@@ -38,7 +38,9 @@ fn decouper_url(url: &str) -> Option<(SocketAddr, String)> {
     locale(&adresse.ip()).then_some((adresse, chemin))
 }
 
-/// Corps d'une réponse HTTP/1.1 (gère « Transfer-Encoding: chunked ») et son code de statut
+/// Corps d'une réponse HTTP/1.1 (gère « Transfer-Encoding: chunked ») et son code de statut. Tout le découpage
+/// se fait sur les octets : une taille de bloc tombant au milieu d'un caractère UTF-8 (envoyé par un appareil
+/// malveillant du réseau, ou par une box au nom accentué) ne doit jamais faire paniquer le service
 fn http(adresse: SocketAddr, requete: &str) -> Option<(u16, String)> {
     let mut flux = TcpStream::connect_timeout(&adresse, Duration::from_secs(3)).ok()?;
     let _ = flux.set_read_timeout(Some(Duration::from_secs(5)));
@@ -51,23 +53,34 @@ fn http(adresse: SocketAddr, requete: &str) -> Option<(u16, String)> {
             Ok(n) => brut.extend_from_slice(&tampon[..n]),
         }
     }
-    let texte = String::from_utf8_lossy(&brut).into_owned();
-    let (entete, corps) = texte.split_once("\r\n\r\n")?;
-    let statut: u16 = entete.split_whitespace().nth(1)?.parse().ok()?;
-    let corps = if entete.to_ascii_lowercase().contains("transfer-encoding: chunked") { dechunker(corps) } else { corps.to_string() };
-    Some((statut, corps))
+    reponse(&brut)
 }
 
-fn dechunker(c: &str) -> String {
-    let mut sortie = String::new();
+/// Statut et corps d'une réponse HTTP brute
+fn reponse(brut: &[u8]) -> Option<(u16, String)> {
+    let fin_entete = brut.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let entete = String::from_utf8_lossy(&brut[..fin_entete]).to_ascii_lowercase();
+    let corps = &brut[fin_entete + 4..];
+    let statut: u16 = entete.split_whitespace().nth(1)?.parse().ok()?;
+    let corps = if entete.contains("transfer-encoding: chunked") { dechunker(corps) } else { corps.to_vec() };
+    Some((statut, String::from_utf8_lossy(&corps).into_owned()))
+}
+
+fn dechunker(c: &[u8]) -> Vec<u8> {
+    let mut sortie = Vec::new();
     let mut reste = c;
-    while let Some((taille, apres)) = reste.split_once("\r\n") {
-        let n = usize::from_str_radix(taille.split(';').next().unwrap_or("").trim(), 16).unwrap_or(0);
-        if n == 0 || n > apres.len() {
+    while let Some(fin_ligne) = reste.windows(2).position(|w| w == b"\r\n") {
+        let ligne = String::from_utf8_lossy(&reste[..fin_ligne]);
+        let n = usize::from_str_radix(ligne.split(';').next().unwrap_or("").trim(), 16).unwrap_or(0);
+        let apres = &reste[fin_ligne + 2..];
+        if n == 0 || n > apres.len() || sortie.len() + n > TAILLE_MAX {
             break;
         }
-        sortie.push_str(&apres[..n]);
-        reste = apres[n..].trim_start_matches("\r\n");
+        sortie.extend_from_slice(&apres[..n]);
+        reste = &apres[n..];
+        if reste.starts_with(b"\r\n") {
+            reste = &reste[2..];
+        }
     }
     sortie
 }
@@ -147,6 +160,11 @@ pub fn decouper_url_test(url: &str) -> Option<(SocketAddr, String)> {
 }
 
 #[cfg(test)]
-pub fn dechunker_test(c: &str) -> String {
+pub fn dechunker_test(c: &[u8]) -> Vec<u8> {
     dechunker(c)
+}
+
+#[cfg(test)]
+pub fn reponse_test(brut: &[u8]) -> Option<(u16, String)> {
+    reponse(brut)
 }

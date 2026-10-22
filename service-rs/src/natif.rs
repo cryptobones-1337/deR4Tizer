@@ -262,6 +262,55 @@ pub fn signataire_valide(chemin: &str) -> Option<String> {
     }
 }
 
+/// Empreinte SHA-256 de la clé publique du certificat qui a signé le fichier, après vérification complète de la
+/// signature AVEC contrôle de révocation de toute la chaîne (un certificat volé puis révoqué est refusé).
+/// Sert à la mise à jour automatique : on compare une clé, pas un nom (que n'importe qui peut obtenir).
+pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN, WTD_REVOKE_WHOLECHAIN};
+    let chemin_large = large(chemin);
+    let mut fichier = WINTRUST_FILE_INFO {
+        cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
+        pcwszFilePath: PCWSTR(chemin_large.as_ptr()),
+        hFile: HANDLE::default(),
+        pgKnownSubject: std::ptr::null_mut(),
+    };
+    let mut donnees = WINTRUST_DATA {
+        cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
+        dwUIChoice: WTD_UI_NONE,
+        fdwRevocationChecks: WTD_REVOKE_WHOLECHAIN,
+        dwUnionChoice: WTD_CHOICE_FILE,
+        Anonymous: WINTRUST_DATA_0 { pFile: &mut fichier },
+        dwStateAction: WTD_STATEACTION_VERIFY,
+        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN,
+        ..Default::default()
+    };
+    let mut action: GUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    unsafe {
+        let r = WinVerifyTrust(HWND::default(), &mut action, &mut donnees as *mut _ as *mut c_void);
+        let mut cle = None;
+        if r == 0 {
+            let fournisseur = WTHelperProvDataFromStateData(donnees.hWVTStateData);
+            if !fournisseur.is_null() {
+                let signataire = WTHelperGetProvSignerFromChain(fournisseur, 0, false, 0);
+                if !signataire.is_null() && !(*signataire).pasCertChain.is_null() {
+                    let cert = (*(*signataire).pasCertChain).pCert;
+                    if !cert.is_null() && !(*cert).pCertInfo.is_null() {
+                        let pk = &(*(*cert).pCertInfo).SubjectPublicKeyInfo.PublicKey;
+                        if !pk.pbData.is_null() && pk.cbData > 0 {
+                            let octets = std::slice::from_raw_parts(pk.pbData, pk.cbData as usize);
+                            cle = Some(Sha256::digest(octets).iter().map(|o| format!("{o:02x}")).collect());
+                        }
+                    }
+                }
+            }
+        }
+        donnees.dwStateAction = WTD_STATEACTION_CLOSE;
+        WinVerifyTrust(HWND::default(), &mut action, &mut donnees as *mut _ as *mut c_void);
+        cle
+    }
+}
+
 // ------------------------------------------------------------ divers
 
 /// Vide le cache DNS de Windows (fonction non documentée de dnsapi.dll, comme ipconfig /flushdns)

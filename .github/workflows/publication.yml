@@ -14,11 +14,14 @@ permissions:
 jobs:
   publier:
     runs-on: windows-latest
+    # Environnement GitHub « publication » : y ranger les secrets de signature et exiger une approbation
+    # (Settings > Environments) ; protéger aussi les tags v* (Settings > Rules)
+    environment: publication
     env:
       # Les secrets ne sont pas lisibles dans une condition « if » : on passe par une variable
       AVEC_CERTIFICAT: ${{ secrets.CERTIFICAT_PFX != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Le tag correspond à la version du code
         shell: pwsh
@@ -35,6 +38,10 @@ jobs:
 
       - name: Compilation
         shell: pwsh
+        env:
+          # Empreinte de la clé publique du certificat de signature, épinglée dans le binaire : la mise à jour
+          # automatique n'installe que des versions signées par cette clé (variable d'environnement GitHub, non secrète)
+          DER4TIZER_CLE_SIGNATURE: ${{ vars.CLE_SIGNATURE }}
         run: |
           cd service-rs; cargo build --release; cd ..
           ./compiler.ps1 -InterfaceSeulement

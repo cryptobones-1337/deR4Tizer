@@ -20,8 +20,7 @@ namespace DeR4Tizer
         readonly ComboBox cbNiveauNotif = Liste("Info", "Alerte", "Critique");
         readonly Label lblApprentissage = new Label { AutoSize = true, ForeColor = Theme.Texte, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 4, 0, 4) };
         readonly Label lblMaj = new Label { AutoSize = true, ForeColor = Theme.Texte, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 4, 0, 4) };
-        readonly CheckBox chkMajAuto = Case("Installer automatiquement une version vérifiée (empreinte et signature du même éditeur)");
-        readonly CheckBox chkMajNonSigne = Case("Accepter aussi des binaires non signés (essais seulement : leur origine n'est pas prouvée)");
+        readonly CheckBox chkMajAuto = Case("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)");
         readonly TextBox txtMajUrl = Saisie(520);
         readonly TextBox txtMaxHeure = Saisie(50);
         readonly CheckBox chkNtfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)");
@@ -125,12 +124,11 @@ namespace DeR4Tizer
             pile.Controls.Add(Section("MISE À JOUR"));
             pile.Controls.Add(lblMaj);
             pile.Controls.Add(chkMajAuto);
-            pile.Controls.Add(chkMajNonSigne);
             pile.Controls.Add(Ligne(Etiquette("Manifeste"), txtMajUrl));
             var btnMajEnr = new BoutonNeon("Enregistrer", Theme.Cyan);
             btnMajEnr.Click += (s, e) =>
             {
-                var m = new ConfigMaj { Auto = chkMajAuto.Checked, AccepterNonSigne = chkMajNonSigne.Checked, Url = txtMajUrl.Text.Trim() };
+                var m = new ConfigMaj { Auto = chkMajAuto.Checked, Url = txtMajUrl.Text.Trim() };
                 Canal.Executer(new Commande { Action = "majConfig", Valeur = Commun.Json().Serialize(m) });
                 Charger();
             };
@@ -244,10 +242,10 @@ namespace DeR4Tizer
             }
             var mj = config.Maj ?? new ConfigMaj();
             chkMajAuto.Checked = mj.Auto;
-            chkMajNonSigne.Checked = mj.AccepterNonSigne;
             txtMajUrl.Text = mj.Url ?? "";
             var em = Commun.Lire<EtatMaj>("maj.json");
             lblMaj.Text = (L.En ? "Installed version: " : "Version installée : ") + Commun.Version
+                + (em != null && !em.CleEpinglee ? (L.En ? " · no signing key pinned in this version: updates are only reported" : " · aucune clé de signature épinglée dans cette version : les mises à jour sont seulement signalées") : "")
                 + (em == null ? (L.En ? " · not checked yet (daily check)" : " · pas encore vérifiée (vérification quotidienne)")
                     : " · " + (L.En ? "checked on " : "vérifiée le ") + em.VerifieLe + " : " + em.Statut);
             var n = config.Notifications ?? new ConfigNotifications();

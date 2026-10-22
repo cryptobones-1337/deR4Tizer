@@ -185,8 +185,7 @@ namespace DeR4Tizer
                 case "majConfig":
                     {
                         var m = Commun.Json().Deserialize<ConfigMaj>(v) ?? new ConfigMaj();
-                        return (en ? "Update settings — automatic: " : "Réglages de mise à jour — automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non"))
-                            + (m.AccepterNonSigne ? (en ? " · INSTALL UNSIGNED BINARIES" : " · INSTALLER DES BINAIRES NON SIGNÉS") : "") + " · " + m.Url;
+                        return (en ? "Update settings — automatic installation: " : "Réglages de mise à jour — installation automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non")) + " · " + m.Url;
                     }
                 case "autoriserLecteur":
                     {

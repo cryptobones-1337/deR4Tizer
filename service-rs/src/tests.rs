@@ -326,77 +326,133 @@ fn baseline_reglage_asr_partage_conserve() {
 }
 
 #[test]
-fn debogage_a_distance_du_navigateur() {
-    assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --headless"#).is_some());
-    assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#).is_none());
-}
-
-// ------------------------------------------------------------ bruit, VPN, vie privée, UPnP, mise à jour
-
-#[test]
-fn apprentissage_et_exceptions() {
-    use crate::apprentissage::{decider, signature, Exception};
-    use std::collections::BTreeSet;
-    let mut a = alerte("Alerte", "lancé par rmm-agent", "PowerShell obscurci : -enc AAAA", 5);
-    a.processus = "powershell".into();
-    a.mitre = "T1059.001".into();
-    let sig = signature(&a);
-    let vide = BTreeSet::new();
-    // pendant l'apprentissage : information, comportement mémorisé
-    assert_eq!(decider("Alerte", &sig, true, &vide, &[]), Some(("Info", " [mode apprentissage : comportement mémorisé]", true)));
-    // une alerte critique n'est jamais adoucie, même apprise ou en exception
-    let appris: BTreeSet<String> = [sig.clone()].into_iter().collect();
-    assert_eq!(decider("Critique", &sig, true, &appris, &[]), None);
-    // après l'apprentissage : comportement appris en information, inconnu en alerte
-    assert_eq!(decider("Alerte", &sig, false, &appris, &[]).map(|d| d.0), Some("Info"));
-    assert_eq!(decider("Alerte", "autre|chose|t####", false, &appris, &[]), None);
-    // exception explicite
-    let ex = vec![Exception { signature: sig.clone(), ..Default::default() }];
-    assert_eq!(decider("Alerte", &sig, false, &vide, &ex).map(|d| d.0), Some("Info"));
-    // une autre IP ne fait pas un autre comportement
-    let mut b = a.clone();
-    let mut c = a.clone();
-    b.destination = "203.0.113.5".into();
-    c.destination = "198.51.100.77".into();
-    assert_eq!(signature(&b), signature(&c));
-}
-
-#[test]
-fn mise_a_jour_versions_et_signatures() {
-    use crate::maj::{plus_recente, signature_acceptable};
-    assert!(plus_recente("4.10", "4.9"));
-    assert!(plus_recente("v5.0", "4.9.9"));
-    assert!(!plus_recente("4.0", "4.0"));
-    assert!(!plus_recente("3.9", "4.0"));
-    assert!(signature_acceptable(Some("Mairie X"), Some("Mairie X"), false).is_ok());
-    assert!(signature_acceptable(Some("Pirate"), Some("Mairie X"), true).is_err(), "autre éditeur : refusé même en mode permissif");
-    assert!(signature_acceptable(None, Some("Mairie X"), true).is_err(), "retour au non signé : refusé");
-    assert!(signature_acceptable(None, None, false).is_err(), "non signé : pas d'installation automatique");
-    assert!(signature_acceptable(None, None, true).is_ok());
-    assert!(signature_acceptable(Some("Mairie X"), None, false).is_ok(), "première version signée");
-}
-
-#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
 }
 
+// ------------------------------------------------------------ revue v6 : N1 à N3 et non-bloquants
+
+/// Variante du mini-fuzz pour les fonctions qui prennent du texte : octets aléatoires (dont non ASCII)
+/// convertis par from_utf8_lossy, comme le texte reçu du réseau
+fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
+    torturer(valide.as_bytes(), &mut |d| f(&String::from_utf8_lossy(d)));
+    for t in ["é", "Révolution", "\u{212A}", "\u{FFFD}\u{FFFD}", "日本語", "\u{1F600}"] {
+        f(t);
+        f(&format!("{t}{valide}{t}"));
+    }
+}
+
 #[test]
-fn ip_directe_pour_les_editeurs_connus() {
+fn n1_upnp_sans_panique_sur_utf8_coupe() {
+    // Cas reproduit par la revue : bloc de 2 octets invalides en UTF-8
+    let r = crate::upnp::reponse_test(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n\xff\xff\r\n0\r\n\r\n");
+    assert_eq!(r.map(|(s, _)| s), Some(200));
+    // « é » (2 octets) coupé entre deux blocs : le texte final est reconstitué
+    let corps = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nR\xc3\r\n9\r\n\xa9volution\r\n0\r\n\r\n";
+    assert_eq!(crate::upnp::reponse_test(corps).unwrap().1, "Révolution");
+    assert_eq!(crate::upnp::dechunker_test(b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"), b"Wikipedia");
+    torturer(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n", &mut |d| {
+        let _ = crate::upnp::reponse_test(d);
+        let _ = crate::upnp::dechunker_test(d);
+    });
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
+    assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
+}
+
+#[test]
+fn fonctions_texte_sans_panique() {
+    torturer_texte("a%20b+c%3A%C3%A9", &mut |t| { let _ = crate::api::decoder_test(t); });
+    torturer_texte(r#"alert tcp any any -> any any (msg:"é"; content:"|41|é"; sid:9;)"#, &mut |t| { let _ = crate::ids::lire_texte_test(t); });
+    torturer_texte(r"C:\Users\marie\AppData\x.exe", &mut |t| { let _ = crate::commun::masquer_chemin(t); });
+    torturer_texte("Brave Software, Inc.", &mut |t| { let _ = crate::moniteur::ip_directe_normale(t); });
+    torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
+    torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
+    torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
+}
+
+#[test]
+fn n2_mise_a_jour_cle_epinglee() {
+    use crate::maj::{installation_autorisee, plus_recente, version_valide};
+    let cle = "a".repeat(64);
+    let autre = "b".repeat(64);
+    assert!(installation_autorisee(Some(&cle), Some(&cle)).is_ok());
+    assert!(installation_autorisee(Some(&autre), Some(&cle)).is_err(), "autre clé (même nom de certificat possible) : refusé");
+    assert!(installation_autorisee(None, Some(&cle)).is_err(), "non signé, invalide ou révoqué : refusé");
+    assert!(installation_autorisee(Some(&cle), None).is_err(), "aucune clé épinglée : jamais d'installation");
+    assert!(installation_autorisee(Some(&cle), Some("court")).is_err());
+    assert!(version_valide("4.2") && version_valide("10.0.1"));
+    for v in ["", "4..2", "4.2-beta", "..\\..\\x", "4.2 ", "4/2"] {
+        assert!(!version_valide(v), "« {v} » ne doit pas servir de nom de dossier");
+    }
+    assert!(plus_recente("4.10", "4.9") && !plus_recente("4.0", "4.0") && !plus_recente("3.9", "4.0"));
+}
+
+#[test]
+fn n3_apprentissage_par_chemin_editeur_et_destination() {
+    use crate::apprentissage::{decider, signal_fort, signature_avec};
+    use std::collections::BTreeSet;
+    let mut vrai = alerte("Alerte", "203.0.113.5", "IP DIRECTE (aucune requête DNS)", 3);
+    vrai.processus = "keepass".into();
+    vrai.chemin = r"C:\Program Files\KeePass\KeePass.exe".into();
+    vrai.mitre = String::new();
+    let mut faux = vrai.clone();
+    faux.chemin = r"C:\Users\x\AppData\Local\Temp\KeePass.exe".into();
+    assert_ne!(signature_avec(&vrai, "Dominik Reichl"), signature_avec(&faux, "non signé"), "même nom, autre chemin et éditeur : autre comportement");
+    let mut autre_ip = vrai.clone();
+    autre_ip.destination = "198.51.100.77".into();
+    assert_ne!(signature_avec(&vrai, "e"), signature_avec(&autre_ip, "e"), "une autre IP n'est pas apprise d'office");
+    let mut domaine = vrai.clone();
+    domaine.nom_dns = Some("keepass.info".into());
+    let mut domaine_autre_ip = domaine.clone();
+    domaine_autre_ip.destination = "198.51.100.77".into();
+    assert_eq!(signature_avec(&domaine, "e"), signature_avec(&domaine_autre_ip, "e"), "même domaine : même comportement");
+    for r in ["suppression des sauvegardes (typique d'un rançongiciel) : vssadmin delete shadows",
+              "document winword qui lance powershell (macro ou exploit probable)",
+              "PowerShell obscurci ou qui télécharge du code : iex", "détournement d'outil Windows (LOLBin) : certutil -urlcache"] {
+        assert!(signal_fort(&alerte("Alerte", "lancé par x", r, 5)), "{r}");
+    }
+    let mut ids = alerte("Alerte", "IDS : Bureau à distance (RDP) sollicité depuis Internet", "règle 9000041", 6);
+    ids.mitre = String::new();
+    assert!(signal_fort(&ids));
+    let vide = BTreeSet::new();
+    assert_eq!(decider("Critique", "x", true, &vide, &[]), None);
+    assert!(decider("Alerte", "x", true, &vide, &[]).is_some_and(|d| d.2));
+}
+
+#[test]
+fn regroupement_second_niveau() {
+    let mut lot: Vec<_> = (1..=300).map(|i| {
+        let mut a = alerte("Alerte", &format!("{}-liste.example", ["alpha", "beta", "gamma", "delta"][i % 4].repeat(1 + i % 7)), "domaine listé demandé", 6);
+        a.processus = "svchost".into();
+        a.mitre = "T1071.004".into();
+        a
+    }).collect();
+    let mut vraie = alerte("Critique", "passerelle 192.168.1.254", "USURPATION ARP probable", 12);
+    vraie.mitre = "T1557.002".into();
+    lot.push(vraie);
+    let groupes = crate::notifications::regrouper(&lot);
+    assert!(groupes.len() <= 3, "les domaines différents d'une même nature sont fusionnés : {} groupes", groupes.len());
+    assert!(crate::notifications::texte(&lot).contains("USURPATION ARP"));
+}
+
+#[test]
+fn ip_directe_editeurs_exacts() {
     use crate::moniteur::ip_directe_normale;
     assert!(ip_directe_normale("Proton AG"));
     assert!(ip_directe_normale("Google LLC"));
     assert!(ip_directe_normale("Valve Corp."));
-    assert!(!ip_directe_normale(""), "programme non signé : toujours pénalisé");
-    assert!(!ip_directe_normale("Evil Software Ltd"));
+    assert!(!ip_directe_normale("Google Fake Updates Ltd"), "sous-chaîne : refusé");
+    assert!(!ip_directe_normale("TeamViewer Germany GmbH"), "prise en main à distance : jamais exemptée");
+    assert!(!ip_directe_normale("AnyDesk Software GmbH"));
+    assert!(!ip_directe_normale(""));
 }
 
 #[test]
-fn upnp_adresses_locales_seulement() {
-    assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
-    assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
-    assert!(crate::upnp::decouper_url_test("https://192.168.1.254/x").is_none());
-    assert_eq!(crate::upnp::dechunker_test("4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"), "Wikipedia");
-    let _ = crate::upnp::dechunker_test("ffffffff\r\nabc");
+fn debogage_a_distance_ancre_sur_l_executable() {
+    use crate::processus::suspicion;
+    assert!(suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --headless"#).is_some());
+    assert!(suspicion("chrome.exe --remote-debugging-pipe").is_some());
+    assert!(suspicion(r#""C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe" --remote-debugging-port=0"#).is_none());
+    assert!(suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#).is_none());
 }

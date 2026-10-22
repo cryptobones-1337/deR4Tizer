@@ -142,7 +142,9 @@ pub fn cible(commande: &str) -> String {
     if let Some(r) = c.strip_prefix(r"\??\") {
         c = r.to_string();
     }
-    if c.to_lowercase().starts_with(r"\systemroot\") {
+    // Comparaison sur les octets ASCII : sur la version en minuscules, un caractère Unicode (signe Kelvin…)
+    // pourrait devenir ASCII et décaler le découpage au milieu d'un caractère (panique, service arrêté)
+    if c.get(..12).is_some_and(|p| p.eq_ignore_ascii_case(r"\systemroot\")) {
         c = format!("{windows}{}", &c[11..]);
     }
     let bas = c.to_lowercase();
