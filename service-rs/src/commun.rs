@@ -137,6 +137,7 @@ pub struct SourceMenace {
     pub entrees: usize,
     pub statut: String,
     pub mis_a_jour: Option<String>,
+    pub licence: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -162,6 +163,8 @@ pub struct Config {
     pub api: ConfigApi,
     /// Prévention d'intrusion : l'IDS bloque au pare-feu l'adresse distante des règles « drop » ou de priorité 1
     pub ips: bool,
+    /// Utiliser aussi les listes de menaces non commerciales ou aux conditions non vérifiées (usage personnel)
+    pub listes_restreintes: bool,
 }
 
 impl Default for Config {
@@ -173,6 +176,7 @@ impl Default for Config {
             syslog: ConfigSyslog::default(),
             api: ConfigApi::default(),
             ips: false,
+            listes_restreintes: false,
         }
     }
 }

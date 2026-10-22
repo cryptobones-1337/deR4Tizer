@@ -90,6 +90,9 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 - Un PC sur un réseau commuté ne voit que son propre trafic, le broadcast et le multicast : ce n'est pas un NDR de tout le réseau (il faudrait un port miroir).
 - Capture IPv4 seulement pour l'instant ; le pays est celui du titulaire du bloc d'adresses (un CDN peut apparaître aux États-Unis).
+- Les exécutables ne sont pas encore signés (certificat de signature de code à obtenir, par exemple SignPath
+  Foundation pour les projets open source) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
+- deR4Tizer complète Microsoft Defender, il ne le remplace pas : un attaquant administrateur peut arrêter le service.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 
 ### Feuille de route
@@ -190,6 +193,18 @@ Routes are listed in the French section above (paths are identical).
 ---
 
 ## Sources de renseignement / Threat-intelligence credits
+
+Par défaut, seules les listes dont les conditions autorisent tout usage sont utilisées : Spamhaus DROP (citation, un
+téléchargement par jour) et abuse.ch Feodo Tracker / SSLBL (usage équitable). Les autres (FireHOL niveau 1, qui agrège
+DShield, ThreatView, Emerging Threats, CINS Army, IPsum, Phishing Army en CC BY-NC 4.0) sont non commerciales ou à
+vérifier : elles ne s'activent que par un réglage explicite, pour un usage personnel. Chaque liste est téléchargée en
+HTTPS, limitée à 100 Mo, rejetée si elle se vide ou s'effondre, et ignorée si elle couvrirait plus de 134 millions
+d'adresses ; les réseaux privés, CGNAT, de lien local et multicast ne sont jamais signalés ni bloqués.
+
+By default only lists whose terms allow any use are enabled (Spamhaus DROP, abuse.ch Feodo Tracker / SSLBL). The others
+are non-commercial or unverified and must be enabled explicitly, for personal use. Lists are fetched over HTTPS only,
+capped at 100 MB, rejected when empty or collapsing, and ignored when covering more than 134 million addresses; private,
+CGNAT, link-local and multicast networks are never flagged or blocked.
 
 Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker et SSLBL (JA3) · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers.
 Géolocalisation / geolocation : statistiques « delegated » d'ARIN, RIPE NCC, APNIC, LACNIC et AFRINIC. Carte / map : Natural Earth 1:110m (domaine public / public domain).

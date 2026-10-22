@@ -47,6 +47,20 @@ const TOUJOURS_AUTORISES: &[&str] = &[
     "onedrive", "filecoauth", "backgroundtaskhost", "svchost",
 ];
 
+/// Programmes qui lisent, copient ou synchronisent tous les fichiers (début du nom de l'exécutable) : ils
+/// peuvent toucher un leurre sans être un rançongiciel. Ils doivent en plus avoir une signature valide.
+const LEURRES_AUTORISES: &[&str] = &[
+    // antivirus et Windows
+    "msmpeng", "mpdefendercoreservice", "mssense", "searchindexer", "searchprotocolhost", "searchfilterhost", "explorer",
+    "wbengine", "sdclt", "vssvc", "filehistory",
+    // synchronisation
+    "onedrive", "filecoauth", "dropbox", "googledrivefs", "nextcloud", "owncloud", "synologydrive", "cloud-drive", "icloud", "megasync",
+    "boxsync", "box",
+    // sauvegarde
+    "veeam", "acronis", "trueimage", "anti_ransomware_service", "mmscmd", "reflect", "macrium", "bztransmit", "bzfilelist", "backblaze",
+    "cbengine", "cobian", "idrive", "carbonite", "aomei", "backupper", "easeus", "urbackup", "duplicati", "arq", "crashplan", "code42",
+];
+
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)
 pub fn dossiers_presents() -> Vec<(String, &'static Cible)> {
     let systeme = crate::natif::dossier_windows();
@@ -152,6 +166,23 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     evenements::abonner("Security", "*[System[EventID=4663]]", move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
+            let exe = Path::new(&programme).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let connu = LEURRES_AUTORISES.iter().any(|a| exe.starts_with(a)) && crate::natif::signataire_valide(&programme).is_some();
+            if connu {
+                // Sauvegarde, synchronisation, antivirus, indexation : on le note sans rien suspendre
+                file.lock().unwrap().push(Alerte {
+                    id: commun::nouvel_id(),
+                    heure: commun::maintenant(),
+                    niveau: "Info".into(),
+                    processus: Path::new(&programme).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                    chemin: programme.clone(),
+                    destination: "leurre anti-rançongiciel".into(),
+                    raisons: format!("{programme} (logiciel connu et signé : sauvegarde, synchronisation ou antivirus) a touché le fichier leurre {objet} — non suspendu"),
+                    pid: Some(pid),
+                    ..Default::default()
+                });
+                return;
+            }
             let config: commun::Config = commun::lire("config.json").unwrap_or_default();
             let suspendu = config.reponse_auto_rancongiciel && crate::reponse::suspendre(pid, true).is_ok();
             file.lock().unwrap().push(Alerte {
