@@ -656,3 +656,82 @@ fn lot1_fichier_cree_avec_ses_droits_et_dacl_remplacee() {
     assert!(poser_droits(&d, "D:P(A;;FA;;;SY").is_err(), "SDDL invalide : erreur, rien de posé");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ------------------------------------------------------------ lot 1, seconde relecture de la PR 1
+
+#[test]
+fn lot1_mise_de_cote_ratee_jamais_de_confiance() {
+    // Relecture : un fichier piégé tenu ouvert sans partage de suppression pendant le démarrage ne doit pas
+    // changer de propriétaire, sinon il serait gardé (et chargé) au démarrage suivant
+    use crate::natif::{lire_securite, renommer_par_handle};
+    use crate::protection::{trier_element, Tri};
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = std::env::temp_dir().join(format!("der4tizer-tenu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("ecartes")).unwrap();
+    let f = d.join("lecteurs.json");
+    std::fs::write(&f, b"[]").unwrap();
+    let avant = lire_securite(&f).unwrap();
+    {
+        // Ouvert en lecture, partage en lecture seule : ni écriture ni suppression partagées
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&f).unwrap();
+        assert!(renommer_par_handle(&f, &d.join("ecartes").join("x-lecteurs.json")).is_err(), "fichier tenu : déplacement impossible");
+        let apres = lire_securite(&f).unwrap();
+        assert_eq!(apres.proprietaire, avant.proprietaire, "aucune prise de possession");
+        assert_eq!(apres.aces, avant.aces, "droits inchangés");
+    }
+    // Propriétaire inchangé, donc toujours non vérifié pour le service : écarté au démarrage suivant
+    for p in [Some(false), None] {
+        assert_eq!(trier_element(false, p), Tri::Ecarter);
+    }
+    // Une fois relâché, le déplacement par handle réussit, sans changer propriétaire ni droits
+    let dest = d.join("ecartes").join("x-lecteurs.json");
+    renommer_par_handle(&f, &dest).unwrap();
+    assert!(!f.exists() && dest.exists());
+    assert_eq!(lire_securite(&dest).unwrap().proprietaire, avant.proprietaire);
+    // Un dossier se déplace aussi
+    std::fs::create_dir_all(d.join("piege")).unwrap();
+    renommer_par_handle(&d.join("piege"), &d.join("ecartes").join("x-piege")).unwrap();
+    assert!(d.join("ecartes").join("x-piege").is_dir());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1_privilege_de_restauration_limite_a_l_appel() {
+    use crate::natif::avec_privilege_restauration;
+    // Hors élévation, le privilège n'est pas dans le jeton : refus, et f n'est pas exécutée. En CI (élevé),
+    // il est accordé le temps de l'appel. Dans les deux cas, le fil revient à son jeton.
+    let mut appele = false;
+    match avec_privilege_restauration(|| appele = true) {
+        Ok(()) => assert!(appele),
+        Err(e) => {
+            assert!(!appele, "f ne doit pas s'exécuter sans le privilège");
+            assert!(e.contains("privilège") || e.contains("jeton"), "{e}");
+        }
+    }
+    // Rappel immédiat : pas d'emprunt de jeton resté actif (un second ImpersonateSelf réussit pareil)
+    let r2 = avec_privilege_restauration(|| 1);
+    assert_eq!(r2.is_ok(), appele);
+}
+
+#[test]
+fn lot1_lisible_en_echec_liste_d_autorisation() {
+    use crate::commun::lisible_en_echec;
+    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "dns.json", "journal.txt"] {
+        assert!(lisible_en_echec(oui), "{oui}");
+    }
+    for non in ["config.json", "lecteurs.json", "apprentissage.json", "blocages.json", "quarantaine.json",
+                "secrets\\notifications.json", "secrets\\leurres-noms.json", "api-jeton.txt", "baseline-sauvegarde.json",
+                "executables.json", "extensions-connues.json", "ecoutes-connues.json", "peripheriques-connus.json",
+                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x"] {
+        assert!(!lisible_en_echec(non), "{non}");
+    }
+}
+
+#[test]
+fn lot1_alerte_critique_locale_en_echec() {
+    let a = crate::protection::alerte_echec("un élément d'un autre propriétaire n'a pas pu être écarté");
+    assert_eq!(a.niveau, "Critique");
+    assert!(a.raisons.contains("n'a pas pu être écarté") && a.raisons.contains("pas remontée"));
+    assert!(!a.raisons.contains("  "), "texte sans espaces doublés : {}", a.raisons);
+}

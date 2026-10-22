@@ -563,35 +563,64 @@ pub fn creer_dossier_protege(chemin: &std::path::Path, sddl: &str) -> bool {
     }
 }
 
-/// Active pour le processus les privilèges de prise de possession et de restauration (présents mais inactifs
-/// dans le jeton du service) : sans eux, SYSTEM ne peut pas reprendre un élément dont la DACL est vide
-pub fn activer_privileges() -> Result<(), String> {
+/// Exécute `f` avec le privilège de restauration actif, sur ce fil seulement et pendant `f` seulement : le fil
+/// emprunte une copie du jeton du processus, y active le privilège, puis revient au jeton du processus (où le
+/// privilège reste inactif). Le reste du service n'en profite jamais.
+pub fn avec_privilege_restauration<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     use windows::Win32::Foundation::{GetLastError, LUID, ERROR_NOT_ALL_ASSIGNED};
     use windows::Win32::Security::{
-        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
-        TOKEN_QUERY,
+        AdjustTokenPrivileges, ImpersonateSelf, LookupPrivilegeValueW, RevertToSelf, SecurityImpersonation, LUID_AND_ATTRIBUTES,
+        SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
     };
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
     unsafe {
-        let mut jeton = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut jeton).map_err(|e| e.to_string())?;
-        let mut r = Ok(());
-        for nom in ["SeTakeOwnershipPrivilege", "SeRestorePrivilege"] {
-            let n = large(nom);
+        ImpersonateSelf(SecurityImpersonation).map_err(|e| format!("emprunt du jeton : {e}"))?;
+        let resultat = (|| {
+            let mut jeton = HANDLE::default();
+            OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, false, &mut jeton).map_err(|e| format!("jeton du fil : {e}"))?;
+            let nom = large("SeRestorePrivilege");
             let mut luid = LUID::default();
-            if let Err(e) = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(n.as_ptr()), &mut luid) {
-                r = Err(format!("{nom} : {e}"));
-                continue;
+            let mut r = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(nom.as_ptr()), &mut luid).map_err(|e| e.to_string());
+            if r.is_ok() {
+                let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+                // AdjustTokenPrivileges réussit même si le privilège n'est pas accordé : ERROR_NOT_ALL_ASSIGNED
+                r = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None).map_err(|e| e.to_string());
+                if r.is_ok() && GetLastError() == ERROR_NOT_ALL_ASSIGNED {
+                    r = Err("privilège de restauration absent du jeton".into());
+                }
             }
-            let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
-            // AdjustTokenPrivileges réussit même si le privilège n'est pas accordé : ERROR_NOT_ALL_ASSIGNED
-            if let Err(e) = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None) {
-                r = Err(format!("{nom} : {e}"));
-            } else if GetLastError() == ERROR_NOT_ALL_ASSIGNED {
-                r = Err(format!("{nom} : privilège absent du jeton"));
-            }
-        }
-        let _ = CloseHandle(jeton);
+            let _ = CloseHandle(jeton);
+            r
+        })();
+        let valeur = resultat.map(|_| f());
+        let _ = RevertToSelf();
+        valeur
+    }
+}
+
+/// Déplace un fichier ou un dossier par son handle, ouvert avec DELETE et la sémantique de sauvegarde (le
+/// privilège de restauration, s'il est actif, accorde DELETE sans toucher au propriétaire ni aux droits). Les
+/// liens ne sont pas suivis. Échoue si l'élément est tenu ouvert sans partage de suppression.
+pub fn renommer_par_handle(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FileRenameInfo, SetFileInformationByHandle, DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE,
+    };
+    let src = large(&source.to_string_lossy());
+    let dst: Vec<u16> = destination.to_string_lossy().encode_utf16().collect();
+    unsafe {
+        let h = CreateFileW(PCWSTR(src.as_ptr()), (DELETE | SYNCHRONIZE).0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, None,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, HANDLE::default())
+            .map_err(|e| format!("ouverture : {e}"))?;
+        // FILE_RENAME_INFO est de taille variable : nom de destination à la suite de la structure
+        let decalage = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let taille = decalage + (dst.len() + 1) * 2;
+        let mut tampon = vec![0u64; taille.div_ceil(8)];
+        let info = tampon.as_mut_ptr() as *mut FILE_RENAME_INFO;
+        (*info).FileNameLength = (dst.len() * 2) as u32;
+        std::ptr::copy_nonoverlapping(dst.as_ptr(), (tampon.as_mut_ptr() as *mut u8).add(decalage) as *mut u16, dst.len());
+        let r = SetFileInformationByHandle(h, FileRenameInfo, tampon.as_ptr() as *const c_void, taille as u32).map_err(|e| format!("renommage : {e}"));
+        let _ = CloseHandle(h);
         r
     }
 }
