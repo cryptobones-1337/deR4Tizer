@@ -91,6 +91,18 @@ Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot su
 - Un fichier de configuration appartenant à un compte standard est ignoré et signalé.
 - Tests unitaires de la décision « propriétaire acceptable » ; test d'intégration CI (lot 3) couvrant les trois scénarios.
 
+### Lot 1 bis : quarantaine et mise à l'écart sans perte de données
+
+**Constat :** `protection.rs:trier` supprime un élément quand sa mise à l'écart échoue ; et `reponse.rs:mettre_en_quarantaine` déplace le fichier par `fs::rename`, qui conserve le propriétaire d'origine (le compte de l'utilisateur). Au démarrage suivant, le fichier quarantainé est donc écarté (restauration impossible) ou supprimé (perte du fichier d'un faux positif).
+
+**À faire :**
+
+- `trier` : jamais de suppression ; déplacement impossible = élément intact, échec journalisé, démarrage en échec fermé.
+- Quarantaine : copie vers un fichier créé par le service avec ses droits (propriétaire SYSTEM), SHA-256 enregistré dans `quarantaine.json`, puis suppression de l'original ; empreinte vérifiée à la restauration.
+- Migration : fichiers de `quarantaine\` présents dans `quarantaine.json` recopiés ainsi au démarrage, pas écartés.
+
+**Critères :** tests « quarantaine, redémarrage, restauration », « ancien fichier quarantainé migré sans perte », « déplacement impossible : intact et échec fermé », « création de ecartes impossible : intact et échec fermé ». Scénario « quarantaine, redémarrage, restauration » ajouté au lot 3.
+
 ### Lot 2 : mise à jour, retour en arrière par manifeste et transaction
 
 **Constat :** la version n'est lue que dans le manifeste, qui n'est pas signé. Un manifeste falsifié annonçant « 99.0 » peut faire installer une ancienne version signée par la bonne clé mais vulnérable. Depuis la v4.3, le MSI porte `AllowDowngrades="yes"` (pour le retour arrière) : le refus d'installer une version plus ancienne, seule barrière restante, a disparu. Le lot 2 doit lire la version dans l'artefact signé avant toute installation, ou rétablir ce refus et faire le retour arrière autrement.
@@ -106,7 +118,7 @@ Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot su
 
 ### Lot 3 : CI d'intégration et chaîne de publication
 
-- Nouveau job CI sur `windows-latest` qui, avec le MSI construit : installe ; vérifie service (compte, démarrage, reprise), droits du dossier (lot 1) ; crée un compte local standard et vérifie depuis ce compte (`Start-Process -Credential`) que le tube refuse ses commandes et qu'il ne peut rien écrire dans le dossier de données ; scénario du dossier précréé, y compris avec des fichiers à DACL vide (`D:P`, propriétaire illisible pour SYSTEM) comme `config.json`, `lecteurs.json` ou `apprentissage.json` : ils doivent être écartés et jamais chargés ; fichier piégé tenu ouvert (sans partage de suppression) pendant le démarrage du service, puis redémarrage : jamais chargé, ni au premier ni au second démarrage ; mise à niveau depuis le MSI de la version précédente ; désinstallation avec et sans `GARDER_DONNEES=1`.
+- Nouveau job CI sur `windows-latest` qui, avec le MSI construit : installe ; vérifie service (compte, démarrage, reprise), droits du dossier (lot 1) ; crée un compte local standard et vérifie depuis ce compte (`Start-Process -Credential`) que le tube refuse ses commandes et qu'il ne peut rien écrire dans le dossier de données ; scénario du dossier précréé, y compris avec des fichiers à DACL vide (`D:P`, propriétaire illisible pour SYSTEM) comme `config.json`, `lecteurs.json` ou `apprentissage.json` : ils doivent être écartés et jamais chargés ; fichier piégé tenu ouvert (sans partage de suppression) pendant le démarrage du service, puis redémarrage : jamais chargé, ni au premier ni au second démarrage ; quarantaine d'un fichier, redémarrage du service, restauration : fichier restauré à l'identique ; mise à niveau depuis le MSI de la version précédente ; désinstallation avec et sans `GARDER_DONNEES=1`.
 - WiX : vérifier l'empreinte SHA-256 de `wix314-binaries.zip` (valeur figée dans le workflow) dans `ci.yml` et `publication.yml`.
 - `publication.yml` : séparer compilation (sans secret) et signature (reçoit seulement les artefacts, environnement `publication`). Aucune compilation ni script de dépendance dans le job qui détient le certificat.
 
