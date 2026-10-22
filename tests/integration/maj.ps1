@@ -266,7 +266,9 @@ NonExecute 'Service muet après l''installation (tube absent ou tenu par un autr
 # ---------------------------------------------------------------- mise à jour réussie
 Remettre-Courante
 Publier $Nouvelle (Msi $Nouvelle) (Msi $Courante)
-Verifier "Mise à jour $Courante → $Nouvelle réussie : service de la nouvelle version, une seule entrée, aucun retour arrière" {
+# Témoin positif du contrôle de révocation : CRL qui répond, racine sans adresse de CRL (comme les vraies) ;
+# le correctif ne refuse pas tout
+Verifier "Mise à jour $Courante → $Nouvelle réussie (CRL qui répond, racine sans CRL) : service de la nouvelle version, une seule entrée, aucun retour arrière" {
     Installation-Lancee
     $fin = (Get-Date).AddSeconds(300)
     do {
