@@ -36,6 +36,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **DPI** | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
 | **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
+| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs |
 | **Interface** | Français / anglais |
 
 ### Architecture
@@ -43,7 +44,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 ```
 deR4TizerSvc.exe   service Windows en Rust, compte SYSTEM (surveillance, réponse, export)
 deR4Tizer.exe      interface C# (.NET Framework 4.8, fourni avec Windows), sans droits admin
-C:\ProgramData\deR4Tizer   état partagé (JSON), journal
+C:\ProgramData\deR4Tizer   état partagé (JSON), journal ; lecture : administrateurs et comptes autorisés
 \\.\pipe\deR4Tizer         commandes interface → service (administrateurs et SYSTEM seulement)
 ```
 
@@ -131,6 +132,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **DPI** | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
 | **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
+| **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators |
 | **Interface** | French / English |
 
 ### Architecture
@@ -138,7 +140,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 ```
 deR4TizerSvc.exe   Rust Windows service, SYSTEM account (monitoring, response, export)
 deR4Tizer.exe      C# interface (.NET Framework 4.8, ships with Windows), no admin rights
-C:\ProgramData\deR4Tizer   shared state (JSON), log
+C:\ProgramData\deR4Tizer   shared state (JSON), log; readable by administrators and authorised accounts
 \\.\pipe\deR4Tizer         interface → service commands (Administrators and SYSTEM only)
 ```
 

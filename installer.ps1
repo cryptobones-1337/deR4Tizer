@@ -1,7 +1,7 @@
 ﻿#Requires -RunAsAdministrator
 # Installe (ou met à jour) deR4Tizer :
 #   - C:\Program Files\deR4Tizer    deR4TizerSvc.exe (service) et deR4Tizer.exe (interface)
-#   - C:\ProgramData\deR4Tizer      état, alertes, blocages, journal (lecture seule pour les utilisateurs)
+#   - C:\ProgramData\deR4Tizer      état, alertes, événements, journal (lecture : compte connecté et administrateurs)
 #   - service "deR4Tizer" en compte SYSTEM, démarrage automatique, redémarré en cas de plantage
 #   - raccourci dans le menu Démarrer, et au démarrage de session si vous le voulez
 $ErrorActionPreference = 'Stop'
@@ -24,10 +24,14 @@ Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force -Path $dest, $donnees | Out-Null
 Copy-Item (Join-Path $source 'deR4TizerSvc.exe'), (Join-Path $source 'deR4Tizer.exe') $dest -Force
 
-# Données : SYSTEM et Administrateurs en écriture, Utilisateurs en lecture seule (l'interface lit sans droits admin)
+# Données : SYSTEM et Administrateurs en écriture ; en lecture, seulement le compte connecté (l'interface lit
+# sans droits admin). Les événements, sessions et alertes ne sont pas lisibles par les autres comptes du PC ;
+# un autre compte peut être autorisé depuis l'interface (UAC). Le service repose ces droits toutes les heures.
 $acl = New-Object Security.AccessControl.DirectorySecurity
 $acl.SetAccessRuleProtection($true, $false)
-$droits = [ordered]@{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'; 'S-1-5-32-545' = 'ReadAndExecute' }
+$droits = [ordered]@{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl' }
+$connecte = (Get-CimInstance Win32_ComputerSystem).UserName
+if ($connecte) { $droits[(New-Object Security.Principal.NTAccount($connecte)).Translate([Security.Principal.SecurityIdentifier]).Value] = 'ReadAndExecute' }
 foreach ($sid in $droits.Keys) {
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
         (New-Object Security.Principal.SecurityIdentifier $sid), $droits[$sid], 'ContainerInherit,ObjectInherit', 'None', 'Allow')))

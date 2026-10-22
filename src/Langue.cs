@@ -114,6 +114,12 @@ namespace DeR4Tizer
             { "Message", "Message" }, { "Bloqué", "Blocked" }, { "oui", "yes" }, { "Site (SNI)", "Site (SNI)" }, { "Hôte et chemin", "Host and path" },
             { "Nom demandé", "Requested name" }, { "Serveur DNS", "DNS server" }, { "Empreinte JA3", "JA3 fingerprint" }, { "Sessions", "Sessions" },
 
+            // Accès aux données
+            { "ACCÈS AUX DONNÉES", "DATA ACCESS" }, { "Autoriser un autre compte…", "Authorise another account…" }, { "Autoriser", "Authorise" },
+            { "Les événements, sessions, alertes et appareils du réseau ne sont lisibles que par SYSTEM, les administrateurs et ces comptes :",
+              "Events, sessions, alerts and network devices can only be read by SYSTEM, administrators and these accounts:" },
+            { "Nom du compte (par exemple : PC-ACCUEIL\\marie)", "Account name (for example: FRONT-DESK\\marie)" }, { "Compte introuvable.", "Account not found." },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },
