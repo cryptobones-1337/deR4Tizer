@@ -866,11 +866,16 @@ fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
     ];
     let m = Manifeste::new(&d, 0);
     let messages = migrer_quarantaine(&dq, &mut liste, &sddl, |p| Some(p.ends_with("confiance.quarantaine")), &|l| m.ecrire(l));
-    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages.len(), 2, "{messages:?}");
     assert!(liste[0].fichier.starts_with("ancien-") && liste[0].sha256.len() == 64);
     assert!(!dq.join("ancien.quarantaine").exists());
-    assert_eq!(std::fs::read(dq.join(&liste[0].fichier)).unwrap(), b"contenu d'origine");
-    assert!(liste[1].fichier.is_empty() && liste[1].sha256.len() == 64, "copie de confiance : empreinte ajoutée");
+    // Copies en clair réencodées, propriétaire de confiance ou non : plus rien du contenu en clair
+    for e in &liste[..2] {
+        let c = dq.join(&e.fichier);
+        assert!(crate::reponse::est_encodee(&c), "{}", e.fichier);
+        assert!(!contient(&std::fs::read(&c).unwrap(), b"contenu") && !contient(&std::fs::read(&c).unwrap(), b"deja sur"));
+    }
+    assert!(liste[1].fichier.starts_with("confiance-") && liste[1].sha256.len() == 64);
     assert!(liste[2].sha256.is_empty());
     assert_eq!(m.lu(), liste, "nouvelle copie enregistrée");
     restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
@@ -880,20 +885,24 @@ fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
 
 #[test]
 fn lot1bis_decision_de_reprise() {
-    use crate::reponse::{decision_reprise, EtatQuarantaine::*, Reprise};
-    // (état, original présent, copie présente) : toutes les combinaisons
-    assert_eq!(decision_reprise(EnCours, true, true), Reprise::RetirerCopieEtEntree);
-    assert_eq!(decision_reprise(EnCours, false, true), Reprise::MarquerTerminee);
-    assert_eq!(decision_reprise(EnCours, true, false), Reprise::RetirerEntree);
-    assert!(matches!(decision_reprise(EnCours, false, false), Reprise::Signaler(_)));
-    assert_eq!(decision_reprise(Terminee, true, true), Reprise::Rien);
-    assert_eq!(decision_reprise(Terminee, false, true), Reprise::Rien);
-    assert!(matches!(decision_reprise(Terminee, true, false), Reprise::Signaler(_)));
-    assert!(matches!(decision_reprise(Terminee, false, false), Reprise::Signaler(_)));
-    assert_eq!(decision_reprise(Restauree, true, true), Reprise::FinirRestauration);
-    assert_eq!(decision_reprise(Restauree, true, false), Reprise::RetirerEntree);
-    assert_eq!(decision_reprise(Restauree, false, true), Reprise::RemettreTerminee);
-    assert!(matches!(decision_reprise(Restauree, false, false), Reprise::Signaler(_)));
+    use crate::reponse::{decision_reprise, EtatQuarantaine::*, Original::*, Reprise};
+    // (état, original, copie présente) : toutes les combinaisons
+    assert_eq!(decision_reprise(EnCours, Identique, true), Reprise::RetirerCopieEtEntree);
+    assert_eq!(decision_reprise(EnCours, Different, true), Reprise::MarquerTerminee, "un autre fichier au même chemin : copie gardée");
+    assert_eq!(decision_reprise(EnCours, Absent, true), Reprise::MarquerTerminee);
+    assert_eq!(decision_reprise(EnCours, Identique, false), Reprise::RetirerEntree);
+    assert_eq!(decision_reprise(EnCours, Different, false), Reprise::RetirerEntree);
+    assert!(matches!(decision_reprise(EnCours, Absent, false), Reprise::Signaler(_)));
+    for o in [Identique, Different, Absent] {
+        assert_eq!(decision_reprise(Terminee, o, true), Reprise::Rien);
+        assert!(matches!(decision_reprise(Terminee, o, false), Reprise::Signaler(_)));
+    }
+    assert_eq!(decision_reprise(Restauree, Identique, true), Reprise::RetirerCopieEtEntree);
+    assert_eq!(decision_reprise(Restauree, Different, true), Reprise::RemettreTerminee);
+    assert_eq!(decision_reprise(Restauree, Absent, true), Reprise::RemettreTerminee);
+    assert_eq!(decision_reprise(Restauree, Identique, false), Reprise::RetirerEntree);
+    assert_eq!(decision_reprise(Restauree, Different, false), Reprise::RetirerEntree);
+    assert!(matches!(decision_reprise(Restauree, Absent, false), Reprise::Signaler(_)));
 }
 
 #[test]
@@ -933,6 +942,15 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
     reprendre_quarantaine(&dq, &mut lu);
     assert_eq!(lu[0].etat(), EtatQuarantaine::Terminee);
     let mut liste = lu;
+
+    // 3 bis. « en_cours », original remplacé par un autre fichier au même chemin : la copie est gardée
+    let mut autre_fichier = liste.clone();
+    autre_fichier[0].etat = "en_cours".into();
+    std::fs::write(&f, b"un autre fichier").unwrap();
+    reprendre_quarantaine(&dq, &mut autre_fichier);
+    assert_eq!(autre_fichier[0].etat(), EtatQuarantaine::Terminee);
+    assert!(copies() == 1, "copie gardée");
+    std::fs::remove_file(&f).unwrap();
 
     // 4. Restauration, échec de l'enregistrement « restauree » : fichier restauré retiré, copie et entrée intactes
     let m = Manifeste::new(&d, 1);
@@ -1026,5 +1044,67 @@ fn lot1bis_ecartes_suspect_mis_de_cote_sans_suppression() {
     assert!(!q.exists());
     let suspect = std::fs::read_dir(&d).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("ecartes-suspect-")).unwrap().path();
     assert_eq!(std::fs::read(suspect.join("piece.json")).unwrap(), b"garde", "contenu conservé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+fn contient(foin: &[u8], aiguille: &[u8]) -> bool {
+    foin.windows(aiguille.len()).any(|w| w == aiguille)
+}
+
+/// Chaîne de test EICAR (68 octets), reconstituée en mémoire à partir d'octets décalés de +1 : elle ne figure
+/// ni dans ce source ni dans le binaire de test (Defender supprimerait l'un ou l'autre), et n'est jamais
+/// écrite sur le disque
+fn eicar() -> Vec<u8> {
+    const DECALES: &[u8] = &[89, 54, 80, 34, 81, 38, 65, 66, 81, 92, 53, 93, 81, 91, 89, 54, 53, 41, 81, 95, 42, 56, 68, 68, 42, 56,
+        126, 37, 70, 74, 68, 66, 83, 46, 84, 85, 66, 79, 69, 66, 83, 69, 46, 66, 79, 85, 74, 87, 74, 83, 86, 84, 46, 85, 70, 84, 85,
+        46, 71, 74, 77, 70, 34, 37, 73, 44, 73, 43];
+    DECALES.iter().map(|o| o - 1).collect()
+}
+
+#[test]
+fn lot1bis_copie_encodee_jamais_en_clair() {
+    use crate::reponse::{encoder_flux, entete_encodage, est_encodee, nonce_de, quarantaine_transaction, restaurer_transaction};
+    // En mémoire : la chaîne EICAR encodée ne contient plus la chaîne, ni aucun de ses motifs de 8 octets
+    let e = eicar();
+    assert_eq!(e.len(), 68);
+    let nonce = nonce_de("test.quarantaine");
+    let mut encode = e.clone();
+    encoder_flux(&nonce, 0, &mut encode);
+    for w in e.windows(8) {
+        assert!(!contient(&encode, w), "motif {:?}", String::from_utf8_lossy(w));
+    }
+    let mut decode = encode.clone();
+    encoder_flux(&nonce, 0, &mut decode);
+    assert_eq!(decode, e, "réversible");
+    // Encodage par morceaux (positions) identique à l'encodage d'un seul tenant
+    let mut morceaux = e.clone();
+    let (a, b) = morceaux.split_at_mut(13);
+    encoder_flux(&nonce, 0, a);
+    encoder_flux(&nonce, 13, b);
+    assert_eq!(morceaux, encode);
+    assert_eq!(entete_encodage(&nonce).len(), 21);
+
+    // Sur le disque : contenu très répétitif (le pire cas pour un XOR à clé courte), mis en quarantaine
+    let d = dossier_test("encodage");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let f = d.join("journal.txt");
+    let contenu: Vec<u8> = b"ligne de test deR4Tizer, identique a chaque fois : 0123456789\r\n".repeat(3000);
+    std::fs::write(&f, &contenu).unwrap();
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    quarantaine_transaction(&dq, &mut liste, &f, "enc", "test", &sddl, &|l| m.ecrire(l)).unwrap();
+    let chemin_copie = dq.join(liste[0].nom_fichier());
+    let copie = std::fs::read(&chemin_copie).unwrap();
+    assert!(est_encodee(&chemin_copie) && copie.starts_with(b"D4TQ"));
+    for motif in [&b"ligne de test"[..], b"deR4Tizer", b"0123456789"] {
+        assert!(!contient(&copie, motif), "motif en clair : {}", String::from_utf8_lossy(motif));
+    }
+    // Aucune fenêtre de 16 octets du contenu d'origine ne se retrouve dans la copie
+    let fenetres: std::collections::HashSet<&[u8]> = contenu.windows(16).collect();
+    assert!(!copie.windows(16).any(|w| fenetres.contains(w)));
+    // Restauration identique à l'octet
+    restaurer_transaction(&dq, &mut liste, "enc", &|l| m.ecrire(l)).unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), contenu);
     let _ = std::fs::remove_dir_all(&d);
 }

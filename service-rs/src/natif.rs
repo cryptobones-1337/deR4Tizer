@@ -675,6 +675,14 @@ pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> 
 /// blocs (taille quelconque), et renvoie l'empreinte SHA-256 du contenu copié. La destination ne doit pas
 /// exister ; en cas d'échec, elle est supprimée.
 pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, sddl: &str) -> Result<String, String> {
+    copier_protege_avec(source, destination, sddl, &[], &mut |_, _| {})
+}
+
+/// `copier_protege`, avec un en-tête écrit avant le contenu et une transformation appliquée à chaque bloc
+/// (paramètres : octets du bloc, position du bloc dans le fichier d'origine). L'empreinte renvoyée est
+/// celle du contenu d'ORIGINE, avant transformation.
+pub fn copier_protege_avec(source: &std::path::Path, destination: &std::path::Path, sddl: &str, entete: &[u8],
+                           transformer: &mut dyn FnMut(&mut [u8], u64)) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     use std::io::{Read, Write};
     use std::os::windows::io::FromRawHandle;
@@ -696,12 +704,16 @@ pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, s
     let mut empreinte = Sha256::new();
     let mut tampon = vec![0u8; 1 << 16];
     let r = (|| -> std::io::Result<()> {
+        sortie.write_all(entete)?;
+        let mut position = 0u64;
         loop {
             let n = entree.read(&mut tampon)?;
             if n == 0 {
                 break;
             }
             empreinte.update(&tampon[..n]);
+            transformer(&mut tampon[..n], position);
+            position += n as u64;
             sortie.write_all(&tampon[..n])?;
         }
         sortie.sync_all()
