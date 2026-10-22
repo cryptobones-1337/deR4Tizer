@@ -237,19 +237,29 @@ $fD = Join-Path $dD 'sous\f.bin'
 $hD = Nouveau-Fichier $fD
 $canariD = Join-Path $Canaris 'restauration'
 $empreinteD = Nouveau-Canari $canariD
-Verifier 'Jonction posée avant une restauration : refusée, rien écrit hors du dossier d''origine' {
+# Le propriétaire de l'emplacement est lu en remontant le chemin sans suivre de lien : la jonction le rend
+# illisible, d'où un refus (REPLI) avant toute écriture, avec ou sans session. Témoin (sans session) : le même
+# dossier sans jonction est refusé pour une autre raison (emplacement des administrateurs) ; seule la jonction
+# change la décision. Le refus des liens à la création (creer_sans_lien) ne joue que si la jonction arrive
+# entre ce contrôle et la création : course non reproductible ici.
+Verifier 'Jonction posée avant une restauration : refusée avant toute écriture (REPLI, propriétaire illisible), canari intact' {
     $e = Quarantaine-Verifiee $fD $hD
     if ($e -is [string]) { return "préparation : $e" }
+    if (-not $sessionSid) {
+        $t = Commande-Cible 'restaurer' $e.Id
+        if ($t.Ok -or $t.Message -notmatch '^REPLI : emplacement appartenant au système ou aux administrateurs') { return "témoin sans jonction : $($t.Message)" }
+    }
     Remove-Item -LiteralPath (Join-Path $dD 'sous') -Force -Recurse
     if (-not (Nouvelle-Jonction (Join-Path $dD 'sous') $canariD)) { return 'jonction non créée' }
-    # Propriétaire utilisateur avec session : seul le refus des liens arrête la restauration
     if ($sessionSid) { icacls $dD /setowner $sessionNom /Q | Out-Null }
     $r = Commande-Cible 'restaurer' $e.Id
     if ($r.Ok) { return "acceptée : $($r.Message)" }
+    if ($r.Message -notmatch '^REPLI : propriétaire de l''emplacement illisible') { return "refus inattendu : $($r.Message)" }
     if ((Empreinte-Dossier $canariD) -ne $empreinteD) { return 'canari modifié' }
     if (-not (Entree-Quarantaine $fD) -or -not (Test-Path (Copie $e))) { return 'entrée ou copie perdue' }
     $true
 }
+NonExecute 'Jonction posée entre le contrôle du propriétaire et la création : refus par creer_sans_lien' 'course non reproductible de façon déterministe ; demande aussi une session ouverte (VM)'
 
 # Jonction dans le chemin au moment de la mise en quarantaine, vers un canari qui contient un fichier du même nom
 # (forme déterministe de la jonction posée pendant l'opération : le handle ouvert aboutit hors du chemin demandé)
@@ -262,6 +272,8 @@ Verifier 'Jonction dans le chemin d''une mise en quarantaine : refusée, rien lu
     $f = Join-Path $dE 'sous\f.bin'
     $r = Commande-Cible 'quarantaine' $f
     if ($r.Ok) { return "acceptée : $($r.Message)" }
+    # Refus pour la bonne raison : chemin final hors du chemin demandé (natif::ErreurOuverture::Detourne)
+    if ($r.Message -notmatch 'le chemin mène ailleurs .* ; quarantaine refusée') { return "refus inattendu : $($r.Message)" }
     if ((Empreinte-Dossier $canariE) -ne $empreinteE) { return 'canari modifié (appât supprimé ?)' }
     if (Entree-Quarantaine $f) { return 'entrée créée' }
     $true
