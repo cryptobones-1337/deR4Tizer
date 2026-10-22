@@ -382,11 +382,15 @@ function Nouvelle-Jonction([string]$Lien, [string]$Cible, $Compte = $null) {
 
 # Exécute du PowerShell en SYSTEM par une tâche planifiée (runner jetable) ; renvoie sa sortie (texte). Sert aux
 # contrôles des dossiers réservés à SYSTEM, que l'administrateur ne peut pas lire.
+# Script et sortie dans un dossier de l'administrateur, jamais dans C:\d4t-commun (ouvert au compte standard :
+# un script exécuté en SYSTEM ne doit pas y être modifiable).
 function En-TantQueSysteme([string]$Code, [int]$Secondes = 120) {
     $script:NumeroScript++
     $n = $script:NumeroScript
-    $f = Join-Path $script:Commun "systeme-$n.ps1"
-    $sortie = Join-Path $script:Commun "systeme-$n.txt"
+    $dossier = Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) 'd4t-systeme'
+    New-Item -ItemType Directory -Force -Path $dossier | Out-Null
+    $f = Join-Path $dossier "systeme-$n.ps1"
+    $sortie = Join-Path $dossier "systeme-$n.txt"
     $corps = "`$ErrorActionPreference = 'Continue'`r`n& {`r`n$Code`r`n} *>&1 | Out-File -LiteralPath '$sortie' -Encoding utf8 -Width 4096"
     [IO.File]::WriteAllText($f, $corps, (New-Object Text.UTF8Encoding($true)))
     $nom = "d4t-essai-systeme-$n"
