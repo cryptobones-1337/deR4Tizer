@@ -18,6 +18,10 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 
 ### Fonctionnalités (v4.3)
 
+État réel de chaque capacité (validée sur Windows par la CI, testée en labo, ou implémentée sans vérification) :
+[matrice des capacités](docs/roadmap/capability-matrix.md). Aucune n'est encore prête pour la production ; le NDR,
+le DPI et l'IDS/IPS sont expérimentaux.
+
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
 | **Réseau** | Connexions sortantes en direct par programme, score de suspicion, détection de balises (beaconing), première connexion d'un programme à Internet |
@@ -32,14 +36,14 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
 | **Analyse du trafic** | Capture passive des paquets (sockets brutes de Windows, sans pilote) : débit, programmes, destinations, ports et pays (registres Internet régionaux), carte du monde en direct |
-| **NDR local** | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
-| **DPI** | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
-| **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
+| **NDR local** (expérimental) | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
+| **DPI** (expérimental) | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
+| **IDS / IPS** (expérimental) | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
 | **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
-| **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
+| **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF, en clair), API HTTP d'export en lecture seule avec jeton |
 | **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés et vérifiés à chaque démarrage, fichiers d'un autre propriétaire ignorés ; si la vérification échoue, configuration et secrets sont ignorés et l'interface l'affiche |
 | **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
-| **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée, fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus |
+| **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée quand la liste de révocation répond (une liste injoignable est aujourd'hui tolérée : correctif en relecture), fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus (validation sur Windows en cours) |
 | **Interface** | Français / anglais |
 
 ### Architecture
@@ -167,6 +171,8 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 - Sur un poste géré (domaine, Intune), la baseline est en lecture seule ; si l'organisation n'active pas l'audit
   du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
+- L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
+- L'exécution avec Microsoft Defender actif n'a pas encore été vérifiée : aucune distribution avant ce scénario.
 
 ### Feuille de route
 
@@ -190,6 +196,10 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 
 ### Features (v4.3)
 
+Actual state of each capability (validated on Windows by the CI, lab-tested, or implemented without verification):
+[capability matrix](docs/roadmap/capability-matrix.md) (in French). None is production-ready yet; NDR, DPI and
+IDS/IPS are experimental.
+
 | Area | What deR4Tizer does |
 |---|---|
 | **Network** | Live outbound connections per program, suspicion score, beaconing detection, first Internet connection of a program |
@@ -204,14 +214,14 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
-| **Local NDR** | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
-| **DPI** | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
-| **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
+| **Local NDR** (experimental) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
+| **DPI** (experimental) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
+| **IDS / IPS** (experimental) | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
-| **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
+| **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF, cleartext), read-only HTTP export API with token |
 | **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced and checked at every start, files owned by anyone else ignored; if the check fails, settings and secrets are ignored and the interface shows it |
 | **Less noise** | 7-day learning mode (behaviours remembered), "no longer alert for this behaviour" exceptions, "direct IP" criterion neutralised for known VPNs, messengers and games; critical alerts are never softened |
-| **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by one of the keys pinned in the binary, revocation checked, files kept in a SYSTEM-only folder, with rollback if the service stops answering |
+| **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by one of the keys pinned in the binary, revocation checked when the revocation list answers (an unreachable list is currently tolerated: fix under review), files kept in a SYSTEM-only folder, with rollback if the service stops answering (Windows validation in progress) |
 | **Interface** | French / English |
 
 ### Architecture
