@@ -41,13 +41,16 @@ pub const CIBLES: &[Cible] = &[
     Cible { nom: "extension MetaMask (Brave)", relatif: r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn", recursif: false, proprietaires: &["brave"] },
 ];
 
-/// Éditeur attendu (dans le nom du signataire Authenticode) de chaque propriétaire légitime : un
-/// « chrome.exe » posé dans %TEMP% n'est pas signé par Google et reste suspect
-const EDITEURS: &[(&str, &str)] = &[
-    ("chrome", "Google"), ("brave", "Brave"), ("msedge", "Microsoft"), ("msedgewebview2", "Microsoft"),
-    ("firefox", "Mozilla"), ("plugin-container", "Mozilla"), ("crashreporter", "Mozilla"),
-    ("discord", "Discord"), ("update", "Discord"), ("telegram", "Telegram"), ("updater", "Telegram"),
-    ("ledger live", "Ledger"), ("ledger wallet", "Ledger"), ("exodus", "Exodus"),
+/// Éditeur attendu de chaque propriétaire légitime : nom EXACT du signataire Authenticode (comparaison sans
+/// casse ni ponctuation). Un « chrome.exe » posé dans %TEMP% n'est pas signé « Google LLC » ; un certificat
+/// « Brave Heart SARL » ne passe pas pour Brave. Noms relevés sur les logiciels installés.
+const GOOGLE: &[&str] = &["Google LLC"];
+const MICROSOFT: &[&str] = &["Microsoft Corporation", "Microsoft Windows", "Microsoft Windows Publisher"];
+const EDITEURS: &[(&str, &[&str])] = &[
+    ("chrome", GOOGLE), ("brave", &["Brave Software, Inc."]), ("msedge", MICROSOFT), ("msedgewebview2", MICROSOFT),
+    ("firefox", &["Mozilla Corporation"]), ("plugin-container", &["Mozilla Corporation"]), ("crashreporter", &["Mozilla Corporation"]),
+    ("discord", &["Discord Inc."]), ("update", &["Discord Inc."]), ("telegram", &["Telegram FZ-LLC"]), ("updater", &["Telegram FZ-LLC"]),
+    ("ledger live", &["Ledger SAS"]), ("ledger wallet", &["Ledger SAS"]), ("exodus", &["Exodus Movement, Inc."]),
 ];
 
 /// Programmes de Windows et de Microsoft qui ouvrent légitimement tous les fichiers (antivirus, indexation,
@@ -58,21 +61,36 @@ const TOUJOURS_AUTORISES: &[&str] = &[
 ];
 
 /// Logiciels qui lisent, copient ou synchronisent tous les fichiers et peuvent toucher un leurre sans être un
-/// rançongiciel : (début du nom de l'exécutable, éditeur attendu dans la signature). Le couple est vérifié.
-const LEURRES_AUTORISES: &[(&str, &str)] = &[
+/// rançongiciel : (début du nom de l'exécutable, signataires exacts acceptés). Le couple est vérifié.
+const LEURRES_AUTORISES: &[(&str, &[&str])] = &[
     // antivirus, indexation et sauvegarde de Windows
-    ("msmpeng", "Microsoft"), ("mpdefendercoreservice", "Microsoft"), ("mssense", "Microsoft"), ("searchindexer", "Microsoft"),
-    ("searchprotocolhost", "Microsoft"), ("searchfilterhost", "Microsoft"), ("wbengine", "Microsoft"), ("sdclt", "Microsoft"),
-    ("vssvc", "Microsoft"), ("filehistory", "Microsoft"), ("onedrive", "Microsoft"), ("filecoauth", "Microsoft"),
+    ("msmpeng", MICROSOFT), ("mpdefendercoreservice", MICROSOFT), ("mssense", MICROSOFT), ("searchindexer", MICROSOFT),
+    ("searchprotocolhost", MICROSOFT), ("searchfilterhost", MICROSOFT), ("wbengine", MICROSOFT), ("sdclt", MICROSOFT),
+    ("vssvc", MICROSOFT), ("filehistory", MICROSOFT), ("onedrive", MICROSOFT), ("filecoauth", MICROSOFT),
     // synchronisation
-    ("dropbox", "Dropbox"), ("googledrivefs", "Google"), ("nextcloud", "Nextcloud"), ("owncloud", "ownCloud"),
-    ("synologydrive", "Synology"), ("icloud", "Apple"), ("megasync", "Mega Limited"), ("boxsync", "Box, Inc"), ("box", "Box, Inc"),
+    ("dropbox", &["Dropbox, Inc"]), ("googledrivefs", GOOGLE), ("nextcloud", &["Nextcloud GmbH"]), ("owncloud", &["ownCloud GmbH"]),
+    ("synologydrive", &["Synology Inc."]), ("icloud", &["Apple Inc."]), ("megasync", &["Mega Limited"]), ("boxsync", &["Box, Inc."]),
+    ("box", &["Box, Inc."]),
     // sauvegarde
-    ("veeam", "Veeam"), ("acronis", "Acronis"), ("trueimage", "Acronis"), ("anti_ransomware_service", "Acronis"), ("mmscmd", "Acronis"),
-    ("reflect", "Paramount Software"), ("macrium", "Paramount Software"), ("bztransmit", "Backblaze"), ("bzfilelist", "Backblaze"),
-    ("cobian", "Cobian"), ("idrive", "IDrive"), ("carbonite", "Carbonite"), ("aomei", "AOMEI"), ("backupper", "AOMEI"),
-    ("urbackup", "Infscape"), ("arq", "Haystack"), ("crashplan", "Code42"), ("code42", "Code42"),
+    ("veeam", &["Veeam Software Group GmbH"]), ("acronis", &["Acronis International GmbH"]), ("trueimage", &["Acronis International GmbH"]),
+    ("anti_ransomware_service", &["Acronis International GmbH"]), ("mmscmd", &["Acronis International GmbH"]),
+    ("reflect", &["Paramount Software UK Ltd"]), ("macrium", &["Paramount Software UK Ltd"]), ("bztransmit", &["Backblaze, Inc."]),
+    ("bzfilelist", &["Backblaze, Inc."]), ("idrive", &["IDrive Inc."]), ("carbonite", &["Carbonite, Inc.", "Open Text Corporation"]),
+    ("urbackup", &["Infscape UG (haftungsbeschränkt)"]), ("arq", &["Haystack Software LLC"]), ("crashplan", &["Code42 Software, Inc."]),
+    ("code42", &["Code42 Software, Inc."]),
 ];
+
+/// Nom de signataire normalisé : sans casse, sans ponctuation, espaces simples
+fn normaliser(nom: &str) -> String {
+    nom.to_lowercase().chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>()
+        .split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Le signataire est exactement l'un des éditeurs attendus
+pub fn editeur_correspond(signataire: &str, attendus: &[&str]) -> bool {
+    let s = normaliser(signataire);
+    !s.is_empty() && attendus.iter().any(|a| normaliser(a) == s)
+}
 
 /// Signataire d'un exécutable, mis en cache par chemin et date de modification
 fn signataire(chemin: &str) -> Option<String> {
@@ -93,11 +111,11 @@ fn signataire(chemin: &str) -> Option<String> {
     s
 }
 
-fn signe_par(chemin: &str, editeur: &str) -> bool {
-    if editeur == "Microsoft" && crate::natif::binaire_windows(chemin) {
+fn signe_par(chemin: &str, editeurs: &[&str]) -> bool {
+    if std::ptr::eq(editeurs, MICROSOFT) && crate::natif::binaire_windows(chemin) {
         return true;
     }
-    signataire(chemin).map(|s| s.contains(editeur)).unwrap_or(false)
+    signataire(chemin).map(|s| editeur_correspond(&s, editeurs)).unwrap_or(false)
 }
 
 /// Programme autorisé à lire ces données : bon nom ET bon éditeur (ou binaire Windows vérifié)
@@ -111,7 +129,7 @@ fn legitime(exe: &str, chemin: &str, proprietaires: &[&str]) -> bool {
     if proprietaires.contains(&exe) {
         return EDITEURS.iter().any(|(n, e)| *n == exe && signe_par(chemin, e));
     }
-    TOUJOURS_AUTORISES.contains(&exe) && signe_par(chemin, "Microsoft")
+    TOUJOURS_AUTORISES.contains(&exe) && signe_par(chemin, MICROSOFT)
 }
 
 /// Logiciel connu (couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
@@ -255,9 +273,11 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
                 return;
             }
             let config: commun::Config = commun::lire("config.json").unwrap_or_default();
-            // Un binaire de Windows (svchost partagé, explorer…) n'est jamais suspendu automatiquement : la session ou le
-            // réseau se figeraient ; l'alerte reste critique
-            let suspendu = config.reponse_auto_rancongiciel && !crate::natif::binaire_windows(&programme) && crate::reponse::suspendre(pid, true).is_ok();
+            // rundll32, regsvr32, mshta, powershell… sont des binaires Windows par lesquels passent beaucoup de
+            // rançongiciels : ils sont suspendus. Seuls les processus critiques (csrss, lsass, svchost…) sont
+            // protégés, par reponse::protege()
+            let suspendu = suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
+                && crate::reponse::suspendre(pid, true).is_ok();
             file.lock().unwrap().push(Alerte {
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),
@@ -282,4 +302,10 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
         vues.insert(cle, Instant::now());
         file.lock().unwrap().push(a);
     });
+}
+
+/// Décision sur un programme qui a touché un leurre : suspendre seulement en réponse automatique, si ce n'est ni
+/// un logiciel connu (sauvegarde, synchronisation, antivirus) ni un processus critique de Windows
+pub fn suspendre_leurre(reponse_auto: bool, logiciel_connu: bool, critique: bool) -> bool {
+    reponse_auto && !logiciel_connu && !critique
 }

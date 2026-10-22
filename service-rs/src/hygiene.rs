@@ -76,9 +76,10 @@ const ANCIENS_LEURRES: &[(&str, &str)] = &[
 /// Noms des leurres, tirés au hasard à l'installation (leurres-noms.json) : un rançongiciel qui lit ce code
 /// ne peut pas les reconnaître. Ils commencent par « 0 » pour être parmi les premiers fichiers parcourus.
 pub fn noms_leurres() -> Vec<(String, String)> {
-    if let Some(l) = commun::lire::<Vec<(String, String)>>("leurres-noms.json").filter(|l| !l.is_empty()) {
+    if let Some(l) = commun::lire::<Vec<(String, String)>>(FICHIER_NOMS).filter(|l| !l.is_empty()) {
         return l;
     }
+    crate::notifications::preparer_dossier();
     let mut graine = commun::filetime(std::time::SystemTime::now()) ^ ((std::process::id() as u64) << 32);
     let mut hasard = |n: u64| {
         graine ^= graine << 13;
@@ -94,8 +95,33 @@ pub fn noms_leurres() -> Vec<(String, String)> {
         let modele = modeles[hasard(modeles.len() as u64) as usize];
         l.push((dossier.to_string(), modele.replace("{}", &(1000 + hasard(9000)).to_string())));
     }
-    commun::ecrire("leurres-noms.json", &l);
+    commun::ecrire(FICHIER_NOMS, &l);
     l
+}
+
+/// Noms et chemins des leurres : dans secrets\ (SYSTEM et administrateurs seulement). Dans le dossier de
+/// données, le compte connecté pourrait les lire, et un rançongiciel lancé sous ce compte les éviterait.
+pub const FICHIER_NOMS: &str = r"secrets\leurres-noms.json";
+pub const FICHIER_LEURRES: &str = r"secrets\leurres.json";
+
+/// Anciennes listes lisibles (versions précédentes) : leurres retirés et renommés, listes effacées
+pub fn migrer_leurres() {
+    let anciens: Vec<(String, String)> = commun::lire("leurres-noms.json").unwrap_or_default();
+    if anciens.is_empty() && !commun::dossier().join("leurres.json").exists() {
+        return;
+    }
+    for profil in profils() {
+        for (dossier, nom) in &anciens {
+            let f = profil.join(dossier).join(nom);
+            if f.exists() {
+                let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
+                let _ = fs::remove_file(&f);
+            }
+        }
+    }
+    let _ = fs::remove_file(commun::dossier().join("leurres-noms.json"));
+    let _ = fs::remove_file(commun::dossier().join("leurres.json"));
+    commun::journal("leurres : anciens noms (lisibles par le compte connecté) remplacés par de nouveaux, rangés dans secrets\\");
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -121,6 +147,7 @@ pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
 
 /// Crée les leurres manquants (cachés), leur pose un audit d'écriture, et renvoie la liste
 pub fn poser_leurres() -> Vec<Leurre> {
+    migrer_leurres();
     retirer_leurres_modeles();
     // Anciens leurres à nom fixe : retirés des profils
     for profil in profils() {
@@ -167,7 +194,7 @@ pub fn poser_leurres() -> Vec<Leurre> {
         }
         let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(0x0800_0000).output();
     }
-    commun::ecrire("leurres.json", &liste);
+    commun::ecrire(FICHIER_LEURRES, &liste);
     liste
 }
 
@@ -236,18 +263,29 @@ pub fn chemin_image(image: &str) -> PathBuf {
     PathBuf::from(i)
 }
 
-/// Pilote connu de LOLDrivers (liste en cache, rechargée une fois par jour)
+/// Pilote connu de LOLDrivers. La liste est gardée en mémoire et rechargée une fois par jour par un fil à part :
+/// l'appelant (le fil de corrélation du SIEM) n'attend jamais un téléchargement.
 pub fn pilote_vulnerable(chemin: &Path) -> Option<String> {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
-    static CACHE: OnceLock<Mutex<(Option<Instant>, HashSet<String>)>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new((None, HashSet::new())));
-    let mut c = cache.lock().unwrap();
-    if c.0.map(|t| t.elapsed() > Duration::from_secs(86_400)).unwrap_or(true) {
-        *c = (Some(Instant::now()), liste_loldrivers());
+    static CACHE: OnceLock<Arc<Mutex<(Option<Instant>, Arc<HashSet<String>>)>>> = OnceLock::new();
+    static EN_COURS: AtomicBool = AtomicBool::new(false);
+    let cache = CACHE.get_or_init(|| Arc::new(Mutex::new((None, Arc::new(HashSet::new()))))).clone();
+    let (perime, liste) = {
+        let c = cache.lock().unwrap();
+        (c.0.map(|t| t.elapsed() > Duration::from_secs(86_400)).unwrap_or(true), c.1.clone())
+    };
+    if perime && !EN_COURS.swap(true, Ordering::SeqCst) {
+        let c = cache.clone();
+        std::thread::spawn(move || {
+            let nouvelle = Arc::new(liste_loldrivers());
+            *c.lock().unwrap() = (Some(Instant::now()), nouvelle);
+            EN_COURS.store(false, Ordering::SeqCst);
+        });
     }
     let h = empreinte_fichier(chemin)?;
-    c.1.contains(&h).then_some(h)
+    liste.contains(&h).then_some(h)
 }
 
 /// Pilotes déclarés dans le registre (services de type 1 ou 2), y compris en démarrage manuel et hors du

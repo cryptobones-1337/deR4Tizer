@@ -53,7 +53,7 @@ fn dossier_secrets() -> PathBuf {
 
 /// Dossier des secrets : SYSTEM et administrateurs seulement, sans héritage des droits de lecture accordés
 /// aux comptes autorisés sur le dossier de données
-fn preparer_dossier() {
+pub fn preparer_dossier() {
     let d = dossier_secrets();
     let _ = fs::create_dir_all(&d);
     let _ = Command::new("icacls.exe")
@@ -164,19 +164,30 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         }
         // Les critiques partent toujours : un attaquant ne doit pas pouvoir noyer la vraie alerte sous des
         // alertes provoquées ; seules les autres comptent dans le plafond par heure
-        let (critiques, autres): (Vec<Alerte>, Vec<Alerte>) = lot.into_iter().partition(|a| a.niveau == "Critique");
-        let mut a_envoyer = critiques;
-        if !autres.is_empty() {
-            if envois_heure < config.max_par_heure.max(1) {
-                envois_heure += 1;
-                a_envoyer.extend(autres);
-            } else {
-                retenues += autres.len();
-            }
+        let (a_envoyer, n_retenues, compte) = repartir(lot, envois_heure, config.max_par_heure);
+        retenues += n_retenues;
+        if compte {
+            envois_heure += 1;
         }
         if !a_envoyer.is_empty() {
             envoyer_partout(&config, &a_envoyer, &mut etat);
         }
+    }
+}
+
+/// Les critiques partent toujours ; les autres seulement sous le plafond horaire.
+/// Renvoie (à envoyer, nombre retenu, l'envoi compte dans le plafond)
+pub fn repartir(lot: Vec<Alerte>, envois_heure: u32, max_par_heure: u32) -> (Vec<Alerte>, usize, bool) {
+    let (mut a_envoyer, autres): (Vec<Alerte>, Vec<Alerte>) = lot.into_iter().partition(|a| a.niveau == "Critique");
+    if autres.is_empty() {
+        return (a_envoyer, 0, false);
+    }
+    if envois_heure < max_par_heure.max(1) {
+        a_envoyer.extend(autres);
+        (a_envoyer, 0, true)
+    } else {
+        let n = autres.len();
+        (a_envoyer, n, false)
     }
 }
 
@@ -242,6 +253,58 @@ fn hote() -> String {
     crate::export::hote_local()
 }
 
+/// Groupe d'alertes de même nature dans un lot (même niveau, programme, technique et destination aux chiffres
+/// près) : 300 « serveur DHCP 192.168.1.x » usurpés deviennent une ligne, et l'alerte unique reste visible
+pub struct Groupe<'a> {
+    pub alerte: &'a Alerte,
+    pub nombre: usize,
+    pub exemples: Vec<String>,
+}
+
+fn nature(a: &Alerte) -> String {
+    // Chaque suite de chiffres devient « # » : 192.168.1.5 et 192.168.1.50 sont de même nature
+    let mut destination = String::new();
+    for c in a.destination.chars() {
+        if c.is_ascii_digit() {
+            if !destination.ends_with('#') {
+                destination.push('#');
+            }
+        } else {
+            destination.push(c);
+        }
+    }
+    format!("{}|{}|{}|{}", a.niveau, a.processus, a.mitre, destination)
+}
+
+/// Groupes du lot : d'abord les alertes uniques (souvent la vraie), puis par gravité et score décroissants
+pub fn regrouper(lot: &[Alerte]) -> Vec<Groupe<'_>> {
+    let mut groupes: Vec<Groupe> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for a in lot {
+        let cle = nature(a);
+        match index.get(&cle) {
+            Some(&i) => {
+                let g = &mut groupes[i];
+                g.nombre += 1;
+                if a.score > g.alerte.score {
+                    g.alerte = a;
+                }
+                if g.exemples.len() < 3 && !a.destination.is_empty() {
+                    g.exemples.push(a.destination.clone());
+                }
+            }
+            None => {
+                index.insert(cle, groupes.len());
+                groupes.push(Groupe { alerte: a, nombre: 1, exemples: if a.destination.is_empty() { vec![] } else { vec![a.destination.clone()] } });
+            }
+        }
+    }
+    groupes.sort_by(|a, b| (a.nombre > 1).cmp(&(b.nombre > 1))
+        .then(crate::export::rang(&b.alerte.niveau).cmp(&crate::export::rang(&a.alerte.niveau)))
+        .then(b.alerte.score.cmp(&a.alerte.score)));
+    groupes
+}
+
 fn titre(lot: &[Alerte]) -> String {
     let pire = lot.iter().max_by_key(|a| crate::export::rang(&a.niveau)).map(|a| a.niveau.clone()).unwrap_or_default();
     if lot.len() == 1 {
@@ -251,9 +314,24 @@ fn titre(lot: &[Alerte]) -> String {
     }
 }
 
-fn texte(lot: &[Alerte]) -> String {
-    lot.iter().take(10).map(|a| {
-        let mut l = format!("[{}] {} — {}", a.niveau, a.heure, a.raisons);
+fn entete_groupe(g: &Groupe) -> String {
+    if g.nombre == 1 {
+        format!("[{}] {} — {}", g.alerte.niveau, g.alerte.heure, g.alerte.raisons)
+    } else {
+        format!("[{}] {} × {} ({}…) — {}", g.alerte.niveau, g.nombre, nature_lisible(g.alerte), g.exemples.join(", "), g.alerte.raisons)
+    }
+}
+
+fn nature_lisible(a: &Alerte) -> String {
+    let d: String = a.destination.split(|c: char| c.is_ascii_digit()).next().unwrap_or("").trim().to_string();
+    if d.is_empty() { a.processus.clone() } else { d }
+}
+
+pub fn texte(lot: &[Alerte]) -> String {
+    let groupes = regrouper(lot);
+    groupes.iter().take(10).map(|g| {
+        let a = g.alerte;
+        let mut l = entete_groupe(g);
         if !a.processus.is_empty() {
             l.push_str(&format!("\nProgramme : {}", a.processus));
         }
@@ -265,7 +343,7 @@ fn texte(lot: &[Alerte]) -> String {
         }
         l
     }).collect::<Vec<_>>().join("\n\n")
-        + &if lot.len() > 10 { format!("\n\n… et {} autre(s), voir l'interface de deR4Tizer.", lot.len() - 10) } else { String::new() }
+        + &if groupes.len() > 10 { format!("\n\n… et {} autre(s) type(s) d'alerte, voir l'interface de deR4Tizer.", groupes.len() - 10) } else { String::new() }
 }
 
 // ------------------------------------------------------------ envoi (curl)
@@ -327,11 +405,13 @@ fn teams(s: &Secrets, lot: &[Alerte]) -> Result<(), String> {
         "type": "TextBlock", "size": "Large", "weight": "Bolder", "wrap": true,
         "color": match pire { 2 => "Attention", 1 => "Warning", _ => "Default" }, "text": titre(lot),
     })];
-    for a in lot.iter().take(10) {
+    for g in regrouper(lot).iter().take(10) {
+        let a = g.alerte;
         let mut faits = vec![serde_json::json!({"title": "Poste", "value": hote()}), serde_json::json!({"title": "Heure", "value": a.heure})];
+        if g.nombre > 1 { faits.push(serde_json::json!({"title": "Occurrences", "value": format!("{} ({}…)", g.nombre, g.exemples.join(", "))})); }
         if !a.processus.is_empty() { faits.push(serde_json::json!({"title": "Programme", "value": a.processus})); }
         if !a.mitre.is_empty() { faits.push(serde_json::json!({"title": "Technique", "value": a.mitre})); }
-        corps_carte.push(serde_json::json!({"type": "TextBlock", "wrap": true, "weight": "Bolder", "text": format!("{} : {}", a.niveau, a.raisons), "separator": true}));
+        corps_carte.push(serde_json::json!({"type": "TextBlock", "wrap": true, "weight": "Bolder", "text": entete_groupe(g), "separator": true}));
         corps_carte.push(serde_json::json!({"type": "FactSet", "facts": faits}));
         if !a.conseil.is_empty() {
             corps_carte.push(serde_json::json!({"type": "TextBlock", "wrap": true, "text": format!("Que faire : {}", a.conseil)}));

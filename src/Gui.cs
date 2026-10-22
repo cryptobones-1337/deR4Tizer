@@ -137,9 +137,14 @@ namespace DeR4Tizer
                 case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + cible;
                 case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + cible;
                 case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + cible;
-                case "restaurer": return (en ? "RESTORE a quarantined file to its original location" : "REMETTRE un fichier de la quarantaine à son emplacement d'origine");
+                case "restaurer":
+                    {
+                        var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(x => x.Id == cible);
+                        return (en ? "RESTORE from quarantine and make executable again: " : "SORTIR de la quarantaine et rendre de nouveau exécutable : ")
+                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + cible : q.CheminOrigine + (en ? "\n(quarantined because: " : "\n(mis en quarantaine pour : ") + q.Raison + ")");
+                    }
                 case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + cible;
-                case "panique": return v == "true" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
+                case "panique": return v != "off" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
                 case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + cible;
                 case "reglages":
                     {
@@ -713,6 +718,10 @@ namespace DeR4Tizer
                 menacesVu = d;
                 RemplirMenaces(Commun.Lire<InfosMenaces>("menaces.json"));
             }
+            var bl = Commun.Lire<EtatBaseline>("baseline.json");
+            var auditFichiers = bl == null || bl.Regles == null ? null : bl.Regles.FirstOrDefault(r => r.Id == "audit.fichiers");
+            if (auditFichiers != null && auditFichiers.Etat != "conforme")
+                pastilles.Add(new Entete.Pastille { Texte = L.T("VOL DE DONNÉES NON SURVEILLÉ (AUDIT INACTIF)"), Couleur = Theme.Jaune, Clignote = true });
             var infos = Commun.Lire<InfosMenaces>("menaces.json");
             if (infos != null)
                 pastilles.Add(new Entete.Pastille { Texte = "INTEL " + (infos.TotalIp + infos.TotalReseaux).ToString("N0") + " IP · " + infos.TotalDomaines.ToString("N0") + " DOM.", Couleur = Theme.Magenta });
@@ -1140,7 +1149,7 @@ namespace DeR4Tizer
         {
             string question = paniqueActive
                 ? "Rétablir l'accès à Internet pour tous les programmes ?"
-                : "Couper Internet pour tous les programmes (sauf composants de Windows) et fermer les connexions en cours ?\n\nÀ utiliser si vous pensez qu'un attaquant ou un rançongiciel est actif.";
+                : L.T("Couper Internet pour tous les programmes et fermer les connexions en cours ?\n\nÀ utiliser si vous pensez qu'un attaquant ou un rançongiciel est actif. Le réseau local reste accessible.\n\nLimite : les serveurs DNS et les serveurs de notification (ntfy, Teams, e-mail) restent joignables pour tous les programmes, pas seulement pour deR4Tizer ; un malware pourrait s'en servir pour faire sortir des données. Préférez un serveur ntfy auto-hébergé à ntfy.sh.");
             if (MessageBox.Show(question, "deR4Tizer : PANIQUE", MessageBoxButtons.YesNo, paniqueActive ? MessageBoxIcon.Question : MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(new Commande { Action = "panique", Valeur = paniqueActive ? "off" : "on" });
             etatVu = "";

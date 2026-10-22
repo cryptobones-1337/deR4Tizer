@@ -56,6 +56,7 @@ namespace DeR4Tizer
             pile.Controls.Add(Note("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation."));
             pile.Controls.Add(Ligne(Etiquette("Niveau minimal"), cbNiveauNotif, Etiquette("Messages par heure au plus"), txtMaxHeure));
             pile.Controls.Add(chkNtfy);
+            pile.Controls.Add(Note("Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique)."));
             pile.Controls.Add(Ligne(Etiquette("Adresse du sujet"), txtNtfyUrl, Etiquette("Jeton (facultatif)"), txtNtfyJeton));
             pile.Controls.Add(chkTeams);
             pile.Controls.Add(Ligne(Etiquette("Adresse du webhook"), txtTeamsUrl));
