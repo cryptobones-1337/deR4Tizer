@@ -561,15 +561,53 @@ fn lot1_droits_conformes() {
 fn lot1_lecture_echec_ferme() {
     use crate::commun::lecture_autorisee;
     // Hors service : pas de contrôle (tests, mode console)
-    assert!(lecture_autorisee(false, true, true, Some(false)).is_ok());
+    assert!(lecture_autorisee(false, true, true, true, Some(false)).is_ok());
     // En service
-    assert!(lecture_autorisee(true, true, false, Some(true)).is_ok());
-    assert!(lecture_autorisee(true, true, false, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
-    assert!(lecture_autorisee(true, true, false, Some(false)).is_err(), "propriétaire : compte standard");
-    assert!(lecture_autorisee(true, true, true, Some(true)).is_err(), "protection non vérifiée : rien n'est chargé");
+    assert!(lecture_autorisee(true, true, false, true, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, true, false, false, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
+    assert!(lecture_autorisee(true, true, false, true, None).is_err(), "fichier présent au propriétaire illisible (DACL vide)");
+    assert!(lecture_autorisee(true, true, false, true, Some(false)).is_err(), "propriétaire : compte standard");
+    assert!(lecture_autorisee(true, true, true, true, Some(true)).is_err(), "protection non vérifiée : rien n'est chargé");
     // lecteurs.json (sans le verrou) : seul le propriétaire compte
-    assert!(lecture_autorisee(true, false, true, Some(true)).is_ok());
-    assert!(lecture_autorisee(true, false, true, Some(false)).is_err());
+    assert!(lecture_autorisee(true, false, true, true, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, false, true, true, Some(false)).is_err());
+    assert!(lecture_autorisee(true, false, true, true, None).is_err());
+}
+
+#[test]
+fn lot1_tri_au_demarrage_proprietaire_non_verifie_ecarte() {
+    use crate::protection::{trier_element, Tri};
+    assert_eq!(trier_element(false, Some(true)), Tri::Garder);
+    assert_eq!(trier_element(false, Some(false)), Tri::Ecarter, "compte standard");
+    // Revue de la PR 1 : un compte standard pose une DACL vide sur son fichier, SYSTEM ne lit plus le
+    // propriétaire ; garder le fichier le ferait blanchir par la prise de possession qui suit
+    assert_eq!(trier_element(false, None), Tri::Ecarter, "propriétaire illisible");
+    for p in [Some(true), Some(false), None] {
+        assert_eq!(trier_element(true, p), Tri::SupprimerLien, "un lien est supprimé quel que soit son propriétaire");
+    }
+}
+
+#[test]
+fn lot1_dacl_vide_proprietaire_illisible() {
+    // Ce que voit le service sur un fichier à DACL vide dont il n'est pas propriétaire : lecture des droits
+    // impossible. Hors élévation, le propriétaire (le compte du test) garde READ_CONTROL : on vérifie au moins
+    // que la DACL vide est bien posée et que la décision ne s'appuie pas sur un None.
+    use crate::natif::{lire_securite, poser_droits};
+    let d = std::env::temp_dir().join(format!("der4tizer-dacl-vide-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("config.json");
+    std::fs::write(&f, b"{}").unwrap();
+    let proprietaire = lire_securite(&f).unwrap().proprietaire;
+    poser_droits(&f, &format!("O:{proprietaire}D:P")).unwrap();
+    if let Some(s) = lire_securite(&f) {
+        assert!(s.protege && s.aces.is_empty(), "DACL vide : {:?}", s.aces);
+    }
+    assert!(std::fs::read(&f).is_err(), "plus personne ne lit le contenu");
+    // Remise des droits pour nettoyer : le propriétaire garde le droit de réécrire la DACL (pas de changer
+    // le propriétaire, d'où icacls et non poser_droits)
+    assert!(crate::protection::icacls(&[&f.to_string_lossy(), "/grant", &format!("*{proprietaire}:F")]));
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
