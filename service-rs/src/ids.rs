@@ -425,6 +425,13 @@ impl Regle {
     }
 }
 
+/// Décision pure du blocage IPS : IPS actif, adresse publique, règle drop, reject ou de priorité 1, connexion TCP
+/// établie (un paquet isolé peut porter une adresse source usurpée), et jamais en échec de la protection du
+/// dossier de données (les règles y sont rangées)
+pub fn blocage_ips(actif: bool, externe: bool, action: &str, priorite: u8, etablie: bool, echec_protection: bool) -> bool {
+    actif && externe && (action == "drop" || action == "reject" || priorite == 1) && etablie && !echec_protection
+}
+
 impl Ids {
     pub fn nouveau(alertes: Arc<Mutex<Vec<Alerte>>>, blocages: Arc<Mutex<Vec<(String, String)>>>) -> Ids {
         let mut regles = Vec::new();
@@ -437,7 +444,8 @@ impl Ids {
             for f in l.flatten() {
                 let nom = f.file_name().to_string_lossy().to_string();
                 if nom.ends_with(".rules") {
-                    if let Ok(t) = std::fs::read_to_string(f.path()) {
+                    // Propriétaire contrôlé, comme tout fichier du dossier de données
+                    if let Some(t) = commun::lire_fichier_proprietaire(&f.path()) {
                         fichiers.push(nom.clone());
                         sources.push((nom, t));
                     }
@@ -488,7 +496,7 @@ impl Ids {
         let niveau = match r.priorite { 1 => "Critique", 2 => "Alerte", _ => "Info" };
         let externe = crate::parefeu::publique(&IpAddr::V4(distant));
         // Un paquet isolé peut porter une adresse source usurpée : on ne bloque qu'une connexion TCP établie
-        let bloquer = self.ips && externe && (r.action == "drop" || r.action == "reject" || r.priorite == 1) && contexte.etablie(p);
+        let bloquer = blocage_ips(self.ips, externe, &r.action, r.priorite, contexte.etablie(p), commun::echec_protection().is_some());
         if bloquer {
             self.blocages.lock().unwrap().push((distant.to_string(), format!("IPS : {}", r.msg)));
         }

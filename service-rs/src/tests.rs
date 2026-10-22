@@ -690,16 +690,55 @@ fn lot1_privilege_de_restauration_limite_a_l_appel() {
     assert_eq!(r2.is_ok(), appele);
 }
 
+/// Lot 5 : en échec de la protection du dossier, aucune réponse automatique alimentée par les fichiers du dossier
+/// (listes de menaces, règles IDS) : ni blocage automatique, ni IPS ; hors échec, rien ne change
+#[test]
+fn lot5_reponses_automatiques_jamais_en_echec_ferme() {
+    use crate::ids::blocage_ips;
+    use crate::moniteur::blocage_automatique;
+    assert!(blocage_automatique(true, true, false, false));
+    assert!(!blocage_automatique(true, true, false, true), "échec fermé : pas de blocage automatique");
+    assert!(!blocage_automatique(false, true, false, false), "confiance non haute");
+    assert!(!blocage_automatique(true, false, false, false), "réglage désactivé");
+    assert!(!blocage_automatique(true, true, true, false), "déjà bloquée");
+    assert!(blocage_ips(true, true, "drop", 3, true, false));
+    assert!(blocage_ips(true, true, "alert", 1, true, false), "priorité 1");
+    assert!(!blocage_ips(true, true, "drop", 3, true, true), "échec fermé : pas de blocage IPS");
+    assert!(!blocage_ips(false, true, "drop", 3, true, false), "IPS désactivé");
+    assert!(!blocage_ips(true, false, "drop", 3, true, false), "adresse non publique");
+    assert!(!blocage_ips(true, true, "alert", 2, true, false), "ni drop, ni reject, ni priorité 1");
+    assert!(!blocage_ips(true, true, "drop", 3, false, false), "connexion non établie (source usurpable)");
+}
+
+/// Lot 5 : les fichiers du dossier de données que le service télécharge lui-même (listes de menaces, règles IDS,
+/// LOLDrivers, JA3) et les événements du SIEM sont lus par commun (propriétaire contrôlé), jamais directement
+#[test]
+fn lot5_lectures_du_dossier_par_commun() {
+    for (module, source) in [("menaces.rs", include_str!("menaces.rs")), ("ids.rs", include_str!("ids.rs")),
+                             ("dpi.rs", include_str!("dpi.rs")), ("siem.rs", include_str!("siem.rs"))] {
+        for interdit in ["fs::read_to_string(", "fs::File::open(", "fs::read("] {
+            assert!(!source.contains(interdit), "{module} lit directement ({interdit})");
+        }
+    }
+    let hygiene = include_str!("hygiene.rs");
+    let loldrivers = &hygiene[hygiene.find("loldrivers.json").expect("loldrivers.json")..];
+    // Fin de la fonction (« \n} » : valable avec des fins de ligne LF comme CRLF)
+    let fonction = &loldrivers[..loldrivers.find("\n}").unwrap_or(loldrivers.len())];
+    assert!(!fonction.contains("fs::read_to_string("), "hygiene.rs lit loldrivers.json directement");
+}
+
 #[test]
 fn lot1_lisible_en_echec_liste_d_autorisation() {
     use crate::commun::lisible_en_echec;
-    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "dns.json", "journal.txt"] {
+    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "journal.txt"] {
         assert!(lisible_en_echec(oui), "{oui}");
     }
     for non in ["config.json", "lecteurs.json", "apprentissage.json", "blocages.json", "quarantaine.json",
                 "secrets\\notifications.json", "secrets\\leurres-noms.json", "api-jeton.txt", "baseline-sauvegarde.json",
                 "executables.json", "extensions-connues.json", "ecoutes-connues.json", "peripheriques-connus.json",
-                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x"] {
+                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x",
+                // Lot 5 : le cache DNS n'est plus lu en échec fermé
+                "dns.json"] {
         assert!(!lisible_en_echec(non), "{non}");
     }
 }
