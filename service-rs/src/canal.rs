@@ -70,11 +70,12 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
                 Err(e) => {
                     if e != derniere_erreur {
                         commun::journal(&format!("erreur du canal de commandes : {e}"));
-                        // Nom déjà pris : un autre processus tient le tube (squat)
-                        if let Some(pid) = pid_serveur_anonyme(commun::NOM_PIPE) {
-                            let chemin = crate::natif::chemin_processus(pid);
-                            partage.alertes_externes.lock().unwrap().push(alerte_squat(Some(pid), &chemin));
-                        }
+                        // Première instance impossible : le nom est pris par un autre processus (squat). Alerte dans
+                        // tous les cas, avec le PID et le chemin s'ils sont lisibles (un tube qui refuse SYSTEM
+                        // ne les donne pas)
+                        let pid = pid_serveur_anonyme(commun::NOM_PIPE);
+                        let chemin = pid.map(crate::natif::chemin_processus).unwrap_or_default();
+                        partage.alertes_externes.lock().unwrap().push(alerte_squat(pid, &chemin));
                         derniere_erreur = e;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(5));
