@@ -14,7 +14,7 @@
 
 ### Pourquoi
 
-deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes peuvent être envoyées au SIEM de votre choix.
+deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail) et peuvent aussi partir vers le SIEM de votre choix.
 
 ### Fonctionnalités (v4.0)
 
@@ -35,6 +35,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **NDR local** | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
 | **DPI** | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
 | **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
+| **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
 | **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs |
 | **Interface** | Français / anglais |
@@ -113,7 +114,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 ### Why
 
-deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Alerts can be forwarded to the SIEM of your choice.
+deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Critical alerts reach the IT provider or contact person (ntfy, Teams, e-mail) and can also go to the SIEM of your choice.
 
 ### Features (v4.0)
 
@@ -134,6 +135,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **Local NDR** | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
 | **DPI** | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
 | **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
+| **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
 | **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators |
 | **Interface** | French / English |

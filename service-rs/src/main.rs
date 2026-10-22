@@ -13,6 +13,7 @@ mod dpi;
 mod geoip;
 mod ids;
 mod ndr;
+mod notifications;
 mod trafic;
 mod chaines;
 mod api;

@@ -306,10 +306,8 @@ namespace DeR4Tizer
             btnDebloquer.Click += (s, e) => DebloquerSelection();
             var btnTout = new BoutonNeon("Tout débloquer", Theme.Magenta);
             btnTout.Click += (s, e) => ToutDebloquer();
-            var btnTelemetrie = new BoutonNeon("Bloquer la télémétrie…", Theme.Cyan);
-            btnTelemetrie.Click += (s, e) => DialogueTelemetrie();
             var pageBlocages = Page("Blocages", "Domaines redirigés vers 127.0.0.1 (fichier hosts), IP bloquées et programmes isolés au pare-feu.", lvBlocages,
-                btnDebloquer, btnTelemetrie, btnTout);
+                btnDebloquer, btnTout);
 
             // ---------------- Quarantaine
             lvQuarantaine.Colonnes("Date", 160, "Fichier d'origine", 560, "Raison", 380, "Taille", 110);
@@ -528,8 +526,8 @@ namespace DeR4Tizer
             if (etat != null)
             {
                 pastilles.Add(etat.JournalDnsActif
-                    ? new Entete.Pastille { Texte = "DNS " + etat.IpConnues.ToString("N0") + " IP", Couleur = Theme.Cyan }
-                    : new Entete.Pastille { Texte = "DNS INACTIF", Couleur = Theme.Jaune });
+                    ? new Entete.Pastille { Texte = L.T("SITES IDENTIFIÉS") + " : " + etat.IpConnues.ToString("N0"), Couleur = Theme.Cyan }
+                    : new Entete.Pastille { Texte = L.T("NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)"), Couleur = Theme.Jaune });
                 pastilles.Add(new Entete.Pastille
                 {
                     Texte = etat.SourceProcessus == "Sysmon" ? "PROCESSUS : SYSMON" : etat.SourceProcessus == "WMI" ? "PROCESSUS : WMI" : "PROCESSUS : —",
@@ -1131,44 +1129,6 @@ namespace DeR4Tizer
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             Canal.Executer(new Commande { Action = "toutDebloquer" });
             Rafraichir();
-        }
-
-        void DialogueTelemetrie()
-        {
-            using (var d = new Form
-            {
-                Text = "Bloquer la télémétrie", Size = new Size(520, 380), FormBorderStyle = FormBorderStyle.FixedDialog,
-                StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, Font = Theme.Petit,
-                Padding = new Padding(16), ShowIcon = false
-            })
-            {
-                Theme.FenetreSombre(d);
-                var liste = new CheckedListBox
-                {
-                    Dock = DockStyle.Top, Height = 120, CheckOnClick = true, BackColor = Theme.Panneau, ForeColor = Theme.Texte,
-                    BorderStyle = BorderStyle.None, Font = Theme.Mono
-                };
-                foreach (var k in Commun.Telemetrie.Keys)
-                    liste.Items.Add(k + " (" + Commun.Telemetrie[k].Length + " domaines)", !k.StartsWith("Microsoft"));
-                var avertissement = new Label
-                {
-                    Dock = DockStyle.Top, Height = 100, ForeColor = Theme.TexteDim, Padding = new Padding(0, 10, 0, 0),
-                    Text = "Les domaines cochés seront redirigés vers 127.0.0.1 dans le fichier hosts.\n\n" +
-                           "Microsoft Defender considère le blocage des domaines Microsoft comme une modification " +
-                           "suspecte (HostsFileHijack) et peut annuler ces lignes : c'est pourquoi ils ne sont pas cochés."
-                };
-                var ok = new BoutonNeon("Bloquer", Theme.Cyan) { DialogResult = DialogResult.OK, Dock = DockStyle.Bottom, AutoSize = false, Height = 34 };
-                d.Controls.Add(avertissement);
-                d.Controls.Add(liste);
-                d.Controls.Add(ok);
-                d.AcceptButton = ok;
-                if (d.ShowDialog(this) != DialogResult.OK) return;
-                var cles = Commun.Telemetrie.Keys.ToList();
-                var choix = liste.CheckedIndices.Cast<int>().Select(i => cles[i]).ToList();
-                if (choix.Count == 0) return;
-                Canal.Executer(new Commande { Action = "telemetrie", Categories = choix });
-                Rafraichir();
-            }
         }
 
         void DemarrerService()
