@@ -158,41 +158,60 @@ pub fn trier_element(lien: bool, proprietaire_ok: Option<bool>) -> Tri {
 /// Parcourt le contenu sans suivre les liens : liens supprimés, éléments au propriétaire non vérifié mis de
 /// côté. Renvoie les chemins écartés (relatifs)
 fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
-    let Ok(lecture) = fs::read_dir(dossier) else { return };
-    for e in lecture.flatten() {
+    let relatif = |p: &Path| p.strip_prefix(racine).unwrap_or(p).display().to_string();
+    // Ce qu'on ne peut pas examiner n'est pas gardé en silence : échec fermé
+    let lecture = match fs::read_dir(dossier) {
+        Ok(l) => l,
+        Err(e) => return ecartes.push(format!("{} (IMPOSSIBLE À ÉCARTER : contenu illisible : {e})", relatif(dossier))),
+    };
+    for e in lecture {
+        let e = match e {
+            Ok(e) => e,
+            Err(err) => {
+                ecartes.push(format!("{} (IMPOSSIBLE À ÉCARTER : élément illisible : {err})", relatif(dossier)));
+                continue;
+            }
+        };
         let p = e.path();
         if p == quarantaine {
             continue;
         }
-        let Ok(m) = fs::symlink_metadata(&p) else { continue };
-        let relatif = p.strip_prefix(racine).unwrap_or(&p).display().to_string();
+        let m = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(err) => {
+                ecartes.push(format!("{} (IMPOSSIBLE À ÉCARTER : non inspectable : {err})", relatif(&p)));
+                continue;
+            }
+        };
         match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&p)) {
             Tri::SupprimerLien => {
                 supprimer_lien(&p);
                 let ok = fs::symlink_metadata(&p).is_err();
-                ecartes.push(format!("{relatif} (lien supprimé){}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
+                ecartes.push(format!("{} (lien supprimé){}", relatif(&p), if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
             }
             Tri::Ecarter => {
                 let _ = fs::create_dir_all(quarantaine);
-                let dest = quarantaine.join(format!("{}-{}", commun::nouvel_id(), relatif.replace(['\\', '/'], "_")));
+                let dest = quarantaine.join(format!("{}-{}", commun::nouvel_id(), relatif(&p).replace(['\\', '/'], "_")));
                 // Chaque étape note son erreur : le journal dit pourquoi un élément n'a pas pu être écarté
                 let mut erreurs = Vec::new();
                 let mut ok = fs::rename(&p, &dest).map_err(|e| erreurs.push(format!("déplacement : {e}"))).is_ok();
                 if !ok {
-                    // Droits verrouillés par leur propriétaire (DACL vide d'un dossier, par exemple) : prise de
-                    // possession de CET élément seul, puis mise de côté. Rien n'est jamais chargé depuis ecartes :
-                    // ce n'est pas un blanchiment.
-                    // (icacls /setowner échoue ici en rendant 0 : appel Windows direct, privilèges activés)
-                    match crate::natif::poser_droits(&p, "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)") {
-                        Err(e) => erreurs.push(format!("prise de possession : {e}")),
-                        Ok(()) => ok = fs::rename(&p, &dest).map_err(|e| erreurs.push(format!("déplacement après prise de possession : {e}"))).is_ok(),
+                    // Droits verrouillés par leur propriétaire (DACL vide d'un dossier, par exemple) : déplacement
+                    // par handle avec le privilège de restauration, actif sur ce fil et pour ce seul appel.
+                    // JAMAIS de prise de possession : un élément qui resterait sur place aurait alors un
+                    // propriétaire de confiance et serait chargé au démarrage suivant.
+                    match crate::natif::avec_privilege_restauration(|| crate::natif::renommer_par_handle(&p, &dest)) {
+                        Ok(Ok(())) => ok = true,
+                        Ok(Err(e)) => erreurs.push(format!("déplacement avec privilège : {e}")),
+                        Err(e) => erreurs.push(format!("privilège de restauration : {e}")),
                     }
                 }
                 if !ok {
                     ok = (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) })
                         .map_err(|e| erreurs.push(format!("suppression : {e}"))).is_ok();
                 }
-                ecartes.push(format!("{relatif}{}", if ok { String::new() } else { format!(" (IMPOSSIBLE À ÉCARTER : {})", erreurs.join(" ; ")) }));
+                // Échec : l'élément reste tel quel, propriétaire non vérifié, donc jamais lu ; démarrage en échec fermé
+                ecartes.push(format!("{}{}", relatif(&p), if ok { String::new() } else { format!(" (IMPOSSIBLE À ÉCARTER : {})", erreurs.join(" ; ")) }));
             }
             Tri::Garder if m.is_dir() => trier(&p, racine, quarantaine, ecartes),
             Tri::Garder => {}
@@ -227,9 +246,6 @@ pub fn securiser() {
     let racine = commun::dossier().clone();
     let mut messages = Vec::new();
     let mut echec = None;
-    if let Err(e) = crate::natif::activer_privileges() {
-        messages.push(format!("privilèges de prise de possession indisponibles ({e})"));
-    }
     if let Ok(m) = fs::symlink_metadata(&racine) {
         match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&racine)) {
             Tri::Garder => {}
@@ -265,7 +281,7 @@ pub fn securiser() {
     for m in messages {
         commun::journal(&format!("protection des données : {m}"));
     }
-    publier(resultat);
+    let _ = publier(resultat);
 }
 
 /// Échec fermé : tant que la protection n'est pas vérifiée, aucun fichier de configuration ou de secret n'est
@@ -278,13 +294,36 @@ pub fn combiner(echec_demarrage: Option<String>, resultat: Result<(), String>) -
     }
 }
 
-fn publier(resultat: Result<(), String>) {
+fn publier(resultat: Result<(), String>) -> Option<String> {
     match combiner(ECHEC_DEMARRAGE.lock().unwrap().clone(), resultat) {
-        Ok(()) => commun::definir_echec_protection(None),
+        Ok(()) => {
+            commun::definir_echec_protection(None);
+            None
+        }
         Err(e) => {
             commun::journal(&format!("protection des données : ÉCHEC ({e}) : configuration et secrets ignorés, valeurs par défaut"));
-            commun::definir_echec_protection(Some(e));
+            commun::definir_echec_protection(Some(e.clone()));
+            Some(e)
         }
+    }
+}
+
+/// Alerte critique locale à l'entrée en échec. Elle reste sur le poste : les secrets de remontée sont
+/// ignorés en échec fermé (limite connue)
+pub fn alerte_echec(raison: &str) -> commun::Alerte {
+    commun::Alerte {
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        score: 10,
+        processus: "deR4Tizer".into(),
+        chemin: commun::dossier().display().to_string(),
+        destination: "protection du dossier de données".into(),
+        raisons: format!("PROTECTION DU DOSSIER DE DONNÉES EN ÉCHEC : {raison}. Configuration, apprentissage, blocages, \
+            quarantaine et secrets sont ignorés (valeurs par défaut) ; la détection continue. Cette alerte n'est pas remontée \
+            au prestataire. Que faire : regarder le journal (éléments écartés ou impossibles à écarter), fermer le programme \
+            qui tient le fichier, puis redémarrer le service deR4Tizer."),
+        ..Default::default()
     }
 }
 
@@ -345,9 +384,10 @@ pub fn autoriser(sid: &str) -> Result<String, String> {
     Ok(if nom.is_empty() { sid.into() } else { nom })
 }
 
-pub fn demarrer() {
-    std::thread::Builder::new().name("protection".into()).spawn(|| {
+pub fn demarrer(alertes: std::sync::Arc<std::sync::Mutex<Vec<commun::Alerte>>>) {
+    std::thread::Builder::new().name("protection".into()).spawn(move || {
         let mut annonce = false;
+        let mut en_echec = false;
         loop {
             let mut l = lecteurs();
             if l.is_empty() {
@@ -366,7 +406,12 @@ pub fn demarrer() {
                     l.iter().map(|x| x.nom.as_str()).collect::<Vec<_>>().join(", ")));
                 annonce = true;
             }
-            publier(resultat);
+            let echec = publier(resultat);
+            // Entrée en échec (au démarrage ou plus tard) : une alerte critique, pas une par heure
+            if let (Some(e), false) = (&echec, en_echec) {
+                alertes.lock().unwrap().push(alerte_echec(e));
+            }
+            en_echec = echec.is_some();
             // Personne n'est encore connecté (démarrage du PC) : on réessaie bientôt
             std::thread::sleep(Duration::from_secs(if l.is_empty() { 60 } else { 3600 }));
         }

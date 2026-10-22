@@ -107,7 +107,7 @@ impl Moniteur {
         });
         crate::siem::demarrer(partage.alertes_externes.clone(), !console);
         if !console {
-            crate::protection::demarrer();
+            crate::protection::demarrer(partage.alertes_externes.clone());
             std::thread::spawn(baseline::forcer_tailles);
             crate::maj::demarrer();
         }

@@ -437,10 +437,26 @@ pub fn lire_fichier_proprietaire(chemin: &Path) -> Option<String> {
     lire_controle(chemin, false)
 }
 
+/// Décision pure : fichier encore lisible quand la protection du dossier est en échec (chemin relatif au
+/// dossier de données). Liste d'autorisation, le reste est refusé par défaut : seules les données que le
+/// service retélécharge lui-même (GeoIP) et l'historique qu'il écrit (alertes, incidents, cache DNS,
+/// journal), qui n'accordent aucune confiance et ne changent pas son comportement. Tout ce qui le fait
+/// (configuration, comptes autorisés, apprentissage, blocages, quarantaine, bases « connues », secrets,
+/// jeton) reste refusé. Le contrôle du propriétaire s'applique dans tous les cas.
+pub fn lisible_en_echec(relatif: &str) -> bool {
+    let r = relatif.replace('/', "\\").to_ascii_lowercase();
+    if let Some(nom) = r.strip_prefix("geoip\\") {
+        return !nom.is_empty() && !nom.contains('\\') && nom.ends_with(".txt");
+    }
+    matches!(r.as_str(), "alertes.json" | "incidents.json" | "dns.json" | "journal.txt")
+}
+
 /// Lecture d'un fichier du dossier de données : propriétaire contrôlé, et refus tant que la protection du
-/// dossier n'est pas vérifiée (échec fermé : le service garde ses valeurs par défaut)
+/// dossier n'est pas vérifiée, sauf pour les fichiers de `lisible_en_echec` (échec fermé : le service garde
+/// ses valeurs par défaut, la détection continue)
 pub fn lire_fichier(chemin: &Path) -> Option<String> {
-    lire_controle(chemin, true)
+    let relatif = chemin.strip_prefix(dossier()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+    lire_controle(chemin, !lisible_en_echec(&relatif))
 }
 
 pub fn lire<T: DeserializeOwned>(nom: &str) -> Option<T> {
