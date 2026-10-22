@@ -542,7 +542,34 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     gpo::marquer_gpt(audit_modifie).map_err(|e| format!("gpt.ini : {e}"))?;
     commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
     gpo::gpupdate()?;
+    // Le service Journal d'événements ne relit la taille maximale qu'à son redémarrage : appliquée aussi tout de suite
+    for r in regles {
+        for m in r.mecanismes {
+            if let Registre { cle, nom: "MaxSize", valeur: Dword(ko) } = m {
+                if cle.contains(r"\EventLog\") {
+                    let canal = cle.rsplit('\\').next().unwrap_or("");
+                    let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                }
+            }
+        }
+    }
     Ok(format!("{} règle(s) appliquée(s) par la GPO locale.", regles.len()))
+}
+
+/// Taille effective des journaux pour les règles appliquées : le service Journal d'événements ne relit la
+/// stratégie qu'à son redémarrage (appelé au démarrage du service)
+pub fn forcer_tailles() {
+    let sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
+    for r in REGLES.iter().filter(|r| sauvegarde.regles.contains_key(r.id)) {
+        for m in r.mecanismes {
+            if let Registre { cle, nom: "MaxSize", valeur: Dword(ko) } = m {
+                if cle.contains(r"\EventLog\") {
+                    let canal = cle.rsplit('\\').next().unwrap_or("");
+                    let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                }
+            }
+        }
+    }
 }
 
 pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
