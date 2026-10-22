@@ -67,6 +67,9 @@ Verifier 'Compte local standard créé' {
 $sessionNom = (Get-CimInstance Win32_ComputerSystem).UserName
 $sessionSid = $null
 if ($sessionNom) { try { $sessionSid = (New-Object Security.Principal.NTAccount($sessionNom)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { } }
+# Sur un runner hébergé, la session est celle d'un administrateur (runneradmin) : les scénarios avec session
+# prouvent le mécanisme (création sous le jeton de l'utilisateur), pas le cas d'un utilisateur standard (VM)
+$sessionGenre = if ($sessionSid -and @(Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.SID.Value -eq $sessionSid }).Count) { "session d'administrateur" } else { "session d'utilisateur standard" }
 New-Item -ItemType Directory -Force -Path $Origine, $Canaris | Out-Null
 
 # Dossier de données précréé par le compte standard, avec un sous-dossier qui sera mis de côté dans « ecartes »
@@ -208,7 +211,7 @@ if ($sessionSid) {
     $dC = Join-Path $Origine 'session'
     $fC = Join-Path $dC 'essai-session.bin'
     $hC = Nouveau-Fichier $fC
-    Verifier "Restauration avec session ($sessionNom) : fichier recréé sous son identité, identique" {
+    Verifier "Restauration avec session ($sessionGenre, $sessionNom) : fichier recréé sous son identité, identique" {
         $e = Quarantaine-Verifiee $fC $hC
         if ($e -is [string]) { return $e }
         # Propriétaire l'utilisateur ; lui seul peut créer dans le dossier. SYSTEM : lecture des droits et
@@ -245,18 +248,28 @@ $hD = Nouveau-Fichier $fD
 $canariD = Join-Path $Canaris 'restauration'
 $empreinteD = Nouveau-Canari $canariD
 # Le propriétaire de l'emplacement est lu en remontant le chemin sans suivre de lien : la jonction le rend
-# illisible, d'où un refus (REPLI) avant toute écriture, avec ou sans session. Témoin : le même
-# dossier sans jonction est refusé pour une autre raison (emplacement des administrateurs) ; seule la jonction
-# change la décision. Le refus des liens à la création (creer_sans_lien) ne joue que si la jonction arrive
-# entre ce contrôle et la création : course non reproductible ici.
+# illisible, d'où un refus (REPLI) avant toute écriture, avec ou sans session. Témoin, seule la jonction
+# différant entre les deux essais : avec une session, même dossier au même propriétaire (l'utilisateur de la
+# session) sans jonction, restauration RÉUSSIE, puis nouvelle quarantaine, jonction, restauration refusée ; sans
+# session, même dossier sans jonction refusé pour une autre raison (emplacement des administrateurs). Le refus
+# des liens à la création (creer_sans_lien) ne joue que si la jonction arrive entre ce contrôle et la création :
+# course non reproductible ici.
 Verifier 'Jonction posée avant une restauration : refusée avant toute écriture (REPLI, propriétaire illisible), canari intact' {
     $e = Quarantaine-Verifiee $fD $hD
     if ($e -is [string]) { return "préparation : $e" }
-    $t = Commande-Cible 'restaurer' $e.Id
-    if ($t.Ok -or $t.Message -notmatch '^REPLI : emplacement appartenant au système ou aux administrateurs') { return "témoin sans jonction : $($t.Message)" }
+    if ($sessionSid) {
+        icacls $dD /setowner $sessionNom /Q | Out-Null
+        $t = Commande-Cible 'restaurer' $e.Id
+        if (-not $t.Ok) { return "témoin sans jonction ($sessionGenre) : restauration refusée : $($t.Message)" }
+        if (-not (Test-Path $fD) -or (Sha256 $fD) -ne $hD) { return 'témoin sans jonction : fichier non restauré à l''identique' }
+        $e = Quarantaine-Verifiee $fD $hD
+        if ($e -is [string]) { return "seconde quarantaine : $e" }
+    } else {
+        $t = Commande-Cible 'restaurer' $e.Id
+        if ($t.Ok -or $t.Message -notmatch '^REPLI : emplacement appartenant au système ou aux administrateurs') { return "témoin sans jonction : $($t.Message)" }
+    }
     Remove-Item -LiteralPath (Join-Path $dD 'sous') -Force -Recurse
     if (-not (Nouvelle-Jonction (Join-Path $dD 'sous') $canariD)) { return 'jonction non créée' }
-    if ($sessionSid) { icacls $dD /setowner $sessionNom /Q | Out-Null }
     $r = Commande-Cible 'restaurer' $e.Id
     if ($r.Ok) { return "acceptée : $($r.Message)" }
     if ($r.Message -notmatch '^REPLI : propriétaire de l''emplacement illisible') { return "refus inattendu : $($r.Message)" }
@@ -264,7 +277,7 @@ Verifier 'Jonction posée avant une restauration : refusée avant toute écritur
     if (-not (Entree-Quarantaine $fD) -or -not (Test-Path (Copie $e))) { return 'entrée ou copie perdue' }
     $true
 }
-NonExecute 'Jonction posée entre le contrôle du propriétaire et la création : refus par creer_sans_lien' 'course non reproductible de façon déterministe ; demande aussi une session ouverte (VM)'
+NonExecute 'Jonction posée entre le contrôle du propriétaire et la création : refus par creer_sans_lien' 'course non reproductible de façon déterministe'
 
 # Jonction dans le chemin au moment de la mise en quarantaine, vers un canari qui contient un fichier du même nom
 # (forme déterministe de la jonction posée pendant l'opération : le handle ouvert aboutit hors du chemin demandé)

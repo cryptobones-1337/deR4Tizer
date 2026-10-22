@@ -178,7 +178,9 @@ if ($compte) {
     $consoleSid = $null
     if ($console) { try { $consoleSid = (New-Object Security.Principal.NTAccount($console)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { } }
     if ($consoleSid -like 'S-1-5-21-*') {
-        Verifier "Second démarrage : lecture accordée au compte connecté à la console ($console), sans écriture" {
+        # Runner hébergé : runneradmin, un administrateur ; le cas d'un utilisateur standard demande une VM
+        $genre = if (@(Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.SID.Value -eq $consoleSid }).Count) { "session d'administrateur" } else { "session d'utilisateur standard" }
+        Verifier "Second démarrage : lecture accordée au compte connecté à la console ($genre, $console), sans écriture" {
             $fin = (Get-Date).AddSeconds(60)
             do {
                 $a = @((Droits $script:Donnees).Entrees | Where-Object { $_.Sid -eq $consoleSid -and $_.Autorise })
