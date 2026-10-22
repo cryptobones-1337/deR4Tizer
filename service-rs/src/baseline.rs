@@ -142,9 +142,9 @@ pub static REGLES: &[Regle] = &[
         ],
     },
     Regle {
-        id: "journal.taille-securite", profil: "journalisation", categorie: "Journalisation : contenu", titre: "Journal Sécurité de 256 Mo",
+        id: "journal.taille-securite", profil: "journalisation", categorie: "Journalisation : contenu", titre: "Journal Sécurité de 1 Go",
         pourquoi: "Par défaut 20 Mo : avec l'audit activé, l'historique ne durerait que quelques heures.", compat: "",
-        mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows\EventLog\Security", nom: "MaxSize", valeur: Dword(262144) }],
+        mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows\EventLog\Security", nom: "MaxSize", valeur: Dword(1_048_576) }],
     },
     Regle {
         id: "journal.dns", profil: "journalisation", categorie: "Journalisation : journaux", titre: "Journal du client DNS",
@@ -411,6 +411,30 @@ fn verifier_mecanisme(m: &Mecanisme) -> (Option<bool>, String, String) {
     }
 }
 
+/// Gestion existante du poste : la GPO de domaine ou Intune écraserait la GPO locale, ou entrerait en conflit
+/// avec elle ; dans ce cas la baseline est seulement évaluée (lecture seule). Calculé une fois.
+pub fn gestion() -> Option<String> {
+    static G: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    G.get_or_init(|| {
+        let mut l = Vec::new();
+        let sortie = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                "$d = (Get-CimInstance Win32_ComputerSystem).PartOfDomain; \
+                 $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \
+                   Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProviderID -eq 'MS DM Server' }).Count; \
+                 \"$d|$m\""])
+            .output().map(|s| String::from_utf8_lossy(&s.stdout).trim().to_string()).unwrap_or_default();
+        let (domaine, mdm) = sortie.split_once('|').unwrap_or(("False", "0"));
+        if domaine.eq_ignore_ascii_case("true") {
+            l.push("domaine Active Directory");
+        }
+        if mdm.trim().parse::<u32>().unwrap_or(0) > 0 {
+            l.push("Intune (ou autre gestion MDM)");
+        }
+        (!l.is_empty()).then(|| format!("Poste géré par {} : la baseline est en lecture seule, pour ne pas entrer en conflit avec les stratégies de l'organisation.", l.join(" et ")))
+    }).clone()
+}
+
 pub fn evaluer() -> EtatBaseline {
     let sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     let mut regles = Vec::new();
@@ -443,7 +467,7 @@ pub fn evaluer() -> EtatBaseline {
         });
     }
     let scores = totaux.into_iter().map(|(p, (ok, n))| (p.to_string(), if n == 0 { 0 } else { ok * 100 / n })).collect();
-    EtatBaseline { mis_a_jour: commun::maintenant(), regles, scores, message: String::new() }
+    EtatBaseline { mis_a_jour: commun::maintenant(), regles, scores, message: gestion().unwrap_or_default() }
 }
 
 // ------------------------------------------------------------ application et retour en arrière
@@ -475,6 +499,9 @@ pub fn selection(cible: &str) -> Vec<&'static Regle> {
 }
 
 pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
+    if let Some(g) = gestion() {
+        return Err(g);
+    }
     sauvegarder_fichiers_gpo();
     let mut sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     let mut ajouts = Vec::new();
@@ -569,7 +596,28 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             }
         }
     }
-    gpo::modifier_pol(&[], &retraits).map_err(|e| format!("Registry.pol : {e}"))?;
+    // Réglages partagés (ExploitGuard_ASR_Rules pour toutes les règles ASR, EnableControlledFolderAccess pour
+    // l'audit et le blocage…) : s'ils servent encore à une règle toujours appliquée, on remet sa valeur au lieu
+    // de les retirer
+    let mut ajouts = Vec::new();
+    for r in REGLES.iter().filter(|r| sauvegarde.regles.contains_key(r.id)) {
+        for m in r.mecanismes {
+            if let Registre { cle, nom, valeur } = m {
+                if retraits.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)) {
+                    retraits.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
+                    ajouts.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
+                    ajouts.push(entree(cle, nom, valeur));
+                    if let Ok((k, _)) = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
+                        let _ = match valeur {
+                            Dword(n) => k.set_value(nom, n),
+                            Texte(t) => k.set_value(nom, &t.to_string()),
+                        };
+                    }
+                }
+            }
+        }
+    }
+    gpo::modifier_pol(&ajouts, &retraits).map_err(|e| format!("Registry.pol : {e}"))?;
     if audit_modifie {
         audit.retain(|l| l.2 != 0);
         gpo::ecrire_audit(&audit).map_err(|e| format!("audit.csv : {e}"))?;

@@ -368,6 +368,7 @@ namespace DeR4Tizer
         public bool Actif { get; set; }
         public int Port { get; set; }
         public bool Reseau { get; set; }
+        public string Adresses { get; set; }
     }
 
     public class Alerte

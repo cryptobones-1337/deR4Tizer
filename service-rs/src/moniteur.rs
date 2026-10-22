@@ -72,6 +72,7 @@ pub struct Moniteur {
     blocages: Vec<Blocage>,
     dernieres_connexions: Vec<Connexion>,
     empreinte_hosts: String,
+    expiration: Instant,
     derniere_signature_etat: String,
     dernier_etat_ecrit: Instant,
     derniere_sauvegarde_dns: Instant,
@@ -148,6 +149,7 @@ impl Moniteur {
             blocages: commun::lire("blocages.json").unwrap_or_default(),
             dernieres_connexions: Vec::new(),
             empreinte_hosts: blocage::empreinte_hosts(),
+            expiration: Instant::now(),
             derniere_signature_etat: String::new(),
             dernier_etat_ecrit: Instant::now() - Duration::from_secs(60),
             derniere_sauvegarde_dns: Instant::now(),
@@ -250,7 +252,7 @@ impl Moniteur {
                         let b = baseline::evaluer();
                         // Le service applique lui-même le profil « journalisation » (demandé par l'utilisateur),
                         // une fois au démarrage, s'il n'est pas conforme
-                        if premier && !console && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
+                        if premier && !console && baseline::gestion().is_none() && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
                             let r = baseline::appliquer(&baseline::selection("journalisation"));
                             commun::journal(&format!("baseline « journalisation » : {}", r.unwrap_or_else(|e| format!("échec : {e}"))));
                             premier = false;
@@ -425,7 +427,7 @@ impl Moniteur {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
                 if m.haute && self.config.blocage_auto_menaces && !bloque {
-                    self.bloquer_ip(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
+                    self.bloquer_ip_auto(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
                     action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
                 }
                 alertes_modifiees |= self.ajouter_alerte("Critique", &f, format!("{}{action}", f.raisons));
@@ -508,8 +510,12 @@ impl Moniteur {
         let dns: Vec<Alerte> = std::mem::take(&mut *self.partage.alertes_externes.lock().unwrap());
         let a_bloquer: Vec<(String, String)> = std::mem::take(&mut *self.partage.blocages_ips.lock().unwrap());
         for (ip, raison) in a_bloquer {
-            let r = self.bloquer_ip(&ip, &raison);
+            let r = self.bloquer_ip_auto(&ip, &raison);
             commun::journal(&format!("IPS : {}", r.message));
+        }
+        if self.expiration.elapsed() > Duration::from_secs(60) {
+            self.expiration = Instant::now();
+            self.expirer_blocages();
         }
         for a in detections.into_iter().chain(dns) {
             if let Some(pid) = a.pid {
@@ -705,6 +711,9 @@ impl Moniteur {
                 if n.api.actif && n.api.port < 1024 {
                     return Reponse::erreur("Choisissez un port d'API entre 1024 et 65535.");
                 }
+                if n.api.actif && n.api.reseau && n.api.adresses.trim().is_empty() {
+                    return Reponse::erreur("Indiquez l'adresse du SIEM autorisé à interroger l'API depuis le réseau.");
+                }
                 self.config.langue = if n.langue == "en" { "en".into() } else { "fr".into() };
                 if n.syslog != self.config.syslog {
                     self.config.syslog = n.syslog;
@@ -797,7 +806,13 @@ En-tête : Authorization: Bearer {j}"))
                 let mut i = 0;
                 while i < a_tuer.len() {
                     let parent = a_tuer[i];
-                    a_tuer.extend(liste.iter().filter(|(p, x)| x.parent == parent && !a_tuer.contains(p)).map(|(p, _)| *p).collect::<Vec<_>>());
+                    // Windows ne remet pas à zéro le PID parent des orphelins : un « enfant » créé avant son parent
+                    // appartient à un ancien processus qui portait le même PID, il n'est pas de la chaîne
+                    let naissance_parent = natif::creation_processus(parent).unwrap_or(0);
+                    a_tuer.extend(liste.iter()
+                        .filter(|(p, x)| x.parent == parent && !a_tuer.contains(p))
+                        .filter(|(p, _)| natif::creation_processus(**p).map(|n| n >= naissance_parent).unwrap_or(false))
+                        .map(|(p, _)| *p).collect::<Vec<_>>());
                     i += 1;
                 }
                 let n = a_tuer.iter().rev().filter(|p| reponse::tuer(**p).is_ok()).count();
@@ -818,7 +833,7 @@ En-tête : Authorization: Bearer {j}"))
                 }
                 match reponse::isoler_programme(&chemin) {
                     Ok(()) => {
-                        self.blocages.push(Blocage { type_: "programme".into(), cible: chemin.clone(), raison, date: commun::maintenant() });
+                        self.blocages.push(Blocage { type_: "programme".into(), cible: chemin.clone(), raison, date: commun::maintenant(), expire: String::new() });
                         commun::ecrire("blocages.json", &self.blocages);
                         Reponse::ok(format!("{chemin} est coupé du réseau (entrant et sortant)."))
                     }
@@ -873,7 +888,7 @@ En-tête : Authorization: Bearer {j}"))
         }
         self.empreinte_hosts = blocage::empreinte_hosts(); // notre propre écriture ne doit pas déclencher d'alerte
         for d in &nouveaux {
-            self.blocages.push(Blocage { type_: "hosts".into(), cible: d.clone(), raison: raison.into(), date: commun::maintenant() });
+            self.blocages.push(Blocage { type_: "hosts".into(), cible: d.clone(), raison: raison.into(), date: commun::maintenant(), expire: String::new() });
         }
         commun::ecrire("blocages.json", &self.blocages);
         let coupees = ip_a_couper.map(|ip| self.couper(ip)).unwrap_or(0);
@@ -891,11 +906,46 @@ En-tête : Authorization: Bearer {j}"))
             if let Err(e) = blocage::ajouter_regle(ip, raison) {
                 return Reponse::erreur(format!("Pare-feu : {e}"));
             }
-            self.blocages.push(Blocage { type_: "parefeu".into(), cible: ip.into(), raison: raison.into(), date: commun::maintenant() });
+            self.blocages.push(Blocage { type_: "parefeu".into(), cible: ip.into(), raison: raison.into(), date: commun::maintenant(), expire: String::new() });
             commun::ecrire("blocages.json", &self.blocages);
         }
         let coupees = self.couper(ip);
         Reponse::ok(format!("Connexions sortantes vers {ip} bloquées par le pare-feu{}", message_coupure(coupees)))
+    }
+
+    /// Blocage automatique (liste de menaces, IPS) : levé au bout de 7 jours, ou plus tôt si l'adresse sort des
+    /// listes (adresse réattribuée, CDN…)
+    fn bloquer_ip_auto(&mut self, ip: &str, raison: &str) -> Reponse {
+        let r = self.bloquer_ip(ip, raison);
+        if r.ok {
+            let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400));
+            if let Some(b) = self.blocages.iter_mut().find(|b| b.type_ == "parefeu" && b.cible == ip && b.expire.is_empty() && b.raison == raison) {
+                b.expire = fin;
+                commun::ecrire("blocages.json", &self.blocages);
+            }
+        }
+        r
+    }
+
+    fn expirer_blocages(&mut self) {
+        let maintenant = commun::maintenant();
+        let a_retirer: Vec<(String, String, &'static str)> = {
+            let menaces = self.partage.menaces.read().unwrap();
+            let chargees = menaces.infos.total_ip + menaces.infos.total_reseaux > 0;
+            self.blocages.iter().filter_map(|b| {
+                if !b.expire.is_empty() && b.expire < maintenant {
+                    Some((b.type_.clone(), b.cible.clone(), "durée écoulée"))
+                } else if chargees && b.raison.starts_with("blocage automatique") && menaces.chercher_ip(&b.cible).is_none() {
+                    Some((b.type_.clone(), b.cible.clone(), "adresse retirée des listes de menaces"))
+                } else {
+                    None
+                }
+            }).collect()
+        };
+        for (t, c, pourquoi) in a_retirer {
+            self.debloquer(&t, &c);
+            commun::journal(&format!("blocage automatique levé : {c} ({pourquoi})"));
+        }
     }
 
     fn couper(&self, ip: &str) -> usize {
@@ -966,8 +1016,9 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
     let s = match natif::signataire_valide(chemin) {
         Some(nom) if nom.is_empty() => "signé".to_string(),
         Some(nom) => nom,
-        // Fichiers système signés par catalogue, pas dans le fichier lui-même
-        None if chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin) => "Windows (catalogue)".into(),
+        // Fichiers système signés par catalogue, pas dans le fichier lui-même : empreinte vérifiée dans les
+        // catalogues installés (C:\Windows\Tasks ou spool\drivers\color sont inscriptibles par tous)
+        None if (chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin)) && natif::signe_par_catalogue(chemin) => "Windows (catalogue)".into(),
         None => String::new(),
     };
     cache.insert(cle, s.clone());

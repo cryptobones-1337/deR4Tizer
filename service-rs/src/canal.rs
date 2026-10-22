@@ -1,5 +1,9 @@
 //! Canal de commandes : tube nommé \\.\pipe\deR4Tizer, réservé aux administrateurs et à SYSTEM.
 //! L'interface envoie une ligne JSON (Commande) et reçoit une ligne JSON (Reponse).
+//! Protection contre l'usurpation du tube : la première instance est créée avec FILE_FLAG_FIRST_PIPE_INSTANCE
+//! (échec si quelqu'un l'a déjà créé), et une instance reste toujours ouverte (la suivante est créée avant de
+//! traiter la connexion en cours) ; créer une instance supplémentaire exige un droit que seul SYSTEM possède.
+//! L'interface vérifie de son côté que le serveur du tube est bien le processus du service.
 
 use crate::commun::{self, Commande, Reponse};
 use crate::moniteur::{Moniteur, Partage};
@@ -7,12 +11,12 @@ use crate::natif::large;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HLOCAL, LocalFree, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree, INVALID_HANDLE_VALUE};
 use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
+use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
 /// SYSTEM et administrateurs ; en mode console (tests uniquement), tout utilisateur connecté
@@ -24,23 +28,7 @@ fn descripteur(console: bool) -> String {
     sddl
 }
 
-pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bool) {
-    std::thread::Builder::new().name("commandes".into()).spawn(move || {
-        let mut derniere_erreur = String::new();
-        while !partage.arret.load(Ordering::Relaxed) {
-            if let Err(e) = une_connexion(&moniteur, &partage, console) {
-                // Une erreur répétée (tube déjà pris par une autre instance…) n'est notée qu'une fois
-                if e != derniere_erreur {
-                    commun::journal(&format!("erreur du canal de commandes : {e}"));
-                    derniere_erreur = e;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
-        }
-    }).unwrap();
-}
-
-fn une_connexion(moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, console: bool) -> Result<(), String> {
+fn creer(console: bool, premiere: bool) -> Result<HANDLE, String> {
     unsafe {
         let sddl = large(&descripteur(console));
         let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -52,20 +40,65 @@ fn une_connexion(moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, consol
             bInheritHandle: false.into(),
         };
         let nom = large(commun::NOM_PIPE);
-        let tube = CreateNamedPipeW(PCWSTR(nom.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            1, 4096, 4096, 0, Some(&attributs));
+        let mode = if premiere { PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE } else { PIPE_ACCESS_DUPLEX };
+        let tube = CreateNamedPipeW(PCWSTR(nom.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES, 4096, 4096, 0, Some(&attributs));
         let _ = LocalFree(HLOCAL(sd.0));
         if tube == INVALID_HANDLE_VALUE || tube.is_invalid() {
-            return Err(windows::core::Error::from_win32().to_string());
+            let e = windows::core::Error::from_win32();
+            return Err(if premiere { format!("{e} (un autre programme occupe peut-être le canal \\\\.\\pipe\\deR4Tizer)") } else { e.to_string() });
         }
-        // ERROR_PIPE_CONNECTED : le client s'est connecté entre la création et l'attente, c'est normal
-        if let Err(e) = ConnectNamedPipe(tube, None) {
-            if e.code().0 as u32 != 0x8007_0217 {
-                let _ = CloseHandle(tube);
-                return Err(e.to_string());
+        Ok(tube)
+    }
+}
+
+pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bool) {
+    std::thread::Builder::new().name("commandes".into()).spawn(move || {
+        let mut derniere_erreur = String::new();
+        while !partage.arret.load(Ordering::Relaxed) {
+            // Première instance : refusée si le nom est déjà pris
+            let mut courant = match creer(console, true) {
+                Ok(t) => t,
+                Err(e) => {
+                    if e != derniere_erreur {
+                        commun::journal(&format!("erreur du canal de commandes : {e}"));
+                        derniere_erreur = e;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    continue;
+                }
+            };
+            derniere_erreur.clear();
+            while !partage.arret.load(Ordering::Relaxed) {
+                unsafe {
+                    // ERROR_PIPE_CONNECTED : le client s'est connecté entre la création et l'attente, c'est normal
+                    if let Err(e) = ConnectNamedPipe(courant, None) {
+                        if e.code().0 as u32 != 0x8007_0217 {
+                            let _ = CloseHandle(courant);
+                            break;
+                        }
+                    }
+                }
+                // L'instance suivante existe avant que celle-ci ne se ferme : le nom n'est jamais libre
+                let suivant = match creer(console, false) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        commun::journal(&format!("erreur du canal de commandes : {e}"));
+                        traiter(courant, &moniteur, &partage);
+                        unsafe { let _ = CloseHandle(courant); }
+                        break;
+                    }
+                };
+                traiter(courant, &moniteur, &partage);
+                unsafe { let _ = CloseHandle(courant); }
+                courant = suivant;
             }
         }
+    }).unwrap();
+}
 
+fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>) {
+    unsafe {
         // Lecture d'une ligne
         let mut demande = Vec::new();
         let mut tampon = [0u8; 4096];
@@ -91,7 +124,5 @@ fn une_connexion(moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, consol
         let _ = WriteFile(tube, Some(&sortie), Some(&mut ecrits), None);
         let _ = FlushFileBuffers(tube);
         let _ = DisconnectNamedPipe(tube);
-        let _ = CloseHandle(tube);
-        Ok(())
     }
 }

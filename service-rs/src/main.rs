@@ -34,6 +34,8 @@ mod protection;
 mod reponse;
 mod siem;
 mod surveillances;
+#[cfg(test)]
+mod tests;
 mod vol_donnees;
 
 use std::ffi::OsString;

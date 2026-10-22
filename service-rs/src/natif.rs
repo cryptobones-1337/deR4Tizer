@@ -284,3 +284,68 @@ pub fn dossier_windows() -> String {
 pub fn dossier_systeme() -> String {
     format!(r"{}\System32", dossier_windows())
 }
+
+// ------------------------------------------------------------ catalogues de sécurité et processus
+
+/// Fichier signé par un catalogue de sécurité installé (signature de Windows et des pilotes, rangée dans
+/// System32\CatRoot et non dans le fichier lui-même) : vrai contrôle de l'empreinte, pas du dossier
+pub fn signe_par_catalogue(chemin: &str) -> bool {
+    use windows::Win32::Security::Cryptography::Catalog::{
+        CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2, CryptCATAdminEnumCatalogFromHash,
+        CryptCATAdminReleaseCatalogContext, CryptCATAdminReleaseContext,
+    };
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+    let large_chemin = large(chemin);
+    unsafe {
+        let Ok(fichier) = CreateFileW(PCWSTR(large_chemin.as_ptr()), FILE_GENERIC_READ.0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) else { return false };
+        let mut trouve = false;
+        // Catalogues récents en SHA-256, anciens en SHA-1
+        for algorithme in [windows::core::w!("SHA256"), PCWSTR::null()] {
+            let mut admin = 0isize;
+            if CryptCATAdminAcquireContext2(&mut admin, None, algorithme, None, 0).is_err() {
+                continue;
+            }
+            let mut taille = 0u32;
+            let _ = CryptCATAdminCalcHashFromFileHandle2(admin, fichier, &mut taille, None, 0);
+            if taille > 0 && taille <= 64 {
+                let mut empreinte = vec![0u8; taille as usize];
+                if CryptCATAdminCalcHashFromFileHandle2(admin, fichier, &mut taille, Some(empreinte.as_mut_ptr()), 0).is_ok() {
+                    let info = CryptCATAdminEnumCatalogFromHash(admin, &empreinte, 0, None);
+                    if info != 0 {
+                        trouve = true;
+                        let _ = CryptCATAdminReleaseCatalogContext(admin, info, 0);
+                    }
+                }
+            }
+            let _ = CryptCATAdminReleaseContext(admin, 0);
+            if trouve {
+                break;
+            }
+        }
+        let _ = CloseHandle(fichier);
+        trouve
+    }
+}
+
+/// Heure de création d'un processus (FILETIME), pour écarter les PID réutilisés
+pub fn creation_processus(pid: u32) -> Option<u64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::GetProcessTimes;
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let r = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u);
+        let _ = CloseHandle(h);
+        r.ok()?;
+        Some(((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64)
+    }
+}
+
+/// Binaire de Windows : situé dans le dossier Windows et signé par Microsoft (dans le fichier ou par catalogue)
+pub fn binaire_windows(chemin: &str) -> bool {
+    let windows = dossier_windows().to_lowercase();
+    chemin.to_lowercase().starts_with(&windows)
+        && (signataire_valide(chemin).map(|s| s.starts_with("Microsoft")).unwrap_or(false) || signe_par_catalogue(chemin))
+}
+

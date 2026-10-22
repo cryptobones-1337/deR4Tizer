@@ -66,6 +66,9 @@ pub struct Dpi {
     /// Domaine de base → (sous-domaines distincts, instant du premier)
     sous_domaines: HashMap<String, (HashSet<String>, Instant)>,
     deja: HashMap<String, Instant>,
+    /// ClientHello en cours de réassemblage (découpé sur plusieurs segments TCP, par exemple avec ML-KEM) :
+    /// (port local, adresse et port distants) → (octets reçus, début)
+    partiels: HashMap<(u16, std::net::Ipv4Addr, u16), (Vec<u8>, Instant)>,
     tics: u64,
 }
 
@@ -109,6 +112,7 @@ impl Dpi {
             empreintes: HashMap::new(),
             sous_domaines: HashMap::new(),
             deja: HashMap::new(),
+            partiels: HashMap::new(),
             tics: 0,
         }
     }
@@ -142,10 +146,13 @@ impl Dpi {
         file.truncate(200);
     }
 
-    fn tls(&mut self, p: &Paquet, programme: &str) {
-        let Some((sni, ja3)) = client_hello(p.charge) else { return };
+    fn tls_brut(&mut self, donnees: &[u8], p: &Paquet, programme: &str) {
+        let Some((sni, ja3)) = client_hello(donnees) else { return };
         self.compteurs.0 += 1;
         let (ip, port, _) = p.distant();
+        if self.empreintes.len() >= 1000 && !self.empreintes.contains_key(&ja3) {
+            self.empreintes.clear();
+        }
         let e = self.empreintes.entry(ja3.clone()).or_default();
         e.0 += 1;
         if e.1.len() < 10 {
@@ -228,11 +235,19 @@ impl Dpi {
             let base = parties[parties.len() - 2..].join(".");
             let sous = parties[..parties.len() - 2].join(".");
             if sous.len() >= 25 && entropie(&sous) > 3.5 {
+                if self.sous_domaines.len() > 2000 && !self.sous_domaines.contains_key(&base) {
+                    self.sous_domaines.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(300));
+                    if self.sous_domaines.len() > 2000 {
+                        return;
+                    }
+                }
                 let e = self.sous_domaines.entry(base.clone()).or_insert_with(|| (HashSet::new(), Instant::now()));
                 if e.1.elapsed() > Duration::from_secs(300) {
                     *e = (HashSet::new(), Instant::now());
                 }
-                e.0.insert(sous);
+                if e.0.len() < 500 {
+                    e.0.insert(sous);
+                }
                 let n = e.0.len();
                 if n >= 30 {
                     self.alerter(format!("tunnel|{base}"), "Alerte", 7, programme, ip.to_string(), port, base.clone(),
@@ -290,7 +305,29 @@ impl Analyseur for Dpi {
             return;
         }
         match p.proto {
-            TCP if p.charge[0] == 0x16 => self.tls(p, &contexte.programme(p)),
+            TCP if p.charge[0] == 0x16 || self.partiels.contains_key(&(p.port_source, p.destination, p.port_destination)) => {
+                // Longueur annoncée par l'enregistrement TLS : le ClientHello peut tenir sur plusieurs segments
+                let cle = (p.port_source, p.destination, p.port_destination);
+                let mut donnees = match self.partiels.remove(&cle) {
+                    Some((mut d, _)) => {
+                        d.extend_from_slice(p.charge);
+                        d
+                    }
+                    None => p.charge.to_vec(),
+                };
+                let attendu = if donnees.len() >= 5 && donnees[0] == 0x16 { 5 + u16::from_be_bytes([donnees[3], donnees[4]]) as usize } else { 0 };
+                if attendu > donnees.len() && attendu <= 16_384 + 5 {
+                    if self.partiels.len() >= 500 {
+                        self.partiels.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(5));
+                    }
+                    if self.partiels.len() < 500 {
+                        self.partiels.insert(cle, (std::mem::take(&mut donnees), Instant::now()));
+                    }
+                    return;
+                }
+                let programme = contexte.programme(p);
+                self.tls_brut(&donnees, p, &programme);
+            }
             TCP if p.charge[0].is_ascii_uppercase() => self.http(p, &contexte.programme(p)),
             UDP if port == 53 => self.dns(p, &contexte.programme(p)),
             _ => {}
@@ -301,6 +338,7 @@ impl Analyseur for Dpi {
         self.tics += 1;
         if self.tics % 5 == 0 {
             self.deja.retain(|_, t| t.elapsed() < Duration::from_secs(3600));
+            self.partiels.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(5));
             self.ecrire();
         }
     }
@@ -387,4 +425,14 @@ fn client_hello(d: &[u8]) -> Option<(Option<String>, String)> {
         formats.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-"));
     let empreinte = Md5::digest(chaine.as_bytes()).iter().map(|o| format!("{o:02x}")).collect();
     Some((sni, empreinte))
+}
+
+#[cfg(test)]
+pub fn client_hello_test(d: &[u8]) -> Option<(Option<String>, String)> {
+    client_hello(d)
+}
+
+#[cfg(test)]
+pub fn nom_question_test(m: &[u8]) -> Option<String> {
+    nom_question(m)
 }

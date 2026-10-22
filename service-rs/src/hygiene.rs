@@ -54,7 +54,7 @@ fn profils() -> Vec<PathBuf> {
 /// Retire les leurres posés par erreur dans les profils modèles (versions précédentes)
 fn retirer_leurres_modeles() {
     for profil in profils_modeles() {
-        for (dossier, nom) in LEURRES {
+        for (dossier, nom) in ANCIENS_LEURRES.iter().map(|(d, n)| (d.to_string(), n.to_string())).chain(noms_leurres()) {
             let f = profil.join(dossier).join(nom);
             if f.exists() {
                 let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
@@ -66,11 +66,37 @@ fn retirer_leurres_modeles() {
 
 // ------------------------------------------------------------ leurres
 
-const LEURRES: &[(&str, &str)] = &[
+/// Anciens noms fixes (publiés dans le code) : retirés et remplacés
+const ANCIENS_LEURRES: &[(&str, &str)] = &[
     (r"Documents", "!000-deR4Tizer-leurre.docx"),
     (r"Pictures", "!000-deR4Tizer-leurre.jpg"),
     (r"Desktop", "!000-deR4Tizer-leurre.xlsx"),
 ];
+
+/// Noms des leurres, tirés au hasard à l'installation (leurres-noms.json) : un rançongiciel qui lit ce code
+/// ne peut pas les reconnaître. Ils commencent par « 0 » pour être parmi les premiers fichiers parcourus.
+pub fn noms_leurres() -> Vec<(String, String)> {
+    if let Some(l) = commun::lire::<Vec<(String, String)>>("leurres-noms.json").filter(|l| !l.is_empty()) {
+        return l;
+    }
+    let mut graine = commun::filetime(std::time::SystemTime::now()) ^ ((std::process::id() as u64) << 32);
+    let mut hasard = |n: u64| {
+        graine ^= graine << 13;
+        graine ^= graine >> 7;
+        graine ^= graine << 17;
+        graine % n
+    };
+    let docs = ["0 Factures {}.docx", "0 Contrat {}.docx", "0 Devis {}.docx", "0 Archives {}.docx"];
+    let images = ["0 IMG_{}.jpg", "0 Scan_{}.jpg", "0 Photo {}.jpg"];
+    let bureau = ["0 Comptabilité {}.xlsx", "0 Budget {}.xlsx", "0 Clients {}.xlsx"];
+    let mut l = Vec::new();
+    for (dossier, modeles) in [("Documents", &docs[..]), ("Pictures", &images[..]), ("Desktop", &bureau[..])] {
+        let modele = modeles[hasard(modeles.len() as u64) as usize];
+        l.push((dossier.to_string(), modele.replace("{}", &(1000 + hasard(9000)).to_string())));
+    }
+    commun::ecrire("leurres-noms.json", &l);
+    l
+}
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
@@ -96,10 +122,21 @@ pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
 /// Crée les leurres manquants (cachés), leur pose un audit d'écriture, et renvoie la liste
 pub fn poser_leurres() -> Vec<Leurre> {
     retirer_leurres_modeles();
+    // Anciens leurres à nom fixe : retirés des profils
+    for profil in profils() {
+        for (dossier, nom) in ANCIENS_LEURRES {
+            let f = profil.join(dossier).join(nom);
+            if f.exists() {
+                let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
+                let _ = fs::remove_file(&f);
+            }
+        }
+    }
+    let noms = noms_leurres();
     let mut liste = Vec::new();
     let mut a_auditer = Vec::new();
     for profil in profils() {
-        for (dossier, nom) in LEURRES {
+        for (dossier, nom) in &noms {
             let d = profil.join(dossier);
             if !d.is_dir() {
                 continue;
@@ -154,7 +191,8 @@ pub fn verifier_leurres(liste: &mut Vec<Leurre>) -> Vec<Alerte> {
 pub fn pid_touchant_leurre(xml: &str) -> Option<(u32, String, String)> {
     let d = crate::evenements::donnees(xml);
     let objet = d.get("ObjectName")?;
-    if !objet.contains("deR4Tizer-leurre") {
+    let nom = Path::new(objet.as_str()).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if !noms_leurres().iter().any(|(_, n)| n.to_lowercase() == nom) {
         return None;
     }
     let pid = u32::from_str_radix(d.get("ProcessId")?.trim_start_matches("0x"), 16).ok()?;
@@ -183,6 +221,57 @@ pub fn liste_loldrivers() -> HashSet<String> {
     Regex::new(r#""SHA256":\s*"([0-9a-fA-F]{64})""#).unwrap().captures_iter(&t).map(|c| c[1].to_lowercase()).collect()
 }
 
+/// Chemin d'un ImagePath de service ou de pilote (« \\SystemRoot\\… », « \\??\\C:\\… », « System32\\… »)
+pub fn chemin_image(image: &str) -> PathBuf {
+    let windows = crate::natif::dossier_windows();
+    let i = image.trim().trim_matches('"');
+    let i = i.strip_prefix(r"\??\").unwrap_or(i);
+    if let Some(r) = i.get(..11).filter(|p| p.eq_ignore_ascii_case(r"\SystemRoot")) {
+        let _ = r;
+        return PathBuf::from(format!("{windows}{}", &i[11..]));
+    }
+    if i.len() > 9 && i[..9].eq_ignore_ascii_case(r"System32\") {
+        return PathBuf::from(&windows).join(i);
+    }
+    PathBuf::from(i)
+}
+
+/// Pilote connu de LOLDrivers (liste en cache, rechargée une fois par jour)
+pub fn pilote_vulnerable(chemin: &Path) -> Option<String> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    static CACHE: OnceLock<Mutex<(Option<Instant>, HashSet<String>)>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new((None, HashSet::new())));
+    let mut c = cache.lock().unwrap();
+    if c.0.map(|t| t.elapsed() > Duration::from_secs(86_400)).unwrap_or(true) {
+        *c = (Some(Instant::now()), liste_loldrivers());
+    }
+    let h = empreinte_fichier(chemin)?;
+    c.1.contains(&h).then_some(h)
+}
+
+/// Pilotes déclarés dans le registre (services de type 1 ou 2), y compris en démarrage manuel et hors du
+/// dossier drivers (un .sys posé dans %TEMP% puis lancé par « sc start »)
+fn pilotes_declares() -> Vec<PathBuf> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    let mut l = Vec::new();
+    let Ok(services) = winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SYSTEM\CurrentControlSet\Services") else { return l };
+    for nom in services.enum_keys().map_while(Result::ok) {
+        let Ok(k) = services.open_subkey(&nom) else { continue };
+        let type_: u32 = k.get_value("Type").unwrap_or(0);
+        if type_ != 1 && type_ != 2 {
+            continue;
+        }
+        if let Ok(image) = k.get_value::<String, _>("ImagePath") {
+            let p = chemin_image(&image);
+            if p.is_file() {
+                l.push(p);
+            }
+        }
+    }
+    l
+}
+
 /// Compare les pilotes présents (dossier drivers et pilotes déclarés) à la liste
 pub fn verifier_pilotes(connus: &HashSet<String>, deja: &mut HashSet<String>) -> Vec<Alerte> {
     let mut a = Vec::new();
@@ -190,9 +279,13 @@ pub fn verifier_pilotes(connus: &HashSet<String>, deja: &mut HashSet<String>) ->
         return a;
     }
     let dossier = PathBuf::from(crate::natif::dossier_systeme()).join("drivers");
-    let Ok(entrees) = fs::read_dir(&dossier) else { return a };
-    for e in entrees.map_while(Result::ok) {
-        let p = e.path();
+    let mut chemins: Vec<PathBuf> = fs::read_dir(&dossier).map(|d| d.map_while(Result::ok).map(|e| e.path()).collect()).unwrap_or_default();
+    for p in pilotes_declares() {
+        if !chemins.iter().any(|c| c.as_os_str().eq_ignore_ascii_case(p.as_os_str())) {
+            chemins.push(p);
+        }
+    }
+    for p in chemins {
         if p.extension().map(|x| !x.eq_ignore_ascii_case("sys")).unwrap_or(true) {
             continue;
         }

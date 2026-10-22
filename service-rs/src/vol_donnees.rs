@@ -41,25 +41,84 @@ pub const CIBLES: &[Cible] = &[
     Cible { nom: "extension MetaMask (Brave)", relatif: r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn", recursif: false, proprietaires: &["brave"] },
 ];
 
-/// Programmes qui ouvrent légitimement tous les fichiers (antivirus, sauvegarde de Windows, deR4Tizer…)
-const TOUJOURS_AUTORISES: &[&str] = &[
-    "msmpeng", "mpdefendercoreservice", "mssense", "searchprotocolhost", "searchindexer", "system", "der4tizersvc",
-    "onedrive", "filecoauth", "backgroundtaskhost", "svchost",
+/// Éditeur attendu (dans le nom du signataire Authenticode) de chaque propriétaire légitime : un
+/// « chrome.exe » posé dans %TEMP% n'est pas signé par Google et reste suspect
+const EDITEURS: &[(&str, &str)] = &[
+    ("chrome", "Google"), ("brave", "Brave"), ("msedge", "Microsoft"), ("msedgewebview2", "Microsoft"),
+    ("firefox", "Mozilla"), ("plugin-container", "Mozilla"), ("crashreporter", "Mozilla"),
+    ("discord", "Discord"), ("update", "Discord"), ("telegram", "Telegram"), ("updater", "Telegram"),
+    ("ledger live", "Ledger"), ("ledger wallet", "Ledger"), ("exodus", "Exodus"),
 ];
 
-/// Programmes qui lisent, copient ou synchronisent tous les fichiers (début du nom de l'exécutable) : ils
-/// peuvent toucher un leurre sans être un rançongiciel. Ils doivent en plus avoir une signature valide.
-const LEURRES_AUTORISES: &[&str] = &[
-    // antivirus et Windows
-    "msmpeng", "mpdefendercoreservice", "mssense", "searchindexer", "searchprotocolhost", "searchfilterhost", "explorer",
-    "wbengine", "sdclt", "vssvc", "filehistory",
-    // synchronisation
-    "onedrive", "filecoauth", "dropbox", "googledrivefs", "nextcloud", "owncloud", "synologydrive", "cloud-drive", "icloud", "megasync",
-    "boxsync", "box",
-    // sauvegarde
-    "veeam", "acronis", "trueimage", "anti_ransomware_service", "mmscmd", "reflect", "macrium", "bztransmit", "bzfilelist", "backblaze",
-    "cbengine", "cobian", "idrive", "carbonite", "aomei", "backupper", "easeus", "urbackup", "duplicati", "arq", "crashplan", "code42",
+/// Programmes de Windows et de Microsoft qui ouvrent légitimement tous les fichiers (antivirus, indexation,
+/// synchronisation) : binaire Windows vérifié (dossier Windows et signature) ou signé par Microsoft
+const TOUJOURS_AUTORISES: &[&str] = &[
+    "msmpeng", "mpdefendercoreservice", "mssense", "searchprotocolhost", "searchindexer", "onedrive", "filecoauth",
+    "backgroundtaskhost", "svchost",
 ];
+
+/// Logiciels qui lisent, copient ou synchronisent tous les fichiers et peuvent toucher un leurre sans être un
+/// rançongiciel : (début du nom de l'exécutable, éditeur attendu dans la signature). Le couple est vérifié.
+const LEURRES_AUTORISES: &[(&str, &str)] = &[
+    // antivirus, indexation et sauvegarde de Windows
+    ("msmpeng", "Microsoft"), ("mpdefendercoreservice", "Microsoft"), ("mssense", "Microsoft"), ("searchindexer", "Microsoft"),
+    ("searchprotocolhost", "Microsoft"), ("searchfilterhost", "Microsoft"), ("wbengine", "Microsoft"), ("sdclt", "Microsoft"),
+    ("vssvc", "Microsoft"), ("filehistory", "Microsoft"), ("onedrive", "Microsoft"), ("filecoauth", "Microsoft"),
+    // synchronisation
+    ("dropbox", "Dropbox"), ("googledrivefs", "Google"), ("nextcloud", "Nextcloud"), ("owncloud", "ownCloud"),
+    ("synologydrive", "Synology"), ("icloud", "Apple"), ("megasync", "Mega Limited"), ("boxsync", "Box, Inc"), ("box", "Box, Inc"),
+    // sauvegarde
+    ("veeam", "Veeam"), ("acronis", "Acronis"), ("trueimage", "Acronis"), ("anti_ransomware_service", "Acronis"), ("mmscmd", "Acronis"),
+    ("reflect", "Paramount Software"), ("macrium", "Paramount Software"), ("bztransmit", "Backblaze"), ("bzfilelist", "Backblaze"),
+    ("cobian", "Cobian"), ("idrive", "IDrive"), ("carbonite", "Carbonite"), ("aomei", "AOMEI"), ("backupper", "AOMEI"),
+    ("urbackup", "Infscape"), ("arq", "Haystack"), ("crashplan", "Code42"), ("code42", "Code42"),
+];
+
+/// Signataire d'un exécutable, mis en cache par chemin et date de modification
+fn signataire(chemin: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(commun::filetime).unwrap_or(0);
+    let cle = format!("{chemin}|{date}");
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(s) = cache.lock().unwrap().get(&cle) {
+        return s.clone();
+    }
+    let s = crate::natif::signataire_valide(chemin);
+    let mut c = cache.lock().unwrap();
+    if c.len() > 2000 {
+        c.clear();
+    }
+    c.insert(cle, s.clone());
+    s
+}
+
+fn signe_par(chemin: &str, editeur: &str) -> bool {
+    if editeur == "Microsoft" && crate::natif::binaire_windows(chemin) {
+        return true;
+    }
+    signataire(chemin).map(|s| s.contains(editeur)).unwrap_or(false)
+}
+
+/// Programme autorisé à lire ces données : bon nom ET bon éditeur (ou binaire Windows vérifié)
+fn legitime(exe: &str, chemin: &str, proprietaires: &[&str]) -> bool {
+    if chemin.is_empty() {
+        return false;
+    }
+    if std::env::current_exe().map(|p| p.to_string_lossy().eq_ignore_ascii_case(chemin)).unwrap_or(false) {
+        return true;
+    }
+    if proprietaires.contains(&exe) {
+        return EDITEURS.iter().any(|(n, e)| *n == exe && signe_par(chemin, e));
+    }
+    TOUJOURS_AUTORISES.contains(&exe) && signe_par(chemin, "Microsoft")
+}
+
+/// Logiciel connu (couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
+pub fn leurre_autorise(chemin: &str) -> bool {
+    let exe = Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    LEURRES_AUTORISES.iter().any(|(n, e)| exe.starts_with(n) && signe_par(chemin, e))
+}
 
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)
 pub fn dossiers_presents() -> Vec<(String, &'static Cible)> {
@@ -87,10 +146,10 @@ pub fn poser_audit() -> Result<usize, String> {
     }
     let mut script = String::from("$ErrorActionPreference='Continue'\n$n=0\n");
     for (d, c) in &dossiers {
-        let heritage = if c.recursif { "ContainerInherit,ObjectInherit" } else { "ObjectInherit" };
+        let (heritage, propagation) = if c.recursif { ("ContainerInherit,ObjectInherit", "None") } else { ("ObjectInherit", "NoPropagateInherit") };
         script.push_str(&format!(
-            "try {{ $a = Get-Acl -LiteralPath '{d}' -Audit; \
-             $r = New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'),'ReadData','{heritage}','None','Success'); \
+            "try {{ $a = Get-Acl -LiteralPath '{d}' -Audit; $a.PurgeAuditRules((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0')); \
+             $r = New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'),'ReadData','{heritage}','{propagation}','Success'); \
              $a.AddAuditRule($r); Set-Acl -LiteralPath '{d}' -AclObject $a; $n++ }} catch {{ Write-Output (\"erreur : {d} : \" + $_.Exception.Message) }}\n",
             d = d.replace('\'', "''"),
         ));
@@ -119,7 +178,7 @@ pub fn analyser(xml: &str, dossiers: &[(String, &'static Cible)]) -> Option<Aler
         .iter()
         .filter(|(dossier, _)| objet.starts_with(&format!("{}\\", dossier.to_lowercase())))
         .max_by_key(|(dossier, _)| dossier.len())?;
-    if cible.proprietaires.contains(&exe.as_str()) || TOUJOURS_AUTORISES.contains(&exe.as_str()) {
+    if legitime(&exe, &processus, cible.proprietaires) {
         return None;
     }
     // Seule la lecture d'un fichier compte : parcourir un dossier du profil (inventaire des extensions,
@@ -166,8 +225,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     evenements::abonner("Security", "*[System[EventID=4663]]", move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
-            let exe = Path::new(&programme).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let connu = LEURRES_AUTORISES.iter().any(|a| exe.starts_with(a)) && crate::natif::signataire_valide(&programme).is_some();
+            let connu = leurre_autorise(&programme);
             if connu {
                 // Sauvegarde, synchronisation, antivirus, indexation : on le note sans rien suspendre
                 file.lock().unwrap().push(Alerte {
@@ -184,7 +242,9 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
                 return;
             }
             let config: commun::Config = commun::lire("config.json").unwrap_or_default();
-            let suspendu = config.reponse_auto_rancongiciel && crate::reponse::suspendre(pid, true).is_ok();
+            // Un binaire de Windows (svchost partagé, explorer…) n'est jamais suspendu automatiquement : la session ou le
+            // réseau se figeraient ; l'alerte reste critique
+            let suspendu = config.reponse_auto_rancongiciel && !crate::natif::binaire_windows(&programme) && crate::reponse::suspendre(pid, true).is_ok();
             file.lock().unwrap().push(Alerte {
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),

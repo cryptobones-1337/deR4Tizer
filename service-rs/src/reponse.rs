@@ -14,7 +14,7 @@ use std::time::SystemTime;
 use windows::core::{BSTR, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, VARIANT_TRUE};
 use windows::Win32::NetworkManagement::WindowsFirewall::{
-    INetFwPolicy2, INetFwRule, NetFwPolicy2, NetFwRule, NET_FW_ACTION_ALLOW, NET_FW_ACTION_BLOCK, NET_FW_PROFILE2_DOMAIN,
+    INetFwPolicy2, INetFwRule, NetFwPolicy2, NetFwRule, NET_FW_ACTION_BLOCK, NET_FW_PROFILE2_DOMAIN,
     NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC, NET_FW_RULE_DIR_IN, NET_FW_RULE_DIR_OUT,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
@@ -71,9 +71,26 @@ impl Origine {
 
 // ------------------------------------------------------------ processus
 
-pub fn tuer(pid: u32) -> Result<(), String> {
+/// Processus dont l'arrêt ou la suspension fige ou fait planter Windows (vérifiés : binaire de Windows)
+const CRITIQUES: &[&str] = &[
+    "csrss", "wininit", "winlogon", "lsass", "lsaiso", "services", "smss", "svchost", "dwm", "fontdrvhost", "registry",
+    "memory compression", "secure system", "msmpeng", "mpdefendercoreservice",
+];
+
+/// Raison de refuser d'agir sur ce processus, s'il y en a une
+pub fn protege(pid: u32) -> Option<String> {
     if pid <= 4 || pid == std::process::id() {
-        return Err("processus protégé".into());
+        return Some("processus du système ou de deR4Tizer".into());
+    }
+    let chemin = natif::chemin_processus(pid);
+    let nom = Path::new(&chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    (CRITIQUES.contains(&nom.as_str()) && natif::binaire_windows(&chemin))
+        .then(|| format!("{nom} est un processus critique de Windows (le système ou le réseau se figerait)"))
+}
+
+pub fn tuer(pid: u32) -> Result<(), String> {
+    if let Some(r) = protege(pid) {
+        return Err(format!("refusé : {r}"));
     }
     unsafe {
         let h = OpenProcess(PROCESS_TERMINATE, false, pid).map_err(|e| e.to_string())?;
@@ -85,8 +102,10 @@ pub fn tuer(pid: u32) -> Result<(), String> {
 
 /// Suspend ou reprend tous les fils d'un processus (fonctions NtSuspendProcess / NtResumeProcess de ntdll)
 pub fn suspendre(pid: u32, suspendre: bool) -> Result<(), String> {
-    if pid <= 4 || pid == std::process::id() {
-        return Err("processus protégé".into());
+    if suspendre {
+        if let Some(r) = protege(pid) {
+            return Err(format!("refusé : {r}"));
+        }
     }
     unsafe {
         let nom = large("ntdll.dll");
@@ -222,27 +241,119 @@ pub fn liberer_programme(chemin: &str) -> usize {
 const PROFILS: [windows::Win32::NetworkManagement::WindowsFirewall::NET_FW_PROFILE_TYPE2; 3] =
     [NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC];
 
-/// Mode panique : action sortante par défaut « bloquer » sur tous les profils. Seuls les programmes
-/// ayant une règle d'autorisation sortante explicite (essentiellement des composants de Windows) passent encore.
-pub fn panique(activer: bool) -> Result<String, String> {
+const PANIQUE_SORTANT: &str = "deR4Tizer PANIQUE (sortant)";
+const PANIQUE_ENTRANT: &str = "deR4Tizer PANIQUE (entrant)";
+
+/// Réseaux privés et réservés, jamais bloqués par le mode panique (le réseau local reste joignable)
+const RESERVES: &[(u32, u32)] = &[
+    (0x0000_0000, 0x00FF_FFFF), (0x0A00_0000, 0x0AFF_FFFF), (0x6440_0000, 0x647F_FFFF), (0x7F00_0000, 0x7FFF_FFFF),
+    (0xA9FE_0000, 0xA9FE_FFFF), (0xAC10_0000, 0xAC1F_FFFF), (0xC0A8_0000, 0xC0A8_FFFF), (0xE000_0000, 0xFFFF_FFFF),
+];
+
+/// Plages IPv4 publiques privées des adresses à épargner, au format du pare-feu (« a.b.c.d-e.f.g.h »)
+pub fn plages_internet(epargnees: &[std::net::Ipv4Addr]) -> Vec<String> {
+    let mut trous: Vec<(u32, u32)> = RESERVES.to_vec();
+    trous.extend(epargnees.iter().map(|ip| (u32::from(*ip), u32::from(*ip))));
+    trous.sort();
+    let mut plages = Vec::new();
+    let mut debut: u64 = 0;
+    for (d, f) in trous {
+        if (d as u64) > debut {
+            plages.push((debut as u32, d - 1));
+        }
+        debut = debut.max(f as u64 + 1);
+    }
+    if debut <= u32::MAX as u64 {
+        plages.push((debut as u32, u32::MAX));
+    }
+    plages.iter().map(|(d, f)| format!("{}-{}", std::net::Ipv4Addr::from(*d), std::net::Ipv4Addr::from(*f))).collect()
+}
+
+/// Adresses à épargner : serveurs DNS de la machine et serveurs de notification (pour que l'alerte parte)
+fn epargnees() -> Vec<std::net::Ipv4Addr> {
+    use std::net::ToSocketAddrs;
+    let mut l = Vec::new();
+    let dns = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "(Get-DnsClientServerAddress -AddressFamily IPv4).ServerAddresses -join ','"])
+        .output().map(|s| String::from_utf8_lossy(&s.stdout).trim().to_string()).unwrap_or_default();
+    l.extend(dns.split(',').filter_map(|x| x.trim().parse::<std::net::Ipv4Addr>().ok()));
+    let config: commun::Config = commun::lire("config.json").unwrap_or_default();
+    let secrets = crate::notifications::lire_secrets();
+    let mut hotes = Vec::new();
+    for url in [&secrets.ntfy_url, &secrets.teams_url] {
+        if let Some(h) = url.strip_prefix("https://").and_then(|r| r.split(['/', ':']).next()) {
+            hotes.push(format!("{h}:443"));
+        }
+    }
+    if config.notifications.smtp && !config.notifications.smtp_serveur.is_empty() {
+        hotes.push(format!("{}:{}", config.notifications.smtp_serveur, config.notifications.smtp_port));
+    }
+    for h in hotes {
+        if let Ok(a) = h.to_socket_addrs() {
+            l.extend(a.filter_map(|x| match x.ip() { std::net::IpAddr::V4(v) => Some(v), _ => None }));
+        }
+    }
+    l.sort();
+    l.dedup();
+    l
+}
+
+fn regle_blocage(p: &INetFwPolicy2, nom: &str, sortant: bool, adresses: &str) -> windows::core::Result<()> {
     unsafe {
-        let p = politique().map_err(|e| e.to_string())?;
-        for profil in PROFILS {
-            p.put_DefaultOutboundAction(profil, if activer { NET_FW_ACTION_BLOCK } else { NET_FW_ACTION_ALLOW }).map_err(|e| e.to_string())?;
-            if activer {
-                p.put_FirewallEnabled(profil, VARIANT_TRUE).map_err(|e| e.to_string())?;
+        let r: INetFwRule = CoCreateInstance(&NetFwRule, None, CLSCTX_INPROC_SERVER)?;
+        r.SetName(&BSTR::from(nom))?;
+        r.SetDescription(&BSTR::from("Mode panique de deR4Tizer : Internet coupé, réseau local et alertes conservés"))?;
+        r.SetGrouping(&BSTR::from(blocage::GROUPE))?;
+        r.SetDirection(if sortant { NET_FW_RULE_DIR_OUT } else { NET_FW_RULE_DIR_IN })?;
+        r.SetAction(NET_FW_ACTION_BLOCK)?;
+        r.SetProtocol(256)?;
+        r.SetRemoteAddresses(&BSTR::from(adresses))?;
+        r.SetProfiles(0x7FFF_FFFF)?;
+        r.SetEnabled(VARIANT_TRUE)?;
+        p.Rules()?.Add(&r)
+    }
+}
+
+/// Mode panique : deux règles de BLOCAGE (qui priment sur toutes les règles d'autorisation, y compris celles
+/// qu'un programme malveillant aurait créées) vers tout Internet, IPv4 et IPv6 globales ; le réseau local, les
+/// serveurs DNS et les serveurs de notification restent joignables. Rien d'autre n'est modifié : la sortie
+/// du mode retire simplement les deux règles.
+pub fn panique(activer: bool) -> Result<String, String> {
+    let p = politique().map_err(|e| e.to_string())?;
+    unsafe {
+        if let Ok(regles) = p.Rules() {
+            for nom in [PANIQUE_SORTANT, PANIQUE_ENTRANT] {
+                let b = BSTR::from(nom);
+                let mut n = 0;
+                while regles.Item(&b).is_ok() && n < 10 && regles.Remove(&b).is_ok() {
+                    n += 1;
+                }
             }
         }
     }
-    if activer {
-        // Coupe immédiatement les connexions en cours (les règles ne s'appliquent qu'aux nouvelles)
-        let n = natif::lister_tcp().iter().filter(|c| c.etat == 5).filter(|c| natif::couper(c)).count();
-        fs::write(commun::dossier().join("panique-active"), commun::maintenant()).map_err(|e| e.to_string())?;
-        Ok(format!("MODE PANIQUE : trafic sortant bloqué pour tous les programmes non autorisés ; {n} connexion(s) coupée(s)."))
-    } else {
+    if !activer {
         let _ = fs::remove_file(commun::dossier().join("panique-active"));
-        Ok("Mode panique désactivé : trafic sortant de nouveau autorisé.".into())
+        return Ok("Mode panique désactivé : Internet de nouveau accessible.".into());
     }
+    let epargnees = epargnees();
+    let mut adresses = plages_internet(&epargnees);
+    adresses.push("2000::-3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
+    let liste = adresses.join(",");
+    regle_blocage(&p, PANIQUE_SORTANT, true, &liste).map_err(|e| e.to_string())?;
+    regle_blocage(&p, PANIQUE_ENTRANT, false, &liste).map_err(|e| e.to_string())?;
+    unsafe {
+        for profil in PROFILS {
+            let _ = p.put_FirewallEnabled(profil, VARIANT_TRUE);
+        }
+    }
+    // Coupe immédiatement les connexions vers Internet en cours (les règles ne s'appliquent qu'aux nouvelles)
+    let n = natif::lister_tcp().iter()
+        .filter(|c| c.etat == 5 && c.ip.parse().map(|a| crate::parefeu::publique(&a)).unwrap_or(false))
+        .filter(|c| !c.ip.parse::<std::net::Ipv4Addr>().map(|a| epargnees.contains(&a)).unwrap_or(false))
+        .filter(|c| natif::couper(c)).count();
+    fs::write(commun::dossier().join("panique-active"), commun::maintenant()).map_err(|e| e.to_string())?;
+    Ok(format!("MODE PANIQUE : Internet coupé pour tous les programmes ; réseau local, DNS et {} serveur(s) de notification conservés ; {n} connexion(s) coupée(s).",
+        epargnees.len()))
 }
 
 pub fn panique_active() -> bool {

@@ -242,11 +242,13 @@ pub struct ConfigApi {
     pub port: u16,
     /// Écoute sur le réseau local (sinon 127.0.0.1 seulement)
     pub reseau: bool,
+    /// Adresses autorisées sur le réseau (SIEM), séparées par des virgules : obligatoires avec « reseau »
+    pub adresses: String,
 }
 
 impl Default for ConfigApi {
     fn default() -> Self {
-        ConfigApi { actif: false, port: 8642, reseau: false }
+        ConfigApi { actif: false, port: 8642, reseau: false, adresses: String::new() }
     }
 }
 
@@ -294,6 +296,9 @@ pub struct Blocage {
     pub raison: String,
     #[serde(deserialize_with = "nul_vide")]
     pub date: String,
+    /// Fin du blocage (« aaaa-mm-jj hh:mm:ss ») pour les blocages automatiques ; vide : permanent
+    #[serde(default, deserialize_with = "nul_vide")]
+    pub expire: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -404,8 +409,9 @@ pub fn maintenant() -> String {
 
 pub fn journal(message: &str) {
     let f = dossier().join("journal.txt");
-    if fs::metadata(&f).map(|m| m.len() > 1024 * 1024).unwrap_or(false) {
-        let _ = fs::remove_file(&f);
+    // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)
+    if fs::metadata(&f).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false) {
+        let _ = fs::rename(&f, dossier().join("journal.1.txt"));
     }
     if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
         let _ = writeln!(fichier, "{}  {}\r", maintenant(), message);
