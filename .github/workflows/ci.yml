@@ -51,3 +51,61 @@ jobs:
             bin/deR4Tizer.msi
             bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
+
+  # Lot 3a : tests d'intégration sur un runner jetable, avec le MSI construit ci-dessus (installation, service,
+  # droits du dossier de données, compte standard, dossier précréé et pièges, mise à niveau, désinstallations).
+  # Le tableau des scénarios (réussi, échoué, non exécuté avec la raison) est dans le résumé du job.
+  integration-installation:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: deR4Tizer-${{ github.sha }}
+          path: bin
+
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: WiX 3.14, archive vérifiée
+        shell: pwsh
+        run: |
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile "$wix.zip"
+          $h = (Get-FileHash "$wix.zip" -Algorithm SHA256).Hash
+          if ($h -ne '6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31') { throw "Archive WiX inattendue ($h)." }
+          Expand-Archive "$wix.zip" $wix
+          "WIX=$wix" >> $env:GITHUB_ENV
+
+      # Version plus ancienne : construite depuis un commit figé (celui qui a introduit le MSI), avec un numéro
+      # explicite inférieur à la version courante ; rien ne dépend de ce qui traînerait ailleurs
+      - name: Version plus ancienne (commit 4da823a, version 4.1.0)
+        shell: pwsh
+        run: |
+          $ancien = Join-Path $env:RUNNER_TEMP 'ancien'
+          git worktree add $ancien 4da823ac699e198106c9c6cbdbdd58286992dbf1
+          Push-Location (Join-Path $ancien 'service-rs'); cargo build --release; if ($LASTEXITCODE) { throw 'compilation de l''ancienne version' }; Pop-Location
+          Push-Location $ancien
+          ./compiler.ps1 -InterfaceSeulement
+          Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
+          ./construire-msi.ps1 -Version 4.1.0
+          Copy-Item bin/deR4Tizer.msi (Join-Path $env:RUNNER_TEMP 'deR4Tizer-ancien.msi')
+          Pop-Location
+
+      - name: Scénarios du lot 3a
+        shell: powershell
+        run: |
+          $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
+          ./tests/integration/installation.ps1 -Msi "$PWD\bin\deR4Tizer.msi" -MsiAncien (Join-Path $env:RUNNER_TEMP 'deR4Tizer-ancien.msi') -Version $v
+
+      - name: Journaux d'installation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journaux-integration-installation-${{ github.sha }}
+          path: ${{ runner.temp }}/journaux-msi
+          retention-days: 7
