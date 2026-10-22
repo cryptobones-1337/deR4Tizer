@@ -1,0 +1,108 @@
+// Langue de l'interface : le texte français sert de clé, la traduction anglaise est cherchée ici.
+// Un texte absent du dictionnaire reste en français (ajoutez-le ici pour le traduire).
+using System.Collections.Generic;
+
+namespace DeR4Tizer
+{
+    static class L
+    {
+        public static bool En;
+
+        public static string T(string fr)
+        {
+            string en;
+            return En && fr != null && Anglais.TryGetValue(fr, out en) ? en : fr;
+        }
+
+        static readonly Dictionary<string, string> Anglais = new Dictionary<string, string>
+        {
+            // Navigation et pages
+            { "Connexions", "Connections" }, { "Alertes", "Alerts" }, { "Chaînes", "Chains" }, { "Vie privée", "Privacy" },
+            { "Pare-feu", "Firewall" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },
+            { "Blocages", "Blocks" }, { "Quarantaine", "Quarantine" }, { "Menaces", "Threats" }, { "Réglages", "Settings" },
+            { "Chaînes de processus", "Process chains" }, { "Vie privée et accès", "Privacy and access" },
+            { "Pare-feu et exposition à Internet", "Firewall and Internet exposure" }, { "Démarrage automatique", "Autostart" },
+            { "Baseline de sécurité", "Security baseline" }, { "Extensions de navigateur", "Browser extensions" },
+            { "Menaces et réponses automatiques", "Threats and automatic responses" },
+            { "Flux sortants en direct. Survolez une ligne pour le chemin, la ligne de commande et l'origine du fichier ; clic droit pour bloquer ou réagir.",
+              "Live outbound flows. Hover a row for the path, command line and file origin; right-click to block or respond." },
+            { "Critique : menace avérée. Alerte : comportement suspect. Info : première fois qu'un programme fait quelque chose.",
+              "Critical: confirmed threat. Alert: suspicious behaviour. Info: first time a program does something." },
+            { "Qui a lancé quoi. Le score s'additionne sur toute la chaîne : une suite d'actions banales une à une devient visible. Alerte au-delà de 12.",
+              "Who launched what. The score adds up along the chain: a series of individually harmless actions becomes visible. Alert above 12." },
+            { "Caméra, micro, prise en main à distance et ports ouverts sur le réseau.", "Camera, microphone, remote control and ports open to the network." },
+            { "Paquets entrants venus d'Internet (journal du pare-feu) et changements de règles avec le programme qui les a faits.",
+              "Inbound packets from the Internet (firewall log) and rule changes with the program that made them." },
+            { "Tout ce qui se lance avec Windows. Une entrée nouvelle ou modifiée déclenche une alerte.",
+              "Everything that starts with Windows. A new or modified entry raises an alert." },
+            { "Inspirée des baselines Intune et Microsoft, appliquée par la stratégie de groupe locale. La journalisation est appliquée automatiquement ; le reste à votre demande.",
+              "Inspired by the Intune and Microsoft baselines, applied through local Group Policy. Logging is applied automatically; the rest on request." },
+            { "Une extension avec des permissions sensibles peut lire vos pages, vos cookies ou vos saisies. Une nouvelle extension déclenche une alerte.",
+              "An extension with sensitive permissions can read your pages, cookies or keystrokes. A new extension raises an alert." },
+            { "Domaines redirigés vers 127.0.0.1 (fichier hosts), IP bloquées et programmes isolés au pare-feu.",
+              "Domains redirected to 127.0.0.1 (hosts file), IPs blocked and programs isolated at the firewall." },
+            { "Fichiers retirés de leur emplacement et rendus inexécutables. Ils peuvent être restaurés.",
+              "Files removed from their location and made non-executable. They can be restored." },
+            { "Listes open source téléchargées toutes les 12 h par le service, et réactions automatiques.",
+              "Open-source lists downloaded every 12 h by the service, and automatic responses." },
+            { "Langue, envoi des alertes à un SIEM (syslog), API d'export et export des journaux.",
+              "Language, alert forwarding to a SIEM (syslog), export API and log export." },
+
+            // Colonnes
+            { "Score", "Score" }, { "Programme", "Program" }, { "Lancé par", "Parent" }, { "PID", "PID" }, { "Destination", "Destination" },
+            { "Port", "Port" }, { "Signataire", "Signer" }, { "Vu depuis", "Seen since" }, { "Vue depuis", "Seen since" }, { "Raisons", "Reasons" },
+            { "Heure", "Time" }, { "Niveau", "Level" }, { "Chemin", "Path" }, { "Processus", "Process" }, { "Ligne de commande", "Command line" },
+            { "Élément", "Item" }, { "Détail", "Detail" }, { "Depuis / dernière fois", "Since / last time" }, { "Quand", "When" },
+            { "Catégorie", "Category" }, { "Nom", "Name" }, { "Commande", "Command" }, { "Remarque", "Note" }, { "Règle", "Rule" },
+            { "État", "State" }, { "Actuel", "Current" }, { "Attendu", "Expected" }, { "Compatibilité", "Compatibility" },
+            { "Navigateur", "Browser" }, { "Extension", "Extension" }, { "Version", "Version" }, { "Permissions", "Permissions" },
+            { "Type", "Type" }, { "Cible", "Target" }, { "Raison", "Reason" }, { "Date", "Date" }, { "Fichier d'origine", "Original file" },
+            { "Taille", "Size" }, { "Source", "Source" }, { "Confiance", "Confidence" }, { "Entrées", "Entries" }, { "Mise à jour", "Updated" },
+            { "Statut", "Status" },
+
+            // Boutons, cases, menus
+            { "Démarrer le service", "Start the service" }, { "◉ PANIQUE : couper Internet", "◉ PANIC: cut the Internet" },
+            { "Journal du service", "Service log" }, { "Dossier des données", "Data folder" },
+            { "Appliquer le profil recommandé", "Apply recommended profile" }, { "Appliquer le profil renforcé…", "Apply hardened profile…" },
+            { "Appliquer la sélection", "Apply selection" }, { "Annuler la sélection", "Revert selection" }, { "Tout annuler", "Revert all" },
+            { "Réévaluer", "Re-evaluate" }, { "Débloquer la sélection", "Unblock selection" }, { "Tout débloquer", "Unblock all" },
+            { "Bloquer la télémétrie…", "Block telemetry…" }, { "Bloquer", "Block" }, { "Restaurer la sélection", "Restore selection" },
+            { "Mettre à jour maintenant", "Update now" },
+            { "Masquer les entrées signées Microsoft / Windows", "Hide entries signed by Microsoft / Windows" },
+            { "Bloquer automatiquement au pare-feu les IP des listes de confiance haute", "Automatically block high-confidence list IPs at the firewall" },
+            { "Suspendre automatiquement un programme qui touche aux fichiers leurres (rançongiciel)", "Automatically suspend a program that touches canary files (ransomware)" },
+            { "Bloquer (nom dans le fichier hosts, sinon IP au pare-feu)", "Block (name in hosts file, otherwise IP at the firewall)" },
+            { "Bloquer l'IP au pare-feu", "Block the IP at the firewall" }, { "Bloquer cette destination", "Block this destination" },
+            { "Isoler ce programme du réseau", "Isolate this program from the network" }, { "Suspendre le processus", "Suspend the process" },
+            { "Reprendre le processus", "Resume the process" }, { "Tuer le processus", "Kill the process" },
+            { "Tuer le processus et ses enfants", "Kill the process and its children" },
+            { "Tuer ce processus et toute sa descendance", "Kill this process and all its descendants" },
+            { "Mettre le programme en quarantaine", "Quarantine the program" }, { "Mettre la cible en quarantaine", "Quarantine the target" },
+            { "Ouvrir l'emplacement du programme", "Open program location" }, { "Ouvrir l'emplacement du fichier", "Open file location" },
+            { "Copier", "Copy" }, { "Ouvrir", "Open" }, { "Quitter", "Quit" },
+            { "Sélectionnez une alerte pour voir la technique d'attaque et quoi faire.", "Select an alert to see the attack technique and what to do." },
+            { "L'interface reste dans la zone de notification. Le service, lui, tourne en permanence.",
+              "The interface stays in the notification area. The service keeps running at all times." },
+
+            // Réglages
+            { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
+            { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },
+            { "ENVOI DES ALERTES (SYSLOG)", "ALERT FORWARDING (SYSLOG)" },
+            { "Envoyer les alertes à un serveur syslog / SIEM", "Send alerts to a syslog server / SIEM" },
+            { "Serveur", "Server" }, { "Protocole", "Protocol" }, { "Format", "Format" }, { "Niveau minimal", "Minimum level" },
+            { "JSON : en-tête RFC 5424 et détail en JSON. CEF : reconnu par la plupart des SIEM (Splunk, QRadar, Sentinel, Wazuh, Graylog…).",
+              "JSON: RFC 5424 header with JSON detail. CEF: understood by most SIEMs (Splunk, QRadar, Sentinel, Wazuh, Graylog…)." },
+            { "API D'EXPORT (HTTP, LECTURE SEULE)", "EXPORT API (HTTP, READ-ONLY)" },
+            { "Activer l'API d'export", "Enable the export API" },
+            { "Accessible depuis le réseau local (sinon cet ordinateur seulement)", "Reachable from the local network (otherwise this computer only)" },
+            { "Afficher le jeton", "Show token" }, { "Nouveau jeton", "New token" },
+            { "Chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ». Routes : /api/v1/alertes, /connexions, /exposition, /baseline, /regles-parefeu, /blocages, /journal.",
+              "Every request must carry the header \"Authorization: Bearer <token>\". Routes: /api/v1/alertes, /connexions, /exposition, /baseline, /regles-parefeu, /blocages, /journal." },
+            { "EXPORT DES JOURNAUX", "LOG EXPORT" }, { "Exporter les alertes…", "Export alerts…" }, { "Exporter le journal du service…", "Export service log…" },
+            { "Enregistrer", "Save" }, { "Tester l'envoi", "Send test" },
+            { "Remplacer le jeton ? Les outils qui utilisent l'ancien devront être mis à jour.", "Replace the token? Tools using the old one will have to be updated." },
+            { "Réglages enregistrés.", "Settings saved." },
+            { "Indiquez le serveur syslog.", "Enter the syslog server." },
+        };
+    }
+}

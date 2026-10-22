@@ -1,0 +1,249 @@
+//! API HTTP d'export, en lecture seule, pour un SIEM ou un outil tiers.
+//! Protégée par un jeton (en-tête « Authorization: Bearer <jeton> »), stocké dans api-jeton.txt,
+//! lisible par SYSTEM et les administrateurs seulement. Écoute sur 127.0.0.1, ou sur le réseau local
+//! si demandé (une règle de pare-feu « deR4Tizer API » ouvre alors le port, profils Domaine et Privé).
+//!
+//!   GET /api/v1/sante                                    sans jeton : vérification de disponibilité
+//!   GET /api/v1/alertes?depuis=&niveau=&limite=&format=  format : json (défaut), ndjson ou cef
+//!   GET /api/v1/connexions | etat | exposition | baseline | regles-parefeu | blocages
+//!   GET /api/v1/journal?lignes=200                       texte brut
+
+use crate::commun::{self, Alerte, ConfigApi};
+use crate::export;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::os::windows::process::CommandExt;
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
+use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+
+const FICHIER_JETON: &str = "api-jeton.txt";
+const NOM_REGLE: &str = "deR4Tizer-API";
+const MAX_CONNEXIONS: usize = 16;
+
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+static CONNEXIONS: AtomicUsize = AtomicUsize::new(0);
+
+// ------------------------------------------------------------ jeton
+
+fn nouveau_jeton() -> String {
+    let mut octets = [0u8; 32];
+    unsafe {
+        let _ = BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut octets, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    }
+    octets.iter().map(|o| format!("{o:02x}")).collect()
+}
+
+/// Jeton actuel, créé au premier besoin
+pub fn jeton() -> String {
+    let f = commun::dossier().join(FICHIER_JETON);
+    match fs::read_to_string(&f) {
+        Ok(j) if j.trim().len() >= 32 => j.trim().to_string(),
+        _ => regenerer_jeton(),
+    }
+}
+
+pub fn regenerer_jeton() -> String {
+    let f = commun::dossier().join(FICHIER_JETON);
+    let j = nouveau_jeton();
+    let _ = fs::write(&f, &j);
+    // Retire l'héritage (le dossier est lisible par les utilisateurs) : SYSTEM et administrateurs seulement
+    let _ = Command::new("icacls.exe")
+        .arg(&f)
+        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F"])
+        .creation_flags(0x0800_0000)
+        .output();
+    j
+}
+
+/// Comparaison en temps constant
+fn egaux(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+// ------------------------------------------------------------ serveur
+
+/// (Re)démarre l'API selon la configuration ; l'ancienne écoute s'arrête d'elle-même
+pub fn demarrer(config: &ConfigApi) {
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    regle_parefeu(config);
+    if !config.actif {
+        return;
+    }
+    let jeton = jeton();
+    let adresse = format!("{}:{}", if config.reseau { "0.0.0.0" } else { "127.0.0.1" }, config.port);
+    std::thread::Builder::new().name("api".into()).spawn(move || {
+        // L'ancienne écoute peut tenir le port quelques instants
+        let mut ecoute = None;
+        for _ in 0..10 {
+            match TcpListener::bind(&adresse) {
+                Ok(l) => {
+                    ecoute = Some(l);
+                    break;
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(500)),
+            }
+        }
+        let Some(ecoute) = ecoute else {
+            commun::journal(&format!("API d'export : impossible d'écouter sur {adresse}"));
+            return;
+        };
+        let _ = ecoute.set_nonblocking(true);
+        commun::journal(&format!("API d'export : écoute sur {adresse}"));
+        while GENERATION.load(Ordering::SeqCst) == generation {
+            match ecoute.accept() {
+                Ok((flux, _)) => {
+                    if CONNEXIONS.load(Ordering::SeqCst) >= MAX_CONNEXIONS {
+                        continue;
+                    }
+                    CONNEXIONS.fetch_add(1, Ordering::SeqCst);
+                    let j = jeton.clone();
+                    std::thread::spawn(move || {
+                        let _ = traiter(flux, &j);
+                        CONNEXIONS.fetch_sub(1, Ordering::SeqCst);
+                    });
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(250)),
+            }
+        }
+    }).unwrap();
+}
+
+/// Ouvre le port sur le réseau local (profils Domaine et Privé, jamais Public), ou retire la règle
+fn regle_parefeu(config: &ConfigApi) {
+    let script = if config.actif && config.reseau {
+        format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; \
+            New-NetFirewallRule -Name '{NOM_REGLE}' -DisplayName 'deR4Tizer API' -Group '{}' -Direction Inbound \
+            -Protocol TCP -LocalPort {} -Action Allow -Profile Domain,Private | Out-Null", crate::blocage::GROUPE, config.port)
+    } else {
+        format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue")
+    };
+    let _ = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output();
+}
+
+fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
+    flux.set_nonblocking(false)?;
+    flux.set_read_timeout(Some(Duration::from_secs(5)))?;
+    flux.set_write_timeout(Some(Duration::from_secs(10)))?;
+    let mut demande = Vec::new();
+    let mut tampon = [0u8; 2048];
+    while !demande.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = flux.read(&mut tampon)?;
+        if n == 0 || demande.len() > 16 * 1024 {
+            break;
+        }
+        demande.extend_from_slice(&tampon[..n]);
+    }
+    let texte = String::from_utf8_lossy(&demande);
+    let mut lignes = texte.split("\r\n");
+    let premiere = lignes.next().unwrap_or("");
+    let mut morceaux = premiere.split_whitespace();
+    let (methode, cible) = (morceaux.next().unwrap_or(""), morceaux.next().unwrap_or(""));
+    let autorisation = lignes
+        .filter_map(|l| l.split_once(':'))
+        .find(|(n, _)| n.trim().eq_ignore_ascii_case("authorization"))
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default();
+    let (chemin, requete) = cible.split_once('?').unwrap_or((cible, ""));
+    let parametre = |nom: &str| -> Option<String> {
+        requete.split('&').filter_map(|p| p.split_once('=')).find(|(n, _)| *n == nom).map(|(_, v)| decoder(v))
+    };
+
+    if methode != "GET" {
+        return repondre(&mut flux, 405, "application/json", r#"{"Erreur":"méthode non autorisée (lecture seule)"}"#);
+    }
+    if chemin == "/api/v1/sante" {
+        return repondre(&mut flux, 200, "application/json",
+            &format!(r#"{{"Ok":true,"Produit":"deR4Tizer","Version":"{}","Hote":"{}"}}"#, commun::VERSION, export::hote_local()));
+    }
+    let fourni = autorisation.strip_prefix("Bearer ").unwrap_or("");
+    if !egaux(fourni, jeton) {
+        // Ralentit les essais de jeton
+        std::thread::sleep(Duration::from_secs(1));
+        return repondre(&mut flux, 401, "application/json", r#"{"Erreur":"jeton absent ou invalide"}"#);
+    }
+
+    let brut = |nom: &str| fs::read_to_string(commun::dossier().join(nom)).unwrap_or_else(|_| "null".into());
+    let champ_etat = |champ: &str| {
+        serde_json::from_str::<serde_json::Value>(&brut("etat.json")).ok()
+            .and_then(|v| v.get(champ).cloned()).unwrap_or_default().to_string()
+    };
+    match chemin {
+        "/api/v1/alertes" => {
+            let mut alertes: Vec<Alerte> = commun::lire("alertes.json").unwrap_or_default();
+            if let Some(d) = parametre("depuis") {
+                let d = d.replace('T', " ");
+                alertes.retain(|a| a.heure.as_str() > d.as_str());
+            }
+            if let Some(n) = parametre("niveau") {
+                alertes.retain(|a| export::rang(&a.niveau) >= export::rang(&n));
+            }
+            let limite = parametre("limite").and_then(|l| l.parse().ok()).unwrap_or(500usize).min(1000);
+            let debut = alertes.len().saturating_sub(limite);
+            let alertes = &alertes[debut..];
+            match parametre("format").as_deref() {
+                Some("ndjson") => repondre(&mut flux, 200, "application/x-ndjson",
+                    &alertes.iter().map(export::json).collect::<Vec<_>>().join("\n")),
+                Some("cef") => repondre(&mut flux, 200, "text/plain",
+                    &alertes.iter().map(export::cef).collect::<Vec<_>>().join("\n")),
+                _ => repondre(&mut flux, 200, "application/json", &serde_json::to_string(alertes).unwrap_or_default()),
+            }
+        }
+        "/api/v1/connexions" => repondre(&mut flux, 200, "application/json", &champ_etat("Flux")),
+        "/api/v1/exposition" => repondre(&mut flux, 200, "application/json", &champ_etat("Exposition")),
+        "/api/v1/etat" => repondre(&mut flux, 200, "application/json", &brut("etat.json")),
+        "/api/v1/baseline" => repondre(&mut flux, 200, "application/json", &brut("baseline.json")),
+        "/api/v1/regles-parefeu" => repondre(&mut flux, 200, "application/json", &brut("parefeu.json")),
+        "/api/v1/blocages" => repondre(&mut flux, 200, "application/json", &brut("blocages.json")),
+        "/api/v1/journal" => {
+            let n = parametre("lignes").and_then(|l| l.parse().ok()).unwrap_or(200usize).min(5000);
+            let tout = fs::read_to_string(commun::dossier().join("journal.txt")).unwrap_or_default();
+            let lignes: Vec<&str> = tout.lines().collect();
+            repondre(&mut flux, 200, "text/plain", &lignes[lignes.len().saturating_sub(n)..].join("\n"))
+        }
+        _ => repondre(&mut flux, 404, "application/json", r#"{"Erreur":"route inconnue"}"#),
+    }
+}
+
+fn repondre(flux: &mut TcpStream, code: u16, type_: &str, corps: &str) -> std::io::Result<()> {
+    let statut = match code {
+        200 => "OK",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        _ => "Method Not Allowed",
+    };
+    let entete = format!("HTTP/1.1 {code} {statut}\r\nContent-Type: {type_}; charset=utf-8\r\nContent-Length: {}\r\n\
+        Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", corps.len());
+    flux.write_all(entete.as_bytes())?;
+    flux.write_all(corps.as_bytes())?;
+    flux.flush()
+}
+
+/// Décodage des paramètres d'URL (%xx et +)
+fn decoder(v: &str) -> String {
+    let o = v.as_bytes();
+    let mut sortie = Vec::with_capacity(o.len());
+    let mut i = 0;
+    while i < o.len() {
+        match o[i] {
+            b'+' => sortie.push(b' '),
+            b'%' if i + 2 < o.len() => {
+                match u8::from_str_radix(std::str::from_utf8(&o[i + 1..i + 3]).unwrap_or(""), 16) {
+                    Ok(b) => {
+                        sortie.push(b);
+                        i += 2;
+                    }
+                    Err(_) => sortie.push(b'%'),
+                }
+            }
+            b => sortie.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&sortie).into_owned()
+}

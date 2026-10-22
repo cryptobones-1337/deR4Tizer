@@ -1,0 +1,30 @@
+# Exécutables compilés (publiés dans les Releases, pas dans le code)
+bin/
+*.exe
+*.pdb
+
+# Compilation Rust
+service-rs/target/
+
+# Journaux et résultats de tests (peuvent contenir des noms de machine, chemins, IP)
+*.log
+tests/*.log
+
+# Captures d'écran locales (peuvent montrer des programmes, chemins et adresses de la machine)
+ui*.png
+
+# Données d'exécution du service, si copiées par erreur
+config.json
+alertes.json
+etat.json
+api-jeton.txt
+
+# Scripts de diagnostic locaux
+diagnostic*.ps1
+
+# Éditeurs
+.vs/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
