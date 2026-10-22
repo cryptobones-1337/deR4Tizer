@@ -258,7 +258,9 @@ Verifier 'Jonction posée avant une restauration : refusée avant toute écritur
     $e = Quarantaine-Verifiee $fD $hD
     if ($e -is [string]) { return "préparation : $e" }
     if ($sessionSid) {
-        icacls $dD /setowner $sessionNom /Q | Out-Null
+        # Toute l'arborescence : le service lit le propriétaire du plus proche dossier existant (ici « sous »)
+        icacls $dD /setowner $sessionNom /T /Q | Out-Null
+        if ((Droits (Join-Path $dD 'sous')).Proprietaire -ne $sessionSid) { return 'propriétaire de « sous » non posé' }
         $t = Commande-Cible 'restaurer' $e.Id
         if (-not $t.Ok) { return "témoin sans jonction ($sessionGenre) : restauration refusée : $($t.Message)" }
         if (-not (Test-Path $fD) -or (Sha256 $fD) -ne $hD) { return 'témoin sans jonction : fichier non restauré à l''identique' }
