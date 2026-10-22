@@ -421,23 +421,125 @@ pub fn est_systeme() -> bool {
     })
 }
 
-/// Propriétaire du fichier ou du dossier : SYSTEM ou Administrateurs ? None si illisible
-pub fn proprietaire_de_confiance(chemin: &std::path::Path) -> Option<bool> {
+/// Entrée d'une liste de droits (DACL) : autorisation ou refus, masque d'accès, SID du compte
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ace {
+    pub autorise: bool,
+    pub masque: u32,
+    pub sid: String,
+}
+
+/// Propriétaire et droits d'un fichier ou d'un dossier, tels que Windows les rapporte
+#[derive(Debug, Clone, Default)]
+pub struct Securite {
+    pub proprietaire: String,
+    /// Héritage coupé (SE_DACL_PROTECTED)
+    pub protege: bool,
+    pub aces: Vec<Ace>,
+    /// Entrée d'un type non reconnu (objet, rappel…) : à traiter comme non conforme
+    pub ace_inconnue: bool,
+}
+
+fn sid_texte(sid: windows::Win32::Security::PSID) -> String {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    unsafe {
+        let mut p = PWSTR::null();
+        if ConvertSidToStringSidW(sid, &mut p).is_err() || p.is_null() {
+            return String::new();
+        }
+        let t = p.to_string().unwrap_or_default();
+        let _ = LocalFree(HLOCAL(p.0 as *mut c_void));
+        t
+    }
+}
+
+/// Lit le propriétaire et la DACL ; None si illisible
+pub fn lire_securite(chemin: &std::path::Path) -> Option<Securite> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
-    use windows::Win32::Security::{IsWellKnownSid, WinBuiltinAdministratorsSid, WinLocalSystemSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    use windows::Win32::Security::{
+        GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID,
+    };
     let nom = large(&chemin.to_string_lossy());
     unsafe {
         let mut proprietaire = PSID::default();
+        let mut dacl: *mut ACL = std::ptr::null_mut();
         let mut sd = PSECURITY_DESCRIPTOR::default();
-        let r = GetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
-            Some(&mut proprietaire), None, None, None, &mut sd);
-        if r.0 != 0 || proprietaire.is_invalid() {
+        let r = GetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&mut proprietaire), None, Some(&mut dacl), None, &mut sd);
+        if r.0 != 0 || sd.0.is_null() {
             return None;
         }
-        let ok = IsWellKnownSid(proprietaire, WinLocalSystemSid).as_bool() || IsWellKnownSid(proprietaire, WinBuiltinAdministratorsSid).as_bool();
+        let mut s = Securite { proprietaire: if proprietaire.is_invalid() { String::new() } else { sid_texte(proprietaire) }, ..Default::default() };
+        let (mut controle, mut revision) = (0u16, 0u32);
+        if GetSecurityDescriptorControl(sd, &mut controle, &mut revision).is_ok() {
+            s.protege = controle & 0x1000 != 0; // SE_DACL_PROTECTED
+        }
+        if dacl.is_null() {
+            // DACL absente : accès total pour tout le monde
+            s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
+        } else {
+            for i in 0..(*dacl).AceCount as u32 {
+                let mut p: *mut c_void = std::ptr::null_mut();
+                if GetAce(dacl, i, &mut p).is_err() || p.is_null() {
+                    s.ace_inconnue = true;
+                    continue;
+                }
+                let entete = &*(p as *const ACE_HEADER);
+                match entete.AceType {
+                    // ACCESS_ALLOWED_ACE et ACCESS_DENIED_ACE ont la même disposition
+                    0 | 1 => {
+                        let ace = &*(p as *const ACCESS_ALLOWED_ACE);
+                        let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
+                        s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
+                    }
+                    _ => s.ace_inconnue = true,
+                }
+            }
+        }
         let _ = LocalFree(HLOCAL(sd.0));
-        Some(ok)
+        Some(s)
+    }
+}
+
+/// Propriétaire du fichier ou du dossier : SYSTEM ou Administrateurs ? None si illisible
+pub fn proprietaire_de_confiance(chemin: &std::path::Path) -> Option<bool> {
+    lire_securite(chemin).map(|s| crate::protection::proprietaire_acceptable(&s.proprietaire))
+}
+
+/// Écrit un fichier avec son descripteur de sécurité dès la création (fichier temporaire créé avec le SDDL,
+/// puis remplacement atomique : les droits explicites et protégés suivent le fichier). Aucune fenêtre où le
+/// contenu serait lisible avec les droits hérités.
+pub fn ecrire_fichier_protege(chemin: &std::path::Path, contenu: &[u8], sddl: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree, GENERIC_WRITE};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, MoveFileExW, WriteFile, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let tmp = chemin.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let (n_tmp, n_final, s) = (large(&tmp.to_string_lossy()), large(&chemin.to_string_lossy()), large(sddl));
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let f = CreateFileW(PCWSTR(n_tmp.as_ptr()), GENERIC_WRITE.0, FILE_SHARE_NONE, Some(&attributs), CREATE_NEW, FILE_ATTRIBUTE_NORMAL, HANDLE::default());
+        let _ = LocalFree(HLOCAL(sd.0));
+        let f = f.map_err(|e| e.to_string())?;
+        let mut ecrits = 0u32;
+        let r = WriteFile(f, Some(contenu), Some(&mut ecrits), None);
+        let _ = CloseHandle(f);
+        if let Err(e) = r.map_err(|e| e.to_string()).and_then(|_| if ecrits as usize == contenu.len() { Ok(()) } else { Err("écriture incomplète".into()) }) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        MoveFileExW(PCWSTR(n_tmp.as_ptr()), PCWSTR(n_final.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            e.to_string()
+        })
     }
 }
 
@@ -458,5 +560,113 @@ pub fn creer_dossier_protege(chemin: &std::path::Path, sddl: &str) -> bool {
         let ok = CreateDirectoryW(PCWSTR(nom.as_ptr()), Some(&attributs)).is_ok();
         let _ = LocalFree(HLOCAL(sd.0));
         ok
+    }
+}
+
+/// Exécute `f` avec le privilège de restauration actif, sur ce fil seulement et pendant `f` seulement : le fil
+/// emprunte une copie du jeton du processus, y active le privilège, puis revient au jeton du processus (où le
+/// privilège reste inactif). Le reste du service n'en profite jamais.
+pub fn avec_privilege_restauration<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    use windows::Win32::Foundation::{GetLastError, LUID, ERROR_NOT_ALL_ASSIGNED};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, ImpersonateSelf, LookupPrivilegeValueW, RevertToSelf, SecurityImpersonation, LUID_AND_ATTRIBUTES,
+        SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+    unsafe {
+        ImpersonateSelf(SecurityImpersonation).map_err(|e| format!("emprunt du jeton : {e}"))?;
+        let resultat = (|| {
+            let mut jeton = HANDLE::default();
+            OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, false, &mut jeton).map_err(|e| format!("jeton du fil : {e}"))?;
+            let nom = large("SeRestorePrivilege");
+            let mut luid = LUID::default();
+            let mut r = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(nom.as_ptr()), &mut luid).map_err(|e| e.to_string());
+            if r.is_ok() {
+                let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+                // AdjustTokenPrivileges réussit même si le privilège n'est pas accordé : ERROR_NOT_ALL_ASSIGNED
+                r = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None).map_err(|e| e.to_string());
+                if r.is_ok() && GetLastError() == ERROR_NOT_ALL_ASSIGNED {
+                    r = Err("privilège de restauration absent du jeton".into());
+                }
+            }
+            let _ = CloseHandle(jeton);
+            r
+        })();
+        let valeur = resultat.map(|_| f());
+        let _ = RevertToSelf();
+        valeur
+    }
+}
+
+/// Déplace un fichier ou un dossier par son handle, ouvert avec DELETE et la sémantique de sauvegarde (le
+/// privilège de restauration, s'il est actif, accorde DELETE sans toucher au propriétaire ni aux droits). Les
+/// liens ne sont pas suivis. Échoue si l'élément est tenu ouvert sans partage de suppression.
+pub fn renommer_par_handle(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FileRenameInfo, SetFileInformationByHandle, DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE,
+    };
+    let src = large(&source.to_string_lossy());
+    let dst: Vec<u16> = destination.to_string_lossy().encode_utf16().collect();
+    unsafe {
+        let h = CreateFileW(PCWSTR(src.as_ptr()), (DELETE | SYNCHRONIZE).0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, None,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, HANDLE::default())
+            .map_err(|e| format!("ouverture : {e}"))?;
+        // FILE_RENAME_INFO est de taille variable : nom de destination à la suite de la structure
+        let decalage = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let taille = decalage + (dst.len() + 1) * 2;
+        let mut tampon = vec![0u64; taille.div_ceil(8)];
+        let info = tampon.as_mut_ptr() as *mut FILE_RENAME_INFO;
+        (*info).FileNameLength = (dst.len() * 2) as u32;
+        std::ptr::copy_nonoverlapping(dst.as_ptr(), (tampon.as_mut_ptr() as *mut u8).add(decalage) as *mut u16, dst.len());
+        let r = SetFileInformationByHandle(h, FileRenameInfo, tampon.as_ptr() as *const c_void, taille as u32).map_err(|e| format!("renommage : {e}"));
+        let _ = CloseHandle(h);
+        r
+    }
+}
+
+/// Remplace le propriétaire puis toute la DACL (héritage coupé) par ceux du SDDL ; les enfants héritent des
+/// nouvelles entrées. Contrairement à icacls /grant, aucune entrée existante n'est conservée. En deux temps :
+/// changer de propriétaire demande WRITE_OWNER (privilège de prise de possession), réécrire la DACL demande
+/// WRITE_DAC, que donne le fait d'être devenu propriétaire.
+pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
+    };
+    use windows::Win32::Security::{
+        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    };
+    let (nom, s) = (large(&chemin.to_string_lossy()), large(sddl));
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut proprietaire = PSID::default();
+        let mut r = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaut).map_err(|e| e.to_string());
+        if r.is_ok() && (!present.as_bool() || dacl.is_null()) {
+            r = Err("SDDL sans DACL".into());
+        }
+        if r.is_ok() {
+            r = GetSecurityDescriptorOwner(sd, &mut proprietaire, &mut defaut).map_err(|e| e.to_string());
+        }
+        if r.is_ok() && !proprietaire.is_invalid() {
+            let e = SetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                proprietaire, PSID::default(), None, None);
+            if e.0 != 0 {
+                r = Err(format!("propriétaire : {}", windows::core::Error::from(e)));
+            }
+        }
+        if r.is_ok() {
+            let e = SetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, PSID::default(), PSID::default(), Some(dacl), None);
+            if e.0 != 0 {
+                r = Err(format!("droits : {}", windows::core::Error::from(e)));
+            }
+        }
+        let _ = LocalFree(HLOCAL(sd.0));
+        r
     }
 }

@@ -79,7 +79,7 @@ pub fn noms_leurres() -> Vec<(String, String)> {
     if let Some(l) = commun::lire::<Vec<(String, String)>>(FICHIER_NOMS).filter(|l| !l.is_empty()) {
         return l;
     }
-    crate::notifications::preparer_dossier();
+    let _ = crate::notifications::preparer_dossier();
     let mut graine = commun::filetime(std::time::SystemTime::now()) ^ ((std::process::id() as u64) << 32);
     let mut hasard = |n: u64| {
         graine ^= graine << 13;
