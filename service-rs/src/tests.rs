@@ -1133,7 +1133,7 @@ fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
 
 #[test]
 fn lot1ter_meme_chemin_et_chemin_final() {
-    use crate::natif::{chemin_final, meme_chemin, ouvrir_verifie, ErreurOuverture};
+    use crate::natif::{chemin_final, forme_longue, meme_chemin, ouvrir_verifie, ErreurOuverture};
     assert!(meme_chemin(r"\\?\C:\Users\Marie\x.txt", r"c:\users\marie\X.TXT"));
     assert!(meme_chemin(r"\\?\UNC\serveur\partage\x", r"\\serveur\partage\x\"));
     assert!(meme_chemin("C:/a/b", r"C:\a\b"));
@@ -1144,7 +1144,8 @@ fn lot1ter_meme_chemin_et_chemin_final() {
     let f = d.join("a.txt");
     std::fs::write(&f, b"a").unwrap();
     let h = ouvrir_verifie(&f, 0x8000_0000 | 0x0010_0000, 0x7, false).unwrap();
-    assert!(meme_chemin(&chemin_final(&h).unwrap(), &f.to_string_lossy()));
+    // Le dossier temporaire peut lui-même être désigné en noms courts (CI) : comparaison avec la forme longue
+    assert!(meme_chemin(&chemin_final(&h).unwrap(), &forme_longue(&f).to_string_lossy()));
     assert_eq!(ouvrir_verifie(&d.join("absent.txt"), 0x8000_0000, 0x7, false).unwrap_err(), ErreurOuverture::Absent);
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -1263,10 +1264,12 @@ fn lot1ter_chemin_en_noms_courts_accepte() {
     let f = long.join("fichier au nom tres long.txt");
     std::fs::write(&f, b"contenu").unwrap();
     let sha = crate::hygiene::empreinte_fichier(&f).unwrap();
-    assert!(meme_chemin(&forme_longue(&f).to_string_lossy(), &f.to_string_lossy()));
-    match forme_courte(&f).filter(|c| c != &f) {
+    // Le dossier temporaire peut lui-même être désigné en noms courts (CI) : références en forme longue
+    let f_long = forme_longue(&f);
+    assert!(!f_long.to_string_lossy().contains('~'), "{}", f_long.display());
+    match forme_courte(&f).filter(|c| !meme_chemin(&c.to_string_lossy(), &f_long.to_string_lossy())) {
         Some(court) => {
-            assert!(meme_chemin(&forme_longue(&court).to_string_lossy(), &f.to_string_lossy()), "{}", court.display());
+            assert!(meme_chemin(&forme_longue(&court).to_string_lossy(), &f_long.to_string_lossy()), "{}", court.display());
             assert!(ouvrir_verifie(&court, 0x8000_0000 | 0x0010_0000, 0x7, false).is_ok(), "{}", court.display());
             assert_eq!(etat_original(&court, &sha), Original::Identique);
             // Fichier à créer dans un dossier désigné par son nom court
