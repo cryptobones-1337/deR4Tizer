@@ -217,7 +217,7 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>) -> Ndr {
             {
                 let mut g = i.lock().unwrap();
                 g.etat.mis_a_jour = commun::maintenant();
-                commun::ecrire("reseau.json", &g.etat);
+                let _ = commun::ecrire("reseau.json", &g.etat);
             }
             std::thread::sleep(Duration::from_secs(10));
         }

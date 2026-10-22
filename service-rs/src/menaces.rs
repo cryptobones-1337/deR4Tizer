@@ -290,7 +290,7 @@ impl Menaces {
         m.plages_reputation = fusionner(plages_r);
         infos.total_ip = m.ip4.len() + m.ip6.len();
         infos.total_domaines = m.domaines.iter().map(|(_, t)| t.len()).sum();
-        commun::ecrire("menaces.json", &infos);
+        let _ = commun::ecrire("menaces.json", &infos);
         m.infos = infos;
         m
     }

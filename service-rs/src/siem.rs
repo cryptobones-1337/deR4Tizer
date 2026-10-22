@@ -462,7 +462,7 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
                 let surplus = incidents.len() - 500;
                 incidents.drain(..surplus);
             }
-            commun::ecrire("incidents.json", &incidents);
+            let _ = commun::ecrire("incidents.json", &incidents);
         }
         if dernier_menage.elapsed() > Duration::from_secs(3600) {
             menage();

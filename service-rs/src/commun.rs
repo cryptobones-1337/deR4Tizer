@@ -464,20 +464,37 @@ pub fn lire<T: DeserializeOwned>(nom: &str) -> Option<T> {
     serde_json::from_str(texte.trim_start_matches('\u{feff}')).ok()
 }
 
-/// Écriture atomique : fichier temporaire puis remplacement, pour que l'interface ne lise jamais un fichier à moitié écrit
-pub fn ecrire<T: Serialize + ?Sized>(nom: &str, donnees: &T) {
-    let f = dossier().join(nom);
-    let tmp = dossier().join(format!("{nom}.tmp"));
-    let Ok(json) = serde_json::to_vec(donnees) else { return };
-    if fs::write(&tmp, json).is_err() {
-        return;
+/// Écriture atomique : fichier temporaire synchronisé sur le disque, puis remplacement (écriture immédiate),
+/// pour que l'interface ne lise jamais un fichier à moitié écrit. Erreur si le fichier n'a pas été remplacé :
+/// les appelants pour qui l'écriture fait partie d'une transaction (quarantaine) la vérifient.
+pub fn ecrire<T: Serialize + ?Sized>(nom: &str, donnees: &T) -> Result<(), String> {
+    ecrire_dans(&dossier().join(nom), donnees)
+}
+
+/// `ecrire` vers un chemin quelconque (tests, dossiers de travail)
+pub fn ecrire_dans<T: Serialize + ?Sized>(f: &Path, donnees: &T) -> Result<(), String> {
+    let nom = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp = f.with_file_name(format!("{nom}.tmp"));
+    let json = serde_json::to_vec(donnees).map_err(|e| format!("{nom} : {e}"))?;
+    let ecrit = (|| -> std::io::Result<()> {
+        let mut h = fs::File::create(&tmp)?;
+        h.write_all(&json)?;
+        h.sync_all()
+    })();
+    if let Err(e) = ecrit {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{nom} : écriture : {e}"));
     }
+    let mut derniere = String::new();
     for _ in 0..5 {
-        if fs::rename(&tmp, &f).is_ok() {
-            return;
+        match crate::natif::remplacer_fichier(&tmp, f) {
+            Ok(()) => return Ok(()),
+            Err(e) => derniere = e,
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    let _ = fs::remove_file(&tmp);
+    Err(format!("{nom} : remplacement : {derniere}"))
 }
 
 pub fn lire_carte(nom: &str) -> Option<HashMap<String, String>> {

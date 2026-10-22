@@ -753,10 +753,33 @@ fn sddl_test(d: &std::path::Path) -> (String, String) {
     (moi.clone(), format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})"))
 }
 
+/// Écriture du manifeste pour les tests : vers un fichier, en échouant à l'appel numéro `echec` (0 : jamais)
+struct Manifeste {
+    fichier: std::path::PathBuf,
+    appels: std::cell::Cell<u32>,
+    echec: u32,
+}
+
+impl Manifeste {
+    fn new(d: &std::path::Path, echec: u32) -> Self {
+        Manifeste { fichier: d.join("quarantaine.json"), appels: std::cell::Cell::new(0), echec }
+    }
+    fn ecrire(&self, l: &[crate::reponse::ElementQuarantaine]) -> Result<(), String> {
+        self.appels.set(self.appels.get() + 1);
+        if self.appels.get() == self.echec {
+            return Err("disque plein (simulé)".into());
+        }
+        crate::commun::ecrire_dans(&self.fichier, l)
+    }
+    fn lu(&self) -> Vec<crate::reponse::ElementQuarantaine> {
+        serde_json::from_slice(&std::fs::read(&self.fichier).unwrap_or_default()).unwrap_or_default()
+    }
+}
+
 #[test]
 fn lot1bis_quarantaine_redemarrage_restauration() {
-    use crate::protection::{proprietaire_acceptable, trier_element, Tri};
-    use crate::reponse::{copier_en_quarantaine, restaurer_depuis, ElementQuarantaine, SDDL_QUARANTAINE};
+    use crate::protection::{trier_element, Tri};
+    use crate::reponse::{quarantaine_transaction, restaurer_transaction, EtatQuarantaine, SDDL_QUARANTAINE};
     let d = dossier_test("quarantaine");
     let (moi, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -764,41 +787,70 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
     std::fs::create_dir_all(origine.parent().unwrap()).unwrap();
     let contenu: Vec<u8> = (0..200_000u32).map(|i| (i * 7 % 251) as u8).collect();
     std::fs::write(&origine, &contenu).unwrap();
-    let (fichier, sha) = copier_en_quarantaine(&dq, &origine, "id1", &sddl).unwrap();
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    quarantaine_transaction(&dq, &mut liste, &origine, "id1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
     assert!(!origine.exists(), "original retiré");
-    let copie = dq.join(&fichier);
-    // La copie est créée par le service avec ses droits : propriétaire celui du SDDL (en service, SYSTEM)
+    assert_eq!(liste[0].etat(), EtatQuarantaine::Terminee);
+    assert_eq!(m.lu(), liste, "manifeste enregistré");
+    let copie = dq.join(liste[0].nom_fichier());
+    // Copie créée par le service avec ses droits : propriétaire celui du SDDL (en service, SYSTEM)
     let s = crate::natif::lire_securite(&copie).unwrap();
     assert_eq!(s.proprietaire, moi);
     assert!(s.protege);
     assert!(SDDL_QUARANTAINE.starts_with("O:SY"), "en service, propriétaire SYSTEM");
-    // Redémarrage : une copie à SYSTEM est gardée par le tri (et non écartée comme avant)
-    assert!(proprietaire_acceptable("S-1-5-18"));
+    // Redémarrage : une copie à SYSTEM est gardée par le tri
     assert_eq!(trier_element(false, Some(true)), Tri::Garder);
-    let e = ElementQuarantaine { id: "id1".into(), chemin_origine: origine.display().to_string(), fichier: fichier.clone(), sha256: sha.clone(), ..Default::default() };
     // Copie modifiée : refus
     let mut altere = contenu.clone();
     altere[10] ^= 1;
     std::fs::write(&copie, &altere).unwrap();
-    assert!(restaurer_depuis(&dq, &e).unwrap_err().contains("modifiée"));
+    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap_err().contains("modifiée"));
     std::fs::write(&copie, &contenu).unwrap();
-    // Sans empreinte : refus
-    assert!(restaurer_depuis(&dq, &ElementQuarantaine { sha256: String::new(), ..e.clone() }).is_err());
     // Emplacement d'origine occupé : refus, rien d'écrasé
     std::fs::write(&origine, b"autre").unwrap();
-    assert!(restaurer_depuis(&dq, &e).is_err());
+    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).is_err());
     assert_eq!(std::fs::read(&origine).unwrap(), b"autre");
     std::fs::remove_file(&origine).unwrap();
-    // Restauration : même contenu, copie retirée
-    restaurer_depuis(&dq, &e).unwrap();
+    // Restauration : même contenu, copie et entrée retirées
+    restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), contenu);
-    assert!(!copie.exists());
+    assert!(!copie.exists() && liste.is_empty() && m.lu().is_empty());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_marque_internet_conservee() {
+    use crate::reponse::{lire_marque_internet, migrer_quarantaine, quarantaine_transaction, restaurer_transaction, ElementQuarantaine};
+    let d = dossier_test("marque");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let marque = "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://exemple.invalid/setup.exe\r\n";
+    let m = Manifeste::new(&d, 0);
+    // Quarantaine puis restauration
+    let f = d.join("setup.exe");
+    std::fs::write(&f, b"MZ...").unwrap();
+    std::fs::write(format!("{}:Zone.Identifier", f.display()), marque).unwrap();
+    let mut liste = Vec::new();
+    quarantaine_transaction(&dq, &mut liste, &f, "z1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
+    assert!(liste[0].zone_identifier.contains("ZoneId=3"));
+    restaurer_transaction(&dq, &mut liste, "z1", &|l| m.ecrire(l)).unwrap();
+    assert!(lire_marque_internet(&f).contains("ZoneId=3"), "marque réécrite sur le fichier restauré");
+    // Migration d'une ancienne copie (déplacée avec son flux), puis restauration
+    std::fs::write(dq.join("ancien.quarantaine"), b"MZ ancien").unwrap();
+    std::fs::write(format!("{}:Zone.Identifier", dq.join("ancien.quarantaine").display()), marque).unwrap();
+    let g = d.join("ancien.exe");
+    let mut liste = vec![ElementQuarantaine { id: "ancien".into(), chemin_origine: g.display().to_string(), ..Default::default() }];
+    migrer_quarantaine(&dq, &mut liste, &sddl, |_| Some(false), &|l| m.ecrire(l));
+    assert!(liste[0].zone_identifier.contains("ZoneId=3"));
+    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
+    assert!(lire_marque_internet(&g).contains("ZoneId=3"));
     let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
 fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
-    use crate::reponse::{migrer_quarantaine, restaurer_depuis, ElementQuarantaine};
+    use crate::reponse::{migrer_quarantaine, restaurer_transaction, ElementQuarantaine};
     let d = dossier_test("migration");
     let (_, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -812,19 +864,124 @@ fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
         ElementQuarantaine { id: "confiance".into(), chemin_origine: d.join("x").display().to_string(), ..Default::default() },
         ElementQuarantaine { id: "disparu".into(), chemin_origine: d.join("y").display().to_string(), ..Default::default() },
     ];
-    let messages = migrer_quarantaine(&dq, &mut liste, &sddl, |p| Some(p.ends_with("confiance.quarantaine")));
+    let m = Manifeste::new(&d, 0);
+    let messages = migrer_quarantaine(&dq, &mut liste, &sddl, |p| Some(p.ends_with("confiance.quarantaine")), &|l| m.ecrire(l));
     assert_eq!(messages.len(), 1, "{messages:?}");
-    // Recopié avec ses droits, empreinte enregistrée, ancienne copie retirée, contenu intact
     assert!(liste[0].fichier.starts_with("ancien-") && liste[0].sha256.len() == 64);
     assert!(!dq.join("ancien.quarantaine").exists());
     assert_eq!(std::fs::read(dq.join(&liste[0].fichier)).unwrap(), b"contenu d'origine");
-    // Copie déjà de confiance : empreinte ajoutée, pas de recopie
-    assert!(liste[1].fichier.is_empty() && liste[1].sha256.len() == 64);
-    // Fichier absent : rien
+    assert!(liste[1].fichier.is_empty() && liste[1].sha256.len() == 64, "copie de confiance : empreinte ajoutée");
     assert!(liste[2].sha256.is_empty());
-    // Et la restauration fonctionne ensuite
-    restaurer_depuis(&dq, &liste[0]).unwrap();
+    assert_eq!(m.lu(), liste, "nouvelle copie enregistrée");
+    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), b"contenu d'origine");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_decision_de_reprise() {
+    use crate::reponse::{decision_reprise, EtatQuarantaine::*, Reprise};
+    // (état, original présent, copie présente) : toutes les combinaisons
+    assert_eq!(decision_reprise(EnCours, true, true), Reprise::RetirerCopieEtEntree);
+    assert_eq!(decision_reprise(EnCours, false, true), Reprise::MarquerTerminee);
+    assert_eq!(decision_reprise(EnCours, true, false), Reprise::RetirerEntree);
+    assert!(matches!(decision_reprise(EnCours, false, false), Reprise::Signaler(_)));
+    assert_eq!(decision_reprise(Terminee, true, true), Reprise::Rien);
+    assert_eq!(decision_reprise(Terminee, false, true), Reprise::Rien);
+    assert!(matches!(decision_reprise(Terminee, true, false), Reprise::Signaler(_)));
+    assert!(matches!(decision_reprise(Terminee, false, false), Reprise::Signaler(_)));
+    assert_eq!(decision_reprise(Restauree, true, true), Reprise::FinirRestauration);
+    assert_eq!(decision_reprise(Restauree, true, false), Reprise::RetirerEntree);
+    assert_eq!(decision_reprise(Restauree, false, true), Reprise::RemettreTerminee);
+    assert!(matches!(decision_reprise(Restauree, false, false), Reprise::Signaler(_)));
+}
+
+#[test]
+fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
+    use crate::reponse::{quarantaine_transaction, reprendre_quarantaine, restaurer_transaction, EtatQuarantaine, ElementQuarantaine};
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = dossier_test("transaction");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let copies = || std::fs::read_dir(&dq).map(|l| l.count()).unwrap_or(0);
+
+    // 1. Échec du premier enregistrement (« en_cours ») : copie retirée, original intact, rien d'enregistré
+    let f = d.join("a.exe");
+    std::fs::write(&f, b"AAA").unwrap();
+    let m = Manifeste::new(&d, 1);
+    let mut liste = Vec::new();
+    assert!(quarantaine_transaction(&dq, &mut liste, &f, "a", "t", &sddl, &|l| m.ecrire(l)).is_err());
+    assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
+    assert!(liste.is_empty() && copies() == 0 && m.lu().is_empty());
+
+    // 2. Original impossible à supprimer (tenu ouvert) : copie et entrée retirées, original intact
+    let m = Manifeste::new(&d, 0);
+    {
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&f).unwrap();
+        assert!(quarantaine_transaction(&dq, &mut liste, &f, "a", "t", &sddl, &|l| m.ecrire(l)).is_err());
+    }
+    assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
+    assert!(liste.is_empty() && copies() == 0 && m.lu().is_empty());
+
+    // 3. Échec du dernier enregistrement (« terminee ») : original supprimé, copie en place, entrée
+    //    enregistrée « en_cours » ; la reprise au démarrage la termine
+    let m = Manifeste::new(&d, 2);
+    quarantaine_transaction(&dq, &mut liste, &f, "a", "t", &sddl, &|l| m.ecrire(l)).unwrap();
+    assert!(!f.exists() && copies() == 1);
+    let mut lu = m.lu();
+    assert_eq!(lu[0].etat(), EtatQuarantaine::EnCours);
+    reprendre_quarantaine(&dq, &mut lu);
+    assert_eq!(lu[0].etat(), EtatQuarantaine::Terminee);
+    let mut liste = lu;
+
+    // 4. Restauration, échec de l'enregistrement « restauree » : fichier restauré retiré, copie et entrée intactes
+    let m = Manifeste::new(&d, 1);
+    assert!(restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).is_err());
+    assert!(!f.exists() && copies() == 1 && liste[0].etat() == EtatQuarantaine::Terminee);
+
+    // 5. Dossier d'origine impossible à créer (un fichier à sa place) : erreur avant toute copie
+    let bloque = d.join("bloque");
+    std::fs::write(&bloque, b"").unwrap();
+    let mut autre = liste.clone();
+    autre[0].chemin_origine = bloque.join("sous").join("a.exe").display().to_string();
+    let m = Manifeste::new(&d, 0);
+    assert!(restaurer_transaction(&dq, &mut autre, "a", &|l| m.ecrire(l)).unwrap_err().contains("dossier d'origine"));
+    assert!(copies() == 1 && m.appels.get() == 0, "rien de copié ni d'enregistré");
+
+    // 6. Restauration interrompue après l'enregistrement « restauree » : la reprise retire la copie et l'entrée
+    let m = Manifeste::new(&d, 2);
+    restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
+    let mut lu = m.lu();
+    assert_eq!(lu[0].etat(), EtatQuarantaine::Restauree);
+    std::fs::write(dq.join(lu[0].nom_fichier()), b"AAA").unwrap(); // copie encore présente (retrait raté)
+    reprendre_quarantaine(&dq, &mut lu);
+    assert!(lu.is_empty() && copies() == 0);
+
+    // 7. Copie orpheline (sans entrée) : signalée et conservée
+    std::fs::write(dq.join("orpheline.quarantaine"), b"x").unwrap();
+    let mut vide: Vec<ElementQuarantaine> = Vec::new();
+    let messages = reprendre_quarantaine(&dq, &mut vide);
+    assert!(messages.iter().any(|m| m.contains("orpheline")) && dq.join("orpheline.quarantaine").exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_migration_echec_du_manifeste_ancienne_copie_gardee() {
+    use crate::reponse::{migrer_quarantaine, ElementQuarantaine};
+    let d = dossier_test("migration-echec");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    std::fs::create_dir_all(&dq).unwrap();
+    std::fs::write(dq.join("ancien.quarantaine"), b"precieux").unwrap();
+    let mut liste = vec![ElementQuarantaine { id: "ancien".into(), chemin_origine: d.join("x").display().to_string(), ..Default::default() }];
+    let avant = liste.clone();
+    let m = Manifeste::new(&d, 1);
+    let messages = migrer_quarantaine(&dq, &mut liste, &sddl, |_| Some(false), &|l| m.ecrire(l));
+    assert!(messages[0].contains("NON migrée"), "{messages:?}");
+    assert_eq!(liste, avant, "entrée inchangée");
+    assert_eq!(std::fs::read(dq.join("ancien.quarantaine")).unwrap(), b"precieux", "ancienne copie gardée");
+    assert_eq!(std::fs::read_dir(&dq).unwrap().count(), 1, "nouvelle copie retirée");
     let _ = std::fs::remove_dir_all(&d);
 }
 

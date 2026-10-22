@@ -713,3 +713,10 @@ pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, s
     }
     Ok(empreinte.finalize().iter().map(|o| format!("{o:02x}")).collect())
 }
+
+/// Remplace `destination` par `source` (même volume), écriture immédiate sur le disque
+pub fn remplacer_fichier(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+    let (s, d) = (large(&source.to_string_lossy()), large(&destination.to_string_lossy()));
+    unsafe { MoveFileExW(PCWSTR(s.as_ptr()), PCWSTR(d.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH).map_err(|e| e.to_string()) }
+}

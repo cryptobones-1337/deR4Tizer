@@ -550,7 +550,7 @@ impl Analyseur for Ids {
         if self.tics % 5 == 0 {
             self.ips = commun::lire::<commun::Config>("config.json").map(|c| c.ips).unwrap_or(false);
             self.deja.retain(|_, t| t.elapsed() < Duration::from_secs(3600));
-            commun::ecrire("ids.json", &Etat {
+            let _ = commun::ecrire("ids.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 regles: self.regles.len(),
                 ignorees: self.ignorees,

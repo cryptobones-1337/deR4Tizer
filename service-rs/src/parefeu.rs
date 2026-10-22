@@ -220,7 +220,7 @@ pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str
             if historique.len() > 300 {
                 historique.remove(0);
             }
-            commun::ecrire("parefeu.json", &historique);
+            let _ = commun::ecrire("parefeu.json", &historique);
             if let Some(a) = a {
                 // Actualisation de la GPO classée en information : on vérifie une minute plus tard que les règles
                 // sont bien revenues (Windows en compte plusieurs centaines) ; sinon, alerte critique
@@ -408,7 +408,7 @@ impl LecteurJournal {
             liste.sort_by(|a, b| b.derniere.cmp(&a.derniere));
             liste.truncate(200);
             self.entrees = liste.iter().map(|e| ((e.source.clone(), e.port_local, e.action.clone()), e.clone())).collect();
-            commun::ecrire("exposition.json", &liste);
+            let _ = commun::ecrire("exposition.json", &liste);
         }
         alertes
     }

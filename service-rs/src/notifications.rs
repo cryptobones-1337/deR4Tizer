@@ -233,7 +233,7 @@ fn ecrire_etat(etat: &mut Etat) {
     etat.ntfy_configure = !s.ntfy_url.is_empty();
     etat.teams_configure = !s.teams_url.is_empty();
     etat.smtp_mot_de_passe = !s.smtp_mot_de_passe.is_empty();
-    commun::ecrire("notifications.json", etat);
+    let _ = commun::ecrire("notifications.json", etat);
 }
 
 /// Envoi immédiat d'un message de test sur les canaux activés ; renvoie le compte rendu

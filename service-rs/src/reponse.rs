@@ -134,11 +134,41 @@ pub struct ElementQuarantaine {
     pub fichier: String,
     /// Empreinte SHA-256 de la copie, vérifiée à la restauration (vide : élément pas encore migré)
     pub sha256: String,
+    /// « en_cours », « terminee » ou « restauree » (vide : éléments d'avant la 4.3, terminés)
+    pub etat: String,
+    /// Marque Internet de l'original (flux Zone.Identifier), réécrite à la restauration
+    pub zone_identifier: String,
+}
+
+/// État d'un élément de quarantaine (transaction)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EtatQuarantaine {
+    /// Copie faite et enregistrée, original pas encore supprimé
+    EnCours,
+    Terminee,
+    /// Fichier restauré et vérifié, copie pas encore retirée
+    Restauree,
 }
 
 impl ElementQuarantaine {
     pub fn nom_fichier(&self) -> String {
         if self.fichier.is_empty() { format!("{}.quarantaine", self.id) } else { self.fichier.clone() }
+    }
+
+    pub fn etat(&self) -> EtatQuarantaine {
+        match self.etat.as_str() {
+            "en_cours" => EtatQuarantaine::EnCours,
+            "restauree" => EtatQuarantaine::Restauree,
+            _ => EtatQuarantaine::Terminee,
+        }
+    }
+
+    fn marquer(&mut self, etat: EtatQuarantaine) {
+        self.etat = match etat {
+            EtatQuarantaine::EnCours => "en_cours",
+            EtatQuarantaine::Terminee => "terminee",
+            EtatQuarantaine::Restauree => "restauree",
+        }.into();
     }
 }
 
@@ -147,26 +177,90 @@ impl ElementQuarantaine {
 /// propriétaire d'origine (l'utilisateur) : la copie serait écartée au démarrage suivant.
 pub const SDDL_QUARANTAINE: &str = "O:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)";
 
+/// Écriture du manifeste (quarantaine.json en service ; injectée dans les tests pour simuler un échec)
+pub type EcrireManifeste<'a> = &'a dyn Fn(&[ElementQuarantaine]) -> Result<(), String>;
+
 fn dossier_quarantaine() -> PathBuf {
     commun::dossier().join("quarantaine")
 }
 
-/// Copie protégée de `source` dans `dossier`, empreinte relue, puis suppression de l'original. Renvoie
-/// (nom du fichier, empreinte). Si l'original ne peut pas être supprimé, la copie est retirée et rien ne change.
-pub fn copier_en_quarantaine(dossier: &Path, source: &Path, id: &str, sddl: &str) -> Result<(String, String), String> {
+/// Marque Internet (flux Zone.Identifier) d'un fichier, 4 Ko au plus ; vide s'il n'en a pas
+pub fn lire_marque_internet(chemin: &Path) -> String {
+    use std::io::Read;
+    let mut t = String::new();
+    if let Ok(f) = fs::File::open(format!("{}:Zone.Identifier", chemin.display())) {
+        let _ = f.take(4096).read_to_string(&mut t);
+    }
+    t
+}
+
+fn ecrire_marque_internet(chemin: &Path, marque: &str) -> Result<(), String> {
+    if marque.is_empty() {
+        return Ok(());
+    }
+    fs::write(format!("{}:Zone.Identifier", chemin.display()), marque).map_err(|e| format!("marque Internet : {e}"))
+}
+
+/// Copie protégée de `source` dans `dossier`, empreinte relue. Renvoie (nom du fichier, empreinte)
+fn copier_verifie(dossier: &Path, source: &Path, fichier: &str, sddl: &str) -> Result<String, String> {
     fs::create_dir_all(dossier).map_err(|e| e.to_string())?;
-    let fichier = format!("{id}.quarantaine");
-    let copie = dossier.join(&fichier);
+    let copie = dossier.join(fichier);
     let sha = natif::copier_protege(source, &copie, sddl)?;
     if crate::hygiene::empreinte_fichier(&copie).is_none_or(|h| !h.eq_ignore_ascii_case(&sha)) {
         let _ = fs::remove_file(&copie);
         return Err("copie en quarantaine illisible ou différente de l'original".into());
     }
-    if let Err(e) = fs::remove_file(source) {
+    Ok(sha)
+}
+
+/// Mise en quarantaine transactionnelle : copie protégée vérifiée, entrée « en_cours » ENREGISTRÉE, puis
+/// seulement suppression de l'original, puis « terminee ». Échec d'enregistrement : copie retirée, original
+/// intact. Original impossible à supprimer : entrée et copie retirées, original intact. Échec du dernier
+/// enregistrement : l'original est déjà supprimé, la copie est en place ; la reprise au démarrage termine.
+pub fn quarantaine_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, source: &Path, id: &str, raison: &str,
+                               sddl: &str, ecrire: EcrireManifeste) -> Result<(), String> {
+    let fichier = format!("{id}.quarantaine");
+    let zone_identifier = lire_marque_internet(source);
+    let taille = fs::metadata(source).map(|m| m.len()).unwrap_or(0);
+    let sha256 = copier_verifie(dossier, source, &fichier, sddl)?;
+    let copie = dossier.join(&fichier);
+    let mut e = ElementQuarantaine { id: id.into(), chemin_origine: source.display().to_string(), date: commun::maintenant(),
+        raison: raison.into(), taille, fichier, sha256, zone_identifier, ..Default::default() };
+    e.marquer(EtatQuarantaine::EnCours);
+    liste.push(e);
+    if let Err(x) = ecrire(liste) {
+        liste.pop();
         let _ = fs::remove_file(&copie);
-        return Err(format!("suppression de l'original impossible : {e}"));
+        return Err(format!("quarantaine non enregistrée ({x}) : original intact"));
     }
-    Ok((fichier, sha))
+    if let Err(x) = fs::remove_file(source) {
+        liste.pop();
+        if ecrire(liste).is_ok() {
+            let _ = fs::remove_file(&copie);
+        }
+        return Err(format!("suppression de l'original impossible : {x}"));
+    }
+    if let Some(e) = liste.last_mut() {
+        e.marquer(EtatQuarantaine::Terminee);
+    }
+    // Échec ici : original supprimé, copie et entrée « en_cours » en place, la reprise passera à « terminee »
+    let _ = ecrire(liste);
+    Ok(())
+}
+
+/// Lit le manifeste. Absent : liste vide. Présent mais illisible (protection en échec, propriétaire non
+/// vérifié, contenu invalide) : erreur, pour ne jamais le réécrire avec une liste incomplète.
+fn charger_liste() -> Result<Vec<ElementQuarantaine>, String> {
+    let f = commun::dossier().join("quarantaine.json");
+    if fs::symlink_metadata(&f).is_err() {
+        return Ok(Vec::new());
+    }
+    commun::lire::<Vec<ElementQuarantaine>>("quarantaine.json")
+        .ok_or_else(|| "manifeste de quarantaine illisible ou protection du dossier non vérifiée".to_string())
+}
+
+fn ecrire_manifeste_service(liste: &[ElementQuarantaine]) -> Result<(), String> {
+    commun::ecrire("quarantaine.json", liste)
 }
 
 /// Tue les processus qui exécutent ce fichier, puis le met en quarantaine (copie protégée, inexécutable)
@@ -179,24 +273,24 @@ pub fn mettre_en_quarantaine(chemin: &str, raison: &str) -> Result<String, Strin
     if bas.starts_with(&natif::dossier_windows().to_lowercase()) {
         return Err("refusé : fichier du système Windows".into());
     }
+    let mut liste = charger_liste()?;
     for (pid, _) in natif::processus() {
         if natif::chemin_processus(pid).eq_ignore_ascii_case(chemin) {
             let _ = tuer(pid);
         }
     }
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let id = commun::nouvel_id();
-    let taille = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-    let (fichier, sha256) = copier_en_quarantaine(&dossier_quarantaine(), p, &id, SDDL_QUARANTAINE)?;
-    let mut liste: Vec<ElementQuarantaine> = commun::lire("quarantaine.json").unwrap_or_default();
-    liste.push(ElementQuarantaine { id, chemin_origine: chemin.into(), date: commun::maintenant(), raison: raison.into(), taille, fichier, sha256 });
-    commun::ecrire("quarantaine.json", &liste);
+    quarantaine_transaction(&dossier_quarantaine(), &mut liste, p, &commun::nouvel_id(), raison, SDDL_QUARANTAINE, &ecrire_manifeste_service)?;
     Ok(format!("{} placé en quarantaine.", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()))
 }
 
-/// Restaure un élément : empreinte de la copie vérifiée (refus si absente ou différente), recopie à son
-/// emplacement d'origine (refus s'il est occupé), empreinte de la restauration vérifiée, puis retrait de la copie
-pub fn restaurer_depuis(dossier: &Path, e: &ElementQuarantaine) -> Result<(), String> {
+/// Restauration transactionnelle : empreinte de la copie vérifiée (refus si absente ou différente), dossier
+/// d'origine créé (échec = erreur avant toute copie), refus si l'emplacement est occupé, recopie, empreinte
+/// vérifiée, marque Internet réécrite, état « restauree » ENREGISTRÉ, puis seulement retrait de la copie et
+/// de l'entrée. Échec d'enregistrement : fichier restauré retiré, copie et entrée intactes.
+pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, id: &str, ecrire: EcrireManifeste) -> Result<String, String> {
+    let i = liste.iter().position(|e| e.id == id).ok_or("élément introuvable")?;
+    let e = liste[i].clone();
     let source = dossier.join(e.nom_fichier());
     if e.sha256.len() != 64 {
         return Err("empreinte de la copie inconnue : restauration refusée".into());
@@ -211,71 +305,202 @@ pub fn restaurer_depuis(dossier: &Path, e: &ElementQuarantaine) -> Result<(), St
         return Err(format!("{} existe déjà : restauration refusée", e.chemin_origine));
     }
     if let Some(d) = cible.parent() {
-        let _ = fs::create_dir_all(d);
+        fs::create_dir_all(d).map_err(|x| format!("dossier d'origine impossible à créer : {x}"))?;
     }
-    fs::copy(&source, cible).map_err(|x| x.to_string())?;
-    if crate::hygiene::empreinte_fichier(cible).is_none_or(|h| !h.eq_ignore_ascii_case(&e.sha256)) {
+    let annuler = |raison: String| {
         let _ = fs::remove_file(cible);
-        return Err("restauration incomplète : fichier restauré retiré, copie conservée".into());
+        Err(raison)
+    };
+    if let Err(x) = fs::copy(&source, cible) {
+        return annuler(format!("copie impossible : {x}"));
     }
+    if crate::hygiene::empreinte_fichier(cible).is_none_or(|h| !h.eq_ignore_ascii_case(&e.sha256)) {
+        return annuler("restauration incomplète : fichier restauré retiré, copie conservée".into());
+    }
+    if let Err(x) = ecrire_marque_internet(cible, &e.zone_identifier) {
+        return annuler(x);
+    }
+    liste[i].marquer(EtatQuarantaine::Restauree);
+    if let Err(x) = ecrire(liste) {
+        liste[i].marquer(e.etat());
+        return annuler(format!("restauration non enregistrée ({x}) : fichier restauré retiré, copie conservée"));
+    }
+    // Échecs suivants sans gravité : la reprise au démarrage retire la copie et l'entrée
     let _ = fs::remove_file(&source);
-    Ok(())
+    liste.remove(i);
+    let _ = ecrire(liste);
+    Ok(e.chemin_origine)
 }
 
 pub fn restaurer(id: &str) -> Result<String, String> {
-    let mut liste: Vec<ElementQuarantaine> = commun::lire("quarantaine.json").unwrap_or_default();
-    let i = liste.iter().position(|e| e.id == id).ok_or("élément introuvable")?;
-    restaurer_depuis(&dossier_quarantaine(), &liste[i])?;
-    let e = liste.remove(i);
-    commun::ecrire("quarantaine.json", &liste);
-    Ok(format!("{} restauré.", e.chemin_origine))
+    let mut liste = charger_liste()?;
+    let chemin = restaurer_transaction(&dossier_quarantaine(), &mut liste, id, &ecrire_manifeste_service)?;
+    Ok(format!("{chemin} restauré."))
 }
 
-/// Migration au démarrage (avant le tri du dossier de données) : une copie qui n'appartient pas à SYSTEM ou aux
-/// administrateurs (déplacée avant la 4.3, elle garde le propriétaire de l'utilisateur) serait écartée par le
-/// tri. Elle est recopiée de façon protégée, empreinte enregistrée ; l'ancienne est supprimée si possible,
-/// sinon le tri la met de côté. Une copie de confiance sans empreinte reçoit la sienne. Le contenu n'est
-/// jamais perdu. Renvoie les messages pour le journal ; `liste` est mise à jour.
-pub fn migrer_quarantaine(dossier: &Path, liste: &mut [ElementQuarantaine], sddl: &str,
-                          de_confiance: impl Fn(&Path) -> Option<bool>) -> Vec<String> {
+/// Action de reprise au démarrage d'une entrée, selon son état et la présence de l'original et de la copie.
+/// Ne supprime jamais un original.
+#[derive(Debug, PartialEq)]
+pub enum Reprise {
+    Rien,
+    /// Quarantaine non aboutie (original intact) : copie et entrée retirées
+    RetirerCopieEtEntree,
+    /// Original supprimé, copie en place : la quarantaine est terminée
+    MarquerTerminee,
+    RetirerEntree,
+    /// Restauration enregistrée : copie retirée si le fichier restauré a la bonne empreinte, puis entrée
+    FinirRestauration,
+    /// Fichier restauré disparu, copie en place : de nouveau en quarantaine
+    RemettreTerminee,
+    /// Anomalie journalisée, entrée conservée
+    Signaler(&'static str),
+}
+
+pub fn decision_reprise(etat: EtatQuarantaine, original: bool, copie: bool) -> Reprise {
+    use EtatQuarantaine::*;
+    match (etat, original, copie) {
+        (EnCours, true, true) => Reprise::RetirerCopieEtEntree,
+        (EnCours, false, true) => Reprise::MarquerTerminee,
+        (EnCours, true, false) => Reprise::RetirerEntree,
+        (EnCours, false, false) => Reprise::Signaler("quarantaine interrompue : ni original ni copie"),
+        (Terminee, _, true) => Reprise::Rien,
+        (Terminee, _, false) => Reprise::Signaler("copie en quarantaine manquante"),
+        (Restauree, true, true) => Reprise::FinirRestauration,
+        (Restauree, true, false) => Reprise::RetirerEntree,
+        (Restauree, false, true) => Reprise::RemettreTerminee,
+        (Restauree, false, false) => Reprise::Signaler("restauration interrompue : ni fichier restauré ni copie"),
+    }
+}
+
+/// Applique la reprise à chaque entrée, puis signale les copies orphelines (sans entrée), conservées.
+/// Renvoie les messages pour le journal ; `liste` est mise à jour (à enregistrer par l'appelant).
+pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>) -> Vec<String> {
     let mut messages = Vec::new();
-    for e in liste.iter_mut() {
-        let ancien = dossier.join(e.nom_fichier());
-        if fs::symlink_metadata(&ancien).is_err() {
-            continue;
-        }
-        if de_confiance(&ancien) == Some(true) {
-            if e.sha256.is_empty() {
-                if let Some(h) = crate::hygiene::empreinte_fichier(&ancien) {
-                    e.sha256 = h;
+    let mut garder = Vec::new();
+    for mut e in liste.drain(..) {
+        let copie = dossier.join(e.nom_fichier());
+        let original = fs::symlink_metadata(&e.chemin_origine).is_ok();
+        let decision = decision_reprise(e.etat(), original, fs::symlink_metadata(&copie).is_ok());
+        let garde = match decision {
+            Reprise::Rien => true,
+            Reprise::RetirerCopieEtEntree => {
+                let _ = fs::remove_file(&copie);
+                false
+            }
+            Reprise::MarquerTerminee | Reprise::RemettreTerminee => {
+                e.marquer(EtatQuarantaine::Terminee);
+                true
+            }
+            Reprise::RetirerEntree => false,
+            Reprise::FinirRestauration => {
+                let intact = crate::hygiene::empreinte_fichier(Path::new(&e.chemin_origine)).is_some_and(|h| h.eq_ignore_ascii_case(&e.sha256));
+                if intact {
+                    let _ = fs::remove_file(&copie);
+                    false
+                } else {
+                    messages.push(format!("quarantaine : {} restauré mais différent de la copie : copie conservée", e.chemin_origine));
+                    e.marquer(EtatQuarantaine::Terminee);
+                    true
                 }
             }
-            continue;
-        }
-        let fichier = format!("{}-{}.quarantaine", e.id, commun::nouvel_id());
-        match natif::copier_protege(&ancien, &dossier.join(&fichier), sddl) {
-            Ok(sha) => {
-                e.fichier = fichier;
-                e.sha256 = sha;
-                let supprime = fs::remove_file(&ancien).is_ok();
-                messages.push(format!("quarantaine : {} recopiée avec ses droits{}", e.chemin_origine,
-                    if supprime { "" } else { " (ancienne copie laissée au tri du démarrage)" }));
+            Reprise::Signaler(m) => {
+                messages.push(format!("quarantaine : {} : {m}", e.chemin_origine));
+                true
             }
-            Err(x) => messages.push(format!("quarantaine : {} NON migrée ({x}) ; ancienne copie laissée au tri", e.chemin_origine)),
+        };
+        if !matches!(decision, Reprise::Rien | Reprise::Signaler(_)) {
+            messages.push(format!("quarantaine : reprise de {} ({decision:?})", e.chemin_origine));
+        }
+        if garde {
+            garder.push(e);
+        }
+    }
+    *liste = garder;
+    let connus: std::collections::HashSet<String> = liste.iter().map(|e| e.nom_fichier().to_lowercase()).collect();
+    for f in fs::read_dir(dossier).into_iter().flatten().flatten() {
+        let n = f.file_name().to_string_lossy().to_string();
+        if !connus.contains(&n.to_lowercase()) {
+            messages.push(format!("quarantaine : copie orpheline conservée : {n}"));
         }
     }
     messages
 }
 
-/// Migration appliquée au dossier de données du service (appelée par protection::imposer)
-pub fn migrer_quarantaine_service() -> Vec<String> {
-    let Some(mut liste) = commun::lire_fichier_proprietaire(&commun::dossier().join("quarantaine.json"))
-        .and_then(|t| serde_json::from_str::<Vec<ElementQuarantaine>>(t.trim_start_matches('\u{feff}')).ok()) else { return Vec::new() };
-    let avant = liste.clone();
-    let messages = migrer_quarantaine(&dossier_quarantaine(), &mut liste, SDDL_QUARANTAINE, natif::proprietaire_de_confiance);
-    if liste != avant {
-        commun::ecrire("quarantaine.json", &liste);
+/// Migration au démarrage (avant le tri du dossier de données) : une copie qui n'appartient pas à SYSTEM ou aux
+/// administrateurs (déplacée avant la 4.3, elle garde le propriétaire de l'utilisateur) serait écartée par le
+/// tri. Elle est recopiée de façon protégée (marque Internet relevée sur l'ancienne), la nouvelle copie est
+/// ENREGISTRÉE, puis seulement l'ancienne est supprimée (sinon laissée au tri, jamais perdue). Une copie de
+/// confiance sans empreinte reçoit la sienne. Renvoie les messages pour le journal.
+pub fn migrer_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, sddl: &str,
+                          de_confiance: impl Fn(&Path) -> Option<bool>, ecrire: EcrireManifeste) -> Vec<String> {
+    let mut messages = Vec::new();
+    let mut empreintes_ajoutees = false;
+    for i in 0..liste.len() {
+        let ancien = dossier.join(liste[i].nom_fichier());
+        if fs::symlink_metadata(&ancien).is_err() {
+            continue;
+        }
+        if de_confiance(&ancien) == Some(true) {
+            if liste[i].sha256.is_empty() {
+                if let Some(h) = crate::hygiene::empreinte_fichier(&ancien) {
+                    liste[i].sha256 = h;
+                    empreintes_ajoutees = true;
+                }
+            }
+            continue;
+        }
+        let avant = liste[i].clone();
+        let fichier = format!("{}-{}.quarantaine", avant.id, commun::nouvel_id());
+        let sha = match copier_verifie(dossier, &ancien, &fichier, sddl) {
+            Ok(s) => s,
+            Err(x) => {
+                messages.push(format!("quarantaine : {} NON migrée ({x}) ; ancienne copie laissée au tri", avant.chemin_origine));
+                continue;
+            }
+        };
+        let e = &mut liste[i];
+        e.fichier = fichier.clone();
+        e.sha256 = sha;
+        if e.zone_identifier.is_empty() {
+            e.zone_identifier = lire_marque_internet(&ancien);
+        }
+        if let Err(x) = ecrire(liste) {
+            liste[i] = avant.clone();
+            let _ = fs::remove_file(dossier.join(&fichier));
+            messages.push(format!("quarantaine : {} NON migrée (manifeste : {x}) ; ancienne copie laissée au tri", avant.chemin_origine));
+            continue;
+        }
+        let supprime = fs::remove_file(&ancien).is_ok();
+        messages.push(format!("quarantaine : {} recopiée avec ses droits{}", avant.chemin_origine,
+            if supprime { "" } else { " (ancienne copie laissée au tri du démarrage)" }));
     }
+    if empreintes_ajoutees {
+        if let Err(x) = ecrire(liste) {
+            messages.push(format!("quarantaine : empreintes non enregistrées ({x})"));
+        }
+    }
+    messages
+}
+
+/// Reprise puis migration, appliquées au dossier de données du service (appelé par protection::imposer)
+pub fn reprendre_et_migrer_quarantaine_service() -> Vec<String> {
+    let f = commun::dossier().join("quarantaine.json");
+    if fs::symlink_metadata(&f).is_err() {
+        return Vec::new();
+    }
+    let Some(mut liste) = commun::lire_fichier_proprietaire(&f)
+        .and_then(|t| serde_json::from_str::<Vec<ElementQuarantaine>>(t.trim_start_matches('\u{feff}')).ok()) else {
+        return vec!["quarantaine : manifeste illisible ou au propriétaire non vérifié : reprise et migration non faites".into()];
+    };
+    let avant = liste.clone();
+    let mut messages = reprendre_quarantaine(&dossier_quarantaine(), &mut liste);
+    if liste != avant {
+        if let Err(x) = ecrire_manifeste_service(&liste) {
+            messages.push(format!("quarantaine : reprise non enregistrée ({x})"));
+            return messages;
+        }
+    }
+    messages.extend(migrer_quarantaine(&dossier_quarantaine(), &mut liste, SDDL_QUARANTAINE, natif::proprietaire_de_confiance, &ecrire_manifeste_service));
     messages
 }
 

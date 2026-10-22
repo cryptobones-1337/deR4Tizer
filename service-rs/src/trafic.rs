@@ -215,7 +215,7 @@ impl Trafic {
             ports,
         };
         drop(geo);
-        commun::ecrire("trafic.json", &etat);
+        let _ = commun::ecrire("trafic.json", &etat);
     }
 }
 

@@ -95,7 +95,7 @@ pub fn noms_leurres() -> Vec<(String, String)> {
         let modele = modeles[hasard(modeles.len() as u64) as usize];
         l.push((dossier.to_string(), modele.replace("{}", &(1000 + hasard(9000)).to_string())));
     }
-    commun::ecrire(FICHIER_NOMS, &l);
+    let _ = commun::ecrire(FICHIER_NOMS, &l);
     l
 }
 
@@ -194,7 +194,7 @@ pub fn poser_leurres() -> Vec<Leurre> {
         }
         let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(0x0800_0000).output();
     }
-    commun::ecrire(FICHIER_LEURRES, &liste);
+    let _ = commun::ecrire(FICHIER_LEURRES, &liste);
     liste
 }
 
@@ -469,8 +469,8 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
             }
         }
     }
-    commun::ecrire("extensions-connues.json", &connues);
+    let _ = commun::ecrire("extensions-connues.json", &connues);
     liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
-    commun::ecrire("extensions.json", &liste);
+    let _ = commun::ecrire("extensions.json", &liste);
     (liste, alertes)
 }
