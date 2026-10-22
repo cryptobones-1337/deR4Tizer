@@ -116,7 +116,10 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) -> bool {
 fn date_wmi(v: Option<&Variant>) -> String {
     // Format CIM : aaaammjjhhmmss.ffffff+zzz
     match v {
-        Some(Variant::String(s)) if s.len() >= 14 => format!("{}-{}-{} {}:{}", &s[0..4], &s[4..6], &s[6..8], &s[8..10], &s[10..12]),
+        Some(Variant::String(s)) => match (s.get(0..4), s.get(4..6), s.get(6..8), s.get(8..10), s.get(10..12)) {
+            (Some(a), Some(m), Some(j), Some(h), Some(mi)) => format!("{a}-{m}-{j} {h}:{mi}"),
+            _ => String::new(),
+        },
         _ => String::new(),
     }
 }

@@ -253,11 +253,12 @@ pub fn chemin_image(image: &str) -> PathBuf {
     let windows = crate::natif::dossier_windows();
     let i = image.trim().trim_matches('"');
     let i = i.strip_prefix(r"\??\").unwrap_or(i);
-    if let Some(r) = i.get(..11).filter(|p| p.eq_ignore_ascii_case(r"\SystemRoot")) {
-        let _ = r;
+    // get() et non [..] : l'ImagePath vient d'un service installé par n'importe quel programme administrateur ;
+    // un découpage au milieu d'un caractère UTF-8 ferait paniquer le service
+    if i.get(..11).is_some_and(|p| p.eq_ignore_ascii_case(r"\SystemRoot")) {
         return PathBuf::from(format!("{windows}{}", &i[11..]));
     }
-    if i.len() > 9 && i[..9].eq_ignore_ascii_case(r"System32\") {
+    if i.len() > 9 && i.get(..9).is_some_and(|p| p.eq_ignore_ascii_case(r"System32\")) {
         return PathBuf::from(&windows).join(i);
     }
     PathBuf::from(i)

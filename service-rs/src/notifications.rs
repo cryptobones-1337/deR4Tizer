@@ -299,6 +299,41 @@ pub fn regrouper(lot: &[Alerte]) -> Vec<Groupe<'_>> {
             }
         }
     }
+    // Second niveau : des destinations textuelles toutes différentes (300 domaines listés) ne doivent pas
+    // remplir le message de 300 groupes « uniques »
+    let cle2 = |a: &Alerte| format!("{}|{}|{}", a.niveau, a.processus, a.mitre);
+    let mut compte: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for g in &groupes {
+        *compte.entry(cle2(g.alerte)).or_default() += 1;
+    }
+    let mut fusionnes: Vec<Groupe> = Vec::new();
+    let mut index2: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for g in groupes {
+        let k = cle2(g.alerte);
+        if compte[&k] <= 5 {
+            fusionnes.push(g);
+            continue;
+        }
+        match index2.get(&k) {
+            Some(&i) => {
+                let f = &mut fusionnes[i];
+                f.nombre += g.nombre;
+                if g.alerte.score > f.alerte.score {
+                    f.alerte = g.alerte;
+                }
+                for e in g.exemples {
+                    if f.exemples.len() < 3 {
+                        f.exemples.push(e);
+                    }
+                }
+            }
+            None => {
+                index2.insert(k, fusionnes.len());
+                fusionnes.push(Groupe { nombre: g.nombre.max(2), ..g });
+            }
+        }
+    }
+    let mut groupes = fusionnes;
     groupes.sort_by(|a, b| (a.nombre > 1).cmp(&(b.nombre > 1))
         .then(crate::export::rang(&b.alerte.niveau).cmp(&crate::export::rang(&a.alerte.niveau)))
         .then(b.alerte.score.cmp(&a.alerte.score)));

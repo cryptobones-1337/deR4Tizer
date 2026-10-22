@@ -26,6 +26,8 @@ pub struct InfoProcessus {
     pub image: String,
     pub ligne_commande: Option<String>,
     pub parent: Option<String>,
+    /// Chemin complet du programme parent (pour l'apprentissage : le nom seul s'usurpe)
+    pub parent_chemin: Option<String>,
     vu: Instant,
 }
 
@@ -44,7 +46,7 @@ fn regles() -> &'static [(Regex, &'static str)] {
              "PowerShell obscurci ou qui télécharge du code"),
             (Regex::new(r"(?i)certutil.*(-urlcache|-decode|-f\s+http)|bitsadmin.*/transfer|mshta.*(http|javascript:|vbscript:)|regsvr32.*/i:http|rundll32.*javascript:|wmic.*process\s+call\s+create").unwrap(),
              "détournement d'outil Windows (LOLBin)"),
-            (Regex::new(r"(?i)(chrome|msedge|brave)(\.exe)?.*--remote-debugging-(port|pipe)").unwrap(),
+            (Regex::new(r#"(?i)(^|[\\/"\s])(chrome|msedge|brave)\.exe"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
              "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)"),
             (Regex::new(r"(?i)vssadmin.*delete\s+shadows|wbadmin.*delete\s+(catalog|systemstatebackup)|bcdedit.*recoveryenabled\s+no|wmic.*shadowcopy\s+delete").unwrap(),
              "suppression des sauvegardes (typique d'un rançongiciel)"),
@@ -125,10 +127,14 @@ impl Processus {
                     image: texte(&evenement, "ProcessName").unwrap_or_default(),
                     ligne_commande: None,
                     parent: None,
+                    parent_chemin: None,
                     vu: Instant::now(),
                 });
                 if info.parent.is_none() {
                     info.parent = nom_de(ppid);
+                }
+                if info.parent_chemin.is_none() {
+                    info.parent_chemin = Some(crate::natif::chemin_processus(ppid)).filter(|c| !c.is_empty());
                 }
                 moi.analyser(pid, &info);
             }
@@ -152,6 +158,7 @@ impl Processus {
             image: texte(o, "ExecutablePath").unwrap_or_default(),
             ligne_commande: texte(o, "CommandLine"),
             parent: nombre(o, "ParentProcessId").and_then(nom_de),
+            parent_chemin: nombre(o, "ParentProcessId").map(crate::natif::chemin_processus).filter(|c| !c.is_empty()),
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());
@@ -171,6 +178,7 @@ impl Processus {
             image: d.get("Image").cloned().unwrap_or_default(),
             ligne_commande: d.get("CommandLine").cloned(),
             parent: d.get("ParentImage").map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
+            parent_chemin: d.get("ParentImage").cloned(),
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());
@@ -194,11 +202,15 @@ impl Processus {
         }
         let ligne = p.ligne_commande.clone().unwrap_or_default();
         let ligne: String = if ligne.chars().count() > 300 { ligne.chars().take(300).collect::<String>() + "…" } else { ligne };
+        // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
+        // document bureautique qui lance un interpréteur (macro ou exploit)
+        let fort = raisons.iter().any(|r| r.contains("suppression des sauvegardes") || r.contains("(macro ou exploit probable)"));
         self.detections.lock().unwrap().push(Alerte {
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
-            niveau: "Alerte".into(),
-            score: 5,
+            niveau: if fort { "Critique" } else { "Alerte" }.into(),
+            score: if fort { 10 } else { 5 },
+            parent: p.parent_chemin.clone().unwrap_or_default(),
             processus: exe,
             chemin: p.image.clone(),
             destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),

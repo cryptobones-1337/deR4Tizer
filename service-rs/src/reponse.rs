@@ -74,7 +74,7 @@ impl Origine {
 /// Processus dont l'arrêt ou la suspension fige ou fait planter Windows (vérifiés : binaire de Windows)
 const CRITIQUES: &[&str] = &[
     "csrss", "wininit", "winlogon", "lsass", "lsaiso", "services", "smss", "svchost", "dwm", "fontdrvhost", "registry",
-    "memory compression", "secure system", "msmpeng", "mpdefendercoreservice",
+    "memory compression", "secure system", "msmpeng", "mpdefendercoreservice", "explorer",
 ];
 
 /// Raison de refuser d'agir sur ce processus, s'il y en a une

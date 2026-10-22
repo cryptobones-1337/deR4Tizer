@@ -774,7 +774,10 @@ impl Moniteur {
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),
             },
-            "majVerifier" => Reponse::ok(crate::maj::verifier_maintenant(&self.config.maj)),
+            "majVerifier" => {
+                crate::maj::verifier_maintenant(self.config.maj.clone());
+                Reponse::ok("Recherche de mise à jour lancée : le résultat s'affichera dans les Réglages.")
+            }
             "majConfig" => {
                 let Some(m) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<commun::ConfigMaj>(v).ok()) else {
                     return Reponse::erreur("réglages de mise à jour illisibles");
@@ -1175,14 +1178,17 @@ pub fn blocages_a_lever(blocages: &[Blocage], maintenant: &str, listes_chargees:
 }
 
 /// Éditeurs dont les applications contactent normalement des adresses IP sans requête DNS (VPN, messageries,
-/// canaux de notification, jeux) : le critère « IP directe » ne les pénalise pas. Programme signé uniquement.
+/// canaux de notification, jeux) : le critère « IP directe » ne les pénalise pas. Nom EXACT du signataire
+/// (sans casse ni ponctuation) ; pas d'outils de prise en main à distance (TeamViewer, AnyDesk : arnaques au
+/// faux support technique)
 pub fn ip_directe_normale(signataire: &str) -> bool {
     const EDITEURS: &[&str] = &[
-        "proton", "wireguard", "openvpn", "nord security", "nordvpn", "tefincom", "tailscale", "mullvad", "expressvpn",
-        "private internet access", "cloudflare", "fortinet", "palo alto networks", "cisco", "microsoft", "google", "apple",
-        "mozilla", "brave software", "valve", "blizzard", "riot games", "epic games", "electronic arts", "ubisoft",
-        "discord", "zoom", "spotify", "slack", "whatsapp", "meta platforms", "telegram", "signal messenger", "teamviewer", "anydesk",
+        "Proton AG", "Proton Technologies AG", "WireGuard LLC", "OpenVPN Inc.", "Tefincom S.A.", "Nord Security", "Tailscale Inc.",
+        "Mullvad VPN AB", "Express Technologies Ltd.", "Private Internet Access, Inc.", "Cloudflare, Inc.",
+        "Microsoft Corporation", "Microsoft Windows", "Google LLC", "Apple Inc.", "Mozilla Corporation", "Brave Software, Inc.",
+        "Valve Corp.", "Blizzard Entertainment, Inc.", "Riot Games, Inc.", "Epic Games Inc.", "Electronic Arts, Inc.",
+        "Discord Inc.", "Zoom Video Communications, Inc.", "Spotify AB", "WhatsApp LLC", "Meta Platforms, Inc.",
+        "Telegram FZ-LLC", "Signal Messenger, LLC",
     ];
-    let s = signataire.to_lowercase();
-    !s.is_empty() && !s.starts_with("der4tizer") && EDITEURS.iter().any(|e| s.contains(e))
+    crate::vol_donnees::editeur_correspond(signataire, EDITEURS)
 }

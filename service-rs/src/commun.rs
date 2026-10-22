@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "4.1";
+pub const VERSION: &str = "4.2";
 pub const NOM_SERVICE: &str = "deR4Tizer";
 pub const NOM_PIPE: &str = r"\\.\pipe\deR4Tizer";
 pub const SEUIL_ALERTE: i32 = 3;
@@ -244,13 +244,13 @@ pub struct ConfigMaj {
     pub auto: bool,
     /// Manifeste de la dernière version publiée
     pub url: String,
-    /// Installer aussi des binaires non signés (essais seulement)
-    pub accepter_non_signe: bool,
 }
 
 impl Default for ConfigMaj {
     fn default() -> Self {
-        ConfigMaj { auto: true, url: "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json".into(), accepter_non_signe: false }
+        // Désactivée par défaut : l'installation automatique n'a de sens qu'avec des versions signées par la clé
+        // épinglée dans le binaire (voir maj.rs)
+        ConfigMaj { auto: false, url: "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json".into() }
     }
 }
 
@@ -309,6 +309,9 @@ pub struct Alerte {
     pub mitre: String,
     #[serde(deserialize_with = "nul_vide")]
     pub conseil: String,
+    /// Chemin du programme parent, s'il est connu (détections de processus)
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub parent: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

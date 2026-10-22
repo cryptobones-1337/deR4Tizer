@@ -314,11 +314,11 @@ namespace DeR4Tizer
     {
         public string Debut { get; set; } public string Fin { get; set; } public List<string> Appris { get; set; } public List<ExceptionApprise> Exceptions { get; set; }
     }
-    public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } }
+    public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } public bool CleEpinglee { get; set; } }
     public class ConfigMaj
     {
-        public ConfigMaj() { Auto = true; Url = "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json"; }
-        public bool Auto { get; set; } public string Url { get; set; } public bool AccepterNonSigne { get; set; }
+        public ConfigMaj() { Auto = false; Url = "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json"; }
+        public bool Auto { get; set; } public string Url { get; set; }
     }
 
     // ------------------------------------------------------------ DPI (dpi.json) et IDS (ids.json)
@@ -439,7 +439,7 @@ namespace DeR4Tizer
 
     public static class Commun
     {
-        public const string Version = "4.1";
+        public const string Version = "4.2";
         public const string NomService = "deR4Tizer";
         public const string NomPipe = "deR4Tizer";
         public const int SeuilAlerte = 3;
