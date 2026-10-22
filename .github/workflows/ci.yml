@@ -135,3 +135,100 @@ jobs:
           name: journaux-integration-quarantaine-${{ github.sha }}
           path: ${{ runner.temp }}/journaux-msi
           retention-days: 7
+
+  # Lot 3c : mise à jour automatique avec le service réel. PKI de test, clé de test épinglée et paquets signés
+  # générés dans le job, jamais conservés : la clé n'est définie que dans l'étape de compilation, et aucun binaire
+  # ni paquet de ce job n'est téléversé (seulement les journaux, contrôlés avant). Serveur local journalisé qui
+  # reproduit l'arborescence des versions GitHub ; aucune adresse publiée n'est utilisée.
+  integration-maj:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Exécutable du job windows : seulement pour vérifier que la clé de test n'y figure pas
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: deR4Tizer-${{ github.sha }}
+          path: ci-bin
+
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: WiX 3.14, archive vérifiée
+        shell: pwsh
+        run: |
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile "$wix.zip"
+          $h = (Get-FileHash "$wix.zip" -Algorithm SHA256).Hash
+          if ($h -ne '6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31') { throw "Archive WiX inattendue ($h)." }
+          Expand-Archive "$wix.zip" $wix
+          "WIX=$wix" >> $env:GITHUB_ENV
+
+      - name: Versions (courante, suivante, précédente)
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
+          $p = $v.Split('.'); $d = [int]$p[-1]
+          "D4T_COURANTE=$v" >> $env:GITHUB_ENV
+          "D4T_NOUVELLE=$((@($p[0..($p.Count - 2)]) + ($d + 1)) -join '.')" >> $env:GITHUB_ENV
+          "D4T_PRECEDENTE=$((@($p[0..($p.Count - 2)]) + ($d - 1)) -join '.')" >> $env:GITHUB_ENV
+
+      - name: PKI de test (générée dans le job)
+        shell: powershell
+        run: ./tests/integration/maj-pki.ps1 -Dossier "$env:RUNNER_TEMP\d4t-pki"
+
+      - name: Compilation avec la clé de test épinglée (versions courante et suivante)
+        shell: pwsh
+        run: |
+          # La clé de test n'est définie que dans cette étape, jamais au niveau du workflow ni du job
+          $env:DER4TIZER_CLES_SIGNATURE = (Get-Content "$env:RUNNER_TEMP\d4t-pki\cle-epinglee.txt" -Raw).Trim()
+          $ex = Join-Path $env:RUNNER_TEMP 'd4t-executables'
+          New-Item -ItemType Directory -Force "$ex\$env:D4T_COURANTE", "$ex\$env:D4T_NOUVELLE" | Out-Null
+          Push-Location service-rs; cargo build --release; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
+          ./compiler.ps1 -InterfaceSeulement
+          Copy-Item service-rs/target/release/der4tizer-svc.exe "$ex\$env:D4T_COURANTE\deR4TizerSvc.exe"
+          Copy-Item bin/deR4Tizer.exe "$ex\$env:D4T_COURANTE\deR4Tizer.exe"
+          # Version suivante : seul le numéro change
+          $f = 'service-rs/src/commun.rs'
+          $t = Get-Content $f -Raw
+          $t2 = $t.Replace("pub const VERSION: &str = `"$env:D4T_COURANTE`"", "pub const VERSION: &str = `"$env:D4T_NOUVELLE`"")
+          if ($t2 -eq $t) { throw 'numéro de version introuvable' }
+          [IO.File]::WriteAllText((Resolve-Path $f), $t2)
+          Push-Location service-rs; cargo build --release; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
+          Copy-Item service-rs/target/release/der4tizer-svc.exe "$ex\$env:D4T_NOUVELLE\deR4TizerSvc.exe"
+          git checkout -- $f
+          Remove-Item bin/deR4Tizer.exe -Force
+
+      - name: Paquets MSI signés par la PKI de test
+        shell: powershell
+        run: ./tests/integration/maj-paquets.ps1 -Pki "$env:RUNNER_TEMP\d4t-pki" -Executables "$env:RUNNER_TEMP\d4t-executables" -Sortie "$env:RUNNER_TEMP\d4t-paquets" -Courante $env:D4T_COURANTE -Nouvelle $env:D4T_NOUVELLE -Precedente $env:D4T_PRECEDENTE
+
+      - name: Scénarios du lot 3c
+        shell: powershell
+        run: ./tests/integration/maj.ps1 -Pki "$env:RUNNER_TEMP\d4t-pki" -Paquets "$env:RUNNER_TEMP\d4t-paquets" -Executables "$env:RUNNER_TEMP\d4t-executables" -ArtefactCi "$PWD\ci-bin\deR4TizerSvc.exe" -Courante $env:D4T_COURANTE -Nouvelle $env:D4T_NOUVELLE -Precedente $env:D4T_PRECEDENTE
+
+      # Rien d'autre que des journaux texte ne quitte le runner
+      - name: Contrôle des journaux avant téléversement
+        if: always()
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'journaux-msi'
+          if (-not (Test-Path $d)) { New-Item -ItemType Directory $d | Out-Null }
+          $interdits = @(Get-ChildItem $d -Recurse -File | Where-Object { $_.Extension -notin '.log', '.txt' })
+          if ($interdits.Count) { $interdits | Remove-Item -Force; throw "fichiers non journaux retirés : $($interdits.Name -join ', ')" }
+
+      - name: Journaux
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journaux-integration-maj-${{ github.sha }}
+          path: ${{ runner.temp }}/journaux-msi
+          retention-days: 7
+
+      - name: Effacement de la PKI, des exécutables et des paquets de test
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($n in 'd4t-pki', 'd4t-executables', 'd4t-paquets', 'd4t-www') { Remove-Item (Join-Path $env:RUNNER_TEMP $n) -Recurse -Force -ErrorAction SilentlyContinue }
+          Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like '*deR4Tizer racine de test*' | Remove-Item -ErrorAction SilentlyContinue
