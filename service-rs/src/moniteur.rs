@@ -865,6 +865,12 @@ En-tête : Authorization: Bearer {j}"))
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),
             },
+            // Repli quand la restauration à l'emplacement d'origine est refusée (pas de session du propriétaire,
+            // emplacement système) : dossier créé par le service
+            "restaurerRepli" => match reponse::restaurer_repli(c.cible.as_deref().unwrap_or("")) {
+                Ok(m) => Reponse::ok(m),
+                Err(e) => Reponse::erreur(e),
+            },
             "isolerProgramme" => {
                 let chemin = c.cible.clone().unwrap_or_default();
                 if chemin.is_empty() || chemin.to_lowercase().starts_with(&natif::dossier_windows().to_lowercase()) {

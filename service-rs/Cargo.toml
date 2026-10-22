@@ -22,6 +22,8 @@ aho-corasick = "1"                                      # recherche des motifs d
 [dependencies.windows]
 version = "=0.58.0"
 features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",                           # NtCreateFile : flux Zone.Identifier ouvert par rapport au handle du fichier
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
@@ -41,6 +43,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Ole",
     "Win32_System_Pipes",
+    "Win32_System_RemoteDesktop",                       # sessions ouvertes : restauration avec le jeton de l'utilisateur
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Time",
