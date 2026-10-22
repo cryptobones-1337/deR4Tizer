@@ -278,7 +278,7 @@ pub fn revocation_verifiee(erreurs_chaine: u32) -> bool {
 /// Sert à la mise à jour automatique : on compare une clé, pas un nom (que n'importe qui peut obtenir).
 pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
-    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN, WTD_REVOKE_WHOLECHAIN};
+    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT, WTD_REVOKE_WHOLECHAIN};
     let chemin_large = large(chemin);
     let mut fichier = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -293,7 +293,9 @@ pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
         dwUnionChoice: WTD_CHOICE_FILE,
         Anonymous: WINTRUST_DATA_0 { pFile: &mut fichier },
         dwStateAction: WTD_STATEACTION_VERIFY,
-        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN,
+        // Racine exclue : une racine n'a pas d'adresse de CRL (elle se retire du magasin, elle ne se révoque
+        // pas) ; vérifiée, elle serait « révocation inconnue » et revocation_verifiee refuserait tout
+        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
         ..Default::default()
     };
     let mut action: GUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
