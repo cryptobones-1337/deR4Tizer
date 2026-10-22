@@ -320,8 +320,8 @@ namespace DeR4Tizer
             Dock = DockStyle.Bottom, Height = 64, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Padding = new Padding(12, 8, 12, 8)
         };
         readonly NotifyIcon icone = new NotifyIcon();
-        readonly Icon iconeNormale = Theme.IconeApplication(16);
-        Icon iconeAlerte;
+        readonly Icon iconeNormale = Theme.IconeZoneNotification(false), iconeAlerte = Theme.IconeZoneNotification(true),
+            iconeNotification = Theme.IconeNotification();
         readonly System.Windows.Forms.Timer minuteur = new System.Windows.Forms.Timer { Interval = 2000 };
         readonly System.Windows.Forms.Timer clignotement = new System.Windows.Forms.Timer { Interval = 600 };
 
@@ -345,7 +345,6 @@ namespace DeR4Tizer
             Font = Theme.Petit;
             Theme.FenetreSombre(this);
             try { derniereLue = File.ReadAllText(fichierLecture).Trim(); } catch { }
-            iconeAlerte = Theme.IconeAvecPastille(iconeNormale);
             var rendu = new RenduSombre();
 
             // ---------------- Connexions
@@ -645,7 +644,7 @@ namespace DeR4Tizer
                 Hide();
                 if (!astuceMontree)
                 {
-                    icone.ShowBalloonTip(3000, "deR4Tizer", L.T("L'interface reste dans la zone de notification. Le service, lui, tourne en permanence."), ToolTipIcon.Info);
+                    Notifier("deR4Tizer", L.T("L'interface reste dans la zone de notification. Le service, lui, tourne en permanence."), ToolTipIcon.Info);
                     astuceMontree = true;
                 }
                 return;
@@ -883,11 +882,62 @@ namespace DeR4Tizer
             var nouvelles = alertes.Where(a => !idsConnus.Contains(a.Id)).ToList();
             foreach (var a in nouvelles) idsConnus.Add(a.Id);
             var graves = nouvelles.Where(a => a.Niveau == "Alerte" || a.Niveau == "Critique").ToList();
-            var symbole = graves.Any(a => a.Niveau == "Critique") ? ToolTipIcon.Error : ToolTipIcon.Warning;
+            // La gravité ouvre le titre : l'icône de deR4Tizer ne la porte plus (avant : icône d'erreur ou d'avertissement)
+            bool critique = graves.Any(a => a.Niveau == "Critique");
+            string niveau = critique ? (L.En ? "Critical" : "Critique") : (L.En ? "Alert" : "Alerte");
+            var repli = critique ? ToolTipIcon.Error : ToolTipIcon.Warning;
             if (graves.Count == 1)
-                icone.ShowBalloonTip(8000, "deR4Tizer : " + graves[0].Processus, graves[0].Destination + " : " + graves[0].Raisons, symbole);
+                Notifier(niveau + " : deR4Tizer : " + graves[0].Processus, graves[0].Destination + " : " + graves[0].Raisons, repli);
             else if (graves.Count > 1)
-                icone.ShowBalloonTip(8000, "deR4Tizer", graves.Count + " nouvelles alertes", symbole);
+                Notifier(niveau + " : deR4Tizer", graves.Count + " nouvelles alertes", repli);
+        }
+
+        // Notification Windows avec l'icône de deR4Tizer (NIIF_USER), envoyée sur la fenêtre et l'identifiant de
+        // l'icône de la zone de notification : le clic reste reçu par NotifyIcon (BalloonTipClicked). NotifyIcon
+        // ne propose que les icônes système (avertissement, erreur) ; ses champs internes sont stables dans .NET
+        // Framework 4.8. À défaut, notification classique avec l'icône système de la gravité (`repli`).
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DonneesIcone
+        {
+            public int Taille;
+            public IntPtr Fenetre;
+            public int Id, Champs, MessageRappel;
+            public IntPtr Icone;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Bulle;
+            public int Etat, MasqueEtat;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string Texte;
+            public int Delai;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string Titre;
+            public int Options;
+            public Guid Element;
+            public IntPtr IconeNotification;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern bool Shell_NotifyIcon(int message, ref DonneesIcone donnees);
+
+        void Notifier(string titre, string texte, ToolTipIcon repli)
+        {
+            titre = titre.Length > 63 ? titre.Substring(0, 62) + "…" : titre;
+            texte = texte.Length > 255 ? texte.Substring(0, 254) + "…" : texte;
+            try
+            {
+                const System.Reflection.BindingFlags interne = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var fenetre = typeof(NotifyIcon).GetField("window", interne).GetValue(icone) as NativeWindow;
+                var id = (int)typeof(NotifyIcon).GetField("id", interne).GetValue(icone);
+                var d = new DonneesIcone
+                {
+                    Fenetre = fenetre.Handle, Id = id,
+                    Champs = 0x10, // NIF_INFO
+                    Titre = titre, Texte = texte, Delai = 8000,
+                    Options = 0x4 | 0x20, // NIIF_USER | NIIF_LARGE_ICON
+                    IconeNotification = iconeNotification.Handle
+                };
+                d.Taille = Marshal.SizeOf(d);
+                if (fenetre.Handle != IntPtr.Zero && Shell_NotifyIcon(1, ref d)) return; // NIM_MODIFY
+            }
+            catch { }
+            icone.ShowBalloonTip(8000, titre, texte, repli);
         }
 
         void MarquerLues()
