@@ -109,3 +109,29 @@ jobs:
           name: journaux-integration-installation-${{ github.sha }}
           path: ${{ runner.temp }}/journaux-msi
           retention-days: 7
+
+  # Lot 3b : quarantaine avec le service réel (redémarrage, restauration à l'identique, repli sans session,
+  # restauration avec session si le runner en a une), jonctions du lot 1 ter avec canaris, reprise au démarrage
+  # avec un lien dans le chemin d'origine, jonction dans un dossier mis de côté, désinstallation complète.
+  integration-quarantaine:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: deR4Tizer-${{ github.sha }}
+          path: bin
+
+      - name: Scénarios du lot 3b
+        shell: powershell
+        run: ./tests/integration/quarantaine.ps1 -Msi "$PWD\bin\deR4Tizer.msi"
+
+      - name: Journaux d'installation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journaux-integration-quarantaine-${{ github.sha }}
+          path: ${{ runner.temp }}/journaux-msi
+          retention-days: 7

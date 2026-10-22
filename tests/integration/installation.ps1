@@ -122,7 +122,6 @@ Verifier 'Dossier de données : propriétaire Administrateurs, héritage coupé'
     if (-not $d.Protege) { return 'droits hérités de ProgramData' }
     $true
 }
-NonExecute 'Dossier de données : lecture accordée au compte connecté à la console' 'aucune session de console sur un runner hébergé (VM nécessaire) ; le témoin des comptes autorisés est le second compte, plus bas'
 
 if ($compte) {
     # ------------------------------------------------------------ premier démarrage : échec fermé
@@ -165,12 +164,35 @@ if ($compte) {
         if (-not $tenu.WaitForExit(15000)) { return 'le processus ne s''arrête pas' }
         $true
     }
-    $debut2 = Redemarrer-Service
+    # Dans Verifier : un redémarrage raté est un ÉCHOUÉ du tableau, pas un arrêt du script sans bilan
+    $debut2 = Get-Date
+    Verifier 'Second démarrage : le service redémarre et répond' { $script:debut2 = Redemarrer-Service; $true }
     $etat2 = Attendre-Etat $debut2
     Verifier 'Second démarrage : protection vérifiée' {
         if (-not $etat2) { return 'état non publié' }
         if (-not [string]::IsNullOrEmpty($etat2.ProtectionDonnees)) { return "protection en échec : $($etat2.ProtectionDonnees)" }
         $true
+    }
+    # Comptes autorisés piégés écartés et aucun autre : le service accorde la lecture au compte de la console
+    $console = (Get-CimInstance Win32_ComputerSystem).UserName
+    $consoleSid = $null
+    if ($console) { try { $consoleSid = (New-Object Security.Principal.NTAccount($console)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { } }
+    if ($consoleSid -like 'S-1-5-21-*') {
+        # Runner hébergé : runneradmin, un administrateur ; le cas d'un utilisateur standard demande une VM
+        $genre = if (@(Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.SID.Value -eq $consoleSid }).Count) { "session d'administrateur" } else { "session d'utilisateur standard" }
+        Verifier "Second démarrage : lecture accordée au compte connecté à la console ($genre, $console), sans écriture" {
+            $fin = (Get-Date).AddSeconds(60)
+            do {
+                $a = @((Droits $script:Donnees).Entrees | Where-Object { $_.Sid -eq $consoleSid -and $_.Autorise })
+                if ($a.Count) { break }
+                Start-Sleep 2
+            } while ((Get-Date) -lt $fin)
+            if (-not $a.Count) { return "aucune entrée pour $console ; journal : $(Journal 'protection des donn')" }
+            if (@($a | Where-Object { Ecriture $_.Droits }).Count) { return "droit d'écriture : $($a.Droits -join ', ')" }
+            $true
+        }
+    } else {
+        NonExecute 'Dossier de données : lecture accordée au compte connecté à la console' "aucun compte utilisateur à la console ($console)"
     }
     Verifier 'Second démarrage : configuration légitime chargée (port témoin ouvert)' {
         if (-not (Attendre-Port $PortTemoin)) { return "port $PortTemoin fermé ; journal : $(Journal 'API|protection des donn')" }
