@@ -138,6 +138,9 @@ pub struct ElementQuarantaine {
     pub etat: String,
     /// Marque Internet de l'original (flux Zone.Identifier), réécrite à la restauration
     pub zone_identifier: String,
+    /// Emplacement où le fichier a été restauré (origine ou dossier de repli du service), renseigné avec l'état
+    /// « restauree » ; vide sinon
+    pub chemin_restaure: String,
 }
 
 /// État d'un élément de quarantaine (transaction)
@@ -265,13 +268,28 @@ fn empreinte_copie(copie: &Path) -> Option<String> {
     if est_encodee(copie) { decoder(copie, &mut std::io::sink()).ok() } else { crate::hygiene::empreinte_fichier(copie) }
 }
 
-/// Recrée le contenu d'origine d'une copie à l'emplacement `cible` (qui ne doit pas exister)
-fn restituer(copie: &Path, cible: &Path) -> Result<(), String> {
-    if !est_encodee(copie) {
-        return fs::copy(copie, cible).map(|_| ()).map_err(|e| format!("copie impossible : {e}"));
+/// Recrée le contenu d'origine d'une copie dans `cible`, fichier déjà créé et vérifié (handle)
+fn restituer_dans(copie: &Path, cible: &mut fs::File) -> Result<(), String> {
+    if est_encodee(copie) {
+        return decoder(copie, cible).map(|_| ());
     }
-    let mut f = fs::OpenOptions::new().write(true).create_new(true).open(cible).map_err(|e| format!("création impossible : {e}"))?;
-    decoder(copie, &mut f).map(|_| ())
+    let mut f = fs::File::open(copie).map_err(|e| format!("copie illisible : {e}"))?;
+    std::io::copy(&mut f, cible).map(|_| ()).map_err(|e| format!("écriture : {e}"))
+}
+
+/// Empreinte SHA-256 d'un flux (fichier ouvert par handle)
+fn empreinte_lecteur(r: &mut dyn std::io::Read) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    let mut tampon = vec![0u8; 1 << 16];
+    loop {
+        let n = r.read(&mut tampon).ok()?;
+        if n == 0 {
+            break;
+        }
+        h.update(&tampon[..n]);
+    }
+    Some(h.finalize().iter().map(|o| format!("{o:02x}")).collect())
 }
 
 /// Écriture du manifeste (quarantaine.json en service ; injectée dans les tests pour simuler un échec)
@@ -291,20 +309,33 @@ pub fn lire_marque_internet(chemin: &Path) -> String {
     t
 }
 
-fn ecrire_marque_internet(chemin: &Path, marque: &str) -> Result<(), String> {
+/// Marque Internet du fichier ouvert, lue par rapport à son handle (sans repasser par le chemin)
+fn lire_marque_handle(f: &fs::File) -> String {
+    use std::io::Read;
+    let mut t = String::new();
+    if let Ok(Some(flux)) = natif::ouvrir_flux(f, ":Zone.Identifier", false) {
+        let _ = flux.take(4096).read_to_string(&mut t);
+    }
+    t
+}
+
+/// Réécrit la marque Internet sur le fichier ouvert, par rapport à son handle
+fn ecrire_marque_handle(f: &fs::File, marque: &str) -> Result<(), String> {
+    use std::io::Write;
     if marque.is_empty() {
         return Ok(());
     }
-    fs::write(format!("{}:Zone.Identifier", chemin.display()), marque).map_err(|e| format!("marque Internet : {e}"))
+    let mut flux = natif::ouvrir_flux(f, ":Zone.Identifier", true)?.ok_or("marque Internet : flux non créé")?;
+    flux.write_all(marque.as_bytes()).map_err(|e| format!("marque Internet : {e}"))
 }
 
 /// Copie protégée et ENCODÉE de `source` dans `dossier`, relue et décodée pour vérification. Renvoie
 /// l'empreinte du contenu d'origine
-fn copier_verifie(dossier: &Path, source: &Path, fichier: &str, sddl: &str) -> Result<String, String> {
+fn copier_verifie(dossier: &Path, source: &mut dyn std::io::Read, fichier: &str, sddl: &str) -> Result<String, String> {
     fs::create_dir_all(dossier).map_err(|e| e.to_string())?;
     let copie = dossier.join(fichier);
     let nonce = nonce_de(fichier);
-    let sha = natif::copier_protege_avec(source, &copie, sddl, &entete_encodage(&nonce), &mut |b, p| encoder_flux(&nonce, p, b))?;
+    let sha = natif::copier_protege_depuis(source, &copie, sddl, &entete_encodage(&nonce), &mut |b, p| encoder_flux(&nonce, p, b))?;
     if empreinte_copie(&copie).is_none_or(|h| !h.eq_ignore_ascii_case(&sha)) {
         let _ = fs::remove_file(&copie);
         return Err("copie en quarantaine illisible ou différente de l'original".into());
@@ -312,16 +343,22 @@ fn copier_verifie(dossier: &Path, source: &Path, fichier: &str, sddl: &str) -> R
     Ok(sha)
 }
 
-/// Mise en quarantaine transactionnelle : copie protégée vérifiée, entrée « en_cours » ENREGISTRÉE, puis
-/// seulement suppression de l'original, puis « terminee ». Échec d'enregistrement : copie retirée, original
+/// Mise en quarantaine transactionnelle : l'original est ouvert UNE fois par handle, sans suivre de lien,
+/// chemin final vérifié, partagé en lecture seule (personne ne peut le modifier ni le remplacer pendant
+/// l'opération) ; contenu, marque Internet et suppression passent par ce handle, aucune opération par chemin
+/// après le contrôle. Copie protégée vérifiée, entrée « en_cours » ENREGISTRÉE, puis seulement suppression de
+/// l'original, puis « terminee ». Échec d'enregistrement : copie retirée, original
 /// intact. Original impossible à supprimer : entrée et copie retirées, original intact. Échec du dernier
 /// enregistrement : l'original est déjà supprimé, la copie est en place ; la reprise au démarrage termine.
 pub fn quarantaine_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, source: &Path, id: &str, raison: &str,
                                sddl: &str, ecrire: EcrireManifeste) -> Result<(), String> {
     let fichier = format!("{id}.quarantaine");
-    let zone_identifier = lire_marque_internet(source);
-    let taille = fs::metadata(source).map(|m| m.len()).unwrap_or(0);
-    let sha256 = copier_verifie(dossier, source, &fichier, sddl)?;
+    // GENERIC_READ | DELETE | SYNCHRONIZE, partage en lecture seule
+    let mut original = natif::ouvrir_verifie(source, 0x8000_0000 | 0x0001_0000 | 0x0010_0000, 0x1, false)
+        .map_err(|e| format!("{} : {e} ; quarantaine refusée", source.display()))?;
+    let zone_identifier = lire_marque_handle(&original);
+    let taille = original.metadata().map(|m| m.len()).unwrap_or(0);
+    let sha256 = copier_verifie(dossier, &mut original, &fichier, sddl)?;
     let copie = dossier.join(&fichier);
     let mut e = ElementQuarantaine { id: id.into(), chemin_origine: source.display().to_string(), date: commun::maintenant(),
         raison: raison.into(), taille, fichier, sha256, zone_identifier, ..Default::default() };
@@ -332,13 +369,15 @@ pub fn quarantaine_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantain
         let _ = fs::remove_file(&copie);
         return Err(format!("quarantaine non enregistrée ({x}) : original intact"));
     }
-    if let Err(x) = fs::remove_file(source) {
+    // Suppression par le handle vérifié (effective à sa fermeture)
+    if let Err(x) = natif::supprimer_par_handle(&original) {
         liste.pop();
         if ecrire(liste).is_ok() {
             let _ = fs::remove_file(&copie);
         }
         return Err(format!("suppression de l'original impossible : {x}"));
     }
+    drop(original);
     if let Some(e) = liste.last_mut() {
         e.marquer(EtatQuarantaine::Terminee);
     }
@@ -383,11 +422,18 @@ pub fn mettre_en_quarantaine(chemin: &str, raison: &str) -> Result<String, Strin
     Ok(format!("{} placé en quarantaine.", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()))
 }
 
-/// Restauration transactionnelle : empreinte de la copie vérifiée (refus si absente ou différente), dossier
-/// d'origine créé (échec = erreur avant toute copie), refus si l'emplacement est occupé, recopie, empreinte
-/// vérifiée, marque Internet réécrite, état « restauree » ENREGISTRÉ, puis seulement retrait de la copie et
-/// de l'entrée. Échec d'enregistrement : fichier restauré retiré, copie et entrée intactes.
-pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, id: &str, ecrire: EcrireManifeste) -> Result<String, String> {
+/// Crée le fichier de destination d'une restauration (et ses dossiers) ; renvoie son handle vérifié
+pub type CreerCible<'a> = &'a dyn Fn(&Path) -> Result<fs::File, String>;
+
+/// Restauration transactionnelle vers `cible` (emplacement d'origine ou dossier de repli) : empreinte de la
+/// copie vérifiée (refus si absente ou différente), refus si l'emplacement est occupé, fichier créé par
+/// `creer` (en service : sous l'identité de l'utilisateur propriétaire, chemin final vérifié ; échec = erreur
+/// avant toute copie), contenu restitué, empreinte relue et marque Internet réécrite PAR LE HANDLE, état
+/// « restauree » ENREGISTRÉ, puis seulement retrait de la copie et de l'entrée. Tout échec après la création :
+/// fichier restauré supprimé par son handle, copie et entrée intactes.
+pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, id: &str, cible: &Path, creer: CreerCible,
+                             ecrire: EcrireManifeste) -> Result<String, String> {
+    use std::io::{Seek, SeekFrom};
     let i = liste.iter().position(|e| e.id == id).ok_or("élément introuvable")?;
     let e = liste[i].clone();
     let source = dossier.join(e.nom_fichier());
@@ -399,42 +445,153 @@ pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
         Some(_) => return Err("la copie en quarantaine a été modifiée : restauration refusée".into()),
         None => return Err("copie en quarantaine introuvable ou illisible".into()),
     }
-    let cible = Path::new(&e.chemin_origine);
     if fs::symlink_metadata(cible).is_ok() {
-        return Err(format!("{} existe déjà : restauration refusée", e.chemin_origine));
+        return Err(format!("{} existe déjà : restauration refusée", cible.display()));
     }
-    if let Some(d) = cible.parent() {
-        fs::create_dir_all(d).map_err(|x| format!("dossier d'origine impossible à créer : {x}"))?;
-    }
-    let annuler = |raison: String| {
-        let _ = fs::remove_file(cible);
+    let mut fichier = creer(cible)?;
+    let annuler = |f: &fs::File, raison: String| {
+        let _ = natif::supprimer_par_handle(f);
         Err(raison)
     };
-    if let Err(x) = restituer(&source, cible) {
-        return annuler(x);
+    if let Err(x) = restituer_dans(&source, &mut fichier) {
+        return annuler(&fichier, x);
     }
-    if crate::hygiene::empreinte_fichier(cible).is_none_or(|h| !h.eq_ignore_ascii_case(&e.sha256)) {
-        return annuler("restauration incomplète : fichier restauré retiré, copie conservée".into());
+    let relu = fichier.seek(SeekFrom::Start(0)).ok().and_then(|_| empreinte_lecteur(&mut fichier));
+    if relu.is_none_or(|h| !h.eq_ignore_ascii_case(&e.sha256)) {
+        return annuler(&fichier, "restauration incomplète : fichier restauré retiré, copie conservée".into());
     }
-    if let Err(x) = ecrire_marque_internet(cible, &e.zone_identifier) {
-        return annuler(x);
+    if let Err(x) = ecrire_marque_handle(&fichier, &e.zone_identifier) {
+        return annuler(&fichier, x);
     }
     liste[i].marquer(EtatQuarantaine::Restauree);
+    liste[i].chemin_restaure = cible.display().to_string();
     if let Err(x) = ecrire(liste) {
-        liste[i].marquer(e.etat());
-        return annuler(format!("restauration non enregistrée ({x}) : fichier restauré retiré, copie conservée"));
+        liste[i] = e.clone();
+        return annuler(&fichier, format!("restauration non enregistrée ({x}) : fichier restauré retiré, copie conservée"));
     }
+    drop(fichier);
     // Échecs suivants sans gravité : la reprise au démarrage retire la copie et l'entrée
     let _ = fs::remove_file(&source);
     liste.remove(i);
     let _ = ecrire(liste);
-    Ok(e.chemin_origine)
+    Ok(cible.display().to_string())
 }
+
+/// Où restaurer : à l'emplacement d'origine sous l'identité de son propriétaire, ou dans le dossier de repli
+#[derive(Debug, PartialEq)]
+pub enum CibleRestauration {
+    Origine,
+    Repli(&'static str),
+}
+
+/// Décision pure. Jamais d'écriture en SYSTEM à l'emplacement d'origine : il faut un propriétaire qui soit un
+/// compte d'utilisateur (S-1-5-21-…) avec une session ouverte, dont on emprunte l'identité
+pub fn cible_restauration(proprietaire: Option<&str>, session_ouverte: bool) -> CibleRestauration {
+    match proprietaire {
+        None => CibleRestauration::Repli("propriétaire de l'emplacement illisible"),
+        Some(sid) if !sid.starts_with("S-1-5-21-") => CibleRestauration::Repli("emplacement appartenant au système ou aux administrateurs"),
+        Some(_) if !session_ouverte => CibleRestauration::Repli("aucune session ouverte du propriétaire de l'emplacement"),
+        Some(_) => CibleRestauration::Origine,
+    }
+}
+
+/// Crée un fichier et ses dossiers sans suivre de lien : refus si un élément existant du chemin est un lien,
+/// création, puis chemin final vérifié (fichier supprimé par son handle s'il a été détourné)
+pub fn creer_sans_lien(cible: &Path) -> Result<fs::File, String> {
+    if natif::chemin_contient_lien(cible) {
+        return Err(format!("{} : un élément du chemin est un lien ; restauration refusée", cible.display()));
+    }
+    if let Some(d) = cible.parent() {
+        fs::create_dir_all(d).map_err(|x| format!("dossier d'origine impossible à créer : {x}"))?;
+    }
+    natif::creer_verifie(cible).map_err(|x| format!("{} : {x} ; restauration refusée", cible.display()))
+}
+
+/// Propriétaire du plus proche dossier existant de `cible`, lu par handle sans suivre de lien (chemin final
+/// vérifié) ; None si illisible ou détourné
+fn proprietaire_emplacement(cible: &Path) -> Option<String> {
+    let mut d = cible.parent();
+    while let Some(x) = d {
+        // READ_CONTROL | SYNCHRONIZE, tout partage
+        match natif::ouvrir_verifie(x, 0x0002_0000 | 0x0010_0000, 0x7, true) {
+            Ok(f) => return natif::proprietaire_par_handle(&f),
+            Err(natif::ErreurOuverture::Absent) => d = x.parent(),
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+const REPLI: &str = "REPLI";
 
 pub fn restaurer(id: &str) -> Result<String, String> {
     let mut liste = charger_liste()?;
-    let chemin = restaurer_transaction(&dossier_quarantaine(), &mut liste, id, &ecrire_manifeste_service)?;
+    let e = liste.iter().find(|e| e.id == id).cloned().ok_or("élément introuvable")?;
+    let cible = PathBuf::from(&e.chemin_origine);
+    let proprietaire = proprietaire_emplacement(&cible);
+    if let CibleRestauration::Repli(raison) = cible_restauration(proprietaire.as_deref(), true) {
+        return Err(format!("{REPLI} : {raison}. Restauration possible dans le dossier de deR4Tizer (bouton « Restaurer dans le dossier de deR4Tizer »)."));
+    }
+    let sid = proprietaire.unwrap_or_default();
+    // Création sous l'identité du propriétaire : Windows applique SES droits (une jonction vers un dossier
+    // système échoue) ; le reste (restitution, vérification, marque) passe par le handle obtenu
+    let creer = |c: &Path| match natif::avec_jeton_de(&sid, || creer_sans_lien(c)) {
+        Ok(r) => r,
+        Err(x) => Err(format!("{REPLI} : {x}. Restauration possible dans le dossier de deR4Tizer (bouton « Restaurer dans le dossier de deR4Tizer »).")),
+    };
+    let chemin = restaurer_transaction(&dossier_quarantaine(), &mut liste, id, &cible, &creer, &ecrire_manifeste_service)?;
     Ok(format!("{chemin} restauré."))
+}
+
+/// Prépare le dossier de repli `base\<id>` : refus si la protection du dossier de données est en échec ;
+/// `base` créé (erreur vérifiée) puis ouvert par handle sans suivre de lien, chemin final vérifié ;
+/// `<id>` créé avec ses droits s'il n'existe pas, puis ouvert de même ; ses droits sont relus par le handle
+/// et comparés à l'attendu (`conforme`) ; non conformes : réimposés par le handle puis relus ; échec = refus
+pub fn preparer_dossier_repli(base: &Path, id: &str, sddl: &str, echec_protection: bool,
+                              conforme: &dyn Fn(&natif::Securite) -> Result<(), String>) -> Result<PathBuf, String> {
+    if echec_protection {
+        return Err("protection du dossier de données en échec : restauration de repli refusée".into());
+    }
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("identifiant d'élément invalide".into());
+    }
+    if fs::symlink_metadata(base).is_err() {
+        fs::create_dir(base).map_err(|e| format!("{} impossible à créer : {e}", base.display()))?;
+    }
+    // READ_CONTROL | SYNCHRONIZE, tout partage
+    natif::ouvrir_verifie(base, 0x0002_0000 | 0x0010_0000, 0x7, true).map_err(|e| format!("{} : {e} ; repli refusé", base.display()))?;
+    let dossier = base.join(id);
+    if fs::symlink_metadata(&dossier).is_err() && !natif::creer_dossier_protege(&dossier, sddl) {
+        return Err(format!("{} impossible à créer avec ses droits", dossier.display()));
+    }
+    // READ_CONTROL | WRITE_DAC | WRITE_OWNER | SYNCHRONIZE
+    let h = natif::ouvrir_verifie(&dossier, 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000, 0x7, true)
+        .map_err(|e| format!("{} : {e} ; repli refusé", dossier.display()))?;
+    let verifier = |h: &fs::File| natif::lire_securite_handle(h).ok_or_else(|| "droits illisibles".to_string()).and_then(|s| conforme(&s));
+    if verifier(&h).is_err() {
+        natif::poser_droits_handle(&h, sddl).map_err(|e| format!("{} : droits refusés ({e}) ; repli refusé", dossier.display()))?;
+        verifier(&h).map_err(|e| format!("{} : {e} ; repli refusé", dossier.display()))?;
+    }
+    Ok(dossier)
+}
+
+/// Restauration de repli : dans un dossier créé par le service (ProgramData\deR4Tizer\restaurations\<id>),
+/// lisible par SYSTEM, les administrateurs et le propriétaire de l'emplacement d'origine s'il est un utilisateur
+pub fn restaurer_repli(id: &str) -> Result<String, String> {
+    use crate::protection::{droits_conformes, SID_ADMINISTRATEURS, SID_SYSTEME};
+    let mut liste = charger_liste()?;
+    let e = liste.iter().find(|e| e.id == id).cloned().ok_or("élément introuvable")?;
+    let nom = Path::new(&e.chemin_origine).file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| !n.is_empty())
+        .unwrap_or_else(|| format!("{id}.restaure"));
+    let lecteur = proprietaire_emplacement(Path::new(&e.chemin_origine)).filter(|s| s.starts_with("S-1-5-21-") && s.chars().all(|c| c.is_ascii_digit() || c == '-' || c == 'S'));
+    let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){}", lecteur.as_ref().map(|s| format!("(A;OICI;0x1200a9;;;{s})")).unwrap_or_default());
+    let lecteurs: Vec<&str> = lecteur.iter().map(String::as_str).collect();
+    let conforme = |s: &natif::Securite| droits_conformes(s, &[SID_SYSTEME, SID_ADMINISTRATEURS], &lecteurs);
+    let dossier = preparer_dossier_repli(&commun::dossier().join("restaurations"), &e.id, &sddl, commun::echec_protection().is_some(), &conforme)?;
+    let cible = dossier.join(nom);
+    let creer = |c: &Path| natif::creer_verifie(c).map_err(|x| format!("{} : {x}", c.display()));
+    let chemin = restaurer_transaction(&dossier_quarantaine(), &mut liste, id, &cible, &creer, &ecrire_manifeste_service)?;
+    Ok(format!("Fichier restauré dans le dossier de deR4Tizer : {chemin}"))
 }
 
 /// Action de reprise au démarrage d'une entrée, selon son état et la présence de l'original et de la copie.
@@ -483,6 +640,19 @@ pub fn decision_reprise(etat: EtatQuarantaine, original: Original, copie: bool) 
     }
 }
 
+/// Original lu par handle, sans suivre de lien, chemin final vérifié : un lien ou un chemin détourné compte
+/// comme « différent » (la copie est gardée) ; rien n'est lu hors du chemin
+pub fn etat_original(chemin: &Path, sha256: &str) -> Original {
+    // GENERIC_READ | SYNCHRONIZE, tout partage
+    match natif::ouvrir_verifie(chemin, 0x8000_0000 | 0x0010_0000, 0x7, false) {
+        Err(natif::ErreurOuverture::Absent) => Original::Absent,
+        Err(_) => Original::Different,
+        Ok(mut f) => {
+            if empreinte_lecteur(&mut f).is_some_and(|h| h.eq_ignore_ascii_case(sha256)) { Original::Identique } else { Original::Different }
+        }
+    }
+}
+
 /// Applique la reprise à chaque entrée, puis signale les copies orphelines (sans entrée), conservées.
 /// Renvoie les messages pour le journal ; `liste` est mise à jour (à enregistrer par l'appelant).
 pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>) -> Vec<String> {
@@ -490,14 +660,9 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     let mut garder = Vec::new();
     for mut e in liste.drain(..) {
         let copie = dossier.join(e.nom_fichier());
-        let chemin = Path::new(&e.chemin_origine);
-        let original = if fs::symlink_metadata(chemin).is_err() {
-            Original::Absent
-        } else if crate::hygiene::empreinte_fichier(chemin).is_some_and(|h| h.eq_ignore_ascii_case(&e.sha256)) {
-            Original::Identique
-        } else {
-            Original::Different
-        };
+        // Fichier restauré : à l'emplacement où il l'a été (origine ou dossier de repli)
+        let chemin = if e.etat() == EtatQuarantaine::Restauree && !e.chemin_restaure.is_empty() { &e.chemin_restaure } else { &e.chemin_origine };
+        let original = etat_original(Path::new(chemin), &e.sha256);
         let decision = decision_reprise(e.etat(), original, fs::symlink_metadata(&copie).is_ok());
         let garde = match decision {
             Reprise::Rien => true,
@@ -571,7 +736,7 @@ pub fn migrer_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, s
                 Ok(h)
             })
         } else {
-            copier_verifie(dossier, &ancien, &fichier, sddl)
+            fs::File::open(&ancien).map_err(|x| format!("ancienne copie illisible : {x}")).and_then(|mut f| copier_verifie(dossier, &mut f, &fichier, sddl))
         };
         let sha = match recopie {
             Ok(s) => s,

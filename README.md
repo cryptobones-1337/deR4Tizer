@@ -55,10 +55,10 @@ Aucun pilote noyau, aucune dépendance à installer : uniquement des API Windows
 
 ### Compiler
 
-Prérequis : Windows 10/11, [rustup](https://rustup.rs) avec la chaîne **stable-x86_64-pc-windows-gnu**.
+Prérequis : Windows 10/11, Visual Studio Build Tools 2022 (charge de travail « Développement Desktop en C++ »), [rustup](https://rustup.rs) avec la chaîne **stable-x86_64-pc-windows-msvc**, la même que la CI. Les tests sur un poste se font avec l'artefact compilé par la CI.
 
 ```powershell
-rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup toolchain install stable-x86_64-pc-windows-msvc
 .\compiler.ps1          # interface (csc de Windows) + service Rust → bin\
 ```
 
@@ -208,10 +208,10 @@ No kernel driver and nothing extra to install: only Windows APIs (ETW, Event Log
 
 ### Build
 
-Requirements: Windows 10/11, [rustup](https://rustup.rs) with the **stable-x86_64-pc-windows-gnu** toolchain.
+Requirements: Windows 10/11, Visual Studio Build Tools 2022 ("Desktop development with C++" workload), [rustup](https://rustup.rs) with the **stable-x86_64-pc-windows-msvc** toolchain, the same as the CI. Tests on a machine use the artifact built by the CI.
 
 ```powershell
-rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup toolchain install stable-x86_64-pc-windows-msvc
 .\compiler.ps1          # interface (Windows csc) + Rust service → bin\
 ```
 

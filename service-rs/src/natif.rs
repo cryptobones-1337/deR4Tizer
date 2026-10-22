@@ -456,12 +456,8 @@ fn sid_texte(sid: windows::Win32::Security::PSID) -> String {
 
 /// Lit le propriétaire et la DACL ; None si illisible
 pub fn lire_securite(chemin: &std::path::Path) -> Option<Securite> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
-    use windows::Win32::Security::{
-        GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID,
-    };
+    use windows::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
     let nom = large(&chemin.to_string_lossy());
     unsafe {
         let mut proprietaire = PSID::default();
@@ -469,38 +465,111 @@ pub fn lire_securite(chemin: &std::path::Path) -> Option<Securite> {
         let mut sd = PSECURITY_DESCRIPTOR::default();
         let r = GetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             Some(&mut proprietaire), None, Some(&mut dacl), None, &mut sd);
-        if r.0 != 0 || sd.0.is_null() {
+        if r.0 != 0 {
             return None;
         }
-        let mut s = Securite { proprietaire: if proprietaire.is_invalid() { String::new() } else { sid_texte(proprietaire) }, ..Default::default() };
-        let (mut controle, mut revision) = (0u16, 0u32);
-        if GetSecurityDescriptorControl(sd, &mut controle, &mut revision).is_ok() {
-            s.protege = controle & 0x1000 != 0; // SE_DACL_PROTECTED
+        analyser_descripteur(proprietaire, dacl, sd)
+    }
+}
+
+/// `lire_securite` par le handle d'un élément déjà ouvert (et vérifié), sans repasser par son chemin ; le
+/// handle doit avoir READ_CONTROL
+pub fn lire_securite_handle(f: &std::fs::File) -> Option<Securite> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    unsafe {
+        let mut proprietaire = PSID::default();
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        let r = GetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&mut proprietaire), None, Some(&mut dacl), None, Some(&mut sd));
+        if r.0 != 0 {
+            return None;
         }
-        if dacl.is_null() {
-            // DACL absente : accès total pour tout le monde
-            s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
-        } else {
-            for i in 0..(*dacl).AceCount as u32 {
-                let mut p: *mut c_void = std::ptr::null_mut();
-                if GetAce(dacl, i, &mut p).is_err() || p.is_null() {
-                    s.ace_inconnue = true;
-                    continue;
+        analyser_descripteur(proprietaire, dacl, sd)
+    }
+}
+
+/// Propriétaire et entrées d'un descripteur de sécurité rendu par Windows (libéré ici)
+unsafe fn analyser_descripteur(proprietaire: windows::Win32::Security::PSID, dacl: *mut windows::Win32::Security::ACL,
+                               sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<Securite> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::{GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACE_HEADER, PSID};
+    if sd.0.is_null() {
+        return None;
+    }
+    let mut s = Securite { proprietaire: if proprietaire.is_invalid() { String::new() } else { sid_texte(proprietaire) }, ..Default::default() };
+    let (mut controle, mut revision) = (0u16, 0u32);
+    if GetSecurityDescriptorControl(sd, &mut controle, &mut revision).is_ok() {
+        s.protege = controle & 0x1000 != 0; // SE_DACL_PROTECTED
+    }
+    if dacl.is_null() {
+        // DACL absente : accès total pour tout le monde
+        s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
+    } else {
+        for i in 0..(*dacl).AceCount as u32 {
+            let mut p: *mut c_void = std::ptr::null_mut();
+            if GetAce(dacl, i, &mut p).is_err() || p.is_null() {
+                s.ace_inconnue = true;
+                continue;
+            }
+            let entete = &*(p as *const ACE_HEADER);
+            match entete.AceType {
+                // ACCESS_ALLOWED_ACE et ACCESS_DENIED_ACE ont la même disposition
+                0 | 1 => {
+                    let ace = &*(p as *const ACCESS_ALLOWED_ACE);
+                    let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
+                    s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
                 }
-                let entete = &*(p as *const ACE_HEADER);
-                match entete.AceType {
-                    // ACCESS_ALLOWED_ACE et ACCESS_DENIED_ACE ont la même disposition
-                    0 | 1 => {
-                        let ace = &*(p as *const ACCESS_ALLOWED_ACE);
-                        let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
-                        s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
-                    }
-                    _ => s.ace_inconnue = true,
-                }
+                _ => s.ace_inconnue = true,
+            }
+        }
+    }
+    let _ = LocalFree(HLOCAL(sd.0));
+    Some(s)
+}
+
+/// `poser_droits` par le handle d'un élément déjà ouvert et vérifié (WRITE_OWNER si le SDDL a un
+/// propriétaire, WRITE_DAC) : propriétaire puis DACL entière, héritage coupé
+pub fn poser_droits_handle(f: &std::fs::File, sddl: &str) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    };
+    let h = HANDLE(f.as_raw_handle());
+    let s = large(sddl);
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut proprietaire = PSID::default();
+        let mut r = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaut).map_err(|e| e.to_string());
+        if r.is_ok() && (!present.as_bool() || dacl.is_null()) {
+            r = Err("SDDL sans DACL".into());
+        }
+        if r.is_ok() {
+            r = GetSecurityDescriptorOwner(sd, &mut proprietaire, &mut defaut).map_err(|e| e.to_string());
+        }
+        if r.is_ok() && !proprietaire.is_invalid() {
+            let e = SetSecurityInfo(h, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, proprietaire, PSID::default(), None, None);
+            if e.0 != 0 {
+                r = Err(format!("propriétaire : {}", windows::core::Error::from(e)));
+            }
+        }
+        if r.is_ok() {
+            let e = SetSecurityInfo(h, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, PSID::default(),
+                PSID::default(), Some(dacl), None);
+            if e.0 != 0 {
+                r = Err(format!("droits : {}", windows::core::Error::from(e)));
             }
         }
         let _ = LocalFree(HLOCAL(sd.0));
-        Some(s)
+        r
     }
 }
 
@@ -683,14 +752,20 @@ pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, s
 /// celle du contenu d'ORIGINE, avant transformation.
 pub fn copier_protege_avec(source: &std::path::Path, destination: &std::path::Path, sddl: &str, entete: &[u8],
                            transformer: &mut dyn FnMut(&mut [u8], u64)) -> Result<String, String> {
+    let mut entree = std::fs::File::open(source).map_err(|e| format!("lecture de l'original : {e}"))?;
+    copier_protege_depuis(&mut entree, destination, sddl, entete, transformer)
+}
+
+/// `copier_protege_avec`, depuis un flux déjà ouvert (handle vérifié de l'original, par exemple)
+pub fn copier_protege_depuis(entree: &mut dyn std::io::Read, destination: &std::path::Path, sddl: &str, entete: &[u8],
+                             transformer: &mut dyn FnMut(&mut [u8], u64)) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::os::windows::io::FromRawHandle;
     use windows::Win32::Foundation::{HLOCAL, LocalFree, GENERIC_WRITE};
     use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE};
-    let mut entree = std::fs::File::open(source).map_err(|e| format!("lecture de l'original : {e}"))?;
     let (nom, s) = (large(&destination.to_string_lossy()), large(sddl));
     let sortie = unsafe {
         let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -731,4 +806,271 @@ pub fn remplacer_fichier(source: &std::path::Path, destination: &std::path::Path
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
     let (s, d) = (large(&source.to_string_lossy()), large(&destination.to_string_lossy()));
     unsafe { MoveFileExW(PCWSTR(s.as_ptr()), PCWSTR(d.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH).map_err(|e| e.to_string()) }
+}
+
+// ------------------------------------------------------------ chemins choisis par l'utilisateur, opérés en SYSTEM
+//
+// Un contrôle suivi d'une opération par chemin laisse une fenêtre où une jonction ou un lien redirige
+// l'opération (vers un dossier système, par exemple). Ici : une ouverture par handle sans suivre de lien sur
+// le dernier élément, le chemin final réel vérifié, puis toutes les opérations par ce handle.
+
+/// Échec d'ouverture sans suivre de lien
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErreurOuverture {
+    Absent,
+    /// Le dernier élément est un lien (jonction, lien symbolique)
+    Lien,
+    /// Le chemin final réel n'est pas le chemin demandé (lien ou jonction plus haut dans le chemin)
+    Detourne(String),
+    Autre(String),
+}
+
+impl std::fmt::Display for ErreurOuverture {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ErreurOuverture::Absent => write!(f, "introuvable"),
+            ErreurOuverture::Lien => write!(f, "le chemin est un lien"),
+            ErreurOuverture::Detourne(r) => write!(f, "le chemin mène ailleurs ({r})"),
+            ErreurOuverture::Autre(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Décision pure : deux chemins désignent-ils le même emplacement ? (préfixes \\?\ et \\?\UNC\ retirés,
+/// séparateurs, casse, barre finale)
+pub fn meme_chemin(a: &str, b: &str) -> bool {
+    fn n(s: &str) -> String {
+        let s = s.replace('/', "\\");
+        let s = match s.strip_prefix(r"\\?\UNC\") {
+            Some(r) => format!(r"\\{r}"),
+            None => s.strip_prefix(r"\\?\").unwrap_or(&s).to_string(),
+        };
+        s.trim_end_matches('\\').to_lowercase()
+    }
+    !a.trim().is_empty() && !b.trim().is_empty() && n(a) == n(b)
+}
+
+/// Chemin final réel d'un handle (liens et jonctions résolus)
+pub fn chemin_final(f: &std::fs::File) -> Result<String, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED};
+    let h = HANDLE(f.as_raw_handle());
+    let mut tampon = vec![0u16; 1024];
+    for _ in 0..2 {
+        let n = unsafe { GetFinalPathNameByHandleW(h, &mut tampon, FILE_NAME_NORMALIZED) } as usize;
+        if n == 0 {
+            return Err(windows::core::Error::from_win32().to_string());
+        }
+        if n < tampon.len() {
+            return Ok(String::from_utf16_lossy(&tampon[..n]));
+        }
+        tampon = vec![0u16; n + 1];
+    }
+    Err("chemin final trop long".into())
+}
+
+/// Ouvre un fichier (ou un dossier) sans suivre de lien sur son dernier élément ; refuse s'il en est un
+pub fn ouvrir_sans_lien(chemin: &std::path::Path, acces: u32, partage: u32, dossier: bool) -> Result<std::fs::File, ErreurOuverture> {
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FileAttributeTagInfo, GetFileInformationByHandleEx, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAGS_AND_ATTRIBUTES,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_MODE, OPEN_EXISTING,
+    };
+    let nom = large(&chemin.to_string_lossy());
+    let options = FILE_FLAG_OPEN_REPARSE_POINT | if dossier { FILE_FLAG_BACKUP_SEMANTICS } else { FILE_FLAGS_AND_ATTRIBUTES(0) };
+    let h = unsafe { CreateFileW(PCWSTR(nom.as_ptr()), acces, FILE_SHARE_MODE(partage), None, OPEN_EXISTING, options, HANDLE::default()) }
+        .map_err(|e| {
+            if e.code() == ERROR_FILE_NOT_FOUND.to_hresult() || e.code() == ERROR_PATH_NOT_FOUND.to_hresult() {
+                ErreurOuverture::Absent
+            } else {
+                ErreurOuverture::Autre(e.to_string())
+            }
+        })?;
+    let f = unsafe { std::fs::File::from_raw_handle(h.0 as _) };
+    let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+    unsafe {
+        GetFileInformationByHandleEx(h, FileAttributeTagInfo, &mut info as *mut _ as *mut c_void, std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32)
+    }.map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    if info.FileAttributes & 0x400 != 0 {
+        return Err(ErreurOuverture::Lien);
+    }
+    Ok(f)
+}
+
+/// Forme longue d'un chemin (noms courts 8.3 comme « RUNNER~1 » développés), pour le comparer au chemin final
+/// que rend Windows. Ne suit pas les jonctions : elle traduit des noms, elle ne résout pas de lien. Pour un
+/// élément qui n'existe pas encore, son dossier parent est développé.
+pub fn forme_longue(p: &std::path::Path) -> std::path::PathBuf {
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+    let n = large(&p.to_string_lossy());
+    let mut tampon = vec![0u16; 1024];
+    let l = unsafe { GetLongPathNameW(PCWSTR(n.as_ptr()), Some(&mut tampon)) } as usize;
+    if l > 0 && l < tampon.len() {
+        return std::path::PathBuf::from(String::from_utf16_lossy(&tampon[..l]));
+    }
+    match (p.parent(), p.file_name()) {
+        (Some(parent), Some(nom)) if parent != p => forme_longue(parent).join(nom),
+        _ => p.to_path_buf(),
+    }
+}
+
+/// Chemin attendu, absolu et en forme longue
+fn chemin_attendu(chemin: &std::path::Path) -> Result<std::path::PathBuf, ErreurOuverture> {
+    std::path::absolute(chemin).map(|a| forme_longue(&a)).map_err(|e| ErreurOuverture::Autre(e.to_string()))
+}
+
+/// Ouvre sans suivre de lien et vérifie que le chemin final réel est le chemin demandé
+pub fn ouvrir_verifie(chemin: &std::path::Path, acces: u32, partage: u32, dossier: bool) -> Result<std::fs::File, ErreurOuverture> {
+    let attendu = chemin_attendu(chemin)?;
+    let f = ouvrir_sans_lien(&attendu, acces, partage, dossier)?;
+    let reel = chemin_final(&f).map_err(ErreurOuverture::Autre)?;
+    if !meme_chemin(&reel, &attendu.to_string_lossy()) {
+        return Err(ErreurOuverture::Detourne(reel));
+    }
+    Ok(f)
+}
+
+/// Crée un fichier qui n'existe pas encore, sans suivre de lien, et vérifie son chemin final réel ; s'il ne
+/// correspond pas, le fichier créé est supprimé par son handle et la création refusée. Le handle permet
+/// lecture, écriture et suppression.
+pub fn creer_verifie(chemin: &std::path::Path) -> Result<std::fs::File, ErreurOuverture> {
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_NONE};
+    let attendu = chemin_attendu(chemin)?;
+    let nom = large(&attendu.to_string_lossy());
+    let h = unsafe {
+        CreateFileW(PCWSTR(nom.as_ptr()), GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0, FILE_SHARE_NONE, None, CREATE_NEW,
+            FILE_FLAG_OPEN_REPARSE_POINT, HANDLE::default())
+    }.map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    let f = unsafe { std::fs::File::from_raw_handle(h.0 as _) };
+    match chemin_final(&f) {
+        Ok(reel) if meme_chemin(&reel, &attendu.to_string_lossy()) => Ok(f),
+        Ok(reel) => {
+            let _ = supprimer_par_handle(&f);
+            Err(ErreurOuverture::Detourne(reel))
+        }
+        Err(e) => {
+            let _ = supprimer_par_handle(&f);
+            Err(ErreurOuverture::Autre(e))
+        }
+    }
+}
+
+/// Supprime le fichier ouvert (à la fermeture de son dernier handle) ; le handle doit avoir l'accès DELETE
+pub fn supprimer_par_handle(f: &std::fs::File) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO};
+    let info = FILE_DISPOSITION_INFO { DeleteFile: true.into() };
+    unsafe {
+        SetFileInformationByHandle(HANDLE(f.as_raw_handle()), FileDispositionInfo, &info as *const _ as *const c_void,
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32)
+    }.map_err(|e| e.to_string())
+}
+
+/// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
+/// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
+pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows::Wdk::Storage::FileSystem::{NtCreateFile, NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS};
+    use windows::Win32::Foundation::UNICODE_STRING;
+    use windows::Win32::Storage::FileSystem::{FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    use windows::Win32::System::IO::IO_STATUS_BLOCK;
+    let mut nom: Vec<u16> = flux.encode_utf16().collect();
+    let chaine = UNICODE_STRING { Length: (nom.len() * 2) as u16, MaximumLength: (nom.len() * 2) as u16, Buffer: PWSTR(nom.as_mut_ptr()) };
+    let attributs = OBJECT_ATTRIBUTES {
+        Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: HANDLE(f.as_raw_handle()),
+        ObjectName: &chaine,
+        Attributes: 0x40, // OBJ_CASE_INSENSITIVE
+        SecurityDescriptor: std::ptr::null(),
+        SecurityQualityOfService: std::ptr::null(),
+    };
+    // GENERIC_READ ou GENERIC_WRITE, plus SYNCHRONIZE ; FILE_OPEN (1) ou FILE_OVERWRITE_IF (5) ;
+    // FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
+    let acces = FILE_ACCESS_RIGHTS(if ecriture { 0x4000_0000 } else { 0x8000_0000 } | 0x0010_0000);
+    let disposition = NTCREATEFILE_CREATE_DISPOSITION(if ecriture { 5 } else { 1 });
+    let mut h = HANDLE::default();
+    let mut io = IO_STATUS_BLOCK::default();
+    let statut = unsafe {
+        // Partage total : le handle du fichier lui-même peut détenir DELETE (mise en quarantaine), qu'un flux
+        // ouvert sans FILE_SHARE_DELETE contredirait (violation de partage)
+        NtCreateFile(&mut h, acces, &attributs, &mut io, None, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, disposition,
+            NTCREATEFILE_CREATE_OPTIONS(0x40 | 0x20), None, 0)
+    };
+    if statut.0 == 0xC000_0034u32 as i32 && !ecriture {
+        return Ok(None); // STATUS_OBJECT_NAME_NOT_FOUND
+    }
+    if statut.0 < 0 {
+        return Err(format!("flux {flux} : NTSTATUS {:#x}", statut.0 as u32));
+    }
+    Ok(Some(unsafe { std::fs::File::from_raw_handle(h.0 as _) }))
+}
+
+/// Propriétaire (SID) du fichier ou dossier ouvert
+pub fn proprietaire_par_handle(f: &std::fs::File) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    let mut proprietaire = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        let r = GetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, Some(&mut proprietaire), None,
+            None, None, Some(&mut sd));
+        if r.0 != 0 || proprietaire.is_invalid() {
+            return None;
+        }
+        let s = sid_texte(proprietaire);
+        let _ = LocalFree(HLOCAL(sd.0));
+        Some(s).filter(|s| !s.is_empty())
+    }
+}
+
+/// Exécute `f` sous l'identité d'un utilisateur dont une session est ouverte (jeton de sa session), sur ce
+/// fil seulement : Windows applique alors SES droits, pas ceux de SYSTEM. Erreur si aucune session de ce
+/// compte n'est ouverte. Si le retour au jeton du service échoue, le service s'arrête plutôt que de
+/// continuer sous une autre identité.
+pub fn avec_jeton_de<T>(sid: &str, f: impl FnOnce() -> T) -> Result<T, String> {
+    use windows::Win32::Security::{GetTokenInformation, ImpersonateLoggedOnUser, RevertToSelf, TokenUser, TOKEN_USER};
+    use windows::Win32::System::RemoteDesktop::{WTSEnumerateSessionsW, WTSFreeMemory, WTSQueryUserToken, WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW};
+    unsafe {
+        let mut sessions: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+        let mut n = 0u32;
+        WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut n).map_err(|e| format!("sessions : {e}"))?;
+        let liste = std::slice::from_raw_parts(sessions, n as usize).to_vec();
+        WTSFreeMemory(sessions as *mut c_void);
+        for s in liste {
+            let mut jeton = HANDLE::default();
+            if WTSQueryUserToken(s.SessionId, &mut jeton).is_err() {
+                continue;
+            }
+            let mut tampon = vec![0u64; 64];
+            let mut taille = 0u32;
+            let ok = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok();
+            if !ok || sid_texte((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid) != sid {
+                let _ = CloseHandle(jeton);
+                continue;
+            }
+            let r = ImpersonateLoggedOnUser(jeton).map_err(|e| format!("emprunt de l'identité : {e}"));
+            let _ = CloseHandle(jeton);
+            r?;
+            let valeur = f();
+            if RevertToSelf().is_err() {
+                crate::commun::journal("ARRÊT : retour à l'identité du service impossible après une restauration");
+                std::process::abort();
+            }
+            return Ok(valeur);
+        }
+        Err("aucune session ouverte de ce compte".into())
+    }
+}
+
+/// Un élément EXISTANT du chemin (fichier ou dossier parent) est-il un lien (jonction, lien symbolique) ?
+/// Contrôle préalable seulement : la preuve reste le chemin final vérifié après ouverture
+pub fn chemin_contient_lien(chemin: &std::path::Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    chemin.ancestors().any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_attributes() & 0x400 != 0))
 }

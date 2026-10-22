@@ -143,6 +143,12 @@ namespace DeR4Tizer
                         return (en ? "RESTORE from quarantine and make executable again: " : "SORTIR de la quarantaine et rendre de nouveau exécutable : ")
                             + (q == null ? (en ? "unknown item " : "élément inconnu ") + cible : q.CheminOrigine + (en ? "\n(quarantined because: " : "\n(mis en quarantaine pour : ") + q.Raison + ")");
                     }
+                case "restaurerRepli":
+                    {
+                        var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(x => x.Id == cible);
+                        return (en ? "RESTORE from quarantine into the deR4Tizer folder (ProgramData\\deR4Tizer\\restaurations): " : "SORTIR de la quarantaine dans le dossier de deR4Tizer (ProgramData\\deR4Tizer\\restaurations) : ")
+                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + cible : q.CheminOrigine);
+                    }
                 case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + cible;
                 case "panique": return v != "off" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
                 case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + cible;
@@ -456,7 +462,19 @@ namespace DeR4Tizer
                 Canal.Executer(new Commande { Action = "restaurer", Cible = q.Id });
                 quarantaineVu = DateTime.MinValue;
             };
-            var pageQuarantaine = Page("Quarantaine", "Fichiers retirés de leur emplacement et rendus inexécutables. Ils peuvent être restaurés.", lvQuarantaine, btnRestaurer);
+            // Repli : si la restauration à l'emplacement d'origine est refusée (le propriétaire n'a pas de session
+            // ouverte, emplacement du système), le service restaure dans son propre dossier
+            var btnRestaurerRepli = new BoutonNeon("Restaurer dans le dossier de deR4Tizer", Theme.Cyan);
+            btnRestaurerRepli.Click += (s, e) =>
+            {
+                if (lvQuarantaine.SelectedItems.Count == 0) return;
+                var q = (ElementQuarantaine)lvQuarantaine.SelectedItems[0].Tag;
+                if (MessageBox.Show("Restaurer ce fichier dans le dossier de deR4Tizer (C:\\ProgramData\\deR4Tizer\\restaurations) plutôt qu'à son emplacement d'origine ?\n\n" + q.CheminOrigine,
+                    "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                Canal.Executer(new Commande { Action = "restaurerRepli", Cible = q.Id });
+                quarantaineVu = DateTime.MinValue;
+            };
+            var pageQuarantaine = Page("Quarantaine", "Fichiers retirés de leur emplacement et rendus inexécutables. Ils peuvent être restaurés.", lvQuarantaine, btnRestaurer, btnRestaurerRepli);
 
             // ---------------- Listes de menaces et réponses automatiques
             lvMenaces.Colonnes("Source", 260, "Type", 90, "Confiance", 100, "Entrées", 90, "Mise à jour", 140, "Licence", 330, "Statut", 380);

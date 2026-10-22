@@ -39,7 +39,12 @@ pub fn proprietaire_acceptable(sid: &str) -> bool {
 /// Décision pure sur des droits relus : propriétaire acceptable, héritage coupé, contrôle total pour les
 /// seuls comptes de `complets`, lecture seule pour les `lecteurs`, rien pour les autres
 pub fn droits_conformes(s: &crate::natif::Securite, complets: &[&str], lecteurs: &[&str]) -> Result<(), String> {
-    if !proprietaire_acceptable(&s.proprietaire) {
+    droits_conformes_pour(s, &proprietaire_acceptable, complets, lecteurs)
+}
+
+/// `droits_conformes`, avec la règle d'acceptation du propriétaire fournie (tests hors service)
+pub fn droits_conformes_pour(s: &crate::natif::Securite, proprietaire_ok: &dyn Fn(&str) -> bool, complets: &[&str], lecteurs: &[&str]) -> Result<(), String> {
+    if !proprietaire_ok(&s.proprietaire) {
         return Err(format!("propriétaire {} (ni SYSTEM ni Administrateurs)", if s.proprietaire.is_empty() { "illisible" } else { &s.proprietaire }));
     }
     if !s.protege {
@@ -265,6 +270,34 @@ pub fn preparer_quarantaine_avec(q: &Path, de_confiance: &dyn Fn(&Path) -> Optio
 /// seul un redémarrage réussi du service le fait
 static ECHEC_DEMARRAGE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Décision pure : un élément dont la DACL est protégée (héritage coupé), dont le propriétaire est de
+/// confiance et sur lequel aucun autre compte n'a de droit d'écriture a reçu ses propres droits à la
+/// création ; il ne doit pas être réinitialisé (ni son contenu). `de_confiance` : SYSTEM et Administrateurs
+/// en service. Une entrée de type inconnu empêche de le garder.
+pub fn a_garder_tel_quel(s: &crate::natif::Securite, de_confiance: &dyn Fn(&str) -> bool) -> bool {
+    s.protege
+        && de_confiance(&s.proprietaire)
+        && !s.ace_inconnue
+        && s.aces.iter().filter(|a| a.autorise).all(|a| de_confiance(&a.sid) || a.masque & DROITS_ECRITURE == 0)
+}
+
+/// Réinitialise aux droits hérités le contenu de `dossier`, élément par élément, sans suivre de lien, en
+/// laissant intacts (avec leur contenu) les éléments à garder tels quels
+pub fn reinitialiser_contenu(dossier: &Path, de_confiance: &dyn Fn(&str) -> bool) {
+    let Ok(lecture) = fs::read_dir(dossier) else { return };
+    for e in lecture.flatten() {
+        let p = e.path();
+        let Ok(m) = fs::symlink_metadata(&p) else { continue };
+        if est_lien(&m) || crate::natif::lire_securite(&p).is_some_and(|s| a_garder_tel_quel(&s, de_confiance)) {
+            continue;
+        }
+        icacls(&[&p.to_string_lossy(), "/reset", "/C", "/Q"]);
+        if m.is_dir() {
+            reinitialiser_contenu(&p, de_confiance);
+        }
+    }
+}
+
 /// Démarrage du service, avant toute lecture du dossier de données
 pub fn securiser() {
     if !crate::natif::est_systeme() {
@@ -379,15 +412,10 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
         return Err("un élément d'un autre propriétaire n'a pas pu être écarté".into());
     }
     // Tout ce qui reste appartient à SYSTEM ou aux administrateurs (vérifié par trier). Contenu : droits
-    // hérités du dossier, sauf le jeton de l'API et les secrets, qui ont leurs propres droits (posés à la
-    // création, à ne pas réinitialiser). Avec /C, icacls rend 0 même en cas d'échec : son code n'est pas
-    // une preuve, seules les relectures de droits en sont une (racine, secrets, jeton ci-dessous)
-    for e in fs::read_dir(racine).map_err(|e| e.to_string())?.flatten() {
-        let n = e.file_name().to_string_lossy().to_string();
-        if n != crate::api::FICHIER_JETON && n != "secrets" {
-            icacls(&[&e.path().to_string_lossy(), "/reset", "/T", "/C", "/Q"]);
-        }
-    }
+    // hérités du dossier, sauf ce qui a reçu ses propres droits à la création (DACL protégée et propriétaire
+    // de confiance : jeton, secrets, copies de quarantaine, dossiers de repli). Avec /C, icacls rend 0 même en
+    // cas d'échec : son code n'est pas une preuve, seules les relectures de droits en sont une
+    reinitialiser_contenu(racine, &proprietaire_acceptable);
     crate::notifications::preparer_dossier()?;
     crate::api::proteger_jeton()?;
     let l = lecteurs();
