@@ -1543,6 +1543,67 @@ fn lot2_retour_arriere_simule() {
 }
 
 /// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
+/// Lot 5 : un client du canal qui se connecte puis se tait ne bloque plus le canal : la lecture d'une commande est
+/// bornée dans le temps ; une commande normale est toujours lue
+#[test]
+fn lot5_canal_lecture_bornee_client_silencieux() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    for (essai, envoi) in [("silence", None), ("commande", Some("{\"Action\":\"verification\"}\n"))] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-{essai}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+        assert!(!tube.is_invalid());
+        let nom_client = nom.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&nom_client).unwrap();
+            if let Some(t) = envoi {
+                c.write_all(t.as_bytes()).unwrap();
+            }
+            // Le client garde la connexion ouverte sans rien envoyer de plus
+            std::thread::sleep(Duration::from_secs(6));
+        });
+        let _ = unsafe { ConnectNamedPipe(tube, None) };
+        let debut = Instant::now();
+        let lu = crate::canal::lire_commande(HANDLE(tube.0), Duration::from_millis(800));
+        let duree = debut.elapsed();
+        assert!(duree < Duration::from_secs(3), "{essai} : lecture non bornée ({duree:?})");
+        match envoi {
+            None => assert!(lu.is_empty(), "silence : rien ne doit être lu"),
+            Some(t) => assert_eq!(String::from_utf8_lossy(&lu), t, "commande : lue en entier"),
+        }
+        unsafe { let _ = CloseHandle(tube); }
+        client.join().unwrap();
+    }
+}
+
+/// Lot 5 : canal occupé par un autre processus au démarrage (squat) : le PID de celui qui tient le tube est lu en
+/// client anonyme (jamais avec l'identité de SYSTEM), et l'alerte est critique, avec le PID et le chemin
+#[test]
+fn lot5_canal_squat_pid_et_alerte_critique() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let nom = format!(r"\\.\pipe\d4t-essai-lot5-squat-{}", std::process::id());
+    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), Some(std::process::id()));
+    unsafe { let _ = CloseHandle(tube); }
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), None, "tube fermé : aucun PID");
+    let a = crate::canal::alerte_squat(Some(4242), r"C:\Users\x\AppData\squat.exe");
+    assert_eq!(a.niveau, "Critique");
+    assert_eq!(a.pid, Some(4242));
+    assert!(a.raisons.contains("4242") && a.raisons.contains(r"C:\Users\x\AppData\squat.exe"), "{}", a.raisons);
+    let inconnu = crate::canal::alerte_squat(None, "");
+    assert_eq!(inconnu.niveau, "Critique");
+}
+
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
