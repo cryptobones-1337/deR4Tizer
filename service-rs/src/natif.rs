@@ -662,9 +662,23 @@ pub fn avec_privilege_restauration<T>(f: impl FnOnce() -> T) -> Result<T, String
             r
         })();
         let valeur = resultat.map(|_| f());
-        let _ = RevertToSelf();
+        retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), "privilège de restauration", arreter);
         valeur
     }
+}
+
+/// Après un emprunt d'identité ou un privilège activé sur le fil : si le retour à l'identité du service
+/// (RevertToSelf) échoue, le fil garderait une autre identité ou le privilège ; `arret` est appelé (en service :
+/// journal puis arrêt du processus, que le gestionnaire de services relance avec un jeton propre)
+pub fn retour_ou_arret(retour: Result<(), String>, contexte: &str, arret: impl FnOnce(String)) {
+    if let Err(e) = retour {
+        arret(format!("ARRÊT : retour à l'identité du service impossible ({contexte}) : {e}"));
+    }
+}
+
+fn arreter(message: String) {
+    crate::commun::journal(&message);
+    std::process::abort();
 }
 
 /// Déplace un fichier ou un dossier par son handle, ouvert avec DELETE et la sémantique de sauvegarde (le
@@ -1058,10 +1072,7 @@ pub fn avec_jeton_de<T>(sid: &str, f: impl FnOnce() -> T) -> Result<T, String> {
             let _ = CloseHandle(jeton);
             r?;
             let valeur = f();
-            if RevertToSelf().is_err() {
-                crate::commun::journal("ARRÊT : retour à l'identité du service impossible après une restauration");
-                std::process::abort();
-            }
+            retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), "restauration sous l'identité de l'utilisateur", arreter);
             return Ok(valeur);
         }
         Err("aucune session ouverte de ce compte".into())
