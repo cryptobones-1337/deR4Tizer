@@ -230,3 +230,103 @@ fn chemins_des_pilotes() {
     assert_eq!(crate::hygiene::chemin_image(r"\??\C:\Temp\y.sys").to_string_lossy(), r"C:\Temp\y.sys");
     assert_eq!(crate::hygiene::chemin_image(r"System32\drivers\z.sys").to_string_lossy().to_lowercase(), format!(r"{w}\System32\drivers\z.sys").to_lowercase());
 }
+
+// ------------------------------------------------------------ décisions (un test par correctif des revues)
+
+fn alerte(niveau: &str, destination: &str, raisons: &str, score: i32) -> crate::commun::Alerte {
+    crate::commun::Alerte {
+        niveau: niveau.into(), destination: destination.into(), raisons: raisons.into(), score,
+        processus: "réseau local".into(), mitre: "T1557.003".into(), heure: "2026-10-22 10:00:00".into(), ..Default::default()
+    }
+}
+
+#[test]
+fn b1_leurre_touche_par_rundll32_suspendu() {
+    // rundll32 : binaire Windows, mais ni logiciel connu ni processus critique → suspendu
+    assert!(crate::vol_donnees::suspendre_leurre(true, false, false));
+    // processus critique (svchost partagé…) : jamais
+    assert!(!crate::vol_donnees::suspendre_leurre(true, false, true));
+    // sauvegarde connue et signée : jamais
+    assert!(!crate::vol_donnees::suspendre_leurre(true, true, false));
+    // réponse automatique désactivée : jamais
+    assert!(!crate::vol_donnees::suspendre_leurre(false, false, false));
+}
+
+#[test]
+fn b2_noms_des_leurres_dans_le_dossier_des_secrets() {
+    assert!(crate::hygiene::FICHIER_NOMS.starts_with("secrets\\"));
+    assert!(crate::hygiene::FICHIER_LEURRES.starts_with("secrets\\"));
+}
+
+#[test]
+fn b3_vraie_alerte_visible_parmi_300_usurpations() {
+    let mut lot: Vec<_> = (1..=300).map(|i| alerte("Critique", &format!("serveur DHCP 192.168.1.{i}"),
+        "SERVEUR DHCP PIRATE probable", 12)).collect();
+    let mut vraie = alerte("Critique", "passerelle 192.168.1.254", "USURPATION ARP probable", 12);
+    vraie.mitre = "T1557.002".into();
+    lot.insert(150, vraie);
+    let t = crate::notifications::texte(&lot);
+    assert!(t.contains("USURPATION ARP"), "l'alerte unique doit apparaître");
+    assert!(t.contains("300 × serveur DHCP"), "les 300 usurpations doivent tenir sur une ligne : {t}");
+    assert!(t.find("USURPATION ARP").unwrap() < t.find("300 ×").unwrap(), "l'alerte unique d'abord");
+}
+
+#[test]
+fn notifications_critiques_jamais_retenues() {
+    let lot = vec![alerte("Critique", "a", "x", 10), alerte("Alerte", "b", "y", 5)];
+    // plafond atteint : la critique part, l'autre est retenue
+    let (envoi, retenues, compte) = crate::notifications::repartir(lot.clone(), 10, 10);
+    assert_eq!((envoi.len(), retenues, compte), (1, 1, false));
+    assert_eq!(envoi[0].niveau, "Critique");
+    // sous le plafond : tout part et l'envoi compte
+    let (envoi, retenues, compte) = crate::notifications::repartir(lot, 0, 10);
+    assert_eq!((envoi.len(), retenues, compte), (2, 0, true));
+}
+
+#[test]
+fn editeurs_compares_exactement() {
+    use crate::vol_donnees::editeur_correspond;
+    assert!(editeur_correspond("Brave Software, Inc.", &["Brave Software, Inc."]));
+    assert!(editeur_correspond("BRAVE SOFTWARE INC", &["Brave Software, Inc."]), "casse et ponctuation ignorées");
+    assert!(!editeur_correspond("Brave Heart SARL", &["Brave Software, Inc."]));
+    assert!(!editeur_correspond("Box, Inc. Fake Ltd", &["Box, Inc."]));
+    assert!(!editeur_correspond("", &["Google LLC"]));
+}
+
+#[test]
+fn blocages_leves_a_expiration_ou_hors_liste() {
+    use crate::commun::Blocage;
+    let b = |cible: &str, raison: &str, expire: &str| Blocage { type_: "parefeu".into(), cible: cible.into(), raison: raison.into(), date: String::new(), expire: expire.into() };
+    let l = vec![
+        b("1.1.1.1", "blocage automatique : Spamhaus", "2026-10-29 10:00:00"),
+        b("2.2.2.2", "blocage automatique : Spamhaus", "2026-10-21 10:00:00"),
+        b("3.3.3.3", "blocage manuel", ""),
+    ];
+    let listee = |ip: &str| ip != "1.1.1.1";
+    let r = crate::moniteur::blocages_a_lever(&l, "2026-10-22 10:00:00", true, listee);
+    let cibles: Vec<&str> = r.iter().map(|x| x.1.as_str()).collect();
+    assert_eq!(cibles, vec!["1.1.1.1", "2.2.2.2"], "hors liste et expiré levés, manuel conservé");
+    // listes pas encore chargées : seule l'expiration compte (sinon tout serait débloqué au démarrage)
+    let r = crate::moniteur::blocages_a_lever(&l, "2026-10-22 10:00:00", false, |_| false);
+    assert_eq!(r.len(), 1);
+}
+
+#[test]
+fn baseline_reglage_asr_partage_conserve() {
+    use crate::baseline::{reglages_partages, REGLES};
+    let asr: Vec<&crate::baseline::Regle> = REGLES.iter().filter(|r| r.id.starts_with("asr.")).collect();
+    assert!(asr.len() >= 2);
+    // on annule la première règle ASR : ExploitGuard_ASR_Rules doit rester, puisque la deuxième l'utilise
+    let retires = vec![(r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR".to_string(), "ExploitGuard_ASR_Rules".to_string())];
+    let garder = reglages_partages(&retires, &asr[1..]);
+    assert_eq!(garder.len(), 1);
+    assert_eq!(garder[0].1, "ExploitGuard_ASR_Rules");
+    // plus aucune règle ASR appliquée : rien à conserver
+    assert!(reglages_partages(&retires, &[]).is_empty());
+}
+
+#[test]
+fn debogage_a_distance_du_navigateur() {
+    assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --headless"#).is_some());
+    assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#).is_none());
+}

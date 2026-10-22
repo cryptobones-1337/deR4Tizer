@@ -930,18 +930,10 @@ En-tête : Authorization: Bearer {j}"))
 
     fn expirer_blocages(&mut self) {
         let maintenant = commun::maintenant();
-        let a_retirer: Vec<(String, String, &'static str)> = {
+        let a_retirer = {
             let menaces = self.partage.menaces.read().unwrap();
             let chargees = menaces.infos.total_ip + menaces.infos.total_reseaux > 0;
-            self.blocages.iter().filter_map(|b| {
-                if !b.expire.is_empty() && b.expire < maintenant {
-                    Some((b.type_.clone(), b.cible.clone(), "durée écoulée"))
-                } else if chargees && b.raison.starts_with("blocage automatique") && menaces.chercher_ip(&b.cible).is_none() {
-                    Some((b.type_.clone(), b.cible.clone(), "adresse retirée des listes de menaces"))
-                } else {
-                    None
-                }
-            }).collect()
+            blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.chercher_ip(ip).is_some())
         };
         for (t, c, pourquoi) in a_retirer {
             self.debloquer(&t, &c);
@@ -1125,7 +1117,8 @@ pub fn nettoyer() {
         Err(e) => println!("Fichier hosts : {e}"),
     }
     // Leurres anti-rançongiciel et mode panique
-    let leurres: Vec<hygiene::Leurre> = commun::lire("leurres.json").unwrap_or_default();
+    let mut leurres: Vec<hygiene::Leurre> = commun::lire(hygiene::FICHIER_LEURRES).unwrap_or_default();
+    leurres.extend(commun::lire::<Vec<hygiene::Leurre>>("leurres.json").unwrap_or_default());
     let n = leurres.iter().filter(|l| {
         let _ = std::process::Command::new("attrib.exe").args(["-h", "-s"]).arg(&l.chemin).output();
         fs::remove_file(&l.chemin).is_ok()
@@ -1140,4 +1133,17 @@ pub fn nettoyer() {
         let _ = fs::remove_file(marqueur);
         println!("Journal DNS de Windows désactivé (il l'était avant deR4Tizer).");
     }
+}
+
+/// Blocages automatiques à lever : durée écoulée, ou adresse sortie des listes (si les listes sont chargées)
+pub fn blocages_a_lever(blocages: &[Blocage], maintenant: &str, listes_chargees: bool, listee: impl Fn(&str) -> bool) -> Vec<(String, String, &'static str)> {
+    blocages.iter().filter_map(|b| {
+        if !b.expire.is_empty() && b.expire.as_str() < maintenant {
+            Some((b.type_.clone(), b.cible.clone(), "durée écoulée"))
+        } else if listes_chargees && b.raison.starts_with("blocage automatique") && !listee(&b.cible) {
+            Some((b.type_.clone(), b.cible.clone(), "adresse retirée des listes de menaces"))
+        } else {
+            None
+        }
+    }).collect()
 }

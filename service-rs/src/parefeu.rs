@@ -220,6 +220,28 @@ pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str
             }
             commun::ecrire("parefeu.json", &historique);
             if let Some(a) = a {
+                // Actualisation de la GPO classée en information : on vérifie une minute plus tard que les règles
+                // sont bien revenues (Windows en compte plusieurs centaines) ; sinon, alerte critique
+                if a.raisons.starts_with("règles du pare-feu rechargées") {
+                    let f = file.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(60));
+                        let n = crate::blocage::nombre_regles().unwrap_or(0);
+                        if n < 50 {
+                            f.lock().unwrap().push(Alerte {
+                                id: commun::nouvel_id(),
+                                heure: commun::maintenant(),
+                                niveau: "Critique".into(),
+                                score: 10,
+                                processus: "svchost".into(),
+                                destination: "règles du pare-feu".into(),
+                                raisons: format!("après une suppression de toutes les règles du pare-feu, seules {n} règle(s) sont revenues : pare-feu vidé  [MITRE T1562.004]"),
+                                mitre: "T1562.004".into(),
+                                ..Default::default()
+                            });
+                        }
+                    });
+                }
                 file.lock().unwrap().push(a);
             }
         })

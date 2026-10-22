@@ -44,6 +44,8 @@ fn regles() -> &'static [(Regex, &'static str)] {
              "PowerShell obscurci ou qui télécharge du code"),
             (Regex::new(r"(?i)certutil.*(-urlcache|-decode|-f\s+http)|bitsadmin.*/transfer|mshta.*(http|javascript:|vbscript:)|regsvr32.*/i:http|rundll32.*javascript:|wmic.*process\s+call\s+create").unwrap(),
              "détournement d'outil Windows (LOLBin)"),
+            (Regex::new(r"(?i)(chrome|msedge|brave)(\.exe)?.*--remote-debugging-(port|pipe)").unwrap(),
+             "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)"),
             (Regex::new(r"(?i)vssadmin.*delete\s+shadows|wbadmin.*delete\s+(catalog|systemstatebackup)|bcdedit.*recoveryenabled\s+no|wmic.*shadowcopy\s+delete").unwrap(),
              "suppression des sauvegardes (typique d'un rançongiciel)"),
         ]

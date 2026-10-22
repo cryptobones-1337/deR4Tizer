@@ -98,6 +98,11 @@ pub fn ajouter_regle(ip: &str, raison: &str) -> windows::core::Result<()> {
     }
 }
 
+/// Nombre de règles du pare-feu actuellement en vigueur (None si illisible)
+pub fn nombre_regles() -> Option<i32> {
+    unsafe { politique().ok()?.Rules().ok()?.Count().ok() }
+}
+
 /// Supprime toutes les règles portant le nom de cette IP
 pub fn supprimer_regle(ip: &str) -> usize {
     let Ok(p) = politique() else { return 0 };

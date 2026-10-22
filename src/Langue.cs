@@ -144,6 +144,12 @@ namespace DeR4Tizer
 
             { "Adresses autorisées (SIEM)", "Allowed addresses (SIEM)" },
 
+            { "VOL DE DONNÉES NON SURVEILLÉ (AUDIT INACTIF)", "DATA THEFT NOT MONITORED (AUDIT OFF)" },
+            { "Couper Internet pour tous les programmes et fermer les connexions en cours ?\n\nÀ utiliser si vous pensez qu'un attaquant ou un rançongiciel est actif. Le réseau local reste accessible.\n\nLimite : les serveurs DNS et les serveurs de notification (ntfy, Teams, e-mail) restent joignables pour tous les programmes, pas seulement pour deR4Tizer ; un malware pourrait s'en servir pour faire sortir des données. Préférez un serveur ntfy auto-hébergé à ntfy.sh.",
+              "Cut the Internet for all programs and close current connections?\n\nUse it if you think an attacker or ransomware is active. The local network stays reachable.\n\nLimitation: DNS servers and notification servers (ntfy, Teams, e-mail) remain reachable for all programs, not only deR4Tizer; malware could use them to send data out. Prefer a self-hosted ntfy server to ntfy.sh." },
+            { "Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique).",
+              "Tip: a self-hosted ntfy server rather than ntfy.sh, which malware also uses to send data out (it remains reachable in panic mode)." },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

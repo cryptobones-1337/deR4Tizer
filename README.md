@@ -94,6 +94,13 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 - Les exécutables ne sont pas encore signés (certificat de signature de code à obtenir, par exemple SignPath
   Foundation pour les projets open source) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
 - deR4Tizer complète Microsoft Defender, il ne le remplace pas : un attaquant administrateur peut arrêter le service.
+- Mode panique : les serveurs DNS et de notification restent joignables pour tous les programmes (un malware
+  pourrait s'en servir pour faire sortir des données) ; préférez un serveur ntfy auto-hébergé à ntfy.sh.
+- La détection des voleurs de données repose sur l'identité du programme qui lit les fichiers : elle ne voit pas
+  l'injection de code dans le navigateur. Le lancement d'un navigateur en débogage à distance
+  (`--remote-debugging-port`, technique courante de vol de cookies) est en revanche signalé.
+- Sur un poste géré (domaine, Intune), la baseline est en lecture seule ; si l'organisation n'active pas l'audit
+  du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 
 ### Feuille de route

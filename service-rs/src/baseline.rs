@@ -627,21 +627,17 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // l'audit et le blocage…) : s'ils servent encore à une règle toujours appliquée, on remet sa valeur au lieu
     // de les retirer
     let mut ajouts = Vec::new();
-    for r in REGLES.iter().filter(|r| sauvegarde.regles.contains_key(r.id)) {
-        for m in r.mecanismes {
-            if let Registre { cle, nom, valeur } = m {
-                if retraits.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)) {
-                    retraits.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
-                    ajouts.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
-                    ajouts.push(entree(cle, nom, valeur));
-                    if let Ok((k, _)) = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
-                        let _ = match valeur {
-                            Dword(n) => k.set_value(nom, n),
-                            Texte(t) => k.set_value(nom, &t.to_string()),
-                        };
-                    }
-                }
-            }
+    let retires: Vec<(String, String)> = retraits.iter().map(|e: &EntreePol| (e.cle.clone(), e.nom.clone())).collect();
+    let restantes: Vec<&Regle> = REGLES.iter().filter(|r| sauvegarde.regles.contains_key(r.id)).collect();
+    for (cle, nom, valeur) in reglages_partages(&retires, &restantes) {
+        retraits.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
+        ajouts.retain(|e: &EntreePol| !(e.cle.eq_ignore_ascii_case(cle) && e.nom.eq_ignore_ascii_case(nom)));
+        ajouts.push(entree(cle, nom, valeur));
+        if let Ok((k, _)) = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
+            let _ = match valeur {
+                Dword(n) => k.set_value(nom, n),
+                Texte(t) => k.set_value(nom, &t.to_string()),
+            };
         }
     }
     gpo::modifier_pol(&ajouts, &retraits).map_err(|e| format!("Registry.pol : {e}"))?;
@@ -671,4 +667,21 @@ pub fn derives(avant: &EtatBaseline, apres: &EtatBaseline) -> Vec<Alerte> {
             ..Default::default()
         })
         .collect()
+}
+
+/// Réglages retirés par une annulation mais encore utilisés par une règle toujours appliquée : on remet la
+/// valeur de cette règle au lieu de les retirer (ExploitGuard_ASR_Rules, EnableControlledFolderAccess…)
+pub fn reglages_partages<'a>(retires: &[(String, String)], restantes: &[&'a Regle]) -> Vec<(&'a str, &'a str, &'a Valeur)> {
+    let mut l: Vec<(&str, &str, &Valeur)> = Vec::new();
+    for r in restantes {
+        for m in r.mecanismes {
+            if let Registre { cle, nom, valeur } = m {
+                if retires.iter().any(|(c, n)| c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom))
+                    && !l.iter().any(|(c, n, _)| c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom)) {
+                    l.push((cle, nom, valeur));
+                }
+            }
+        }
+    }
+    l
 }
