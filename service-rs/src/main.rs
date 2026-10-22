@@ -8,6 +8,12 @@
 mod baseline;
 mod blocage;
 mod canal;
+mod capture;
+mod dpi;
+mod geoip;
+mod ids;
+mod ndr;
+mod trafic;
 mod chaines;
 mod api;
 mod commun;

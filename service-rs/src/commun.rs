@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "3.2";
+pub const VERSION: &str = "4.0";
 pub const NOM_SERVICE: &str = "deR4Tizer";
 pub const NOM_PIPE: &str = r"\\.\pipe\deR4Tizer";
 pub const SEUIL_ALERTE: i32 = 3;
@@ -160,6 +160,8 @@ pub struct Config {
     pub langue: String,
     pub syslog: ConfigSyslog,
     pub api: ConfigApi,
+    /// Prévention d'intrusion : l'IDS bloque au pare-feu l'adresse distante des règles « drop » ou de priorité 1
+    pub ips: bool,
 }
 
 impl Default for Config {
@@ -170,6 +172,7 @@ impl Default for Config {
             langue: "fr".into(),
             syslog: ConfigSyslog::default(),
             api: ConfigApi::default(),
+            ips: false,
         }
     }
 }

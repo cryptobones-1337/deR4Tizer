@@ -48,6 +48,8 @@ pub struct Partage {
     pub dns: Mutex<HashMap<String, String>>,
     /// Alertes produites hors du fil de surveillance (DNS, Defender, baseline…)
     pub alertes_externes: Arc<Mutex<Vec<Alerte>>>,
+    /// Adresses à bloquer demandées par l'IPS : (IP, raison)
+    pub blocages_ips: Arc<Mutex<Vec<(String, String)>>>,
     pub menaces: RwLock<Menaces>,
     pub defender: Mutex<EtatDefender>,
     pub baseline_occupee: AtomicBool,
@@ -96,6 +98,7 @@ impl Moniteur {
         let partage = Arc::new(Partage {
             dns: Mutex::new(commun::lire_carte("dns.json").unwrap_or_default()),
             alertes_externes: Arc::new(Mutex::new(Vec::new())),
+            blocages_ips: Arc::new(Mutex::new(Vec::new())),
             menaces: RwLock::new(Menaces::charger(&HashMap::new())),
             defender: Mutex::new(EtatDefender::default()),
             baseline_occupee: AtomicBool::new(false),
@@ -173,6 +176,21 @@ impl Moniteur {
             ));
         }
         crate::export::demarrer(&m.config.syslog);
+        if !console {
+            // Capture des paquets : trafic, NDR local, DPI, IDS/IPS
+            // Trafic, DPI et IDS sur l'interface de la route par défaut (le tunnel, avec un VPN) ;
+            // NDR sur la carte du réseau local
+            let analyseurs: Vec<Box<dyn crate::capture::Analyseur>> = vec![
+                Box::new(crate::trafic::Trafic::nouveau(partage.clone())),
+                Box::new(crate::dpi::Dpi::nouveau(partage.clone())),
+                Box::new(crate::ids::Ids::nouveau(partage.alertes_externes.clone(), partage.blocages_ips.clone())),
+            ];
+            let p = partage.clone();
+            crate::capture::demarrer("trafic", analyseurs, crate::capture::adresse_locale, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
+            let ndr = crate::ndr::demarrer(partage.alertes_externes.clone());
+            let p = partage.clone();
+            crate::capture::demarrer("réseau local", vec![Box::new(ndr)], crate::ndr::adresse_lan, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
+        }
         if !console {
             crate::api::demarrer(&m.config.api);
         }
@@ -473,6 +491,11 @@ impl Moniteur {
         }
         let detections: Vec<Alerte> = std::mem::take(&mut *self.processus.detections.lock().unwrap());
         let dns: Vec<Alerte> = std::mem::take(&mut *self.partage.alertes_externes.lock().unwrap());
+        let a_bloquer: Vec<(String, String)> = std::mem::take(&mut *self.partage.blocages_ips.lock().unwrap());
+        for (ip, raison) in a_bloquer {
+            let r = self.bloquer_ip(&ip, &raison);
+            commun::journal(&format!("IPS : {}", r.message));
+        }
         for a in detections.into_iter().chain(dns) {
             if let Some(pid) = a.pid {
                 let raison: String = a.raisons.chars().take(90).collect();
@@ -642,6 +665,10 @@ impl Moniteur {
                     Some("BlocageAutoMenaces") => {
                         self.config.blocage_auto_menaces = actif;
                         "Blocage automatique des menaces"
+                    }
+                    Some("Ips") => {
+                        self.config.ips = actif;
+                        "Prévention d'intrusion (IPS)"
                     }
                     Some("ReponseAutoRancongiciel") => {
                         self.config.reponse_auto_rancongiciel = actif;

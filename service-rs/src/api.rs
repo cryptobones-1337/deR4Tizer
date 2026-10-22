@@ -118,9 +118,13 @@ fn regle_parefeu(config: &ConfigApi) {
     let script = if config.actif && config.reseau {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; \
             New-NetFirewallRule -Name '{NOM_REGLE}' -DisplayName 'deR4Tizer API' -Group '{}' -Direction Inbound \
-            -Protocol TCP -LocalPort {} -Action Allow -Profile Domain,Private | Out-Null", crate::blocage::GROUPE, config.port)
+            -Protocol TCP -LocalPort {} -Action Allow -Profile Domain,Private | Out-Null; \
+            Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue; \
+            New-NetFirewallRule -Name '{NOM_REGLE}-public' -DisplayName 'deR4Tizer API (réseau public bloqué)' -Group '{}' \
+            -Direction Inbound -Protocol TCP -LocalPort {} -Action Block -Profile Public | Out-Null",
+            crate::blocage::GROUPE, config.port, crate::blocage::GROUPE, config.port)
     } else {
-        format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue")
+        format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue")
     };
     let _ = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])

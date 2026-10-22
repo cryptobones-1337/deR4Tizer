@@ -197,7 +197,7 @@ namespace DeR4Tizer
             demarrerCache = cache;
             Text = "deR4Tizer " + Commun.Version;
             Icon = Theme.IconeApplication(32);
-            Size = new Size(1360, 860);
+            Size = new Size(1360, 880);
             MinimumSize = new Size(960, 560);
             StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.Petit;
@@ -340,11 +340,23 @@ namespace DeR4Tizer
             // ils rétrécissent au lieu de faire apparaître une barre horizontale
             liens.ClientSizeChanged += (s, e) => { foreach (Control c in liens.Controls) c.Width = liens.ClientSize.Width; };
             navFlux = Lien(liens, "Connexions", pageFlux, largeurNav);
+            var pageTrafic = new PageTrafic();
+            contenu.Controls.Add(pageTrafic);
+            pages.Add(pageTrafic);
+            Lien(liens, "Trafic", pageTrafic, largeurNav);
             navAlertes = Lien(liens, "Alertes", pageAlertes, largeurNav);
             var pageSiem = new PageSiem();
             contenu.Controls.Add(pageSiem);
             pages.Add(pageSiem);
             Lien(liens, "Événements", pageSiem, largeurNav);
+            var pageDetection = new PageDetection();
+            contenu.Controls.Add(pageDetection);
+            pages.Add(pageDetection);
+            Lien(liens, "Détection", pageDetection, largeurNav);
+            var pageReseau = new PageReseau();
+            contenu.Controls.Add(pageReseau);
+            pages.Add(pageReseau);
+            Lien(liens, "Réseau local", pageReseau, largeurNav);
             navChaines = Lien(liens, "Chaînes", pageChaines, largeurNav);
             navVie = Lien(liens, "Vie privée", pageVie, largeurNav);
             navParefeu = Lien(liens, "Pare-feu", pageParefeu, largeurNav);

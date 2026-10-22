@@ -225,6 +225,7 @@ namespace DeR4Tizer
         public string Langue { get; set; }
         public ConfigSyslog Syslog { get; set; }
         public ConfigApi Api { get; set; }
+        public bool Ips { get; set; }
         // Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
         public bool BlocageAutoMenaces { get; set; }
         // Suspend aussitôt le programme qui modifie un fichier leurre
@@ -259,6 +260,61 @@ namespace DeR4Tizer
         public string Mitre { get; set; }
         public string Resume { get; set; }
         public List<string> Evenements { get; set; }
+    }
+
+    // ------------------------------------------------------------ trafic (trafic.json)
+    public class PointTrafic { public string Heure { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } }
+    public class TraficApplication { public string Nom { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } public int Destinations { get; set; } }
+    public class TraficDestination
+    {
+        public string Ip { get; set; } public string Nom { get; set; } public string Pays { get; set; } public string Programme { get; set; }
+        public int Port { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } public bool Active { get; set; }
+    }
+    public class TraficPays
+    {
+        public string Code { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } public int Destinations { get; set; }
+        public List<string> Programmes { get; set; } public bool Active { get; set; }
+    }
+    public class TraficPort { public string Port { get; set; } public long Octets { get; set; } }
+    public class EtatTrafic
+    {
+        public string MisAJour { get; set; } public string Depuis { get; set; } public string Interface { get; set; }
+        public long DebitEntrant { get; set; } public long DebitSortant { get; set; } public long TotalEntrant { get; set; } public long TotalSortant { get; set; }
+        public long Paquets { get; set; } public int PlagesGeoip { get; set; }
+        public List<PointTrafic> Serie { get; set; } public List<TraficApplication> Applications { get; set; }
+        public List<TraficDestination> Destinations { get; set; } public List<TraficPays> Pays { get; set; } public List<TraficPort> Ports { get; set; }
+    }
+
+    // ------------------------------------------------------------ réseau local (reseau.json)
+    public class Appareil { public string Ip { get; set; } public string Mac { get; set; } public string PremiereVue { get; set; } public string DerniereVue { get; set; } public bool Passerelle { get; set; } }
+    public class Repondeur { public string Ip { get; set; } public string Protocole { get; set; } public List<string> Noms { get; set; } public string Derniere { get; set; } }
+    public class ServeurDhcp { public string Ip { get; set; } public string Vu { get; set; } public bool Legitime { get; set; } }
+    public class EtatReseau
+    {
+        public string MisAJour { get; set; } public string Interface { get; set; } public string Masque { get; set; } public string Passerelle { get; set; }
+        public string MacPasserelle { get; set; } public string MacPasserelleConnue { get; set; } public string DhcpInterface { get; set; }
+        public List<Appareil> Appareils { get; set; } public List<ServeurDhcp> ServeursDhcp { get; set; } public List<Repondeur> Repondeurs { get; set; }
+        public string DernierLeurre { get; set; } public string ResultatLeurre { get; set; }
+    }
+
+    // ------------------------------------------------------------ DPI (dpi.json) et IDS (ids.json)
+    public class SessionDpi { public string Heure { get; set; } public string Programme { get; set; } public string Ip { get; set; } public int Port { get; set; } public string Nom { get; set; } public string Ja3 { get; set; } public string Remarque { get; set; } }
+    public class EmpreinteJa3 { public string Ja3 { get; set; } public int Nombre { get; set; } public List<string> Programmes { get; set; } }
+    public class EtatDpi
+    {
+        public string MisAJour { get; set; } public int SessionsTls { get; set; } public int RequetesHttp { get; set; } public int RequetesDns { get; set; }
+        public int EmpreintesJa3Connues { get; set; } public List<SessionDpi> Tls { get; set; } public List<SessionDpi> Http { get; set; } public List<SessionDpi> Dns { get; set; }
+        public List<EmpreinteJa3> Empreintes { get; set; }
+    }
+    public class DetectionIds
+    {
+        public string Heure { get; set; } public long Sid { get; set; } public string Message { get; set; } public string Classe { get; set; } public string Niveau { get; set; }
+        public string Source { get; set; } public string Destination { get; set; } public string Programme { get; set; } public bool Bloque { get; set; }
+    }
+    public class EtatIds
+    {
+        public string MisAJour { get; set; } public int Regles { get; set; } public int Ignorees { get; set; } public List<string> Fichiers { get; set; }
+        public bool Ips { get; set; } public long PaquetsAnalyses { get; set; } public List<DetectionIds> Detections { get; set; }
     }
 
     public class ConfigSyslog
@@ -327,7 +383,7 @@ namespace DeR4Tizer
 
     public static class Commun
     {
-        public const string Version = "3.2";
+        public const string Version = "4.0";
         public const string NomService = "deR4Tizer";
         public const string NomPipe = "deR4Tizer";
         public const int SeuilAlerte = 3;
