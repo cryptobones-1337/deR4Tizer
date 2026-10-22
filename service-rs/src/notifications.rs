@@ -64,7 +64,7 @@ pub fn preparer_dossier() {
 }
 
 pub fn lire_secrets() -> Secrets {
-    fs::read_to_string(dossier_secrets().join("notifications.json")).ok()
+    commun::lire_fichier(&dossier_secrets().join("notifications.json"))
         .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 

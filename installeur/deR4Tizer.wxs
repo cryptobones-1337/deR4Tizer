@@ -17,7 +17,9 @@
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64"
              Description="deR4Tizer : protection locale pour Windows (détection, mini-SIEM, durcissement)" Comments="Licence EUPL-1.2" />
 
-    <MajorUpgrade DowngradeErrorMessage="Une version plus récente de deR4Tizer est déjà installée." Schedule="afterInstallInitialize" />
+    <!-- Retour arrière de la mise à jour automatique : le service réinstalle le paquet de la version précédente
+         (le contrôle « version plus récente » est fait par le service avant d'installer) -->
+    <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="LANCEMENT_SESSION" Value="1" />
@@ -25,10 +27,16 @@
     <Property Id="GARDER_BASELINE" Secure="yes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/cryptobones-1337/deR4Tizer" />
     <Property Id="ARPPRODUCTICON" Value="icone.exe" />
+    <!-- Pas de réparation depuis « Applications » (WixUI_Minimal retire déjà « Modifier ») : une réparation arrête et relance le service -->
+    <Property Id="ARPNOREPAIR" Value="1" />
     <Icon Id="icone.exe" SourceFile="$(var.Bin)\deR4Tizer.exe" />
 
     <Condition Message="deR4Tizer nécessite Windows 10 ou plus récent, en 64 bits.">
       <![CDATA[Installed OR (VersionNT64 >= 603)]]>
+    </Condition>
+    <!-- Réparation (msiexec /fa) par un compte standard : refusée, elle arrêterait la surveillance -->
+    <Condition Message="La réparation de deR4Tizer est réservée aux administrateurs.">
+      <![CDATA[NOT Installed OR REMOVE="ALL" OR UPGRADINGPRODUCTCODE OR AdminUser]]>
     </Condition>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -36,6 +44,9 @@
         <Directory Id="INSTALLFOLDER" Name="deR4Tizer" />
       </Directory>
       <Directory Id="ProgramMenuFolder" />
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="DONNEES" Name="deR4Tizer" />
+      </Directory>
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
@@ -63,10 +74,22 @@
     </DirectoryRef>
 
 
+    <!-- Dossier de données créé avec ses droits (SYSTEM et administrateurs, propriétaire Administrateurs, sans
+         héritage de ProgramData où les utilisateurs peuvent créer des fichiers). Le service les impose aussi à
+         chaque démarrage (protection.rs), et ajoute la lecture pour les comptes autorisés. -->
+    <DirectoryRef Id="DONNEES">
+      <Component Id="Donnees" Guid="7D2C4A91-3E5B-4F68-A0C7-5B9E1D8F2A63" Win64="yes">
+        <CreateFolder>
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+        </CreateFolder>
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="Principal" Title="deR4Tizer" Level="1">
       <ComponentRef Id="Service" />
       <ComponentRef Id="Interface" />
       <ComponentRef Id="LancementSession" />
+      <ComponentRef Id="Donnees" />
     </Feature>
 
     <!-- Désinstallation (pas lors d'une mise à jour) : le service arrêté, on retire ce qu'il a posé, avant d'effacer les fichiers -->

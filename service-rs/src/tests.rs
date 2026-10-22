@@ -373,14 +373,20 @@ fn fonctions_texte_sans_panique() {
 
 #[test]
 fn n2_mise_a_jour_cle_epinglee() {
-    use crate::maj::{installation_autorisee, plus_recente, version_valide};
+    use crate::maj::{cles_epinglees, installation_autorisee, plus_recente, version_valide};
     let cle = "a".repeat(64);
     let autre = "b".repeat(64);
-    assert!(installation_autorisee(Some(&cle), Some(&cle)).is_ok());
-    assert!(installation_autorisee(Some(&autre), Some(&cle)).is_err(), "autre clé (même nom de certificat possible) : refusé");
-    assert!(installation_autorisee(None, Some(&cle)).is_err(), "non signé, invalide ou révoqué : refusé");
-    assert!(installation_autorisee(Some(&cle), None).is_err(), "aucune clé épinglée : jamais d'installation");
-    assert!(installation_autorisee(Some(&cle), Some("court")).is_err());
+    let une = cles_epinglees(Some(&cle));
+    assert!(installation_autorisee(Some(&cle), &une).is_ok());
+    assert!(installation_autorisee(Some(&autre), &une).is_err(), "autre clé (même nom de certificat possible) : refusé");
+    assert!(installation_autorisee(None, &une).is_err(), "non signé, invalide ou révoqué : refusé");
+    assert!(installation_autorisee(Some(&cle), &cles_epinglees(None)).is_err(), "aucune clé épinglée : jamais d'installation");
+    assert!(installation_autorisee(Some(&cle), &cles_epinglees(Some("court"))).is_err());
+    // Revue v7 : clé actuelle et clé suivante (renouvellement du certificat) ; variable vide = aucune clé
+    let deux = cles_epinglees(Some(&format!(" {cle}, {} ;zz", autre.to_uppercase())));
+    assert_eq!(deux.len(), 2);
+    assert!(installation_autorisee(Some(&autre), &deux).is_ok(), "clé suivante acceptée");
+    assert!(cles_epinglees(Some("")).is_empty() && cles_epinglees(Some(&"g".repeat(64))).is_empty() && cles_epinglees(Some(&"a".repeat(63))).is_empty());
     assert!(version_valide("4.2") && version_valide("10.0.1"));
     for v in ["", "4..2", "4.2-beta", "..\\..\\x", "4.2 ", "4/2"] {
         assert!(!version_valide(v), "« {v} » ne doit pas servir de nom de dossier");
@@ -455,4 +461,44 @@ fn debogage_a_distance_ancre_sur_l_executable() {
     assert!(suspicion("chrome.exe --remote-debugging-pipe").is_some());
     assert!(suspicion(r#""C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe" --remote-debugging-port=0"#).is_none());
     assert!(suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#).is_none());
+}
+
+// ------------------------------------------------------------ revue v7
+
+#[test]
+fn m1_proprietaire_du_dossier_de_donnees() {
+    use crate::natif::proprietaire_de_confiance;
+    use std::path::Path;
+    let programdata = std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into());
+    assert_eq!(proprietaire_de_confiance(Path::new(&programdata)), Some(true), "ProgramData appartient à SYSTEM");
+    let systeme = crate::natif::dossier_systeme();
+    assert_eq!(proprietaire_de_confiance(&Path::new(&systeme).join("kernel32.dll")), Some(false), "TrustedInstaller n'est ni SYSTEM ni Administrateurs");
+    assert_eq!(proprietaire_de_confiance(Path::new(r"C:\n-existe-pas\x.json")), None);
+    // Hors service (tests, console), pas de contrôle : les fichiers appartiennent à l'utilisateur
+    assert!(!crate::natif::est_systeme());
+}
+
+#[test]
+fn script_de_mise_a_jour_valide() {
+    use std::path::{Path, PathBuf};
+    let inst = Path::new(r"C:\ProgramData\deR4Tizer\maj\installation");
+    let prog = Path::new(r"C:\Program Files\deR4Tizer");
+    let h = "ab".repeat(32);
+    for fichiers in [vec![(inst.join(r"4.4\deR4Tizer.msi"), h.clone())],
+                     vec![(inst.join(r"4.4\deR4TizerSvc.exe"), h.clone()), (inst.join(r"4.4\deR4Tizer.exe"), h.clone())]] {
+        let s = crate::maj::script_installation("4.4", inst, prog, &fichiers);
+        assert!(s.contains(&format!("Hash -eq '{h}'")), "empreinte revérifiée juste avant l'exécution");
+        assert!(s.contains("\"Action\":\"verification\"") && s.contains(r"deR4Tizer 4\.4"), "contrôle par le canal, pas seulement l'existence du tube");
+        assert!(s.contains(r"installation\4.3\deR4Tizer.msi") || s.contains(&format!(r"installation\{}\deR4Tizer.msi", crate::commun::VERSION)));
+        // Syntaxe PowerShell valide
+        let f = std::env::temp_dir().join(format!("der4tizer-script-{}.ps1", std::process::id()));
+        std::fs::write(&f, &s).unwrap();
+        let sortie = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                &format!("$e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{}', [ref]$null, [ref]$e); $e.Count", f.display())])
+            .output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(String::from_utf8_lossy(&sortie.stdout).trim(), "0", "{s}");
+        let _: Vec<PathBuf> = fichiers.into_iter().map(|x| x.0).collect();
+    }
 }

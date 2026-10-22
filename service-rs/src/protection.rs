@@ -3,12 +3,24 @@
 //! comptes autorisés (lecteurs.json), plus par tous les utilisateurs du PC. Par défaut, le compte connecté
 //! à la console au premier démarrage ; d'autres comptes s'ajoutent depuis l'interface (avec l'UAC).
 //! Les droits sont reposés au démarrage puis toutes les heures.
+//!
+//! Au démarrage du service, AVANT toute lecture (securiser) : le dossier est créé avec ses droits dès la
+//! création ; s'il existait déjà sans appartenir à SYSTEM ou aux administrateurs (créé d'avance par un compte
+//! standard, qui pourrait sinon réécrire les droits), il est écarté. Dans le dossier, les liens (jonctions,
+//! liens symboliques) sont supprimés et les fichiers d'un autre propriétaire mis de côté dans « ecartes »,
+//! puis propriétaire et droits sont imposés à tout le contenu. Le paquet MSI crée aussi le dossier avec ces
+//! droits (installeur\deR4Tizer.wxs).
 
 use crate::commun;
 use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+
+/// SYSTEM et administrateurs, propriétaire Administrateurs, sans héritage du dossier ProgramData
+const SDDL_DOSSIER: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 #[serde(rename_all = "PascalCase", default)]
@@ -59,6 +71,94 @@ fn appliquer(lecteurs: &[Lecteur]) -> bool {
     ok
 }
 
+fn icacls(args: &[&str]) -> bool {
+    Command::new("icacls.exe").args(args).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
+}
+
+fn est_lien(m: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    m.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
+}
+
+fn supprimer_lien(p: &Path) {
+    // Un lien vers un dossier se supprime comme un dossier vide, sans toucher à sa cible
+    let _ = fs::remove_dir(p).or_else(|_| fs::remove_file(p));
+}
+
+/// Parcourt le contenu sans suivre les liens : liens supprimés, éléments d'un autre propriétaire mis de côté.
+/// Renvoie les chemins écartés (relatifs)
+fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
+    let Ok(lecture) = fs::read_dir(dossier) else { return };
+    for e in lecture.flatten() {
+        let p = e.path();
+        if p == quarantaine || p.starts_with(quarantaine) {
+            continue;
+        }
+        let Ok(m) = fs::symlink_metadata(&p) else { continue };
+        let relatif = p.strip_prefix(racine).unwrap_or(&p).display().to_string();
+        if est_lien(&m) {
+            supprimer_lien(&p);
+            ecartes.push(format!("{relatif} (lien supprimé)"));
+        } else if crate::natif::proprietaire_de_confiance(&p) == Some(false) {
+            let _ = fs::create_dir_all(quarantaine);
+            let dest = quarantaine.join(relatif.replace(['\\', '/'], "_"));
+            let ok = fs::rename(&p, &dest).is_ok() || (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) }).is_ok();
+            ecartes.push(format!("{relatif}{}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
+        } else if m.is_dir() {
+            trier(&p, racine, quarantaine, ecartes);
+        }
+    }
+}
+
+/// Démarrage du service, avant toute lecture du dossier de données
+pub fn securiser() {
+    if !crate::natif::est_systeme() {
+        let _ = fs::create_dir_all(commun::dossier());
+        return;
+    }
+    let racine = commun::dossier().clone();
+    let mut messages = Vec::new();
+    if let Ok(m) = fs::symlink_metadata(&racine) {
+        if est_lien(&m) {
+            supprimer_lien(&racine);
+            messages.push("le dossier de données était un lien : supprimé".to_string());
+        } else if crate::natif::proprietaire_de_confiance(&racine) != Some(true) {
+            let ecarte = racine.with_file_name(format!("deR4Tizer.ecarte-{}", commun::maintenant().replace([':', ' '], "-")));
+            if fs::rename(&racine, &ecarte).is_ok() {
+                messages.push(format!("le dossier de données n'appartenait ni à SYSTEM ni aux administrateurs : écarté vers {}", ecarte.display()));
+            } else {
+                messages.push("le dossier de données n'appartenait ni à SYSTEM ni aux administrateurs et n'a pas pu être écarté : propriétaire imposé".into());
+            }
+        }
+    }
+    if !racine.exists() && !crate::natif::creer_dossier_protege(&racine, SDDL_DOSSIER) {
+        let _ = fs::create_dir_all(&racine);
+    }
+    let r = racine.to_string_lossy().to_string();
+    // D'abord le dossier racine (plus personne d'autre ne peut y créer quoi que ce soit), puis le contenu
+    icacls(&[&r, "/setowner", "*S-1-5-32-544", "/C", "/Q"]);
+    appliquer(&[]);
+    let quarantaine = racine.join("ecartes");
+    let mut ecartes = Vec::new();
+    trier(&racine, &racine, &quarantaine, &mut ecartes);
+    icacls(&[&r, "/setowner", "*S-1-5-32-544", "/T", "/C", "/Q"]);
+    icacls(&[&format!("{r}\\*"), "/reset", "/T", "/C", "/Q"]);
+    if !ecartes.is_empty() {
+        messages.push(format!("{} élément(s) d'un autre propriétaire ou lien(s) écarté(s) vers ecartes : {}", ecartes.len(),
+            ecartes.iter().take(20).cloned().collect::<Vec<_>>().join(", ")));
+    }
+    // Droits définitifs : secrets réservés aux administrateurs, lecteurs autorisés (lecteurs.json vérifié)
+    crate::notifications::preparer_dossier();
+    crate::api::proteger_jeton();
+    if racine.join("maj").join("installation").exists() {
+        crate::maj::dossier_installation();
+    }
+    appliquer(&lecteurs());
+    for m in messages {
+        commun::journal(&format!("protection des données : {m}"));
+    }
+}
+
 /// Ajoute un compte autorisé (commande de l'interface) ; renvoie son nom
 pub fn autoriser(sid: &str) -> Result<String, String> {
     if !sid_valide(sid) {
@@ -86,8 +186,8 @@ pub fn demarrer() {
                     commun::ecrire("lecteurs.json", &l);
                 }
             }
+            let ok = appliquer(&l);
             if !l.is_empty() {
-                let ok = appliquer(&l);
                 if !annonce {
                     commun::journal(&format!("protection des données : lecture réservée à SYSTEM, aux administrateurs et à {}{}",
                         l.iter().map(|x| x.nom.as_str()).collect::<Vec<_>>().join(", "), if ok { "" } else { " (ÉCHEC de la pose des droits)" }));

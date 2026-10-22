@@ -1,11 +1,17 @@
 //! Mise à jour automatique du service et de l'interface. Une fois par jour : lecture du manifeste de la
 //! dernière version publiée (HTTPS), téléchargement, contrôle de l'empreinte SHA-256, puis de la signature
-//! Authenticode AVEC contrôle de révocation, et comparaison de la clé publique du signataire à la clé
-//! ÉPINGLÉE dans ce binaire à la compilation (variable DER4TIZER_CLE_SIGNATURE, fournie par la CI de
-//! publication). Sans clé épinglée, une nouvelle version est seulement signalée, jamais installée : un compte
-//! GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur tout le parc.
-//! Installation : un script à part sauvegarde les exécutables, installe (MSI ou copie), puis vérifie que le
-//! service répond sur son canal dans les 60 s ; sinon il remet l'ancienne version.
+//! Authenticode AVEC contrôle de révocation, et comparaison de la clé publique du signataire aux clés
+//! ÉPINGLÉES dans ce binaire à la compilation (variable DER4TIZER_CLE_SIGNATURE, fournie par la CI de
+//! publication : la clé actuelle et la suivante, séparées par des virgules, pour survivre au renouvellement
+//! du certificat). Sans clé épinglée, une nouvelle version est seulement signalée, jamais installée : un
+//! compte GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur tout le parc.
+//!
+//! Les fichiers sont téléchargés et vérifiés dans maj\installation, réservé à SYSTEM (propriétaire et droits
+//! réimposés à chaque usage) : aucun autre compte ne peut les remplacer entre la vérification et l'exécution.
+//! Installation : un script à part sauvegarde les exécutables, revérifie l'empreinte juste avant d'exécuter,
+//! installe (MSI ou copie), puis envoie la commande « verification » sur le canal du service pendant 60 s.
+//! Sans réponse de la nouvelle version : réinstallation du paquet MSI de la version précédente s'il a été
+//! gardé (base Windows Installer cohérente), sinon remise des anciens exécutables.
 //!
 //! Manifeste (manifeste.json, publié avec chaque version par la CI) :
 //!   { "Version": "4.2", "Fichiers": [ { "Nom": "deR4Tizer.msi", "Url": "https://…", "Sha256": "…" }, … ] }
@@ -14,12 +20,12 @@ use crate::commun::{self, ConfigMaj};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-/// Empreinte SHA-256 (hexadécimale) de la clé publique du certificat de signature attendu
-const CLE_EPINGLEE: Option<&str> = option_env!("DER4TIZER_CLE_SIGNATURE");
+/// Empreintes SHA-256 (hexadécimales) des clés publiques des certificats de signature acceptés
+const CLES_EPINGLEES: Option<&str> = option_env!("DER4TIZER_CLE_SIGNATURE");
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -67,16 +73,47 @@ pub fn plus_recente(disponible: &str, installee: &str) -> bool {
     false
 }
 
-/// Décision pure : la clé du fichier (vérifié, révocation comprise) doit être exactement la clé épinglée
-pub fn installation_autorisee(cle_fichier: Option<&str>, cle_epinglee: Option<&str>) -> Result<(), String> {
-    let Some(attendue) = cle_epinglee.filter(|c| c.len() == 64) else {
+fn hexa_64(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Liste des clés épinglées : empreintes de 64 caractères hexadécimaux, séparées par des virgules, des
+/// points-virgules ou des espaces ; tout le reste (variable vide, valeur tronquée) est ignoré
+pub fn cles_epinglees(brut: Option<&str>) -> Vec<String> {
+    brut.unwrap_or("").split([',', ';', ' ', '\n', '\r', '\t']).map(str::trim).filter(|c| hexa_64(c)).map(str::to_lowercase).collect()
+}
+
+/// Décision pure : la clé du fichier (vérifié, révocation comprise) doit être l'une des clés épinglées
+pub fn installation_autorisee(cle_fichier: Option<&str>, cles: &[String]) -> Result<(), String> {
+    if cles.is_empty() {
         return Err("cette version n'a pas de clé de signature épinglée : mise à jour signalée, pas installée".into());
-    };
+    }
     match cle_fichier {
         None => Err("signature absente, invalide ou révoquée".into()),
-        Some(c) if c.eq_ignore_ascii_case(attendue) => Ok(()),
-        Some(_) => Err("signé par une autre clé que celle de deR4Tizer".into()),
+        Some(c) if cles.iter().any(|k| k.eq_ignore_ascii_case(c)) => Ok(()),
+        Some(_) => Err("signé par une autre clé que celles de deR4Tizer".into()),
     }
+}
+
+fn icacls(args: &[&str]) {
+    let _ = Command::new("icacls.exe").args(args).creation_flags(0x0800_0000).output();
+}
+
+/// maj\installation : SYSTEM seul (propriétaire compris), réimposé à chaque usage. Les administrateurs en
+/// sont exclus aussi : seul le service y écrit.
+pub fn dossier_installation() -> PathBuf {
+    let d = commun::dossier().join("maj").join("installation");
+    let _ = fs::create_dir_all(commun::dossier().join("maj"));
+    if !d.exists() && !crate::natif::creer_dossier_protege(&d, "O:SYD:PAI(A;OICI;FA;;;SY)") {
+        let _ = fs::create_dir_all(&d);
+    }
+    if crate::natif::est_systeme() {
+        let s = d.to_string_lossy().to_string();
+        icacls(&[&s, "/setowner", "*S-1-5-18", "/T", "/C", "/Q"]);
+        icacls(&[&s, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "/C", "/Q"]);
+        icacls(&[&format!("{s}\\*"), "/reset", "/T", "/C", "/Q"]);
+    }
+    d
 }
 
 fn telecharger(url: &str, destination: &Path) -> Result<(), String> {
@@ -99,7 +136,7 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     if let Err(e) = telecharger(&config.url, &f_manifeste) {
         return (String::new(), format!("manifeste illisible ({e})"));
     }
-    let Some(m) = fs::read_to_string(&f_manifeste).ok().and_then(|t| serde_json::from_str::<Manifeste>(&t).ok()) else {
+    let Some(m) = commun::lire_fichier(&f_manifeste).and_then(|t| serde_json::from_str::<Manifeste>(&t).ok()) else {
         return (String::new(), "manifeste invalide".into());
     };
     if !version_valide(&m.version) {
@@ -111,10 +148,23 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     if !installer {
         return (m.version.clone(), format!("version {} disponible (installation automatique désactivée)", m.version));
     }
-    let cible = dossier.join(&m.version);
+    let cles = cles_epinglees(CLES_EPINGLEES);
+    let installation = dossier_installation();
+    // Ancienne disposition (4.2) : téléchargements et sauvegarde hors du dossier réservé
+    let _ = fs::remove_dir_all(dossier.join("sauvegarde"));
+    let _ = fs::remove_dir_all(dossier.join(&m.version));
+    // On garde le paquet de la version installée (retour arrière) et rien d'autre
+    for e in fs::read_dir(&installation).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        if n != commun::VERSION && n != "sauvegarde" {
+            let _ = fs::remove_dir_all(e.path()).or_else(|_| fs::remove_file(e.path()));
+        }
+    }
+    let cible = installation.join(&m.version);
     let _ = fs::create_dir_all(&cible);
+    let mut verifies = Vec::new();
     for f in &m.fichiers {
-        if !NOMS_AUTORISES.contains(&f.nom.as_str()) || f.sha256.len() != 64 {
+        if !NOMS_AUTORISES.contains(&f.nom.as_str()) || !hexa_64(&f.sha256) {
             return (m.version, format!("fichier inattendu dans le manifeste : {}", f.nom));
         }
         let chemin = cible.join(&f.nom);
@@ -127,58 +177,87 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
             return (m.version, format!("empreinte de {} incorrecte : fichier rejeté", f.nom));
         }
         let cle = crate::natif::cle_signataire_verifiee(&chemin.to_string_lossy());
-        if let Err(e) = installation_autorisee(cle.as_deref(), CLE_EPINGLEE) {
+        if let Err(e) = installation_autorisee(cle.as_deref(), &cles) {
             let _ = fs::remove_file(&chemin);
             return (m.version.clone(), format!("version {} disponible : {e}", m.version));
         }
+        verifies.push((chemin, f.sha256.to_lowercase()));
     }
-    lancer_installation(&m, &cible)
+    if verifies.is_empty() {
+        return (m.version, "manifeste sans fichier".into());
+    }
+    lancer_installation(&m.version, &installation, &verifies)
 }
 
-/// Script à part (le service ne peut pas se remplacer lui-même) : sauvegarde, installation, contrôle du
-/// canal du service pendant 60 s, retour à l'ancienne version en cas d'échec
-fn lancer_installation(m: &Manifeste, cible: &Path) -> (String, String) {
-    let installation = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
-    let sauvegarde = commun::dossier().join("maj").join("sauvegarde");
+/// Script à part (le service ne peut pas se remplacer lui-même) : sauvegarde, contrôle des empreintes juste
+/// avant l'exécution, installation, contrôle du service par son canal, retour arrière en cas d'échec
+fn lancer_installation(version: &str, installation: &Path, fichiers: &[(PathBuf, String)]) -> (String, String) {
+    let programme = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+    let sauvegarde = installation.join("sauvegarde");
     let _ = fs::create_dir_all(&sauvegarde);
     for n in ["deR4TizerSvc.exe", "deR4Tizer.exe"] {
-        let _ = fs::copy(installation.join(n), sauvegarde.join(n));
+        let _ = fs::copy(programme.join(n), sauvegarde.join(n));
     }
-    let q = |p: &Path| p.display().to_string().replace('\'', "''");
-    let msi = cible.join("deR4Tizer.msi");
-    let etape = if msi.exists() {
-        format!("Start-Process msiexec.exe -Wait -ArgumentList '/i', '\"{}\"', '/qn', '/norestart', '/l*v', '\"{}\"'",
-            q(&msi), q(&commun::dossier().join("maj").join("installation.log")))
-    } else {
-        format!("Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force; Stop-Service deR4Tizer -Force; \
-                 (Get-Service deR4Tizer).WaitForStatus('Stopped', '00:00:30'); Copy-Item -Path '{}\\*.exe' -Destination '{}' -Force; Start-Service deR4Tizer",
-            q(cible), q(&installation))
-    };
-    let script = format!(
-        "Start-Sleep 3; {etape}; \
-         $ok = $false; for ($i = 0; $i -lt 60 -and -not $ok; $i++) {{ Start-Sleep 1; \
-           $ok = ((Get-Service deR4Tizer -ErrorAction SilentlyContinue).Status -eq 'Running') -and ([IO.Directory]::GetFiles('\\\\.\\pipe\\') -contains '\\\\.\\pipe\\deR4Tizer') }}; \
-         if (-not $ok) {{ \
-           Stop-Service deR4Tizer -Force -ErrorAction SilentlyContinue; Start-Sleep 2; \
-           Copy-Item -Path '{sv}\\*.exe' -Destination '{inst}' -Force; Start-Service deR4Tizer; \
-           Set-Content -Path '{echec}' -Value ('échec de la version {v} : ancienne version restaurée le ' + (Get-Date)) }}",
-        sv = q(&sauvegarde), inst = q(&installation), v = m.version,
-        echec = q(&commun::dossier().join("maj").join("echec.txt")));
+    let script = script_installation(version, installation, &programme, fichiers);
     match Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
         .creation_flags(0x0800_0000 | 0x0000_0008) // sans fenêtre, détaché
         .spawn()
     {
         Ok(_) => {
-            commun::journal(&format!("mise à jour vers la version {} : installation lancée (retour arrière si le service ne répond pas)", m.version));
-            (m.version.clone(), format!("installation de la version {} en cours", m.version))
+            let _ = fs::remove_file(commun::dossier().join("maj").join("echec.txt"));
+            commun::journal(&format!("mise à jour vers la version {version} : installation lancée (retour arrière si le service ne répond pas)"));
+            (version.to_string(), format!("installation de la version {version} en cours"))
         }
-        Err(e) => (m.version.clone(), format!("installation impossible ({e})")),
+        Err(e) => (version.to_string(), format!("installation impossible ({e})")),
     }
 }
 
+/// Texte du script d'installation (fonction à part pour le tester)
+pub fn script_installation(version: &str, installation: &Path, programme: &Path, fichiers: &[(PathBuf, String)]) -> String {
+    let sauvegarde = installation.join("sauvegarde");
+    let q = |p: &Path| p.display().to_string().replace('\'', "''");
+    let journal_msi = commun::dossier().join("maj").join("installation.log");
+    let controle = fichiers.iter()
+        .map(|(p, h)| format!("((Get-FileHash -Algorithm SHA256 -LiteralPath '{}').Hash -eq '{h}')", q(p)))
+        .collect::<Vec<_>>().join(" -and ");
+    let msiexec = |paquet: &Path, journal: &Path| format!(
+        "Start-Process msiexec.exe -Wait -ArgumentList '/i', '\"{}\"', '/qn', '/norestart', '/l*v', '\"{}\"'", q(paquet), q(journal));
+    let etape = match fichiers.iter().find(|(p, _)| p.file_name().is_some_and(|n| n == "deR4Tizer.msi")) {
+        Some((msi, _)) => msiexec(msi, &journal_msi),
+        None => {
+            let dossier = fichiers[0].0.parent().unwrap_or(installation);
+            format!("Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force; Stop-Service deR4Tizer -Force; \
+                     (Get-Service deR4Tizer).WaitForStatus('Stopped', '00:00:30'); Copy-Item -Path '{}\\*.exe' -Destination '{}' -Force; Start-Service deR4Tizer",
+                q(dossier), q(programme))
+        }
+    };
+    // Paquet de la version installée, gardé si elle-même est arrivée par mise à jour
+    let ancien_msi = installation.join(commun::VERSION).join("deR4Tizer.msi");
+    let retour = format!(
+        "if (Test-Path -LiteralPath '{a}') {{ {reinstaller}; $mode = 'paquet de la version {va} réinstallé' }} \
+         else {{ Stop-Service deR4Tizer -Force -ErrorAction SilentlyContinue; Start-Sleep 2; \
+           Copy-Item -Path '{sv}\\*.exe' -Destination '{prog}' -Force; Start-Service deR4Tizer; \
+           $mode = 'anciens exécutables remis (Windows Installer indique encore la version {v})' }}",
+        a = q(&ancien_msi), reinstaller = msiexec(&ancien_msi, &commun::dossier().join("maj").join("retour.log")),
+        va = commun::VERSION, sv = q(&sauvegarde), prog = q(programme), v = version);
+    let echec = q(&commun::dossier().join("maj").join("echec.txt"));
+    format!(
+        "function Repond {{ try {{ $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut); \
+           $c.Connect(2000); $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c); \
+           $w.WriteLine('{{\"Action\":\"verification\"}}'); $l = $r.ReadLine(); $c.Dispose(); \
+           return ($l -match '\"Ok\":true' -and $l -match 'deR4Tizer {ve}\"') }} catch {{ return $false }} }}; \
+         Start-Sleep 3; \
+         if (-not ({controle})) {{ Set-Content -Path '{echec}' -Value ('version {v} : fichier modifié après vérification, installation abandonnée le ' + (Get-Date)); exit }}; \
+         {etape}; \
+         $ok = $false; for ($i = 0; $i -lt 30 -and -not $ok; $i++) {{ Start-Sleep 2; $ok = Repond }}; \
+         if (-not $ok) {{ {retour}; \
+           Set-Content -Path '{echec}' -Value ('échec de la version {v} (pas de réponse du service) : ' + $mode + ' le ' + (Get-Date)) }}",
+        ve = version.replace('.', "\\."), v = version)
+}
+
 fn publier(disponible: String, mut statut: String) {
-    if let Ok(e) = fs::read_to_string(commun::dossier().join("maj").join("echec.txt")) {
+    if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
         statut = format!("{statut} · {}", e.trim());
     }
     commun::ecrire("maj.json", &Etat {
@@ -186,7 +265,7 @@ fn publier(disponible: String, mut statut: String) {
         version_installee: commun::VERSION.into(),
         version_disponible: disponible,
         statut,
-        cle_epinglee: CLE_EPINGLEE.is_some(),
+        cle_epinglee: !cles_epinglees(CLES_EPINGLEES).is_empty(),
     });
 }
 

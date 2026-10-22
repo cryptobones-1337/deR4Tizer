@@ -439,7 +439,7 @@ namespace DeR4Tizer
 
     public static class Commun
     {
-        public const string Version = "4.2";
+        public const string Version = "4.3";
         public const string NomService = "deR4Tizer";
         public const string NomPipe = "deR4Tizer";
         public const int SeuilAlerte = 3;

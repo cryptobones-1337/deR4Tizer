@@ -672,6 +672,8 @@ impl Moniteur {
         commun::journal(&format!("commande : {action} {}", c.nom_dns.as_deref().or(c.ip.as_deref()).or(c.cible.as_deref()).unwrap_or("")));
         let raison = c.raison.clone().unwrap_or_default();
         match action.as_str() {
+            // Contrôle de bon fonctionnement après une mise à jour (maj.rs) : le service répond et dit sa version
+            "verification" => Reponse::ok(format!("deR4Tizer {}", commun::VERSION)),
             "bloquer" => match c.nom_dns.as_deref().filter(|n| !n.is_empty()) {
                 Some(n) => self.bloquer_domaines(&[n.to_string()], &raison, c.ip.as_deref()),
                 None => self.bloquer_ip(c.ip.as_deref().unwrap_or(""), &raison),
