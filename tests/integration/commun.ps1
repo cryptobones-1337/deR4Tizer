@@ -294,6 +294,12 @@ foreach (`$l in [IO.File]::ReadAllLines('$liste')) {
     if ($s -notmatch '(?m)^FIN') { return "essais interrompus : $($s -replace "`r?`n", ' ')" }
     $attendu = 1 + @($cibles | Where-Object { $_ -like 'D|*' }).Count * 2 + @($cibles | Where-Object { $_ -like 'F|*' }).Count
     if ($lignes.Count -ne $attendu) { return "$($lignes.Count) résultats pour $attendu essais" }
+    # Fichier de travail du service (*.tmp renommé) disparu entre l'énumération et l'essai : ni refus ni accès ;
+    # écarté seulement s'il n'existe plus au moment du contrôle
+    $lignes = @($lignes | Where-Object {
+        $c = $_ -split '\|'
+        -not ($c[0] -eq 'ECRIRE' -and $c[-1] -eq 'FileNotFoundException' -and -not (Test-Path -LiteralPath $c[1]))
+    })
     $mauvais = @($lignes | Where-Object { ($_ -split '\|')[-1] -ne 'UnauthorizedAccessException' })
     if ($mauvais.Count) { return "$($mauvais.Count) essai(s) non refusé(s) sur $attendu : " + (($mauvais | Select-Object -First 8) -join ' ; ') }
     $true
@@ -335,7 +341,9 @@ function Sha256([string]$Chemin) { (Get-FileHash -LiteralPath $Chemin -Algorithm
 function Liste-Quarantaine {
     $f = Join-Path $script:Donnees 'quarantaine.json'
     if (-not (Test-Path $f)) { return @() }
-    @((Get-Content $f -Raw -Encoding UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json)
+    # ConvertFrom-Json (PowerShell 5.1) rend le tableau JSON comme UN objet : passer par une variable
+    $j = (Get-Content $f -Raw -Encoding UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
+    @($j)
 }
 
 function Entree-Quarantaine([string]$Origine) { @(Liste-Quarantaine | Where-Object { $_.CheminOrigine -eq $Origine }) | Select-Object -Last 1 }

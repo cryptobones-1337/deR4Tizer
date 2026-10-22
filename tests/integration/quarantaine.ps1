@@ -211,10 +211,17 @@ if ($sessionSid) {
     Verifier "Restauration avec session ($sessionNom) : fichier recréé sous son identité, identique" {
         $e = Quarantaine-Verifiee $fC $hC
         if ($e -is [string]) { return $e }
+        # Propriétaire l'utilisateur ; lui seul peut créer dans le dossier. SYSTEM : lecture des droits et
+        # synchronisation sur le dossier (lecture du propriétaire par le service), contrôle total seulement sur les
+        # fichiers créés dedans (héritage seul : restitution et marque Internet par le handle)
         icacls $dC /setowner $sessionNom /Q | Out-Null
-        icacls $dC /inheritance:r /grant:r "$($sessionNom):(OI)(CI)F" /Q | Out-Null
+        $acl = Get-Acl -LiteralPath $dC
+        $acl.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$sessionSid)(A;;0x120000;;;SY)(A;OIIO;FA;;;SY)", 'Access')
+        Set-Acl -LiteralPath $dC -AclObject $acl
         $d = Droits $dC
-        if ($d.Proprietaire -ne $sessionSid -or @($d.Entrees | Where-Object { $_.Sid -ne $sessionSid }).Count) { return 'droits du dossier d''origine non posés' }
+        if ($d.Proprietaire -ne $sessionSid) { return "propriétaire du dossier d'origine : $($d.Proprietaire)" }
+        $autres = @($d.Entrees | Where-Object { $_.Sid -ne $sessionSid -and ($_.Sid -ne 'S-1-5-18' -or (-not $_.HeritageSeul -and (Ecriture $_.Droits))) })
+        if ($autres.Count) { return "droits du dossier d'origine : $(($autres | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
         $r = Commande-Cible 'restaurer' $e.Id
         if (-not $r.Ok) { return "refusée : $($r.Message)" }
         if (-not (Test-Path $fC)) { return 'fichier absent' }
@@ -238,17 +245,15 @@ $hD = Nouveau-Fichier $fD
 $canariD = Join-Path $Canaris 'restauration'
 $empreinteD = Nouveau-Canari $canariD
 # Le propriétaire de l'emplacement est lu en remontant le chemin sans suivre de lien : la jonction le rend
-# illisible, d'où un refus (REPLI) avant toute écriture, avec ou sans session. Témoin (sans session) : le même
+# illisible, d'où un refus (REPLI) avant toute écriture, avec ou sans session. Témoin : le même
 # dossier sans jonction est refusé pour une autre raison (emplacement des administrateurs) ; seule la jonction
 # change la décision. Le refus des liens à la création (creer_sans_lien) ne joue que si la jonction arrive
 # entre ce contrôle et la création : course non reproductible ici.
 Verifier 'Jonction posée avant une restauration : refusée avant toute écriture (REPLI, propriétaire illisible), canari intact' {
     $e = Quarantaine-Verifiee $fD $hD
     if ($e -is [string]) { return "préparation : $e" }
-    if (-not $sessionSid) {
-        $t = Commande-Cible 'restaurer' $e.Id
-        if ($t.Ok -or $t.Message -notmatch '^REPLI : emplacement appartenant au système ou aux administrateurs') { return "témoin sans jonction : $($t.Message)" }
-    }
+    $t = Commande-Cible 'restaurer' $e.Id
+    if ($t.Ok -or $t.Message -notmatch '^REPLI : emplacement appartenant au système ou aux administrateurs') { return "témoin sans jonction : $($t.Message)" }
     Remove-Item -LiteralPath (Join-Path $dD 'sous') -Force -Recurse
     if (-not (Nouvelle-Jonction (Join-Path $dD 'sous') $canariD)) { return 'jonction non créée' }
     if ($sessionSid) { icacls $dD /setowner $sessionNom /Q | Out-Null }
