@@ -1538,23 +1538,75 @@ fn lot2_retour_arriere_simule() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-#[test]
-fn lot2_pid_du_serveur_du_tube() {
-    // Le code PowerShell du script (P/Invoke de GetNamedPipeServerProcessId), sur un vrai tube créé par ce test
+/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
+fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
     use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
-    let nom = format!("der4tizer-test-{}", std::process::id());
     let chemin: Vec<u16> = format!(r"\\.\pipe\{nom}").encode_utf16().chain(Some(0)).collect();
     let tube = unsafe { CreateNamedPipeW(PCWSTR(chemin.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
     assert!(!tube.is_invalid());
     let brut = tube.0 as usize;
-    let attente = std::thread::spawn(move || unsafe {
-        let _ = ConnectNamedPipe(windows::Win32::Foundation::HANDLE(brut as _), None);
-    });
-    let script = format!("{}; $c = New-Object IO.Pipes.NamedPipeClientStream('.', '{nom}', [IO.Pipes.PipeDirection]::InOut); $c.Connect(5000);         Write-Output (Pid-Serveur $c); $c.Dispose()", crate::maj::PS_PID_SERVEUR);
-    let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().unwrap();
-    let _ = attente.join();
-    unsafe { let _ = windows::Win32::Foundation::CloseHandle(tube); }
-    assert_eq!(String::from_utf8_lossy(&sortie.stdout).trim(), std::process::id().to_string(), "{}", String::from_utf8_lossy(&sortie.stderr));
+    std::thread::spawn(move || unsafe {
+        let h = HANDLE(brut as _);
+        let _ = ConnectNamedPipe(h, None);
+        let mut recu = Vec::new();
+        let mut octet = [0u8; 1];
+        let mut n = 0u32;
+        while ReadFile(h, Some(&mut octet), Some(&mut n), None).is_ok() && n == 1 {
+            if octet[0] == b'\n' {
+                break;
+            }
+            recu.push(octet[0]);
+        }
+        if !recu.is_empty() {
+            let _ = WriteFile(h, Some(format!("{reponse}\r\n").as_bytes()), None, None);
+            let _ = FlushFileBuffers(h);
+        }
+        let _ = CloseHandle(h);
+        String::from_utf8_lossy(&recu).trim_end_matches('\r').to_string()
+    })
+}
+
+fn powershell_sortie(script: &str) -> String {
+    let s = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script]).output().unwrap();
+    assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
+    String::from_utf8_lossy(&s.stdout).trim().to_string()
+}
+
+#[test]
+fn lot2_canal_code_de_production_sur_un_vrai_tube() {
+    // Le code PowerShell EXACT du script de production (ps_canal), passé comme lui en ligne de commande à
+    // powershell.exe : requête reçue par le serveur, filtre CIM, PID du serveur du tube
+    use crate::maj::{ps_canal, script_installation, ParametresScript};
+    let pid = std::process::id();
+    let nom = format!("der4tizer-test-{pid}");
+    // Pid-Service tel quel, sur un service qui existe partout (WMI) : filtre CIM correctement échappé
+    let p = powershell_sortie(&format!("{}; Write-Output (Pid-Service)", ps_canal(&nom, "Winmgmt")));
+    assert!(p.parse::<u32>().is_ok_and(|v| v > 0), "PID de Winmgmt : {p:?}");
+    // Tube tenu par le processus attendu (ici le test, à la place du service) : requête exacte et réponse
+    let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]{pid} }}; Write-Output ('REPONSE=' + (Lire-Reponse))", ps_canal(&nom, "Winmgmt")));
+    let recu = serveur.join().unwrap();
+    assert_eq!(recu, r#"{"Action":"verification"}"#, "requête envoyée au service");
+    let c: crate::commun::Commande = serde_json::from_str(&recu).expect("JSON valide pour le service");
+    assert_eq!(c.action.as_deref(), Some("verification"));
+    assert_eq!(sortie, r#"REPONSE={"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    // Tube tenu par un autre processus que le service : aucune requête envoyée, réponse nulle
+    let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]1 }}; Write-Output ('NUL=' + ($null -eq (Lire-Reponse)))", ps_canal(&nom, "Winmgmt")));
+    assert_eq!(serveur.join().unwrap(), "", "rien n'est envoyé à un tube squatté");
+    assert_eq!(sortie, "NUL=True");
+    // Le script de production embarque ce code tel quel, et sa syntaxe est valide
+    let d = dossier_test("script-production");
+    let (paquet, retour) = (d.join("n.msi"), d.join("a.msi"));
+    let s = script_installation(&ParametresScript { version: "4.4", paquet: &paquet, sha_paquet: &"ab".repeat(32), retour: &retour,
+        sha_retour: &"cd".repeat(32), journaux: &d, simulation: None });
+    assert!(s.contains(&ps_canal("deR4Tizer", "deR4Tizer")));
+    let f = d.join("script.ps1");
+    std::fs::write(&f, &s).unwrap();
+    let erreurs = powershell_sortie(&format!("$e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{}', [ref]$null, [ref]$e); $e.Count", f.display()));
+    assert_eq!(erreurs, "0");
+    let _ = std::fs::remove_dir_all(&d);
 }

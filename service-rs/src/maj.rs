@@ -381,36 +381,43 @@ fn lancer_installation(p: &ParametresScript) -> (String, String) {
     }
 }
 
+/// PowerShell : interrogation du service par son canal, code exact du script de production (testé tel quel
+/// sur un vrai tube). Pid-Service : processus du service `service` ; Lire-Reponse : $null si le tube `tube`
+/// n'est pas tenu par ce processus, sinon la réponse à {"Action":"verification"}.
+pub fn ps_canal(tube: &str, service: &str) -> String {
+    format!(
+        "{PS_PID_SERVEUR}; \
+         function Pid-Service {{ [uint32](Get-CimInstance Win32_Service -Filter \"Name='{service}'\").ProcessId }}; \
+         function Lire-Reponse {{ $c = New-Object IO.Pipes.NamedPipeClientStream('.', '{tube}', [IO.Pipes.PipeDirection]::InOut); $c.Connect(2000); \
+           $ps = Pid-Serveur $c; $pv = Pid-Service; if ($pv -eq 0 -or $ps -ne $pv) {{ $c.Dispose(); return $null }}; \
+           $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c); \
+           $w.WriteLine('{{\"Action\":\"verification\"}}'); $l = $r.ReadLine(); $c.Dispose(); return $l }}"
+    )
+}
+
 /// Texte du script d'installation (fonction à part pour le tester, en simulation)
 pub fn script_installation(p: &ParametresScript) -> String {
     let q = |c: &Path| c.display().to_string().replace('\'', "''");
     let echec = q(&p.journaux.join("echec.txt"));
     // Lire-Reponse : $null si le tube n'est pas tenu par le processus du service (un compte standard peut
     // créer le tube pendant que l'ancien service est arrêté et répondre à sa place)
-    let (definitions, installer, lire_reponse, essais, pause) = match &p.simulation {
+    let (definitions, installer, essais, pause) = match &p.simulation {
         Some(s) => (
-            String::new(),
-            format!("Add-Content -LiteralPath '{}' -Value ('installer ' + $paquet)", q(s.journal)),
-            format!("Add-Content -LiteralPath '{}' -Value 'canal'; if ({} -ne {}) {{ return $null }}; return '{}'",
+            format!("function Lire-Reponse {{ Add-Content -LiteralPath '{}' -Value 'canal'; if ({} -ne {}) {{ return $null }}; return '{}' }}; ",
                 q(s.journal), s.pid_serveur, s.pid_service, s.reponse.replace('\'', "''")),
+            format!("Add-Content -LiteralPath '{}' -Value ('installer ' + $paquet)", q(s.journal)),
             2,
             0,
         ),
         None => (
-            format!("{PS_PID_SERVEUR}; "),
-            format!("Start-Process msiexec.exe -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')"),
-            "$c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut); $c.Connect(2000); \
-             $ps = Pid-Serveur $c; $pv = [uint32](Get-CimInstance Win32_Service -Filter \"Name='deR4Tizer'\").ProcessId; \
-             if ($pv -eq 0 -or $ps -ne $pv) { $c.Dispose(); return $null }; \
-             $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c); \
-             $w.WriteLine('{\"Action\":\"verification\"}'); $l = $r.ReadLine(); $c.Dispose(); return $l".to_string(),
+            format!("{}; ", ps_canal(commun::NOM_SERVICE, commun::NOM_SERVICE)),
+            "Start-Process msiexec.exe -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')".to_string(),
             30,
             2,
         ),
     };
     format!(
         "{definitions}function Installer($paquet, $journal) {{ {installer} }}; \
-         function Lire-Reponse {{ {lire_reponse} }}; \
          function Repond {{ try {{ $l = Lire-Reponse; if ($null -eq $l) {{ return $false }}; $j = $l | ConvertFrom-Json -ErrorAction Stop; \
            return ($j.Ok -eq $true -and $j.Message -eq 'deR4Tizer {v}') }} catch {{ return $false }} }}; \
          function Echec($t) {{ Set-Content -LiteralPath '{echec}' -Encoding UTF8 -Value ($t + ' le ' + (Get-Date)) }}; \
