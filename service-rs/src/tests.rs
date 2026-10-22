@@ -587,10 +587,10 @@ fn lot1_fichier_cree_avec_ses_droits_et_dacl_remplacee() {
     ecrire_fichier_protege(&f, b"abc", &sddl).unwrap();
     let s = lire_securite(&f).expect("droits lisibles");
     assert!(s.protege);
-    let mut sids: Vec<_> = s.aces.iter().filter(|a| a.autorise).map(|a| a.sid.clone()).collect();
-    sids.sort();
-    let mut attendu = vec!["S-1-5-18".to_string(), "S-1-5-32-544".into(), utilisateur.clone()];
-    attendu.sort();
+    // Comptes distincts : en CI, le test tourne en administrateur élevé et le compte du test est alors
+    // Administrateurs lui-même (Windows fusionne les deux entrées)
+    let sids: std::collections::BTreeSet<_> = s.aces.iter().filter(|a| a.autorise).map(|a| a.sid.clone()).collect();
+    let attendu: std::collections::BTreeSet<_> = ["S-1-5-18".to_string(), "S-1-5-32-544".into(), utilisateur.clone()].into();
     assert_eq!(sids, attendu);
     // Remplacement d'un fichier existant : toujours protégé, contenu remplacé
     ecrire_fichier_protege(&f, b"defg", &sddl).unwrap();
