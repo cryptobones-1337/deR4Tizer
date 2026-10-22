@@ -1,6 +1,6 @@
 [package]
 name = "der4tizer-svc"
-version = "4.0.0"
+version = "4.1.0"
 edition = "2021"
 description = "deR4Tizer : service de surveillance des connexions, de la persistance et de la vie privée"
 

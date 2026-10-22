@@ -28,3 +28,4 @@ diagnostic*.ps1
 *.swp
 Thumbs.db
 desktop.ini
+installeur/obj/

@@ -285,6 +285,14 @@ fn main() {
         moniteur::nettoyer();
         return;
     }
+    if args.iter().any(|a| a == "--supprimer-donnees") {
+        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets
+        match std::fs::remove_dir_all(commun::dossier()) {
+            Ok(()) => println!("Données supprimées : {}", commun::dossier().display()),
+            Err(e) => println!("Données : {e}"),
+        }
+        return;
+    }
     if args.iter().any(|a| a == "--console") {
         initialiser_com();
         priorite_basse();

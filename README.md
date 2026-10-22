@@ -62,13 +62,25 @@ rustup toolchain install stable-x86_64-pc-windows-gnu
 .\compiler.ps1          # interface (csc de Windows) + service Rust → bin\
 ```
 
-### Installer, mettre à jour, désinstaller
+### Installer
 
-```powershell
-.\installer.ps1         # en administrateur
-.\mettre-a-jour.ps1     # demande l'UAC si besoin
-.\desinstaller.ps1      # -GarderBaseline pour conserver les réglages de sécurité
+Télécharger `deR4Tizer.msi` depuis la [dernière version](https://github.com/cryptobones-1337/deR4Tizer/releases/latest)
+et l'ouvrir. Le service démarre aussitôt ; l'interface se trouve dans le menu Démarrer et se lance à l'ouverture de
+session. Les mises à jour suivantes s'installent seules (versions signées).
+
+Déploiement sur un parc (GPO, Intune, prestataire) :
+
+```bat
+msiexec /i deR4Tizer.msi /qn
+msiexec /i deR4Tizer.msi /qn LANCEMENT_SESSION=0     :: sans lancement de l'interface à l'ouverture de session
 ```
+
+Désinstallation depuis « Applications », ou `msiexec /x deR4Tizer.msi /qn`. Elle retire les blocages, les règles de
+pare-feu et les leurres, remet les réglages de sécurité d'origine et efface les données ; `GARDER_BASELINE=1` et
+`GARDER_DONNEES=1` conservent respectivement les réglages et les données.
+
+Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence MS-RL, sans redevance) ;
+`.\mettre-a-jour.ps1` remplace les exécutables d'une installation existante.
 
 ### Intégration SIEM
 
@@ -187,13 +199,15 @@ rustup toolchain install stable-x86_64-pc-windows-gnu
 .\compiler.ps1          # interface (Windows csc) + Rust service → bin\
 ```
 
-### Install, update, uninstall
+### Install
 
-```powershell
-.\installer.ps1         # as administrator
-.\mettre-a-jour.ps1     # asks for UAC if needed
-.\desinstaller.ps1      # -GarderBaseline keeps the security settings
-```
+Download `deR4Tizer.msi` from the [latest release](https://github.com/cryptobones-1337/deR4Tizer/releases/latest) and
+open it. The service starts immediately; the interface is in the Start menu and starts at logon. Later updates install
+themselves (signed releases).
+
+Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0` to skip the logon
+launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
+original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
 
 ### SIEM integration
 
