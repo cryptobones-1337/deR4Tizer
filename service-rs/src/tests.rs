@@ -1282,3 +1282,80 @@ fn lot1ter_chemin_en_noms_courts_accepte() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ------------------------------------------------------------ lot 1 ter, revue de la PR 5
+
+#[test]
+fn lot1ter_reinitialisation_garde_les_droits_poses_a_la_creation() {
+    use crate::natif::{copier_protege, creer_dossier_protege, lire_securite};
+    use crate::protection::{icacls, proprietaire_acceptable, reinitialiser_contenu};
+    let d = dossier_test("reinitialisation");
+    let (moi, _) = sddl_test(&d);
+    // Racine : droit de lecture hérité pour Utilisateurs (tient lieu des comptes autorisés)
+    assert!(icacls(&[&d.to_string_lossy(), "/grant", "*S-1-5-32-545:(OI)(CI)RX"]));
+    let q = d.join("quarantaine");
+    std::fs::create_dir_all(&q).unwrap();
+    let source = d.join("source.bin");
+    std::fs::write(&source, b"contenu").unwrap();
+    let copie = q.join("x.quarantaine");
+    copier_protege(&source, &copie, &format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})")).unwrap();
+    std::fs::create_dir_all(d.join("restaurations")).unwrap();
+    let repli = d.join("restaurations").join("id1");
+    assert!(creer_dossier_protege(&repli, &format!("O:{moi}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{moi})(A;OICI;0x1200a9;;;S-1-5-32-546)")));
+    let ordinaire = d.join("ordinaire.json");
+    std::fs::write(&ordinaire, b"{}").unwrap();
+    assert!(icacls(&[&ordinaire.to_string_lossy(), "/grant", "*S-1-5-11:F"]));
+    // En service, la règle est « propriétaire SYSTEM ou Administrateurs » ; ici le compte du test en tient lieu
+    reinitialiser_contenu(&d, &|o: &str| o == moi || proprietaire_acceptable(o));
+    let s = lire_securite(&copie).unwrap();
+    assert!(s.protege, "copie de quarantaine : héritage toujours coupé");
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "aucun droit hérité ajouté : {:?}", s.aces);
+    let s = lire_securite(&repli).unwrap();
+    assert!(s.protege && s.aces.iter().any(|a| a.sid == "S-1-5-32-546"), "dossier de repli : lecteur conservé {:?}", s.aces);
+    let s = lire_securite(&ordinaire).unwrap();
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-11"), "élément ordinaire : entrée explicite retirée {:?}", s.aces);
+    assert!(s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "élément ordinaire : droits hérités du dossier");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_dossier_de_repli_verifie() {
+    use crate::natif::lire_securite;
+    use crate::protection::{droits_conformes_pour, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    use crate::reponse::preparer_dossier_repli;
+    let d = dossier_test("repli");
+    let (moi, _) = sddl_test(&d);
+    let lecteur = "S-1-5-32-546";
+    let sddl = format!("O:{moi}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{moi})(A;OICI;0x1200a9;;;{lecteur})");
+    let conforme = |s: &crate::natif::Securite| droits_conformes_pour(s, &|o: &str| o == moi, &[SY, BA, moi.as_str()], &[lecteur]);
+    let base = d.join("restaurations");
+    // Création normale
+    let r = preparer_dossier_repli(&base, "a1", &sddl, false, &conforme).unwrap();
+    assert!(conforme(&lire_securite(&r).unwrap()).is_ok());
+    // Sous-dossier préexistant aux droits incorrects (hérités, sans le lecteur) : droits réimposés puis relus
+    std::fs::create_dir_all(base.join("a2")).unwrap();
+    assert!(conforme(&lire_securite(&base.join("a2")).unwrap()).is_err());
+    let r = preparer_dossier_repli(&base, "a2", &sddl, false, &conforme).unwrap();
+    let s = lire_securite(&r).unwrap();
+    assert!(s.protege && s.aces.iter().any(|a| a.sid == lecteur), "{:?}", s.aces);
+    // Sous-dossier remplacé par une jonction (vers un dossier « système ») : refus
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    jonction(&base.join("a3"), &systeme);
+    assert!(preparer_dossier_repli(&base, "a3", &sddl, false, &conforme).unwrap_err().contains("lien"));
+    std::fs::remove_dir(base.join("a3")).unwrap();
+    // Dossier restaurations lui-même remplacé par une jonction : refus
+    let base2 = d.join("restaurations2");
+    jonction(&base2, &systeme);
+    assert!(preparer_dossier_repli(&base2, "a4", &sddl, false, &conforme).is_err());
+    assert!(contenu_dossier(&systeme).is_empty(), "rien de créé dans la cible de la jonction");
+    std::fs::remove_dir(&base2).unwrap();
+    // Protection du dossier de données en échec : refus
+    assert!(preparer_dossier_repli(&base, "a5", &sddl, true, &conforme).unwrap_err().contains("échec"));
+    assert!(!base.join("a5").exists());
+    // Dossier restaurations impossible à créer (parent absent) : erreur, pas ignorée
+    assert!(preparer_dossier_repli(&d.join("absent").join("restaurations"), "a6", &sddl, false, &conforme).is_err());
+    // Identifiant qui sortirait du dossier : refus
+    assert!(preparer_dossier_repli(&base, r"..\x", &sddl, false, &conforme).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -543,25 +543,55 @@ pub fn restaurer(id: &str) -> Result<String, String> {
     Ok(format!("{chemin} restauré."))
 }
 
+/// Prépare le dossier de repli `base\<id>` : refus si la protection du dossier de données est en échec ;
+/// `base` créé (erreur vérifiée) puis ouvert par handle sans suivre de lien, chemin final vérifié ;
+/// `<id>` créé avec ses droits s'il n'existe pas, puis ouvert de même ; ses droits sont relus par le handle
+/// et comparés à l'attendu (`conforme`) ; non conformes : réimposés par le handle puis relus ; échec = refus
+pub fn preparer_dossier_repli(base: &Path, id: &str, sddl: &str, echec_protection: bool,
+                              conforme: &dyn Fn(&natif::Securite) -> Result<(), String>) -> Result<PathBuf, String> {
+    if echec_protection {
+        return Err("protection du dossier de données en échec : restauration de repli refusée".into());
+    }
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("identifiant d'élément invalide".into());
+    }
+    if fs::symlink_metadata(base).is_err() {
+        fs::create_dir(base).map_err(|e| format!("{} impossible à créer : {e}", base.display()))?;
+    }
+    // READ_CONTROL | SYNCHRONIZE, tout partage
+    natif::ouvrir_verifie(base, 0x0002_0000 | 0x0010_0000, 0x7, true).map_err(|e| format!("{} : {e} ; repli refusé", base.display()))?;
+    let dossier = base.join(id);
+    if fs::symlink_metadata(&dossier).is_err() && !natif::creer_dossier_protege(&dossier, sddl) {
+        return Err(format!("{} impossible à créer avec ses droits", dossier.display()));
+    }
+    // READ_CONTROL | WRITE_DAC | WRITE_OWNER | SYNCHRONIZE
+    let h = natif::ouvrir_verifie(&dossier, 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000, 0x7, true)
+        .map_err(|e| format!("{} : {e} ; repli refusé", dossier.display()))?;
+    let verifier = |h: &fs::File| natif::lire_securite_handle(h).ok_or_else(|| "droits illisibles".to_string()).and_then(|s| conforme(&s));
+    if verifier(&h).is_err() {
+        natif::poser_droits_handle(&h, sddl).map_err(|e| format!("{} : droits refusés ({e}) ; repli refusé", dossier.display()))?;
+        verifier(&h).map_err(|e| format!("{} : {e} ; repli refusé", dossier.display()))?;
+    }
+    Ok(dossier)
+}
+
 /// Restauration de repli : dans un dossier créé par le service (ProgramData\deR4Tizer\restaurations\<id>),
 /// lisible par SYSTEM, les administrateurs et le propriétaire de l'emplacement d'origine s'il est un utilisateur
 pub fn restaurer_repli(id: &str) -> Result<String, String> {
+    use crate::protection::{droits_conformes, SID_ADMINISTRATEURS, SID_SYSTEME};
     let mut liste = charger_liste()?;
     let e = liste.iter().find(|e| e.id == id).cloned().ok_or("élément introuvable")?;
     let nom = Path::new(&e.chemin_origine).file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| !n.is_empty())
         .unwrap_or_else(|| format!("{id}.restaure"));
-    let base = commun::dossier().join("restaurations");
-    let dossier = base.join(&e.id);
     let lecteur = proprietaire_emplacement(Path::new(&e.chemin_origine)).filter(|s| s.starts_with("S-1-5-21-") && s.chars().all(|c| c.is_ascii_digit() || c == '-' || c == 'S'));
-    let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){}", lecteur.map(|s| format!("(A;OICI;0x1200a9;;;{s})")).unwrap_or_default());
-    let _ = fs::create_dir_all(&base);
-    if fs::symlink_metadata(&dossier).is_err() && !natif::creer_dossier_protege(&dossier, &sddl) {
-        return Err(format!("{} impossible à créer avec ses droits", dossier.display()));
-    }
+    let sddl = format!("O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){}", lecteur.as_ref().map(|s| format!("(A;OICI;0x1200a9;;;{s})")).unwrap_or_default());
+    let lecteurs: Vec<&str> = lecteur.iter().map(String::as_str).collect();
+    let conforme = |s: &natif::Securite| droits_conformes(s, &[SID_SYSTEME, SID_ADMINISTRATEURS], &lecteurs);
+    let dossier = preparer_dossier_repli(&commun::dossier().join("restaurations"), &e.id, &sddl, commun::echec_protection().is_some(), &conforme)?;
     let cible = dossier.join(nom);
     let creer = |c: &Path| natif::creer_verifie(c).map_err(|x| format!("{} : {x}", c.display()));
     let chemin = restaurer_transaction(&dossier_quarantaine(), &mut liste, id, &cible, &creer, &ecrire_manifeste_service)?;
-    Ok(format!("{chemin} restauré (dossier de deR4Tizer)."))
+    Ok(format!("Fichier restauré dans le dossier de deR4Tizer : {chemin}"))
 }
 
 /// Action de reprise au démarrage d'une entrée, selon son état et la présence de l'original et de la copie.

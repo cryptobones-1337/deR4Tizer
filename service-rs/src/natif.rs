@@ -456,12 +456,8 @@ fn sid_texte(sid: windows::Win32::Security::PSID) -> String {
 
 /// Lit le propriétaire et la DACL ; None si illisible
 pub fn lire_securite(chemin: &std::path::Path) -> Option<Securite> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
-    use windows::Win32::Security::{
-        GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID,
-    };
+    use windows::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
     let nom = large(&chemin.to_string_lossy());
     unsafe {
         let mut proprietaire = PSID::default();
@@ -469,38 +465,111 @@ pub fn lire_securite(chemin: &std::path::Path) -> Option<Securite> {
         let mut sd = PSECURITY_DESCRIPTOR::default();
         let r = GetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             Some(&mut proprietaire), None, Some(&mut dacl), None, &mut sd);
-        if r.0 != 0 || sd.0.is_null() {
+        if r.0 != 0 {
             return None;
         }
-        let mut s = Securite { proprietaire: if proprietaire.is_invalid() { String::new() } else { sid_texte(proprietaire) }, ..Default::default() };
-        let (mut controle, mut revision) = (0u16, 0u32);
-        if GetSecurityDescriptorControl(sd, &mut controle, &mut revision).is_ok() {
-            s.protege = controle & 0x1000 != 0; // SE_DACL_PROTECTED
+        analyser_descripteur(proprietaire, dacl, sd)
+    }
+}
+
+/// `lire_securite` par le handle d'un élément déjà ouvert (et vérifié), sans repasser par son chemin ; le
+/// handle doit avoir READ_CONTROL
+pub fn lire_securite_handle(f: &std::fs::File) -> Option<Securite> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    unsafe {
+        let mut proprietaire = PSID::default();
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        let r = GetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&mut proprietaire), None, Some(&mut dacl), None, Some(&mut sd));
+        if r.0 != 0 {
+            return None;
         }
-        if dacl.is_null() {
-            // DACL absente : accès total pour tout le monde
-            s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
-        } else {
-            for i in 0..(*dacl).AceCount as u32 {
-                let mut p: *mut c_void = std::ptr::null_mut();
-                if GetAce(dacl, i, &mut p).is_err() || p.is_null() {
-                    s.ace_inconnue = true;
-                    continue;
+        analyser_descripteur(proprietaire, dacl, sd)
+    }
+}
+
+/// Propriétaire et entrées d'un descripteur de sécurité rendu par Windows (libéré ici)
+unsafe fn analyser_descripteur(proprietaire: windows::Win32::Security::PSID, dacl: *mut windows::Win32::Security::ACL,
+                               sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<Securite> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::{GetAce, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE, ACE_HEADER, PSID};
+    if sd.0.is_null() {
+        return None;
+    }
+    let mut s = Securite { proprietaire: if proprietaire.is_invalid() { String::new() } else { sid_texte(proprietaire) }, ..Default::default() };
+    let (mut controle, mut revision) = (0u16, 0u32);
+    if GetSecurityDescriptorControl(sd, &mut controle, &mut revision).is_ok() {
+        s.protege = controle & 0x1000 != 0; // SE_DACL_PROTECTED
+    }
+    if dacl.is_null() {
+        // DACL absente : accès total pour tout le monde
+        s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
+    } else {
+        for i in 0..(*dacl).AceCount as u32 {
+            let mut p: *mut c_void = std::ptr::null_mut();
+            if GetAce(dacl, i, &mut p).is_err() || p.is_null() {
+                s.ace_inconnue = true;
+                continue;
+            }
+            let entete = &*(p as *const ACE_HEADER);
+            match entete.AceType {
+                // ACCESS_ALLOWED_ACE et ACCESS_DENIED_ACE ont la même disposition
+                0 | 1 => {
+                    let ace = &*(p as *const ACCESS_ALLOWED_ACE);
+                    let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
+                    s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
                 }
-                let entete = &*(p as *const ACE_HEADER);
-                match entete.AceType {
-                    // ACCESS_ALLOWED_ACE et ACCESS_DENIED_ACE ont la même disposition
-                    0 | 1 => {
-                        let ace = &*(p as *const ACCESS_ALLOWED_ACE);
-                        let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
-                        s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
-                    }
-                    _ => s.ace_inconnue = true,
-                }
+                _ => s.ace_inconnue = true,
+            }
+        }
+    }
+    let _ = LocalFree(HLOCAL(sd.0));
+    Some(s)
+}
+
+/// `poser_droits` par le handle d'un élément déjà ouvert et vérifié (WRITE_OWNER si le SDDL a un
+/// propriétaire, WRITE_DAC) : propriétaire puis DACL entière, héritage coupé
+pub fn poser_droits_handle(f: &std::fs::File, sddl: &str) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    };
+    let h = HANDLE(f.as_raw_handle());
+    let s = large(sddl);
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut proprietaire = PSID::default();
+        let mut r = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaut).map_err(|e| e.to_string());
+        if r.is_ok() && (!present.as_bool() || dacl.is_null()) {
+            r = Err("SDDL sans DACL".into());
+        }
+        if r.is_ok() {
+            r = GetSecurityDescriptorOwner(sd, &mut proprietaire, &mut defaut).map_err(|e| e.to_string());
+        }
+        if r.is_ok() && !proprietaire.is_invalid() {
+            let e = SetSecurityInfo(h, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, proprietaire, PSID::default(), None, None);
+            if e.0 != 0 {
+                r = Err(format!("propriétaire : {}", windows::core::Error::from(e)));
+            }
+        }
+        if r.is_ok() {
+            let e = SetSecurityInfo(h, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, PSID::default(),
+                PSID::default(), Some(dacl), None);
+            if e.0 != 0 {
+                r = Err(format!("droits : {}", windows::core::Error::from(e)));
             }
         }
         let _ = LocalFree(HLOCAL(sd.0));
-        Some(s)
+        r
     }
 }
 
