@@ -45,6 +45,7 @@ namespace DeR4Tizer
         public List<Chaine> Chaines { get; set; }
         public bool Panique { get; set; }
         public Exposition Exposition { get; set; }
+        public string ProtectionDonnees { get; set; }   // vide : droits du dossier de données vérifiés
     }
 
     // Exposition du PC à Internet (paquets entrants venus d'Internet, adresses publiques)

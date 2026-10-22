@@ -12,7 +12,6 @@
 
 use crate::commun::{self, Alerte, ConfigApi};
 use crate::export;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
@@ -21,7 +20,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 
-const FICHIER_JETON: &str = "api-jeton.txt";
+pub const FICHIER_JETON: &str = "api-jeton.txt";
 const NOM_REGLE: &str = "deR4Tizer-API";
 const MAX_CONNEXIONS: usize = 16;
 
@@ -38,34 +37,45 @@ fn nouveau_jeton() -> String {
     octets.iter().map(|o| format!("{o:02x}")).collect()
 }
 
-/// Jeton actuel, créé au premier besoin
-pub fn jeton() -> String {
+/// Jeton : SYSTEM et administrateurs seulement, droits posés à la création du fichier (le dossier est
+/// lisible par les comptes autorisés)
+const SDDL_JETON: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
+
+/// Jeton actuel, créé au premier besoin. None si le jeton ne peut pas être créé avec ses droits : l'API ne
+/// démarre pas sans jeton protégé (échec fermé)
+pub fn jeton() -> Option<String> {
     let f = commun::dossier().join(FICHIER_JETON);
     match commun::lire_fichier(&f) {
-        Some(j) if j.trim().len() >= 32 => j.trim().to_string(),
-        _ => regenerer_jeton(),
+        Some(j) if j.trim().len() >= 32 && droits_jeton(&f).is_ok() => Some(j.trim().to_string()),
+        _ => regenerer_jeton().map_err(|e| commun::journal(&format!("API d'export : jeton non créé ({e})"))).ok(),
     }
 }
 
-pub fn regenerer_jeton() -> String {
+/// Droits du jeton relus (en service seulement : en mode console, le propriétaire est l'utilisateur)
+fn droits_jeton(f: &std::path::Path) -> Result<(), String> {
+    use crate::protection::{SID_ADMINISTRATEURS, SID_SYSTEME};
+    if !crate::natif::est_systeme() {
+        return Ok(());
+    }
+    crate::protection::verifier(f, &[SID_SYSTEME, SID_ADMINISTRATEURS], &[])
+}
+
+pub fn regenerer_jeton() -> Result<String, String> {
     let f = commun::dossier().join(FICHIER_JETON);
     let j = nouveau_jeton();
-    let _ = fs::write(&f, &j);
-    proteger_jeton();
-    j
+    crate::natif::ecrire_fichier_protege(&f, j.as_bytes(), SDDL_JETON)?;
+    droits_jeton(&f)?;
+    Ok(j)
 }
 
-/// Retire l'héritage (le dossier est lisible par les comptes autorisés) : SYSTEM et administrateurs seulement
-pub fn proteger_jeton() {
+/// Au démarrage : un jeton dont les droits ne sont plus ceux posés à la création a pu être lu ; il est remplacé
+pub fn proteger_jeton() -> Result<(), String> {
     let f = commun::dossier().join(FICHIER_JETON);
-    if !f.exists() {
-        return;
+    if !f.exists() || droits_jeton(&f).is_ok() {
+        return Ok(());
     }
-    let _ = Command::new("icacls.exe")
-        .arg(&f)
-        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F"])
-        .creation_flags(0x0800_0000)
-        .output();
+    commun::journal("API d'export : droits du jeton modifiés, nouveau jeton créé");
+    regenerer_jeton().map(|_| ())
 }
 
 /// Comparaison en temps constant
@@ -82,7 +92,10 @@ pub fn demarrer(config: &ConfigApi) {
     if !config.actif {
         return;
     }
-    let jeton = jeton();
+    let Some(jeton) = jeton() else {
+        commun::journal("API d'export : non démarrée, jeton impossible à créer avec ses droits");
+        return;
+    };
     let autorisees = adresses_autorisees(config);
     if config.reseau && autorisees.is_empty() {
         commun::journal("API d'export : accès réseau refusé sans adresse de SIEM autorisée ; écoute locale seulement");

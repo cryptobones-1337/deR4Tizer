@@ -502,3 +502,236 @@ fn script_de_mise_a_jour_valide() {
         let _: Vec<PathBuf> = fichiers.into_iter().map(|x| x.0).collect();
     }
 }
+
+// ------------------------------------------------------------ lot 1 : propriété et droits du dossier de données
+
+fn securite(proprietaire: &str, protege: bool, aces: &[(bool, u32, &str)]) -> crate::natif::Securite {
+    crate::natif::Securite {
+        proprietaire: proprietaire.into(),
+        protege,
+        aces: aces.iter().map(|&(autorise, masque, sid)| crate::natif::Ace { autorise, masque, sid: sid.into() }).collect(),
+        ace_inconnue: false,
+    }
+}
+
+#[test]
+fn lot1_proprietaire_acceptable() {
+    use crate::protection::proprietaire_acceptable;
+    assert!(proprietaire_acceptable("S-1-5-18"), "SYSTEM");
+    assert!(proprietaire_acceptable("S-1-5-32-544"), "Administrateurs");
+    for refuse in ["S-1-5-21-1004336348-1177238915-682003330-1001", "S-1-5-32-545", "S-1-5-11", "S-1-1-0",
+                   "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", // TrustedInstaller
+                   "", "S-1-5-32-5440", "S-1-5-180", " S-1-5-18", "s-1-5-18"] {
+        assert!(!proprietaire_acceptable(refuse), "{refuse:?}");
+    }
+}
+
+#[test]
+fn lot1_droits_conformes() {
+    use crate::protection::{droits_conformes, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    let lecteur = "S-1-5-21-1-2-3-1001";
+    let complets = [SY, BA];
+    let ok = securite(BA, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA), (true, 0x1200a9, lecteur)]);
+    assert!(droits_conformes(&ok, &complets, &[lecteur]).is_ok());
+    // Propriétaire : un compte standard qui a créé le dossier d'avance
+    assert!(droits_conformes(&securite(lecteur, true, &[(true, 0x1f01ff, SY)]), &complets, &[]).is_err());
+    assert!(droits_conformes(&securite("", true, &[]), &complets, &[]).is_err(), "propriétaire illisible");
+    // Héritage de ProgramData encore actif
+    assert!(droits_conformes(&securite(BA, false, &[(true, 0x1f01ff, SY)]), &complets, &[]).is_err());
+    // Utilisateurs, Utilisateurs authentifiés, Tout le monde, Créateur propriétaire : aucun droit, même en lecture
+    for autre in ["S-1-5-32-545", "S-1-5-11", "S-1-1-0", "S-1-3-0"] {
+        assert!(droits_conformes(&securite(BA, true, &[(true, 0x1200a9, autre)]), &complets, &[lecteur]).is_err(), "{autre}");
+    }
+    // Lecteur : lecture seulement ; chaque droit d'écriture isolé est refusé
+    for ecriture in [0x2u32, 0x4, 0x10, 0x40, 0x100, 0x1_0000, 0x4_0000, 0x8_0000, 0x0200_0000, 0x1000_0000, 0x4000_0000] {
+        let s = securite(BA, true, &[(true, 0x1200a9 | ecriture, lecteur)]);
+        assert!(droits_conformes(&s, &complets, &[lecteur]).is_err(), "droit {ecriture:#x}");
+    }
+    // Dossier de travail de la mise à jour : SYSTEM seul, les administrateurs exclus
+    assert!(droits_conformes(&securite(SY, true, &[(true, 0x1f01ff, SY)]), &[SY], &[]).is_ok());
+    assert!(droits_conformes(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA)]), &[SY], &[]).is_err());
+    // Un refus explicite ne gêne pas ; une entrée d'un type inconnu, si
+    assert!(droits_conformes(&securite(BA, true, &[(false, 0x1f01ff, "S-1-5-32-545"), (true, 0x1f01ff, SY)]), &complets, &[]).is_ok());
+    let mut inconnue = securite(BA, true, &[(true, 0x1f01ff, SY)]);
+    inconnue.ace_inconnue = true;
+    assert!(droits_conformes(&inconnue, &complets, &[]).is_err());
+}
+
+#[test]
+fn lot1_lecture_echec_ferme() {
+    use crate::commun::lecture_autorisee;
+    // Hors service : pas de contrôle (tests, mode console)
+    assert!(lecture_autorisee(false, true, true, true, Some(false)).is_ok());
+    // En service
+    assert!(lecture_autorisee(true, true, false, true, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, true, false, false, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
+    assert!(lecture_autorisee(true, true, false, true, None).is_err(), "fichier présent au propriétaire illisible (DACL vide)");
+    assert!(lecture_autorisee(true, true, false, true, Some(false)).is_err(), "propriétaire : compte standard");
+    assert!(lecture_autorisee(true, true, true, true, Some(true)).is_err(), "protection non vérifiée : rien n'est chargé");
+    // lecteurs.json (sans le verrou) : seul le propriétaire compte
+    assert!(lecture_autorisee(true, false, true, true, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, false, true, true, Some(false)).is_err());
+    assert!(lecture_autorisee(true, false, true, true, None).is_err());
+}
+
+#[test]
+fn lot1_tri_au_demarrage_proprietaire_non_verifie_ecarte() {
+    use crate::protection::{trier_element, Tri};
+    assert_eq!(trier_element(false, Some(true)), Tri::Garder);
+    assert_eq!(trier_element(false, Some(false)), Tri::Ecarter, "compte standard");
+    // Revue de la PR 1 : un compte standard pose une DACL vide sur son fichier, SYSTEM ne lit plus le
+    // propriétaire ; garder le fichier le ferait blanchir par la prise de possession qui suit
+    assert_eq!(trier_element(false, None), Tri::Ecarter, "propriétaire illisible");
+    for p in [Some(true), Some(false), None] {
+        assert_eq!(trier_element(true, p), Tri::SupprimerLien, "un lien est supprimé quel que soit son propriétaire");
+    }
+}
+
+#[test]
+fn lot1_echec_du_demarrage_non_leve_par_la_verification_horaire() {
+    use crate::protection::combiner;
+    // Constaté sur le poste : un dossier piégé impossible à écarter mettait la protection en échec, puis la
+    // première vérification horaire (racine seule, conforme) levait l'échec dans la même seconde
+    let e = Some("un élément d'un autre propriétaire n'a pas pu être écarté".to_string());
+    assert!(combiner(e.clone(), Ok(())).is_err());
+    assert!(combiner(e, Err("autre".into())).is_err());
+    assert!(combiner(None, Ok(())).is_ok());
+    assert!(combiner(None, Err("droits de la racine".into())).is_err());
+}
+
+#[test]
+fn lot1_dacl_vide_proprietaire_illisible() {
+    // Ce que voit le service sur un fichier à DACL vide dont il n'est pas propriétaire : lecture des droits
+    // impossible. Hors élévation, le propriétaire (le compte du test) garde READ_CONTROL : on vérifie au moins
+    // que la DACL vide est bien posée et que la décision ne s'appuie pas sur un None.
+    use crate::natif::{lire_securite, poser_droits};
+    let d = std::env::temp_dir().join(format!("der4tizer-dacl-vide-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("config.json");
+    std::fs::write(&f, b"{}").unwrap();
+    let proprietaire = lire_securite(&f).unwrap().proprietaire;
+    poser_droits(&f, &format!("O:{proprietaire}D:P")).unwrap();
+    if let Some(s) = lire_securite(&f) {
+        assert!(s.protege && s.aces.is_empty(), "DACL vide : {:?}", s.aces);
+    }
+    assert!(std::fs::read(&f).is_err(), "plus personne ne lit le contenu");
+    // Remise des droits pour nettoyer : le propriétaire garde le droit de réécrire la DACL (pas de changer
+    // le propriétaire, d'où icacls et non poser_droits)
+    assert!(crate::protection::icacls(&[&f.to_string_lossy(), "/grant", &format!("*{proprietaire}:F")]));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1_fichier_cree_avec_ses_droits_et_dacl_remplacee() {
+    use crate::natif::{ecrire_fichier_protege, lire_securite, poser_droits};
+    let d = std::env::temp_dir().join(format!("der4tizer-lot1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    // Le test tourne sans élévation : le compte du test garde ses droits (le service, lui, est SYSTEM)
+    let utilisateur = lire_securite(&d).unwrap().proprietaire;
+    assert!(utilisateur.starts_with("S-1-5-"), "{utilisateur}");
+    let sddl = format!("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{utilisateur})");
+    // Fichier créé directement avec une DACL protégée, rien d'hérité du dossier
+    let f = d.join("jeton.txt");
+    ecrire_fichier_protege(&f, b"abc", &sddl).unwrap();
+    let s = lire_securite(&f).expect("droits lisibles");
+    assert!(s.protege);
+    // Comptes distincts : en CI, le test tourne en administrateur élevé et le compte du test est alors
+    // Administrateurs lui-même (Windows fusionne les deux entrées)
+    let sids: std::collections::BTreeSet<_> = s.aces.iter().filter(|a| a.autorise).map(|a| a.sid.clone()).collect();
+    let attendu: std::collections::BTreeSet<_> = ["S-1-5-18".to_string(), "S-1-5-32-544".into(), utilisateur.clone()].into();
+    assert_eq!(sids, attendu);
+    // Remplacement d'un fichier existant : toujours protégé, contenu remplacé
+    ecrire_fichier_protege(&f, b"defg", &sddl).unwrap();
+    assert!(lire_securite(&f).unwrap().protege);
+    assert_eq!(std::fs::read(&f).unwrap(), b"defg");
+    // poser_droits remplace TOUTE la DACL : une entrée « Utilisateurs : modification » ne survit pas
+    assert!(crate::protection::icacls(&[&d.to_string_lossy(), "/grant", "*S-1-5-32-545:(OI)(CI)M"]));
+    assert!(lire_securite(&d).unwrap().aces.iter().any(|a| a.sid == "S-1-5-32-545"));
+    poser_droits(&d, &format!("O:{utilisateur}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{utilisateur})")).unwrap();
+    let s = lire_securite(&d).unwrap();
+    assert!(s.protege && !s.ace_inconnue);
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "entrée étrangère retirée : {:?}", s.aces);
+    assert!(poser_droits(&d, "D:P(A;;FA;;;SY").is_err(), "SDDL invalide : erreur, rien de posé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ------------------------------------------------------------ lot 1, seconde relecture de la PR 1
+
+#[test]
+fn lot1_mise_de_cote_ratee_jamais_de_confiance() {
+    // Relecture : un fichier piégé tenu ouvert sans partage de suppression pendant le démarrage ne doit pas
+    // changer de propriétaire, sinon il serait gardé (et chargé) au démarrage suivant
+    use crate::natif::{lire_securite, renommer_par_handle};
+    use crate::protection::{trier_element, Tri};
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = std::env::temp_dir().join(format!("der4tizer-tenu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("ecartes")).unwrap();
+    let f = d.join("lecteurs.json");
+    std::fs::write(&f, b"[]").unwrap();
+    let avant = lire_securite(&f).unwrap();
+    {
+        // Ouvert en lecture, partage en lecture seule : ni écriture ni suppression partagées
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&f).unwrap();
+        assert!(renommer_par_handle(&f, &d.join("ecartes").join("x-lecteurs.json")).is_err(), "fichier tenu : déplacement impossible");
+        let apres = lire_securite(&f).unwrap();
+        assert_eq!(apres.proprietaire, avant.proprietaire, "aucune prise de possession");
+        assert_eq!(apres.aces, avant.aces, "droits inchangés");
+    }
+    // Propriétaire inchangé, donc toujours non vérifié pour le service : écarté au démarrage suivant
+    for p in [Some(false), None] {
+        assert_eq!(trier_element(false, p), Tri::Ecarter);
+    }
+    // Une fois relâché, le déplacement par handle réussit, sans changer propriétaire ni droits
+    let dest = d.join("ecartes").join("x-lecteurs.json");
+    renommer_par_handle(&f, &dest).unwrap();
+    assert!(!f.exists() && dest.exists());
+    assert_eq!(lire_securite(&dest).unwrap().proprietaire, avant.proprietaire);
+    // Un dossier se déplace aussi
+    std::fs::create_dir_all(d.join("piege")).unwrap();
+    renommer_par_handle(&d.join("piege"), &d.join("ecartes").join("x-piege")).unwrap();
+    assert!(d.join("ecartes").join("x-piege").is_dir());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1_privilege_de_restauration_limite_a_l_appel() {
+    use crate::natif::avec_privilege_restauration;
+    // Hors élévation, le privilège n'est pas dans le jeton : refus, et f n'est pas exécutée. En CI (élevé),
+    // il est accordé le temps de l'appel. Dans les deux cas, le fil revient à son jeton.
+    let mut appele = false;
+    match avec_privilege_restauration(|| appele = true) {
+        Ok(()) => assert!(appele),
+        Err(e) => {
+            assert!(!appele, "f ne doit pas s'exécuter sans le privilège");
+            assert!(e.contains("privilège") || e.contains("jeton"), "{e}");
+        }
+    }
+    // Rappel immédiat : pas d'emprunt de jeton resté actif (un second ImpersonateSelf réussit pareil)
+    let r2 = avec_privilege_restauration(|| 1);
+    assert_eq!(r2.is_ok(), appele);
+}
+
+#[test]
+fn lot1_lisible_en_echec_liste_d_autorisation() {
+    use crate::commun::lisible_en_echec;
+    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "dns.json", "journal.txt"] {
+        assert!(lisible_en_echec(oui), "{oui}");
+    }
+    for non in ["config.json", "lecteurs.json", "apprentissage.json", "blocages.json", "quarantaine.json",
+                "secrets\\notifications.json", "secrets\\leurres-noms.json", "api-jeton.txt", "baseline-sauvegarde.json",
+                "executables.json", "extensions-connues.json", "ecoutes-connues.json", "peripheriques-connus.json",
+                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x"] {
+        assert!(!lisible_en_echec(non), "{non}");
+    }
+}
+
+#[test]
+fn lot1_alerte_critique_locale_en_echec() {
+    let a = crate::protection::alerte_echec("un élément d'un autre propriétaire n'a pas pu être écarté");
+    assert_eq!(a.niveau, "Critique");
+    assert!(a.raisons.contains("n'a pas pu être écarté") && a.raisons.contains("pas remontée"));
+    assert!(!a.raisons.contains("  "), "texte sans espaces doublés : {}", a.raisons);
+}
