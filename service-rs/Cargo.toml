@@ -1,0 +1,53 @@
+[package]
+name = "der4tizer-svc"
+version = "2.0.0"
+edition = "2021"
+description = "deR4Tizer : service de surveillance des connexions, de la persistance et de la vie privée"
+
+# Les versions de la bibliothèque Windows sont figées sur celles qui fournissent leurs bibliothèques
+# d'import toutes prêtes (windows-targets 0.52) : la chaîne GNU minimale de rustup n'a pas d'assembleur
+# pour générer celles des versions plus récentes.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+winreg = "=0.52.0"
+windows-service = "=0.7.0"
+wmi = { version = "=0.13.4", default-features = false }     # sans chrono (qui tire windows-link)
+sha2 = "0.11.1"
+
+[dependencies.windows]
+version = "=0.58.0"
+features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+    "Win32_Security_WinTrust",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_EventLog",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Pipes",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
