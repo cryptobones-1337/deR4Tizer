@@ -120,7 +120,22 @@ pour pouvoir y revenir ; sans lui, rien n'est installé. Les fichiers sont gard�
 réservé à SYSTEM (droits vérifiés avant chaque usage), et les empreintes sont revérifiées juste avant l'exécution.
 Le service doit ensuite répondre en JSON valide sur son canal, avec la nouvelle version, dans les 60 s ; sinon le
 paquet de la version précédente est réinstallé. Sans clé épinglée, une version est seulement signalée : un compte
-GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
+GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc. Le contrôle de santé vérifie
+aussi que le tube du canal est tenu par le processus du service (et non par un programme qui l'aurait créé pendant
+l'arrêt de l'ancienne version).
+
+**Premier déploiement.** Aucune version n'est publiée à ce jour, et les postes installés avant la première version
+signée n'ont ni clé épinglée ni paquet de retour arrière disponible : ils ne se mettront jamais à jour seuls. Le
+parc part donc d'une première version signée, installée à la main (ou par GPO, Intune, prestataire). Procédure de
+publication :
+
+1. obtenir le certificat de signature de code et calculer l'empreinte SHA-256 de sa clé publique ;
+2. la renseigner dans la variable de dépôt `CLE_SIGNATURE` (avec, plus tard, celle de la clé suivante) ;
+3. ranger le certificat dans l'environnement GitHub « publication » (approbation obligatoire) ;
+4. poser le tag `vX.Y` correspondant à la version du code : la CI compile, signe, construit le MSI et publie la
+   version avec son manifeste ;
+5. installer ce MSI sur chaque poste ; les versions suivantes pourront ensuite s'installer seules (si l'installation
+   automatique est activée), le paquet de cette première version servant de retour arrière.
 
 Protéger la publication : ranger les secrets de signature dans l'environnement GitHub « publication » avec une
 approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules). La compilation (où
