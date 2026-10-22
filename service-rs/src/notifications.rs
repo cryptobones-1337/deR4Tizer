@@ -71,9 +71,8 @@ pub fn preparer_dossier() -> Result<(), String> {
         return Ok(());
     }
     crate::natif::poser_droits(&d, SDDL_SECRETS).map_err(|e| format!("droits du dossier des secrets refusés ({e})"))?;
-    if !crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]) && fs::read_dir(&d).is_ok_and(|mut l| l.next().is_some()) {
-        return Err("droits du contenu des secrets refusés".into());
-    }
+    // Contenu : droits hérités (code d'icacls /C non probant ; la preuve est la relecture du dossier)
+    crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]);
     verifier(&d, &complets, &[])
 }
 
