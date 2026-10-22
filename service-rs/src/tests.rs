@@ -690,6 +690,21 @@ fn lot1_privilege_de_restauration_limite_a_l_appel() {
     assert_eq!(r2.is_ok(), appele);
 }
 
+/// Lot 5 : après un emprunt d'identité ou un privilège activé sur le fil, un retour à l'identité du service
+/// impossible (RevertToSelf en échec) arrête le service, dans les deux fonctions qui empruntent
+#[test]
+fn lot5_retour_a_soi_impossible_arret() {
+    use crate::natif::retour_ou_arret;
+    let mut arrete = false;
+    retour_ou_arret(Err("refusé".to_string()), "essai", |_| arrete = true);
+    assert!(arrete, "échec du retour : arrêt");
+    let mut arrete = false;
+    retour_ou_arret(Ok(()), "essai", |_| arrete = true);
+    assert!(!arrete, "retour réussi : pas d'arrêt");
+    let natif = include_str!("natif.rs");
+    assert!(!natif.contains("let _ = RevertToSelf()"), "un échec de RevertToSelf est ignoré quelque part");
+}
+
 #[test]
 fn lot1_lisible_en_echec_liste_d_autorisation() {
     use crate::commun::lisible_en_echec;
