@@ -84,20 +84,67 @@ namespace DeR4Tizer
             }
         }
 
-        // Pastille rouge sur l'icône de la zone de notification quand des alertes ne sont pas lues
-        public static Icon IconeAvecPastille(Icon baseIcone)
+        // Échelle réelle de l'écran : l'interface n'est pas déclarée « DPI aware », Windows lui annonce toujours
+        // 96 ppp et agrandirait ensuite une icône de 16 px (floue). AppliedDPI donne l'échelle appliquée.
+        static int Ppp()
         {
-            using (var b = new Bitmap(32, 32))
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop\WindowMetrics"))
+                {
+                    var v = k == null ? null : k.GetValue("AppliedDPI") as int?;
+                    if (v >= 96 && v <= 480) return v.Value;
+                }
+            }
+            catch { }
+            return 96;
+        }
+
+        // Plus petite image de l'icône au moins aussi grande que la taille voulue (images de 16, 20, 24, 32, 48…)
+        static int TailleImage(int pointsA96)
+        {
+            int voulu = (int)Math.Ceiling(pointsA96 * Ppp() / 96.0);
+            foreach (int t in new[] { 16, 20, 24, 32, 48, 64, 128, 256 }) if (t >= voulu) return t;
+            return 256;
+        }
+
+        // Icône de la zone de notification, à la taille réelle de l'écran, avec ou sans pastille (alertes non
+        // lues). Dessinée depuis l'image PNG de la bonne taille : jamais d'agrandissement d'une image de 16 px.
+        // La pastille est découpée dans l'icône (bord transparent) plutôt qu'entourée d'une couleur du thème,
+        // pour rester nette sur une barre des tâches claire comme sombre.
+        public static Icon IconeZoneNotification(bool pastille)
+        {
+            int t = TailleImage(16);
+            using (var image = ImageApplication(t))
+            using (var b = new Bitmap(t, t, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             {
                 using (var g = Graphics.FromImage(b))
                 {
                     g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.DrawIcon(new Icon(baseIcone, 32, 32), new Rectangle(0, 0, 32, 32));
-                    g.FillEllipse(new SolidBrush(Fond), 17, 17, 15, 15);
-                    g.FillEllipse(new SolidBrush(Rouge), 19, 19, 11, 11);
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.DrawImage(image, new Rectangle(0, 0, t, t));
+                    if (pastille)
+                    {
+                        float d = t * 0.5f, bord = Math.Max(1f, t / 16f);
+                        g.CompositingMode = CompositingMode.SourceCopy;
+                        using (var vide = new SolidBrush(Color.Transparent))
+                            g.FillEllipse(vide, t - d - bord, t - d - bord, d + 2 * bord, d + 2 * bord);
+                        g.CompositingMode = CompositingMode.SourceOver;
+                        using (var rouge = new SolidBrush(Rouge))
+                            g.FillEllipse(rouge, t - d, t - d, d, d);
+                    }
                 }
                 return Icon.FromHandle(b.GetHicon());
             }
+        }
+
+        // Grande icône des notifications Windows : l'image de l'application, pas l'icône système d'avertissement
+        public static Icon IconeNotification()
+        {
+            int t = TailleImage(32);
+            using (var image = ImageApplication(t))
+            using (var b = new Bitmap(image))
+                return Icon.FromHandle(b.GetHicon());
         }
 
         public static GraphicsPath Arrondi(RectangleF r, float rayon)
