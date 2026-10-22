@@ -1240,3 +1240,42 @@ fn lot1ter_restauration_sans_session_jamais_en_system() {
     assert!(!execute);
 }
 
+
+/// Forme courte (8.3) d'un chemin existant, si le volume en crée
+fn forme_courte(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+    let n: Vec<u16> = p.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    let mut t = vec![0u16; 1024];
+    let l = unsafe { GetShortPathNameW(PCWSTR(n.as_ptr()), Some(&mut t)) } as usize;
+    (l > 0 && l < t.len()).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&t[..l])))
+}
+
+#[test]
+fn lot1ter_chemin_en_noms_courts_accepte() {
+    // CI : le dossier temporaire est atteint par un nom court (C:\Users\RUNNER~1\…) alors que Windows rend le
+    // chemin final en noms longs ; un chemin légitime ne doit pas être pris pour un détournement
+    use crate::natif::{creer_verifie, forme_longue, meme_chemin, ouvrir_verifie};
+    use crate::reponse::{etat_original, Original};
+    let d = dossier_test("noms-courts");
+    let long = d.join("un dossier au nom vraiment long");
+    std::fs::create_dir_all(&long).unwrap();
+    let f = long.join("fichier au nom tres long.txt");
+    std::fs::write(&f, b"contenu").unwrap();
+    let sha = crate::hygiene::empreinte_fichier(&f).unwrap();
+    assert!(meme_chemin(&forme_longue(&f).to_string_lossy(), &f.to_string_lossy()));
+    match forme_courte(&f).filter(|c| c != &f) {
+        Some(court) => {
+            assert!(meme_chemin(&forme_longue(&court).to_string_lossy(), &f.to_string_lossy()), "{}", court.display());
+            assert!(ouvrir_verifie(&court, 0x8000_0000 | 0x0010_0000, 0x7, false).is_ok(), "{}", court.display());
+            assert_eq!(etat_original(&court, &sha), Original::Identique);
+            // Fichier à créer dans un dossier désigné par son nom court
+            let dossier_court = forme_courte(&long).unwrap();
+            let nouveau = dossier_court.join("nouveau.txt");
+            assert!(creer_verifie(&nouveau).is_ok(), "{}", nouveau.display());
+            assert!(long.join("nouveau.txt").exists());
+        }
+        None => eprintln!("noms courts 8.3 désactivés sur ce volume : cas de la CI non reproductible ici"),
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
