@@ -270,25 +270,30 @@ pub fn preparer_quarantaine_avec(q: &Path, de_confiance: &dyn Fn(&Path) -> Optio
 /// seul un redémarrage réussi du service le fait
 static ECHEC_DEMARRAGE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// Décision pure : un élément dont la DACL est protégée (héritage coupé) et dont le propriétaire est de
-/// confiance a reçu ses propres droits à la création ; il ne doit pas être réinitialisé (ni son contenu)
-pub fn a_garder_tel_quel(s: &crate::natif::Securite, proprietaire_ok: &dyn Fn(&str) -> bool) -> bool {
-    s.protege && proprietaire_ok(&s.proprietaire)
+/// Décision pure : un élément dont la DACL est protégée (héritage coupé), dont le propriétaire est de
+/// confiance et sur lequel aucun autre compte n'a de droit d'écriture a reçu ses propres droits à la
+/// création ; il ne doit pas être réinitialisé (ni son contenu). `de_confiance` : SYSTEM et Administrateurs
+/// en service. Une entrée de type inconnu empêche de le garder.
+pub fn a_garder_tel_quel(s: &crate::natif::Securite, de_confiance: &dyn Fn(&str) -> bool) -> bool {
+    s.protege
+        && de_confiance(&s.proprietaire)
+        && !s.ace_inconnue
+        && s.aces.iter().filter(|a| a.autorise).all(|a| de_confiance(&a.sid) || a.masque & DROITS_ECRITURE == 0)
 }
 
 /// Réinitialise aux droits hérités le contenu de `dossier`, élément par élément, sans suivre de lien, en
 /// laissant intacts (avec leur contenu) les éléments à garder tels quels
-pub fn reinitialiser_contenu(dossier: &Path, proprietaire_ok: &dyn Fn(&str) -> bool) {
+pub fn reinitialiser_contenu(dossier: &Path, de_confiance: &dyn Fn(&str) -> bool) {
     let Ok(lecture) = fs::read_dir(dossier) else { return };
     for e in lecture.flatten() {
         let p = e.path();
         let Ok(m) = fs::symlink_metadata(&p) else { continue };
-        if est_lien(&m) || crate::natif::lire_securite(&p).is_some_and(|s| a_garder_tel_quel(&s, proprietaire_ok)) {
+        if est_lien(&m) || crate::natif::lire_securite(&p).is_some_and(|s| a_garder_tel_quel(&s, de_confiance)) {
             continue;
         }
         icacls(&[&p.to_string_lossy(), "/reset", "/C", "/Q"]);
         if m.is_dir() {
-            reinitialiser_contenu(&p, proprietaire_ok);
+            reinitialiser_contenu(&p, de_confiance);
         }
     }
 }

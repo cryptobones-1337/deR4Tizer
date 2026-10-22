@@ -1305,6 +1305,9 @@ fn lot1ter_reinitialisation_garde_les_droits_poses_a_la_creation() {
     let ordinaire = d.join("ordinaire.json");
     std::fs::write(&ordinaire, b"{}").unwrap();
     assert!(icacls(&[&ordinaire.to_string_lossy(), "/grant", "*S-1-5-11:F"]));
+    // DACL protégée et propriétaire de confiance, mais Utilisateurs authentifiés peut y écrire : pas gardé
+    let ecrivable = d.join("protege-mais-ecrivable.json");
+    copier_protege(&source, &ecrivable, &format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})(A;;0x1301bf;;;S-1-5-11)")).unwrap();
     // En service, la règle est « propriétaire SYSTEM ou Administrateurs » ; ici le compte du test en tient lieu
     reinitialiser_contenu(&d, &|o: &str| o == moi || proprietaire_acceptable(o));
     let s = lire_securite(&copie).unwrap();
@@ -1315,6 +1318,9 @@ fn lot1ter_reinitialisation_garde_les_droits_poses_a_la_creation() {
     let s = lire_securite(&ordinaire).unwrap();
     assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-11"), "élément ordinaire : entrée explicite retirée {:?}", s.aces);
     assert!(s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "élément ordinaire : droits hérités du dossier");
+    let s = lire_securite(&ecrivable).unwrap();
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-11"), "écriture d'un autre compte : réinitialisé {:?}", s.aces);
+    assert!(!s.protege && s.aces.iter().any(|a| a.sid == "S-1-5-32-545"));
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -1358,4 +1364,28 @@ fn lot1ter_dossier_de_repli_verifie() {
     // Identifiant qui sortirait du dossier : refus
     assert!(preparer_dossier_repli(&base, r"..\x", &sddl, false, &conforme).is_err());
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_garder_tel_quel_sans_ecriture_etrangere() {
+    use crate::protection::{a_garder_tel_quel, proprietaire_acceptable, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    let ok = |s: &crate::natif::Securite| a_garder_tel_quel(s, &proprietaire_acceptable);
+    let lecteur = "S-1-5-21-1-2-3-1001";
+    // Copie de quarantaine, secrets, jeton : SYSTEM et Administrateurs seulement
+    assert!(ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA)])));
+    // Dossier de repli : lecteur en lecture seule
+    assert!(ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA), (true, 0x1200a9, lecteur)])));
+    // Un autre compte avec un droit d'écriture, quel qu'il soit : réinitialisé
+    for ecriture in [0x2u32, 0x4, 0x10, 0x40, 0x100, 0x1_0000, 0x4_0000, 0x8_0000, 0x0200_0000, 0x1000_0000, 0x4000_0000] {
+        assert!(!ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1200a9 | ecriture, lecteur)])), "droit {ecriture:#x}");
+    }
+    assert!(!ok(&securite(SY, true, &[(true, 0x1f01ff, "S-1-1-0")])), "Tout le monde en contrôle total");
+    // Un refus explicite ne compte pas comme un droit
+    assert!(ok(&securite(SY, true, &[(false, 0x1f01ff, "S-1-1-0"), (true, 0x1f01ff, SY)])));
+    // Héritage actif, propriétaire étranger, entrée inconnue : réinitialisé
+    assert!(!ok(&securite(SY, false, &[(true, 0x1f01ff, SY)])));
+    assert!(!ok(&securite(lecteur, true, &[(true, 0x1f01ff, SY)])));
+    let mut inconnue = securite(SY, true, &[(true, 0x1f01ff, SY)]);
+    inconnue.ace_inconnue = true;
+    assert!(!ok(&inconnue));
 }
