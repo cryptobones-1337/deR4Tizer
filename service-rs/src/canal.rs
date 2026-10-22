@@ -4,12 +4,16 @@
 //! (échec si quelqu'un l'a déjà créé), et une instance reste toujours ouverte (la suivante est créée avant de
 //! traiter la connexion en cours) ; créer une instance supplémentaire exige un droit que seul SYSTEM possède.
 //! L'interface vérifie de son côté que le serveur du tube est bien le processus du service.
+//! Un client qui se connecte puis se tait ne bloque pas le canal : la lecture d'une commande est bornée dans le
+//! temps (DELAI_LECTURE). Si le nom est déjà pris au démarrage (squat), alerte critique locale avec le PID et le
+//! chemin du processus qui tient le tube, lus en client anonyme.
 
 use crate::commun::{self, Commande, Reponse};
 use crate::moniteur::{Moniteur, Partage};
 use crate::natif::large;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree, INVALID_HANDLE_VALUE};
 use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
@@ -18,6 +22,10 @@ use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile,
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
+
+/// Délai maximal de lecture d'une commande : l'interface et le script de mise à jour écrivent la leur dès la
+/// connexion
+const DELAI_LECTURE: Duration = Duration::from_secs(10);
 
 /// SYSTEM et administrateurs ; en mode console (tests uniquement), tout utilisateur connecté
 fn descripteur(console: bool) -> String {
@@ -62,6 +70,11 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
                 Err(e) => {
                     if e != derniere_erreur {
                         commun::journal(&format!("erreur du canal de commandes : {e}"));
+                        // Nom déjà pris : un autre processus tient le tube (squat)
+                        if let Some(pid) = pid_serveur_anonyme(commun::NOM_PIPE) {
+                            let chemin = crate::natif::chemin_processus(pid);
+                            partage.alertes_externes.lock().unwrap().push(alerte_squat(Some(pid), &chemin));
+                        }
                         derniere_erreur = e;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -97,21 +110,94 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
     }).unwrap();
 }
 
-fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>) {
-    unsafe {
-        // Lecture d'une ligne
-        let mut demande = Vec::new();
-        let mut tampon = [0u8; 4096];
-        loop {
-            let mut lus = 0u32;
-            if ReadFile(tube, Some(&mut tampon), Some(&mut lus), None).is_err() || lus == 0 {
-                break;
-            }
-            demande.extend_from_slice(&tampon[..lus as usize]);
-            if demande.contains(&b'\n') || demande.len() > 65536 {
-                break;
+/// Lit une commande (jusqu'à la fin de ligne, 64 Ko au plus) en DELAI au plus : un fil de garde annule la
+/// lecture bloquante de ce fil (CancelSynchronousIo) à l'échéance, et recommence tant que la lecture n'est pas
+/// finie (une annulation tombée entre deux lectures ne serait pas retenue). Sans garde possible, rien n'est lu.
+pub fn lire_commande(tube: HANDLE, delai: Duration) -> Vec<u8> {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use windows::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
+    use windows::Win32::System::IO::CancelSynchronousIo;
+    let mut demande = Vec::new();
+    let Ok(fil) = (unsafe { OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId()) }) else {
+        commun::journal("canal de commandes : garde de lecture impossible, commande ignorée");
+        return demande;
+    };
+    let brut = fil.0 as usize;
+    let (fin, attente) = channel::<()>();
+    let garde = std::thread::spawn(move || unsafe {
+        let f = HANDLE(brut as _);
+        if attente.recv_timeout(delai) == Err(RecvTimeoutError::Timeout) {
+            while attente.recv_timeout(Duration::from_millis(100)) == Err(RecvTimeoutError::Timeout) {
+                let _ = CancelSynchronousIo(f);
             }
         }
+        let _ = CloseHandle(f);
+    });
+    let debut = Instant::now();
+    let mut tampon = [0u8; 4096];
+    loop {
+        let mut lus = 0u32;
+        if unsafe { ReadFile(tube, Some(&mut tampon), Some(&mut lus), None) }.is_err() || lus == 0 {
+            break;
+        }
+        demande.extend_from_slice(&tampon[..lus as usize]);
+        if demande.contains(&b'\n') || demande.len() > 65536 || debut.elapsed() >= delai {
+            break;
+        }
+    }
+    let _ = fin.send(());
+    let _ = garde.join();
+    // Échéance atteinte sans fin de ligne : commande incomplète, ignorée
+    if !demande.contains(&b'\n') && debut.elapsed() >= delai {
+        demande.clear();
+    }
+    demande
+}
+
+/// PID du processus qui tient un tube nommé, lu en client ANONYME (SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS) :
+/// le service ne se présente jamais avec l'identité de SYSTEM à un serveur qui pourrait l'emprunter ; rien n'est
+/// écrit dans le tube
+pub fn pid_serveur_anonyme(chemin: &str) -> Option<u32> {
+    use windows::Win32::Foundation::GENERIC_READ;
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_NONE, OPEN_EXISTING, SECURITY_ANONYMOUS, SECURITY_SQOS_PRESENT};
+    use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+    let nom = large(chemin);
+    unsafe {
+        let h = CreateFileW(PCWSTR(nom.as_ptr()), GENERIC_READ.0, FILE_SHARE_NONE, None, OPEN_EXISTING,
+            SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS, None).ok()?;
+        let mut pid = 0u32;
+        let ok = GetNamedPipeServerProcessId(h, &mut pid).is_ok();
+        let _ = CloseHandle(h);
+        (ok && pid != 0).then_some(pid)
+    }
+}
+
+/// Alerte critique locale : le canal de commandes est tenu par un autre processus
+pub fn alerte_squat(pid: Option<u32>, chemin: &str) -> commun::Alerte {
+    let qui = match (pid, chemin.is_empty()) {
+        (Some(p), false) => format!("le processus {p} ({chemin})"),
+        (Some(p), true) => format!("le processus {p} (chemin illisible)"),
+        (None, _) => "un processus inconnu".to_string(),
+    };
+    commun::Alerte {
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        score: 10,
+        processus: if chemin.is_empty() { "inconnu".into() } else { chemin.to_string() },
+        chemin: chemin.to_string(),
+        destination: "canal de commandes de deR4Tizer".into(),
+        raisons: format!("CANAL DE COMMANDES OCCUPÉ : {qui} tient le tube {} à la place du service. L'interface ne peut \
+            plus commander le service, et ce programme peut se faire passer pour lui. Que faire : arrêter ce programme, \
+            l'analyser, puis redémarrer le service deR4Tizer.", commun::NOM_PIPE),
+        pid,
+        ..Default::default()
+    }
+}
+
+fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>) {
+    unsafe {
+        let demande = lire_commande(tube, DELAI_LECTURE);
         let texte = String::from_utf8_lossy(&demande);
         let ligne = texte.trim_start_matches('\u{feff}').lines().next().unwrap_or("");
         let reponse = match serde_json::from_str::<Commande>(ligne) {
