@@ -1,4 +1,4 @@
-//! Lecture des journaux d'événements de Windows (journal DNS, Sysmon) : historique puis abonnement.
+//! Lecture des journaux d'événements de Windows (Sécurité, Système, DNS, Sysmon…) : historique puis suivi.
 
 use crate::natif::large;
 use regex::Regex;
@@ -6,12 +6,9 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::OnceLock;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows::Win32::System::EventLog::{
-    EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtRender, EvtRenderEventXml, EvtSubscribe,
-    EvtSubscribeToFutureEvents, EVT_HANDLE,
+    EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryReverseDirection, EvtRender, EvtRenderEventXml, EVT_HANDLE,
 };
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 /// Journal activé ? (lu avec wevtutil, qui affiche « enabled: true/false »)
 pub fn journal_actif(canal: &str) -> Option<bool> {
@@ -76,29 +73,53 @@ pub fn historique(canal: &str, requete: &str, traiter: &mut dyn FnMut(String)) {
     }
 }
 
-/// S'abonne aux nouveaux événements ; le traitement tourne dans un fil dédié
-pub fn abonner(canal: &str, requete: &str, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
-    let (c, r) = (large(canal), large(requete));
+/// Numéro (EventRecordID) du dernier événement du journal ; None si le journal n'existe pas ou est illisible
+fn dernier_numero(canal: &str) -> Option<u64> {
+    static MOTIF: OnceLock<Regex> = OnceLock::new();
+    let motif = MOTIF.get_or_init(|| Regex::new(r"<EventRecordID>(\d+)</EventRecordID>").unwrap());
+    let (c, r) = (large(canal), large("*"));
     unsafe {
-        let Ok(signal) = CreateEventW(None, false, false, None) else { return false };
-        let abonnement = match EvtSubscribe(None, signal, PCWSTR(c.as_ptr()), PCWSTR(r.as_ptr()), None, None, None, EvtSubscribeToFutureEvents.0 as u32) {
-            Ok(a) => a,
-            Err(_) => {
-                let _ = CloseHandle(signal);
-                return false;
-            }
+        let resultats = EvtQuery(None, PCWSTR(c.as_ptr()), PCWSTR(r.as_ptr()), EvtQueryChannelPath.0 as u32 | EvtQueryReverseDirection.0 as u32).ok()?;
+        let mut evenements = [0isize; 1];
+        let mut n = 0u32;
+        let numero = if EvtNext(resultats, &mut evenements, 1000, 0, &mut n).is_ok() && n == 1 {
+            let h = EVT_HANDLE(evenements[0]);
+            let x = rendre(h);
+            let _ = EvtClose(h);
+            x.and_then(|x| motif.captures(&x).and_then(|m| m[1].parse().ok()))
+        } else {
+            Some(0)
         };
-        let (signal, abonnement) = (signal.0 as isize, abonnement.0);
-        std::thread::Builder::new()
-            .name(format!("journal {canal}"))
-            .spawn(move || loop {
-                let s = windows::Win32::Foundation::HANDLE(signal as *mut _);
-                if WaitForSingleObject(s, 2000) == WAIT_OBJECT_0 {
-                    vider(EVT_HANDLE(abonnement), &mut traiter);
-                }
-            })
-            .is_ok()
+        let _ = EvtClose(resultats);
+        numero
     }
+}
+
+/// Suit les nouveaux événements du journal qui correspondent à la requête « *[System[…]] » ; le traitement
+/// tourne dans un fil dédié. Lecture incrémentale par numéro d'événement toutes les 2 s, plutôt qu'un
+/// abonnement EvtSubscribe : sur un journal très actif (Sécurité avec l'audit des fichiers), un abonnement
+/// qui prend du retard est déclaré périmé par Windows et ne livre plus rien.
+pub fn abonner(canal: &str, requete: &str, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
+    let Some(conditions) = requete.trim().strip_prefix("*[System[").and_then(|r| r.strip_suffix("]]")).map(String::from) else { return false };
+    let Some(mut dernier) = dernier_numero(canal) else { return false };
+    let canal = canal.to_string();
+    std::thread::Builder::new()
+        .name(format!("journal {canal}"))
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(n) = dernier_numero(&canal) else { continue };
+            if n < dernier {
+                // Journal effacé : on repart du début
+                dernier = 0;
+            }
+            if n == dernier {
+                continue;
+            }
+            let q = format!("*[System[(EventRecordID > {dernier}) and (EventRecordID <= {n}) and ({conditions})]]");
+            historique(&canal, &q, &mut traiter);
+            dernier = n;
+        })
+        .is_ok()
 }
 
 /// Champs <Data Name='…'>…</Data> d'un événement rendu en XML

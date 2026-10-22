@@ -108,6 +108,11 @@ pub fn analyser(xml: &str, dossiers: &[(String, &'static Cible)]) -> Option<Aler
     if cible.proprietaires.contains(&exe.as_str()) || TOUJOURS_AUTORISES.contains(&exe.as_str()) {
         return None;
     }
+    // Seule la lecture d'un fichier compte : parcourir un dossier du profil (inventaire des extensions,
+    // pose de l'audit par deR4Tizer, détection des navigateurs installés…) ne lit aucune donnée
+    if Path::new(d.get("ObjectName")?).is_dir() {
+        return None;
+    }
     let suspect = processus.to_lowercase().contains(r"\temp\") || processus.to_lowercase().contains(r"\downloads\")
         || processus.to_lowercase().contains(r"\users\public\");
     Some(Alerte {
