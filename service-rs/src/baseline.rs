@@ -540,7 +540,7 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
         gpo::ecrire_audit(&audit).map_err(|e| format!("audit.csv : {e}"))?;
     }
     gpo::marquer_gpt(audit_modifie).map_err(|e| format!("gpt.ini : {e}"))?;
-    commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
+    let _ = commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
     gpo::gpupdate()?;
     // Le service Journal d'événements ne relit la taille maximale qu'à son redémarrage : appliquée aussi tout de suite
     for r in regles {
@@ -646,7 +646,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         gpo::ecrire_audit(&audit).map_err(|e| format!("audit.csv : {e}"))?;
     }
     gpo::marquer_gpt(audit_modifie).map_err(|e| format!("gpt.ini : {e}"))?;
-    commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
+    let _ = commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
     gpo::gpupdate()?;
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
 }

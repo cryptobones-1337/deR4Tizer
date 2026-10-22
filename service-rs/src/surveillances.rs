@@ -113,7 +113,7 @@ impl Surveillances {
         }
         self.en_cours_avant = en_cours;
         if modifies {
-            commun::ecrire("peripheriques-connus.json", &self.peripheriques_connus.iter().collect::<Vec<_>>());
+            let _ = commun::ecrire("peripheriques-connus.json", &self.peripheriques_connus.iter().collect::<Vec<_>>());
         }
         self.apprentissage_peripheriques = false;
         usages.sort_by(|a, b| b.en_cours.cmp(&a.en_cours).then(b.dernier_debut.cmp(&a.dernier_debut)));
@@ -213,7 +213,7 @@ impl Surveillances {
             });
         }
         if modifiees {
-            commun::ecrire("ecoutes-connues.json", &self.ecoutes_connues);
+            let _ = commun::ecrire("ecoutes-connues.json", &self.ecoutes_connues);
         }
         self.apprentissage_ecoutes = false;
         ecoutes.sort_by_key(|e| e.port);

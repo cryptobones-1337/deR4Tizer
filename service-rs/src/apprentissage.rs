@@ -59,7 +59,7 @@ fn etat() -> &'static Mutex<Etat> {
             e.appris.clear();
             e.exceptions.clear();
         }
-        commun::ecrire(FICHIER, &e);
+        let _ = commun::ecrire(FICHIER, &e);
         Mutex::new(e)
     })
 }
@@ -146,7 +146,7 @@ pub fn filtrer(a: &mut Alerte) {
         a.score = a.score.min(1);
         a.raisons.push_str(mention);
         if memoriser && e.appris.len() < 5000 && e.appris.insert(sig) {
-            commun::ecrire(FICHIER, &*e);
+            let _ = commun::ecrire(FICHIER, &*e);
         }
     }
 }
@@ -157,7 +157,7 @@ pub fn ajouter_exception(a: &Alerte) -> String {
     let description = format!("{} — {} — {}", a.processus, a.destination, a.raisons.chars().take(120).collect::<String>());
     if !e.exceptions.iter().any(|x| x.signature == sig) {
         e.exceptions.push(Exception { signature: sig, description: description.clone(), date: commun::maintenant() });
-        commun::ecrire(FICHIER, &*e);
+        let _ = commun::ecrire(FICHIER, &*e);
     }
     description
 }
@@ -183,6 +183,6 @@ pub fn commande(quoi: &str) -> Result<String, String> {
         }
         _ => return Err("commande d'apprentissage inconnue".into()),
     };
-    commun::ecrire(FICHIER, &*e);
+    let _ = commun::ecrire(FICHIER, &*e);
     Ok(m)
 }

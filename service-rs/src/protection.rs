@@ -366,9 +366,9 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     }
     let quarantaine = racine.join("ecartes");
     preparer_quarantaine(&quarantaine)?;
-    // Copies en quarantaine d'avant la 4.3 (propriétaire de l'utilisateur) : recopiées avec leurs droits avant
-    // le tri, qui sinon les écarterait (restauration impossible)
-    messages.extend(crate::reponse::migrer_quarantaine_service());
+    // Quarantaine : reprise des transactions interrompues, puis copies d'avant la 4.3 (propriétaire de
+    // l'utilisateur) recopiées avec leurs droits avant le tri, qui sinon les écarterait (restauration impossible)
+    messages.extend(crate::reponse::reprendre_et_migrer_quarantaine_service());
     let mut ecartes = Vec::new();
     trier(racine, racine, &quarantaine, &mut ecartes);
     if !ecartes.is_empty() {
@@ -406,7 +406,7 @@ pub fn autoriser(sid: &str) -> Result<String, String> {
     let nom = nom_de(sid);
     if !l.iter().any(|x| x.sid == sid) {
         l.push(Lecteur { sid: sid.into(), nom: if nom.is_empty() { sid.into() } else { nom.clone() } });
-        commun::ecrire("lecteurs.json", &l);
+        let _ = commun::ecrire("lecteurs.json", &l);
     }
     if !appliquer(&l) {
         return Err("pose des droits refusée par Windows".into());
@@ -424,7 +424,7 @@ pub fn demarrer(alertes: std::sync::Arc<std::sync::Mutex<Vec<commun::Alerte>>>) 
             if l.is_empty() {
                 if let Some(u) = utilisateur_console() {
                     l.push(u);
-                    commun::ecrire("lecteurs.json", &l);
+                    let _ = commun::ecrire("lecteurs.json", &l);
                 }
             }
             let resultat = if appliquer(&l) {

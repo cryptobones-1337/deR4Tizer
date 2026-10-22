@@ -277,7 +277,7 @@ fn publier(disponible: String, mut statut: String) {
     if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
         statut = format!("{statut} · {}", e.trim());
     }
-    commun::ecrire("maj.json", &Etat {
+    let _ = commun::ecrire("maj.json", &Etat {
         verifie_le: commun::maintenant(),
         version_installee: commun::VERSION.into(),
         version_disponible: disponible,
