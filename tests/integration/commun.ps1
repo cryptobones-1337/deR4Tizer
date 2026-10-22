@@ -138,15 +138,21 @@ $script:SidsConfiance = 'S-1-5-18', 'S-1-5-32-544'
 $script:SidTrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 
 # Éléments d'un dossier, récursivement, sans suivre les liens. Le contenu de « ecartes » (fichiers mis de côté,
-# qui gardent leur propriétaire d'origine et ne sont jamais lus) est compté à part dans $Ecartes.
-function Elements([string]$Racine, $Ecartes) {
+# qui gardent leur propriétaire d'origine et ne sont jamais lus) est compté à part dans $Ecartes. $EnSysteme :
+# dossiers laissés de côté, ni listés ni parcourus, parce que l'appelant les contrôle en SYSTEM (dossier de
+# travail de la mise à jour, réservé à SYSTEM). Un dossier illisible en administrateur n'est jamais ignoré en
+# silence : il est ajouté à $script:Illisibles, que les contrôles comptent comme écart.
+$script:Illisibles = New-Object System.Collections.Generic.List[string]
+function Elements([string]$Racine, $Ecartes, [string[]]$EnSysteme = @()) {
     $pile = New-Object System.Collections.Generic.Stack[string]
     $pile.Push($Racine)
     $liste = New-Object System.Collections.Generic.List[object]
     $liste.Add((Get-Item -LiteralPath $Racine -Force))
     while ($pile.Count) {
         $d = $pile.Pop()
-        foreach ($e in @(Get-ChildItem -LiteralPath $d -Force)) {
+        try { $contenu = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { $script:Illisibles.Add($d); continue }
+        foreach ($e in $contenu) {
+            if ($e.FullName -in $EnSysteme) { continue }
             $liste.Add($e)
             if ($e.PSIsContainer -and -not ($e.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
                 if ($e.Name -like 'ecartes*' -and $d -eq $script:Donnees) {
@@ -163,14 +169,16 @@ function Elements([string]$Racine, $Ecartes) {
 # SID, y compris les entrées « héritage seulement » (elles s'appliqueraient aux éléments créés plus tard), sauf
 # CREATOR OWNER (S-1-3-0), qui devient le propriétaire, déjà contrôlé. $Attendus : chemins
 # relatifs dont l'écart est attendu (fichier tenu ouvert en échec fermé), signalés à part. $Toleres : SID
-# admis en plus, par racine (TrustedInstaller sur Program Files). Renvoie $true ou la liste des écarts.
-function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtable]$Toleres = @{}) {
+# admis en plus, par racine (TrustedInstaller sur Program Files). $EnSysteme : dossiers contrôlés à part en
+# SYSTEM par l'appelant (Controle-Systeme). Renvoie $true ou la liste des écarts.
+function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtable]$Toleres = @{}, [string[]]$EnSysteme = @()) {
     $ecarts = New-Object System.Collections.Generic.List[string]
     $n = 0
+    $script:Illisibles.Clear()
     foreach ($r in $Racines) {
         if (-not (Test-Path -LiteralPath $r)) { $ecarts.Add("$r absent"); continue }
         $ec = 0
-        foreach ($e in (Elements $r ([ref]$ec))) {
+        foreach ($e in (Elements $r ([ref]$ec) $EnSysteme)) {
             $rel = $e.FullName.Substring($r.Length).TrimStart('\')
             if ($rel -in $Attendus) { continue }
             $n++
@@ -186,6 +194,7 @@ function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtab
             }
         }
     }
+    foreach ($i in $script:Illisibles) { $ecarts.Add("$i : contenu illisible en administrateur (non contrôlé)") }
     if ($ecarts.Count) { return "$($ecarts.Count) écart(s) sur $n élément(s) : " + (($ecarts | Select-Object -First 8) -join ' ; ') }
     $true
 }
@@ -261,15 +270,19 @@ function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Seconde
 # Seule une UnauthorizedAccessException vaut refus : un délai dépassé, un service arrêté ou un chemin absent ne
 # prouvent rien. Renvoie $true ou la liste de ce qui n'a pas été refusé. $Exclus : chemins complets écartés
 # de l'essai (fichier tenu ouvert en échec fermé, attendu).
-function Essais-Standard($Compte, [string[]]$Exclus = @()) {
+function Essais-Standard($Compte, [string[]]$Exclus = @(), [string[]]$EnSysteme = @()) {
     $cibles = New-Object System.Collections.Generic.List[string]
+    $script:Illisibles.Clear()
+    # Dossiers contrôlés en SYSTEM : pas parcourus, mais le compte essaie quand même d'y créer
+    foreach ($d in $EnSysteme) { if (Test-Path -LiteralPath $d) { $cibles.Add("D|$d") } }
     foreach ($r in $script:Donnees, $script:Programme) {
         if (-not (Test-Path $r)) { return "cible absente : $r" }
-        foreach ($e in (Elements $r $null)) {
+        foreach ($e in (Elements $r $null $EnSysteme)) {
             if ($e.FullName -in $Exclus) { continue }
             $cibles.Add($(if ($e.PSIsContainer) { 'D|' } else { 'F|' }) + $e.FullName)
         }
     }
+    if ($script:Illisibles.Count) { return "contenu illisible en administrateur, non essayé : $($script:Illisibles -join ', ')" }
     $script:NumeroScript++
     $liste = Join-Path $script:Commun "cibles-$($script:NumeroScript).txt"
     [IO.File]::WriteAllLines($liste, $cibles, (New-Object Text.UTF8Encoding($true)))
@@ -363,4 +376,66 @@ function Nouvelle-Jonction([string]$Lien, [string]$Cible, $Compte = $null) {
     }
     $i = Get-Item -LiteralPath $Lien -Force -ErrorAction SilentlyContinue
     [bool]($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint))
+}
+
+# ---------------------------------------------------------------- SYSTEM (lot 3c)
+
+# Exécute du PowerShell en SYSTEM par une tâche planifiée (runner jetable) ; renvoie sa sortie (texte). Sert aux
+# contrôles des dossiers réservés à SYSTEM, que l'administrateur ne peut pas lire.
+function En-TantQueSysteme([string]$Code, [int]$Secondes = 120) {
+    $script:NumeroScript++
+    $n = $script:NumeroScript
+    $f = Join-Path $script:Commun "systeme-$n.ps1"
+    $sortie = Join-Path $script:Commun "systeme-$n.txt"
+    $corps = "`$ErrorActionPreference = 'Continue'`r`n& {`r`n$Code`r`n} *>&1 | Out-File -LiteralPath '$sortie' -Encoding utf8 -Width 4096"
+    [IO.File]::WriteAllText($f, $corps, (New-Object Text.UTF8Encoding($true)))
+    $nom = "d4t-essai-systeme-$n"
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$f`""
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName $nom -Action $action -Principal $principal -Force | Out-Null
+    try {
+        Start-ScheduledTask -TaskName $nom
+        $fin = (Get-Date).AddSeconds($Secondes)
+        do { Start-Sleep 1; $t = Get-ScheduledTask -TaskName $nom } while ($t.State -ne 'Ready' -and (Get-Date) -lt $fin)
+        if ($t.State -ne 'Ready') { throw "tâche SYSTEM : délai dépassé ($Secondes s)" }
+    } finally { Unregister-ScheduledTask -TaskName $nom -Confirm:$false }
+    if (Test-Path $sortie) { return (Get-Content -LiteralPath $sortie -Raw -Encoding UTF8) }
+    ''
+}
+
+# Contrôle, en SYSTEM, d'un dossier réservé à SYSTEM : la racine a ses droits protégés (héritage coupé) ; chaque
+# élément (sans suivre de lien) a pour propriétaire SYSTEM, n'est pas un lien, et n'a d'entrées que pour SYSTEM
+# (aucune pour TrustedInstaller ni pour aucun autre SID). Renvoie $true ou la liste des écarts.
+function Controle-Systeme([string]$Racine) {
+    $s = En-TantQueSysteme @"
+`$T = [Security.Principal.SecurityIdentifier]
+function Voir(`$e) {
+    try { `$a = Get-Acl -LiteralPath `$e.FullName } catch { "ECART|`$(`$e.FullName)|droits illisibles en SYSTEM"; return }
+    if (`$e.Attributes -band [IO.FileAttributes]::ReparsePoint) { "ECART|`$(`$e.FullName)|lien" }
+    `$o = `$a.GetOwner(`$T).Value
+    if (`$o -ne 'S-1-5-18') { "ECART|`$(`$e.FullName)|propriétaire `$o" }
+    foreach (`$r in `$a.GetAccessRules(`$true, `$true, `$T)) {
+        if (`$r.IdentityReference.Value -ne 'S-1-5-18') { "ECART|`$(`$e.FullName)|entrée pour `$(`$r.IdentityReference.Value) (`$(`$r.FileSystemRights))" }
+    }
+}
+`$racine = Get-Item -LiteralPath '$Racine' -Force
+if (-not (Get-Acl -LiteralPath '$Racine').AreAccessRulesProtected) { 'ECART|$Racine|droits hérités (non protégés)' }
+Voir `$racine
+`$n = 1
+`$pile = New-Object System.Collections.Generic.Stack[string]
+`$pile.Push('$Racine')
+while (`$pile.Count) {
+    foreach (`$e in @(Get-ChildItem -LiteralPath `$pile.Pop() -Force)) {
+        `$n++
+        Voir `$e
+        if (`$e.PSIsContainer -and -not (`$e.Attributes -band [IO.FileAttributes]::ReparsePoint)) { `$pile.Push(`$e.FullName) }
+    }
+}
+"FIN|`$n"
+"@
+    if ($s -notmatch '(?m)^FIN\|(\d+)') { return "contrôle SYSTEM interrompu : $($s -replace "`r?`n", ' ')" }
+    $n = $Matches[1]
+    $ecarts = @($s -split "`r?`n" | Where-Object { $_ -like 'ECART|*' })
+    if ($ecarts.Count) { return "$($ecarts.Count) écart(s) sur $n élément(s) (contrôle en SYSTEM) : " + (($ecarts | Select-Object -First 8) -join ' ; ') }
+    $true
 }
