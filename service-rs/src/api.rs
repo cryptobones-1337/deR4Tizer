@@ -41,8 +41,8 @@ fn nouveau_jeton() -> String {
 /// Jeton actuel, créé au premier besoin
 pub fn jeton() -> String {
     let f = commun::dossier().join(FICHIER_JETON);
-    match fs::read_to_string(&f) {
-        Ok(j) if j.trim().len() >= 32 => j.trim().to_string(),
+    match commun::lire_fichier(&f) {
+        Some(j) if j.trim().len() >= 32 => j.trim().to_string(),
         _ => regenerer_jeton(),
     }
 }
@@ -51,13 +51,21 @@ pub fn regenerer_jeton() -> String {
     let f = commun::dossier().join(FICHIER_JETON);
     let j = nouveau_jeton();
     let _ = fs::write(&f, &j);
-    // Retire l'héritage (le dossier est lisible par les utilisateurs) : SYSTEM et administrateurs seulement
+    proteger_jeton();
+    j
+}
+
+/// Retire l'héritage (le dossier est lisible par les comptes autorisés) : SYSTEM et administrateurs seulement
+pub fn proteger_jeton() {
+    let f = commun::dossier().join(FICHIER_JETON);
+    if !f.exists() {
+        return;
+    }
     let _ = Command::new("icacls.exe")
         .arg(&f)
         .args(["/inheritance:r", "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F"])
         .creation_flags(0x0800_0000)
         .output();
-    j
 }
 
 /// Comparaison en temps constant
@@ -203,7 +211,7 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
         return repondre(&mut flux, 401, "application/json", r#"{"Erreur":"jeton absent ou invalide"}"#);
     }
 
-    let brut = |nom: &str| fs::read_to_string(commun::dossier().join(nom)).unwrap_or_else(|_| "null".into());
+    let brut = |nom: &str| commun::lire_fichier(&commun::dossier().join(nom)).unwrap_or_else(|| "null".into());
     let champ_etat = |champ: &str| {
         serde_json::from_str::<serde_json::Value>(&brut("etat.json")).ok()
             .and_then(|v| v.get(champ).cloned()).unwrap_or_default().to_string()
@@ -257,7 +265,7 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
         "/api/v1/blocages" => repondre(&mut flux, 200, "application/json", &brut("blocages.json")),
         "/api/v1/journal" => {
             let n = parametre("lignes").and_then(|l| l.parse().ok()).unwrap_or(200usize).min(5000);
-            let tout = fs::read_to_string(commun::dossier().join("journal.txt")).unwrap_or_default();
+            let tout = commun::lire_fichier(&commun::dossier().join("journal.txt")).unwrap_or_default();
             let lignes: Vec<&str> = tout.lines().collect();
             repondre(&mut flux, 200, "text/plain", &lignes[lignes.len().saturating_sub(n)..].join("\n"))
         }

@@ -398,3 +398,65 @@ pub fn binaire_windows(chemin: &str) -> bool {
         && (signataire_valide(chemin).map(|s| s.starts_with("Microsoft")).unwrap_or(false) || signe_par_catalogue(chemin))
 }
 
+
+// ------------------------------------------------------------ propriétaires et droits des fichiers
+
+/// Le processus tourne-t-il en SYSTEM (service) ? Les contrôles de propriétaire ne s'appliquent qu'alors :
+/// en mode console ou dans les tests, les fichiers appartiennent légitimement à l'utilisateur.
+pub fn est_systeme() -> bool {
+    use std::sync::OnceLock;
+    use windows::Win32::Security::{GetTokenInformation, IsWellKnownSid, TokenUser, WinLocalSystemSid, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    static SYSTEME: OnceLock<bool> = OnceLock::new();
+    *SYSTEME.get_or_init(|| unsafe {
+        let mut jeton = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut jeton).is_err() {
+            return false;
+        }
+        let mut tampon = vec![0u64; 64];
+        let mut taille = 0u32;
+        let ok = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok();
+        let _ = CloseHandle(jeton);
+        ok && IsWellKnownSid((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool()
+    })
+}
+
+/// Propriétaire du fichier ou du dossier : SYSTEM ou Administrateurs ? None si illisible
+pub fn proprietaire_de_confiance(chemin: &std::path::Path) -> Option<bool> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows::Win32::Security::{IsWellKnownSid, WinBuiltinAdministratorsSid, WinLocalSystemSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    let nom = large(&chemin.to_string_lossy());
+    unsafe {
+        let mut proprietaire = PSID::default();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        let r = GetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+            Some(&mut proprietaire), None, None, None, &mut sd);
+        if r.0 != 0 || proprietaire.is_invalid() {
+            return None;
+        }
+        let ok = IsWellKnownSid(proprietaire, WinLocalSystemSid).as_bool() || IsWellKnownSid(proprietaire, WinBuiltinAdministratorsSid).as_bool();
+        let _ = LocalFree(HLOCAL(sd.0));
+        Some(ok)
+    }
+}
+
+/// Crée un dossier avec son descripteur de sécurité dès la création (SDDL), sans fenêtre où il hériterait
+/// des droits de son parent
+pub fn creer_dossier_protege(chemin: &std::path::Path, sddl: &str) -> bool {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::CreateDirectoryW;
+    let (nom, s) = (large(&chemin.to_string_lossy()), large(sddl));
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).is_err() {
+            return false;
+        }
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let ok = CreateDirectoryW(PCWSTR(nom.as_ptr()), Some(&attributs)).is_ok();
+        let _ = LocalFree(HLOCAL(sd.0));
+        ok
+    }
+}

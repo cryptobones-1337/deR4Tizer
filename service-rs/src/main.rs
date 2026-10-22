@@ -86,6 +86,8 @@ fn service_principal(_arguments: Vec<OsString>) {
     };
     let _ = etat.set_service_status(statut(ServiceState::StartPending, ServiceControlAccept::empty()));
 
+    // Avant toute lecture : propriétaire et droits du dossier de données
+    protection::securiser();
     initialiser_com();
     priorite_basse();
     let (moniteur, partage) = moniteur::Moniteur::demarrer(false);
@@ -105,7 +107,7 @@ fn main() {
             commun::definir_dossier(d.into());
         }
     }
-    let _ = std::fs::create_dir_all(commun::dossier());
+    // Le dossier de données n'est pas créé ici : le service le crée avec ses droits (protection::securiser)
 
     // Outils de diagnostic (sans rien modifier)
     if let Some(i) = args.iter().position(|a| a == "--chercher") {
@@ -294,6 +296,7 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--console") {
+        let _ = std::fs::create_dir_all(commun::dossier());
         initialiser_com();
         priorite_basse();
         println!("deR4Tizer {} (Rust) en mode console, données : {}. Entrée pour arrêter.", commun::VERSION, commun::dossier().display());

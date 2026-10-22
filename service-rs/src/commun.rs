@@ -3,14 +3,14 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "4.2";
+pub const VERSION: &str = "4.3";
 pub const NOM_SERVICE: &str = "deR4Tizer";
 pub const NOM_PIPE: &str = r"\\.\pipe\deR4Tizer";
 pub const SEUIL_ALERTE: i32 = 3;
@@ -380,8 +380,21 @@ pub fn telemetrie() -> Vec<(&'static str, Vec<&'static str>)> {
 
 // ------------------------------------------------------------ fichiers
 
+/// Lecture d'un fichier du dossier de données. En service (SYSTEM), un fichier dont le propriétaire n'est ni
+/// SYSTEM ni Administrateurs est refusé : posé par un compte standard, il ne doit jamais être cru.
+pub fn lire_fichier(chemin: &Path) -> Option<String> {
+    if crate::natif::est_systeme() && crate::natif::proprietaire_de_confiance(chemin) == Some(false) {
+        static SIGNALES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+        if SIGNALES.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap().insert(chemin.to_path_buf()) {
+            journal(&format!("protection des données : {} ignoré (propriétaire ni SYSTEM ni Administrateurs)", chemin.display()));
+        }
+        return None;
+    }
+    fs::read_to_string(chemin).ok()
+}
+
 pub fn lire<T: DeserializeOwned>(nom: &str) -> Option<T> {
-    let texte = fs::read_to_string(dossier().join(nom)).ok()?;
+    let texte = lire_fichier(&dossier().join(nom))?;
     serde_json::from_str(texte.trim_start_matches('\u{feff}')).ok()
 }
 

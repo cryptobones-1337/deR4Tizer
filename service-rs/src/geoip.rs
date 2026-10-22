@@ -60,7 +60,7 @@ impl GeoIp {
     pub fn charger() -> GeoIp {
         let mut plages = Vec::new();
         for (nom, _) in SOURCES {
-            let Ok(texte) = fs::read_to_string(dossier().join(format!("{nom}.txt"))) else { continue };
+            let Some(texte) = crate::commun::lire_fichier(&dossier().join(format!("{nom}.txt"))) else { continue };
             // registre|pays|ipv4|début|nombre|date|statut[|…]
             for ligne in texte.lines() {
                 let c: Vec<&str> = ligne.split('|').collect();

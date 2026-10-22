@@ -16,7 +16,7 @@
 
 deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail) et peuvent aussi partir vers le SIEM de votre choix.
 
-### Fonctionnalités (v4.2)
+### Fonctionnalités (v4.3)
 
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
@@ -37,9 +37,9 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
 | **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
-| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs |
+| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés à chaque démarrage, fichiers d'un autre propriétaire ignorés |
 | **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
-| **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par la clé épinglée dans le binaire, révocation vérifiée, avec retour à l'ancienne version si le service ne répond plus |
+| **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée, fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus |
 | **Interface** | Français / anglais |
 
 ### Architecture
@@ -66,7 +66,7 @@ rustup toolchain install stable-x86_64-pc-windows-gnu
 
 Télécharger `deR4Tizer.msi` depuis la [dernière version](https://github.com/cryptobones-1337/deR4Tizer/releases/latest)
 et l'ouvrir. Le service démarre aussitôt ; l'interface se trouve dans le menu Démarrer et se lance à l'ouverture de
-session. Les mises à jour suivantes s'installent seules (versions signées).
+session. Les nouvelles versions sont signalées ; leur installation automatique s'active dans les réglages (versions signées).
 
 Déploiement sur un parc (GPO, Intune, prestataire) :
 
@@ -78,6 +78,9 @@ msiexec /i deR4Tizer.msi /qn LANCEMENT_SESSION=0     :: sans lancement de l'inte
 Désinstallation depuis « Applications », ou `msiexec /x deR4Tizer.msi /qn`. Elle retire les blocages, les règles de
 pare-feu et les leurres, remet les réglages de sécurité d'origine et efface les données ; `GARDER_BASELINE=1` et
 `GARDER_DONNEES=1` conservent respectivement les réglages et les données.
+
+La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
+relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher.
 
 Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence MS-RL, sans redevance) ;
 `.\mettre-a-jour.ps1` remplace les exécutables d'une installation existante.
@@ -106,14 +109,19 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 Chaque tag `vX.Y` lance le workflow *Publication* : tests, compilation, signature, empreintes et `manifeste.json`
 joints à la version GitHub. Les postes lisent ce manifeste une fois par jour (`releases/latest/download/manifeste.json`). L'installation
 automatique est désactivée par défaut ; activée, elle n'installe une version que si chaque fichier a la bonne
-empreinte et est signé par la **clé épinglée dans le binaire** (empreinte SHA-256 de la clé publique, variable
-`CLE_SIGNATURE` de l'environnement GitHub « publication »), révocation vérifiée. Si le service ne répond plus
-60 s après l'installation, l'ancienne version est remise. Sans clé épinglée, une version est seulement signalée :
-un compte GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
+empreinte et est signé par l'une des **clés épinglées dans le binaire** (empreintes SHA-256 des clés publiques,
+variable de dépôt `CLE_SIGNATURE` : la clé actuelle et la suivante, séparées par une virgule, pour passer le
+renouvellement du certificat), révocation vérifiée. Les fichiers sont téléchargés et vérifiés dans
+`maj\installation`, réservé à SYSTEM, et l'empreinte est revérifiée juste avant l'exécution. Le service doit
+ensuite répondre sur son canal dans les 60 s ; sinon le paquet de la version précédente est réinstallé (ou, à
+défaut, les anciens exécutables remis). Sans clé épinglée, une version est seulement signalée : un compte GitHub
+compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
 
 Protéger la publication : ranger les secrets de signature dans l'environnement GitHub « publication » avec une
-approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules) ; les actions de la CI
-sont épinglées par SHA. L'idéal reste une clé hors de GitHub (Azure Trusted Signing, SignPath).
+approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules). La compilation (où
+s'exécutent les scripts des dépendances) se fait dans un job sans secret ; la signature, dans un job à part qui ne
+reçoit que les exécutables ; l'archive WiX est vérifiée par son empreinte et les actions sont épinglées par SHA.
+L'idéal reste une clé hors de GitHub (Azure Trusted Signing, SignPath).
 
 Pour signer : obtenir un certificat de signature de code (gratuit pour l'open source via
 [SignPath Foundation](https://signpath.org), ou Azure Trusted Signing, ou un certificat OV au format .pfx), puis
@@ -160,7 +168,7 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 
 deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Critical alerts reach the IT provider or contact person (ntfy, Teams, e-mail) and can also go to the SIEM of your choice.
 
-### Features (v4.2)
+### Features (v4.3)
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -181,9 +189,9 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
-| **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators |
+| **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced at every start, files owned by anyone else ignored |
 | **Less noise** | 7-day learning mode (behaviours remembered), "no longer alert for this behaviour" exceptions, "direct IP" criterion neutralised for known VPNs, messengers and games; critical alerts are never softened |
-| **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by the key pinned in the binary, revocation checked, with rollback if the service stops answering |
+| **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by one of the keys pinned in the binary, revocation checked, files kept in a SYSTEM-only folder, with rollback if the service stops answering |
 | **Interface** | French / English |
 
 ### Architecture
@@ -209,12 +217,13 @@ rustup toolchain install stable-x86_64-pc-windows-gnu
 ### Install
 
 Download `deR4Tizer.msi` from the [latest release](https://github.com/cryptobones-1337/deR4Tizer/releases/latest) and
-open it. The service starts immediately; the interface is in the Start menu and starts at logon. Later updates install
-themselves (signed releases).
+open it. The service starts immediately; the interface is in the Start menu and starts at logon. New versions are reported;
+automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0` to skip the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
+Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service.
 
 ### SIEM integration
 

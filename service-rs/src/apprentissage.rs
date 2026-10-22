@@ -71,7 +71,10 @@ fn editeur(chemin: &str) -> String {
         return String::new();
     }
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    if let Some(e) = cache.lock().unwrap().get(chemin) {
+    // Clé : chemin et date de modification, pour qu'un exécutable remplacé (AppData) soit revérifié
+    let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(crate::commun::filetime).unwrap_or(0);
+    let cle = format!("{chemin}|{date}");
+    if let Some(e) = cache.lock().unwrap().get(&cle) {
         return e.clone();
     }
     let e = crate::natif::signataire_valide(chemin)
@@ -81,7 +84,7 @@ fn editeur(chemin: &str) -> String {
     if c.len() > 2000 {
         c.clear();
     }
-    c.insert(chemin.to_string(), e.clone());
+    c.insert(cle, e.clone());
     e
 }
 
