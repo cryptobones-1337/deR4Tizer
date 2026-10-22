@@ -52,15 +52,29 @@ fn dossier_secrets() -> PathBuf {
 }
 
 /// Dossier des secrets : SYSTEM et administrateurs seulement, sans héritage des droits de lecture accordés
-/// aux comptes autorisés sur le dossier de données
-pub fn preparer_dossier() {
+/// aux comptes autorisés sur le dossier de données. Créé avec ses droits ; s'il existe avec d'autres droits,
+/// ils sont réimposés puis relus. Erreur si les droits ne sont pas vérifiés : rien n'y est alors écrit.
+const SDDL_SECRETS: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+pub fn preparer_dossier() -> Result<(), String> {
+    use crate::protection::{verifier, SID_ADMINISTRATEURS, SID_SYSTEME};
     let d = dossier_secrets();
-    let _ = fs::create_dir_all(&d);
-    let _ = Command::new("icacls.exe")
-        .arg(&d)
-        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"])
-        .creation_flags(0x0800_0000)
-        .output();
+    if !d.exists() && !crate::natif::creer_dossier_protege(&d, SDDL_SECRETS) {
+        return Err("dossier des secrets impossible à créer avec ses droits".into());
+    }
+    // En mode console (tests), le propriétaire est l'utilisateur : pas de contrôle
+    if !crate::natif::est_systeme() {
+        return Ok(());
+    }
+    let complets = [SID_SYSTEME, SID_ADMINISTRATEURS];
+    if verifier(&d, &complets, &[]).is_ok() {
+        return Ok(());
+    }
+    crate::natif::poser_droits(&d, SDDL_SECRETS).map_err(|e| format!("droits du dossier des secrets refusés ({e})"))?;
+    if !crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]) && fs::read_dir(&d).is_ok_and(|mut l| l.next().is_some()) {
+        return Err("droits du contenu des secrets refusés".into());
+    }
+    verifier(&d, &complets, &[])
 }
 
 pub fn lire_secrets() -> Secrets {
@@ -69,8 +83,8 @@ pub fn lire_secrets() -> Secrets {
 }
 
 /// Met à jour les secrets : une valeur vide laisse l'ancienne, « - » l'efface
-pub fn enregistrer_secrets(n: &Secrets) {
-    preparer_dossier();
+pub fn enregistrer_secrets(n: &Secrets) -> Result<(), String> {
+    preparer_dossier()?;
     let mut s = lire_secrets();
     let maj = |ancien: &mut String, nouveau: &str| match nouveau.trim() {
         "" => {}
@@ -81,11 +95,14 @@ pub fn enregistrer_secrets(n: &Secrets) {
     maj(&mut s.ntfy_jeton, &n.ntfy_jeton);
     maj(&mut s.teams_url, &n.teams_url);
     maj(&mut s.smtp_mot_de_passe, &n.smtp_mot_de_passe);
-    let _ = fs::write(dossier_secrets().join("notifications.json"), serde_json::to_string(&s).unwrap_or_default());
+    crate::natif::ecrire_fichier_protege(&dossier_secrets().join("notifications.json"),
+        serde_json::to_string(&s).unwrap_or_default().as_bytes(), "D:P(A;;FA;;;SY)(A;;FA;;;BA)")
 }
 
 pub fn demarrer(config: &ConfigNotifications) {
-    preparer_dossier();
+    if let Err(e) = preparer_dossier() {
+        commun::journal(&format!("remontée des alertes : {e}"));
+    }
     let (tx, rx) = sync_channel(5000);
     if FILE.set(Mutex::new(tx)).is_err() {
         return configurer(config);
@@ -390,6 +407,8 @@ fn cite(v: &str) -> String {
 
 /// Lance curl avec un fichier de paramètres et un corps écrits dans le dossier des secrets, puis les efface
 fn curl(parametres: &str, corps: &[u8]) -> Result<(), String> {
+    // Les paramètres contiennent jetons et mots de passe : jamais dans un dossier aux droits non vérifiés
+    preparer_dossier()?;
     let d = dossier_secrets();
     let n = commun::nouvel_id();
     let (f_param, f_corps) = (d.join(format!("curl-{n}.txt")), d.join(format!("corps-{n}.bin")));

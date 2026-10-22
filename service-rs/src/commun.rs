@@ -71,6 +71,8 @@ pub struct Etat {
     pub chaines: Vec<crate::chaines::Chaine>,
     pub panique: bool,
     pub exposition: crate::parefeu::Exposition,
+    /// Vide si la protection du dossier de données est vérifiée ; sinon la raison de l'échec
+    pub protection_donnees: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -380,17 +382,62 @@ pub fn telemetrie() -> Vec<(&'static str, Vec<&'static str>)> {
 
 // ------------------------------------------------------------ fichiers
 
-/// Lecture d'un fichier du dossier de données. En service (SYSTEM), un fichier dont le propriétaire n'est ni
-/// SYSTEM ni Administrateurs est refusé : posé par un compte standard, il ne doit jamais être cru.
-pub fn lire_fichier(chemin: &Path) -> Option<String> {
-    if crate::natif::est_systeme() && crate::natif::proprietaire_de_confiance(chemin) == Some(false) {
-        static SIGNALES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-        if SIGNALES.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap().insert(chemin.to_path_buf()) {
-            journal(&format!("protection des données : {} ignoré (propriétaire ni SYSTEM ni Administrateurs)", chemin.display()));
-        }
+/// Échec de la protection du dossier de données (None : protection vérifiée)
+static ECHEC_PROTECTION: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn definir_echec_protection(e: Option<String>) {
+    *ECHEC_PROTECTION.lock().unwrap() = e;
+}
+
+pub fn echec_protection() -> Option<String> {
+    ECHEC_PROTECTION.lock().unwrap().clone()
+}
+
+fn signaler_une_fois(chemin: &Path, raison: &str) {
+    static SIGNALES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let cle = format!("{}|{raison}", chemin.display());
+    if SIGNALES.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap().insert(cle) {
+        journal(&format!("protection des données : {} ignoré ({raison})", chemin.display()));
+    }
+}
+
+/// Décision pure de lecture d'un fichier du dossier de données. Hors service (tests, console), pas de
+/// contrôle. En service : refus tant que la protection du dossier n'est pas vérifiée (si `avec_verrou`), et
+/// refus d'un fichier dont le propriétaire n'est ni SYSTEM ni Administrateurs : posé par un compte standard,
+/// il ne doit jamais être cru. Un propriétaire illisible (fichier absent, le plus souvent) laisse la lecture
+/// échouer d'elle-même.
+pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: bool, proprietaire_ok: Option<bool>) -> Result<(), &'static str> {
+    if !systeme {
+        return Ok(());
+    }
+    if avec_verrou && echec_protection {
+        return Err("protection du dossier non vérifiée");
+    }
+    if proprietaire_ok == Some(false) {
+        return Err("propriétaire ni SYSTEM ni Administrateurs");
+    }
+    Ok(())
+}
+
+fn lire_controle(chemin: &Path, avec_verrou: bool) -> Option<String> {
+    let systeme = crate::natif::est_systeme();
+    let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
+    if let Err(raison) = lecture_autorisee(systeme, avec_verrou, echec_protection().is_some(), proprietaire) {
+        signaler_une_fois(chemin, raison);
         return None;
     }
     fs::read_to_string(chemin).ok()
+}
+
+/// Lecture avec le seul contrôle du propriétaire (lecteurs.json, pour reprendre après un échec)
+pub fn lire_fichier_proprietaire(chemin: &Path) -> Option<String> {
+    lire_controle(chemin, false)
+}
+
+/// Lecture d'un fichier du dossier de données : propriétaire contrôlé, et refus tant que la protection du
+/// dossier n'est pas vérifiée (échec fermé : le service garde ses valeurs par défaut)
+pub fn lire_fichier(chemin: &Path) -> Option<String> {
+    lire_controle(chemin, true)
 }
 
 pub fn lire<T: DeserializeOwned>(nom: &str) -> Option<T> {

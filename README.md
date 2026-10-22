@@ -37,7 +37,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
 | **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
-| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés à chaque démarrage, fichiers d'un autre propriétaire ignorés |
+| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés et vérifiés à chaque démarrage, fichiers d'un autre propriétaire ignorés ; si la vérification échoue, configuration et secrets sont ignorés et l'interface l'affiche |
 | **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
 | **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée, fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus |
 | **Interface** | Français / anglais |
@@ -112,7 +112,8 @@ automatique est désactivée par défaut ; activée, elle n'installe une version
 empreinte et est signé par l'une des **clés épinglées dans le binaire** (empreintes SHA-256 des clés publiques,
 variable de dépôt `CLE_SIGNATURE` : la clé actuelle et la suivante, séparées par une virgule, pour passer le
 renouvellement du certificat), révocation vérifiée. Les fichiers sont téléchargés et vérifiés dans
-`maj\installation`, réservé à SYSTEM, et l'empreinte est revérifiée juste avant l'exécution. Le service doit
+`%ProgramFiles%\deR4Tizer\maj`, réservé à SYSTEM (droits vérifiés avant chaque usage, mise à jour refusée
+sinon), et l'empreinte est revérifiée juste avant l'exécution. Le service doit
 ensuite répondre sur son canal dans les 60 s ; sinon le paquet de la version précédente est réinstallé (ou, à
 défaut, les anciens exécutables remis). Sans clé épinglée, une version est seulement signalée : un compte GitHub
 compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
@@ -189,7 +190,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
-| **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced at every start, files owned by anyone else ignored |
+| **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced and checked at every start, files owned by anyone else ignored; if the check fails, settings and secrets are ignored and the interface shows it |
 | **Less noise** | 7-day learning mode (behaviours remembered), "no longer alert for this behaviour" exceptions, "direct IP" criterion neutralised for known VPNs, messengers and games; critical alerts are never softened |
 | **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by one of the keys pinned in the binary, revocation checked, files kept in a SYSTEM-only folder, with rollback if the service stops answering |
 | **Interface** | French / English |

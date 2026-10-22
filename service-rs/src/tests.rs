@@ -502,3 +502,107 @@ fn script_de_mise_a_jour_valide() {
         let _: Vec<PathBuf> = fichiers.into_iter().map(|x| x.0).collect();
     }
 }
+
+// ------------------------------------------------------------ lot 1 : propriété et droits du dossier de données
+
+fn securite(proprietaire: &str, protege: bool, aces: &[(bool, u32, &str)]) -> crate::natif::Securite {
+    crate::natif::Securite {
+        proprietaire: proprietaire.into(),
+        protege,
+        aces: aces.iter().map(|&(autorise, masque, sid)| crate::natif::Ace { autorise, masque, sid: sid.into() }).collect(),
+        ace_inconnue: false,
+    }
+}
+
+#[test]
+fn lot1_proprietaire_acceptable() {
+    use crate::protection::proprietaire_acceptable;
+    assert!(proprietaire_acceptable("S-1-5-18"), "SYSTEM");
+    assert!(proprietaire_acceptable("S-1-5-32-544"), "Administrateurs");
+    for refuse in ["S-1-5-21-1004336348-1177238915-682003330-1001", "S-1-5-32-545", "S-1-5-11", "S-1-1-0",
+                   "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", // TrustedInstaller
+                   "", "S-1-5-32-5440", "S-1-5-180", " S-1-5-18", "s-1-5-18"] {
+        assert!(!proprietaire_acceptable(refuse), "{refuse:?}");
+    }
+}
+
+#[test]
+fn lot1_droits_conformes() {
+    use crate::protection::{droits_conformes, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    let lecteur = "S-1-5-21-1-2-3-1001";
+    let complets = [SY, BA];
+    let ok = securite(BA, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA), (true, 0x1200a9, lecteur)]);
+    assert!(droits_conformes(&ok, &complets, &[lecteur]).is_ok());
+    // Propriétaire : un compte standard qui a créé le dossier d'avance
+    assert!(droits_conformes(&securite(lecteur, true, &[(true, 0x1f01ff, SY)]), &complets, &[]).is_err());
+    assert!(droits_conformes(&securite("", true, &[]), &complets, &[]).is_err(), "propriétaire illisible");
+    // Héritage de ProgramData encore actif
+    assert!(droits_conformes(&securite(BA, false, &[(true, 0x1f01ff, SY)]), &complets, &[]).is_err());
+    // Utilisateurs, Utilisateurs authentifiés, Tout le monde, Créateur propriétaire : aucun droit, même en lecture
+    for autre in ["S-1-5-32-545", "S-1-5-11", "S-1-1-0", "S-1-3-0"] {
+        assert!(droits_conformes(&securite(BA, true, &[(true, 0x1200a9, autre)]), &complets, &[lecteur]).is_err(), "{autre}");
+    }
+    // Lecteur : lecture seulement ; chaque droit d'écriture isolé est refusé
+    for ecriture in [0x2u32, 0x4, 0x10, 0x40, 0x100, 0x1_0000, 0x4_0000, 0x8_0000, 0x0200_0000, 0x1000_0000, 0x4000_0000] {
+        let s = securite(BA, true, &[(true, 0x1200a9 | ecriture, lecteur)]);
+        assert!(droits_conformes(&s, &complets, &[lecteur]).is_err(), "droit {ecriture:#x}");
+    }
+    // Dossier de travail de la mise à jour : SYSTEM seul, les administrateurs exclus
+    assert!(droits_conformes(&securite(SY, true, &[(true, 0x1f01ff, SY)]), &[SY], &[]).is_ok());
+    assert!(droits_conformes(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA)]), &[SY], &[]).is_err());
+    // Un refus explicite ne gêne pas ; une entrée d'un type inconnu, si
+    assert!(droits_conformes(&securite(BA, true, &[(false, 0x1f01ff, "S-1-5-32-545"), (true, 0x1f01ff, SY)]), &complets, &[]).is_ok());
+    let mut inconnue = securite(BA, true, &[(true, 0x1f01ff, SY)]);
+    inconnue.ace_inconnue = true;
+    assert!(droits_conformes(&inconnue, &complets, &[]).is_err());
+}
+
+#[test]
+fn lot1_lecture_echec_ferme() {
+    use crate::commun::lecture_autorisee;
+    // Hors service : pas de contrôle (tests, mode console)
+    assert!(lecture_autorisee(false, true, true, Some(false)).is_ok());
+    // En service
+    assert!(lecture_autorisee(true, true, false, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, true, false, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
+    assert!(lecture_autorisee(true, true, false, Some(false)).is_err(), "propriétaire : compte standard");
+    assert!(lecture_autorisee(true, true, true, Some(true)).is_err(), "protection non vérifiée : rien n'est chargé");
+    // lecteurs.json (sans le verrou) : seul le propriétaire compte
+    assert!(lecture_autorisee(true, false, true, Some(true)).is_ok());
+    assert!(lecture_autorisee(true, false, true, Some(false)).is_err());
+}
+
+#[test]
+fn lot1_fichier_cree_avec_ses_droits_et_dacl_remplacee() {
+    use crate::natif::{ecrire_fichier_protege, lire_securite, poser_droits};
+    let d = std::env::temp_dir().join(format!("der4tizer-lot1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    // Le test tourne sans élévation : le compte du test garde ses droits (le service, lui, est SYSTEM)
+    let utilisateur = lire_securite(&d).unwrap().proprietaire;
+    assert!(utilisateur.starts_with("S-1-5-"), "{utilisateur}");
+    let sddl = format!("D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{utilisateur})");
+    // Fichier créé directement avec une DACL protégée, rien d'hérité du dossier
+    let f = d.join("jeton.txt");
+    ecrire_fichier_protege(&f, b"abc", &sddl).unwrap();
+    let s = lire_securite(&f).expect("droits lisibles");
+    assert!(s.protege);
+    let mut sids: Vec<_> = s.aces.iter().filter(|a| a.autorise).map(|a| a.sid.clone()).collect();
+    sids.sort();
+    let mut attendu = vec!["S-1-5-18".to_string(), "S-1-5-32-544".into(), utilisateur.clone()];
+    attendu.sort();
+    assert_eq!(sids, attendu);
+    // Remplacement d'un fichier existant : toujours protégé, contenu remplacé
+    ecrire_fichier_protege(&f, b"defg", &sddl).unwrap();
+    assert!(lire_securite(&f).unwrap().protege);
+    assert_eq!(std::fs::read(&f).unwrap(), b"defg");
+    // poser_droits remplace TOUTE la DACL : une entrée « Utilisateurs : modification » ne survit pas
+    assert!(crate::protection::icacls(&[&d.to_string_lossy(), "/grant", "*S-1-5-32-545:(OI)(CI)M"]));
+    assert!(lire_securite(&d).unwrap().aces.iter().any(|a| a.sid == "S-1-5-32-545"));
+    poser_droits(&d, &format!("O:{utilisateur}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{utilisateur})")).unwrap();
+    let s = lire_securite(&d).unwrap();
+    assert!(s.protege && !s.ace_inconnue);
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "entrée étrangère retirée : {:?}", s.aces);
+    assert!(poser_droits(&d, "D:P(A;;FA;;;SY").is_err(), "SDDL invalide : erreur, rien de posé");
+    let _ = std::fs::remove_dir_all(&d);
+}

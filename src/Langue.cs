@@ -139,7 +139,7 @@ namespace DeR4Tizer
             { "Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer.",
               "The ntfy and Teams addresses, the token and the password are stored separately, readable by administrators only: leave a field empty to keep the saved value, type \"-\" to clear it." },
             { "Enregistrer les notifications", "Save notifications" }, { "Envoyer un message de test", "Send a test message" },
-            { "enregistrée", "saved" }, { "non renseignée", "not set" }, { "SITES IDENTIFIÉS", "SITES IDENTIFIED" },
+            { "enregistrée", "saved" }, { "non renseignée", "not set" }, { "SITES IDENTIFIÉS", "SITES IDENTIFIED" }, { "DONNÉES NON PROTÉGÉES : RÉGLAGES IGNORÉS", "DATA NOT PROTECTED: SETTINGS IGNORED" },
             { "NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)", "SITE NAMES UNKNOWN (DNS LOG OFF)" },
 
             { "Adresses autorisées (SIEM)", "Allowed addresses (SIEM)" },
