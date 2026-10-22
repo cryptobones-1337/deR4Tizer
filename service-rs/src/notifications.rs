@@ -1,0 +1,410 @@
+//! Remontée des alertes vers un tiers (prestataire informatique, référent) : ntfy, Microsoft Teams
+//! (webhook de flux de travail, carte adaptative) et e-mail (SMTP avec TLS). Les envois passent par
+//! curl.exe (fourni par Windows), sur un fil dédié : les alertes arrivées en 15 s sont regroupées dans un
+//! seul message, et un plafond par heure évite d'inonder le destinataire (le surplus est résumé).
+//! Les secrets (adresse ntfy et jeton, adresse du webhook Teams, mot de passe SMTP) sont rangés dans
+//! secrets\notifications.json, lisible par SYSTEM et les administrateurs seulement ; les fichiers de
+//! paramètres passés à curl (-K) y sont aussi écrits, jamais sur la ligne de commande.
+
+use crate::commun::{self, Alerte, ConfigNotifications};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Secrets {
+    /// Adresse du sujet ntfy, par exemple https://ntfy.sh/mairie-x7k2 ou un serveur auto-hébergé
+    pub ntfy_url: String,
+    pub ntfy_jeton: String,
+    pub teams_url: String,
+    pub smtp_mot_de_passe: String,
+}
+
+/// État lisible par l'interface (sans secret)
+#[derive(Serialize, Default)]
+#[serde(rename_all = "PascalCase")]
+struct Etat {
+    ntfy_configure: bool,
+    teams_configure: bool,
+    smtp_mot_de_passe: bool,
+    envoyes: u64,
+    resumes: u64,
+    dernier_envoi: String,
+    derniere_erreur: String,
+}
+
+enum Message {
+    Alerte(Alerte),
+    Config(ConfigNotifications),
+}
+
+static FILE: OnceLock<Mutex<SyncSender<Message>>> = OnceLock::new();
+
+fn dossier_secrets() -> PathBuf {
+    commun::dossier().join("secrets")
+}
+
+/// Dossier des secrets : SYSTEM et administrateurs seulement, sans héritage des droits de lecture accordés
+/// aux comptes autorisés sur le dossier de données
+fn preparer_dossier() {
+    let d = dossier_secrets();
+    let _ = fs::create_dir_all(&d);
+    let _ = Command::new("icacls.exe")
+        .arg(&d)
+        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"])
+        .creation_flags(0x0800_0000)
+        .output();
+}
+
+pub fn lire_secrets() -> Secrets {
+    fs::read_to_string(dossier_secrets().join("notifications.json")).ok()
+        .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Met à jour les secrets : une valeur vide laisse l'ancienne, « - » l'efface
+pub fn enregistrer_secrets(n: &Secrets) {
+    preparer_dossier();
+    let mut s = lire_secrets();
+    let maj = |ancien: &mut String, nouveau: &str| match nouveau.trim() {
+        "" => {}
+        "-" => ancien.clear(),
+        v => *ancien = v.to_string(),
+    };
+    maj(&mut s.ntfy_url, &n.ntfy_url);
+    maj(&mut s.ntfy_jeton, &n.ntfy_jeton);
+    maj(&mut s.teams_url, &n.teams_url);
+    maj(&mut s.smtp_mot_de_passe, &n.smtp_mot_de_passe);
+    let _ = fs::write(dossier_secrets().join("notifications.json"), serde_json::to_string(&s).unwrap_or_default());
+}
+
+pub fn demarrer(config: &ConfigNotifications) {
+    preparer_dossier();
+    let (tx, rx) = sync_channel(5000);
+    if FILE.set(Mutex::new(tx)).is_err() {
+        return configurer(config);
+    }
+    let config = config.clone();
+    std::thread::Builder::new().name("notifications".into()).spawn(move || boucle(config, rx)).unwrap();
+}
+
+pub fn configurer(config: &ConfigNotifications) {
+    if let Some(f) = FILE.get() {
+        let _ = f.lock().unwrap().try_send(Message::Config(config.clone()));
+    }
+}
+
+pub fn alerte(a: &Alerte) {
+    if let Some(f) = FILE.get() {
+        let _ = f.lock().unwrap().try_send(Message::Alerte(a.clone()));
+    }
+}
+
+fn actif(c: &ConfigNotifications) -> bool {
+    c.ntfy || c.teams || c.smtp
+}
+
+fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
+    let mut etat = Etat::default();
+    let mut fenetre = Instant::now();
+    let mut envois_heure = 0u32;
+    let mut retenues: Vec<Alerte> = Vec::new();
+    ecrire_etat(&mut etat);
+    loop {
+        // Attente de la première alerte, puis regroupement de celles des 15 secondes suivantes
+        let premiere = match rx.recv() {
+            Ok(Message::Config(c)) => {
+                config = c;
+                ecrire_etat(&mut etat);
+                continue;
+            }
+            Ok(Message::Alerte(a)) => a,
+            Err(_) => return,
+        };
+        if !actif(&config) || crate::export::rang(&premiere.niveau) < crate::export::rang(&config.niveau_min) {
+            continue;
+        }
+        let mut lot = vec![premiere];
+        let limite = Instant::now() + Duration::from_secs(15);
+        loop {
+            let reste = limite.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(reste) {
+                Ok(Message::Alerte(a)) if crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
+                Ok(Message::Alerte(_)) => {}
+                Ok(Message::Config(c)) => config = c,
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        // Plafond par heure : au-delà, les alertes sont retenues puis résumées à l'heure suivante
+        if fenetre.elapsed() > Duration::from_secs(3600) {
+            fenetre = Instant::now();
+            envois_heure = 0;
+            if !retenues.is_empty() {
+                let n = retenues.len();
+                let resume = Alerte {
+                    niveau: "Alerte".into(),
+                    heure: commun::maintenant(),
+                    processus: "deR4Tizer".into(),
+                    destination: "résumé".into(),
+                    raisons: format!("{n} autre(s) alerte(s) n'ont pas été envoyées pour ne pas vous inonder (plafond de {} message(s) par heure). Détail dans l'interface de deR4Tizer, page Alertes.", config.max_par_heure),
+                    ..Default::default()
+                };
+                retenues.clear();
+                etat.resumes += 1;
+                envoyer_partout(&config, &[resume], &mut etat);
+            }
+        }
+        if envois_heure >= config.max_par_heure.max(1) {
+            retenues.extend(lot);
+            continue;
+        }
+        envois_heure += 1;
+        envoyer_partout(&config, &lot, &mut etat);
+    }
+}
+
+fn envoyer_partout(config: &ConfigNotifications, lot: &[Alerte], etat: &mut Etat) {
+    let s = lire_secrets();
+    let mut erreurs = Vec::new();
+    if config.ntfy && !s.ntfy_url.is_empty() {
+        if let Err(e) = ntfy(&s, lot) { erreurs.push(format!("ntfy : {e}")); }
+    }
+    if config.teams && !s.teams_url.is_empty() {
+        if let Err(e) = teams(&s, lot) { erreurs.push(format!("Teams : {e}")); }
+    }
+    if config.smtp && !config.smtp_serveur.is_empty() {
+        if let Err(e) = courriel(config, &s, lot) { erreurs.push(format!("e-mail : {e}")); }
+    }
+    etat.envoyes += 1;
+    etat.dernier_envoi = commun::maintenant();
+    etat.derniere_erreur = erreurs.join(" ; ");
+    if !erreurs.is_empty() {
+        commun::journal(&format!("notifications : {}", etat.derniere_erreur));
+    }
+    ecrire_etat(etat);
+}
+
+fn ecrire_etat(etat: &mut Etat) {
+    let s = lire_secrets();
+    etat.ntfy_configure = !s.ntfy_url.is_empty();
+    etat.teams_configure = !s.teams_url.is_empty();
+    etat.smtp_mot_de_passe = !s.smtp_mot_de_passe.is_empty();
+    commun::ecrire("notifications.json", etat);
+}
+
+/// Envoi immédiat d'un message de test sur les canaux activés ; renvoie le compte rendu
+pub fn tester(config: &ConfigNotifications) -> Result<String, String> {
+    if !actif(config) {
+        return Err("aucun canal activé".into());
+    }
+    let test = Alerte {
+        niveau: "Info".into(),
+        heure: commun::maintenant(),
+        processus: "deR4Tizer".into(),
+        destination: "test".into(),
+        raisons: "Message de test : les alertes de ce poste vous parviendront par ce canal.".into(),
+        conseil: "Rien à faire.".into(),
+        ..Default::default()
+    };
+    let s = lire_secrets();
+    let mut ok = Vec::new();
+    let mut erreurs = Vec::new();
+    let mut essai = |nom: &str, r: Result<(), String>| match r {
+        Ok(()) => ok.push(nom.to_string()),
+        Err(e) => erreurs.push(format!("{nom} : {e}")),
+    };
+    if config.ntfy { essai("ntfy", if s.ntfy_url.is_empty() { Err("adresse du sujet non renseignée".into()) } else { ntfy(&s, &[test.clone()]) }); }
+    if config.teams { essai("Teams", if s.teams_url.is_empty() { Err("adresse du webhook non renseignée".into()) } else { teams(&s, &[test.clone()]) }); }
+    if config.smtp { essai("e-mail", courriel(config, &s, &[test.clone()])); }
+    if erreurs.is_empty() { Ok(format!("Message de test envoyé : {}.", ok.join(", "))) } else { Err(format!("{}{}", erreurs.join(" ; "), if ok.is_empty() { String::new() } else { format!(" (réussi : {})", ok.join(", ")) })) }
+}
+
+// ------------------------------------------------------------ mise en forme
+
+fn hote() -> String {
+    crate::export::hote_local()
+}
+
+fn titre(lot: &[Alerte]) -> String {
+    let pire = lot.iter().max_by_key(|a| crate::export::rang(&a.niveau)).map(|a| a.niveau.clone()).unwrap_or_default();
+    if lot.len() == 1 {
+        format!("deR4Tizer · {} sur {} : {}", lot[0].niveau, hote(), if lot[0].destination.is_empty() { &lot[0].processus } else { &lot[0].destination })
+    } else {
+        format!("deR4Tizer · {} alertes sur {} (la plus grave : {pire})", lot.len(), hote())
+    }
+}
+
+fn texte(lot: &[Alerte]) -> String {
+    lot.iter().take(10).map(|a| {
+        let mut l = format!("[{}] {} — {}", a.niveau, a.heure, a.raisons);
+        if !a.processus.is_empty() {
+            l.push_str(&format!("\nProgramme : {}", a.processus));
+        }
+        if !a.mitre.is_empty() {
+            l.push_str(&format!("\nTechnique : {}", a.mitre));
+        }
+        if !a.conseil.is_empty() {
+            l.push_str(&format!("\nQue faire : {}", a.conseil));
+        }
+        l
+    }).collect::<Vec<_>>().join("\n\n")
+        + &if lot.len() > 10 { format!("\n\n… et {} autre(s), voir l'interface de deR4Tizer.", lot.len() - 10) } else { String::new() }
+}
+
+// ------------------------------------------------------------ envoi (curl)
+
+/// Valeur entre guillemets pour un fichier de paramètres curl (-K)
+fn cite(v: &str) -> String {
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\"").replace(['\r', '\n'], " "))
+}
+
+/// Lance curl avec un fichier de paramètres et un corps écrits dans le dossier des secrets, puis les efface
+fn curl(parametres: &str, corps: &[u8]) -> Result<(), String> {
+    let d = dossier_secrets();
+    let n = commun::nouvel_id();
+    let (f_param, f_corps) = (d.join(format!("curl-{n}.txt")), d.join(format!("corps-{n}.bin")));
+    let r = (|| {
+        fs::write(&f_corps, corps).map_err(|e| e.to_string())?;
+        fs::write(&f_param, format!("{parametres}\nsilent\nshow-error\nfail\nmax-time = 30\nproto = \"=https,smtps,smtp\"\n")).map_err(|e| e.to_string())?;
+        let sortie = Command::new("curl.exe")
+            .arg("-K").arg(&f_param)
+            .arg("--data-binary").arg(format!("@{}", f_corps.display()))
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if sortie.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&sortie.stderr).trim().chars().take(300).collect()) }
+    })();
+    let _ = fs::remove_file(&f_param);
+    let _ = fs::remove_file(&f_corps);
+    r
+}
+
+fn ntfy(s: &Secrets, lot: &[Alerte]) -> Result<(), String> {
+    // Publication en JSON (https://serveur, {"topic": …}) : titre et texte en UTF-8 sans encodage d'en-tête
+    let url = s.ntfy_url.trim().trim_end_matches('/');
+    let (serveur, sujet) = url.rsplit_once('/').ok_or("adresse ntfy invalide (attendu : https://serveur/sujet)")?;
+    if !serveur.starts_with("https://") {
+        return Err("l'adresse ntfy doit commencer par https://".into());
+    }
+    let pire = lot.iter().map(|a| crate::export::rang(&a.niveau)).max().unwrap_or(0);
+    let corps = serde_json::json!({
+        "topic": sujet,
+        "title": titre(lot),
+        "message": texte(lot),
+        "priority": match pire { 2 => 5, 1 => 4, _ => 3 },
+        "tags": [match pire { 2 => "rotating_light", 1 => "warning", _ => "information_source" }],
+    });
+    let mut p = format!("url = {}\nheader = \"Content-Type: application/json\"", cite(serveur));
+    if !s.ntfy_jeton.is_empty() {
+        p.push_str(&format!("\nheader = {}", cite(&format!("Authorization: Bearer {}", s.ntfy_jeton))));
+    }
+    curl(&p, corps.to_string().as_bytes())
+}
+
+fn teams(s: &Secrets, lot: &[Alerte]) -> Result<(), String> {
+    if !s.teams_url.starts_with("https://") {
+        return Err("l'adresse du webhook doit commencer par https://".into());
+    }
+    let pire = lot.iter().map(|a| crate::export::rang(&a.niveau)).max().unwrap_or(0);
+    let mut corps_carte = vec![serde_json::json!({
+        "type": "TextBlock", "size": "Large", "weight": "Bolder", "wrap": true,
+        "color": match pire { 2 => "Attention", 1 => "Warning", _ => "Default" }, "text": titre(lot),
+    })];
+    for a in lot.iter().take(10) {
+        let mut faits = vec![serde_json::json!({"title": "Poste", "value": hote()}), serde_json::json!({"title": "Heure", "value": a.heure})];
+        if !a.processus.is_empty() { faits.push(serde_json::json!({"title": "Programme", "value": a.processus})); }
+        if !a.mitre.is_empty() { faits.push(serde_json::json!({"title": "Technique", "value": a.mitre})); }
+        corps_carte.push(serde_json::json!({"type": "TextBlock", "wrap": true, "weight": "Bolder", "text": format!("{} : {}", a.niveau, a.raisons), "separator": true}));
+        corps_carte.push(serde_json::json!({"type": "FactSet", "facts": faits}));
+        if !a.conseil.is_empty() {
+            corps_carte.push(serde_json::json!({"type": "TextBlock", "wrap": true, "text": format!("Que faire : {}", a.conseil)}));
+        }
+    }
+    let corps = serde_json::json!({
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": { "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4", "body": corps_carte }
+        }]
+    });
+    curl(&format!("url = {}\nheader = \"Content-Type: application/json\"", cite(&s.teams_url)), corps.to_string().as_bytes())
+}
+
+fn base64(d: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::new();
+    for c in d.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        s.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    s
+}
+
+/// Date d'en-tête de courriel (RFC 5322), en UTC
+fn date_courriel() -> String {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let jours = secs.div_euclid(86_400);
+    let s = secs.rem_euclid(86_400);
+    let jour_semaine = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][(jours.rem_euclid(7)) as usize];
+    let iso = crate::export::horodatage_utc(SystemTime::now());
+    let (a, m, j) = (&iso[0..4], iso[5..7].parse::<usize>().unwrap_or(1), &iso[8..10]);
+    let mois = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m.clamp(1, 12) - 1];
+    format!("{jour_semaine}, {j} {mois} {a} {:02}:{:02}:{:02} +0000", s / 3600, s % 3600 / 60, s % 60)
+}
+
+fn courriel(c: &ConfigNotifications, s: &Secrets, lot: &[Alerte]) -> Result<(), String> {
+    if c.smtp_serveur.trim().is_empty() || c.expediteur.trim().is_empty() || c.destinataires.trim().is_empty() {
+        return Err("serveur, expéditeur ou destinataires non renseignés".into());
+    }
+    let destinataires: Vec<&str> = c.destinataires.split([',', ';', ' ']).map(str::trim).filter(|d| d.contains('@')).collect();
+    if destinataires.is_empty() {
+        return Err("aucun destinataire valide".into());
+    }
+    // SSL : connexion chiffrée d'emblée (port 465) ; STARTTLS : chiffrement exigé après connexion (port 587)
+    let schema = if c.smtp_securite == "SSL" { "smtps" } else { "smtp" };
+    let mut p = format!("url = {}\nssl-reqd\nmail-from = {}", cite(&format!("{schema}://{}:{}", c.smtp_serveur.trim(), c.smtp_port)), cite(c.expediteur.trim()));
+    for d in &destinataires {
+        p.push_str(&format!("\nmail-rcpt = {}", cite(d)));
+    }
+    if !c.smtp_utilisateur.is_empty() {
+        p.push_str(&format!("\nuser = {}", cite(&format!("{}:{}", c.smtp_utilisateur, s.smtp_mot_de_passe))));
+    }
+    p.push_str("\nupload-file = -");
+    let message = format!(
+        "From: deR4Tizer <{}>\r\nTo: {}\r\nSubject: =?UTF-8?B?{}?=\r\nDate: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+        c.expediteur.trim(), destinataires.join(", "), base64(titre(lot).as_bytes()), date_courriel(),
+        base64(texte(lot).replace('\n', "\r\n").as_bytes()).as_bytes().chunks(76).map(|l| String::from_utf8_lossy(l).into_owned()).collect::<Vec<_>>().join("\r\n"));
+    courriel_curl(&p, message.as_bytes())
+}
+
+/// Le message passe par l'entrée standard (upload-file = -), pas par --data-binary
+fn courriel_curl(parametres: &str, message: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let d = dossier_secrets();
+    let f = d.join(format!("curl-{}.txt", commun::nouvel_id()));
+    let r = (|| {
+        fs::write(&f, format!("{parametres}\nsilent\nshow-error\nmax-time = 30\n")).map_err(|e| e.to_string())?;
+        let mut enfant = Command::new("curl.exe")
+            .arg("-K").arg(&f)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        enfant.stdin.take().ok_or("entrée de curl indisponible")?.write_all(message).map_err(|e| e.to_string())?;
+        let sortie = enfant.wait_with_output().map_err(|e| e.to_string())?;
+        if sortie.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&sortie.stderr).trim().chars().take(300).collect()) }
+    })();
+    let _ = fs::remove_file(&f);
+    r
+}

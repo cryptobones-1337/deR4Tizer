@@ -126,6 +126,22 @@ namespace DeR4Tizer
             { "Masquer les entrées signées Microsoft / Windows (sauf commande suspecte)", "Hide entries signed by Microsoft / Windows (unless the command is suspicious)" },
             { "Signataire du programme", "Program signer" }, { "Licence", "Licence" },
 
+            // Remontée des alertes
+            { "REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)", "ALERT FORWARDING (IT PROVIDER, CONTACT PERSON)" },
+            { "Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation.",
+              "Sends this computer's alerts to the person in charge, with the \"what to do\". Alerts within 15 seconds are grouped into one message, and an hourly cap prevents flooding." },
+            { "Messages par heure au plus", "Max messages per hour" },
+            { "ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)", "ntfy (mobile or desktop app, public or self-hosted server)" },
+            { "Adresse du sujet", "Topic address" }, { "Jeton (facultatif)", "Token (optional)" },
+            { "Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)", "Microsoft Teams (\"post to a channel\" workflow webhook)" },
+            { "Adresse du webhook", "Webhook address" }, { "E-mail (SMTP chiffré)", "E-mail (encrypted SMTP)" }, { "Sécurité", "Security" },
+            { "Mot de passe", "Password" }, { "Expéditeur", "Sender" }, { "Destinataires", "Recipients" },
+            { "Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer.",
+              "The ntfy and Teams addresses, the token and the password are stored separately, readable by administrators only: leave a field empty to keep the saved value, type \"-\" to clear it." },
+            { "Enregistrer les notifications", "Save notifications" }, { "Envoyer un message de test", "Send a test message" },
+            { "enregistrée", "saved" }, { "non renseignée", "not set" }, { "SITES IDENTIFIÉS", "SITES IDENTIFIED" },
+            { "NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)", "SITE NAMES UNKNOWN (DNS LOG OFF)" },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

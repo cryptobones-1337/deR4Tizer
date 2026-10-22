@@ -228,6 +228,7 @@ namespace DeR4Tizer
         public ConfigApi Api { get; set; }
         public bool Ips { get; set; }
         public bool ListesRestreintes { get; set; }
+        public ConfigNotifications Notifications { get; set; }
         // Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
         public bool BlocageAutoMenaces { get; set; }
         // Suspend aussitôt le programme qui modifie un fichier leurre
@@ -322,6 +323,34 @@ namespace DeR4Tizer
     // Compte autorisé à lire les données (lecteurs.json)
     public class Lecteur { public string Sid { get; set; } public string Nom { get; set; } }
 
+    public class ConfigNotifications
+    {
+        public ConfigNotifications() { NiveauMin = "Critique"; MaxParHeure = 10; SmtpPort = 465; SmtpSecurite = "SSL"; SmtpServeur = SmtpUtilisateur = Expediteur = Destinataires = ""; }
+        public string NiveauMin { get; set; }
+        public int MaxParHeure { get; set; }
+        public bool Ntfy { get; set; }
+        public bool Teams { get; set; }
+        public bool Smtp { get; set; }
+        public string SmtpServeur { get; set; }
+        public int SmtpPort { get; set; }
+        public string SmtpSecurite { get; set; }
+        public string SmtpUtilisateur { get; set; }
+        public string Expediteur { get; set; }
+        public string Destinataires { get; set; }
+    }
+
+    // État des notifications (notifications.json, sans secret)
+    public class EtatNotifications
+    {
+        public bool NtfyConfigure { get; set; }
+        public bool TeamsConfigure { get; set; }
+        public bool SmtpMotDePasse { get; set; }
+        public long Envoyes { get; set; }
+        public long Resumes { get; set; }
+        public string DernierEnvoi { get; set; }
+        public string DerniereErreur { get; set; }
+    }
+
     public class ConfigSyslog
     {
         public ConfigSyslog() { Hote = ""; Port = 514; Protocole = "UDP"; Format = "JSON"; NiveauMin = "Alerte"; }
@@ -369,7 +398,7 @@ namespace DeR4Tizer
 
     public class Commande
     {
-        // bloquer, bloquerIp, debloquer, toutDebloquer, telemetrie, config, majMenaces
+        // bloquer, bloquerIp, debloquer, toutDebloquer, config, majMenaces, reglages, notifications…
         public string Action { get; set; }
         public string Valeur { get; set; }
         public string Ip { get; set; }
@@ -395,20 +424,6 @@ namespace DeR4Tizer
 
         public static string Dossier = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "deR4Tizer");
-
-        // Domaines de télémétrie connus, par éditeur
-        public static readonly Dictionary<string, string[]> Telemetrie = new Dictionary<string, string[]>
-        {
-            { "Microsoft / Windows", new[] {
-                "vortex.data.microsoft.com", "vortex-win.data.microsoft.com", "settings-win.data.microsoft.com",
-                "v10.events.data.microsoft.com", "v20.events.data.microsoft.com", "self.events.data.microsoft.com",
-                "mobile.events.data.microsoft.com", "umwatson.events.data.microsoft.com", "watson.events.data.microsoft.com",
-                "watson.telemetry.microsoft.com", "telecommand.telemetry.microsoft.com", "oca.telemetry.microsoft.com",
-                "sqm.telemetry.microsoft.com" } },
-            { "NVIDIA", new[] { "telemetry.gfe.nvidia.com", "events.gfe.nvidia.com" } },
-            { "Mozilla", new[] { "incoming.telemetry.mozilla.org" } },
-            { "Adobe", new[] { "cc-api-data.adobe.io" } },
-        };
 
         public static JavaScriptSerializer Json()
         {

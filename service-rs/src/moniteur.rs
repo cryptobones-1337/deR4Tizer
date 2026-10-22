@@ -179,6 +179,7 @@ impl Moniteur {
             ));
         }
         crate::export::demarrer(&m.config.syslog);
+        crate::notifications::demarrer(&m.config.notifications);
         if !console {
             // Capture des paquets : trafic, NDR local, DPI, IDS/IPS
             // Trafic, DPI et IDS sur l'interface de la route par défaut (le tunnel, avec un VPN) ;
@@ -196,6 +197,17 @@ impl Moniteur {
         }
         if !console {
             crate::api::demarrer(&m.config.api);
+        }
+        let mut m = m;
+        let telemetrie: Vec<String> = m.blocages.iter().filter(|b| b.type_ == "hosts" && b.raison == "télémétrie").map(|b| b.cible.clone()).collect();
+        if !telemetrie.is_empty() {
+            m.blocages.retain(|b| !(b.type_ == "hosts" && b.raison == "télémétrie"));
+            let domaines: Vec<String> = m.blocages.iter().filter(|b| b.type_ == "hosts").map(|b| b.cible.clone()).collect();
+            if blocage::ecrire_bloc_hosts(&domaines).is_ok() {
+                m.empreinte_hosts = blocage::empreinte_hosts();
+                commun::ecrire("blocages.json", &m.blocages);
+                commun::journal(&format!("blocage de la télémétrie retiré du fichier hosts ({} domaine(s))", telemetrie.len()));
+            }
         }
         let m = Arc::new(Mutex::new(m));
 
@@ -635,6 +647,7 @@ impl Moniteur {
         commun::journal(&format!("{} : {} -> {}{} ({})", a.niveau, a.processus, a.destination,
             if a.port > 0 { format!(":{}", a.port) } else { String::new() }, a.raisons));
         crate::export::alerte(&a);
+        crate::notifications::alerte(&a);
         crate::siem::depuis_alerte(&a);
         self.alertes.push(a);
         true
@@ -652,14 +665,6 @@ impl Moniteur {
                 None => self.bloquer_ip(c.ip.as_deref().unwrap_or(""), &raison),
             },
             "bloquerIp" => self.bloquer_ip(c.ip.as_deref().unwrap_or(""), &raison),
-            "telemetrie" => {
-                let choix = c.categories.unwrap_or_default();
-                let domaines: Vec<String> = commun::telemetrie().into_iter()
-                    .filter(|(k, _)| choix.iter().any(|c| c == k))
-                    .flat_map(|(_, d)| d.into_iter().map(String::from))
-                    .collect();
-                self.bloquer_domaines(&domaines, "télémétrie", None)
-            }
             "debloquer" => self.debloquer(c.type_.as_deref().unwrap_or(""), c.cible.as_deref().unwrap_or("")),
             "toutDebloquer" => self.tout_debloquer(),
             "config" => {
@@ -717,6 +722,32 @@ impl Moniteur {
                 match crate::export::tester(&cfg) {
                     Ok(()) => Reponse::ok(format!("Message de test envoyé à {}:{} ({}).", cfg.hote, cfg.port, cfg.protocole)),
                     Err(e) => Reponse::erreur(format!("Échec de l'envoi : {e}")),
+                }
+            }
+            // ---------------- remontée des alertes : Valeur = { Config, NtfyUrl, NtfyJeton, TeamsUrl, SmtpMotDePasse }
+            "notifications" | "testerNotifications" => {
+                #[derive(serde::Deserialize, Default)]
+                #[serde(rename_all = "PascalCase", default)]
+                struct Demande {
+                    // absente ou nulle : réglages par défaut (tout désactivé)
+                    config: Option<commun::ConfigNotifications>,
+                    #[serde(flatten)]
+                    secrets: crate::notifications::Secrets,
+                }
+                let Some(d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
+                    return Reponse::erreur("réglages des notifications illisibles");
+                };
+                crate::notifications::enregistrer_secrets(&d.secrets);
+                self.config.notifications = d.config.unwrap_or_default();
+                commun::ecrire("config.json", &self.config);
+                crate::notifications::configurer(&self.config.notifications);
+                if action == "testerNotifications" {
+                    match crate::notifications::tester(&self.config.notifications) {
+                        Ok(m) => Reponse::ok(m),
+                        Err(e) => Reponse::erreur(format!("Échec : {e}")),
+                    }
+                } else {
+                    Reponse::ok("Réglages des notifications enregistrés.")
                 }
             }
             "autoriserLecteur" => match crate::protection::autoriser(c.valeur.as_deref().unwrap_or("")) {

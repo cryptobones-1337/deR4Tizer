@@ -165,6 +165,7 @@ pub struct Config {
     pub ips: bool,
     /// Utiliser aussi les listes de menaces non commerciales ou aux conditions non vérifiées (usage personnel)
     pub listes_restreintes: bool,
+    pub notifications: ConfigNotifications,
 }
 
 impl Default for Config {
@@ -177,6 +178,7 @@ impl Default for Config {
             api: ConfigApi::default(),
             ips: false,
             listes_restreintes: false,
+            notifications: ConfigNotifications::default(),
         }
     }
 }
@@ -199,6 +201,36 @@ pub struct ConfigSyslog {
 impl Default for ConfigSyslog {
     fn default() -> Self {
         ConfigSyslog { actif: false, hote: String::new(), port: 514, protocole: "UDP".into(), format: "JSON".into(), niveau_min: "Alerte".into() }
+    }
+}
+
+/// Remontée des alertes vers un tiers (prestataire, référent) ; les secrets sont rangés à part
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct ConfigNotifications {
+    /// Niveau minimal envoyé : "Info", "Alerte" ou "Critique"
+    pub niveau_min: String,
+    pub max_par_heure: u32,
+    pub ntfy: bool,
+    pub teams: bool,
+    pub smtp: bool,
+    pub smtp_serveur: String,
+    pub smtp_port: u16,
+    /// "SSL" (port 465) ou "STARTTLS" (port 587)
+    pub smtp_securite: String,
+    pub smtp_utilisateur: String,
+    pub expediteur: String,
+    /// Adresses séparées par des virgules
+    pub destinataires: String,
+}
+
+impl Default for ConfigNotifications {
+    fn default() -> Self {
+        ConfigNotifications {
+            niveau_min: "Critique".into(), max_par_heure: 10, ntfy: false, teams: false, smtp: false,
+            smtp_serveur: String::new(), smtp_port: 465, smtp_securite: "SSL".into(), smtp_utilisateur: String::new(),
+            expediteur: String::new(), destinataires: String::new(),
+        }
     }
 }
 
@@ -267,7 +299,7 @@ pub struct Blocage {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct Commande {
-    /// bloquer, bloquerIp, debloquer, toutDebloquer, telemetrie, config, majMenaces
+    /// bloquer, bloquerIp, debloquer, toutDebloquer, config, majMenaces, reglages, notifications…
     pub action: Option<String>,
     pub valeur: Option<String>,
     pub ip: Option<String>,

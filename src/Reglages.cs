@@ -17,6 +17,17 @@ namespace DeR4Tizer
         readonly ComboBox cbProtocole = Liste("UDP", "TCP"), cbFormat = Liste("JSON", "CEF"), cbNiveau = Liste("Info", "Alerte", "Critique");
         readonly CheckBox chkApi = Case("Activer l'API d'export"), chkReseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)");
         readonly TextBox txtPortApi = Saisie(70);
+        readonly ComboBox cbNiveauNotif = Liste("Info", "Alerte", "Critique");
+        readonly TextBox txtMaxHeure = Saisie(50);
+        readonly CheckBox chkNtfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)");
+        readonly TextBox txtNtfyUrl = Saisie(360), txtNtfyJeton = Secret(220);
+        readonly CheckBox chkTeams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)");
+        readonly TextBox txtTeamsUrl = Secret(520);
+        readonly CheckBox chkSmtp = Case("E-mail (SMTP chiffré)");
+        readonly TextBox txtSmtpServeur = Saisie(220), txtSmtpPort = Saisie(60), txtSmtpUtilisateur = Saisie(220), txtSmtpMotDePasse = Secret(160),
+            txtExpediteur = Saisie(220), txtDestinataires = Saisie(360);
+        readonly ComboBox cbSmtpSecurite = Liste("SSL", "STARTTLS");
+        readonly Label lblNotif = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 4, 0, 4) };
         Config config;
 
         public PageReglages()
@@ -39,6 +50,26 @@ namespace DeR4Tizer
             pile.Controls.Add(Section("LANGUE"));
             pile.Controls.Add(Ligne(Etiquette("Langue de l'interface"), cbLangue));
             pile.Controls.Add(Note("La langue s'applique au prochain lancement de l'interface."));
+
+            // ---------------- Remontée des alertes
+            pile.Controls.Add(Section("REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)"));
+            pile.Controls.Add(Note("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation."));
+            pile.Controls.Add(Ligne(Etiquette("Niveau minimal"), cbNiveauNotif, Etiquette("Messages par heure au plus"), txtMaxHeure));
+            pile.Controls.Add(chkNtfy);
+            pile.Controls.Add(Ligne(Etiquette("Adresse du sujet"), txtNtfyUrl, Etiquette("Jeton (facultatif)"), txtNtfyJeton));
+            pile.Controls.Add(chkTeams);
+            pile.Controls.Add(Ligne(Etiquette("Adresse du webhook"), txtTeamsUrl));
+            pile.Controls.Add(chkSmtp);
+            pile.Controls.Add(Ligne(Etiquette("Serveur"), txtSmtpServeur, Etiquette("Port"), txtSmtpPort, Etiquette("Sécurité"), cbSmtpSecurite));
+            pile.Controls.Add(Ligne(Etiquette("Utilisateur"), txtSmtpUtilisateur, Etiquette("Mot de passe"), txtSmtpMotDePasse));
+            pile.Controls.Add(Ligne(Etiquette("Expéditeur"), txtExpediteur, Etiquette("Destinataires"), txtDestinataires));
+            pile.Controls.Add(Note("Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer."));
+            pile.Controls.Add(lblNotif);
+            var btnNotif = new BoutonNeon("Enregistrer les notifications", Theme.Cyan);
+            btnNotif.Click += (s, e) => EnvoyerNotifications("notifications");
+            var btnTestNotif = new BoutonNeon("Envoyer un message de test", Theme.TexteDim);
+            btnTestNotif.Click += (s, e) => EnvoyerNotifications("testerNotifications");
+            pile.Controls.Add(Ligne(btnNotif, btnTestNotif));
 
             // ---------------- Syslog
             pile.Controls.Add(Section("ENVOI DES ALERTES (SYSLOG)"));
@@ -119,6 +150,13 @@ namespace DeR4Tizer
             return new TextBox { Width = largeur, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Mono, Margin = new Padding(0, 3, 14, 3) };
         }
 
+        static TextBox Secret(int largeur)
+        {
+            var t = Saisie(largeur);
+            t.UseSystemPasswordChar = true;
+            return t;
+        }
+
         static ComboBox Liste(params string[] valeurs)
         {
             var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Width = 110, Margin = new Padding(0, 3, 14, 3) };
@@ -157,6 +195,51 @@ namespace DeR4Tizer
             chkApi.Checked = config.Api.Actif;
             txtPortApi.Text = config.Api.Port.ToString();
             chkReseau.Checked = config.Api.Reseau;
+            var n = config.Notifications ?? new ConfigNotifications();
+            Choisir(cbNiveauNotif, n.NiveauMin);
+            txtMaxHeure.Text = n.MaxParHeure.ToString();
+            chkNtfy.Checked = n.Ntfy;
+            chkTeams.Checked = n.Teams;
+            chkSmtp.Checked = n.Smtp;
+            txtSmtpServeur.Text = n.SmtpServeur;
+            txtSmtpPort.Text = n.SmtpPort.ToString();
+            Choisir(cbSmtpSecurite, n.SmtpSecurite);
+            txtSmtpUtilisateur.Text = n.SmtpUtilisateur;
+            txtExpediteur.Text = n.Expediteur;
+            txtDestinataires.Text = n.Destinataires;
+            foreach (var t in new[] { txtNtfyUrl, txtNtfyJeton, txtTeamsUrl, txtSmtpMotDePasse }) t.Text = "";
+            var e = Commun.Lire<EtatNotifications>("notifications.json");
+            Func<bool, string> fait = b => b ? L.T("enregistrée") : L.T("non renseignée");
+            lblNotif.Text = e == null ? "" : string.Format(L.En
+                ? "ntfy address: {0} · Teams webhook: {1} · SMTP password: {2} · {3} message(s) sent{4}{5}"
+                : "Adresse ntfy : {0} · webhook Teams : {1} · mot de passe SMTP : {2} · {3} message(s) envoyé(s){4}{5}",
+                fait(e.NtfyConfigure), fait(e.TeamsConfigure), fait(e.SmtpMotDePasse), e.Envoyes,
+                string.IsNullOrEmpty(e.DernierEnvoi) ? "" : (L.En ? ", last on " : ", dernier le ") + e.DernierEnvoi,
+                string.IsNullOrEmpty(e.DerniereErreur) ? "" : (L.En ? " · last error: " : " · dernière erreur : ") + e.DerniereErreur);
+        }
+
+        void EnvoyerNotifications(string action)
+        {
+            int max, port;
+            if (!int.TryParse(txtMaxHeure.Text.Trim(), out max) || max < 1 || max > 1000 || !int.TryParse(txtSmtpPort.Text.Trim(), out port) || port < 1 || port > 65535)
+            {
+                MessageBox.Show(L.En ? "Invalid number (messages per hour: 1-1000, port: 1-65535)." : "Nombre invalide (messages par heure : 1 à 1000, port : 1 à 65535).",
+                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            var demande = new Dictionary<string, object>
+            {
+                { "Config", new ConfigNotifications
+                    {
+                        NiveauMin = (string)cbNiveauNotif.SelectedItem, MaxParHeure = max, Ntfy = chkNtfy.Checked, Teams = chkTeams.Checked, Smtp = chkSmtp.Checked,
+                        SmtpServeur = txtSmtpServeur.Text.Trim(), SmtpPort = port, SmtpSecurite = (string)cbSmtpSecurite.SelectedItem,
+                        SmtpUtilisateur = txtSmtpUtilisateur.Text.Trim(), Expediteur = txtExpediteur.Text.Trim(), Destinataires = txtDestinataires.Text.Trim()
+                    } },
+                { "NtfyUrl", txtNtfyUrl.Text.Trim() }, { "NtfyJeton", txtNtfyJeton.Text.Trim() },
+                { "TeamsUrl", txtTeamsUrl.Text.Trim() }, { "SmtpMotDePasse", txtSmtpMotDePasse.Text }
+            };
+            Canal.Executer(new Commande { Action = action, Valeur = Commun.Json().Serialize(demande) });
+            Charger();
         }
 
         // Réglages saisis, ou null (avec un message) si un port est invalide
