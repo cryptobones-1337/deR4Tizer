@@ -430,7 +430,7 @@ impl Moniteur {
             if let Some(m) = &menace {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
-                if m.haute && self.config.blocage_auto_menaces && !bloque {
+                if blocage_automatique(m.haute, self.config.blocage_auto_menaces, bloque, commun::echec_protection().is_some()) {
                     self.bloquer_ip_auto(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
                     action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
                 }
@@ -514,6 +514,8 @@ impl Moniteur {
         let detections: Vec<Alerte> = std::mem::take(&mut *self.processus.detections.lock().unwrap());
         let dns: Vec<Alerte> = std::mem::take(&mut *self.partage.alertes_externes.lock().unwrap());
         let a_bloquer: Vec<(String, String)> = std::mem::take(&mut *self.partage.blocages_ips.lock().unwrap());
+        // Échec de la protection du dossier : aucune réponse automatique alimentée par ses fichiers (règles IDS)
+        let a_bloquer = if commun::echec_protection().is_some() { Vec::new() } else { a_bloquer };
         for (ip, raison) in a_bloquer {
             let r = self.bloquer_ip_auto(&ip, &raison);
             commun::journal(&format!("IPS : {}", r.message));
@@ -1183,6 +1185,13 @@ pub fn nettoyer() {
         let _ = fs::remove_file(marqueur);
         println!("Journal DNS de Windows désactivé (il l'était avant deR4Tizer).");
     }
+}
+
+/// Décision pure du blocage automatique d'une adresse des listes de menaces : liste de confiance haute, réglage
+/// actif, adresse pas encore bloquée, et jamais en échec de la protection du dossier de données (les listes y sont
+/// rangées : aucune réponse automatique alimentée par des fichiers dont la protection n'est pas vérifiée)
+pub fn blocage_automatique(haute: bool, actif: bool, deja_bloquee: bool, echec_protection: bool) -> bool {
+    haute && actif && !deja_bloquee && !echec_protection
 }
 
 /// Blocages automatiques à lever : durée écoulée, ou adresse sortie des listes (si les listes sont chargées)

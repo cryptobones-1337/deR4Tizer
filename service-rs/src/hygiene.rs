@@ -244,7 +244,8 @@ pub fn liste_loldrivers() -> HashSet<String> {
             .filter(|s| s.status.success())
             .and_then(|_| fs::rename(f.with_extension("tmp"), &f).ok());
     }
-    let Ok(t) = fs::read_to_string(&f) else { return HashSet::new() };
+    // Propriétaire contrôlé, comme tout fichier du dossier de données
+    let Some(t) = commun::lire_fichier_proprietaire(&f) else { return HashSet::new() };
     Regex::new(r#""SHA256":\s*"([0-9a-fA-F]{64})""#).unwrap().captures_iter(&t).map(|c| c[1].to_lowercase()).collect()
 }
 
