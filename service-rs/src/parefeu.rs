@@ -169,7 +169,11 @@ pub fn traduire(xml: &str, signataire: &dyn Fn(&str) -> String) -> Option<(Evene
     // Emplacements réservés aux administrateurs : un installeur temporaire disparu de là est un programme de mise à jour
     let dossier_protege = auteur_bas.contains(r"\program files") || auteur_bas.contains(r"\windows\systemtemp\");
     let outil_ligne_commande = ["netsh", "powershell", "pwsh", "cmd", "wmic"].contains(&auteur_nom.to_lowercase().as_str());
-    let alerte = if operation == "toutes supprimées" {
+    let alerte = if operation == "toutes supprimées" && auteur_nom.eq_ignore_ascii_case("svchost") && crate::natif::binaire_windows(&e.auteur) {
+        // Actualisation de la stratégie de groupe (gpupdate) : Windows recharge les règles de la GPO, ce qui
+        // s'annonce comme une suppression de toutes les règles de ce magasin
+        Some(("Info", 0, "règles du pare-feu rechargées par Windows (actualisation de la stratégie de groupe)".to_string()))
+    } else if operation == "toutes supprimées" {
         Some(("Critique", 10, format!("TOUTES les règles du pare-feu ont été supprimées (par {})", if e.auteur.is_empty() { "?" } else { &e.auteur })))
     } else if auteur_sig.is_empty() {
         Some(("Critique", 8, format!("le pare-feu a été modifié par un programme NON SIGNÉ : règle « {} » {} ({} {})", e.regle, operation, e.sens, e.action)))

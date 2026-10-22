@@ -146,12 +146,25 @@ pub fn poser_audit() -> Result<usize, String> {
     }
     let mut script = String::from("$ErrorActionPreference='Continue'\n$n=0\n");
     for (d, c) in &dossiers {
-        let (heritage, propagation) = if c.recursif { ("ContainerInherit,ObjectInherit", "None") } else { ("ObjectInherit", "NoPropagateInherit") };
+        // InheritOnly : la règle ne vise pas le dossier lui-même (le parcourir n'est pas lire une donnée, et
+        // produirait des milliers d'événements) ; NoPropagateInherit : seulement ses fichiers, pas les sous-dossiers
+        let (heritage, propagation) = if c.recursif { ("ContainerInherit,ObjectInherit", "InheritOnly") } else { ("ObjectInherit", "InheritOnly,NoPropagateInherit") };
+        // Reposée seulement si elle diffère : chaque Set-Acl se propage à tous les fichiers (événements 4907 en rafale)
         script.push_str(&format!(
-            "try {{ $a = Get-Acl -LiteralPath '{d}' -Audit; $a.PurgeAuditRules((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0')); \
+            "try {{ $a = Get-Acl -LiteralPath '{d}' -Audit; \
              $r = New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'),'ReadData','{heritage}','{propagation}','Success'); \
-             $a.AddAuditRule($r); Set-Acl -LiteralPath '{d}' -AclObject $a; $n++ }} catch {{ Write-Output (\"erreur : {d} : \" + $_.Exception.Message) }}\n",
+             $x = @($a.GetAuditRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object {{ $_.IdentityReference.Value -eq 'S-1-1-0' }}); \
+             if (-not ($x.Count -eq 1 -and $x[0].FileSystemRights -eq $r.FileSystemRights -and $x[0].InheritanceFlags -eq $r.InheritanceFlags -and $x[0].PropagationFlags -eq $r.PropagationFlags)) {{ \
+               $a.PurgeAuditRules((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0')); $a.AddAuditRule($r); Set-Acl -LiteralPath '{d}' -AclObject $a }}; \
+             Get-ChildItem -LiteralPath '{d}' -File -Force {recursion} -ErrorAction SilentlyContinue | ForEach-Object {{ \
+               $fa = Get-Acl -LiteralPath $_.FullName -Audit; \
+               if (-not @($fa.GetAuditRules($false, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {{ $_.IdentityReference.Value -eq 'S-1-1-0' }}).Count) {{ \
+                 $fa.SetAuditRuleProtection($false, $true); Set-Acl -LiteralPath $_.FullName -AclObject $fa }} }}; \
+             $n++ }} catch {{ Write-Output (\"erreur : {d} : \" + $_.Exception.Message) }}\n",
             d = d.replace('\'', "''"),
+            // Fichiers déjà présents sans la règle héritée (la modification du dossier ne leur parvient pas
+            // toujours) : réécrire leur descripteur sans protection force Windows à recalculer l'héritage
+            recursion = if c.recursif { "-Recurse" } else { "" },
         ));
     }
     script.push_str("Write-Output \"poses=$n\"\n");

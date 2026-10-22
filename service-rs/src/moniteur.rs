@@ -108,6 +108,7 @@ impl Moniteur {
         crate::siem::demarrer(partage.alertes_externes.clone(), !console);
         if !console {
             crate::protection::demarrer();
+            std::thread::spawn(baseline::forcer_tailles);
         }
         defender::surveiller(partage.alertes_externes.clone());
         {
