@@ -103,6 +103,40 @@ Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot su
 
 **Critères :** tests « quarantaine, redémarrage, restauration », « ancien fichier quarantainé migré sans perte », « déplacement impossible : intact et échec fermé », « création de ecartes impossible : intact et échec fermé ». Scénario « quarantaine, redémarrage, restauration » ajouté au lot 3.
 
+### Lot 1 ter : opérations de fichiers SYSTEM sur des chemins de l'utilisateur
+
+**Constat :** plusieurs opérations du service, en SYSTEM, portent sur des chemins choisis ou contrôlés par
+l'utilisateur, avec un contrôle puis une opération par chemin. Une jonction ou un lien posé entre les deux
+redirige l'opération vers un dossier système (élévation de privilèges) :
+- `reponse.rs`, restauration : écriture du fichier et de sa marque Internet à `chemin_origine` ;
+- `reponse.rs`, mise en quarantaine : lecture puis suppression de l'original (pause de 500 ms entre l'arrêt
+  des processus et la copie) ;
+- `reponse.rs`, reprise au démarrage : lecture de l'empreinte de `chemin_origine` à chaque démarrage.
+
+**À faire :**
+
+- Quarantaine : ouvrir l'original une seule fois par handle sans suivre les liens
+  (`FILE_FLAG_OPEN_REPARSE_POINT`), vérifier son chemin final (`GetFinalPathNameByHandle`) contre le chemin
+  attendu, lire le contenu et la marque Internet, puis supprimer par ce même handle (`FileDispositionInfo`) ;
+  aucune opération par chemin après le contrôle.
+- Restauration : écrire le fichier et sa marque en empruntant le jeton de l'utilisateur propriétaire de
+  l'emplacement (session ouverte), pour que les droits de Windows s'appliquent à lui et pas à SYSTEM ; si
+  aucune session de cet utilisateur n'est ouverte, refuser et proposer une restauration dans un dossier créé
+  par le service.
+- Reprise au démarrage : lire l'empreinte de l'original par handle sans suivre les liens, avec vérification
+  du chemin final ; un élément de chemin qui est un lien = original « différent » (la copie est gardée).
+- Outillage : compilation locale alignée sur la CI (chaîne MSVC) dans `compiler-rs.ps1` et le README ; les
+  tests sur un poste se font avec l'artefact de la CI, jamais avec une compilation locale GNU.
+
+**Critères d'acceptation :**
+
+- Test « jonction posée avant restauration » : rien n'est écrit hors du dossier d'origine.
+- Test « jonction posée pendant la quarantaine » : rien n'est lu ni supprimé hors du fichier visé.
+- Test « lien dans le chemin d'origine au démarrage » : la copie est gardée, rien n'est lu hors du chemin.
+- Restauration sans session de l'utilisateur : refusée ou dirigée vers le dossier du service, jamais écrite
+  en SYSTEM à l'emplacement d'origine.
+- Scénarios correspondants ajoutés au lot 3.
+
 ### Lot 2 : mise à jour, retour en arrière par manifeste et transaction
 
 **Constat :** la version n'est lue que dans le manifeste, qui n'est pas signé. Un manifeste falsifié annonçant « 99.0 » peut faire installer une ancienne version signée par la bonne clé mais vulnérable. Depuis la v4.3, le MSI porte `AllowDowngrades="yes"` (pour le retour arrière) : le refus d'installer une version plus ancienne, seule barrière restante, a disparu. Le lot 2 doit lire la version dans l'artefact signé avant toute installation, ou rétablir ce refus et faire le retour arrière autrement.
@@ -119,6 +153,9 @@ Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot su
 ### Lot 3 : CI d'intégration et chaîne de publication
 
 - Nouveau job CI sur `windows-latest` qui, avec le MSI construit : installe ; vérifie service (compte, démarrage, reprise), droits du dossier (lot 1) ; crée un compte local standard et vérifie depuis ce compte (`Start-Process -Credential`) que le tube refuse ses commandes et qu'il ne peut rien écrire dans le dossier de données ; scénario du dossier précréé, y compris avec des fichiers à DACL vide (`D:P`, propriétaire illisible pour SYSTEM) comme `config.json`, `lecteurs.json` ou `apprentissage.json` : ils doivent être écartés et jamais chargés ; fichier piégé tenu ouvert (sans partage de suppression) pendant le démarrage du service, puis redémarrage : jamais chargé, ni au premier ni au second démarrage ; quarantaine d'un fichier, redémarrage du service, restauration : fichier restauré à l'identique ; mise à niveau depuis le MSI de la version précédente ; désinstallation avec et sans `GARDER_DONNEES=1`.
+- Scénario d'exécution avec Microsoft Defender actif, avec l'artefact MSVC de la CI : installation,
+  mise en quarantaine d'un fichier de test bénin, redémarrage, restauration. Aucune détection.
+  Tant que ce scénario n'a pas réussi, aucune distribution, même à un testeur.
 - WiX : vérifier l'empreinte SHA-256 de `wix314-binaries.zip` (valeur figée dans le workflow) dans `ci.yml` et `publication.yml`.
 - `publication.yml` : séparer compilation (sans secret) et signature (reçoit seulement les artefacts, environnement `publication`). Aucune compilation ni script de dépendance dans le job qui détient le certificat.
 
