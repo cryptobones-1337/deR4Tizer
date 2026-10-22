@@ -330,3 +330,73 @@ fn debogage_a_distance_du_navigateur() {
     assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --headless"#).is_some());
     assert!(crate::processus::suspicion(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#).is_none());
 }
+
+// ------------------------------------------------------------ bruit, VPN, vie privée, UPnP, mise à jour
+
+#[test]
+fn apprentissage_et_exceptions() {
+    use crate::apprentissage::{decider, signature, Exception};
+    use std::collections::BTreeSet;
+    let mut a = alerte("Alerte", "lancé par rmm-agent", "PowerShell obscurci : -enc AAAA", 5);
+    a.processus = "powershell".into();
+    a.mitre = "T1059.001".into();
+    let sig = signature(&a);
+    let vide = BTreeSet::new();
+    // pendant l'apprentissage : information, comportement mémorisé
+    assert_eq!(decider("Alerte", &sig, true, &vide, &[]), Some(("Info", " [mode apprentissage : comportement mémorisé]", true)));
+    // une alerte critique n'est jamais adoucie, même apprise ou en exception
+    let appris: BTreeSet<String> = [sig.clone()].into_iter().collect();
+    assert_eq!(decider("Critique", &sig, true, &appris, &[]), None);
+    // après l'apprentissage : comportement appris en information, inconnu en alerte
+    assert_eq!(decider("Alerte", &sig, false, &appris, &[]).map(|d| d.0), Some("Info"));
+    assert_eq!(decider("Alerte", "autre|chose|t####", false, &appris, &[]), None);
+    // exception explicite
+    let ex = vec![Exception { signature: sig.clone(), ..Default::default() }];
+    assert_eq!(decider("Alerte", &sig, false, &vide, &ex).map(|d| d.0), Some("Info"));
+    // une autre IP ne fait pas un autre comportement
+    let mut b = a.clone();
+    let mut c = a.clone();
+    b.destination = "203.0.113.5".into();
+    c.destination = "198.51.100.77".into();
+    assert_eq!(signature(&b), signature(&c));
+}
+
+#[test]
+fn mise_a_jour_versions_et_signatures() {
+    use crate::maj::{plus_recente, signature_acceptable};
+    assert!(plus_recente("4.10", "4.9"));
+    assert!(plus_recente("v5.0", "4.9.9"));
+    assert!(!plus_recente("4.0", "4.0"));
+    assert!(!plus_recente("3.9", "4.0"));
+    assert!(signature_acceptable(Some("Mairie X"), Some("Mairie X"), false).is_ok());
+    assert!(signature_acceptable(Some("Pirate"), Some("Mairie X"), true).is_err(), "autre éditeur : refusé même en mode permissif");
+    assert!(signature_acceptable(None, Some("Mairie X"), true).is_err(), "retour au non signé : refusé");
+    assert!(signature_acceptable(None, None, false).is_err(), "non signé : pas d'installation automatique");
+    assert!(signature_acceptable(None, None, true).is_ok());
+    assert!(signature_acceptable(Some("Mairie X"), None, false).is_ok(), "première version signée");
+}
+
+#[test]
+fn chemins_de_profil_masques() {
+    assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
+    assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
+}
+
+#[test]
+fn ip_directe_pour_les_editeurs_connus() {
+    use crate::moniteur::ip_directe_normale;
+    assert!(ip_directe_normale("Proton AG"));
+    assert!(ip_directe_normale("Google LLC"));
+    assert!(ip_directe_normale("Valve Corp."));
+    assert!(!ip_directe_normale(""), "programme non signé : toujours pénalisé");
+    assert!(!ip_directe_normale("Evil Software Ltd"));
+}
+
+#[test]
+fn upnp_adresses_locales_seulement() {
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
+    assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
+    assert!(crate::upnp::decouper_url_test("https://192.168.1.254/x").is_none());
+    assert_eq!(crate::upnp::dechunker_test("4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"), "Wikipedia");
+    let _ = crate::upnp::dechunker_test("ffffffff\r\nabc");
+}

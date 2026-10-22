@@ -150,6 +150,20 @@ namespace DeR4Tizer
             { "Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique).",
               "Tip: a self-hosted ntfy server rather than ntfy.sh, which malware also uses to send data out (it remains reachable in panic mode)." },
 
+            // Apprentissage, mise à jour, UPnP, exposition
+            { "Ne plus alerter pour ce comportement", "No longer alert for this behaviour" },
+            { "MODE APPRENTISSAGE ET EXCEPTIONS", "LEARNING MODE AND EXCEPTIONS" },
+            { "Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement ».",
+              "During the first days, non-critical alerts are recorded as information and their behaviour is learned (point-of-sale software, IT provider tools, scripts…). Afterwards, only new behaviour raises an alert. Critical alerts are never softened. Right-click an alert: \"No longer alert for this behaviour\"." },
+            { "Terminer l'apprentissage", "End learning" }, { "Recommencer (7 jours)", "Restart (7 days)" }, { "Supprimer les exceptions", "Delete exceptions" },
+            { "MISE À JOUR", "UPDATES" }, { "Manifeste", "Manifest" }, { "Rechercher maintenant", "Check now" },
+            { "Installer automatiquement une version vérifiée (empreinte et signature du même éditeur)", "Automatically install a verified version (hash and signature from the same publisher)" },
+            { "Accepter aussi des binaires non signés (essais seulement : leur origine n'est pas prouvée)", "Also accept unsigned binaries (testing only: their origin is not proven)" },
+            { "Aucune exposition détectée", "No exposure detected" }, { "PC EXPOSÉ À INTERNET", "PC EXPOSED TO THE INTERNET" },
+            { "ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC", "no packet from the Internet in the last 24 h, no public address, no UPnP redirection from the router to this PC" },
+            { "Redirections de ports de la box (UPnP)", "Router port forwards (UPnP)" }, { "VERS CE PC", "TO THIS PC" }, { "Redirection", "Forward" },
+            { "port interne", "internal port" }, { "active", "active" }, { "inactive", "inactive" },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

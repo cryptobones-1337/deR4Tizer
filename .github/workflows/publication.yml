@@ -1,0 +1,69 @@
+# Publication d'une version : à chaque tag « v4.1 », compilation, signature (si un certificat est configuré),
+# empreintes SHA-256 et manifeste pour la mise à jour automatique, puis publication de la version GitHub.
+# Secrets facultatifs pour la signature : CERTIFICAT_PFX (fichier .pfx en base64) et CERTIFICAT_MOT_DE_PASSE.
+# Sans eux, les binaires ne sont pas signés et les postes signalent la version sans l'installer.
+name: Publication
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publier:
+    runs-on: windows-latest
+    env:
+      # Les secrets ne sont pas lisibles dans une condition « if » : on passe par une variable
+      AVEC_CERTIFICAT: ${{ secrets.CERTIFICAT_PFX != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Le tag correspond à la version du code
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
+
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Tests
+        working-directory: service-rs
+        run: cargo test --release
+
+      - name: Compilation
+        shell: pwsh
+        run: |
+          cd service-rs; cargo build --release; cd ..
+          ./compiler.ps1 -InterfaceSeulement
+          Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
+
+      - name: Signature
+        if: env.AVEC_CERTIFICAT == 'true'
+        env:
+          CERTIFICAT: ${{ secrets.CERTIFICAT_PFX }}
+          MOT_DE_PASSE: ${{ secrets.CERTIFICAT_MOT_DE_PASSE }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'certificat.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICAT))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:MOT_DE_PASSE /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 bin/deR4Tizer.exe bin/deR4TizerSvc.exe
+          if ($LASTEXITCODE) { throw 'Échec de la signature.' }
+          Remove-Item $pfx
+
+      - name: Manifeste de mise à jour
+        shell: pwsh
+        run: |
+          $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          $fichiers = foreach ($n in 'deR4TizerSvc.exe', 'deR4Tizer.exe') {
+            [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
+          }
+          [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
+
+      - name: Version GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create ${{ github.ref_name }} bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --title "deR4Tizer ${{ github.ref_name }}" --generate-notes

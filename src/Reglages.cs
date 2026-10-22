@@ -18,6 +18,11 @@ namespace DeR4Tizer
         readonly CheckBox chkApi = Case("Activer l'API d'export"), chkReseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)");
         readonly TextBox txtPortApi = Saisie(70), txtAdressesApi = Saisie(300);
         readonly ComboBox cbNiveauNotif = Liste("Info", "Alerte", "Critique");
+        readonly Label lblApprentissage = new Label { AutoSize = true, ForeColor = Theme.Texte, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 4, 0, 4) };
+        readonly Label lblMaj = new Label { AutoSize = true, ForeColor = Theme.Texte, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 4, 0, 4) };
+        readonly CheckBox chkMajAuto = Case("Installer automatiquement une version vérifiée (empreinte et signature du même éditeur)");
+        readonly CheckBox chkMajNonSigne = Case("Accepter aussi des binaires non signés (essais seulement : leur origine n'est pas prouvée)");
+        readonly TextBox txtMajUrl = Saisie(520);
         readonly TextBox txtMaxHeure = Saisie(50);
         readonly CheckBox chkNtfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)");
         readonly TextBox txtNtfyUrl = Saisie(360), txtNtfyJeton = Secret(220);
@@ -50,6 +55,18 @@ namespace DeR4Tizer
             pile.Controls.Add(Section("LANGUE"));
             pile.Controls.Add(Ligne(Etiquette("Langue de l'interface"), cbLangue));
             pile.Controls.Add(Note("La langue s'applique au prochain lancement de l'interface."));
+
+            // ---------------- Mode apprentissage et exceptions
+            pile.Controls.Add(Section("MODE APPRENTISSAGE ET EXCEPTIONS"));
+            pile.Controls.Add(Note("Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement »."));
+            pile.Controls.Add(lblApprentissage);
+            var btnFinApp = new BoutonNeon("Terminer l'apprentissage", Theme.TexteDim);
+            btnFinApp.Click += (s, e) => { Canal.Executer(new Commande { Action = "apprentissage", Valeur = "terminer" }); Charger(); };
+            var btnReApp = new BoutonNeon("Recommencer (7 jours)", Theme.TexteDim);
+            btnReApp.Click += (s, e) => { Canal.Executer(new Commande { Action = "apprentissage", Valeur = "recommencer" }); Charger(); };
+            var btnOublier = new BoutonNeon("Supprimer les exceptions", Theme.Magenta);
+            btnOublier.Click += (s, e) => { Canal.Executer(new Commande { Action = "apprentissage", Valeur = "oublier" }); Charger(); };
+            pile.Controls.Add(Ligne(btnFinApp, btnReApp, btnOublier));
 
             // ---------------- Remontée des alertes
             pile.Controls.Add(Section("REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)"));
@@ -103,6 +120,23 @@ namespace DeR4Tizer
             var btnEnregistrer = new BoutonNeon("Enregistrer", Theme.Cyan) { Margin = new Padding(0, 14, 8, 6) };
             btnEnregistrer.Click += (s, e) => Enregistrer();
             pile.Controls.Add(btnEnregistrer);
+
+            // ---------------- Mise à jour
+            pile.Controls.Add(Section("MISE À JOUR"));
+            pile.Controls.Add(lblMaj);
+            pile.Controls.Add(chkMajAuto);
+            pile.Controls.Add(chkMajNonSigne);
+            pile.Controls.Add(Ligne(Etiquette("Manifeste"), txtMajUrl));
+            var btnMajEnr = new BoutonNeon("Enregistrer", Theme.Cyan);
+            btnMajEnr.Click += (s, e) =>
+            {
+                var m = new ConfigMaj { Auto = chkMajAuto.Checked, AccepterNonSigne = chkMajNonSigne.Checked, Url = txtMajUrl.Text.Trim() };
+                Canal.Executer(new Commande { Action = "majConfig", Valeur = Commun.Json().Serialize(m) });
+                Charger();
+            };
+            var btnMajVerif = new BoutonNeon("Rechercher maintenant", Theme.TexteDim);
+            btnMajVerif.Click += (s, e) => { Canal.Executer(new Commande { Action = "majVerifier" }); Charger(); };
+            pile.Controls.Add(Ligne(btnMajEnr, btnMajVerif));
 
             // ---------------- Accès aux données
             pile.Controls.Add(Section("ACCÈS AUX DONNÉES"));
@@ -198,6 +232,24 @@ namespace DeR4Tizer
             txtPortApi.Text = config.Api.Port.ToString();
             chkReseau.Checked = config.Api.Reseau;
             txtAdressesApi.Text = config.Api.Adresses ?? "";
+            var app = Commun.Lire<EtatApprentissage>("apprentissage.json");
+            if (app != null)
+            {
+                bool enCours = string.CompareOrdinal(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), app.Fin ?? "") < 0;
+                lblApprentissage.Text = string.Format(L.En
+                    ? "{0} · {1} learned behaviour(s) · {2} exception(s)"
+                    : "{0} · {1} comportement(s) appris · {2} exception(s)",
+                    enCours ? (L.En ? "Learning until " : "Apprentissage jusqu'au ") + app.Fin : (L.En ? "Learning finished on " : "Apprentissage terminé le ") + app.Fin,
+                    (app.Appris ?? new List<string>()).Count, (app.Exceptions ?? new List<ExceptionApprise>()).Count);
+            }
+            var mj = config.Maj ?? new ConfigMaj();
+            chkMajAuto.Checked = mj.Auto;
+            chkMajNonSigne.Checked = mj.AccepterNonSigne;
+            txtMajUrl.Text = mj.Url ?? "";
+            var em = Commun.Lire<EtatMaj>("maj.json");
+            lblMaj.Text = (L.En ? "Installed version: " : "Version installée : ") + Commun.Version
+                + (em == null ? (L.En ? " · not checked yet (daily check)" : " · pas encore vérifiée (vérification quotidienne)")
+                    : " · " + (L.En ? "checked on " : "vérifiée le ") + em.VerifieLe + " : " + em.Statut);
             var n = config.Notifications ?? new ConfigNotifications();
             Choisir(cbNiveauNotif, n.NiveauMin);
             txtMaxHeure.Text = n.MaxParHeure.ToString();

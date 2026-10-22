@@ -171,6 +171,23 @@ namespace DeR4Tizer
                         return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
                             + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
                     }
+                case "exception":
+                    {
+                        var a = (Commun.Lire<List<Alerte>>("alertes.json") ?? new List<Alerte>()).FirstOrDefault(x => x.Id == cible);
+                        return (en ? "No longer alert for this behaviour (information only): " : "Ne plus alerter pour ce comportement (information seulement) : ")
+                            + (a == null ? cible : a.Processus + " — " + a.Destination + " — " + (a.Raisons ?? "").Substring(0, Math.Min(120, (a.Raisons ?? "").Length)));
+                    }
+                case "apprentissage":
+                    return v == "terminer" ? (en ? "End learning mode now" : "Terminer le mode apprentissage maintenant")
+                        : v == "recommencer" ? (en ? "Restart learning mode for 7 days (forget learned behaviours)" : "Relancer le mode apprentissage pour 7 jours (oublier les comportements appris)")
+                        : (en ? "DELETE all alert exceptions" : "SUPPRIMER toutes les exceptions d'alerte");
+                case "majVerifier": return en ? "Check for an update now (and install it if it is verified)" : "Rechercher une mise à jour maintenant (et l'installer si elle est vérifiée)";
+                case "majConfig":
+                    {
+                        var m = Commun.Json().Deserialize<ConfigMaj>(v) ?? new ConfigMaj();
+                        return (en ? "Update settings — automatic: " : "Réglages de mise à jour — automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non"))
+                            + (m.AccepterNonSigne ? (en ? " · INSTALL UNSIGNED BINARIES" : " · INSTALLER DES BINAIRES NON SIGNÉS") : "") + " · " + m.Url;
+                    }
                 case "autoriserLecteur":
                     {
                         string nom = v;
@@ -347,6 +364,7 @@ namespace DeR4Tizer
             lvAlertes.Colonnes("Heure", 170, "Niveau", 85, "Programme", 140, "Destination", 260, "Port", 60, "Raisons", 520, "Chemin", 320);
             lvAlertes.ContextMenuStrip = MenuContextuel(rendu,
                 new ToolStripMenuItem("Bloquer cette destination", null, (s, e) => BloquerAlerte()),
+                new ToolStripMenuItem("Ne plus alerter pour ce comportement", null, (s, e) => ExceptionAlerte()),
                 new ToolStripSeparator(),
                 new ToolStripMenuItem("Isoler ce programme du réseau", null, (s, e) => Agir(lvAlertes, "isolerProgramme")),
                 new ToolStripMenuItem("Suspendre le processus", null, (s, e) => Agir(lvAlertes, "suspendre")),
@@ -968,9 +986,10 @@ namespace DeR4Tizer
             {
                 var bilan = new ListViewItem(new[]
                 {
-                    exp.Exposee ? "PC EXPOSÉ À INTERNET" : "Non exposé",
-                    exp.Exposee ? string.Join(" ; ", exp.Raisons ?? new List<string>()) : "aucun paquet venu d'Internet n'a atteint le PC ces dernières 24 h ; pas d'adresse publique sur le PC",
-                    "", exp.JournalPaquets ? "journal des paquets actif" : "journal des paquets INACTIF (baseline « journalisation »)"
+                    exp.Exposee ? L.T("PC EXPOSÉ À INTERNET") : L.T("Aucune exposition détectée"),
+                    exp.Exposee ? string.Join(" ; ", exp.Raisons ?? new List<string>())
+                        : L.T("ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC"),
+                    "", exp.Base ?? ""
                 });
                 if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = Theme.Vert;
                 lvParefeu.Items.Add(bilan);
@@ -1218,6 +1237,18 @@ namespace DeR4Tizer
             if (lvFlux.SelectedItems.Count == 0) return;
             var f = (FluxInfo)lvFlux.SelectedItems[0].Tag;
             Bloquer(f.Processus, f.Ip, ipSeulement ? null : f.NomDns);
+        }
+
+        void ExceptionAlerte()
+        {
+            if (lvAlertes.SelectedItems.Count == 0) return;
+            var a = (Alerte)lvAlertes.SelectedItems[0].Tag;
+            if (a.Niveau == "Critique")
+            {
+                MessageBox.Show(L.En ? "Critical alerts cannot be silenced." : "Une alerte critique ne peut pas être mise en exception.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            Canal.Executer(new Commande { Action = "exception", Cible = a.Id });
         }
 
         void BloquerAlerte()

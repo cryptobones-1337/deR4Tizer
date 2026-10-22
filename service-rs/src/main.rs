@@ -12,11 +12,14 @@ mod capture;
 mod dpi;
 mod geoip;
 mod ids;
+mod maj;
 mod ndr;
 mod notifications;
 mod trafic;
+mod upnp;
 mod chaines;
 mod api;
+mod apprentissage;
 mod commun;
 mod defender;
 mod evenements;
@@ -255,7 +258,7 @@ fn main() {
         for a in lecteur.lire(&|pid| format!("prog{pid}")) {
             println!("[{}] {} : {}", a.niveau, a.processus, a.raisons);
         }
-        let b = lecteur.bilan(&[]);
+        let b = lecteur.bilan(&[], &Default::default());
         println!("exposé : {} — {:?}", b.exposee, b.raisons);
         let _ = std::fs::remove_file(&f);
         return;

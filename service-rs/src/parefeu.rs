@@ -52,6 +52,8 @@ pub struct Exposition {
     pub adresses_publiques: Vec<String>,
     pub journal_paquets: bool,
     pub entrees: Vec<EntreeExposee>,
+    /// Ce sur quoi repose le verdict (journal des paquets, UPnP), pour ne pas affirmer plus qu'on ne sait
+    pub base: String,
 }
 
 // ------------------------------------------------------------ adresses
@@ -412,7 +414,7 @@ impl LecteurJournal {
     }
 
     /// Bilan d'exposition pour l'interface
-    pub fn bilan(&self, adresses: &[String]) -> Exposition {
+    pub fn bilan(&self, adresses: &[String], reseau: &crate::ndr::EtatReseau) -> Exposition {
         let mut entrees: Vec<EntreeExposee> = self.entrees.values().cloned().collect();
         entrees.sort_by(|a, b| b.derniere.cmp(&a.derniere));
         let hier = commun::heure(std::time::SystemTime::now() - Duration::from_secs(86400));
@@ -429,12 +431,20 @@ impl LecteurJournal {
         if bloquees > 0 {
             raisons.push(format!("{bloquees} source(s) d'Internet ont atteint le PC en 24 h (bloquées par le pare-feu)"));
         }
+        for r in reseau.redirections.iter().filter(|r| r.active && r.client == reseau.interface) {
+            raisons.push(format!("la box redirige le port {} ({}) d'Internet vers ce PC, port {} (UPnP{})", r.port_externe, r.protocole, r.port_interne,
+                if r.description.is_empty() { String::new() } else { format!(" : « {} »", r.description) }));
+        }
+        let base = format!("journal des paquets du pare-feu : {} ; redirections de la box (UPnP) : {}",
+            if self.actif() { "actif" } else { "INACTIF (redémarrez le PC pour l'activer), entrées non vérifiées" },
+            if reseau.upnp.is_empty() { "pas encore vérifiées".to_string() } else { reseau.upnp.clone() });
         Exposition {
             exposee: !raisons.is_empty(),
             raisons,
             adresses_publiques: adresses.to_vec(),
             journal_paquets: self.actif(),
             entrees: entrees.into_iter().take(50).collect(),
+            base,
         }
     }
 }

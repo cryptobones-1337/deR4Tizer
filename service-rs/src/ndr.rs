@@ -61,6 +61,9 @@ pub struct EtatReseau {
     pub repondeurs: Vec<Repondeur>,
     pub dernier_leurre: String,
     pub resultat_leurre: String,
+    /// Redirections de ports de la box (UPnP) et résultat de la dernière vérification
+    pub redirections: Vec<crate::upnp::Redirection>,
+    pub upnp: String,
 }
 
 struct Interne {
@@ -206,6 +209,7 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>) -> Ndr {
                 premier = false;
                 if !leurre_fait || dernier_leurre.elapsed() > Duration::from_secs(600) {
                     leurre(&i, locale);
+                    verifier_upnp(&i, locale);
                     dernier_leurre = Instant::now();
                     leurre_fait = true;
                 }
@@ -281,6 +285,33 @@ fn analyser_arp(i: &Arc<Mutex<Interne>>, locale: Ipv4Addr, premier: bool) {
     if g.etat.appareils.len() > 500 {
         g.etat.appareils.sort_by(|a, b| b.derniere_vue.cmp(&a.derniere_vue));
         g.etat.appareils.truncate(500);
+    }
+}
+
+// ------------------------------------------------------------ UPnP
+
+fn verifier_upnp(i: &Arc<Mutex<Interne>>, locale: Ipv4Addr) {
+    let resultat = crate::upnp::redirections(locale);
+    let mut g = i.lock().unwrap();
+    match resultat {
+        Ok(l) => {
+            let vers_pc: Vec<_> = l.iter().filter(|r| r.active && r.client == locale.to_string()).cloned().collect();
+            g.etat.upnp = format!("{} redirection(s) sur la box, dont {} vers ce PC", l.len(), vers_pc.len());
+            let anciennes = g.etat.redirections.clone();
+            for r in &vers_pc {
+                if !anciennes.contains(r) {
+                    g.alerter(format!("upnp|{}|{}", r.port_externe, r.protocole), "Alerte", 6, format!("port {} ({})", r.port_externe, r.protocole),
+                        format!("la box ouvre le port {} ({}) d'Internet vers ce PC (port {}) par UPnP{} : le PC est joignable depuis Internet sur ce port",
+                            r.port_externe, r.protocole, r.port_interne, if r.description.is_empty() { String::new() } else { format!(", « {} »", r.description) }),
+                        "T1133");
+                }
+            }
+            g.etat.redirections = l;
+        }
+        Err(e) => {
+            g.etat.upnp = e;
+            g.etat.redirections.clear();
+        }
     }
 }
 
