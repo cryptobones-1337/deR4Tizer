@@ -165,7 +165,9 @@ if ($compte) {
         if (-not $tenu.WaitForExit(15000)) { return 'le processus ne s''arrête pas' }
         $true
     }
-    $debut2 = Redemarrer-Service
+    # Dans Verifier : un redémarrage raté est un ÉCHOUÉ du tableau, pas un arrêt du script sans bilan
+    $debut2 = Get-Date
+    Verifier 'Second démarrage : le service redémarre et répond' { $script:debut2 = Redemarrer-Service; $true }
     $etat2 = Attendre-Etat $debut2
     Verifier 'Second démarrage : protection vérifiée' {
         if (-not $etat2) { return 'état non publié' }
