@@ -735,3 +735,139 @@ fn lot1_alerte_critique_locale_en_echec() {
     assert!(a.raisons.contains("n'a pas pu être écarté") && a.raisons.contains("pas remontée"));
     assert!(!a.raisons.contains("  "), "texte sans espaces doublés : {}", a.raisons);
 }
+
+// ------------------------------------------------------------ lot 1 bis : quarantaine et mise à l'écart sans perte
+
+fn dossier_test(nom: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("der4tizer-{nom}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// SID du compte du test (propriétaire de ce qu'il crée) et SDDL de quarantaine pour le test : même forme que
+/// celle du service, avec le compte du test à la place de SYSTEM (hors élévation, on ne peut pas donner un
+/// fichier à SYSTEM)
+fn sddl_test(d: &std::path::Path) -> (String, String) {
+    let moi = crate::natif::lire_securite(d).unwrap().proprietaire;
+    (moi.clone(), format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})"))
+}
+
+#[test]
+fn lot1bis_quarantaine_redemarrage_restauration() {
+    use crate::protection::{proprietaire_acceptable, trier_element, Tri};
+    use crate::reponse::{copier_en_quarantaine, restaurer_depuis, ElementQuarantaine, SDDL_QUARANTAINE};
+    let d = dossier_test("quarantaine");
+    let (moi, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let origine = d.join("Téléchargements").join("faux-positif.exe");
+    std::fs::create_dir_all(origine.parent().unwrap()).unwrap();
+    let contenu: Vec<u8> = (0..200_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    std::fs::write(&origine, &contenu).unwrap();
+    let (fichier, sha) = copier_en_quarantaine(&dq, &origine, "id1", &sddl).unwrap();
+    assert!(!origine.exists(), "original retiré");
+    let copie = dq.join(&fichier);
+    // La copie est créée par le service avec ses droits : propriétaire celui du SDDL (en service, SYSTEM)
+    let s = crate::natif::lire_securite(&copie).unwrap();
+    assert_eq!(s.proprietaire, moi);
+    assert!(s.protege);
+    assert!(SDDL_QUARANTAINE.starts_with("O:SY"), "en service, propriétaire SYSTEM");
+    // Redémarrage : une copie à SYSTEM est gardée par le tri (et non écartée comme avant)
+    assert!(proprietaire_acceptable("S-1-5-18"));
+    assert_eq!(trier_element(false, Some(true)), Tri::Garder);
+    let e = ElementQuarantaine { id: "id1".into(), chemin_origine: origine.display().to_string(), fichier: fichier.clone(), sha256: sha.clone(), ..Default::default() };
+    // Copie modifiée : refus
+    let mut altere = contenu.clone();
+    altere[10] ^= 1;
+    std::fs::write(&copie, &altere).unwrap();
+    assert!(restaurer_depuis(&dq, &e).unwrap_err().contains("modifiée"));
+    std::fs::write(&copie, &contenu).unwrap();
+    // Sans empreinte : refus
+    assert!(restaurer_depuis(&dq, &ElementQuarantaine { sha256: String::new(), ..e.clone() }).is_err());
+    // Emplacement d'origine occupé : refus, rien d'écrasé
+    std::fs::write(&origine, b"autre").unwrap();
+    assert!(restaurer_depuis(&dq, &e).is_err());
+    assert_eq!(std::fs::read(&origine).unwrap(), b"autre");
+    std::fs::remove_file(&origine).unwrap();
+    // Restauration : même contenu, copie retirée
+    restaurer_depuis(&dq, &e).unwrap();
+    assert_eq!(std::fs::read(&origine).unwrap(), contenu);
+    assert!(!copie.exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
+    use crate::reponse::{migrer_quarantaine, restaurer_depuis, ElementQuarantaine};
+    let d = dossier_test("migration");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    std::fs::create_dir_all(&dq).unwrap();
+    // Avant la 4.3 : déplacé tel quel (propriétaire de l'utilisateur), sans empreinte, nom « <id>.quarantaine »
+    std::fs::write(dq.join("ancien.quarantaine"), b"contenu d'origine").unwrap();
+    std::fs::write(dq.join("confiance.quarantaine"), b"deja sur").unwrap();
+    let origine = d.join("restaure.exe");
+    let mut liste = vec![
+        ElementQuarantaine { id: "ancien".into(), chemin_origine: origine.display().to_string(), ..Default::default() },
+        ElementQuarantaine { id: "confiance".into(), chemin_origine: d.join("x").display().to_string(), ..Default::default() },
+        ElementQuarantaine { id: "disparu".into(), chemin_origine: d.join("y").display().to_string(), ..Default::default() },
+    ];
+    let messages = migrer_quarantaine(&dq, &mut liste, &sddl, |p| Some(p.ends_with("confiance.quarantaine")));
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    // Recopié avec ses droits, empreinte enregistrée, ancienne copie retirée, contenu intact
+    assert!(liste[0].fichier.starts_with("ancien-") && liste[0].sha256.len() == 64);
+    assert!(!dq.join("ancien.quarantaine").exists());
+    assert_eq!(std::fs::read(dq.join(&liste[0].fichier)).unwrap(), b"contenu d'origine");
+    // Copie déjà de confiance : empreinte ajoutée, pas de recopie
+    assert!(liste[1].fichier.is_empty() && liste[1].sha256.len() == 64);
+    // Fichier absent : rien
+    assert!(liste[2].sha256.is_empty());
+    // Et la restauration fonctionne ensuite
+    restaurer_depuis(&dq, &liste[0]).unwrap();
+    assert_eq!(std::fs::read(&origine).unwrap(), b"contenu d'origine");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_deplacement_impossible_intact_et_echec_ferme() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = dossier_test("intact");
+    let f = d.join("config.json");
+    std::fs::write(&f, b"{\"piege\":1}").unwrap();
+    let mut ecartes = Vec::new();
+    {
+        // Tenu ouvert sans partage de suppression ; propriétaire déclaré non vérifié (à écarter)
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&f).unwrap();
+        crate::protection::trier_avec(&d, &d, &d.join("ecartes"), &mut ecartes, &|_| Some(false));
+    }
+    assert!(ecartes.iter().any(|e| e.starts_with("config.json") && e.contains("IMPOSSIBLE")), "{ecartes:?}");
+    assert_eq!(std::fs::read(&f).unwrap(), b"{\"piege\":1}", "jamais supprimé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_creation_de_ecartes_impossible_intact_et_echec_ferme() {
+    let d = dossier_test("sans-ecartes");
+    let f = d.join("apprentissage.json");
+    std::fs::write(&f, b"[]").unwrap();
+    let mut ecartes = Vec::new();
+    // Dossier de mise à l'écart impossible à créer (parent absent)
+    crate::protection::trier_avec(&d, &d, &d.join("absent").join("ecartes"), &mut ecartes, &|_| Some(false));
+    assert!(ecartes.iter().any(|e| e.starts_with("apprentissage.json") && e.contains("IMPOSSIBLE")), "{ecartes:?}");
+    assert_eq!(std::fs::read(&f).unwrap(), b"[]", "jamais supprimé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1bis_ecartes_suspect_mis_de_cote_sans_suppression() {
+    let d = dossier_test("ecartes-suspect");
+    let q = d.join("ecartes");
+    std::fs::create_dir_all(&q).unwrap();
+    std::fs::write(q.join("piece.json"), b"garde").unwrap();
+    // Propriétaire déclaré non vérifié : ecartes est mis de côté
+    crate::protection::preparer_quarantaine_avec(&q, &|_| Some(false)).unwrap();
+    assert!(!q.exists());
+    let suspect = std::fs::read_dir(&d).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("ecartes-suspect-")).unwrap().path();
+    assert_eq!(std::fs::read(suspect.join("piece.json")).unwrap(), b"garde", "contenu conservé");
+    let _ = std::fs::remove_dir_all(&d);
+}

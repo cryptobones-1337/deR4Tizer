@@ -670,3 +670,46 @@ pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> 
         r
     }
 }
+
+/// Copie un fichier vers un nouveau fichier créé directement avec son descripteur de sécurité (SDDL), par
+/// blocs (taille quelconque), et renvoie l'empreinte SHA-256 du contenu copié. La destination ne doit pas
+/// exister ; en cas d'échec, elle est supprimée.
+pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, sddl: &str) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Foundation::{HLOCAL, LocalFree, GENERIC_WRITE};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE};
+    let mut entree = std::fs::File::open(source).map_err(|e| format!("lecture de l'original : {e}"))?;
+    let (nom, s) = (large(&destination.to_string_lossy()), large(sddl));
+    let sortie = unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let h = CreateFileW(PCWSTR(nom.as_ptr()), GENERIC_WRITE.0, FILE_SHARE_NONE, Some(&attributs), CREATE_NEW, FILE_ATTRIBUTE_NORMAL, HANDLE::default());
+        let _ = LocalFree(HLOCAL(sd.0));
+        std::fs::File::from_raw_handle(h.map_err(|e| format!("création de la copie : {e}"))?.0 as _)
+    };
+    let mut sortie = sortie;
+    let mut empreinte = Sha256::new();
+    let mut tampon = vec![0u8; 1 << 16];
+    let r = (|| -> std::io::Result<()> {
+        loop {
+            let n = entree.read(&mut tampon)?;
+            if n == 0 {
+                break;
+            }
+            empreinte.update(&tampon[..n]);
+            sortie.write_all(&tampon[..n])?;
+        }
+        sortie.sync_all()
+    })();
+    drop(sortie);
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(destination);
+        return Err(format!("copie : {e}"));
+    }
+    Ok(empreinte.finalize().iter().map(|o| format!("{o:02x}")).collect())
+}
