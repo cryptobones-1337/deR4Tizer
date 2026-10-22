@@ -143,6 +143,8 @@ jobs:
   integration-maj:
     needs: windows
     runs-on: windows-latest
+    # Un scénario bloqué échoue au bout d'une heure et quart au lieu de tourner six heures
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
