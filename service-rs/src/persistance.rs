@@ -79,7 +79,7 @@ impl Persistance {
         }
         self.reference = releve.iter().map(|e| (e.cle.clone(), e.clone())).collect();
         if modifie {
-            commun::ecrire("demarrage.json", &releve);
+            let _ = commun::ecrire("demarrage.json", &releve);
         }
         self.entrees = releve;
         self.apprentissage = false;

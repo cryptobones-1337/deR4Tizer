@@ -267,7 +267,7 @@ impl Dpi {
             .map(|(j, (n, p))| Empreinte { ja3: j.clone(), nombre: *n, programmes: p.iter().cloned().collect() }).collect();
         empreintes.sort_by_key(|e| std::cmp::Reverse(e.nombre));
         empreintes.truncate(50);
-        commun::ecrire("dpi.json", &Etat {
+        let _ = commun::ecrire("dpi.json", &Etat {
             mis_a_jour: commun::maintenant(),
             sessions_tls: self.compteurs.0,
             requetes_http: self.compteurs.1,

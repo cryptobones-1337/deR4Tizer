@@ -155,9 +155,44 @@ pub fn trier_element(lien: bool, proprietaire_ok: Option<bool>) -> Tri {
     }
 }
 
+/// Crée le dossier « ecartes » s'il n'existe pas : avec ses droits dès la création en service, simplement
+/// hors service (tests, console, où le propriétaire est l'utilisateur)
+fn creer_ecartes(q: &Path) -> Result<(), String> {
+    if fs::symlink_metadata(q).is_ok() {
+        return Ok(());
+    }
+    let ok = if crate::natif::est_systeme() { crate::natif::creer_dossier_protege(q, SDDL_DOSSIER) } else { fs::create_dir(q).is_ok() };
+    if ok { Ok(()) } else { Err(format!("création de {} impossible", q.display())) }
+}
+
+/// Déplace un élément sans jamais le supprimer ni en changer le propriétaire : déplacement simple, puis par
+/// handle avec le privilège de restauration (droits verrouillés par leur propriétaire). Erreurs détaillées.
+fn deplacer_sans_perte(p: &Path, dest: &Path) -> Result<(), String> {
+    let mut erreurs = Vec::new();
+    match fs::rename(p, dest) {
+        Ok(()) => return Ok(()),
+        Err(e) => erreurs.push(format!("déplacement : {e}")),
+    }
+    // Privilège actif sur ce fil et pour ce seul appel. JAMAIS de prise de possession : un élément resté sur
+    // place aurait alors un propriétaire de confiance et serait chargé au démarrage suivant.
+    match crate::natif::avec_privilege_restauration(|| crate::natif::renommer_par_handle(p, dest)) {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(e)) => erreurs.push(format!("déplacement avec privilège : {e}")),
+        Err(e) => erreurs.push(format!("privilège de restauration : {e}")),
+    }
+    Err(erreurs.join(" ; "))
+}
+
 /// Parcourt le contenu sans suivre les liens : liens supprimés, éléments au propriétaire non vérifié mis de
-/// côté. Renvoie les chemins écartés (relatifs)
-fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
+/// côté dans `quarantaine`. Jamais de suppression : un élément qui ne peut pas être déplacé reste intact
+/// (propriétaire non vérifié, donc jamais lu) et le démarrage passe en échec fermé. Renvoie les chemins
+/// écartés (relatifs), avec « IMPOSSIBLE À ÉCARTER » pour les échecs.
+pub fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
+    trier_avec(dossier, racine, quarantaine, ecartes, &crate::natif::proprietaire_de_confiance)
+}
+
+/// `trier`, avec la lecture du propriétaire fournie (tests : résultat indépendant du compte qui les lance)
+pub fn trier_avec(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>, de_confiance: &dyn Fn(&Path) -> Option<bool>) {
     let relatif = |p: &Path| p.strip_prefix(racine).unwrap_or(p).display().to_string();
     // Ce qu'on ne peut pas examiner n'est pas gardé en silence : échec fermé
     let lecture = match fs::read_dir(dossier) {
@@ -183,53 +218,46 @@ fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<St
                 continue;
             }
         };
-        match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&p)) {
+        match trier_element(est_lien(&m), de_confiance(&p)) {
             Tri::SupprimerLien => {
                 supprimer_lien(&p);
                 let ok = fs::symlink_metadata(&p).is_err();
                 ecartes.push(format!("{} (lien supprimé){}", relatif(&p), if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
             }
             Tri::Ecarter => {
-                let _ = fs::create_dir_all(quarantaine);
                 let dest = quarantaine.join(format!("{}-{}", commun::nouvel_id(), relatif(&p).replace(['\\', '/'], "_")));
-                // Chaque étape note son erreur : le journal dit pourquoi un élément n'a pas pu être écarté
-                let mut erreurs = Vec::new();
-                let mut ok = fs::rename(&p, &dest).map_err(|e| erreurs.push(format!("déplacement : {e}"))).is_ok();
-                if !ok {
-                    // Droits verrouillés par leur propriétaire (DACL vide d'un dossier, par exemple) : déplacement
-                    // par handle avec le privilège de restauration, actif sur ce fil et pour ce seul appel.
-                    // JAMAIS de prise de possession : un élément qui resterait sur place aurait alors un
-                    // propriétaire de confiance et serait chargé au démarrage suivant.
-                    match crate::natif::avec_privilege_restauration(|| crate::natif::renommer_par_handle(&p, &dest)) {
-                        Ok(Ok(())) => ok = true,
-                        Ok(Err(e)) => erreurs.push(format!("déplacement avec privilège : {e}")),
-                        Err(e) => erreurs.push(format!("privilège de restauration : {e}")),
-                    }
-                }
-                if !ok {
-                    ok = (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) })
-                        .map_err(|e| erreurs.push(format!("suppression : {e}"))).is_ok();
-                }
-                // Échec : l'élément reste tel quel, propriétaire non vérifié, donc jamais lu ; démarrage en échec fermé
-                ecartes.push(format!("{}{}", relatif(&p), if ok { String::new() } else { format!(" (IMPOSSIBLE À ÉCARTER : {})", erreurs.join(" ; ")) }));
+                let r = creer_ecartes(quarantaine).and_then(|_| deplacer_sans_perte(&p, &dest));
+                // Échec : l'élément reste tel quel, jamais supprimé ; démarrage en échec fermé
+                ecartes.push(match r {
+                    Ok(()) => relatif(&p),
+                    Err(e) => format!("{} (IMPOSSIBLE À ÉCARTER : {e})", relatif(&p)),
+                });
             }
-            Tri::Garder if m.is_dir() => trier(&p, racine, quarantaine, ecartes),
+            Tri::Garder if m.is_dir() => trier_avec(&p, racine, quarantaine, ecartes, de_confiance),
             Tri::Garder => {}
         }
     }
 }
 
 /// Dossier « ecartes » : lui-même soumis à la règle (un compte standard pourrait l'avoir créé d'avance, ou en
-/// avoir fait un lien). S'il n'est pas sûr, il est supprimé (sans suivre de lien)
-fn preparer_quarantaine(q: &Path) -> Result<(), String> {
+/// avoir fait un lien). S'il n'est pas sûr, il est mis de côté sous un autre nom, jamais supprimé ; s'il ne
+/// peut pas l'être, échec fermé. Il est ensuite (re)créé avec ses droits au premier élément à écarter.
+pub fn preparer_quarantaine(q: &Path) -> Result<(), String> {
+    preparer_quarantaine_avec(q, &crate::natif::proprietaire_de_confiance)
+}
+
+pub fn preparer_quarantaine_avec(q: &Path, de_confiance: &dyn Fn(&Path) -> Option<bool>) -> Result<(), String> {
     let Ok(m) = fs::symlink_metadata(q) else { return Ok(()) };
-    match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(q)) {
+    match trier_element(est_lien(&m), de_confiance(q)) {
         Tri::Garder => Ok(()),
         Tri::SupprimerLien => {
             supprimer_lien(q);
             if fs::symlink_metadata(q).is_ok() { Err("le dossier ecartes est un lien impossible à supprimer".into()) } else { Ok(()) }
         }
-        Tri::Ecarter => fs::remove_dir_all(q).map_err(|e| format!("dossier ecartes au propriétaire non vérifié, impossible à supprimer ({e})")),
+        Tri::Ecarter => {
+            let suspect = q.with_file_name(format!("ecartes-suspect-{}", commun::nouvel_id()));
+            deplacer_sans_perte(q, &suspect).map_err(|e| format!("dossier ecartes au propriétaire non vérifié, impossible à mettre de côté ({e})"))
+        }
     }
 }
 
@@ -338,6 +366,9 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     }
     let quarantaine = racine.join("ecartes");
     preparer_quarantaine(&quarantaine)?;
+    // Quarantaine : reprise des transactions interrompues, puis copies d'avant la 4.3 (propriétaire de
+    // l'utilisateur) recopiées avec leurs droits avant le tri, qui sinon les écarterait (restauration impossible)
+    messages.extend(crate::reponse::reprendre_et_migrer_quarantaine_service());
     let mut ecartes = Vec::new();
     trier(racine, racine, &quarantaine, &mut ecartes);
     if !ecartes.is_empty() {
@@ -375,7 +406,7 @@ pub fn autoriser(sid: &str) -> Result<String, String> {
     let nom = nom_de(sid);
     if !l.iter().any(|x| x.sid == sid) {
         l.push(Lecteur { sid: sid.into(), nom: if nom.is_empty() { sid.into() } else { nom.clone() } });
-        commun::ecrire("lecteurs.json", &l);
+        let _ = commun::ecrire("lecteurs.json", &l);
     }
     if !appliquer(&l) {
         return Err("pose des droits refusée par Windows".into());
@@ -393,7 +424,7 @@ pub fn demarrer(alertes: std::sync::Arc<std::sync::Mutex<Vec<commun::Alerte>>>) 
             if l.is_empty() {
                 if let Some(u) = utilisateur_console() {
                     l.push(u);
-                    commun::ecrire("lecteurs.json", &l);
+                    let _ = commun::ecrire("lecteurs.json", &l);
                 }
             }
             let resultat = if appliquer(&l) {

@@ -209,7 +209,7 @@ impl Moniteur {
             let domaines: Vec<String> = m.blocages.iter().filter(|b| b.type_ == "hosts").map(|b| b.cible.clone()).collect();
             if blocage::ecrire_bloc_hosts(&domaines).is_ok() {
                 m.empreinte_hosts = blocage::empreinte_hosts();
-                commun::ecrire("blocages.json", &m.blocages);
+                let _ = commun::ecrire("blocages.json", &m.blocages);
                 commun::journal(&format!("blocage de la télémétrie retiré du fichier hosts ({} domaine(s))", telemetrie.len()));
             }
         }
@@ -263,7 +263,7 @@ impl Moniteur {
                         if let Some(avant) = &baseline_avant {
                             p.alertes_externes.lock().unwrap().extend(baseline::derives(avant, &b));
                         }
-                        commun::ecrire("baseline.json", &b);
+                        let _ = commun::ecrire("baseline.json", &b);
                         baseline_avant = Some(b);
                     }
                     premier = false;
@@ -296,7 +296,7 @@ impl Moniteur {
 
     pub fn arreter(&self) {
         self.partage.arret.store(true, Ordering::Relaxed);
-        commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
+        let _ = commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
         commun::journal("arrêt");
     }
 
@@ -544,10 +544,10 @@ impl Moniteur {
                 let surplus = self.alertes.len() - 1000;
                 self.alertes.drain(..surplus);
             }
-            commun::ecrire("alertes.json", &self.alertes);
+            let _ = commun::ecrire("alertes.json", &self.alertes);
         }
         if exes_modifies {
-            commun::ecrire("executables.json", &self.executables_vus.iter().collect::<Vec<_>>());
+            let _ = commun::ecrire("executables.json", &self.executables_vus.iter().collect::<Vec<_>>());
         }
         if self.apprentissage && !self.premier_passage {
             self.apprentissage = false;
@@ -566,7 +566,7 @@ impl Moniteur {
         if signature_etat != self.derniere_signature_etat || self.dernier_etat_ecrit.elapsed() >= Duration::from_secs(30) {
             let ip_connues = self.partage.dns.lock().unwrap().len();
             let n = flux.len();
-            commun::ecrire("etat.json", &Etat {
+            let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
                 version: commun::VERSION.into(),
@@ -592,7 +592,7 @@ impl Moniteur {
             }
         }
         if self.derniere_sauvegarde_dns.elapsed() >= Duration::from_secs(300) {
-            commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
+            let _ = commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
             self.derniere_sauvegarde_dns = Instant::now();
         }
         self.premier_passage = false;
@@ -691,7 +691,7 @@ impl Moniteur {
                     }
                     Some("ListesRestreintes") => {
                         self.config.listes_restreintes = actif;
-                        commun::ecrire("config.json", &self.config);
+                        let _ = commun::ecrire("config.json", &self.config);
                         let p = partage.clone();
                         std::thread::spawn(move || mettre_a_jour_menaces(&p, true));
                         "Listes non commerciales ou non vérifiées"
@@ -706,7 +706,7 @@ impl Moniteur {
                     }
                     _ => return Reponse::erreur("réglage inconnu"),
                 };
-                commun::ecrire("config.json", &self.config);
+                let _ = commun::ecrire("config.json", &self.config);
                 Reponse::ok(format!("{quoi} {}.", if actif { "activé(e)" } else { "désactivé(e)" }))
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
@@ -732,7 +732,7 @@ impl Moniteur {
                     self.config.api = n.api;
                     crate::api::demarrer(&self.config.api);
                 }
-                commun::ecrire("config.json", &self.config);
+                let _ = commun::ecrire("config.json", &self.config);
                 Reponse::ok("Réglages enregistrés.")
             }
             "testerSyslog" => {
@@ -759,7 +759,7 @@ impl Moniteur {
                     return Reponse::erreur(format!("Secrets non enregistrés : {e}"));
                 }
                 self.config.notifications = d.config.unwrap_or_default();
-                commun::ecrire("config.json", &self.config);
+                let _ = commun::ecrire("config.json", &self.config);
                 crate::notifications::configurer(&self.config.notifications);
                 if action == "testerNotifications" {
                     match crate::notifications::tester(&self.config.notifications) {
@@ -791,7 +791,7 @@ impl Moniteur {
                     return Reponse::erreur("L'adresse du manifeste doit commencer par https://");
                 }
                 self.config.maj = m;
-                commun::ecrire("config.json", &self.config);
+                let _ = commun::ecrire("config.json", &self.config);
                 Reponse::ok("Réglages de mise à jour enregistrés.")
             }
             "autoriserLecteur" => match crate::protection::autoriser(c.valeur.as_deref().unwrap_or("")) {
@@ -873,7 +873,7 @@ En-tête : Authorization: Bearer {j}"))
                 match reponse::isoler_programme(&chemin) {
                     Ok(()) => {
                         self.blocages.push(Blocage { type_: "programme".into(), cible: chemin.clone(), raison, date: commun::maintenant(), expire: String::new() });
-                        commun::ecrire("blocages.json", &self.blocages);
+                        let _ = commun::ecrire("blocages.json", &self.blocages);
                         Reponse::ok(format!("{chemin} est coupé du réseau (entrant et sortant)."))
                     }
                     Err(e) => Reponse::erreur(format!("Pare-feu : {e}")),
@@ -904,7 +904,7 @@ En-tête : Authorization: Bearer {j}"))
                     commun::journal(&format!("baseline {operation} {cible} : {message}"));
                     let mut b = baseline::evaluer();
                     b.message = message;
-                    commun::ecrire("baseline.json", &b);
+                    let _ = commun::ecrire("baseline.json", &b);
                     p.baseline_occupee.store(false, Ordering::Relaxed);
                 });
                 Reponse::ok("Opération lancée : la GPO locale est mise à jour (environ 30 secondes). Le résultat s'affichera dans l'onglet Baseline.")
@@ -929,7 +929,7 @@ En-tête : Authorization: Bearer {j}"))
         for d in &nouveaux {
             self.blocages.push(Blocage { type_: "hosts".into(), cible: d.clone(), raison: raison.into(), date: commun::maintenant(), expire: String::new() });
         }
-        commun::ecrire("blocages.json", &self.blocages);
+        let _ = commun::ecrire("blocages.json", &self.blocages);
         let coupees = ip_a_couper.map(|ip| self.couper(ip)).unwrap_or(0);
         Reponse::ok(format!("{} domaine(s) redirigé(s) vers 127.0.0.1{}", nouveaux.len(), message_coupure(coupees)))
     }
@@ -946,7 +946,7 @@ En-tête : Authorization: Bearer {j}"))
                 return Reponse::erreur(format!("Pare-feu : {e}"));
             }
             self.blocages.push(Blocage { type_: "parefeu".into(), cible: ip.into(), raison: raison.into(), date: commun::maintenant(), expire: String::new() });
-            commun::ecrire("blocages.json", &self.blocages);
+            let _ = commun::ecrire("blocages.json", &self.blocages);
         }
         let coupees = self.couper(ip);
         Reponse::ok(format!("Connexions sortantes vers {ip} bloquées par le pare-feu{}", message_coupure(coupees)))
@@ -960,7 +960,7 @@ En-tête : Authorization: Bearer {j}"))
             let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400));
             if let Some(b) = self.blocages.iter_mut().find(|b| b.type_ == "parefeu" && b.cible == ip && b.expire.is_empty() && b.raison == raison) {
                 b.expire = fin;
-                commun::ecrire("blocages.json", &self.blocages);
+                let _ = commun::ecrire("blocages.json", &self.blocages);
             }
         }
         r
@@ -998,7 +998,7 @@ En-tête : Authorization: Bearer {j}"))
             }
             self.empreinte_hosts = blocage::empreinte_hosts();
         }
-        commun::ecrire("blocages.json", &self.blocages);
+        let _ = commun::ecrire("blocages.json", &self.blocages);
         Reponse::ok(format!("{cible} débloqué."))
     }
 
@@ -1014,7 +1014,7 @@ En-tête : Authorization: Bearer {j}"))
         }
         self.empreinte_hosts = blocage::empreinte_hosts();
         self.blocages.clear();
-        commun::ecrire("blocages.json", &self.blocages);
+        let _ = commun::ecrire("blocages.json", &self.blocages);
         Reponse::ok(format!("Tous les blocages retirés ({regles} règle(s) de pare-feu)."))
     }
 }

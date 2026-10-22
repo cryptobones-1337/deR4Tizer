@@ -670,3 +670,65 @@ pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> 
         r
     }
 }
+
+/// Copie un fichier vers un nouveau fichier créé directement avec son descripteur de sécurité (SDDL), par
+/// blocs (taille quelconque), et renvoie l'empreinte SHA-256 du contenu copié. La destination ne doit pas
+/// exister ; en cas d'échec, elle est supprimée.
+pub fn copier_protege(source: &std::path::Path, destination: &std::path::Path, sddl: &str) -> Result<String, String> {
+    copier_protege_avec(source, destination, sddl, &[], &mut |_, _| {})
+}
+
+/// `copier_protege`, avec un en-tête écrit avant le contenu et une transformation appliquée à chaque bloc
+/// (paramètres : octets du bloc, position du bloc dans le fichier d'origine). L'empreinte renvoyée est
+/// celle du contenu d'ORIGINE, avant transformation.
+pub fn copier_protege_avec(source: &std::path::Path, destination: &std::path::Path, sddl: &str, entete: &[u8],
+                           transformer: &mut dyn FnMut(&mut [u8], u64)) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Foundation::{HLOCAL, LocalFree, GENERIC_WRITE};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE};
+    let mut entree = std::fs::File::open(source).map_err(|e| format!("lecture de l'original : {e}"))?;
+    let (nom, s) = (large(&destination.to_string_lossy()), large(sddl));
+    let sortie = unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let h = CreateFileW(PCWSTR(nom.as_ptr()), GENERIC_WRITE.0, FILE_SHARE_NONE, Some(&attributs), CREATE_NEW, FILE_ATTRIBUTE_NORMAL, HANDLE::default());
+        let _ = LocalFree(HLOCAL(sd.0));
+        std::fs::File::from_raw_handle(h.map_err(|e| format!("création de la copie : {e}"))?.0 as _)
+    };
+    let mut sortie = sortie;
+    let mut empreinte = Sha256::new();
+    let mut tampon = vec![0u8; 1 << 16];
+    let r = (|| -> std::io::Result<()> {
+        sortie.write_all(entete)?;
+        let mut position = 0u64;
+        loop {
+            let n = entree.read(&mut tampon)?;
+            if n == 0 {
+                break;
+            }
+            empreinte.update(&tampon[..n]);
+            transformer(&mut tampon[..n], position);
+            position += n as u64;
+            sortie.write_all(&tampon[..n])?;
+        }
+        sortie.sync_all()
+    })();
+    drop(sortie);
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(destination);
+        return Err(format!("copie : {e}"));
+    }
+    Ok(empreinte.finalize().iter().map(|o| format!("{o:02x}")).collect())
+}
+
+/// Remplace `destination` par `source` (même volume), écriture immédiate sur le disque
+pub fn remplacer_fichier(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+    let (s, d) = (large(&source.to_string_lossy()), large(&destination.to_string_lossy()));
+    unsafe { MoveFileExW(PCWSTR(s.as_ptr()), PCWSTR(d.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH).map_err(|e| e.to_string()) }
+}
