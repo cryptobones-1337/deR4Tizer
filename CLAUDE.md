@@ -129,6 +129,11 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 - `api.rs`, `/api/v1/sante` : ne plus renvoyer le nom de la machine sans jeton.
 - `canal.rs` : délai maximal de lecture d'une commande (un client admin silencieux bloque aujourd'hui tout le canal) et taille maximale déjà bornée, à tester.
 - Documenter dans le README que `msiexec /fa` (réparation) par un compte standard arrête puis relance brièvement le service.
+- Lectures du dossier de données hors de `commun::lire_fichier` (menaces.rs, ids.rs `regles\`, hygiene.rs
+  `loldrivers.json`, dpi.rs JA3, siem.rs) : propriétaire contrôlé partout ; en échec fermé, aucune réponse
+  automatique alimentée par ces fichiers (blocage automatique, IPS).
+- `commun::lisible_en_echec` : retirer `dns.json`.
+- `natif::avec_privilege_restauration` : si `RevertToSelf` échoue, arrêter le service.
 
 ### Ensuite (après validation des lots 1 à 5, une phase à la fois, avec accord)
 
