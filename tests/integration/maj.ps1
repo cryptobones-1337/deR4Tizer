@@ -95,9 +95,29 @@ function Rien-Installe {
     $true
 }
 
-# Refus attendu : statut contenant $Motif, requêtes exigées, rien d'installé
+# Remet la version courante si un scénario a laissé autre chose (installation lancée à tort) : attend la fin de
+# msiexec et du script, puis installe le paquet courant. Les scénarios suivants partent ainsi du même état.
+function Remettre-Courante {
+    $fin = (Get-Date).AddSeconds(420)
+    do { Start-Sleep 10 } while ((@(Get-Process msiexec -ErrorAction SilentlyContinue).Count -gt 1 -or
+        @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'Lire-Reponse' }).Count) -and (Get-Date) -lt $fin)
+    Garder-Journaux 'remise-en-etat'
+    $p = @(Produits)
+    $j = Attendre-Canal 30
+    if ($p.Count -eq 1 -and $p[0].DisplayVersion.StartsWith($Courante) -and $j -and $j.Message -eq "deR4Tizer $Courante") { return }
+    [void](Installer (Msi $Courante) (Join-Path $Journaux "remise-en-etat-$(Get-Date -Format HHmmss).log"))
+    [void](Attendre-Canal)
+}
+
+# Refus attendu : statut contenant $Motif, requêtes exigées, rien d'installé. Une installation lancée à tort est
+# un échec, et l'état est remis avant de continuer.
 function Refus([string]$Motif, [string[]]$Exigees, [string[]]$Interdites = @()) {
     $v = Verification
+    if ($v.Etat.Statut -match 'installation de la version .* en cours') {
+        Publier-Neutre
+        Remettre-Courante
+        return "installation lancée au lieu d'un refus (statut : $($v.Etat.Statut)) ; version courante remise"
+    }
     if ($v.Etat.Statut -notmatch [regex]::Escape($Motif)) { return "statut : $($v.Etat.Statut)" }
     $r = Requetes-Attendues $v $Exigees $Interdites; if ($r -ne $true) { return $r }
     Rien-Installe
@@ -225,6 +245,7 @@ Publier-Neutre
 foreach ($cas in @(
     @{ Nom = 'casse'; Titre = "Paquet cassé (exécutable du service invalide) : retour à $Courante, une seule entrée « Applications »" },
     @{ Nom = 'ancien'; Titre = "Service qui répond mal ($Nouvelle contenant l'exécutable $Courante) : retour à $Courante (version plus ancienne), une seule entrée « Applications »" })) {
+    Remettre-Courante
     Publier $Nouvelle (Msi "$Nouvelle-$($cas.Nom)") (Msi $Courante)
     Verifier $cas.Titre {
         Installation-Lancee
@@ -243,6 +264,7 @@ foreach ($cas in @(
 NonExecute 'Service muet après l''installation (tube absent ou tenu par un autre processus)' 'couvert seulement par le mode simulation de script_installation (tests unitaires)'
 
 # ---------------------------------------------------------------- mise à jour réussie
+Remettre-Courante
 Publier $Nouvelle (Msi $Nouvelle) (Msi $Courante)
 Verifier "Mise à jour $Courante → $Nouvelle réussie : service de la nouvelle version, une seule entrée, aucun retour arrière" {
     Installation-Lancee
