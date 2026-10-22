@@ -295,10 +295,10 @@ foreach (`$l in [IO.File]::ReadAllLines('$liste')) {
     $attendu = 1 + @($cibles | Where-Object { $_ -like 'D|*' }).Count * 2 + @($cibles | Where-Object { $_ -like 'F|*' }).Count
     if ($lignes.Count -ne $attendu) { return "$($lignes.Count) résultats pour $attendu essais" }
     # Fichier de travail du service (*.tmp renommé) disparu entre l'énumération et l'essai : ni refus ni accès ;
-    # écarté seulement s'il n'existe plus au moment du contrôle
+    # écarté seulement s'il n'existe plus au moment du contrôle. Toute autre disparition reste un écart.
     $lignes = @($lignes | Where-Object {
         $c = $_ -split '\|'
-        -not ($c[0] -eq 'ECRIRE' -and $c[-1] -eq 'FileNotFoundException' -and -not (Test-Path -LiteralPath $c[1]))
+        -not ($c[0] -eq 'ECRIRE' -and $c[1] -like '*.tmp' -and $c[-1] -eq 'FileNotFoundException' -and -not (Test-Path -LiteralPath $c[1]))
     })
     $mauvais = @($lignes | Where-Object { ($_ -split '\|')[-1] -ne 'UnauthorizedAccessException' })
     if ($mauvais.Count) { return "$($mauvais.Count) essai(s) non refusé(s) sur $attendu : " + (($mauvais | Select-Object -First 8) -join ' ; ') }
