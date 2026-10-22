@@ -779,7 +779,7 @@ impl Manifeste {
 #[test]
 fn lot1bis_quarantaine_redemarrage_restauration() {
     use crate::protection::{trier_element, Tri};
-    use crate::reponse::{quarantaine_transaction, restaurer_transaction, EtatQuarantaine, SDDL_QUARANTAINE};
+    use crate::reponse::{quarantaine_transaction, EtatQuarantaine, SDDL_QUARANTAINE};
     let d = dossier_test("quarantaine");
     let (moi, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -805,15 +805,15 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
     let mut altere = contenu.clone();
     altere[10] ^= 1;
     std::fs::write(&copie, &altere).unwrap();
-    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap_err().contains("modifiée"));
+    assert!(restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap_err().contains("modifiée"));
     std::fs::write(&copie, &contenu).unwrap();
     // Emplacement d'origine occupé : refus, rien d'écrasé
     std::fs::write(&origine, b"autre").unwrap();
-    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).is_err());
+    assert!(restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).is_err());
     assert_eq!(std::fs::read(&origine).unwrap(), b"autre");
     std::fs::remove_file(&origine).unwrap();
     // Restauration : même contenu, copie et entrée retirées
-    restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), contenu);
     assert!(!copie.exists() && liste.is_empty() && m.lu().is_empty());
     let _ = std::fs::remove_dir_all(&d);
@@ -821,7 +821,7 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
 
 #[test]
 fn lot1bis_marque_internet_conservee() {
-    use crate::reponse::{lire_marque_internet, migrer_quarantaine, quarantaine_transaction, restaurer_transaction, ElementQuarantaine};
+    use crate::reponse::{lire_marque_internet, migrer_quarantaine, quarantaine_transaction, ElementQuarantaine};
     let d = dossier_test("marque");
     let (_, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -834,7 +834,7 @@ fn lot1bis_marque_internet_conservee() {
     let mut liste = Vec::new();
     quarantaine_transaction(&dq, &mut liste, &f, "z1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
     assert!(liste[0].zone_identifier.contains("ZoneId=3"));
-    restaurer_transaction(&dq, &mut liste, "z1", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "z1", &|l| m.ecrire(l)).unwrap();
     assert!(lire_marque_internet(&f).contains("ZoneId=3"), "marque réécrite sur le fichier restauré");
     // Migration d'une ancienne copie (déplacée avec son flux), puis restauration
     std::fs::write(dq.join("ancien.quarantaine"), b"MZ ancien").unwrap();
@@ -843,14 +843,14 @@ fn lot1bis_marque_internet_conservee() {
     let mut liste = vec![ElementQuarantaine { id: "ancien".into(), chemin_origine: g.display().to_string(), ..Default::default() }];
     migrer_quarantaine(&dq, &mut liste, &sddl, |_| Some(false), &|l| m.ecrire(l));
     assert!(liste[0].zone_identifier.contains("ZoneId=3"));
-    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
     assert!(lire_marque_internet(&g).contains("ZoneId=3"));
     let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
 fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
-    use crate::reponse::{migrer_quarantaine, restaurer_transaction, ElementQuarantaine};
+    use crate::reponse::{migrer_quarantaine, ElementQuarantaine};
     let d = dossier_test("migration");
     let (_, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -878,7 +878,7 @@ fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
     assert!(liste[1].fichier.starts_with("confiance-") && liste[1].sha256.len() == 64);
     assert!(liste[2].sha256.is_empty());
     assert_eq!(m.lu(), liste, "nouvelle copie enregistrée");
-    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), b"contenu d'origine");
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -907,7 +907,7 @@ fn lot1bis_decision_de_reprise() {
 
 #[test]
 fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
-    use crate::reponse::{quarantaine_transaction, reprendre_quarantaine, restaurer_transaction, EtatQuarantaine, ElementQuarantaine};
+    use crate::reponse::{quarantaine_transaction, reprendre_quarantaine, EtatQuarantaine, ElementQuarantaine};
     use std::os::windows::fs::OpenOptionsExt;
     let d = dossier_test("transaction");
     let (_, sddl) = sddl_test(&d);
@@ -954,7 +954,7 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
 
     // 4. Restauration, échec de l'enregistrement « restauree » : fichier restauré retiré, copie et entrée intactes
     let m = Manifeste::new(&d, 1);
-    assert!(restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).is_err());
+    assert!(restaurer_test(&dq, &mut liste, "a", &|l| m.ecrire(l)).is_err());
     assert!(!f.exists() && copies() == 1 && liste[0].etat() == EtatQuarantaine::Terminee);
 
     // 5. Dossier d'origine impossible à créer (un fichier à sa place) : erreur avant toute copie
@@ -963,12 +963,12 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
     let mut autre = liste.clone();
     autre[0].chemin_origine = bloque.join("sous").join("a.exe").display().to_string();
     let m = Manifeste::new(&d, 0);
-    assert!(restaurer_transaction(&dq, &mut autre, "a", &|l| m.ecrire(l)).unwrap_err().contains("dossier d'origine"));
+    assert!(restaurer_test(&dq, &mut autre, "a", &|l| m.ecrire(l)).unwrap_err().contains("dossier d'origine"));
     assert!(copies() == 1 && m.appels.get() == 0, "rien de copié ni d'enregistré");
 
     // 6. Restauration interrompue après l'enregistrement « restauree » : la reprise retire la copie et l'entrée
     let m = Manifeste::new(&d, 2);
-    restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "a", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
     let mut lu = m.lu();
     assert_eq!(lu[0].etat(), EtatQuarantaine::Restauree);
@@ -1063,7 +1063,7 @@ fn eicar() -> Vec<u8> {
 
 #[test]
 fn lot1bis_copie_encodee_jamais_en_clair() {
-    use crate::reponse::{encoder_flux, entete_encodage, est_encodee, nonce_de, quarantaine_transaction, restaurer_transaction};
+    use crate::reponse::{encoder_flux, entete_encodage, est_encodee, nonce_de, quarantaine_transaction};
     // En mémoire : la chaîne EICAR encodée ne contient plus la chaîne, ni aucun de ses motifs de 8 octets
     let e = eicar();
     assert_eq!(e.len(), 68);
@@ -1104,7 +1104,139 @@ fn lot1bis_copie_encodee_jamais_en_clair() {
     let fenetres: std::collections::HashSet<&[u8]> = contenu.windows(16).collect();
     assert!(!copie.windows(16).any(|w| fenetres.contains(w)));
     // Restauration identique à l'octet
-    restaurer_transaction(&dq, &mut liste, "enc", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "enc", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&f).unwrap(), contenu);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ------------------------------------------------------------ lot 1 ter : opérations SYSTEM sur des chemins de l'utilisateur
+
+/// Restauration de test à l'emplacement d'origine de l'entrée, avec la création sans lien (en service, la
+/// même création se fait sous l'identité du propriétaire)
+fn restaurer_test(dq: &std::path::Path, liste: &mut Vec<crate::reponse::ElementQuarantaine>, id: &str,
+                  ecrire: crate::reponse::EcrireManifeste) -> Result<String, String> {
+    let cible = std::path::PathBuf::from(&liste.iter().find(|e| e.id == id).ok_or("élément introuvable")?.chemin_origine);
+    crate::reponse::restaurer_transaction(dq, liste, id, &cible, &crate::reponse::creer_sans_lien, ecrire)
+}
+
+/// Jonction (pas besoin d'élévation) `lien` → `cible`
+fn jonction(lien: &std::path::Path, cible: &std::path::Path) {
+    let s = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(lien).arg(cible).output().unwrap();
+    assert!(s.status.success(), "mklink /J : {}", String::from_utf8_lossy(&s.stderr));
+}
+
+fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(d).map(|l| l.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+    v.sort();
+    v
+}
+
+#[test]
+fn lot1ter_meme_chemin_et_chemin_final() {
+    use crate::natif::{chemin_final, meme_chemin, ouvrir_verifie, ErreurOuverture};
+    assert!(meme_chemin(r"\\?\C:\Users\Marie\x.txt", r"c:\users\marie\X.TXT"));
+    assert!(meme_chemin(r"\\?\UNC\serveur\partage\x", r"\\serveur\partage\x\"));
+    assert!(meme_chemin("C:/a/b", r"C:\a\b"));
+    assert!(!meme_chemin(r"C:\a\b", r"C:\a\bc"));
+    assert!(!meme_chemin("", ""));
+    assert!(!meme_chemin(r"\\?\C:\Windows\System32\x", r"C:\Users\x"));
+    let d = dossier_test("chemin-final");
+    let f = d.join("a.txt");
+    std::fs::write(&f, b"a").unwrap();
+    let h = ouvrir_verifie(&f, 0x8000_0000 | 0x0010_0000, 0x7, false).unwrap();
+    assert!(meme_chemin(&chemin_final(&h).unwrap(), &f.to_string_lossy()));
+    assert_eq!(ouvrir_verifie(&d.join("absent.txt"), 0x8000_0000, 0x7, false).unwrap_err(), ErreurOuverture::Absent);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_jonction_avant_restauration() {
+    use crate::reponse::{creer_sans_lien, quarantaine_transaction};
+    let d = dossier_test("jonction-restauration");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let origine = d.join("Documents");
+    let systeme = d.join("systeme"); // tient lieu de dossier système
+    std::fs::create_dir_all(&origine).unwrap();
+    std::fs::create_dir_all(&systeme).unwrap();
+    let f = origine.join("pilote.dll");
+    std::fs::write(&f, b"contenu").unwrap();
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    quarantaine_transaction(&dq, &mut liste, &f, "j1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
+    // Avant la restauration, Documents est remplacé par une jonction vers le dossier « système »
+    std::fs::remove_dir(&origine).unwrap();
+    jonction(&origine, &systeme);
+    let r = restaurer_test(&dq, &mut liste, "j1", &|l| m.ecrire(l));
+    assert!(r.unwrap_err().contains("lien"), "restauration refusée");
+    assert!(contenu_dossier(&systeme).is_empty(), "rien d'écrit hors du dossier d'origine");
+    assert_eq!(liste.len(), 1, "copie et entrée intactes");
+    // Même sans le contrôle préalable (jonction posée juste après lui) : création détournée détectée par le
+    // chemin final, fichier créé supprimé par son handle
+    assert!(crate::natif::creer_verifie(&f).is_err());
+    assert!(contenu_dossier(&systeme).is_empty(), "fichier détourné retiré");
+    assert!(creer_sans_lien(&f).is_err());
+    std::fs::remove_dir(&origine).unwrap(); // retire la jonction, pas sa cible
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_jonction_pendant_la_quarantaine() {
+    use crate::reponse::quarantaine_transaction;
+    let d = dossier_test("jonction-quarantaine");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let telechargements = d.join("Telechargements");
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    std::fs::write(systeme.join("setup.exe"), b"fichier systeme").unwrap();
+    // Entre le contrôle (chemin demandé dans Téléchargements) et l'opération, le dossier devient une jonction
+    jonction(&telechargements, &systeme);
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    let r = quarantaine_transaction(&dq, &mut liste, &telechargements.join("setup.exe"), "q1", "test", &sddl, &|l| m.ecrire(l));
+    assert!(r.unwrap_err().contains("ailleurs"), "chemin final différent : refus");
+    assert_eq!(std::fs::read(systeme.join("setup.exe")).unwrap(), b"fichier systeme", "rien de supprimé");
+    assert!(contenu_dossier(&dq).is_empty() && liste.is_empty(), "rien de lu ni de copié");
+    // Le dernier élément lui-même est une jonction : refus aussi
+    let r = quarantaine_transaction(&dq, &mut liste, &telechargements, "q2", "test", &sddl, &|l| m.ecrire(l));
+    assert!(r.is_err());
+    std::fs::remove_dir(&telechargements).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_lien_dans_le_chemin_au_demarrage() {
+    use crate::reponse::{etat_original, Original};
+    let d = dossier_test("jonction-reprise");
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    std::fs::write(systeme.join("x.txt"), b"meme contenu").unwrap();
+    let sha = crate::hygiene::empreinte_fichier(&systeme.join("x.txt")).unwrap();
+    assert_eq!(etat_original(&systeme.join("x.txt"), &sha), Original::Identique);
+    // Même contenu, mais atteint par une jonction : « différent », la copie sera gardée
+    let lien = d.join("lien");
+    jonction(&lien, &systeme);
+    assert_eq!(etat_original(&lien.join("x.txt"), &sha), Original::Different);
+    assert_eq!(etat_original(&lien, &sha), Original::Different, "le chemin est lui-même un lien");
+    assert_eq!(etat_original(&d.join("absent.txt"), &sha), Original::Absent);
+    std::fs::remove_dir(&lien).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_restauration_sans_session_jamais_en_system() {
+    use crate::reponse::{cible_restauration, CibleRestauration};
+    let utilisateur = "S-1-5-21-1-2-3-1001";
+    assert_eq!(cible_restauration(Some(utilisateur), true), CibleRestauration::Origine);
+    assert!(matches!(cible_restauration(Some(utilisateur), false), CibleRestauration::Repli(_)), "pas de session : repli");
+    for systeme in ["S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"] {
+        assert!(matches!(cible_restauration(Some(systeme), true), CibleRestauration::Repli(_)), "{systeme}");
+    }
+    assert!(matches!(cible_restauration(None, true), CibleRestauration::Repli(_)));
+    // Emprunt du jeton d'un compte sans session : erreur, et l'opération n'est pas exécutée
+    let mut execute = false;
+    assert!(crate::natif::avec_jeton_de(utilisateur, || execute = true).is_err());
+    assert!(!execute);
+}
+

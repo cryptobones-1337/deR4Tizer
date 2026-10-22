@@ -1,17 +1,19 @@
-﻿# Compile le service Rust (deR4TizerSvc.exe) avec la chaîne GNU de rustup, puis le copie dans bin\.
-# Les fichiers intermédiaires vont dans un dossier court (%USERPROFILE%\.der4tizer-build) pour éviter
+﻿# Compile le service Rust (deR4TizerSvc.exe) avec la chaîne MSVC de rustup, la même que la CI (versions
+# distribuées), puis le copie dans bin\. Prérequis : Visual Studio Build Tools 2022, charge de travail
+# « Développement Desktop en C++ » (éditeur de liens et SDK Windows), et
+#   rustup toolchain install stable-x86_64-pc-windows-msvc
+# Les fichiers intermédiaires vont dans un dossier court (%USERPROFILE%\.der4tizer-build-msvc) pour éviter
 # la limite de 260 caractères des chemins Windows.
+# Les tests sur un poste se font avec l'artefact compilé par la CI, pas avec cette compilation locale.
 param([switch]$Debug)
 $ErrorActionPreference = 'Stop'
-$cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
-$outils = Get-ChildItem (Join-Path $env:USERPROFILE '.rustup\toolchains') -Directory -Filter 'stable-*-gnu' |
-    ForEach-Object { Join-Path $_.FullName 'lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained' } | Select-Object -First 1
-$env:PATH = "$cargoBin;$outils;$env:PATH"
-$env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build'
+$chaine = 'stable-x86_64-pc-windows-msvc'
+$env:PATH = "$(Join-Path $env:USERPROFILE '.cargo\bin');$env:PATH"
+$env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build-msvc'
 
 Push-Location (Join-Path $PSScriptRoot 'service-rs')
 try {
-    if ($Debug) { cargo build } else { cargo build --release }
+    if ($Debug) { cargo "+$chaine" build } else { cargo "+$chaine" build --release }
     if ($LASTEXITCODE) { throw 'Échec de la compilation du service Rust.' }
 } finally { Pop-Location }
 
