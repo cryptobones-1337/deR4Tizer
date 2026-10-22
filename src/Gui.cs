@@ -674,6 +674,9 @@ namespace DeR4Tizer
                     ? new Entete.Pastille { Texte = "CAM / MIC OFF", Couleur = Theme.TexteDim }
                     : new Entete.Pastille { Texte = string.Join(" + ", actifs.Select(u => u.Peripherique.ToUpperInvariant() + " : " + u.Programme)), Couleur = Theme.Rouge, Clignote = true });
                 if (etat.Panique) pastilles.Insert(0, new Entete.Pastille { Texte = "MODE PANIQUE : INTERNET COUPÉ", Couleur = Theme.Rouge, Clignote = true });
+                // Échec fermé côté service : configuration et secrets ignorés tant que les droits ne sont pas vérifiés
+                if (!string.IsNullOrEmpty(etat.ProtectionDonnees))
+                    pastilles.Insert(0, new Entete.Pastille { Texte = L.T("DONNÉES NON PROTÉGÉES : RÉGLAGES IGNORÉS"), Couleur = Theme.Rouge, Clignote = true });
                 var def = etat.Defender;
                 if (def != null && def.Disponible)
                     pastilles.Add(def.TempsReel && def.Antivirus

@@ -582,6 +582,7 @@ impl Moniteur {
                 chaines: self.chaines.iter().take(30).cloned().collect(),
                 panique: reponse::panique_active(),
                 exposition: self.exposition.clone(),
+                protection_donnees: commun::echec_protection().unwrap_or_default(),
             });
             self.derniere_signature_etat = signature_etat;
             self.dernier_etat_ecrit = Instant::now();
@@ -754,7 +755,9 @@ impl Moniteur {
                 let Some(d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
                     return Reponse::erreur("réglages des notifications illisibles");
                 };
-                crate::notifications::enregistrer_secrets(&d.secrets);
+                if let Err(e) = crate::notifications::enregistrer_secrets(&d.secrets) {
+                    return Reponse::erreur(format!("Secrets non enregistrés : {e}"));
+                }
                 self.config.notifications = d.config.unwrap_or_default();
                 commun::ecrire("config.json", &self.config);
                 crate::notifications::configurer(&self.config.notifications);
@@ -801,7 +804,11 @@ impl Moniteur {
                     crate::api::demarrer(&self.config.api);
                     j
                 } else {
-                    crate::api::jeton()
+                    crate::api::jeton().ok_or_else(|| "jeton impossible à créer avec ses droits".to_string())
+                };
+                let j = match j {
+                    Ok(j) => j,
+                    Err(e) => return Reponse::erreur(format!("Jeton de l'API indisponible : {e}")),
                 };
                 Reponse::ok(format!("Jeton de l'API (Ctrl+C pour copier ce message) :
 
@@ -1135,6 +1142,12 @@ fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
 
 /// Désinstallation : retire tous les blocages et désactive le journal DNS s'il l'avait activé
 pub fn nettoyer() {
+    // Dossier de travail de la mise à jour (Program Files) : inconnu du paquet MSI, retiré ici
+    match fs::remove_dir_all(crate::maj::dossier_travail()) {
+        Ok(()) => println!("Dossier de mise à jour supprimé."),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => println!("Dossier de mise à jour : {e}"),
+    }
     let blocages: Vec<Blocage> = commun::lire("blocages.json").unwrap_or_default();
     let n: usize = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| blocage::supprimer_regle(&b.cible)).sum();
     blocage::supprimer_groupe();

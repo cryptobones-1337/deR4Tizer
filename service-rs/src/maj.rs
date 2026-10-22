@@ -6,8 +6,9 @@
 //! du certificat). Sans clé épinglée, une nouvelle version est seulement signalée, jamais installée : un
 //! compte GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur tout le parc.
 //!
-//! Les fichiers sont téléchargés et vérifiés dans maj\installation, réservé à SYSTEM (propriétaire et droits
-//! réimposés à chaque usage) : aucun autre compte ne peut les remplacer entre la vérification et l'exécution.
+//! Les fichiers sont téléchargés et vérifiés dans %ProgramFiles%\deR4Tizer\maj, réservé à SYSTEM (propriétaire
+//! et droits vérifiés avant chaque usage, mise à jour refusée sinon) : aucun autre compte ne peut les remplacer
+//! entre la vérification et l'exécution. Le dossier est supprimé à la désinstallation (--nettoyer).
 //! Installation : un script à part sauvegarde les exécutables, revérifie l'empreinte juste avant d'exécuter,
 //! installe (MSI ou copie), puis envoie la commande « verification » sur le canal du service pendant 60 s.
 //! Sans réponse de la nouvelle version : réinstallation du paquet MSI de la version précédente s'il a été
@@ -95,25 +96,37 @@ pub fn installation_autorisee(cle_fichier: Option<&str>, cles: &[String]) -> Res
     }
 }
 
-fn icacls(args: &[&str]) {
-    let _ = Command::new("icacls.exe").args(args).creation_flags(0x0800_0000).output();
+
+/// Dossier de travail : %ProgramFiles%\deR4Tizer\maj (à côté des exécutables, hors du dossier de données),
+/// SYSTEM seul. Les administrateurs en sont exclus aussi : seul le service y écrit.
+pub fn dossier_travail() -> PathBuf {
+    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("maj"))).unwrap_or_else(|| PathBuf::from("maj"))
 }
 
-/// maj\installation : SYSTEM seul (propriétaire compris), réimposé à chaque usage. Les administrateurs en
-/// sont exclus aussi : seul le service y écrit.
-pub fn dossier_installation() -> PathBuf {
-    let d = commun::dossier().join("maj").join("installation");
-    let _ = fs::create_dir_all(commun::dossier().join("maj"));
-    if !d.exists() && !crate::natif::creer_dossier_protege(&d, "O:SYD:PAI(A;OICI;FA;;;SY)") {
-        let _ = fs::create_dir_all(&d);
+const SDDL_TRAVAIL: &str = "O:SYD:PAI(A;OICI;FA;;;SY)";
+
+/// Prépare le dossier de travail et vérifie propriétaire et droits ; Err : mise à jour refusée (échec fermé)
+pub fn preparer_dossier_travail() -> Result<PathBuf, String> {
+    use crate::protection::{verifier, SID_SYSTEME};
+    let d = dossier_travail();
+    if fs::symlink_metadata(&d).is_ok_and(|m| { use std::os::windows::fs::MetadataExt; m.file_attributes() & 0x400 != 0 }) {
+        return Err(format!("{} est un lien : mise à jour refusée", d.display()));
     }
-    if crate::natif::est_systeme() {
-        let s = d.to_string_lossy().to_string();
-        icacls(&[&s, "/setowner", "*S-1-5-18", "/T", "/C", "/Q"]);
-        icacls(&[&s, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "/C", "/Q"]);
-        icacls(&[&format!("{s}\\*"), "/reset", "/T", "/C", "/Q"]);
+    if !d.exists() && !crate::natif::creer_dossier_protege(&d, SDDL_TRAVAIL) {
+        return Err(format!("{} impossible à créer avec ses droits", d.display()));
     }
-    d
+    if !crate::natif::est_systeme() {
+        return Err("mise à jour réservée au service (SYSTEM)".into());
+    }
+    if verifier(&d, &[SID_SYSTEME], &[]).is_err() {
+        crate::natif::poser_droits(&d, SDDL_TRAVAIL).map_err(|e| format!("droits du dossier de mise à jour refusés ({e})"))?;
+    }
+    // Contenu : droits hérités du dossier (aucun droit explicite laissé par quelqu'un d'autre)
+    if fs::read_dir(&d).is_ok_and(|mut l| l.next().is_some()) && !crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]) {
+        return Err("droits du contenu du dossier de mise à jour refusés".into());
+    }
+    verifier(&d, &[SID_SYSTEME], &[])?;
+    Ok(d)
 }
 
 fn telecharger(url: &str, destination: &Path) -> Result<(), String> {
@@ -149,10 +162,14 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
         return (m.version.clone(), format!("version {} disponible (installation automatique désactivée)", m.version));
     }
     let cles = cles_epinglees(CLES_EPINGLEES);
-    let installation = dossier_installation();
-    // Ancienne disposition (4.2) : téléchargements et sauvegarde hors du dossier réservé
-    let _ = fs::remove_dir_all(dossier.join("sauvegarde"));
-    let _ = fs::remove_dir_all(dossier.join(&m.version));
+    let installation = match preparer_dossier_travail() {
+        Ok(d) => d,
+        Err(e) => return (m.version.clone(), format!("version {} disponible : {e}", m.version)),
+    };
+    // Anciennes dispositions (4.2, 4.3) : téléchargements et sauvegarde dans le dossier de données
+    for ancien in ["sauvegarde", "installation", m.version.as_str()] {
+        let _ = fs::remove_dir_all(dossier.join(ancien));
+    }
     // On garde le paquet de la version installée (retour arrière) et rien d'autre
     for e in fs::read_dir(&installation).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().to_string();
