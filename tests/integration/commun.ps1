@@ -158,8 +158,10 @@ function Elements([string]$Racine, $Ecartes) {
     $liste
 }
 
-# Contrôle récursif : chaque élément de chaque racine a pour propriétaire SYSTEM ou Administrateurs, et aucune
-# entrée d'autorisation qui s'applique à lui ne donne un droit d'écriture à un autre SID. $Attendus : chemins
+# Contrôle récursif : chaque élément de chaque racine a pour propriétaire SYSTEM ou Administrateurs, n'est pas
+# un lien (jonction, lien symbolique), et aucune entrée d'autorisation ne donne un droit d'écriture à un autre
+# SID, y compris les entrées « héritage seulement » (elles s'appliqueraient aux éléments créés plus tard), sauf
+# CREATOR OWNER (S-1-3-0), qui devient le propriétaire, déjà contrôlé. $Attendus : chemins
 # relatifs dont l'écart est attendu (fichier tenu ouvert en échec fermé), signalés à part. $Toleres : SID
 # admis en plus, par racine (TrustedInstaller sur Program Files). Renvoie $true ou la liste des écarts.
 function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtable]$Toleres = @{}) {
@@ -174,10 +176,12 @@ function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtab
             $n++
             $admis = $script:SidsConfiance + @($Toleres[$r])
             try { $d = Droits $e.FullName } catch { $ecarts.Add("$($e.FullName) : droits illisibles"); continue }
+            if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { $ecarts.Add("$($e.FullName) : lien") }
             if ($d.Proprietaire -notin $script:SidsConfiance) { $ecarts.Add("$($e.FullName) : propriétaire $($d.Proprietaire)") }
             foreach ($a in $d.Entrees) {
-                if ($a.Autorise -and -not $a.HeritageSeul -and $a.Sid -notin $admis -and (Ecriture $a.Droits)) {
-                    $ecarts.Add("$($e.FullName) : écriture pour $($a.Sid) ($($a.Droits))")
+                if ($a.HeritageSeul -and $a.Sid -eq 'S-1-3-0') { continue }
+                if ($a.Autorise -and $a.Sid -notin $admis -and (Ecriture $a.Droits)) {
+                    $ecarts.Add("$($e.FullName) : écriture pour $($a.Sid) ($($a.Droits))$(if ($a.HeritageSeul) { ' (héritage seulement)' })")
                 }
             }
         }
@@ -293,4 +297,62 @@ foreach (`$l in [IO.File]::ReadAllLines('$liste')) {
     $mauvais = @($lignes | Where-Object { ($_ -split '\|')[-1] -ne 'UnauthorizedAccessException' })
     if ($mauvais.Count) { return "$($mauvais.Count) essai(s) non refusé(s) sur $attendu : " + (($mauvais | Select-Object -First 8) -join ' ; ') }
     $true
+}
+
+# ---------------------------------------------------------------- canaris et quarantaine (lot 3b)
+
+# Empreinte d'un dossier témoin (canari) : chemin relatif, taille, SHA-256 et propriétaire de chaque élément,
+# sans suivre les liens. Deux relevés identiques : rien n'a été écrit, lu pour modification ni supprimé.
+function Empreinte-Dossier([string]$Racine) {
+    if (-not (Test-Path -LiteralPath $Racine)) { return '(absent)' }
+    $l = foreach ($e in (Elements $Racine $null)) {
+        $rel = $e.FullName.Substring($Racine.Length)
+        $h = if ($e.PSIsContainer) { 'dossier' } else { (Get-FileHash -LiteralPath $e.FullName -Algorithm SHA256).Hash }
+        "$rel|$(if ($e.PSIsContainer) { '' } else { $e.Length })|$h|$((Droits $e.FullName).Proprietaire)"
+    }
+    ($l | Sort-Object) -join "`n"
+}
+
+# Canari : dossier de l'administrateur avec des fichiers témoins (dont un éventuel « appât » au nom donné)
+function Nouveau-Canari([string]$Chemin, [string]$Appat = '', [byte[]]$Contenu = $null) {
+    New-Item -ItemType Directory -Force -Path $Chemin | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Chemin 'temoin.txt'), "canari $Chemin")
+    New-Item -ItemType Directory -Force -Path (Join-Path $Chemin 'sous') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Chemin 'sous\temoin2.txt'), 'canari, sous-dossier')
+    if ($Appat) { [IO.File]::WriteAllBytes((Join-Path $Chemin $Appat), $Contenu) }
+    Empreinte-Dossier $Chemin
+}
+
+function Octets-Aleatoires([int]$Taille) {
+    $o = New-Object byte[] $Taille
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($o)
+    $o
+}
+
+function Sha256([string]$Chemin) { (Get-FileHash -LiteralPath $Chemin -Algorithm SHA256).Hash }
+
+# Manifeste de quarantaine relu (tableau, éventuellement vide)
+function Liste-Quarantaine {
+    $f = Join-Path $script:Donnees 'quarantaine.json'
+    if (-not (Test-Path $f)) { return @() }
+    @((Get-Content $f -Raw -Encoding UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json)
+}
+
+function Entree-Quarantaine([string]$Origine) { @(Liste-Quarantaine | Where-Object { $_.CheminOrigine -eq $Origine }) | Select-Object -Last 1 }
+
+# Commande sur le canal avec une cible (et une raison) ; renvoie l'objet réponse
+function Commande-Cible([string]$Action, [string]$Cible) {
+    $j = @{ Action = $Action; Cible = $Cible; Raison = 'test d''intégration (lot 3b)' } | ConvertTo-Json -Compress
+    Commande $j 30000 | ConvertFrom-Json
+}
+
+# Jonction (mklink /J) ; avec -Compte, créée sous l'identité de ce compte. Renvoie $true si elle existe.
+function Nouvelle-Jonction([string]$Lien, [string]$Cible, $Compte = $null) {
+    if ($Compte) {
+        $s = En-TantQue $Compte "cmd.exe /c mklink /J `"$Lien`" `"$Cible`""
+    } else {
+        $s = cmd.exe /c mklink /J "$Lien" "$Cible" 2>&1 | Out-String
+    }
+    $i = Get-Item -LiteralPath $Lien -Force -ErrorAction SilentlyContinue
+    [bool]($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint))
 }
