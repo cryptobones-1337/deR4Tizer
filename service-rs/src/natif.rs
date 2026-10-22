@@ -829,9 +829,31 @@ pub fn ouvrir_sans_lien(chemin: &std::path::Path, acces: u32, partage: u32, doss
     Ok(f)
 }
 
+/// Forme longue d'un chemin (noms courts 8.3 comme « RUNNER~1 » développés), pour le comparer au chemin final
+/// que rend Windows. Ne suit pas les jonctions : elle traduit des noms, elle ne résout pas de lien. Pour un
+/// élément qui n'existe pas encore, son dossier parent est développé.
+pub fn forme_longue(p: &std::path::Path) -> std::path::PathBuf {
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+    let n = large(&p.to_string_lossy());
+    let mut tampon = vec![0u16; 1024];
+    let l = unsafe { GetLongPathNameW(PCWSTR(n.as_ptr()), Some(&mut tampon)) } as usize;
+    if l > 0 && l < tampon.len() {
+        return std::path::PathBuf::from(String::from_utf16_lossy(&tampon[..l]));
+    }
+    match (p.parent(), p.file_name()) {
+        (Some(parent), Some(nom)) if parent != p => forme_longue(parent).join(nom),
+        _ => p.to_path_buf(),
+    }
+}
+
+/// Chemin attendu, absolu et en forme longue
+fn chemin_attendu(chemin: &std::path::Path) -> Result<std::path::PathBuf, ErreurOuverture> {
+    std::path::absolute(chemin).map(|a| forme_longue(&a)).map_err(|e| ErreurOuverture::Autre(e.to_string()))
+}
+
 /// Ouvre sans suivre de lien et vérifie que le chemin final réel est le chemin demandé
 pub fn ouvrir_verifie(chemin: &std::path::Path, acces: u32, partage: u32, dossier: bool) -> Result<std::fs::File, ErreurOuverture> {
-    let attendu = std::path::absolute(chemin).map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    let attendu = chemin_attendu(chemin)?;
     let f = ouvrir_sans_lien(&attendu, acces, partage, dossier)?;
     let reel = chemin_final(&f).map_err(ErreurOuverture::Autre)?;
     if !meme_chemin(&reel, &attendu.to_string_lossy()) {
@@ -847,7 +869,7 @@ pub fn creer_verifie(chemin: &std::path::Path) -> Result<std::fs::File, ErreurOu
     use std::os::windows::io::FromRawHandle;
     use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
     use windows::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_NONE};
-    let attendu = std::path::absolute(chemin).map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    let attendu = chemin_attendu(chemin)?;
     let nom = large(&attendu.to_string_lossy());
     let h = unsafe {
         CreateFileW(PCWSTR(nom.as_ptr()), GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0, FILE_SHARE_NONE, None, CREATE_NEW,
