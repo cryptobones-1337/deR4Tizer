@@ -242,6 +242,27 @@ if ($compte) {
     } else {
         NonExecute 'Comptes autorisés légitimes' 'second compte indisponible'
     }
+
+    # ------------------------------------------------------------ réparation par un compte standard
+    # Condition de lancement AdminUser (installeur\deR4Tizer.wxs) : une réparation arrêterait puis relancerait le
+    # service ; refusée à un compte standard. Preuve : code de retour d'échec et même processus du service.
+    Verifier 'Réparation (msiexec /fa) par le compte standard : refusée, service jamais relancé (même PID)' {
+        $code = (Produits | Select-Object -First 1).PSChildName
+        if (-not $code) { return 'code produit introuvable' }
+        $avant = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        $journal = Join-Path $script:Commun 'reparation-standard.log'
+        $s = En-TantQue $compte @"
+`$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/fa', '$code', '/qn', '/l*v', '"$journal"'
+'CODE=' + `$p.ExitCode
+"@ -Secondes 300
+        if (Test-Path $journal) { Copy-Item $journal (Join-Path $Journaux 'reparation-standard.log') }
+        $apres = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        if ($s -notmatch 'CODE=(\d+)') { return "msiexec sans code de retour : $($s -replace "`r?`n", ' ')" }
+        if ([int]$Matches[1] -eq 0) { return 'réparation acceptée (code 0)' }
+        if ($apres -ne $avant) { return "service relancé (PID $avant → $apres)" }
+        if (-not (Attendre-Canal 30)) { return 'le service ne répond plus' }
+        $true
+    }
 } else {
     NonExecute 'Compte standard et pièges' 'compte standard indisponible'
 }
