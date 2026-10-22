@@ -36,9 +36,11 @@ function Bilan([string]$Titre) {
         foreach ($r in $script:Resultats) { $l += "| $($r.Scenario) | $($r.Resultat) | $(($r.Detail -replace '\|', '/') -replace "`r?`n", ' ') |" }
         [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, ($l -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
     }
-    $echecs = @($script:Resultats | Where-Object Resultat -eq 'ÉCHOUÉ').Count
-    $non = @($script:Resultats | Where-Object Resultat -eq 'NON EXÉCUTÉ').Count
-    Write-Host "Bilan : $(@($script:Resultats).Count) scénarios, $echecs échoué(s), $non non exécuté(s)"
+    # Pas de @() autour de la liste générique : PowerShell 5.1 y lève « Argument types do not match »
+    $tous = $script:Resultats.ToArray()
+    $echecs = @($tous | Where-Object Resultat -eq 'ÉCHOUÉ').Count
+    $non = @($tous | Where-Object Resultat -eq 'NON EXÉCUTÉ').Count
+    Write-Host "Bilan : $($tous.Count) scénarios, $echecs échoué(s), $non non exécuté(s)"
     if ($echecs) { exit 1 }
 }
 
