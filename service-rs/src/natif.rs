@@ -563,8 +563,43 @@ pub fn creer_dossier_protege(chemin: &std::path::Path, sddl: &str) -> bool {
     }
 }
 
-/// Remplace d'un coup le propriétaire et toute la DACL (héritage coupé) par ceux du SDDL ; les enfants
-/// héritent des nouvelles entrées. Contrairement à icacls /grant, aucune entrée existante n'est conservée.
+/// Active pour le processus les privilèges de prise de possession et de restauration (présents mais inactifs
+/// dans le jeton du service) : sans eux, SYSTEM ne peut pas reprendre un élément dont la DACL est vide
+pub fn activer_privileges() -> Result<(), String> {
+    use windows::Win32::Foundation::{GetLastError, LUID, ERROR_NOT_ALL_ASSIGNED};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
+        TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut jeton = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut jeton).map_err(|e| e.to_string())?;
+        let mut r = Ok(());
+        for nom in ["SeTakeOwnershipPrivilege", "SeRestorePrivilege"] {
+            let n = large(nom);
+            let mut luid = LUID::default();
+            if let Err(e) = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(n.as_ptr()), &mut luid) {
+                r = Err(format!("{nom} : {e}"));
+                continue;
+            }
+            let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+            // AdjustTokenPrivileges réussit même si le privilège n'est pas accordé : ERROR_NOT_ALL_ASSIGNED
+            if let Err(e) = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None) {
+                r = Err(format!("{nom} : {e}"));
+            } else if GetLastError() == ERROR_NOT_ALL_ASSIGNED {
+                r = Err(format!("{nom} : privilège absent du jeton"));
+            }
+        }
+        let _ = CloseHandle(jeton);
+        r
+    }
+}
+
+/// Remplace le propriétaire puis toute la DACL (héritage coupé) par ceux du SDDL ; les enfants héritent des
+/// nouvelles entrées. Contrairement à icacls /grant, aucune entrée existante n'est conservée. En deux temps :
+/// changer de propriétaire demande WRITE_OWNER (privilège de prise de possession), réécrire la DACL demande
+/// WRITE_DAC, que donne le fait d'être devenu propriétaire.
 pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
     use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{
@@ -588,12 +623,18 @@ pub fn poser_droits(chemin: &std::path::Path, sddl: &str) -> Result<(), String> 
         if r.is_ok() {
             r = GetSecurityDescriptorOwner(sd, &mut proprietaire, &mut defaut).map_err(|e| e.to_string());
         }
+        if r.is_ok() && !proprietaire.is_invalid() {
+            let e = SetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                proprietaire, PSID::default(), None, None);
+            if e.0 != 0 {
+                r = Err(format!("propriétaire : {}", windows::core::Error::from(e)));
+            }
+        }
         if r.is_ok() {
             let e = SetNamedSecurityInfoW(PCWSTR(nom.as_ptr()), SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                proprietaire, PSID::default(), Some(dacl), None);
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, PSID::default(), PSID::default(), Some(dacl), None);
             if e.0 != 0 {
-                r = Err(windows::core::Error::from(e).to_string());
+                r = Err(format!("droits : {}", windows::core::Error::from(e)));
             }
         }
         let _ = LocalFree(HLOCAL(sd.0));

@@ -122,9 +122,9 @@ pub fn preparer_dossier_travail() -> Result<PathBuf, String> {
         crate::natif::poser_droits(&d, SDDL_TRAVAIL).map_err(|e| format!("droits du dossier de mise à jour refusés ({e})"))?;
     }
     // Contenu : droits hérités du dossier (aucun droit explicite laissé par quelqu'un d'autre)
-    if fs::read_dir(&d).is_ok_and(|mut l| l.next().is_some()) && !crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]) {
-        return Err("droits du contenu du dossier de mise à jour refusés".into());
-    }
+    // (code d'icacls /C non probant : la preuve est la relecture ci-dessous, et l'empreinte revérifiée avant
+    // exécution)
+    crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]);
     verifier(&d, &[SID_SYSTEME], &[])?;
     Ok(d)
 }

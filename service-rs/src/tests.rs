@@ -588,6 +588,18 @@ fn lot1_tri_au_demarrage_proprietaire_non_verifie_ecarte() {
 }
 
 #[test]
+fn lot1_echec_du_demarrage_non_leve_par_la_verification_horaire() {
+    use crate::protection::combiner;
+    // Constaté sur le poste : un dossier piégé impossible à écarter mettait la protection en échec, puis la
+    // première vérification horaire (racine seule, conforme) levait l'échec dans la même seconde
+    let e = Some("un élément d'un autre propriétaire n'a pas pu être écarté".to_string());
+    assert!(combiner(e.clone(), Ok(())).is_err());
+    assert!(combiner(e, Err("autre".into())).is_err());
+    assert!(combiner(None, Ok(())).is_ok());
+    assert!(combiner(None, Err("droits de la racine".into())).is_err());
+}
+
+#[test]
 fn lot1_dacl_vide_proprietaire_illisible() {
     // Ce que voit le service sur un fichier à DACL vide dont il n'est pas propriétaire : lecture des droits
     // impossible. Hors élévation, le propriétaire (le compte du test) garde READ_CONTROL : on vérifie au moins

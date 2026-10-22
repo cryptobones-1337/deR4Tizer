@@ -118,6 +118,8 @@ fn appliquer(lecteurs: &[Lecteur]) -> bool {
     crate::natif::poser_droits(commun::dossier(), &sddl).is_ok()
 }
 
+/// icacls : avec /C (continuer sur erreur), le code de retour vaut 0 même quand un élément a échoué ;
+/// ne jamais s'en servir comme preuve, relire les droits
 pub fn icacls(args: &[&str]) -> bool {
     Command::new("icacls.exe").args(args).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
 }
@@ -173,8 +175,24 @@ fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<St
             Tri::Ecarter => {
                 let _ = fs::create_dir_all(quarantaine);
                 let dest = quarantaine.join(format!("{}-{}", commun::nouvel_id(), relatif.replace(['\\', '/'], "_")));
-                let ok = fs::rename(&p, &dest).is_ok() || (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) }).is_ok();
-                ecartes.push(format!("{relatif}{}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
+                // Chaque étape note son erreur : le journal dit pourquoi un élément n'a pas pu être écarté
+                let mut erreurs = Vec::new();
+                let mut ok = fs::rename(&p, &dest).map_err(|e| erreurs.push(format!("déplacement : {e}"))).is_ok();
+                if !ok {
+                    // Droits verrouillés par leur propriétaire (DACL vide d'un dossier, par exemple) : prise de
+                    // possession de CET élément seul, puis mise de côté. Rien n'est jamais chargé depuis ecartes :
+                    // ce n'est pas un blanchiment.
+                    // (icacls /setowner échoue ici en rendant 0 : appel Windows direct, privilèges activés)
+                    match crate::natif::poser_droits(&p, "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)") {
+                        Err(e) => erreurs.push(format!("prise de possession : {e}")),
+                        Ok(()) => ok = fs::rename(&p, &dest).map_err(|e| erreurs.push(format!("déplacement après prise de possession : {e}"))).is_ok(),
+                    }
+                }
+                if !ok {
+                    ok = (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) })
+                        .map_err(|e| erreurs.push(format!("suppression : {e}"))).is_ok();
+                }
+                ecartes.push(format!("{relatif}{}", if ok { String::new() } else { format!(" (IMPOSSIBLE À ÉCARTER : {})", erreurs.join(" ; ")) }));
             }
             Tri::Garder if m.is_dir() => trier(&p, racine, quarantaine, ecartes),
             Tri::Garder => {}
@@ -209,6 +227,9 @@ pub fn securiser() {
     let racine = commun::dossier().clone();
     let mut messages = Vec::new();
     let mut echec = None;
+    if let Err(e) = crate::natif::activer_privileges() {
+        messages.push(format!("privilèges de prise de possession indisponibles ({e})"));
+    }
     if let Ok(m) = fs::symlink_metadata(&racine) {
         match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&racine)) {
             Tri::Garder => {}
@@ -233,12 +254,14 @@ pub fn securiser() {
     // Échec fermé : rien n'est imposé sur un dossier qu'on n'a pas pu écarter ni sur un lien (ce serait le
     // blanchir) ; le service tourne avec ses valeurs par défaut
     let resultat = match echec {
-        Some(e) => {
-            *ECHEC_DEMARRAGE.lock().unwrap() = Some(e.clone());
-            Err(e)
-        }
+        Some(e) => Err(e),
         None => imposer(&racine, &mut messages),
     };
+    // Tout échec du démarrage reste acquis jusqu'au prochain démarrage : la vérification horaire, qui ne revoit
+    // que la racine, ne doit pas le lever (le contenu, lui, n'a pas été traité)
+    if let Err(e) = &resultat {
+        *ECHEC_DEMARRAGE.lock().unwrap() = Some(e.clone());
+    }
     for m in messages {
         commun::journal(&format!("protection des données : {m}"));
     }
@@ -247,12 +270,16 @@ pub fn securiser() {
 
 /// Échec fermé : tant que la protection n'est pas vérifiée, aucun fichier de configuration ou de secret n'est
 /// chargé (commun::lire_fichier), et l'échec est affiché dans l'interface (etat.json)
-fn publier(resultat: Result<(), String>) {
-    let resultat = match ECHEC_DEMARRAGE.lock().unwrap().clone() {
+/// Décision pure : un échec du démarrage l'emporte sur le résultat d'une vérification ultérieure
+pub fn combiner(echec_demarrage: Option<String>, resultat: Result<(), String>) -> Result<(), String> {
+    match echec_demarrage {
         Some(e) => Err(e),
         None => resultat,
-    };
-    match resultat {
+    }
+}
+
+fn publier(resultat: Result<(), String>) {
+    match combiner(ECHEC_DEMARRAGE.lock().unwrap().clone(), resultat) {
         Ok(()) => commun::definir_echec_protection(None),
         Err(e) => {
             commun::journal(&format!("protection des données : ÉCHEC ({e}) : configuration et secrets ignorés, valeurs par défaut"));
@@ -265,9 +292,9 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     if !racine.exists() && !crate::natif::creer_dossier_protege(racine, SDDL_DOSSIER) {
         return Err(format!("impossible de créer {} avec ses droits", racine.display()));
     }
-    let r = racine.to_string_lossy().to_string();
-    // D'abord le dossier racine (plus personne d'autre ne peut y créer quoi que ce soit), puis le contenu
-    if !icacls(&[&r, "/setowner", "*S-1-5-32-544", "/C", "/Q"]) || !appliquer(&[]) {
+    // D'abord le dossier racine, propriétaire compris (plus personne d'autre ne peut y créer quoi que ce soit),
+    // puis le contenu
+    if !appliquer(&[]) {
         return Err("pose du propriétaire ou des droits du dossier refusée".into());
     }
     let quarantaine = racine.join("ecartes");
@@ -281,18 +308,14 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     if ecartes.iter().any(|e| e.contains("IMPOSSIBLE")) {
         return Err("un élément d'un autre propriétaire n'a pas pu être écarté".into());
     }
-    if !icacls(&[&r, "/setowner", "*S-1-5-32-544", "/T", "/C", "/Q"]) {
-        return Err("pose du propriétaire sur le contenu refusée".into());
-    }
-    // Contenu : droits hérités du dossier, sauf le jeton de l'API et les secrets, qui ont leurs propres droits
-    // (posés à la création, à ne pas réinitialiser)
+    // Tout ce qui reste appartient à SYSTEM ou aux administrateurs (vérifié par trier). Contenu : droits
+    // hérités du dossier, sauf le jeton de l'API et les secrets, qui ont leurs propres droits (posés à la
+    // création, à ne pas réinitialiser). Avec /C, icacls rend 0 même en cas d'échec : son code n'est pas
+    // une preuve, seules les relectures de droits en sont une (racine, secrets, jeton ci-dessous)
     for e in fs::read_dir(racine).map_err(|e| e.to_string())?.flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if n == crate::api::FICHIER_JETON || n == "secrets" {
-            continue;
-        }
-        if !icacls(&[&e.path().to_string_lossy(), "/reset", "/T", "/C", "/Q"]) {
-            return Err(format!("réinitialisation des droits de {n} refusée"));
+        if n != crate::api::FICHIER_JETON && n != "secrets" {
+            icacls(&[&e.path().to_string_lossy(), "/reset", "/T", "/C", "/Q"]);
         }
     }
     crate::notifications::preparer_dossier()?;
