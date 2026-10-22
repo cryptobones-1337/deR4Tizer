@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paquet d'installation de deR4Tizer (WiX 3.14, licence MS-RL, sans redevance).
+  Installe le service (compte SYSTEM, démarrage automatique, redémarré en cas d'échec) et l'interface,
+  un raccourci dans le menu Démarrer et le lancement de l'interface à l'ouverture de session.
+
+  Installation silencieuse (GPO, Intune, prestataire) :
+    msiexec /i deR4Tizer.msi /qn
+  Options :
+    LANCEMENT_SESSION=0   ne pas lancer l'interface à l'ouverture de session
+  Désinstallation (retire les blocages, règles de pare-feu, leurres, remet la baseline d'origine, efface les données) :
+    msiexec /x deR4Tizer.msi /qn [GARDER_DONNEES=1] [GARDER_BASELINE=1]
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Product Id="*" Name="deR4Tizer" Language="1036" Codepage="1252" Version="$(var.Version)" Manufacturer="deR4Tizer (projet open source)"
+           UpgradeCode="6F1E2B47-9C3A-4D58-8E21-4B7D0C9A3F15">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64"
+             Description="deR4Tizer : protection locale pour Windows (détection, mini-SIEM, durcissement)" Comments="Licence EUPL-1.2" />
+
+    <MajorUpgrade DowngradeErrorMessage="Une version plus récente de deR4Tizer est déjà installée." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="LANCEMENT_SESSION" Value="1" />
+    <Property Id="GARDER_DONNEES" Secure="yes" />
+    <Property Id="GARDER_BASELINE" Secure="yes" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/cryptobones-1337/deR4Tizer" />
+    <Property Id="ARPPRODUCTICON" Value="icone.exe" />
+    <Icon Id="icone.exe" SourceFile="$(var.Bin)\deR4Tizer.exe" />
+
+    <Condition Message="deR4Tizer nécessite Windows 10 ou plus récent, en 64 bits.">
+      <![CDATA[Installed OR (VersionNT64 >= 603)]]>
+    </Condition>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="deR4Tizer" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="Service" Guid="3C8A51D2-7E44-4B0A-9F6B-2D1E8C7A5B90" Win64="yes">
+        <File Id="ServiceExe" Name="deR4TizerSvc.exe" Source="$(var.Bin)\deR4TizerSvc.exe" KeyPath="yes" />
+        <ServiceInstall Id="InstallationService" Name="deR4Tizer" DisplayName="deR4Tizer" Type="ownProcess" Start="auto"
+                        Account="LocalSystem" ErrorControl="normal"
+                        Description="Surveille les connexions, la persistance et le réseau local, alerte et applique les blocages.">
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="ControleService" Name="deR4Tizer" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+      <Component Id="Interface" Guid="A4F07C19-2B6D-4E83-8D5A-91C3E6B2F048" Win64="yes">
+        <File Id="InterfaceExe" Name="deR4Tizer.exe" Source="$(var.Bin)\deR4Tizer.exe" KeyPath="yes">
+          <Shortcut Id="RaccourciMenu" Directory="ProgramMenuFolder" Name="deR4Tizer" Advertise="yes" WorkingDirectory="INSTALLFOLDER"
+                    Icon="icone.exe" Description="Protection locale : connexions, alertes, réseau local" />
+        </File>
+      </Component>
+      <Component Id="LancementSession" Guid="E2B96D40-5A71-4C1F-B3E8-7D0A4F2C6E19" Win64="yes">
+        <Condition>LANCEMENT_SESSION = "1"</Condition>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="deR4Tizer" Type="string"
+                       Value="&quot;[INSTALLFOLDER]deR4Tizer.exe&quot; --cache" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+
+    <Feature Id="Principal" Title="deR4Tizer" Level="1">
+      <ComponentRef Id="Service" />
+      <ComponentRef Id="Interface" />
+      <ComponentRef Id="LancementSession" />
+    </Feature>
+
+    <!-- Désinstallation (pas lors d'une mise à jour) : le service arrêté, on retire ce qu'il a posé, avant d'effacer les fichiers -->
+    <CustomAction Id="Nettoyer" FileKey="ServiceExe" ExeCommand="--nettoyer" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="AnnulerBaseline" FileKey="ServiceExe" ExeCommand="--annuler-baseline" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="SupprimerDonnees" FileKey="ServiceExe" ExeCommand="--supprimer-donnees" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="FermerInterface" Directory="INSTALLFOLDER" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM deR4Tizer.exe" Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="FermerInterface" Before="StopServices">REMOVE OR UPGRADINGPRODUCTCODE OR WIX_UPGRADE_DETECTED</Custom>
+      <Custom Action="Nettoyer" After="StopServices"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE]]></Custom>
+      <Custom Action="AnnulerBaseline" After="Nettoyer"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND GARDER_BASELINE<>"1"]]></Custom>
+      <Custom Action="SupprimerDonnees" After="AnnulerBaseline"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND GARDER_DONNEES<>"1"]]></Custom>
+    </InstallExecuteSequence>
+
+    <UIRef Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.Installeur)\licence.rtf" />
+  </Product>
+</Wix>

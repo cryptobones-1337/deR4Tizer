@@ -52,13 +52,30 @@ jobs:
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           & $signtool.FullName sign /f $pfx /p $env:MOT_DE_PASSE /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 bin/deR4Tizer.exe bin/deR4TizerSvc.exe
           if ($LASTEXITCODE) { throw 'Échec de la signature.' }
-          Remove-Item $pfx
+          "PFX=$pfx" >> $env:GITHUB_ENV
+
+      - name: Paquet MSI (WiX 3.14, licence MS-RL)
+        shell: pwsh
+        env:
+          MOT_DE_PASSE: ${{ secrets.CERTIFICAT_MOT_DE_PASSE }}
+        run: |
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile "$wix.zip"
+          Expand-Archive "$wix.zip" $wix
+          $env:WIX = $wix
+          ./construire-msi.ps1
+          if ($env:PFX -and (Test-Path $env:PFX)) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+            & $signtool.FullName sign /f $env:PFX /p $env:MOT_DE_PASSE /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d deR4Tizer bin/deR4Tizer.msi
+            if ($LASTEXITCODE) { throw 'Échec de la signature du paquet.' }
+            Remove-Item $env:PFX
+          }
 
       - name: Manifeste de mise à jour
         shell: pwsh
         run: |
           $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
-          $fichiers = foreach ($n in 'deR4TizerSvc.exe', 'deR4Tizer.exe') {
+          $fichiers = foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe') {
             [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
           }
           [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
@@ -66,4 +83,4 @@ jobs:
       - name: Version GitHub
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --title "deR4Tizer ${{ github.ref_name }}" --generate-notes
+        run: gh release create ${{ github.ref_name }} bin/deR4Tizer.msi bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --title "deR4Tizer ${{ github.ref_name }}" --generate-notes

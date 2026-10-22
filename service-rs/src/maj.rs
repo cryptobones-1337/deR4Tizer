@@ -3,7 +3,7 @@
 //! leur signature Authenticode, qui doit venir du même éditeur que les binaires installés. Un binaire non
 //! signé n'est jamais installé automatiquement, sauf réglage explicite (accepter_non_signe), à réserver aux
 //! essais : sans signature, l'empreinte ne prouve que l'intégrité du téléchargement, pas son origine.
-//! Installation : un script lancé à part arrête le service, remplace les fichiers et le redémarre.
+//! Installation : le paquet MSI publié (msiexec /qn), ou à défaut un script lancé à part qui remplace les fichiers.
 //!
 //! Manifeste (manifeste.json, publié avec chaque version par la CI) :
 //!   { "Version": "4.1", "Fichiers": [ { "Nom": "deR4TizerSvc.exe", "Url": "https://…", "Sha256": "…" }, … ] }
@@ -41,7 +41,7 @@ struct Etat {
     statut: String,
 }
 
-const NOMS_AUTORISES: &[&str] = &["deR4TizerSvc.exe", "deR4Tizer.exe"];
+const NOMS_AUTORISES: &[&str] = &["deR4Tizer.msi", "deR4TizerSvc.exe", "deR4Tizer.exe"];
 
 /// « 4.10 » > « 4.9 » : comparaison numérique des composantes
 pub fn plus_recente(disponible: &str, installee: &str) -> bool {
@@ -118,6 +118,22 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
         if let Err(e) = signature_acceptable(signataire.as_deref(), signataire_installe.as_deref(), config.accepter_non_signe) {
             return (m.version.clone(), format!("version {} disponible, {e}", m.version));
         }
+    }
+    // Paquet MSI (installation normale) : Windows Installer arrête le service, remplace les fichiers, le relance
+    if m.fichiers.iter().any(|f| f.nom == "deR4Tizer.msi") {
+        let msi = cible.join("deR4Tizer.msi");
+        let journal = dossier.join("installation.log");
+        let lance = Command::new("msiexec.exe")
+            .arg("/i").arg(&msi).args(["/qn", "/norestart", "/l*v"]).arg(&journal)
+            .creation_flags(0x0800_0000 | 0x0000_0008)
+            .spawn();
+        return match lance {
+            Ok(_) => {
+                commun::journal(&format!("mise à jour vers la version {} : installation du paquet MSI lancée", m.version));
+                (m.version.clone(), format!("installation de la version {} en cours", m.version))
+            }
+            Err(e) => (m.version, format!("installation impossible ({e})")),
+        };
     }
     if m.fichiers.iter().all(|f| f.nom != "deR4TizerSvc.exe") {
         return (m.version, "manifeste sans le service".into());

@@ -31,10 +31,21 @@ jobs:
         shell: pwsh
         run: ./compiler.ps1 -InterfaceSeulement
 
+      - name: Paquet MSI (WiX 3.14, licence MS-RL)
+        shell: pwsh
+        run: |
+          Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
+          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
+          Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile "$wix.zip"
+          Expand-Archive "$wix.zip" $wix
+          $env:WIX = $wix
+          ./construire-msi.ps1
+
       - name: Artefacts
         uses: actions/upload-artifact@v4
         with:
           name: deR4Tizer-${{ github.sha }}
           path: |
-            service-rs/target/release/der4tizer-svc.exe
+            bin/deR4Tizer.msi
+            bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
