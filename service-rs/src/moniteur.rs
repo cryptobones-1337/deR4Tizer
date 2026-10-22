@@ -669,6 +669,13 @@ impl Moniteur {
                         self.config.blocage_auto_menaces = actif;
                         "Blocage automatique des menaces"
                     }
+                    Some("ListesRestreintes") => {
+                        self.config.listes_restreintes = actif;
+                        commun::ecrire("config.json", &self.config);
+                        let p = partage.clone();
+                        std::thread::spawn(move || mettre_a_jour_menaces(&p, true));
+                        "Listes non commerciales ou non vérifiées"
+                    }
                     Some("Ips") => {
                         self.config.ips = actif;
                         "Prévention d'intrusion (IPS)"
@@ -846,8 +853,8 @@ En-tête : Authorization: Bearer {j}"))
         if ip.parse::<IpAddr>().is_err() {
             return Reponse::erreur("Adresse IP invalide.");
         }
-        if est_locale(ip) {
-            return Reponse::erreur(format!("Refusé : {ip} est une adresse locale."));
+        if est_locale(ip) || ip.parse::<IpAddr>().map(|a| !crate::parefeu::publique(&a)).unwrap_or(true) {
+            return Reponse::erreur(format!("Refusé : {ip} n'est pas une adresse publique (réseau local, CGNAT, multicast…)."));
         }
         if !self.blocages.iter().any(|b| b.type_ == "parefeu" && b.cible == ip) {
             if let Err(e) = blocage::ajouter_regle(ip, raison) {
@@ -905,9 +912,19 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
     if chemin.is_empty() {
         return "?".into();
     }
-    // Nos propres exécutables (compilés localement, donc non signés) ne doivent pas déclencher d'alerte
-    if Path::new(chemin).parent().map(|d| d.to_string_lossy().to_lowercase()).as_deref() == Some(notre) {
-        return "deR4Tizer (local)".into();
+    // Nos propres exécutables (non signés tant qu'il n'y a pas de certificat de signature de code) : reconnus
+    // par leur empreinte SHA-256, pas par leur dossier, pour qu'un autre fichier posé à côté ne soit pas approuvé
+    let _ = notre;
+    let nom = Path::new(chemin).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if nom == "der4tizersvc.exe" || nom == "der4tizer.exe" {
+        static NOS: OnceLock<HashSet<String>> = OnceLock::new();
+        let nos = NOS.get_or_init(|| {
+            let exe = std::env::current_exe().unwrap_or_default();
+            [exe.clone(), exe.with_file_name("deR4Tizer.exe")].iter().filter_map(|p| crate::hygiene::empreinte_fichier(p)).collect()
+        });
+        if crate::hygiene::empreinte_fichier(Path::new(chemin)).is_some_and(|h| nos.contains(&h)) {
+            return "deR4Tizer (empreinte vérifiée)".into();
+        }
     }
     let date = fs::metadata(chemin).and_then(|m| m.modified()).map(commun::filetime).unwrap_or(0);
     let cle = format!("{chemin}|{date}");

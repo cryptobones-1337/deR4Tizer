@@ -163,8 +163,9 @@ namespace DeR4Tizer
 
         readonly Liste lvFlux = new Liste(), lvAlertes = new Liste(), lvBlocages = new Liste(), lvDemarrage = new Liste(), lvVie = new Liste(), lvMenaces = new Liste(),
                        lvChaines = new Liste(), lvBaseline = new Liste(), lvExtensions = new Liste(), lvQuarantaine = new Liste(), lvParefeu = new Liste();
-        readonly CheckBox chkMasquerWindows = CaseNeon("Masquer les entrées signées Microsoft / Windows", true);
+        readonly CheckBox chkMasquerWindows = CaseNeon("Masquer les entrées signées Microsoft / Windows (sauf commande suspecte)", true);
         readonly CheckBox chkBlocageAuto = CaseNeon("Bloquer automatiquement au pare-feu les IP des listes de confiance haute", false);
+        readonly CheckBox chkListesRestreintes = CaseNeon("Utiliser aussi les listes non commerciales ou aux conditions non vérifiées (usage personnel uniquement)", false);
         readonly CheckBox chkRancongiciel = CaseNeon("Suspendre automatiquement un programme qui touche aux fichiers leurres (rançongiciel)", false);
         readonly Label lblMenaces = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, Margin = new Padding(0, 8, 0, 0) };
         readonly Label lblBaseline = new Label { AutoSize = true, ForeColor = Theme.Texte, Font = Theme.PetitGras, Margin = new Padding(0, 8, 12, 0) };
@@ -208,7 +209,7 @@ namespace DeR4Tizer
 
             // ---------------- Connexions
             lvFlux.Colonnes("Score", 60, "Programme", 140, "Lancé par", 110, "PID", 60, "Destination", 280, "Port", 60,
-                "Signataire", 170, "Vu depuis", 170, "Raisons", 420);
+                "Signataire du programme", 190, "Vu depuis", 170, "Raisons", 420);
             lvFlux.ContextMenuStrip = MenuContextuel(rendu,
                 new ToolStripMenuItem("Bloquer (nom dans le fichier hosts, sinon IP au pare-feu)", null, (s, e) => BloquerFlux(false)),
                 new ToolStripMenuItem("Bloquer l'IP au pare-feu", null, (s, e) => BloquerFlux(true)),
@@ -324,13 +325,14 @@ namespace DeR4Tizer
             var pageQuarantaine = Page("Quarantaine", "Fichiers retirés de leur emplacement et rendus inexécutables. Ils peuvent être restaurés.", lvQuarantaine, btnRestaurer);
 
             // ---------------- Listes de menaces et réponses automatiques
-            lvMenaces.Colonnes("Source", 300, "Type", 100, "Confiance", 110, "Entrées", 110, "Mise à jour", 160, "Statut", 420);
+            lvMenaces.Colonnes("Source", 260, "Type", 90, "Confiance", 100, "Entrées", 90, "Mise à jour", 140, "Licence", 330, "Statut", 380);
             var btnMaj = new BoutonNeon("Mettre à jour maintenant", Theme.Cyan);
             btnMaj.Click += (s, e) => Canal.Executer(new Commande { Action = "majMenaces" });
             chkBlocageAuto.CheckedChanged += (s, e) => ChangerReglage(chkBlocageAuto, "BlocageAutoMenaces");
             chkRancongiciel.CheckedChanged += (s, e) => ChangerReglage(chkRancongiciel, "ReponseAutoRancongiciel");
+            chkListesRestreintes.CheckedChanged += (s, e) => ChangerReglage(chkListesRestreintes, "ListesRestreintes");
             var pageMenaces = Page("Menaces et réponses automatiques", "Listes open source téléchargées toutes les 12 h par le service, et réactions automatiques.",
-                lvMenaces, btnMaj, chkBlocageAuto, chkRancongiciel, lblMenaces);
+                lvMenaces, btnMaj, chkBlocageAuto, chkRancongiciel, chkListesRestreintes, lblMenaces);
 
             // ---------------- Navigation
             const int largeurNav = 230;
@@ -620,6 +622,7 @@ namespace DeR4Tizer
                 majCase = true;
                 chkBlocageAuto.Checked = config.BlocageAutoMenaces;
                 chkRancongiciel.Checked = config.ReponseAutoRancongiciel;
+                chkListesRestreintes.Checked = config.ListesRestreintes;
                 majCase = false;
             }
 
@@ -757,7 +760,7 @@ namespace DeR4Tizer
 
         void RemplirDemarrage()
         {
-            var liste = demarrage.Where(e => !chkMasquerWindows.Checked
+            var liste = demarrage.Where(e => !chkMasquerWindows.Checked || !string.IsNullOrEmpty(e.Remarque)
                 || !(e.Signataire == "Windows (catalogue)" || (e.Signataire ?? "").StartsWith("Microsoft"))).ToList();
             lvDemarrage.BeginUpdate();
             lvDemarrage.Items.Clear();
@@ -1075,8 +1078,9 @@ namespace DeR4Tizer
             if (infos != null)
                 foreach (var s in infos.Sources ?? new List<SourceMenace>())
                 {
-                    var item = new ListViewItem(new[] { s.Nom, s.Type, s.Confiance, s.Entrees.ToString("N0"), s.MisAJour ?? "", s.Statut ?? "" });
-                    if (s.Statut != "ok") item.ForeColor = Theme.Rouge;
+                    var item = new ListViewItem(new[] { s.Nom, s.Type, s.Confiance, s.Entrees.ToString("N0"), s.MisAJour ?? "", s.Licence ?? "", s.Statut ?? "" });
+                    if ((s.Statut ?? "").StartsWith("désactivée")) item.ForeColor = Theme.TexteDim;
+                    else if (s.Statut != "ok") item.ForeColor = Theme.Rouge;
                     else if (s.Confiance == "haute") item.ForeColor = Theme.Cyan;
                     lvMenaces.Items.Add(item);
                 }

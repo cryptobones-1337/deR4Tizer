@@ -120,6 +120,12 @@ namespace DeR4Tizer
               "Events, sessions, alerts and network devices can only be read by SYSTEM, administrators and these accounts:" },
             { "Nom du compte (par exemple : PC-ACCUEIL\\marie)", "Account name (for example: FRONT-DESK\\marie)" }, { "Compte introuvable.", "Account not found." },
 
+            // Revue : listes, démarrage, colonnes
+            { "Utiliser aussi les listes non commerciales ou aux conditions non vérifiées (usage personnel uniquement)",
+              "Also use non-commercial or unverified-terms lists (personal use only)" },
+            { "Masquer les entrées signées Microsoft / Windows (sauf commande suspecte)", "Hide entries signed by Microsoft / Windows (unless the command is suspicious)" },
+            { "Signataire du programme", "Program signer" }, { "Licence", "Licence" },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

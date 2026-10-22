@@ -112,6 +112,9 @@ fn evaluer(e: &EntreeDemarrage) -> String {
     if e.signataire.is_empty() {
         r.push("NON SIGNÉ".to_string());
     }
+    if let Some(s) = crate::processus::suspicion(&e.commande) {
+        r.push(s.to_string());
+    }
     if dossier_suspect().is_match(&e.cible) {
         r.push("dossier suspect".into());
     }

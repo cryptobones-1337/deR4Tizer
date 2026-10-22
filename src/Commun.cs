@@ -208,6 +208,7 @@ namespace DeR4Tizer
         public int Entrees { get; set; }
         public string Statut { get; set; }
         public string MisAJour { get; set; }
+        public string Licence { get; set; }
     }
 
     public class InfosMenaces
@@ -226,6 +227,7 @@ namespace DeR4Tizer
         public ConfigSyslog Syslog { get; set; }
         public ConfigApi Api { get; set; }
         public bool Ips { get; set; }
+        public bool ListesRestreintes { get; set; }
         // Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
         public bool BlocageAutoMenaces { get; set; }
         // Suspend aussitôt le programme qui modifie un fichier leurre

@@ -79,7 +79,7 @@ pub struct Leurre {
     pub empreinte: String,
 }
 
-fn empreinte_fichier(chemin: &Path) -> Option<String> {
+pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
     let mut f = fs::OpenOptions::new().read(true).share_mode(7).open(chemin).ok()?;
     let mut h = Sha256::new();
     let mut tampon = [0u8; 65536];
