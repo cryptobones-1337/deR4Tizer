@@ -644,7 +644,7 @@ namespace DeR4Tizer
                 Hide();
                 if (!astuceMontree)
                 {
-                    Notifier("deR4Tizer", L.T("L'interface reste dans la zone de notification. Le service, lui, tourne en permanence."));
+                    Notifier("deR4Tizer", L.T("L'interface reste dans la zone de notification. Le service, lui, tourne en permanence."), ToolTipIcon.Info);
                     astuceMontree = true;
                 }
                 return;
@@ -882,16 +882,20 @@ namespace DeR4Tizer
             var nouvelles = alertes.Where(a => !idsConnus.Contains(a.Id)).ToList();
             foreach (var a in nouvelles) idsConnus.Add(a.Id);
             var graves = nouvelles.Where(a => a.Niveau == "Alerte" || a.Niveau == "Critique").ToList();
+            // La gravité ouvre le titre : l'icône de deR4Tizer ne la porte plus (avant : icône d'erreur ou d'avertissement)
+            bool critique = graves.Any(a => a.Niveau == "Critique");
+            string niveau = critique ? (L.En ? "Critical" : "Critique") : (L.En ? "Alert" : "Alerte");
+            var repli = critique ? ToolTipIcon.Error : ToolTipIcon.Warning;
             if (graves.Count == 1)
-                Notifier("deR4Tizer : " + graves[0].Processus, graves[0].Destination + " : " + graves[0].Raisons);
+                Notifier(niveau + " : deR4Tizer : " + graves[0].Processus, graves[0].Destination + " : " + graves[0].Raisons, repli);
             else if (graves.Count > 1)
-                Notifier("deR4Tizer", graves.Count + " nouvelles alertes");
+                Notifier(niveau + " : deR4Tizer", graves.Count + " nouvelles alertes", repli);
         }
 
         // Notification Windows avec l'icône de deR4Tizer (NIIF_USER), envoyée sur la fenêtre et l'identifiant de
         // l'icône de la zone de notification : le clic reste reçu par NotifyIcon (BalloonTipClicked). NotifyIcon
         // ne propose que les icônes système (avertissement, erreur) ; ses champs internes sont stables dans .NET
-        // Framework 4.8. À défaut, notification sans icône système.
+        // Framework 4.8. À défaut, notification classique avec l'icône système de la gravité (`repli`).
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct DonneesIcone
         {
@@ -912,7 +916,7 @@ namespace DeR4Tizer
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         static extern bool Shell_NotifyIcon(int message, ref DonneesIcone donnees);
 
-        void Notifier(string titre, string texte)
+        void Notifier(string titre, string texte, ToolTipIcon repli)
         {
             titre = titre.Length > 63 ? titre.Substring(0, 62) + "…" : titre;
             texte = texte.Length > 255 ? texte.Substring(0, 254) + "…" : texte;
@@ -933,7 +937,7 @@ namespace DeR4Tizer
                 if (fenetre.Handle != IntPtr.Zero && Shell_NotifyIcon(1, ref d)) return; // NIM_MODIFY
             }
             catch { }
-            icone.ShowBalloonTip(8000, titre, texte, ToolTipIcon.None);
+            icone.ShowBalloonTip(8000, titre, texte, repli);
         }
 
         void MarquerLues()
