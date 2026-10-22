@@ -256,18 +256,37 @@ Verifier 'Version plus ancienne installée (MSI construit depuis un commit figé
     $true
 }
 Start-Sleep 10
-# Chemin d'attaque des postes déjà installés : la 4.1.0 laisse les utilisateurs créer dans le dossier
+# Chemin d'attaque des postes déjà installés : un fichier d'un autre propriétaire présent dans le dossier au
+# moment de la mise à niveau. La 4.1.0 (commit 4da823a) retire déjà aux Utilisateurs le droit de créer dans le
+# dossier au démarrage de son service : le compte standard essaie d'abord pour de vrai ; s'il est refusé (attendu),
+# l'état hérité d'une version plus ancienne (ou d'un dossier précréé avant la 4.1.0) est simulé par
+# l'administrateur : configuration piégée dont le propriétaire est le compte standard, qui y a le contrôle total.
 $piegePose = $false
 if ($compte) {
-    Verifier 'Version 4.1.0 en marche : le compte standard pose une configuration piégée' {
-        $f = Join-Path $script:Donnees 'config.json'
-        $s = En-TantQue $compte @"
-if (Test-Path -LiteralPath '$f') { 'EXISTE' } else { Set-Content -LiteralPath '$f' -Value '$ConfigPiegee' -Encoding Ascii -ErrorAction Stop; 'POSE' }
+    $fConfig = Join-Path $script:Donnees 'config.json'
+    $essai = En-TantQue $compte @"
+try { `$h = [IO.File]::Open('$script:Donnees\piege-4.1.0.json', 'CreateNew', 'Write'); `$h.Dispose(); 'CREATION=ECRIT' }
+catch { `$x = `$_.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; 'CREATION=' + `$x.GetType().Name }
 "@
-        if ($s -match 'EXISTE') { return 'config.json existe déjà (créé par la 4.1.0) : le piège ne peut pas le remplacer' }
-        if (-not (Test-Path $f) -or (Droits $f).Proprietaire -ne $compte.Sid) { return "piège non posé : $($s -replace "`r?`n", ' ')" }
-        $script:piegePose = $true
-        $true
+    if ($essai -match 'CREATION=ECRIT') {
+        Noter 'Version 4.1.0 en marche : création refusée au compte standard' 'ÉCHOUÉ' 'le compte standard crée des fichiers dans le dossier de la 4.1.0 (piège réel posé)'
+        [IO.File]::WriteAllText($fConfig, $ConfigPiegee)
+        icacls $fConfig /setowner $compte.Nom /Q | Out-Null
+        $piegePose = (Droits $fConfig).Proprietaire -eq $compte.Sid
+    } else {
+        Verifier 'Version 4.1.0 en marche : création refusée au compte standard' {
+            if ($essai -notmatch 'CREATION=UnauthorizedAccessException') { return "résultat : $($essai -replace "`r?`n", ' ')" }
+            $true
+        }
+        Verifier 'État hérité simulé : configuration piégée dont le propriétaire est le compte standard' {
+            [IO.File]::WriteAllText($fConfig, $ConfigPiegee, (New-Object Text.ASCIIEncoding))
+            icacls $fConfig /setowner $compte.Nom /Q | Out-Null
+            icacls $fConfig /grant "$($compte.Nom):F" /Q | Out-Null
+            $o = (Droits $fConfig).Proprietaire
+            if ($o -ne $compte.Sid) { return "propriétaire $o" }
+            $script:piegePose = $true
+            $true
+        }
     }
 }
 $journalAvant = if (Test-Path (Join-Path $script:Donnees 'journal.txt')) { Get-Content (Join-Path $script:Donnees 'journal.txt') -TotalCount 1 -Encoding UTF8 } else { $null }

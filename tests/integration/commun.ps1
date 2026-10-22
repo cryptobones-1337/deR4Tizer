@@ -251,6 +251,7 @@ function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Seconde
 
 # Ce que le compte standard peut faire sur le canal, dans chaque dossier réellement présent (créer un fichier,
 # créer un sous-dossier) et sur chaque fichier présent (ouvrir en écriture), données et Program Files\deR4Tizer.
+# (Pas de fonction nommée « Type » : l'alias type, Get-Content, passerait avant.)
 # Seule une UnauthorizedAccessException vaut refus : un délai dépassé, un service arrêté ou un chemin absent ne
 # prouvent rien. Renvoie $true ou la liste de ce qui n'a pas été refusé. $Exclus : chemins complets écartés
 # de l'essai (fichier tenu ouvert en échec fermé, attendu).
@@ -267,18 +268,18 @@ function Essais-Standard($Compte, [string[]]$Exclus = @()) {
     $liste = Join-Path $script:Commun "cibles-$($script:NumeroScript).txt"
     [IO.File]::WriteAllLines($liste, $cibles, (New-Object Text.UTF8Encoding($true)))
     $s = En-TantQue $Compte @"
-function Type(`$err) { `$x = `$err.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; `$x.GetType().Name }
+function Nom-Exception(`$err) { `$x = `$err.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; `$x.GetType().Name }
 try { `$c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut); `$c.Connect(5000)
       `$w = New-Object IO.StreamWriter(`$c); `$w.AutoFlush = `$true; `$r = New-Object IO.StreamReader(`$c)
-      `$w.WriteLine('{"Action":"toutDebloquer"}'); 'TUBE|canal|REPONSE ' + `$r.ReadLine() } catch { 'TUBE|canal|' + (Type `$_) }
+      `$w.WriteLine('{"Action":"toutDebloquer"}'); 'TUBE|canal|REPONSE ' + `$r.ReadLine() } catch { 'TUBE|canal|' + (Nom-Exception `$_) }
 `$n = [guid]::NewGuid().ToString('N')
 foreach (`$l in [IO.File]::ReadAllLines('$liste')) {
     `$t, `$p = `$l -split '\|', 2
     if (`$t -eq 'D') {
-        try { `$h = [IO.File]::Open((Join-Path `$p "piege-`$n.txt"), 'CreateNew', 'Write'); `$h.Dispose(); "CREERFICHIER|`$p|ECRIT" } catch { "CREERFICHIER|`$p|" + (Type `$_) }
-        try { [void][IO.Directory]::CreateDirectory((Join-Path `$p "piege-`$n")); "CREERDOSSIER|`$p|CREE" } catch { "CREERDOSSIER|`$p|" + (Type `$_) }
+        try { `$h = [IO.File]::Open((Join-Path `$p "piege-`$n.txt"), 'CreateNew', 'Write'); `$h.Dispose(); "CREERFICHIER|`$p|ECRIT" } catch { "CREERFICHIER|`$p|" + (Nom-Exception `$_) }
+        try { [void][IO.Directory]::CreateDirectory((Join-Path `$p "piege-`$n")); "CREERDOSSIER|`$p|CREE" } catch { "CREERDOSSIER|`$p|" + (Nom-Exception `$_) }
     } else {
-        try { `$h = [IO.File]::Open(`$p, 'Open', 'Write', 'ReadWrite, Delete'); `$h.Dispose(); "ECRIRE|`$p|OUVERT" } catch { "ECRIRE|`$p|" + (Type `$_) }
+        try { `$h = [IO.File]::Open(`$p, 'Open', 'Write', 'ReadWrite, Delete'); `$h.Dispose(); "ECRIRE|`$p|OUVERT" } catch { "ECRIRE|`$p|" + (Nom-Exception `$_) }
     }
 }
 'FIN'
