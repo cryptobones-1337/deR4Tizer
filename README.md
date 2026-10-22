@@ -16,7 +16,7 @@
 
 deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail) et peuvent aussi partir vers le SIEM de votre choix.
 
-### Fonctionnalités (v4.0)
+### Fonctionnalités (v4.1)
 
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
@@ -38,6 +38,8 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
 | **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs |
+| **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
+| **Mise à jour** | Vérification quotidienne, empreinte SHA-256 et signature du même éditeur exigées ; binaires non signés signalés mais pas installés |
 | **Interface** | Français / anglais |
 
 ### Architecture
@@ -87,9 +89,25 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 | `/api/v1/incidents` | Incidents de corrélation |
 | `/api/v1/journal?lignes=200` | Journal du service (texte) |
 
+### Mise à jour automatique et signature
+
+Chaque tag `vX.Y` lance le workflow *Publication* : tests, compilation, signature, empreintes et `manifeste.json`
+joints à la version GitHub. Les postes lisent ce manifeste une fois par jour (`releases/latest/download/manifeste.json`,
+donc dépôt public) et n'installent une version que si chaque fichier a la bonne empreinte et la signature du même
+éditeur que la version installée.
+
+Pour signer : obtenir un certificat de signature de code (gratuit pour l'open source via
+[SignPath Foundation](https://signpath.org), ou Azure Trusted Signing, ou un certificat OV au format .pfx), puis
+ajouter les secrets `CERTIFICAT_PFX` (fichier .pfx en base64) et `CERTIFICAT_MOT_DE_PASSE`. En local,
+`DER4TIZER_CERT_SHA1` (empreinte d'un certificat du magasin) fait signer `compiler.ps1`. Tant que les binaires ne sont
+pas signés, Windows affiche « éditeur inconnu » et les postes signalent les nouvelles versions sans les installer.
+
 ### Limites connues
 
 - Un PC sur un réseau commuté ne voit que son propre trafic, le broadcast et le multicast : ce n'est pas un NDR de tout le réseau (il faudrait un port miroir).
+- La règle de pare-feu « deR4Tizer capture » autorise tout l'entrant vers le service : c'est nécessaire, une règle
+  bloquant le TCP entrant vers le service fait aussi tomber la capture (mesuré : 3 Ko reçus en 20 s au lieu de 304 Ko).
+  Le service n'écoute aucun port réseau, sauf l'API facultative, filtrée par adresse et bloquée sur le profil Public.
 - Capture IPv4 seulement pour l'instant ; le pays est celui du titulaire du bloc d'adresses (un CDN peut apparaître aux États-Unis).
 - Les exécutables ne sont pas encore signés (certificat de signature de code à obtenir, par exemple SignPath
   Foundation pour les projets open source) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
@@ -123,7 +141,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Critical alerts reach the IT provider or contact person (ntfy, Teams, e-mail) and can also go to the SIEM of your choice.
 
-### Features (v4.0)
+### Features (v4.1)
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -145,6 +163,8 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
 | **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators |
+| **Less noise** | 7-day learning mode (behaviours remembered), "no longer alert for this behaviour" exceptions, "direct IP" criterion neutralised for known VPNs, messengers and games; critical alerts are never softened |
+| **Updates** | Daily check, SHA-256 hash and same-publisher signature required; unsigned binaries reported but not installed |
 | **Interface** | French / English |
 
 ### Architecture

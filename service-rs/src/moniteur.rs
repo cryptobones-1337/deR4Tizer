@@ -109,6 +109,7 @@ impl Moniteur {
         if !console {
             crate::protection::demarrer();
             std::thread::spawn(baseline::forcer_tailles);
+            crate::maj::demarrer();
         }
         defender::surveiller(partage.alertes_externes.clone());
         {
@@ -381,6 +382,8 @@ impl Moniteur {
             if nom.is_none() {
                 if NAVIGATEURS_DOH.contains(&nom_processus.to_lowercase().as_str()) {
                     raisons.push("IP sans DNS (navigateur, DoH probable)".into());
+                } else if ip_directe_normale(&signataire) {
+                    raisons.push("IP sans DNS (application connue : VPN, messagerie, notifications, jeu…)".into());
                 } else if self.journal_dns_actif && !self.preexistants.contains(&cle) {
                     raisons.push("IP DIRECTE (aucune requête DNS)".into());
                     score += 2;
@@ -475,7 +478,8 @@ impl Moniteur {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, Some("adresse-publique".into()));
             }
         }
-        self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques);
+        let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
+        self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
 
         // Leurres anti-rançongiciel (vérification par empreinte, en plus de l'audit d'écriture)
         for a in hygiene::verifier_leurres(&mut self.leurres) {
@@ -643,6 +647,7 @@ impl Moniteur {
 
     fn ajouter_alerte_brute(&mut self, mut a: Alerte, cle: Option<String>) -> bool {
         mitre::enrichir(&mut a);
+        crate::apprentissage::filtrer(&mut a);
         if let Some(cle) = cle {
             if let Some(t) = self.dernieres_alertes.get(&cle) {
                 if t.elapsed() < Duration::from_secs(24 * 3600) {
@@ -759,6 +764,27 @@ impl Moniteur {
                 } else {
                     Reponse::ok("Réglages des notifications enregistrés.")
                 }
+            }
+            // ---------------- bruit : « ne plus alerter pour ce comportement » (Cible : identifiant de l'alerte)
+            "exception" => match self.alertes.iter().find(|a| Some(a.id.as_str()) == c.cible.as_deref()).cloned() {
+                Some(a) => Reponse::ok(format!("Ce comportement ne déclenchera plus qu'une information : {}", crate::apprentissage::ajouter_exception(&a))),
+                None => Reponse::erreur("Alerte introuvable."),
+            },
+            "apprentissage" => match crate::apprentissage::commande(c.valeur.as_deref().unwrap_or("")) {
+                Ok(m) => Reponse::ok(m),
+                Err(e) => Reponse::erreur(e),
+            },
+            "majVerifier" => Reponse::ok(crate::maj::verifier_maintenant(&self.config.maj)),
+            "majConfig" => {
+                let Some(m) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<commun::ConfigMaj>(v).ok()) else {
+                    return Reponse::erreur("réglages de mise à jour illisibles");
+                };
+                if !m.url.is_empty() && !m.url.starts_with("https://") {
+                    return Reponse::erreur("L'adresse du manifeste doit commencer par https://");
+                }
+                self.config.maj = m;
+                commun::ecrire("config.json", &self.config);
+                Reponse::ok("Réglages de mise à jour enregistrés.")
             }
             "autoriserLecteur" => match crate::protection::autoriser(c.valeur.as_deref().unwrap_or("")) {
                 Ok(nom) => Reponse::ok(format!("Le compte {nom} peut maintenant lire les données de deR4Tizer.")),
@@ -1146,4 +1172,17 @@ pub fn blocages_a_lever(blocages: &[Blocage], maintenant: &str, listes_chargees:
             None
         }
     }).collect()
+}
+
+/// Éditeurs dont les applications contactent normalement des adresses IP sans requête DNS (VPN, messageries,
+/// canaux de notification, jeux) : le critère « IP directe » ne les pénalise pas. Programme signé uniquement.
+pub fn ip_directe_normale(signataire: &str) -> bool {
+    const EDITEURS: &[&str] = &[
+        "proton", "wireguard", "openvpn", "nord security", "nordvpn", "tefincom", "tailscale", "mullvad", "expressvpn",
+        "private internet access", "cloudflare", "fortinet", "palo alto networks", "cisco", "microsoft", "google", "apple",
+        "mozilla", "brave software", "valve", "blizzard", "riot games", "epic games", "electronic arts", "ubisoft",
+        "discord", "zoom", "spotify", "slack", "whatsapp", "meta platforms", "telegram", "signal messenger", "teamviewer", "anydesk",
+    ];
+    let s = signataire.to_lowercase();
+    !s.is_empty() && !s.starts_with("der4tizer") && EDITEURS.iter().any(|e| s.contains(e))
 }

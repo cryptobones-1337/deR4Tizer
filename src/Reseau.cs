@@ -1,4 +1,4 @@
-// Pages Réseau local (NDR : appareils, passerelle, DHCP, répondeurs LLMNR/NBNS/mDNS, leurre) et
+﻿// Pages Réseau local (NDR : appareils, passerelle, DHCP, répondeurs LLMNR/NBNS/mDNS, leurre) et
 // Détection (IDS/IPS et DPI : détections, sessions TLS avec SNI et JA3, requêtes HTTP et DNS).
 using System;
 using System.Collections.Generic;
@@ -93,6 +93,13 @@ namespace DeR4Tizer
             Lv.AjouterSection(L.T("Serveurs DHCP vus"));
             foreach (var d in r.ServeursDhcp ?? new List<ServeurDhcp>())
                 Ligne(new[] { d.Legitime ? L.T("Serveur DHCP") : L.T("Serveur DHCP PIRATE"), d.Ip, d.Legitime ? L.T("serveur de cette interface") : L.T("n'est pas le serveur de cette interface"), "", d.Vu }, d.Legitime ? "" : "Critique");
+            Lv.AjouterSection(L.T("Redirections de ports de la box (UPnP)") + " — " + (r.Upnp ?? ""));
+            foreach (var x in r.Redirections ?? new List<RedirectionUpnp>())
+            {
+                bool versPc = x.Client == r.Interface;
+                Ligne(new[] { (versPc ? L.T("VERS CE PC") : L.T("Redirection")) + " " + x.PortExterne + "/" + x.Protocole, x.Client, L.T("port interne") + " " + x.PortInterne + (string.IsNullOrEmpty(x.Description) ? "" : " · " + x.Description), x.Active ? L.T("active") : L.T("inactive"), "" },
+                    versPc && x.Active ? "Alerte" : "");
+            }
             Lv.AjouterSection(L.T("Répondeurs LLMNR / NBNS / mDNS"));
             foreach (var x in r.Repondeurs ?? new List<Repondeur>())
                 Ligne(new[] { x.Protocole, x.Ip, string.Join(", ", x.Noms ?? new List<string>()), "", x.Derniere }, (x.Noms ?? new List<string>()).Count >= (x.Protocole == "mDNS" ? 15 : 3) ? "Alerte" : "");

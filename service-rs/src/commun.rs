@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "4.0";
+pub const VERSION: &str = "4.1";
 pub const NOM_SERVICE: &str = "deR4Tizer";
 pub const NOM_PIPE: &str = r"\\.\pipe\deR4Tizer";
 pub const SEUIL_ALERTE: i32 = 3;
@@ -166,6 +166,7 @@ pub struct Config {
     /// Utiliser aussi les listes de menaces non commerciales ou aux conditions non vérifiées (usage personnel)
     pub listes_restreintes: bool,
     pub notifications: ConfigNotifications,
+    pub maj: ConfigMaj,
 }
 
 impl Default for Config {
@@ -179,6 +180,7 @@ impl Default for Config {
             ips: false,
             listes_restreintes: false,
             notifications: ConfigNotifications::default(),
+            maj: ConfigMaj::default(),
         }
     }
 }
@@ -232,6 +234,31 @@ impl Default for ConfigNotifications {
             expediteur: String::new(), destinataires: String::new(),
         }
     }
+}
+
+/// Mise à jour automatique (maj.rs)
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct ConfigMaj {
+    /// Installer automatiquement une version vérifiée (sinon : seulement la signaler)
+    pub auto: bool,
+    /// Manifeste de la dernière version publiée
+    pub url: String,
+    /// Installer aussi des binaires non signés (essais seulement)
+    pub accepter_non_signe: bool,
+}
+
+impl Default for ConfigMaj {
+    fn default() -> Self {
+        ConfigMaj { auto: true, url: "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json".into(), accepter_non_signe: false }
+    }
+}
+
+/// Chemin d'un profil utilisateur masqué (« C:\Users\marie\… » → « %USERPROFILE%\… ») : un poste partagé ne
+/// montre pas les noms des comptes ni leurs dossiers
+pub fn masquer_chemin(chemin: &str) -> String {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"(?i)^[a-z]:\\users\\[^\\]+").unwrap()).replace(chemin, "%USERPROFILE%").into_owned()
 }
 
 /// API HTTP d'export (lecture seule), protégée par un jeton

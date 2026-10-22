@@ -55,6 +55,7 @@ namespace DeR4Tizer
         public List<string> AdressesPubliques { get; set; }
         public bool JournalPaquets { get; set; }
         public List<EntreeExposee> Entrees { get; set; }
+        public string Base { get; set; }
     }
 
     public class EntreeExposee
@@ -229,6 +230,7 @@ namespace DeR4Tizer
         public bool Ips { get; set; }
         public bool ListesRestreintes { get; set; }
         public ConfigNotifications Notifications { get; set; }
+        public ConfigMaj Maj { get; set; }
         // Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
         public bool BlocageAutoMenaces { get; set; }
         // Suspend aussitôt le programme qui modifie un fichier leurre
@@ -298,6 +300,25 @@ namespace DeR4Tizer
         public string MacPasserelle { get; set; } public string MacPasserelleConnue { get; set; } public string DhcpInterface { get; set; }
         public List<Appareil> Appareils { get; set; } public List<ServeurDhcp> ServeursDhcp { get; set; } public List<Repondeur> Repondeurs { get; set; }
         public string DernierLeurre { get; set; } public string ResultatLeurre { get; set; }
+        public List<RedirectionUpnp> Redirections { get; set; } public string Upnp { get; set; }
+    }
+    public class RedirectionUpnp
+    {
+        public int PortExterne { get; set; } public string Protocole { get; set; } public string Client { get; set; }
+        public int PortInterne { get; set; } public string Description { get; set; } public bool Active { get; set; }
+    }
+
+    // Mode apprentissage et exceptions (apprentissage.json), mise à jour (maj.json)
+    public class ExceptionApprise { public string Signature { get; set; } public string Description { get; set; } public string Date { get; set; } }
+    public class EtatApprentissage
+    {
+        public string Debut { get; set; } public string Fin { get; set; } public List<string> Appris { get; set; } public List<ExceptionApprise> Exceptions { get; set; }
+    }
+    public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } }
+    public class ConfigMaj
+    {
+        public ConfigMaj() { Auto = true; Url = "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json"; }
+        public bool Auto { get; set; } public string Url { get; set; } public bool AccepterNonSigne { get; set; }
     }
 
     // ------------------------------------------------------------ DPI (dpi.json) et IDS (ids.json)
@@ -418,7 +439,7 @@ namespace DeR4Tizer
 
     public static class Commun
     {
-        public const string Version = "4.0";
+        public const string Version = "4.1";
         public const string NomService = "deR4Tizer";
         public const string NomPipe = "deR4Tizer";
         public const int SeuilAlerte = 3;

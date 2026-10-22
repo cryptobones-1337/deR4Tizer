@@ -18,4 +18,13 @@ if ($LASTEXITCODE) { throw 'Échec de la compilation de l''interface.' }
 # -InterfaceSeulement : la CI compile le service elle-même (chaîne MSVC de GitHub Actions)
 if ($args -notcontains '-InterfaceSeulement') { & (Join-Path $PSScriptRoot 'compiler-rs.ps1') }
 
+# Signature de code, si un certificat est disponible sur cette machine (empreinte dans DER4TIZER_CERT_SHA1) :
+# sans signature, Windows affiche « éditeur inconnu » et la mise à jour automatique ne s'installe pas
+if ($env:DER4TIZER_CERT_SHA1) {
+    $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    if (-not $signtool) { throw 'signtool.exe introuvable (installez le SDK Windows).' }
+    & $signtool.FullName sign /sha1 $env:DER4TIZER_CERT_SHA1 /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 (Join-Path $sortie '*.exe')
+    if ($LASTEXITCODE) { throw 'Échec de la signature.' }
+}
+
 Get-ChildItem $sortie -Filter *.exe | Select-Object Name, @{ n = 'Ko'; e = { [int]($_.Length / 1KB) } } | Format-Table -AutoSize

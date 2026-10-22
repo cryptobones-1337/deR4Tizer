@@ -117,7 +117,15 @@ impl Surveillances {
         }
         self.apprentissage_peripheriques = false;
         usages.sort_by(|a, b| b.en_cours.cmp(&a.en_cours).then(b.dernier_debut.cmp(&a.dernier_debut)));
-        self.usages = usages;
+        // Affichage : 30 derniers jours et chemins de profil masqués (poste partagé, données personnelles)
+        let limite = commun::heure(std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400));
+        self.usages = usages.into_iter()
+            .filter(|u| u.en_cours || u.dernier_debut >= limite)
+            .map(|mut u| {
+                u.chemin = commun::masquer_chemin(&u.chemin);
+                u
+            })
+            .collect();
     }
 
     // ------------------------------------------------------------ prise en main à distance
