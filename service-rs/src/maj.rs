@@ -274,7 +274,10 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     if let Err(e) = telecharger(&config.url, &f_manifeste, TAILLE_MAX_MANIFESTE) {
         return (String::new(), format!("manifeste illisible ({e})"));
     }
-    let m = match fs::read(&f_manifeste).map_err(|e| e.to_string()).and_then(|o| lire_manifeste(&o)) {
+    // Lu avec le contrôle du propriétaire, comme tout fichier du dossier de données (la confiance vient de
+    // toute façon du paquet signé)
+    let lu = commun::lire_fichier(&f_manifeste).ok_or_else(|| "manifeste illisible ou protection du dossier non vérifiée".to_string());
+    let m = match lu.and_then(|t| lire_manifeste(t.as_bytes())) {
         Ok(m) => m,
         Err(e) => return (String::new(), e),
     };
@@ -342,8 +345,23 @@ pub struct ParametresScript<'a> {
     /// Dossier des journaux d'installation et du fichier echec.txt
     pub journaux: &'a Path,
     /// Tests : (journal des actions simulées, réponse simulée du service) ; ni msiexec ni canal
-    pub simulation: Option<(&'a Path, &'a str)>,
+    pub simulation: Option<Simulation<'a>>,
 }
+
+/// Simulation du script (tests) : actions consignées dans `journal`, ni msiexec ni canal
+pub struct Simulation<'a> {
+    pub journal: &'a Path,
+    /// Réponse du « service » sur le canal
+    pub reponse: &'a str,
+    /// Processus qui tient le tube, et processus du service
+    pub pid_serveur: u32,
+    pub pid_service: u32,
+}
+
+/// PowerShell : PID du processus serveur d'un tube nommé ouvert ($c, NamedPipeClientStream connecté)
+pub const PS_PID_SERVEUR: &str = "Add-Type -Namespace D4T -Name Tube -MemberDefinition \
+    '[DllImport(\"kernel32.dll\", SetLastError = true)] public static extern bool GetNamedPipeServerProcessId(IntPtr p, out uint id);'; \
+    function Pid-Serveur($c) { [uint32]$p = 0; [void][D4T.Tube]::GetNamedPipeServerProcessId($c.SafePipeHandle.DangerousGetHandle(), [ref]$p); return $p }";
 
 /// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
 /// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
@@ -367,16 +385,23 @@ fn lancer_installation(p: &ParametresScript) -> (String, String) {
 pub fn script_installation(p: &ParametresScript) -> String {
     let q = |c: &Path| c.display().to_string().replace('\'', "''");
     let echec = q(&p.journaux.join("echec.txt"));
-    let (installer, lire_reponse, essais, pause) = match p.simulation {
-        Some((journal, reponse)) => (
-            format!("Add-Content -LiteralPath '{}' -Value ('installer ' + $paquet)", q(journal)),
-            format!("Add-Content -LiteralPath '{}' -Value 'canal'; return '{}'", q(journal), reponse.replace('\'', "''")),
+    // Lire-Reponse : $null si le tube n'est pas tenu par le processus du service (un compte standard peut
+    // créer le tube pendant que l'ancien service est arrêté et répondre à sa place)
+    let (definitions, installer, lire_reponse, essais, pause) = match &p.simulation {
+        Some(s) => (
+            String::new(),
+            format!("Add-Content -LiteralPath '{}' -Value ('installer ' + $paquet)", q(s.journal)),
+            format!("Add-Content -LiteralPath '{}' -Value 'canal'; if ({} -ne {}) {{ return $null }}; return '{}'",
+                q(s.journal), s.pid_serveur, s.pid_service, s.reponse.replace('\'', "''")),
             2,
             0,
         ),
         None => (
+            format!("{PS_PID_SERVEUR}; "),
             format!("Start-Process msiexec.exe -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')"),
             "$c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut); $c.Connect(2000); \
+             $ps = Pid-Serveur $c; $pv = [uint32](Get-CimInstance Win32_Service -Filter \"Name='deR4Tizer'\").ProcessId; \
+             if ($pv -eq 0 -or $ps -ne $pv) { $c.Dispose(); return $null }; \
              $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c); \
              $w.WriteLine('{\"Action\":\"verification\"}'); $l = $r.ReadLine(); $c.Dispose(); return $l".to_string(),
             30,
@@ -384,9 +409,9 @@ pub fn script_installation(p: &ParametresScript) -> String {
         ),
     };
     format!(
-        "function Installer($paquet, $journal) {{ {installer} }}; \
+        "{definitions}function Installer($paquet, $journal) {{ {installer} }}; \
          function Lire-Reponse {{ {lire_reponse} }}; \
-         function Repond {{ try {{ $j = Lire-Reponse | ConvertFrom-Json -ErrorAction Stop; \
+         function Repond {{ try {{ $l = Lire-Reponse; if ($null -eq $l) {{ return $false }}; $j = $l | ConvertFrom-Json -ErrorAction Stop; \
            return ($j.Ok -eq $true -and $j.Message -eq 'deR4Tizer {v}') }} catch {{ return $false }} }}; \
          function Echec($t) {{ Set-Content -LiteralPath '{echec}' -Encoding UTF8 -Value ($t + ' le ' + (Get-Date)) }}; \
          function Empreinte($f) {{ try {{ (Get-FileHash -Algorithm SHA256 -LiteralPath $f -ErrorAction Stop).Hash }} catch {{ '' }} }}; \

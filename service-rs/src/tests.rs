@@ -1490,7 +1490,7 @@ fn lot2_proprietes_lues_dans_le_paquet() {
 
 #[test]
 fn lot2_retour_arriere_simule() {
-    use crate::maj::{script_installation, ParametresScript};
+    use crate::maj::{script_installation, ParametresScript, Simulation};
     let d = dossier_test("retour-arriere");
     let paquet = d.join("4.4").join("deR4Tizer.msi");
     let retour = d.join("4.3").join("deR4Tizer.msi");
@@ -1502,18 +1502,19 @@ fn lot2_retour_arriere_simule() {
     let sha_retour = crate::hygiene::empreinte_fichier(&retour).unwrap();
     let journal = d.join("actions.txt");
     let echec = d.join("echec.txt");
-    let jouer = |reponse: &str, sha_paquet: &str| -> (Vec<String>, Option<String>) {
+    let jouer_pid = |reponse: &str, sha_paquet: &str, pid_serveur: u32| -> (Vec<String>, Option<String>) {
         let _ = std::fs::remove_file(&journal);
         let _ = std::fs::remove_file(&echec);
         let s = script_installation(&ParametresScript {
             version: "4.4", paquet: &paquet, sha_paquet, retour: &retour, sha_retour: &sha_retour, journaux: &d,
-            simulation: Some((&journal, reponse)),
+            simulation: Some(Simulation { journal: &journal, reponse, pid_serveur, pid_service: 4242 }),
         });
         let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &s]).output().unwrap();
         assert!(sortie.status.success(), "{}", String::from_utf8_lossy(&sortie.stderr));
         let actions = std::fs::read_to_string(&journal).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
         (actions, std::fs::read_to_string(&echec).ok())
     };
+    let jouer = |reponse: &str, sha_paquet: &str| jouer_pid(reponse, sha_paquet, 4242);
     let installer = |p: &std::path::Path| format!("installer {}", p.display());
     // Le service répond, en JSON, avec la nouvelle version : pas de retour arrière
     let (a, e) = jouer(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &sha_paquet);
@@ -1525,9 +1526,35 @@ fn lot2_retour_arriere_simule() {
         assert_eq!(a, vec![installer(&paquet), "canal".into(), "canal".into(), installer(&retour)], "réponse {reponse:?}");
         assert!(e.as_deref().is_some_and(|t| t.contains("réinstallé") && t.contains("4.4")), "{e:?}");
     }
+    // Réponse valide, mais le tube est tenu par un autre processus que le service (squat pendant l'arrêt de
+    // l'ancien service) : échec de santé, retour arrière
+    let (a, e) = jouer_pid(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &sha_paquet, 5151);
+    assert_eq!(a, vec![installer(&paquet), "canal".into(), "canal".into(), installer(&retour)]);
+    assert!(e.as_deref().is_some_and(|t| t.contains("réinstallé")), "{e:?}");
     // Paquet modifié après vérification : rien n'est installé
     let (a, e) = jouer(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &"00".repeat(32));
     assert!(a.is_empty(), "{a:?}");
     assert!(e.as_deref().is_some_and(|t| t.contains("abandonnée")));
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot2_pid_du_serveur_du_tube() {
+    // Le code PowerShell du script (P/Invoke de GetNamedPipeServerProcessId), sur un vrai tube créé par ce test
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let nom = format!("der4tizer-test-{}", std::process::id());
+    let chemin: Vec<u16> = format!(r"\\.\pipe\{nom}").encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(chemin.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    let brut = tube.0 as usize;
+    let attente = std::thread::spawn(move || unsafe {
+        let _ = ConnectNamedPipe(windows::Win32::Foundation::HANDLE(brut as _), None);
+    });
+    let script = format!("{}; $c = New-Object IO.Pipes.NamedPipeClientStream('.', '{nom}', [IO.Pipes.PipeDirection]::InOut); $c.Connect(5000);         Write-Output (Pid-Serveur $c); $c.Dispose()", crate::maj::PS_PID_SERVEUR);
+    let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().unwrap();
+    let _ = attente.join();
+    unsafe { let _ = windows::Win32::Foundation::CloseHandle(tube); }
+    assert_eq!(String::from_utf8_lossy(&sortie.stdout).trim(), std::process::id().to_string(), "{}", String::from_utf8_lossy(&sortie.stderr));
 }

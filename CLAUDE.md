@@ -165,7 +165,7 @@ redirige l'opération vers un dossier système (élévation de privilèges) :
 
 Créer à partir du code et des revues déjà faites, sans réaudit complet :
 
-- `docs/roadmap/capability-matrix.md` : chaque capacité avec un état parmi « prévu », « implémenté non vérifié », « testé en labo », « validé sur Windows », « prêt pour la production » ; fichiers sources ; prérequis Windows ; tests existants ; limites. L'IDS, le DPI et le NDR sont classés expérimentaux. Limite connue à y inscrire : en échec de la protection du dossier de données, l'alerte critique reste locale (les secrets de remontée sont ignorés), le prestataire n'est pas prévenu.
+- `docs/roadmap/capability-matrix.md` : chaque capacité avec un état parmi « prévu », « implémenté non vérifié », « testé en labo », « validé sur Windows », « prêt pour la production » ; fichiers sources ; prérequis Windows ; tests existants ; limites. L'IDS, le DPI et le NDR sont classés expérimentaux. Limite connue à y inscrire : en échec de la protection du dossier de données, l'alerte critique reste locale (les secrets de remontée sont ignorés), le prestataire n'est pas prévenu. Risque résiduel à y inscrire : le MSI accepte une version plus ancienne (`AllowDowngrades`, nécessaire au retour arrière) ; le refus d'une version plus ancienne est assuré par le service, sur la version lue dans le paquet signé, et un administrateur peut toujours installer une version plus ancienne à la main.
 - `docs/security/threat-model.md` : frontières de privilège (service SYSTEM, interface, tube, API, mise à jour, dossier de données, capture réseau), attaquants considérés (compte standard local, appareil du LAN, compte GitHub compromis, liste de menaces corrompue), mesures et risques résiduels.
 - `docs/architecture/current-state.md` et `docs/testing/baseline.md` (commandes de compilation et de test réellement exécutées, résultats).
 - `docs/reponse/politique.md` : niveaux de réponse 0 à 3. Seules actions de niveau 3 (automatiques) autorisées : blocage des IP Spamhaus DROP et Feodo Tracker, suspension du programme qui touche un leurre. Tout le reste, IPS compris, au niveau 2 au plus (désactivé par défaut ou confirmation).
@@ -183,6 +183,8 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
   automatique alimentée par ces fichiers (blocage automatique, IPS).
 - `commun::lisible_en_echec` : retirer `dns.json`.
 - `natif::avec_privilege_restauration` : si `RevertToSelf` échoue, arrêter le service.
+- canal.rs : tube occupé par un autre processus au démarrage (squat) : alerte critique locale
+  avec le PID et le chemin du processus qui le détient, plutôt qu'une simple ligne de journal.
 
 ### Ensuite (après validation des lots 1 à 5, une phase à la fois, avec accord)
 
