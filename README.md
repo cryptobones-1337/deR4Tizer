@@ -107,16 +107,20 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 ### Mise à jour automatique et signature
 
 Chaque tag `vX.Y` lance le workflow *Publication* : tests, compilation, signature, empreintes et `manifeste.json`
-joints à la version GitHub. Les postes lisent ce manifeste une fois par jour (`releases/latest/download/manifeste.json`). L'installation
-automatique est désactivée par défaut ; activée, elle n'installe une version que si chaque fichier a la bonne
-empreinte et est signé par l'une des **clés épinglées dans le binaire** (empreintes SHA-256 des clés publiques,
-variable de dépôt `CLE_SIGNATURE` : la clé actuelle et la suivante, séparées par une virgule, pour passer le
-renouvellement du certificat), révocation vérifiée. Les fichiers sont téléchargés et vérifiés dans
-`%ProgramFiles%\deR4Tizer\maj`, réservé à SYSTEM (droits vérifiés avant chaque usage, mise à jour refusée
-sinon), et l'empreinte est revérifiée juste avant l'exécution. Le service doit
-ensuite répondre sur son canal dans les 60 s ; sinon le paquet de la version précédente est réinstallé (ou, à
-défaut, les anciens exécutables remis). Sans clé épinglée, une version est seulement signalée : un compte GitHub
-compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
+joints à la version GitHub. Les postes lisent ce manifeste une fois par jour (`releases/latest/download/manifeste.json`).
+Le manifeste est strict (champs connus seulement, 64 Ko au plus, un seul fichier : le paquet MSI) et ne fait jamais
+foi seul, puisqu'il n'est pas signé. L'installation automatique est désactivée par défaut ; activée, elle n'installe
+un paquet que si son empreinte est celle du manifeste, s'il est signé par l'une des **clés épinglées dans le
+binaire** (empreintes SHA-256 des clés publiques, variable de dépôt `CLE_SIGNATURE`, transmise à la compilation
+sous le nom `DER4TIZER_CLES_SIGNATURE` : la clé actuelle et la suivante, séparées par une virgule, pour passer le
+renouvellement du certificat), révocation vérifiée, et si la **version lue dans le paquet signé** (`ProductVersion`,
+avec l'`UpgradeCode` de deR4Tizer) est celle du manifeste et strictement plus récente que la version installée.
+Avant toute installation, le service se procure aussi le paquet de **sa propre version**, vérifié de la même façon,
+pour pouvoir y revenir ; sans lui, rien n'est installé. Les fichiers sont gardés dans `%ProgramFiles%\deR4Tizer\maj`,
+réservé à SYSTEM (droits vérifiés avant chaque usage), et les empreintes sont revérifiées juste avant l'exécution.
+Le service doit ensuite répondre en JSON valide sur son canal, avec la nouvelle version, dans les 60 s ; sinon le
+paquet de la version précédente est réinstallé. Sans clé épinglée, une version est seulement signalée : un compte
+GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc.
 
 Protéger la publication : ranger les secrets de signature dans l'environnement GitHub « publication » avec une
 approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules). La compilation (où
