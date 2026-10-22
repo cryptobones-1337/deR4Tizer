@@ -92,6 +92,28 @@ namespace DeR4Tizer
             { "Mini-SIEM local : sessions, comptes, processus, services, connexions, pare-feu et alertes, conservés 30 jours. Les règles de corrélation lèvent des incidents.",
               "Local mini-SIEM: logons, accounts, processes, services, connections, firewall and alerts, kept for 30 days. Correlation rules raise incidents." },
 
+            // Trafic, réseau local, détection
+            { "Trafic", "Traffic" }, { "Réseau local", "Local network" }, { "Détection", "Detection" },
+            { "Analyse passive des paquets de ce PC depuis minuit. Pays d'enregistrement des adresses (registres Internet régionaux) ; les arcs montrent les échanges des 10 dernières secondes.",
+              "Passive analysis of this PC's packets since midnight. Country where addresses are registered (regional Internet registries); arcs show exchanges in the last 10 seconds." },
+            { "Pas encore de données de trafic (le service capture les paquets au démarrage).", "No traffic data yet (the service captures packets at startup)." },
+            { "Reçu", "Received" }, { "Envoyé", "Sent" }, { "Destinations", "Destinations" }, { "Pays", "Country" }, { "Volume", "Volume" }, { "Programmes", "Programs" },
+            { "Surveillance passive de la carte reliée à la box (même avec un VPN) : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS (Responder). Un leurre interroge toutes les 10 minutes un nom qui n'existe pas : personne ne doit répondre.",
+              "Passive monitoring of the adapter connected to the router (even with a VPN): ARP spoofing, rogue DHCP server, LLMNR/NBNS poisoning (Responder). A decoy queries a non-existent name every 10 minutes: nobody should answer." },
+            { "Pas encore de données (le service analyse le réseau au démarrage).", "No data yet (the service analyses the network at startup)." },
+            { "Adresse IP", "IP address" }, { "Première vue", "First seen" }, { "Dernière vue", "Last seen" },
+            { "Appareils du réseau local", "Local network devices" }, { "Passerelle (box)", "Gateway (router)" }, { "Appareil", "Device" },
+            { "Serveurs DHCP vus", "DHCP servers seen" }, { "Serveur DHCP", "DHCP server" }, { "Serveur DHCP PIRATE", "ROGUE DHCP server" },
+            { "serveur de cette interface", "server of this interface" }, { "n'est pas le serveur de cette interface", "is not this interface's server" },
+            { "Répondeurs LLMNR / NBNS / mDNS", "LLMNR / NBNS / mDNS responders" },
+            { "IDS/IPS : règles au format Suricata (intégrées + fichiers .rules du dossier des règles, par exemple Emerging Threats Open). DPI : nom des sites TLS (SNI), empreintes des clients TLS (JA3, liste SSLBL d'abuse.ch), requêtes HTTP en clair et DNS.",
+              "IDS/IPS: Suricata-format rules (built-in + .rules files in the rules folder, e.g. Emerging Threats Open). DPI: TLS site names (SNI), TLS client fingerprints (JA3, abuse.ch SSLBL list), cleartext HTTP and DNS requests." },
+            { "Détections IDS", "IDS detections" }, { "Sessions TLS (SNI, JA3)", "TLS sessions (SNI, JA3)" }, { "Requêtes HTTP en clair", "Cleartext HTTP requests" },
+            { "Requêtes DNS", "DNS requests" }, { "Empreintes JA3", "JA3 fingerprints" }, { "Dossier des règles", "Rules folder" },
+            { "IPS : bloquer au pare-feu l'adresse distante des règles « drop » ou de priorité 1", "IPS: block at the firewall the remote address of \"drop\" or priority-1 rules" },
+            { "Message", "Message" }, { "Bloqué", "Blocked" }, { "oui", "yes" }, { "Site (SNI)", "Site (SNI)" }, { "Hôte et chemin", "Host and path" },
+            { "Nom demandé", "Requested name" }, { "Serveur DNS", "DNS server" }, { "Empreinte JA3", "JA3 fingerprint" }, { "Sessions", "Sessions" },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

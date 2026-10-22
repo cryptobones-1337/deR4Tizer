@@ -16,7 +16,7 @@
 
 deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes peuvent être envoyées au SIEM de votre choix.
 
-### Fonctionnalités (v3.2)
+### Fonctionnalités (v4.0)
 
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
@@ -31,6 +31,10 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
 | **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
+| **Analyse du trafic** | Capture passive des paquets (sockets brutes de Windows, sans pilote) : débit, programmes, destinations, ports et pays (registres Internet régionaux), carte du monde en direct |
+| **NDR local** | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
+| **DPI** | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
+| **IDS / IPS** | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
 | **Interface** | Français / anglais |
 
@@ -81,13 +85,19 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 | `/api/v1/incidents` | Incidents de corrélation |
 | `/api/v1/journal?lignes=200` | Journal du service (texte) |
 
+### Limites connues
+
+- Un PC sur un réseau commuté ne voit que son propre trafic, le broadcast et le multicast : ce n'est pas un NDR de tout le réseau (il faudrait un port miroir).
+- Capture IPv4 seulement pour l'instant ; le pays est celui du titulaire du bloc d'adresses (un CDN peut apparaître aux États-Unis).
+- Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
+
 ### Feuille de route
 
 1. ✅ Réglages, langue FR/EN, syslog, API d'export
 2. ✅ Mini-SIEM local : stockage, recherche, chronologie, corrélation
-3. Analyse du trafic, géolocalisation par pays (données publiques des RIR), carte du monde
-4. NDR local : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS
-5. DPI et IDS/IPS : SNI, DNS, empreintes JA3/JA4, règles compatibles Suricata
+3. ✅ Analyse du trafic, géolocalisation par pays (données publiques des RIR), carte du monde
+4. ✅ NDR local : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS
+5. ✅ DPI et IDS/IPS : SNI, DNS, empreintes JA3, règles compatibles Suricata
 
 ### Licence
 
@@ -101,7 +111,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Alerts can be forwarded to the SIEM of your choice.
 
-### Features (v3.2)
+### Features (v4.0)
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -116,6 +126,10 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **Hardening** | Baseline inspired by Intune and Microsoft, applied through local Group Policy, reversible |
 | **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
+| **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
+| **Local NDR** | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
+| **DPI** | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
+| **IDS / IPS** | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
 | **Interface** | French / English |
 
@@ -163,9 +177,9 @@ Routes are listed in the French section above (paths are identical).
 
 1. ✅ Settings, FR/EN language, syslog, export API
 2. ✅ Local mini-SIEM: storage, search, timeline, correlation
-3. Traffic analysis, per-country geolocation (public RIR data), world map
-4. Local NDR: ARP spoofing, rogue DHCP server, LLMNR/NBNS/mDNS poisoning
-5. DPI and IDS/IPS: SNI, DNS, JA3/JA4 fingerprints, Suricata-compatible rules
+3. ✅ Traffic analysis, per-country geolocation (public RIR data), world map
+4. ✅ Local NDR: ARP spoofing, rogue DHCP server, LLMNR/NBNS/mDNS poisoning
+5. ✅ DPI and IDS/IPS: SNI, DNS, JA3 fingerprints, Suricata-compatible rules
 
 ### License
 
@@ -175,6 +189,7 @@ Routes are listed in the French section above (paths are identical).
 
 ## Sources de renseignement / Threat-intelligence credits
 
-Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers.
+Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker et SSLBL (JA3) · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers.
+Géolocalisation / geolocation : statistiques « delegated » d'ARIN, RIPE NCC, APNIC, LACNIC et AFRINIC. Carte / map : Natural Earth 1:110m (domaine public / public domain).
 Ces listes appartiennent à leurs auteurs et restent soumises à leurs propres conditions d'utilisation.
 These lists belong to their authors and remain subject to their own terms of use.

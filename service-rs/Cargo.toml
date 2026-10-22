@@ -1,6 +1,6 @@
 [package]
 name = "der4tizer-svc"
-version = "2.0.0"
+version = "4.0.0"
 edition = "2021"
 description = "deR4Tizer : service de surveillance des connexions, de la persistance et de la vie privée"
 
@@ -15,6 +15,9 @@ winreg = "=0.52.0"
 windows-service = "=0.7.0"
 wmi = { version = "=0.13.4", default-features = false }     # sans chrono (qui tire windows-link)
 sha2 = "0.11.1"
+socket2 = { version = "=0.5.7", features = ["all"] }   # sockets brutes (capture SIO_RCVALL)
+md-5 = "0.10"                                           # empreintes TLS JA3
+aho-corasick = "1"                                      # recherche des motifs des règles IDS
 
 [dependencies.windows]
 version = "=0.58.0"

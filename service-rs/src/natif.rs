@@ -6,7 +6,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, SetTcpEntry, MIB_TCPROW_LH, MIB_TCPROW_LH_0, MIB_TCP_STATE, TCP_TABLE_OWNER_PID_ALL,
+    GetExtendedTcpTable, GetExtendedUdpTable, SetTcpEntry, MIB_TCPROW_LH, MIB_TCPROW_LH_0, MIB_TCP_STATE, TCP_TABLE_OWNER_PID_ALL,
+    UDP_TABLE_OWNER_PID,
 };
 use windows::Win32::Security::Cryptography::{CertGetNameStringW, CERT_NAME_SIMPLE_DISPLAY_TYPE};
 use windows::Win32::Security::WinTrust::{
@@ -124,6 +125,38 @@ fn lire_table(famille: u32, liste: &mut Vec<Connexion>) {
         }
         return;
     }
+}
+
+/// Ports UDP IPv4 ouverts : (port local, pid)
+pub fn lister_udp() -> Vec<(u16, u32)> {
+    let mut liste = Vec::new();
+    let mut taille: u32 = 0;
+    unsafe {
+        GetExtendedUdpTable(None, &mut taille, false, 2, UDP_TABLE_OWNER_PID, 0);
+    }
+    for _ in 0..3 {
+        taille += 8192;
+        let mut tampon = vec![0u8; taille as usize];
+        let r = unsafe { GetExtendedUdpTable(Some(tampon.as_mut_ptr() as *mut c_void), &mut taille, false, 2, UDP_TABLE_OWNER_PID, 0) };
+        if r == 122 {
+            continue;
+        }
+        if r != 0 {
+            return liste;
+        }
+        let lire32 = |pos: usize| u32::from_le_bytes(tampon[pos..pos + 4].try_into().unwrap());
+        let n = lire32(0) as usize;
+        // MIB_UDPROW_OWNER_PID : adresse locale, port local, pid (12 octets)
+        for i in 0..n {
+            let p = 4 + i * 12;
+            if p + 12 > tampon.len() {
+                break;
+            }
+            liste.push((port_reseau(lire32(p + 4)), lire32(p + 8)));
+        }
+        break;
+    }
+    liste
 }
 
 /// Coupe une connexion IPv4 établie (DELETE_TCB) ; nécessite les droits administrateur
