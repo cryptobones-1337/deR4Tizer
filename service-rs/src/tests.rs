@@ -779,7 +779,7 @@ impl Manifeste {
 #[test]
 fn lot1bis_quarantaine_redemarrage_restauration() {
     use crate::protection::{trier_element, Tri};
-    use crate::reponse::{quarantaine_transaction, restaurer_transaction, EtatQuarantaine, SDDL_QUARANTAINE};
+    use crate::reponse::{quarantaine_transaction, EtatQuarantaine, SDDL_QUARANTAINE};
     let d = dossier_test("quarantaine");
     let (moi, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -805,15 +805,15 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
     let mut altere = contenu.clone();
     altere[10] ^= 1;
     std::fs::write(&copie, &altere).unwrap();
-    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap_err().contains("modifiée"));
+    assert!(restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap_err().contains("modifiée"));
     std::fs::write(&copie, &contenu).unwrap();
     // Emplacement d'origine occupé : refus, rien d'écrasé
     std::fs::write(&origine, b"autre").unwrap();
-    assert!(restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).is_err());
+    assert!(restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).is_err());
     assert_eq!(std::fs::read(&origine).unwrap(), b"autre");
     std::fs::remove_file(&origine).unwrap();
     // Restauration : même contenu, copie et entrée retirées
-    restaurer_transaction(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "id1", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), contenu);
     assert!(!copie.exists() && liste.is_empty() && m.lu().is_empty());
     let _ = std::fs::remove_dir_all(&d);
@@ -821,7 +821,7 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
 
 #[test]
 fn lot1bis_marque_internet_conservee() {
-    use crate::reponse::{lire_marque_internet, migrer_quarantaine, quarantaine_transaction, restaurer_transaction, ElementQuarantaine};
+    use crate::reponse::{lire_marque_internet, migrer_quarantaine, quarantaine_transaction, ElementQuarantaine};
     let d = dossier_test("marque");
     let (_, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -834,7 +834,7 @@ fn lot1bis_marque_internet_conservee() {
     let mut liste = Vec::new();
     quarantaine_transaction(&dq, &mut liste, &f, "z1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
     assert!(liste[0].zone_identifier.contains("ZoneId=3"));
-    restaurer_transaction(&dq, &mut liste, "z1", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "z1", &|l| m.ecrire(l)).unwrap();
     assert!(lire_marque_internet(&f).contains("ZoneId=3"), "marque réécrite sur le fichier restauré");
     // Migration d'une ancienne copie (déplacée avec son flux), puis restauration
     std::fs::write(dq.join("ancien.quarantaine"), b"MZ ancien").unwrap();
@@ -843,14 +843,14 @@ fn lot1bis_marque_internet_conservee() {
     let mut liste = vec![ElementQuarantaine { id: "ancien".into(), chemin_origine: g.display().to_string(), ..Default::default() }];
     migrer_quarantaine(&dq, &mut liste, &sddl, |_| Some(false), &|l| m.ecrire(l));
     assert!(liste[0].zone_identifier.contains("ZoneId=3"));
-    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
     assert!(lire_marque_internet(&g).contains("ZoneId=3"));
     let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
 fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
-    use crate::reponse::{migrer_quarantaine, restaurer_transaction, ElementQuarantaine};
+    use crate::reponse::{migrer_quarantaine, ElementQuarantaine};
     let d = dossier_test("migration");
     let (_, sddl) = sddl_test(&d);
     let dq = d.join("quarantaine");
@@ -878,7 +878,7 @@ fn lot1bis_ancien_fichier_quarantaine_migre_sans_perte() {
     assert!(liste[1].fichier.starts_with("confiance-") && liste[1].sha256.len() == 64);
     assert!(liste[2].sha256.is_empty());
     assert_eq!(m.lu(), liste, "nouvelle copie enregistrée");
-    restaurer_transaction(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "ancien", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&origine).unwrap(), b"contenu d'origine");
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -907,7 +907,7 @@ fn lot1bis_decision_de_reprise() {
 
 #[test]
 fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
-    use crate::reponse::{quarantaine_transaction, reprendre_quarantaine, restaurer_transaction, EtatQuarantaine, ElementQuarantaine};
+    use crate::reponse::{quarantaine_transaction, reprendre_quarantaine, EtatQuarantaine, ElementQuarantaine};
     use std::os::windows::fs::OpenOptionsExt;
     let d = dossier_test("transaction");
     let (_, sddl) = sddl_test(&d);
@@ -954,7 +954,7 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
 
     // 4. Restauration, échec de l'enregistrement « restauree » : fichier restauré retiré, copie et entrée intactes
     let m = Manifeste::new(&d, 1);
-    assert!(restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).is_err());
+    assert!(restaurer_test(&dq, &mut liste, "a", &|l| m.ecrire(l)).is_err());
     assert!(!f.exists() && copies() == 1 && liste[0].etat() == EtatQuarantaine::Terminee);
 
     // 5. Dossier d'origine impossible à créer (un fichier à sa place) : erreur avant toute copie
@@ -963,12 +963,12 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
     let mut autre = liste.clone();
     autre[0].chemin_origine = bloque.join("sous").join("a.exe").display().to_string();
     let m = Manifeste::new(&d, 0);
-    assert!(restaurer_transaction(&dq, &mut autre, "a", &|l| m.ecrire(l)).unwrap_err().contains("dossier d'origine"));
+    assert!(restaurer_test(&dq, &mut autre, "a", &|l| m.ecrire(l)).unwrap_err().contains("dossier d'origine"));
     assert!(copies() == 1 && m.appels.get() == 0, "rien de copié ni d'enregistré");
 
     // 6. Restauration interrompue après l'enregistrement « restauree » : la reprise retire la copie et l'entrée
     let m = Manifeste::new(&d, 2);
-    restaurer_transaction(&dq, &mut liste, "a", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "a", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
     let mut lu = m.lu();
     assert_eq!(lu[0].etat(), EtatQuarantaine::Restauree);
@@ -1063,7 +1063,7 @@ fn eicar() -> Vec<u8> {
 
 #[test]
 fn lot1bis_copie_encodee_jamais_en_clair() {
-    use crate::reponse::{encoder_flux, entete_encodage, est_encodee, nonce_de, quarantaine_transaction, restaurer_transaction};
+    use crate::reponse::{encoder_flux, entete_encodage, est_encodee, nonce_de, quarantaine_transaction};
     // En mémoire : la chaîne EICAR encodée ne contient plus la chaîne, ni aucun de ses motifs de 8 octets
     let e = eicar();
     assert_eq!(e.len(), 68);
@@ -1104,7 +1104,288 @@ fn lot1bis_copie_encodee_jamais_en_clair() {
     let fenetres: std::collections::HashSet<&[u8]> = contenu.windows(16).collect();
     assert!(!copie.windows(16).any(|w| fenetres.contains(w)));
     // Restauration identique à l'octet
-    restaurer_transaction(&dq, &mut liste, "enc", &|l| m.ecrire(l)).unwrap();
+    restaurer_test(&dq, &mut liste, "enc", &|l| m.ecrire(l)).unwrap();
     assert_eq!(std::fs::read(&f).unwrap(), contenu);
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ------------------------------------------------------------ lot 1 ter : opérations SYSTEM sur des chemins de l'utilisateur
+
+/// Restauration de test à l'emplacement d'origine de l'entrée, avec la création sans lien (en service, la
+/// même création se fait sous l'identité du propriétaire)
+fn restaurer_test(dq: &std::path::Path, liste: &mut Vec<crate::reponse::ElementQuarantaine>, id: &str,
+                  ecrire: crate::reponse::EcrireManifeste) -> Result<String, String> {
+    let cible = std::path::PathBuf::from(&liste.iter().find(|e| e.id == id).ok_or("élément introuvable")?.chemin_origine);
+    crate::reponse::restaurer_transaction(dq, liste, id, &cible, &crate::reponse::creer_sans_lien, ecrire)
+}
+
+/// Jonction (pas besoin d'élévation) `lien` → `cible`
+fn jonction(lien: &std::path::Path, cible: &std::path::Path) {
+    let s = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(lien).arg(cible).output().unwrap();
+    assert!(s.status.success(), "mklink /J : {}", String::from_utf8_lossy(&s.stderr));
+}
+
+fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(d).map(|l| l.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+    v.sort();
+    v
+}
+
+#[test]
+fn lot1ter_meme_chemin_et_chemin_final() {
+    use crate::natif::{chemin_final, forme_longue, meme_chemin, ouvrir_verifie, ErreurOuverture};
+    assert!(meme_chemin(r"\\?\C:\Users\Marie\x.txt", r"c:\users\marie\X.TXT"));
+    assert!(meme_chemin(r"\\?\UNC\serveur\partage\x", r"\\serveur\partage\x\"));
+    assert!(meme_chemin("C:/a/b", r"C:\a\b"));
+    assert!(!meme_chemin(r"C:\a\b", r"C:\a\bc"));
+    assert!(!meme_chemin("", ""));
+    assert!(!meme_chemin(r"\\?\C:\Windows\System32\x", r"C:\Users\x"));
+    let d = dossier_test("chemin-final");
+    let f = d.join("a.txt");
+    std::fs::write(&f, b"a").unwrap();
+    let h = ouvrir_verifie(&f, 0x8000_0000 | 0x0010_0000, 0x7, false).unwrap();
+    // Le dossier temporaire peut lui-même être désigné en noms courts (CI) : comparaison avec la forme longue
+    assert!(meme_chemin(&chemin_final(&h).unwrap(), &forme_longue(&f).to_string_lossy()));
+    assert_eq!(ouvrir_verifie(&d.join("absent.txt"), 0x8000_0000, 0x7, false).unwrap_err(), ErreurOuverture::Absent);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_jonction_avant_restauration() {
+    use crate::reponse::{creer_sans_lien, quarantaine_transaction};
+    let d = dossier_test("jonction-restauration");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let origine = d.join("Documents");
+    let systeme = d.join("systeme"); // tient lieu de dossier système
+    std::fs::create_dir_all(&origine).unwrap();
+    std::fs::create_dir_all(&systeme).unwrap();
+    let f = origine.join("pilote.dll");
+    std::fs::write(&f, b"contenu").unwrap();
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    quarantaine_transaction(&dq, &mut liste, &f, "j1", "test", &sddl, &|l| m.ecrire(l)).unwrap();
+    // Avant la restauration, Documents est remplacé par une jonction vers le dossier « système »
+    std::fs::remove_dir(&origine).unwrap();
+    jonction(&origine, &systeme);
+    let r = restaurer_test(&dq, &mut liste, "j1", &|l| m.ecrire(l));
+    assert!(r.unwrap_err().contains("lien"), "restauration refusée");
+    assert!(contenu_dossier(&systeme).is_empty(), "rien d'écrit hors du dossier d'origine");
+    assert_eq!(liste.len(), 1, "copie et entrée intactes");
+    // Même sans le contrôle préalable (jonction posée juste après lui) : création détournée détectée par le
+    // chemin final, fichier créé supprimé par son handle
+    assert!(crate::natif::creer_verifie(&f).is_err());
+    assert!(contenu_dossier(&systeme).is_empty(), "fichier détourné retiré");
+    assert!(creer_sans_lien(&f).is_err());
+    std::fs::remove_dir(&origine).unwrap(); // retire la jonction, pas sa cible
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_jonction_pendant_la_quarantaine() {
+    use crate::reponse::quarantaine_transaction;
+    let d = dossier_test("jonction-quarantaine");
+    let (_, sddl) = sddl_test(&d);
+    let dq = d.join("quarantaine");
+    let telechargements = d.join("Telechargements");
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    std::fs::write(systeme.join("setup.exe"), b"fichier systeme").unwrap();
+    // Entre le contrôle (chemin demandé dans Téléchargements) et l'opération, le dossier devient une jonction
+    jonction(&telechargements, &systeme);
+    let m = Manifeste::new(&d, 0);
+    let mut liste = Vec::new();
+    let r = quarantaine_transaction(&dq, &mut liste, &telechargements.join("setup.exe"), "q1", "test", &sddl, &|l| m.ecrire(l));
+    assert!(r.unwrap_err().contains("ailleurs"), "chemin final différent : refus");
+    assert_eq!(std::fs::read(systeme.join("setup.exe")).unwrap(), b"fichier systeme", "rien de supprimé");
+    assert!(contenu_dossier(&dq).is_empty() && liste.is_empty(), "rien de lu ni de copié");
+    // Le dernier élément lui-même est une jonction : refus aussi
+    let r = quarantaine_transaction(&dq, &mut liste, &telechargements, "q2", "test", &sddl, &|l| m.ecrire(l));
+    assert!(r.is_err());
+    std::fs::remove_dir(&telechargements).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_lien_dans_le_chemin_au_demarrage() {
+    use crate::reponse::{etat_original, Original};
+    let d = dossier_test("jonction-reprise");
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    std::fs::write(systeme.join("x.txt"), b"meme contenu").unwrap();
+    let sha = crate::hygiene::empreinte_fichier(&systeme.join("x.txt")).unwrap();
+    assert_eq!(etat_original(&systeme.join("x.txt"), &sha), Original::Identique);
+    // Même contenu, mais atteint par une jonction : « différent », la copie sera gardée
+    let lien = d.join("lien");
+    jonction(&lien, &systeme);
+    assert_eq!(etat_original(&lien.join("x.txt"), &sha), Original::Different);
+    assert_eq!(etat_original(&lien, &sha), Original::Different, "le chemin est lui-même un lien");
+    assert_eq!(etat_original(&d.join("absent.txt"), &sha), Original::Absent);
+    std::fs::remove_dir(&lien).unwrap();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_restauration_sans_session_jamais_en_system() {
+    use crate::reponse::{cible_restauration, CibleRestauration};
+    let utilisateur = "S-1-5-21-1-2-3-1001";
+    assert_eq!(cible_restauration(Some(utilisateur), true), CibleRestauration::Origine);
+    assert!(matches!(cible_restauration(Some(utilisateur), false), CibleRestauration::Repli(_)), "pas de session : repli");
+    for systeme in ["S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"] {
+        assert!(matches!(cible_restauration(Some(systeme), true), CibleRestauration::Repli(_)), "{systeme}");
+    }
+    assert!(matches!(cible_restauration(None, true), CibleRestauration::Repli(_)));
+    // Emprunt du jeton d'un compte sans session : erreur, et l'opération n'est pas exécutée
+    let mut execute = false;
+    assert!(crate::natif::avec_jeton_de(utilisateur, || execute = true).is_err());
+    assert!(!execute);
+}
+
+
+/// Forme courte (8.3) d'un chemin existant, si le volume en crée
+fn forme_courte(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+    let n: Vec<u16> = p.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    let mut t = vec![0u16; 1024];
+    let l = unsafe { GetShortPathNameW(PCWSTR(n.as_ptr()), Some(&mut t)) } as usize;
+    (l > 0 && l < t.len()).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&t[..l])))
+}
+
+#[test]
+fn lot1ter_chemin_en_noms_courts_accepte() {
+    // CI : le dossier temporaire est atteint par un nom court (C:\Users\RUNNER~1\…) alors que Windows rend le
+    // chemin final en noms longs ; un chemin légitime ne doit pas être pris pour un détournement
+    use crate::natif::{creer_verifie, forme_longue, meme_chemin, ouvrir_verifie};
+    use crate::reponse::{etat_original, Original};
+    let d = dossier_test("noms-courts");
+    let long = d.join("un dossier au nom vraiment long");
+    std::fs::create_dir_all(&long).unwrap();
+    let f = long.join("fichier au nom tres long.txt");
+    std::fs::write(&f, b"contenu").unwrap();
+    let sha = crate::hygiene::empreinte_fichier(&f).unwrap();
+    // Le dossier temporaire peut lui-même être désigné en noms courts (CI) : références en forme longue
+    let f_long = forme_longue(&f);
+    assert!(!f_long.to_string_lossy().contains('~'), "{}", f_long.display());
+    match forme_courte(&f).filter(|c| !meme_chemin(&c.to_string_lossy(), &f_long.to_string_lossy())) {
+        Some(court) => {
+            assert!(meme_chemin(&forme_longue(&court).to_string_lossy(), &f_long.to_string_lossy()), "{}", court.display());
+            assert!(ouvrir_verifie(&court, 0x8000_0000 | 0x0010_0000, 0x7, false).is_ok(), "{}", court.display());
+            assert_eq!(etat_original(&court, &sha), Original::Identique);
+            // Fichier à créer dans un dossier désigné par son nom court
+            let dossier_court = forme_courte(&long).unwrap();
+            let nouveau = dossier_court.join("nouveau.txt");
+            assert!(creer_verifie(&nouveau).is_ok(), "{}", nouveau.display());
+            assert!(long.join("nouveau.txt").exists());
+        }
+        None => eprintln!("noms courts 8.3 désactivés sur ce volume : cas de la CI non reproductible ici"),
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ------------------------------------------------------------ lot 1 ter, revue de la PR 5
+
+#[test]
+fn lot1ter_reinitialisation_garde_les_droits_poses_a_la_creation() {
+    use crate::natif::{copier_protege, creer_dossier_protege, lire_securite};
+    use crate::protection::{icacls, proprietaire_acceptable, reinitialiser_contenu};
+    let d = dossier_test("reinitialisation");
+    let (moi, _) = sddl_test(&d);
+    // Racine : droit de lecture hérité pour Utilisateurs (tient lieu des comptes autorisés)
+    assert!(icacls(&[&d.to_string_lossy(), "/grant", "*S-1-5-32-545:(OI)(CI)RX"]));
+    let q = d.join("quarantaine");
+    std::fs::create_dir_all(&q).unwrap();
+    let source = d.join("source.bin");
+    std::fs::write(&source, b"contenu").unwrap();
+    let copie = q.join("x.quarantaine");
+    copier_protege(&source, &copie, &format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})")).unwrap();
+    std::fs::create_dir_all(d.join("restaurations")).unwrap();
+    let repli = d.join("restaurations").join("id1");
+    assert!(creer_dossier_protege(&repli, &format!("O:{moi}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{moi})(A;OICI;0x1200a9;;;S-1-5-32-546)")));
+    let ordinaire = d.join("ordinaire.json");
+    std::fs::write(&ordinaire, b"{}").unwrap();
+    assert!(icacls(&[&ordinaire.to_string_lossy(), "/grant", "*S-1-5-11:F"]));
+    // DACL protégée et propriétaire de confiance, mais Utilisateurs authentifiés peut y écrire : pas gardé
+    let ecrivable = d.join("protege-mais-ecrivable.json");
+    copier_protege(&source, &ecrivable, &format!("O:{moi}D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{moi})(A;;0x1301bf;;;S-1-5-11)")).unwrap();
+    // En service, la règle est « propriétaire SYSTEM ou Administrateurs » ; ici le compte du test en tient lieu
+    reinitialiser_contenu(&d, &|o: &str| o == moi || proprietaire_acceptable(o));
+    let s = lire_securite(&copie).unwrap();
+    assert!(s.protege, "copie de quarantaine : héritage toujours coupé");
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "aucun droit hérité ajouté : {:?}", s.aces);
+    let s = lire_securite(&repli).unwrap();
+    assert!(s.protege && s.aces.iter().any(|a| a.sid == "S-1-5-32-546"), "dossier de repli : lecteur conservé {:?}", s.aces);
+    let s = lire_securite(&ordinaire).unwrap();
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-11"), "élément ordinaire : entrée explicite retirée {:?}", s.aces);
+    assert!(s.aces.iter().any(|a| a.sid == "S-1-5-32-545"), "élément ordinaire : droits hérités du dossier");
+    let s = lire_securite(&ecrivable).unwrap();
+    assert!(!s.aces.iter().any(|a| a.sid == "S-1-5-11"), "écriture d'un autre compte : réinitialisé {:?}", s.aces);
+    assert!(!s.protege && s.aces.iter().any(|a| a.sid == "S-1-5-32-545"));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_dossier_de_repli_verifie() {
+    use crate::natif::lire_securite;
+    use crate::protection::{droits_conformes_pour, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    use crate::reponse::preparer_dossier_repli;
+    let d = dossier_test("repli");
+    let (moi, _) = sddl_test(&d);
+    let lecteur = "S-1-5-32-546";
+    let sddl = format!("O:{moi}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{moi})(A;OICI;0x1200a9;;;{lecteur})");
+    let conforme = |s: &crate::natif::Securite| droits_conformes_pour(s, &|o: &str| o == moi, &[SY, BA, moi.as_str()], &[lecteur]);
+    let base = d.join("restaurations");
+    // Création normale
+    let r = preparer_dossier_repli(&base, "a1", &sddl, false, &conforme).unwrap();
+    assert!(conforme(&lire_securite(&r).unwrap()).is_ok());
+    // Sous-dossier préexistant aux droits incorrects (hérités, sans le lecteur) : droits réimposés puis relus
+    std::fs::create_dir_all(base.join("a2")).unwrap();
+    assert!(conforme(&lire_securite(&base.join("a2")).unwrap()).is_err());
+    let r = preparer_dossier_repli(&base, "a2", &sddl, false, &conforme).unwrap();
+    let s = lire_securite(&r).unwrap();
+    assert!(s.protege && s.aces.iter().any(|a| a.sid == lecteur), "{:?}", s.aces);
+    // Sous-dossier remplacé par une jonction (vers un dossier « système ») : refus
+    let systeme = d.join("systeme");
+    std::fs::create_dir_all(&systeme).unwrap();
+    jonction(&base.join("a3"), &systeme);
+    assert!(preparer_dossier_repli(&base, "a3", &sddl, false, &conforme).unwrap_err().contains("lien"));
+    std::fs::remove_dir(base.join("a3")).unwrap();
+    // Dossier restaurations lui-même remplacé par une jonction : refus
+    let base2 = d.join("restaurations2");
+    jonction(&base2, &systeme);
+    assert!(preparer_dossier_repli(&base2, "a4", &sddl, false, &conforme).is_err());
+    assert!(contenu_dossier(&systeme).is_empty(), "rien de créé dans la cible de la jonction");
+    std::fs::remove_dir(&base2).unwrap();
+    // Protection du dossier de données en échec : refus
+    assert!(preparer_dossier_repli(&base, "a5", &sddl, true, &conforme).unwrap_err().contains("échec"));
+    assert!(!base.join("a5").exists());
+    // Dossier restaurations impossible à créer (parent absent) : erreur, pas ignorée
+    assert!(preparer_dossier_repli(&d.join("absent").join("restaurations"), "a6", &sddl, false, &conforme).is_err());
+    // Identifiant qui sortirait du dossier : refus
+    assert!(preparer_dossier_repli(&base, r"..\x", &sddl, false, &conforme).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot1ter_garder_tel_quel_sans_ecriture_etrangere() {
+    use crate::protection::{a_garder_tel_quel, proprietaire_acceptable, SID_ADMINISTRATEURS as BA, SID_SYSTEME as SY};
+    let ok = |s: &crate::natif::Securite| a_garder_tel_quel(s, &proprietaire_acceptable);
+    let lecteur = "S-1-5-21-1-2-3-1001";
+    // Copie de quarantaine, secrets, jeton : SYSTEM et Administrateurs seulement
+    assert!(ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA)])));
+    // Dossier de repli : lecteur en lecture seule
+    assert!(ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1f01ff, BA), (true, 0x1200a9, lecteur)])));
+    // Un autre compte avec un droit d'écriture, quel qu'il soit : réinitialisé
+    for ecriture in [0x2u32, 0x4, 0x10, 0x40, 0x100, 0x1_0000, 0x4_0000, 0x8_0000, 0x0200_0000, 0x1000_0000, 0x4000_0000] {
+        assert!(!ok(&securite(SY, true, &[(true, 0x1f01ff, SY), (true, 0x1200a9 | ecriture, lecteur)])), "droit {ecriture:#x}");
+    }
+    assert!(!ok(&securite(SY, true, &[(true, 0x1f01ff, "S-1-1-0")])), "Tout le monde en contrôle total");
+    // Un refus explicite ne compte pas comme un droit
+    assert!(ok(&securite(SY, true, &[(false, 0x1f01ff, "S-1-1-0"), (true, 0x1f01ff, SY)])));
+    // Héritage actif, propriétaire étranger, entrée inconnue : réinitialisé
+    assert!(!ok(&securite(SY, false, &[(true, 0x1f01ff, SY)])));
+    assert!(!ok(&securite(lecteur, true, &[(true, 0x1f01ff, SY)])));
+    let mut inconnue = securite(SY, true, &[(true, 0x1f01ff, SY)]);
+    inconnue.ace_inconnue = true;
+    assert!(!ok(&inconnue));
 }
