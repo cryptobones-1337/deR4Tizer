@@ -1,4 +1,4 @@
-// Langue de l'interface : le texte français sert de clé, la traduction anglaise est cherchée ici.
+﻿// Langue de l'interface : le texte français sert de clé, la traduction anglaise est cherchée ici.
 // Un texte absent du dictionnaire reste en français (ajoutez-le ici pour le traduire).
 using System.Collections.Generic;
 
@@ -83,6 +83,14 @@ namespace DeR4Tizer
             { "Sélectionnez une alerte pour voir la technique d'attaque et quoi faire.", "Select an alert to see the attack technique and what to do." },
             { "L'interface reste dans la zone de notification. Le service, lui, tourne en permanence.",
               "The interface stays in the notification area. The service keeps running at all times." },
+
+            // Événements (mini-SIEM)
+            { "Événements", "Events" }, { "Rechercher", "Search" }, { "Toutes les sources", "All sources" }, { "Tous niveaux", "All levels" },
+            { "1 heure", "1 hour" }, { "24 heures", "24 hours" }, { "7 jours", "7 days" }, { "30 jours", "30 days" }, { "Recherche…", "Searching…" },
+            { "Incident", "Incident" }, { "Résumé", "Summary" }, { "Utilisateur", "User" }, { "Chercher cette valeur", "Search this value" },
+            { "Sélectionnez un incident ou un événement pour voir le détail.", "Select an incident or an event to see the details." },
+            { "Mini-SIEM local : sessions, comptes, processus, services, connexions, pare-feu et alertes, conservés 30 jours. Les règles de corrélation lèvent des incidents.",
+              "Local mini-SIEM: logons, accounts, processes, services, connections, firewall and alerts, kept for 30 days. Correlation rules raise incidents." },
 
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },

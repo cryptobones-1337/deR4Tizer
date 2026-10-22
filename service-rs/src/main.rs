@@ -24,6 +24,7 @@ mod parefeu;
 mod persistance;
 mod processus;
 mod reponse;
+mod siem;
 mod surveillances;
 mod vol_donnees;
 
@@ -94,6 +95,22 @@ fn main() {
     let _ = std::fs::create_dir_all(commun::dossier());
 
     // Outils de diagnostic (sans rien modifier)
+    if let Some(i) = args.iter().position(|a| a == "--chercher") {
+        // --chercher <texte> [source] : recherche dans les événements du mini-SIEM
+        let filtre = siem::Filtre {
+            texte: args.get(i + 1).cloned().unwrap_or_default(),
+            source: args.get(i + 2).cloned().unwrap_or_default(),
+            type_: String::new(),
+            niveau_min: String::new(),
+            depuis: String::new(),
+            jusqua: String::new(),
+            limite: 5,
+        };
+        for e in siem::rechercher(&filtre) {
+            println!("{} [{}] {} {}", e.heure, e.source, e.type_, e.message.chars().take(100).collect::<String>());
+        }
+        return;
+    }
     if args.iter().any(|a| a == "--baseline") {
         initialiser_com();
         let b = baseline::evaluer();

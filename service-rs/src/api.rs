@@ -5,6 +5,8 @@
 //!
 //!   GET /api/v1/sante                                    sans jeton : vérification de disponibilité
 //!   GET /api/v1/alertes?depuis=&niveau=&limite=&format=  format : json (défaut), ndjson ou cef
+//!   GET /api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json|ndjson   (mini-SIEM)
+//!   GET /api/v1/incidents                                incidents de corrélation
 //!   GET /api/v1/connexions | etat | exposition | baseline | regles-parefeu | blocages
 //!   GET /api/v1/journal?lignes=200                       texte brut
 
@@ -194,6 +196,26 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
                 _ => repondre(&mut flux, 200, "application/json", &serde_json::to_string(alertes).unwrap_or_default()),
             }
         }
+        "/api/v1/evenements" => {
+            let p = |n: &str| parametre(n).unwrap_or_default().replace('T', " ");
+            let filtre = crate::siem::Filtre {
+                texte: parametre("q").unwrap_or_default(),
+                source: p("source"),
+                type_: parametre("type").unwrap_or_default(),
+                niveau_min: p("niveau"),
+                depuis: p("depuis"),
+                jusqua: p("jusqua"),
+                limite: parametre("limite").and_then(|l| l.parse().ok()).unwrap_or(500usize).min(5000),
+            };
+            let evenements = crate::siem::rechercher(&filtre);
+            if parametre("format").as_deref() == Some("ndjson") {
+                repondre(&mut flux, 200, "application/x-ndjson",
+                    &evenements.iter().filter_map(|e| serde_json::to_string(e).ok()).collect::<Vec<_>>().join("\n"))
+            } else {
+                repondre(&mut flux, 200, "application/json", &serde_json::to_string(&evenements).unwrap_or_default())
+            }
+        }
+        "/api/v1/incidents" => repondre(&mut flux, 200, "application/json", &brut("incidents.json")),
         "/api/v1/connexions" => repondre(&mut flux, 200, "application/json", &champ_etat("Flux")),
         "/api/v1/exposition" => repondre(&mut flux, 200, "application/json", &champ_etat("Exposition")),
         "/api/v1/etat" => repondre(&mut flux, 200, "application/json", &brut("etat.json")),

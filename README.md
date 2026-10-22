@@ -16,7 +16,7 @@
 
 deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes peuvent être envoyées au SIEM de votre choix.
 
-### Fonctionnalités (v3.1)
+### Fonctionnalités (v3.2)
 
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
@@ -30,6 +30,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 | **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) |
 | **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
 | **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
+| **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
 | **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF), API HTTP d'export en lecture seule avec jeton |
 | **Interface** | Français / anglais |
 
@@ -76,12 +77,14 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 | `/api/v1/sante` | Disponibilité (sans jeton) |
 | `/api/v1/alertes?depuis=&niveau=&limite=&format=json\|ndjson\|cef` | Alertes |
 | `/api/v1/connexions`, `/exposition`, `/baseline`, `/regles-parefeu`, `/blocages` | État |
+| `/api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json\|ndjson` | Recherche dans les événements (mini-SIEM) |
+| `/api/v1/incidents` | Incidents de corrélation |
 | `/api/v1/journal?lignes=200` | Journal du service (texte) |
 
 ### Feuille de route
 
 1. ✅ Réglages, langue FR/EN, syslog, API d'export
-2. Mini-SIEM local : stockage, recherche, chronologie, corrélation
+2. ✅ Mini-SIEM local : stockage, recherche, chronologie, corrélation
 3. Analyse du trafic, géolocalisation par pays (données publiques des RIR), carte du monde
 4. NDR local : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS
 5. DPI et IDS/IPS : SNI, DNS, empreintes JA3/JA4, règles compatibles Suricata
@@ -98,7 +101,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Alerts can be forwarded to the SIEM of your choice.
 
-### Features (v3.1)
+### Features (v3.2)
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -112,6 +115,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 | **Firewall** | Rule-change tracking (with the authoring program), Internet exposure (inbound packets from public IPs) |
 | **Hardening** | Baseline inspired by Intune and Microsoft, applied through local Group Policy, reversible |
 | **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
+| **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF), read-only HTTP export API with token |
 | **Interface** | French / English |
 
@@ -158,7 +162,7 @@ Routes are listed in the French section above (paths are identical).
 ### Roadmap
 
 1. ✅ Settings, FR/EN language, syslog, export API
-2. Local mini-SIEM: storage, search, timeline, correlation
+2. ✅ Local mini-SIEM: storage, search, timeline, correlation
 3. Traffic analysis, per-country geolocation (public RIR data), world map
 4. Local NDR: ARP spoofing, rogue DHCP server, LLMNR/NBNS/mDNS poisoning
 5. DPI and IDS/IPS: SNI, DNS, JA3/JA4 fingerprints, Suricata-compatible rules

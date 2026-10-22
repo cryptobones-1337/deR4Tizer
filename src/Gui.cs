@@ -197,7 +197,7 @@ namespace DeR4Tizer
             demarrerCache = cache;
             Text = "deR4Tizer " + Commun.Version;
             Icon = Theme.IconeApplication(32);
-            Size = new Size(1360, 800);
+            Size = new Size(1360, 860);
             MinimumSize = new Size(960, 560);
             StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.Petit;
@@ -335,9 +335,16 @@ namespace DeR4Tizer
             // ---------------- Navigation
             const int largeurNav = 230;
             var nav = new Panel { Dock = DockStyle.Left, Width = largeurNav, BackColor = Theme.Fond };
-            var liens = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(0, 14, 0, 0), AutoScroll = true };
+            var liens = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(0, 10, 0, 0), AutoScroll = true };
+            // Les liens prennent la largeur visible : quand la barre verticale apparaît (petite fenêtre),
+            // ils rétrécissent au lieu de faire apparaître une barre horizontale
+            liens.ClientSizeChanged += (s, e) => { foreach (Control c in liens.Controls) c.Width = liens.ClientSize.Width; };
             navFlux = Lien(liens, "Connexions", pageFlux, largeurNav);
             navAlertes = Lien(liens, "Alertes", pageAlertes, largeurNav);
+            var pageSiem = new PageSiem();
+            contenu.Controls.Add(pageSiem);
+            pages.Add(pageSiem);
+            Lien(liens, "Événements", pageSiem, largeurNav);
             navChaines = Lien(liens, "Chaînes", pageChaines, largeurNav);
             navVie = Lien(liens, "Vie privée", pageVie, largeurNav);
             navParefeu = Lien(liens, "Pare-feu", pageParefeu, largeurNav);

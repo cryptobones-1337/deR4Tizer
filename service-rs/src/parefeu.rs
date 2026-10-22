@@ -209,6 +209,7 @@ pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str
     evenements::abonner(JOURNAL, "*[System[(EventID=2004 or EventID=2005 or EventID=2006 or EventID=2032 or EventID=2033 or EventID=2052 or EventID=2059 or EventID=2071 or EventID=2072 or EventID=2097 or EventID=2099)]]",
         move |xml| {
             let Some((e, a)) = traduire(&xml, &signataire) else { return };
+            crate::siem::regle_parefeu(&e.operation, &e.regle, &e.sens, &e.action, &e.auteur);
             historique.push(e);
             if historique.len() > 300 {
                 historique.remove(0);

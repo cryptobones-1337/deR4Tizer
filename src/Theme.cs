@@ -250,7 +250,7 @@ namespace DeR4Tizer
         {
             Cle = texte;
             Text = L.T(texte);
-            Size = new Size(largeur, 42);
+            Size = new Size(largeur, 36);
             Margin = Padding.Empty;
             Cursor = Cursors.Hand;
             Font = Theme.Nav;

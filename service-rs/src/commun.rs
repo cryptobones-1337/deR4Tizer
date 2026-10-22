@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "3.1";
+pub const VERSION: &str = "3.2";
 pub const NOM_SERVICE: &str = "deR4Tizer";
 pub const NOM_PIPE: &str = r"\\.\pipe\deR4Tizer";
 pub const SEUIL_ALERTE: i32 = 3;

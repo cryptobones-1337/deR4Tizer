@@ -101,6 +101,7 @@ impl Moniteur {
             baseline_occupee: AtomicBool::new(false),
             arret: AtomicBool::new(false),
         });
+        crate::siem::demarrer(partage.alertes_externes.clone(), !console);
         defender::surveiller(partage.alertes_externes.clone());
         {
             // Changements de règles du pare-feu, avec le signataire du programme auteur
@@ -301,6 +302,9 @@ impl Moniteur {
             let nouveau = !self.premieres_vues.contains_key(&cle);
             if nouveau {
                 self.premieres_vues.insert(cle.clone(), commun::maintenant());
+                if !self.premier_passage {
+                    crate::siem::connexion(&nom_processus, *pid, ip, *port, nom.as_deref());
+                }
                 if self.premier_passage {
                     self.preexistants.insert(cle.clone());
                 }
@@ -605,6 +609,7 @@ impl Moniteur {
         commun::journal(&format!("{} : {} -> {}{} ({})", a.niveau, a.processus, a.destination,
             if a.port > 0 { format!(":{}", a.port) } else { String::new() }, a.raisons));
         crate::export::alerte(&a);
+        crate::siem::depuis_alerte(&a);
         self.alertes.push(a);
         true
     }

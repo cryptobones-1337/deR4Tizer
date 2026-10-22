@@ -231,6 +231,36 @@ namespace DeR4Tizer
         public bool ReponseAutoRancongiciel { get; set; }
     }
 
+    // Événement normalisé du mini-SIEM (siem\evenements-AAAAMMJJ.ndjson)
+    public class Evenement
+    {
+        public string Heure { get; set; }
+        public string Source { get; set; }
+        public string Type { get; set; }
+        public string Niveau { get; set; }
+        public string Utilisateur { get; set; }
+        public string Processus { get; set; }
+        public int? Pid { get; set; }
+        public string Ip { get; set; }
+        public int Port { get; set; }
+        public string Destination { get; set; }
+        public string Message { get; set; }
+        public string Mitre { get; set; }
+    }
+
+    // Incident levé par une règle de corrélation (incidents.json)
+    public class Incident
+    {
+        public string Id { get; set; }
+        public string Heure { get; set; }
+        public string Regle { get; set; }
+        public string Titre { get; set; }
+        public string Niveau { get; set; }
+        public string Mitre { get; set; }
+        public string Resume { get; set; }
+        public List<string> Evenements { get; set; }
+    }
+
     public class ConfigSyslog
     {
         public ConfigSyslog() { Hote = ""; Port = 514; Protocole = "UDP"; Format = "JSON"; NiveauMin = "Alerte"; }
@@ -297,7 +327,7 @@ namespace DeR4Tizer
 
     public static class Commun
     {
-        public const string Version = "3.1";
+        public const string Version = "3.2";
         public const string NomService = "deR4Tizer";
         public const string NomPipe = "deR4Tizer";
         public const int SeuilAlerte = 3;
