@@ -177,6 +177,103 @@ impl ElementQuarantaine {
 /// propriétaire d'origine (l'utilisateur) : la copie serait écartée au démarrage suivant.
 pub const SDDL_QUARANTAINE: &str = "O:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)";
 
+/// Contenu des copies encodé, jamais en clair sur le disque (un exécutable ou un script malveillant n'a rien à
+/// y faire, et un antivirus pourrait supprimer la copie) : en-tête « D4TQ », version, nonce de 16 octets, puis
+/// le contenu combiné (XOR) à un flux dérivé de SHA-256(clé ‖ nonce ‖ numéro de bloc). Ce n'est pas un
+/// chiffrement : la clé est fixe et publique, seul compte que les octets d'origine n'apparaissent plus.
+const MAGIE: &[u8; 4] = b"D4TQ";
+const VERSION_ENCODAGE: u8 = 1;
+const TAILLE_ENTETE: usize = 4 + 1 + 16;
+const CLE_QUARANTAINE: &[u8] = b"deR4Tizer : contenu mis en quarantaine, encodage v1";
+
+/// Nonce d'une copie, dérivé de son nom de fichier (unique)
+pub fn nonce_de(fichier: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(fichier.as_bytes());
+    let mut n = [0u8; 16];
+    n.copy_from_slice(&h[..16]);
+    n
+}
+
+/// Encode ou décode (même opération) `octets`, situés à `position` dans le contenu d'origine
+pub fn encoder_flux(nonce: &[u8; 16], position: u64, octets: &mut [u8]) {
+    use sha2::{Digest, Sha256};
+    let mut bloc_courant = u64::MAX;
+    let mut flux = [0u8; 32];
+    for (i, o) in octets.iter_mut().enumerate() {
+        let p = position + i as u64;
+        if p / 32 != bloc_courant {
+            bloc_courant = p / 32;
+            let mut h = Sha256::new();
+            h.update(CLE_QUARANTAINE);
+            h.update(nonce);
+            h.update(bloc_courant.to_le_bytes());
+            flux.copy_from_slice(&h.finalize());
+        }
+        *o ^= flux[(p % 32) as usize];
+    }
+}
+
+pub fn entete_encodage(nonce: &[u8; 16]) -> Vec<u8> {
+    let mut e = MAGIE.to_vec();
+    e.push(VERSION_ENCODAGE);
+    e.extend_from_slice(nonce);
+    e
+}
+
+/// Nonce si le fichier commence par un en-tête d'encodage reconnu
+fn lire_entete(f: &mut fs::File) -> Option<[u8; 16]> {
+    use std::io::Read;
+    let mut e = [0u8; TAILLE_ENTETE];
+    f.read_exact(&mut e).ok()?;
+    if &e[..4] != MAGIE || e[4] != VERSION_ENCODAGE {
+        return None;
+    }
+    let mut n = [0u8; 16];
+    n.copy_from_slice(&e[5..]);
+    Some(n)
+}
+
+pub fn est_encodee(chemin: &Path) -> bool {
+    fs::File::open(chemin).ok().and_then(|mut f| lire_entete(&mut f)).is_some()
+}
+
+/// Décode une copie encodée vers `sortie` ; renvoie l'empreinte SHA-256 du contenu décodé
+fn decoder(copie: &Path, sortie: &mut dyn std::io::Write) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = fs::File::open(copie).map_err(|e| format!("copie illisible : {e}"))?;
+    let nonce = lire_entete(&mut f).ok_or("copie sans en-tête d'encodage")?;
+    let mut h = Sha256::new();
+    let mut tampon = vec![0u8; 1 << 16];
+    let mut position = 0u64;
+    loop {
+        let n = f.read(&mut tampon).map_err(|e| format!("lecture de la copie : {e}"))?;
+        if n == 0 {
+            break;
+        }
+        encoder_flux(&nonce, position, &mut tampon[..n]);
+        position += n as u64;
+        h.update(&tampon[..n]);
+        sortie.write_all(&tampon[..n]).map_err(|e| format!("écriture : {e}"))?;
+    }
+    Ok(h.finalize().iter().map(|o| format!("{o:02x}")).collect())
+}
+
+/// Empreinte du contenu d'origine d'une copie : décodée si encodée, telle quelle sinon (copies d'avant)
+fn empreinte_copie(copie: &Path) -> Option<String> {
+    if est_encodee(copie) { decoder(copie, &mut std::io::sink()).ok() } else { crate::hygiene::empreinte_fichier(copie) }
+}
+
+/// Recrée le contenu d'origine d'une copie à l'emplacement `cible` (qui ne doit pas exister)
+fn restituer(copie: &Path, cible: &Path) -> Result<(), String> {
+    if !est_encodee(copie) {
+        return fs::copy(copie, cible).map(|_| ()).map_err(|e| format!("copie impossible : {e}"));
+    }
+    let mut f = fs::OpenOptions::new().write(true).create_new(true).open(cible).map_err(|e| format!("création impossible : {e}"))?;
+    decoder(copie, &mut f).map(|_| ())
+}
+
 /// Écriture du manifeste (quarantaine.json en service ; injectée dans les tests pour simuler un échec)
 pub type EcrireManifeste<'a> = &'a dyn Fn(&[ElementQuarantaine]) -> Result<(), String>;
 
@@ -201,12 +298,14 @@ fn ecrire_marque_internet(chemin: &Path, marque: &str) -> Result<(), String> {
     fs::write(format!("{}:Zone.Identifier", chemin.display()), marque).map_err(|e| format!("marque Internet : {e}"))
 }
 
-/// Copie protégée de `source` dans `dossier`, empreinte relue. Renvoie (nom du fichier, empreinte)
+/// Copie protégée et ENCODÉE de `source` dans `dossier`, relue et décodée pour vérification. Renvoie
+/// l'empreinte du contenu d'origine
 fn copier_verifie(dossier: &Path, source: &Path, fichier: &str, sddl: &str) -> Result<String, String> {
     fs::create_dir_all(dossier).map_err(|e| e.to_string())?;
     let copie = dossier.join(fichier);
-    let sha = natif::copier_protege(source, &copie, sddl)?;
-    if crate::hygiene::empreinte_fichier(&copie).is_none_or(|h| !h.eq_ignore_ascii_case(&sha)) {
+    let nonce = nonce_de(fichier);
+    let sha = natif::copier_protege_avec(source, &copie, sddl, &entete_encodage(&nonce), &mut |b, p| encoder_flux(&nonce, p, b))?;
+    if empreinte_copie(&copie).is_none_or(|h| !h.eq_ignore_ascii_case(&sha)) {
         let _ = fs::remove_file(&copie);
         return Err("copie en quarantaine illisible ou différente de l'original".into());
     }
@@ -295,7 +394,7 @@ pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     if e.sha256.len() != 64 {
         return Err("empreinte de la copie inconnue : restauration refusée".into());
     }
-    match crate::hygiene::empreinte_fichier(&source) {
+    match empreinte_copie(&source) {
         Some(h) if h.eq_ignore_ascii_case(&e.sha256) => {}
         Some(_) => return Err("la copie en quarantaine a été modifiée : restauration refusée".into()),
         None => return Err("copie en quarantaine introuvable ou illisible".into()),
@@ -311,8 +410,8 @@ pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
         let _ = fs::remove_file(cible);
         Err(raison)
     };
-    if let Err(x) = fs::copy(&source, cible) {
-        return annuler(format!("copie impossible : {x}"));
+    if let Err(x) = restituer(&source, cible) {
+        return annuler(x);
     }
     if crate::hygiene::empreinte_fichier(cible).is_none_or(|h| !h.eq_ignore_ascii_case(&e.sha256)) {
         return annuler("restauration incomplète : fichier restauré retiré, copie conservée".into());
@@ -348,27 +447,39 @@ pub enum Reprise {
     /// Original supprimé, copie en place : la quarantaine est terminée
     MarquerTerminee,
     RetirerEntree,
-    /// Restauration enregistrée : copie retirée si le fichier restauré a la bonne empreinte, puis entrée
-    FinirRestauration,
     /// Fichier restauré disparu, copie en place : de nouveau en quarantaine
     RemettreTerminee,
     /// Anomalie journalisée, entrée conservée
     Signaler(&'static str),
 }
 
-pub fn decision_reprise(etat: EtatQuarantaine, original: bool, copie: bool) -> Reprise {
+/// Fichier présent à l'emplacement d'origine, comparé à l'empreinte enregistrée
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Original {
+    Absent,
+    Identique,
+    /// Un autre fichier occupe le chemin : ce n'est pas l'original
+    Different,
+}
+
+pub fn decision_reprise(etat: EtatQuarantaine, original: Original, copie: bool) -> Reprise {
     use EtatQuarantaine::*;
+    use Original::*;
     match (etat, original, copie) {
-        (EnCours, true, true) => Reprise::RetirerCopieEtEntree,
-        (EnCours, false, true) => Reprise::MarquerTerminee,
-        (EnCours, true, false) => Reprise::RetirerEntree,
-        (EnCours, false, false) => Reprise::Signaler("quarantaine interrompue : ni original ni copie"),
+        // Quarantaine non aboutie : l'original est intact, la copie n'a plus lieu d'être
+        (EnCours, Identique, true) => Reprise::RetirerCopieEtEntree,
+        // Original supprimé, ou remplacé par un autre fichier : la copie est le seul exemplaire, on la garde
+        (EnCours, Absent | Different, true) => Reprise::MarquerTerminee,
+        (EnCours, Identique | Different, false) => Reprise::RetirerEntree,
+        (EnCours, Absent, false) => Reprise::Signaler("quarantaine interrompue : ni original ni copie"),
         (Terminee, _, true) => Reprise::Rien,
         (Terminee, _, false) => Reprise::Signaler("copie en quarantaine manquante"),
-        (Restauree, true, true) => Reprise::FinirRestauration,
-        (Restauree, true, false) => Reprise::RetirerEntree,
-        (Restauree, false, true) => Reprise::RemettreTerminee,
-        (Restauree, false, false) => Reprise::Signaler("restauration interrompue : ni fichier restauré ni copie"),
+        // Restauration enregistrée et fichier restauré intact : la copie n'a plus lieu d'être
+        (Restauree, Identique, true) => Reprise::RetirerCopieEtEntree,
+        // Fichier restauré disparu ou différent : la copie redevient le seul exemplaire
+        (Restauree, Absent | Different, true) => Reprise::RemettreTerminee,
+        (Restauree, Identique | Different, false) => Reprise::RetirerEntree,
+        (Restauree, Absent, false) => Reprise::Signaler("restauration interrompue : ni fichier restauré ni copie"),
     }
 }
 
@@ -379,7 +490,14 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     let mut garder = Vec::new();
     for mut e in liste.drain(..) {
         let copie = dossier.join(e.nom_fichier());
-        let original = fs::symlink_metadata(&e.chemin_origine).is_ok();
+        let chemin = Path::new(&e.chemin_origine);
+        let original = if fs::symlink_metadata(chemin).is_err() {
+            Original::Absent
+        } else if crate::hygiene::empreinte_fichier(chemin).is_some_and(|h| h.eq_ignore_ascii_case(&e.sha256)) {
+            Original::Identique
+        } else {
+            Original::Different
+        };
         let decision = decision_reprise(e.etat(), original, fs::symlink_metadata(&copie).is_ok());
         let garde = match decision {
             Reprise::Rien => true,
@@ -392,17 +510,6 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
                 true
             }
             Reprise::RetirerEntree => false,
-            Reprise::FinirRestauration => {
-                let intact = crate::hygiene::empreinte_fichier(Path::new(&e.chemin_origine)).is_some_and(|h| h.eq_ignore_ascii_case(&e.sha256));
-                if intact {
-                    let _ = fs::remove_file(&copie);
-                    false
-                } else {
-                    messages.push(format!("quarantaine : {} restauré mais différent de la copie : copie conservée", e.chemin_origine));
-                    e.marquer(EtatQuarantaine::Terminee);
-                    true
-                }
-            }
             Reprise::Signaler(m) => {
                 messages.push(format!("quarantaine : {} : {m}", e.chemin_origine));
                 true
@@ -440,9 +547,10 @@ pub fn migrer_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, s
         if fs::symlink_metadata(&ancien).is_err() {
             continue;
         }
-        if de_confiance(&ancien) == Some(true) {
+        let encodee = est_encodee(&ancien);
+        if encodee && de_confiance(&ancien) == Some(true) {
             if liste[i].sha256.is_empty() {
-                if let Some(h) = crate::hygiene::empreinte_fichier(&ancien) {
+                if let Some(h) = empreinte_copie(&ancien) {
                     liste[i].sha256 = h;
                     empreintes_ajoutees = true;
                 }
@@ -451,7 +559,21 @@ pub fn migrer_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, s
         }
         let avant = liste[i].clone();
         let fichier = format!("{}-{}.quarantaine", avant.id, commun::nouvel_id());
-        let sha = match copier_verifie(dossier, &ancien, &fichier, sddl) {
+        // Copie en clair : réencodée ; copie déjà encodée mais d'un autre propriétaire : recopiée telle quelle
+        // (l'en-tête et le nonce restent ceux de l'ancien nom), empreinte décodée vérifiée
+        let recopie = if encodee {
+            natif::copier_protege(&ancien, &dossier.join(&fichier), sddl).and_then(|_| {
+                let h = empreinte_copie(&dossier.join(&fichier)).ok_or("copie illisible")?;
+                if !avant.sha256.is_empty() && !h.eq_ignore_ascii_case(&avant.sha256) {
+                    let _ = fs::remove_file(dossier.join(&fichier));
+                    return Err("empreinte différente de celle enregistrée".to_string());
+                }
+                Ok(h)
+            })
+        } else {
+            copier_verifie(dossier, &ancien, &fichier, sddl)
+        };
+        let sha = match recopie {
             Ok(s) => s,
             Err(x) => {
                 messages.push(format!("quarantaine : {} NON migrée ({x}) ; ancienne copie laissée au tri", avant.chemin_origine));
