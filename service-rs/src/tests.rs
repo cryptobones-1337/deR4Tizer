@@ -478,30 +478,6 @@ fn m1_proprietaire_du_dossier_de_donnees() {
     assert!(!crate::natif::est_systeme());
 }
 
-#[test]
-fn script_de_mise_a_jour_valide() {
-    use std::path::{Path, PathBuf};
-    let inst = Path::new(r"C:\ProgramData\deR4Tizer\maj\installation");
-    let prog = Path::new(r"C:\Program Files\deR4Tizer");
-    let h = "ab".repeat(32);
-    for fichiers in [vec![(inst.join(r"4.4\deR4Tizer.msi"), h.clone())],
-                     vec![(inst.join(r"4.4\deR4TizerSvc.exe"), h.clone()), (inst.join(r"4.4\deR4Tizer.exe"), h.clone())]] {
-        let s = crate::maj::script_installation("4.4", inst, prog, &fichiers);
-        assert!(s.contains(&format!("Hash -eq '{h}'")), "empreinte revérifiée juste avant l'exécution");
-        assert!(s.contains("\"Action\":\"verification\"") && s.contains(r"deR4Tizer 4\.4"), "contrôle par le canal, pas seulement l'existence du tube");
-        assert!(s.contains(r"installation\4.3\deR4Tizer.msi") || s.contains(&format!(r"installation\{}\deR4Tizer.msi", crate::commun::VERSION)));
-        // Syntaxe PowerShell valide
-        let f = std::env::temp_dir().join(format!("der4tizer-script-{}.ps1", std::process::id()));
-        std::fs::write(&f, &s).unwrap();
-        let sortie = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command",
-                &format!("$e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{}', [ref]$null, [ref]$e); $e.Count", f.display())])
-            .output().unwrap();
-        let _ = std::fs::remove_file(&f);
-        assert_eq!(String::from_utf8_lossy(&sortie.stdout).trim(), "0", "{s}");
-        let _: Vec<PathBuf> = fichiers.into_iter().map(|x| x.0).collect();
-    }
-}
 
 // ------------------------------------------------------------ lot 1 : propriété et droits du dossier de données
 
@@ -1388,4 +1364,253 @@ fn lot1ter_garder_tel_quel_sans_ecriture_etrangere() {
     let mut inconnue = securite(SY, true, &[(true, 0x1f01ff, SY)]);
     inconnue.ace_inconnue = true;
     assert!(!ok(&inconnue));
+}
+
+// ------------------------------------------------------------ lot 2 : mise à jour, version lue dans le paquet signé
+
+fn manifeste_json(version: &str, fichiers: &[(&str, &str, &str)]) -> Vec<u8> {
+    let f: Vec<String> = fichiers.iter().map(|(n, u, h)| format!(r#"{{"Nom":"{n}","Url":"{u}","Sha256":"{h}"}}"#)).collect();
+    format!(r#"{{"Version":"{version}","Fichiers":[{}]}}"#, f.join(",")).into_bytes()
+}
+
+#[test]
+fn lot2_manifeste_strict() {
+    use crate::maj::lire_manifeste;
+    let h = "ab".repeat(32);
+    let url = "https://github.com/cryptobones-1337/deR4Tizer/releases/download/v4.4/deR4Tizer.msi";
+    let m = lire_manifeste(&manifeste_json("4.4", &[("deR4Tizer.msi", url, &h)])).unwrap();
+    assert_eq!(m.version, "4.4");
+    let mut bom = "\u{feff}".as_bytes().to_vec();
+    bom.extend(manifeste_json("4.4", &[("deR4Tizer.msi", url, &h)]));
+    assert!(lire_manifeste(&bom).is_ok(), "BOM UTF-8 accepté");
+    let refus = |octets: Vec<u8>, attendu: &str| {
+        let e = lire_manifeste(&octets).unwrap_err();
+        assert!(e.contains(attendu), "{e}");
+    };
+    // Fichier manquant, en double, inattendu
+    refus(manifeste_json("4.4", &[]), "absent");
+    refus(manifeste_json("4.4", &[("deR4Tizer.msi", url, &h), ("deR4Tizer.msi", url, &h)]), "double");
+    refus(manifeste_json("4.4", &[("deR4Tizer.msi", url, &h), ("deR4TizerSvc.exe", url, &h)]), "inattendu");
+    refus(manifeste_json("4.4", &[("autre.msi", url, &h)]), "inattendu");
+    // Champs inconnus ou manquants, version, empreinte, adresse
+    refus(br#"{"Version":"4.4","Fichiers":[],"Clef":"x"}"#.to_vec(), "invalide");
+    refus(format!(r#"{{"Version":"4.4","Fichiers":[{{"Nom":"deR4Tizer.msi","Url":"{url}","Sha256":"{h}","Taille":1}}]}}"#).into_bytes(), "invalide");
+    refus(format!(r#"{{"Version":"4.4","Fichiers":[{{"Nom":"deR4Tizer.msi","Url":"{url}"}}]}}"#).into_bytes(), "invalide");
+    refus(manifeste_json("99.0-beta", &[("deR4Tizer.msi", url, &h)]), "version");
+    refus(manifeste_json("4..4", &[("deR4Tizer.msi", url, &h)]), "version");
+    refus(manifeste_json("4.4", &[("deR4Tizer.msi", url, "abc")]), "empreinte");
+    refus(manifeste_json("4.4", &[("deR4Tizer.msi", "http://exemple.invalid/x.msi", &h)]), "adresse");
+    refus(manifeste_json("4.4", &[("deR4Tizer.msi", "https://exemple.invalid/a b.msi", &h)]), "adresse");
+    // Taille bornée
+    let mut gros = manifeste_json("4.4", &[("deR4Tizer.msi", url, &h)]);
+    gros.extend(std::iter::repeat_n(b' ', 70_000));
+    refus(gros, "trop gros");
+    refus(vec![0xff, 0xfe, 0x00], "UTF-8");
+    // Mini-fuzz : jamais de panique
+    torturer(&manifeste_json("4.4", &[("deR4Tizer.msi", url, &h)]), &mut |d| {
+        let _ = lire_manifeste(d);
+    });
+}
+
+#[test]
+fn lot2_decision_installation() {
+    use crate::maj::{cles_epinglees, decision_installation, lire_manifeste, meme_version, Artefact, UPGRADE_CODE};
+    let h = "ab".repeat(32);
+    let cle = "c1".repeat(32);
+    let cles = cles_epinglees(Some(&cle));
+    let url = "https://github.com/cryptobones-1337/deR4Tizer/releases/download/v4.4/deR4Tizer.msi";
+    let m = lire_manifeste(&manifeste_json("4.4", &[("deR4Tizer.msi", url, &h)])).unwrap();
+    let bon = Artefact { sha256: h.clone(), cle: Some(cle.clone()), proprietes: Some(("4.4.0".into(), UPGRADE_CODE.into())) };
+    assert!(decision_installation(&m, &bon, "4.3", &cles).is_ok());
+    assert!(meme_version("4.4", "4.4.0") && !meme_version("4.4", "4.4.1") && !meme_version("4.4", "x"));
+    let refus = |a: &Artefact, installee: &str, cles: &[String], attendu: &str| {
+        let e = decision_installation(&m, a, installee, cles).unwrap_err();
+        assert!(e.contains(attendu), "{e}");
+    };
+    // Version de l'artefact ≠ manifeste (manifeste « 4.4 » pour un ancien paquet signé)
+    refus(&Artefact { proprietes: Some(("4.1.0".into(), UPGRADE_CODE.into())), ..bon.clone() }, "4.3", &cles, "différente");
+    // Version égale ou plus ancienne que la version installée
+    refus(&bon, "4.4", &cles, "pas plus récente");
+    refus(&bon, "4.10", &cles, "pas plus récente");
+    // Empreinte fausse
+    refus(&Artefact { sha256: "cd".repeat(32), ..bon.clone() }, "4.3", &cles, "empreinte");
+    // Signature absente (ou invalide, ou révoquée)
+    refus(&Artefact { cle: None, ..bon.clone() }, "4.3", &cles, "signature");
+    // Clé inattendue
+    refus(&Artefact { cle: Some("ee".repeat(32)), ..bon.clone() }, "4.3", &cles, "autre clé");
+    // Liste de clés vide ou mal formée
+    refus(&bon, "4.3", &cles_epinglees(None), "épinglée");
+    refus(&bon, "4.3", &cles_epinglees(Some("c1c1 ; trop-court ;")), "épinglée");
+    // Paquet signé d'un autre produit, propriétés illisibles
+    refus(&Artefact { proprietes: Some(("4.4.0".into(), "{00000000-0000-0000-0000-000000000000}".into())), ..bon.clone() }, "4.3", &cles, "autre produit");
+    refus(&Artefact { proprietes: None, ..bon.clone() }, "4.3", &cles, "illisibles");
+}
+
+#[test]
+fn lot2_adresse_du_paquet_de_retour() {
+    use crate::maj::url_paquet_version;
+    assert_eq!(url_paquet_version("https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json", "4.3").as_deref(),
+        Some("https://github.com/cryptobones-1337/deR4Tizer/releases/download/v4.3/deR4Tizer.msi"));
+    assert!(url_paquet_version("http://github.com/x/releases/latest/download/manifeste.json", "4.3").is_none());
+    assert!(url_paquet_version("https://exemple.invalid/manifeste.json", "4.3").is_none());
+    assert!(url_paquet_version("https://github.com/x/releases/latest/download/autre.json", "4.3").is_none());
+    assert!(url_paquet_version("https://github.com/x/releases/latest/download/manifeste.json", "4.3/../x").is_none());
+}
+
+#[test]
+fn lot2_proprietes_lues_dans_le_paquet() {
+    use crate::natif::proprietes_msi;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::ApplicationInstallationAndServicing::{
+        MsiCloseHandle, MsiDatabaseCommit, MsiDatabaseOpenViewW, MsiOpenDatabaseW, MsiViewExecute, MSIDBOPEN_CREATE, MSIHANDLE,
+    };
+    let d = dossier_test("msi");
+    let f = d.join("test.msi");
+    let large = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    unsafe {
+        let mut base = MSIHANDLE::default();
+        assert_eq!(MsiOpenDatabaseW(PCWSTR(large(&f.to_string_lossy()).as_ptr()), MSIDBOPEN_CREATE, &mut base), 0);
+        for requete in ["CREATE TABLE `Property` (`Property` CHAR(72) NOT NULL, `Value` LONGCHAR NOT NULL PRIMARY KEY `Property`)",
+                        "INSERT INTO `Property` (`Property`, `Value`) VALUES ('ProductVersion', '4.4.0')",
+                        "INSERT INTO `Property` (`Property`, `Value`) VALUES ('UpgradeCode', '{6F1E2B47-9C3A-4D58-8E21-4B7D0C9A3F15}')"] {
+            let mut vue = MSIHANDLE::default();
+            assert_eq!(MsiDatabaseOpenViewW(base, PCWSTR(large(requete).as_ptr()), &mut vue), 0, "{requete}");
+            assert_eq!(MsiViewExecute(vue, MSIHANDLE::default()), 0, "{requete}");
+            MsiCloseHandle(vue);
+        }
+        assert_eq!(MsiDatabaseCommit(base), 0);
+        MsiCloseHandle(base);
+    }
+    assert_eq!(proprietes_msi(&f).unwrap(), ("4.4.0".to_string(), crate::maj::UPGRADE_CODE.to_string()));
+    let pas_msi = d.join("pas-un-msi.msi");
+    std::fs::write(&pas_msi, b"MZ").unwrap();
+    assert!(proprietes_msi(&pas_msi).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot2_retour_arriere_simule() {
+    use crate::maj::{script_installation, ParametresScript, Simulation};
+    let d = dossier_test("retour-arriere");
+    let paquet = d.join("4.4").join("deR4Tizer.msi");
+    let retour = d.join("4.3").join("deR4Tizer.msi");
+    std::fs::create_dir_all(paquet.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(retour.parent().unwrap()).unwrap();
+    std::fs::write(&paquet, b"paquet 4.4").unwrap();
+    std::fs::write(&retour, b"paquet 4.3").unwrap();
+    let sha_paquet = crate::hygiene::empreinte_fichier(&paquet).unwrap();
+    let sha_retour = crate::hygiene::empreinte_fichier(&retour).unwrap();
+    let journal = d.join("actions.txt");
+    let echec = d.join("echec.txt");
+    let jouer_pid = |reponse: &str, sha_paquet: &str, pid_serveur: u32| -> (Vec<String>, Option<String>) {
+        let _ = std::fs::remove_file(&journal);
+        let _ = std::fs::remove_file(&echec);
+        let s = script_installation(&ParametresScript {
+            version: "4.4", paquet: &paquet, sha_paquet, retour: &retour, sha_retour: &sha_retour, journaux: &d,
+            simulation: Some(Simulation { journal: &journal, reponse, pid_serveur, pid_service: 4242 }),
+        });
+        let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &s]).env_remove("PSModulePath").output().unwrap();
+        assert!(sortie.status.success(), "{}", String::from_utf8_lossy(&sortie.stderr));
+        let actions: Vec<String> = std::fs::read_to_string(&journal).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
+        let e = std::fs::read_to_string(&echec).ok();
+        // Diagnostic, affiché seulement si le test échoue
+        eprintln!("réponse {reponse:?} : actions {actions:?}, journal présent {}, échec {e:?}, sortie {:?}, erreurs {:?}",
+            journal.exists(), String::from_utf8_lossy(&sortie.stdout), String::from_utf8_lossy(&sortie.stderr));
+        (actions, e)
+    };
+    let jouer = |reponse: &str, sha_paquet: &str| jouer_pid(reponse, sha_paquet, 4242);
+    let installer = |p: &std::path::Path| format!("installer {}", p.display());
+    // Le service répond, en JSON, avec la nouvelle version : pas de retour arrière
+    let (a, e) = jouer(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &sha_paquet);
+    assert_eq!(a, vec![installer(&paquet), "canal".into()]);
+    assert!(e.is_none());
+    // Le service ne répond pas en JSON valide (ou pas du tout) : retour arrière par le paquet précédent
+    for reponse in ["", "\"Ok\":true deR4Tizer 4.4", r#"{"Ok":false,"Message":"deR4Tizer 4.4"}"#, r#"{"Ok":true,"Message":"deR4Tizer 4.3"}"#] {
+        let (a, e) = jouer(reponse, &sha_paquet);
+        assert_eq!(a, vec![installer(&paquet), "canal".into(), "canal".into(), installer(&retour)], "réponse {reponse:?}");
+        assert!(e.as_deref().is_some_and(|t| t.contains("réinstallé") && t.contains("4.4")), "{e:?}");
+    }
+    // Réponse valide, mais le tube est tenu par un autre processus que le service (squat pendant l'arrêt de
+    // l'ancien service) : échec de santé, retour arrière
+    let (a, e) = jouer_pid(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &sha_paquet, 5151);
+    assert_eq!(a, vec![installer(&paquet), "canal".into(), "canal".into(), installer(&retour)]);
+    assert!(e.as_deref().is_some_and(|t| t.contains("réinstallé")), "{e:?}");
+    // Paquet modifié après vérification : rien n'est installé
+    let (a, e) = jouer(r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#, &"00".repeat(32));
+    assert!(a.is_empty(), "{a:?}");
+    assert!(e.as_deref().is_some_and(|t| t.contains("abandonnée")));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
+fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let chemin: Vec<u16> = format!(r"\\.\pipe\{nom}").encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(chemin.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    let brut = tube.0 as usize;
+    std::thread::spawn(move || unsafe {
+        let h = HANDLE(brut as _);
+        let _ = ConnectNamedPipe(h, None);
+        let mut recu = Vec::new();
+        let mut octet = [0u8; 1];
+        let mut n = 0u32;
+        while ReadFile(h, Some(&mut octet), Some(&mut n), None).is_ok() && n == 1 {
+            if octet[0] == b'\n' {
+                break;
+            }
+            recu.push(octet[0]);
+        }
+        if !recu.is_empty() {
+            let _ = WriteFile(h, Some(format!("{reponse}\r\n").as_bytes()), None, None);
+            let _ = FlushFileBuffers(h);
+        }
+        let _ = CloseHandle(h);
+        String::from_utf8_lossy(&recu).trim_end_matches('\r').to_string()
+    })
+}
+
+fn powershell_sortie(script: &str) -> String {
+    let s = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script]).env_remove("PSModulePath").output().unwrap();
+    assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
+    String::from_utf8_lossy(&s.stdout).trim().to_string()
+}
+
+#[test]
+fn lot2_canal_code_de_production_sur_un_vrai_tube() {
+    // Le code PowerShell EXACT du script de production (ps_canal), passé comme lui en ligne de commande à
+    // powershell.exe : requête reçue par le serveur, filtre CIM, PID du serveur du tube
+    use crate::maj::{ps_canal, script_installation, ParametresScript};
+    let pid = std::process::id();
+    let nom = format!("der4tizer-test-{pid}");
+    // Pid-Service tel quel, sur un service qui existe partout (WMI) : filtre CIM correctement échappé
+    let p = powershell_sortie(&format!("{}; Write-Output (Pid-Service)", ps_canal(&nom, "Winmgmt")));
+    assert!(p.parse::<u32>().is_ok_and(|v| v > 0), "PID de Winmgmt : {p:?}");
+    // Tube tenu par le processus attendu (ici le test, à la place du service) : requête exacte et réponse
+    let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]{pid} }}; Write-Output ('REPONSE=' + (Lire-Reponse))", ps_canal(&nom, "Winmgmt")));
+    let recu = serveur.join().unwrap();
+    assert_eq!(recu, r#"{"Action":"verification"}"#, "requête envoyée au service");
+    let c: crate::commun::Commande = serde_json::from_str(&recu).expect("JSON valide pour le service");
+    assert_eq!(c.action.as_deref(), Some("verification"));
+    assert_eq!(sortie, r#"REPONSE={"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    // Tube tenu par un autre processus que le service : aucune requête envoyée, réponse nulle
+    let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
+    let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]1 }}; Write-Output ('NUL=' + ($null -eq (Lire-Reponse)))", ps_canal(&nom, "Winmgmt")));
+    assert_eq!(serveur.join().unwrap(), "", "rien n'est envoyé à un tube squatté");
+    assert_eq!(sortie, "NUL=True");
+    // Le script de production embarque ce code tel quel, et sa syntaxe est valide
+    let d = dossier_test("script-production");
+    let (paquet, retour) = (d.join("n.msi"), d.join("a.msi"));
+    let s = script_installation(&ParametresScript { version: "4.4", paquet: &paquet, sha_paquet: &"ab".repeat(32), retour: &retour,
+        sha_retour: &"cd".repeat(32), journaux: &d, simulation: None });
+    assert!(s.contains(&ps_canal("deR4Tizer", "deR4Tizer")));
+    let f = d.join("script.ps1");
+    std::fs::write(&f, &s).unwrap();
+    let erreurs = powershell_sortie(&format!("$e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{}', [ref]$null, [ref]$e); $e.Count", f.display()));
+    assert_eq!(erreurs, "0");
+    let _ = std::fs::remove_dir_all(&d);
 }

@@ -1074,3 +1074,44 @@ pub fn chemin_contient_lien(chemin: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
     chemin.ancestors().any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_attributes() & 0x400 != 0))
 }
+
+/// Propriétés d'un paquet MSI lues dans sa table Property (lecture seule, rien n'est exécuté) :
+/// (ProductVersion, UpgradeCode). À n'appeler qu'APRÈS la vérification de la signature du fichier.
+pub fn proprietes_msi(chemin: &std::path::Path) -> Result<(String, String), String> {
+    use windows::Win32::System::ApplicationInstallationAndServicing::{
+        MsiCloseHandle, MsiDatabaseOpenViewW, MsiOpenDatabaseW, MsiRecordGetStringW, MsiViewExecute, MsiViewFetch, MSIDBOPEN_READONLY,
+        MSIHANDLE,
+    };
+    let nom = large(&chemin.to_string_lossy());
+    unsafe {
+        let mut base = MSIHANDLE::default();
+        let r = MsiOpenDatabaseW(PCWSTR(nom.as_ptr()), MSIDBOPEN_READONLY, &mut base);
+        if r != 0 {
+            return Err(format!("paquet MSI illisible (erreur {r})"));
+        }
+        let lire = |propriete: &str| -> Result<String, String> {
+            let requete = large(&format!("SELECT `Value` FROM `Property` WHERE `Property`='{propriete}'"));
+            let mut vue = MSIHANDLE::default();
+            if MsiDatabaseOpenViewW(base, PCWSTR(requete.as_ptr()), &mut vue) != 0 {
+                return Err(format!("{propriete} : requête refusée"));
+            }
+            let mut resultat = Err(format!("{propriete} absente du paquet"));
+            if MsiViewExecute(vue, MSIHANDLE::default()) == 0 {
+                let mut enr = MSIHANDLE::default();
+                if MsiViewFetch(vue, &mut enr) == 0 {
+                    let mut tampon = vec![0u16; 256];
+                    let mut n = tampon.len() as u32;
+                    if MsiRecordGetStringW(enr, 1, PWSTR(tampon.as_mut_ptr()), Some(&mut n)) == 0 {
+                        resultat = Ok(String::from_utf16_lossy(&tampon[..n as usize]));
+                    }
+                    MsiCloseHandle(enr);
+                }
+            }
+            MsiCloseHandle(vue);
+            resultat
+        };
+        let r = lire("ProductVersion").and_then(|v| lire("UpgradeCode").map(|u| (v, u)));
+        MsiCloseHandle(base);
+        r
+    }
+}

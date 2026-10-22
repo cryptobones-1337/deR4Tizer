@@ -44,7 +44,7 @@ jobs:
         env:
           # Clés de signature épinglées dans le binaire : la mise à jour automatique n'installe que des
           # versions signées par l'une d'elles (variable de dépôt, non secrète)
-          DER4TIZER_CLE_SIGNATURE: ${{ vars.CLE_SIGNATURE }}
+          DER4TIZER_CLES_SIGNATURE: ${{ vars.CLE_SIGNATURE }}
         run: |
           cd service-rs; cargo build --release; cd ..
           ./compiler.ps1 -InterfaceSeulement
@@ -120,8 +120,10 @@ jobs:
       - name: Manifeste de mise à jour
         shell: pwsh
         run: |
+          # Un seul fichier, le paquet MSI : c'est lui que les postes installent, et sa version y est lue après
+          # vérification de sa signature (les exécutables restent joints à la version pour une installation manuelle)
           $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
-          $fichiers = foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe') {
+          $fichiers = foreach ($n in 'deR4Tizer.msi') {
             [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
           }
           [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM

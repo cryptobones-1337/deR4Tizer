@@ -25,6 +25,7 @@ features = [
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",                           # NtCreateFile : flux Zone.Identifier ouvert par rapport au handle du fichier
     "Win32_Foundation",
+    "Win32_System_ApplicationInstallationAndServicing", # lecture des propriétés d'un paquet MSI (mise à jour)
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_NetworkManagement_WindowsFirewall",
