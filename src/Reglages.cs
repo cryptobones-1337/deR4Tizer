@@ -1,4 +1,4 @@
-// Page Réglages : langue, envoi des alertes en syslog, API d'export et export des journaux.
+﻿// Page Réglages : langue, envoi des alertes en syslog, API d'export et export des journaux.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -70,6 +70,15 @@ namespace DeR4Tizer
             var btnEnregistrer = new BoutonNeon("Enregistrer", Theme.Cyan) { Margin = new Padding(0, 14, 8, 6) };
             btnEnregistrer.Click += (s, e) => Enregistrer();
             pile.Controls.Add(btnEnregistrer);
+
+            // ---------------- Accès aux données
+            pile.Controls.Add(Section("ACCÈS AUX DONNÉES"));
+            var lecteurs = Commun.Lire<List<Lecteur>>("lecteurs.json") ?? new List<Lecteur>();
+            pile.Controls.Add(Note(L.T("Les événements, sessions, alertes et appareils du réseau ne sont lisibles que par SYSTEM, les administrateurs et ces comptes :")
+                + " " + (lecteurs.Count == 0 ? "—" : string.Join(", ", lecteurs.Select(x => x.Nom)))));
+            var btnAutoriser = new BoutonNeon("Autoriser un autre compte…", Theme.TexteDim);
+            btnAutoriser.Click += (s, e) => AutoriserCompte();
+            pile.Controls.Add(Ligne(btnAutoriser));
 
             // ---------------- Export
             pile.Controls.Add(Section("EXPORT DES JOURNAUX"));
@@ -178,6 +187,25 @@ namespace DeR4Tizer
             if (c == null) return;
             Canal.Executer(new Commande { Action = "reglages", Valeur = Commun.Json().Serialize(c) });
             Charger();
+        }
+
+        // Autorise un compte local à lire les données (nom saisi, converti en identifiant de sécurité)
+        void AutoriserCompte()
+        {
+            using (var f = new Form { Text = "deR4Tizer", Size = new Size(420, 150), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, BackColor = Theme.Fond, ForeColor = Theme.Texte, Font = Theme.Petit })
+            {
+                var t = Saisie(360);
+                t.Location = new Point(16, 36);
+                var lbl = new Label { Text = L.T("Nom du compte (par exemple : PC-ACCUEIL\\marie)"), AutoSize = true, Location = new Point(16, 12) };
+                var ok = new BoutonNeon("Autoriser", Theme.Cyan) { DialogResult = DialogResult.OK, Location = new Point(16, 70) };
+                f.Controls.AddRange(new Control[] { lbl, t, ok });
+                f.AcceptButton = ok;
+                if (f.ShowDialog(this) != DialogResult.OK || t.Text.Trim().Length == 0) return;
+                string sid;
+                try { sid = new System.Security.Principal.NTAccount(t.Text.Trim()).Translate(typeof(System.Security.Principal.SecurityIdentifier)).Value; }
+                catch { MessageBox.Show(L.T("Compte introuvable."), "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+                Canal.Executer(new Commande { Action = "autoriserLecteur", Valeur = sid });
+            }
         }
 
         // ------------------------------------------------------------ export

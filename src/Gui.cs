@@ -1226,7 +1226,19 @@ namespace DeR4Tizer
             }
 
             var cfg = Commun.Lire<Config>("config.json");
-            L.En = cfg != null && cfg.Langue == "en";
+            L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
+
+            // Données réservées : ce compte n'est peut-être pas autorisé à les lire
+            if (args.Length == 0 || args.Contains("--cache") || args.Contains("--page"))
+            {
+                bool refuse = false;
+                try { Directory.GetFiles(Commun.Dossier); } catch (UnauthorizedAccessException) { refuse = true; } catch { }
+                if (refuse && MessageBox.Show(L.En
+                        ? "deR4Tizer data (events, sessions, alerts) is restricted to administrators and authorised accounts.\n\nAuthorise this account (" + Environment.UserName + ") to read it? An administrator password will be asked."
+                        : "Les données de deR4Tizer (événements, sessions, alertes) sont réservées aux administrateurs et aux comptes autorisés.\n\nAutoriser ce compte (" + Environment.UserName + ") à les lire ? Le mot de passe d'un administrateur sera demandé.",
+                        "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                    Canal.Executer(new Commande { Action = "autoriserLecteur", Valeur = WindowsIdentity.GetCurrent().User.Value });
+            }
 
             bool premier;
             // Une seule interface à la fois, sauf pour un dossier de données de test

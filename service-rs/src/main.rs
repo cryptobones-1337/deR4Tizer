@@ -29,6 +29,7 @@ mod natif;
 mod parefeu;
 mod persistance;
 mod processus;
+mod protection;
 mod reponse;
 mod siem;
 mod surveillances;

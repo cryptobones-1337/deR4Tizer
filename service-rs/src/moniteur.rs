@@ -105,6 +105,9 @@ impl Moniteur {
             arret: AtomicBool::new(false),
         });
         crate::siem::demarrer(partage.alertes_externes.clone(), !console);
+        if !console {
+            crate::protection::demarrer();
+        }
         defender::surveiller(partage.alertes_externes.clone());
         {
             // Changements de règles du pare-feu, avec le signataire du programme auteur
@@ -709,6 +712,10 @@ impl Moniteur {
                     Err(e) => Reponse::erreur(format!("Échec de l'envoi : {e}")),
                 }
             }
+            "autoriserLecteur" => match crate::protection::autoriser(c.valeur.as_deref().unwrap_or("")) {
+                Ok(nom) => Reponse::ok(format!("Le compte {nom} peut maintenant lire les données de deR4Tizer.")),
+                Err(e) => Reponse::erreur(e),
+            },
             "jetonApi" | "nouveauJeton" => {
                 let j = if action == "nouveauJeton" {
                     let j = crate::api::regenerer_jeton();

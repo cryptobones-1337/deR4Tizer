@@ -317,6 +317,9 @@ namespace DeR4Tizer
         public bool Ips { get; set; } public long PaquetsAnalyses { get; set; } public List<DetectionIds> Detections { get; set; }
     }
 
+    // Compte autorisé à lire les données (lecteurs.json)
+    public class Lecteur { public string Sid { get; set; } public string Nom { get; set; } }
+
     public class ConfigSyslog
     {
         public ConfigSyslog() { Hote = ""; Port = 514; Protocole = "UDP"; Format = "JSON"; NiveauMin = "Alerte"; }
