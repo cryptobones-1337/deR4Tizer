@@ -1511,8 +1511,12 @@ fn lot2_retour_arriere_simule() {
         });
         let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &s]).output().unwrap();
         assert!(sortie.status.success(), "{}", String::from_utf8_lossy(&sortie.stderr));
-        let actions = std::fs::read_to_string(&journal).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
-        (actions, std::fs::read_to_string(&echec).ok())
+        let actions: Vec<String> = std::fs::read_to_string(&journal).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
+        let e = std::fs::read_to_string(&echec).ok();
+        // Diagnostic, affiché seulement si le test échoue
+        eprintln!("réponse {reponse:?} : actions {actions:?}, journal présent {}, échec {e:?}, sortie {:?}, erreurs {:?}",
+            journal.exists(), String::from_utf8_lossy(&sortie.stdout), String::from_utf8_lossy(&sortie.stderr));
+        (actions, e)
     };
     let jouer = |reponse: &str, sha_paquet: &str| jouer_pid(reponse, sha_paquet, 4242);
     let installer = |p: &std::path::Path| format!("installer {}", p.display());
