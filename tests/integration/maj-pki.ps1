@@ -88,8 +88,11 @@ $cfg = "$d/openssl.cnf"
 [IO.File]::WriteAllText("$Dossier\serie", "1000`n")
 [IO.File]::WriteAllText("$Dossier\crlnumero", "1000`n")
 
-# Racine
+# Racine SANS adresse de CRL, comme les racines réelles : le service exclut la racine du contrôle de révocation
+# (WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT) ; une racine de test avec une CRL masquerait un refus général
 O req -x509 -config $cfg -newkey rsa:3072 -nodes -keyout "$d/racine.key" -out "$d/racine.crt" -days 30 -extensions ext_racine
+$r = New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $Dossier 'racine.crt'))
+if (@($r.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.31' }).Count) { throw 'la racine de test a une adresse de CRL' }
 # Clés : K (épinglée), K2 (non épinglée), TLS
 foreach ($k in 'k', 'k2', 'tls') { O genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$d/$k.key" }
 
