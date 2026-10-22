@@ -404,25 +404,28 @@ fn signaler_une_fois(chemin: &Path, raison: &str) {
 /// Décision pure de lecture d'un fichier du dossier de données. Hors service (tests, console), pas de
 /// contrôle. En service : refus tant que la protection du dossier n'est pas vérifiée (si `avec_verrou`), et
 /// refus d'un fichier dont le propriétaire n'est ni SYSTEM ni Administrateurs : posé par un compte standard,
-/// il ne doit jamais être cru. Un propriétaire illisible (fichier absent, le plus souvent) laisse la lecture
-/// échouer d'elle-même.
-pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: bool, proprietaire_ok: Option<bool>) -> Result<(), &'static str> {
+/// il ne doit jamais être cru. Un propriétaire illisible n'est admis que si le fichier n'existe pas (la
+/// lecture échoue alors d'elle-même).
+pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: bool, existe: bool, proprietaire_ok: Option<bool>) -> Result<(), &'static str> {
     if !systeme {
         return Ok(());
     }
     if avec_verrou && echec_protection {
         return Err("protection du dossier non vérifiée");
     }
-    if proprietaire_ok == Some(false) {
-        return Err("propriétaire ni SYSTEM ni Administrateurs");
+    match proprietaire_ok {
+        Some(true) => Ok(()),
+        Some(false) => Err("propriétaire ni SYSTEM ni Administrateurs"),
+        None if existe => Err("propriétaire illisible"),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn lire_controle(chemin: &Path, avec_verrou: bool) -> Option<String> {
     let systeme = crate::natif::est_systeme();
     let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
-    if let Err(raison) = lecture_autorisee(systeme, avec_verrou, echec_protection().is_some(), proprietaire) {
+    let existe = fs::symlink_metadata(chemin).is_ok();
+    if let Err(raison) = lecture_autorisee(systeme, avec_verrou, echec_protection().is_some(), existe, proprietaire) {
         signaler_une_fois(chemin, raison);
         return None;
     }

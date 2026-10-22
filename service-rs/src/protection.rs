@@ -132,30 +132,73 @@ fn supprimer_lien(p: &Path) {
     let _ = fs::remove_dir(p).or_else(|_| fs::remove_file(p));
 }
 
-/// Parcourt le contenu sans suivre les liens : liens supprimés, éléments d'un autre propriétaire mis de côté.
-/// Renvoie les chemins écartés (relatifs)
+/// Sort d'un élément du dossier de données au démarrage
+#[derive(Debug, PartialEq)]
+pub enum Tri {
+    Garder,
+    SupprimerLien,
+    Ecarter,
+}
+
+/// Décision pure : seul un élément dont le propriétaire est LU et acceptable est gardé. Un propriétaire
+/// illisible (None) ne vaut pas confiance : un compte standard peut le rendre illisible pour SYSTEM (DACL
+/// vide), alors que la prise de possession qui suit le rendrait ensuite « propre ».
+pub fn trier_element(lien: bool, proprietaire_ok: Option<bool>) -> Tri {
+    if lien {
+        Tri::SupprimerLien
+    } else if proprietaire_ok == Some(true) {
+        Tri::Garder
+    } else {
+        Tri::Ecarter
+    }
+}
+
+/// Parcourt le contenu sans suivre les liens : liens supprimés, éléments au propriétaire non vérifié mis de
+/// côté. Renvoie les chemins écartés (relatifs)
 fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
     let Ok(lecture) = fs::read_dir(dossier) else { return };
     for e in lecture.flatten() {
         let p = e.path();
-        if p == quarantaine || p.starts_with(quarantaine) {
+        if p == quarantaine {
             continue;
         }
         let Ok(m) = fs::symlink_metadata(&p) else { continue };
         let relatif = p.strip_prefix(racine).unwrap_or(&p).display().to_string();
-        if est_lien(&m) {
-            supprimer_lien(&p);
-            ecartes.push(format!("{relatif} (lien supprimé)"));
-        } else if crate::natif::proprietaire_de_confiance(&p) == Some(false) {
-            let _ = fs::create_dir_all(quarantaine);
-            let dest = quarantaine.join(relatif.replace(['\\', '/'], "_"));
-            let ok = fs::rename(&p, &dest).is_ok() || (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) }).is_ok();
-            ecartes.push(format!("{relatif}{}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
-        } else if m.is_dir() {
-            trier(&p, racine, quarantaine, ecartes);
+        match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&p)) {
+            Tri::SupprimerLien => {
+                supprimer_lien(&p);
+                let ok = fs::symlink_metadata(&p).is_err();
+                ecartes.push(format!("{relatif} (lien supprimé){}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
+            }
+            Tri::Ecarter => {
+                let _ = fs::create_dir_all(quarantaine);
+                let dest = quarantaine.join(format!("{}-{}", commun::nouvel_id(), relatif.replace(['\\', '/'], "_")));
+                let ok = fs::rename(&p, &dest).is_ok() || (if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) }).is_ok();
+                ecartes.push(format!("{relatif}{}", if ok { "" } else { " (IMPOSSIBLE À ÉCARTER)" }));
+            }
+            Tri::Garder if m.is_dir() => trier(&p, racine, quarantaine, ecartes),
+            Tri::Garder => {}
         }
     }
 }
+
+/// Dossier « ecartes » : lui-même soumis à la règle (un compte standard pourrait l'avoir créé d'avance, ou en
+/// avoir fait un lien). S'il n'est pas sûr, il est supprimé (sans suivre de lien)
+fn preparer_quarantaine(q: &Path) -> Result<(), String> {
+    let Ok(m) = fs::symlink_metadata(q) else { return Ok(()) };
+    match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(q)) {
+        Tri::Garder => Ok(()),
+        Tri::SupprimerLien => {
+            supprimer_lien(q);
+            if fs::symlink_metadata(q).is_ok() { Err("le dossier ecartes est un lien impossible à supprimer".into()) } else { Ok(()) }
+        }
+        Tri::Ecarter => fs::remove_dir_all(q).map_err(|e| format!("dossier ecartes au propriétaire non vérifié, impossible à supprimer ({e})")),
+    }
+}
+
+/// Échec constaté au démarrage (dossier impossible à écarter…) : la vérification horaire ne peut pas le lever,
+/// seul un redémarrage réussi du service le fait
+static ECHEC_DEMARRAGE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Démarrage du service, avant toute lecture du dossier de données
 pub fn securiser() {
@@ -165,20 +208,37 @@ pub fn securiser() {
     }
     let racine = commun::dossier().clone();
     let mut messages = Vec::new();
+    let mut echec = None;
     if let Ok(m) = fs::symlink_metadata(&racine) {
-        if est_lien(&m) {
-            supprimer_lien(&racine);
-            messages.push("le dossier de données était un lien : supprimé".to_string());
-        } else if crate::natif::proprietaire_de_confiance(&racine) != Some(true) {
-            let ecarte = racine.with_file_name(format!("deR4Tizer.ecarte-{}", commun::maintenant().replace([':', ' '], "-")));
-            if fs::rename(&racine, &ecarte).is_ok() {
-                messages.push(format!("le dossier de données n'appartenait ni à SYSTEM ni aux administrateurs : écarté vers {}", ecarte.display()));
-            } else {
-                messages.push("le dossier de données n'appartenait ni à SYSTEM ni aux administrateurs et n'a pas pu être écarté : propriétaire imposé".into());
+        match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&racine)) {
+            Tri::Garder => {}
+            Tri::SupprimerLien => {
+                supprimer_lien(&racine);
+                if fs::symlink_metadata(&racine).is_ok() {
+                    echec = Some("le dossier de données est un lien impossible à supprimer".to_string());
+                } else {
+                    messages.push("le dossier de données était un lien : supprimé".to_string());
+                }
+            }
+            Tri::Ecarter => {
+                let ecarte = racine.with_file_name(format!("deR4Tizer.ecarte-{}", commun::maintenant().replace([':', ' '], "-")));
+                if fs::rename(&racine, &ecarte).is_ok() {
+                    messages.push(format!("le dossier de données n'appartenait pas (de façon vérifiable) à SYSTEM ou aux administrateurs : écarté vers {}", ecarte.display()));
+                } else {
+                    echec = Some("le dossier de données n'appartient pas (de façon vérifiable) à SYSTEM ou aux administrateurs et n'a pas pu être écarté".to_string());
+                }
             }
         }
     }
-    let resultat = imposer(&racine, &mut messages);
+    // Échec fermé : rien n'est imposé sur un dossier qu'on n'a pas pu écarter ni sur un lien (ce serait le
+    // blanchir) ; le service tourne avec ses valeurs par défaut
+    let resultat = match echec {
+        Some(e) => {
+            *ECHEC_DEMARRAGE.lock().unwrap() = Some(e.clone());
+            Err(e)
+        }
+        None => imposer(&racine, &mut messages),
+    };
     for m in messages {
         commun::journal(&format!("protection des données : {m}"));
     }
@@ -188,6 +248,10 @@ pub fn securiser() {
 /// Échec fermé : tant que la protection n'est pas vérifiée, aucun fichier de configuration ou de secret n'est
 /// chargé (commun::lire_fichier), et l'échec est affiché dans l'interface (etat.json)
 fn publier(resultat: Result<(), String>) {
+    let resultat = match ECHEC_DEMARRAGE.lock().unwrap().clone() {
+        Some(e) => Err(e),
+        None => resultat,
+    };
     match resultat {
         Ok(()) => commun::definir_echec_protection(None),
         Err(e) => {
@@ -207,6 +271,7 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
         return Err("pose du propriétaire ou des droits du dossier refusée".into());
     }
     let quarantaine = racine.join("ecartes");
+    preparer_quarantaine(&quarantaine)?;
     let mut ecartes = Vec::new();
     trier(racine, racine, &quarantaine, &mut ecartes);
     if !ecartes.is_empty() {
