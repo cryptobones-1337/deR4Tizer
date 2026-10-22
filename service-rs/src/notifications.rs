@@ -1,7 +1,8 @@
 //! Remontée des alertes vers un tiers (prestataire informatique, référent) : ntfy, Microsoft Teams
 //! (webhook de flux de travail, carte adaptative) et e-mail (SMTP avec TLS). Les envois passent par
 //! curl.exe (fourni par Windows), sur un fil dédié : les alertes arrivées en 15 s sont regroupées dans un
-//! seul message, et un plafond par heure évite d'inonder le destinataire (le surplus est résumé).
+//! seul message ; un plafond par heure évite d'inonder le destinataire (le surplus non critique est résumé
+//! sur minuterie), mais les alertes critiques passent toujours.
 //! Les secrets (adresse ntfy et jeton, adresse du webhook Teams, mot de passe SMTP) sont rangés dans
 //! secrets\notifications.json, lisible par SYSTEM et les administrateurs seulement ; les fichiers de
 //! paramètres passés à curl (-K) y sont aussi écrits, jamais sur la ligne de commande.
@@ -113,22 +114,42 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
     let mut etat = Etat::default();
     let mut fenetre = Instant::now();
     let mut envois_heure = 0u32;
-    let mut retenues: Vec<Alerte> = Vec::new();
+    let mut retenues = 0usize;
     ecrire_etat(&mut etat);
     loop {
-        // Attente de la première alerte, puis regroupement de celles des 15 secondes suivantes
-        let premiere = match rx.recv() {
+        // Résumé du surplus retenu, envoyé sur minuterie (même si aucune nouvelle alerte n'arrive)
+        if fenetre.elapsed() > Duration::from_secs(3600) {
+            fenetre = Instant::now();
+            envois_heure = 0;
+            if retenues > 0 {
+                let resume = Alerte {
+                    niveau: "Alerte".into(),
+                    heure: commun::maintenant(),
+                    processus: "deR4Tizer".into(),
+                    destination: "résumé".into(),
+                    raisons: format!("{retenues} autre(s) alerte(s) non critique(s) n'ont pas été envoyées pour ne pas vous inonder (plafond de {} message(s) par heure). Détail dans l'interface de deR4Tizer, page Alertes.", config.max_par_heure),
+                    ..Default::default()
+                };
+                retenues = 0;
+                etat.resumes += 1;
+                envoyer_partout(&config, &[resume], &mut etat);
+            }
+        }
+        // Attente de la première alerte (une minute au plus, pour la minuterie du résumé)
+        let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
             Ok(Message::Config(c)) => {
                 config = c;
                 ecrire_etat(&mut etat);
                 continue;
             }
             Ok(Message::Alerte(a)) => a,
-            Err(_) => return,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => return,
         };
         if !actif(&config) || crate::export::rang(&premiere.niveau) < crate::export::rang(&config.niveau_min) {
             continue;
         }
+        // Regroupement des alertes des 15 secondes suivantes
         let mut lot = vec![premiere];
         let limite = Instant::now() + Duration::from_secs(15);
         loop {
@@ -141,31 +162,21 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        // Plafond par heure : au-delà, les alertes sont retenues puis résumées à l'heure suivante
-        if fenetre.elapsed() > Duration::from_secs(3600) {
-            fenetre = Instant::now();
-            envois_heure = 0;
-            if !retenues.is_empty() {
-                let n = retenues.len();
-                let resume = Alerte {
-                    niveau: "Alerte".into(),
-                    heure: commun::maintenant(),
-                    processus: "deR4Tizer".into(),
-                    destination: "résumé".into(),
-                    raisons: format!("{n} autre(s) alerte(s) n'ont pas été envoyées pour ne pas vous inonder (plafond de {} message(s) par heure). Détail dans l'interface de deR4Tizer, page Alertes.", config.max_par_heure),
-                    ..Default::default()
-                };
-                retenues.clear();
-                etat.resumes += 1;
-                envoyer_partout(&config, &[resume], &mut etat);
+        // Les critiques partent toujours : un attaquant ne doit pas pouvoir noyer la vraie alerte sous des
+        // alertes provoquées ; seules les autres comptent dans le plafond par heure
+        let (critiques, autres): (Vec<Alerte>, Vec<Alerte>) = lot.into_iter().partition(|a| a.niveau == "Critique");
+        let mut a_envoyer = critiques;
+        if !autres.is_empty() {
+            if envois_heure < config.max_par_heure.max(1) {
+                envois_heure += 1;
+                a_envoyer.extend(autres);
+            } else {
+                retenues += autres.len();
             }
         }
-        if envois_heure >= config.max_par_heure.max(1) {
-            retenues.extend(lot);
-            continue;
+        if !a_envoyer.is_empty() {
+            envoyer_partout(&config, &a_envoyer, &mut etat);
         }
-        envois_heure += 1;
-        envoyer_partout(&config, &lot, &mut etat);
     }
 }
 
@@ -407,4 +418,9 @@ fn courriel_curl(parametres: &str, message: &[u8]) -> Result<(), String> {
     })();
     let _ = fs::remove_file(&f);
     r
+}
+
+#[cfg(test)]
+pub fn base64_test(d: &[u8]) -> String {
+    base64(d)
 }

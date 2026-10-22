@@ -276,6 +276,7 @@ fn traduire(xml: &str) -> Option<Evenement> {
             let (nom, fichier) = if id == 7045 { (v("ServiceName"), v("ImagePath")) } else { (v("ServiceName"), v("ServiceFileName")) };
             e.source = if id == 7045 { "systeme".into() } else { "securite".into() };
             e.processus = nom.clone();
+            e.destination = fichier.clone();
             e.mitre = "T1543.003".into();
             e.message = format!("service installé : {nom} ({fichier})");
         }
@@ -589,6 +590,17 @@ impl Correlation {
             }
             // R5 : service installé depuis un dossier inscriptible par l'utilisateur
             "service-installe" => {
+                // R10 : pilote vulnérable connu (BYOVD), où qu'il soit sur le disque
+                let image = crate::hygiene::chemin_image(&e.destination);
+                if image.extension().map(|x| x.eq_ignore_ascii_case("sys")).unwrap_or(false) {
+                    if let Some(h) = crate::hygiene::pilote_vulnerable(&image) {
+                        if self.une_fois(format!("R10|{h}")) {
+                            incident("R10", "Pilote vulnérable installé (BYOVD)", "Critique", "T1068",
+                                format!("{} : ce pilote figure dans LOLDrivers (SHA-256 {}…) ; il sert à désactiver les antivirus depuis le noyau",
+                                    e.message, &h[..16]), vec![trace(e)]);
+                        }
+                    }
+                }
                 let m = e.message.to_lowercase();
                 let suspect = [r"\temp\", r"\appdata\", r"\users\public\", r"\downloads\", r"\téléchargements\", r"\programdata\"]
                     .iter().any(|d| m.contains(d)) || m.contains("powershell") || m.contains("cmd.exe /c") || m.contains("cmd /c");

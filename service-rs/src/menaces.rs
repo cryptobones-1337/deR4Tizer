@@ -414,3 +414,8 @@ fn fusionner(mut plages: Vec<Plage>) -> Vec<Plage> {
     }
     resultat
 }
+
+#[cfg(test)]
+pub fn recouvre_reserve_test(debut: u32, fin: u32) -> bool {
+    recouvre_reserve(debut, fin)
+}

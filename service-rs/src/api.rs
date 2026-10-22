@@ -75,7 +75,12 @@ pub fn demarrer(config: &ConfigApi) {
         return;
     }
     let jeton = jeton();
-    let adresse = format!("{}:{}", if config.reseau { "0.0.0.0" } else { "127.0.0.1" }, config.port);
+    let autorisees = adresses_autorisees(config);
+    if config.reseau && autorisees.is_empty() {
+        commun::journal("API d'export : accès réseau refusé sans adresse de SIEM autorisée ; écoute locale seulement");
+    }
+    let reseau = config.reseau && !autorisees.is_empty();
+    let adresse = format!("{}:{}", if reseau { "0.0.0.0" } else { "127.0.0.1" }, config.port);
     std::thread::Builder::new().name("api".into()).spawn(move || {
         // L'ancienne écoute peut tenir le port quelques instants
         let mut ecoute = None;
@@ -96,8 +101,9 @@ pub fn demarrer(config: &ConfigApi) {
         commun::journal(&format!("API d'export : écoute sur {adresse}"));
         while GENERATION.load(Ordering::SeqCst) == generation {
             match ecoute.accept() {
-                Ok((flux, _)) => {
-                    if CONNEXIONS.load(Ordering::SeqCst) >= MAX_CONNEXIONS {
+                Ok((flux, pair)) => {
+                    // Défense en profondeur, en plus de la règle de pare-feu : seulement les adresses du SIEM
+                    if CONNEXIONS.load(Ordering::SeqCst) >= MAX_CONNEXIONS || !autorisee(pair.ip(), &autorisees) {
                         continue;
                     }
                     CONNEXIONS.fetch_add(1, Ordering::SeqCst);
@@ -118,11 +124,11 @@ fn regle_parefeu(config: &ConfigApi) {
     let script = if config.actif && config.reseau {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; \
             New-NetFirewallRule -Name '{NOM_REGLE}' -DisplayName 'deR4Tizer API' -Group '{}' -Direction Inbound \
-            -Protocol TCP -LocalPort {} -Action Allow -Profile Domain,Private | Out-Null; \
+            -Protocol TCP -LocalPort {} -RemoteAddress {} -Action Allow -Profile Domain,Private | Out-Null; \
             Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue; \
             New-NetFirewallRule -Name '{NOM_REGLE}-public' -DisplayName 'deR4Tizer API (réseau public bloqué)' -Group '{}' \
             -Direction Inbound -Protocol TCP -LocalPort {} -Action Block -Profile Public | Out-Null",
-            crate::blocage::GROUPE, config.port, crate::blocage::GROUPE, config.port)
+            crate::blocage::GROUPE, config.port, adresses_autorisees(config).join(","), crate::blocage::GROUPE, config.port)
     } else {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue")
     };
@@ -130,6 +136,29 @@ fn regle_parefeu(config: &ConfigApi) {
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(0x0800_0000)
         .output();
+}
+
+/// Adresses ou réseaux (CIDR) autorisés à interroger l'API depuis le réseau
+fn adresses_autorisees(config: &ConfigApi) -> Vec<String> {
+    config.adresses.split([',', ';', ' ']).map(str::trim)
+        .filter(|a| { let ip = a.split('/').next().unwrap_or(""); !a.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() })
+        .map(String::from).collect()
+}
+
+fn autorisee(ip: std::net::IpAddr, autorisees: &[String]) -> bool {
+    if ip.is_loopback() {
+        return true;
+    }
+    autorisees.iter().any(|a| match a.split_once('/') {
+        None => a.parse::<std::net::IpAddr>().map(|x| x == ip).unwrap_or(false),
+        Some((r, l)) => match (r.parse::<std::net::Ipv4Addr>(), l.parse::<u32>(), ip) {
+            (Ok(r), Ok(l), std::net::IpAddr::V4(v)) if l <= 32 => {
+                let m = if l == 0 { 0 } else { u32::MAX << (32 - l) };
+                u32::from(r) & m == u32::from(v) & m
+            }
+            _ => false,
+        },
+    })
 }
 
 fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
@@ -272,4 +301,14 @@ fn decoder(v: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&sortie).into_owned()
+}
+
+#[cfg(test)]
+pub fn autorisee_test(ip: std::net::IpAddr, l: &[String]) -> bool {
+    autorisee(ip, l)
+}
+
+#[cfg(test)]
+pub fn decoder_test(v: &str) -> String {
+    decoder(v)
 }

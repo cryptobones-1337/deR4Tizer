@@ -142,6 +142,8 @@ namespace DeR4Tizer
             { "enregistrée", "saved" }, { "non renseignée", "not set" }, { "SITES IDENTIFIÉS", "SITES IDENTIFIED" },
             { "NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)", "SITE NAMES UNKNOWN (DNS LOG OFF)" },
 
+            { "Adresses autorisées (SIEM)", "Allowed addresses (SIEM)" },
+
             // Réglages
             { "LANGUE", "LANGUAGE" }, { "Langue de l'interface", "Interface language" },
             { "La langue s'applique au prochain lancement de l'interface.", "The language applies the next time the interface starts." },

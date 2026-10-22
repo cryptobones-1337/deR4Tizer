@@ -8,7 +8,8 @@
 //!             (le contenu est cherché dans toute la charge utile)
 //! Une règle qui utilise une option non prise en charge (pcre, byte_test…) est ignorée plutôt que mal
 //! appliquée. Les motifs sont cherchés en une passe (Aho-Corasick). En mode IPS (réglage), une règle
-//! « drop » ou de priorité 1 bloque l'adresse distante au pare-feu.
+//! « drop » ou de priorité 1 bloque l'adresse distante au pare-feu, seulement pour une connexion TCP établie
+//! (adresse non usurpable) et pour 7 jours.
 
 use crate::capture::{Analyseur, Contexte, Paquet, TCP, UDP};
 use crate::commun::{self, Alerte};
@@ -20,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Règles intégrées : signatures génériques, sans faux positif courant
-const REGLES_INTEGREES: &str = r#"
+pub(crate) const REGLES_INTEGREES: &str = r#"
 alert udp any any -> any any (msg:"deR4Tizer : paquet de test de l'IDS"; content:"deR4Tizer-test-IDS-7f3a"; priority:3; classtype:misc-activity; sid:9000000; rev:1;)
 alert tcp any any -> any any (msg:"Fichier de test antivirus EICAR transféré en clair"; content:"X5O!P%@AP[4|5c|PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!"; priority:2; classtype:misc-activity; sid:9000001; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Tentative Log4Shell (JNDI) reçue"; content:"${jndi:"; nocase; priority:1; classtype:attempted-admin; sid:9000010; rev:1;)
@@ -480,10 +481,14 @@ impl Ids {
         if self.deja.get(&cle).map(|t| t.elapsed() < Duration::from_secs(3600)).unwrap_or(false) {
             return;
         }
+        if self.deja.len() > 20_000 {
+            self.deja.clear();
+        }
         self.deja.insert(cle, Instant::now());
         let niveau = match r.priorite { 1 => "Critique", 2 => "Alerte", _ => "Info" };
         let externe = crate::parefeu::publique(&IpAddr::V4(distant));
-        let bloquer = self.ips && externe && (r.action == "drop" || r.action == "reject" || r.priorite == 1);
+        // Un paquet isolé peut porter une adresse source usurpée : on ne bloque qu'une connexion TCP établie
+        let bloquer = self.ips && externe && (r.action == "drop" || r.action == "reject" || r.priorite == 1) && contexte.etablie(p);
         if bloquer {
             self.blocages.lock().unwrap().push((distant.to_string(), format!("IPS : {}", r.msg)));
         }
@@ -556,4 +561,22 @@ impl Analyseur for Ids {
             });
         }
     }
+}
+
+#[cfg(test)]
+pub fn lire_texte_test(texte: &str) -> (usize, usize) {
+    let (mut n, mut ignorees) = (0, 0);
+    for l in texte.lines() {
+        match lire_regle(l, "test") {
+            Ok(Some(_)) => n += 1,
+            Ok(None) => {}
+            Err(()) => ignorees += 1,
+        }
+    }
+    (n, ignorees)
+}
+
+#[cfg(test)]
+pub fn correspond_test(regle: &str, charge: &[u8]) -> Option<bool> {
+    lire_regle(regle, "test").ok().flatten().map(|r| r.charge(charge))
 }

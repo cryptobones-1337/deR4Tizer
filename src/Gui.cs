@@ -13,6 +13,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text;
@@ -28,6 +29,37 @@ namespace DeR4Tizer
             return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
         }
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetNamedPipeServerProcessId(IntPtr tube, out uint pid);
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern IntPtr OpenSCManager(string machine, string base_, uint acces);
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern IntPtr OpenService(IntPtr gestionnaire, string nom, uint acces);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern bool QueryServiceStatusEx(IntPtr service, int niveau, byte[] tampon, int taille, out int requis);
+        [DllImport("advapi32.dll")]
+        static extern bool CloseServiceHandle(IntPtr h);
+
+        // PID du service deR4Tizer (SERVICE_STATUS_PROCESS.dwProcessId), 0 s'il est arrêté ou introuvable
+        static uint PidService()
+        {
+            IntPtr scm = OpenSCManager(null, null, 0x0001), svc = IntPtr.Zero;
+            try
+            {
+                if (scm == IntPtr.Zero) return 0;
+                svc = OpenService(scm, Commun.NomService, 0x0004);
+                if (svc == IntPtr.Zero) return 0;
+                var t = new byte[36];
+                int requis;
+                return QueryServiceStatusEx(svc, 0, t, t.Length, out requis) ? BitConverter.ToUInt32(t, 28) : 0;
+            }
+            finally
+            {
+                if (svc != IntPtr.Zero) CloseServiceHandle(svc);
+                if (scm != IntPtr.Zero) CloseServiceHandle(scm);
+            }
+        }
+
         public static Reponse Envoyer(Commande c)
         {
             try
@@ -35,6 +67,14 @@ namespace DeR4Tizer
                 using (var tube = new NamedPipeClientStream(".", Commun.NomPipe, PipeDirection.InOut))
                 {
                     tube.Connect(3000);
+                    // Le serveur du tube doit être le processus du service : un programme qui aurait pris le nom du
+                    // canal ne reçoit rien (pas même la commande)
+                    uint serveur;
+                    uint service = PidService();
+                    if (!GetNamedPipeServerProcessId(tube.SafePipeHandle.DangerousGetHandle(), out serveur) || service == 0 || serveur != service)
+                        return new Reponse { Ok = false, Message = L.En
+                            ? "The command channel is not held by the deR4Tizer service (possible impersonation): command not sent."
+                            : "Le canal de commandes n'est pas tenu par le service deR4Tizer (usurpation possible) : commande non envoyée." };
                     var ecrivain = new StreamWriter(tube, new UTF8Encoding(false)) { AutoFlush = true };
                     ecrivain.WriteLine(Commun.Json().Serialize(c));
                     string ligne = new StreamReader(tube, Encoding.UTF8).ReadLine();
@@ -46,7 +86,9 @@ namespace DeR4Tizer
             catch (Exception e) { return new Reponse { Ok = false, Message = e.Message }; }
         }
 
-        // Envoie la commande, en passant par une copie de l'interface lancée en administrateur si besoin
+        // Envoie la commande, en passant par une copie de l'interface lancée en administrateur si besoin.
+        // La commande (qui peut contenir un mot de passe) passe par un fichier du profil, effacé dès sa lecture :
+        // jamais par la ligne de commande, que l'audit des processus (4688) et les SIEM enregistrent.
         public static void Executer(Commande c)
         {
             if (EstAdmin())
@@ -54,10 +96,13 @@ namespace DeR4Tizer
                 Afficher(Envoyer(c));
                 return;
             }
-            string donnees = Convert.ToBase64String(Encoding.UTF8.GetBytes(Commun.Json().Serialize(c)));
+            string dossier = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer");
+            string fichier = Path.Combine(dossier, "commande-" + Guid.NewGuid().ToString("N") + ".json");
             try
             {
-                var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--commande " + donnees)
+                Directory.CreateDirectory(dossier);
+                File.WriteAllText(fichier, Commun.Json().Serialize(c), new UTF8Encoding(false));
+                var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--commande-fichier \"" + fichier + "\"")
                 {
                     Verb = "runas", UseShellExecute = true
                 });
@@ -67,6 +112,75 @@ namespace DeR4Tizer
             {
                 if (e.NativeErrorCode != 1223) MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally
+            {
+                try { File.Delete(fichier); } catch { }
+            }
+        }
+
+        // Ce que la commande va faire, en clair : l'instance administrateur l'affiche avant d'envoyer, pour qu'un
+        // autre programme ne puisse pas faire accepter « Tout débloquer » derrière l'invite UAC habituelle
+        public static string Decrire(Commande c)
+        {
+            string v = c.Valeur ?? "", cible = c.Cible ?? "";
+            bool en = L.En;
+            switch (c.Action)
+            {
+                case "bloquer": return (en ? "Block " : "Bloquer ") + (string.IsNullOrEmpty(c.NomDns) ? c.Ip : c.NomDns);
+                case "bloquerIp": return (en ? "Block the address " : "Bloquer l'adresse ") + c.Ip + (en ? " at the firewall" : " au pare-feu");
+                case "debloquer": return (en ? "REMOVE the block on " : "RETIRER le blocage de ") + cible;
+                case "toutDebloquer": return en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)";
+                case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + cible;
+                case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
+                case "tuer": return (en ? "Kill process " : "Tuer le processus ") + cible;
+                case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + cible + (en ? " and all its descendants" : " et toute sa descendance");
+                case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + cible;
+                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + cible;
+                case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + cible;
+                case "restaurer": return (en ? "RESTORE a quarantined file to its original location" : "REMETTRE un fichier de la quarantaine à son emplacement d'origine");
+                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + cible;
+                case "panique": return v == "true" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
+                case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + cible;
+                case "reglages":
+                    {
+                        var r = Commun.Json().Deserialize<Config>(v) ?? new Config();
+                        string api = r.Api != null && r.Api.Actif ? (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
+                        string sys = r.Syslog != null && r.Syslog.Actif ? r.Syslog.Hote + ":" + r.Syslog.Port : (en ? "off" : "désactivé");
+                        return (en ? "Change settings — language: " : "Modifier les réglages — langue : ") + r.Langue + " · syslog : " + sys + " · API : " + api;
+                    }
+                case "testerSyslog": return en ? "Send a syslog test message" : "Envoyer un message syslog de test";
+                case "jetonApi": return en ? "Show the export API token" : "Afficher le jeton de l'API d'export";
+                case "nouveauJeton": return en ? "REPLACE the export API token" : "REMPLACER le jeton de l'API d'export";
+                case "notifications":
+                case "testerNotifications":
+                    {
+                        var d = Commun.Json().Deserialize<Dictionary<string, object>>(v) ?? new Dictionary<string, object>();
+                        var canaux = new List<string>();
+                        object o;
+                        var conf = d.TryGetValue("Config", out o) ? o as Dictionary<string, object> : null;
+                        Func<string, bool> actif = k => conf != null && conf.ContainsKey(k) && conf[k] is bool && (bool)conf[k];
+                        Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Hote((string)o)) : "";
+                        if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
+                        if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
+                        if (actif("Smtp")) canaux.Add((en ? "e-mail to " : "e-mail à ") + (conf != null && conf.ContainsKey("Destinataires") ? conf["Destinataires"] : ""));
+                        return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
+                            + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
+                    }
+                case "autoriserLecteur":
+                    {
+                        string nom = v;
+                        try { nom = new SecurityIdentifier(v).Translate(typeof(NTAccount)).Value; } catch { }
+                        return (en ? "Allow the account " : "Autoriser le compte ") + nom + (en ? " to read deR4Tizer data (events, sessions, alerts)" : " à lire les données de deR4Tizer (événements, sessions, alertes)");
+                    }
+                default: return c.Action + " " + cible;
+            }
+        }
+
+        // Nom d'hôte d'une adresse web, sans le chemin (qui peut être secret)
+        static string Hote(string url)
+        {
+            Uri u;
+            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Host : "?";
         }
 
         public static void Afficher(Reponse r)
@@ -1180,17 +1294,28 @@ namespace DeR4Tizer
             int i = Array.IndexOf(args, "--dossier");
             if (i >= 0 && i + 1 < args.Length) Commun.Dossier = args[i + 1];
 
-            // Mode « assistant » : lancé en administrateur par l'interface pour transmettre une commande au service
-            if (args.Length == 2 && args[0] == "--commande")
+            var cfg = Commun.Lire<Config>("config.json");
+            L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
+
+            // Mode « assistant » : lancé en administrateur par l'interface pour transmettre une commande au service.
+            // Il lit la commande dans le fichier, l'efface, et montre en clair ce qu'il va faire avant de l'envoyer.
+            if (args.Length == 2 && args[0] == "--commande-fichier")
             {
-                var c = Commun.Json().Deserialize<Commande>(Encoding.UTF8.GetString(Convert.FromBase64String(args[1])));
+                Commande c;
+                try
+                {
+                    c = Commun.Json().Deserialize<Commande>(File.ReadAllText(args[1], Encoding.UTF8));
+                    File.Delete(args[1]);
+                }
+                catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+                if (c == null) return 1;
+                if (MessageBox.Show((L.En ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + Canal.Decrire(c)
+                        + (L.En ? "\n\nContinue?" : "\n\nContinuer ?"), "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return 1;
                 var r = Canal.Envoyer(c);
                 Canal.Afficher(r);
                 return r.Ok ? 0 : 1;
             }
-
-            var cfg = Commun.Lire<Config>("config.json");
-            L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
 
             // Données réservées : ce compte n'est peut-être pas autorisé à les lire
             if (args.Length == 0 || args.Contains("--cache") || args.Contains("--page"))

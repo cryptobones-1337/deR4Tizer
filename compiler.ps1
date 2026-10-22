@@ -15,6 +15,7 @@ if (-not (Test-Path $icone)) { & (Join-Path $PSScriptRoot 'icone.ps1') | Out-Nul
     "/win32icon:$icone" "/resource:$icone,deR4Tizer.ico" "/out:$sortie\deR4Tizer.exe" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Trafic.cs" "$src\Reseau.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
 if ($LASTEXITCODE) { throw 'Échec de la compilation de l''interface.' }
 
-& (Join-Path $PSScriptRoot 'compiler-rs.ps1')
+# -InterfaceSeulement : la CI compile le service elle-même (chaîne MSVC de GitHub Actions)
+if ($args -notcontains '-InterfaceSeulement') { & (Join-Path $PSScriptRoot 'compiler-rs.ps1') }
 
 Get-ChildItem $sortie -Filter *.exe | Select-Object Name, @{ n = 'Ko'; e = { [int]($_.Length / 1KB) } } | Format-Table -AutoSize

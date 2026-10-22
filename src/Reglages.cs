@@ -16,7 +16,7 @@ namespace DeR4Tizer
         readonly TextBox txtHote = Saisie(220), txtPortSyslog = Saisie(70);
         readonly ComboBox cbProtocole = Liste("UDP", "TCP"), cbFormat = Liste("JSON", "CEF"), cbNiveau = Liste("Info", "Alerte", "Critique");
         readonly CheckBox chkApi = Case("Activer l'API d'export"), chkReseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)");
-        readonly TextBox txtPortApi = Saisie(70);
+        readonly TextBox txtPortApi = Saisie(70), txtAdressesApi = Saisie(300);
         readonly ComboBox cbNiveauNotif = Liste("Info", "Alerte", "Critique");
         readonly TextBox txtMaxHeure = Saisie(50);
         readonly CheckBox chkNtfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)");
@@ -86,6 +86,7 @@ namespace DeR4Tizer
             pile.Controls.Add(chkApi);
             pile.Controls.Add(Ligne(Etiquette("Port"), txtPortApi));
             pile.Controls.Add(chkReseau);
+            pile.Controls.Add(Ligne(Etiquette("Adresses autorisées (SIEM)"), txtAdressesApi));
             pile.Controls.Add(Note("Chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ». Routes : /api/v1/alertes, /connexions, /exposition, /baseline, /regles-parefeu, /blocages, /journal."));
             var btnJeton = new BoutonNeon("Afficher le jeton", Theme.TexteDim);
             btnJeton.Click += (s, e) => Canal.Executer(new Commande { Action = "jetonApi" });
@@ -195,6 +196,7 @@ namespace DeR4Tizer
             chkApi.Checked = config.Api.Actif;
             txtPortApi.Text = config.Api.Port.ToString();
             chkReseau.Checked = config.Api.Reseau;
+            txtAdressesApi.Text = config.Api.Adresses ?? "";
             var n = config.Notifications ?? new ConfigNotifications();
             Choisir(cbNiveauNotif, n.NiveauMin);
             txtMaxHeure.Text = n.MaxParHeure.ToString();
@@ -260,7 +262,7 @@ namespace DeR4Tizer
                 Actif = chkSyslog.Checked, Hote = txtHote.Text.Trim(), Port = portSyslog,
                 Protocole = (string)cbProtocole.SelectedItem, Format = (string)cbFormat.SelectedItem, NiveauMin = (string)cbNiveau.SelectedItem
             };
-            c.Api = new ConfigApi { Actif = chkApi.Checked, Port = portApi, Reseau = chkReseau.Checked };
+            c.Api = new ConfigApi { Actif = chkApi.Checked, Port = portApi, Reseau = chkReseau.Checked, Adresses = txtAdressesApi.Text.Trim() };
             return c;
         }
 

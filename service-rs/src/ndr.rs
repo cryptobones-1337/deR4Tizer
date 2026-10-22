@@ -416,9 +416,11 @@ impl Analyseur for Ndr {
                 let mut g = self.interne.lock().unwrap();
                 let legitime = g.etat.dhcp_interface.is_empty() || g.etat.dhcp_interface == serveur;
                 let vu = commun::maintenant();
+                let plein = g.etat.serveurs_dhcp.len() >= 50;
                 match g.etat.serveurs_dhcp.iter_mut().find(|s| s.ip == serveur) {
                     Some(s) => s.vu = vu,
-                    None => g.etat.serveurs_dhcp.push(ServeurDhcp { ip: serveur.clone(), vu, legitime }),
+                    None if !plein => g.etat.serveurs_dhcp.push(ServeurDhcp { ip: serveur.clone(), vu, legitime }),
+                    None => {}
                 }
                 if !legitime {
                     let attendu = g.etat.dhcp_interface.clone();
@@ -437,20 +439,28 @@ impl Analyseur for Ndr {
                 let Some(nom) = nom else { return };
                 let ip = p.source.to_string();
                 let mut g = self.interne.lock().unwrap();
+                if g.reponses.len() > 2000 && !g.reponses.contains_key(&(ip.clone(), proto)) {
+                    g.reponses.retain(|_, f| f.iter().any(|(t, _)| t.elapsed() < Duration::from_secs(600)));
+                    if g.reponses.len() > 2000 {
+                        return;
+                    }
+                }
                 let file = g.reponses.entry((ip.clone(), proto)).or_default();
                 file.retain(|(t, _)| t.elapsed() < Duration::from_secs(600));
-                if !file.iter().any(|(_, n)| *n == nom) {
+                if !file.iter().any(|(_, n)| *n == nom) && file.len() < 100 {
                     file.push((Instant::now(), nom.clone()));
                 }
                 let noms: Vec<String> = file.iter().map(|(_, n)| n.clone()).collect();
                 let distincts = noms.len();
                 let maintenant = commun::maintenant();
+                let plein = g.etat.repondeurs.len() >= 200;
                 match g.etat.repondeurs.iter_mut().find(|r| r.ip == ip && r.protocole == proto) {
                     Some(r) => {
                         r.noms = noms.iter().rev().take(10).cloned().collect();
                         r.derniere = maintenant;
                     }
-                    None => g.etat.repondeurs.push(Repondeur { ip: ip.clone(), protocole: proto.into(), noms: noms.clone(), derniere: maintenant }),
+                    None if !plein => g.etat.repondeurs.push(Repondeur { ip: ip.clone(), protocole: proto.into(), noms: noms.clone(), derniere: maintenant }),
+                    None => {}
                 }
                 // mDNS : un appareil annonce souvent plusieurs noms de services, seuil plus haut
                 let seuil = if proto == "mDNS" { 15 } else { 3 };
@@ -464,4 +474,14 @@ impl Analyseur for Ndr {
             _ => {}
         }
     }
+}
+
+#[cfg(test)]
+pub fn nom_dns_test(m: &[u8]) -> Option<String> {
+    nom_dns(m)
+}
+
+#[cfg(test)]
+pub fn nom_nbns_test(m: &[u8]) -> Option<String> {
+    nom_nbns(m)
 }

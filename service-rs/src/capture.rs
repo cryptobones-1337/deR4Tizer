@@ -46,6 +46,8 @@ struct Tables {
     tcp: HashMap<u16, u32>,
     udp: HashMap<u16, u32>,
     noms: HashMap<u32, String>,
+    /// Connexions TCP établies : (port local, adresse distante, port distant)
+    etablies: std::collections::HashSet<(u16, String, u16)>,
     lues: Option<Instant>,
 }
 
@@ -59,7 +61,9 @@ pub struct Contexte {
 impl Contexte {
     fn rafraichir(&self) {
         let mut t = self.tables.borrow_mut();
-        t.tcp = crate::natif::lister_tcp().into_iter().map(|c| (c.port_local, c.pid)).collect();
+        let tcp = crate::natif::lister_tcp();
+        t.etablies = tcp.iter().filter(|c| c.etat == 5).map(|c| (c.port_local, c.ip.clone(), c.port)).collect();
+        t.tcp = tcp.into_iter().map(|c| (c.port_local, c.pid)).collect();
         t.udp = crate::natif::lister_udp().into_iter().collect();
         t.noms = crate::natif::processus().into_iter().map(|(pid, i)| (pid, i.nom)).collect();
         t.lues = Some(Instant::now());
@@ -77,6 +81,23 @@ impl Contexte {
             UDP => t.udp.get(&port_local).copied(),
             _ => None,
         }
+    }
+
+    /// Le paquet appartient à une connexion TCP établie (poignée de main complète) : l'adresse distante n'est
+    /// donc pas usurpée, contrairement à un paquet isolé
+    pub fn etablie(&self, p: &Paquet) -> bool {
+        if p.proto != TCP {
+            return false;
+        }
+        let (ip, port, port_local) = p.distant();
+        let cle = (port_local, ip.to_string(), port);
+        if self.tables.borrow().etablies.contains(&cle) {
+            return true;
+        }
+        if self.age() > Duration::from_millis(300) {
+            self.rafraichir();
+        }
+        self.tables.borrow().etablies.contains(&cle)
     }
 
     /// Nom du programme qui possède le port local du paquet, « ? » s'il est inconnu
@@ -250,4 +271,9 @@ pub fn demarrer(
             }
         }
     }).unwrap();
+}
+
+#[cfg(test)]
+pub fn decoder_test(d: &[u8], locale: Ipv4Addr) -> Option<Paquet<'_>> {
+    decoder(d, locale)
 }

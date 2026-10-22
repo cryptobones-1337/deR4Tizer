@@ -1,0 +1,40 @@
+# Intégration continue : tests du service Rust (dont le mini-fuzz des parseurs réseau), compilation du
+# service et de l'interface C#, sur Windows. Les exécutables compilés sont gardés comme artefacts.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust stable
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Tests du service
+        working-directory: service-rs
+        run: cargo test --release
+
+      - name: Compilation du service
+        working-directory: service-rs
+        run: cargo build --release
+
+      - name: Compilation de l'interface
+        shell: pwsh
+        run: ./compiler.ps1 -InterfaceSeulement
+
+      - name: Artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deR4Tizer-${{ github.sha }}
+          path: |
+            service-rs/target/release/der4tizer-svc.exe
+            bin/deR4Tizer.exe
