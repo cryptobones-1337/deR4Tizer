@@ -369,6 +369,9 @@ fn lancer_installation(p: &ParametresScript) -> (String, String) {
     let script = script_installation(p);
     match Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        // Un PSModulePath hérité de PowerShell 7 fait charger à Windows PowerShell des modules incompatibles
+        // (Get-FileHash introuvable, constaté en CI) : powershell.exe reprend alors le sien
+        .env_remove("PSModulePath")
         .creation_flags(0x0800_0000 | 0x0000_0008) // sans fenêtre, détaché
         .spawn()
     {
@@ -421,7 +424,7 @@ pub fn script_installation(p: &ParametresScript) -> String {
          function Repond {{ try {{ $l = Lire-Reponse; if ($null -eq $l) {{ return $false }}; $j = $l | ConvertFrom-Json -ErrorAction Stop; \
            return ($j.Ok -eq $true -and $j.Message -eq 'deR4Tizer {v}') }} catch {{ return $false }} }}; \
          function Echec($t) {{ Set-Content -LiteralPath '{echec}' -Encoding UTF8 -Value ($t + ' le ' + (Get-Date)) }}; \
-         function Empreinte($f) {{ try {{ (Get-FileHash -Algorithm SHA256 -LiteralPath $f -ErrorAction Stop).Hash }} catch {{ '' }} }}; \
+         function Empreinte($f) {{ try {{ $s = [IO.File]::OpenRead($f); try {{ [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($s)).Replace('-', '') }} finally {{ $s.Dispose() }} }} catch {{ '' }} }}; \
          Start-Sleep {attente}; \
          if ((Empreinte '{paquet}') -ne '{sha_paquet}') {{ Echec 'version {v} : paquet modifié après vérification, installation abandonnée'; exit }}; \
          if ((Empreinte '{retour}') -ne '{sha_retour}') {{ Echec 'version {v} : paquet de retour arrière modifié, installation abandonnée'; exit }}; \

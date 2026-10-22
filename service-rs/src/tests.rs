@@ -1509,7 +1509,7 @@ fn lot2_retour_arriere_simule() {
             version: "4.4", paquet: &paquet, sha_paquet, retour: &retour, sha_retour: &sha_retour, journaux: &d,
             simulation: Some(Simulation { journal: &journal, reponse, pid_serveur, pid_service: 4242 }),
         });
-        let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &s]).output().unwrap();
+        let sortie = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &s]).env_remove("PSModulePath").output().unwrap();
         assert!(sortie.status.success(), "{}", String::from_utf8_lossy(&sortie.stderr));
         let actions: Vec<String> = std::fs::read_to_string(&journal).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
         let e = std::fs::read_to_string(&echec).ok();
@@ -1574,7 +1574,7 @@ fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<Str
 }
 
 fn powershell_sortie(script: &str) -> String {
-    let s = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script]).output().unwrap();
+    let s = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script]).env_remove("PSModulePath").output().unwrap();
     assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
     String::from_utf8_lossy(&s.stdout).trim().to_string()
 }
