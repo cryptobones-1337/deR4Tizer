@@ -246,6 +246,19 @@ if ($compte) {
     # ------------------------------------------------------------ réparation par un compte standard
     # Condition de lancement AdminUser (installeur\deR4Tizer.wxs) : une réparation arrêterait puis relancerait le
     # service ; refusée à un compte standard. Preuve : code de retour d'échec et même processus du service.
+    # Témoin d'abord : la même réparation par l'administrateur réussit et relance le service (autre PID) ; sans
+    # lui, « même PID » ne prouverait rien.
+    Verifier 'Réparation (msiexec /fa) par l''administrateur (témoin) : acceptée (code 0), service relancé (autre PID)' {
+        $code = (Produits | Select-Object -First 1).PSChildName
+        if (-not $code) { return 'code produit introuvable' }
+        $avant = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/fa', $code, '/qn', '/norestart', '/l*v', "`"$(Join-Path $Journaux 'reparation-administrateur.log')`""
+        if ($p.ExitCode -ne 0) { return "msiexec a rendu $($p.ExitCode)" }
+        if (-not (Attendre-Canal)) { return 'le service ne répond plus après la réparation' }
+        $apres = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        if ($apres -eq $avant) { return "service non relancé (PID $avant inchangé) : le témoin ne distingue rien" }
+        $true
+    }
     Verifier 'Réparation (msiexec /fa) par le compte standard : refusée, service jamais relancé (même PID)' {
         $code = (Produits | Select-Object -First 1).PSChildName
         if (-not $code) { return 'code produit introuvable' }
