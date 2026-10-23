@@ -189,6 +189,10 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 ### Ensuite (après validation des lots 1 à 5, une phase à la fois, avec accord)
 
 1. Phase 1 complète : autorisation vérifiée par commande, validation de chaque champ reçu, limites de débit et de concurrence, tests de messages malformés, tronqués, silencieux.
+   Architecture, dans la même phase (à faire après la fusion des PR ouvertes, qui touchent ces fichiers) :
+   - `Moniteur` (moniteur.rs) : `executer()` (28 commandes dans un seul `match`) découpé en un gestionnaire par domaine (réponse, blocages, configuration, mise à jour, protection) ; les actions longues (quarantaine, restauration, baseline, panique) faites hors du verrou `Arc<Mutex<Moniteur>>`, pris seulement pour enregistrer le résultat : une commande ne doit plus aveugler la surveillance, ni un cycle lent bloquer l'interface ; `passage()` (cycle de 3 s) découpé en étapes, chacune avec sa minuterie.
+   - Mesure du cycle de surveillance (durée de chaque étape, PowerShell lancés pendant le cycle) avant toute optimisation ; aucune optimisation sans chiffre.
+   - `natif.rs` découpé, sans changement de comportement, en sous-modules (fichiers, sécurité, jetons, signature, réseau) ; `commun.rs` allégé de ce qui n'est pas commun.
 2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
