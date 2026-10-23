@@ -41,15 +41,16 @@ la résolution de noms.
 - Mesures : parseurs bornés et testés ; API désactivée par défaut, jeton, adresses autorisées ; détection NDR
   (ARP, DHCP, LLMNR/NBNS/mDNS), expérimentale.
 - Risques résiduels : l'export syslog part en clair ; la règle « deR4Tizer capture » autorise tout l'entrant vers
-  le service (nécessaire à la capture) ; `/api/v1/sante` renvoie le nom de la machine sans jeton (lot 5) ; échec
-  de `BCryptGenRandom` non vérifié à la création du jeton (lot 5).
+  le service (nécessaire à la capture) ; `/api/v1/sante` renvoie le nom de la machine sans jeton ; échec de
+  `BCryptGenRandom` non vérifié à la création du jeton (correctifs proposés, PR #14, non fusionnée).
 
 ### Compte GitHub compromis
 Veut publier une version malveillante que les postes installeraient.
 
 - Mesures : clé de signature épinglée dans les binaires déjà installés (une nouvelle clé n'est acceptée que par
-  les binaires compilés avec elle) ; certificat dans l'environnement « publication » (secrets, approbation),
-  compilation séparée de la signature ; tags `v*` protégés ; `main` protégée (PR, CI obligatoire) ; version lue
+  les binaires compilés avec elle) ; certificat dans l'environnement « publication » (secrets ; approbation obligatoire à confirmer),
+  compilation séparée de la signature ; ensemble de règles « tags-version » actif sur les tags (vu le 2026-10-22,
+  contenu à confirmer) ; `main` protégée (PR, CI obligatoire) ; version lue
   dans le paquet signé, plus récente que l'installée.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
