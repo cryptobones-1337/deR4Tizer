@@ -1542,7 +1542,6 @@ fn lot2_retour_arriere_simule() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
 /// Lot 5 : un client du canal qui se connecte puis se tait ne bloque plus le canal : la lecture d'une commande est
 /// bornée dans le temps ; une commande normale est toujours lue
 #[test]
@@ -1602,8 +1601,29 @@ fn lot5_canal_squat_pid_et_alerte_critique() {
     assert!(a.raisons.contains("4242") && a.raisons.contains(r"C:\Users\x\AppData\squat.exe"), "{}", a.raisons);
     let inconnu = crate::canal::alerte_squat(None, "");
     assert_eq!(inconnu.niveau, "Critique");
+    // Revue : alerte de squat seulement quand le nom est déjà pris à la création de la première instance
+    use crate::canal::squat;
+    assert!(squat(5), "ERROR_ACCESS_DENIED : nom déjà pris");
+    assert!(squat(231), "ERROR_PIPE_BUSY : nom pris par un tube à instances limitées");
+    assert!(!squat(8), "ERROR_NOT_ENOUGH_MEMORY : autre erreur");
+    assert!(!squat(0));
+    // Code réellement rendu par Windows quand un autre processus tient déjà le nom, qu'il limite ou non le nombre
+    // d'instances : la décision s'appuie sur ce constat
+    use windows::Win32::Storage::FileSystem::FILE_FLAG_FIRST_PIPE_INSTANCE;
+    for max in [1u32, 255] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-pris-{max}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tenu = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, max, 512, 512, 0, None) };
+        assert!(!tenu.is_invalid());
+        let second = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 255, 512, 512, 0, None) };
+        let code = (windows::core::Error::from_win32().code().0 as u32) & 0xFFFF;
+        assert!(second.is_invalid(), "nom déjà pris : création refusée");
+        assert!(squat(code), "instances maximales {max} : code {code}, pas reconnu comme squat");
+        unsafe { let _ = CloseHandle(tenu); }
+    }
 }
 
+/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
