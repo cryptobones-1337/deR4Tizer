@@ -36,12 +36,21 @@ fn descripteur(console: bool) -> String {
     sddl
 }
 
-fn creer(console: bool, premiere: bool) -> Result<HANDLE, String> {
+/// Décision pure : l'échec de création de la PREMIÈRE instance signale un squat seulement si le nom est déjà pris :
+/// ERROR_ACCESS_DENIED (5, FILE_FLAG_FIRST_PIPE_INSTANCE), ou ERROR_PIPE_BUSY (231) quand le processus qui le tient
+/// limite le nombre d'instances (constaté, test lot5_canal_squat_pid_et_alerte_critique) ; les autres erreurs vont
+/// au journal seulement
+pub fn squat(code_win32: u32) -> bool {
+    code_win32 == 5 || code_win32 == 231
+}
+
+/// Création d'une instance ; en cas d'échec : message et code Win32
+fn creer(console: bool, premiere: bool) -> Result<HANDLE, (String, u32)> {
     unsafe {
         let sddl = large(&descripteur(console));
         let mut sd = PSECURITY_DESCRIPTOR::default();
         ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| (e.to_string(), 0))?;
         let attributs = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: sd.0,
@@ -54,7 +63,8 @@ fn creer(console: bool, premiere: bool) -> Result<HANDLE, String> {
         let _ = LocalFree(HLOCAL(sd.0));
         if tube == INVALID_HANDLE_VALUE || tube.is_invalid() {
             let e = windows::core::Error::from_win32();
-            return Err(if premiere { format!("{e} (un autre programme occupe peut-être le canal \\\\.\\pipe\\deR4Tizer)") } else { e.to_string() });
+            let code = (e.code().0 as u32) & 0xFFFF;
+            return Err((if premiere { format!("{e} (un autre programme occupe peut-être le canal \\\\.\\pipe\\deR4Tizer)") } else { e.to_string() }, code));
         }
         Ok(tube)
     }
@@ -67,15 +77,17 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
             // Première instance : refusée si le nom est déjà pris
             let mut courant = match creer(console, true) {
                 Ok(t) => t,
-                Err(e) => {
+                Err((e, code)) => {
                     if e != derniere_erreur {
                         commun::journal(&format!("erreur du canal de commandes : {e}"));
-                        // Première instance impossible : le nom est pris par un autre processus (squat). Alerte dans
-                        // tous les cas, avec le PID et le chemin s'ils sont lisibles (un tube qui refuse SYSTEM
-                        // ne les donne pas)
-                        let pid = pid_serveur_anonyme(commun::NOM_PIPE);
-                        let chemin = pid.map(crate::natif::chemin_processus).unwrap_or_default();
-                        partage.alertes_externes.lock().unwrap().push(alerte_squat(pid, &chemin));
+                        // Refus d'accès sur la première instance : le nom est pris par un autre processus (squat).
+                        // Alerte avec le PID et le chemin s'ils sont lisibles (un tube qui refuse SYSTEM ne les
+                        // donne pas)
+                        if squat(code) {
+                            let pid = pid_serveur_anonyme(commun::NOM_PIPE);
+                            let chemin = pid.map(crate::natif::chemin_processus).unwrap_or_default();
+                            partage.alertes_externes.lock().unwrap().push(alerte_squat(pid, &chemin));
+                        }
                         derniere_erreur = e;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -96,7 +108,7 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
                 // L'instance suivante existe avant que celle-ci ne se ferme : le nom n'est jamais libre
                 let suivant = match creer(console, false) {
                     Ok(t) => t,
-                    Err(e) => {
+                    Err((e, _)) => {
                         commun::journal(&format!("erreur du canal de commandes : {e}"));
                         traiter(courant, &moniteur, &partage);
                         unsafe { let _ = CloseHandle(courant); }
