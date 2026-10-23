@@ -42,6 +42,12 @@ pub fn jeton_depuis_alea(generateur_ok: bool, octets: &[u8]) -> Option<String> {
     (generateur_ok && octets.len() >= 32 && octets.iter().any(|&o| o != 0)).then(|| octets.iter().map(|o| format!("{o:02x}")).collect())
 }
 
+/// Décision pure : un jeton déjà présent n'est repris que s'il a la forme de ceux que crée le service (64 caractères
+/// hexadécimaux, pas tous nuls) ; sinon il est régénéré
+pub fn jeton_valide(j: &str) -> bool {
+    j.len() == 64 && j.bytes().all(|o| o.is_ascii_hexdigit()) && j.bytes().any(|o| o != b'0')
+}
+
 /// Réponse de /api/v1/sante, servie sans jeton : disponibilité et version, rien qui identifie le poste
 pub fn corps_sante() -> String {
     format!(r#"{{"Ok":true,"Produit":"deR4Tizer","Version":"{}"}}"#, commun::VERSION)
@@ -56,7 +62,7 @@ const SDDL_JETON: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
 pub fn jeton() -> Option<String> {
     let f = commun::dossier().join(FICHIER_JETON);
     match commun::lire_fichier(&f) {
-        Some(j) if j.trim().len() >= 32 && droits_jeton(&f).is_ok() => Some(j.trim().to_string()),
+        Some(j) if jeton_valide(j.trim()) && droits_jeton(&f).is_ok() => Some(j.trim().to_string()),
         _ => regenerer_jeton().map_err(|e| commun::journal(&format!("API d'export : jeton non créé ({e})"))).ok(),
     }
 }
