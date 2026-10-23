@@ -218,6 +218,15 @@ fn lot5_api_jeton_echec_ferme_et_sante_anonyme() {
     assert!(!s.contains("Hote"), "nom de la machine renvoyé sans jeton : {s}");
     let hote = crate::export::hote_local();
     assert!(hote.is_empty() || !s.contains(&hote), "nom de la machine renvoyé sans jeton : {s}");
+    // Revue : un jeton DÉJÀ présent n'est repris que s'il a la forme d'un jeton créé par le service
+    use crate::api::jeton_valide;
+    assert!(jeton_valide(&"ab".repeat(32)));
+    assert!(jeton_valide(&"0123456789ABCDEF".repeat(4)), "majuscules hexadécimales acceptées");
+    assert!(!jeton_valide(&"0".repeat(64)), "jeton nul refusé");
+    assert!(!jeton_valide(&"a".repeat(32)), "32 caractères : trop court");
+    assert!(!jeton_valide(&"a".repeat(65)), "trop long");
+    assert!(!jeton_valide(&"g".repeat(64)), "non hexadécimal");
+    assert!(!jeton_valide(""), "vide");
 }
 
 #[test]
