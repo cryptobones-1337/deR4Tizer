@@ -124,7 +124,8 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     }
     // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
     // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
-    if !tache_windows && clsid_com(&e.commande).is_some() && !Path::new(&e.cible).is_file() {
+    // Préfixe « COM » seul (pas le format exact) : un ClassId mal formé ne doit pas faire taire la remarque
+    if !tache_windows && e.categorie == "Tâche planifiée" && e.commande.starts_with("COM ") && !Path::new(&e.cible).is_file() {
         r.push("serveur COM non enregistré pour la machine".into());
     }
     r.join(", ")
@@ -193,6 +194,14 @@ fn clsid_com(commande: &str) -> Option<&str> {
     static MOTIF: OnceLock<Regex> = OnceLock::new();
     let motif = MOTIF.get_or_init(|| Regex::new(r"^COM (\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})$").unwrap());
     motif.captures(commande.trim()).and_then(|c| c.get(1)).map(|m| m.as_str())
+}
+
+/// Commande relevée pour une action COM : ClassId entre accolades, avec ou sans dans la tâche (Windows accepte
+/// et garde les deux formes)
+pub(crate) fn commande_com(class_id: &str) -> String {
+    let id = class_id.trim();
+    let id = id.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or(id).trim();
+    format!("COM {{{id}}}")
 }
 
 /// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32
@@ -357,7 +366,7 @@ fn taches(l: &mut Vec<EntreeDemarrage>) {
                 let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
                 ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
             } else if let Some(c) = com.captures(&xml) {
-                ajouter(l, "Tâche planifiée", &nom, &format!("COM {}", c[1].trim()));
+                ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
             }
         }
     }

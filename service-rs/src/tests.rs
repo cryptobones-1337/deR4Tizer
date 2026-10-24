@@ -315,6 +315,17 @@ fn tache_com_hors_windows_sans_serveur_signalee() {
     }
     // Tâche livrée avec Windows au CLSID non enregistré : pas de bruit
     assert_eq!(crate::persistance::evaluer(&tache(r"\Microsoft\Windows\Wininet\X", "")), "");
+    // ClassId sans accolades (accepté et gardé tel quel par Windows) : la remarque ne se contourne pas
+    let mut sans = tache(r"\Mise a jour", "");
+    sans.commande = "COM 00000000-0000-0000-0000-0000000000D4".into();
+    assert!(crate::persistance::evaluer(&sans).contains("serveur COM non enregistré"));
+    // et le relevé le ramène à la forme reconnue, résolue comme les autres
+    let wininet = "0358B920-0AC7-461F-98F4-58E32CD89148";
+    for id in [wininet.to_string(), format!("{{{wininet}}}"), format!("  {{{wininet}}} ")] {
+        assert_eq!(crate::persistance::commande_com(&id), format!("COM {{{wininet}}}"), "{id}");
+    }
+    let w = crate::natif::dossier_windows();
+    assert_eq!(crate::persistance::cible(&crate::persistance::commande_com(wininet)).to_lowercase(), format!(r"{w}\system32\wininet.dll").to_lowercase());
 }
 
 // ------------------------------------------------------------ décisions (un test par correctif des revues)
