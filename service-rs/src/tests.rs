@@ -1655,3 +1655,41 @@ fn exposition_reelle_sans_faux_positifs() {
     assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 27036);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Client NTP de Windows : envoi du port local 123 vers time.windows.com:123, réponse de 123 vers 123, hors de la
+/// plage dynamique. Reconnue par l'état du flux (envoi récent en sens inverse), pas par une liste de ports : le même
+/// port 123 joint par une autre source, ou par la même source depuis un autre port, reste une exposition
+#[test]
+fn exposition_udp_reponse_reconnue_par_le_flux() {
+    use crate::parefeu::{reponse_udp, ContexteExposition, FluxUdp, LecteurJournal, DELAI_REPONSE_UDP};
+    use std::time::{Duration, Instant};
+    let serveur: std::net::IpAddr = "40.119.6.228".parse().unwrap();
+    let mut flux = FluxUdp::new();
+    let maintenant = Instant::now();
+    flux.insert((123, serveur, 123), maintenant);
+    assert!(reponse_udp(&flux, 123, serveur, 123, maintenant), "réponse du serveur NTP");
+    assert!(!reponse_udp(&flux, 123, "203.0.113.9".parse().unwrap(), 123, maintenant), "autre source vers le port 123");
+    assert!(!reponse_udp(&flux, 123, serveur, 40000, maintenant), "même source, autre port distant");
+    assert!(!reponse_udp(&flux, 123, serveur, 123, maintenant + DELAI_REPONSE_UDP + Duration::from_secs(1)), "envoi trop ancien");
+    // Lignes du journal : envoi puis réponse, sans alerte ; la même source sans envoi préalable, avec alerte
+    let ctx = ContexteExposition { ecoute_tcp: Default::default(), udp_dynamique: (49152, 65535), pid_service: 3468 };
+    let d = dossier_test("exposition-ntp");
+    let f = d.join("pfirewall.log");
+    std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid
+").unwrap();
+    let mut lecteur = LecteurJournal::sur_fichier(f.clone());
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+    for l in [
+        "2026-10-24 12:00:00 ALLOW UDP 192.168.1.12 40.119.6.228 123 123 0 - - - - - - - SEND 1688",
+        "2026-10-24 12:00:00 ALLOW UDP 40.119.6.228 192.168.1.12 123 123 0 - - - - - - - RECEIVE 1688",
+        "2026-10-24 12:00:05 ALLOW UDP 203.0.113.9 192.168.1.12 123 123 0 - - - - - - - RECEIVE 1688",
+    ] {
+        writeln!(o, "{l}").unwrap();
+    }
+    drop(o);
+    let alertes = lecteur.lire(&|_| String::new(), &ctx);
+    assert_eq!(alertes.len(), 1, "{:?}", alertes.iter().map(|a| a.raisons.clone()).collect::<Vec<_>>());
+    assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 123);
+    let _ = std::fs::remove_dir_all(&d);
+}
