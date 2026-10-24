@@ -53,7 +53,8 @@ impl Persistance {
         let mut modifie = releve.len() != self.reference.len();
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
-            e.signataire = if e.cible.is_empty() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
+            // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
+            e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
             match self.reference.get(&e.cle) {
                 Some(ancienne) => {
@@ -102,7 +103,7 @@ fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
     }
 }
 
-fn evaluer(e: &EntreeDemarrage) -> String {
+pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
@@ -121,6 +122,12 @@ fn evaluer(e: &EntreeDemarrage) -> String {
     if matches!(e.categorie.as_str(), "IFEO" | "AppInit" | "WMI") {
         r.push("technique de persistance rare".into());
     }
+    // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
+    // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
+    // Préfixe « COM » seul (pas le format exact) : un ClassId mal formé ne doit pas faire taire la remarque
+    if !tache_windows && e.categorie == "Tâche planifiée" && e.commande.starts_with("COM ") && !Path::new(&e.cible).is_file() {
+        r.push("serveur COM non enregistré pour la machine".into());
+    }
     r.join(", ")
 }
 
@@ -136,6 +143,11 @@ pub fn cible(commande: &str) -> String {
     let motif = MOTIF.get_or_init(|| Regex::new(r"(?i)^(.+?\.(exe|dll|sys|bat|cmd|ps1|vbs|js|com|scr|cpl|ocx))(\s|,|$)").unwrap());
     if commande.trim().is_empty() {
         return String::new();
+    }
+    // Tâche à gestionnaire COM (« COM {CLSID} ») : la cible est le serveur enregistré pour ce CLSID. Une valeur
+    // du registre elle-même de la forme « COM {…} » est refusée : sinon récursion sans fin (pile, service arrêté)
+    if let Some(clsid) = clsid_com(commande) {
+        return serveur_com(clsid).filter(|s| clsid_com(s).is_none()).map(|s| cible(&s)).unwrap_or_default();
     }
     let windows = natif::dossier_windows();
     let mut c = developper(commande.trim());
@@ -164,16 +176,41 @@ pub fn cible(commande: &str) -> String {
         let dossiers = std::iter::once(natif::dossier_systeme()).chain(path.split(';').filter(|d| !d.is_empty()).map(developper));
         for d in dossiers {
             let mut candidat = Path::new(&d).join(&chemin).to_string_lossy().to_string();
-            if !candidat.to_lowercase().ends_with(".exe") && Path::new(&format!("{candidat}.exe")).exists() {
+            if !candidat.to_lowercase().ends_with(".exe") && Path::new(&format!("{candidat}.exe")).is_file() {
                 candidat.push_str(".exe");
             }
-            if Path::new(&candidat).exists() {
+            // Un fichier seulement : un dossier du même nom (System32\COM…) n'est pas lancé
+            if Path::new(&candidat).is_file() {
                 chemin = candidat;
                 break;
             }
         }
     }
     chemin
+}
+
+/// CLSID d'une action « COM {CLSID} » (forme écrite par `taches`)
+fn clsid_com(commande: &str) -> Option<&str> {
+    static MOTIF: OnceLock<Regex> = OnceLock::new();
+    let motif = MOTIF.get_or_init(|| Regex::new(r"^COM (\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})$").unwrap());
+    motif.captures(commande.trim()).and_then(|c| c.get(1)).map(|m| m.as_str())
+}
+
+/// Commande relevée pour une action COM : ClassId entre accolades, avec ou sans dans la tâche (Windows accepte
+/// et garde les deux formes)
+pub(crate) fn commande_com(class_id: &str) -> String {
+    let id = class_id.trim();
+    let id = id.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or(id).trim();
+    format!("COM {{{id}}}")
+}
+
+/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32
+fn serveur_com(clsid: &str) -> Option<String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    ["InprocServer32", "LocalServer32"].iter().find_map(|s| {
+        let k = hklm.open_subkey(format!(r"SOFTWARE\Classes\CLSID\{clsid}\{s}")).ok()?;
+        texte_registre(&k, "").filter(|v| !v.trim().is_empty())
+    })
 }
 
 // ------------------------------------------------------------ relevé
@@ -329,7 +366,7 @@ fn taches(l: &mut Vec<EntreeDemarrage>) {
                 let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
                 ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
             } else if let Some(c) = com.captures(&xml) {
-                ajouter(l, "Tâche planifiée", &nom, &format!("COM {}", &c[1]));
+                ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
             }
         }
     }

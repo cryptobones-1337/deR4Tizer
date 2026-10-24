@@ -288,6 +288,46 @@ fn chemins_des_pilotes() {
     assert_eq!(crate::hygiene::chemin_image(r"System32\drivers\z.sys").to_string_lossy().to_lowercase(), format!(r"{w}\System32\drivers\z.sys").to_lowercase());
 }
 
+#[test]
+fn tache_com_cible_le_serveur_du_clsid() {
+    // Tâche planifiée à gestionnaire COM (Wininet\CacheTask, présente sur tout Windows) : la cible est la DLL du
+    // CLSID, pas le dossier System32\COM trouvé en cherchant « COM » (signataire vide, donc « NON SIGNÉ » à tort)
+    let w = crate::natif::dossier_windows();
+    let c = crate::persistance::cible("COM {0358B920-0AC7-461F-98F4-58E32CD89148}");
+    assert_eq!(c.to_lowercase(), format!(r"{w}\system32\wininet.dll").to_lowercase());
+    // CLSID inconnu : aucune cible (signataire « ? »), jamais un dossier
+    assert_eq!(crate::persistance::cible("COM {00000000-0000-0000-0000-0000000000D4}"), "");
+    // Un nom relatif ne se résout jamais en dossier (ici System32\COM)
+    assert_ne!(crate::persistance::cible("COM").to_lowercase(), format!(r"{w}\system32\com").to_lowercase());
+}
+
+#[test]
+fn tache_com_hors_windows_sans_serveur_signalee() {
+    // Détournement COM : tâche hors \Microsoft\Windows\ dont le CLSID n'est pas enregistré pour la machine (HKCU,
+    // non lu) ou dont le serveur manque. Ne doit jamais sortir sans remarque
+    let tache = |nom: &str, cible: &str| crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(), nom: nom.into(), commande: "COM {00000000-0000-0000-0000-0000000000D4}".into(),
+        cible: cible.into(), signataire: "?".into(), ..Default::default()
+    };
+    let absent = format!(r"{}\d4t-absent-{}.dll", crate::natif::dossier_systeme(), std::process::id());
+    for (nom, c) in [(r"\Mise a jour", ""), (r"\Microsoft\Office\Tache", ""), (r"\Mise a jour", absent.as_str())] {
+        assert!(crate::persistance::evaluer(&tache(nom, c)).contains("serveur COM non enregistré"), "{nom} / {c}");
+    }
+    // Tâche livrée avec Windows au CLSID non enregistré : pas de bruit
+    assert_eq!(crate::persistance::evaluer(&tache(r"\Microsoft\Windows\Wininet\X", "")), "");
+    // ClassId sans accolades (accepté et gardé tel quel par Windows) : la remarque ne se contourne pas
+    let mut sans = tache(r"\Mise a jour", "");
+    sans.commande = "COM 00000000-0000-0000-0000-0000000000D4".into();
+    assert!(crate::persistance::evaluer(&sans).contains("serveur COM non enregistré"));
+    // et le relevé le ramène à la forme reconnue, résolue comme les autres
+    let wininet = "0358B920-0AC7-461F-98F4-58E32CD89148";
+    for id in [wininet.to_string(), format!("{{{wininet}}}"), format!("  {{{wininet}}} ")] {
+        assert_eq!(crate::persistance::commande_com(&id), format!("COM {{{wininet}}}"), "{id}");
+    }
+    let w = crate::natif::dossier_windows();
+    assert_eq!(crate::persistance::cible(&crate::persistance::commande_com(wininet)).to_lowercase(), format!(r"{w}\system32\wininet.dll").to_lowercase());
+}
+
 // ------------------------------------------------------------ décisions (un test par correctif des revues)
 
 fn alerte(niveau: &str, destination: &str, raisons: &str, score: i32) -> crate::commun::Alerte {
