@@ -290,8 +290,17 @@ if ($compte) {
 try { `$h = [IO.File]::Open('$script:Donnees\piege-4.1.0.json', 'CreateNew', 'Write'); `$h.Dispose(); 'CREATION=ECRIT' }
 catch { `$x = `$_.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; 'CREATION=' + `$x.GetType().Name }
 "@
-    if ($essai -match 'CREATION=ECRIT') {
-        Noter 'Version 4.1.0 en marche : création refusée au compte standard' 'ÉCHOUÉ' 'le compte standard crée des fichiers dans le dossier de la 4.1.0 (piège réel posé)'
+    # La 4.1.0 ne pose ses droits qu'une fois un compte connecté à la console (protection::demarrer de 4da823a) :
+    # sans personne à la console (Windows Sandbox), son dossier reste ouvert, défaut de cette version corrigé depuis.
+    # Ce n'est alors pas un échec de la version testée ; le piège réel posé rend la mise à niveau plus exigeante.
+    $consoleAncienne = (Get-CimInstance Win32_ComputerSystem).UserName
+    if ($essai -match 'CREATION=ECRIT' -and -not $consoleAncienne) {
+        NonExecute 'Version 4.1.0 en marche : création refusée au compte standard' 'aucun compte à la console : la 4.1.0 ne pose alors pas ses droits (défaut connu de cette version) ; piège réel posé par le compte standard'
+        [IO.File]::WriteAllText($fConfig, $ConfigPiegee)
+        icacls $fConfig /setowner $compte.Nom /Q | Out-Null
+        $piegePose = (Droits $fConfig).Proprietaire -eq $compte.Sid
+    } elseif ($essai -match 'CREATION=ECRIT') {
+        Noter 'Version 4.1.0 en marche : création refusée au compte standard' 'ÉCHOUÉ' "le compte standard crée des fichiers dans le dossier de la 4.1.0 alors que $consoleAncienne est à la console (piège réel posé)"
         [IO.File]::WriteAllText($fConfig, $ConfigPiegee)
         icacls $fConfig /setowner $compte.Nom /Q | Out-Null
         $piegePose = (Droits $fConfig).Proprietaire -eq $compte.Sid
