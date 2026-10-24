@@ -2027,3 +2027,62 @@ fn defender_relu_au_demarrage_avant_publication() {
     let desactive = EtatDefender { disponible: true, mode: "Normal".into(), temps_reel: false, ..Default::default() };
     assert!(!relire_avant_publication(&desactive, false), "protection en temps réel coupée (mode Normal) : publiée aussitôt");
 }
+
+/// IDS, règle Shellshock (sid 9000011, rév. 2) : constaté, une alerte CRITIQUE sur un téléchargement chiffré de
+/// plusieurs gigaoctets (réponses TLS d'un port 443) : les motifs « () { » puis « }; » n'importe où après finissent
+/// par apparaître au hasard dans des octets chiffrés. La règle vise désormais une requête vers un serveur HTTP en
+/// clair du poste, avec la forme de l'attaque (« } » dans les 10 octets qui suivent « () { »).
+#[test]
+fn ids_shellshock_sans_faux_positif_sur_des_octets_quelconques() {
+    let regle = crate::ids::REGLES_INTEGREES.lines().find(|l| l.contains("sid:9000011")).expect("règle Shellshock");
+    assert!(regle.contains("-> $HOME_NET [80,"), "vers un serveur HTTP en clair du poste seulement : {regle}");
+    assert!(!regle.contains("443"), "jamais le port TLS : {regle}");
+    let ok = |c: &[u8]| crate::ids::correspond_test(regle, c).expect("règle lisible");
+    assert!(ok(b"GET /cgi-bin/x HTTP/1.1\r\nUser-Agent: () { :; }; /bin/cat /etc/passwd\r\n\r\n"), "attaque classique");
+    assert!(ok(b"Referer: () { _; } >_[$($())] { echo x; }\r\n"), "variante");
+    // Motifs écartés : « () { » puis « }; » loin après, comme dans des octets chiffrés
+    let mut quelconque = vec![0x17u8, 0x03, 0x03, 0x40, 0x00];
+    quelconque.extend_from_slice(b"() {");
+    quelconque.extend(std::iter::repeat(0xA5u8).take(500));
+    quelconque.extend_from_slice(b"};");
+    assert!(!ok(&quelconque), "« }} » trop loin de « () {{ »");
+}
+
+/// Exposition : un paquet UDP BLOQUÉ qui répond à un flux du poste n'est pas une exposition (réponses d'un flux QUIC
+/// sortant bloquées pendant une reconfiguration du réseau ; paquet du serveur d'un VPN au milieu de paquets
+/// acceptés). Flux appris d'un envoi du poste ou d'une réponse acceptée vers un port dynamique. Un paquet bloqué
+/// d'une source avec laquelle le poste n'a rien échangé, ou d'un autre port de cette source, reste une alerte.
+/// Lignes synthétiques (adresses de documentation, RFC 5737).
+#[test]
+fn exposition_paquet_bloque_reponse_a_un_flux() {
+    use crate::parefeu::{ContexteExposition, LecteurJournal};
+    let ctx = ContexteExposition { ecoute_tcp: Default::default(), udp_dynamique: (49152, 65535), pid_service: 4000 };
+    let d = dossier_test("exposition-bloques");
+    let f = d.join("pfirewall.log");
+    std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\n").unwrap();
+    let mut lecteur = LecteurJournal::sur_fichier(f.clone());
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+    for l in [
+        // Flux QUIC sortant, puis réponses bloquées
+        "2026-01-01 10:00:00 ALLOW UDP 192.168.0.10 198.51.100.30 50010 443 0 - - - - - - - SEND 5000",
+        "2026-01-01 10:00:02 DROP UDP 198.51.100.30 192.168.0.10 443 50010 56 - - - - - - - RECEIVE 5000",
+        "2026-01-01 10:00:03 DROP UDP 198.51.100.30 192.168.0.10 443 50010 1039 - - - - - - - RECEIVE 5000",
+        // Serveur d'un VPN : réponse acceptée vers un port dynamique, puis un paquet bloqué du même flux
+        "2026-01-01 10:00:04 ALLOW UDP 203.0.113.40 192.168.0.10 51820 50020 0 - - - - - - - RECEIVE 5100",
+        "2026-01-01 10:00:05 DROP UDP 203.0.113.40 192.168.0.10 51820 50020 176 - - - - - - - RECEIVE 5100",
+        // Témoins : source inconnue, et même source depuis un autre port
+        "2026-01-01 10:00:06 DROP UDP 192.0.2.99 192.168.0.10 5000 50030 60 - - - - - - - RECEIVE 0",
+        "2026-01-01 10:00:07 DROP UDP 198.51.100.30 192.168.0.10 9999 50010 60 - - - - - - - RECEIVE 0",
+    ] {
+        writeln!(o, "{l}").unwrap();
+    }
+    drop(o);
+    let alertes = lecteur.lire(&|_| String::new(), &ctx);
+    let raisons: Vec<String> = alertes.iter().map(|a| a.raisons.clone()).collect();
+    assert_eq!(alertes.len(), 2, "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("192.0.2.99") && a.port == 50030), "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("198.51.100.30") && a.port == 50010), "{raisons:?}");
+    assert!(!raisons.iter().any(|r| r.contains("203.0.113.40")), "{raisons:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

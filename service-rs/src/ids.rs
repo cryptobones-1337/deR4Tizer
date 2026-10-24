@@ -25,7 +25,7 @@ pub(crate) const REGLES_INTEGREES: &str = r#"
 alert udp any any -> any any (msg:"deR4Tizer : paquet de test de l'IDS"; content:"deR4Tizer-test-IDS-7f3a"; priority:3; classtype:misc-activity; sid:9000000; rev:1;)
 alert tcp any any -> any any (msg:"Fichier de test antivirus EICAR transféré en clair"; content:"X5O!P%@AP[4|5c|PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!"; priority:2; classtype:misc-activity; sid:9000001; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Tentative Log4Shell (JNDI) reçue"; content:"${jndi:"; nocase; priority:1; classtype:attempted-admin; sid:9000010; rev:1;)
-alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Tentative Shellshock reçue"; content:"() {"; content:"};"; distance:0; priority:1; classtype:attempted-admin; sid:9000011; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET [80,8000,8008,8080,8888] (msg:"Tentative Shellshock reçue"; content:"() {"; content:"}"; distance:0; within:10; priority:1; classtype:attempted-admin; sid:9000011; rev:2;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Remontée de répertoires (../) reçue"; content:"../../../../"; priority:2; classtype:web-application-attack; sid:9000012; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Scanner de vulnérabilités sqlmap"; content:"User-Agent: sqlmap"; nocase; priority:2; classtype:web-application-attack; sid:9000013; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"Scanner Nmap (moteur de scripts)"; content:"Nmap Scripting Engine"; nocase; priority:2; classtype:attempted-recon; sid:9000014; rev:1;)
