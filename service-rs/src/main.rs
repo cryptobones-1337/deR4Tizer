@@ -252,10 +252,10 @@ fn main() {
         let mut lecteur = parefeu::LecteurJournal::sur_fichier(f.clone());
         let _ = std::fs::OpenOptions::new().append(true).open(&f).and_then(|mut x| {
             use std::io::Write;
-            x.write_all(b"2026-10-22 07:00:01 ALLOW TCP 203.0.113.7 192.168.1.50 51515 3389 0 - - - - - - - RECEIVE 1234\r\n\
-2026-10-22 07:00:02 DROP TCP 198.51.100.9 192.168.1.50 40000 445 0 - - - - - - - RECEIVE 0\r\n\
-2026-10-22 07:00:03 ALLOW UDP 192.168.1.254 192.168.1.50 53 5353 0 - - - - - - - RECEIVE 0\r\n\
-2026-10-22 07:00:04 ALLOW TCP 192.168.1.50 8.8.8.8 50000 443 0 - - - - - - - SEND 999\r\n")
+            x.write_all(b"2026-01-01 07:00:01 ALLOW TCP 203.0.113.7 192.168.0.10 51515 3389 0 - - - - - - - RECEIVE 1234\r\n\
+2026-01-01 07:00:02 DROP TCP 198.51.100.9 192.168.0.10 40000 445 0 - - - - - - - RECEIVE 0\r\n\
+2026-01-01 07:00:03 ALLOW UDP 192.168.0.1 192.168.0.10 53 5353 0 - - - - - - - RECEIVE 0\r\n\
+2026-01-01 07:00:04 ALLOW TCP 192.168.0.10 192.0.2.8 50000 443 0 - - - - - - - SEND 999\r\n")
         });
         // Diagnostic : le port 3389 de l'exemple est réputé en écoute
         let contexte = parefeu::ContexteExposition { ecoute_tcp: [3389u16].into_iter().collect(), udp_dynamique: parefeu::plage_dynamique_udp(), pid_service: std::process::id() };

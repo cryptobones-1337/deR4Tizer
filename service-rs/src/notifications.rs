@@ -278,7 +278,7 @@ pub struct Groupe<'a> {
 }
 
 fn nature(a: &Alerte) -> String {
-    // Chaque suite de chiffres devient « # » : 192.168.1.5 et 192.168.1.50 sont de même nature
+    // Chaque suite de chiffres devient « # » : 192.168.0.5 et 192.168.0.55 sont de même nature
     let mut destination = String::new();
     for c in a.destination.chars() {
         if c.is_ascii_digit() {
