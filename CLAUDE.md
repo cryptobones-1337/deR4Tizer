@@ -69,6 +69,17 @@ Risques restants
 
 Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot suivant commence.
 
+### Exception temporaire : GitHub Actions désactivé sur le dépôt (depuis le 2026-10-22)
+
+Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par une preuve locale, avec l'accord de Benoît :
+1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
+2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c en Windows Sandbox (tests/bac-a-sable). Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés.
+3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
+4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
+5. Au retour de GitHub Actions : vérifications obligatoires rétablies par Benoît, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
+
+Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM et que les binaires ne sont pas signés.
+
 ## 5. File de travail (dans cet ordre)
 
 ### Lot 1 : propriété et droits du dossier de données (bloquant, élévation de privilèges)
