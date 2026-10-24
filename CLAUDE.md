@@ -10,7 +10,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée et validée par le relecteur externe. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -67,7 +67,25 @@ Risques restants
 - <limite connue, ou « aucun identifié »>
 ```
 
-Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot suivant commence.
+Puis s'arrêter : chaque PR est relue avant que le lot suivant commence.
+
+### Relecture des PR (depuis le 2026-10-24)
+
+Sur décision de cryptobones-1337, la relecture des PR est faite par un agent de relecture Claude Code, à la place du
+relecteur externe :
+1. Sans l'historique de la session qui a écrit le code, mais sur une consigne rédigée par elle ; aucune écriture dans
+   le dépôt ni sur GitHub (ni poussée, ni fusion, ni commentaire), les fusions de contrôle se faisant dans un clone
+   temporaire ; sur les têtes des PR lues sur GitHub.
+2. Contrôles : arbre intégré reproduit et égal à l'arbre de la preuve ; pas d'empilement ; fusion sans conflit ;
+   `cargo test --release` (MSVC) et, pour chaque correctif, un test qui échoue sans lui ; documentation et règles de
+   ce fichier ; données personnelles ; description exacte.
+3. Verdict par PR : « Go » ou « Pas go » motivé ; sans preuve Windows Sandbox sur l'arbre annoncé, « Go sous réserve
+   du passage Sandbox ».
+4. Le verdict ne remplace ni le passage en Windows Sandbox ni la décision de fusion, qui reste à cryptobones-1337.
+
+Limite : l'agent est le même modèle que l'auteur des changements ; leurs angles morts peuvent coïncider. Cette
+relecture n'est donc pas une relecture indépendante, et rien ne doit la présenter comme telle (README, matrice,
+publications).
 
 ### Exception temporaire : GitHub Actions désactivé sur le dépôt (depuis le 2026-10-22)
 
@@ -78,7 +96,7 @@ Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par un
 4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
 5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
 
-Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM et que les binaires ne sont pas signés.
+Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM, que les binaires ne sont pas signés et qu'une relecture indépendante (personne ou organisme autre que Claude) n'a pas été faite.
 
 ## 5. File de travail (dans cet ordre)
 
@@ -230,4 +248,4 @@ Un changement n'est terminé que si :
 - des tests positifs, négatifs et aux limites existent et ont été exécutés, ou leur non-exécution est déclarée ;
 - aucun secret ne fuit dans les journaux ni sur la ligne de commande ;
 - la matrice des capacités et le README reflètent l'état démontré, pas l'état espéré ;
-- le rapport de lot (section 4) est écrit et le relecteur externe a donné son accord.
+- le rapport de lot (section 4) est écrit, la relecture a rendu « Go » et cryptobones-1337 a donné son accord pour fusionner.
