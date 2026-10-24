@@ -1065,6 +1065,203 @@ pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), S
     })?
 }
 
+/// Bilan d'une pose d'audit sur une arborescence
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct BilanAudit {
+    /// Éléments dont la SACL a été complétée
+    pub poses: usize,
+    /// Éléments qui avaient déjà l'audit voulu
+    pub deja: usize,
+    /// Liens, chemins détournés ou éléments illisibles : écartés, jamais suivis
+    pub ecartes: usize,
+    /// Parcours arrêté au nombre maximal d'éléments
+    pub tronque: bool,
+}
+
+/// Descripteur construit depuis un SDDL, libéré à la fin
+struct DescripteurSddl(windows::Win32::Security::PSECURITY_DESCRIPTOR);
+
+impl DescripteurSddl {
+    fn depuis(sddl: &str) -> Result<DescripteurSddl, String> {
+        use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+        use windows::Win32::Security::PSECURITY_DESCRIPTOR;
+        let s = large(sddl);
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None) }.map_err(|e| format!("{sddl} : {e}"))?;
+        Ok(DescripteurSddl(sd))
+    }
+}
+
+impl Drop for DescripteurSddl {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+        unsafe {
+            let _ = LocalFree(HLOCAL(self.0 .0));
+        }
+    }
+}
+
+/// SACL d'un descripteur, en SDDL (« S:… ») ; descripteur sans SACL (cas de la plupart des fichiers) : chaîne vide,
+/// pas une erreur. None : descripteur illisible.
+fn texte_sacl(sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<String> {
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{GetSecurityDescriptorSacl, ACL, SACL_SECURITY_INFORMATION};
+    unsafe {
+        let (mut presente, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        GetSecurityDescriptorSacl(sd, &mut presente, &mut acl, &mut defaut).ok()?;
+        if !presente.as_bool() || acl.is_null() {
+            return Some(String::new());
+        }
+        let mut p = windows::core::PWSTR::null();
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, SACL_SECURITY_INFORMATION, &mut p, None).ok()?;
+        if p.is_null() {
+            return Some(String::new());
+        }
+        let t = p.to_string().ok();
+        let _ = LocalFree(HLOCAL(p.0 as _));
+        t
+    }
+}
+
+/// SACL, en SDDL, d'un descripteur donné en SDDL (tests : même chemin que la lecture d'un objet)
+pub fn texte_sacl_de_sddl(sddl: &str) -> Option<String> {
+    texte_sacl(DescripteurSddl::depuis(sddl).ok()?.0)
+}
+
+/// Entrée d'audit voulue, en SDDL normalisé par Windows (« AU;OINPIOSA;CC;;;WD »), tirée d'un SDDL « S:(…) » d'une
+/// seule entrée
+fn entree_normalisee(sddl: &str) -> Result<String, String> {
+    let d = DescripteurSddl::depuis(sddl)?;
+    let t = texte_sacl(d.0).ok_or_else(|| format!("{sddl} : SACL illisible"))?;
+    let e = entrees_sacl(&t).1;
+    match e.as_slice() {
+        [une] => Ok(une.clone()),
+        _ => Err(format!("{sddl} : une seule entrée d'audit attendue")),
+    }
+}
+
+/// SACL actuelle de l'objet ouvert (handle avec ACCESS_SYSTEM_SECURITY), en SDDL ; None : illisible
+fn sacl_du_handle(f: &std::fs::File) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{GetKernelObjectSecurity, PSECURITY_DESCRIPTOR, SACL_SECURITY_INFORMATION};
+    let h = HANDLE(f.as_raw_handle());
+    let mut taille = 0u32;
+    unsafe {
+        let _ = GetKernelObjectSecurity(h, SACL_SECURITY_INFORMATION.0, PSECURITY_DESCRIPTOR::default(), 0, &mut taille);
+        if taille == 0 {
+            return None;
+        }
+        let mut tampon = vec![0u8; taille as usize];
+        GetKernelObjectSecurity(h, SACL_SECURITY_INFORMATION.0, PSECURITY_DESCRIPTOR(tampon.as_mut_ptr() as *mut c_void), taille, &mut taille).ok()?;
+        texte_sacl(PSECURITY_DESCRIPTOR(tampon.as_mut_ptr() as *mut c_void))
+    }
+}
+
+/// SACL en SDDL découpée : (drapeaux de contrôle « AI », « P »…, entrées sans parenthèses)
+fn entrees_sacl(t: &str) -> (String, Vec<String>) {
+    let t = t.strip_prefix("S:").unwrap_or(t);
+    let debut = t.find('(').unwrap_or(t.len());
+    let entrees = t[debut..].split(')').map(|e| e.trim_start_matches('(')).filter(|e| !e.is_empty()).map(String::from).collect();
+    (t[..debut].to_string(), entrees)
+}
+
+/// Décision pure : SACL complétée, ou None si l'audit voulu est déjà en place. Seules les entrées de deR4Tizer sont
+/// retirées : audit explicite (non hérité) de Tout le monde (WD), sur les succès (SA), avec les droits de l'entrée
+/// voulue ; toute autre entrée (règle d'audit de l'organisation, entrée héritée) est gardée telle quelle. Pour un
+/// fichier (`heritee_suffit`), l'entrée voulue héritée du dossier (« ID ») suffit.
+pub fn sacl_completee(actuelle: &str, voulue: &str, heritee_suffit: bool) -> Option<String> {
+    let champs = |e: &str| e.split(';').map(String::from).collect::<Vec<_>>();
+    let v = champs(voulue);
+    let notre = |e: &str| {
+        let c = champs(e);
+        c.len() == 6 && c[0] == "AU" && c[5] == "WD" && c[2] == v[2] && c[1].contains("SA") && !c[1].contains("ID")
+    };
+    let (controle, entrees) = entrees_sacl(actuelle);
+    let exacte = entrees.iter().any(|e| e == voulue);
+    let heritee = heritee_suffit && entrees.iter().any(|e| { let mut c = champs(e); c.len() == 6 && { c[1] = c[1].replace("ID", ""); c == v } });
+    let perimees = entrees.iter().any(|e| notre(e) && e != voulue);
+    if (exacte || heritee) && !perimees {
+        return None;
+    }
+    let mut nouvelle: Vec<&str> = entrees.iter().filter(|e| !notre(e)).map(String::as_str).collect();
+    nouvelle.push(voulue);
+    Some(format!("S:{controle}{}", nouvelle.iter().map(|e| format!("({e})")).collect::<String>()))
+}
+
+/// Complète la SACL de l'objet ouvert si besoin. SetKernelObjectSecurity : cet objet seul, SACL seule (ni DACL, ni
+/// propriétaire, ni propagation par chemin aux enfants, contrairement à Set-Acl et SetSecurityInfo). SACL actuelle
+/// illisible : rien n'est écrit (elle pourrait contenir des entrées à garder).
+fn poser_sacl(f: &std::fs::File, voulue: &str, dossier: bool, bilan: &mut BilanAudit) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{SetKernelObjectSecurity, SACL_SECURITY_INFORMATION};
+    let actuelle = sacl_du_handle(f).ok_or("SACL actuelle illisible")?;
+    let Some(nouvelle) = sacl_completee(&actuelle, voulue, !dossier) else {
+        bilan.deja += 1;
+        return Ok(());
+    };
+    let sd = DescripteurSddl::depuis(&nouvelle)?;
+    unsafe { SetKernelObjectSecurity(HANDLE(f.as_raw_handle()), SACL_SECURITY_INFORMATION, sd.0) }.map_err(|e| e.to_string())?;
+    bilan.poses += 1;
+    Ok(())
+}
+
+/// Pose l'audit (SACL) sur une arborescence de l'utilisateur, en SYSTEM, tout par handle : SeSecurityPrivilege
+/// actif sur ce fil pendant le seul parcours ; chaque élément ouvert sans suivre de lien sur le dernier élément et
+/// son chemin final vérifié (un lien, ou un chemin détourné plus haut, est écarté et jamais suivi : une jonction
+/// posée par l'utilisateur ne fait rien écrire ailleurs) ; SACL complétée seulement si besoin (sinon des rafales
+/// d'événements 4907), entrées tierces gardées. `sddl_dossier` sur la racine (et chaque sous-dossier si `recursif`),
+/// `sddl_fichier` sur les fichiers déjà présents (les nouveaux héritent de l'entrée du dossier) : une seule entrée
+/// chacun. Err : racine introuvable, détournée ou impossible à auditer.
+pub fn poser_audit_arborescence(racine: &std::path::Path, sddl_dossier: &str, sddl_fichier: &str, recursif: bool, maximum: usize) -> Result<BilanAudit, String> {
+    // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
+    const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
+    let (voulue_dossier, voulue_fichier) = (entree_normalisee(sddl_dossier)?, entree_normalisee(sddl_fichier)?);
+    avec_privilege("SeSecurityPrivilege", || {
+        let mut bilan = BilanAudit::default();
+        let ouverte = ouvrir_verifie(racine, ACCES, 0x7, true).map_err(|e| format!("{} : {e}", racine.display()))?;
+        poser_sacl(&ouverte, &voulue_dossier, true, &mut bilan).map_err(|e| format!("{} : {e}", racine.display()))?;
+        drop(ouverte);
+        let mut a_parcourir = vec![racine.to_path_buf()];
+        let mut vus = 0usize;
+        while let Some(dossier) = a_parcourir.pop() {
+            // Liste lue par chemin ; chaque entrée est ensuite ouverte et vérifiée : une redirection du dossier entre
+            // la liste et l'ouverture donne un autre chemin final, donc un refus
+            let Ok(entrees) = std::fs::read_dir(&dossier) else { bilan.ecartes += 1; continue };
+            for e in entrees.flatten() {
+                vus += 1;
+                if vus > maximum {
+                    bilan.tronque = true;
+                    return Ok(bilan);
+                }
+                // Type tiré de la liste, sans suivre de lien : une jonction ou un lien n'est ni dossier ni fichier
+                let Ok(t) = e.file_type() else { bilan.ecartes += 1; continue };
+                if t.is_symlink() {
+                    bilan.ecartes += 1;
+                    continue;
+                }
+                if t.is_dir() && !recursif {
+                    continue;
+                }
+                let chemin = e.path();
+                match ouvrir_verifie(&chemin, ACCES, 0x7, t.is_dir()) {
+                    Ok(f) => {
+                        let voulue = if t.is_dir() { &voulue_dossier } else { &voulue_fichier };
+                        if poser_sacl(&f, voulue, t.is_dir(), &mut bilan).is_err() {
+                            bilan.ecartes += 1;
+                        } else if t.is_dir() {
+                            a_parcourir.push(chemin);
+                        }
+                    }
+                    Err(_) => bilan.ecartes += 1,
+                }
+            }
+        }
+        Ok(bilan)
+    })?
+}
+
 /// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
 /// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
 pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {
