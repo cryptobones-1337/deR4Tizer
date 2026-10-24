@@ -3,7 +3,10 @@
 # Résumé de chaque tableau ; clés et binaires de test du 3c effacés quoi qu'il arrive. À surveiller avec vigie.ps1.
 # Usage : .\tests\bac-a-sable\passage-complet.ps1 -Depot <worktree d'intégration> [-Cible vm|bac-a-sable]
 param([string]$Depot = 'C:\d4t-integration', [string]$Racine = 'C:\d4t-bac-a-sable', [string[]]$Scenarios = @('installation', 'quarantaine', 'maj'),
-      [ValidateSet('vm', 'bac-a-sable')] [string]$Cible = 'vm')
+      [ValidateSet('vm', 'bac-a-sable')] [string]$Cible = 'vm',
+      # VM seulement : compte standard connecté à la console pendant les scénarios (lot 3d, session standard)
+      [switch]$SessionStandard)
+$options = if ($Cible -eq 'vm' -and $SessionStandard) { @{ SessionStandard = $true } } else { @{} }
 $lanceur = if ($Cible -eq 'vm') { '.\tests\vm\lancer.ps1' } else { '.\tests\bac-a-sable\lancer.ps1' }
 $prefixe = if ($Cible -eq 'vm') { 'sortie-vm' } else { 'sortie' }
 $ErrorActionPreference = 'Continue'
@@ -38,9 +41,9 @@ $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').U
 "arbre testé : $(git rev-parse 'HEAD^{tree}')"
 "MSI (3a, 3b) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
-foreach ($s in @('installation', 'quarantaine') | Where-Object { $Scenarios -contains $_ }) {
+foreach ($s in @('installation', 'quarantaine', 'lot3d') | Where-Object { $Scenarios -contains $_ }) {
     Attendre-Fermeture
-    & $lanceur -Scenario $s *> "$env:TEMP\d4t-$s.log"
+    & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"
     Resume $s
     if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-$s-*" | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
 }
@@ -50,7 +53,7 @@ if ($Scenarios -contains 'maj') { try {
     if (-not $? -or -not (Test-Path (Join-Path $Racine 'entree\maj\versions.txt'))) { 'préparation -Maj en échec'; Get-Content "$env:TEMP\d4t-prep-maj.log" -Tail 25 }
     else {
         "MSI (3c, reconstruit après les paquets de test) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
-        & $lanceur -Scenario maj *> "$env:TEMP\d4t-maj.log"
+        & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"
         Resume 'maj'
         if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-maj-*" | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }

@@ -15,11 +15,14 @@ param(
     # Par défaut : l'instantané le plus récent dont le nom commence par « propre »
     [string]$Instantane = '',
     [string]$Identifiants = (Join-Path $env:USERPROFILE '.d4t-vm-credential.xml'),
-    [int]$Minutes = 60
+    [int]$Minutes = 60,
+    # Compte local STANDARD connecté à la console pendant le scénario (ouverture de session automatique, puis
+    # redémarrage) : scénarios « session standard » du lot 3d. Compte et réglage effacés par la remise à l'instantané.
+    [switch]$SessionStandard
 )
 $ErrorActionPreference = 'Stop'
 $entree = Join-Path $Racine 'entree'
-$sortie = Join-Path $Racine "sortie-vm-$Scenario-$(Get-Date -Format yyyyMMdd-HHmmss)"
+$sortie = Join-Path $Racine "sortie-vm-$Scenario-$(if ($SessionStandard) { 'standard-' })$(Get-Date -Format yyyyMMdd-HHmmss)"
 if (-not (Test-Path (Join-Path $entree 'deR4Tizer.msi'))) { throw 'Dossier d''entrée incomplet : lancer d''abord tests\bac-a-sable\preparer.ps1.' }
 if ($Scenario -eq 'maj' -and -not (Test-Path (Join-Path $entree 'maj\versions.txt'))) { throw 'Scénario maj : lancer d''abord preparer.ps1 -Maj.' }
 $cred = Import-Clixml $Identifiants
@@ -54,6 +57,29 @@ try {
         Start-Sleep 10
     }
     if ((& $ecart) -gt 120) { throw 'Horloge de la VM non resynchronisée (écart de plus de 2 minutes).' }
+    if ($SessionStandard) {
+        # Compte standard jetable, mot de passe aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte ;
+        # ouverture de session automatique à la console, puis redémarrage
+        Invoke-Command -Session $s {
+            $car = [char[]]'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+            $mdp = (-join (1..24 | ForEach-Object { $car | Get-Random })) + 'a7!K'
+            New-LocalUser -Name 'd4t_console' -Password (ConvertTo-SecureString $mdp -AsPlainText -Force) -PasswordNeverExpires -AccountNeverExpires | Out-Null
+            Add-LocalGroupMember -SID 'S-1-5-32-545' -Member 'd4t_console'
+            $w = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            Set-ItemProperty $w -Name AutoAdminLogon -Value '1'
+            Set-ItemProperty $w -Name DefaultUserName -Value 'd4t_console'
+            Set-ItemProperty $w -Name DefaultDomainName -Value $env:COMPUTERNAME
+            Set-ItemProperty $w -Name DefaultPassword -Value $mdp
+        }
+        Remove-PSSession $s; $s = $null
+        Restart-VM -Name $Vm -Force -Wait -For Heartbeat
+        $s = Session
+        $fin = (Get-Date).AddMinutes(8)
+        do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
+        while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
+        if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après le redémarrage ($console)." }
+        Write-Host "Console : $console (compte standard)"
+    }
     Invoke-Command -Session $s { Remove-Item C:\entree, C:\sortie -Recurse -Force -ErrorAction SilentlyContinue }
     Copy-Item -Path $entree -Destination 'C:\entree' -ToSession $s -Recurse -Force
     # Empreinte du MSI calculée ici, sur l'hôte : le lot 3d la compare à celle du fichier reçu dans la VM
