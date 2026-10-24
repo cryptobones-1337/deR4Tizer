@@ -46,7 +46,7 @@ fn torturer(valide: &[u8], f: &mut dyn FnMut(&[u8])) {
 
 fn paquet_udp(charge: &[u8]) -> Vec<u8> {
     let total = 20 + 8 + charge.len();
-    let mut p = vec![0x45, 0, (total >> 8) as u8, total as u8, 0, 0, 0x40, 0, 64, 17, 0, 0, 10, 2, 0, 2, 198, 51, 100, 1];
+    let mut p = vec![0x45, 0, (total >> 8) as u8, total as u8, 0, 0, 0x40, 0, 64, 17, 0, 0, 10, 0, 0, 2, 198, 51, 100, 1];
     p.extend_from_slice(&[0xC3, 0x50, 0, 9, 0, (8 + charge.len()) as u8, 0, 0]);
     p.extend_from_slice(charge);
     p
@@ -55,7 +55,7 @@ fn paquet_udp(charge: &[u8]) -> Vec<u8> {
 #[test]
 fn decoder_paquet_udp() {
     let d = paquet_udp(b"bonjour");
-    let p = crate::capture::decoder_test(&d, Ipv4Addr::new(10, 2, 0, 2)).expect("paquet valide");
+    let p = crate::capture::decoder_test(&d, Ipv4Addr::new(10, 0, 0, 2)).expect("paquet valide");
     assert!(!p.entrant);
     assert_eq!(p.proto, 17);
     assert_eq!(p.port_destination, 9);
@@ -67,7 +67,7 @@ fn decoder_paquet_udp() {
 fn decoder_sans_panique() {
     let valide = paquet_udp(b"0123456789abcdef");
     torturer(&valide, &mut |d| {
-        let _ = crate::capture::decoder_test(d, Ipv4Addr::new(10, 2, 0, 2));
+        let _ = crate::capture::decoder_test(d, Ipv4Addr::new(10, 0, 0, 2));
     });
 }
 
@@ -1856,19 +1856,20 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
 #[test]
 fn exposition_reelle_sans_faux_positifs() {
     use crate::parefeu::{exposition_reelle, plage_dynamique, ContexteExposition, LecteurJournal};
-    let ctx = ContexteExposition { ecoute_tcp: [27036u16, 49664].into_iter().collect(), udp_dynamique: (49152, 65535), pid_service: 3468 };
-    assert!(!exposition_reelle("TCP", 61076, 3468, "-", &ctx), "ligne de la socket de capture du service");
+    let ctx = ContexteExposition { ecoute_tcp: [40001u16, 40002].into_iter().collect(), udp_dynamique: (49152, 65535), pid_service: 4000 };
+    assert!(!exposition_reelle("TCP", 50001, 4000, "-", &ctx), "ligne de la socket de capture du service");
     assert!(!exposition_reelle("TCP", 1550, 9999, "-", &ctx), "réponse vers un port éphémère, rien n'y écoute");
-    assert!(exposition_reelle("TCP", 27036, 9999, "-", &ctx), "connexion entrante vers un port en écoute");
-    assert!(!exposition_reelle("UDP", 51343, 9999, "-", &ctx), "réponse UDP vers un port dynamique");
-    assert!(exposition_reelle("UDP", 3074, 9999, "-", &ctx), "UDP vers un port fixe");
+    assert!(exposition_reelle("TCP", 40001, 9999, "-", &ctx), "connexion entrante vers un port en écoute");
+    assert!(!exposition_reelle("UDP", 50003, 9999, "-", &ctx), "réponse UDP vers un port dynamique");
+    assert!(exposition_reelle("UDP", 3000, 9999, "-", &ctx), "UDP vers un port fixe");
     assert!(!exposition_reelle("ICMP", 0, 9999, "0", &ctx), "réponse d'écho");
     assert!(exposition_reelle("ICMP", 0, 9999, "8", &ctx), "demande d'écho venue d'Internet");
     // Sortie de netsh, en anglais comme en français
     assert_eq!(plage_dynamique("Protocol udp Dynamic Port Range\n---\nStart Port      : 49152\nNumber of Ports : 16384\n"), Some((49152, 65535)));
     assert_eq!(plage_dynamique("Plage de ports dynamiques du protocole tcp\n---\nPort de démarrage : 1024\nNombre de ports   : 64511\n"), Some((1024, 65534)));
     assert_eq!(plage_dynamique("rien"), None);
-    // Lignes réelles du journal : seule la connexion vers un port en écoute donne une alerte
+    // Lignes synthétiques au format du journal (adresses de documentation, RFC 5737) : seule la connexion vers un
+    // port en écoute donne une alerte
     let d = dossier_test("exposition");
     let f = d.join("pfirewall.log");
     std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\n").unwrap();
@@ -1876,17 +1877,17 @@ fn exposition_reelle_sans_faux_positifs() {
     use std::io::Write;
     let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
     for l in [
-        "2026-10-24 09:28:08 ALLOW TCP 172.217.171.110 10.8.0.2 443 61076 0 - 0 0 0 - - - RECEIVE 3468",
-        "2026-10-24 09:17:02 ALLOW TCP 198.51.100.20 192.168.1.50 27024 37077 0 - 0 0 0 - - - RECEIVE 3332",
-        "2026-10-24 09:26:09 ALLOW ICMP 8.8.8.8 10.8.0.2 - - 0 - - - - 0 0 - RECEIVE 4",
-        "2026-10-24 09:30:00 ALLOW TCP 203.0.113.9 192.168.1.50 51515 27036 0 - 0 0 0 - - - RECEIVE 16424",
+        "2026-01-01 10:00:01 ALLOW TCP 198.51.100.7 192.168.0.10 443 50001 0 - 0 0 0 - - - RECEIVE 4000",
+        "2026-01-01 10:00:02 ALLOW TCP 198.51.100.20 192.168.0.10 443 50002 0 - 0 0 0 - - - RECEIVE 5000",
+        "2026-01-01 10:00:03 ALLOW ICMP 192.0.2.53 192.168.0.10 - - 0 - - - - 0 0 - RECEIVE 4",
+        "2026-01-01 10:00:04 ALLOW TCP 203.0.113.9 192.168.0.10 51515 40001 0 - 0 0 0 - - - RECEIVE 6000",
     ] {
         writeln!(o, "{l}").unwrap();
     }
     drop(o);
     let alertes = lecteur.lire(&|_| String::new(), &ctx);
     assert_eq!(alertes.len(), 1, "{:?}", alertes.iter().map(|a| a.raisons.clone()).collect::<Vec<_>>());
-    assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 27036);
+    assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 40001);
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -1897,7 +1898,7 @@ fn exposition_reelle_sans_faux_positifs() {
 fn exposition_udp_reponse_reconnue_par_le_flux() {
     use crate::parefeu::{reponse_udp, ContexteExposition, FluxUdp, LecteurJournal, DELAI_REPONSE_UDP};
     use std::time::{Duration, Instant};
-    let serveur: std::net::IpAddr = "40.119.6.228".parse().unwrap();
+    let serveur: std::net::IpAddr = "192.0.2.123".parse().unwrap();
     let mut flux = FluxUdp::new();
     let maintenant = Instant::now();
     flux.insert((123, serveur, 123), maintenant);
@@ -1906,7 +1907,7 @@ fn exposition_udp_reponse_reconnue_par_le_flux() {
     assert!(!reponse_udp(&flux, 123, serveur, 40000, maintenant), "même source, autre port distant");
     assert!(!reponse_udp(&flux, 123, serveur, 123, maintenant + DELAI_REPONSE_UDP + Duration::from_secs(1)), "envoi trop ancien");
     // Lignes du journal : envoi puis réponse, sans alerte ; la même source sans envoi préalable, avec alerte
-    let ctx = ContexteExposition { ecoute_tcp: Default::default(), udp_dynamique: (49152, 65535), pid_service: 3468 };
+    let ctx = ContexteExposition { ecoute_tcp: Default::default(), udp_dynamique: (49152, 65535), pid_service: 4000 };
     let d = dossier_test("exposition-ntp");
     let f = d.join("pfirewall.log");
     std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid
@@ -1915,9 +1916,9 @@ fn exposition_udp_reponse_reconnue_par_le_flux() {
     use std::io::Write;
     let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
     for l in [
-        "2026-10-24 12:00:00 ALLOW UDP 192.168.1.50 40.119.6.228 123 123 0 - - - - - - - SEND 1688",
-        "2026-10-24 12:00:00 ALLOW UDP 40.119.6.228 192.168.1.50 123 123 0 - - - - - - - RECEIVE 1688",
-        "2026-10-24 12:00:05 ALLOW UDP 203.0.113.9 192.168.1.50 123 123 0 - - - - - - - RECEIVE 1688",
+        "2026-01-01 12:00:00 ALLOW UDP 192.168.0.10 192.0.2.123 123 123 0 - - - - - - - SEND 1500",
+        "2026-01-01 12:00:00 ALLOW UDP 192.0.2.123 192.168.0.10 123 123 0 - - - - - - - RECEIVE 1500",
+        "2026-01-01 12:00:05 ALLOW UDP 203.0.113.9 192.168.0.10 123 123 0 - - - - - - - RECEIVE 1500",
     ] {
         writeln!(o, "{l}").unwrap();
     }
