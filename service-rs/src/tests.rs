@@ -177,6 +177,37 @@ fn regles_sans_panique() {
     });
 }
 
+/// IDS, règle Shellshock (sid 9000011, rév. 2), correction de bruit hors phase 3 : constaté, une alerte CRITIQUE sur
+/// un téléchargement chiffré de plusieurs gigaoctets (réponses d'un port 443) ; « () { » puis « }; » n'importe où
+/// après finissent par apparaître au hasard dans des octets chiffrés. La règle vise une requête vers un serveur HTTP
+/// en clair du poste, avec la forme de l'attaque (« } » dans les 10 octets qui suivent « () { »). Règle entière
+/// appliquée : en-tête (adresses, ports) et contenu.
+#[test]
+fn ids_shellshock_sans_faux_positif_sur_des_octets_quelconques() {
+    use crate::capture::Paquet;
+    use crate::ids::correspond_paquet_test;
+    let regle = crate::ids::REGLES_INTEGREES.lines().find(|l| l.contains("sid:9000011")).expect("règle Shellshock");
+    let paquet = |source: [u8; 4], port_source: u16, port_destination: u16, charge: &'static [u8]| Paquet {
+        entrant: true, proto: 6, source: source.into(), destination: [192, 168, 0, 10].into(), port_source,
+        port_destination, longueur: 40 + charge.len(), drapeaux: 0x18, charge,
+    };
+    let attaque: &[u8] = b"GET /cgi-bin/x HTTP/1.1\r\nUser-Agent: () { :; }; /bin/cat /etc/passwd\r\n\r\n";
+    // Positif : requête Shellshock vers le port 80 du poste, depuis Internet
+    assert_eq!(correspond_paquet_test(regle, &paquet([203, 0, 113, 5], 50000, 80, attaque)), Some(true), "attaque vers le port 80");
+    assert_eq!(correspond_paquet_test(regle, &paquet([203, 0, 113, 5], 50000, 8080, b"Referer: () { _; } >_[$($())] { echo x; }\r\n")),
+        Some(true), "variante vers le port 8080");
+    // Négatifs : octets chiffrés ou quelconques (« () { » puis « }; » loin après), réponse d'un port 443, port TLS
+    let mut quelconque = vec![0x17u8, 0x03, 0x03, 0x40, 0x00];
+    quelconque.extend_from_slice(b"() {");
+    quelconque.extend(std::iter::repeat(0xA5u8).take(500));
+    quelconque.extend_from_slice(b"};");
+    let quelconque: &'static [u8] = Box::leak(quelconque.into_boxed_slice());
+    assert_eq!(correspond_paquet_test(regle, &paquet([203, 0, 113, 5], 50000, 80, quelconque)), Some(false), "« }} » loin de « () {{ »");
+    assert_eq!(correspond_paquet_test(regle, &paquet([203, 0, 113, 5], 443, 50001, attaque)), Some(false), "réponse d'un serveur (port 443)");
+    assert_eq!(correspond_paquet_test(regle, &paquet([203, 0, 113, 5], 50000, 443, attaque)), Some(false), "port TLS du poste");
+    assert_eq!(correspond_paquet_test(regle, &paquet([192, 168, 0, 20], 50000, 80, attaque)), Some(false), "source du réseau local");
+}
+
 // ------------------------------------------------------------ adresses
 
 #[test]
