@@ -1674,24 +1674,34 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Audit des données sensibles, posé par handle (natif::poser_audit_arborescence) : décision « déjà posé ». Un
-/// dossier doit avoir l'entrée exacte (drapeaux d'héritage compris) ; un fichier, l'entrée voulue, explicite ou
-/// héritée du dossier. Sinon la SACL serait réécrite à chaque passage (rafales d'événements 4907). La pose réelle
-/// (privilège SeSecurityPrivilege, jonction vers un canari) est vérifiée par le scénario 3b.
+/// Audit des données sensibles, posé par handle (natif::poser_audit_arborescence) : SACL complétée, jamais
+/// remplacée. Seules les entrées de deR4Tizer (audit explicite de Tout le monde, succès, mêmes droits) sont
+/// retirées ; une règle de l'organisation ou une entrée héritée est gardée. Rien à écrire si l'audit est déjà en
+/// place (sinon des rafales d'événements 4907 à chaque passage). La pose réelle (privilège SeSecurityPrivilege,
+/// jonction vers un canari, entrée tierce gardée) est vérifiée par le scénario 3b.
 #[test]
-fn audit_donnees_deja_pose() {
-    use crate::natif::audit_deja_pose;
-    let dossier = "S:(AU;OINPIOSA;CC;;;WD)";
-    assert!(audit_deja_pose(dossier, dossier, true));
-    assert!(!audit_deja_pose("S:(AU;OICIIOSA;CC;;;WD)", dossier, true), "autres drapeaux d'héritage sur un dossier");
-    assert!(!audit_deja_pose("S:", dossier, true), "aucun audit");
-    let fichier = "S:(AU;SA;CC;;;WD)";
-    assert!(audit_deja_pose(fichier, fichier, false));
-    assert!(audit_deja_pose("S:AI(AU;IDSA;CC;;;WD)", fichier, false), "entrée héritée du dossier");
-    assert!(audit_deja_pose("S:AI(AU;SA;FA;;;BA)(AU;IDSA;CC;;;WD)", fichier, false), "entrée voulue parmi d'autres");
-    assert!(!audit_deja_pose("S:", fichier, false), "aucun audit");
-    assert!(!audit_deja_pose("S:(AU;SA;CC;;;BA)", fichier, false), "autre compte audité");
-    assert!(!audit_deja_pose("S:(AU;FA;CC;;;WD)", fichier, false), "échecs audités, pas les succès");
-    assert!(!audit_deja_pose("S:(AU;SA;FA;;;WD)", fichier, false), "autres droits");
-    assert!(!audit_deja_pose("S:(AU;SA;CC;;;WD)", "S:", false), "SACL voulue vide : jamais « déjà posée »");
+fn audit_donnees_sacl_completee() {
+    use crate::natif::sacl_completee;
+    let dossier = "AU;OINPIOSA;CC;;;WD";
+    let fichier = "AU;SA;CC;;;WD";
+    // Aucune SACL : l'entrée est ajoutée
+    assert_eq!(sacl_completee("", dossier, false).as_deref(), Some("S:(AU;OINPIOSA;CC;;;WD)"));
+    assert_eq!(sacl_completee("S:", fichier, true).as_deref(), Some("S:(AU;SA;CC;;;WD)"));
+    // Déjà en place : rien à écrire
+    assert_eq!(sacl_completee("S:(AU;OINPIOSA;CC;;;WD)", dossier, false), None);
+    assert_eq!(sacl_completee("S:AI(AU;IDSA;CC;;;WD)", fichier, true), None, "fichier : entrée héritée du dossier");
+    assert!(sacl_completee("S:AI(AU;IDOINPIOSA;CC;;;WD)", dossier, false).is_some(), "dossier : l'entrée héritée ne suffit pas");
+    // Entrée tierce (règle de l'organisation) gardée, la nôtre ajoutée
+    assert_eq!(sacl_completee("S:(AU;SAFA;FA;;;BA)", dossier, false).as_deref(), Some("S:(AU;SAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)"));
+    assert_eq!(sacl_completee("S:(AU;SAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)", dossier, false), None, "tierce et nôtre : rien à écrire");
+    // Autre audit de Tout le monde, mais pas le nôtre (échecs, autres droits) : gardé
+    assert_eq!(sacl_completee("S:(AU;FA;CC;;;WD)(AU;SA;FA;;;WD)", fichier, true).as_deref(), Some("S:(AU;FA;CC;;;WD)(AU;SA;FA;;;WD)(AU;SA;CC;;;WD)"));
+    // Notre ancienne entrée (autres drapeaux d'héritage) remplacée, drapeaux de contrôle et entrées héritées gardés
+    assert_eq!(sacl_completee("S:AI(AU;OICIIOSA;CC;;;WD)(AU;IDSAFA;FA;;;BA)", dossier, false).as_deref(),
+        Some("S:AI(AU;IDSAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)"));
+    // Doublon de la nôtre : un seul exemplaire gardé
+    assert_eq!(sacl_completee("S:(AU;OINPIOSA;CC;;;WD)(AU;OICIIOSA;CC;;;WD)", dossier, false).as_deref(), Some("S:(AU;OINPIOSA;CC;;;WD)"));
+    // Idempotent : le résultat complété ne demande plus rien
+    let r = sacl_completee("S:(AU;SAFA;FA;;;BA)", fichier, true).unwrap();
+    assert_eq!(sacl_completee(&r, fichier, true), None);
 }
