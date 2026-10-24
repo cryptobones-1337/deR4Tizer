@@ -1,7 +1,8 @@
 ﻿# Exécuté DANS Windows Sandbox à l'ouverture de session (lancer.ps1) : joue un scénario d'intégration comme le runner
 # de la CI, écrit le tableau et les journaux dans le dossier de sortie monté, relève l'état de Microsoft Defender
-# avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé.
-param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario)
+# avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé. Aussi exécuté dans la VM de test
+# (tests\vm\lancer.ps1, PowerShell Direct) avec -SansArret : la VM est remise à son instantané par le lanceur.
+param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario, [switch]$SansArret)
 $sortie = 'C:\sortie'
 $entree = 'C:\entree'
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
@@ -38,5 +39,5 @@ try {
     Stop-Transcript | Out-Null
     # Écrit en dernier : lancer.ps1 attend ce fichier
     Set-Content -LiteralPath (Join-Path $sortie "$Scenario-code.txt") -Value $code -Encoding Ascii
-    Stop-Computer -Force
+    if (-not $SansArret) { Stop-Computer -Force }
 }
