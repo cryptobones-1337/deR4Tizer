@@ -800,6 +800,11 @@ impl Moniteur {
                 if n.api.actif && n.api.reseau && n.api.adresses.trim().is_empty() {
                     return Reponse::erreur("Indiquez l'adresse du SIEM autorisé à interroger l'API depuis le réseau.");
                 }
+                let invalides = crate::api::adresses_invalides(&n.api.adresses);
+                if !invalides.is_empty() {
+                    return Reponse::erreur(format!("Adresses autorisées invalides (adresse IPv4, ou réseau IPv4 de /8 à /32) : {}",
+                        invalides.iter().map(|a| a.chars().filter(|x| !x.is_control()).take(40).collect::<String>()).collect::<Vec<_>>().join(", ")));
+                }
                 self.config.langue = if n.langue == "en" { "en".into() } else { "fr".into() };
                 if n.syslog != self.config.syslog {
                     self.config.syslog = n.syslog;
@@ -829,9 +834,14 @@ impl Moniteur {
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
                 }
-                let Some(d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
+                let Some(mut d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
                     return Reponse::erreur("réglages des notifications illisibles");
                 };
+                let nouvelle = d.config.clone().unwrap_or_default();
+                if let Err(e) = crate::notifications::preparer(&self.config.notifications, &nouvelle,
+                    &crate::notifications::lire_secrets(), &mut d.secrets) {
+                    return Reponse::erreur(format!("Réglages des notifications refusés : {e}"));
+                }
                 if let Err(e) = crate::notifications::enregistrer_secrets(&d.secrets) {
                     return Reponse::erreur(format!("Secrets non enregistrés : {e}"));
                 }

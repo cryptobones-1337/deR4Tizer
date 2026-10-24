@@ -118,6 +118,23 @@ namespace DeR4Tizer
             }
         }
 
+        // Fichier de commande écrit par Executer : %LOCALAPPDATA%\deR4Tizer\commande-<32 hexadécimaux>.json, ni le fichier
+        // ni son dossier n'étant un point d'analyse (lien, jonction)
+        public static bool FichierDeCommande(string chemin)
+        {
+            try
+            {
+                var f = new FileInfo(chemin);
+                string nom = f.Name;
+                if (!nom.StartsWith("commande-") || !nom.EndsWith(".json") || nom.Length != "commande-".Length + 32 + ".json".Length) return false;
+                foreach (char x in nom.Substring(9, 32)) if (!((x >= '0' && x <= '9') || (x >= 'a' && x <= 'f'))) return false;
+                if (f.Directory == null || !string.Equals(f.Directory.Name, "deR4Tizer", StringComparison.OrdinalIgnoreCase)) return false;
+                if ((f.Attributes & FileAttributes.ReparsePoint) != 0 || (f.Directory.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+                return f.Exists;
+            }
+            catch { return false; }
+        }
+
         // Ce que la commande va faire, en clair : l'instance administrateur l'affiche avant d'envoyer, pour qu'un
         // autre programme ne puisse pas faire accepter « Tout débloquer » derrière l'invite UAC habituelle
         public static string Decrire(Commande c)
@@ -173,7 +190,20 @@ namespace DeR4Tizer
                         Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Hote((string)o)) : "";
                         if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
                         if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
-                        if (actif("Smtp")) canaux.Add((en ? "e-mail to " : "e-mail à ") + (conf != null && conf.ContainsKey("Destinataires") ? conf["Destinataires"] : ""));
+                        // Tout ce qui sera appliqué est affiché (audit, AUD6-02) : serveur, port, sécurité, compte, expéditeur
+                        // et mot de passe (nouveau, effacé ou inchangé) ; un serveur changé sans nouveau mot de passe efface
+                        // l'ancien côté service, jamais envoyé à un autre serveur
+                        Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? conf[k].ToString() : "";
+                        if (actif("Smtp"))
+                        {
+                            string mdp = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
+                                ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau"))
+                                : (en ? "unchanged (cleared if the server or account changes)" : "inchangé (effacé si le serveur ou le compte change)");
+                            canaux.Add((en ? "e-mail to " : "e-mail à ") + champ("Destinataires") + (en ? " via " : " par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
+                                + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
+                                + (en ? ", password " : ", mot de passe ") + mdp + ")");
+                        }
+                        if (conf != null) canaux.Add((en ? "minimum level " : "niveau minimal ") + champ("NiveauMin") + (en ? ", at most " : ", au plus ") + champ("MaxParHeure") + (en ? " per hour" : " par heure"));
                         return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
                             + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
                     }
@@ -1408,14 +1438,17 @@ namespace DeR4Tizer
             L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
 
             // Mode « assistant » : lancé en administrateur par l'interface pour transmettre une commande au service.
-            // Il lit la commande dans le fichier, l'efface, et montre en clair ce qu'il va faire avant de l'envoyer.
+            // Il lit la commande dans le fichier et montre en clair ce qu'il va faire avant de l'envoyer. Il n'efface
+            // rien (l'interface qui l'a lancé efface le fichier) et ne lit qu'un fichier de commande de deR4Tizer :
+            // sinon n'importe quel programme pouvait, derrière l'invite UAC, faire effacer en administrateur un fichier
+            // de son choix (audit, AUD6-01).
             if (args.Length == 2 && args[0] == "--commande-fichier")
             {
                 Commande c;
                 try
                 {
+                    if (!Canal.FichierDeCommande(args[1])) throw new InvalidOperationException(L.En ? "Not a deR4Tizer command file." : "Ce n'est pas un fichier de commande de deR4Tizer.");
                     c = Commun.Json().Deserialize<Commande>(File.ReadAllText(args[1], Encoding.UTF8));
-                    File.Delete(args[1]);
                 }
                 catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
                 if (c == null) return 1;

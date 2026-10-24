@@ -94,7 +94,7 @@ Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence M
 
 **Syslog** : Réglages → *Envoi des alertes*. Format JSON (en-tête RFC 5424, détail en JSON) ou CEF.
 
-**API d'export** : Réglages → *API d'export*. Écoute sur `127.0.0.1:8642` par défaut. Le réseau local est possible (profils Domaine et Privé uniquement).
+**API d'export** : Réglages → *API d'export*. Écoute sur `127.0.0.1:8642` par défaut. Le réseau local est possible (profils Domaine et Privé uniquement), **en clair** (HTTP, sans TLS) : jeton et données passent en clair, à réserver à un réseau de confiance.
 
 ```bash
 curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?niveau=Alerte&format=ndjson"

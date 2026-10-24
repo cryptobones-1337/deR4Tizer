@@ -164,8 +164,10 @@ pub fn json(a: &Alerte) -> String {
 
 /// Alerte au format CEF : CEF:Version|Fournisseur|Produit|Version|Signature|Nom|Gravité|Extension
 pub fn cef(a: &Alerte) -> String {
-    let entete = |s: &str| s.replace('\\', "\\\\").replace('|', "\\|").replace(['\r', '\n'], " ");
-    let ext = |s: &str| s.replace('\\', "\\\\").replace('=', "\\=").replace(['\r', '\n'], " ");
+    // Tout caractère de contrôle (fin de ligne, NUL, ESC…) devient une espace (audit, AUD3-06)
+    let sans_controle = |s: &str| s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>();
+    let entete = |s: &str| sans_controle(s).replace('\\', "\\\\").replace('|', "\\|");
+    let ext = |s: &str| sans_controle(s).replace('\\', "\\\\").replace('=', "\\=");
     let signature = if a.mitre.is_empty() { a.niveau.clone() } else { a.mitre.split_whitespace().next().unwrap_or("").to_string() };
     let nom: String = a.raisons.chars().take(120).collect();
     let mut e = vec![

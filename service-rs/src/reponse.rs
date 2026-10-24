@@ -71,20 +71,33 @@ impl Origine {
 
 // ------------------------------------------------------------ processus
 
-/// Processus dont l'arrêt ou la suspension fige ou fait planter Windows (vérifiés : binaire de Windows)
+/// Processus dont l'arrêt ou la suspension fige ou fait planter Windows, par chemin EXACT relatif au dossier Windows.
+/// Avant, le nom suffisait avec un chemin qui COMMENÇAIT par le dossier Windows et une signature Microsoft : une copie
+/// de powershell.exe nommée explorer.exe dans C:\Windows\Tasks (où tout compte peut écrire) échappait à la suspension
+/// automatique d'un rançongiciel et aux actions manuelles (audit, AUD5-01). Defender (MsMpEng) est un processus
+/// protégé que le service ne peut pas ouvrir : il n'a pas besoin d'y figurer.
 const CRITIQUES: &[&str] = &[
-    "csrss", "wininit", "winlogon", "lsass", "lsaiso", "services", "smss", "svchost", "dwm", "fontdrvhost", "registry",
-    "memory compression", "secure system", "msmpeng", "mpdefendercoreservice", "explorer",
+    r"system32\csrss.exe", r"system32\wininit.exe", r"system32\winlogon.exe", r"system32\lsass.exe", r"system32\lsaiso.exe",
+    r"system32\services.exe", r"system32\smss.exe", r"system32\svchost.exe", r"system32\dwm.exe", r"system32\fontdrvhost.exe",
+    r"explorer.exe",
 ];
+
+/// Chemin d'un processus critique : exactement l'un des CRITIQUES sous le dossier Windows (casse ignorée)
+pub fn chemin_critique(chemin: &str, dossier_windows: &str) -> bool {
+    let c = chemin.to_lowercase();
+    let w = dossier_windows.trim_end_matches('\\').to_lowercase();
+    c.strip_prefix(&w).and_then(|r| r.strip_prefix('\\')).is_some_and(|r| CRITIQUES.contains(&r))
+}
 
 /// Raison de refuser d'agir sur ce processus, s'il y en a une
 pub fn protege(pid: u32) -> Option<String> {
     if pid <= 4 || pid == std::process::id() {
         return Some("processus du système ou de deR4Tizer".into());
     }
+    // Chemin complet canonique (QueryFullProcessImageName), comparé exactement ; signature Microsoft en plus
     let chemin = natif::chemin_processus(pid);
     let nom = Path::new(&chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    (CRITIQUES.contains(&nom.as_str()) && natif::binaire_windows(&chemin))
+    (chemin_critique(&chemin, &natif::dossier_windows()) && natif::binaire_windows(&chemin))
         .then(|| format!("{nom} est un processus critique de Windows (le système ou le réseau se figerait)"))
 }
 
