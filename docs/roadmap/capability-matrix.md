@@ -1,9 +1,9 @@
 # Matrice des capacités de deR4Tizer
 
-État au 2026-10-24, branche `main` (commit `7ff8309`, après réécriture de l'historique, version 4.3), après la fusion des PR #10 et #12 à #27 ; les PR #28 et #30, fusionnées juste avant celle-ci, sont
-décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte que la preuve citée.
-Une PR encore ouverte est signalée comme telle : tant qu'elle n'est pas fusionnée, `main` ne contient pas son
-contenu.
+État au 2026-10-24, branche `main` (commit `c60d9b3`, version 4.3), après la fusion des PR #10, #12 à #27 et #31 à
+#35 ; les PR fusionnées ensuite sont décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte
+que la preuve citée. Une PR encore ouverte est signalée comme telle : tant qu'elle n'est pas fusionnée, `main` ne
+contient pas son contenu.
 
 ## États
 
@@ -28,7 +28,9 @@ est identique, aux adresses IP des données de test près, à celui de `main` `7
 commit cités pour mémoire) : 3a 41 réussis,
   0 échoué, 2 non exécutés ; 3b 23 réussis, 0 échoué, 3 non exécutés ; 3c 19 réussis, 0 échoué, 1 non exécuté.
   Tableaux complets en commentaire des PR #10 à #27 ; raisons des non exécutés dans `docs/testing/baseline.md`.
-- Tests unitaires : `cargo test --release` (chaîne MSVC) sur ce même arbre, 79 réussis (voir `docs/testing/baseline.md`).
+- Windows Sandbox, arbre `4bdcc38dd6e99aa52376d1d44b78ebad7c61db15`, celui de `main` `c60d9b3` (fusion des PR #34, #31,
+  #32, #33, #35) : 3a 41 réussis, 0 échoué, 2 non exécutés ; 3b 24, 0, 3 ; 3c 19, 0, 1. Tableaux en commentaire de ces PR.
+- Tests unitaires : `cargo test --release` (chaîne MSVC) sur ce même arbre, 80 réussis (voir `docs/testing/baseline.md`).
 
 ## Matrice
 

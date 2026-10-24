@@ -112,7 +112,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 ### Mise à jour automatique et signature
 
 > **Limite connue.** Dans les versions publiées jusqu'ici, la mise à jour automatique n'installe rien : le script
-> d'installation, lancé sans console, ne s'exécutait pas (corrigé par la PR #26, non fusionnée). Une 4.2 ou une
+> d'installation, lancé sans console, ne s'exécutait pas (corrigé dans `main` par la PR #26, pas encore dans une version publiée). Une 4.2 ou une
 > 4.3 installée ne se met donc pas à jour seule : installer à la main (`msiexec /i deR4Tizer.msi`) une version qui
 > contient ce correctif ; la mise à jour automatique fonctionne ensuite à partir de celle-ci.
 

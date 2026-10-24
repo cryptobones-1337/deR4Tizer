@@ -9,8 +9,8 @@ cd service-rs
 cargo test --release
 ```
 
-- 2026-10-24, arbre `370e4d27` (celui de `main` après la fusion des PR #10 à #27, avant la réécriture de l'historique), local, chaîne `stable-x86_64-pc-windows-msvc` :
-  **79 réussis, 0 échoué**.
+- 2026-10-24, arbre `4bdcc38d` (`main` `c60d9b3`), local, chaîne `stable-x86_64-pc-windows-msvc` :
+  **80 réussis, 0 échoué**.
 - Contenu (`service-rs/src/tests.rs`) : fonctions pures qui lisent des données du réseau ou de fichiers externes
   (paquets, TLS, DNS, règles IDS, manifestes, UPnP), décisions de sécurité (droits, tri au démarrage,
   quarantaine, reprise, restauration, mise à jour, clé épinglée), avec un mini-fuzz (toutes les troncatures d'un
@@ -60,6 +60,19 @@ commit cités pour mémoire), Windows 11 Pro 10.0.26300.9711, MSI des scénarios
 | 3c | 19 | 0 | 1 : service muet après l'installation (simulation seulement) |
 
 Tableaux complets en commentaire des PR #10 à #27.
+
+2026-10-24, arbre `4bdcc38dd6e99aa52376d1d44b78ebad7c61db15`, celui de `main` `c60d9b3` après la fusion des PR #34,
+#31, #32, #33, #35 (commit testé `bfaa412`, `git diff bfaa412 main` vide), Windows 11 Pro 10.0.26300.9711, MSI des
+scénarios 3a et 3b SHA-256 `6F63CE69B91596A13BCECE69891BDDF5404EB3BE01CF2551CC1385857558E9D9`, 80 tests unitaires :
+
+| Lot | Réussis | Échoués | Non exécutés |
+|---|---|---|---|
+| 3a | 41 | 0 | 2 (mêmes raisons) |
+| 3b | 24 | 0 | 3 (mêmes raisons) |
+| 3c | 19 | 0 | 1 (même raison) |
+
+Nouveaux par rapport au passage précédent : leurre déjà présent dans un profil sans session audité (3b) ;
+désinstallation sans `GARDER_DONNEES` qui retire bien les données (3a, 3b). Tableaux en commentaire des PR #31 à #35.
 
 ## Non couvert
 
