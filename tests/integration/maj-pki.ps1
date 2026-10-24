@@ -4,9 +4,12 @@
 #   epinglee    clé K (épinglée dans les binaires de test), valide
 #   autre       clé K2 (non épinglée), valide
 #   revoquee    clé K, révoqué dans la CRL
-#   sanscrl     clé K, adresse de CRL qui ne répond pas
-# Les trois certificats de la clé K sont distincts : seule la révocation change, et le cache des CRL de Windows
-# ne mélange pas les cas. Mots de passe aléatoires, jamais affichés. Ce script n'approuve rien : l'import de la
+#   sanscrl     clé K, adresse de CRL qui ne répond pas, émis par une autorité intermédiaire à part (« muette »)
+# Les trois certificats de la clé K sont distincts : seule la révocation change. Le certificat sanscrl n'est pas
+# émis par la racine : Windows vérifie la révocation avec toute CRL valide de l'émetteur, quelle que soit son
+# adresse ; la CRL de la racine, téléchargée pour les autres cas, couvrirait aussi ce certificat et le scénario
+# « CRL injoignable » verrait une révocation vérifiée (constaté en Windows Sandbox). L'intermédiaire, lui, ne publie
+# aucune CRL ; sa propre révocation est vérifiée par la CRL de la racine, qui répond. Mots de passe aléatoires, jamais affichés. Ce script n'approuve rien : l'import de la
 # racine dans le magasin de la machine est fait par le job, sur le runner jetable seulement.
 param(
     [Parameter(Mandatory)] [string]$Dossier,
@@ -56,6 +59,18 @@ default_crl_days = 7
 policy = politique
 unique_subject = no
 copy_extensions = none
+[ ca_muette ]
+dir = $d
+database = $d/index-muette.txt
+new_certs_dir = $d/nouveaux
+certificate = $d/muette.crt
+private_key = $d/muette.key
+serial = $d/serie-muette
+default_md = sha256
+default_days = 30
+policy = politique
+unique_subject = no
+copy_extensions = none
 [ politique ]
 commonName = supplied
 [ ext_racine ]
@@ -66,6 +81,12 @@ subjectKeyIdentifier = hash
 basicConstraints = critical,CA:FALSE
 keyUsage = critical,digitalSignature
 extendedKeyUsage = codeSigning
+authorityKeyIdentifier = keyid
+crlDistributionPoints = URI:$crl
+[ ext_intermediaire ]
+basicConstraints = critical,CA:TRUE,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid
 crlDistributionPoints = URI:$crl
 [ ext_signature_muet ]
@@ -87,6 +108,8 @@ $cfg = "$d/openssl.cnf"
 [IO.File]::WriteAllText("$Dossier\index.txt", '')
 [IO.File]::WriteAllText("$Dossier\serie", "1000`n")
 [IO.File]::WriteAllText("$Dossier\crlnumero", "1000`n")
+[IO.File]::WriteAllText("$Dossier\index-muette.txt", '')
+[IO.File]::WriteAllText("$Dossier\serie-muette", "2000`n")
 
 # Racine SANS adresse de CRL, comme les racines réelles : le service exclut la racine du contrôle de révocation
 # (WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT) ; une racine de test avec une CRL masquerait un refus général
@@ -94,17 +117,18 @@ O req -x509 -config $cfg -newkey rsa:3072 -nodes -keyout "$d/racine.key" -out "$
 $r = New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $Dossier 'racine.crt'))
 if (@($r.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.31' }).Count) { throw 'la racine de test a une adresse de CRL' }
 # Clés : K (épinglée), K2 (non épinglée), TLS
-foreach ($k in 'k', 'k2', 'tls') { O genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$d/$k.key" }
+foreach ($k in 'k', 'k2', 'tls', 'muette') { O genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$d/$k.key" }
 
-# Certificat émis par la racine : nom, clé, extensions
-function Emettre([string]$Nom, [string]$Cle, [string]$Extensions, [string]$Cn) {
+# Certificat émis par la racine (ou par l'autorité `$Autorite) : nom, clé, extensions
+function Emettre([string]$Nom, [string]$Cle, [string]$Extensions, [string]$Cn, [string]$Autorite = 'ca_test') {
     O req -new -config $cfg -key "$d/$Cle.key" -subj "/CN=$Cn" -out "$d/$Nom.csr"
-    O ca -batch -config $cfg -extensions $Extensions -notext -in "$d/$Nom.csr" -out "$d/$Nom.crt"
+    O ca -batch -config $cfg -name $Autorite -extensions $Extensions -notext -in "$d/$Nom.csr" -out "$d/$Nom.crt"
 }
+Emettre 'muette' 'muette' 'ext_intermediaire' 'deR4Tizer intermediaire de test (sans CRL publiee)'
 Emettre 'epinglee' 'k' 'ext_signature' 'deR4Tizer signature de test (cle epinglee)'
 Emettre 'autre' 'k2' 'ext_signature' 'deR4Tizer signature de test (cle non epinglee)'
 Emettre 'revoquee' 'k' 'ext_signature' 'deR4Tizer signature de test (revoque)'
-Emettre 'sanscrl' 'k' 'ext_signature_muet' 'deR4Tizer signature de test (CRL muette)'
+Emettre 'sanscrl' 'k' 'ext_signature_muet' 'deR4Tizer signature de test (CRL muette)' 'ca_muette'
 Emettre 'tls' 'tls' 'ext_tls' $Hote
 
 # Révocation, puis CRL (DER) : produite une fois, avant tout usage
@@ -115,7 +139,11 @@ O crl -in "$d/racine.crl.pem" -outform DER -out "$d/racine.crl"
 # Fichiers PFX pour signtool (chaîne comprise)
 foreach ($n in 'epinglee', 'autre', 'revoquee', 'sanscrl') {
     $cle = if ($n -eq 'autre') { 'k2' } else { 'k' }
-    O pkcs12 -export -inkey "$d/$cle.key" -in "$d/$n.crt" -certfile "$d/racine.crt" -out "$d/$n.pfx" -passout "pass:$mdp" `
+    # Chaîne : l'intermédiaire puis la racine pour sanscrl, la racine seule pour les autres
+    $chaine = "$d/chaine-$n.pem"
+    $pems = if ($n -eq 'sanscrl') { @("$Dossier\muette.crt", "$Dossier\racine.crt") } else { @("$Dossier\racine.crt") }
+    [IO.File]::WriteAllText(($chaine -replace '/', '\'), (($pems | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n"))
+    O pkcs12 -export -inkey "$d/$cle.key" -in "$d/$n.crt" -certfile $chaine -out "$d/$n.pfx" -passout "pass:$mdp" `
         -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256
 }
 

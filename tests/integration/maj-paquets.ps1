@@ -34,7 +34,10 @@ function Paquet([string]$Nom, [string]$Version, [string]$Service, [string]$Certi
     $msi = Join-Path $Sortie "$Nom.msi"
     Move-Item (Join-Path $bin 'deR4Tizer.msi') $msi -Force
     # Sans horodatage externe : les certificats de test sont valides pendant tout le job
-    $s = & $signtool.FullName sign /f (Join-Path $Pki "$Certificat.pfx") /p $mdp /fd SHA256 /d deR4Tizer $msi 2>&1
+    # Certificat émis par l'intermédiaire « muette » : l'intermédiaire est joint à la signature (/ac), sans quoi la
+    # chaîne ne se construirait pas sur le poste
+    $ac = if ($Certificat -eq 'sanscrl') { @('/ac', (Join-Path $Pki 'muette.crt')) } else { @() }
+    $s = & $signtool.FullName sign /f (Join-Path $Pki "$Certificat.pfx") /p $mdp /fd SHA256 @ac /d deR4Tizer $msi 2>&1
     if ($LASTEXITCODE) { throw "signature de $Nom : $($s | Out-String)" }
     $signe = (Get-AuthenticodeSignature $msi).SignerCertificate
     if (-not $signe -or $signe.Thumbprint -ne (New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $Pki "$Certificat.crt"))).Thumbprint) {
