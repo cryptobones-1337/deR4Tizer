@@ -77,8 +77,8 @@ if ($Maj) {
     New-Item -ItemType Directory -Force -Path "$ex\$courante", "$ex\$nouvelle", (Join-Path $m 'ci-bin') | Out-Null
     # Exécutable officiel (sans clé de test) : sert à vérifier que la clé de test n'y figure pas
     Copy-Item (Join-Path $depot 'bin\deR4TizerSvc.exe') (Join-Path $m 'ci-bin\deR4TizerSvc.exe') -Force
-    # openssl de Git : mingw64in ou usrin selon l'installation
-    $openssl = @('mingw64in', 'usrin') | ForEach-Object { Join-Path $env:ProgramFiles "Git\$_\openssl.exe" } | Where-Object { Test-Path $_ } | Select-Object -First 1
+    # openssl de Git : mingw64\bin ou usr\bin selon l'installation
+    $openssl = @('mingw64\bin', 'usr\bin') | ForEach-Object { Join-Path $env:ProgramFiles "Git\$_\openssl.exe" } | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $openssl) { throw 'openssl de Git introuvable' }
     & (Join-Path $depot 'tests\integration\maj-pki.ps1') -Dossier (Join-Path $m 'pki') -OpenSsl $openssl
     $cle = (Get-Content (Join-Path $m 'pki\cle-epinglee.txt') -Raw).Trim()
