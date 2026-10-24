@@ -220,6 +220,25 @@ pub fn preparer_dossier_travail() -> Result<PathBuf, String> {
     Ok(d)
 }
 
+/// Contenu du dossier de travail : propriétaire SYSTEM. Ce que le service crée (sous-dossiers de version,
+/// téléchargements) a sinon Administrateurs pour propriétaire (propriétaire par défaut du jeton SYSTEM), et le
+/// propriétaire garde le droit de réécrire les droits ; icacls /reset ne touche pas au propriétaire.
+/// (code d'icacls non probant : proprietaires_verifies fait foi avant toute exécution)
+fn proprietaire_systeme(travail: &Path) {
+    crate::protection::icacls(&[&format!(r"{}\*", travail.display()), "/setowner", "*S-1-5-18", "/T", "/C", "/Q"]);
+}
+
+/// Paquets à exécuter : propriétaire SYSTEM, sinon pas d'installation (échec fermé)
+fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
+    for p in paquets {
+        let s = crate::natif::lire_securite(p).ok_or_else(|| format!("droits de {} illisibles", p.display()))?;
+        if s.proprietaire != crate::protection::SID_SYSTEME {
+            return Err(format!("{} : propriétaire {} au lieu de SYSTEM, installation refusée", p.display(), s.proprietaire));
+        }
+    }
+    Ok(())
+}
+
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
     let sortie = Command::new("curl.exe")
         .args(["-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
@@ -257,7 +276,9 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
     let url = url_paquet_version(url_manifeste, commun::VERSION)
         .ok_or("adresse du paquet de la version installée impossible à déduire du manifeste")?;
     fs::create_dir_all(&dossier).map_err(|e| e.to_string())?;
-    telecharger(&url, &paquet, 52_428_800).map_err(|e| format!("paquet de la version installée ({}) introuvable : {e}", commun::VERSION))?;
+    let telechargement = telecharger(&url, &paquet, 52_428_800);
+    proprietaire_systeme(travail);
+    telechargement.map_err(|e| format!("paquet de la version installée ({}) introuvable : {e}", commun::VERSION))?;
     let a = constater(&paquet, cles);
     if let Err(e) = verifier_artefact(&a, commun::VERSION, cles) {
         let _ = fs::remove_file(&paquet);
@@ -315,11 +336,17 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     let cible = travail.join(&m.version);
     let _ = fs::create_dir_all(&cible);
     let paquet = cible.join(NOM_PAQUET);
-    if let Err(e) = telecharger(&m.fichiers[0].url, &paquet, 52_428_800) {
+    let telechargement = telecharger(&m.fichiers[0].url, &paquet, 52_428_800);
+    proprietaire_systeme(&travail);
+    if let Err(e) = telechargement {
         return refus(format!("téléchargement du paquet impossible ({e})"));
     }
     let a = constater(&paquet, &cles);
     if let Err(e) = decision_installation(&m, &a, commun::VERSION, &cles) {
+        let _ = fs::remove_file(&paquet);
+        return refus(e);
+    }
+    if let Err(e) = proprietaires_verifies(&[paquet.as_path(), retour.as_path()]) {
         let _ = fs::remove_file(&paquet);
         return refus(e);
     }
