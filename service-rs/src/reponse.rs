@@ -881,6 +881,7 @@ pub fn plages_internet(epargnees: &[std::net::Ipv4Addr]) -> Vec<String> {
 fn epargnees() -> Vec<std::net::Ipv4Addr> {
     use std::net::ToSocketAddrs;
     let mut l = Vec::new();
+    crate::mesure::powershell("reponse");
     let dns = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", "(Get-DnsClientServerAddress -AddressFamily IPv4).ServerAddresses -join ','"])
         .output().map(|s| String::from_utf8_lossy(&s.stdout).trim().to_string()).unwrap_or_default();

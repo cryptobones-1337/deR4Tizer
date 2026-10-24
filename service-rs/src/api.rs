@@ -169,6 +169,7 @@ fn regle_parefeu(config: &ConfigApi) {
     } else {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue")
     };
+    crate::mesure::powershell("api");
     let _ = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(0x0800_0000)

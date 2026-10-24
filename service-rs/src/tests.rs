@@ -566,6 +566,33 @@ fn regroupement_second_niveau() {
     assert!(crate::notifications::texte(&lot).contains("USURPATION ARP"));
 }
 
+/// Phase 1 : mesure du cycle de surveillance (condition préalable au découpage de Moniteur). Répartition par
+/// classes de durée, cumul et fenêtre alimentés ensemble, PowerShell comptés par contexte.
+#[test]
+fn phase1_mesure_du_cycle() {
+    use crate::mesure::{duree, instantane, powershell, Stat, SEUILS_MS};
+    use std::time::Duration;
+    let mut s = Stat::default();
+    for ms in [0u64, 1, 3, 7, 40, 90, 400, 900, 4000, 9000] {
+        s.ajouter(Duration::from_millis(ms));
+    }
+    assert_eq!(s.nombre, 10);
+    assert_eq!(s.repartition, [2, 1, 1, 1, 1, 1, 1, 1, 1], "classes ≤ {SEUILS_MS:?} ms puis au-delà");
+    assert_eq!(s.max_ms, 9000.0);
+    assert_eq!(s.dernier_ms, 9000.0);
+    assert!((s.total_ms - 14441.0).abs() < 0.5);
+    let etape = format!("essai.{}", std::process::id());
+    duree(&etape, Duration::from_millis(12));
+    duree(&etape, Duration::from_millis(30));
+    powershell("essai-mesure");
+    let (cumul, fenetre) = instantane();
+    for m in [&cumul, &fenetre] {
+        let st = m.etapes.get(&etape).expect("étape mesurée");
+        assert_eq!((st.nombre, st.repartition[3]), (2, 2), "deux mesures entre 10 et 50 ms");
+        assert!(m.powershell.get("essai-mesure").copied().unwrap_or(0) >= 1);
+    }
+}
+
 /// Defender au démarrage du PC : constaté, l'interface affichait « DEFENDER DÉSACTIVÉ » pendant les 10 minutes qui
 /// suivent un redémarrage (premier relevé « Not running », Defender pas encore prêt). L'état est relu tant qu'aucun
 /// état n'a été publié et que Defender ne répond pas ou se dit « Not running » ; ensuite, plus d'attente.
