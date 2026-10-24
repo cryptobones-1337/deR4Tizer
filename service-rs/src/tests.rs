@@ -1614,3 +1614,20 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
     assert_eq!(erreurs, "0");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Le script d'installation lancé par la commande de production s'exécute vraiment. Avec DETACHED_PROCESS, Windows
+/// PowerShell 5.1 sortait avec le code 0 sans rien exécuter : aucune mise à jour n'était installée et aucun retour
+/// arrière n'avait lieu (scénario 3c en Windows Sandbox). Témoin : la même commande détachée n'écrit rien.
+#[test]
+fn script_installation_lance_s_execute() {
+    use crate::maj::commande_script;
+    use std::os::windows::process::CommandExt;
+    let d = dossier_test("script-lance");
+    let (marque, temoin) = (d.join("marque.txt"), d.join("temoin.txt"));
+    let ecrire = |f: &std::path::Path| format!("Set-Content -LiteralPath '{}' -Value ok", f.display());
+    let code = commande_script(&ecrire(&marque)).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && marque.exists(), "le script lancé par commande_script ne s'est pas exécuté");
+    let code = commande_script(&ecrire(&temoin)).creation_flags(0x0800_0000 | 0x0000_0008).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && !temoin.exists(), "témoin : PowerShell détaché a exécuté la commande (comportement à revoir)");
+    let _ = std::fs::remove_dir_all(&d);
+}
