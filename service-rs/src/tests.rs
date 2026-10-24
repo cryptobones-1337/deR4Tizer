@@ -371,6 +371,20 @@ fn fonctions_texte_sans_panique() {
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
 }
 
+/// Lot 3c : un certificat dont la CRL ne répond pas était accepté (WinVerifyTrust tolère la révocation hors
+/// ligne). Révocation révoquée, inconnue ou hors ligne : refus ; les autres états de la chaîne n'y changent rien.
+#[test]
+fn n2_revocation_verifiee_ou_refus() {
+    use crate::natif::revocation_verifiee;
+    assert!(revocation_verifiee(0), "chaîne sans erreur");
+    assert!(!revocation_verifiee(0x0000_0004), "révoqué");
+    assert!(!revocation_verifiee(0x0000_0040), "révocation inconnue");
+    assert!(!revocation_verifiee(0x0100_0000), "révocation hors ligne (CRL injoignable)");
+    assert!(!revocation_verifiee(0x0100_0040), "inconnue et hors ligne, comme Windows les signale ensemble");
+    assert!(!revocation_verifiee(0x0100_0000 | 0x0000_0001), "hors ligne avec une autre erreur");
+    assert!(revocation_verifiee(0x0000_0001), "autre erreur seule : du ressort de WinVerifyTrust, pas de cette décision");
+}
+
 #[test]
 fn n2_mise_a_jour_cle_epinglee() {
     use crate::maj::{cles_epinglees, installation_autorisee, plus_recente, version_valide};
