@@ -1,6 +1,6 @@
 # Modèle de menaces de deR4Tizer
 
-État au 2026-10-22 (`main`, version 4.3). Les mesures citées renvoient au code et, quand elles sont prouvées en
+État au 2026-10-24 (`main`, commit `4702837`, version 4.3). Les mesures citées renvoient au code et, quand elles sont prouvées en
 conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 
 ## Frontières de privilège
@@ -11,7 +11,7 @@ conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 | Interface | Service | `deR4Tizer.exe`, sans droits d'administrateur | L'interface lit l'état (fichiers JSON du dossier de données, lecture seule) ; toute action passe par le canal, donc par un administrateur (UAC). | 3a (compte standard refusé) |
 | Canal de commandes `\\.\pipe\deR4Tizer` | Service | Processus locaux | Réservé à SYSTEM et aux administrateurs ; première instance créée avec `FILE_FLAG_FIRST_PIPE_INSTANCE`, une instance toujours ouverte ; l'interface et le script de mise à jour vérifient que le serveur du tube est le processus du service. | 3a ; `lot2_canal_code_de_production_sur_un_vrai_tube` |
 | API d'export (HTTP) | Service | Réseau local (si activé) ou 127.0.0.1 | Désactivée par défaut ; lecture seule ; jeton (`api-jeton.txt`, SYSTEM et administrateurs) ; sur le réseau, adresses autorisées obligatoires et règle de pare-feu (profils Domaine et Privé, Public bloqué). | 3a (port témoin) ; `api_adresses_autorisees` |
-| Mise à jour automatique | Service (installe un MSI en SYSTEM) | Serveur de publication (GitHub), réseau | Manifeste strict ; empreinte SHA-256 ; signature Authenticode avec révocation ; clé publique du signataire comparée aux clés épinglées dans le binaire ; version lue dans le paquet signé ; dossier de travail réservé à SYSTEM ; retour arrière par le MSI de la version installée, lui aussi vérifié. Installation automatique désactivée par défaut. | `lot2_*` ; 3c (PR #10, non fusionnée) |
+| Mise à jour automatique | Service (installe un MSI en SYSTEM) | Serveur de publication (GitHub), réseau | Manifeste strict ; empreinte SHA-256 ; signature Authenticode avec révocation ; clé publique du signataire comparée aux clés épinglées dans le binaire ; version lue dans le paquet signé ; dossier de travail réservé à SYSTEM ; retour arrière par le MSI de la version installée, lui aussi vérifié. Installation automatique désactivée par défaut. | `lot2_*` ; 3c en Windows Sandbox seulement (jamais en CI) |
 | Dossier de données `C:\ProgramData\deR4Tizer` | Service | Comptes locaux | Créé avec ses droits (MSI et service) ; propriétaire et droits imposés et vérifiés au démarrage ; éléments d'un autre propriétaire mis de côté, jamais lus ; échec fermé (configuration et secrets ignorés). | 3a |
 | Opérations de fichiers SYSTEM sur des chemins de l'utilisateur (quarantaine, restauration) | Service | Utilisateur propriétaire du chemin | Ouverture par handle sans suivre de lien, chemin final vérifié ; restauration sous l'identité de l'utilisateur, jamais en SYSTEM à l'emplacement d'origine ; repli dans le dossier du service. | 3b |
 | Capture réseau | Service (socket brute) | Tout paquet reçu par le poste | Parseurs bornés et testés (mini-fuzz) ; règle « deR4Tizer capture » nécessaire (tout l'entrant vers le service) ; le service n'écoute aucun port, sauf l'API facultative. | `cargo test` (mini-fuzz) |
@@ -41,8 +41,8 @@ la résolution de noms.
 - Mesures : parseurs bornés et testés ; API désactivée par défaut, jeton, adresses autorisées ; détection NDR
   (ARP, DHCP, LLMNR/NBNS/mDNS), expérimentale.
 - Risques résiduels : l'export syslog part en clair ; la règle « deR4Tizer capture » autorise tout l'entrant vers
-  le service (nécessaire à la capture) ; `/api/v1/sante` renvoie le nom de la machine sans jeton ; échec de
-  `BCryptGenRandom` non vérifié à la création du jeton (correctifs proposés, PR #14, non fusionnée).
+  le service (nécessaire à la capture). Jeton de l'API en échec fermé et `/api/v1/sante` sans nom de machine
+  (PR #14), testés en labo seulement.
 
 ### Compte GitHub compromis
 Veut publier une version malveillante que les postes installeraient.
@@ -50,11 +50,15 @@ Veut publier une version malveillante que les postes installeraient.
 - Mesures : clé de signature épinglée dans les binaires déjà installés (une nouvelle clé n'est acceptée que par
   les binaires compilés avec elle) ; certificat dans l'environnement « publication » (secrets ; approbation obligatoire à confirmer),
   compilation séparée de la signature ; ensemble de règles « tags-version » actif sur les tags (vu le 2026-10-22,
-  contenu à confirmer) ; `main` protégée (PR, CI obligatoire) ; version lue
+  contenu à confirmer) ; `main` protégée (PR obligatoire, pas de poussée forcée ; vérifications de CI obligatoires
+  retirées temporairement pendant la désactivation de GitHub Actions, remplacées par la preuve locale de
+  `CLAUDE.md`) ; version lue
   dans le paquet signé, plus récente que l'installée.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
-  sessions) le couvre. Sur `main`, une liste de révocation injoignable est tolérée (PR #12, non fusionnée).
+  sessions) le couvre. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
+  Windows Sandbox seulement). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
+  versions 4.2 et 4.3 publiées (corrigée par la PR #26, non encore publiée), n'installe rien aujourd'hui.
 - Choix du certificat : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
   ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
