@@ -128,4 +128,7 @@ Etape 'Scripts'
 Copy-Item (Join-Path $depot 'tests\integration\*.ps1') (Join-Path $entree 'integration') -Force
 Copy-Item (Join-Path $depot 'tests\integration\*.py') (Join-Path $entree 'integration') -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $PSScriptRoot 'executer.ps1') $entree -Force
+# Scénarios propres à la VM de test (lot 3d) ; ils chargent ..\integration\commun.ps1
+New-Item -ItemType Directory -Force -Path (Join-Path $entree 'vm') | Out-Null
+Copy-Item (Join-Path $depot 'tests\vm\lot3d.ps1') (Join-Path $entree 'vm') -Force
 Write-Host "Prêt : $entree (version $version). Lancer : .\tests\bac-a-sable\lancer.ps1 -Scenario installation|quarantaine"

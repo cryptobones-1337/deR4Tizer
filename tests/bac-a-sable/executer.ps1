@@ -2,7 +2,7 @@
 # de la CI, écrit le tableau et les journaux dans le dossier de sortie monté, relève l'état de Microsoft Defender
 # avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé. Aussi exécuté dans la VM de test
 # (tests\vm\lancer.ps1, PowerShell Direct) avec -SansArret : la VM est remise à son instantané par le lanceur.
-param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario, [switch]$SansArret)
+param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d')] [string]$Scenario, [switch]$SansArret)
 $sortie = 'C:\sortie'
 $entree = 'C:\entree'
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
@@ -21,6 +21,11 @@ try {
     switch ($Scenario) {
         'installation' { & "$entree\integration\installation.ps1" -Msi "$entree\deR4Tizer.msi" -MsiAncien "$entree\deR4Tizer-ancien.msi" -Version $version }
         'quarantaine' { & "$entree\integration\quarantaine.ps1" -Msi "$entree\deR4Tizer.msi" }
+        # VM seulement : empreinte du MSI calculée sur l'hôte et déposée par tests\vm\lancer.ps1
+        'lot3d' {
+            $attendu = if (Test-Path "$entree\msi-sha256-hote.txt") { (Get-Content "$entree\msi-sha256-hote.txt" -Raw).Trim() } else { '' }
+            & "$entree\vm\lot3d.ps1" -Msi "$entree\deR4Tizer.msi" -Sha256Attendu $attendu
+        }
         'maj' {
             # Python embarquable (lecture seule) pour le serveur local ; versions préparées par preparer.ps1 -Maj
             $env:PATH = "$entree\python;$env:PATH"

@@ -7,9 +7,9 @@
 # administrateur de la VM enregistré par Export-Clixml (DPAPI, jamais affiché) ; membre du groupe « Administrateurs
 # Hyper-V » ; preparer.ps1 exécuté (et preparer.ps1 -Maj pour le 3c).
 #
-# Usage : .\tests\vm\lancer.ps1 -Scenario installation|quarantaine|maj [-Vm deR4Tizer-test-26H2] [-Instantane <nom>]
+# Usage : .\tests\vm\lancer.ps1 -Scenario installation|quarantaine|maj|lot3d [-Vm deR4Tizer-test-26H2] [-Instantane <nom>]
 param(
-    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario,
+    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d')] [string]$Scenario,
     [string]$Racine = 'C:\d4t-bac-a-sable',
     [string]$Vm = 'deR4Tizer-test-26H2',
     # Par défaut : l'instantané le plus récent dont le nom commence par « propre »
@@ -56,6 +56,9 @@ try {
     if ((& $ecart) -gt 120) { throw 'Horloge de la VM non resynchronisée (écart de plus de 2 minutes).' }
     Invoke-Command -Session $s { Remove-Item C:\entree, C:\sortie -Recurse -Force -ErrorAction SilentlyContinue }
     Copy-Item -Path $entree -Destination 'C:\entree' -ToSession $s -Recurse -Force
+    # Empreinte du MSI calculée ici, sur l'hôte : le lot 3d la compare à celle du fichier reçu dans la VM
+    $h = (Get-FileHash (Join-Path $entree 'deR4Tizer.msi') -Algorithm SHA256).Hash
+    Invoke-Command -Session $s -ArgumentList $h { param($h) Set-Content C:\entree\msi-sha256-hote.txt $h -Encoding Ascii }
     Invoke-Command -Session $s -ArgumentList $Scenario, $Minutes -ScriptBlock {
         param($Scenario, $Minutes)
         # Exécuteur dans un processus séparé, avec un délai maximal ; -SansArret : la VM ne s'éteint pas
