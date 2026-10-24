@@ -297,8 +297,24 @@ fn tache_com_cible_le_serveur_du_clsid() {
     assert_eq!(c.to_lowercase(), format!(r"{w}\system32\wininet.dll").to_lowercase());
     // CLSID inconnu : aucune cible (signataire « ? »), jamais un dossier
     assert_eq!(crate::persistance::cible("COM {00000000-0000-0000-0000-0000000000D4}"), "");
-    // Un nom relatif ne se résout jamais en dossier
-    assert!(!std::path::Path::new(&crate::persistance::cible("COM")).is_dir());
+    // Un nom relatif ne se résout jamais en dossier (ici System32\COM)
+    assert_ne!(crate::persistance::cible("COM").to_lowercase(), format!(r"{w}\system32\com").to_lowercase());
+}
+
+#[test]
+fn tache_com_hors_windows_sans_serveur_signalee() {
+    // Détournement COM : tâche hors \Microsoft\Windows\ dont le CLSID n'est pas enregistré pour la machine (HKCU,
+    // non lu) ou dont le serveur manque. Ne doit jamais sortir sans remarque
+    let tache = |nom: &str, cible: &str| crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(), nom: nom.into(), commande: "COM {00000000-0000-0000-0000-0000000000D4}".into(),
+        cible: cible.into(), signataire: "?".into(), ..Default::default()
+    };
+    let absent = format!(r"{}\d4t-absent-{}.dll", crate::natif::dossier_systeme(), std::process::id());
+    for (nom, c) in [(r"\Mise a jour", ""), (r"\Microsoft\Office\Tache", ""), (r"\Mise a jour", absent.as_str())] {
+        assert!(crate::persistance::evaluer(&tache(nom, c)).contains("serveur COM non enregistré"), "{nom} / {c}");
+    }
+    // Tâche livrée avec Windows au CLSID non enregistré : pas de bruit
+    assert_eq!(crate::persistance::evaluer(&tache(r"\Microsoft\Windows\Wininet\X", "")), "");
 }
 
 // ------------------------------------------------------------ décisions (un test par correctif des revues)

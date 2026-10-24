@@ -53,7 +53,8 @@ impl Persistance {
         let mut modifie = releve.len() != self.reference.len();
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
-            e.signataire = if e.cible.is_empty() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
+            // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
+            e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
             match self.reference.get(&e.cle) {
                 Some(ancienne) => {
@@ -102,7 +103,7 @@ fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
     }
 }
 
-fn evaluer(e: &EntreeDemarrage) -> String {
+pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
@@ -120,6 +121,11 @@ fn evaluer(e: &EntreeDemarrage) -> String {
     }
     if matches!(e.categorie.as_str(), "IFEO" | "AppInit" | "WMI") {
         r.push("technique de persistance rare".into());
+    }
+    // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
+    // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
+    if !tache_windows && clsid_com(&e.commande).is_some() && !Path::new(&e.cible).is_file() {
+        r.push("serveur COM non enregistré pour la machine".into());
     }
     r.join(", ")
 }
@@ -351,7 +357,7 @@ fn taches(l: &mut Vec<EntreeDemarrage>) {
                 let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
                 ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
             } else if let Some(c) = com.captures(&xml) {
-                ajouter(l, "Tâche planifiée", &nom, &format!("COM {}", &c[1]));
+                ajouter(l, "Tâche planifiée", &nom, &format!("COM {}", c[1].trim()));
             }
         }
     }
