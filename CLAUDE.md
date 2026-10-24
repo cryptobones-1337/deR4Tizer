@@ -10,7 +10,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée et validée par la relecture (section 4). Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -73,7 +73,9 @@ Puis s'arrêter : chaque PR est relue avant que le lot suivant commence.
 
 Sur décision de cryptobones-1337, la relecture des PR est faite par un agent de relecture Claude Code, à la place du
 relecteur externe :
-1. Contexte vierge, lecture seule (aucun commit, aucune fusion, aucun commentaire), sur les têtes des PR lues sur GitHub.
+1. Sans l'historique de la session qui a écrit le code, mais sur une consigne rédigée par elle ; aucune écriture dans
+   le dépôt ni sur GitHub (ni poussée, ni fusion, ni commentaire), les fusions de contrôle se faisant dans un clone
+   temporaire ; sur les têtes des PR lues sur GitHub.
 2. Contrôles : arbre intégré reproduit et égal à l'arbre de la preuve ; pas d'empilement ; fusion sans conflit ;
    `cargo test --release` (MSVC) et, pour chaque correctif, un test qui échoue sans lui ; documentation et règles de
    ce fichier ; données personnelles ; description exacte.
