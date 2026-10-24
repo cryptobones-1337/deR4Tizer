@@ -203,6 +203,32 @@ fn plages_du_mode_panique() {
     }
 }
 
+/// Lot 5 : jeton de l'API en échec fermé (BCryptGenRandom en échec ou octets nuls : aucun jeton, donc pas d'API),
+/// et /api/v1/sante, servie sans jeton, ne dit plus le nom de la machine
+#[test]
+fn lot5_api_jeton_echec_ferme_et_sante_anonyme() {
+    use crate::api::{corps_sante, jeton_depuis_alea};
+    assert_eq!(jeton_depuis_alea(false, &[7u8; 32]), None, "générateur en échec : pas de jeton");
+    assert_eq!(jeton_depuis_alea(true, &[0u8; 32]), None, "octets nuls : pas de jeton");
+    assert_eq!(jeton_depuis_alea(true, &[0u8; 8]), None, "trop court : pas de jeton");
+    let j = jeton_depuis_alea(true, &[0xab; 32]).unwrap();
+    assert_eq!(j, "ab".repeat(32));
+    let s = corps_sante();
+    assert!(s.contains(r#""Ok":true"#) && s.contains(crate::commun::VERSION), "{s}");
+    assert!(!s.contains("Hote"), "nom de la machine renvoyé sans jeton : {s}");
+    let hote = crate::export::hote_local();
+    assert!(hote.is_empty() || !s.contains(&hote), "nom de la machine renvoyé sans jeton : {s}");
+    // Revue : un jeton DÉJÀ présent n'est repris que s'il a la forme d'un jeton créé par le service
+    use crate::api::jeton_valide;
+    assert!(jeton_valide(&"ab".repeat(32)));
+    assert!(jeton_valide(&"0123456789ABCDEF".repeat(4)), "majuscules hexadécimales acceptées");
+    assert!(!jeton_valide(&"0".repeat(64)), "jeton nul refusé");
+    assert!(!jeton_valide(&"a".repeat(32)), "32 caractères : trop court");
+    assert!(!jeton_valide(&"a".repeat(65)), "trop long");
+    assert!(!jeton_valide(&"g".repeat(64)), "non hexadécimal");
+    assert!(!jeton_valide(""), "vide");
+}
+
 #[test]
 fn api_adresses_autorisees() {
     let l = vec!["192.168.1.10".to_string(), "10.0.0.0/8".to_string()];
