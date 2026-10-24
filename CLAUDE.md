@@ -69,6 +69,17 @@ Risques restants
 
 Puis s'arrêter : le relecteur externe analyse chaque commit avant que le lot suivant commence.
 
+### Exception temporaire : GitHub Actions désactivé sur le dépôt (depuis le 2026-10-22)
+
+Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par une preuve locale, avec l'accord de cryptobones-1337 :
+1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
+2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c en Windows Sandbox (tests/bac-a-sable). Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés.
+3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
+4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
+5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
+
+Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM et que les binaires ne sont pas signés.
+
 ## 5. File de travail (dans cet ordre)
 
 ### Lot 1 : propriété et droits du dossier de données (bloquant, élévation de privilèges)
@@ -189,8 +200,13 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 ### Ensuite (après validation des lots 1 à 5, une phase à la fois, avec accord)
 
 1. Phase 1 complète : autorisation vérifiée par commande, validation de chaque champ reçu, limites de débit et de concurrence, tests de messages malformés, tronqués, silencieux.
+   Architecture, dans la même phase (à faire après la fusion des PR ouvertes, qui touchent ces fichiers) :
+   - Condition préalable : mesure du cycle de surveillance (durée de chaque étape, PowerShell lancés pendant le cycle, temps passé sous le verrou). Sans ces chiffres, ni découpage de `Moniteur` ni optimisation.
+   - `Moniteur` (moniteur.rs), une fois la mesure faite et seulement là où elle le justifie : les actions longues (quarantaine, restauration, baseline, panique) faites hors du verrou `Arc<Mutex<Moniteur>>`, pris seulement pour enregistrer le résultat : une quarantaine ne doit plus aveugler la surveillance, ni un cycle lent bloquer l'interface ; `executer()` (28 commandes dans un seul `match`) découpé en un gestionnaire par domaine (réponse, blocages, configuration, mise à jour, protection) ; `passage()` (cycle de 3 s) découpé en étapes, chacune avec sa minuterie.
+   - Pas de découpage de `natif.rs` pour lui-même : du seul déplacement de code, en conflit avec toutes les PR ouvertes. Seulement si une mesure ou une correction le justifie, au moment de celle-ci.
 2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
+   Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
