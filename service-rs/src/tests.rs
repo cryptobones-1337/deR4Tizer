@@ -2189,6 +2189,37 @@ fn phase1_fichier_hosts_sans_injection() {
     assert_eq!(crate::blocage::lignes_du_bloc(&noms), vec!["exemple.test", "b.test"], "noms invalides écartés, valides en minuscules");
 }
 
+/// Audit SEC-005, SEC-006, AUD5-05, AUD5-06 : le fichier hosts était entièrement décodé et filtré en ASCII (lignes
+/// de l'utilisateur altérées), un début de bloc sans fin faisait perdre la suite, et l'écriture n'était pas atomique.
+/// Les lignes hors du bloc sont maintenant recopiées octet pour octet.
+#[test]
+fn audit_fichier_hosts_lignes_de_l_utilisateur_intactes() {
+    use crate::blocage::{nouveau_contenu, DEBUT_BLOC, FIN_BLOC};
+    let d = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let utilisateur = "# serveur du café, étage 2\r\n192.168.1.20\tnas.local\r\n".as_bytes();
+    // Sans bloc ni domaine : contenu identique, octet pour octet (y compris sans fin de ligne finale)
+    assert_eq!(nouveau_contenu(utilisateur, &[]).unwrap(), utilisateur);
+    assert_eq!(nouveau_contenu(b"10.0.0.1 a", &[]).unwrap(), b"10.0.0.1 a");
+    // Bloc ajouté : lignes de l'utilisateur intactes devant
+    let n = nouveau_contenu(utilisateur, &d(&["Exemple.Test"])).unwrap();
+    assert!(n.starts_with(utilisateur));
+    assert_eq!(&n[utilisateur.len()..], format!("{DEBUT_BLOC}\r\n127.0.0.1\texemple.test\r\n{FIN_BLOC}\r\n").as_bytes());
+    // Bloc existant remplacé, lignes avant et après gardées telles quelles
+    let avec = [utilisateur, format!("{DEBUT_BLOC}\r\n127.0.0.1\tancien.test\r\n{FIN_BLOC}\r\n").as_bytes(), "# après, déjà là\r\n".as_bytes()].concat();
+    let n = nouveau_contenu(&avec, &d(&["b.test"])).unwrap();
+    let t = String::from_utf8(n).unwrap();
+    assert!(t.starts_with("# serveur du café, étage 2\r\n192.168.1.20\tnas.local\r\n# après, déjà là\r\n"), "{t:?}");
+    assert!(t.contains("127.0.0.1\tb.test") && !t.contains("ancien.test"));
+    // Bloc retiré quand il n'y a plus de domaine
+    assert_eq!(nouveau_contenu(&avec, &[]).unwrap(), [utilisateur, "# après, déjà là\r\n".as_bytes()].concat());
+    // Faux début de bloc sans fin : ligne de l'utilisateur, rien n'est perdu après
+    let faux = [utilisateur, format!("{DEBUT_BLOC}\r\n10.6.6.6 banque.test\r\n").as_bytes()].concat();
+    let n = nouveau_contenu(&faux, &d(&["c.test"])).unwrap();
+    assert!(n.starts_with(&faux), "le faux début de bloc et la ligne suivante sont gardés");
+    // UTF-16 : refusé plutôt que cassé
+    assert!(nouveau_contenu(&[0xFF, 0xFE, b'#', 0], &d(&["a.test"])).is_err());
+}
+
 #[test]
 fn phase1_messages_malformes_tronques() {
     use crate::validation::Client;

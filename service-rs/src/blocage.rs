@@ -43,8 +43,58 @@ pub fn lignes_hors_bloc() -> std::io::Result<(Vec<String>, Vec<String>)> {
     Ok((hors, bloc))
 }
 
+/// Empreinte du fichier hosts ENTIER : avant, seules les lignes hors du bloc de deR4Tizer comptaient, et une ligne
+/// ajoutée dans le bloc (ou un faux début de bloc) passait sans alerte (audit AUD5-06)
 pub fn empreinte_hosts() -> String {
-    lignes_hors_bloc().map(|(h, _)| h.join("\n")).unwrap_or_default()
+    crate::hygiene::empreinte_fichier(&fichier_hosts()).unwrap_or_default()
+}
+
+/// Bornes du bloc de deR4Tizer : (ligne de début, ligne de fin), seulement si les deux marqueurs sont présents dans
+/// cet ordre ; un début sans fin n'est pas un bloc (sinon toutes les lignes suivantes de l'utilisateur seraient perdues)
+fn bornes_du_bloc(lignes: &[&[u8]]) -> Option<(usize, usize)> {
+    let net = |l: &[u8]| -> Vec<u8> { l.strip_suffix(b"\r").unwrap_or(l).to_vec() };
+    let debut = lignes.iter().position(|l| net(l) == DEBUT_BLOC.as_bytes())?;
+    let fin = lignes[debut + 1..].iter().position(|l| net(l) == FIN_BLOC.as_bytes())? + debut + 1;
+    Some((debut, fin))
+}
+
+/// Nouveau contenu du fichier hosts (pur, testé) : les lignes de l'utilisateur hors du bloc sont recopiées OCTET POUR
+/// OCTET (avant, le fichier entier passait par un décodage approximatif et un filtre ASCII : commentaires accentués
+/// perdus, fichier UTF-16 cassé, audit SEC-006) ; seul le bloc de deR4Tizer est réécrit, en ASCII, fins de ligne
+/// Windows. Fichier en UTF-16 (BOM) : refusé plutôt que réécrit.
+pub fn nouveau_contenu(original: &[u8], domaines: &[String]) -> Result<Vec<u8>, String> {
+    if original.starts_with(&[0xFF, 0xFE]) || original.starts_with(&[0xFE, 0xFF]) {
+        return Err("fichier hosts en UTF-16 : non modifié".into());
+    }
+    let lignes: Vec<&[u8]> = if original.is_empty() { Vec::new() } else { original.split(|&b| b == b'\n').collect() };
+    // split laisse un dernier élément vide quand le fichier finit par une fin de ligne
+    let (lignes, fin_de_ligne) = match lignes.split_last() {
+        Some((d, reste)) if d.is_empty() => (reste.to_vec(), true),
+        _ => (lignes.clone(), lignes.is_empty()),
+    };
+    let mut garder: Vec<&[u8]> = lignes.clone();
+    if let Some((d, f)) = bornes_du_bloc(&lignes) {
+        garder.drain(d..=f);
+    }
+    // Lignes gardées rejointes telles quelles (avec leur \r éventuel), fin de ligne finale seulement si l'original
+    // en avait une : sans bloc, le contenu est exactement l'original
+    let mut sortie = garder.join(&b'\n');
+    if fin_de_ligne && !garder.is_empty() {
+        sortie.push(b'\n');
+    }
+    let mut liste = lignes_du_bloc(domaines);
+    liste.sort();
+    liste.dedup();
+    if !liste.is_empty() {
+        if !sortie.is_empty() && !sortie.ends_with(b"\n") {
+            sortie.extend_from_slice(b"\r\n");
+        }
+        for l in std::iter::once(DEBUT_BLOC.to_string()).chain(liste.iter().map(|d| format!("127.0.0.1\t{d}"))).chain(std::iter::once(FIN_BLOC.to_string())) {
+            sortie.extend_from_slice(l.as_bytes());
+            sortie.extend_from_slice(b"\r\n");
+        }
+    }
+    Ok(sortie)
 }
 
 /// Noms écrits dans le bloc de deR4Tizer du fichier hosts : seulement des noms de domaine valides (phase 1), en
@@ -61,23 +111,51 @@ pub fn lignes_du_bloc(domaines: &[String]) -> Vec<String> {
     }).collect()
 }
 
+/// Sauvegardes du fichier hosts gardées (les plus récentes)
+const SAUVEGARDES_HOSTS: usize = 20;
+
+/// Réécrit le bloc de deR4Tizer (audit SEC-005) : sauvegarde obligatoire avant toute écriture (échec : rien n'est
+/// écrit), puis fichier temporaire dans le même dossier et remplacement (jamais de fichier hosts tronqué) ; seules les
+/// SAUVEGARDES_HOSTS dernières sauvegardes sont gardées.
 pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
-    let (mut lignes, _) = lignes_hors_bloc()?;
-    let sauvegardes = commun::dossier().join("sauvegardes");
-    let _ = fs::create_dir_all(&sauvegardes);
-    let horodatage = commun::maintenant().replace([':', ' '], "-");
-    let _ = fs::copy(fichier_hosts(), sauvegardes.join(format!("hosts-{horodatage}.bak")));
-    let mut liste = lignes_du_bloc(domaines);
-    liste.sort();
-    liste.dedup();
-    if !liste.is_empty() {
-        lignes.push(DEBUT_BLOC.into());
-        lignes.extend(liste.iter().map(|d| format!("127.0.0.1\t{d}")));
-        lignes.push(FIN_BLOC.into());
+    use std::io::{Error, ErrorKind, Write};
+    let hosts = fichier_hosts();
+    let original = match fs::read(&hosts) {
+        Ok(o) => o,
+        Err(e) if e.kind() == ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    let contenu = nouveau_contenu(&original, domaines).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    if contenu == original {
+        return Ok(());
     }
-    // ASCII pur, fins de ligne Windows
-    let texte: String = lignes.iter().map(|l| format!("{}\r\n", l.trim_end_matches('\r'))).collect();
-    fs::write(fichier_hosts(), texte.chars().filter(|c| c.is_ascii()).collect::<String>())?;
+    let sauvegardes = commun::dossier().join("sauvegardes");
+    fs::create_dir_all(&sauvegardes)?;
+    if !original.is_empty() {
+        let horodatage = commun::maintenant().replace([':', ' '], "-");
+        fs::write(sauvegardes.join(format!("hosts-{horodatage}.bak")), &original)?;
+        let mut anciennes: Vec<_> = fs::read_dir(&sauvegardes)?.filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("hosts-")).map(|e| e.path()).collect();
+        anciennes.sort();
+        let surplus = anciennes.len().saturating_sub(SAUVEGARDES_HOSTS);
+        for a in anciennes.into_iter().take(surplus) {
+            let _ = fs::remove_file(a);
+        }
+    }
+    let tmp = hosts.with_file_name("hosts.deR4Tizer.tmp");
+    let ecrit = (|| -> std::io::Result<()> {
+        let mut h = fs::File::create(&tmp)?;
+        h.write_all(&contenu)?;
+        h.sync_all()
+    })();
+    if let Err(e) = ecrit {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = natif::remplacer_fichier(&tmp, &hosts) {
+        let _ = fs::remove_file(&tmp);
+        return Err(Error::other(e));
+    }
     natif::vider_cache_dns();
     Ok(())
 }
