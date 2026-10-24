@@ -68,8 +68,8 @@ rustup toolchain install stable-x86_64-pc-windows-msvc
 
 ### Installer
 
-Télécharger `deR4Tizer.msi` depuis la [dernière version](https://github.com/cryptobones-1337/deR4Tizer/releases/latest)
-et l'ouvrir. Le service démarre aussitôt ; l'interface se trouve dans le menu Démarrer et se lance à l'ouverture de
+Aucune version n'est publiée à ce jour (voir « Premier déploiement » plus bas). Une fois publiée : télécharger
+`deR4Tizer.msi` depuis la [page des versions](https://github.com/cryptobones-1337/deR4Tizer/releases) et l'ouvrir. Le service démarre aussitôt ; l'interface se trouve dans le menu Démarrer et se lance à l'ouverture de
 session. Les nouvelles versions sont signalées ; leur installation automatique s'active dans les réglages (versions signées).
 
 Déploiement sur un parc (GPO, Intune, prestataire) :
@@ -111,7 +111,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 ### Mise à jour automatique et signature
 
-> **Limite connue.** Dans les versions publiées jusqu'ici, la mise à jour automatique n'installe rien : le script
+> **Limite connue.** Dans les versions 4.2 et 4.3 déjà installées, la mise à jour automatique n'installe rien : le script
 > d'installation, lancé sans console, ne s'exécutait pas (corrigé dans `main` par la PR #26, pas encore dans une version publiée). Une 4.2 ou une
 > 4.3 installée ne se met donc pas à jour seule : installer à la main (`msiexec /i deR4Tizer.msi`) une version qui
 > contient ce correctif ; la mise à jour automatique fonctionne ensuite à partir de celle-ci.
