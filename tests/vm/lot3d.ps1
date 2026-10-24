@@ -96,17 +96,14 @@ if ($installe) {
     }
     if ($entree) {
         Verifier 'Restauration à l''identique' {
+            # Fichier créé par l'administrateur (propriétaire Administrateurs, sans session à lui) : la restauration se
+            # fait à l'origine, ou dans le dossier de repli du service (restaurations\<id>\<nom>) ; les deux sont
+            # acceptés ici, avec une empreinte identique
+            $repli = Join-Path $script:Donnees "restaurations\$($entree.Id)\$(Split-Path $fichier -Leaf)"
             $r = Commande-Cible 'restaurer' $entree.Id
-            # Fichier créé par l'administrateur (propriétaire Administrateurs, sans session à lui) : la restauration
-            # peut se faire à l'origine ou dans le dossier de repli du service ; les deux sont acceptés ici
-            $e = @(Liste-Quarantaine | Where-Object Id -eq $entree.Id) | Select-Object -Last 1
-            $chemin = if (Test-Path -LiteralPath $fichier) { $fichier } elseif ($e -and $e.CheminRestaure) { $e.CheminRestaure } else { $null }
-            if (-not $r.Ok -and -not $chemin) {
-                $r = Commande-Cible 'restaurerRepli' $entree.Id
-                $e = @(Liste-Quarantaine | Where-Object Id -eq $entree.Id) | Select-Object -Last 1
-                $chemin = if ($e -and $e.CheminRestaure) { $e.CheminRestaure } else { $null }
-            }
-            if (-not $chemin -or -not (Test-Path -LiteralPath $chemin)) { return "fichier restauré introuvable : $($r.Message)" }
+            if (-not $r.Ok -and -not (Test-Path -LiteralPath $fichier)) { $r = Commande-Cible 'restaurerRepli' $entree.Id }
+            $chemin = if (Test-Path -LiteralPath $fichier) { $fichier } elseif (Test-Path -LiteralPath $repli) { $repli } else { $null }
+            if (-not $chemin) { return "fichier restauré introuvable (origine ni repli) : $($r.Message)" }
             if ((Sha256 $chemin) -ne $empreinte) { return "contenu différent ($chemin)" }
             $true
         }
@@ -140,7 +137,10 @@ if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
 # Configuration de Defender modifiée pendant le passage (événement 5007) : deR4Tizer ne doit jamais y toucher
 Verifier 'Configuration de Defender inchangée pendant le passage (événement 5007)' {
-    $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue)
+    # Seulement les réglages de protection (exclusions, temps réel, falsification, cloud, comportement) : Defender
+    # écrit lui-même des centaines de 5007 sur ses propres réglages internes (Features\Controls), constaté en VM
+    $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue |
+        Where-Object { $_.Message -match 'Exclusions|Real-Time Protection|Disable|TamperProtection|SpyNet|MAPS' -and $_.Message -notmatch 'Features\\Controls' })
     if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 3 | ForEach-Object { ($_.Message -split "`n" | Select-Object -Skip 1 -First 3) -join ' ' }) -join ' ; ') }
     $true
 }
