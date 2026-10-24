@@ -1673,3 +1673,25 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
     assert_eq!(erreurs, "0");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Audit des données sensibles, posé par handle (natif::poser_audit_arborescence) : décision « déjà posé ». Un
+/// dossier doit avoir l'entrée exacte (drapeaux d'héritage compris) ; un fichier, l'entrée voulue, explicite ou
+/// héritée du dossier. Sinon la SACL serait réécrite à chaque passage (rafales d'événements 4907). La pose réelle
+/// (privilège SeSecurityPrivilege, jonction vers un canari) est vérifiée par le scénario 3b.
+#[test]
+fn audit_donnees_deja_pose() {
+    use crate::natif::audit_deja_pose;
+    let dossier = "S:(AU;OINPIOSA;CC;;;WD)";
+    assert!(audit_deja_pose(dossier, dossier, true));
+    assert!(!audit_deja_pose("S:(AU;OICIIOSA;CC;;;WD)", dossier, true), "autres drapeaux d'héritage sur un dossier");
+    assert!(!audit_deja_pose("S:", dossier, true), "aucun audit");
+    let fichier = "S:(AU;SA;CC;;;WD)";
+    assert!(audit_deja_pose(fichier, fichier, false));
+    assert!(audit_deja_pose("S:AI(AU;IDSA;CC;;;WD)", fichier, false), "entrée héritée du dossier");
+    assert!(audit_deja_pose("S:AI(AU;SA;FA;;;BA)(AU;IDSA;CC;;;WD)", fichier, false), "entrée voulue parmi d'autres");
+    assert!(!audit_deja_pose("S:", fichier, false), "aucun audit");
+    assert!(!audit_deja_pose("S:(AU;SA;CC;;;BA)", fichier, false), "autre compte audité");
+    assert!(!audit_deja_pose("S:(AU;FA;CC;;;WD)", fichier, false), "échecs audités, pas les succès");
+    assert!(!audit_deja_pose("S:(AU;SA;FA;;;WD)", fichier, false), "autres droits");
+    assert!(!audit_deja_pose("S:(AU;SA;CC;;;WD)", "S:", false), "SACL voulue vide : jamais « déjà posée »");
+}
