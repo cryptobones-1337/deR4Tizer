@@ -1641,6 +1641,87 @@ fn lot2_retour_arriere_simule() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Lot 5 : un client du canal qui se connecte puis se tait ne bloque plus le canal : la lecture d'une commande est
+/// bornée dans le temps ; une commande normale est toujours lue
+#[test]
+fn lot5_canal_lecture_bornee_client_silencieux() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    for (essai, envoi) in [("silence", None), ("commande", Some("{\"Action\":\"verification\"}\n"))] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-{essai}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+        assert!(!tube.is_invalid());
+        let nom_client = nom.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&nom_client).unwrap();
+            if let Some(t) = envoi {
+                c.write_all(t.as_bytes()).unwrap();
+            }
+            // Le client garde la connexion ouverte sans rien envoyer de plus
+            std::thread::sleep(Duration::from_secs(6));
+        });
+        let _ = unsafe { ConnectNamedPipe(tube, None) };
+        let debut = Instant::now();
+        let lu = crate::canal::lire_commande(HANDLE(tube.0), Duration::from_millis(800));
+        let duree = debut.elapsed();
+        assert!(duree < Duration::from_secs(3), "{essai} : lecture non bornée ({duree:?})");
+        match envoi {
+            None => assert!(lu.is_empty(), "silence : rien ne doit être lu"),
+            Some(t) => assert_eq!(String::from_utf8_lossy(&lu), t, "commande : lue en entier"),
+        }
+        unsafe { let _ = CloseHandle(tube); }
+        client.join().unwrap();
+    }
+}
+
+/// Lot 5 : canal occupé par un autre processus au démarrage (squat) : le PID de celui qui tient le tube est lu en
+/// client anonyme (jamais avec l'identité de SYSTEM), et l'alerte est critique, avec le PID et le chemin
+#[test]
+fn lot5_canal_squat_pid_et_alerte_critique() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let nom = format!(r"\\.\pipe\d4t-essai-lot5-squat-{}", std::process::id());
+    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), Some(std::process::id()));
+    unsafe { let _ = CloseHandle(tube); }
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), None, "tube fermé : aucun PID");
+    let a = crate::canal::alerte_squat(Some(4242), r"C:\Users\x\AppData\squat.exe");
+    assert_eq!(a.niveau, "Critique");
+    assert_eq!(a.pid, Some(4242));
+    assert!(a.raisons.contains("4242") && a.raisons.contains(r"C:\Users\x\AppData\squat.exe"), "{}", a.raisons);
+    let inconnu = crate::canal::alerte_squat(None, "");
+    assert_eq!(inconnu.niveau, "Critique");
+    // Revue : alerte de squat seulement quand le nom est déjà pris à la création de la première instance
+    use crate::canal::squat;
+    assert!(squat(5), "ERROR_ACCESS_DENIED : nom déjà pris");
+    assert!(squat(231), "ERROR_PIPE_BUSY : nom pris par un tube à instances limitées");
+    assert!(!squat(8), "ERROR_NOT_ENOUGH_MEMORY : autre erreur");
+    assert!(!squat(0));
+    // Code réellement rendu par Windows quand un autre processus tient déjà le nom, qu'il limite ou non le nombre
+    // d'instances : la décision s'appuie sur ce constat
+    use windows::Win32::Storage::FileSystem::FILE_FLAG_FIRST_PIPE_INSTANCE;
+    for max in [1u32, 255] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-pris-{max}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tenu = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, max, 512, 512, 0, None) };
+        assert!(!tenu.is_invalid());
+        let second = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 255, 512, 512, 0, None) };
+        let code = (windows::core::Error::from_win32().code().0 as u32) & 0xFFFF;
+        assert!(second.is_invalid(), "nom déjà pris : création refusée");
+        assert!(squat(code), "instances maximales {max} : code {code}, pas reconnu comme squat");
+        unsafe { let _ = CloseHandle(tenu); }
+    }
+}
+
 /// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
