@@ -1,6 +1,6 @@
 # Modèle de menaces de deR4Tizer
 
-État au 2026-10-24 (`main`, commit `4702837`, version 4.3). Les mesures citées renvoient au code et, quand elles sont prouvées en
+État au 2026-10-24 (`main`, commit `7ff8309`, version 4.3). Les mesures citées renvoient au code et, quand elles sont prouvées en
 conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 
 ## Frontières de privilège

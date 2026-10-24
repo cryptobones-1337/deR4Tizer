@@ -1,7 +1,6 @@
 # Matrice des capacités de deR4Tizer
 
-État au 2026-10-24, branche `main` (commit `4702837`, arbre `370e4d272d88515c1e6901882933bc8340995602`,
-version 4.3), après la fusion des PR #10 et #12 à #27 ; les PR #28 et #30, fusionnées juste avant celle-ci, sont
+État au 2026-10-24, branche `main` (commit `7ff8309`, après réécriture de l'historique, version 4.3), après la fusion des PR #10 et #12 à #27 ; les PR #28 et #30, fusionnées juste avant celle-ci, sont
 décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte que la preuve citée.
 Une PR encore ouverte est signalée comme telle : tant qu'elle n'est pas fusionnée, `main` ne contient pas son
 contenu.
@@ -24,7 +23,9 @@ L'IDS, le DPI et le NDR sont **expérimentaux**, quel que soit l'état de leurs 
 - **3a** (`integration-installation`, `tests/integration/installation.ps1`) : run 39822711631 (PR #9, `3194bb6`), 42 scénarios, 0 échoué, 0 non exécuté.
 - **3b** (`integration-quarantaine`, `tests/integration/quarantaine.ps1`) : même run, 21 scénarios, 0 échoué, 1 non exécuté (refus par `creer_sans_lien` : course non reproductible).
 - **3c** (`integration-maj`) : jamais exécuté en CI (GitHub Actions désactivé sur le dépôt depuis le 2026-10-22).
-- Windows Sandbox, arbre de `main` `370e4d27` (commit testé `0eb38bf`, `git diff 0eb38bf main` vide) : 3a 41 réussis,
+- Windows Sandbox, arbre `370e4d27`, celui de `main` après la fusion des PR #10 à #27 (l'historique a été réécrit le 2026-10-24 pour en retirer des données personnelles : l'arbre testé `370e4d27`
+est identique, aux adresses IP des données de test près, à celui de `main` `7ff8309` ; anciens identifiants de
+commit cités pour mémoire) : 3a 41 réussis,
   0 échoué, 2 non exécutés ; 3b 23 réussis, 0 échoué, 3 non exécutés ; 3c 19 réussis, 0 échoué, 1 non exécuté.
   Tableaux complets en commentaire des PR #10 à #27 ; raisons des non exécutés dans `docs/testing/baseline.md`.
 - Tests unitaires : `cargo test --release` (chaîne MSVC) sur ce même arbre, 79 réussis (voir `docs/testing/baseline.md`).

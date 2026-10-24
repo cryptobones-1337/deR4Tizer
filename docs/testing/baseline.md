@@ -9,7 +9,7 @@ cd service-rs
 cargo test --release
 ```
 
-- 2026-10-24, arbre de `main` `370e4d27` (commit testé `0eb38bf`), local, chaîne `stable-x86_64-pc-windows-msvc` :
+- 2026-10-24, arbre `370e4d27` (celui de `main` après la fusion des PR #10 à #27, avant la réécriture de l'historique), local, chaîne `stable-x86_64-pc-windows-msvc` :
   **79 réussis, 0 échoué**.
 - Contenu (`service-rs/src/tests.rs`) : fonctions pures qui lisent des données du réseau ou de fichiers externes
   (paquets, TLS, DNS, règles IDS, manifestes, UPnP), décisions de sécurité (droits, tri au démarrage,
@@ -47,8 +47,10 @@ Mêmes scripts, lancés par `tests/bac-a-sable/preparer.ps1` puis `lancer.ps1 -S
 (et `preparer.ps1 -Maj` pour 3c), dans une Windows Sandbox jetable. Signal, pas preuve : ni poste réel ni Defender
 actif (désactivé dans la Sandbox) ; jamais compté comme « validé sur Windows (VM) ».
 
-2026-10-24, arbre `370e4d272d88515c1e6901882933bc8340995602` (commit testé `0eb38bf`, identique à `main` après la
-fusion : `git diff 0eb38bf main` vide), Windows 11 Pro 10.0.26300.9711, MSI des scénarios 3a et 3b SHA-256
+2026-10-24, arbre `370e4d272d88515c1e6901882933bc8340995602`, identique à `main` après la fusion des PR #10 à #27
+(l'historique a été réécrit le 2026-10-24 pour en retirer des données personnelles : l'arbre testé `370e4d27`
+est identique, aux adresses IP des données de test près, à celui de `main` `7ff8309` ; anciens identifiants de
+commit cités pour mémoire), Windows 11 Pro 10.0.26300.9711, MSI des scénarios 3a et 3b SHA-256
 `D36263F9BC19170C25193A5642974E8FB33D969CF466CDAE96AF5AB4C30F38D5` :
 
 | Lot | Réussis | Échoués | Non exécutés |
