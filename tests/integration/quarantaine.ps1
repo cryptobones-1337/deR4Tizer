@@ -182,7 +182,9 @@ if ($sessionSid) {
 # le compte standard remplace son dossier « Chrome\User Data » par une jonction vers un canari. Par chemin (ancien
 # Get-Acl / Set-Acl), SYSTEM réécrivait les descripteurs complets du canari ; par handle vérifié, rien n'y est
 # écrit : chaque descripteur (DACL et SACL) du canari est relu à l'identique. Témoin : un vrai dossier « Edge\User
-# Data » du même profil reçoit l'audit (dossier : entrée héritée par ses fichiers ; fichier présent : entrée posée).
+# Data » du même profil reçoit l'audit (dossier : entrée héritée par ses fichiers ; fichier présent : entrée posée),
+# et une règle d'audit posée avant par l'« organisation » (échecs de suppression des Administrateurs) y est gardée :
+# la SACL est complétée, jamais remplacée.
 function Descripteurs([string]$Racine) {
     $l = foreach ($e in @(Get-Item -LiteralPath $Racine -Force) + @(Get-ChildItem -LiteralPath $Racine -Recurse -Force)) {
         "$($e.FullName.Substring($Racine.Length))|$((Get-Acl -LiteralPath $e.FullName -Audit).Sddl)"
@@ -208,6 +210,10 @@ Set-Content -LiteralPath '$edge\Local State' -Value '{}'
     if (-not $i -or -not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath "$edge\Local State")) {
         Noter 'Audit des données sensibles : jonction et dossier témoin posés par le compte standard' 'ÉCHOUÉ' "mise en place : $($s -replace "`r?`n", ' ')"
     } else {
+        # Règle tierce sur le dossier témoin, posée par l'administrateur avant le passage du service
+        $a = Get-Acl -LiteralPath $edge -Audit
+        $a.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), 'Delete', 'None', 'None', 'Failure')))
+        Set-Acl -LiteralPath $edge -AclObject $a
         # Pose faite au démarrage du service, puis toutes les heures
         $debutAudit = Redemarrer-Service
         $fin = (Get-Date).AddSeconds(90)
@@ -220,11 +226,14 @@ Set-Content -LiteralPath '$edge\Local State' -Value '{}'
             if ($apres -ne $descripteursAvant) { return "descripteurs du canari modifiés à travers la jonction" }
             $true
         }
-        Verifier 'Audit des données sensibles : témoin, audit posé dans le vrai dossier du profil (dossier et fichier présent)' {
+        Verifier 'Audit des données sensibles : témoin, audit posé dans le vrai dossier du profil (dossier et fichier présent), règle tierce gardée' {
             $d = @(Audit-Tous $edge)
             if (-not $d.Count) { return "aucun audit sur $edge ; journal : $(Journal 'audit')" }
             if (-not ($d[0].PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { return "audit du dossier non limité à ses fichiers ($($d[0].PropagationFlags))" }
             if (-not @(Audit-Tous "$edge\Local State").Count) { return "aucun audit sur le fichier présent" }
+            $tierce = @((Get-Acl -LiteralPath $edge -Audit).Audit | Where-Object {
+                $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' -and $_.AuditFlags -eq 'Failure' })
+            if (-not $tierce.Count) { return "règle d'audit tierce effacée (SACL remplacée au lieu d'être complétée)" }
             $true
         }
     }

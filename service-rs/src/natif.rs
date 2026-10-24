@@ -1049,10 +1049,10 @@ pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), S
     })?
 }
 
-//// Bilan d'une pose d'audit sur une arborescence
+/// Bilan d'une pose d'audit sur une arborescence
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct BilanAudit {
-    /// Éléments dont la SACL a été écrite
+    /// Éléments dont la SACL a été complétée
     pub poses: usize,
     /// Éléments qui avaient déjà l'audit voulu
     pub deja: usize,
@@ -1062,34 +1062,25 @@ pub struct BilanAudit {
     pub tronque: bool,
 }
 
-/// SACL voulue, préparée une fois : descripteur (pour l'écrire) et forme texte normalisée (pour comparer)
-struct SaclVoulue {
-    sd: windows::Win32::Security::PSECURITY_DESCRIPTOR,
-    texte: String,
-}
+/// Descripteur construit depuis un SDDL, libéré à la fin
+struct DescripteurSddl(windows::Win32::Security::PSECURITY_DESCRIPTOR);
 
-impl SaclVoulue {
-    fn depuis(sddl: &str) -> Result<SaclVoulue, String> {
+impl DescripteurSddl {
+    fn depuis(sddl: &str) -> Result<DescripteurSddl, String> {
         use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
         use windows::Win32::Security::PSECURITY_DESCRIPTOR;
         let s = large(sddl);
         let mut sd = PSECURITY_DESCRIPTOR::default();
         unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None) }.map_err(|e| format!("{sddl} : {e}"))?;
-        // Libéré par Drop, même en cas d'erreur ci-dessous
-        let mut v = SaclVoulue { sd, texte: String::new() };
-        v.texte = texte_sacl(sd).ok_or_else(|| format!("{sddl} : SACL illisible"))?;
-        if !v.texte.contains('(') {
-            return Err(format!("{sddl} : SDDL sans SACL"));
-        }
-        Ok(v)
+        Ok(DescripteurSddl(sd))
     }
 }
 
-impl Drop for SaclVoulue {
+impl Drop for DescripteurSddl {
     fn drop(&mut self) {
         use windows::Win32::Foundation::{HLOCAL, LocalFree};
         unsafe {
-            let _ = LocalFree(HLOCAL(self.sd.0));
+            let _ = LocalFree(HLOCAL(self.0 .0));
         }
     }
 }
@@ -1108,7 +1099,19 @@ fn texte_sacl(sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<Stri
     }
 }
 
-/// SACL actuelle de l'objet ouvert (handle avec ACCESS_SYSTEM_SECURITY), en SDDL
+/// Entrée d'audit voulue, en SDDL normalisé par Windows (« AU;OINPIOSA;CC;;;WD »), tirée d'un SDDL « S:(…) » d'une
+/// seule entrée
+fn entree_normalisee(sddl: &str) -> Result<String, String> {
+    let d = DescripteurSddl::depuis(sddl)?;
+    let t = texte_sacl(d.0).ok_or_else(|| format!("{sddl} : SACL illisible"))?;
+    let e = entrees_sacl(&t).1;
+    match e.as_slice() {
+        [une] => Ok(une.clone()),
+        _ => Err(format!("{sddl} : une seule entrée d'audit attendue")),
+    }
+}
+
+/// SACL actuelle de l'objet ouvert (handle avec ACCESS_SYSTEM_SECURITY), en SDDL ; None : illisible
 fn sacl_du_handle(f: &std::fs::File) -> Option<String> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Security::{GetKernelObjectSecurity, PSECURITY_DESCRIPTOR, SACL_SECURITY_INFORMATION};
@@ -1125,36 +1128,50 @@ fn sacl_du_handle(f: &std::fs::File) -> Option<String> {
     }
 }
 
-/// Décision pure : l'audit voulu est-il déjà en place ? Égalité exacte pour un dossier (les drapeaux d'héritage
-/// comptent) ; pour un fichier, les entrées voulues suffisent, explicites ou héritées du dossier (« ID »).
-pub fn audit_deja_pose(actuelle: &str, voulue: &str, dossier: bool) -> bool {
-    if actuelle == voulue {
-        return true;
-    }
-    if dossier {
-        return false;
-    }
-    // Entrées (AU;<drapeaux>;<droits>;;;<SID>) : mêmes drapeaux hors ID, mêmes droits, même SID
-    fn entrees(t: &str) -> Vec<(String, String, String)> {
-        t.split('(').skip(1).filter_map(|e| {
-            let c: Vec<&str> = e.trim_end_matches(')').split(';').collect();
-            (c.len() == 6 && c[0] == "AU").then(|| (c[1].replace("ID", ""), c[2].to_string(), c[5].to_string()))
-        }).collect()
-    }
-    let (voulues, presentes) = (entrees(voulue), entrees(actuelle));
-    !voulues.is_empty() && voulues.iter().all(|v| presentes.contains(v))
+/// SACL en SDDL découpée : (drapeaux de contrôle « AI », « P »…, entrées sans parenthèses)
+fn entrees_sacl(t: &str) -> (String, Vec<String>) {
+    let t = t.strip_prefix("S:").unwrap_or(t);
+    let debut = t.find('(').unwrap_or(t.len());
+    let entrees = t[debut..].split(')').map(|e| e.trim_start_matches('(')).filter(|e| !e.is_empty()).map(String::from).collect();
+    (t[..debut].to_string(), entrees)
 }
 
-/// Écrit la SACL de l'objet ouvert si elle diffère. SetKernelObjectSecurity : cet objet seul, SACL seule (ni DACL,
-/// ni propriétaire, ni propagation par chemin aux enfants, contrairement à Set-Acl et SetSecurityInfo)
-fn poser_sacl(f: &std::fs::File, voulue: &SaclVoulue, dossier: bool, bilan: &mut BilanAudit) -> Result<(), String> {
+/// Décision pure : SACL complétée, ou None si l'audit voulu est déjà en place. Seules les entrées de deR4Tizer sont
+/// retirées : audit explicite (non hérité) de Tout le monde (WD), sur les succès (SA), avec les droits de l'entrée
+/// voulue ; toute autre entrée (règle d'audit de l'organisation, entrée héritée) est gardée telle quelle. Pour un
+/// fichier (`heritee_suffit`), l'entrée voulue héritée du dossier (« ID ») suffit.
+pub fn sacl_completee(actuelle: &str, voulue: &str, heritee_suffit: bool) -> Option<String> {
+    let champs = |e: &str| e.split(';').map(String::from).collect::<Vec<_>>();
+    let v = champs(voulue);
+    let notre = |e: &str| {
+        let c = champs(e);
+        c.len() == 6 && c[0] == "AU" && c[5] == "WD" && c[2] == v[2] && c[1].contains("SA") && !c[1].contains("ID")
+    };
+    let (controle, entrees) = entrees_sacl(actuelle);
+    let exacte = entrees.iter().any(|e| e == voulue);
+    let heritee = heritee_suffit && entrees.iter().any(|e| { let mut c = champs(e); c.len() == 6 && { c[1] = c[1].replace("ID", ""); c == v } });
+    let perimees = entrees.iter().any(|e| notre(e) && e != voulue);
+    if (exacte || heritee) && !perimees {
+        return None;
+    }
+    let mut nouvelle: Vec<&str> = entrees.iter().filter(|e| !notre(e)).map(String::as_str).collect();
+    nouvelle.push(voulue);
+    Some(format!("S:{controle}{}", nouvelle.iter().map(|e| format!("({e})")).collect::<String>()))
+}
+
+/// Complète la SACL de l'objet ouvert si besoin. SetKernelObjectSecurity : cet objet seul, SACL seule (ni DACL, ni
+/// propriétaire, ni propagation par chemin aux enfants, contrairement à Set-Acl et SetSecurityInfo). SACL actuelle
+/// illisible : rien n'est écrit (elle pourrait contenir des entrées à garder).
+fn poser_sacl(f: &std::fs::File, voulue: &str, dossier: bool, bilan: &mut BilanAudit) -> Result<(), String> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Security::{SetKernelObjectSecurity, SACL_SECURITY_INFORMATION};
-    if sacl_du_handle(f).is_some_and(|a| audit_deja_pose(&a, &voulue.texte, dossier)) {
+    let actuelle = sacl_du_handle(f).ok_or("SACL actuelle illisible")?;
+    let Some(nouvelle) = sacl_completee(&actuelle, voulue, !dossier) else {
         bilan.deja += 1;
         return Ok(());
-    }
-    unsafe { SetKernelObjectSecurity(HANDLE(f.as_raw_handle()), SACL_SECURITY_INFORMATION, voulue.sd) }.map_err(|e| e.to_string())?;
+    };
+    let sd = DescripteurSddl::depuis(&nouvelle)?;
+    unsafe { SetKernelObjectSecurity(HANDLE(f.as_raw_handle()), SACL_SECURITY_INFORMATION, sd.0) }.map_err(|e| e.to_string())?;
     bilan.poses += 1;
     Ok(())
 }
@@ -1162,14 +1179,14 @@ fn poser_sacl(f: &std::fs::File, voulue: &SaclVoulue, dossier: bool, bilan: &mut
 /// Pose l'audit (SACL) sur une arborescence de l'utilisateur, en SYSTEM, tout par handle : SeSecurityPrivilege
 /// actif sur ce fil pendant le seul parcours ; chaque élément ouvert sans suivre de lien sur le dernier élément et
 /// son chemin final vérifié (un lien, ou un chemin détourné plus haut, est écarté et jamais suivi : une jonction
-/// posée par l'utilisateur ne fait rien écrire ailleurs) ; SACL écrite seulement si elle diffère (sinon des rafales
-/// d'événements 4907). `sddl_dossier` sur la racine (et chaque sous-dossier si `recursif`), `sddl_fichier` sur les
-/// fichiers déjà présents (les nouveaux héritent de l'entrée du dossier). Err : racine introuvable, détournée ou
-/// impossible à auditer.
+/// posée par l'utilisateur ne fait rien écrire ailleurs) ; SACL complétée seulement si besoin (sinon des rafales
+/// d'événements 4907), entrées tierces gardées. `sddl_dossier` sur la racine (et chaque sous-dossier si `recursif`),
+/// `sddl_fichier` sur les fichiers déjà présents (les nouveaux héritent de l'entrée du dossier) : une seule entrée
+/// chacun. Err : racine introuvable, détournée ou impossible à auditer.
 pub fn poser_audit_arborescence(racine: &std::path::Path, sddl_dossier: &str, sddl_fichier: &str, recursif: bool, maximum: usize) -> Result<BilanAudit, String> {
     // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
     const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
-    let (voulue_dossier, voulue_fichier) = (SaclVoulue::depuis(sddl_dossier)?, SaclVoulue::depuis(sddl_fichier)?);
+    let (voulue_dossier, voulue_fichier) = (entree_normalisee(sddl_dossier)?, entree_normalisee(sddl_fichier)?);
     avec_privilege("SeSecurityPrivilege", || {
         let mut bilan = BilanAudit::default();
         let ouverte = ouvrir_verifie(racine, ACCES, 0x7, true).map_err(|e| format!("{} : {e}", racine.display()))?;
@@ -1214,7 +1231,7 @@ pub fn poser_audit_arborescence(racine: &std::path::Path, sddl_dossier: &str, sd
     })?
 }
 
-// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
+/// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
 /// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
 pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
