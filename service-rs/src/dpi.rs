@@ -92,7 +92,8 @@ impl Dpi {
                         .arg(&f).arg(URL_JA3).creation_flags(0x0800_0000).output();
                 }
                 // ja3_md5,Firstseen,Lastseen,Listingreason
-                let carte: HashMap<String, String> = std::fs::read_to_string(&f).unwrap_or_default().lines()
+                // Propriétaire contrôlé, comme tout fichier du dossier de données
+                let carte: HashMap<String, String> = commun::lire_fichier_proprietaire(&f).unwrap_or_default().lines()
                     .filter(|l| !l.starts_with('#'))
                     .filter_map(|l| { let c: Vec<&str> = l.split(',').collect(); (c.len() >= 4 && c[0].len() == 32).then(|| (c[0].to_lowercase(), c[3].trim().to_string())) })
                     .collect();
