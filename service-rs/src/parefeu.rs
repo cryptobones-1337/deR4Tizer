@@ -286,6 +286,50 @@ fn preparer_dossier(fichier: &Path) {
     });
 }
 
+/// Ce qu'il faut savoir du poste pour distinguer une exposition réelle d'une réponse à une connexion sortante
+pub struct ContexteExposition {
+    /// Ports TCP locaux en écoute (état LISTEN) au moment de la lecture
+    pub ecoute_tcp: std::collections::HashSet<u16>,
+    /// Plage dynamique UDP du poste (ports des sockets clientes), bornes comprises
+    pub udp_dynamique: (u16, u16),
+    /// PID du service : ses lignes sont les copies reçues par sa socket de capture (règle « deR4Tizer capture »)
+    pub pid_service: u32,
+}
+
+/// Décision pure : un paquet entrant venu d'Internet et ACCEPTÉ montre-t-il que le PC est joignable ? Non pour les
+/// lignes du service (capture), ni pour les réponses aux connexions sortantes : en TCP, elles arrivent sur un port
+/// éphémère où rien n'écoute (la plage dynamique TCP peut couvrir presque tous les ports : seul l'état d'écoute
+/// fait foi) ; en UDP, sur un port de la plage dynamique ; en ICMP, ce sont des réponses d'écho (type 0)
+pub fn exposition_reelle(protocole: &str, port_local: u16, pid: u32, icmp_type: &str, ctx: &ContexteExposition) -> bool {
+    if pid != 0 && pid == ctx.pid_service {
+        return false;
+    }
+    match protocole {
+        "TCP" => ctx.ecoute_tcp.contains(&port_local),
+        "UDP" => !(ctx.udp_dynamique.0..=ctx.udp_dynamique.1).contains(&port_local),
+        "ICMP" => icmp_type == "8",
+        _ => true,
+    }
+}
+
+/// Plage dynamique lue dans la sortie de « netsh int ipv4 show dynamicport … » (anglais ou français : les deux
+/// nombres dans l'ordre, port de départ puis nombre de ports) ; None si illisible
+pub fn plage_dynamique(sortie: &str) -> Option<(u16, u16)> {
+    let nombres: Vec<u32> = sortie.lines().filter_map(|l| l.rsplit(':').next()?.trim().parse().ok()).collect();
+    let (&debut, &nombre) = (nombres.first()?, nombres.get(1)?);
+    let fin = debut.checked_add(nombre)?.checked_sub(1)?;
+    (debut > 0 && nombre > 0 && fin <= 65535).then_some((debut as u16, fin as u16))
+}
+
+/// Plage dynamique UDP du poste (netsh), défaut de Windows si illisible
+pub fn plage_dynamique_udp() -> (u16, u16) {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("netsh.exe").args(["int", "ipv4", "show", "dynamicport", "udp"])
+        .creation_flags(0x0800_0000).output().ok()
+        .and_then(|s| plage_dynamique(&String::from_utf8_lossy(&s.stdout)))
+        .unwrap_or((49152, 65535))
+}
+
 pub struct LecteurJournal {
     fichier: PathBuf,
     position: u64,
@@ -320,7 +364,7 @@ impl LecteurJournal {
     }
 
     /// Lit les lignes ajoutées depuis le dernier passage ; renvoie les alertes
-    pub fn lire(&mut self, nom_processus: &dyn Fn(u32) -> String) -> Vec<Alerte> {
+    pub fn lire(&mut self, nom_processus: &dyn Fn(u32) -> String, ctx: &ContexteExposition) -> Vec<Alerte> {
         let mut alertes = Vec::new();
         let Ok(mut f) = fs::File::open(&self.fichier) else { return alertes };
         let taille = f.metadata().map(|m| m.len()).unwrap_or(0);
@@ -361,6 +405,11 @@ impl LecteurJournal {
             }
             let port: u16 = v("dst-port").parse().unwrap_or(0);
             let action = if v("action") == "ALLOW" { "ACCEPTÉ" } else { "BLOQUÉ" };
+            // Paquet accepté : seulement s'il montre une exposition réelle (pas la capture du service, pas une
+            // réponse à une connexion sortante)
+            if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, v("pid").parse().unwrap_or(0), v("icmptype"), ctx) {
+                continue;
+            }
             let programme = v("pid").parse::<u32>().ok().filter(|p| *p > 0).map(nom_processus).unwrap_or_default();
             let cle = (source.to_string(), port, action.to_string());
             let maintenant = commun::maintenant();

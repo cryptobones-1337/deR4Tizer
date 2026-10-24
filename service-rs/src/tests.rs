@@ -1614,3 +1614,44 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
     assert_eq!(erreurs, "0");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Faux positifs « PC EXPOSÉ À INTERNET » (constatés le 2026-10-24) : le journal du pare-feu attribue au service les
+/// paquets que reçoit sa socket de capture, et note les réponses aux connexions sortantes vers des ports éphémères.
+/// Exposition réelle seulement : TCP vers un port en écoute, UDP hors de la plage dynamique, demande d'écho ICMP ;
+/// jamais une ligne du service lui-même
+#[test]
+fn exposition_reelle_sans_faux_positifs() {
+    use crate::parefeu::{exposition_reelle, plage_dynamique, ContexteExposition, LecteurJournal};
+    let ctx = ContexteExposition { ecoute_tcp: [27036u16, 49664].into_iter().collect(), udp_dynamique: (49152, 65535), pid_service: 3468 };
+    assert!(!exposition_reelle("TCP", 61076, 3468, "-", &ctx), "ligne de la socket de capture du service");
+    assert!(!exposition_reelle("TCP", 1550, 9999, "-", &ctx), "réponse vers un port éphémère, rien n'y écoute");
+    assert!(exposition_reelle("TCP", 27036, 9999, "-", &ctx), "connexion entrante vers un port en écoute");
+    assert!(!exposition_reelle("UDP", 51343, 9999, "-", &ctx), "réponse UDP vers un port dynamique");
+    assert!(exposition_reelle("UDP", 3074, 9999, "-", &ctx), "UDP vers un port fixe");
+    assert!(!exposition_reelle("ICMP", 0, 9999, "0", &ctx), "réponse d'écho");
+    assert!(exposition_reelle("ICMP", 0, 9999, "8", &ctx), "demande d'écho venue d'Internet");
+    // Sortie de netsh, en anglais comme en français
+    assert_eq!(plage_dynamique("Protocol udp Dynamic Port Range\n---\nStart Port      : 49152\nNumber of Ports : 16384\n"), Some((49152, 65535)));
+    assert_eq!(plage_dynamique("Plage de ports dynamiques du protocole tcp\n---\nPort de démarrage : 1024\nNombre de ports   : 64511\n"), Some((1024, 65534)));
+    assert_eq!(plage_dynamique("rien"), None);
+    // Lignes réelles du journal : seule la connexion vers un port en écoute donne une alerte
+    let d = dossier_test("exposition");
+    let f = d.join("pfirewall.log");
+    std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\n").unwrap();
+    let mut lecteur = LecteurJournal::sur_fichier(f.clone());
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+    for l in [
+        "2026-10-24 09:28:08 ALLOW TCP 172.217.171.110 10.8.0.2 443 61076 0 - 0 0 0 - - - RECEIVE 3468",
+        "2026-10-24 09:17:02 ALLOW TCP 198.51.100.20 192.168.1.50 27024 37077 0 - 0 0 0 - - - RECEIVE 3332",
+        "2026-10-24 09:26:09 ALLOW ICMP 8.8.8.8 10.8.0.2 - - 0 - - - - 0 0 - RECEIVE 4",
+        "2026-10-24 09:30:00 ALLOW TCP 203.0.113.9 192.168.1.50 51515 27036 0 - 0 0 0 - - - RECEIVE 16424",
+    ] {
+        writeln!(o, "{l}").unwrap();
+    }
+    drop(o);
+    let alertes = lecteur.lire(&|_| String::new(), &ctx);
+    assert_eq!(alertes.len(), 1, "{:?}", alertes.iter().map(|a| a.raisons.clone()).collect::<Vec<_>>());
+    assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 27036);
+    let _ = std::fs::remove_dir_all(&d);
+}
