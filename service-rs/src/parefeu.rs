@@ -274,7 +274,7 @@ fn preparer_dossier(fichier: &Path) {
         let script = "Set-NetFirewallProfile -All -PolicyStore localhost -LogBlocked True -LogAllowed True \
             -LogMaxSizeKilobytes 32767 -LogFileName '%systemroot%\\system32\\LogFiles\\Firewall\\pfirewall.log'";
         crate::mesure::powershell("parefeu");
-        let _ = std::process::Command::new("powershell.exe")
+        let _ = std::process::Command::new(crate::natif::powershell_exe())
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .creation_flags(0x0800_0000)
             .output();

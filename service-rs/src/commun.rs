@@ -545,14 +545,23 @@ pub fn maintenant() -> String {
 
 // ------------------------------------------------------------ journal
 
+/// Message ramené à une seule ligne de journal (pur, testé)
+pub fn ligne_de_journal(message: &str) -> String {
+    message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
+}
+
 pub fn journal(message: &str) {
     let f = dossier().join("journal.txt");
     // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)
     if fs::metadata(&f).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false) {
         let _ = fs::rename(&f, dossier().join("journal.1.txt"));
     }
+    // Une ligne par message : caractères de contrôle et séparateurs de ligne Unicode remplacés par une espace (noms
+    // DNS, NBNS, UPnP, lignes de commande venus du poste ou du réseau ajoutaient de fausses lignes horodatées,
+    // audit AUD4-05)
+    let propre = ligne_de_journal(message);
     if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
-        let _ = writeln!(fichier, "{}  {}\r", maintenant(), message);
+        let _ = writeln!(fichier, "{}  {}\r", maintenant(), propre);
     }
 }
 

@@ -338,6 +338,32 @@ fn horodatage_et_base64() {
     assert_eq!(crate::notifications::base64_test("é".as_bytes()), "w6k=");
 }
 
+/// Audit AUD2-02 : powershell.exe n'est pas dans System32 même, un nom nu était cherché dans le PATH par SYSTEM.
+/// Chemin absolu, et aucun module du service ne lance plus « powershell.exe » par son seul nom.
+#[test]
+fn audit_powershell_par_chemin_absolu() {
+    let p = crate::natif::powershell_exe();
+    assert!(std::path::Path::new(&p).is_absolute() && p.to_lowercase().ends_with(r"\system32\windowspowershell\v1.0\powershell.exe"), "{p}");
+    assert!(std::path::Path::new(&p).is_file(), "{p} introuvable");
+    let nu = concat!("Command::new(", "\"powershell.exe\")");
+    for (nom, source) in [("api", include_str!("api.rs")), ("baseline", include_str!("baseline.rs")), ("blocage", include_str!("blocage.rs")),
+                          ("capture", include_str!("capture.rs")), ("maj", include_str!("maj.rs")), ("parefeu", include_str!("parefeu.rs")),
+                          ("protection", include_str!("protection.rs")), ("reponse", include_str!("reponse.rs")), ("moniteur", include_str!("moniteur.rs")),
+                          ("hygiene", include_str!("hygiene.rs")), ("natif", include_str!("natif.rs")), ("gpo", include_str!("gpo.rs"))] {
+        assert!(!source.contains(nu), "{nom}.rs lance encore powershell.exe par son seul nom");
+    }
+}
+
+/// Audit AUD4-05 : un nom DNS, NBNS ou UPnP, une ligne de commande contenant une fin de ligne ajoutaient de fausses
+/// lignes horodatées au journal du service
+#[test]
+fn audit_journal_une_seule_ligne_par_message() {
+    let l = crate::commun::ligne_de_journal("nom a\r\n2026-10-25 10:00:00  faux\u{2028}suite\u{0}\tfin");
+    assert!(!l.chars().any(|c| c.is_control() || c == '\u{2028}' || c == '\u{2029}'), "{l:?}");
+    assert!(l.contains("2026-10-25 10:00:00  faux") && l.starts_with("nom a"));
+    assert_eq!(crate::commun::ligne_de_journal("é ordinaire"), "é ordinaire");
+}
+
 #[test]
 fn chemins_des_pilotes() {
     let w = crate::natif::dossier_windows();
