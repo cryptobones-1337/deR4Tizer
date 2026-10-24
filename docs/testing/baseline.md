@@ -9,8 +9,8 @@ cd service-rs
 cargo test --release
 ```
 
-- 2026-10-24, arbre `67978e1f` (`main` `b72874f`), local, chaîne `stable-x86_64-pc-windows-msvc` :
-  **83 réussis, 0 échoué**.
+- 2026-10-24, arbre `7ad06963` (`main` `1cf04fe`), local, chaîne `stable-x86_64-pc-windows-msvc` :
+  **86 réussis, 0 échoué**.
 - Contenu (`service-rs/src/tests.rs`) : fonctions pures qui lisent des données du réseau ou de fichiers externes
   (paquets, TLS, DNS, règles IDS, manifestes, UPnP), décisions de sécurité (droits, tri au démarrage,
   quarantaine, reprise, restauration, mise à jour, clé épinglée), avec un mini-fuzz (toutes les troncatures d'un
@@ -88,6 +88,19 @@ démarrage de Windows Sandbox) ; 3c, reconstruit après les paquets de test,
 | 3c | 19 | 0 | 1 (même raison) |
 
 Tableaux en commentaire des PR #36, #37, #40, #41, #42.
+
+2026-10-24, arbre `7ad0696305ea17de643b2c015aff497d7dadd10b`, celui de `main` `1cf04fe` après la fusion des PR #43,
+#44, #45, #46 (commit testé `b86e8d2`, `git diff b86e8d2 main` vide), Windows 11 Pro 10.0.26300.9711, 86 tests
+unitaires. MSI SHA-256 : 3a et 3b `E6EA86BA979D5DBB84E93F70BF837F9CDB22BA6C84A6B7130995E0977A4862C8` ; 3c, reconstruit
+après les paquets de test, `F7D7CFA1122C417D9C9250B8C0F3EFBC27B076090F75155049E6DE06340F5704`.
+
+| Lot | Réussis | Échoués | Non exécutés |
+|---|---|---|---|
+| 3a | 41 | 0 | 2 (mêmes raisons) |
+| 3b | 24 | 0 | 3 (mêmes raisons) |
+| 3c | 19 | 0 | 1 (même raison) |
+
+Tableaux en commentaire des PR #43, #44, #45, #46.
 
 ## Non couvert
 

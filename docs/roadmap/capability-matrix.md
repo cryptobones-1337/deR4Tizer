@@ -1,7 +1,7 @@
 # Matrice des capacités de deR4Tizer
 
-État au 2026-10-24, branche `main` (commit `b72874f`, version 4.3), après la fusion des PR #10, #12 à #27, #31 à #37
-et #40 à #42 ; les PR fusionnées ensuite sont décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte
+État au 2026-10-24, branche `main` (commit `1cf04fe`, version 4.3), après la fusion des PR #10, #12 à #27, #31 à #37
+et #40 à #46 ; les PR fusionnées ensuite sont décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte
 que la preuve citée. Une PR encore ouverte est signalée comme telle : tant qu'elle n'est pas fusionnée, `main` ne
 contient pas son contenu.
 
@@ -32,7 +32,9 @@ commit cités pour mémoire) : 3a 41 réussis,
   #32, #33, #35) : 3a 41 réussis, 0 échoué, 2 non exécutés ; 3b 24, 0, 3 ; 3c 19, 0, 1. Tableaux en commentaire de ces PR.
 - Windows Sandbox, arbre `67978e1f8a2d8fc42b55c2c8624761ff50826949`, celui de `main` `b72874f` (fusion des PR #36, #37,
   #40, #41, #42) : 3a 41 réussis, 0 échoué, 2 non exécutés ; 3b 24, 0, 3 ; 3c 19, 0, 1. Tableaux en commentaire de ces PR.
-- Tests unitaires : `cargo test --release` (chaîne MSVC) sur ce dernier arbre, 83 réussis (voir `docs/testing/baseline.md`).
+- Windows Sandbox, arbre `7ad0696305ea17de643b2c015aff497d7dadd10b`, celui de `main` `1cf04fe` (fusion des PR #43, #44,
+  #45, #46) : 3a 41 réussis, 0 échoué, 2 non exécutés ; 3b 24, 0, 3 ; 3c 19, 0, 1. Tableaux en commentaire de ces PR.
+- Tests unitaires : `cargo test --release` (chaîne MSVC) sur ce dernier arbre, 86 réussis (voir `docs/testing/baseline.md`).
 
 ## Matrice
 
@@ -50,7 +52,7 @@ commit cités pour mémoire) : 3a 41 réussis,
 | Surveillance des connexions, score de suspicion, balises, première connexion | implémenté non vérifié (critère « IP directe » testé en labo) | `moniteur.rs`, `natif.rs` | — | `ip_directe_editeurs_exacts` | — |
 | Chaînes de processus et score cumulé | implémenté non vérifié | `chaines.rs` | — | — | — |
 | Origine des processus et règles inspirées de Sigma | implémenté non vérifié (débogage à distance testé en labo) | `processus.rs` | Sysmon facultatif (sinon WMI) | `debogage_a_distance_ancre_sur_l_executable` | Sans Sysmon, couverture réduite. |
-| Persistance (clés Run, services, tâches, WMI, Démarrage) | implémenté non vérifié (cible des tâches COM testée en labo) | `persistance.rs` | — | `tache_com_cible_le_serveur_du_clsid`, `tache_com_hors_windows_sans_serveur_signalee` | Tâche à gestionnaire COM : la cible est le serveur du CLSID enregistré pour la machine (InprocServer32, sinon LocalServer32), dont la signature est vérifiée ; avant ce correctif, la cible était le dossier `System32\COM` et ces tâches de Windows sortaient « NON SIGNÉ ». CLSID non enregistré pour la machine, ou serveur absent : signataire « ? » ; hors `\Microsoft\Windows\`, remarque « serveur COM non enregistré pour la machine » (cas du détournement COM par le profil d'un utilisateur, HKCU, qui n'est pas lu) ; aussi signalé à tort, sur un poste réel, une tâche de Windows hors de ce dossier (`\SoftLanding\…`), gardée signalée plutôt qu'exemptée par son nom. |
+| Persistance (clés Run, services, tâches, WMI, Démarrage) | implémenté non vérifié (cible des tâches COM testée en labo) | `persistance.rs` | — | `tache_com_cible_le_serveur_du_clsid`, `tache_com_hors_windows_sans_serveur_signalee` | Tâche à gestionnaire COM : la cible est le serveur du CLSID enregistré pour la machine (InprocServer32, sinon LocalServer32), dont la signature est vérifiée ; avant ce correctif, la cible était le dossier `System32\COM` et ces tâches de Windows sortaient « NON SIGNÉ ». CLSID non enregistré pour la machine, ou serveur absent : signataire « ? » ; hors `\Microsoft\Windows\`, remarque « serveur COM non enregistré pour la machine » (cas du détournement COM par le profil d'un utilisateur, HKCU, qui n'est pas lu) ; aussi signalé à tort, sur un poste réel, une tâche de Windows hors de ce dossier (`\SoftLanding\…`), gardée signalée plutôt qu'exemptée par son nom. Non détecté : un CLSID enregistré pour la machine et surchargé dans le profil d'un utilisateur (HKCU), forme classique du détournement COM ; la cible reste alors le serveur de la machine, signé, sans remarque. Avant ce correctif, il n'était pas détecté en tant que tel non plus, mais toutes les tâches COM sortaient « NON SIGNÉ » (alerte), celle-ci comprise, sans la distinguer. |
 | Leurres anti-rançongiciel et suspension automatique | testé en labo (décision) | `hygiene.rs`, `vol_donnees.rs` | Audit du système de fichiers (4663) | `b1_leurre_touche_par_rundll32_suspendu`, `b2_noms_des_leurres_dans_le_dossier_des_secrets` ; 3b (jonction vers un canari) | Création, suppression et nettoyage par handle sans suivre de lien, sous l'identité du propriétaire du profil (PR #20). Audit d'écriture des leurres posé par `SetKernelObjectSecurity`, comme l'audit des données sensibles (PR #34, qui reprend la #28 fermée) ; avant elle, l'écriture de la SACL par `SetSecurityInfo` était refusée et aucun leurre n'était audité. Leurre déjà présent dans un profil sans session, audité après redémarrage : réussi en Windows Sandbox (3b). Création des leurres dans un profil qui a une session : non validée (VM). |
 | Pilotes vulnérables (LOLDrivers) | testé en labo (chemins) | `hygiene.rs` | — | `chemins_des_pilotes` | `loldrivers.json` lu avec le contrôle du propriétaire (PR #16), testé en labo. |
 | Extensions de navigateur | implémenté non vérifié | `hygiene.rs` | — | — | — |
