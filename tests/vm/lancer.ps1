@@ -6,6 +6,8 @@
 # Prérequis : VM avec un instantané « propre » (Defender actif, sans exclusion), PowerShell Direct ; compte
 # administrateur de la VM enregistré par Export-Clixml (DPAPI, jamais affiché) ; membre du groupe « Administrateurs
 # Hyper-V » ; preparer.ps1 exécuté (et preparer.ps1 -Maj pour le 3c).
+# Defender n'est que relevé (avant et après, par l'exécuteur) ; son état « pleinement actif » n'est exigé que par le
+# lot 3d (tests\vm\lot3d.ps1). Sans -SessionStandard, la session de console est celle de l'instantané.
 #
 # Usage : .\tests\vm\lancer.ps1 -Scenario installation|quarantaine|maj|lot3d [-Vm deR4Tizer-test-26H2] [-Instantane <nom>]
 param(
@@ -78,6 +80,12 @@ try {
         do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
         while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
         if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après le redémarrage ($console)." }
+        # Réellement standard : pas membre des Administrateurs (comptes locaux seulement dans la VM de test : pas de
+        # groupe de domaine imbriqué)
+        $admin = Invoke-Command -Session $s {
+            @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*\d4t_console' }).Count
+        }
+        if ($admin) { throw 'Le compte de console est membre des Administrateurs : session standard impossible.' }
         Write-Host "Console : $console (compte standard)"
     }
     Invoke-Command -Session $s { Remove-Item C:\entree, C:\sortie -Recurse -Force -ErrorAction SilentlyContinue }
@@ -92,19 +100,26 @@ try {
             '-File', 'C:\entree\executer.ps1', '-Scenario', $Scenario, '-SansArret'
         if (-not $p.WaitForExit($Minutes * 60000)) { $p.Kill(); 'délai dépassé : exécuteur arrêté' }
     }
-    Copy-Item -Path 'C:\sortie\*' -Destination $sortie -FromSession $s -Recurse -Force
     Invoke-Command -Session $s { "Windows de la VM : $((Get-CimInstance Win32_OperatingSystem).Version).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR)" } |
         Set-Content (Join-Path $sortie "$Scenario-vm.txt")
 } finally {
+    # Sortie rapportée même si le scénario ou la session a échoué, avant la remise à l'instantané qui l'effacerait
+    try {
+        if (-not $s -or $s.State -ne 'Opened') { $s = Session }
+        Copy-Item -Path 'C:\sortie\*' -Destination $sortie -FromSession $s -Recurse -Force -ErrorAction Stop
+    } catch { Write-Warning "Sortie de la VM non rapportée : $($_.Exception.Message)" }
     if ($s) { Remove-PSSession $s -ErrorAction SilentlyContinue }
-    # VM remise à son instantané : MSI, comptes de test, racine de test approuvée et clés du 3c n'y restent pas
-    try { Remettre } catch { Write-Warning "VM non remise à son instantané : $($_.Exception.Message)" }
+    # VM remise à son instantané : MSI, comptes de test, racine de test approuvée et clés du 3c n'y restent pas.
+    # Échec : le lanceur échoue (le passage ne compte pas), le scénario suivant repartira de l'instantané.
+    $remise = $true
+    try { Remettre } catch { $remise = $false; Write-Warning "VM non remise à son instantané : $($_.Exception.Message)" }
     if ($Scenario -eq 'maj') {
         Remove-Item -LiteralPath (Join-Path $entree 'maj') -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "Clés et binaires de test effacés ($(Join-Path $entree 'maj'))"
     }
 }
+if (-not $remise) { throw "VM non remise à son instantané après le scénario (voir $sortie) : passage sans valeur de preuve." }
 $fichierCode = Join-Path $sortie "$Scenario-code.txt"
 if (-not (Test-Path $fichierCode)) { throw "Pas de résultat (voir $sortie)." }
 $code = (Get-Content $fichierCode -Raw).Trim()

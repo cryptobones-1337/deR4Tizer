@@ -7,7 +7,8 @@
 # Lancé dans la VM par tests\vm\lancer.ps1 -Scenario lot3d (exécuteur tests\bac-a-sable\executer.ps1).
 param(
     [Parameter(Mandatory)] [string]$Msi,
-    # Empreinte SHA-256 attendue du MSI (celle de la preuve citée) ; vide : comparaison NON EXÉCUTÉ
+    # Empreinte SHA-256 du MSI calculée sur l'hôte (tests\vm\lancer.ps1) : prouve que le fichier installé dans la VM est
+    # celui de l'hôte (intégrité de la copie) ; vide : comparaison NON EXÉCUTÉ
     [string]$Sha256Attendu = '',
     [string]$Journaux = (Join-Path $env:RUNNER_TEMP 'journaux-msi')
 )
@@ -22,13 +23,16 @@ function Etat-Defender {
     $p = Get-MpPreference
     [pscustomobject]@{
         Service = $s.AMServiceEnabled; Antivirus = $s.AntivirusEnabled; TempsReel = $s.RealTimeProtectionEnabled
+        Comportement = $s.BehaviorMonitorEnabled; Acces = $s.OnAccessProtectionEnabled; Telechargements = $s.IoavProtectionEnabled
+        AgeSignatures = [int]$s.AntivirusSignatureAge
         Mode = $s.AMRunningMode; Falsification = $s.IsTamperProtected; Cloud = [int]$p.MAPSReporting
         Exclusions = @($p.ExclusionPath) + @($p.ExclusionProcess) + @($p.ExclusionExtension) | Where-Object { $_ }
         Signatures = $s.AntivirusSignatureVersion; Plateforme = $s.AMProductVersion
     }
 }
-function Actif($e) { $e.Service -and $e.Antivirus -and $e.TempsReel -and $e.Mode -eq 'Normal' -and $e.Falsification -and $e.Cloud -gt 0 -and -not @($e.Exclusions).Count }
-function Decrire($e) { "service $($e.Service), antivirus $($e.Antivirus), temps réel $($e.TempsReel), mode $($e.Mode), falsification $($e.Falsification), cloud $($e.Cloud), exclusions $(@($e.Exclusions).Count), plateforme $($e.Plateforme), signatures $($e.Signatures)" }
+# Signatures de plus de 7 jours : un « aucune détection » ne vaudrait rien (instantané ancien)
+function Actif($e) { $e.Service -and $e.Antivirus -and $e.TempsReel -and $e.Comportement -and $e.Acces -and $e.Telechargements -and $e.Mode -eq 'Normal' -and $e.Falsification -and $e.Cloud -gt 0 -and $e.AgeSignatures -le 7 -and -not @($e.Exclusions).Count }
+function Decrire($e) { "service $($e.Service), antivirus $($e.Antivirus), temps réel $($e.TempsReel), comportement $($e.Comportement), accès $($e.Acces), téléchargements $($e.Telechargements), mode $($e.Mode), falsification $($e.Falsification), cloud $($e.Cloud), exclusions $(@($e.Exclusions).Count), plateforme $($e.Plateforme), signatures $($e.Signatures) ($($e.AgeSignatures) j)" }
 
 # Détections depuis le début du passage : menaces et événements 1116 (détection) et 1117 (action)
 function Detections {
@@ -121,6 +125,8 @@ if ($installe) {
     }
 }
 
+# Analyse dans le cloud éventuellement tardive : une minute d'attente avant la relecture des détections
+Start-Sleep 60
 Verifier 'Aucune détection Defender pendant le passage' {
     $d = Detections
     if ($d.Nombre) {
@@ -132,5 +138,11 @@ Verifier 'Aucune détection Defender pendant le passage' {
 $apres = Etat-Defender
 if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI' (Decrire $apres) }
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
+# Configuration de Defender modifiée pendant le passage (événement 5007) : deR4Tizer ne doit jamais y toucher
+Verifier 'Configuration de Defender inchangée pendant le passage (événement 5007)' {
+    $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue)
+    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 3 | ForEach-Object { ($_.Message -split "`n" | Select-Object -Skip 1 -First 3) -join ' ' }) -join ' ; ') }
+    $true
+}
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'

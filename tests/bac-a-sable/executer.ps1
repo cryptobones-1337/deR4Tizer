@@ -12,6 +12,7 @@ $env:GITHUB_STEP_SUMMARY = Join-Path $sortie "$Scenario-tableau.md"
 Remove-Item $env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
 Start-Transcript -LiteralPath (Join-Path $sortie "$Scenario-transcription.txt") -Force | Out-Null
 $code = 99
+$debut = Get-Date
 try {
     $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     "Compte : $([Security.Principal.WindowsIdentity]::GetCurrent().Name) ; administrateur élevé : $admin"
@@ -39,7 +40,8 @@ try {
     "EXCEPTION : $($_.Exception.Message)"
     $code = 98
 } finally {
-    try { Get-MpThreatDetection | Format-List | Out-String | Set-Content (Join-Path $sortie "$Scenario-defender-detections.txt") } catch { }
+    # Détections de ce scénario seulement (un historique présent dans l'instantané de la VM n'est pas compté)
+    try { Get-MpThreatDetection | Where-Object { $_.InitialDetectionTime -ge $debut } | Format-List | Out-String | Set-Content (Join-Path $sortie "$Scenario-defender-detections.txt") } catch { }
     Copy-Item (Join-Path $env:RUNNER_TEMP 'journaux-msi') (Join-Path $sortie "$Scenario-journaux") -Recurse -Force -ErrorAction SilentlyContinue
     Stop-Transcript | Out-Null
     # Écrit en dernier : lancer.ps1 attend ce fichier
