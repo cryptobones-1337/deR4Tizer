@@ -1115,6 +1115,65 @@ fn jonction(lien: &std::path::Path, cible: &std::path::Path) {
     assert!(s.status.success(), "mklink /J : {}", String::from_utf8_lossy(&s.stderr));
 }
 
+/// Revue de sécurité : les leurres sont posés, lus et retirés dans les dossiers de l'utilisateur, qu'il contrôle.
+/// Tout passe par un handle ouvert sans suivre de lien, chemin final vérifié : un dossier du profil remplacé par
+/// une jonction vers un autre dossier (canari) est refusé, et rien n'y est créé, lu ni supprimé
+#[test]
+fn leurres_par_handle_jamais_a_travers_un_lien() {
+    use crate::hygiene::{creer_leurre, empreinte_verifiee, retirer_leurre};
+    let d = dossier_test("leurres-liens");
+    let canari = d.join("canari");
+    std::fs::create_dir_all(&canari).unwrap();
+    std::fs::write(canari.join("0 Factures 1234.docx"), b"fichier du canari").unwrap();
+    let avant = contenu_dossier(&canari);
+    // Profil piégé : Documents est une jonction vers le canari
+    let piege = d.join("piege");
+    std::fs::create_dir_all(&piege).unwrap();
+    jonction(&piege.join("Documents"), &canari);
+    let par_le_lien = piege.join("Documents").join("0 Factures 1234.docx");
+    assert!(!retirer_leurre(&par_le_lien), "retrait à travers une jonction : refusé");
+    assert!(creer_leurre(&piege.join("Documents").join("0 Nouveau 5678.docx")).is_err(), "création à travers une jonction : refusée");
+    assert!(empreinte_verifiee(&par_le_lien).is_none(), "lecture à travers une jonction : refusée");
+    assert_eq!(contenu_dossier(&canari), avant, "canari modifié");
+    assert_eq!(std::fs::read(canari.join("0 Factures 1234.docx")).unwrap(), b"fichier du canari");
+    // Témoin : vrai dossier, tout fonctionne
+    let vrai = d.join("vrai").join("Documents");
+    std::fs::create_dir_all(&vrai).unwrap();
+    let f = vrai.join("0 Contrat 4321.docx");
+    creer_leurre(&f).unwrap();
+    use std::os::windows::fs::MetadataExt;
+    let attributs = std::fs::metadata(&f).unwrap().file_attributes();
+    assert_eq!(attributs & 0x6, 0x6, "leurre caché et système");
+    assert_eq!(empreinte_verifiee(&f), crate::hygiene::empreinte_fichier(&f), "empreinte lue par le handle vérifié");
+    assert!(creer_leurre(&f).is_err(), "un leurre existant n'est jamais écrasé");
+    assert!(retirer_leurre(&f) && !f.exists(), "retrait du vrai leurre");
+    let _ = std::fs::remove_dir(piege.join("Documents"));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Revue de sécurité : plus aucune opération par chemin sur les leurres (suppression, écriture, attributs, audit
+/// posé par PowerShell), ni dans hygiene.rs ni au nettoyage de la désinstallation ; profils lus dans ProfileList
+#[test]
+fn leurres_aucune_operation_par_chemin() {
+    let hygiene = include_str!("hygiene.rs");
+    let debut = hygiene.find("// ------------------------------------------------------------ leurres").unwrap_or(0);
+    let fin = hygiene.find("// ------------------------------------------------------------ pilotes").unwrap_or(hygiene.len());
+    let leurres = &hygiene[debut..fin];
+    for interdit in ["fs::write(", "attrib.exe", "Set-Acl", "Get-Acl", ".exists()"] {
+        assert!(!leurres.contains(interdit), "hygiene.rs (leurres) : opération par chemin {interdit}");
+    }
+    // Suppression par chemin admise seulement dans le dossier de données (protégé), jamais dans un profil
+    for (i, _) in leurres.match_indices("fs::remove_file(") {
+        assert!(leurres[i..].starts_with("fs::remove_file(commun::dossier()"), "hygiene.rs (leurres) : suppression par chemin hors du dossier de données");
+    }
+    let modeles = &hygiene[hygiene.find("fn retirer_leurres_modeles").unwrap()..debut];
+    assert!(!modeles.contains("fs::remove_file(") && !modeles.contains("attrib.exe"), "profils modèles : retrait par chemin");
+    let moniteur = include_str!("moniteur.rs");
+    assert!(!moniteur.contains("fs::remove_file(&l.chemin)"), "nettoyage : retrait par chemin");
+    assert_eq!(crate::hygiene::chemin_image_profil(r"%SystemDrive%\Users\marie", "C:"), std::path::PathBuf::from(r"C:\Users\marie"));
+    assert_eq!(crate::hygiene::chemin_image_profil(r"D:\Profils\paul", "C:"), std::path::PathBuf::from(r"D:\Profils\paul"));
+}
+
 fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(d).map(|l| l.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
     v.sort();
