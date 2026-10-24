@@ -29,12 +29,28 @@ static CONNEXIONS: AtomicUsize = AtomicUsize::new(0);
 
 // ------------------------------------------------------------ jeton
 
-fn nouveau_jeton() -> String {
+fn nouveau_jeton() -> Option<String> {
     let mut octets = [0u8; 32];
-    unsafe {
-        let _ = BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut octets, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    }
-    octets.iter().map(|o| format!("{o:02x}")).collect()
+    let ok = unsafe { BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut octets, BCRYPT_USE_SYSTEM_PREFERRED_RNG).is_ok() };
+    jeton_depuis_alea(ok, &octets)
+}
+
+/// Décision pure : jeton tiré des octets aléatoires, seulement si le générateur a réussi et a rendu 32 octets
+/// non tous nuls (un tampon resté à zéro donnerait un jeton connu de tous). None : pas de jeton, pas d'API
+/// (échec fermé)
+pub fn jeton_depuis_alea(generateur_ok: bool, octets: &[u8]) -> Option<String> {
+    (generateur_ok && octets.len() >= 32 && octets.iter().any(|&o| o != 0)).then(|| octets.iter().map(|o| format!("{o:02x}")).collect())
+}
+
+/// Décision pure : un jeton déjà présent n'est repris que s'il a la forme de ceux que crée le service (64 caractères
+/// hexadécimaux, pas tous nuls) ; sinon il est régénéré
+pub fn jeton_valide(j: &str) -> bool {
+    j.len() == 64 && j.bytes().all(|o| o.is_ascii_hexdigit()) && j.bytes().any(|o| o != b'0')
+}
+
+/// Réponse de /api/v1/sante, servie sans jeton : disponibilité et version, rien qui identifie le poste
+pub fn corps_sante() -> String {
+    format!(r#"{{"Ok":true,"Produit":"deR4Tizer","Version":"{}"}}"#, commun::VERSION)
 }
 
 /// Jeton : SYSTEM et administrateurs seulement, droits posés à la création du fichier (le dossier est
@@ -46,7 +62,7 @@ const SDDL_JETON: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
 pub fn jeton() -> Option<String> {
     let f = commun::dossier().join(FICHIER_JETON);
     match commun::lire_fichier(&f) {
-        Some(j) if j.trim().len() >= 32 && droits_jeton(&f).is_ok() => Some(j.trim().to_string()),
+        Some(j) if jeton_valide(j.trim()) && droits_jeton(&f).is_ok() => Some(j.trim().to_string()),
         _ => regenerer_jeton().map_err(|e| commun::journal(&format!("API d'export : jeton non créé ({e})"))).ok(),
     }
 }
@@ -62,7 +78,7 @@ fn droits_jeton(f: &std::path::Path) -> Result<(), String> {
 
 pub fn regenerer_jeton() -> Result<String, String> {
     let f = commun::dossier().join(FICHIER_JETON);
-    let j = nouveau_jeton();
+    let j = nouveau_jeton().ok_or("générateur aléatoire de Windows en échec")?;
     crate::natif::ecrire_fichier_protege(&f, j.as_bytes(), SDDL_JETON)?;
     droits_jeton(&f)?;
     Ok(j)
@@ -214,8 +230,7 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
         return repondre(&mut flux, 405, "application/json", r#"{"Erreur":"méthode non autorisée (lecture seule)"}"#);
     }
     if chemin == "/api/v1/sante" {
-        return repondre(&mut flux, 200, "application/json",
-            &format!(r#"{{"Ok":true,"Produit":"deR4Tizer","Version":"{}","Hote":"{}"}}"#, commun::VERSION, export::hote_local()));
+        return repondre(&mut flux, 200, "application/json", &corps_sante());
     }
     let fourni = autorisation.strip_prefix("Bearer ").unwrap_or("");
     if !egaux(fourni, jeton) {
