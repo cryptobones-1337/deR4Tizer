@@ -7,9 +7,7 @@
 use crate::commun::{self, Alerte};
 use crate::evenements;
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -147,7 +145,8 @@ pub fn dossiers_presents() -> Vec<(String, &'static Cible)> {
     for p in profils.map_while(Result::ok) {
         for c in CIBLES {
             let d = p.path().join(c.relatif);
-            if d.is_dir() {
+            // Ouvert sans suivre de lien, chemin final vérifié (is_dir suivrait une jonction posée par l'utilisateur)
+            if crate::natif::ouvrir_verifie(&d, 0x80, 0x7, true).is_ok() {
                 l.push((d.to_string_lossy().to_string(), c));
             }
         }
@@ -155,47 +154,38 @@ pub fn dossiers_presents() -> Vec<(String, &'static Cible)> {
     l
 }
 
-/// Pose (ou repose) l'audit de lecture sur les dossiers ; les nouveaux fichiers en héritent.
-/// Fait en PowerShell (Get-Acl -Audit / Set-Acl), qui active lui-même le privilège SeSecurityPrivilege.
+/// Audit de lecture : sur le dossier, entrée héritée par ses fichiers (InheritOnly : le parcourir n'est pas lire une
+/// donnée, et produirait des milliers d'événements) ; NoPropagateInherit si la cible n'est pas récursive (ses
+/// fichiers seulement, pas les sous-dossiers)
+fn sddl_audit_dossier(recursif: bool) -> &'static str {
+    if recursif { "S:(AU;OICIIOSA;0x1;;;WD)" } else { "S:(AU;OINPIOSA;0x1;;;WD)" }
+}
+
+/// Audit de lecture sur un fichier déjà présent (les nouveaux héritent de l'entrée du dossier)
+const SDDL_AUDIT_FICHIER: &str = "S:(AU;SA;0x1;;;WD)";
+
+/// Éléments parcourus au plus par dossier (profil de navigateur) et par passage
+const MAXIMUM_PAR_DOSSIER: usize = 20_000;
+
+/// Pose (ou repose) l'audit de lecture sur les dossiers. En SYSTEM dans les profils des utilisateurs : tout par
+/// handle (natif::poser_audit_arborescence), jamais par chemin ni par PowerShell : une jonction posée par
+/// l'utilisateur à la place d'un dossier de son profil ne fait rien écrire ailleurs, et seule la SACL est écrite
+/// (Set-Acl réécrivait le descripteur complet, DACL comprise).
 pub fn poser_audit() -> Result<usize, String> {
-    let dossiers = dossiers_presents();
-    if dossiers.is_empty() {
-        return Ok(0);
+    let mut n = 0;
+    for (d, c) in dossiers_presents() {
+        match crate::natif::poser_audit_arborescence(Path::new(&d), sddl_audit_dossier(c.recursif), SDDL_AUDIT_FICHIER, c.recursif, MAXIMUM_PAR_DOSSIER) {
+            Ok(b) => {
+                n += 1;
+                if b.ecartes > 0 || b.tronque {
+                    commun::journal(&format!("audit des données sensibles : {d} : {} élément(s) écarté(s) (liens ou chemins détournés, jamais suivis){}",
+                        b.ecartes, if b.tronque { " ; parcours arrêté au nombre maximal d'éléments" } else { "" }));
+                }
+            }
+            Err(e) => commun::journal(&format!("audit des données sensibles : erreur : {d} : {e}")),
+        }
     }
-    let mut script = String::from("$ErrorActionPreference='Continue'\n$n=0\n");
-    for (d, c) in &dossiers {
-        // InheritOnly : la règle ne vise pas le dossier lui-même (le parcourir n'est pas lire une donnée, et
-        // produirait des milliers d'événements) ; NoPropagateInherit : seulement ses fichiers, pas les sous-dossiers
-        let (heritage, propagation) = if c.recursif { ("ContainerInherit,ObjectInherit", "InheritOnly") } else { ("ObjectInherit", "InheritOnly,NoPropagateInherit") };
-        // Reposée seulement si elle diffère : chaque Set-Acl se propage à tous les fichiers (événements 4907 en rafale)
-        script.push_str(&format!(
-            "try {{ $a = Get-Acl -LiteralPath '{d}' -Audit; \
-             $r = New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'),'ReadData','{heritage}','{propagation}','Success'); \
-             $x = @($a.GetAuditRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object {{ $_.IdentityReference.Value -eq 'S-1-1-0' }}); \
-             if (-not ($x.Count -eq 1 -and $x[0].FileSystemRights -eq $r.FileSystemRights -and $x[0].InheritanceFlags -eq $r.InheritanceFlags -and $x[0].PropagationFlags -eq $r.PropagationFlags)) {{ \
-               $a.PurgeAuditRules((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0')); $a.AddAuditRule($r); Set-Acl -LiteralPath '{d}' -AclObject $a }}; \
-             Get-ChildItem -LiteralPath '{d}' -File -Force {recursion} -ErrorAction SilentlyContinue | ForEach-Object {{ \
-               $fa = Get-Acl -LiteralPath $_.FullName -Audit; \
-               if (-not @($fa.GetAuditRules($false, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {{ $_.IdentityReference.Value -eq 'S-1-1-0' }}).Count) {{ \
-                 $fa.SetAuditRuleProtection($false, $true); Set-Acl -LiteralPath $_.FullName -AclObject $fa }} }}; \
-             $n++ }} catch {{ Write-Output (\"erreur : {d} : \" + $_.Exception.Message) }}\n",
-            d = d.replace('\'', "''"),
-            // Fichiers déjà présents sans la règle héritée (la modification du dossier ne leur parvient pas
-            // toujours) : réécrire leur descripteur sans protection force Windows à recalculer l'héritage
-            recursion = if c.recursif { "-Recurse" } else { "" },
-        ));
-    }
-    script.push_str("Write-Output \"poses=$n\"\n");
-    let sortie = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(0x0800_0000)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let texte = String::from_utf8_lossy(&sortie.stdout);
-    for l in texte.lines().filter(|l| l.starts_with("erreur")) {
-        commun::journal(&format!("audit des données sensibles : {l}"));
-    }
-    texte.lines().find_map(|l| l.strip_prefix("poses=")).and_then(|n| n.trim().parse().ok()).ok_or_else(|| texte.trim().to_string())
+    Ok(n)
 }
 
 /// Analyse un événement 4663 : renvoie une alerte si un programme inattendu lit des données sensibles
