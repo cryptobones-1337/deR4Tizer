@@ -29,3 +29,4 @@ diagnostic*.ps1
 Thumbs.db
 desktop.ini
 installeur/obj/
+__pycache__/
