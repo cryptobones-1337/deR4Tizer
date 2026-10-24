@@ -5,7 +5,6 @@ use crate::commun::{self, InfosMenaces, SourceMenace};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, Ipv6Addr};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -228,7 +227,8 @@ impl Menaces {
                 infos.sources.push(info);
                 continue;
             }
-            let Ok(fh) = fs::File::open(&f) else {
+            // Propriétaire contrôlé, comme tout fichier du dossier de données
+            let Some(texte) = commun::lire_fichier_proprietaire(&f) else {
                 info.statut = statut.unwrap_or_else(|| "pas encore téléchargée".into());
                 infos.sources.push(info);
                 continue;
@@ -236,7 +236,7 @@ impl Menaces {
             info.mis_a_jour = fs::metadata(&f).and_then(|x| x.modified()).ok().map(|t| commun::heure(t).chars().take(16).collect());
             let haute = s.confiance == "haute";
             let mut rejetee = false;
-            let lignes = BufReader::new(fh).lines().map_while(Result::ok);
+            let lignes = texte.lines().map(str::to_string);
             let n = if s.format == "domaine" {
                 let mut h: Vec<u64> = lignes.filter_map(|l| domaine_de_ligne(&l)).map(|d| empreinte(&d)).collect();
                 h.sort_unstable();
@@ -368,7 +368,7 @@ fn dans_reseau6(ip: &[u8; 16], r: &Reseau6) -> bool {
 
 /// Nombre d'entrées valides d'un fichier de liste (contrôle avant de remplacer la copie précédente)
 fn compter(s: &Source, chemin: &std::path::Path) -> usize {
-    let Ok(t) = fs::read_to_string(chemin) else { return 0 };
+    let Some(t) = commun::lire_fichier_proprietaire(chemin) else { return 0 };
     match s.format {
         "domaine" => t.lines().filter_map(domaine_de_ligne).count(),
         "spamhaus" => t.matches("\"cidr\"").count(),

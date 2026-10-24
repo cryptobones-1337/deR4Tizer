@@ -203,6 +203,32 @@ fn plages_du_mode_panique() {
     }
 }
 
+/// Lot 5 : jeton de l'API en échec fermé (BCryptGenRandom en échec ou octets nuls : aucun jeton, donc pas d'API),
+/// et /api/v1/sante, servie sans jeton, ne dit plus le nom de la machine
+#[test]
+fn lot5_api_jeton_echec_ferme_et_sante_anonyme() {
+    use crate::api::{corps_sante, jeton_depuis_alea};
+    assert_eq!(jeton_depuis_alea(false, &[7u8; 32]), None, "générateur en échec : pas de jeton");
+    assert_eq!(jeton_depuis_alea(true, &[0u8; 32]), None, "octets nuls : pas de jeton");
+    assert_eq!(jeton_depuis_alea(true, &[0u8; 8]), None, "trop court : pas de jeton");
+    let j = jeton_depuis_alea(true, &[0xab; 32]).unwrap();
+    assert_eq!(j, "ab".repeat(32));
+    let s = corps_sante();
+    assert!(s.contains(r#""Ok":true"#) && s.contains(crate::commun::VERSION), "{s}");
+    assert!(!s.contains("Hote"), "nom de la machine renvoyé sans jeton : {s}");
+    let hote = crate::export::hote_local();
+    assert!(hote.is_empty() || !s.contains(&hote), "nom de la machine renvoyé sans jeton : {s}");
+    // Revue : un jeton DÉJÀ présent n'est repris que s'il a la forme d'un jeton créé par le service
+    use crate::api::jeton_valide;
+    assert!(jeton_valide(&"ab".repeat(32)));
+    assert!(jeton_valide(&"0123456789ABCDEF".repeat(4)), "majuscules hexadécimales acceptées");
+    assert!(!jeton_valide(&"0".repeat(64)), "jeton nul refusé");
+    assert!(!jeton_valide(&"a".repeat(32)), "32 caractères : trop court");
+    assert!(!jeton_valide(&"a".repeat(65)), "trop long");
+    assert!(!jeton_valide(&"g".repeat(64)), "non hexadécimal");
+    assert!(!jeton_valide(""), "vide");
+}
+
 #[test]
 fn api_adresses_autorisees() {
     let l = vec!["192.168.1.10".to_string(), "10.0.0.0/8".to_string()];
@@ -369,6 +395,20 @@ fn fonctions_texte_sans_panique() {
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
+}
+
+/// Lot 3c : un certificat dont la CRL ne répond pas était accepté (WinVerifyTrust tolère la révocation hors
+/// ligne). Révocation révoquée, inconnue ou hors ligne : refus ; les autres états de la chaîne n'y changent rien.
+#[test]
+fn n2_revocation_verifiee_ou_refus() {
+    use crate::natif::revocation_verifiee;
+    assert!(revocation_verifiee(0), "chaîne sans erreur");
+    assert!(!revocation_verifiee(0x0000_0004), "révoqué");
+    assert!(!revocation_verifiee(0x0000_0040), "révocation inconnue");
+    assert!(!revocation_verifiee(0x0100_0000), "révocation hors ligne (CRL injoignable)");
+    assert!(!revocation_verifiee(0x0100_0040), "inconnue et hors ligne, comme Windows les signale ensemble");
+    assert!(!revocation_verifiee(0x0100_0000 | 0x0000_0001), "hors ligne avec une autre erreur");
+    assert!(revocation_verifiee(0x0000_0001), "autre erreur seule : du ressort de WinVerifyTrust, pas de cette décision");
 }
 
 #[test]
@@ -690,16 +730,70 @@ fn lot1_privilege_de_restauration_limite_a_l_appel() {
     assert_eq!(r2.is_ok(), appele);
 }
 
+/// Lot 5 : après un emprunt d'identité ou un privilège activé sur le fil, un retour à l'identité du service
+/// impossible (RevertToSelf en échec) arrête le service, dans les deux fonctions qui empruntent
+#[test]
+fn lot5_retour_a_soi_impossible_arret() {
+    use crate::natif::retour_ou_arret;
+    let mut arrete = false;
+    retour_ou_arret(Err("refusé".to_string()), "essai", |_| arrete = true);
+    assert!(arrete, "échec du retour : arrêt");
+    let mut arrete = false;
+    retour_ou_arret(Ok(()), "essai", |_| arrete = true);
+    assert!(!arrete, "retour réussi : pas d'arrêt");
+    let natif = include_str!("natif.rs");
+    assert!(!natif.contains("let _ = RevertToSelf()"), "un échec de RevertToSelf est ignoré quelque part");
+}
+
+/// Lot 5 : en échec de la protection du dossier, aucune réponse automatique alimentée par les fichiers du dossier
+/// (listes de menaces, règles IDS) : ni blocage automatique, ni IPS ; hors échec, rien ne change
+#[test]
+fn lot5_reponses_automatiques_jamais_en_echec_ferme() {
+    use crate::ids::blocage_ips;
+    use crate::moniteur::blocage_automatique;
+    assert!(blocage_automatique(true, true, false, false));
+    assert!(!blocage_automatique(true, true, false, true), "échec fermé : pas de blocage automatique");
+    assert!(!blocage_automatique(false, true, false, false), "confiance non haute");
+    assert!(!blocage_automatique(true, false, false, false), "réglage désactivé");
+    assert!(!blocage_automatique(true, true, true, false), "déjà bloquée");
+    assert!(blocage_ips(true, true, "drop", 3, true, false));
+    assert!(blocage_ips(true, true, "alert", 1, true, false), "priorité 1");
+    assert!(!blocage_ips(true, true, "drop", 3, true, true), "échec fermé : pas de blocage IPS");
+    assert!(!blocage_ips(false, true, "drop", 3, true, false), "IPS désactivé");
+    assert!(!blocage_ips(true, false, "drop", 3, true, false), "adresse non publique");
+    assert!(!blocage_ips(true, true, "alert", 2, true, false), "ni drop, ni reject, ni priorité 1");
+    assert!(!blocage_ips(true, true, "drop", 3, false, false), "connexion non établie (source usurpable)");
+}
+
+/// Lot 5 : les fichiers du dossier de données que le service télécharge lui-même (listes de menaces, règles IDS,
+/// LOLDrivers, JA3) et les événements du SIEM sont lus par commun (propriétaire contrôlé), jamais directement
+#[test]
+fn lot5_lectures_du_dossier_par_commun() {
+    for (module, source) in [("menaces.rs", include_str!("menaces.rs")), ("ids.rs", include_str!("ids.rs")),
+                             ("dpi.rs", include_str!("dpi.rs")), ("siem.rs", include_str!("siem.rs"))] {
+        for interdit in ["fs::read_to_string(", "fs::File::open(", "fs::read("] {
+            assert!(!source.contains(interdit), "{module} lit directement ({interdit})");
+        }
+    }
+    let hygiene = include_str!("hygiene.rs");
+    let loldrivers = &hygiene[hygiene.find("loldrivers.json").expect("loldrivers.json")..];
+    // Fin de la fonction (« \n} » : valable avec des fins de ligne LF comme CRLF)
+    let fonction = &loldrivers[..loldrivers.find("\n}").unwrap_or(loldrivers.len())];
+    assert!(!fonction.contains("fs::read_to_string("), "hygiene.rs lit loldrivers.json directement");
+}
+
 #[test]
 fn lot1_lisible_en_echec_liste_d_autorisation() {
     use crate::commun::lisible_en_echec;
-    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "dns.json", "journal.txt"] {
+    for oui in ["geoip\\afrinic.txt", "GeoIP/ripencc.txt", "alertes.json", "incidents.json", "journal.txt"] {
         assert!(lisible_en_echec(oui), "{oui}");
     }
     for non in ["config.json", "lecteurs.json", "apprentissage.json", "blocages.json", "quarantaine.json",
                 "secrets\\notifications.json", "secrets\\leurres-noms.json", "api-jeton.txt", "baseline-sauvegarde.json",
                 "executables.json", "extensions-connues.json", "ecoutes-connues.json", "peripheriques-connus.json",
-                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x"] {
+                "geoip\\sous\\x.txt", "geoip\\", "geoip\\x.json", "..\\config.json", "", "alertes.json\\x",
+                // Lot 5 : le cache DNS n'est plus lu en échec fermé
+                "dns.json"] {
         assert!(!lisible_en_echec(non), "{non}");
     }
 }
@@ -1099,6 +1193,65 @@ fn restaurer_test(dq: &std::path::Path, liste: &mut Vec<crate::reponse::ElementQ
 fn jonction(lien: &std::path::Path, cible: &std::path::Path) {
     let s = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(lien).arg(cible).output().unwrap();
     assert!(s.status.success(), "mklink /J : {}", String::from_utf8_lossy(&s.stderr));
+}
+
+/// Revue de sécurité : les leurres sont posés, lus et retirés dans les dossiers de l'utilisateur, qu'il contrôle.
+/// Tout passe par un handle ouvert sans suivre de lien, chemin final vérifié : un dossier du profil remplacé par
+/// une jonction vers un autre dossier (canari) est refusé, et rien n'y est créé, lu ni supprimé
+#[test]
+fn leurres_par_handle_jamais_a_travers_un_lien() {
+    use crate::hygiene::{creer_leurre, empreinte_verifiee, retirer_leurre};
+    let d = dossier_test("leurres-liens");
+    let canari = d.join("canari");
+    std::fs::create_dir_all(&canari).unwrap();
+    std::fs::write(canari.join("0 Factures 1234.docx"), b"fichier du canari").unwrap();
+    let avant = contenu_dossier(&canari);
+    // Profil piégé : Documents est une jonction vers le canari
+    let piege = d.join("piege");
+    std::fs::create_dir_all(&piege).unwrap();
+    jonction(&piege.join("Documents"), &canari);
+    let par_le_lien = piege.join("Documents").join("0 Factures 1234.docx");
+    assert!(!retirer_leurre(&par_le_lien), "retrait à travers une jonction : refusé");
+    assert!(creer_leurre(&piege.join("Documents").join("0 Nouveau 5678.docx")).is_err(), "création à travers une jonction : refusée");
+    assert!(empreinte_verifiee(&par_le_lien).is_none(), "lecture à travers une jonction : refusée");
+    assert_eq!(contenu_dossier(&canari), avant, "canari modifié");
+    assert_eq!(std::fs::read(canari.join("0 Factures 1234.docx")).unwrap(), b"fichier du canari");
+    // Témoin : vrai dossier, tout fonctionne
+    let vrai = d.join("vrai").join("Documents");
+    std::fs::create_dir_all(&vrai).unwrap();
+    let f = vrai.join("0 Contrat 4321.docx");
+    creer_leurre(&f).unwrap();
+    use std::os::windows::fs::MetadataExt;
+    let attributs = std::fs::metadata(&f).unwrap().file_attributes();
+    assert_eq!(attributs & 0x6, 0x6, "leurre caché et système");
+    assert_eq!(empreinte_verifiee(&f), crate::hygiene::empreinte_fichier(&f), "empreinte lue par le handle vérifié");
+    assert!(creer_leurre(&f).is_err(), "un leurre existant n'est jamais écrasé");
+    assert!(retirer_leurre(&f) && !f.exists(), "retrait du vrai leurre");
+    let _ = std::fs::remove_dir(piege.join("Documents"));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Revue de sécurité : plus aucune opération par chemin sur les leurres (suppression, écriture, attributs, audit
+/// posé par PowerShell), ni dans hygiene.rs ni au nettoyage de la désinstallation ; profils lus dans ProfileList
+#[test]
+fn leurres_aucune_operation_par_chemin() {
+    let hygiene = include_str!("hygiene.rs");
+    let debut = hygiene.find("// ------------------------------------------------------------ leurres").unwrap_or(0);
+    let fin = hygiene.find("// ------------------------------------------------------------ pilotes").unwrap_or(hygiene.len());
+    let leurres = &hygiene[debut..fin];
+    for interdit in ["fs::write(", "attrib.exe", "Set-Acl", "Get-Acl", ".exists()"] {
+        assert!(!leurres.contains(interdit), "hygiene.rs (leurres) : opération par chemin {interdit}");
+    }
+    // Suppression par chemin admise seulement dans le dossier de données (protégé), jamais dans un profil
+    for (i, _) in leurres.match_indices("fs::remove_file(") {
+        assert!(leurres[i..].starts_with("fs::remove_file(commun::dossier()"), "hygiene.rs (leurres) : suppression par chemin hors du dossier de données");
+    }
+    let modeles = &hygiene[hygiene.find("fn retirer_leurres_modeles").unwrap()..debut];
+    assert!(!modeles.contains("fs::remove_file(") && !modeles.contains("attrib.exe"), "profils modèles : retrait par chemin");
+    let moniteur = include_str!("moniteur.rs");
+    assert!(!moniteur.contains("fs::remove_file(&l.chemin)"), "nettoyage : retrait par chemin");
+    assert_eq!(crate::hygiene::chemin_image_profil(r"%SystemDrive%\Users\marie", "C:"), std::path::PathBuf::from(r"C:\Users\marie"));
+    assert_eq!(crate::hygiene::chemin_image_profil(r"D:\Profils\paul", "C:"), std::path::PathBuf::from(r"D:\Profils\paul"));
 }
 
 fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
@@ -1542,6 +1695,87 @@ fn lot2_retour_arriere_simule() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Lot 5 : un client du canal qui se connecte puis se tait ne bloque plus le canal : la lecture d'une commande est
+/// bornée dans le temps ; une commande normale est toujours lue
+#[test]
+fn lot5_canal_lecture_bornee_client_silencieux() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    for (essai, envoi) in [("silence", None), ("commande", Some("{\"Action\":\"verification\"}\n"))] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-{essai}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+        assert!(!tube.is_invalid());
+        let nom_client = nom.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&nom_client).unwrap();
+            if let Some(t) = envoi {
+                c.write_all(t.as_bytes()).unwrap();
+            }
+            // Le client garde la connexion ouverte sans rien envoyer de plus
+            std::thread::sleep(Duration::from_secs(6));
+        });
+        let _ = unsafe { ConnectNamedPipe(tube, None) };
+        let debut = Instant::now();
+        let lu = crate::canal::lire_commande(HANDLE(tube.0), Duration::from_millis(800));
+        let duree = debut.elapsed();
+        assert!(duree < Duration::from_secs(3), "{essai} : lecture non bornée ({duree:?})");
+        match envoi {
+            None => assert!(lu.is_empty(), "silence : rien ne doit être lu"),
+            Some(t) => assert_eq!(String::from_utf8_lossy(&lu), t, "commande : lue en entier"),
+        }
+        unsafe { let _ = CloseHandle(tube); }
+        client.join().unwrap();
+    }
+}
+
+/// Lot 5 : canal occupé par un autre processus au démarrage (squat) : le PID de celui qui tient le tube est lu en
+/// client anonyme (jamais avec l'identité de SYSTEM), et l'alerte est critique, avec le PID et le chemin
+#[test]
+fn lot5_canal_squat_pid_et_alerte_critique() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let nom = format!(r"\\.\pipe\d4t-essai-lot5-squat-{}", std::process::id());
+    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), Some(std::process::id()));
+    unsafe { let _ = CloseHandle(tube); }
+    assert_eq!(crate::canal::pid_serveur_anonyme(&nom), None, "tube fermé : aucun PID");
+    let a = crate::canal::alerte_squat(Some(4242), r"C:\Users\x\AppData\squat.exe");
+    assert_eq!(a.niveau, "Critique");
+    assert_eq!(a.pid, Some(4242));
+    assert!(a.raisons.contains("4242") && a.raisons.contains(r"C:\Users\x\AppData\squat.exe"), "{}", a.raisons);
+    let inconnu = crate::canal::alerte_squat(None, "");
+    assert_eq!(inconnu.niveau, "Critique");
+    // Revue : alerte de squat seulement quand le nom est déjà pris à la création de la première instance
+    use crate::canal::squat;
+    assert!(squat(5), "ERROR_ACCESS_DENIED : nom déjà pris");
+    assert!(squat(231), "ERROR_PIPE_BUSY : nom pris par un tube à instances limitées");
+    assert!(!squat(8), "ERROR_NOT_ENOUGH_MEMORY : autre erreur");
+    assert!(!squat(0));
+    // Code réellement rendu par Windows quand un autre processus tient déjà le nom, qu'il limite ou non le nombre
+    // d'instances : la décision s'appuie sur ce constat
+    use windows::Win32::Storage::FileSystem::FILE_FLAG_FIRST_PIPE_INSTANCE;
+    for max in [1u32, 255] {
+        let nom = format!(r"\\.\pipe\d4t-essai-lot5-pris-{max}-{}", std::process::id());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tenu = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, max, 512, 512, 0, None) };
+        assert!(!tenu.is_invalid());
+        let second = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 255, 512, 512, 0, None) };
+        let code = (windows::core::Error::from_win32().code().0 as u32) & 0xFFFF;
+        assert!(second.is_invalid(), "nom déjà pris : création refusée");
+        assert!(squat(code), "instances maximales {max} : code {code}, pas reconnu comme squat");
+        unsafe { let _ = CloseHandle(tenu); }
+    }
+}
+
 /// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
@@ -1691,5 +1925,54 @@ fn exposition_udp_reponse_reconnue_par_le_flux() {
     let alertes = lecteur.lire(&|_| String::new(), &ctx);
     assert_eq!(alertes.len(), 1, "{:?}", alertes.iter().map(|a| a.raisons.clone()).collect::<Vec<_>>());
     assert!(alertes[0].raisons.contains("203.0.113.9") && alertes[0].port == 123);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Audit des données sensibles, posé par handle (natif::poser_audit_arborescence) : SACL complétée, jamais
+/// remplacée. Seules les entrées de deR4Tizer (audit explicite de Tout le monde, succès, mêmes droits) sont
+/// retirées ; une règle de l'organisation ou une entrée héritée est gardée. Rien à écrire si l'audit est déjà en
+/// place (sinon des rafales d'événements 4907 à chaque passage). La pose réelle (privilège SeSecurityPrivilege,
+/// jonction vers un canari, entrée tierce gardée) est vérifiée par le scénario 3b.
+#[test]
+fn audit_donnees_sacl_completee() {
+    use crate::natif::sacl_completee;
+    let dossier = "AU;OINPIOSA;CC;;;WD";
+    let fichier = "AU;SA;CC;;;WD";
+    // Aucune SACL : l'entrée est ajoutée
+    assert_eq!(sacl_completee("", dossier, false).as_deref(), Some("S:(AU;OINPIOSA;CC;;;WD)"));
+    assert_eq!(sacl_completee("S:", fichier, true).as_deref(), Some("S:(AU;SA;CC;;;WD)"));
+    // Déjà en place : rien à écrire
+    assert_eq!(sacl_completee("S:(AU;OINPIOSA;CC;;;WD)", dossier, false), None);
+    assert_eq!(sacl_completee("S:AI(AU;IDSA;CC;;;WD)", fichier, true), None, "fichier : entrée héritée du dossier");
+    assert!(sacl_completee("S:AI(AU;IDOINPIOSA;CC;;;WD)", dossier, false).is_some(), "dossier : l'entrée héritée ne suffit pas");
+    // Entrée tierce (règle de l'organisation) gardée, la nôtre ajoutée
+    assert_eq!(sacl_completee("S:(AU;SAFA;FA;;;BA)", dossier, false).as_deref(), Some("S:(AU;SAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)"));
+    assert_eq!(sacl_completee("S:(AU;SAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)", dossier, false), None, "tierce et nôtre : rien à écrire");
+    // Autre audit de Tout le monde, mais pas le nôtre (échecs, autres droits) : gardé
+    assert_eq!(sacl_completee("S:(AU;FA;CC;;;WD)(AU;SA;FA;;;WD)", fichier, true).as_deref(), Some("S:(AU;FA;CC;;;WD)(AU;SA;FA;;;WD)(AU;SA;CC;;;WD)"));
+    // Notre ancienne entrée (autres drapeaux d'héritage) remplacée, drapeaux de contrôle et entrées héritées gardés
+    assert_eq!(sacl_completee("S:AI(AU;OICIIOSA;CC;;;WD)(AU;IDSAFA;FA;;;BA)", dossier, false).as_deref(),
+        Some("S:AI(AU;IDSAFA;FA;;;BA)(AU;OINPIOSA;CC;;;WD)"));
+    // Doublon de la nôtre : un seul exemplaire gardé
+    assert_eq!(sacl_completee("S:(AU;OINPIOSA;CC;;;WD)(AU;OICIIOSA;CC;;;WD)", dossier, false).as_deref(), Some("S:(AU;OINPIOSA;CC;;;WD)"));
+    // Idempotent : le résultat complété ne demande plus rien
+    let r = sacl_completee("S:(AU;SAFA;FA;;;BA)", fichier, true).unwrap();
+    assert_eq!(sacl_completee(&r, fichier, true), None);
+}
+
+/// Le script d'installation lancé par la commande de production s'exécute vraiment. Avec DETACHED_PROCESS, Windows
+/// PowerShell 5.1 sortait avec le code 0 sans rien exécuter : aucune mise à jour n'était installée et aucun retour
+/// arrière n'avait lieu (scénario 3c en Windows Sandbox). Témoin : la même commande détachée n'écrit rien.
+#[test]
+fn script_installation_lance_s_execute() {
+    use crate::maj::commande_script;
+    use std::os::windows::process::CommandExt;
+    let d = dossier_test("script-lance");
+    let (marque, temoin) = (d.join("marque.txt"), d.join("temoin.txt"));
+    let ecrire = |f: &std::path::Path| format!("Set-Content -LiteralPath '{}' -Value ok", f.display());
+    let code = commande_script(&ecrire(&marque)).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && marque.exists(), "le script lancé par commande_script ne s'est pas exécuté");
+    let code = commande_script(&ecrire(&temoin)).creation_flags(0x0800_0000 | 0x0000_0008).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && !temoin.exists(), "témoin : PowerShell détaché a exécuté la commande (comportement à revoir)");
     let _ = std::fs::remove_dir_all(&d);
 }

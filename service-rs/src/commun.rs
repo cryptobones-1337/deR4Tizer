@@ -439,8 +439,9 @@ pub fn lire_fichier_proprietaire(chemin: &Path) -> Option<String> {
 
 /// Décision pure : fichier encore lisible quand la protection du dossier est en échec (chemin relatif au
 /// dossier de données). Liste d'autorisation, le reste est refusé par défaut : seules les données que le
-/// service retélécharge lui-même (GeoIP) et l'historique qu'il écrit (alertes, incidents, cache DNS,
-/// journal), qui n'accordent aucune confiance et ne changent pas son comportement. Tout ce qui le fait
+/// service retélécharge lui-même (GeoIP) et l'historique qu'il écrit (alertes, incidents, journal), qui
+/// n'accordent aucune confiance et ne changent pas son comportement. Le cache DNS (dns.json) n'en fait plus
+/// partie : il nomme les destinations des alertes et du trafic, un fichier piégé pourrait les maquiller. Tout ce qui le fait
 /// (configuration, comptes autorisés, apprentissage, blocages, quarantaine, bases « connues », secrets,
 /// jeton) reste refusé. Le contrôle du propriétaire s'applique dans tous les cas.
 pub fn lisible_en_echec(relatif: &str) -> bool {
@@ -448,7 +449,7 @@ pub fn lisible_en_echec(relatif: &str) -> bool {
     if let Some(nom) = r.strip_prefix("geoip\\") {
         return !nom.is_empty() && !nom.contains('\\') && nom.ends_with(".txt");
     }
-    matches!(r.as_str(), "alertes.json" | "incidents.json" | "dns.json" | "journal.txt")
+    matches!(r.as_str(), "alertes.json" | "incidents.json" | "journal.txt")
 }
 
 /// Lecture d'un fichier du dossier de données : propriétaire contrôlé, et refus tant que la protection du

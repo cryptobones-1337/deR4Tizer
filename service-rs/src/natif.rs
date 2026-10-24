@@ -262,12 +262,23 @@ pub fn signataire_valide(chemin: &str) -> Option<String> {
     }
 }
 
+/// Décision pure, sur les erreurs de la chaîne du signataire (CERT_TRUST_STATUS.dwErrorStatus) après un
+/// WinVerifyTrust réussi : la révocation doit avoir été vérifiée. La politique Authenticode par défaut tolère une
+/// révocation hors ligne ou inconnue (CRL injoignable) ; ici, c'est un refus, comme un certificat révoqué.
+pub fn revocation_verifiee(erreurs_chaine: u32) -> bool {
+    const CERT_TRUST_IS_REVOKED: u32 = 0x0000_0004;
+    const CERT_TRUST_REVOCATION_STATUS_UNKNOWN: u32 = 0x0000_0040;
+    const CERT_TRUST_IS_OFFLINE_REVOCATION: u32 = 0x0100_0000;
+    erreurs_chaine & (CERT_TRUST_IS_REVOKED | CERT_TRUST_REVOCATION_STATUS_UNKNOWN | CERT_TRUST_IS_OFFLINE_REVOCATION) == 0
+}
+
 /// Empreinte SHA-256 de la clé publique du certificat qui a signé le fichier, après vérification complète de la
-/// signature AVEC contrôle de révocation de toute la chaîne (un certificat volé puis révoqué est refusé).
+/// signature AVEC contrôle de révocation de toute la chaîne (un certificat volé puis révoqué est refusé, et une
+/// révocation impossible à vérifier aussi : revocation_verifiee).
 /// Sert à la mise à jour automatique : on compare une clé, pas un nom (que n'importe qui peut obtenir).
 pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
-    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN, WTD_REVOKE_WHOLECHAIN};
+    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT, WTD_REVOKE_WHOLECHAIN};
     let chemin_large = large(chemin);
     let mut fichier = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -282,7 +293,9 @@ pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
         dwUnionChoice: WTD_CHOICE_FILE,
         Anonymous: WINTRUST_DATA_0 { pFile: &mut fichier },
         dwStateAction: WTD_STATEACTION_VERIFY,
-        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN,
+        // Racine exclue : une racine n'a pas d'adresse de CRL (elle se retire du magasin, elle ne se révoque
+        // pas) ; vérifiée, elle serait « révocation inconnue » et revocation_verifiee refuserait tout
+        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
         ..Default::default()
     };
     let mut action: GUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
@@ -293,7 +306,10 @@ pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
             let fournisseur = WTHelperProvDataFromStateData(donnees.hWVTStateData);
             if !fournisseur.is_null() {
                 let signataire = WTHelperGetProvSignerFromChain(fournisseur, 0, false, 0);
-                if !signataire.is_null() && !(*signataire).pasCertChain.is_null() {
+                // WinVerifyTrust réussit aussi quand la révocation n'a pas pu être vérifiée (CRL injoignable) :
+                // l'état de la chaîne du signataire fait foi (échec fermé)
+                let chaine = if signataire.is_null() { std::ptr::null_mut() } else { (*signataire).pChainContext };
+                if !chaine.is_null() && revocation_verifiee((*chaine).TrustStatus.dwErrorStatus) && !(*signataire).pasCertChain.is_null() {
                     let cert = (*(*signataire).pasCertChain).pCert;
                     if !cert.is_null() && !(*cert).pCertInfo.is_null() {
                         let pk = &(*(*cert).pCertInfo).SubjectPublicKeyInfo.PublicKey;
@@ -662,9 +678,23 @@ pub fn avec_privilege_restauration<T>(f: impl FnOnce() -> T) -> Result<T, String
             r
         })();
         let valeur = resultat.map(|_| f());
-        let _ = RevertToSelf();
+        retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), "privilège de restauration", arreter);
         valeur
     }
+}
+
+/// Après un emprunt d'identité ou un privilège activé sur le fil : si le retour à l'identité du service
+/// (RevertToSelf) échoue, le fil garderait une autre identité ou le privilège ; `arret` est appelé (en service :
+/// journal puis arrêt du processus, que le gestionnaire de services relance avec un jeton propre)
+pub fn retour_ou_arret(retour: Result<(), String>, contexte: &str, arret: impl FnOnce(String)) {
+    if let Err(e) = retour {
+        arret(format!("ARRÊT : retour à l'identité du service impossible ({contexte}) : {e}"));
+    }
+}
+
+fn arreter(message: String) {
+    crate::commun::journal(&message);
+    std::process::abort();
 }
 
 /// Déplace un fichier ou un dossier par son handle, ouvert avec DELETE et la sémantique de sauvegarde (le
@@ -969,6 +999,265 @@ pub fn supprimer_par_handle(f: &std::fs::File) -> Result<(), String> {
     }.map_err(|e| e.to_string())
 }
 
+/// Ajoute des attributs (caché, système…) au fichier ouvert, par son handle (accès FILE_WRITE_ATTRIBUTES requis)
+pub fn ajouter_attributs(f: &std::fs::File, attributs: u32) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{FileBasicInfo, GetFileInformationByHandleEx, SetFileInformationByHandle, FILE_BASIC_INFO};
+    let h = HANDLE(f.as_raw_handle());
+    let mut info = FILE_BASIC_INFO::default();
+    let taille = std::mem::size_of::<FILE_BASIC_INFO>() as u32;
+    unsafe {
+        GetFileInformationByHandleEx(h, FileBasicInfo, &mut info as *mut _ as *mut c_void, taille).map_err(|e| e.to_string())?;
+        info.FileAttributes |= attributs;
+        SetFileInformationByHandle(h, FileBasicInfo, &info as *const _ as *const c_void, taille).map_err(|e| e.to_string())
+    }
+}
+
+/// Exécute `f` avec le privilège `nom` actif sur CE fil seulement (jeton d'emprunt de soi-même), puis revient à
+/// l'identité du service ; si ce retour échoue, le service s'arrête (le fil garderait le privilège)
+fn avec_privilege<T>(nom: &str, f: impl FnOnce() -> T) -> Result<T, String> {
+    use windows::Win32::Foundation::{GetLastError, LUID, ERROR_NOT_ALL_ASSIGNED};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, ImpersonateSelf, LookupPrivilegeValueW, RevertToSelf, SecurityImpersonation, LUID_AND_ATTRIBUTES,
+        SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+    unsafe {
+        ImpersonateSelf(SecurityImpersonation).map_err(|e| format!("emprunt du jeton : {e}"))?;
+        let resultat = (|| {
+            let mut jeton = HANDLE::default();
+            OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, false, &mut jeton).map_err(|e| format!("jeton du fil : {e}"))?;
+            let n = large(nom);
+            let mut luid = LUID::default();
+            let mut r = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(n.as_ptr()), &mut luid).map_err(|e| e.to_string());
+            if r.is_ok() {
+                let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+                r = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None).map_err(|e| e.to_string());
+                if r.is_ok() && GetLastError() == ERROR_NOT_ALL_ASSIGNED {
+                    r = Err(format!("privilège {nom} absent du jeton"));
+                }
+            }
+            let _ = CloseHandle(jeton);
+            r
+        })();
+        let valeur = resultat.map(|_| f());
+        retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), &format!("privilège {nom}"), arreter);
+        valeur
+    }
+}
+
+/// Pose l'audit (SACL) d'un fichier par son handle, ouvert sans suivre de lien et chemin final vérifié, avec
+/// SeSecurityPrivilege actif sur ce fil pour ce seul appel ; `sddl` ne décrit qu'une SACL (« S:… »)
+pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT};
+    use windows::Win32::Security::{GetSecurityDescriptorSacl, ACL, PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION};
+    avec_privilege("SeSecurityPrivilege", || unsafe {
+        // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
+        let f = ouvrir_verifie(chemin, 0x0100_0000 | 0x0010_0000, 0x7, false).map_err(|e| format!("{} : {e}", chemin.display()))?;
+        let s = large(sddl);
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut sacl: *mut ACL = std::ptr::null_mut();
+        let mut r = GetSecurityDescriptorSacl(sd, &mut present, &mut sacl, &mut defaut).map_err(|e| e.to_string());
+        if r.is_ok() && (!present.as_bool() || sacl.is_null()) {
+            r = Err("SDDL sans SACL".into());
+        }
+        if r.is_ok() {
+            let e = SetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, SACL_SECURITY_INFORMATION, PSID::default(), PSID::default(), None, Some(sacl));
+            if e.0 != 0 {
+                r = Err(format!("audit : {}", windows::core::Error::from(e)));
+            }
+        }
+        let _ = LocalFree(HLOCAL(sd.0));
+        r
+    })?
+}
+
+/// Bilan d'une pose d'audit sur une arborescence
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct BilanAudit {
+    /// Éléments dont la SACL a été complétée
+    pub poses: usize,
+    /// Éléments qui avaient déjà l'audit voulu
+    pub deja: usize,
+    /// Liens, chemins détournés ou éléments illisibles : écartés, jamais suivis
+    pub ecartes: usize,
+    /// Parcours arrêté au nombre maximal d'éléments
+    pub tronque: bool,
+}
+
+/// Descripteur construit depuis un SDDL, libéré à la fin
+struct DescripteurSddl(windows::Win32::Security::PSECURITY_DESCRIPTOR);
+
+impl DescripteurSddl {
+    fn depuis(sddl: &str) -> Result<DescripteurSddl, String> {
+        use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+        use windows::Win32::Security::PSECURITY_DESCRIPTOR;
+        let s = large(sddl);
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None) }.map_err(|e| format!("{sddl} : {e}"))?;
+        Ok(DescripteurSddl(sd))
+    }
+}
+
+impl Drop for DescripteurSddl {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+        unsafe {
+            let _ = LocalFree(HLOCAL(self.0 .0));
+        }
+    }
+}
+
+/// SACL d'un descripteur, en SDDL (« S:… »)
+fn texte_sacl(sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::SACL_SECURITY_INFORMATION;
+    let mut p = windows::core::PWSTR::null();
+    unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, SACL_SECURITY_INFORMATION, &mut p, None).ok()?;
+        let t = p.to_string().ok();
+        let _ = LocalFree(HLOCAL(p.0 as _));
+        t
+    }
+}
+
+/// Entrée d'audit voulue, en SDDL normalisé par Windows (« AU;OINPIOSA;CC;;;WD »), tirée d'un SDDL « S:(…) » d'une
+/// seule entrée
+fn entree_normalisee(sddl: &str) -> Result<String, String> {
+    let d = DescripteurSddl::depuis(sddl)?;
+    let t = texte_sacl(d.0).ok_or_else(|| format!("{sddl} : SACL illisible"))?;
+    let e = entrees_sacl(&t).1;
+    match e.as_slice() {
+        [une] => Ok(une.clone()),
+        _ => Err(format!("{sddl} : une seule entrée d'audit attendue")),
+    }
+}
+
+/// SACL actuelle de l'objet ouvert (handle avec ACCESS_SYSTEM_SECURITY), en SDDL ; None : illisible
+fn sacl_du_handle(f: &std::fs::File) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{GetKernelObjectSecurity, PSECURITY_DESCRIPTOR, SACL_SECURITY_INFORMATION};
+    let h = HANDLE(f.as_raw_handle());
+    let mut taille = 0u32;
+    unsafe {
+        let _ = GetKernelObjectSecurity(h, SACL_SECURITY_INFORMATION.0, PSECURITY_DESCRIPTOR::default(), 0, &mut taille);
+        if taille == 0 {
+            return None;
+        }
+        let mut tampon = vec![0u8; taille as usize];
+        GetKernelObjectSecurity(h, SACL_SECURITY_INFORMATION.0, PSECURITY_DESCRIPTOR(tampon.as_mut_ptr() as *mut c_void), taille, &mut taille).ok()?;
+        texte_sacl(PSECURITY_DESCRIPTOR(tampon.as_mut_ptr() as *mut c_void))
+    }
+}
+
+/// SACL en SDDL découpée : (drapeaux de contrôle « AI », « P »…, entrées sans parenthèses)
+fn entrees_sacl(t: &str) -> (String, Vec<String>) {
+    let t = t.strip_prefix("S:").unwrap_or(t);
+    let debut = t.find('(').unwrap_or(t.len());
+    let entrees = t[debut..].split(')').map(|e| e.trim_start_matches('(')).filter(|e| !e.is_empty()).map(String::from).collect();
+    (t[..debut].to_string(), entrees)
+}
+
+/// Décision pure : SACL complétée, ou None si l'audit voulu est déjà en place. Seules les entrées de deR4Tizer sont
+/// retirées : audit explicite (non hérité) de Tout le monde (WD), sur les succès (SA), avec les droits de l'entrée
+/// voulue ; toute autre entrée (règle d'audit de l'organisation, entrée héritée) est gardée telle quelle. Pour un
+/// fichier (`heritee_suffit`), l'entrée voulue héritée du dossier (« ID ») suffit.
+pub fn sacl_completee(actuelle: &str, voulue: &str, heritee_suffit: bool) -> Option<String> {
+    let champs = |e: &str| e.split(';').map(String::from).collect::<Vec<_>>();
+    let v = champs(voulue);
+    let notre = |e: &str| {
+        let c = champs(e);
+        c.len() == 6 && c[0] == "AU" && c[5] == "WD" && c[2] == v[2] && c[1].contains("SA") && !c[1].contains("ID")
+    };
+    let (controle, entrees) = entrees_sacl(actuelle);
+    let exacte = entrees.iter().any(|e| e == voulue);
+    let heritee = heritee_suffit && entrees.iter().any(|e| { let mut c = champs(e); c.len() == 6 && { c[1] = c[1].replace("ID", ""); c == v } });
+    let perimees = entrees.iter().any(|e| notre(e) && e != voulue);
+    if (exacte || heritee) && !perimees {
+        return None;
+    }
+    let mut nouvelle: Vec<&str> = entrees.iter().filter(|e| !notre(e)).map(String::as_str).collect();
+    nouvelle.push(voulue);
+    Some(format!("S:{controle}{}", nouvelle.iter().map(|e| format!("({e})")).collect::<String>()))
+}
+
+/// Complète la SACL de l'objet ouvert si besoin. SetKernelObjectSecurity : cet objet seul, SACL seule (ni DACL, ni
+/// propriétaire, ni propagation par chemin aux enfants, contrairement à Set-Acl et SetSecurityInfo). SACL actuelle
+/// illisible : rien n'est écrit (elle pourrait contenir des entrées à garder).
+fn poser_sacl(f: &std::fs::File, voulue: &str, dossier: bool, bilan: &mut BilanAudit) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{SetKernelObjectSecurity, SACL_SECURITY_INFORMATION};
+    let actuelle = sacl_du_handle(f).ok_or("SACL actuelle illisible")?;
+    let Some(nouvelle) = sacl_completee(&actuelle, voulue, !dossier) else {
+        bilan.deja += 1;
+        return Ok(());
+    };
+    let sd = DescripteurSddl::depuis(&nouvelle)?;
+    unsafe { SetKernelObjectSecurity(HANDLE(f.as_raw_handle()), SACL_SECURITY_INFORMATION, sd.0) }.map_err(|e| e.to_string())?;
+    bilan.poses += 1;
+    Ok(())
+}
+
+/// Pose l'audit (SACL) sur une arborescence de l'utilisateur, en SYSTEM, tout par handle : SeSecurityPrivilege
+/// actif sur ce fil pendant le seul parcours ; chaque élément ouvert sans suivre de lien sur le dernier élément et
+/// son chemin final vérifié (un lien, ou un chemin détourné plus haut, est écarté et jamais suivi : une jonction
+/// posée par l'utilisateur ne fait rien écrire ailleurs) ; SACL complétée seulement si besoin (sinon des rafales
+/// d'événements 4907), entrées tierces gardées. `sddl_dossier` sur la racine (et chaque sous-dossier si `recursif`),
+/// `sddl_fichier` sur les fichiers déjà présents (les nouveaux héritent de l'entrée du dossier) : une seule entrée
+/// chacun. Err : racine introuvable, détournée ou impossible à auditer.
+pub fn poser_audit_arborescence(racine: &std::path::Path, sddl_dossier: &str, sddl_fichier: &str, recursif: bool, maximum: usize) -> Result<BilanAudit, String> {
+    // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
+    const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
+    let (voulue_dossier, voulue_fichier) = (entree_normalisee(sddl_dossier)?, entree_normalisee(sddl_fichier)?);
+    avec_privilege("SeSecurityPrivilege", || {
+        let mut bilan = BilanAudit::default();
+        let ouverte = ouvrir_verifie(racine, ACCES, 0x7, true).map_err(|e| format!("{} : {e}", racine.display()))?;
+        poser_sacl(&ouverte, &voulue_dossier, true, &mut bilan).map_err(|e| format!("{} : {e}", racine.display()))?;
+        drop(ouverte);
+        let mut a_parcourir = vec![racine.to_path_buf()];
+        let mut vus = 0usize;
+        while let Some(dossier) = a_parcourir.pop() {
+            // Liste lue par chemin ; chaque entrée est ensuite ouverte et vérifiée : une redirection du dossier entre
+            // la liste et l'ouverture donne un autre chemin final, donc un refus
+            let Ok(entrees) = std::fs::read_dir(&dossier) else { bilan.ecartes += 1; continue };
+            for e in entrees.flatten() {
+                vus += 1;
+                if vus > maximum {
+                    bilan.tronque = true;
+                    return Ok(bilan);
+                }
+                // Type tiré de la liste, sans suivre de lien : une jonction ou un lien n'est ni dossier ni fichier
+                let Ok(t) = e.file_type() else { bilan.ecartes += 1; continue };
+                if t.is_symlink() {
+                    bilan.ecartes += 1;
+                    continue;
+                }
+                if t.is_dir() && !recursif {
+                    continue;
+                }
+                let chemin = e.path();
+                match ouvrir_verifie(&chemin, ACCES, 0x7, t.is_dir()) {
+                    Ok(f) => {
+                        let voulue = if t.is_dir() { &voulue_dossier } else { &voulue_fichier };
+                        if poser_sacl(&f, voulue, t.is_dir(), &mut bilan).is_err() {
+                            bilan.ecartes += 1;
+                        } else if t.is_dir() {
+                            a_parcourir.push(chemin);
+                        }
+                    }
+                    Err(_) => bilan.ecartes += 1,
+                }
+            }
+        }
+        Ok(bilan)
+    })?
+}
+
 /// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
 /// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
 pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {
@@ -1058,10 +1347,7 @@ pub fn avec_jeton_de<T>(sid: &str, f: impl FnOnce() -> T) -> Result<T, String> {
             let _ = CloseHandle(jeton);
             r?;
             let valeur = f();
-            if RevertToSelf().is_err() {
-                crate::commun::journal("ARRÊT : retour à l'identité du service impossible après une restauration");
-                std::process::abort();
-            }
+            retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), "restauration sous l'identité de l'utilisateur", arreter);
             return Ok(valeur);
         }
         Err("aucune session ouverte de ce compte".into())
