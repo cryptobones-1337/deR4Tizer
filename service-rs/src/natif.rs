@@ -467,6 +467,58 @@ pub fn est_systeme() -> bool {
     })
 }
 
+/// Identité du client d'un tube (phase 1, autorisation par commande) : SYSTEM, administrateur (groupe
+/// Administrateurs actif dans son jeton), ou autre. Lue sur le jeton du PROCESSUS client
+/// (GetNamedPipeClientProcessId), sans emprunter son identité : rien ne change sur le fil du service. Tout échec
+/// (processus disparu, jeton illisible) : « autre », donc refus (échec fermé).
+pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
+    use crate::validation::Client;
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Security::{
+        CheckTokenMembership, CreateWellKnownSid, DuplicateToken, GetTokenInformation, IsWellKnownSid, SecurityIdentification, TokenUser,
+        WinBuiltinAdministratorsSid, WinLocalSystemSid, PSID, TOKEN_DUPLICATE, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe {
+        let mut pid = 0u32;
+        if GetNamedPipeClientProcessId(tube, &mut pid).is_err() || pid == 0 {
+            return Client::Autre;
+        }
+        let Ok(processus) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return Client::Autre };
+        let mut jeton = HANDLE::default();
+        let ouvert = OpenProcessToken(processus, TOKEN_QUERY | TOKEN_DUPLICATE, &mut jeton).is_ok();
+        let _ = CloseHandle(processus);
+        if !ouvert {
+            return Client::Autre;
+        }
+        let mut tampon = vec![0u64; 64];
+        let mut taille = 0u32;
+        let systeme = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok()
+            && IsWellKnownSid((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool();
+        let mut client = if systeme { Client::Systeme } else { Client::Autre };
+        if !systeme {
+            // CheckTokenMembership exige un jeton d'emprunt : copie au niveau « identification » (aucun accès possible)
+            let mut copie = HANDLE::default();
+            if DuplicateToken(jeton, SecurityIdentification, &mut copie).is_ok() {
+                let mut sid = vec![0u64; 16];
+                let mut t = (sid.len() * 8) as u32;
+                let psid = PSID(sid.as_mut_ptr() as *mut c_void);
+                let mut membre = BOOL(0);
+                if CreateWellKnownSid(WinBuiltinAdministratorsSid, None, psid, &mut t).is_ok()
+                    && CheckTokenMembership(copie, psid, &mut membre).is_ok()
+                    && membre.as_bool()
+                {
+                    client = Client::Administrateur;
+                }
+                let _ = CloseHandle(copie);
+            }
+        }
+        let _ = CloseHandle(jeton);
+        client
+    }
+}
+
 /// Entrée d'une liste de droits (DACL) : autorisation ou refus, masque d'accès, SID du compte
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ace {

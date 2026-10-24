@@ -47,13 +47,27 @@ pub fn empreinte_hosts() -> String {
     lignes_hors_bloc().map(|(h, _)| h.join("\n")).unwrap_or_default()
 }
 
+/// Noms écrits dans le bloc de deR4Tizer du fichier hosts : seulement des noms de domaine valides (phase 1), en
+/// minuscules. Un nom avec une fin de ligne ajouterait une ligne arbitraire au fichier hosts (une banque redirigée
+/// vers une adresse choisie) ; un nom accentué serait réduit par le filtre ASCII à un autre nom. Écartés et journalisés.
+pub fn lignes_du_bloc(domaines: &[String]) -> Vec<String> {
+    domaines.iter().filter_map(|d| {
+        if crate::validation::nom_domaine_valide(d) {
+            Some(d.trim_end_matches('.').to_lowercase())
+        } else {
+            commun::journal(&format!("fichier hosts : nom invalide écarté ({} caractères)", d.chars().count()));
+            None
+        }
+    }).collect()
+}
+
 pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
     let (mut lignes, _) = lignes_hors_bloc()?;
     let sauvegardes = commun::dossier().join("sauvegardes");
     let _ = fs::create_dir_all(&sauvegardes);
     let horodatage = commun::maintenant().replace([':', ' '], "-");
     let _ = fs::copy(fichier_hosts(), sauvegardes.join(format!("hosts-{horodatage}.bak")));
-    let mut liste: Vec<String> = domaines.iter().map(|d| d.to_lowercase()).collect();
+    let mut liste = lignes_du_bloc(domaines);
     liste.sort();
     liste.dedup();
     if !liste.is_empty() {

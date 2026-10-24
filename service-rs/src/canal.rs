@@ -7,8 +7,11 @@
 //! Un client qui se connecte puis se tait ne bloque pas le canal : la lecture d'une commande est bornée dans le
 //! temps (DELAI_LECTURE). Si le nom est déjà pris au démarrage (squat), alerte critique locale avec le PID et le
 //! chemin du processus qui tient le tube, lus en client anonyme.
+//! Phase 1 : avant toute exécution, débit borné (DEBIT_MAX par DEBIT_FENETRE), client identifié sur le jeton de son
+//! processus (SYSTEM, administrateur, autre), autorisation par commande et validation de chaque champ (validation.rs).
 
 use crate::commun::{self, Commande, Reponse};
+use crate::validation::{self, Client, Debit};
 use crate::moniteur::{Moniteur, Partage};
 use crate::natif::large;
 use std::sync::atomic::Ordering;
@@ -26,6 +29,11 @@ use windows::Win32::System::Pipes::{
 /// Délai maximal de lecture d'une commande : l'interface et le script de mise à jour écrivent la leur dès la
 /// connexion
 const DELAI_LECTURE: Duration = Duration::from_secs(10);
+
+/// Phase 1 : débit maximal du canal (toutes commandes confondues) ; l'interface n'envoie qu'une commande par action
+/// de l'utilisateur, le script de mise à jour une vérification par seconde au plus
+const DEBIT_MAX: usize = 30;
+const DEBIT_FENETRE: Duration = Duration::from_secs(10);
 
 /// SYSTEM et administrateurs ; en mode console (tests uniquement), tout utilisateur connecté
 fn descripteur(console: bool) -> String {
@@ -73,6 +81,7 @@ fn creer(console: bool, premiere: bool) -> Result<HANDLE, (String, u32)> {
 pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bool) {
     std::thread::Builder::new().name("commandes".into()).spawn(move || {
         let mut derniere_erreur = String::new();
+        let mut debit = Debit::new(DEBIT_MAX, DEBIT_FENETRE);
         while !partage.arret.load(Ordering::Relaxed) {
             // Première instance : refusée si le nom est déjà pris
             let mut courant = match creer(console, true) {
@@ -110,12 +119,12 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
                     Ok(t) => t,
                     Err((e, _)) => {
                         commun::journal(&format!("erreur du canal de commandes : {e}"));
-                        traiter(courant, &moniteur, &partage);
+                        traiter(courant, &moniteur, &partage, &mut debit);
                         unsafe { let _ = CloseHandle(courant); }
                         break;
                     }
                 };
-                traiter(courant, &moniteur, &partage);
+                traiter(courant, &moniteur, &partage, &mut debit);
                 unsafe { let _ = CloseHandle(courant); }
                 courant = suivant;
             }
@@ -208,14 +217,34 @@ pub fn alerte_squat(pid: Option<u32>, chemin: &str) -> commun::Alerte {
     }
 }
 
-fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>) {
+/// Phase 1 : décision pure, avant toute exécution : débit, lecture, autorisation de ce client pour cette action,
+/// validation de chaque champ. Ok : commande normalisée à exécuter ; Err : réponse de refus (rien d'exécuté).
+pub fn admettre(demande: &[u8], client: Client, debit_ok: bool) -> Result<Commande, Reponse> {
+    if !debit_ok {
+        return Err(Reponse::erreur("Trop de commandes en peu de temps : réessayez dans quelques secondes."));
+    }
+    let mut c = validation::decoder_commande(demande).map_err(Reponse::erreur)?;
+    validation::normaliser(&mut c);
+    let action = c.action.clone().unwrap_or_default();
+    if !validation::autorisee(&action, client) {
+        commun::journal(&format!("commande refusée : {} non autorisée pour ce client ({client:?})",
+            action.chars().filter(|x| !x.is_control()).take(64).collect::<String>()));
+        return Err(Reponse::erreur("Commande refusée : non autorisée pour ce client."));
+    }
+    validation::valider(&c).map_err(|e| {
+        commun::journal(&format!("commande refusée : {action} : {e}"));
+        Reponse::erreur(format!("Commande refusée : {e}."))
+    })?;
+    Ok(c)
+}
+
+fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, debit: &mut Debit) {
     unsafe {
         let demande = lire_commande(tube, DELAI_LECTURE);
-        let texte = String::from_utf8_lossy(&demande);
-        let ligne = texte.trim_start_matches('\u{feff}').lines().next().unwrap_or("");
-        let reponse = match serde_json::from_str::<Commande>(ligne) {
+        let client = crate::natif::client_tube(tube);
+        let reponse = match admettre(&demande, client, debit.accepter(Instant::now())) {
             Ok(c) => moniteur.lock().unwrap().executer(c, partage),
-            Err(e) => Reponse::erreur(format!("commande illisible : {e}")),
+            Err(r) => r,
         };
         let mut sortie = serde_json::to_vec(&reponse).unwrap_or_default();
         sortie.extend_from_slice(b"\r\n");
