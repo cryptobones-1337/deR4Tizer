@@ -27,6 +27,20 @@ jobs:
         working-directory: service-rs
         run: cargo build --release
 
+      - name: Service sans dépendance au runtime Visual C++ (CRT statique)
+        shell: pwsh
+        run: |
+          # Les runners ont le runtime Visual C++ : sans ce contrôle, une régression de la liaison statique
+          # (service-rs/.cargo/config.toml) passerait inaperçue, et le service ne démarrerait pas sur un Windows neuf
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe') | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin introuvable' }
+          $dep = @(& $dumpbin.FullName /dependents service-rs/target/release/der4tizer-svc.exe | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() })
+          if (-not $dep.Count) { throw 'aucune dépendance lue (sortie de dumpbin inattendue)' }
+          "Dépendances : $($dep -join ', ')"
+          $crt = @($dep | Where-Object { $_ -match '^(vcruntime|msvcp|api-ms-win-crt-)' })
+          if ($crt.Count) { throw "runtime Visual C++ requis : $($crt -join ', ')" }
+
       - name: Compilation de l'interface
         shell: pwsh
         run: ./compiler.ps1 -InterfaceSeulement
