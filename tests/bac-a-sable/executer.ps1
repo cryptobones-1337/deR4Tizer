@@ -1,7 +1,7 @@
 ﻿# Exécuté DANS Windows Sandbox à l'ouverture de session (lancer.ps1) : joue un scénario d'intégration comme le runner
 # de la CI, écrit le tableau et les journaux dans le dossier de sortie monté, relève l'état de Microsoft Defender
 # avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé.
-param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine')] [string]$Scenario)
+param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario)
 $sortie = 'C:\sortie'
 $entree = 'C:\entree'
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
@@ -20,6 +20,13 @@ try {
     switch ($Scenario) {
         'installation' { & "$entree\integration\installation.ps1" -Msi "$entree\deR4Tizer.msi" -MsiAncien "$entree\deR4Tizer-ancien.msi" -Version $version }
         'quarantaine' { & "$entree\integration\quarantaine.ps1" -Msi "$entree\deR4Tizer.msi" }
+        'maj' {
+            # Python embarquable (lecture seule) pour le serveur local ; versions préparées par preparer.ps1 -Maj
+            $env:PATH = "$entree\python;$env:PATH"
+            $c, $n, $p = (Get-Content "$entree\maj\versions.txt" -Raw).Trim() -split ' '
+            & "$entree\integration\maj.ps1" -Pki "$entree\maj\pki" -Paquets "$entree\maj\paquets" -Executables "$entree\maj\executables" `
+                -ArtefactCi "$entree\maj\ci-bin\deR4TizerSvc.exe" -Courante $c -Nouvelle $n -Precedente $p
+        }
     }
     $code = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } else { 0 }
 } catch {

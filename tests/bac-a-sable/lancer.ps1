@@ -3,9 +3,11 @@
 # tout ce qu'il contenait est effacé. Prérequis : fonctionnalité « Windows Sandbox » activée (Windows Pro), et
 # preparer.ps1 exécuté. Un seul bac à sable à la fois : un scénario par lancement (chacun part d'un Windows vierge).
 #
-# Usage : .\tests\bac-a-sable\lancer.ps1 -Scenario installation|quarantaine [-Racine C:\d4t-bac-a-sable]
+# Usage : .\tests\bac-a-sable\lancer.ps1 -Scenario installation|quarantaine|maj [-Racine C:\d4t-bac-a-sable]
+# Le scénario maj demande preparer.ps1 -Maj ; ses clés et binaires de test sont effacés à la fin, quel que soit le
+# résultat.
 param(
-    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine')] [string]$Scenario,
+    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj')] [string]$Scenario,
     [string]$Racine = 'C:\d4t-bac-a-sable',
     [int]$Minutes = 60
 )
@@ -15,6 +17,7 @@ if (-not (Test-Path $exe)) { throw 'Windows Sandbox n''est pas activé (Fonction
 $entree = Join-Path $Racine 'entree'
 $sortie = Join-Path $Racine "sortie-$Scenario-$(Get-Date -Format yyyyMMdd-HHmmss)"
 if (-not (Test-Path (Join-Path $entree 'deR4Tizer.msi'))) { throw 'Dossier d''entrée incomplet : lancer d''abord preparer.ps1.' }
+if ($Scenario -eq 'maj' -and -not (Test-Path (Join-Path $entree 'maj\versions.txt'))) { throw 'Scénario maj : lancer d''abord preparer.ps1 -Maj.' }
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
 $wsb = Join-Path $Racine "$Scenario.wsb"
 @"
@@ -37,7 +40,17 @@ Write-Host "Bac à sable lancé ($Scenario), résultats dans $sortie"
 Start-Process $exe -ArgumentList "`"$wsb`""
 $fin = (Get-Date).AddMinutes($Minutes)
 $fichierCode = Join-Path $sortie "$Scenario-code.txt"
-while ((Get-Date) -lt $fin -and -not (Test-Path $fichierCode)) { Start-Sleep 15 }
+try {
+    while ((Get-Date) -lt $fin -and -not (Test-Path $fichierCode)) { Start-Sleep 15 }
+} finally {
+    if ($Scenario -eq 'maj') {
+        # Clés privées de test et binaires où la clé de test est épinglée : effacés du poste
+        while (Get-Process WindowsSandboxRemoteSession -ErrorAction SilentlyContinue) { Start-Sleep 5 }
+        Remove-Item -LiteralPath (Join-Path $entree 'maj') -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Clés et binaires de test effacés ($(Join-Path $entree 'maj'))"
+    }
+}
 if (-not (Test-Path $fichierCode)) { throw "Pas de résultat après $Minutes minutes (voir $sortie)." }
 $code = (Get-Content $fichierCode -Raw).Trim()
 $tableau = Join-Path $sortie "$Scenario-tableau.md"
