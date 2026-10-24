@@ -92,6 +92,8 @@ pub struct Moniteur {
     /// Pour repérer les « balises » : ports locaux déjà vus et instants des nouvelles connexions, par flux
     balises: HashMap<(u32, String, u16), (HashSet<u16>, Vec<Instant>)>,
     journal_parefeu: parefeu::LecteurJournal,
+    /// Plage dynamique UDP du poste, lue au démarrage (exposition à Internet)
+    udp_dynamique: (u16, u16),
     adresses_publiques: Vec<String>,
     exposition: parefeu::Exposition,
 }
@@ -168,6 +170,7 @@ impl Moniteur {
             pose_leurres: if console { None } else { Some(Instant::now()) },
             balises: HashMap::new(),
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
+            udp_dynamique: parefeu::plage_dynamique_udp(),
             adresses_publiques: parefeu::adresses_publiques(),
             exposition: parefeu::Exposition::default(),
             persistance: Persistance::nouvelle(),
@@ -466,7 +469,12 @@ impl Moniteur {
 
         // Exposition à Internet : paquets entrants venus d'Internet (pfirewall.log), adresses publiques
         let noms: HashMap<u32, String> = liste.iter().map(|(p, i)| (*p, i.nom.clone())).collect();
-        for a in self.journal_parefeu.lire(&|pid| noms.get(&pid).cloned().unwrap_or_default()) {
+        let contexte = parefeu::ContexteExposition {
+            ecoute_tcp: toutes.iter().filter(|c| c.etat == 2).map(|c| c.port_local).collect(),
+            udp_dynamique: self.udp_dynamique,
+            pid_service: std::process::id(),
+        };
+        for a in self.journal_parefeu.lire(&|pid| noms.get(&pid).cloned().unwrap_or_default(), &contexte) {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
         if self.numero_passage % 100 == 0 {

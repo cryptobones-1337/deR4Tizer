@@ -257,7 +257,9 @@ fn main() {
 2026-10-22 07:00:03 ALLOW UDP 192.168.1.254 192.168.1.12 53 5353 0 - - - - - - - RECEIVE 0\r\n\
 2026-10-22 07:00:04 ALLOW TCP 192.168.1.12 8.8.8.8 50000 443 0 - - - - - - - SEND 999\r\n")
         });
-        for a in lecteur.lire(&|pid| format!("prog{pid}")) {
+        // Diagnostic : le port 3389 de l'exemple est réputé en écoute
+        let contexte = parefeu::ContexteExposition { ecoute_tcp: [3389u16].into_iter().collect(), udp_dynamique: parefeu::plage_dynamique_udp(), pid_service: std::process::id() };
+        for a in lecteur.lire(&|pid| format!("prog{pid}"), &contexte) {
             println!("[{}] {} : {}", a.niveau, a.processus, a.raisons);
         }
         let b = lecteur.bilan(&[], &Default::default());
