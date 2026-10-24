@@ -41,7 +41,16 @@ Start-Process $exe -ArgumentList "`"$wsb`""
 $fin = (Get-Date).AddMinutes($Minutes)
 $fichierCode = Join-Path $sortie "$Scenario-code.txt"
 try {
-    while ((Get-Date) -lt $fin -and -not (Test-Path $fichierCode)) { Start-Sleep 15 }
+    # Blocage détecté au lieu d'attendre la fin du délai : bac à sable jamais ouvert (une instance précédente encore
+    # en cours de fermeture, par exemple) ou fermé sans écrire de résultat
+    $ouvert = $false; $absent = 0; $debut = Get-Date
+    while ((Get-Date) -lt $fin -and -not (Test-Path $fichierCode)) {
+        Start-Sleep 15
+        if (Get-Process WindowsSandboxRemoteSession -ErrorAction SilentlyContinue) { $ouvert = $true; $absent = 0; continue }
+        $absent++
+        if (-not $ouvert -and ((Get-Date) - $debut).TotalMinutes -gt 5) { throw "Windows Sandbox ne s'est pas ouvert en 5 minutes (une autre instance tourne-t-elle encore ?)." }
+        if ($ouvert -and $absent -ge 4 -and -not (Test-Path $fichierCode)) { throw "Windows Sandbox fermé sans résultat (voir $sortie)." }
+    }
 } finally {
     if ($Scenario -eq 'maj') {
         # Clés privées de test et binaires où la clé de test est épinglée : effacés du poste
