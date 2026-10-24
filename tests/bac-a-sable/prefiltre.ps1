@@ -26,7 +26,12 @@ if ($erreurs) { Noter 'Syntaxe PowerShell' 'ÉCHOUÉ' ($erreurs -join ' ; ') } e
 
 # PSScriptAnalyzer : erreurs seulement
 if (Get-Module -ListAvailable PSScriptAnalyzer) {
-    $r = @(Invoke-ScriptAnalyzer -Path (Join-Path $depot 'tests') -Recurse -Severity Error)
+    # Exceptions justifiées, par fichier et par règle (jamais une règle entière) :
+    # - commun.ps1, PSAvoidUsingConvertToSecureStringWithPlainText : mot de passe aléatoire, tiré en mémoire, jamais
+    #   affiché, d'un compte de test jetable (Windows Sandbox ou runner de CI) ; aucun mot de passe écrit en clair
+    $exceptions = @(@{ Fichier = 'commun.ps1'; Regle = 'PSAvoidUsingConvertToSecureStringWithPlainText' })
+    $r = @(Invoke-ScriptAnalyzer -Path (Join-Path $depot 'tests') -Recurse -Severity Error | Where-Object {
+        $x = $_; -not @($exceptions | Where-Object { $_.Fichier -eq $x.ScriptName -and $_.Regle -eq $x.RuleName }).Count })
     if ($r.Count) { Noter 'PSScriptAnalyzer (erreurs)' 'ÉCHOUÉ' (($r | ForEach-Object { "$($_.ScriptName):$($_.Line) $($_.RuleName)" }) -join ' ; ') }
     else { Noter 'PSScriptAnalyzer (erreurs)' 'RÉUSSI' }
 } else { Noter 'PSScriptAnalyzer (erreurs)' 'NON EXÉCUTÉ' 'module absent' }
