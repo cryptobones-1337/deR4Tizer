@@ -591,6 +591,13 @@ fn phase1_mesure_du_cycle() {
         assert_eq!((st.nombre, st.repartition[3]), (2, 2), "deux mesures entre 10 et 50 ms");
         assert!(m.powershell.get("essai-mesure").copied().unwrap_or(0) >= 1);
     }
+    // Table bornée : au-delà de MAX_ETAPES noms distincts, le reste est compté sous « autre »
+    for i in 0..(crate::mesure::MAX_ETAPES + 10) {
+        duree(&format!("commande.inconnue{i}"), Duration::from_millis(1));
+    }
+    let (cumul, _) = instantane();
+    assert!(cumul.etapes.len() <= crate::mesure::MAX_ETAPES + 1, "{} étapes", cumul.etapes.len());
+    assert!(cumul.etapes.contains_key("autre"));
 }
 
 /// Defender au démarrage du PC : constaté, l'interface affichait « DEFENDER DÉSACTIVÉ » pendant les 10 minutes qui

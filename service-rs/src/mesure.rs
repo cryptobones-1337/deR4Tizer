@@ -65,11 +65,20 @@ fn etat() -> &'static Mutex<(Mesures, Mesures)> {
     E.get_or_init(|| Mutex::new((Mesures::nouvelles(), Mesures::nouvelles())))
 }
 
+/// Nombre maximal d'étapes distinctes : au-delà, une étape nouvelle est comptée sous « autre » (une commande au nom
+/// quelconque ne fait pas grossir la mémoire)
+pub const MAX_ETAPES: usize = 128;
+
+fn cle(m: &Mesures, etape: &str) -> String {
+    if m.etapes.contains_key(etape) || m.etapes.len() < MAX_ETAPES { etape.to_string() } else { "autre".to_string() }
+}
+
 /// Durée d'une étape (cumul et fenêtre)
 pub fn duree(etape: &str, d: Duration) {
     if let Ok(mut e) = etat().lock() {
-        e.0.etapes.entry(etape.to_string()).or_default().ajouter(d);
-        e.1.etapes.entry(etape.to_string()).or_default().ajouter(d);
+        let k = cle(&e.0, etape);
+        e.0.etapes.entry(k.clone()).or_default().ajouter(d);
+        e.1.etapes.entry(k).or_default().ajouter(d);
     }
 }
 
@@ -95,7 +104,13 @@ pub fn instantane() -> (Mesures, Mesures) {
 
 /// Écrit mesures.json (cumul et dernière fenêtre), puis ouvre une nouvelle fenêtre
 pub fn ecrire() {
-    let Ok(mut e) = etat().lock() else { return };
-    let _ = commun::ecrire("mesures.json", &Fichier { ecrit: commun::maintenant(), cumul: &e.0, fenetre: &e.1 });
-    e.1 = Mesures::nouvelles();
+    // Copie prise sous le verrou, fichier écrit après l'avoir relâché : une commande qui mesure sa durée (verrou du
+    // moniteur tenu) n'attend jamais l'écriture sur disque
+    let (cumul, fenetre) = {
+        let Ok(mut e) = etat().lock() else { return };
+        let copie = (e.0.clone(), e.1.clone());
+        e.1 = Mesures::nouvelles();
+        copie
+    };
+    let _ = commun::ecrire("mesures.json", &Fichier { ecrit: commun::maintenant(), cumul: &cumul, fenetre: &fenetre });
 }

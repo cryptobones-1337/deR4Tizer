@@ -255,6 +255,8 @@ impl Moniteur {
                 let mut tour_pilotes = 0u32;
                 let mut pilotes_signales = HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
+                    // Étape « Defender » : lecture WMI comprise (et ses relectures au démarrage du PC)
+                    let t = Instant::now();
                     let mut etat = defender::etat();
                     // Démarrage du PC : Defender répond « Not running » quelques minutes ; relu toutes les 30 s
                     // (10 min au plus) avant le premier état publié, pour ne pas l'afficher désactivé à tort
@@ -272,7 +274,6 @@ impl Moniteur {
                         essais += 1;
                     }
                     defender_publie = true;
-                    let t = Instant::now();
                     let ecarts = defender::ecarts(&p.defender.lock().unwrap(), &etat);
                     p.alertes_externes.lock().unwrap().extend(ecarts);
                     *p.defender.lock().unwrap() = etat;
