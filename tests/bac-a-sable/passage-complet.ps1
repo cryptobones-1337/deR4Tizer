@@ -49,7 +49,7 @@ foreach ($s in @('installation', 'quarantaine', 'lot3d') | Where-Object { $Scena
     & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"
     if (-not $?) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
     Resume $s
-    if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-$s-*" | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
+    if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-$s-*" | Where-Object CreationTime -ge $debutPassage | Sort-Object CreationTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
 }
 if ($Scenarios -contains 'maj') { try {
     Attendre-Fermeture
@@ -60,7 +60,7 @@ if ($Scenarios -contains 'maj') { try {
         & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"
         if (-not $?) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
         Resume 'maj'
-        if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-maj-*" | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
+        if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-maj-*" | Where-Object CreationTime -ge $debutPassage | Sort-Object CreationTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }
 } finally {
     Remove-Item (Join-Path $Racine 'entree\maj'), (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue

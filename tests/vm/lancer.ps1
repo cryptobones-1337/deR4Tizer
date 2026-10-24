@@ -82,10 +82,14 @@ try {
         if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après le redémarrage ($console)." }
         # Réellement standard : pas membre des Administrateurs (comptes locaux seulement dans la VM de test : pas de
         # groupe de domaine imbriqué)
+        # Échec fermé : liste illisible = refus (Get-LocalGroupMember échoue sur un SID orphelin ; net localgroup non)
         $admin = Invoke-Command -Session $s {
-            @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*\d4t_console' }).Count
+            $nom = (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
+            $l = & net.exe localgroup $nom 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $l) { return 'illisible' }
+            if (@($l | Where-Object { $_.Trim() -eq 'd4t_console' }).Count) { 'membre' } else { 'non' }
         }
-        if ($admin) { throw 'Le compte de console est membre des Administrateurs : session standard impossible.' }
+        if ($admin -ne 'non') { throw "Compte de console : appartenance aux Administrateurs $admin, session standard impossible." }
         Write-Host "Console : $console (compte standard)"
     }
     Invoke-Command -Session $s { Remove-Item C:\entree, C:\sortie -Recurse -Force -ErrorAction SilentlyContinue }

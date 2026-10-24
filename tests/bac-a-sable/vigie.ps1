@@ -10,14 +10,18 @@ param([Parameter(Mandatory)] [string]$Journal, [string]$Racine = 'C:\d4t-bac-a-s
 $debut = $Depuis
 $signales = @{}
 $absent = 0
-$ecritVm = $null; $vuVm = Get-Date; $arretVm = 0
+$ecritVm = $null; $vuVm = Get-Date; $arretVm = 0; $scenarioVm = ''
 $journalVu = Get-Date; $tailleJournal = -1
 while ($true) {
     Start-Sleep 60
     $j = if (Test-Path $Journal) { Get-Content $Journal -Raw -ErrorAction SilentlyContinue } else { '' }
-    if ($j -match 'modifications du worktree après passage|exited with code|en échec|Pas de résultat|injoignable') {
-        "FIN du passage ($(Get-Date -Format HH:mm)) : " + (($j -split "`n" | Select-String '^==|ÉCHOUÉ \||échec|Pas de résultat|injoignable|exited') -join ' / ')
+    if ($j -match 'modifications du worktree après passage|exited with code|préparation en échec|préparation -Maj en échec') {
+        "FIN du passage ($(Get-Date -Format HH:mm)) : " + (($j -split "`n" | Select-String '^==|ÉCHOUÉ \||échec|exited') -join ' / ')
         exit 0
+    }
+    # Lanceur en échec pour un scénario : événement, le passage continue avec les suivants
+    foreach ($m in ($j -split "`n" | Select-String '^== (\S+) : lanceur en échec')) {
+        if (-not $signales["echec-$($m.Line)"]) { $signales["echec-$($m.Line)"] = $true; "LANCEUR EN ÉCHEC ($(Get-Date -Format HH:mm)) : $($m.Line.Trim())" }
     }
     if ($j.Length -ne $tailleJournal) { $tailleJournal = $j.Length; $journalVu = Get-Date }
     $prefixe = if ($Cible -eq 'vm') { 'sortie-vm-' } else { 'sortie-' }
@@ -48,6 +52,7 @@ while ($true) {
         $t = try { Invoke-Command -VMName $Vm -Credential $c -ErrorAction Stop {
             Get-ChildItem C:\sortie, C:\d4t-temp -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty LastWriteTime
         } } catch { $null }
+        if ($d.Name -ne $scenarioVm) { $scenarioVm = $d.Name; $ecritVm = $null; $vuVm = Get-Date }
         if ($t -and $t -ne $ecritVm) { $ecritVm = $t; $vuVm = Get-Date }
         elseif (((Get-Date) - $vuVm).TotalMinutes -gt 30) { "BLOQUÉ ? ($(Get-Date -Format HH:mm)) : $($d.Name), aucun fichier de travail écrit depuis 30 min dans la VM"; $vuVm = Get-Date }
     }
