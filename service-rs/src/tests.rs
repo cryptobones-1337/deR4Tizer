@@ -2010,3 +2010,23 @@ fn arret_termine_les_enfants_nommes() {
     let code = enfant.wait().unwrap();
     assert!(!code.success() && debut.elapsed() < std::time::Duration::from_secs(5), "ping.exe a continué ({code:?})");
 }
+
+/// IDS, règle Shellshock (sid 9000011, rév. 2) : constaté, une alerte CRITIQUE sur un téléchargement chiffré de
+/// plusieurs gigaoctets (réponses TLS d'un port 443) : les motifs « () { » puis « }; » n'importe où après finissent
+/// par apparaître au hasard dans des octets chiffrés. La règle vise désormais une requête vers un serveur HTTP en
+/// clair du poste, avec la forme de l'attaque (« } » dans les 10 octets qui suivent « () { »).
+#[test]
+fn ids_shellshock_sans_faux_positif_sur_des_octets_quelconques() {
+    let regle = crate::ids::REGLES_INTEGREES.lines().find(|l| l.contains("sid:9000011")).expect("règle Shellshock");
+    assert!(regle.contains("-> $HOME_NET [80,"), "vers un serveur HTTP en clair du poste seulement : {regle}");
+    assert!(!regle.contains("443"), "jamais le port TLS : {regle}");
+    let ok = |c: &[u8]| crate::ids::correspond_test(regle, c).expect("règle lisible");
+    assert!(ok(b"GET /cgi-bin/x HTTP/1.1\r\nUser-Agent: () { :; }; /bin/cat /etc/passwd\r\n\r\n"), "attaque classique");
+    assert!(ok(b"Referer: () { _; } >_[$($())] { echo x; }\r\n"), "variante");
+    // Motifs écartés : « () { » puis « }; » loin après, comme dans des octets chiffrés
+    let mut quelconque = vec![0x17u8, 0x03, 0x03, 0x40, 0x00];
+    quelconque.extend_from_slice(b"() {");
+    quelconque.extend(std::iter::repeat(0xA5u8).take(500));
+    quelconque.extend_from_slice(b"};");
+    assert!(!ok(&quelconque), "« }} » trop loin de « () {{ »");
+}
