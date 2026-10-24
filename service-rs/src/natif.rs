@@ -214,6 +214,36 @@ pub fn processus() -> HashMap<u32, InfoListe> {
     carte
 }
 
+/// Décision pure : processus enfants directs de `parent` dont le nom (sans .exe) est l'un de `noms`, casse ignorée
+pub fn enfants_nommes(liste: &HashMap<u32, InfoListe>, parent: u32, noms: &[&str]) -> Vec<u32> {
+    let mut v: Vec<u32> = liste.iter()
+        .filter(|(pid, i)| **pid != parent && i.parent == parent && noms.iter().any(|n| n.eq_ignore_ascii_case(&i.nom)))
+        .map(|(pid, _)| *pid)
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// Termine les processus enfants du processus courant portant l'un de ces noms (sans .exe) ; renvoie leur nombre.
+/// Arrêt du service : un curl.exe lancé par lui (téléchargement de GeoIP, des listes de menaces…) lui survivait et
+/// gardait ouvert un fichier du dossier de données, que la désinstallation ne pouvait plus supprimer (constaté en
+/// Windows Sandbox). Le script d'installation des mises à jour (powershell.exe) n'est pas visé : il doit survivre.
+pub fn terminer_enfants(noms: &[&str]) -> usize {
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    let mut n = 0;
+    for pid in enfants_nommes(&processus(), std::process::id(), noms) {
+        unsafe {
+            if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                if TerminateProcess(h, 1).is_ok() {
+                    n += 1;
+                }
+                let _ = CloseHandle(h);
+            }
+        }
+    }
+    n
+}
+
 // ------------------------------------------------------------ signatures
 
 /// Vérifie la signature Authenticode intégrée au fichier ; renvoie le nom du signataire si elle est valide
