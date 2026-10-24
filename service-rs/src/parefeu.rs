@@ -429,12 +429,24 @@ impl LecteurJournal {
             }
             let port: u16 = v("dst-port").parse().unwrap_or(0);
             let action = if v("action") == "ALLOW" { "ACCEPTÉ" } else { "BLOQUÉ" };
+            let port_source: u16 = v("src-port").parse().unwrap_or(0);
             // Paquet accepté : seulement s'il montre une exposition réelle (pas la capture du service, pas une
-            // réponse à une connexion sortante)
-            if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, v("pid").parse().unwrap_or(0), v("icmptype"), ctx) {
+            // réponse à une connexion sortante). Une réponse UDP acceptée vers un port dynamique est retenue comme
+            // flux établi : le paquet bloqué qui la suivrait (état du flux perdu) n'est pas une exposition
+            let pid: u32 = v("pid").parse().unwrap_or(0);
+            if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, pid, v("icmptype"), ctx) {
+                // Retenue seulement une vraie réponse : vers un port dynamique, et pas une ligne du service (sa socket de
+                // capture reçoit des copies de tout paquet, que le pare-feu peut ensuite bloquer)
+                let dynamique = (ctx.udp_dynamique.0..=ctx.udp_dynamique.1).contains(&port);
+                if v("protocol") == "UDP" && dynamique && !(pid != 0 && pid == ctx.pid_service) {
+                    self.flux_udp.insert((port, source, port_source), Instant::now());
+                }
                 continue;
             }
-            if action == "ACCEPTÉ" && v("protocol") == "UDP" && reponse_udp(&self.flux_udp, port, source, v("src-port").parse().unwrap_or(0), Instant::now()) {
+            // Accepté ou bloqué : un paquet UDP qui reprend en sens inverse un flux que le poste vient d'utiliser est
+            // une réponse. Bloqué, il ne montre pas que la box laisse entrer des connexions (constaté : réponses d'un
+            // flux QUIC sortant bloquées pendant une reconfiguration du réseau, réponses du serveur d'un VPN)
+            if v("protocol") == "UDP" && reponse_udp(&self.flux_udp, port, source, port_source, Instant::now()) {
                 continue;
             }
             let programme = v("pid").parse::<u32>().ok().filter(|p| *p > 0).map(nom_processus).unwrap_or_default();
