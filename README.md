@@ -253,8 +253,8 @@ rustup toolchain install stable-x86_64-pc-windows-msvc
 
 ### Install
 
-Download `deR4Tizer.msi` from the [latest release](https://github.com/cryptobones-1337/deR4Tizer/releases/latest) and
-open it. The service starts immediately; the interface is in the Start menu and starts at logon. New versions are reported;
+No version has been released yet. Once released: download `deR4Tizer.msi` from the
+[releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) and open it. The service starts immediately; the interface is in the Start menu and starts at logon. New versions are reported;
 automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0` to skip the logon
