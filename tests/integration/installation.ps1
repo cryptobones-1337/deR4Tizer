@@ -313,7 +313,7 @@ Verifier 'Version plus ancienne installée (MSI construit depuis un commit figé
 }
 Start-Sleep 10
 # Chemin d'attaque des postes déjà installés : un fichier d'un autre propriétaire présent dans le dossier au
-# moment de la mise à niveau. La 4.1.0 (commit 4da823a) retire déjà aux Utilisateurs le droit de créer dans le
+# moment de la mise à niveau. La 4.1.0 (commit 758ff1e) retire déjà aux Utilisateurs le droit de créer dans le
 # dossier au démarrage de son service : le compte standard essaie d'abord pour de vrai ; s'il est refusé (attendu),
 # l'état hérité d'une version plus ancienne (ou d'un dossier précréé avant la 4.1.0) est simulé par
 # l'administrateur : configuration piégée dont le propriétaire est le compte standard, qui y a le contrôle total.
@@ -324,7 +324,7 @@ if ($compte) {
 try { `$h = [IO.File]::Open('$script:Donnees\piege-4.1.0.json', 'CreateNew', 'Write'); `$h.Dispose(); 'CREATION=ECRIT' }
 catch { `$x = `$_.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; 'CREATION=' + `$x.GetType().Name }
 "@
-    # La 4.1.0 ne pose ses droits qu'une fois un compte connecté à la console (protection::demarrer de 4da823a) :
+    # La 4.1.0 ne pose ses droits qu'une fois un compte connecté à la console (protection::demarrer de 758ff1e) :
     # sans personne à la console (Windows Sandbox), son dossier reste ouvert, défaut de cette version corrigé depuis.
     # Ce n'est alors pas un échec de la version testée ; le piège réel posé rend la mise à niveau plus exigeante.
     $consoleAncienne = (Get-CimInstance Win32_ComputerSystem).UserName
