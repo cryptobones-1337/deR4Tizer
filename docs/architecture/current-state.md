@@ -30,6 +30,12 @@ toutes les heures), `listes de menaces` (12 h), `mise à jour` (quotidienne, 10 
 `notifications`, `syslog`, `api`, `siem`, `ndr`, `geoip`, `ja3`, `audit données sensibles`, `traces de processus`,
 `contrôles`, plus un fil de capture par interface réseau (`capture.rs`).
 
+Mesure du cycle (phase 1, `mesure.rs`) : durée de chaque étape du cycle de 3 s, attente et tenue du verrou du
+moniteur par la surveillance, durée de chaque commande (verrou tenu), étapes des contrôles de 10 minutes et nombre de
+PowerShell lancés par contexte. Écrite dans `mesures.json` toutes les 200 cycles (environ 10 minutes) : cumul depuis le
+démarrage et dernière fenêtre, avec la répartition par classes de durée. Condition préalable à tout découpage de
+`Moniteur` (CLAUDE.md, phase 1) ; aucune décision du service n'en dépend.
+
 ## Dossier de données `C:\ProgramData\deR4Tizer`
 
 Propriétaire Administrateurs, héritage coupé ; SYSTEM et Administrateurs en contrôle total ; comptes autorisés en
