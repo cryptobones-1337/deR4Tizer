@@ -97,6 +97,12 @@ fn service_principal(_arguments: Vec<OsString>) {
     let _ = arret_rx.recv();
     let _ = etat.set_service_status(statut(ServiceState::StopPending, ServiceControlAccept::empty()));
     moniteur.lock().unwrap().arreter();
+    // Téléchargements en cours (curl.exe) : terminés avec le service, sinon ils gardent ouverts des fichiers du
+    // dossier de données (désinstallation incomplète)
+    let n = natif::terminer_enfants(&["curl"]);
+    if n > 0 {
+        commun::journal(&format!("arrêt : {n} téléchargement(s) en cours interrompu(s)"));
+    }
     let _ = etat.set_service_status(statut(ServiceState::Stopped, ServiceControlAccept::empty()));
 }
 
@@ -290,10 +296,29 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--supprimer-donnees") {
-        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets
-        match std::fs::remove_dir_all(commun::dossier()) {
-            Ok(()) => println!("Données supprimées : {}", commun::dossier().display()),
-            Err(e) => println!("Données : {e}"),
+        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets. Plusieurs
+        // essais (un fichier peut rester ouvert quelques instants après l'arrêt du service) ; en cas d'échec, compte
+        // rendu dans %SystemRoot%\Temp : l'action du MSI ignore le code de retour, l'échec ne doit pas passer inaperçu
+        let d = commun::dossier();
+        let mut erreur = None;
+        for essai in 0..10 {
+            match std::fs::remove_dir_all(&d) {
+                Ok(()) => { erreur = None; break }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => { erreur = None; break }
+                Err(e) => erreur = Some(e),
+            }
+            if essai < 9 {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+        match erreur {
+            None => println!("Données supprimées : {}", d.display()),
+            Some(e) => {
+                let texte = format!("deR4Tizer : suppression de {} incomplète ({e})", d.display());
+                println!("{texte}");
+                let _ = std::fs::write(std::path::PathBuf::from(natif::dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows"))
+                    .join(r"Temp\deR4Tizer-desinstallation.txt"), &texte);
+            }
         }
         return;
     }

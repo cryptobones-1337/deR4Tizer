@@ -1985,3 +1985,27 @@ fn script_installation_lance_s_execute() {
     assert!(code.success() && !temoin.exists(), "témoin : PowerShell détaché a exécuté la commande (comportement à revoir)");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Arrêt du service : ses enfants curl.exe sont terminés (sinon ils gardaient ouvert un fichier du dossier de données
+/// et la désinstallation le laissait). Décision : enfants directs seulement, par nom sans casse. Réel : un enfant lancé
+/// par ce processus de test est bien terminé, un processus d'un autre parent ne l'est pas.
+#[test]
+fn arret_termine_les_enfants_nommes() {
+    use crate::natif::{enfants_nommes, terminer_enfants, InfoListe};
+    let mut l = std::collections::HashMap::new();
+    l.insert(10, InfoListe { nom: "deR4TizerSvc".into(), parent: 1 });
+    l.insert(11, InfoListe { nom: "curl".into(), parent: 10 });
+    l.insert(12, InfoListe { nom: "CURL".into(), parent: 10 });
+    l.insert(13, InfoListe { nom: "powershell".into(), parent: 10 });
+    l.insert(14, InfoListe { nom: "curl".into(), parent: 99 });
+    assert_eq!(enfants_nommes(&l, 10, &["curl"]), vec![11, 12], "curl, sans casse ; ni powershell ni le curl d'un autre parent");
+    assert!(enfants_nommes(&l, 10, &["deR4TizerSvc"]).is_empty(), "jamais le parent lui-même");
+    // Réel : ping.exe lancé par ce processus (30 s), terminé tout de suite
+    let mut enfant = std::process::Command::new("ping.exe").args(["-n", "30", "127.0.0.1"])
+        .stdout(std::process::Stdio::null()).spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let debut = std::time::Instant::now();
+    assert!(terminer_enfants(&["ping"]) >= 1, "enfant ping.exe non terminé");
+    let code = enfant.wait().unwrap();
+    assert!(!code.success() && debut.elapsed() < std::time::Duration::from_secs(5), "ping.exe a continué ({code:?})");
+}

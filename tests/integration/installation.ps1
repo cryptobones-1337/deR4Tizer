@@ -290,7 +290,7 @@ Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données 
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
     if (Test-Path $script:Donnees) { $reste += 'données' }
     if (@(Produits).Count) { $reste += 'entrée « Applications »' }
-    if ($reste.Count) { return 'reste : ' + ($reste -join ', ') }
+    if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }
     $true
 }
 if ($regles1) {
@@ -413,7 +413,7 @@ Verifier 'Désinstallation avec GARDER_DONNEES=1 : données gardées, le reste r
     $reste = @()
     if (Get-Service deR4Tizer -ErrorAction SilentlyContinue) { $reste += 'service' }
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
-    if ($reste.Count) { return 'reste : ' + ($reste -join ', ') }
+    if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }
     $true
 }
 if ($regles2) {

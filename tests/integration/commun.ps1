@@ -443,3 +443,18 @@ while (`$pile.Count) {
     if ($ecarts.Count) { return "$($ecarts.Count) écart(s) sur $n élément(s) (contrôle en SYSTEM) : " + (($ecarts | Select-Object -First 8) -join ' ; ') }
     $true
 }
+
+# Diagnostic d'une suppression incomplète du dossier de données : éléments restants (chemin relatif, attributs,
+# propriétaire) et processus deR4Tizer encore présents
+function Restes-Donnees([int]$Nombre = 40) {
+    if (-not (Test-Path -LiteralPath $script:Donnees)) { return '(dossier absent)' }
+    $e = @(Get-ChildItem -LiteralPath $script:Donnees -Recurse -Force -ErrorAction SilentlyContinue)
+    $l = $e | Select-Object -First $Nombre | ForEach-Object {
+        $o = try { (Get-Acl -LiteralPath $_.FullName).Owner } catch { 'illisible' }
+        "$($_.FullName.Substring($script:Donnees.Length)) [$($_.Attributes)] $o"
+    }
+    $p = @(Get-Process deR4Tizer* -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name)($($_.Id))" })
+    "$($e.Count) élément(s) : $($l -join ' ; ') ; processus : $(if ($p.Count) { $p -join ', ' } else { 'aucun' })"
+    $cr = Join-Path $env:SystemRoot 'Temp\deR4Tizer-desinstallation.txt'
+    if (Test-Path $cr) { "compte rendu de la désinstallation : $(Get-Content $cr -Raw)" }
+}

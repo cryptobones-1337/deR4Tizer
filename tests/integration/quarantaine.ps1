@@ -499,7 +499,7 @@ Verifier 'Droits de chaque élément après les scénarios (données, Program Fi
 Verifier 'Désinstallation sans GARDER_DONNEES : données retirées, canaris intacts (jonction de ecartes comprise)' {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-3b.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
-    if (Test-Path $script:Donnees) { return "données restantes : $(@(Get-ChildItem $script:Donnees -Recurse -Force).Count) élément(s)" }
+    if (Test-Path $script:Donnees) { return "données restantes : $(Restes-Donnees)" }
     $mod = @()
     if ((Empreinte-Dossier $canariEcartes) -ne $empreinteEcartes) { $mod += 'ecartes' }
     if ((Empreinte-Dossier $canariD) -ne $empreinteD) { $mod += 'restauration' }
