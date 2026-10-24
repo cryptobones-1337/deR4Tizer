@@ -270,6 +270,19 @@ fn api_adresses_autorisees() {
     assert_eq!(crate::api::decoder_test("a%20b+c%3A%"), "a b c:%");
 }
 
+#[test]
+fn reglages_de_l_interface_avec_blocs_nuls() {
+    // Ce qu'envoie l'interface tant que config.json n'existe pas (première installation) : blocs non créés,
+    // sérialisés à null. Refusé, le passage en anglais échouait en « réglages illisibles »
+    let json = r#"{"Langue":"en","Syslog":{"Actif":false,"Hote":"","Port":514,"Protocole":"UDP","Format":"JSON","NiveauMin":"Alerte"},"Api":{"Actif":false,"Port":8642,"Reseau":false,"Adresses":null},"Ips":false,"ListesRestreintes":false,"Notifications":null,"Maj":null,"BlocageAutoMenaces":true,"ReponseAutoRancongiciel":true}"#;
+    let c: crate::commun::Config = serde_json::from_str(json).expect("réglages de l'interface lisibles");
+    assert_eq!(c.langue, "en");
+    assert_eq!(c.api.adresses, "");
+    let defaut = crate::commun::Config::default();
+    assert_eq!(c.maj.url, defaut.maj.url, "bloc nul : valeurs par défaut");
+    assert_eq!(c.notifications.niveau_min, defaut.notifications.niveau_min);
+}
+
 // ------------------------------------------------------------ mise en forme
 
 #[test]

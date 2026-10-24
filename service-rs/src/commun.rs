@@ -32,6 +32,11 @@ fn nul_vide<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
 }
 
+/// Bloc de réglages à `null` (l'interface ne crée pas les blocs absents de config.json) : valeurs par défaut
+fn nul_par_defaut<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(d: D) -> Result<T, D::Error> {
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct FluxInfo {
@@ -160,14 +165,19 @@ pub struct Config {
     /// Suspend aussitôt le programme qui modifie un fichier leurre (rançongiciel probable)
     pub reponse_auto_rancongiciel: bool,
     /// Langue de l'interface : "fr" ou "en"
+    #[serde(deserialize_with = "nul_vide")]
     pub langue: String,
+    #[serde(deserialize_with = "nul_par_defaut")]
     pub syslog: ConfigSyslog,
+    #[serde(deserialize_with = "nul_par_defaut")]
     pub api: ConfigApi,
     /// Prévention d'intrusion : l'IDS bloque au pare-feu l'adresse distante des règles « drop » ou de priorité 1
     pub ips: bool,
     /// Utiliser aussi les listes de menaces non commerciales ou aux conditions non vérifiées (usage personnel)
     pub listes_restreintes: bool,
+    #[serde(deserialize_with = "nul_par_defaut")]
     pub notifications: ConfigNotifications,
+    #[serde(deserialize_with = "nul_par_defaut")]
     pub maj: ConfigMaj,
 }
 
@@ -272,6 +282,7 @@ pub struct ConfigApi {
     /// Écoute sur le réseau local (sinon 127.0.0.1 seulement)
     pub reseau: bool,
     /// Adresses autorisées sur le réseau (SIEM), séparées par des virgules : obligatoires avec « reseau »
+    #[serde(deserialize_with = "nul_vide")]
     pub adresses: String,
 }
 

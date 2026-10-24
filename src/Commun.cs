@@ -224,7 +224,8 @@ namespace DeR4Tizer
 
     public class Config
     {
-        public Config() { BlocageAutoMenaces = true; ReponseAutoRancongiciel = true; Langue = "fr"; Syslog = new ConfigSyslog(); Api = new ConfigApi(); }
+        // Tous les blocs créés : sans config.json (première installation), un bloc à null faisait refuser les réglages
+        public Config() { BlocageAutoMenaces = true; ReponseAutoRancongiciel = true; Langue = "fr"; Syslog = new ConfigSyslog(); Api = new ConfigApi(); Notifications = new ConfigNotifications(); Maj = new ConfigMaj(); }
         public string Langue { get; set; }
         public ConfigSyslog Syslog { get; set; }
         public ConfigApi Api { get; set; }
@@ -386,7 +387,7 @@ namespace DeR4Tizer
 
     public class ConfigApi
     {
-        public ConfigApi() { Port = 8642; }
+        public ConfigApi() { Port = 8642; Adresses = ""; }
         public bool Actif { get; set; }
         public int Port { get; set; }
         public bool Reseau { get; set; }
