@@ -1,0 +1,6 @@
+# Bibliothèque d'exécution C (CRT) liée statiquement avec la chaîne MSVC : le service ne dépend pas de
+# VCRUNTIME140.dll ni des api-ms-win-crt-*.dll de l'Universal CRT absente des Windows anciens. Sans cela, sur un
+# Windows sans « Visual C++ Redistributable » (installation neuve, Windows Sandbox), le service ne démarre pas et
+# l'installation du MSI échoue (erreur 1920 puis 1603), alors que les runners GitHub, qui l'ont, ne le voient pas.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
