@@ -132,7 +132,8 @@ pub struct ElementQuarantaine {
     pub taille: u64,
     /// Nom du fichier dans quarantaine\ (vide : « <id>.quarantaine », éléments d'avant la 4.3)
     pub fichier: String,
-    /// Empreinte SHA-256 de la copie, vérifiée à la restauration (vide : élément pas encore migré)
+    /// Empreinte SHA-256 du contenu d'origine (la copie décodée, pas la copie encodée sur le disque), vérifiée à la
+    /// restauration et comparée à l'original par la reprise au démarrage (vide : élément pas encore migré)
     pub sha256: String,
     /// « en_cours », « terminee » ou « restauree » (vide : éléments d'avant la 4.3, terminés)
     pub etat: String,

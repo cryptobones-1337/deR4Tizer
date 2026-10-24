@@ -51,20 +51,122 @@ fn profils() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Retire les leurres posés par erreur dans les profils modèles (versions précédentes)
+/// Retire les leurres posés par erreur dans les profils modèles (versions précédentes). Public est modifiable par
+/// tous les utilisateurs : retrait par handle seulement, sans suivre de lien, chemin final vérifié
 fn retirer_leurres_modeles() {
     for profil in profils_modeles() {
         for (dossier, nom) in ANCIENS_LEURRES.iter().map(|(d, n)| (d.to_string(), n.to_string())).chain(noms_leurres()) {
-            let f = profil.join(dossier).join(nom);
-            if f.exists() {
-                let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
-                let _ = fs::remove_file(&f);
-            }
+            retirer_leurre(&profil.join(dossier).join(nom));
         }
     }
 }
 
+/// Dossier d'un profil d'après ProfileImagePath (« %SystemDrive% » remplacé par le lecteur de Windows)
+pub fn chemin_image_profil(image: &str, lecteur: &str) -> PathBuf {
+    let bas = image.to_ascii_lowercase();
+    match bas.find("%systemdrive%") {
+        Some(i) => PathBuf::from(format!("{}{}{}", &image[..i], lecteur, &image[i + "%systemdrive%".len()..])),
+        None => PathBuf::from(image),
+    }
+}
+
+/// Profils des comptes d'utilisateur (S-1-5-21-…) d'après ProfileList : (dossier du profil, SID du propriétaire).
+/// Le SID sert à agir sous l'identité de l'utilisateur dans ses propres dossiers.
+fn profils_proprietaires() -> Vec<(PathBuf, String)> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    let lecteur = crate::natif::dossier_windows()[..2].to_string();
+    let Ok(liste) = winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList") else {
+        return Vec::new();
+    };
+    liste.enum_keys().map_while(Result::ok)
+        .filter(|sid| sid.starts_with("S-1-5-21-") && sid[2..].chars().all(|c| c.is_ascii_digit() || c == '-'))
+        .filter_map(|sid| {
+            let image: String = liste.open_subkey(&sid).ok()?.get_value("ProfileImagePath").ok()?;
+            let profil = chemin_image_profil(&image, &lecteur);
+            let nom = profil.file_name()?.to_string_lossy().to_lowercase();
+            (!PROFILS_MODELES.contains(&nom.as_str())).then_some((profil, sid))
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------ leurres
+//
+// Les leurres vivent dans Documents, Pictures et Desktop des profils, dossiers que l'utilisateur contrôle : il peut
+// les remplacer par une jonction (vers un dossier protégé ou vers \RPC Control et ses liens). Aucune opération par
+// chemin : tout passe par un handle ouvert sans suivre de lien, chemin final vérifié (natif::ouvrir_verifie,
+// creer_verifie, supprimer_par_handle), et la création se fait sous l'identité du propriétaire du profil.
+
+/// Contenu d'un leurre : sans importance mais stable ; taille réaliste
+fn contenu_leurre() -> Vec<u8> {
+    (0..24_576u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect()
+}
+
+/// Audit d'écriture et de suppression pour tous (l'événement 4663 dira quel programme a touché le leurre)
+const SDDL_AUDIT_LEURRE: &str = "S:(AU;SA;0x10006;;;WD)";
+
+/// Crée un leurre (caché, système) au chemin exact, jamais à travers un lien ; jamais d'écrasement d'un fichier
+/// existant. En cas d'échec après la création, le fichier créé est supprimé par son handle.
+pub fn creer_leurre(chemin: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = crate::natif::creer_verifie(chemin).map_err(|e| format!("{} : {e}", chemin.display()))?;
+    let r = f.write_all(&contenu_leurre()).map_err(|e| e.to_string())
+        .and_then(|_| crate::natif::ajouter_attributs(&f, 0x2 | 0x4)); // FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
+    if r.is_err() {
+        let _ = crate::natif::supprimer_par_handle(&f);
+    }
+    r
+}
+
+/// Retire un leurre par son handle, ouvert sans suivre de lien et chemin final vérifié : rien n'est supprimé
+/// ailleurs qu'au chemin attendu. Renvoie true si le leurre a été supprimé.
+pub fn retirer_leurre(chemin: &Path) -> bool {
+    // DELETE | SYNCHRONIZE | FILE_READ_ATTRIBUTES, tout partage
+    match crate::natif::ouvrir_verifie(chemin, 0x0001_0000 | 0x0010_0000 | 0x80, 0x7, false) {
+        Ok(f) => crate::natif::supprimer_par_handle(&f).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Empreinte d'un leurre lue par son handle (sans suivre de lien, chemin final vérifié) ; None s'il est absent,
+/// illisible ou détourné
+pub fn empreinte_verifiee(chemin: &Path) -> Option<String> {
+    // GENERIC_READ | SYNCHRONIZE, tout partage
+    let mut f = crate::natif::ouvrir_verifie(chemin, 0x8000_0000 | 0x0010_0000, 0x7, false).ok()?;
+    let mut h = Sha256::new();
+    let mut tampon = [0u8; 65536];
+    loop {
+        let n = f.read(&mut tampon).ok()?;
+        if n == 0 {
+            break;
+        }
+        h.update(&tampon[..n]);
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Exécute `f` sous l'identité du propriétaire du profil s'il a une session ouverte (ses droits s'appliquent : une
+/// jonction vers un dossier protégé échoue en plus du contrôle du chemin final) ; None sans session
+fn sous_l_identite<T>(sid: &str, f: impl FnOnce() -> T) -> Option<T> {
+    crate::natif::avec_jeton_de(sid, f).ok()
+}
+
+/// Retire un leurre d'un profil : sous l'identité de son propriétaire s'il a une session, sinon par SYSTEM, par
+/// handle vérifié dans les deux cas
+fn retirer_leurre_du_profil(sid: &str, chemin: &Path) -> bool {
+    sous_l_identite(sid, || retirer_leurre(chemin)).unwrap_or_else(|| retirer_leurre(chemin))
+}
+
+/// Retire des leurres désignés par leur chemin (nettoyage de la désinstallation) ; renvoie le nombre retiré
+pub fn retirer_leurres(chemins: &[String]) -> usize {
+    let profils = profils_proprietaires();
+    chemins.iter().filter(|c| {
+        let p = Path::new(c.as_str());
+        match profils.iter().find(|(profil, _)| p.starts_with(profil)) {
+            Some((_, sid)) => retirer_leurre_du_profil(sid, p),
+            None => retirer_leurre(p),
+        }
+    }).count()
+}
 
 /// Anciens noms fixes (publiés dans le code) : retirés et remplacés
 const ANCIENS_LEURRES: &[(&str, &str)] = &[
@@ -107,16 +209,12 @@ pub const FICHIER_LEURRES: &str = r"secrets\leurres.json";
 /// Anciennes listes lisibles (versions précédentes) : leurres retirés et renommés, listes effacées
 pub fn migrer_leurres() {
     let anciens: Vec<(String, String)> = commun::lire("leurres-noms.json").unwrap_or_default();
-    if anciens.is_empty() && !commun::dossier().join("leurres.json").exists() {
+    if anciens.is_empty() && fs::symlink_metadata(commun::dossier().join("leurres.json")).is_err() {
         return;
     }
-    for profil in profils() {
+    for (profil, sid) in profils_proprietaires() {
         for (dossier, nom) in &anciens {
-            let f = profil.join(dossier).join(nom);
-            if f.exists() {
-                let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
-                let _ = fs::remove_file(&f);
-            }
+            retirer_leurre_du_profil(&sid, &profil.join(dossier).join(nom));
         }
     }
     let _ = fs::remove_file(commun::dossier().join("leurres-noms.json"));
@@ -145,54 +243,38 @@ pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
     Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Crée les leurres manquants (cachés), leur pose un audit d'écriture, et renvoie la liste
+/// Crée les leurres manquants (cachés) sous l'identité du propriétaire de chaque profil, leur pose un audit
+/// d'écriture par handle, et renvoie la liste. Profil sans session ouverte : aucune création (SYSTEM n'écrit jamais
+/// dans les dossiers de l'utilisateur) ; ses leurres déjà présents sont gardés et audités. Rappelée régulièrement
+/// par le moniteur, pour les utilisateurs qui ouvrent une session plus tard.
 pub fn poser_leurres() -> Vec<Leurre> {
     migrer_leurres();
     retirer_leurres_modeles();
+    let profils = profils_proprietaires();
     // Anciens leurres à nom fixe : retirés des profils
-    for profil in profils() {
+    for (profil, sid) in &profils {
         for (dossier, nom) in ANCIENS_LEURRES {
-            let f = profil.join(dossier).join(nom);
-            if f.exists() {
-                let _ = Command::new("attrib.exe").args(["-h", "-s"]).arg(&f).creation_flags(0x0800_0000).output();
-                let _ = fs::remove_file(&f);
-            }
+            retirer_leurre_du_profil(sid, &profil.join(dossier).join(nom));
         }
     }
     let noms = noms_leurres();
     let mut liste = Vec::new();
-    let mut a_auditer = Vec::new();
-    for profil in profils() {
+    for (profil, sid) in &profils {
         for (dossier, nom) in &noms {
-            let d = profil.join(dossier);
-            if !d.is_dir() {
-                continue;
-            }
-            let f = d.join(nom);
-            if !f.exists() {
-                // Contenu sans importance mais stable ; taille réaliste
-                let contenu: Vec<u8> = (0..24_576u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
-                if fs::write(&f, contenu).is_err() {
-                    continue;
+            let f = profil.join(dossier).join(nom);
+            if empreinte_verifiee(&f).is_none() {
+                // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi)
+                match sous_l_identite(sid, || creer_leurre(&f)) {
+                    Some(Ok(())) => {}
+                    _ => continue,
                 }
-                let _ = Command::new("attrib.exe").args(["+h", "+s"]).arg(&f).creation_flags(0x0800_0000).output();
             }
-            if let Some(e) = empreinte_fichier(&f) {
-                a_auditer.push(f.to_string_lossy().to_string());
-                liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e });
+            let Some(e) = empreinte_verifiee(&f) else { continue };
+            if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
+                commun::journal(&format!("leurres : audit non posé sur {} ({x})", f.display()));
             }
+            liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e });
         }
-    }
-    // Audit d'écriture et de suppression : l'événement 4663 dira quel programme les a touchés
-    if !a_auditer.is_empty() {
-        let mut script = String::from("$ErrorActionPreference='SilentlyContinue'\n");
-        for f in &a_auditer {
-            script.push_str(&format!(
-                "$a = Get-Acl -LiteralPath '{0}' -Audit; $a.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-1-0'),'WriteData,AppendData,Delete','None','None','Success'))); Set-Acl -LiteralPath '{0}' -AclObject $a\n",
-                f.replace('\'', "''")
-            ));
-        }
-        let _ = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).creation_flags(0x0800_0000).output();
     }
     let _ = commun::ecrire(FICHIER_LEURRES, &liste);
     liste
@@ -202,8 +284,12 @@ pub fn poser_leurres() -> Vec<Leurre> {
 pub fn verifier_leurres(liste: &mut Vec<Leurre>) -> Vec<Alerte> {
     let mut a = Vec::new();
     for l in liste.iter_mut() {
-        let p = Path::new(&l.chemin);
-        let etat = if !p.exists() { Some("SUPPRIMÉ ou RENOMMÉ") } else if empreinte_fichier(p).as_deref() != Some(l.empreinte.as_str()) { Some("MODIFIÉ") } else { None };
+        // Par handle vérifié : un leurre remplacé par un lien compte comme supprimé, rien n'est lu ailleurs
+        let etat = match empreinte_verifiee(Path::new(&l.chemin)) {
+            None => Some("SUPPRIMÉ, RENOMMÉ ou REMPLACÉ PAR UN LIEN"),
+            Some(e) if e != l.empreinte => Some("MODIFIÉ"),
+            Some(_) => None,
+        };
         if let Some(e) = etat {
             a.push(alerte("Critique", 15, "?", "", "leurre anti-rançongiciel",
                 format!("fichier leurre {e} : {} — un RANÇONGICIEL est probablement en train de chiffrer vos fichiers. Utilisez le bouton PANIQUE et éteignez le PC si nécessaire.", l.chemin)));
@@ -244,7 +330,8 @@ pub fn liste_loldrivers() -> HashSet<String> {
             .filter(|s| s.status.success())
             .and_then(|_| fs::rename(f.with_extension("tmp"), &f).ok());
     }
-    let Ok(t) = fs::read_to_string(&f) else { return HashSet::new() };
+    // Propriétaire contrôlé, comme tout fichier du dossier de données
+    let Some(t) = commun::lire_fichier_proprietaire(&f) else { return HashSet::new() };
     Regex::new(r#""SHA256":\s*"([0-9a-fA-F]{64})""#).unwrap().captures_iter(&t).map(|c| c[1].to_lowercase()).collect()
 }
 
