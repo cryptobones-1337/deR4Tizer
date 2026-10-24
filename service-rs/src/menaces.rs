@@ -334,7 +334,9 @@ impl Menaces {
                     self.ip6.entry(v6).or_insert(Correspondance { source: source.into(), haute });
                     true
                 }
-                Some(l) if l >= 16 => {
+                // De /16 à /127 (/128 : adresse exacte, plus haut) ; au-delà de /128, entrée invalide écartée : elle
+                // faisait lire au-delà des 16 octets de l'adresse (panique, service arrêté)
+                Some(l) if (16..128).contains(&l) => {
                     self.reseaux6.push(Reseau6 { prefixe: v6.octets(), longueur: l, source: source.into(), haute });
                     true
                 }
@@ -355,7 +357,14 @@ fn dans_plages(plages: &[Plage], v: u32) -> Option<String> {
 }
 
 fn dans_reseau6(ip: &[u8; 16], r: &Reseau6) -> bool {
+    // Défense en profondeur : jamais au-delà des 16 octets, même si une entrée hors bornes avait été acceptée
+    if r.longueur > 128 {
+        return false;
+    }
     let (complets, reste) = ((r.longueur / 8) as usize, r.longueur % 8);
+    if complets == 16 {
+        return ip == &r.prefixe;
+    }
     if ip[..complets] != r.prefixe[..complets] {
         return false;
     }
@@ -418,4 +427,14 @@ fn fusionner(mut plages: Vec<Plage>) -> Vec<Plage> {
 #[cfg(test)]
 pub fn recouvre_reserve_test(debut: u32, fin: u32) -> bool {
     recouvre_reserve(debut, fin)
+}
+
+/// Entrées d'une liste chargées puis adresse cherchée : (entrées acceptées, source trouvée)
+#[cfg(test)]
+pub fn ajouter_et_chercher_test(jetons: &[&str], ip: &str) -> (usize, Option<String>) {
+    let mut m = Menaces::default();
+    let mut plages = Vec::new();
+    let n = jetons.iter().filter(|j| m.ajouter(j, "essai", true, &mut plages)).count();
+    m.plages_hautes = fusionner(plages);
+    (n, m.chercher_ip(ip).map(|c| c.source))
 }
