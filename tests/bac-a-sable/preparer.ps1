@@ -86,7 +86,10 @@ if ($Maj) {
     # Octets d'origine gardés tels quels (ReadAllText retire le BOM, WriteAllText ne le remet pas)
     $octets = [IO.File]::ReadAllBytes($fichier)
     $original = [IO.File]::ReadAllText($fichier)
-    $env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build-msvc-test'
+    # Compilation avec la clé de test : dossier sous Racine\tmp, effacé dès les deux exécutables copiés dans
+    # entree\maj (lui-même effacé par lancer.ps1), y compris si la compilation échoue : aucun binaire à clé de test
+    # conservé sur le poste ; pas de cache entre deux passages
+    $env:CARGO_TARGET_DIR = Join-Path $Racine 'tmp\compilation-cle-test'
     $env:DER4TIZER_CLES_SIGNATURE = $cle
     try {
         Push-Location (Join-Path $depot 'service-rs')
@@ -102,6 +105,9 @@ if ($Maj) {
     } finally {
         [IO.File]::WriteAllBytes($fichier, $octets)
         Remove-Item Env:\DER4TIZER_CLES_SIGNATURE
+        Remove-Item -LiteralPath $env:CARGO_TARGET_DIR -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $env:CARGO_TARGET_DIR) { throw "dossier de compilation à clé de test non effacé : $env:CARGO_TARGET_DIR" }
+        Remove-Item Env:\CARGO_TARGET_DIR
     }
     Copy-Item (Join-Path $depot 'bin\deR4Tizer.exe') "$ex\$courante\deR4Tizer.exe" -Force
     $env:RUNNER_TEMP = Join-Path $Racine 'tmp'
