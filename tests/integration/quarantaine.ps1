@@ -131,6 +131,52 @@ if ($compte -and $dossierEcarte) {
     NonExecute 'Dossier mis de côté : jonction vers un canari' 'compte standard indisponible'
 }
 
+# ---------------------------------------------------------------- leurres anti-rançongiciel (revue de sécurité)
+# Les leurres vivent dans les dossiers de l'utilisateur. Rejeu de l'attaque : le compte standard remplace son dossier
+# Documents par une jonction vers un canari qui contient un fichier au nom public des anciens leurres
+# (« !000-deR4Tizer-leurre.docx », retiré à chaque pose). Par chemin, SYSTEM supprimerait ce fichier hors du profil ;
+# par handle vérifié, rien n'est touché. Témoin : dans le profil qui a une session, les leurres sont posés (cachés,
+# système, audités).
+$profilStd = if ($compte) { "C:\Users\$($compte.Nom)" } else { '' }
+if ($compte -and (Test-Path "$profilStd\NTUSER.DAT")) {
+    $canariLeurres = Join-Path $Canaris 'leurres'
+    $empreinteLeurres = Nouveau-Canari $canariLeurres '!000-deR4Tizer-leurre.docx' (Octets-Aleatoires 4000)
+    Verifier 'Leurres : jonction dans le profil du compte standard vers un canari, redémarrage, canari intact' {
+        $s = En-TantQue $compte @"
+Remove-Item -LiteralPath '$profilStd\Documents' -Recurse -Force -ErrorAction SilentlyContinue
+cmd.exe /c mklink /J "$profilStd\Documents" "$canariLeurres"
+"@
+        $i = Get-Item -LiteralPath "$profilStd\Documents" -Force -ErrorAction SilentlyContinue
+        if (-not $i -or -not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return "jonction non posée : $($s -replace "`r?`n", ' ')" }
+        [void](Redemarrer-Service)
+        Start-Sleep 5
+        if ((Empreinte-Dossier $canariLeurres) -ne $empreinteLeurres) { return 'canari modifié : un leurre a été retiré ou posé à travers la jonction' }
+        $true
+    }
+} else {
+    NonExecute 'Leurres : jonction dans le profil du compte standard' 'profil du compte standard absent'
+}
+if ($sessionSid) {
+    Verifier "Leurres : posés dans le profil de la session ($sessionGenre), cachés, système, audités" {
+        $f = Join-Path $script:Donnees 'secrets\leurres.json'
+        if (-not (Test-Path $f)) { return 'liste des leurres absente' }
+        $liste = @((Get-Content $f -Raw -Encoding UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json)
+        $profilSession = (Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $sessionSid }).LocalPath
+        $miens = @(@($liste) | ForEach-Object { $_ } | Where-Object { $_.chemin -like "$profilSession\*" })
+        if (-not $miens.Count) { return "aucun leurre dans $profilSession" }
+        foreach ($l in $miens) {
+            $i = Get-Item -LiteralPath $l.chemin -Force -ErrorAction SilentlyContinue
+            if (-not $i) { return "absent : $($l.chemin)" }
+            if (($i.Attributes -band 6) -ne 6) { return "ni caché ni système : $($l.chemin)" }
+            $audit = @((Get-Acl -LiteralPath $l.chemin -Audit).Audit)
+            if (-not @($audit | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-1-0' }).Count) { return "audit absent : $($l.chemin)" }
+        }
+        $true
+    }
+} else {
+    NonExecute 'Leurres : posés dans le profil de la session' 'aucune session interactive sur le runner'
+}
+
 # ---------------------------------------------------------------- quarantaine, redémarrage, restauration
 # Emplacement d'origine dont le propriétaire est le compte standard, qui n'a pas de session : restauration à
 # l'origine refusée (jamais d'écriture en SYSTEM), repli dans le dossier du service

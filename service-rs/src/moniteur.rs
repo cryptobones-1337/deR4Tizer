@@ -86,6 +86,9 @@ pub struct Moniteur {
     chaines: Vec<Chaine>,
     origines: HashMap<String, Option<reponse::Origine>>,
     leurres: Vec<hygiene::Leurre>,
+    /// Dernière pose des leurres (None en console : jamais posés) ; reprise régulière pour les utilisateurs qui
+    /// ouvrent une session après le démarrage du service (création sous leur identité seulement)
+    pose_leurres: Option<Instant>,
     /// Pour repérer les « balises » : ports locaux déjà vus et instants des nouvelles connexions, par flux
     balises: HashMap<(u32, String, u16), (HashSet<u16>, Vec<Instant>)>,
     journal_parefeu: parefeu::LecteurJournal,
@@ -162,6 +165,7 @@ impl Moniteur {
             origines: HashMap::new(),
             // Les leurres ne sont posés que par le service (pas lors d'un test en console)
             leurres: if console { Vec::new() } else { hygiene::poser_leurres() },
+            pose_leurres: if console { None } else { Some(Instant::now()) },
             balises: HashMap::new(),
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
             adresses_publiques: parefeu::adresses_publiques(),
@@ -481,7 +485,16 @@ impl Moniteur {
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
         self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
 
-        // Leurres anti-rançongiciel (vérification par empreinte, en plus de l'audit d'écriture)
+        // Leurres anti-rançongiciel : pose reprise toutes les 15 min (nouvelles sessions), leurres déjà suivis gardés
+        if self.pose_leurres.is_some_and(|t| t.elapsed() >= Duration::from_secs(900)) {
+            self.pose_leurres = Some(Instant::now());
+            for l in hygiene::poser_leurres() {
+                if !self.leurres.iter().any(|x| x.chemin == l.chemin) {
+                    self.leurres.push(l);
+                }
+            }
+        }
+        // Vérification par empreinte, en plus de l'audit d'écriture
         for a in hygiene::verifier_leurres(&mut self.leurres) {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
@@ -1169,10 +1182,8 @@ pub fn nettoyer() {
     // Leurres anti-rançongiciel et mode panique
     let mut leurres: Vec<hygiene::Leurre> = commun::lire(hygiene::FICHIER_LEURRES).unwrap_or_default();
     leurres.extend(commun::lire::<Vec<hygiene::Leurre>>("leurres.json").unwrap_or_default());
-    let n = leurres.iter().filter(|l| {
-        let _ = std::process::Command::new("attrib.exe").args(["-h", "-s"]).arg(&l.chemin).output();
-        fs::remove_file(&l.chemin).is_ok()
-    }).count();
+    // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
+    let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
     if reponse::panique_active() {
         let _ = reponse::panique(false);
