@@ -262,12 +262,23 @@ pub fn signataire_valide(chemin: &str) -> Option<String> {
     }
 }
 
+/// Décision pure, sur les erreurs de la chaîne du signataire (CERT_TRUST_STATUS.dwErrorStatus) après un
+/// WinVerifyTrust réussi : la révocation doit avoir été vérifiée. La politique Authenticode par défaut tolère une
+/// révocation hors ligne ou inconnue (CRL injoignable) ; ici, c'est un refus, comme un certificat révoqué.
+pub fn revocation_verifiee(erreurs_chaine: u32) -> bool {
+    const CERT_TRUST_IS_REVOKED: u32 = 0x0000_0004;
+    const CERT_TRUST_REVOCATION_STATUS_UNKNOWN: u32 = 0x0000_0040;
+    const CERT_TRUST_IS_OFFLINE_REVOCATION: u32 = 0x0100_0000;
+    erreurs_chaine & (CERT_TRUST_IS_REVOKED | CERT_TRUST_REVOCATION_STATUS_UNKNOWN | CERT_TRUST_IS_OFFLINE_REVOCATION) == 0
+}
+
 /// Empreinte SHA-256 de la clé publique du certificat qui a signé le fichier, après vérification complète de la
-/// signature AVEC contrôle de révocation de toute la chaîne (un certificat volé puis révoqué est refusé).
+/// signature AVEC contrôle de révocation de toute la chaîne (un certificat volé puis révoqué est refusé, et une
+/// révocation impossible à vérifier aussi : revocation_verifiee).
 /// Sert à la mise à jour automatique : on compare une clé, pas un nom (que n'importe qui peut obtenir).
 pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
-    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN, WTD_REVOKE_WHOLECHAIN};
+    use windows::Win32::Security::WinTrust::{WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT, WTD_REVOKE_WHOLECHAIN};
     let chemin_large = large(chemin);
     let mut fichier = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -282,7 +293,9 @@ pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
         dwUnionChoice: WTD_CHOICE_FILE,
         Anonymous: WINTRUST_DATA_0 { pFile: &mut fichier },
         dwStateAction: WTD_STATEACTION_VERIFY,
-        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN,
+        // Racine exclue : une racine n'a pas d'adresse de CRL (elle se retire du magasin, elle ne se révoque
+        // pas) ; vérifiée, elle serait « révocation inconnue » et revocation_verifiee refuserait tout
+        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
         ..Default::default()
     };
     let mut action: GUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
@@ -293,7 +306,10 @@ pub fn cle_signataire_verifiee(chemin: &str) -> Option<String> {
             let fournisseur = WTHelperProvDataFromStateData(donnees.hWVTStateData);
             if !fournisseur.is_null() {
                 let signataire = WTHelperGetProvSignerFromChain(fournisseur, 0, false, 0);
-                if !signataire.is_null() && !(*signataire).pasCertChain.is_null() {
+                // WinVerifyTrust réussit aussi quand la révocation n'a pas pu être vérifiée (CRL injoignable) :
+                // l'état de la chaîne du signataire fait foi (échec fermé)
+                let chaine = if signataire.is_null() { std::ptr::null_mut() } else { (*signataire).pChainContext };
+                if !chaine.is_null() && revocation_verifiee((*chaine).TrustStatus.dwErrorStatus) && !(*signataire).pasCertChain.is_null() {
                     let cert = (*(*signataire).pasCertChain).pCert;
                     if !cert.is_null() && !(*cert).pCertInfo.is_null() {
                         let pk = &(*(*cert).pCertInfo).SubjectPublicKeyInfo.PublicKey;
