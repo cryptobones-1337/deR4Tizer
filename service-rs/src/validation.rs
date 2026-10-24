@@ -70,12 +70,16 @@ pub fn nom_domaine_valide(d: &str) -> bool {
 }
 
 /// Chemin absolu local (« X:\… »), sans caractère de contrôle ; jamais un chemin réseau (« \\serveur\… ») ni un
-/// chemin d'appareil (« \\?\… », « \\.\… »), ni un élément « .. » (un garde-fou par préfixe, comme le refus du
-/// dossier Windows pour isolerProgramme, serait contourné par « C:\x\..\Windows\… »)
+/// chemin d'appareil (« \\?\… », « \\.\… »). Aucun élément que Windows réécrit avant d'ouvrir le fichier : vide,
+/// « . », « .. », terminé par un point ou une espace ; aucun « : » après le lecteur (flux de données). Sinon un
+/// garde-fou par préfixe, comme le refus du dossier Windows pour isolerProgramme, serait contourné par
+/// « C:\x\..\Windows\… », « C:\.\Windows\… », « C:\\Windows\… » ou « C:\Windows.\… ». Les noms courts
+/// (« WINDOW~1 ») ne sont pas réécrits ici : la comparaison sur la forme complète du chemin relève de la phase 6.
 pub fn chemin_local_absolu(p: &str) -> bool {
     let b = p.as_bytes();
-    p.len() <= MAX_CIBLE && b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' && sans_controle(p)
-        && !p.split(['\\', '/']).any(|e| e.trim_end_matches([' ', '.']).is_empty() && e.contains(".."))
+    p.len() <= MAX_CIBLE && b.len() >= 4 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' && sans_controle(p)
+        && !p[2..].contains(':')
+        && p[3..].split(['\\', '/']).all(|e| !e.is_empty() && !e.ends_with(['.', ' ']))
 }
 
 /// Identifiant d'alerte ou d'élément de quarantaine (commun::nouvel_id, GUID de l'ancien service C#)
