@@ -392,7 +392,8 @@ pub fn rechercher(f: &Filtre) -> Vec<Evenement> {
     let rang = crate::export::rang(&f.niveau_min);
     let mut sortie = Vec::new();
     for (_, chemin) in fichiers {
-        let Ok(contenu) = fs::read_to_string(&chemin) else { continue };
+        // Propriétaire contrôlé, comme tout fichier du dossier de données
+        let Some(contenu) = commun::lire_fichier_proprietaire(&chemin) else { continue };
         for ligne in contenu.lines().rev() {
             if !texte.is_empty() && !ligne.to_lowercase().contains(&texte) {
                 continue;
