@@ -55,7 +55,7 @@ Veut publier une version malveillante que les postes installeraient.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
   sessions) le couvre. Sur `main`, une liste de révocation injoignable est tolérée (PR #12, non fusionnée).
-- Choix du certificat : l'épinglage repose sur la clé publique. Aucune des options n'est utilisable en l'état.
+- Choix du certificat : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
   ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
   Parades, à décider par Benoît (changement du modèle de confiance) : une seconde signature propre au projet

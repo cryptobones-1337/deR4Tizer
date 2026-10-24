@@ -149,7 +149,7 @@ L'idéal reste une clé hors de GitHub (Azure Trusted Signing, SignPath).
 
 Pour signer : obtenir un certificat de signature de code (gratuit pour l'open source via
 [SignPath Foundation](https://signpath.org), ou Azure Trusted Signing, ou un certificat OV au format .pfx ; pour
-les mises à jour automatiques, aucun n'est utilisable en l'état : voir `docs/security/threat-model.md`), puis
+les mises à jour automatiques, SignPath et Azure Trusted Signing ne le sont pas en l'état : voir `docs/security/threat-model.md`), puis
 ajouter les secrets `CERTIFICAT_PFX` (fichier .pfx en base64) et `CERTIFICAT_MOT_DE_PASSE`. En local,
 `DER4TIZER_CERT_SHA1` (empreinte d'un certificat du magasin) fait signer `compiler.ps1`. Tant que les binaires ne sont
 pas signés, Windows affiche « éditeur inconnu » et les postes signalent les nouvelles versions sans les installer.
