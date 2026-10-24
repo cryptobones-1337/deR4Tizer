@@ -60,7 +60,7 @@ L'IDS, le DPI et le NDR sont **expérimentaux**, quel que soit l'état de leurs 
 | Apprentissage et exceptions | testé en labo | `apprentissage.rs` | — | `n3_apprentissage_par_chemin_editeur_et_destination` | — (cache de l'éditeur indexé par chemin et date de modification depuis la 4.2) |
 | Techniques MITRE ATT&CK et conseils | implémenté non vérifié | `mitre.rs` | — | — | — |
 | Interface (C#, français et anglais) | implémenté non vérifié (compilée par la CI) | `src/*.cs` | .NET Framework 4.8 | Compilation dans le job `windows` | Rendu à 125 % et 150 % non vérifié sur un écran réel. |
-| Signature des binaires et du MSI | prévu | `.github/workflows/publication.yml` | Certificat de signature de code | — | Binaires non signés ; choix du certificat en attente (SignPath Foundation ou Azure Trusted Signing : voir `docs/security/threat-model.md`). |
+| Signature des binaires et du MSI | prévu | `.github/workflows/publication.yml` | Certificat de signature de code | — | Binaires non signés. SignPath Foundation non utilisable en l'état pour les mises à jour (certificat à son nom, peut-être commun à plusieurs projets) : seconde signature propre au projet ou nom de produit exigé, à décider ; Azure Trusted Signing (clé qui changerait souvent) à vérifier. Voir `docs/security/threat-model.md`. |
 | Exécution avec Microsoft Defender actif (lot 3d) | prévu | — | VM ou runner auto-hébergé | — | Non exécuté : dernier verrou avant toute distribution. |
 
 ## Scénarios de CI non exécutés (à faire sur une VM)

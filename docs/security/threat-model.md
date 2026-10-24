@@ -55,10 +55,14 @@ Veut publier une version malveillante que les postes installeraient.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
   sessions) le couvre. Sur `main`, une liste de révocation injoignable est tolérée (PR #12, non fusionnée).
-- Choix du certificat : l'épinglage repose sur la clé publique. Un certificat dont la clé ne change qu'au
-  renouvellement (SignPath Foundation) convient ; un certificat de quelques jours dont la clé changerait à
-  chaque renouvellement (Azure Trusted Signing, à vérifier) rendrait l'épinglage inutilisable et demanderait un
-  nouveau modèle de confiance. Le comportement de la révocation avec un certificat expiré et une signature
+- Choix du certificat : l'épinglage repose sur la clé publique. Aucune des options n'est utilisable en l'état.
+  SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
+  ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
+  Parades, à décider par Benoît (changement du modèle de confiance) : une seconde signature propre au projet
+  (Ed25519, clé hors ligne) de l'empreinte du MSI, seule épinglée pour les mises à jour ; ou, au minimum, le nom
+  de produit « deR4Tizer » exigé dans le paquet signé (repose alors sur le contrôle de SignPath). Un certificat de
+  quelques jours dont la clé changerait à chaque renouvellement (Azure Trusted Signing, à vérifier) rendrait
+  l'épinglage inutilisable et demanderait aussi un nouveau modèle de confiance. Le comportement de la révocation avec un certificat expiré et une signature
   horodatée est à tester avec le vrai certificat avant toute publication.
 
 ### Liste de menaces corrompue
