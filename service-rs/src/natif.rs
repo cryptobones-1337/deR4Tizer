@@ -1047,32 +1047,17 @@ fn avec_privilege<T>(nom: &str, f: impl FnOnce() -> T) -> Result<T, String> {
 }
 
 /// Pose l'audit (SACL) d'un fichier par son handle, ouvert sans suivre de lien et chemin final vérifié, avec
-/// SeSecurityPrivilege actif sur ce fil pour ce seul appel ; `sddl` ne décrit qu'une SACL (« S:… »)
+/// SeSecurityPrivilege actif sur ce fil pour ce seul appel ; `sddl` décrit une seule entrée d'audit (« S:(AU;…) »).
+/// SACL complétée par SetKernelObjectSecurity (poser_sacl, comme l'audit des données sensibles) : SetSecurityInfo
+/// relit aussi le descripteur de l'objet et échouait (« Access is denied ») avec un handle ouvert pour la seule SACL
+/// (constaté sur un poste réel : leurres jamais audités ; les scénarios d'intégration n'ont pas de session).
 pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
-    use std::os::windows::io::AsRawHandle;
-    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
-    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT};
-    use windows::Win32::Security::{GetSecurityDescriptorSacl, ACL, PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION};
-    avec_privilege("SeSecurityPrivilege", || unsafe {
-        // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
-        let f = ouvrir_verifie(chemin, 0x0100_0000 | 0x0010_0000, 0x7, false).map_err(|e| format!("{} : {e}", chemin.display()))?;
-        let s = large(sddl);
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
-        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
-        let mut sacl: *mut ACL = std::ptr::null_mut();
-        let mut r = GetSecurityDescriptorSacl(sd, &mut present, &mut sacl, &mut defaut).map_err(|e| e.to_string());
-        if r.is_ok() && (!present.as_bool() || sacl.is_null()) {
-            r = Err("SDDL sans SACL".into());
-        }
-        if r.is_ok() {
-            let e = SetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, SACL_SECURITY_INFORMATION, PSID::default(), PSID::default(), None, Some(sacl));
-            if e.0 != 0 {
-                r = Err(format!("audit : {}", windows::core::Error::from(e)));
-            }
-        }
-        let _ = LocalFree(HLOCAL(sd.0));
-        r
+    // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
+    const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
+    let voulue = entree_normalisee(sddl)?;
+    avec_privilege("SeSecurityPrivilege", || {
+        let f = ouvrir_verifie(chemin, ACCES, 0x7, false).map_err(|e| format!("{} : {e}", chemin.display()))?;
+        poser_sacl(&f, &voulue, false, &mut BilanAudit::default()).map_err(|e| format!("audit : {e}"))
     })?
 }
 

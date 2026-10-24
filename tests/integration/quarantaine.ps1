@@ -271,6 +271,36 @@ Set-Content -LiteralPath '$edge\temoin-integrite-basse.dat' -Value 'Low'
     NonExecute 'Audit des données sensibles : jonction du compte standard vers un canari' 'profil du compte standard absent'
 }
 
+# Audit d'un leurre déjà présent, sans session : le service ne crée pas de leurre dans un profil sans session, mais
+# audite ceux qui y sont déjà. Le compte standard crée lui-même, dans son profil, un fichier au nom d'un leurre (nom
+# lu dans secrets\, hors du dossier Documents remplacé plus haut par une jonction) ; après redémarrage, l'audit
+# d'écriture doit y être posé. Avant le correctif, l'écriture de la SACL échouait (« Access is denied »), constaté
+# sur un poste réel.
+if ($compte -and (Test-Path "$profilStd\NTUSER.DAT")) {
+    # Tableau de paires [dossier, nom] ; boucle explicite : Windows PowerShell 5.1 rend le tableau en un seul objet
+    $brut = Get-Content (Join-Path $script:Donnees 'secrets\leurres-noms.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+    $noms = @(if ($brut) { foreach ($x in ($brut.TrimStart([char]0xFEFF) | ConvertFrom-Json)) { , $x } })
+    $choisi = @($noms | Where-Object { $_[0] -ne 'Documents' }) | Select-Object -First 1
+    if (-not $choisi) {
+        Noter 'Leurres : leurre déjà présent dans un profil sans session, audit posé' 'ÉCHOUÉ' "noms des leurres illisibles ou vides ($($noms.Count))"
+    } else {
+        $leurreStd = Join-Path (Join-Path $profilStd $choisi[0]) $choisi[1]
+        $s = En-TantQue $compte @"
+New-Item -ItemType Directory -Force -Path '$(Split-Path $leurreStd)' | Out-Null
+Set-Content -LiteralPath '$leurreStd' -Value 'leurre pose par le compte standard'
+"@
+        Verifier 'Leurres : leurre déjà présent dans un profil sans session, audit d''écriture posé (redémarrage)' {
+            if (-not (Test-Path -LiteralPath $leurreStd)) { return "fichier non créé par le compte standard : $($s -replace "`r?`n", ' ')" }
+            [void](Redemarrer-Service)
+            $fin = (Get-Date).AddSeconds(60)
+            while ((Get-Date) -lt $fin -and -not @(Audit-Tous $leurreStd).Count) { Start-Sleep 3 }
+            if (-not @(Audit-Tous $leurreStd).Count) { return "audit absent ; SACL : $((Get-Acl -LiteralPath $leurreStd -Audit).Sddl) ; journal : $(Journal 'leurres')" }
+            $true
+        }
+    }
+} else {
+    NonExecute 'Leurres : leurre déjà présent dans un profil sans session, audit posé' 'profil du compte standard absent'
+}
 # ---------------------------------------------------------------- quarantaine, redémarrage, restauration
 # Emplacement d'origine dont le propriétaire est le compte standard, qui n'a pas de session : restauration à
 # l'origine refusée (jamais d'écriture en SYSTEM), repli dans le dossier du service
