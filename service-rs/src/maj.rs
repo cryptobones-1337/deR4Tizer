@@ -363,18 +363,24 @@ pub const PS_PID_SERVEUR: &str = "Add-Type -Namespace D4T -Name Tube -MemberDefi
     '[DllImport(\"kernel32.dll\", SetLastError = true)] public static extern bool GetNamedPipeServerProcessId(IntPtr p, out uint id);'; \
     function Pid-Serveur($c) { [uint32]$p = 0; [void][D4T.Tube]::GetNamedPipeServerProcessId($c.SafePipeHandle.DangerousGetHandle(), [ref]$p); return $p }";
 
-/// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
-/// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
-fn lancer_installation(p: &ParametresScript) -> (String, String) {
-    let script = script_installation(p);
-    match Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+/// Commande qui lance le script d'installation (partagée avec son test). Sans fenêtre (CREATE_NO_WINDOW : console
+/// cachée), jamais DETACHED_PROCESS : sans console, Windows PowerShell 5.1 sort avec le code 0 sans rien exécuter
+/// (constaté en Windows Sandbox, scénario 3c : aucune mise à jour ni aucun retour arrière n'avait lieu). Le processus
+/// n'est dans aucun objet tâche du service : il survit à l'arrêt du service par msiexec.
+pub fn commande_script(script: &str) -> Command {
+    let mut c = Command::new("powershell.exe");
+    c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         // Un PSModulePath hérité de PowerShell 7 fait charger à Windows PowerShell des modules incompatibles
         // (Get-FileHash introuvable, constaté en CI) : powershell.exe reprend alors le sien
         .env_remove("PSModulePath")
-        .creation_flags(0x0800_0000 | 0x0000_0008) // sans fenêtre, détaché
-        .spawn()
-    {
+        .creation_flags(0x0800_0000);
+    c
+}
+
+/// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
+/// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
+fn lancer_installation(p: &ParametresScript) -> (String, String) {
+    match commande_script(&script_installation(p)).spawn() {
         Ok(_) => {
             let _ = fs::remove_file(p.journaux.join("echec.txt"));
             commun::journal(&format!("mise à jour vers la version {} : installation lancée (retour arrière si le service ne répond pas)", p.version));
