@@ -37,7 +37,7 @@ if (Get-Module -ListAvailable PSScriptAnalyzer) {
     $r = @(foreach ($f in $scripts) { Invoke-ScriptAnalyzer -Path $f.FullName -Severity Error }) | Where-Object {
         $x = $_; $rel = $x.ScriptPath.Substring($depot.Length + 1)
         -not @($exceptions | Where-Object { $_.Fichier -eq $rel -and $_.Regle -eq $x.RuleName }).Count }
-    if ($r.Count) { Noter 'PSScriptAnalyzer (erreurs)' 'ÉCHOUÉ' (($r | ForEach-Object { "$($_.ScriptName):$($_.Line) $($_.RuleName)" }) -join ' ; ') }
+    if ($r.Count) { Noter 'PSScriptAnalyzer (erreurs)' 'ÉCHOUÉ' (($r | ForEach-Object { "$($_.ScriptPath.Substring($depot.Length + 1)):$($_.Line) $($_.RuleName)" }) -join ' ; ') }
     else { Noter 'PSScriptAnalyzer (erreurs)' 'RÉUSSI' }
 } else { Noter 'PSScriptAnalyzer (erreurs)' 'NON EXÉCUTÉ' 'module absent' }
 
@@ -61,17 +61,23 @@ $garde = Join-Path $commun 'hooks\garde_pii.py'
 if (Test-Path $garde) {
     # La barrière lit ses motifs depuis le dépôt : lancée depuis le dépôt, quel que soit le dossier courant
     Push-Location $depot
+    # Git écrit en UTF-8 ; Windows PowerShell 5.1 décode la sortie d'un programme avec la page de code de la console :
+    # sans ce réglage, un motif accentué dans un message de commit n'est plus reconnu. core.quotepath=off : un nom de
+    # fichier accentué en clair, pas en octal entre guillemets (sinon introuvable, donc jamais contrôlé)
+    $encodageAvant = [Console]::OutputEncoding
     try {
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
         $env:PYTHONIOENCODING = 'utf-8'
-        $modifies = @(@(git diff --name-only "$Base...HEAD") + @(git diff --name-only HEAD) + @(git ls-files --others --exclude-standard) |
+        $modifies = @(@(git -c core.quotepath=off diff --name-only "$Base...HEAD") + @(git -c core.quotepath=off diff --name-only HEAD) + @(git -c core.quotepath=off ls-files --others --exclude-standard) |
             Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $depot $_)) } | Sort-Object -Unique)
         $trouves = @(foreach ($m in $modifies) { & python -I $garde message (Join-Path $depot $m) 2>$null; if ($LASTEXITCODE) { $m } })
         $messages = Join-Path $env:TEMP "d4t-messages-$PID.txt"
-        git log --format='%an <%ae>%n%B' "$Base..HEAD" | Set-Content -LiteralPath $messages -Encoding UTF8
+        # Fichier toujours écrit, même vide (aucun commit au-dessus de la base) : sinon la barrière échoue sur un fichier absent
+        [IO.File]::WriteAllText($messages, ((@(git log --format='%an <%ae>%n%B' "$Base..HEAD") -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
         & python -I $garde message $messages 2>$null
         if ($LASTEXITCODE) { $trouves += 'messages de commit' }
         Remove-Item -LiteralPath $messages -ErrorAction SilentlyContinue
-    } finally { Pop-Location }
+    } finally { [Console]::OutputEncoding = $encodageAvant; Pop-Location }
     if ($trouves.Count) { Noter 'Données personnelles' 'ÉCHOUÉ' ($trouves -join ', ') }
     else { Noter 'Données personnelles' 'RÉUSSI' "$($modifies.Count) fichier(s) et les messages de commit" }
 } else { Noter 'Données personnelles' 'NON EXÉCUTÉ' 'barrière locale absente' }
