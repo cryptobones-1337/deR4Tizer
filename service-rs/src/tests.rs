@@ -371,6 +371,20 @@ fn fonctions_texte_sans_panique() {
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
 }
 
+/// Lot 3c : un certificat dont la CRL ne répond pas était accepté (WinVerifyTrust tolère la révocation hors
+/// ligne). Révocation révoquée, inconnue ou hors ligne : refus ; les autres états de la chaîne n'y changent rien.
+#[test]
+fn n2_revocation_verifiee_ou_refus() {
+    use crate::natif::revocation_verifiee;
+    assert!(revocation_verifiee(0), "chaîne sans erreur");
+    assert!(!revocation_verifiee(0x0000_0004), "révoqué");
+    assert!(!revocation_verifiee(0x0000_0040), "révocation inconnue");
+    assert!(!revocation_verifiee(0x0100_0000), "révocation hors ligne (CRL injoignable)");
+    assert!(!revocation_verifiee(0x0100_0040), "inconnue et hors ligne, comme Windows les signale ensemble");
+    assert!(!revocation_verifiee(0x0100_0000 | 0x0000_0001), "hors ligne avec une autre erreur");
+    assert!(revocation_verifiee(0x0000_0001), "autre erreur seule : du ressort de WinVerifyTrust, pas de cette décision");
+}
+
 #[test]
 fn n2_mise_a_jour_cle_epinglee() {
     use crate::maj::{cles_epinglees, installation_autorisee, plus_recente, version_valide};
@@ -1704,4 +1718,21 @@ fn audit_donnees_sacl_completee() {
     // Idempotent : le résultat complété ne demande plus rien
     let r = sacl_completee("S:(AU;SAFA;FA;;;BA)", fichier, true).unwrap();
     assert_eq!(sacl_completee(&r, fichier, true), None);
+}
+
+/// Le script d'installation lancé par la commande de production s'exécute vraiment. Avec DETACHED_PROCESS, Windows
+/// PowerShell 5.1 sortait avec le code 0 sans rien exécuter : aucune mise à jour n'était installée et aucun retour
+/// arrière n'avait lieu (scénario 3c en Windows Sandbox). Témoin : la même commande détachée n'écrit rien.
+#[test]
+fn script_installation_lance_s_execute() {
+    use crate::maj::commande_script;
+    use std::os::windows::process::CommandExt;
+    let d = dossier_test("script-lance");
+    let (marque, temoin) = (d.join("marque.txt"), d.join("temoin.txt"));
+    let ecrire = |f: &std::path::Path| format!("Set-Content -LiteralPath '{}' -Value ok", f.display());
+    let code = commande_script(&ecrire(&marque)).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && marque.exists(), "le script lancé par commande_script ne s'est pas exécuté");
+    let code = commande_script(&ecrire(&temoin)).creation_flags(0x0800_0000 | 0x0000_0008).spawn().unwrap().wait().unwrap();
+    assert!(code.success() && !temoin.exists(), "témoin : PowerShell détaché a exécuté la commande (comportement à revoir)");
+    let _ = std::fs::remove_dir_all(&d);
 }

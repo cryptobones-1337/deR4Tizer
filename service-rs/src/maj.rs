@@ -220,6 +220,25 @@ pub fn preparer_dossier_travail() -> Result<PathBuf, String> {
     Ok(d)
 }
 
+/// Contenu du dossier de travail : propriétaire SYSTEM. Ce que le service crée (sous-dossiers de version,
+/// téléchargements) a sinon Administrateurs pour propriétaire (propriétaire par défaut du jeton SYSTEM), et le
+/// propriétaire garde le droit de réécrire les droits ; icacls /reset ne touche pas au propriétaire.
+/// (code d'icacls non probant : proprietaires_verifies fait foi avant toute exécution)
+fn proprietaire_systeme(travail: &Path) {
+    crate::protection::icacls(&[&format!(r"{}\*", travail.display()), "/setowner", "*S-1-5-18", "/T", "/C", "/Q"]);
+}
+
+/// Paquets à exécuter : propriétaire SYSTEM, sinon pas d'installation (échec fermé)
+fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
+    for p in paquets {
+        let s = crate::natif::lire_securite(p).ok_or_else(|| format!("droits de {} illisibles", p.display()))?;
+        if s.proprietaire != crate::protection::SID_SYSTEME {
+            return Err(format!("{} : propriétaire {} au lieu de SYSTEM, installation refusée", p.display(), s.proprietaire));
+        }
+    }
+    Ok(())
+}
+
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
     let sortie = Command::new("curl.exe")
         .args(["-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
@@ -257,7 +276,9 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
     let url = url_paquet_version(url_manifeste, commun::VERSION)
         .ok_or("adresse du paquet de la version installée impossible à déduire du manifeste")?;
     fs::create_dir_all(&dossier).map_err(|e| e.to_string())?;
-    telecharger(&url, &paquet, 52_428_800).map_err(|e| format!("paquet de la version installée ({}) introuvable : {e}", commun::VERSION))?;
+    let telechargement = telecharger(&url, &paquet, 52_428_800);
+    proprietaire_systeme(travail);
+    telechargement.map_err(|e| format!("paquet de la version installée ({}) introuvable : {e}", commun::VERSION))?;
     let a = constater(&paquet, cles);
     if let Err(e) = verifier_artefact(&a, commun::VERSION, cles) {
         let _ = fs::remove_file(&paquet);
@@ -315,11 +336,17 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     let cible = travail.join(&m.version);
     let _ = fs::create_dir_all(&cible);
     let paquet = cible.join(NOM_PAQUET);
-    if let Err(e) = telecharger(&m.fichiers[0].url, &paquet, 52_428_800) {
+    let telechargement = telecharger(&m.fichiers[0].url, &paquet, 52_428_800);
+    proprietaire_systeme(&travail);
+    if let Err(e) = telechargement {
         return refus(format!("téléchargement du paquet impossible ({e})"));
     }
     let a = constater(&paquet, &cles);
     if let Err(e) = decision_installation(&m, &a, commun::VERSION, &cles) {
+        let _ = fs::remove_file(&paquet);
+        return refus(e);
+    }
+    if let Err(e) = proprietaires_verifies(&[paquet.as_path(), retour.as_path()]) {
         let _ = fs::remove_file(&paquet);
         return refus(e);
     }
@@ -363,18 +390,24 @@ pub const PS_PID_SERVEUR: &str = "Add-Type -Namespace D4T -Name Tube -MemberDefi
     '[DllImport(\"kernel32.dll\", SetLastError = true)] public static extern bool GetNamedPipeServerProcessId(IntPtr p, out uint id);'; \
     function Pid-Serveur($c) { [uint32]$p = 0; [void][D4T.Tube]::GetNamedPipeServerProcessId($c.SafePipeHandle.DangerousGetHandle(), [ref]$p); return $p }";
 
-/// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
-/// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
-fn lancer_installation(p: &ParametresScript) -> (String, String) {
-    let script = script_installation(p);
-    match Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+/// Commande qui lance le script d'installation (partagée avec son test). Sans fenêtre (CREATE_NO_WINDOW : console
+/// cachée), jamais DETACHED_PROCESS : sans console, Windows PowerShell 5.1 sort avec le code 0 sans rien exécuter
+/// (constaté en Windows Sandbox, scénario 3c : aucune mise à jour ni aucun retour arrière n'avait lieu). Le processus
+/// n'est dans aucun objet tâche du service : il survit à l'arrêt du service par msiexec.
+pub fn commande_script(script: &str) -> Command {
+    let mut c = Command::new("powershell.exe");
+    c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         // Un PSModulePath hérité de PowerShell 7 fait charger à Windows PowerShell des modules incompatibles
         // (Get-FileHash introuvable, constaté en CI) : powershell.exe reprend alors le sien
         .env_remove("PSModulePath")
-        .creation_flags(0x0800_0000 | 0x0000_0008) // sans fenêtre, détaché
-        .spawn()
-    {
+        .creation_flags(0x0800_0000);
+    c
+}
+
+/// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
+/// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
+fn lancer_installation(p: &ParametresScript) -> (String, String) {
+    match commande_script(&script_installation(p)).spawn() {
         Ok(_) => {
             let _ = fs::remove_file(p.journaux.join("echec.txt"));
             commun::journal(&format!("mise à jour vers la version {} : installation lancée (retour arrière si le service ne répond pas)", p.version));
