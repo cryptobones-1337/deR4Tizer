@@ -83,6 +83,8 @@ if ($Maj) {
     & (Join-Path $depot 'tests\integration\maj-pki.ps1') -Dossier (Join-Path $m 'pki') -OpenSsl $openssl
     $cle = (Get-Content (Join-Path $m 'pki\cle-epinglee.txt') -Raw).Trim()
     $fichier = Join-Path $depot 'service-rs\src\commun.rs'
+    # Octets d'origine gardés tels quels (ReadAllText retire le BOM, WriteAllText ne le remet pas)
+    $octets = [IO.File]::ReadAllBytes($fichier)
     $original = [IO.File]::ReadAllText($fichier)
     $env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build-msvc-test'
     $env:DER4TIZER_CLES_SIGNATURE = $cle
@@ -93,12 +95,12 @@ if ($Maj) {
             Copy-Item (Join-Path $env:CARGO_TARGET_DIR 'release\der4tizer-svc.exe') "$ex\$courante\deR4TizerSvc.exe" -Force
             $t = $original.Replace("pub const VERSION: &str = `"$courante`"", "pub const VERSION: &str = `"$nouvelle`"")
             if ($t -eq $original) { throw 'numéro de version introuvable' }
-            [IO.File]::WriteAllText($fichier, $t)
+            [IO.File]::WriteAllText($fichier, $t, (New-Object Text.UTF8Encoding($true)))
             cargo "+$chaine" build --release; if ($LASTEXITCODE) { throw 'compilation (version suivante, clé de test)' }
             Copy-Item (Join-Path $env:CARGO_TARGET_DIR 'release\der4tizer-svc.exe') "$ex\$nouvelle\deR4TizerSvc.exe" -Force
         } finally { Pop-Location }
     } finally {
-        [IO.File]::WriteAllText($fichier, $original)
+        [IO.File]::WriteAllBytes($fichier, $octets)
         Remove-Item Env:\DER4TIZER_CLES_SIGNATURE
     }
     Copy-Item (Join-Path $depot 'bin\deR4Tizer.exe') "$ex\$courante\deR4Tizer.exe" -Force
