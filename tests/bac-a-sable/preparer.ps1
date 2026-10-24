@@ -3,7 +3,7 @@
 # ce script compile et copie seulement. Le MSI n'est installé que dans le bac à sable (lancer.ps1).
 #
 #   1. service compilé avec la chaîne MSVC (la même que la CI, compiler-rs.ps1), interface, paquet MSI ;
-#   2. version plus ancienne (4.1.0) construite depuis le commit figé 4da823a, comme dans la CI (en cache) ;
+#   2. version plus ancienne (4.1.0) construite depuis le commit figé 758ff1e, comme dans la CI (en cache) ;
 #   3. scripts d'intégration et script d'exécution copiés dans le dossier d'entrée, monté en lecture seule.
 #
 #   4. avec -Maj (scénario 3c) : PKI de test (openssl de Git), versions courante et suivante compilées avec la clé
@@ -44,13 +44,13 @@ Set-Content -LiteralPath (Join-Path $entree 'version.txt') -Value $version -Enco
 # Commit exact construit, pour le rapport
 Set-Content -LiteralPath (Join-Path $entree 'commit.txt') -Value ((git -C $depot rev-parse HEAD) + $(if (git -C $depot status --porcelain) { ' (modifications non commitées)' } else { '' })) -Encoding Ascii
 
-Etape 'Version plus ancienne 4.1.0 (commit 4da823a, en cache)'
-# CRT liée statiquement comme la version courante (service-rs/.cargo/config.toml, absent de 4da823a) : sans cela le
+Etape 'Version plus ancienne 4.1.0 (commit 758ff1e, en cache)'
+# CRT liée statiquement comme la version courante (service-rs/.cargo/config.toml, absent de 758ff1e) : sans cela le
 # service 4.1.0 dépend de VCRUNTIME140.dll, absent du bac à sable, et son installation échoue (erreur 1920)
-$ancien = Join-Path $cache 'deR4Tizer-ancien-crt-statique.msi'
+$ancien = Join-Path $cache 'deR4Tizer-ancien-758ff1e.msi'
 if (-not (Test-Path $ancien)) {
-    $arbre = Join-Path $cache 'ancien'
-    if (-not (Test-Path $arbre)) { git -C $depot worktree add --detach $arbre 4da823ac699e198106c9c6cbdbdd58286992dbf1; if ($LASTEXITCODE) { throw 'worktree 4da823a' } }
+    $arbre = Join-Path $cache 'ancien-758ff1e'
+    if (-not (Test-Path $arbre)) { git -C $depot worktree add --detach $arbre 758ff1ecae8e6c04a7c8a340c097e284539eb4bf; if ($LASTEXITCODE) { throw 'worktree 758ff1e' } }
     $env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build-msvc-ancien'
     Push-Location (Join-Path $arbre 'service-rs')
     $env:RUSTFLAGS = '-C target-feature=+crt-static'

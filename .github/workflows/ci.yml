@@ -97,11 +97,11 @@ jobs:
 
       # Version plus ancienne : construite depuis un commit figé (celui qui a introduit le MSI), avec un numéro
       # explicite inférieur à la version courante ; rien ne dépend de ce qui traînerait ailleurs
-      - name: Version plus ancienne (commit 4da823a, version 4.1.0)
+      - name: Version plus ancienne (commit 758ff1e, version 4.1.0)
         shell: pwsh
         run: |
           $ancien = Join-Path $env:RUNNER_TEMP 'ancien'
-          git worktree add $ancien 4da823ac699e198106c9c6cbdbdd58286992dbf1
+          git worktree add $ancien 758ff1ecae8e6c04a7c8a340c097e284539eb4bf
           Push-Location (Join-Path $ancien 'service-rs'); cargo build --release; if ($LASTEXITCODE) { throw 'compilation de l''ancienne version' }; Pop-Location
           Push-Location $ancien
           ./compiler.ps1 -InterfaceSeulement
