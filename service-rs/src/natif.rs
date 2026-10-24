@@ -1041,10 +1041,7 @@ fn avec_privilege<T>(nom: &str, f: impl FnOnce() -> T) -> Result<T, String> {
             r
         })();
         let valeur = resultat.map(|_| f());
-        if RevertToSelf().is_err() {
-            crate::commun::journal(&format!("ARRÊT : retour à l'identité du service impossible (privilège {nom})"));
-            std::process::abort();
-        }
+        retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), &format!("privilège {nom}"), arreter);
         valeur
     }
 }
