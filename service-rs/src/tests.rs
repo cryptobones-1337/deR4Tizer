@@ -1969,6 +1969,8 @@ fn phase1_champs_invalides_refuses() {
         (r#"{"Action":"quarantaine","Cible":"\\\\serveur\\partage\\x.exe"}"#.to_string(), "chemin réseau"),
         (r#"{"Action":"quarantaine","Cible":"\\\\?\\C:\\x.exe"}"#.to_string(), "chemin d'appareil"),
         (r#"{"Action":"quarantaine","Cible":"C:\\x\u0000.exe"}"#.to_string(), "caractère NUL"),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\x\\..\\Windows\\System32\\svchost.exe"}"#.to_string(), "élément .. (contournement du refus du dossier Windows)"),
+        (r#"{"Action":"quarantaine","Cible":"C:\\x\\..\\y.exe"}"#.to_string(), "élément .."),
         (r#"{"Action":"isolerProgramme","Cible":"programme.exe"}"#.to_string(), "chemin relatif"),
         (r#"{"Action":"restaurer","Cible":"../../x"}"#.to_string(), "identifiant avec séparateurs"),
         (r#"{"Action":"panique","Valeur":"peut-être"}"#.to_string(), "valeur de panique"),
@@ -2054,13 +2056,18 @@ fn phase1_client_du_tube_identifie_sur_son_jeton() {
         std::thread::sleep(std::time::Duration::from_millis(500));
     });
     let _ = unsafe { ConnectNamedPipe(tube, None) };
-    // Le client est ce processus de test : jamais SYSTEM (sauf si les tests tournent en SYSTEM)
+    // Le client est ce processus de test : comparé à un calcul indépendant (IsUserAnAdmin : administrateur élevé).
+    // Tests lancés élevés : le cas « administrateur » est exercé ; sinon « autre » (et le passage VM, en
+    // administrateur, exerce le cas élevé avec le service réel)
     let vu = crate::natif::client_tube(HANDLE(tube.0));
-    if crate::natif::est_systeme() {
-        assert_eq!(vu, crate::validation::Client::Systeme);
+    let attendu = if crate::natif::est_systeme() {
+        crate::validation::Client::Systeme
+    } else if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
+        crate::validation::Client::Administrateur
     } else {
-        assert_ne!(vu, crate::validation::Client::Systeme, "processus de test identifié à tort comme SYSTEM");
-    }
+        crate::validation::Client::Autre
+    };
+    assert_eq!(vu, attendu, "client du tube mal identifié");
     client.join().unwrap();
     unsafe { let _ = CloseHandle(tube); }
     // Handle invalide : « autre » (échec fermé)

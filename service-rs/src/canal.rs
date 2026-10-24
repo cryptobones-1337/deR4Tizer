@@ -240,8 +240,10 @@ pub fn admettre(demande: &[u8], client: Client, debit_ok: bool) -> Result<Comman
 
 fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, debit: &mut Debit) {
     unsafe {
-        let demande = lire_commande(tube, DELAI_LECTURE);
+        // Client identifié dès la connexion, avant la lecture (jusqu'à DELAI_LECTURE) : un client qui écrirait puis se
+        // terminerait laisserait sinon son PID libre pour un autre processus
         let client = crate::natif::client_tube(tube);
+        let demande = lire_commande(tube, DELAI_LECTURE);
         let reponse = match admettre(&demande, client, debit.accepter(Instant::now())) {
             Ok(c) => moniteur.lock().unwrap().executer(c, partage),
             Err(r) => r,

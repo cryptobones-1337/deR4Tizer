@@ -70,10 +70,12 @@ pub fn nom_domaine_valide(d: &str) -> bool {
 }
 
 /// Chemin absolu local (« X:\… »), sans caractère de contrôle ; jamais un chemin réseau (« \\serveur\… ») ni un
-/// chemin d'appareil (« \\?\… », « \\.\… »)
+/// chemin d'appareil (« \\?\… », « \\.\… »), ni un élément « .. » (un garde-fou par préfixe, comme le refus du
+/// dossier Windows pour isolerProgramme, serait contourné par « C:\x\..\Windows\… »)
 pub fn chemin_local_absolu(p: &str) -> bool {
     let b = p.as_bytes();
     p.len() <= MAX_CIBLE && b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' && sans_controle(p)
+        && !p.split(['\\', '/']).any(|e| e.trim_end_matches([' ', '.']).is_empty() && e.contains(".."))
 }
 
 /// Identifiant d'alerte ou d'élément de quarantaine (commun::nouvel_id, GUID de l'ancien service C#)
