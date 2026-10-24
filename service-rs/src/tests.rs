@@ -2034,18 +2034,24 @@ fn exposition_paquet_bloque_reponse_a_un_flux() {
         // Serveur d'un VPN : réponse acceptée vers un port dynamique, puis un paquet bloqué du même flux
         "2026-01-01 10:00:04 ALLOW UDP 203.0.113.40 192.168.0.10 51820 50020 0 - - - - - - - RECEIVE 5100",
         "2026-01-01 10:00:05 DROP UDP 203.0.113.40 192.168.0.10 51820 50020 176 - - - - - - - RECEIVE 5100",
-        // Témoins : source inconnue, et même source depuis un autre port
+        // Témoins, chacun sur son propre port local (clé d'alerte distincte de celle des réponses) : source inconnue ;
+        // même source, autre port distant ; ligne acceptée de la socket de capture du service (PID 4000), qui ne doit
+        // pas masquer le paquet bloqué qui la suit
         "2026-01-01 10:00:06 DROP UDP 192.0.2.99 192.168.0.10 5000 50030 60 - - - - - - - RECEIVE 0",
-        "2026-01-01 10:00:07 DROP UDP 198.51.100.30 192.168.0.10 9999 50010 60 - - - - - - - RECEIVE 0",
+        "2026-01-01 10:00:07 DROP UDP 198.51.100.30 192.168.0.10 9999 50011 60 - - - - - - - RECEIVE 0",
+        "2026-01-01 10:00:08 ALLOW UDP 192.0.2.77 192.168.0.10 6000 50040 0 - - - - - - - RECEIVE 4000",
+        "2026-01-01 10:00:09 DROP UDP 192.0.2.77 192.168.0.10 6000 50040 60 - - - - - - - RECEIVE 0",
     ] {
         writeln!(o, "{l}").unwrap();
     }
     drop(o);
     let alertes = lecteur.lire(&|_| String::new(), &ctx);
     let raisons: Vec<String> = alertes.iter().map(|a| a.raisons.clone()).collect();
-    assert_eq!(alertes.len(), 2, "{raisons:?}");
+    assert_eq!(alertes.len(), 3, "{raisons:?}");
     assert!(alertes.iter().any(|a| a.raisons.contains("192.0.2.99") && a.port == 50030), "{raisons:?}");
-    assert!(alertes.iter().any(|a| a.raisons.contains("198.51.100.30") && a.port == 50010), "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("198.51.100.30") && a.port == 50011), "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("192.0.2.77") && a.port == 50040), "{raisons:?}");
+    assert!(!alertes.iter().any(|a| a.port == 50010), "réponses du flux QUIC sortant : {raisons:?}");
     assert!(!raisons.iter().any(|r| r.contains("203.0.113.40")), "{raisons:?}");
     let _ = std::fs::remove_dir_all(&d);
 }

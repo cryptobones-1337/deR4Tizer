@@ -433,8 +433,12 @@ impl LecteurJournal {
             // Paquet accepté : seulement s'il montre une exposition réelle (pas la capture du service, pas une
             // réponse à une connexion sortante). Une réponse UDP acceptée vers un port dynamique est retenue comme
             // flux établi : le paquet bloqué qui la suivrait (état du flux perdu) n'est pas une exposition
-            if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, v("pid").parse().unwrap_or(0), v("icmptype"), ctx) {
-                if v("protocol") == "UDP" {
+            let pid: u32 = v("pid").parse().unwrap_or(0);
+            if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, pid, v("icmptype"), ctx) {
+                // Retenue seulement une vraie réponse : vers un port dynamique, et pas une ligne du service (sa socket de
+                // capture reçoit des copies de tout paquet, que le pare-feu peut ensuite bloquer)
+                let dynamique = (ctx.udp_dynamique.0..=ctx.udp_dynamique.1).contains(&port);
+                if v("protocol") == "UDP" && dynamique && !(pid != 0 && pid == ctx.pid_service) {
                     self.flux_udp.insert((port, source, port_source), Instant::now());
                 }
                 continue;
