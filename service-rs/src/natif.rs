@@ -1112,18 +1112,33 @@ impl Drop for DescripteurSddl {
     }
 }
 
-/// SACL d'un descripteur, en SDDL (« S:… »)
+/// SACL d'un descripteur, en SDDL (« S:… ») ; descripteur sans SACL (cas de la plupart des fichiers) : chaîne vide,
+/// pas une erreur. None : descripteur illisible.
 fn texte_sacl(sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<String> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1};
-    use windows::Win32::Security::SACL_SECURITY_INFORMATION;
-    let mut p = windows::core::PWSTR::null();
+    use windows::Win32::Security::{GetSecurityDescriptorSacl, ACL, SACL_SECURITY_INFORMATION};
     unsafe {
+        let (mut presente, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        GetSecurityDescriptorSacl(sd, &mut presente, &mut acl, &mut defaut).ok()?;
+        if !presente.as_bool() || acl.is_null() {
+            return Some(String::new());
+        }
+        let mut p = windows::core::PWSTR::null();
         ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, SACL_SECURITY_INFORMATION, &mut p, None).ok()?;
+        if p.is_null() {
+            return Some(String::new());
+        }
         let t = p.to_string().ok();
         let _ = LocalFree(HLOCAL(p.0 as _));
         t
     }
+}
+
+/// SACL, en SDDL, d'un descripteur donné en SDDL (tests : même chemin que la lecture d'un objet)
+pub fn texte_sacl_de_sddl(sddl: &str) -> Option<String> {
+    texte_sacl(DescripteurSddl::depuis(sddl).ok()?.0)
 }
 
 /// Entrée d'audit voulue, en SDDL normalisé par Windows (« AU;OINPIOSA;CC;;;WD »), tirée d'un SDDL « S:(…) » d'une
