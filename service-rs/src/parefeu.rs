@@ -312,6 +312,20 @@ pub fn exposition_reelle(protocole: &str, port_local: u16, pid: u32, icmp_type: 
     }
 }
 
+/// Durée pendant laquelle un envoi UDP du poste rend légitime la réponse en sens inverse
+pub const DELAI_REPONSE_UDP: Duration = Duration::from_secs(120);
+
+/// Flux UDP sortants récents : (port local, adresse distante, port distant) → heure de l'envoi
+pub type FluxUdp = HashMap<(u16, IpAddr, u16), Instant>;
+
+/// Décision pure, UDP : le paquet reçu (source:port_source vers port_local) répond-il à un envoi récent du poste
+/// (port_local vers source:port_source) ? Décidé par l'état du flux, pas par une liste de ports : le client NTP de
+/// Windows envoie depuis son port local 123 vers time.windows.com:123, et la réponse (123 vers 123) arrive hors de
+/// la plage dynamique
+pub fn reponse_udp(flux: &FluxUdp, port_local: u16, source: IpAddr, port_source: u16, maintenant: Instant) -> bool {
+    flux.get(&(port_local, source, port_source)).is_some_and(|t| maintenant.saturating_duration_since(*t) <= DELAI_REPONSE_UDP)
+}
+
 /// Plage dynamique lue dans la sortie de « netsh int ipv4 show dynamicport … » (anglais ou français : les deux
 /// nombres dans l'ordre, port de départ puis nombre de ports) ; None si illisible
 pub fn plage_dynamique(sortie: &str) -> Option<(u16, u16)> {
@@ -336,6 +350,7 @@ pub struct LecteurJournal {
     champs: Vec<String>,
     entrees: HashMap<(String, u16, String), EntreeExposee>,
     alertees: HashMap<(String, u16, String), Instant>,
+    flux_udp: FluxUdp,
 }
 
 impl LecteurJournal {
@@ -349,14 +364,14 @@ impl LecteurJournal {
             .into_iter()
             .map(|e| ((e.source.clone(), e.port_local, e.action.clone()), e))
             .collect();
-        LecteurJournal { fichier, position, champs: Vec::new(), entrees, alertees: HashMap::new() }
+        LecteurJournal { fichier, position, champs: Vec::new(), entrees, alertees: HashMap::new(), flux_udp: HashMap::new() }
     }
 
     /// Lecteur sur un autre fichier (tests), positionné à la fin
     #[allow(dead_code)]
     pub fn sur_fichier(fichier: PathBuf) -> LecteurJournal {
         let position = fs::metadata(&fichier).map(|m| m.len()).unwrap_or(0);
-        LecteurJournal { fichier, position, champs: Vec::new(), entrees: HashMap::new(), alertees: HashMap::new() }
+        LecteurJournal { fichier, position, champs: Vec::new(), entrees: HashMap::new(), alertees: HashMap::new(), flux_udp: HashMap::new() }
     }
 
     pub fn actif(&self) -> bool {
@@ -396,6 +411,15 @@ impl LecteurJournal {
             }
             let valeurs: Vec<&str> = ligne.split_whitespace().collect();
             let v = |nom: &str| self.champs.iter().position(|c| c == nom).and_then(|i| valeurs.get(i)).copied().unwrap_or("");
+            // Envois UDP du poste : état des flux, pour reconnaître leurs réponses
+            if v("path") == "SEND" {
+                if v("protocol") == "UDP" {
+                    if let (Ok(local), Ok(ip), Ok(distant)) = (v("src-port").parse::<u16>(), v("dst-ip").parse::<IpAddr>(), v("dst-port").parse::<u16>()) {
+                        self.flux_udp.insert((local, ip, distant), Instant::now());
+                    }
+                }
+                continue;
+            }
             if v("path") != "RECEIVE" {
                 continue;
             }
@@ -408,6 +432,9 @@ impl LecteurJournal {
             // Paquet accepté : seulement s'il montre une exposition réelle (pas la capture du service, pas une
             // réponse à une connexion sortante)
             if action == "ACCEPTÉ" && !exposition_reelle(v("protocol"), port, v("pid").parse().unwrap_or(0), v("icmptype"), ctx) {
+                continue;
+            }
+            if action == "ACCEPTÉ" && v("protocol") == "UDP" && reponse_udp(&self.flux_udp, port, source, v("src-port").parse().unwrap_or(0), Instant::now()) {
                 continue;
             }
             let programme = v("pid").parse::<u32>().ok().filter(|p| *p > 0).map(nom_processus).unwrap_or_default();
@@ -451,6 +478,7 @@ impl LecteurJournal {
                 ..Default::default()
             });
         }
+        self.flux_udp.retain(|_, t| t.elapsed() <= DELAI_REPONSE_UDP);
         if modifie {
             // Les 200 entrées les plus récentes
             let mut liste: Vec<EntreeExposee> = self.entrees.values().cloned().collect();
