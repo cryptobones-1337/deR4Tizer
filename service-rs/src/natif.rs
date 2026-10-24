@@ -985,6 +985,86 @@ pub fn supprimer_par_handle(f: &std::fs::File) -> Result<(), String> {
     }.map_err(|e| e.to_string())
 }
 
+/// Ajoute des attributs (caché, système…) au fichier ouvert, par son handle (accès FILE_WRITE_ATTRIBUTES requis)
+pub fn ajouter_attributs(f: &std::fs::File, attributs: u32) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{FileBasicInfo, GetFileInformationByHandleEx, SetFileInformationByHandle, FILE_BASIC_INFO};
+    let h = HANDLE(f.as_raw_handle());
+    let mut info = FILE_BASIC_INFO::default();
+    let taille = std::mem::size_of::<FILE_BASIC_INFO>() as u32;
+    unsafe {
+        GetFileInformationByHandleEx(h, FileBasicInfo, &mut info as *mut _ as *mut c_void, taille).map_err(|e| e.to_string())?;
+        info.FileAttributes |= attributs;
+        SetFileInformationByHandle(h, FileBasicInfo, &info as *const _ as *const c_void, taille).map_err(|e| e.to_string())
+    }
+}
+
+/// Exécute `f` avec le privilège `nom` actif sur CE fil seulement (jeton d'emprunt de soi-même), puis revient à
+/// l'identité du service ; si ce retour échoue, le service s'arrête (le fil garderait le privilège)
+fn avec_privilege<T>(nom: &str, f: impl FnOnce() -> T) -> Result<T, String> {
+    use windows::Win32::Foundation::{GetLastError, LUID, ERROR_NOT_ALL_ASSIGNED};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, ImpersonateSelf, LookupPrivilegeValueW, RevertToSelf, SecurityImpersonation, LUID_AND_ATTRIBUTES,
+        SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+    unsafe {
+        ImpersonateSelf(SecurityImpersonation).map_err(|e| format!("emprunt du jeton : {e}"))?;
+        let resultat = (|| {
+            let mut jeton = HANDLE::default();
+            OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, false, &mut jeton).map_err(|e| format!("jeton du fil : {e}"))?;
+            let n = large(nom);
+            let mut luid = LUID::default();
+            let mut r = LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(n.as_ptr()), &mut luid).map_err(|e| e.to_string());
+            if r.is_ok() {
+                let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+                r = AdjustTokenPrivileges(jeton, false, Some(&tp), 0, None, None).map_err(|e| e.to_string());
+                if r.is_ok() && GetLastError() == ERROR_NOT_ALL_ASSIGNED {
+                    r = Err(format!("privilège {nom} absent du jeton"));
+                }
+            }
+            let _ = CloseHandle(jeton);
+            r
+        })();
+        let valeur = resultat.map(|_| f());
+        if RevertToSelf().is_err() {
+            crate::commun::journal(&format!("ARRÊT : retour à l'identité du service impossible (privilège {nom})"));
+            std::process::abort();
+        }
+        valeur
+    }
+}
+
+/// Pose l'audit (SACL) d'un fichier par son handle, ouvert sans suivre de lien et chemin final vérifié, avec
+/// SeSecurityPrivilege actif sur ce fil pour ce seul appel ; `sddl` ne décrit qu'une SACL (« S:… »)
+pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT};
+    use windows::Win32::Security::{GetSecurityDescriptorSacl, ACL, PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION};
+    avec_privilege("SeSecurityPrivilege", || unsafe {
+        // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
+        let f = ouvrir_verifie(chemin, 0x0100_0000 | 0x0010_0000, 0x7, false).map_err(|e| format!("{} : {e}", chemin.display()))?;
+        let s = large(sddl);
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).map_err(|e| e.to_string())?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut sacl: *mut ACL = std::ptr::null_mut();
+        let mut r = GetSecurityDescriptorSacl(sd, &mut present, &mut sacl, &mut defaut).map_err(|e| e.to_string());
+        if r.is_ok() && (!present.as_bool() || sacl.is_null()) {
+            r = Err("SDDL sans SACL".into());
+        }
+        if r.is_ok() {
+            let e = SetSecurityInfo(HANDLE(f.as_raw_handle()), SE_FILE_OBJECT, SACL_SECURITY_INFORMATION, PSID::default(), PSID::default(), None, Some(sacl));
+            if e.0 != 0 {
+                r = Err(format!("audit : {}", windows::core::Error::from(e)));
+            }
+        }
+        let _ = LocalFree(HLOCAL(sd.0));
+        r
+    })?
+}
+
 /// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
 /// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
 pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {
