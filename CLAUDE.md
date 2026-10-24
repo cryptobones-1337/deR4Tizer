@@ -91,7 +91,8 @@ publications).
 
 Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par une preuve locale, avec l'accord de cryptobones-1337 :
 1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
-2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c en Windows Sandbox (tests/bac-a-sable). Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés.
+2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c dans la VM Hyper-V de test, remise à son instantané « propre » avant et après chaque scénario (Microsoft Defender actif, un compte connecté à la console ; tests/vm/lancer.ps1). Windows Sandbox (tests/bac-a-sable/lancer.ps1) reste un secours, signalé comme tel dans la preuve. Passage complet : tests/bac-a-sable/passage-complet.ps1. Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés. Un passage dans la VM ne vaut pas, à lui seul, réussite du lot 3d.
+   Tout passage est surveillé par une vigie (tests/bac-a-sable/vigie.ps1, une vérification par minute) qui signale chaque scénario terminé, tout blocage (bac à sable jamais ouvert ou fermé sans résultat, VM arrêtée, aucune progression pendant 30 minutes) et la fin. Un passage bloqué est arrêté, nettoyé (bac à sable fermé, clés de test effacées, VM remise à son instantané) et relancé ; il ne compte jamais comme preuve.
 3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
 4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
 5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
