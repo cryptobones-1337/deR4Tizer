@@ -288,6 +288,19 @@ fn chemins_des_pilotes() {
     assert_eq!(crate::hygiene::chemin_image(r"System32\drivers\z.sys").to_string_lossy().to_lowercase(), format!(r"{w}\System32\drivers\z.sys").to_lowercase());
 }
 
+#[test]
+fn tache_com_cible_le_serveur_du_clsid() {
+    // Tâche planifiée à gestionnaire COM (Wininet\CacheTask, présente sur tout Windows) : la cible est la DLL du
+    // CLSID, pas le dossier System32\COM trouvé en cherchant « COM » (signataire vide, donc « NON SIGNÉ » à tort)
+    let w = crate::natif::dossier_windows();
+    let c = crate::persistance::cible("COM {0358B920-0AC7-461F-98F4-58E32CD89148}");
+    assert_eq!(c.to_lowercase(), format!(r"{w}\system32\wininet.dll").to_lowercase());
+    // CLSID inconnu : aucune cible (signataire « ? »), jamais un dossier
+    assert_eq!(crate::persistance::cible("COM {00000000-0000-0000-0000-0000000000D4}"), "");
+    // Un nom relatif ne se résout jamais en dossier
+    assert!(!std::path::Path::new(&crate::persistance::cible("COM")).is_dir());
+}
+
 // ------------------------------------------------------------ décisions (un test par correctif des revues)
 
 fn alerte(niveau: &str, destination: &str, raisons: &str, score: i32) -> crate::commun::Alerte {

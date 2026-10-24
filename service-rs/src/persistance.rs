@@ -137,6 +137,11 @@ pub fn cible(commande: &str) -> String {
     if commande.trim().is_empty() {
         return String::new();
     }
+    // Tâche à gestionnaire COM (« COM {CLSID} ») : la cible est le serveur enregistré pour ce CLSID. Une valeur
+    // du registre elle-même de la forme « COM {…} » est refusée : sinon récursion sans fin (pile, service arrêté)
+    if let Some(clsid) = clsid_com(commande) {
+        return serveur_com(clsid).filter(|s| clsid_com(s).is_none()).map(|s| cible(&s)).unwrap_or_default();
+    }
     let windows = natif::dossier_windows();
     let mut c = developper(commande.trim());
     if let Some(r) = c.strip_prefix(r"\??\") {
@@ -164,16 +169,33 @@ pub fn cible(commande: &str) -> String {
         let dossiers = std::iter::once(natif::dossier_systeme()).chain(path.split(';').filter(|d| !d.is_empty()).map(developper));
         for d in dossiers {
             let mut candidat = Path::new(&d).join(&chemin).to_string_lossy().to_string();
-            if !candidat.to_lowercase().ends_with(".exe") && Path::new(&format!("{candidat}.exe")).exists() {
+            if !candidat.to_lowercase().ends_with(".exe") && Path::new(&format!("{candidat}.exe")).is_file() {
                 candidat.push_str(".exe");
             }
-            if Path::new(&candidat).exists() {
+            // Un fichier seulement : un dossier du même nom (System32\COM…) n'est pas lancé
+            if Path::new(&candidat).is_file() {
                 chemin = candidat;
                 break;
             }
         }
     }
     chemin
+}
+
+/// CLSID d'une action « COM {CLSID} » (forme écrite par `taches`)
+fn clsid_com(commande: &str) -> Option<&str> {
+    static MOTIF: OnceLock<Regex> = OnceLock::new();
+    let motif = MOTIF.get_or_init(|| Regex::new(r"^COM (\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})$").unwrap());
+    motif.captures(commande.trim()).and_then(|c| c.get(1)).map(|m| m.as_str())
+}
+
+/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32
+fn serveur_com(clsid: &str) -> Option<String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    ["InprocServer32", "LocalServer32"].iter().find_map(|s| {
+        let k = hklm.open_subkey(format!(r"SOFTWARE\Classes\CLSID\{clsid}\{s}")).ok()?;
+        texte_registre(&k, "").filter(|v| !v.trim().is_empty())
+    })
 }
 
 // ------------------------------------------------------------ relevé
