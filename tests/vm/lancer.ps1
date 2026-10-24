@@ -97,13 +97,37 @@ try {
     # Empreinte du MSI calculée ici, sur l'hôte : le lot 3d la compare à celle du fichier reçu dans la VM
     $h = (Get-FileHash (Join-Path $entree 'deR4Tizer.msi') -Algorithm SHA256).Hash
     Invoke-Command -Session $s -ArgumentList $h { param($h) Set-Content C:\entree\msi-sha256-hote.txt $h -Encoding Ascii }
-    Invoke-Command -Session $s -ArgumentList $Scenario, $Minutes -ScriptBlock {
-        param($Scenario, $Minutes)
-        # Exécuteur dans un processus séparé, avec un délai maximal ; -SansArret : la VM ne s'éteint pas
-        $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass',
-            '-File', 'C:\entree\executer.ps1', '-Scenario', $Scenario, '-SansArret'
-        if (-not $p.WaitForExit($Minutes * 60000)) { $p.Kill(); 'délai dépassé : exécuteur arrêté' }
+    # Exécuteur lancé par une tâche planifiée dans une vraie ouverture de session de l'administrateur (élevée), comme
+    # la LogonCommand de Windows Sandbox : dans une session PowerShell Direct, Start-Process -Credential (scénarios
+    # « compte standard ») ne produit rien (constaté au premier passage). Session interactive de l'administrateur
+    # s'il est à la console, sinon ouverture de session par mot de passe (transmis à la VM par le canal chiffré de
+    # PowerShell Direct, jamais affiché ni écrit sur l'hôte). -SansArret : la VM ne s'éteint pas.
+    $resultat = Invoke-Command -Session $s -ArgumentList $Scenario, $Minutes, $cred -ScriptBlock {
+        param($Scenario, $Minutes, $Cred)
+        $nom = 'd4t-executeur'
+        $utilisateur = $Cred.UserName -replace '^\.\\', "$env:COMPUTERNAME\"
+        if ($utilisateur -notmatch '\\') { $utilisateur = "$env:COMPUTERNAME\$utilisateur" }
+        $console = (Get-CimInstance Win32_ComputerSystem).UserName
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\entree\executer.ps1 -Scenario $Scenario -SansArret"
+        $reglages = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes $Minutes) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        if ($console -and $console.Split('\')[-1] -eq $utilisateur.Split('\')[-1]) {
+            $principal = New-ScheduledTaskPrincipal -UserId $console -LogonType Interactive -RunLevel Highest
+            Register-ScheduledTask -TaskName $nom -Action $action -Principal $principal -Settings $reglages -Force | Out-Null
+            $mode = 'session interactive'
+        } else {
+            Register-ScheduledTask -TaskName $nom -Action $action -User $utilisateur -Password $Cred.GetNetworkCredential().Password -RunLevel Highest -Settings $reglages -Force | Out-Null
+            $mode = 'ouverture de session par mot de passe'
+        }
+        Start-ScheduledTask -TaskName $nom
+        $code = "C:\sortie\$Scenario-code.txt"
+        $fin = (Get-Date).AddMinutes($Minutes)
+        while (-not (Test-Path $code) -and (Get-Date) -lt $fin) { Start-Sleep 10 }
+        $etat = (Get-ScheduledTask -TaskName $nom).State
+        Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
+        if (Test-Path $code) { "exécuteur ($mode) terminé" } else { "délai dépassé ($mode, tâche $etat) : exécuteur arrêté" }
     }
+    Write-Host $resultat
     Invoke-Command -Session $s { "Windows de la VM : $((Get-CimInstance Win32_OperatingSystem).Version).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR)" } |
         Set-Content (Join-Path $sortie "$Scenario-vm.txt")
 } finally {
