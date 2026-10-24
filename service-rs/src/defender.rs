@@ -148,6 +148,14 @@ pub fn etat() -> EtatDefender {
     lire().unwrap_or_default()
 }
 
+/// Décision pure : faut-il relire l'état avant de le publier ? Oui tant qu'aucun état n'a encore été publié
+/// (`deja_publie` faux) et que Defender ne répond pas ou se dit « Not running » : au démarrage du PC, il répond ainsi
+/// quelques minutes, et l'interface affichait « DEFENDER DÉSACTIVÉ » jusqu'au relevé suivant (10 min). Une fois un
+/// état publié, plus d'attente : une vraie désactivation est vue à chaque relevé.
+pub fn relire_avant_publication(etat: &EtatDefender, deja_publie: bool) -> bool {
+    !deja_publie && (!etat.disponible || etat.mode.eq_ignore_ascii_case("Not running"))
+}
+
 /// Alertes sur un changement d'état entre deux relevés
 pub fn ecarts(avant: &EtatDefender, apres: &EtatDefender) -> Vec<Alerte> {
     let mut a = Vec::new();

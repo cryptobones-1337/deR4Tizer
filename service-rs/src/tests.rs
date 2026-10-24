@@ -513,6 +513,23 @@ fn regroupement_second_niveau() {
     assert!(crate::notifications::texte(&lot).contains("USURPATION ARP"));
 }
 
+/// Defender au démarrage du PC : constaté, l'interface affichait « DEFENDER DÉSACTIVÉ » pendant les 10 minutes qui
+/// suivent un redémarrage (premier relevé « Not running », Defender pas encore prêt). L'état est relu tant qu'aucun
+/// état n'a été publié et que Defender ne répond pas ou se dit « Not running » ; ensuite, plus d'attente.
+#[test]
+fn defender_relu_au_demarrage_avant_publication() {
+    use crate::defender::{relire_avant_publication, EtatDefender};
+    let pas_pret = EtatDefender { disponible: true, mode: "Not running".into(), ..Default::default() };
+    let normal = EtatDefender { disponible: true, antivirus: true, temps_reel: true, mode: "Normal".into(), ..Default::default() };
+    let muet = EtatDefender::default();
+    assert!(relire_avant_publication(&pas_pret, false), "« Not running » avant tout état publié : relire");
+    assert!(relire_avant_publication(&muet, false), "WMI muet avant tout état publié : relire");
+    assert!(!relire_avant_publication(&normal, false), "état normal : publié aussitôt");
+    assert!(!relire_avant_publication(&pas_pret, true), "après un état publié : une désactivation est vue aussitôt");
+    let desactive = EtatDefender { disponible: true, mode: "Normal".into(), temps_reel: false, ..Default::default() };
+    assert!(!relire_avant_publication(&desactive, false), "protection en temps réel coupée (mode Normal) : publiée aussitôt");
+}
+
 #[test]
 fn ip_directe_editeurs_exacts() {
     use crate::moniteur::ip_directe_normale;
