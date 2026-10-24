@@ -2030,3 +2030,42 @@ fn ids_shellshock_sans_faux_positif_sur_des_octets_quelconques() {
     quelconque.extend_from_slice(b"};");
     assert!(!ok(&quelconque), "« }} » trop loin de « () {{ »");
 }
+
+/// Exposition : un paquet UDP BLOQUÉ qui répond à un flux du poste n'est pas une exposition (réponses d'un flux QUIC
+/// sortant bloquées pendant une reconfiguration du réseau ; paquet du serveur d'un VPN au milieu de paquets
+/// acceptés). Flux appris d'un envoi du poste ou d'une réponse acceptée vers un port dynamique. Un paquet bloqué
+/// d'une source avec laquelle le poste n'a rien échangé, ou d'un autre port de cette source, reste une alerte.
+/// Lignes synthétiques (adresses de documentation, RFC 5737).
+#[test]
+fn exposition_paquet_bloque_reponse_a_un_flux() {
+    use crate::parefeu::{ContexteExposition, LecteurJournal};
+    let ctx = ContexteExposition { ecoute_tcp: Default::default(), udp_dynamique: (49152, 65535), pid_service: 4000 };
+    let d = dossier_test("exposition-bloques");
+    let f = d.join("pfirewall.log");
+    std::fs::write(&f, "#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\n").unwrap();
+    let mut lecteur = LecteurJournal::sur_fichier(f.clone());
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+    for l in [
+        // Flux QUIC sortant, puis réponses bloquées
+        "2026-01-01 10:00:00 ALLOW UDP 192.168.0.10 198.51.100.30 50010 443 0 - - - - - - - SEND 5000",
+        "2026-01-01 10:00:02 DROP UDP 198.51.100.30 192.168.0.10 443 50010 56 - - - - - - - RECEIVE 5000",
+        "2026-01-01 10:00:03 DROP UDP 198.51.100.30 192.168.0.10 443 50010 1039 - - - - - - - RECEIVE 5000",
+        // Serveur d'un VPN : réponse acceptée vers un port dynamique, puis un paquet bloqué du même flux
+        "2026-01-01 10:00:04 ALLOW UDP 203.0.113.40 192.168.0.10 51820 50020 0 - - - - - - - RECEIVE 5100",
+        "2026-01-01 10:00:05 DROP UDP 203.0.113.40 192.168.0.10 51820 50020 176 - - - - - - - RECEIVE 5100",
+        // Témoins : source inconnue, et même source depuis un autre port
+        "2026-01-01 10:00:06 DROP UDP 192.0.2.99 192.168.0.10 5000 50030 60 - - - - - - - RECEIVE 0",
+        "2026-01-01 10:00:07 DROP UDP 198.51.100.30 192.168.0.10 9999 50010 60 - - - - - - - RECEIVE 0",
+    ] {
+        writeln!(o, "{l}").unwrap();
+    }
+    drop(o);
+    let alertes = lecteur.lire(&|_| String::new(), &ctx);
+    let raisons: Vec<String> = alertes.iter().map(|a| a.raisons.clone()).collect();
+    assert_eq!(alertes.len(), 2, "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("192.0.2.99") && a.port == 50030), "{raisons:?}");
+    assert!(alertes.iter().any(|a| a.raisons.contains("198.51.100.30") && a.port == 50010), "{raisons:?}");
+    assert!(!raisons.iter().any(|r| r.contains("203.0.113.40")), "{raisons:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
