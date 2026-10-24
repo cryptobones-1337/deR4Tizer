@@ -1718,6 +1718,15 @@ fn audit_donnees_sacl_completee() {
     // Idempotent : le résultat complété ne demande plus rien
     let r = sacl_completee("S:(AU;SAFA;FA;;;BA)", fichier, true).unwrap();
     assert_eq!(sacl_completee(&r, fichier, true), None);
+    // Lecture : un descripteur sans SACL (la plupart des fichiers) donne une SACL vide, pas « illisible » ; sans quoi
+    // l'audit n'était jamais posé sur ces fichiers (constaté par le scénario 3b en Windows Sandbox)
+    use crate::natif::texte_sacl_de_sddl;
+    assert_eq!(texte_sacl_de_sddl("O:BAG:BAD:(A;;FA;;;BA)").as_deref(), Some(""));
+    let vide = texte_sacl_de_sddl("O:BAG:BAD:(A;;FA;;;BA)").unwrap();
+    assert_eq!(sacl_completee(&vide, fichier, true).as_deref(), Some("S:(AU;SA;CC;;;WD)"));
+    assert_eq!(texte_sacl_de_sddl("O:BAS:(AU;SAFA;FA;;;BA)").as_deref(), Some("S:(AU;SAFA;FA;;;BA)"));
+    // SACL présente mais nulle : vide aussi (sa forme texte « S:NO_ACCESS_CONTROL » donnerait un SDDL invalide)
+    assert_eq!(texte_sacl_de_sddl("O:BAS:NO_ACCESS_CONTROL").as_deref(), Some(""));
 }
 
 /// Le script d'installation lancé par la commande de production s'exécute vraiment. Avec DETACHED_PROCESS, Windows

@@ -258,7 +258,9 @@ Set-Content -LiteralPath '$edge\temoin-integrite-basse.dat' -Value 'Low'
             $d = @(Audit-Tous $edge)
             if (-not $d.Count) { return "aucun audit sur $edge ; journal : $(Journal 'audit')" }
             if (-not ($d[0].PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { return "audit du dossier non limité à ses fichiers ($($d[0].PropagationFlags))" }
-            if (-not @(Audit-Tous "$edge\Local State").Count) { return "aucun audit sur le fichier présent" }
+            if (-not @(Audit-Tous "$edge\Local State").Count) {
+                return "aucun audit sur le fichier présent ; SACL du fichier : $((Get-Acl -LiteralPath "$edge\Local State" -Audit).Sddl) ; du dossier : $((Get-Acl -LiteralPath $edge -Audit).Sddl) ; journal : $(Journal 'audit')"
+            }
             $tierce = @((Get-Acl -LiteralPath $edge -Audit).Audit | Where-Object {
                 $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' -and $_.AuditFlags -eq 'Failure' })
             if (-not $tierce.Count) { return "règle d'audit tierce effacée (SACL remplacée au lieu d'être complétée)" }
