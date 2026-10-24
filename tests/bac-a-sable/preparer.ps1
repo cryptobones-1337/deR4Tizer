@@ -45,13 +45,16 @@ Set-Content -LiteralPath (Join-Path $entree 'version.txt') -Value $version -Enco
 Set-Content -LiteralPath (Join-Path $entree 'commit.txt') -Value ((git -C $depot rev-parse HEAD) + $(if (git -C $depot status --porcelain) { ' (modifications non commitées)' } else { '' })) -Encoding Ascii
 
 Etape 'Version plus ancienne 4.1.0 (commit 4da823a, en cache)'
-$ancien = Join-Path $cache 'deR4Tizer-ancien.msi'
+# CRT liée statiquement comme la version courante (service-rs/.cargo/config.toml, absent de 4da823a) : sans cela le
+# service 4.1.0 dépend de VCRUNTIME140.dll, absent du bac à sable, et son installation échoue (erreur 1920)
+$ancien = Join-Path $cache 'deR4Tizer-ancien-crt-statique.msi'
 if (-not (Test-Path $ancien)) {
     $arbre = Join-Path $cache 'ancien'
     if (-not (Test-Path $arbre)) { git -C $depot worktree add --detach $arbre 4da823ac699e198106c9c6cbdbdd58286992dbf1; if ($LASTEXITCODE) { throw 'worktree 4da823a' } }
     $env:CARGO_TARGET_DIR = Join-Path $env:USERPROFILE '.der4tizer-build-msvc-ancien'
     Push-Location (Join-Path $arbre 'service-rs')
-    try { cargo "+$chaine" build --release; if ($LASTEXITCODE) { throw 'compilation de la version ancienne' } } finally { Pop-Location }
+    $env:RUSTFLAGS = '-C target-feature=+crt-static'
+    try { cargo "+$chaine" build --release; if ($LASTEXITCODE) { throw 'compilation de la version ancienne' } } finally { Pop-Location; Remove-Item Env:\RUSTFLAGS }
     Push-Location $arbre
     try {
         & .\compiler.ps1 -InterfaceSeulement
