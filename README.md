@@ -80,7 +80,8 @@ pare-feu et les leurres, remet les réglages de sécurité d'origine et efface l
 `GARDER_DONNEES=1` conservent respectivement les réglages et les données.
 
 La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
-relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher.
+relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par la CI
+d'intégration : même processus du service avant et après).
 
 Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence MS-RL, sans redevance) ;
 `.\mettre-a-jour.ps1` remplace les exécutables d'une installation existante.
@@ -243,7 +244,8 @@ automatic installation can be turned on in the settings (signed releases).
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0` to skip the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
-Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service.
+Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service
+(the refusal for a standard account is checked by the integration CI: same service process before and after).
 
 ### SIEM integration
 
