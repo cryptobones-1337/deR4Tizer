@@ -184,13 +184,29 @@ if ($sessionSid) {
 # écrit : chaque descripteur (DACL et SACL) du canari est relu à l'identique. Témoin : un vrai dossier « Edge\User
 # Data » du même profil reçoit l'audit (dossier : entrée héritée par ses fichiers ; fichier présent : entrée posée),
 # et une règle d'audit posée avant par l'« organisation » (échecs de suppression des Administrateurs) y est gardée :
-# la SACL est complétée, jamais remplacée.
+# la SACL est complétée, jamais remplacée. L'étiquette d'intégrité vit dans la même liste (SACL) : un fichier
+# « Low » du dossier (comme ceux qu'écrit un navigateur en mode protégé) garde son étiquette et reçoit l'audit ; une
+# étiquette perdue empêcherait le navigateur d'y écrire.
 function Descripteurs([string]$Racine) {
     $l = foreach ($e in @(Get-Item -LiteralPath $Racine -Force) + @(Get-ChildItem -LiteralPath $Racine -Recurse -Force)) {
         "$($e.FullName.Substring($Racine.Length))|$((Get-Acl -LiteralPath $e.FullName -Audit).Sddl)"
     }
     ($l | Sort-Object) -join "`n"
 }
+# Étiquette d'intégrité en SDDL (« S:(ML;;NW;;;LW) »), lue par SID : la sortie d'icacls dépend de la langue et
+# Get-Acl ne rend pas l'étiquette
+Add-Type -Namespace D4T -Name Etiquette -MemberDefinition @'
+[DllImport("advapi32.dll", CharSet = CharSet.Unicode)] public static extern uint GetNamedSecurityInfoW(string n, int t, uint i, IntPtr o, IntPtr g, IntPtr d, IntPtr s, out IntPtr sd);
+[DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool ConvertSecurityDescriptorToStringSecurityDescriptorW(IntPtr sd, uint r, uint i, out IntPtr s, IntPtr l);
+[DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr p);
+public static string Sddl(string n) {
+    IntPtr sd; uint e = GetNamedSecurityInfoW(n, 1, 0x10, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out sd);
+    if (e != 0) return "erreur " + e;
+    IntPtr s; string r = ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, 0x10, out s, IntPtr.Zero) ? Marshal.PtrToStringUni(s) : "conversion impossible";
+    if (s != IntPtr.Zero) LocalFree(s); LocalFree(sd); return r;
+}
+'@
+function Etiquette([string]$Chemin) { [D4T.Etiquette]::Sddl($Chemin) }
 function Audit-Tous([string]$Chemin) {
     @((Get-Acl -LiteralPath $Chemin -Audit).Audit | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-1-0' })
 }
@@ -205,6 +221,7 @@ New-Item -ItemType Directory -Force -Path '$chrome', '$edge' | Out-Null
 Remove-Item -LiteralPath '$chrome\User Data' -Recurse -Force -ErrorAction SilentlyContinue
 cmd.exe /c mklink /J "$chrome\User Data" "$canariAudit"
 Set-Content -LiteralPath '$edge\Local State' -Value '{}'
+Set-Content -LiteralPath '$edge\temoin-integrite-basse.dat' -Value 'Low'
 "@
     $i = Get-Item -LiteralPath "$chrome\User Data" -Force -ErrorAction SilentlyContinue
     if (-not $i -or -not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath "$edge\Local State")) {
@@ -214,6 +231,10 @@ Set-Content -LiteralPath '$edge\Local State' -Value '{}'
         $a = Get-Acl -LiteralPath $edge -Audit
         $a.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), 'Delete', 'None', 'None', 'Failure')))
         Set-Acl -LiteralPath $edge -AclObject $a
+        # Témoin à étiquette d'intégrité basse
+        $fichierLow = "$edge\temoin-integrite-basse.dat"
+        icacls $fichierLow /setintegritylevel low | Out-Null
+        $etiquetteAvant = Etiquette $fichierLow
         # Pose faite au démarrage du service, puis toutes les heures
         $debutAudit = Redemarrer-Service
         $fin = (Get-Date).AddSeconds(90)
@@ -226,11 +247,20 @@ Set-Content -LiteralPath '$edge\Local State' -Value '{}'
             if ($apres -ne $descripteursAvant) { return "descripteurs du canari modifiés à travers la jonction" }
             $true
         }
+        Verifier 'Audit des données sensibles : fichier à étiquette d''intégrité basse, étiquette gardée et audit posé' {
+            if ($etiquetteAvant -notmatch '\(ML;[^)]*;LW\)') { return "témoin non marqué Low avant le passage : $etiquetteAvant" }
+            $e = Etiquette $fichierLow
+            if ($e -notmatch '\(ML;[^)]*;LW\)') { return "étiquette d'intégrité perdue ou changée : avant $etiquetteAvant, après $e" }
+            if (-not @(Audit-Tous $fichierLow).Count) { return "audit absent sur le fichier Low (écriture refusée ?) ; journal : $(Journal 'audit')" }
+            $true
+        }
         Verifier 'Audit des données sensibles : témoin, audit posé dans le vrai dossier du profil (dossier et fichier présent), règle tierce gardée' {
             $d = @(Audit-Tous $edge)
             if (-not $d.Count) { return "aucun audit sur $edge ; journal : $(Journal 'audit')" }
             if (-not ($d[0].PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { return "audit du dossier non limité à ses fichiers ($($d[0].PropagationFlags))" }
-            if (-not @(Audit-Tous "$edge\Local State").Count) { return "aucun audit sur le fichier présent" }
+            if (-not @(Audit-Tous "$edge\Local State").Count) {
+                return "aucun audit sur le fichier présent ; SACL du fichier : $((Get-Acl -LiteralPath "$edge\Local State" -Audit).Sddl) ; du dossier : $((Get-Acl -LiteralPath $edge -Audit).Sddl) ; journal : $(Journal 'audit')"
+            }
             $tierce = @((Get-Acl -LiteralPath $edge -Audit).Audit | Where-Object {
                 $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' -and $_.AuditFlags -eq 'Failure' })
             if (-not $tierce.Count) { return "règle d'audit tierce effacée (SACL remplacée au lieu d'être complétée)" }
