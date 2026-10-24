@@ -58,7 +58,7 @@ Veut publier une version malveillante que les postes installeraient.
 - Choix du certificat : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
   ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
-  Parades, à décider par Benoît (changement du modèle de confiance) : une seconde signature propre au projet
+  Parades, à décider par cryptobones-1337 (changement du modèle de confiance) : une seconde signature propre au projet
   (Ed25519, clé hors ligne) de l'empreinte du MSI, seule épinglée pour les mises à jour ; ou, au minimum, le nom
   de produit « deR4Tizer » exigé dans le paquet signé (repose alors sur le contrôle de SignPath). Un certificat de
   quelques jours dont la clé changerait à chaque renouvellement (Azure Trusted Signing, à vérifier) rendrait
