@@ -9,8 +9,8 @@ cd service-rs
 cargo test --release
 ```
 
-- 2026-10-24, arbre `4bdcc38d` (`main` `c60d9b3`), local, chaîne `stable-x86_64-pc-windows-msvc` :
-  **80 réussis, 0 échoué**.
+- 2026-10-24, arbre `67978e1f` (`main` `b72874f`), local, chaîne `stable-x86_64-pc-windows-msvc` :
+  **83 réussis, 0 échoué**.
 - Contenu (`service-rs/src/tests.rs`) : fonctions pures qui lisent des données du réseau ou de fichiers externes
   (paquets, TLS, DNS, règles IDS, manifestes, UPnP), décisions de sécurité (droits, tri au démarrage,
   quarantaine, reprise, restauration, mise à jour, clé épinglée), avec un mini-fuzz (toutes les troncatures d'un
@@ -73,6 +73,21 @@ scénarios 3a et 3b SHA-256 `6F63CE69B91596A13BCECE69891BDDF5404EB3BE01CF2551CC1
 
 Nouveaux par rapport au passage précédent : leurre déjà présent dans un profil sans session audité (3b) ;
 désinstallation sans `GARDER_DONNEES` qui retire bien les données (3a, 3b). Tableaux en commentaire des PR #31 à #35.
+
+2026-10-24, arbre `67978e1f8a2d8fc42b55c2c8624761ff50826949`, celui de `main` `b72874f` après la fusion des PR #36,
+#37, #40, #41, #42 (commit testé `51f8796`, `git diff 51f8796 main` vide), Windows 11 Pro 10.0.26300.9711, 83 tests
+unitaires. MSI SHA-256 : 3a `D8EE3E666BBDD0A11B8FB1844CF07598231BE521B5EE5DFD97F67F55B0B74F92` ; 3b
+`7322DF3A3E6F79E1F70EB23A49B2F14B2BD990FDA449053876C55DD7E41C8FB2` (même arbre, recompilé : relancé après un échec de
+démarrage de Windows Sandbox) ; 3c, reconstruit après les paquets de test,
+`C72D73FD548489979886893411BBC167C93692B775438A47151FAB532299F555`.
+
+| Lot | Réussis | Échoués | Non exécutés |
+|---|---|---|---|
+| 3a | 41 | 0 | 2 (mêmes raisons) |
+| 3b | 24 | 0 | 3 (mêmes raisons) |
+| 3c | 19 | 0 | 1 (même raison) |
+
+Tableaux en commentaire des PR #36, #37, #40, #41, #42.
 
 ## Non couvert
 
