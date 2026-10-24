@@ -239,19 +239,28 @@ impl Moniteur {
                 let _com = wmi::COMLibrary::without_security();
                 let mut baseline_avant: Option<baseline::EtatBaseline> = None;
                 let mut premier = true;
+                // Première publication de l'état de Defender faite (même si WMI n'a jamais répondu) : plus d'attente
+                let mut defender_publie = false;
                 let mut tour_pilotes = 0u32;
                 let mut pilotes_signales = HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
                     let mut etat = defender::etat();
                     // Démarrage du PC : Defender répond « Not running » quelques minutes ; relu toutes les 30 s
                     // (10 min au plus) avant le premier état publié, pour ne pas l'afficher désactivé à tort
-                    let deja_publie = p.defender.lock().unwrap().disponible;
+                    // (une seule fois : si WMI ne répond jamais, l'attente ne revient pas à chaque relevé ; arrêt du service
+                    // vu chaque seconde pendant l'attente)
                     let mut essais = 0;
-                    while defender::relire_avant_publication(&etat, deja_publie) && essais < 20 && !p.arret.load(Ordering::Relaxed) {
-                        std::thread::sleep(Duration::from_secs(30));
+                    while defender::relire_avant_publication(&etat, defender_publie) && essais < 20 && !p.arret.load(Ordering::Relaxed) {
+                        for _ in 0..30 {
+                            if p.arret.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_secs(1));
+                        }
                         etat = defender::etat();
                         essais += 1;
                     }
+                    defender_publie = true;
                     let ecarts = defender::ecarts(&p.defender.lock().unwrap(), &etat);
                     p.alertes_externes.lock().unwrap().extend(ecarts);
                     *p.defender.lock().unwrap() = etat;
