@@ -1,7 +1,8 @@
 # Matrice des capacités de deR4Tizer
 
 État au 2026-10-24, branche `main` (commit `4702837`, arbre `370e4d272d88515c1e6901882933bc8340995602`,
-version 4.3), après la fusion des PR #10, #12 à #27. Aucune affirmation ici n'est plus forte que la preuve citée.
+version 4.3), après la fusion des PR #10 et #12 à #27 ; les PR #28 et #30, fusionnées juste avant celle-ci, sont
+décrites dans les lignes concernées. Aucune affirmation ici n'est plus forte que la preuve citée.
 Une PR encore ouverte est signalée comme telle : tant qu'elle n'est pas fusionnée, `main` ne contient pas son
 contenu.
 
@@ -45,7 +46,7 @@ L'IDS, le DPI et le NDR sont **expérimentaux**, quel que soit l'état de leurs 
 | Chaînes de processus et score cumulé | implémenté non vérifié | `chaines.rs` | — | — | — |
 | Origine des processus et règles inspirées de Sigma | implémenté non vérifié (débogage à distance testé en labo) | `processus.rs` | Sysmon facultatif (sinon WMI) | `debogage_a_distance_ancre_sur_l_executable` | Sans Sysmon, couverture réduite. |
 | Persistance (clés Run, services, tâches, WMI, Démarrage) | implémenté non vérifié | `persistance.rs` | — | — | — |
-| Leurres anti-rançongiciel et suspension automatique | testé en labo (décision) | `hygiene.rs`, `vol_donnees.rs` | Audit du système de fichiers (4663) | `b1_leurre_touche_par_rundll32_suspendu`, `b2_noms_des_leurres_dans_le_dossier_des_secrets` ; 3b (jonction vers un canari) | Création, suppression et nettoyage par handle sans suivre de lien, sous l'identité du propriétaire du profil (PR #20). Sur `main`, l'audit d'écriture des leurres n'est **pas posé** (écriture de la SACL refusée, constaté sur un poste réel ; correctif PR #28, non fusionnée) : pas d'alerte immédiate, seul le contrôle périodique de l'empreinte du leurre joue. Pose dans un profil qui a une session : non testée (VM). |
+| Leurres anti-rançongiciel et suspension automatique | testé en labo (décision) | `hygiene.rs`, `vol_donnees.rs` | Audit du système de fichiers (4663) | `b1_leurre_touche_par_rundll32_suspendu`, `b2_noms_des_leurres_dans_le_dossier_des_secrets` ; 3b (jonction vers un canari) | Création, suppression et nettoyage par handle sans suivre de lien, sous l'identité du propriétaire du profil (PR #20). Audit d'écriture des leurres posé par `SetKernelObjectSecurity`, comme l'audit des données sensibles (PR #28) ; avant la #28, l'écriture de la SACL par `SetSecurityInfo` était refusée et aucun leurre n'était audité. Leurre déjà présent dans un profil sans session, audité après redémarrage : réussi en Windows Sandbox (3b). Création des leurres dans un profil qui a une session : non validée (VM). |
 | Pilotes vulnérables (LOLDrivers) | testé en labo (chemins) | `hygiene.rs` | — | `chemins_des_pilotes` | `loldrivers.json` lu avec le contrôle du propriétaire (PR #16), testé en labo. |
 | Extensions de navigateur | implémenté non vérifié | `hygiene.rs` | — | — | — |
 | Vol de données (audit des fichiers des navigateurs et applications) | testé en labo (décision) | `vol_donnees.rs` | Audit « Système de fichiers » (profil de baseline « journalisation ») | `alerte`, `editeurs_compares_exactement`, `audit_donnees_sacl_completee` ; 3b | Audit posé par handle, sans suivre de lien, SACL complétée et non remplacée (PR #25) ; réussi en Windows Sandbox (3b : jonction vers un canari, règle d'audit tierce gardée, étiquette d'intégrité Low gardée). Au-delà de 20 000 éléments par dossier, l'audit n'est posé que sur une partie des fichiers déjà présents (signalé dans le journal du service). Ne voit pas l'injection de code dans le navigateur. Poste géré sans audit des fichiers : non surveillé (signalé). |
