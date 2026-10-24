@@ -242,7 +242,16 @@ impl Moniteur {
                 let mut tour_pilotes = 0u32;
                 let mut pilotes_signales = HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
-                    let etat = defender::etat();
+                    let mut etat = defender::etat();
+                    // Démarrage du PC : Defender répond « Not running » quelques minutes ; relu toutes les 30 s
+                    // (10 min au plus) avant le premier état publié, pour ne pas l'afficher désactivé à tort
+                    let deja_publie = p.defender.lock().unwrap().disponible;
+                    let mut essais = 0;
+                    while defender::relire_avant_publication(&etat, deja_publie) && essais < 20 && !p.arret.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_secs(30));
+                        etat = defender::etat();
+                        essais += 1;
+                    }
                     let ecarts = defender::ecarts(&p.defender.lock().unwrap(), &etat);
                     p.alertes_externes.lock().unwrap().extend(ecarts);
                     *p.defender.lock().unwrap() = etat;
