@@ -145,6 +145,25 @@ function Garder-Journaux([string]$Scenario) {
         $f = Join-Path $DonneesMaj $n
         if (Test-Path $f) { Move-Item $f (Join-Path $Journaux "$Scenario-$n") -Force }
     }
+    # Diagnostic du script d'installation (lancé caché par le service) : journal du service, contenu des deux
+    # dossiers maj, démarrages et erreurs de Windows PowerShell (400, 403, 4100), événements de msiexec
+    $d = Join-Path $Journaux "$Scenario-diagnostic.txt"
+    $depuis = (Get-Date).AddMinutes(-15)
+    & {
+        '== journal du service (mise à jour)'
+        Get-Content (Join-Path $script:Donnees 'journal.txt') -Encoding UTF8 -ErrorAction SilentlyContinue | Select-String 'mise à jour|maj' | Select-Object -Last 15 | ForEach-Object { $_.Line }
+        '== dossiers maj'
+        Get-ChildItem $DonneesMaj, $Travail -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName) $($_.Length) $($_.LastWriteTime)" }
+        '== Windows PowerShell 400/403'
+        Get-WinEvent -FilterHashtable @{ LogName = 'Windows PowerShell'; Id = 400, 403; StartTime = $depuis } -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.TimeCreated) $($_.Id) " + (($_.Message -split "`n" | Select-String 'HostApplication') -join ' ').Substring(0, [Math]::Min(300, (($_.Message -split "`n" | Select-String 'HostApplication') -join ' ').Length)) }
+        '== PowerShell/Operational 4100'
+        Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-PowerShell/Operational'; Id = 4100; StartTime = $depuis } -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.TimeCreated) " + ($_.Message -replace "`r?`n", ' ') }
+        '== MsiInstaller'
+        Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'MsiInstaller'; StartTime = $depuis } -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.TimeCreated) $($_.Id) " + ($_.Message -replace "`r?`n", ' ') }
+    } | Set-Content -LiteralPath $d -Encoding UTF8
 }
 
 # ---------------------------------------------------------------- isolement de la clé de test
