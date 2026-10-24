@@ -1876,10 +1876,10 @@ fn exposition_reelle_sans_faux_positifs() {
     use std::io::Write;
     let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
     for l in [
-        "2026-10-24 09:28:08 ALLOW TCP 172.217.171.110 10.2.0.2 443 61076 0 - 0 0 0 - - - RECEIVE 3468",
-        "2026-10-24 09:17:02 ALLOW TCP 155.133.229.20 192.168.1.12 27024 37077 0 - 0 0 0 - - - RECEIVE 3332",
-        "2026-10-24 09:26:09 ALLOW ICMP 8.8.8.8 10.2.0.2 - - 0 - - - - 0 0 - RECEIVE 4",
-        "2026-10-24 09:30:00 ALLOW TCP 203.0.113.9 192.168.1.12 51515 27036 0 - 0 0 0 - - - RECEIVE 16424",
+        "2026-10-24 09:28:08 ALLOW TCP 172.217.171.110 10.8.0.2 443 61076 0 - 0 0 0 - - - RECEIVE 3468",
+        "2026-10-24 09:17:02 ALLOW TCP 198.51.100.20 192.168.1.50 27024 37077 0 - 0 0 0 - - - RECEIVE 3332",
+        "2026-10-24 09:26:09 ALLOW ICMP 8.8.8.8 10.8.0.2 - - 0 - - - - 0 0 - RECEIVE 4",
+        "2026-10-24 09:30:00 ALLOW TCP 203.0.113.9 192.168.1.50 51515 27036 0 - 0 0 0 - - - RECEIVE 16424",
     ] {
         writeln!(o, "{l}").unwrap();
     }
@@ -1915,9 +1915,9 @@ fn exposition_udp_reponse_reconnue_par_le_flux() {
     use std::io::Write;
     let mut o = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
     for l in [
-        "2026-10-24 12:00:00 ALLOW UDP 192.168.1.12 40.119.6.228 123 123 0 - - - - - - - SEND 1688",
-        "2026-10-24 12:00:00 ALLOW UDP 40.119.6.228 192.168.1.12 123 123 0 - - - - - - - RECEIVE 1688",
-        "2026-10-24 12:00:05 ALLOW UDP 203.0.113.9 192.168.1.12 123 123 0 - - - - - - - RECEIVE 1688",
+        "2026-10-24 12:00:00 ALLOW UDP 192.168.1.50 40.119.6.228 123 123 0 - - - - - - - SEND 1688",
+        "2026-10-24 12:00:00 ALLOW UDP 40.119.6.228 192.168.1.50 123 123 0 - - - - - - - RECEIVE 1688",
+        "2026-10-24 12:00:05 ALLOW UDP 203.0.113.9 192.168.1.50 123 123 0 - - - - - - - RECEIVE 1688",
     ] {
         writeln!(o, "{l}").unwrap();
     }
