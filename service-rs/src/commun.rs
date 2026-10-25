@@ -565,6 +565,19 @@ pub fn journal(message: &str) {
     }
 }
 
+/// Table de déduplication (clé → dernière fois) bornée : entrées plus anciennes que `age` retirées, puis, au-delà de
+/// `max`, les plus anciennes (audit AUD4-02, AUD4-03 : des sources usurpées faisaient grossir ces tables sans fin)
+pub fn purger_anciens<K: std::hash::Hash + Eq + Clone>(m: &mut HashMap<K, std::time::Instant>, age: std::time::Duration, max: usize) {
+    m.retain(|_, t| t.elapsed() < age);
+    if m.len() > max {
+        let mut v: Vec<(K, std::time::Instant)> = m.iter().map(|(k, t)| (k.clone(), *t)).collect();
+        v.sort_by_key(|x| x.1);
+        for (k, _) in v.into_iter().take(m.len() - max) {
+            m.remove(&k);
+        }
+    }
+}
+
 pub fn nouvel_id() -> String {
     // Identifiant unique suffisant pour distinguer les alertes (pas de dépendance à une bibliothèque UUID)
     use std::sync::atomic::{AtomicU64, Ordering};

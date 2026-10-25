@@ -42,12 +42,24 @@ fn decouper_url(url: &str) -> Option<(SocketAddr, String)> {
 /// se fait sur les octets : une taille de bloc tombant au milieu d'un caractère UTF-8 (envoyé par un appareil
 /// malveillant du réseau, ou par une box au nom accentué) ne doit jamais faire paniquer le service
 fn http(adresse: SocketAddr, requete: &str) -> Option<(u16, String)> {
+    http_avec_echeance(adresse, requete, ECHEANCE_HTTP)
+}
+
+/// Durée maximale d'une réponse UPnP entière (audit AUD4-04) : avant, le délai ne portait que sur chaque lecture, et un
+/// appareil qui répondait octet par octet bloquait le fil NDR (plus de détection d'usurpation ARP) pendant des jours
+pub const ECHEANCE_HTTP: Duration = Duration::from_secs(10);
+
+pub fn http_avec_echeance(adresse: SocketAddr, requete: &str, echeance: Duration) -> Option<(u16, String)> {
+    let debut = std::time::Instant::now();
     let mut flux = TcpStream::connect_timeout(&adresse, Duration::from_secs(3)).ok()?;
-    let _ = flux.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = flux.set_read_timeout(Some(Duration::from_secs(5).min(echeance)));
     flux.write_all(requete.as_bytes()).ok()?;
     let mut brut = Vec::new();
     let mut tampon = [0u8; 8192];
     while brut.len() < TAILLE_MAX {
+        if debut.elapsed() >= echeance {
+            return None;
+        }
         match flux.read(&mut tampon) {
             Ok(0) | Err(_) => break,
             Ok(n) => brut.extend_from_slice(&tampon[..n]),

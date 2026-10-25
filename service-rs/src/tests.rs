@@ -600,6 +600,51 @@ fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
     }
 }
 
+/// Audit AUD4-04 : un appareil du réseau local qui répond à la découverte UPnP octet par octet bloquait le fil NDR
+/// (délai par lecture seulement). Échéance globale de la réponse.
+#[test]
+fn audit_upnp_reponse_goutte_a_goutte_bornee() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            for _ in 0..40 {
+                if c.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    });
+    let debut = Instant::now();
+    let r = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_secs(4), "réponse goutte à goutte : {:?}", debut.elapsed());
+    assert!(r.is_none(), "réponse incomplète à l'échéance : abandonnée");
+    let _ = serveur.join();
+}
+
+/// Audit AUD4-02, AUD4-03 : tables de déduplication alimentées par des adresses du réseau, jamais purgées
+#[test]
+fn audit_tables_de_deduplication_bornees() {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    let mut m: HashMap<u32, Instant> = HashMap::new();
+    let maintenant = Instant::now();
+    for i in 0..100u32 {
+        m.insert(i, maintenant.checked_sub(Duration::from_secs(u64::from(i) * 60)).unwrap_or(maintenant));
+    }
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(30 * 60 + 30), 1000);
+    assert_eq!(m.len(), 31, "entrées de plus de 30 min retirées");
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(86400), 10);
+    assert_eq!(m.len(), 10, "au-delà du maximum, les plus anciennes retirées");
+    assert!(m.contains_key(&0) && !m.contains_key(&30), "les plus récentes gardées");
+}
+
 #[test]
 fn n1_upnp_sans_panique_sur_utf8_coupe() {
     // Cas reproduit par la revue : bloc de 2 octets invalides en UTF-8

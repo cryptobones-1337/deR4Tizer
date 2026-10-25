@@ -90,6 +90,9 @@ struct Destination {
     derniere: Option<Instant>,
 }
 
+/// Nombre maximal de destinations suivies (élaguées à 4000 au-delà de 5000, toutes les 5 s)
+pub const MAX_DESTINATIONS: usize = 6000;
+
 pub struct Trafic {
     partage: Arc<Partage>,
     geoip: Arc<RwLock<GeoIp>>,
@@ -239,6 +242,11 @@ impl Analyseur for Trafic {
         if p.entrant { a.0 += octets } else { a.1 += octets }
         if a.2.len() < 2000 {
             a.2.insert(ip);
+        }
+        // Destinations bornées entre deux élagages : au-delà, une adresse nouvelle n'est comptée que dans les totaux
+        // (des sources usurpées faisaient grossir la table jusqu'à minuit, audit AUD4-01)
+        if !self.destinations.contains_key(&ip) && self.destinations.len() >= MAX_DESTINATIONS {
+            return;
         }
         let d = self.destinations.entry(ip).or_default();
         if p.entrant { d.entrant += octets } else { d.sortant += octets }
