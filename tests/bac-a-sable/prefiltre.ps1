@@ -30,8 +30,11 @@ if (Get-Module -ListAvailable PSScriptAnalyzer) {
     # Exceptions justifiées, par fichier et par règle (jamais une règle entière) :
     # - commun.ps1, PSAvoidUsingConvertToSecureStringWithPlainText : mot de passe aléatoire, tiré en mémoire, jamais
     #   affiché, d'un compte de test jetable (Windows Sandbox ou runner de CI) ; aucun mot de passe écrit en clair
+    # - tests\vm\lancer.ps1, même règle : compte standard jetable de la VM de test (-SessionStandard), mot de passe
+    #   aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte, effacé par la remise à l'instantané
     # Exceptions comparées au chemin relatif exact (pas au seul nom de fichier)
-    $exceptions = @(@{ Fichier = 'tests\integration\commun.ps1'; Regle = 'PSAvoidUsingConvertToSecureStringWithPlainText' })
+    $exceptions = @(@{ Fichier = 'tests\integration\commun.ps1'; Regle = 'PSAvoidUsingConvertToSecureStringWithPlainText' },
+                    @{ Fichier = 'tests\vm\lancer.ps1'; Regle = 'PSAvoidUsingConvertToSecureStringWithPlainText' })
     # Tous les scripts du dépôt (racine, installeur, tests), hors dossiers de compilation
     $scripts = @(Get-ChildItem -LiteralPath $depot -Recurse -Filter *.ps1 -File | Where-Object { $_.FullName -notmatch '\\(target|\.git|bin)\\' })
     $r = @(foreach ($f in $scripts) { Invoke-ScriptAnalyzer -Path $f.FullName -Severity Error }) | Where-Object {
