@@ -243,6 +243,49 @@ if ($compte) {
         NonExecute 'Comptes autorisés légitimes' 'second compte indisponible'
     }
 
+    # ------------------------------------------------------------ arrêt du service (relecture de #61)
+    # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en
+    # VM) ; l'arrêt attend la fin d'un relevé en cours 8 s au plus. Arrêt demandé dès que le canal répond : attendu
+    # arrêté en 10 s au plus (délai annoncé à Windows). Que le relevé soit encore en cours n'est pas observable ici.
+    function Arreter-Chrono {
+        $t = [Diagnostics.Stopwatch]::StartNew()
+        sc.exe stop deR4Tizer | Out-Null
+        while ((Get-Service deR4Tizer).Status -ne 'Stopped' -and $t.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 200 }
+        if ((Get-Service deR4Tizer).Status -ne 'Stopped') { return $null }
+        $t.Elapsed.TotalSeconds
+    }
+    Verifier 'Arrêt juste après un démarrage (relevé des démarrages automatiques) : service arrêté en 10 s au plus' {
+        Restart-Service deR4Tizer -Force
+        if (-not (Attendre-Canal)) { return 'le service ne répond plus après le redémarrage' }
+        $s = Arreter-Chrono
+        Start-Service deR4Tizer
+        if (-not (Attendre-Canal)) { return 'le service ne répond plus après la relance' }
+        if ($null -eq $s) { return 'service toujours en marche 60 s après la demande d''arrêt' }
+        if ($s -gt 10) { return ('arrêté en {0:N1} s' -f $s) }
+        $true
+    }
+    # Alerte de persistance produite puis arrêt aussitôt : elle doit figurer dans alertes.json. Valeur Run témoin
+    # (notepad, jamais lancée : la session n'est pas rouverte), retirée dans tous les cas. Bout en bout seulement :
+    # l'alerte peut avoir été reprise par le cycle (toutes les 3 s) avant l'arrêt ; la course elle-même est couverte
+    # par le test unitaire phase1_persistance_videe_a_l_arret
+    $cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; $nomTemoin = 'd4t-temoin-persistance'
+    Verifier 'Alerte de persistance produite juste avant un arrêt : enregistrée dans alertes.json' {
+        try {
+            New-ItemProperty -Path $cleRun -Name $nomTemoin -Value '"C:\Windows\System32\notepad.exe" /d4t-temoin' -PropertyType String -Force | Out-Null
+            $demarrage = Join-Path $script:Donnees 'demarrage.json'
+            $fin = (Get-Date).AddSeconds(150)
+            while ((Get-Date) -lt $fin -and -not ((Test-Path $demarrage) -and (Get-Content $demarrage -Raw -Encoding UTF8) -match $nomTemoin)) { Start-Sleep -Milliseconds 500 }
+            if ((Get-Date) -ge $fin) { return "valeur témoin jamais relevée en 150 s ; journal : $(Journal 'persistance|démarrage')" }
+            if ($null -eq (Arreter-Chrono)) { return 'service toujours en marche 60 s après la demande d''arrêt' }
+            $a = Join-Path $script:Donnees 'alertes.json'
+            if (-not ((Test-Path $a) -and (Get-Content $a -Raw -Encoding UTF8) -match $nomTemoin)) { return "aucune alerte pour $nomTemoin dans alertes.json" }
+            $true
+        } finally {
+            Remove-ItemProperty -Path $cleRun -Name $nomTemoin -ErrorAction SilentlyContinue
+            if ((Get-Service deR4Tizer).Status -ne 'Running') { Start-Service deR4Tizer; [void](Attendre-Canal) }
+        }
+    }
+
     # ------------------------------------------------------------ réparation par un compte standard
     # Condition de lancement AdminUser (installeur\deR4Tizer.wxs) : une réparation arrêterait puis relancerait le
     # service ; refusée à un compte standard. Preuve : code de retour d'échec et même processus du service.

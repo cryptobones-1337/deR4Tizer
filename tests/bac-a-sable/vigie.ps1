@@ -30,16 +30,20 @@ while ($true) {
     }
     if ($j.Length -ne $tailleJournal) { $tailleJournal = $j.Length; $journalVu = [datetime]::UtcNow }
     $prefixe = if ($Cible -eq 'vm') { 'sortie-vm-' } else { 'sortie-' }
-    $d = Get-ChildItem $Racine -Directory -Filter "$prefixe*" | Where-Object CreationTimeUtc -gt $debut | Sort-Object CreationTimeUtc | Select-Object -Last 1
+    $dossiers = @(Get-ChildItem $Racine -Directory -Filter "$prefixe*" | Where-Object CreationTimeUtc -gt $debut | Sort-Object CreationTimeUtc)
+    # Chaque scénario terminé est signalé, même quand le suivant a démarré dans la même minute (seul le plus récent
+    # était regardé : fins manquées au passage de 75e0d92)
+    foreach ($x in $dossiers) {
+        $cx = Get-ChildItem $x.FullName -Filter '*-code.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cx -and -not $signales[$x.Name]) { $signales[$x.Name] = $true; "Scénario terminé ($(Get-Date -Format HH:mm)) : $($x.Name), code $((Get-Content $cx.FullName -Raw).Trim())" }
+    }
+    $d = $dossiers | Select-Object -Last 1
     if (-not $d) {
         if (([datetime]::UtcNow - $journalVu).TotalMinutes -gt 20) { "BLOQUÉ ($(Get-Date -Format HH:mm)) : aucun scénario lancé et journal immobile depuis 20 min (préparation ?)"; $journalVu = [datetime]::UtcNow }
         continue
     }
     $code = Get-ChildItem $d.FullName -Filter '*-code.txt' -ErrorAction SilentlyContinue
-    if ($code) {
-        if (-not $signales[$d.Name]) { $signales[$d.Name] = $true; "Scénario terminé ($(Get-Date -Format HH:mm)) : $($d.Name), code $((Get-Content $code.FullName -Raw).Trim())" }
-        $absent = 0; continue
-    }
+    if ($code) { $absent = 0; continue }
     if ($Cible -eq 'bac-a-sable') {
         $ouvert = @(Get-Process WindowsSandboxRemoteSession -ErrorAction SilentlyContinue).Count
         $absent = if ($ouvert) { 0 } else { $absent + 1 }
