@@ -280,6 +280,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
+Seule exception, pour la phase 3 (mainteneur, 2026-10-25, par ces mots : « Yes: add the rule identifier line to IDS, DPI and NDR alerts, with no other change to their logic. They stay frozen otherwise. ») : une ligne qui pose l'identifiant de règle (`EXP-*`, `docs/detection/regles.md`) dans leurs alertes, sans autre changement de leur logique.
 
 ## 6. Actions réservées à l'humain
 
