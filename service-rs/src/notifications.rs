@@ -89,7 +89,7 @@ pub fn controler_demande(texte: &str) -> Result<(), String> {
         o.insert("Config".into(), serde_json::to_value(crate::commun::ConfigNotifications::default()).unwrap_or_default());
     }
     match crate::commun::cle_ambigue(texte, &modele) {
-        Some(k) => Err(format!("réglages des notifications refusés : clé « {} » ambiguë ou texte illisible", crate::commun::ligne_de_journal(&k))),
+        Some(k) => Err(crate::commun::raison_refus("réglages des notifications refusés", &k)),
         None => Ok(()),
     }
 }

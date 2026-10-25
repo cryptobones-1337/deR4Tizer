@@ -720,9 +720,6 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
-/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
-/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
-/// passe
 /// Audit de sécurité S58-02 : champs texte des réglages en listes fermées (langue, protocole, format, niveau) et hôte
 /// syslog sans caractère de contrôle ni de mise en forme (la confirmation pouvait être repoussée hors de l'écran ou
 /// inversée) ; les valeurs que l'interface envoie passent
@@ -802,6 +799,9 @@ fn audit_reglages_commandes_completes() {
     assert!(controler_demande(r#"{"NtfyUrl":"https://ntfy.sh/a","X":"\uD800"}"#).is_err());
 }
 
+/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
+/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
+/// passe
 #[test]
 fn audit_reglages_cle_ambigue_refusee() {
     use crate::commun::{cle_ambigue, Config};

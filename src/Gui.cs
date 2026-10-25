@@ -185,8 +185,8 @@ namespace DeR4Tizer
                 case "testerSyslog":
                     {
                         var s = Commun.Json().Deserialize<ConfigSyslog>(v);
-                        return Visible((en ? "Send a syslog test message to " : "Envoyer un message syslog de test à ")
-                            + (s == null ? (en ? "the configured server" : "le serveur configuré") : s.Hote + ":" + s.Port + " (" + s.Protocole + ")"));
+                        return Visible(s == null ? (en ? "Send a syslog test message to the configured server" : "Envoyer un message syslog de test au serveur configuré")
+                            : (en ? "Send a syslog test message to " : "Envoyer un message syslog de test à ") + s.Hote + ":" + s.Port + " (" + s.Protocole + ")");
                     }
                 case "jetonApi": return en ? "Show the export API token" : "Afficher le jeton de l'API d'export";
                 case "nouveauJeton": return en ? "REPLACE the export API token" : "REMPLACER le jeton de l'API d'export";

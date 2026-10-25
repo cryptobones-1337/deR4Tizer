@@ -209,12 +209,17 @@ pub fn cle_ambigue(texte: &str, modele: &serde_json::Value) -> Option<String> {
     chercher(&v, modele, "")
 }
 
+/// Message de refus : texte illisible, ou clé ambiguë par la casse (nommée)
+pub fn raison_refus(prefixe: &str, k: &str) -> String {
+    if k == "(texte illisible)" { format!("{prefixe} : texte illisible") } else { format!("{prefixe} : clé « {} » ambiguë (casse)", ligne_de_journal(k)) }
+}
+
 /// Lecture complète d'une commande « reglages » (décision pure, testée) : texte illisible ou clé ambiguë refusés
 /// (AUD6-03, S58-01), puis lecture, puis champs texte en listes fermées (S58-02). Seul chemin du service pour cette
 /// commande.
 pub fn lire_reglages(texte: &str) -> Result<Config, String> {
     if let Some(k) = cle_ambigue(texte, &serde_json::to_value(Config::default()).unwrap_or_default()) {
-        return Err(format!("réglages refusés : clé « {} » ambiguë ou texte illisible", ligne_de_journal(&k)));
+        return Err(raison_refus("réglages refusés", &k));
     }
     let n: Config = serde_json::from_str(texte).map_err(|_| "réglages illisibles".to_string())?;
     match reglages_invalides(&n) {
@@ -226,7 +231,7 @@ pub fn lire_reglages(texte: &str) -> Result<Config, String> {
 /// Lecture d'une commande « testerSyslog » (décision pure, testée) : mêmes contrôles que les réglages
 pub fn lire_syslog_test(texte: &str) -> Result<ConfigSyslog, String> {
     if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigSyslog::default()).unwrap_or_default()) {
-        return Err(format!("test refusé : clé « {} » ambiguë ou texte illisible", ligne_de_journal(&k)));
+        return Err(raison_refus("test refusé", &k));
     }
     let s: ConfigSyslog = serde_json::from_str(texte).map_err(|_| "réglages syslog illisibles".to_string())?;
     match reglages_invalides(&Config { syslog: s.clone(), langue: "fr".into(), ..Config::default() }) {
