@@ -856,6 +856,29 @@ fn audit_reglages_commandes_completes() {
 /// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
 /// passe
 #[test]
+fn audit67_maj_config_cle_ambigue_et_adresse_ascii() {
+    // Audit de sécurité de #67 : S67-01, une clé qui ne diffère que par la casse faisait afficher une adresse (lecture
+    // de l'interface : casse ignorée, dernière clé gagnante) et appliquer une autre (serde) ; S67-02, un hôte en
+    // homoglyphes (U+0570 pour « h ») passait, seul le préfixe https:// était vérifié
+    use crate::commun::lire_config_maj;
+    let m = lire_config_maj(r#"{"Auto":true,"Url":"https://exemple.test/manifeste.json"}"#).unwrap();
+    assert!(m.auto && m.url == "https://exemple.test/manifeste.json");
+    assert!(lire_config_maj(r#"{"Auto":false,"Url":""}"#).is_ok(), "adresse vide : manifeste par défaut");
+    let casse = r#"{"Auto":true,"Url":"https://attaquant.test/m.json","auto":false,"url":"https://exemple.test/manifeste.json"}"#;
+    assert!(serde_json::from_str::<crate::commun::ConfigMaj>(casse).is_ok(), "témoin : serde lit ce texte");
+    assert!(lire_config_maj(casse).is_err(), "clé ambiguë acceptée");
+    for mauvaise in ["https://git\\u0570ub.com/m.json", "https://exemple.test/a b", "https://exemple.test/\\u202Ex",
+                     "http://exemple.test/m.json", "https://exemple.test/\\r\\nx"] {
+        let t = format!(r#"{{"Auto":false,"Url":"{mauvaise}"}}"#);
+        assert!(serde_json::from_str::<crate::commun::ConfigMaj>(&t).is_ok(), "témoin : {mauvaise}");
+        assert!(lire_config_maj(&t).is_err(), "adresse acceptée : {mauvaise}");
+    }
+    let longue = format!(r#"{{"Url":"https://exemple.test/{}"}}"#, "a".repeat(600));
+    assert!(lire_config_maj(&longue).is_err(), "adresse démesurée acceptée");
+    assert!(lire_config_maj("pas du json").is_err());
+}
+
+#[test]
 fn audit_reglages_cle_ambigue_refusee() {
     use crate::commun::{cle_ambigue, Config};
     let modele = serde_json::to_value(Config::default()).unwrap();

@@ -228,6 +228,25 @@ pub fn lire_reglages(texte: &str) -> Result<Config, String> {
     }
 }
 
+/// Lecture d'une commande « majConfig » (décision pure, testée ; audit de sécurité de #67) : clé ambiguë refusée
+/// (S67-01, comme les réglages), adresse du manifeste vide ou https:// en ASCII imprimable sans espace, 600 caractères
+/// au plus (S67-02 : un hôte en homoglyphes ou un caractère invisible pouvait passer pour l'adresse habituelle)
+pub fn lire_config_maj(texte: &str) -> Result<ConfigMaj, String> {
+    if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigMaj::default()).unwrap_or_default()) {
+        return Err(raison_refus("réglages de mise à jour refusés", &k));
+    }
+    let m: ConfigMaj = serde_json::from_str(texte).map_err(|_| "réglages de mise à jour illisibles".to_string())?;
+    if !m.url.is_empty() {
+        if !m.url.starts_with("https://") {
+            return Err("L'adresse du manifeste doit commencer par https://".into());
+        }
+        if m.url.len() > 600 || !m.url.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err("adresse du manifeste refusée : caractères ASCII visibles seulement, sans espace, 600 au plus".into());
+        }
+    }
+    Ok(m)
+}
+
 /// Lecture d'une commande « testerSyslog » (décision pure, testée) : mêmes contrôles que les réglages
 pub fn lire_syslog_test(texte: &str) -> Result<ConfigSyslog, String> {
     if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigSyslog::default()).unwrap_or_default()) {

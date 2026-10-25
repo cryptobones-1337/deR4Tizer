@@ -944,12 +944,10 @@ impl Moniteur {
                 Reponse::ok("Recherche de mise à jour lancée : le résultat s'affichera dans les Réglages.")
             }
             "majConfig" => {
-                let Some(m) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<commun::ConfigMaj>(v).ok()) else {
-                    return Reponse::erreur("réglages de mise à jour illisibles");
+                let m = match commun::lire_config_maj(c.valeur.as_deref().unwrap_or("")) {
+                    Ok(m) => m,
+                    Err(e) => return Reponse::erreur(e),
                 };
-                if !m.url.is_empty() && !m.url.starts_with("https://") {
-                    return Reponse::erreur("L'adresse du manifeste doit commencer par https://");
-                }
                 self.config.maj = m;
                 let _ = commun::ecrire("config.json", &self.config);
                 Reponse::ok("Réglages de mise à jour enregistrés.")
