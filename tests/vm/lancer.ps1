@@ -67,6 +67,11 @@ try {
             $mdp = (-join (1..24 | ForEach-Object { $car | Get-Random })) + 'a7!K'
             New-LocalUser -Name 'd4t_console' -Password (ConvertTo-SecureString $mdp -AsPlainText -Force) -PasswordNeverExpires -AccountNeverExpires | Out-Null
             Add-LocalGroupMember -SID 'S-1-5-32-545' -Member 'd4t_console'
+            # Windows 11 ignore l'ouverture de session automatique tant que l'option « connexion sans mot de passe »
+            # (DevicePasswordLessBuildVersion = 2) est active : constaté dans la VM, console vide après le redémarrage
+            $sansMdp = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
+            New-Item $sansMdp -Force | Out-Null
+            Set-ItemProperty $sansMdp -Name DevicePasswordLessBuildVersion -Value 0 -Type DWord
             $w = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
             Set-ItemProperty $w -Name AutoAdminLogon -Value '1'
             Set-ItemProperty $w -Name DefaultUserName -Value 'd4t_console'
