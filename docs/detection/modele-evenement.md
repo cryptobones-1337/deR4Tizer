@@ -1,7 +1,7 @@
 # Modèle d'événement (phase 3)
 
 Ce document décrit le format des alertes du service (`Alerte`, `service-rs/src/commun.rs`) tel que la phase 3 le
-versionne. Depuis la PR 3.1, les trois champs existent et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
+versionne. Depuis la PR 3.1, les champs `Modele`, `Regle` et `Collecte` existent (et `Signature` depuis la PR 3.1b) et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
 est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre des règles), `Collecte` jusqu'à la PR 3.3
 (état des collectes) : vides, ils ne sont pas écrits.
 
@@ -19,7 +19,7 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 | `Modele` | entier | 0 | version du modèle ; 1 pour les alertes créées par la version qui l'introduit |
 | `Regle` | texte, omis si vide | « » | identifiant de la règle (`docs/detection/regles.md`), « » si l'alerte n'est rattachée à aucune |
 | `Collecte` | texte, omis si vide | « » | collecteur d'où vient l'alerte (état des collectes, PR 3.3) |
-| `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » ; c'est elle qu'une exception posée depuis l'alerte vise |
+| `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » avant le filtrage (y compris celles que l'apprentissage baisse en « Info ») ; c'est elle qu'une exception posée depuis l'alerte vise |
 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
   ancien fichier garde 0, son histoire n'est pas réécrite.
@@ -72,11 +72,15 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 - **Interface** : elle lit `alertes.json` avec un lecteur JSON qui ignore les champs qu'elle ne connaît pas (vérifié :
   une alerte avec `Modele`, `Regle` et `Collecte` se lit).
 - **Retour arrière** vers une version précédente : elle ignore les champs inconnus, puis réécrit le fichier sans eux.
-  Après une nouvelle mise à niveau, ces alertes repassent en `Modele` 0. Accepté.
-- **Exceptions et apprentissage** : inchangés pendant la phase 3. Leur signature dépend du texte `Mitre`, qui ne change
-  pas (`mitre.rs` reste la source) ; la clé de déduplication des alertes ne change pas non plus.
+  Après une nouvelle mise à niveau, ces alertes repassent en `Modele` 0. Accepté. Dans `apprentissage.json`, la version
+  précédente ignore les exceptions et comportements appris mémorisés par empreinte (PR 3.1b) : les alertes concernées
+  reviennent au niveau « Alerte » (échec fermé) ; ces entrées comptent quand même dans le plafond de 5000.
+- **Signature d'apprentissage** : son contenu ne change pas pendant la phase 3 (elle dépend du texte `Mitre`, qui ne
+  change pas : `mitre.rs` reste la source) ; seule sa forme mémorisée change avec la PR 3.1b (empreinte, voir plus bas).
+  La clé de déduplication des alertes ne change pas.
 - **Export** : l'export JSON (syslog) et l'API (`/api/v1/alertes`, JSON et NDJSON) sérialisent l'alerte entière : `Modele`
-  y apparaît dès la PR 3.1, `Regle` et `Collecte` quand ils seront remplis (vides, ils ne sont pas écrits). Le CEF ne
+  y apparaît dès la PR 3.1, `Signature` dès la PR 3.1b (alertes de niveau « Alerte »), `Regle` et `Collecte` quand ils
+  seront remplis (vides, ils ne sont pas écrits). Le CEF ne
   change pas. L'API lit `alertes.json` par la même lecture tolérante, sans rien déplacer (`lire_alertes_sans_effet`) :
   un élément illisible ne vide plus sa réponse.
 

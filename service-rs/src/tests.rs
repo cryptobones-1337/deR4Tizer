@@ -3084,7 +3084,12 @@ fn phase3_exception_sur_alerte_bornee() {
     let m = include_str!("moniteur.rs");
     let d = m.find("fn ajouter_alerte_brute").unwrap();
     let corps = &m[d..d + 900];
-    assert!(corps.find("commun::empreinte_signature(").expect("empreinte") < corps.find("commun::borner_alerte(&mut a)").unwrap());
+    let (calcul, filtre, pose, borne) = (corps.find("commun::empreinte_signature(").expect("empreinte"), corps.find("apprentissage::filtrer(&mut a)").unwrap(),
+        corps.find("a.signature = empreinte;").expect("empreinte jamais posée sur l'alerte (relecture de #73, D1)"), corps.find("commun::borner_alerte(&mut a)").unwrap());
+    assert!(calcul < filtre && filtre < pose && pose < borne, "ordre : empreinte, filtrer, pose, bornage");
+    // D2 : comportement appris mémorisé par empreinte, jamais en clair (apprentissage.json borné)
+    let ap = include_str!("apprentissage.rs");
+    assert!(ap.contains("e.appris.insert(commun::empreinte_signature(&sig))") && !ap.contains("e.appris.insert(sig)"), "comportement appris mémorisé en clair");
     // L'exception vise l'empreinte de l'alerte (cible_exception)
     let avec = Alerte { niveau: "Info".into(), signature: empreinte_signature(&sig), ..bornee.clone() };
     assert_eq!(crate::apprentissage::cible_exception(&avec).as_deref(), Ok(empreinte_signature(&sig).as_str()));
@@ -3101,6 +3106,14 @@ fn phase3_exception_sans_empreinte() {
     let mut bornee = longue.clone();
     borner_alerte(&mut bornee);
     assert!(cible_exception(&bornee).is_err(), "alerte bornée sans empreinte : exception acceptée");
+    // Chaque champ de la signature compte, pas seulement le chemin (relecture de #73, R1)
+    for champ in ["parent", "destination", "nom_dns"] {
+        let mut x = Alerte { niveau: "Alerte".into(), chemin: r"C:\x.exe".into(), ..Default::default() };
+        let long = "b".repeat(900);
+        match champ { "parent" => x.parent = long, "destination" => x.destination = long, _ => x.nom_dns = Some(long) }
+        borner_alerte(&mut x);
+        assert!(cible_exception(&x).is_err(), "{champ} borné sans empreinte : exception acceptée");
+    }
     for niveau in ["Info", "Critique"] {
         assert!(cible_exception(&Alerte { niveau: niveau.into(), chemin: r"C:\x.exe".into(), ..Default::default() }).is_err(), "{niveau}");
     }
@@ -3122,7 +3135,7 @@ fn phase3_alerte_bornee_pire_cas() {
         regle: x.clone(), collecte: x.clone(), signature: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX };
     borner_alerte(&mut a);
     let octets = serde_json::to_vec(&a).unwrap().len();
-    assert!(octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte");
+    assert!(octets < 16 * 1024 && octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte (promis : moins de 16 Ko)");
 }
 
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
