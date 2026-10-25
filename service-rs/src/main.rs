@@ -37,6 +37,7 @@ mod protection;
 mod reponse;
 mod siem;
 mod surveillances;
+mod validation;
 #[cfg(test)]
 mod tests;
 mod vol_donnees;

@@ -1877,6 +1877,209 @@ fn lot5_canal_squat_pid_et_alerte_critique() {
     }
 }
 
+// ------------------------------------------------------------ phase 1 : autorisation, validation, débit du canal
+
+fn commande_json(j: &str) -> crate::commun::Commande {
+    serde_json::from_str(j).unwrap_or_else(|e| panic!("{j} : {e}"))
+}
+
+#[test]
+fn phase1_autorisation_par_commande() {
+    use crate::validation::{autorisee, Client, ACTIONS};
+    for a in ACTIONS {
+        assert!(autorisee(a, Client::Systeme) && autorisee(a, Client::Administrateur), "{a} : SYSTEM et administrateurs");
+        assert_eq!(autorisee(a, Client::Autre), *a == "verification", "{a} : un client « autre » ne peut que demander la version");
+    }
+    for inconnue in ["", "Tuer", "tuer ", "panique\n", "toutDebloquer2", "executer"] {
+        for c in [Client::Systeme, Client::Administrateur, Client::Autre] {
+            assert!(!autorisee(inconnue, c), "action inconnue {inconnue:?} refusée pour {c:?}");
+        }
+    }
+    // Admission : un client « autre » est refusé avant toute validation, sans exécution
+    let r = crate::canal::admettre(br#"{"Action":"toutDebloquer"}"#, Client::Autre, true).err().expect("refus");
+    assert!(!r.ok && r.message.contains("non autorisée"), "{}", r.message);
+    assert!(crate::canal::admettre(br#"{"Action":"verification"}"#, Client::Autre, true).is_ok());
+}
+
+#[test]
+fn phase1_commandes_de_l_interface_acceptees() {
+    // Formes exactes envoyées par l'interface (src/*.cs) : aucune régression
+    let sid = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+    for j in [
+        r#"{"Action":"apprentissage","Valeur":"oublier"}"#.to_string(),
+        r#"{"Action":"apprentissage","Valeur":"recommencer"}"#.to_string(),
+        r#"{"Action":"apprentissage","Valeur":"terminer"}"#.to_string(),
+        format!(r#"{{"Action":"autoriserLecteur","Valeur":"{sid}"}}"#),
+        r#"{"Action":"baseline","Valeur":"appliquer","Cible":"recommandé"}"#.to_string(),
+        r#"{"Action":"baseline","Valeur":"annuler","Cible":"recommandé,renforcé"}"#.to_string(),
+        r#"{"Action":"baseline","Valeur":"evaluer","Cible":""}"#.to_string(),
+        r#"{"Action":"bloquer","Ip":"203.0.113.7","NomDns":"exemple.test","Raison":"flux de chrome"}"#.to_string(),
+        r#"{"Action":"bloquer","Ip":"2001:db8::7","NomDns":null,"Raison":"flux de x"}"#.to_string(),
+        r#"{"Action":"config","Cible":"Ips","Valeur":"true"}"#.to_string(),
+        r#"{"Action":"config","Cible":"ReponseAutoRancongiciel","Valeur":"false"}"#.to_string(),
+        r#"{"Action":"debloquer","Type":"hosts","Cible":"exemple.test"}"#.to_string(),
+        r#"{"Action":"debloquer","Type":"parefeu","Cible":"203.0.113.7"}"#.to_string(),
+        r#"{"Action":"debloquer","Type":"programme","Cible":"C:\\Outils\\x.exe"}"#.to_string(),
+        r#"{"Action":"exception","Cible":"01db2f1c3a4b5c6d-00001a2b-0003"}"#.to_string(),
+        r#"{"Action":"jetonApi"}"#.to_string(), r#"{"Action":"nouveauJeton"}"#.to_string(),
+        r#"{"Action":"majConfig","Valeur":"{\"Auto\":false,\"Url\":\"https://exemple.test/m.json\"}"}"#.to_string(),
+        r#"{"Action":"majMenaces"}"#.to_string(), r#"{"Action":"majVerifier"}"#.to_string(),
+        r#"{"Action":"panique","Valeur":"on"}"#.to_string(), r#"{"Action":"panique","Valeur":"off"}"#.to_string(),
+        r#"{"Action":"reglages","Valeur":"{\"Langue\":\"en\",\"Notifications\":null}"}"#.to_string(),
+        r#"{"Action":"restaurer","Cible":"01db2f1c3a4b5c6d-00001a2b-0004"}"#.to_string(),
+        r#"{"Action":"restaurerRepli","Cible":"01db2f1c3a4b5c6d-00001a2b-0004"}"#.to_string(),
+        r#"{"Action":"testerSyslog","Valeur":"{\"Actif\":true}"}"#.to_string(),
+        r#"{"Action":"toutDebloquer"}"#.to_string(),
+        r#"{"Action":"notifications","Valeur":"{\"Config\":null}"}"#.to_string(),
+        r#"{"Action":"testerNotifications","Valeur":"{}"}"#.to_string(),
+        r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x"}"#.to_string(),
+        r#"{"Action":"tuerChaine","Cible":"4242","Raison":"action manuelle sur x"}"#.to_string(),
+        r#"{"Action":"suspendre","Cible":"4242"}"#.to_string(), r#"{"Action":"reprendre","Cible":"4242"}"#.to_string(),
+        r#"{"Action":"quarantaine","Cible":"C:\\Users\\x\\Downloads\\outil.exe","Raison":"action manuelle sur outil"}"#.to_string(),
+        r#"{"Action":"isolerProgramme","Cible":"D:\\Jeux\\jeu.exe","Raison":"action manuelle sur jeu"}"#.to_string(),
+        r#"{"Action":"verification"}"#.to_string(),
+    ] {
+        assert_eq!(crate::validation::valider(&commande_json(&j)), Ok(()), "{j}");
+    }
+}
+
+#[test]
+fn phase1_champs_invalides_refuses() {
+    use crate::validation::valider;
+    let long = "a".repeat(5000);
+    for (j, pourquoi) in [
+        (r#"{}"#.to_string(), "action manquante"),
+        (r#"{"Action":"inconnue"}"#.to_string(), "action inconnue"),
+        (r#"{"Action":"bloquer","NomDns":"exemple.test\r\n203.0.113.9 banque.test"}"#.to_string(), "fin de ligne dans le nom : injection du fichier hosts"),
+        (r#"{"Action":"bloquer","NomDns":"évil.test"}"#.to_string(), "nom accentué hors punycode"),
+        (r#"{"Action":"bloquer","NomDns":"a..b"}"#.to_string(), "étiquette vide"),
+        (r#"{"Action":"bloquer","NomDns":"-a.test"}"#.to_string(), "étiquette commençant par un tiret"),
+        (r#"{"Action":"bloquer"}"#.to_string(), "ni nom ni adresse"),
+        (r#"{"Action":"bloquer","Ip":"1.2.3"}"#.to_string(), "adresse tronquée"),
+        (r#"{"Action":"bloquerIp","Ip":"203.0.113.7 ; netsh"}"#.to_string(), "adresse suivie d'une commande"),
+        (r#"{"Action":"debloquer","Type":"autre","Cible":"x"}"#.to_string(), "type inconnu"),
+        (r#"{"Action":"debloquer","Type":"parefeu","Cible":"exemple.test"}"#.to_string(), "pare-feu : adresse attendue"),
+        (r#"{"Action":"debloquer","Type":"programme","Cible":"x.exe"}"#.to_string(), "chemin relatif"),
+        (r#"{"Action":"config","Cible":"Defender","Valeur":"false"}"#.to_string(), "réglage inconnu"),
+        (r#"{"Action":"config","Cible":"Ips","Valeur":"oui"}"#.to_string(), "valeur non booléenne"),
+        (r#"{"Action":"reglages","Valeur":"pas du json"}"#.to_string(), "objet JSON attendu"),
+        (r#"{"Action":"tuer","Cible":"4"}"#.to_string(), "PID de System"),
+        (r#"{"Action":"tuer","Cible":"0"}"#.to_string(), "PID nul"),
+        (r#"{"Action":"tuer","Cible":"-1"}"#.to_string(), "PID négatif"),
+        (r#"{"Action":"quarantaine","Cible":"\\\\serveur\\partage\\x.exe"}"#.to_string(), "chemin réseau"),
+        (r#"{"Action":"quarantaine","Cible":"\\\\?\\C:\\x.exe"}"#.to_string(), "chemin d'appareil"),
+        (r#"{"Action":"quarantaine","Cible":"C:\\x\u0000.exe"}"#.to_string(), "caractère NUL"),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\x\\..\\Windows\\System32\\svchost.exe"}"#.to_string(), "élément .. (contournement du refus du dossier Windows)"),
+        (r#"{"Action":"quarantaine","Cible":"C:\\x\\..\\y.exe"}"#.to_string(), "élément .."),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\.\\Windows\\System32\\cmd.exe"}"#.to_string(), "élément « . »"),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\\\Windows\\System32\\cmd.exe"}"#.to_string(), "élément vide"),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\Windows.\\System32\\cmd.exe"}"#.to_string(), "élément terminé par un point"),
+        (r#"{"Action":"isolerProgramme","Cible":"C:\\Windows \\System32\\cmd.exe"}"#.to_string(), "élément terminé par une espace"),
+        (r#"{"Action":"quarantaine","Cible":"C:\\x\\a.exe:flux"}"#.to_string(), "flux de données"),
+        (r#"{"Action":"quarantaine","Cible":"C:\\x\\"}"#.to_string(), "dossier, pas un fichier"),
+        (r#"{"Action":"isolerProgramme","Cible":"programme.exe"}"#.to_string(), "chemin relatif"),
+        (r#"{"Action":"restaurer","Cible":"../../x"}"#.to_string(), "identifiant avec séparateurs"),
+        (r#"{"Action":"panique","Valeur":"peut-être"}"#.to_string(), "valeur de panique"),
+        (r#"{"Action":"baseline","Valeur":"supprimer","Cible":"recommandé"}"#.to_string(), "opération de baseline inconnue"),
+        (r#"{"Action":"baseline","Valeur":"appliquer","Cible":"recommandé;x"}"#.to_string(), "sélection de baseline invalide"),
+        (r#"{"Action":"apprentissage","Valeur":"tout"}"#.to_string(), "apprentissage inconnu"),
+        (r#"{"Action":"autoriserLecteur","Valeur":"Administrateurs"}"#.to_string(), "SID attendu"),
+        (format!(r#"{{"Action":"quarantaine","Cible":"C:\\{long}"}}"#), "cible trop longue"),
+        (format!(r#"{{"Action":"reglages","Valeur":"{{{}}}"}}"#, "a".repeat(40000)), "valeur trop longue"),
+        (r#"{"Action":"reglages","Valeur":"{\u0007}"}"#.to_string(), "caractère de contrôle dans la valeur"),
+    ] {
+        assert!(valider(&commande_json(&j)).is_err(), "{pourquoi} : devait être refusé ({})", j.chars().take(120).collect::<String>());
+    }
+    // Raison : normalisée, jamais une cause de refus (un programme nommé avec une fin de ligne reste blocable)
+    let mut c = commande_json(r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x\r\nfaux"}"#);
+    crate::validation::normaliser(&mut c);
+    assert_eq!(c.raison.as_deref(), Some("action manuelle sur x  faux"));
+    assert_eq!(valider(&c), Ok(()));
+    let mut l = commande_json(&format!(r#"{{"Action":"verification","Raison":"{}"}}"#, "r".repeat(2000)));
+    crate::validation::normaliser(&mut l);
+    assert_eq!(l.raison.unwrap().chars().count(), crate::validation::MAX_RAISON);
+}
+
+#[test]
+fn phase1_fichier_hosts_sans_injection() {
+    let noms = vec!["Exemple.Test.".to_string(), "a.test\r\n203.0.113.9 banque.test".to_string(), "évil.test".to_string(), "b.test".to_string()];
+    assert_eq!(crate::blocage::lignes_du_bloc(&noms), vec!["exemple.test", "b.test"], "noms invalides écartés, valides en minuscules");
+}
+
+#[test]
+fn phase1_messages_malformes_tronques() {
+    use crate::validation::Client;
+    // Lecture : vide, BOM, seconde ligne ignorée, non UTF-8
+    assert!(crate::validation::decoder_commande(b"").is_err());
+    assert!(crate::validation::decoder_commande(b"   \r\n").is_err());
+    assert_eq!(crate::validation::decoder_commande("\u{feff}{\"Action\":\"verification\"}\r\n{\"Action\":\"toutDebloquer\"}".as_bytes()).unwrap().action.as_deref(), Some("verification"));
+    assert!(crate::validation::decoder_commande(&[0xff, 0xfe, 0x00, 0x7b]).is_err());
+    // Toutes les troncatures et des milliers de variantes corrompues : jamais de panique ; une commande admise est
+    // toujours une commande valide
+    for valide in [
+        br#"{"Action":"bloquer","Ip":"203.0.113.7","NomDns":"exemple.test","Raison":"flux de x"}"#.as_slice(),
+        br#"{"Action":"quarantaine","Cible":"C:\\Users\\x\\a.exe","Raison":"r"}"#.as_slice(),
+        br#"{"Action":"reglages","Valeur":"{\"Langue\":\"en\"}"}"#.as_slice(),
+    ] {
+        torturer(valide, &mut |o| {
+            if let Ok(c) = crate::canal::admettre(o, Client::Administrateur, true) {
+                assert_eq!(crate::validation::valider(&c), Ok(()));
+            }
+        });
+    }
+    // Débit dépassé : refus avant lecture, même pour une commande valide
+    let r = crate::canal::admettre(br#"{"Action":"verification"}"#, Client::Administrateur, false).err().expect("refus");
+    assert!(r.message.contains("Trop de commandes"), "{}", r.message);
+}
+
+#[test]
+fn phase1_debit_du_canal() {
+    use std::time::{Duration, Instant};
+    let mut d = crate::validation::Debit::new(3, Duration::from_secs(10));
+    let t = Instant::now();
+    assert!(d.accepter(t) && d.accepter(t + Duration::from_secs(1)) && d.accepter(t + Duration::from_secs(2)));
+    assert!(!d.accepter(t + Duration::from_secs(3)), "quatrième commande dans la fenêtre : refusée");
+    assert!(!d.accepter(t + Duration::from_secs(9)), "un refus ne compte pas, mais la fenêtre est encore pleine");
+    assert!(d.accepter(t + Duration::from_secs(10)), "la première est sortie de la fenêtre");
+    assert!(!d.accepter(t + Duration::from_secs(10)));
+}
+
+#[test]
+fn phase1_client_du_tube_identifie_sur_son_jeton() {
+    use std::io::Write;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    let nom = format!(r"\\.\pipe\d4t-essai-phase1-client-{}", std::process::id());
+    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    assert!(!tube.is_invalid());
+    let n = nom.clone();
+    let client = std::thread::spawn(move || {
+        let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&n).unwrap();
+        c.write_all(b"x").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    });
+    let _ = unsafe { ConnectNamedPipe(tube, None) };
+    // Le client est ce processus de test : comparé à un calcul indépendant (IsUserAnAdmin : administrateur élevé).
+    // Tests lancés élevés : le cas « administrateur » est exercé ; sinon « autre » (et le passage VM, en
+    // administrateur, exerce le cas élevé avec le service réel)
+    let vu = crate::natif::client_tube(HANDLE(tube.0));
+    let attendu = if crate::natif::est_systeme() {
+        crate::validation::Client::Systeme
+    } else if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
+        crate::validation::Client::Administrateur
+    } else {
+        crate::validation::Client::Autre
+    };
+    assert_eq!(vu, attendu, "client du tube mal identifié");
+    client.join().unwrap();
+    unsafe { let _ = CloseHandle(tube); }
+    // Handle invalide : « autre » (échec fermé)
+    assert_eq!(crate::natif::client_tube(windows::Win32::Foundation::INVALID_HANDLE_VALUE), crate::validation::Client::Autre);
+}
+
 /// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
