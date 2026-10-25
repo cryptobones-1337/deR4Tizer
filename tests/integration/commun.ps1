@@ -250,16 +250,43 @@ function Nouveau-CompteStandard([string]$Nom = 'd4t_standard') {
 # Exécute du PowerShell sous l'identité du compte standard ; renvoie sa sortie (texte), ou le processus si
 # -SansAttendre. Le code est écrit dans un fichier (UTF-8 avec BOM), jamais sur la ligne de commande.
 $script:NumeroScript = 0
+# Session 0 (exécuteur lancé par une tâche à ouverture de session par mot de passe, cas tests\vm\lancer.ps1
+# -SessionStandard) : Start-Process -Credential n'y lance rien (constaté dans la VM le 25/10/2026). Le script du compte
+# standard part alors d'une tâche planifiée à son nom (ouverture par mot de passe : compte de test jetable de la VM).
+# Renvoie le processus démarré, comme Start-Process -PassThru, ou $null s'il a déjà fini. Tâche jamais supprimée
+# pendant que son processus tourne (fichier tenu ouvert) : l'instantané de la VM l'efface.
+function Demarrer-ParTache($Compte, [string]$Fichier) {
+    $nom = "d4t-essai-standard-$($script:NumeroScript)"
+    $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Fichier`"" -WorkingDirectory $script:Commun
+    $reglages = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    Register-ScheduledTask -TaskName $nom -Action $action -Settings $reglages -User $Compte.Nom `
+        -Password $Compte.Credential.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
+    Start-ScheduledTask -TaskName $nom
+    $fin = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 200
+        $c = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -like "*$Fichier*" } | Select-Object -First 1
+        if ($c) { $p = Get-Process -Id $c.ProcessId -ErrorAction SilentlyContinue; if ($p) { return $p } }
+        $info = Get-ScheduledTaskInfo -TaskName $nom
+        # Déjà fini : la tâche a tourné (heure de dernier lancement posée) et n'est plus en cours
+        if ($info.LastRunTime -gt (Get-Date).AddMinutes(-5) -and (Get-ScheduledTask -TaskName $nom).State -eq 'Ready') { return $null }
+    } while ((Get-Date) -lt $fin)
+    throw "tâche du compte standard : processus non démarré (résultat $($info.LastTaskResult))"
+}
 function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Secondes = 60) {
     $script:NumeroScript++
     $f = Join-Path $script:Commun "script-$($script:NumeroScript).ps1"
     $sortie = Join-Path $script:Commun "sortie-$($script:NumeroScript).txt"
     $corps = "`$ErrorActionPreference = 'Continue'`r`n& {`r`n$Code`r`n} *>&1 | Out-File -LiteralPath '$sortie' -Encoding utf8 -Width 4096"
     [IO.File]::WriteAllText($f, $corps, (New-Object Text.UTF8Encoding($true)))
-    $p = Start-Process powershell.exe -Credential $Compte.Credential -PassThru -WindowStyle Hidden -WorkingDirectory $script:Commun `
-        -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$f`""
+    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { $p = Demarrer-ParTache $Compte $f }
+    else {
+        $p = Start-Process powershell.exe -Credential $Compte.Credential -PassThru -WindowStyle Hidden -WorkingDirectory $script:Commun `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$f`""
+    }
     if ($SansAttendre) { return $p }
-    if (-not $p.WaitForExit($Secondes * 1000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw "délai dépassé ($Secondes s)" }
+    if ($p -and -not $p.WaitForExit($Secondes * 1000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw "délai dépassé ($Secondes s)" }
     if (Test-Path $sortie) { return (Get-Content -LiteralPath $sortie -Raw -Encoding UTF8) }
     return ''
 }
