@@ -391,9 +391,10 @@ impl Moniteur {
 
     pub fn arreter(&mut self) {
         self.partage.arret.store(true, Ordering::SeqCst);
-        // Alertes de persistance pas encore reprises par le cycle (relevé en cours compris, attendu 15 s au plus) :
-        // enregistrées avant l'arrêt, jamais perdues (relecture de #61)
-        let reste = vider_persistance(&self.partage.persistance_en_cours, &self.partage.alertes_persistance, Duration::from_secs(15));
+        // Alertes de persistance pas encore reprises par le cycle, relevé en cours compris : enregistrées avant l'arrêt
+        // (relecture de #61). Relevé attendu 8 s au plus, sous les 10 s annoncées à Windows (wait_hint) ; au-delà, ou si
+        // Windows tue le service à l'extinction, l'alerte d'un relevé en cours peut encore être perdue
+        let reste = vider_persistance(&self.partage.persistance_en_cours, &self.partage.alertes_persistance, Duration::from_secs(8));
         if !reste.is_empty() {
             for a in reste {
                 self.ajouter_alerte_brute(a, None);

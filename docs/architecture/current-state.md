@@ -28,7 +28,7 @@ sockets brutes (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, sécurité N
 `surveillance` (cœur, `moniteur.rs`, relève toutes les 3 s), `commandes` (canal), `protection` (droits du dossier,
 toutes les heures), `listes de menaces` (12 h), `mise à jour` (quotidienne, 10 min après le démarrage),
 `notifications`, `syslog`, `api`, `siem`, `ndr`, `geoip`, `ja3`, `audit données sensibles`, `traces de processus`,
-`contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours), plus un fil de capture par interface réseau (`capture.rs`).
+`contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours, attendue 8 s au plus), plus un fil de capture par interface réseau (`capture.rs`).
 
 Mesure du cycle (phase 1, `mesure.rs`) : durée de chaque étape du cycle de 3 s, attente et tenue du verrou du
 moniteur par la surveillance, durée de chaque commande (verrou tenu), étapes des contrôles de 10 minutes et nombre de
