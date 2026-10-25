@@ -241,7 +241,7 @@ fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
 
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
     let sortie = Command::new("curl.exe")
-        .args(["-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
+        .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
             "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
         .arg(destination)
         .arg(url)
@@ -396,7 +396,7 @@ pub const PS_PID_SERVEUR: &str = "Add-Type -Namespace D4T -Name Tube -MemberDefi
 /// n'est dans aucun objet tâche du service : il survit à l'arrêt du service par msiexec.
 pub fn commande_script(script: &str) -> Command {
     crate::mesure::powershell("maj");
-    let mut c = Command::new("powershell.exe");
+    let mut c = Command::new(crate::natif::powershell_exe());
     c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         // Un PSModulePath hérité de PowerShell 7 fait charger à Windows PowerShell des modules incompatibles
         // (Get-FileHash introuvable, constaté en CI) : powershell.exe reprend alors le sien
@@ -448,7 +448,7 @@ pub fn script_installation(p: &ParametresScript) -> String {
         ),
         None => (
             format!("{}; ", ps_canal(commun::NOM_SERVICE, commun::NOM_SERVICE)),
-            "Start-Process msiexec.exe -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')".to_string(),
+            "Start-Process (Join-Path ([Environment]::SystemDirectory) 'msiexec.exe') -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')".to_string(),
             30,
             2,
         ),

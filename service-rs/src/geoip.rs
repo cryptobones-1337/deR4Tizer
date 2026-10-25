@@ -41,7 +41,8 @@ impl GeoIp {
             }
             let tmp = f.with_extension("tmp");
             let ok = Command::new("curl.exe")
-                .args(["-sSL", "--fail", "--max-time", "300", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
+                .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
+                    "--max-time", "300", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                 .arg(&tmp)
                 .arg(url)
                 .creation_flags(0x0800_0000)

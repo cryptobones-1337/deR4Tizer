@@ -26,7 +26,8 @@ listes pour aveugler le service, détourner une opération SYSTEM (lien, jonctio
 passer pour le service sur le canal.
 
 - Mesures : dossier de données protégé et vérifié, échec fermé ; canal réservé aux administrateurs ; opérations de
-  fichiers par handle ; restauration sous l'identité de l'utilisateur.
+  fichiers par handle ; restauration sous l'identité de l'utilisateur ; PowerShell lancé par son chemin absolu (un
+  nom nu était cherché dans le PATH machine) ; journal du service sans caractère de contrôle (fausses lignes).
 - Prouvé en CI (3a, 3b) : écriture, création et commandes refusées partout ; dossier précréé, fichiers à DACL
   vide, fichier tenu ouvert, configuration piégée pendant une mise à niveau : écartés, jamais chargés ; jonctions :
   refusées, canaris intacts.
