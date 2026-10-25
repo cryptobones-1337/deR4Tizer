@@ -9,6 +9,7 @@ use crate::{hygiene, mitre, parefeu};
 use crate::defender::{self, EtatDefender};
 use crate::commun::{self, Alerte, Blocage, Commande, Config, Etat, FluxInfo, Reponse};
 use crate::evenements;
+use crate::mesure;
 use crate::menaces::Menaces;
 use crate::natif::{self, Connexion};
 use crate::persistance::Persistance;
@@ -226,8 +227,18 @@ impl Moniteur {
         {
             let (m, p) = (m.clone(), partage.clone());
             std::thread::Builder::new().name("surveillance".into()).spawn(move || {
+                let mut cycles = 0u64;
                 while !p.arret.load(Ordering::Relaxed) {
-                    m.lock().unwrap().passage();
+                    let t = Instant::now();
+                    let mut g = m.lock().unwrap();
+                    let t = mesure::noter("verrou.attente.surveillance", t);
+                    g.passage();
+                    drop(g);
+                    mesure::noter("verrou.tenu.surveillance (cycle complet)", t);
+                    cycles += 1;
+                    if cycles.is_multiple_of(200) {
+                        mesure::ecrire();
+                    }
                     std::thread::sleep(Duration::from_secs(3));
                 }
             }).unwrap();
@@ -244,6 +255,8 @@ impl Moniteur {
                 let mut tour_pilotes = 0u32;
                 let mut pilotes_signales = HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
+                    // Étape « Defender » : lecture WMI comprise (et ses relectures au démarrage du PC)
+                    let t = Instant::now();
                     let mut etat = defender::etat();
                     // Démarrage du PC : Defender répond « Not running » quelques minutes ; relu toutes les 30 s
                     // (10 min au plus) avant le premier état publié, pour ne pas l'afficher désactivé à tort
@@ -266,13 +279,17 @@ impl Moniteur {
                     *p.defender.lock().unwrap() = etat;
 
                     // Extensions de navigateur toutes les 10 min ; pilotes vulnérables une fois par jour
+                    let t = mesure::noter("controles.defender", t);
                     let (_, alertes_ext) = hygiene::verifier_extensions();
                     p.alertes_externes.lock().unwrap().extend(alertes_ext);
+                    let t = mesure::noter("controles.extensions", t);
                     if tour_pilotes == 0 {
                         let liste = hygiene::liste_loldrivers();
                         let a = hygiene::verifier_pilotes(&liste, &mut pilotes_signales);
                         p.alertes_externes.lock().unwrap().extend(a);
+                        mesure::noter("controles.pilotes", t);
                     }
+                    let t = Instant::now();
                     tour_pilotes = (tour_pilotes + 1) % 144;
 
                     if !p.baseline_occupee.load(Ordering::Relaxed) {
@@ -290,6 +307,7 @@ impl Moniteur {
                         }
                         let _ = commun::ecrire("baseline.json", &b);
                         baseline_avant = Some(b);
+                        mesure::noter("controles.baseline", t);
                     }
                     premier = false;
                     for _ in 0..600 {
@@ -335,9 +353,11 @@ impl Moniteur {
 
     fn passage(&mut self) {
         self.numero_passage += 1;
+        let t = Instant::now();
         let toutes = natif::lister_tcp();
         let liste = natif::processus();
         self.arbre.maj(&liste);
+        let t = mesure::noter("cycle.connexions_et_processus", t);
         let connexions: Vec<Connexion> = toutes.iter().filter(|c| (c.etat == 5 || c.etat == 3) && !est_locale(&c.ip)).cloned().collect();
         let mut groupes: HashMap<(u32, String, u16), Vec<&Connexion>> = HashMap::new();
         for c in &connexions {
@@ -481,6 +501,7 @@ impl Moniteur {
             flux.push(f);
         }
 
+        let t = mesure::noter("cycle.flux", t);
         // Oublie les flux fermés pour que leur réapparition soit considérée comme nouvelle
         self.premieres_vues.retain(|k, _| cles_vues.contains(k));
         self.dernieres_connexions = connexions.clone();
@@ -511,6 +532,7 @@ impl Moniteur {
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
         self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
 
+        let t = mesure::noter("cycle.exposition", t);
         // Leurres anti-rançongiciel : pose reprise toutes les 15 min (nouvelles sessions), leurres déjà suivis gardés
         if self.pose_leurres.is_some_and(|t| t.elapsed() >= Duration::from_secs(900)) {
             self.pose_leurres = Some(Instant::now());
@@ -536,12 +558,15 @@ impl Moniteur {
             }, None);
         }
 
+        let t = mesure::noter("cycle.leurres_et_hosts", t);
         // Modules : vie privée et accès distant à chaque passage, persistance toutes les minutes
         let mut cache = std::mem::take(&mut self.signatures);
         let notre = self.notre_dossier.clone();
         let mut signer = |c: &str| signataire_cache(&mut cache, &notre, c);
         let alertes_surv = self.surveillances.verifier(&toutes, &liste, &mut signer);
+        let t = mesure::noter("cycle.surveillances", t);
         let alertes_pers = if self.numero_passage % 20 == 1 { self.persistance.verifier(&mut signer) } else { Vec::new() };
+        let t = if self.numero_passage % 20 == 1 { mesure::noter("cycle.persistance (1 cycle sur 20)", t) } else { t };
         self.signatures = cache;
         for a in alertes_surv {
             let cle = cle_alerte(&a);
@@ -571,6 +596,7 @@ impl Moniteur {
             let cle = cle_alerte(&a);
             alertes_modifiees |= self.ajouter_alerte_brute(a, Some(cle));
         }
+        let t = mesure::noter("cycle.reponses_et_detections", t);
         // Chaînes de processus : score cumulé, alerte au-delà du seuil
         self.chaines = self.arbre.chaines();
         for a in self.arbre.alertes(&self.chaines) {
@@ -580,6 +606,7 @@ impl Moniteur {
             self.processus.nettoyer();
         }
 
+        let t = mesure::noter("cycle.chaines", t);
         if alertes_modifiees {
             if self.alertes.len() > 1000 {
                 let surplus = self.alertes.len() - 1000;
@@ -636,6 +663,7 @@ impl Moniteur {
             let _ = commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
             self.derniere_sauvegarde_dns = Instant::now();
         }
+        mesure::noter("cycle.ecritures", t);
         self.premier_passage = false;
     }
 
@@ -710,7 +738,15 @@ impl Moniteur {
     // ------------------------------------------------------------ commandes de l'interface
 
     pub fn executer(&mut self, c: Commande, partage: &Arc<Partage>) -> Reponse {
+        let debut = Instant::now();
         let action = c.action.clone().unwrap_or_default();
+        let r = self.executer_action(c, partage, &action);
+        mesure::duree(&format!("commande.{}", action.chars().filter(|x| x.is_ascii_alphanumeric()).take(32).collect::<String>()), debut.elapsed());
+        r
+    }
+
+    fn executer_action(&mut self, c: Commande, partage: &Arc<Partage>, action: &str) -> Reponse {
+        let action = action.to_string();
         commun::journal(&format!("commande : {action} {}", c.nom_dns.as_deref().or(c.ip.as_deref()).or(c.cible.as_deref()).unwrap_or("")));
         let raison = c.raison.clone().unwrap_or_default();
         match action.as_str() {

@@ -28,6 +28,7 @@ mod gpo;
 mod hygiene;
 mod mitre;
 mod menaces;
+mod mesure;
 mod moniteur;
 mod natif;
 mod parefeu;

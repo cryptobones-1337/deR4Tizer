@@ -136,6 +136,7 @@ pub fn supprimer_regle(ip: &str) -> usize {
 
 /// Supprime toutes les règles du groupe deR4Tizer (désinstallation, ou règles orphelines)
 pub fn supprimer_groupe() -> bool {
+    crate::mesure::powershell("blocage");
     Command::new("powershell.exe")
         .args(["-NoProfile", "-Command", &format!("Get-NetFirewallRule -Group '{GROUPE}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule")])
         .creation_flags(0x0800_0000)

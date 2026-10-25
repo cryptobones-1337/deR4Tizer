@@ -395,6 +395,7 @@ pub const PS_PID_SERVEUR: &str = "Add-Type -Namespace D4T -Name Tube -MemberDefi
 /// (constaté en Windows Sandbox, scénario 3c : aucune mise à jour ni aucun retour arrière n'avait lieu). Le processus
 /// n'est dans aucun objet tâche du service : il survit à l'arrêt du service par msiexec.
 pub fn commande_script(script: &str) -> Command {
+    crate::mesure::powershell("maj");
     let mut c = Command::new("powershell.exe");
     c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         // Un PSModulePath hérité de PowerShell 7 fait charger à Windows PowerShell des modules incompatibles

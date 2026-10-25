@@ -139,6 +139,7 @@ fn autoriser_capture() {
          New-NetFirewallRule -Name 'deR4Tizer-capture' -DisplayName 'deR4Tizer capture' -Group '{}' -Direction Inbound \
          -Program '{}' -Action Allow -Protocol Any | Out-Null }}",
         crate::blocage::GROUPE, exe.to_string_lossy().replace('\'', "''"));
+    crate::mesure::powershell("capture");
     let _ = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(0x0800_0000)
