@@ -1,4 +1,4 @@
-﻿//! Types et fichiers partagés avec l'interface C# (deR4Tizer.exe) : mêmes noms de champs JSON
+//! Types et fichiers partagés avec l'interface C# (deR4Tizer.exe) : mêmes noms de champs JSON
 //! (PascalCase), mêmes fichiers dans C:\ProgramData\deR4Tizer.
 
 use serde::de::DeserializeOwned;
@@ -179,6 +179,32 @@ pub struct Config {
     pub notifications: ConfigNotifications,
     #[serde(deserialize_with = "nul_par_defaut")]
     pub maj: ConfigMaj,
+}
+
+/// Clé d'une commande reçue qui diffère d'une clé connue par la seule casse (« langue » à côté de « Langue ») :
+/// l'interface (.NET, clés lues sans tenir compte de la casse) en afficherait la valeur à la confirmation, alors que le
+/// service (serde, sensible à la casse) l'ignorerait et appliquerait l'autre (audit AUD6-03). `modele` : la valeur par
+/// défaut sérialisée, qui donne les clés connues à chaque niveau. Une clé inconnue sans homonyme reste ignorée des deux
+/// côtés, comme avant.
+pub fn cle_ambigue(texte: &str, modele: &serde_json::Value) -> Option<String> {
+    fn chercher(v: &serde_json::Value, m: &serde_json::Value, chemin: &str) -> Option<String> {
+        let (serde_json::Value::Object(v), serde_json::Value::Object(m)) = (v, m) else { return None };
+        for (k, sous) in v {
+            let nom = if chemin.is_empty() { k.clone() } else { format!("{chemin}.{k}") };
+            match m.get(k) {
+                Some(sm) => {
+                    if let Some(c) = chercher(sous, sm, &nom) {
+                        return Some(c);
+                    }
+                }
+                None if m.keys().any(|c| c.eq_ignore_ascii_case(k)) => return Some(nom),
+                None => {}
+            }
+        }
+        None
+    }
+    let v: serde_json::Value = serde_json::from_str(texte).ok()?;
+    chercher(&v, modele, "")
 }
 
 impl Default for Config {

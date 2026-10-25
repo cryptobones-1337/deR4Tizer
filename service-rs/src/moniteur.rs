@@ -792,6 +792,9 @@ impl Moniteur {
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
             "reglages" => {
+                if let Some(k) = c.valeur.as_deref().and_then(|v| commun::cle_ambigue(v, &serde_json::to_value(Config::default()).unwrap_or_default())) {
+                    return Reponse::erreur(&format!("réglages refusés : clé « {} » ambiguë (casse)", commun::ligne_de_journal(&k)));
+                }
                 let Some(n) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Config>(v).ok()) else {
                     return Reponse::erreur("réglages illisibles");
                 };
@@ -837,6 +840,14 @@ impl Moniteur {
                     config: Option<commun::ConfigNotifications>,
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
+                }
+                // Clés connues : « Config » et les secrets, à plat (AUD6-03)
+                let mut modele = serde_json::to_value(crate::notifications::Secrets::default()).unwrap_or_default();
+                if let Some(o) = modele.as_object_mut() {
+                    o.insert("Config".into(), serde_json::to_value(commun::ConfigNotifications::default()).unwrap_or_default());
+                }
+                if let Some(k) = c.valeur.as_deref().and_then(|v| commun::cle_ambigue(v, &modele)) {
+                    return Reponse::erreur(&format!("réglages des notifications refusés : clé « {} » ambiguë (casse)", commun::ligne_de_journal(&k)));
                 }
                 let Some(mut d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
                     return Reponse::erreur("réglages des notifications illisibles");

@@ -720,6 +720,22 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
+/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
+/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
+/// passe
+#[test]
+fn audit_reglages_cle_ambigue_refusee() {
+    use crate::commun::{cle_ambigue, Config};
+    let modele = serde_json::to_value(Config::default()).unwrap();
+    assert_eq!(cle_ambigue(r#"{"Langue":"fr","langue":"en"}"#, &modele).as_deref(), Some("langue"));
+    assert_eq!(cle_ambigue(r#"{"Api":{"Actif":true,"port":80,"Port":8642}}"#, &modele).as_deref(), Some("Api.port"));
+    assert_eq!(cle_ambigue(r#"{"SYSLOG":{"Actif":true}}"#, &modele).as_deref(), Some("SYSLOG"));
+    assert_eq!(cle_ambigue(r#"{"Langue":"fr","Api":{"Actif":false,"Port":8642},"Inconnue":1}"#, &modele), None);
+    assert_eq!(cle_ambigue(&serde_json::to_string(&Config::default()).unwrap(), &modele), None);
+    assert_eq!(cle_ambigue("pas du json", &modele), None, "illisible : refusé ailleurs (réglages illisibles)");
+    crate::tests::torturer_texte(r#"{"Langue":"fr","Api":{"Port":8642}}"#, &mut |t| { let _ = cle_ambigue(t, &modele); });
+}
+
 #[test]
 fn fonctions_texte_sans_panique() {
     torturer_texte("a%20b+c%3A%C3%A9", &mut |t| { let _ = crate::api::decoder_test(t); });

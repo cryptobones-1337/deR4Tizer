@@ -173,8 +173,9 @@ namespace DeR4Tizer
                 case "reglages":
                     {
                         var r = Commun.Json().Deserialize<Config>(v) ?? new Config();
-                        string api = r.Api != null && r.Api.Actif ? (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
-                        string sys = r.Syslog != null && r.Syslog.Actif ? r.Syslog.Hote + ":" + r.Syslog.Port : (en ? "off" : "désactivé");
+                        // Tout ce qui est appliqué est affiché, port de l'API et protocole syslog compris (audit AUD6-04)
+                        string api = r.Api != null && r.Api.Actif ? "port " + r.Api.Port + ", " + (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
+                        string sys = r.Syslog != null && r.Syslog.Actif ? r.Syslog.Hote + ":" + r.Syslog.Port + " (" + r.Syslog.Protocole + ", " + r.Syslog.Format + ", minimum " + r.Syslog.NiveauMin + ")" : (en ? "off" : "désactivé");
                         return (en ? "Change settings — language: " : "Modifier les réglages — langue : ") + r.Langue + " · syslog : " + sys + " · API : " + api;
                     }
                 case "testerSyslog": return en ? "Send a syslog test message" : "Envoyer un message syslog de test";
