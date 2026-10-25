@@ -181,6 +181,96 @@ pub struct Config {
     pub maj: ConfigMaj,
 }
 
+/// Clé d'une commande reçue qui diffère d'une clé connue par la seule casse (« langue » à côté de « Langue ») :
+/// l'interface (.NET, clés lues sans tenir compte de la casse) en afficherait la valeur à la confirmation, alors que le
+/// service (serde, sensible à la casse) l'ignorerait et appliquerait l'autre (audit AUD6-03). `modele` : la valeur par
+/// défaut sérialisée, qui donne les clés connues à chaque niveau. Une clé inconnue sans homonyme reste ignorée des deux
+/// côtés, comme avant.
+/// Texte illisible comme valeur JSON : refusé (Some), jamais laissé passer : serde_json peut lire comme Config un texte
+/// qu'il refuse comme valeur (surrogat isolé ou nombre hors plage dans un champ ignoré : audit de sécurité S58-01).
+pub fn cle_ambigue(texte: &str, modele: &serde_json::Value) -> Option<String> {
+    fn chercher(v: &serde_json::Value, m: &serde_json::Value, chemin: &str) -> Option<String> {
+        let (serde_json::Value::Object(v), serde_json::Value::Object(m)) = (v, m) else { return None };
+        for (k, sous) in v {
+            let nom = if chemin.is_empty() { k.clone() } else { format!("{chemin}.{k}") };
+            match m.get(k) {
+                Some(sm) => {
+                    if let Some(c) = chercher(sous, sm, &nom) {
+                        return Some(c);
+                    }
+                }
+                None if m.keys().any(|c| c.eq_ignore_ascii_case(k)) => return Some(nom),
+                None => {}
+            }
+        }
+        None
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(texte) else { return Some("(texte illisible)".into()) };
+    chercher(&v, modele, "")
+}
+
+/// Message de refus : texte illisible, ou clé ambiguë par la casse (nommée)
+pub fn raison_refus(prefixe: &str, k: &str) -> String {
+    if k == "(texte illisible)" { format!("{prefixe} : texte illisible") } else { format!("{prefixe} : clé « {} » ambiguë (casse)", ligne_de_journal(k)) }
+}
+
+/// Lecture complète d'une commande « reglages » (décision pure, testée) : texte illisible ou clé ambiguë refusés
+/// (AUD6-03, S58-01), puis lecture, puis champs texte en listes fermées (S58-02). Seul chemin du service pour cette
+/// commande.
+pub fn lire_reglages(texte: &str) -> Result<Config, String> {
+    if let Some(k) = cle_ambigue(texte, &serde_json::to_value(Config::default()).unwrap_or_default()) {
+        return Err(raison_refus("réglages refusés", &k));
+    }
+    let n: Config = serde_json::from_str(texte).map_err(|_| "réglages illisibles".to_string())?;
+    match reglages_invalides(&n) {
+        Some(r) => Err(format!("réglages refusés : {r}")),
+        None => Ok(n),
+    }
+}
+
+/// Lecture d'une commande « testerSyslog » (décision pure, testée) : mêmes contrôles que les réglages
+pub fn lire_syslog_test(texte: &str) -> Result<ConfigSyslog, String> {
+    if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigSyslog::default()).unwrap_or_default()) {
+        return Err(raison_refus("test refusé", &k));
+    }
+    let s: ConfigSyslog = serde_json::from_str(texte).map_err(|_| "réglages syslog illisibles".to_string())?;
+    match reglages_invalides(&Config { syslog: s.clone(), langue: "fr".into(), ..Config::default() }) {
+        Some(r) => Err(format!("test refusé : {r}")),
+        None => Ok(s),
+    }
+}
+
+/// Raison de refuser des réglages reçus : champs texte en listes fermées (langue, protocole, format, niveau) et hôte
+/// syslog en lettres, chiffres, « . », « - » et « : » (nom, IPv4 ou IPv6), même désactivé (il reste en configuration).
+/// Avant, ces champs étaient affichés bruts à la confirmation en administrateur : un texte long ou inversé pouvait en
+/// cacher le vrai contenu (audit de sécurité S58-02).
+pub fn reglages_invalides(n: &Config) -> Option<String> {
+    if !["fr", "en"].contains(&n.langue.as_str()) {
+        return Some("langue inconnue".into());
+    }
+    let s = &n.syslog;
+    if !["UDP", "TCP"].contains(&s.protocole.as_str()) || !["JSON", "CEF"].contains(&s.format.as_str())
+        || !["Info", "Alerte", "Critique"].contains(&s.niveau_min.as_str()) {
+        return Some("protocole, format ou niveau syslog inconnu".into());
+    }
+    // « : » seulement dans une adresse IPv6 valide : « 10.0.0.5:25 » s'affichait « 10.0.0.5:25:514 » (S58-07)
+    if s.hote.len() > 253 || !s.hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':')
+        || (s.hote.contains(':') && s.hote.parse::<std::net::Ipv6Addr>().is_err()) {
+        return Some("serveur syslog : seulement un nom ou une adresse".into());
+    }
+    // Adresses autorisées de l'API (S58-06) : chiffres, « . », « / », « , », « ; » et espaces simples, longueur bornée
+    // (un remplissage d'espaces cachait à la confirmation un réseau ouvert au pare-feu)
+    let a = &n.api.adresses;
+    if a.len() > 1000 || !a.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'/' | b',' | b';' | b' ')) || a.contains("   ") {
+        return Some("adresses autorisées de l'API : adresses IPv4 ou réseaux, séparés par des virgules".into());
+    }
+    // 16 au plus (S60-03), affichées une par ligne à la confirmation
+    if a.split([',', ';', ' ']).filter(|x| !x.is_empty()).count() > 16 {
+        return Some("adresses autorisées de l'API : 16 au plus".into());
+    }
+    None
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
