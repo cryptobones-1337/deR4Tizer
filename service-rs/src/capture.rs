@@ -140,7 +140,7 @@ fn autoriser_capture() {
          -Program '{}' -Action Allow -Protocol Any | Out-Null }}",
         crate::blocage::GROUPE, exe.to_string_lossy().replace('\'', "''"));
     crate::mesure::powershell("capture");
-    let _ = std::process::Command::new("powershell.exe")
+    let _ = std::process::Command::new(crate::natif::powershell_exe())
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(0x0800_0000)
         .output();

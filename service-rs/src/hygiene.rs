@@ -321,7 +321,7 @@ pub fn liste_loldrivers() -> HashSet<String> {
     if !recent {
         let _ = fs::create_dir_all(commun::dossier().join("menaces"));
         let _ = Command::new("curl.exe")
-            .args(["-sSL", "--fail", "--max-time", "300", "-o"])
+            .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600", "--max-time", "300", "-o"])
             .arg(f.with_extension("tmp"))
             .arg("https://www.loldrivers.io/api/drivers.json")
             .creation_flags(0x0800_0000)

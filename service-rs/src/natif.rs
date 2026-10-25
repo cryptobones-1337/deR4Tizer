@@ -380,6 +380,13 @@ pub fn dossier_systeme() -> String {
     format!(r"{}\System32", dossier_windows())
 }
 
+/// Chemin absolu de Windows PowerShell : powershell.exe n'est pas directement dans System32, un nom nu était donc
+/// cherché dans le PATH par le service (SYSTEM) ; un dossier du PATH machine modifiable par un compte standard aurait
+/// suffi à faire exécuter un faux PowerShell en SYSTEM (audit AUD2-02)
+pub fn powershell_exe() -> String {
+    format!(r"{}\WindowsPowerShell\v1.0\powershell.exe", dossier_systeme())
+}
+
 // ------------------------------------------------------------ catalogues de sécurité et processus
 
 /// Fichier signé par un catalogue de sécurité installé (signature de Windows et des pilotes, rangée dans

@@ -295,6 +295,26 @@ fn api_adresses_autorisees() {
     assert_eq!(crate::api::decoder_test("a%20b+c%3A%"), "a b c:%");
 }
 
+/// Audit SEC-009 (AUD3-01) et SEC-007 (AUD3-04) : seule la partie avant « / » était vérifiée, la suite allait telle
+/// quelle dans un script PowerShell exécuté en SYSTEM ; un réseau IPv6 ouvrait le pare-feu sans être jamais reconnu
+#[test]
+fn audit_api_adresses_autorisees_strictes() {
+    use crate::api::{adresse_autorisee_valide as valide, adresses_invalides, liste_powershell};
+    for a in ["10.0.0.1", "192.168.1.0/24", "10.0.0.0/8", "203.0.113.7/32"] {
+        assert!(valide(a), "{a}");
+    }
+    for a in ["10.0.0.1/$(New-Item C:\\x)", "10.0.0.1/x|Out-Null", "10.0.0.1/8;calc", "10.0.0.1/24`n", "fd00::/64", "2001:db8::1",
+              "10.0.0.1/7", "10.0.0.1/33", "10.0.0.1/0", "10.0.0.1/", "10.0.0.1/+24", "10.0.0.1/024", "exemple.test"] {
+        assert!(!valide(a), "{a} : refusé");
+    }
+    assert_eq!(adresses_invalides("10.0.0.1, 10.0.0.1/x|Out-Null ; fd00::/64"), vec!["10.0.0.1/x|Out-Null", "fd00::/64"]);
+    assert!(adresses_invalides("10.0.0.1;192.168.1.0/24").is_empty());
+    // Script : chaînes entre apostrophes, jamais de texte libre ; liste vide : rien n'est ouvert
+    assert_eq!(liste_powershell(&["10.0.0.1".into(), "192.168.1.0/24".into()]), "@('10.0.0.1','192.168.1.0/24')");
+    assert_eq!(liste_powershell(&["10.0.0.1/$(x)".into()]), "'127.0.0.1'");
+    assert_eq!(liste_powershell(&[]), "'127.0.0.1'");
+}
+
 #[test]
 fn reglages_de_l_interface_avec_blocs_nuls() {
     // Ce qu'envoie l'interface tant que config.json n'existe pas (première installation) : blocs non créés,
@@ -316,6 +336,43 @@ fn horodatage_et_base64() {
     assert_eq!(crate::export::horodatage_utc(t), "2026-10-26T07:00:00.000Z");
     assert_eq!(crate::notifications::base64_test(b"Ma"), "TWE=");
     assert_eq!(crate::notifications::base64_test("é".as_bytes()), "w6k=");
+}
+
+/// Audit AUD2-02 : powershell.exe n'est pas dans System32 même, un nom nu était cherché dans le PATH par SYSTEM.
+/// Chemin absolu, et aucun module du service ne lance plus « powershell.exe » par son seul nom.
+#[test]
+fn audit_powershell_par_chemin_absolu() {
+    let p = crate::natif::powershell_exe();
+    assert!(std::path::Path::new(&p).is_absolute() && p.to_lowercase().ends_with(r"\system32\windowspowershell\v1.0\powershell.exe"), "{p}");
+    assert!(std::path::Path::new(&p).is_file(), "{p} introuvable");
+    let nus = [concat!("Command::new(", "\"powershell.exe\")"), concat!("Command::new(", "\"powershell\")")];
+    for (nom, source) in [("api", include_str!("api.rs")), ("baseline", include_str!("baseline.rs")), ("blocage", include_str!("blocage.rs")),
+                          ("capture", include_str!("capture.rs")), ("maj", include_str!("maj.rs")), ("parefeu", include_str!("parefeu.rs")),
+                          ("protection", include_str!("protection.rs")), ("reponse", include_str!("reponse.rs")), ("moniteur", include_str!("moniteur.rs")),
+                          ("hygiene", include_str!("hygiene.rs")), ("natif", include_str!("natif.rs")), ("gpo", include_str!("gpo.rs"))] {
+        assert!(!nus.iter().any(|nu| source.contains(nu)), "{nom}.rs lance encore powershell.exe par son seul nom");
+    }
+    // msiexec du script de mise à jour (SYSTEM) : par son chemin absolu, jamais cherché dans le PATH
+    assert!(!include_str!("maj.rs").contains(concat!("Start-Process ", "msiexec")), "msiexec cherché dans le PATH");
+    // curl : -q en premier argument partout (aucun .curlrc lu ; -q n'agit qu'en premier)
+    let appel = concat!("Command::new(", "\"curl.exe\")");
+    for (nom, source) in [("menaces", include_str!("menaces.rs")), ("maj", include_str!("maj.rs")), ("notifications", include_str!("notifications.rs")),
+                          ("dpi", include_str!("dpi.rs")), ("geoip", include_str!("geoip.rs")), ("hygiene", include_str!("hygiene.rs"))] {
+        for (i, _) in source.match_indices(appel) {
+            let suite: String = source[i + appel.len()..].chars().filter(|c| !c.is_whitespace()).take(20).collect();
+            assert!(suite.starts_with(".args([\"-q\"") || suite.starts_with(".arg(\"-q\")"), "{nom}.rs : curl sans -q en premier ({suite})");
+        }
+    }
+}
+
+/// Audit AUD4-05 : un nom DNS, NBNS ou UPnP, une ligne de commande contenant une fin de ligne ajoutaient de fausses
+/// lignes horodatées au journal du service
+#[test]
+fn audit_journal_une_seule_ligne_par_message() {
+    let l = crate::commun::ligne_de_journal("nom a\r\n2026-10-25 10:00:00  faux\u{2028}suite\u{0}\tfin");
+    assert!(!l.chars().any(|c| c.is_control() || c == '\u{2028}' || c == '\u{2029}'), "{l:?}");
+    assert!(l.contains("2026-10-25 10:00:00  faux") && l.starts_with("nom a"));
+    assert_eq!(crate::commun::ligne_de_journal("é ordinaire"), "é ordinaire");
 }
 
 #[test]
@@ -375,6 +432,24 @@ fn alerte(niveau: &str, destination: &str, raisons: &str, score: i32) -> crate::
     }
 }
 
+/// Audit AUD5-01 : la protection des processus critiques se contentait du nom et d'un chemin qui COMMENÇAIT par le
+/// dossier Windows : une copie de powershell.exe nommée explorer.exe dans C:\Windows\Tasks (où tout compte peut écrire)
+/// échappait à la suspension d'un rançongiciel. Chemin exact maintenant.
+#[test]
+fn audit_processus_critiques_par_chemin_exact() {
+    use crate::reponse::chemin_critique as critique;
+    let w = r"C:\Windows";
+    for c in [r"C:\Windows\System32\svchost.exe", r"C:\WINDOWS\system32\LSASS.EXE", r"C:\Windows\explorer.exe", r"C:\Windows\System32\csrss.exe"] {
+        assert!(critique(c, w), "{c}");
+    }
+    for c in [r"C:\Windows\Tasks\explorer.exe", r"C:\Windows\Temp\svchost.exe", r"C:\Windows\System32\spool\drivers\color\svchost.exe",
+              r"C:\WindowsX\explorer.exe", r"C:\Windows\System32\..\Tasks\svchost.exe", r"D:\Windows\explorer.exe", r"C:\Users\x\explorer.exe",
+              r"C:\Windows\System32\notepad.exe", r"C:\Windows\SysWOW64\explorer.exe"] {
+        assert!(!critique(c, w), "{c} : pas un processus critique");
+    }
+    assert!(critique(r"C:\Windows\explorer.exe", r"C:\Windows\"), "dossier Windows avec barre finale");
+}
+
 #[test]
 fn b1_leurre_touche_par_rundll32_suspendu() {
     // rundll32 : binaire Windows, mais ni logiciel connu ni processus critique → suspendu
@@ -404,6 +479,69 @@ fn b3_vraie_alerte_visible_parmi_300_usurpations() {
     assert!(t.contains("USURPATION ARP"), "l'alerte unique doit apparaître");
     assert!(t.contains("300 × serveur DHCP"), "les 300 usurpations doivent tenir sur une ligne : {t}");
     assert!(t.find("USURPATION ARP").unwrap() < t.find("300 ×").unwrap(), "l'alerte unique d'abord");
+}
+
+/// Audit AUD6-02 et AUD3-07 : un serveur SMTP changé sans nouveau mot de passe recevait l'ancien (le dialogue de
+/// confirmation ne montrait pas le serveur) ; une fin de ligne dans l'expéditeur ou les destinataires ajoutait des
+/// en-têtes au message
+#[test]
+fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
+    use crate::commun::ConfigNotifications;
+    use crate::notifications::{preparer, Secrets};
+    let actuelle = ConfigNotifications { smtp_serveur: "smtp.exemple.test".into(), smtp_utilisateur: "alertes".into(), ..Default::default() };
+    let actuels = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() };
+    let essai = |nouvelle: &ConfigNotifications, s: Secrets| { let mut s = s; preparer(&actuelle, nouvelle, &actuels, &mut s).map(|_| s) };
+    // Même serveur, même compte, sans nouveau mot de passe : l'ancien est gardé
+    assert_eq!(essai(&actuelle, Secrets::default()).unwrap().smtp_mot_de_passe, "");
+    // Serveur, port ou compte changé sans nouveau mot de passe : l'ancien est effacé
+    for n in [
+        ConfigNotifications { smtp_serveur: "smtp.attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { smtp_port: 2525, ..actuelle.clone() },
+        ConfigNotifications { smtp_utilisateur: "autre".into(), ..actuelle.clone() },
+    ] {
+        assert_eq!(essai(&n, Secrets::default()).unwrap().smtp_mot_de_passe, "-", "{}:{} {}", n.smtp_serveur, n.smtp_port, n.smtp_utilisateur);
+    }
+    // Sécurité SMTP changée (TLS vers « aucune ») sans nouveau mot de passe : effacé (il partirait en clair)
+    assert_eq!(essai(&ConfigNotifications { smtp_securite: "aucune".into(), ..actuelle.clone() }, Secrets::default()).unwrap().smtp_mot_de_passe, "-");
+    // Nouveau mot de passe fourni avec le nouveau serveur : gardé
+    let n = ConfigNotifications { smtp_serveur: "smtp2.exemple.test".into(), ..actuelle.clone() };
+    assert_eq!(essai(&n, Secrets { smtp_mot_de_passe: "nouveau".into(), ..Default::default() }).unwrap().smtp_mot_de_passe, "nouveau");
+    // Adresse ntfy changée sans nouveau jeton : jeton effacé ; même adresse : gardé
+    assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.attaquant.test/b".into(), ..Default::default() }).unwrap().ntfy_jeton, "-");
+    assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() }).unwrap().ntfy_jeton, "");
+    // Adresses ntfy et Teams : homoglyphes, espaces et caractères invisibles refusés ; adresse ordinaire acceptée
+    for u in ["https://ntfy.\u{0455}h/sujet", "https://ntfy.sh/a b", "https://ntfy.sh/a\u{200B}", "https://ntfy.sh/a\r\nX: y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    assert!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.sh/mon-sujet".into(), ..Default::default() }).is_ok());
+    // Forme de l'adresse : compte, barre oblique inverse, autre schéma refusés ; port accepté ; « - » efface
+    for u in [r"https://ntfy.sh\@evil.test/sujet", "https://ntfy.sh@evil.test/sujet", "http://ntfy.sh/sujet", "https://:443/x", "https://ntfy.sh:44a/x", "ftp://x/y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    for u in ["https://ntfy.exemple.test:8443/a", "https://prod-01.westeurope.logic.azure.com/workflows/x?api-version=1", "-"] {
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_ok(), "{u:?}");
+    }
+    // Caractères de contrôle : refus (en-têtes ajoutés)
+    for n in [
+        ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { destinataires: "b@exemple.test\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { smtp_serveur: "smtp.exemple.test\0".into(), ..actuelle.clone() },
+        ConfigNotifications { expediteur: "a@exemple.test\u{202E}tset.tnaquatta".into(), ..actuelle.clone() },
+        ConfigNotifications { destinataires: "b@exemple\u{200B}.test".into(), ..actuelle.clone() },
+    ] {
+        assert!(essai(&n, Secrets::default()).is_err());
+    }
+}
+
+/// Audit AUD3-06 : CEF n'échappait que les fins de ligne ; NUL, ESC et tabulations passaient vers le SIEM
+#[test]
+fn audit_cef_sans_caractere_de_controle() {
+    let mut a = alerte("Alerte", "dest\u{1b}[31m\u{0}x", "raison\twith\u{7}bell", 5);
+    a.processus = "p\u{0}r\u{1b}oc".into();
+    let ligne = crate::export::cef(&a);
+    assert!(!ligne.chars().any(char::is_control), "{ligne:?}");
 }
 
 #[test]
@@ -478,6 +616,89 @@ fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
     }
 }
 
+/// Audit AUD4-04 : un appareil du réseau local qui répond à la découverte UPnP octet par octet bloquait le fil NDR
+/// (délai par lecture seulement). Échéance globale de la réponse.
+#[test]
+fn audit_upnp_reponse_goutte_a_goutte_bornee() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            for _ in 0..40 {
+                if c.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    });
+    let debut = Instant::now();
+    let r = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_secs(4), "réponse goutte à goutte : {:?}", debut.elapsed());
+    assert!(r.is_none(), "réponse incomplète à l'échéance : abandonnée");
+    let _ = serveur.join();
+    // Réponse qui finit juste avant l'échéance puis se tait : la dernière lecture ne dépasse pas l'échéance
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            std::thread::sleep(Duration::from_secs(6));
+        }
+    });
+    let debut = Instant::now();
+    let _ = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_millis(2800), "échéance dépassée par la dernière lecture : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    // Échéance nulle (passage UPnP épuisé) : rien n'est tenté
+    let debut = Instant::now();
+    assert!(crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\n\r\n", Duration::ZERO).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
+    assert!(crate::upnp::ECHEANCE_PASSAGE <= Duration::from_secs(30));
+    // Échéance du passage UPnP entier (relecture de #55, D2) : une requête du passage n'attend jamais au-delà de la fin
+    // du passage, même si l'échéance d'une réponse (10 s) est plus loin ; fin dépassée : rien n'est tenté
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((c, _)) = ecoute.accept() {
+            std::thread::sleep(Duration::from_secs(4));
+            drop(c);
+        }
+    });
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now() + Duration::from_millis(500)).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(1500), "fin du passage ignorée : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now()).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
+}
+
+/// Audit AUD4-02, AUD4-03 : tables de déduplication alimentées par des adresses du réseau, jamais purgées
+#[test]
+fn audit_tables_de_deduplication_bornees() {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    let mut m: HashMap<u32, Instant> = HashMap::new();
+    let maintenant = Instant::now();
+    for i in 0..100u32 {
+        m.insert(i, maintenant.checked_sub(Duration::from_secs(u64::from(i) * 60)).unwrap_or(maintenant));
+    }
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(30 * 60 + 30), 1000);
+    assert_eq!(m.len(), 31, "entrées de plus de 30 min retirées");
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(86400), 10);
+    assert_eq!(m.len(), 10, "au-delà du maximum, les plus anciennes retirées");
+    assert!(m.contains_key(&0) && !m.contains_key(&30), "les plus récentes gardées");
+}
+
 #[test]
 fn n1_upnp_sans_panique_sur_utf8_coupe() {
     // Cas reproduit par la revue : bloc de 2 octets invalides en UTF-8
@@ -493,6 +714,10 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     });
     assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
     assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
+    // Chemin avec retour à la ligne ou espace (en-têtes ajoutés à la requête) : refusé
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/d.xml\r\nX-Injecte: 1").is_none());
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/a b").is_none());
+    assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
 #[test]
@@ -501,6 +726,15 @@ fn fonctions_texte_sans_panique() {
     torturer_texte(r#"alert tcp any any -> any any (msg:"é"; content:"|41|é"; sid:9;)"#, &mut |t| { let _ = crate::ids::lire_texte_test(t); });
     torturer_texte(r"C:\Users\marie\AppData\x.exe", &mut |t| { let _ = crate::commun::masquer_chemin(t); });
     torturer_texte("Brave Software, Inc.", &mut |t| { let _ = crate::moniteur::ip_directe_normale(t); });
+    torturer_texte("192.168.1.0/24", &mut |t| { let _ = crate::api::adresse_autorisee_valide(t); let _ = crate::api::adresses_invalides(t); });
+    torturer_texte(r"C:\Windows\System32\svchost.exe", &mut |t| { let _ = crate::reponse::chemin_critique(t, r"C:\Windows"); let _ = crate::reponse::chemin_critique(r"C:\Windows\explorer.exe", t); });
+    torturer_texte("# u\r\n# >>> deR4Tizer (bloc gere par le service, ne pas modifier a la main)\r\n127.0.0.1\ta.test\r\n# <<< deR4Tizer\r\n", &mut |t| {
+        let d = ["b.test".to_string()];
+        if let Ok(un) = crate::blocage::nouveau_contenu(t.as_bytes(), &d) {
+            // Idempotence sur toute entrée : réécrire avec les mêmes domaines ne change rien
+            assert_eq!(crate::blocage::nouveau_contenu(&un, &d).unwrap(), un, "{t:?}");
+        }
+    });
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
@@ -2063,6 +2297,68 @@ fn phase1_champs_invalides_refuses() {
 fn phase1_fichier_hosts_sans_injection() {
     let noms = vec!["Exemple.Test.".to_string(), "a.test\r\n203.0.113.9 banque.test".to_string(), "évil.test".to_string(), "b.test".to_string()];
     assert_eq!(crate::blocage::lignes_du_bloc(&noms), vec!["exemple.test", "b.test"], "noms invalides écartés, valides en minuscules");
+}
+
+/// Audit SEC-005, SEC-006, AUD5-05, AUD5-06 : le fichier hosts était entièrement décodé et filtré en ASCII (lignes
+/// de l'utilisateur altérées), un début de bloc sans fin faisait perdre la suite, et l'écriture n'était pas atomique.
+/// Les lignes hors du bloc sont maintenant recopiées octet pour octet.
+#[test]
+fn audit_fichier_hosts_lignes_de_l_utilisateur_intactes() {
+    use crate::blocage::{nouveau_contenu, DEBUT_BLOC, FIN_BLOC};
+    let d = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let utilisateur = "# serveur du café, étage 2\r\n192.168.1.20\tnas.local\r\n".as_bytes();
+    // Sans bloc ni domaine : contenu identique, octet pour octet (y compris sans fin de ligne finale)
+    assert_eq!(nouveau_contenu(utilisateur, &[]).unwrap(), utilisateur);
+    assert_eq!(nouveau_contenu(b"10.0.0.1 a", &[]).unwrap(), b"10.0.0.1 a");
+    // Bloc ajouté : lignes de l'utilisateur intactes devant
+    let n = nouveau_contenu(utilisateur, &d(&["Exemple.Test"])).unwrap();
+    assert!(n.starts_with(utilisateur));
+    assert_eq!(&n[utilisateur.len()..], format!("{DEBUT_BLOC}\r\n127.0.0.1\texemple.test\r\n{FIN_BLOC}\r\n").as_bytes());
+    // Bloc existant remplacé, lignes avant et après gardées telles quelles
+    let avec = [utilisateur, format!("{DEBUT_BLOC}\r\n127.0.0.1\tancien.test\r\n{FIN_BLOC}\r\n").as_bytes(), "# après, déjà là\r\n".as_bytes()].concat();
+    let n = nouveau_contenu(&avec, &d(&["b.test"])).unwrap();
+    let t = String::from_utf8(n).unwrap();
+    assert!(t.starts_with("# serveur du café, étage 2\r\n192.168.1.20\tnas.local\r\n# après, déjà là\r\n"), "{t:?}");
+    assert!(t.contains("127.0.0.1\tb.test") && !t.contains("ancien.test"));
+    // Bloc retiré quand il n'y a plus de domaine
+    assert_eq!(nouveau_contenu(&avec, &[]).unwrap(), [utilisateur, "# après, déjà là\r\n".as_bytes()].concat());
+    // Faux début de bloc sans fin : ligne de l'utilisateur, rien n'est perdu après
+    let faux = [utilisateur, format!("{DEBUT_BLOC}\r\n10.6.6.6 banque.test\r\n").as_bytes()].concat();
+    let n = nouveau_contenu(&faux, &d(&["c.test"])).unwrap();
+    assert!(n.starts_with(&faux), "le faux début de bloc et la ligne suivante sont gardés");
+    // Écritures successives (relecture de #54) : faux début AVANT le vrai bloc ; la seconde écriture ne doit rien
+    // perdre de l'utilisateur, et une écriture répétée avec les mêmes domaines ne change rien (idempotence)
+    let faux_avant = format!("# u\r\n{DEBUT_BLOC}\r\n10.0.0.9 nas.test\r\n# ligne de l'utilisateur\r\n").into_bytes();
+    let un = nouveau_contenu(&faux_avant, &d(&["c.test"])).unwrap();
+    assert!(un.starts_with(&faux_avant));
+    let deux = nouveau_contenu(&un, &d(&["d.test"])).unwrap();
+    let t = String::from_utf8(deux.clone()).unwrap();
+    assert!(t.starts_with(std::str::from_utf8(&faux_avant).unwrap()), "seconde écriture : lignes de l'utilisateur perdues : {t:?}");
+    assert!(t.contains("127.0.0.1\td.test") && !t.contains("c.test"), "{t:?}");
+    assert_eq!(nouveau_contenu(&deux, &d(&["d.test"])).unwrap(), deux, "même domaines : contenu inchangé");
+    assert_eq!(nouveau_contenu(&deux, &[]).unwrap(), faux_avant, "bloc retiré : exactement les lignes de l'utilisateur");
+    // Deux blocs complets (fichier laissé ainsi par une version ancienne, ou édité à la main) : tous retirés, idempotent
+    let deux = format!("# u\r\n{DEBUT_BLOC}\r\n127.0.0.1\ta.test\r\n{FIN_BLOC}\r\n# v\r\n{DEBUT_BLOC}\r\n127.0.0.1\tb.test\r\n{FIN_BLOC}\r\n# w\r\n").into_bytes();
+    assert_eq!(nouveau_contenu(&deux, &[]).unwrap(), b"# u\r\n# v\r\n# w\r\n", "retrait complet : aucun bloc ne reste");
+    let un = nouveau_contenu(&deux, &d(&["c.test"])).unwrap();
+    let t = String::from_utf8(un.clone()).unwrap();
+    assert_eq!(t.matches(DEBUT_BLOC).count(), 1, "{t:?}");
+    assert!(!t.contains("a.test") && !t.contains("b.test") && t.contains("c.test"), "{t:?}");
+    assert_eq!(nouveau_contenu(&un, &d(&["c.test"])).unwrap(), un, "idempotent après fusion des blocs");
+    let (hors, bloc) = crate::blocage::decouper_hosts(&deux);
+    assert_eq!(hors, ["# u", "# v", "# w"]);
+    assert_eq!(bloc, ["a.test", "b.test"]);
+    // Fin sans début avant le bloc : ligne de l'utilisateur, gardée
+    let fin_seule = format!("{FIN_BLOC}\r\n# u\r\n").into_bytes();
+    let n = nouveau_contenu(&fin_seule, &d(&["e.test"])).unwrap();
+    assert!(n.starts_with(&fin_seule) && nouveau_contenu(&n, &[]).unwrap() == fin_seule);
+    // Bloc en fin de fichier sans fin de ligne finale : jamais « \r\r\n », ni ligne laissée sans sa fin de ligne
+    let sans_fin = format!("# u\r\n{DEBUT_BLOC}\r\n127.0.0.1\tf.test\r\n{FIN_BLOC}").into_bytes();
+    let n = nouveau_contenu(&sans_fin, &d(&["g.test"])).unwrap();
+    assert!(!n.windows(3).any(|w| w == b"\r\r\n") && n.starts_with(b"# u\r\n"), "{:?}", String::from_utf8_lossy(&n));
+    assert_eq!(nouveau_contenu(&sans_fin, &[]).unwrap(), b"# u\r\n");
+    // UTF-16 : refusé plutôt que cassé
+    assert!(nouveau_contenu(&[0xFF, 0xFE, b'#', 0], &d(&["a.test"])).is_err());
 }
 
 #[test]

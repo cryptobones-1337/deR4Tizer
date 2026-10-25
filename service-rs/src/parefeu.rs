@@ -274,7 +274,7 @@ fn preparer_dossier(fichier: &Path) {
         let script = "Set-NetFirewallProfile -All -PolicyStore localhost -LogBlocked True -LogAllowed True \
             -LogMaxSizeKilobytes 32767 -LogFileName '%systemroot%\\system32\\LogFiles\\Firewall\\pfirewall.log'";
         crate::mesure::powershell("parefeu");
-        let _ = std::process::Command::new("powershell.exe")
+        let _ = std::process::Command::new(crate::natif::powershell_exe())
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .creation_flags(0x0800_0000)
             .output();
@@ -467,9 +467,12 @@ impl LecteurJournal {
                 e.programme = programme.clone();
             }
             modifie = true;
-            // Une alerte par source, port et action toutes les 24 h
+            // Une alerte par source, port et action toutes les 24 h ; table bornée (sources usurpées)
             if self.alertees.get(&cle).map(|t| t.elapsed() < Duration::from_secs(86400)).unwrap_or(false) {
                 continue;
+            }
+            if self.alertees.len() >= 20_000 {
+                commun::purger_anciens(&mut self.alertees, Duration::from_secs(86400), 10_000);
             }
             self.alertees.insert(cle, Instant::now());
             let accepte = action == "ACCEPTÉ";

@@ -418,7 +418,7 @@ pub fn gestion() -> Option<String> {
     G.get_or_init(|| {
         let mut l = Vec::new();
         crate::mesure::powershell("baseline");
-        let sortie = std::process::Command::new("powershell.exe")
+        let sortie = std::process::Command::new(crate::natif::powershell_exe())
             .args(["-NoProfile", "-NonInteractive", "-Command",
                 "$d = (Get-CimInstance Win32_ComputerSystem).PartOfDomain; \
                  $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \

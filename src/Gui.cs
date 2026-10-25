@@ -87,7 +87,8 @@ namespace DeR4Tizer
         }
 
         // Envoie la commande, en passant par une copie de l'interface lancée en administrateur si besoin.
-        // La commande (qui peut contenir un mot de passe) passe par un fichier du profil, effacé dès sa lecture :
+        // La commande (qui peut contenir un mot de passe) passe par un fichier de commande du profil (la copie élevée
+        // ne l'efface pas : elle n'efface rien, audit AUD6-01) :
         // jamais par la ligne de commande, que l'audit des processus (4688) et les SIEM enregistrent.
         public static void Executer(Commande c)
         {
@@ -116,6 +117,23 @@ namespace DeR4Tizer
             {
                 try { File.Delete(fichier); } catch { }
             }
+        }
+
+        // Fichier de commande écrit par Executer : %LOCALAPPDATA%\deR4Tizer\commande-<32 hexadécimaux>.json, ni le fichier
+        // ni son dossier n'étant un point d'analyse (lien, jonction)
+        public static bool FichierDeCommande(string chemin)
+        {
+            try
+            {
+                var f = new FileInfo(chemin);
+                string nom = f.Name;
+                if (!nom.StartsWith("commande-") || !nom.EndsWith(".json") || nom.Length != "commande-".Length + 32 + ".json".Length) return false;
+                foreach (char x in nom.Substring(9, 32)) if (!((x >= '0' && x <= '9') || (x >= 'a' && x <= 'f'))) return false;
+                if (f.Directory == null || !string.Equals(f.Directory.Name, "deR4Tizer", StringComparison.OrdinalIgnoreCase)) return false;
+                if ((f.Attributes & FileAttributes.ReparsePoint) != 0 || (f.Directory.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+                return f.Exists;
+            }
+            catch { return false; }
         }
 
         // Ce que la commande va faire, en clair : l'instance administrateur l'affiche avant d'envoyer, pour qu'un
@@ -173,7 +191,25 @@ namespace DeR4Tizer
                         Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Hote((string)o)) : "";
                         if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
                         if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
-                        if (actif("Smtp")) canaux.Add((en ? "e-mail to " : "e-mail à ") + (conf != null && conf.ContainsKey("Destinataires") ? conf["Destinataires"] : ""));
+                        // Canal désactivé dont l'adresse change quand même, et jeton ntfy : affichés aussi
+                        if (!actif("Ntfy") && secret("NtfyUrl").Length > 0) canaux.Add((en ? "ntfy (off)" : "ntfy (désactivé)") + secret("NtfyUrl"));
+                        if (!actif("Teams") && secret("TeamsUrl").Length > 0) canaux.Add((en ? "Teams (off)" : "Teams (désactivé)") + secret("TeamsUrl"));
+                        if (d.TryGetValue("NtfyJeton", out o) && o is string && ((string)o).Length > 0)
+                            canaux.Add((en ? "ntfy token " : "jeton ntfy ") + (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau")));
+                        // Tout ce qui sera appliqué est affiché (audit, AUD6-02) : serveur, port, sécurité, compte, expéditeur
+                        // et mot de passe (nouveau, effacé ou inchangé) ; un serveur, un port, un compte ou une sécurité changés sans nouveau mot de passe effacent
+                        // l'ancien côté service, jamais envoyé à un autre serveur
+                        Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? conf[k].ToString() : "";
+                        if (actif("Smtp"))
+                        {
+                            string mdp = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
+                                ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau"))
+                                : (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
+                            canaux.Add((en ? "e-mail to " : "e-mail à ") + champ("Destinataires") + (en ? " via " : " par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
+                                + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
+                                + (en ? ", password " : ", mot de passe ") + mdp + ")");
+                        }
+                        if (conf != null) canaux.Add((en ? "minimum level " : "niveau minimal ") + champ("NiveauMin") + (en ? ", at most " : ", au plus ") + champ("MaxParHeure") + (en ? " per hour" : " par heure"));
                         return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
                             + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
                     }
@@ -203,11 +239,13 @@ namespace DeR4Tizer
             }
         }
 
-        // Nom d'hôte d'une adresse web, sans le chemin (qui peut être secret)
+        // Adresse web entière, en ASCII (IdnHost : un hôte en homoglyphes reste visible) : l'hôte seul ne suffisait pas
+        // (audit de sécurité de #52, C1) : « https://ntfy.sh/sujet-d-un-attaquant » s'affichait « ntfy.sh », comme le
+        // réglage légitime, et les alertes partaient chez l'attaquant. La confirmation est vue par l'administrateur seul.
         static string Hote(string url)
         {
             Uri u;
-            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Host : "?";
+            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Scheme + "://" + u.IdnHost + (u.IsDefaultPort ? "" : ":" + u.Port) + u.PathAndQuery : "?";
         }
 
         public static void Afficher(Reponse r)
@@ -1408,14 +1446,17 @@ namespace DeR4Tizer
             L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
 
             // Mode « assistant » : lancé en administrateur par l'interface pour transmettre une commande au service.
-            // Il lit la commande dans le fichier, l'efface, et montre en clair ce qu'il va faire avant de l'envoyer.
+            // Il lit la commande dans le fichier et montre en clair ce qu'il va faire avant de l'envoyer. Il n'efface
+            // rien (l'interface qui l'a lancé efface le fichier) et ne lit qu'un fichier de commande de deR4Tizer :
+            // sinon n'importe quel programme pouvait, derrière l'invite UAC, faire effacer en administrateur un fichier
+            // de son choix (audit, AUD6-01).
             if (args.Length == 2 && args[0] == "--commande-fichier")
             {
                 Commande c;
                 try
                 {
+                    if (!Canal.FichierDeCommande(args[1])) throw new InvalidOperationException(L.En ? "Not a deR4Tizer command file." : "Ce n'est pas un fichier de commande de deR4Tizer.");
                     c = Commun.Json().Deserialize<Commande>(File.ReadAllText(args[1], Encoding.UTF8));
-                    File.Delete(args[1]);
                 }
                 catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
                 if (c == null) return 1;

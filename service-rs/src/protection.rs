@@ -77,7 +77,7 @@ pub struct Lecteur {
 
 fn powershell(script: &str) -> String {
     crate::mesure::powershell("protection");
-    Command::new("powershell.exe")
+    Command::new(crate::natif::powershell_exe())
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(0x0800_0000)
         .output()

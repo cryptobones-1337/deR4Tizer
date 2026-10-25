@@ -88,7 +88,8 @@ impl Dpi {
                     .map(|t| SystemTime::now().duration_since(t).unwrap_or_default() < Duration::from_secs(86_400)).unwrap_or(false);
                 if !recent {
                     let _ = Command::new("curl.exe")
-                        .args(["-sSL", "--fail", "--max-time", "120", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
+                        .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "52428800",
+                            "--max-time", "120", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                         .arg(&f).arg(URL_JA3).creation_flags(0x0800_0000).output();
                 }
                 // ja3_md5,Firstseen,Lastseen,Listingreason
