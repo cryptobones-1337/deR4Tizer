@@ -137,14 +137,15 @@ if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
 # Configuration de Defender modifiée pendant le passage (événement 5007) : deR4Tizer ne doit jamais y toucher
 Verifier 'Configuration de Defender inchangée pendant le passage (événement 5007)' {
-    # Seulement les réglages de protection, par le chemin de la NOUVELLE valeur : exclusions, temps réel, cloud
-    # (Spynet), analyses, protection contre les falsifications, désactivation de Defender. Defender écrit lui-même
-    # des dizaines à des centaines de 5007 sur ses réglages internes (Features\Controls, Features\EcsConfigs),
-    # constaté dans la VM : ils ne comptent pas.
-    $protection = 'New value:\s*HKLM\\SOFTWARE\\(Policies\\)?Microsoft\\Windows Defender\\(Exclusions|Real-Time Protection|Spynet|Scan|Features\\TamperProtection|Disable)'
+    # Seulement les interrupteurs de protection, par le chemin de la NOUVELLE valeur : une exclusion, une protection
+    # en temps réel ou une analyse désactivée, le niveau du cloud et l'envoi d'échantillons, la protection contre les
+    # falsifications, la désactivation de Defender. Defender écrit lui-même des dizaines à des centaines de 5007 sur
+    # ses réglages internes (Features\Controls, Features\EcsConfigs, Spynet\MAPSconcurrency…), constaté dans la VM :
+    # ils ne comptent pas.
+    $protection = 'New value:\s*HKLM\\SOFTWARE\\(Policies\\)?Microsoft\\Windows Defender\\(Exclusions\\|Real-Time Protection\\Disable|Scan\\Disable|Spynet\\(SpynetReporting|SubmitSamplesConsent)\b|Features\\TamperProtection\b|DisableAnti)'
     $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue |
         Where-Object { $_.Message -match $protection })
-    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 3 | ForEach-Object { ($_.Message -split "`n" | Select-Object -Skip 1 -First 3) -join ' ' }) -join ' ; ') }
+    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 3 | ForEach-Object { (($_.Message -split "`n") | Where-Object { $_ -match 'New value' } | ForEach-Object { $_.Trim() }) -join ' ' }) -join ' ; ') }
     $true
 }
 
