@@ -233,6 +233,17 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    - Condition préalable : mesure du cycle de surveillance (durée de chaque étape, PowerShell lancés pendant le cycle, temps passé sous le verrou). Sans ces chiffres, ni découpage de `Moniteur` ni optimisation.
    - `Moniteur` (moniteur.rs), une fois la mesure faite et seulement là où elle le justifie : les actions longues (quarantaine, restauration, baseline, panique) faites hors du verrou `Arc<Mutex<Moniteur>>`, pris seulement pour enregistrer le résultat : une quarantaine ne doit plus aveugler la surveillance, ni un cycle lent bloquer l'interface ; `executer()` (28 commandes dans un seul `match`) découpé en un gestionnaire par domaine (réponse, blocages, configuration, mise à jour, protection) ; `passage()` (cycle de 3 s) découpé en étapes, chacune avec sa minuterie.
    - Pas de découpage de `natif.rs` pour lui-même : du seul déplacement de code, en conflit avec toutes les PR ouvertes. Seulement si une mesure ou une correction le justifie, au moment de celle-ci.
+
+   Validation par le mainteneur, le 2026-10-25, par ces mots : « Yes: once the remaining Phase 1 fixes are merged with a clean VM pass, I validate Phase 1, and Phase 3 can open with the local VM proof replacing GitHub CI. Record it in CLAUDE.md. »
+   - Derniers correctifs de la phase 1, ceux qui lui avaient été présentés :
+     - #64 : outillage de test ;
+     - #65 : files d'alertes reprises à l'arrêt du service ;
+     - texte des confirmations de l'assistant élevé passé par `Visible()` partout ;
+     - fenêtre de confirmation qui renvoie à la ligne et défile, et montre le domaine enregistrable (S60-06/07).
+   - Une fois ces correctifs fusionnés, chacun relu et couvert par un passage VM sans ÉCHOUÉ sur l'arbre intégré, la phase 1 est validée par cryptobones-1337.
+   - La phase 3 s'ouvre alors. Pour son ouverture et pour ses PR, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub.
+   - Le 2026-10-25, le mainteneur a levé, pour l'ouverture de la phase 3, la condition du lot 3d, par ces mots : « Phase 3 can open ». Le lot 3d est encore « non exécuté » dans `docs/roadmap/capability-matrix.md`, alors que cet en-tête pose la condition « après validation des lots 1 à 5 ». La phase 3 s'ouvre donc à la validation de la phase 1 (puce précédente), sans attendre le lot 3d.
+   - Rien ne change pour la distribution : la règle de la section 4 reste entière (CI GitHub verte, lot 3d réussi, binaires signés, relecture indépendante).
 2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
