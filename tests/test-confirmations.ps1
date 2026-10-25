@@ -80,6 +80,7 @@ try {
         Verifier-Fenetre 'fenêtre : renvoi à la ligne et défilement, lecture seule' { $zone.Multiline -and $zone.WordWrap -and $zone.ReadOnly -and $zone.ScrollBars -eq 'Vertical' }
         Verifier-Fenetre 'fenêtre : « Annuler » par défaut (Entrée, Échap)' { $f.AcceptButton -eq $annuler -and $f.CancelButton -eq $annuler -and $f.ActiveControl -eq $annuler -and $annuler.DialogResult -eq 'Cancel' }
         Verifier-Fenetre 'fenêtre : « Continuer » seul renvoie Oui' { $continuer.DialogResult -eq 'Yes' }
+        Verifier-Fenetre 'fenêtre : « Continuer » désarmé à l''ouverture (armé 1 s après l''affichage)' { -not $continuer.Enabled }
     } finally { $f.Dispose() }
     $c = [Activator]::CreateInstance($cmdT); $c.Action = 'majConfig'; $c.Valeur = '{"Auto":false,"Url":""}'
     $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
@@ -87,6 +88,10 @@ try {
     $c.Valeur = '{"Auto":true,"Url":"https://attaquant.test/m.json"}'
     $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
     Verifier-Fenetre 'majConfig : autre adresse signalée' { $t -match 'ADRESSE MODIFIÉE https://attaquant\.test/m\.json' -and $t -match "l'hôte se termine par : attaquant\.test" }
+    # Signes combinants (S69-04) : remplacés, ils ne s'empilent plus sur les lignes voisines
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'quarantaine'; $c.Cible = 'C:\x\a' + ([string][char]0x0489 * 50) + ([string][char]0x0301 * 50)
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'signes combinants neutralisés' { -not ($t.ToCharArray() | Where-Object { [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -in 'NonSpacingMark', 'EnclosingMark' }) }
     "bilan fenêtre : $kof échec(s)"
     if ($ko -or $kof) { exit 1 }
 } finally {

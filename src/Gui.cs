@@ -273,7 +273,10 @@ namespace DeR4Tizer
             {
                 if (char.IsWhiteSpace(ch) && ch != '\n') { if (!espace) b.Append(' '); espace = true; continue; }
                 espace = false;
-                b.Append(char.IsControl(ch) || char.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.Format ? '?' : ch);
+                // Signes combinants (Mn, Me) aussi : empilés, ils débordaient sur les lignes voisines (audit de #69, S69-04)
+                var cat = char.GetUnicodeCategory(ch);
+                b.Append(char.IsControl(ch) || cat == System.Globalization.UnicodeCategory.Format || cat == System.Globalization.UnicodeCategory.NonSpacingMark
+                    || cat == System.Globalization.UnicodeCategory.EnclosingMark ? '?' : ch);
             }
             return b.ToString();
         }
@@ -329,6 +332,14 @@ namespace DeR4Tizer
             bas.Controls.Add(annuler); bas.Controls.Add(continuer);
             f.Controls.Add(zone); f.Controls.Add(bas);
             f.AcceptButton = annuler; f.CancelButton = annuler;
+            // « Continuer » armé une seconde après l'affichage, et de nouveau après chaque retour au premier plan : un clic
+            // préparé ou une fenêtre posée par-dessus juste avant ne tombe pas sur lui (audit de #69, S69-02, S69-03)
+            continuer.Enabled = false;
+            var armement = new System.Windows.Forms.Timer { Interval = 1000 };
+            armement.Tick += (s, e) => { armement.Stop(); continuer.Enabled = true; };
+            f.Activated += (s, e) => { continuer.Enabled = false; armement.Stop(); armement.Start(); };
+            f.Deactivate += (s, e) => { continuer.Enabled = false; armement.Stop(); };
+            f.FormClosed += (s, e) => armement.Dispose();
             f.Shown += (s, e) => { annuler.Focus(); zone.SelectionLength = 0; };
             f.ActiveControl = annuler;
             return f;
