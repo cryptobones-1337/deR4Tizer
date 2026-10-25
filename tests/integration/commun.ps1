@@ -183,7 +183,13 @@ function Controle-Droits([string[]]$Racines, [string[]]$Attendus = @(), [hashtab
             if ($rel -in $Attendus) { continue }
             $n++
             $admis = $script:SidsConfiance + @($Toleres[$r])
-            try { $d = Droits $e.FullName } catch { $ecarts.Add("$($e.FullName) : droits illisibles"); continue }
+            # Fichier de travail du service (*.tmp écrit puis renommé : commun.rs, geoip.rs) disparu entre l'énumération et
+            # la lecture de ses droits : ni écart ni élément contrôlé (passage de c14b997 : geoip\afrinic.tmp) ; écarté
+            # seulement s'il n'existe plus, comme pour l'essai d'écriture. Toute autre lecture impossible reste un écart.
+            try { $d = Droits $e.FullName } catch {
+                if ($e.Name -like '*.tmp' -and -not (Test-Path -LiteralPath $e.FullName)) { $n--; continue }
+                $ecarts.Add("$($e.FullName) : droits illisibles"); continue
+            }
             if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { $ecarts.Add("$($e.FullName) : lien") }
             if ($d.Proprietaire -notin $script:SidsConfiance) { $ecarts.Add("$($e.FullName) : propriétaire $($d.Proprietaire)") }
             foreach ($a in $d.Entrees) {
@@ -493,7 +499,10 @@ function Controle-Systeme([string]$Racine) {
     $s = En-TantQueSysteme @"
 `$T = [Security.Principal.SecurityIdentifier]
 function Voir(`$e) {
-    try { `$a = Get-Acl -LiteralPath `$e.FullName } catch { "ECART|`$(`$e.FullName)|droits illisibles en SYSTEM"; return }
+    try { `$a = Get-Acl -LiteralPath `$e.FullName } catch {
+        if (`$e.Name -like '*.tmp' -and -not (Test-Path -LiteralPath `$e.FullName)) { return }
+        "ECART|`$(`$e.FullName)|droits illisibles en SYSTEM"; return
+    }
     if (`$e.Attributes -band [IO.FileAttributes]::ReparsePoint) { "ECART|`$(`$e.FullName)|lien" }
     `$o = `$a.GetOwner(`$T).Value
     if (`$o -ne 'S-1-5-18') { "ECART|`$(`$e.FullName)|propriétaire `$o" }
