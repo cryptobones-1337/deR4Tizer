@@ -141,35 +141,38 @@ namespace DeR4Tizer
         public static string Decrire(Commande c)
         {
             string v = c.Valeur ?? "", cible = c.Cible ?? "";
+            // Textes venus de la commande, tels qu'affichés : passés par Visible (phase 1, suite de S58-02) ; « cible »
+            // brute ne sert qu'aux recherches (quarantaine.json, alertes.json)
+            string vc = Visible(cible), ip = Visible(c.Ip), nomDns = Visible(c.NomDns);
             bool en = L.En;
             switch (c.Action)
             {
-                case "bloquer": return (en ? "Block " : "Bloquer ") + (string.IsNullOrEmpty(c.NomDns) ? c.Ip : c.NomDns);
-                case "bloquerIp": return (en ? "Block the address " : "Bloquer l'adresse ") + c.Ip + (en ? " at the firewall" : " au pare-feu");
-                case "debloquer": return (en ? "REMOVE the block on " : "RETIRER le blocage de ") + cible;
+                case "bloquer": return (en ? "Block " : "Bloquer ") + (string.IsNullOrEmpty(c.NomDns) ? ip : nomDns);
+                case "bloquerIp": return (en ? "Block the address " : "Bloquer l'adresse ") + ip + (en ? " at the firewall" : " au pare-feu");
+                case "debloquer": return (en ? "REMOVE the block on " : "RETIRER le blocage de ") + vc;
                 case "toutDebloquer": return en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)";
-                case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + cible;
+                case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + vc;
                 case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
-                case "tuer": return (en ? "Kill process " : "Tuer le processus ") + cible;
-                case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + cible + (en ? " and all its descendants" : " et toute sa descendance");
-                case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + cible;
-                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + cible;
-                case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + cible;
+                case "tuer": return (en ? "Kill process " : "Tuer le processus ") + vc;
+                case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance");
+                case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc;
+                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc;
+                case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + vc;
                 case "restaurer":
                     {
                         var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(x => x.Id == cible);
                         return (en ? "RESTORE from quarantine and make executable again: " : "SORTIR de la quarantaine et rendre de nouveau exécutable : ")
-                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + cible : q.CheminOrigine + (en ? "\n(quarantined because: " : "\n(mis en quarantaine pour : ") + q.Raison + ")");
+                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + vc : Visible(q.CheminOrigine) + (en ? "\n(quarantined because: " : "\n(mis en quarantaine pour : ") + Visible(q.Raison) + ")");
                     }
                 case "restaurerRepli":
                     {
                         var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(x => x.Id == cible);
                         return (en ? "RESTORE from quarantine into the deR4Tizer folder (ProgramData\\deR4Tizer\\restaurations): " : "SORTIR de la quarantaine dans le dossier de deR4Tizer (ProgramData\\deR4Tizer\\restaurations) : ")
-                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + cible : q.CheminOrigine);
+                            + (q == null ? (en ? "unknown item " : "élément inconnu ") + vc : Visible(q.CheminOrigine));
                     }
-                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + cible;
+                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + vc;
                 case "panique": return v != "off" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
-                case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + cible;
+                case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + vc;
                 case "reglages":
                     {
                         var r = Commun.Json().Deserialize<Config>(v) ?? new Config();
@@ -230,7 +233,7 @@ namespace DeR4Tizer
                     {
                         var a = (Commun.Lire<List<Alerte>>("alertes.json") ?? new List<Alerte>()).FirstOrDefault(x => x.Id == cible);
                         return (en ? "No longer alert for this behaviour (information only): " : "Ne plus alerter pour ce comportement (information seulement) : ")
-                            + (a == null ? cible : a.Processus + " — " + a.Destination + " — " + (a.Raisons ?? "").Substring(0, Math.Min(120, (a.Raisons ?? "").Length)));
+                            + (a == null ? vc : Visible(a.Processus) + " — " + Visible(a.Destination) + " — " + Visible((a.Raisons ?? "").Substring(0, Math.Min(120, (a.Raisons ?? "").Length))));
                     }
                 case "apprentissage":
                     return v == "terminer" ? (en ? "End learning mode now" : "Terminer le mode apprentissage maintenant")
@@ -240,15 +243,15 @@ namespace DeR4Tizer
                 case "majConfig":
                     {
                         var m = Commun.Json().Deserialize<ConfigMaj>(v) ?? new ConfigMaj();
-                        return (en ? "Update settings — automatic installation: " : "Réglages de mise à jour — installation automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non")) + " · " + m.Url;
+                        return (en ? "Update settings — automatic installation: " : "Réglages de mise à jour — installation automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non")) + " · " + Visible(m.Url);
                     }
                 case "autoriserLecteur":
                     {
                         string nom = v;
                         try { nom = new SecurityIdentifier(v).Translate(typeof(NTAccount)).Value; } catch { }
-                        return (en ? "Allow the account " : "Autoriser le compte ") + nom + (en ? " to read deR4Tizer data (events, sessions, alerts)" : " à lire les données de deR4Tizer (événements, sessions, alertes)");
+                        return (en ? "Allow the account " : "Autoriser le compte ") + Visible(nom) + (en ? " to read deR4Tizer data (events, sessions, alerts)" : " à lire les données de deR4Tizer (événements, sessions, alertes)");
                     }
-                default: return c.Action + " " + cible;
+                default: return Visible(c.Action) + " " + vc;
             }
         }
 
