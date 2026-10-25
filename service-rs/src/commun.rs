@@ -1,4 +1,4 @@
-//! Types et fichiers partagés avec l'interface C# (deR4Tizer.exe) : mêmes noms de champs JSON
+﻿//! Types et fichiers partagés avec l'interface C# (deR4Tizer.exe) : mêmes noms de champs JSON
 //! (PascalCase), mêmes fichiers dans C:\ProgramData\deR4Tizer.
 
 use serde::de::DeserializeOwned;
@@ -186,6 +186,8 @@ pub struct Config {
 /// service (serde, sensible à la casse) l'ignorerait et appliquerait l'autre (audit AUD6-03). `modele` : la valeur par
 /// défaut sérialisée, qui donne les clés connues à chaque niveau. Une clé inconnue sans homonyme reste ignorée des deux
 /// côtés, comme avant.
+/// Texte illisible comme valeur JSON : refusé (Some), jamais laissé passer : serde_json peut lire comme Config un texte
+/// qu'il refuse comme valeur (surrogat isolé ou nombre hors plage dans un champ ignoré : audit de sécurité S58-01).
 pub fn cle_ambigue(texte: &str, modele: &serde_json::Value) -> Option<String> {
     fn chercher(v: &serde_json::Value, m: &serde_json::Value, chemin: &str) -> Option<String> {
         let (serde_json::Value::Object(v), serde_json::Value::Object(m)) = (v, m) else { return None };
@@ -203,8 +205,53 @@ pub fn cle_ambigue(texte: &str, modele: &serde_json::Value) -> Option<String> {
         }
         None
     }
-    let v: serde_json::Value = serde_json::from_str(texte).ok()?;
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(texte) else { return Some("(texte illisible)".into()) };
     chercher(&v, modele, "")
+}
+
+/// Lecture complète d'une commande « reglages » (décision pure, testée) : texte illisible ou clé ambiguë refusés
+/// (AUD6-03, S58-01), puis lecture, puis champs texte en listes fermées (S58-02). Seul chemin du service pour cette
+/// commande.
+pub fn lire_reglages(texte: &str) -> Result<Config, String> {
+    if let Some(k) = cle_ambigue(texte, &serde_json::to_value(Config::default()).unwrap_or_default()) {
+        return Err(format!("réglages refusés : clé « {} » ambiguë ou texte illisible", ligne_de_journal(&k)));
+    }
+    let n: Config = serde_json::from_str(texte).map_err(|_| "réglages illisibles".to_string())?;
+    match reglages_invalides(&n) {
+        Some(r) => Err(format!("réglages refusés : {r}")),
+        None => Ok(n),
+    }
+}
+
+/// Lecture d'une commande « testerSyslog » (décision pure, testée) : mêmes contrôles que les réglages
+pub fn lire_syslog_test(texte: &str) -> Result<ConfigSyslog, String> {
+    if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigSyslog::default()).unwrap_or_default()) {
+        return Err(format!("test refusé : clé « {} » ambiguë ou texte illisible", ligne_de_journal(&k)));
+    }
+    let s: ConfigSyslog = serde_json::from_str(texte).map_err(|_| "réglages syslog illisibles".to_string())?;
+    match reglages_invalides(&Config { syslog: s.clone(), langue: "fr".into(), ..Config::default() }) {
+        Some(r) => Err(format!("test refusé : {r}")),
+        None => Ok(s),
+    }
+}
+
+/// Raison de refuser des réglages reçus : champs texte en listes fermées (langue, protocole, format, niveau) et hôte
+/// syslog en lettres, chiffres, « . », « - » et « : » (nom, IPv4 ou IPv6), même désactivé (il reste en configuration).
+/// Avant, ces champs étaient affichés bruts à la confirmation en administrateur : un texte long ou inversé pouvait en
+/// cacher le vrai contenu (audit de sécurité S58-02).
+pub fn reglages_invalides(n: &Config) -> Option<String> {
+    if !["fr", "en"].contains(&n.langue.as_str()) {
+        return Some("langue inconnue".into());
+    }
+    let s = &n.syslog;
+    if !["UDP", "TCP"].contains(&s.protocole.as_str()) || !["JSON", "CEF"].contains(&s.format.as_str())
+        || !["Info", "Alerte", "Critique"].contains(&s.niveau_min.as_str()) {
+        return Some("protocole, format ou niveau syslog inconnu".into());
+    }
+    if s.hote.len() > 253 || !s.hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':') {
+        return Some("serveur syslog : seulement un nom ou une adresse".into());
+    }
+    None
 }
 
 impl Default for Config {

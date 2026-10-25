@@ -792,11 +792,9 @@ impl Moniteur {
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
             "reglages" => {
-                if let Some(k) = c.valeur.as_deref().and_then(|v| commun::cle_ambigue(v, &serde_json::to_value(Config::default()).unwrap_or_default())) {
-                    return Reponse::erreur(&format!("réglages refusés : clé « {} » ambiguë (casse)", commun::ligne_de_journal(&k)));
-                }
-                let Some(n) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Config>(v).ok()) else {
-                    return Reponse::erreur("réglages illisibles");
+                let n = match commun::lire_reglages(c.valeur.as_deref().unwrap_or("")) {
+                    Ok(n) => n,
+                    Err(e) => return Reponse::erreur(e),
                 };
                 if n.syslog.actif && n.syslog.hote.trim().is_empty() {
                     return Reponse::erreur("Indiquez le serveur syslog.");
@@ -812,7 +810,7 @@ impl Moniteur {
                     return Reponse::erreur(format!("Adresses autorisées invalides (adresse IPv4, ou réseau IPv4 de /8 à /32) : {}",
                         invalides.iter().map(|a| a.chars().filter(|x| !x.is_control()).take(40).collect::<String>()).collect::<Vec<_>>().join(", ")));
                 }
-                self.config.langue = if n.langue == "en" { "en".into() } else { "fr".into() };
+                self.config.langue = n.langue.clone();
                 if n.syslog != self.config.syslog {
                     self.config.syslog = n.syslog;
                     crate::export::configurer(&self.config.syslog);
@@ -825,7 +823,11 @@ impl Moniteur {
                 Reponse::ok("Réglages enregistrés.")
             }
             "testerSyslog" => {
-                let cfg = c.valeur.as_deref().and_then(|v| serde_json::from_str(v).ok()).unwrap_or_else(|| self.config.syslog.clone());
+                // Mêmes contrôles que les réglages (S58-01, S58-02) ; la confirmation affiche la destination
+                let cfg = match c.valeur.as_deref() {
+                    Some(v) => match commun::lire_syslog_test(v) { Ok(s) => s, Err(e) => return Reponse::erreur(e) },
+                    None => self.config.syslog.clone(),
+                };
                 match crate::export::tester(&cfg) {
                     Ok(()) => Reponse::ok(format!("Message de test envoyé à {}:{} ({}).", cfg.hote, cfg.port, cfg.protocole)),
                     Err(e) => Reponse::erreur(format!("Échec de l'envoi : {e}")),
@@ -841,13 +843,8 @@ impl Moniteur {
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
                 }
-                // Clés connues : « Config » et les secrets, à plat (AUD6-03)
-                let mut modele = serde_json::to_value(crate::notifications::Secrets::default()).unwrap_or_default();
-                if let Some(o) = modele.as_object_mut() {
-                    o.insert("Config".into(), serde_json::to_value(commun::ConfigNotifications::default()).unwrap_or_default());
-                }
-                if let Some(k) = c.valeur.as_deref().and_then(|v| commun::cle_ambigue(v, &modele)) {
-                    return Reponse::erreur(&format!("réglages des notifications refusés : clé « {} » ambiguë (casse)", commun::ligne_de_journal(&k)));
+                if let Err(e) = crate::notifications::controler_demande(c.valeur.as_deref().unwrap_or("")) {
+                    return Reponse::erreur(e);
                 }
                 let Some(mut d) = c.valeur.as_deref().and_then(|v| serde_json::from_str::<Demande>(v).ok()) else {
                     return Reponse::erreur("réglages des notifications illisibles");
