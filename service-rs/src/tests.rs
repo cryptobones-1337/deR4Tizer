@@ -515,6 +515,14 @@ fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
         assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
     }
     assert!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.sh/mon-sujet".into(), ..Default::default() }).is_ok());
+    // Forme de l'adresse : compte, barre oblique inverse, autre schéma refusés ; port accepté ; « - » efface
+    for u in [r"https://ntfy.sh\@evil.test/sujet", "https://ntfy.sh@evil.test/sujet", "http://ntfy.sh/sujet", "https://:443/x", "https://ntfy.sh:44a/x", "ftp://x/y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    for u in ["https://ntfy.exemple.test:8443/a", "https://prod-01.westeurope.logic.azure.com/workflows/x?api-version=1", "-"] {
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_ok(), "{u:?}");
+    }
     // Caractères de contrôle : refus (en-têtes ajoutés)
     for n in [
         ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
