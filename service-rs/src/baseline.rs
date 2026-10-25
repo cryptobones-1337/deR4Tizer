@@ -658,6 +658,7 @@ pub fn derives(avant: &EtatBaseline, apres: &EtatBaseline) -> Vec<Alerte> {
     apres.regles.iter()
         .filter(|r| r.appliquee && r.etat == "non conforme" && anciens.get(r.id.as_str()).map(|a| a.etat == "conforme").unwrap_or(false))
         .map(|r| Alerte {
+            regle: crate::regles::BAS_001.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
             niveau: "Alerte".into(),

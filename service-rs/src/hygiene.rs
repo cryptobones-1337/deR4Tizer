@@ -16,8 +16,9 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn alerte(niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
+fn alerte(regle: &str, niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
     Alerte {
+        regle: regle.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: niveau.into(),
@@ -291,7 +292,7 @@ pub fn verifier_leurres(liste: &mut Vec<Leurre>) -> Vec<Alerte> {
             Some(_) => None,
         };
         if let Some(e) = etat {
-            a.push(alerte("Critique", 15, "?", "", "leurre anti-rançongiciel",
+            a.push(alerte(crate::regles::LEU_001, "Critique", 15, "?", "", "leurre anti-rançongiciel",
                 format!("fichier leurre {e} : {} — un RANÇONGICIEL est probablement en train de chiffrer vos fichiers. Utilisez le bouton PANIQUE et éteignez le PC si nécessaire.", l.chemin)));
             l.empreinte = String::from("alerte");
         }
@@ -417,7 +418,7 @@ pub fn verifier_pilotes(connus: &HashSet<String>, deja: &mut HashSet<String>) ->
         }
         let Some(h) = empreinte_fichier(&p) else { continue };
         if connus.contains(&h) && deja.insert(h.clone()) {
-            a.push(alerte("Critique", 10, &p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            a.push(alerte(crate::regles::PIL_001, "Critique", 10, &p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
                 &p.to_string_lossy(), "pilote vulnérable",
                 format!("PILOTE VULNÉRABLE OU MALVEILLANT CONNU (LOLDrivers, SHA-256 {}…) : technique « BYOVD » utilisée pour désactiver les antivirus  [MITRE T1068]", &h[..16])));
         }
@@ -548,7 +549,7 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
                 e.depuis = commun::maintenant();
                 connues.insert(cle, e.depuis.clone());
                 if !apprentissage {
-                    alertes.push(alerte(if e.dangereuse { "Alerte" } else { "Info" }, if e.dangereuse { 4 } else { 0 }, &e.nom, "",
+                    alertes.push(alerte(crate::regles::EXT_001, if e.dangereuse { "Alerte" } else { "Info" }, if e.dangereuse { 4 } else { 0 }, &e.nom, "",
                         &format!("extension {}", e.navigateur),
                         format!("NOUVELLE extension de navigateur « {} » {}{}", e.nom, e.version,
                             if e.dangereuse { format!(" avec des permissions sensibles ({}) : vérifiez que vous l'avez installée vous-même  [MITRE T1176]", e.permissions) } else { String::new() })));

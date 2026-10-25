@@ -4,8 +4,8 @@ Inventaire des détections **qui existent déjà** dans le service. Aucune règl
 de la règle, ce qu'elle couvre, la télémétrie dont elle dépend et ce qui se passe si cette télémétrie manque, son niveau,
 ses faux positifs attendus, ses tests et son état de mesure.
 
-**Les identifiants ne sont pas encore portés par les alertes** : ils le seront avec la PR 3.2 (registre des règles).
-Jusque-là, ce document est un inventaire.
+**Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle** (champ `Regle`, registre `service-rs/src/regles.rs`). Un test vérifie
+que ce document et le registre listent les mêmes identifiants.
 
 Les niveaux indiqués sont ceux que le code produit **avant** l'apprentissage et les exceptions : `apprentissage::filtrer`
 peut faire passer une « Alerte » en « Info ». Seuls les niveaux « Critique » et « Info » sont garantis tels quels.
@@ -18,11 +18,12 @@ Règles de forme :
 
 - identifiant `DOM-NNN`, jamais réutilisé ; une règle retirée reste listée, marquée « retirée » ;
 - `COR-R1` à `COR-R10` gardent les numéros actuels du SIEM (`incidents.json`) ;
-- `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle sera ajoutée à leurs
+- `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle est ajoutée à leurs
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
-- une alerte qui réunit plusieurs indices d'un même domaine portera l'identifiant de la règle la plus forte qu'elle
-  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001). Limite actuelle : pour les lignes de commande,
-  `processus::suspicion` ne rend que le **premier** motif trouvé (voir PRC-002 à PRC-005).
+- une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte qu'elle
+  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001 ; `processus::regle_retenue`). Une alerte ne
+  porte qu'une règle. Limite actuelle : pour les lignes de commande, `processus::suspicion_regle` ne rend que le
+  **premier** motif trouvé (voir PRC-002 à PRC-005).
 
 « Si la télémétrie manque » décrit le comportement **actuel** : dans la plupart des cas, la règle se tait sans le dire.
 L'état des collectes (PR 3.3) rendra ce silence visible.
@@ -410,13 +411,13 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 | Id | Module | Code |
 |---|---|---|
-| EXP-IDS-&lt;sid&gt; | IDS (règles au format Suricata), identifiant de la règle IDS | `ids.rs` |
-| EXP-DPI-* | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
-| EXP-NDR-* | NDR | `ndr.rs` |
+| EXP-IDS-001 | IDS (règles au format Suricata) ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` |
+| EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
+| EXP-NDR-001 | NDR | `ndr.rs` |
 
-- Gelés par `CLAUDE.md` : seule une ligne qui pose l'identifiant de règle sera ajoutée à leurs alertes (PR 3.2), sans
+- Gelés par `CLAUDE.md` : seule une ligne qui pose l'identifiant de règle est ajoutée à leurs alertes (PR 3.2), sans
   autre changement de logique (mainteneur, 2026-10-25).
-- `EXP-DPI-*` et `EXP-NDR-*` sont des familles : leurs identifiants exacts seront fixés ici avant d'être posés dans le
-  code (PR 3.2), pour ne jamais en réutiliser un.
+- Un identifiant par module (PR 3.2) : chacun de ces modules produit ses alertes à un seul endroit, et la règle précise
+  (sid de l'IDS, motif du DPI ou du NDR) reste dans les raisons. Un découpage plus fin attendra leur dégel.
 - **Télémétrie** : capture réseau.
 - **Tests** : ceux des modules, inchangés ; aucune mesure de faux positifs pendant la phase 3.

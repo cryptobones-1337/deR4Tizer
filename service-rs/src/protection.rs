@@ -374,6 +374,7 @@ fn publier(resultat: Result<(), String>) -> Option<String> {
 /// ignorés en échec fermé (limite connue)
 pub fn alerte_echec(raison: &str) -> commun::Alerte {
     commun::Alerte {
+        regle: crate::regles::INT_001.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: "Critique".into(),

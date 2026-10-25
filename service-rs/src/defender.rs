@@ -45,8 +45,9 @@ fn nom_asr(id: &str) -> &'static str {
     }
 }
 
-fn alerte(niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
+fn alerte(regle: &str, niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
     Alerte {
+        regle: regle.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: niveau.into(),
@@ -71,33 +72,33 @@ pub fn traduire(xml: &str) -> Option<Alerte> {
     let chemin = v("Path").trim_start_matches("file:_").to_string();
     let processus = v("Process Name");
     Some(match id {
-        1116 => alerte("Critique", 10, &fichier(&processus), &processus, &v("Threat Name"),
+        1116 => alerte(crate::regles::DEF_001, "Critique", 10, &fichier(&processus), &processus, &v("Threat Name"),
             format!("Defender a DÉTECTÉ {} ({}) dans {}", v("Threat Name"), v("Category Name"), chemin)),
-        1117 => alerte("Info", 0, &fichier(&processus), &processus, &v("Threat Name"),
+        1117 => alerte(crate::regles::DEF_002, "Info", 0, &fichier(&processus), &processus, &v("Threat Name"),
             format!("Defender a traité {} : {}", v("Threat Name"), v("Action Name"))),
-        5001 => alerte("Critique", 10, "Defender", "", "protection en temps réel", "la protection en temps réel de Defender a été DÉSACTIVÉE".into()),
-        5010 | 5012 => alerte("Critique", 10, "Defender", "", "analyse", "l'analyse antivirus de Defender a été DÉSACTIVÉE".into()),
+        5001 => alerte(crate::regles::DEF_003, "Critique", 10, "Defender", "", "protection en temps réel", "la protection en temps réel de Defender a été DÉSACTIVÉE".into()),
+        5010 | 5012 => alerte(crate::regles::DEF_004, "Critique", 10, "Defender", "", "analyse", "l'analyse antivirus de Defender a été DÉSACTIVÉE".into()),
         5007 => {
             let nouvelle = v("New Value");
             let bas = nouvelle.to_lowercase();
             if bas.contains("\\exclusions\\") {
-                alerte("Critique", 10, "Defender", "", "exclusion",
+                alerte(crate::regles::DEF_005, "Critique", 10, "Defender", "", "exclusion",
                     format!("EXCLUSION ajoutée à Defender (technique classique des malwares) : {nouvelle}"))
             } else if bas.contains("disablerealtimemonitoring = 0x1") || bas.contains("disableantispyware = 0x1") || bas.contains("tamperprotection = 0x4") {
-                alerte("Critique", 10, "Defender", "", "configuration", format!("protection de Defender AFFAIBLIE : {nouvelle}"))
+                alerte(crate::regles::DEF_006, "Critique", 10, "Defender", "", "configuration", format!("protection de Defender AFFAIBLIE : {nouvelle}"))
             } else {
                 return None;
             }
         }
-        1121 => alerte("Alerte", 5, &fichier(&processus), &processus, &fichier(&chemin),
+        1121 => alerte(crate::regles::DEF_007, "Alerte", 5, &fichier(&processus), &processus, &fichier(&chemin),
             format!("Defender ASR a BLOQUÉ : {} ({})", nom_asr(&v("ID")), chemin)),
-        1122 => alerte("Info", 0, &fichier(&processus), &processus, &fichier(&chemin),
+        1122 => alerte(crate::regles::DEF_007, "Info", 0, &fichier(&processus), &processus, &fichier(&chemin),
             format!("Defender ASR (audit) aurait bloqué : {} ({})", nom_asr(&v("ID")), chemin)),
-        1123 => alerte("Alerte", 5, &fichier(&processus), &processus, &fichier(&chemin),
+        1123 => alerte(crate::regles::DEF_008, "Alerte", 5, &fichier(&processus), &processus, &fichier(&chemin),
             format!("accès contrôlé aux dossiers a BLOQUÉ une modification de {chemin}")),
-        1124 => alerte("Info", 0, &fichier(&processus), &processus, &fichier(&chemin),
+        1124 => alerte(crate::regles::DEF_008, "Info", 0, &fichier(&processus), &processus, &fichier(&chemin),
             format!("accès contrôlé aux dossiers (audit) : modification de {chemin}")),
-        1125 | 1126 => alerte(if id == 1125 { "Alerte" } else { "Info" }, if id == 1125 { 5 } else { 0 }, &fichier(&processus), &processus,
+        1125 | 1126 => alerte(crate::regles::DEF_009, if id == 1125 { "Alerte" } else { "Info" }, if id == 1125 { 5 } else { 0 }, &fichier(&processus), &processus,
             &v("Path"), format!("protection réseau de Defender {} : {}", if id == 1125 { "a BLOQUÉ" } else { "(audit)" }, v("Path"))),
         _ => return None,
     })
@@ -163,13 +164,13 @@ pub fn ecarts(avant: &EtatDefender, apres: &EtatDefender) -> Vec<Alerte> {
         return a;
     }
     if avant.temps_reel && !apres.temps_reel {
-        a.push(alerte("Critique", 10, "Defender", "", "protection en temps réel", "la protection en temps réel de Defender est COUPÉE".into()));
+        a.push(alerte(crate::regles::DEF_010, "Critique", 10, "Defender", "", "protection en temps réel", "la protection en temps réel de Defender est COUPÉE".into()));
     }
     if avant.protection_falsification && !apres.protection_falsification {
-        a.push(alerte("Critique", 10, "Defender", "", "protection contre les falsifications", "la protection contre les falsifications de Defender est DÉSACTIVÉE".into()));
+        a.push(alerte(crate::regles::DEF_011, "Critique", 10, "Defender", "", "protection contre les falsifications", "la protection contre les falsifications de Defender est DÉSACTIVÉE".into()));
     }
     if avant.antivirus && !apres.antivirus {
-        a.push(alerte("Critique", 10, "Defender", "", "antivirus", "l'antivirus Defender est DÉSACTIVÉ".into()));
+        a.push(alerte(crate::regles::DEF_012, "Critique", 10, "Defender", "", "antivirus", "l'antivirus Defender est DÉSACTIVÉ".into()));
     }
     a
 }

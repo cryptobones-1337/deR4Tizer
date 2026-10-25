@@ -570,9 +570,9 @@ impl Moniteur {
                     self.bloquer_ip_auto(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
                     action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
                 }
-                alertes_modifiees |= self.ajouter_alerte("Critique", &f, format!("{}{action}", f.raisons));
+                alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_001, "Critique", &f, format!("{}{action}", f.raisons));
             } else if nouveau && !self.premier_passage && score >= commun::SEUIL_ALERTE {
-                alertes_modifiees |= self.ajouter_alerte("Alerte", &f, f.raisons.clone());
+                alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_002, "Alerte", &f, f.raisons.clone());
             }
 
             let exe = if chemin.is_empty() { nom_processus.to_lowercase() } else { chemin.to_lowercase() };
@@ -581,7 +581,7 @@ impl Moniteur {
                 if !self.apprentissage && !self.premier_passage {
                     let texte = format!("première connexion à Internet de ce programme{}",
                         f.parent.as_ref().map(|p| format!(" (lancé par {p})")).unwrap_or_default());
-                    alertes_modifiees |= self.ajouter_alerte("Info", &f, texte);
+                    alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_003, "Info", &f, texte);
                 }
             }
             // Arbre des processus : les signaux réseau de poids (≥ 2) comptent dans la chaîne
@@ -612,6 +612,7 @@ impl Moniteur {
             self.adresses_publiques = parefeu::adresses_publiques();
             if self.adresses_publiques.len() > avant {
                 let a = Alerte {
+                    regle: crate::regles::RES_004.into(),
                     id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 4, processus: "Windows".into(),
                     destination: "carte réseau".into(),
                     raisons: format!("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC ({})", self.adresses_publiques.join(", ")),
@@ -643,6 +644,7 @@ impl Moniteur {
         if empreinte != self.empreinte_hosts {
             self.empreinte_hosts = empreinte;
             alertes_modifiees |= self.ajouter_alerte_brute(Alerte {
+                regle: crate::regles::SYS_001.into(),
                 id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 3,
                 processus: "?".into(), destination: "fichier hosts".into(),
                 raisons: "le fichier hosts a été modifié par un autre programme".into(), ..Default::default()
@@ -758,9 +760,10 @@ impl Moniteur {
             || (b.type_ == "hosts" && nom.map(|n| b.cible.eq_ignore_ascii_case(n)).unwrap_or(false)))
     }
 
-    fn ajouter_alerte(&mut self, niveau: &str, f: &FluxInfo, raisons: String) -> bool {
+    fn ajouter_alerte(&mut self, regle: &str, niveau: &str, f: &FluxInfo, raisons: String) -> bool {
         let cle = format!("{niveau}|{}|{}|{}", f.chemin, f.processus, f.ip);
         self.ajouter_alerte_brute(Alerte {
+            regle: regle.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
             niveau: niveau.into(),
@@ -1310,6 +1313,7 @@ fn traiter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
     let nom = nom.trim_end_matches('.');
     if let Some(m) = p.menaces.read().unwrap().chercher_domaine(nom) {
         p.alertes_externes.lock().unwrap().push(Alerte {
+            regle: crate::regles::DNS_001.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
             niveau: "Critique".into(),

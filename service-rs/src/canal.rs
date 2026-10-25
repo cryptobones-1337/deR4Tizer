@@ -202,6 +202,7 @@ pub fn alerte_squat(pid: Option<u32>, chemin: &str) -> commun::Alerte {
         (None, _) => "un processus inconnu".to_string(),
     };
     commun::Alerte {
+        regle: crate::regles::INT_002.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: "Critique".into(),
