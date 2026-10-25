@@ -19,6 +19,7 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 | `Modele` | entier | 0 | version du modèle ; 1 pour les alertes créées par la version qui l'introduit |
 | `Regle` | texte, omis si vide | « » | identifiant de la règle (`docs/detection/regles.md`), « » si l'alerte n'est rattachée à aucune |
 | `Collecte` | texte, omis si vide | « » | collecteur d'où vient l'alerte (état des collectes, PR 3.3) |
+| `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » ; c'est elle qu'une exception posée depuis l'alerte vise |
 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
   ancien fichier garde 0, son histoire n'est pas réécrite.
@@ -46,13 +47,22 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 - **Champs bornés** (audit de sécurité de #72, S72-01, S72-06, S72-07) : dans `ajouter_alerte_brute`, les décisions sont
   prises sur le texte **entier** (technique MITRE, signal fort, apprentissage), puis l'alerte est bornée (`borner_alerte`)
   avant tout usage (journal, export, notifications, SIEM, `alertes.json`). `Raisons` est gardé à 1000 caractères,
-  `Chemin`, `Parent` et `Conseil` à 520, les autres champs à 256, en gardant le **début et la fin** (« … » au milieu) :
+  `Chemin` et `Parent` à 520, `Processus`, `Destination`, `Conseil`, `Ip` et `NomDns` à 256, les champs posés par le code
+  plus court encore (`Mitre` 128, `Regle` et `Collecte` 64, `Signature` 80, `Niveau`, `Heure`, `Id`), en gardant le
+  **début et la fin** (« … » au milieu) :
   la conclusion d'une alerte (remarque, motif) est souvent à la fin, après une donnée externe longue. Les caractères de
-  contrôle deviennent « ? ». Une alerte bornée tient en moins de 16 Ko, 1000 alertes en moins de 16 Mo : un compte
+  contrôle deviennent « ? ». Une alerte bornée tient en moins de 16 Ko même si **tous** ses champs sont remplis de
+  caractères de 4 octets (test du pire cas), 1000 alertes en moins de 16 Mo : un compte
   standard ne peut plus faire mettre l'historique de côté en créant quelques démarrages automatiques géants, ni faire
   disparaître le motif d'une persistance en le repoussant au-delà de la borne.
 - **Apprentissage** : un fichier mis de côté compte comme historique (`historique_alertes_existe`) : une mise de côté ne
   fait pas prendre un poste déjà en service pour une première installation (relecture de #72, D7).
+- **Exceptions et comportements appris** (audit de sécurité de #72, S72-10 ; relecture, R7) : une exception posée depuis
+  une alerte vise l'empreinte `Signature` du comportement entier, pas l'alerte bornée. Avant, une exception posée sur une
+  alerte au chemin long ne s'appliquait jamais, et un programme posé au chemin borné littéral pouvait en hériter. Les
+  nouveaux comportements appris sont mémorisés par leur empreinte (taille fixe : `apprentissage.json` reste borné). Les
+  exceptions et comportements déjà enregistrés en clair restent reconnus. Une alerte d'avant cette version n'a pas
+  d'empreinte : une exception posée depuis elle reprend l'ancienne signature.
 - **Limite supplémentaire** : si la protection du dossier est en échec, quelqu'un qui pré-crée tous les noms de mise de
   côté possibles (100 par seconde d'horodatage) peut empêcher la mise de côté, donc retenir l'écriture d'`alertes.json` :
   les nouvelles alertes restent en mémoire (1000 au plus) et sont perdues à l'arrêt. L'échec n'est écrit qu'une fois au

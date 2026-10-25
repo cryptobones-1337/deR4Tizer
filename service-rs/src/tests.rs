@@ -3017,7 +3017,7 @@ fn phase3_alerte_bornee() {
     assert!(b.raisons == "connexion vers 203.0.113.9" && b.chemin == r"C:\x.exe");
     let source = include_str!("moniteur.rs");
     let debut = source.find("fn ajouter_alerte_brute").unwrap();
-    let corps = &source[debut..debut + 600];
+    let corps = &source[debut..debut + 1200];
     let (b, f) = (corps.find("commun::borner_alerte(&mut a)").expect("bornage absent"), corps.find("apprentissage::filtrer(&mut a)").expect("filtrer"));
     assert!(corps.find("mitre::enrichir(&mut a)").unwrap() < b && f < b, "bornage avant les décisions sur le texte entier (S72-06)");
     let e = source.find("fn ecrire_alertes").unwrap();
@@ -3051,6 +3051,55 @@ fn phase3_historique_mis_de_cote_compte() {
     assert!(historique_alertes_existe(&n(&["Alertes-illisible-20261025120000-1.JSON"])));
     assert!(!historique_alertes_existe(&n(&["config.json", "apprentissage.json", "alertes.json.tmp", "incidents.json"])));
     assert!(include_str!("apprentissage.rs").contains("commun::historique_alertes_existe(&commun::noms_du_dossier())"));
+}
+
+/// Audit de sécurité de #72, S72-10 : une exception posée sur une alerte bornée vise le comportement entier. Avant :
+/// l'exception portait la signature de l'alerte bornée ; le programme légitime au chemin long n'y correspondait jamais,
+/// et un programme posé au chemin borné littéral (« début … fin ») en héritait
+#[test]
+fn phase3_exception_sur_alerte_bornee() {
+    use crate::apprentissage::{decider, signature_avec, Exception};
+    use crate::commun::{borner_alerte, empreinte_signature, Alerte};
+    use std::collections::BTreeSet;
+    let chemin = format!(r"C:\Outils\{}\outil.exe", "a".repeat(700));
+    let entiere = Alerte { niveau: "Alerte".into(), chemin: chemin.clone(), destination: "203.0.113.9".into(), raisons: "connexion suspecte".into(), ..Default::default() };
+    let sig = signature_avec(&entiere, "");
+    let mut bornee = entiere.clone();
+    borner_alerte(&mut bornee);
+    let sig_bornee = signature_avec(&bornee, "");
+    assert_ne!(sig, sig_bornee, "témoin : le bornage change la signature");
+    // Exception posée depuis l'alerte enregistrée : par son empreinte (texte entier)
+    let exc = vec![Exception { signature: empreinte_signature(&sig), description: String::new(), date: String::new() }];
+    let vide = BTreeSet::new();
+    assert!(decider("Alerte", &sig, false, &vide, &exc).is_some(), "le programme légitime n'est pas couvert par son exception");
+    assert!(decider("Alerte", &sig_bornee, false, &vide, &exc).is_none(), "un programme au chemin borné hérite de l'exception");
+    // Ancien format (signature en clair) toujours reconnu
+    let ancienne = vec![Exception { signature: sig.clone(), description: String::new(), date: String::new() }];
+    assert!(decider("Alerte", &sig, false, &vide, &ancienne).is_some());
+    // Comportement appris : par empreinte (R7 : apprentissage.json borné), ancien format reconnu
+    let appris: BTreeSet<String> = [empreinte_signature(&sig)].into();
+    assert!(decider("Alerte", &sig, false, &appris, &[]).is_some());
+    assert!(empreinte_signature(&sig).len() == 71 && empreinte_signature(&sig).starts_with("sha256:"));
+    // Le moniteur pose l'empreinte sur le texte entier, avant le bornage ; l'exception la reprend
+    let m = include_str!("moniteur.rs");
+    let d = m.find("fn ajouter_alerte_brute").unwrap();
+    let corps = &m[d..d + 900];
+    assert!(corps.find("commun::empreinte_signature(").expect("empreinte") < corps.find("commun::borner_alerte(&mut a)").unwrap());
+    assert!(include_str!("apprentissage.rs").contains("if a.signature.is_empty() { signature(a) } else { a.signature.clone() }"));
+}
+
+/// Audit de sécurité de #72, S72-11 : la borne de taille vaut pour TOUS les champs, même remplis de caractères de
+/// 4 octets (1000 alertes sous TAILLE_MAX_ALERTES)
+#[test]
+fn phase3_alerte_bornee_pire_cas() {
+    use crate::commun::{borner_alerte, Alerte, TAILLE_MAX_ALERTES};
+    let x: String = "\u{10FFFF}".repeat(5000);
+    let mut a = Alerte { id: x.clone(), heure: x.clone(), niveau: x.clone(), processus: x.clone(), chemin: x.clone(), destination: x.clone(),
+        ip: Some(x.clone()), nom_dns: Some(x.clone()), raisons: x.clone(), mitre: x.clone(), conseil: x.clone(), parent: x.clone(),
+        regle: x.clone(), collecte: x.clone(), signature: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX };
+    borner_alerte(&mut a);
+    let octets = serde_json::to_vec(&a).unwrap().len();
+    assert!(octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte");
 }
 
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés

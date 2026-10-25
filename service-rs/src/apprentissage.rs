@@ -116,10 +116,12 @@ pub fn decider(niveau: &str, signature: &str, en_apprentissage: bool, appris: &B
     if niveau == "Critique" || niveau == "Info" {
         return None;
     }
-    if exceptions.iter().any(|e| e.signature == signature) {
+    // Exceptions et comportements appris : par empreinte (format actuel) ou par signature en clair (anciens fichiers)
+    let empreinte = commun::empreinte_signature(signature);
+    if exceptions.iter().any(|e| e.signature == signature || e.signature == empreinte) {
         return Some(("Info", " [exception enregistrée]", false));
     }
-    if appris.contains(signature) {
+    if appris.contains(signature) || appris.contains(&empreinte) {
         return Some(("Info", " [comportement appris]", false));
     }
     if en_apprentissage {
@@ -145,7 +147,8 @@ pub fn filtrer(a: &mut Alerte) {
         a.niveau = niveau.into();
         a.score = a.score.min(1);
         a.raisons.push_str(mention);
-        if memoriser && e.appris.len() < 5000 && e.appris.insert(sig) {
+        // Mémorisé par son empreinte : taille fixe, apprentissage.json borné (relecture de #72, R7)
+        if memoriser && e.appris.len() < 5000 && e.appris.insert(commun::empreinte_signature(&sig)) {
             let _ = commun::ecrire(FICHIER, &*e);
         }
     }
@@ -153,7 +156,8 @@ pub fn filtrer(a: &mut Alerte) {
 
 pub fn ajouter_exception(a: &Alerte) -> String {
     let mut e = etat().lock().unwrap();
-    let sig = signature(a);
+    // Empreinte du comportement entier, posée avant le bornage ; une alerte d'avant la phase 3.1 n'en a pas
+    let sig = if a.signature.is_empty() { signature(a) } else { a.signature.clone() };
     let description = format!("{} — {} — {}", a.processus, a.destination, a.raisons.chars().take(120).collect::<String>());
     if !e.exceptions.iter().any(|x| x.signature == sig) {
         e.exceptions.push(Exception { signature: sig, description: description.clone(), date: commun::maintenant() });
