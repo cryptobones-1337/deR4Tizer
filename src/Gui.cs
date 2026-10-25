@@ -87,7 +87,8 @@ namespace DeR4Tizer
         }
 
         // Envoie la commande, en passant par une copie de l'interface lancée en administrateur si besoin.
-        // La commande (qui peut contenir un mot de passe) passe par un fichier du profil, effacé dès sa lecture :
+        // La commande (qui peut contenir un mot de passe) passe par un fichier de commande du profil (la copie élevée
+        // ne l'efface pas : elle n'efface rien, audit AUD6-01) :
         // jamais par la ligne de commande, que l'audit des processus (4688) et les SIEM enregistrent.
         public static void Executer(Commande c)
         {
@@ -190,6 +191,11 @@ namespace DeR4Tizer
                         Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Hote((string)o)) : "";
                         if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
                         if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
+                        // Canal désactivé dont l'adresse change quand même, et jeton ntfy : affichés aussi
+                        if (!actif("Ntfy") && secret("NtfyUrl").Length > 0) canaux.Add((en ? "ntfy (off)" : "ntfy (désactivé)") + secret("NtfyUrl"));
+                        if (!actif("Teams") && secret("TeamsUrl").Length > 0) canaux.Add((en ? "Teams (off)" : "Teams (désactivé)") + secret("TeamsUrl"));
+                        if (d.TryGetValue("NtfyJeton", out o) && o is string && ((string)o).Length > 0)
+                            canaux.Add((en ? "ntfy token " : "jeton ntfy ") + (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau")));
                         // Tout ce qui sera appliqué est affiché (audit, AUD6-02) : serveur, port, sécurité, compte, expéditeur
                         // et mot de passe (nouveau, effacé ou inchangé) ; un serveur changé sans nouveau mot de passe efface
                         // l'ancien côté service, jamais envoyé à un autre serveur

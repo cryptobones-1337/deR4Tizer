@@ -224,17 +224,19 @@ fn autorisee(ip: std::net::IpAddr, autorisees: &[String]) -> bool {
 
 fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
     flux.set_nonblocking(false)?;
-    flux.set_read_timeout(Some(Duration::from_secs(5)))?;
     flux.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut demande = Vec::new();
     let mut tampon = [0u8; 2048];
     // Échéance totale de lecture de la requête (audit, AUD3-05) : avant, un client qui envoyait un octet toutes les
-    // 4 s tenait la connexion des heures ; 16 connexions lentes rendaient l'API indisponible
+    // 4 s tenait la connexion des heures ; 16 connexions lentes rendaient l'API indisponible. Chaque lecture attend au
+    // plus le temps qui reste (5 s au plus) : 10 s en tout, jamais 10 s plus une dernière lecture
     let debut = std::time::Instant::now();
     while !demande.windows(4).any(|w| w == b"\r\n\r\n") {
-        if debut.elapsed() > Duration::from_secs(10) {
+        let reste = Duration::from_secs(10).saturating_sub(debut.elapsed());
+        if reste.is_zero() {
             return Ok(());
         }
+        flux.set_read_timeout(Some(reste.min(Duration::from_secs(5))))?;
         let n = flux.read(&mut tampon)?;
         if n == 0 || demande.len() > 16 * 1024 {
             break;

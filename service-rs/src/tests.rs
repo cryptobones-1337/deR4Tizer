@@ -475,6 +475,8 @@ fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
         ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
         ConfigNotifications { destinataires: "b@exemple.test\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
         ConfigNotifications { smtp_serveur: "smtp.exemple.test\0".into(), ..actuelle.clone() },
+        ConfigNotifications { expediteur: "a@exemple.test\u{202E}tset.tnaquatta".into(), ..actuelle.clone() },
+        ConfigNotifications { destinataires: "b@exemple\u{200B}.test".into(), ..actuelle.clone() },
     ] {
         assert!(essai(&n, Secrets::default()).is_err());
     }
@@ -584,6 +586,8 @@ fn fonctions_texte_sans_panique() {
     torturer_texte(r#"alert tcp any any -> any any (msg:"é"; content:"|41|é"; sid:9;)"#, &mut |t| { let _ = crate::ids::lire_texte_test(t); });
     torturer_texte(r"C:\Users\marie\AppData\x.exe", &mut |t| { let _ = crate::commun::masquer_chemin(t); });
     torturer_texte("Brave Software, Inc.", &mut |t| { let _ = crate::moniteur::ip_directe_normale(t); });
+    torturer_texte("192.168.1.0/24", &mut |t| { let _ = crate::api::adresse_autorisee_valide(t); let _ = crate::api::adresses_invalides(t); });
+    torturer_texte(r"C:\Windows\System32\svchost.exe", &mut |t| { let _ = crate::reponse::chemin_critique(t, r"C:\Windows"); let _ = crate::reponse::chemin_critique(r"C:\Windows\explorer.exe", t); });
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
