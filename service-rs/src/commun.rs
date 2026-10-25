@@ -264,6 +264,10 @@ pub fn reglages_invalides(n: &Config) -> Option<String> {
     if a.len() > 1000 || !a.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'/' | b',' | b';' | b' ')) || a.contains("   ") {
         return Some("adresses autorisées de l'API : adresses IPv4 ou réseaux, séparés par des virgules".into());
     }
+    // 16 au plus (S60-03), affichées une par ligne à la confirmation
+    if a.split([',', ';', ' ']).filter(|x| !x.is_empty()).count() > 16 {
+        return Some("adresses autorisées de l'API : 16 au plus".into());
+    }
     None
 }
 

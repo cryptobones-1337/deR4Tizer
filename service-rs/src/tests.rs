@@ -747,10 +747,35 @@ fn audit_reglages_champs_texte_fermes() {
     }
 }
 
-/// Relecture de #58 (D2) : chemins complets des commandes (ce que le service appelle), sur ce que l'interface envoie
-/// réellement (aucun refus) et sur les contournements (refus)
 /// Audit de sécurité S58-05, S58-06, S58-07 : champs remplis d'espaces (la confirmation en administrateur montrait
 /// l'adresse légitime suivie de blanc, et repoussait hors de l'écran une adresse ajoutée) et « : » dans l'hôte syslog
+/// Audit de sécurité S60-01 à S60-03 : remplissage sans espace (destinataire légitime répété, caractères blancs qui ne
+/// sont pas des espaces, longue liste d'adresses) : champs SMTP en ASCII imprimable, 10 destinataires au plus, sans
+/// doublon ni élément qui ne soit une adresse, 16 adresses de l'API au plus
+#[test]
+fn audit_champs_listes_bornees() {
+    use crate::commun::{lire_reglages, ConfigNotifications};
+    use crate::notifications::{preparer, Secrets};
+    let actuelle = ConfigNotifications { smtp_serveur: "smtp.exemple.test".into(), smtp_utilisateur: "alertes".into(), ..Default::default() };
+    let essai = |d: &str| { let mut s = Secrets::default(); preparer(&actuelle, &ConfigNotifications { destinataires: d.into(), ..actuelle.clone() }, &Secrets::default(), &mut s) };
+    let dix: Vec<String> = (0..10).map(|i| format!("a{i}@exemple.test")).collect();
+    assert!(essai(&dix.join(", ")).is_ok(), "10 destinataires : accepté");
+    assert!(essai(&format!("{}, b@exemple.test", dix.join(","))).is_err(), "11 : refusé");
+    assert!(essai(&format!("{}x@attacker.example", "admin@legit.example,".repeat(47))).is_err(), "répété : refusé");
+    assert!(essai("a@exemple.test, A@EXEMPLE.TEST").is_err(), "doublon à la casse près : refusé");
+    assert!(essai("a@exemple.test, pas-une-adresse").is_err(), "élément sans @ : refusé");
+    for d in [format!("admin@legit.example,{},x@attacker.example", "\u{2800}".repeat(300)), format!("admin@legit.example{},x@attacker.example", "\u{0336}".repeat(100)), "admin@légit.example".to_string()] {
+        assert!(essai(&d).is_err(), "non ASCII : refusé");
+    }
+    // Adresses ntfy et Teams bornées (relecture de #60) : une adresse démesurée cachait la suite de la confirmation
+    let mut s = Secrets { ntfy_url: format!("https://ntfy.sh/{}", "a".repeat(4500)), ..Default::default() };
+    assert!(preparer(&actuelle, &actuelle, &Secrets::default(), &mut s).is_err());
+    let api = |adresses: &str| lire_reglages(&format!(r#"{{"Langue":"fr","Api":{{"Actif":true,"Port":8642,"Reseau":true,"Adresses":"{adresses}"}}}}"#));
+    let seize: Vec<String> = (1..=16).map(|i| format!("192.0.2.{i}")).collect();
+    assert!(api(&seize.join(",")).is_ok());
+    assert!(api(&format!("{},203.0.113.0/24", seize.join(","))).is_err(), "17 adresses : refusé");
+}
+
 #[test]
 fn audit_champs_sans_remplissage() {
     use crate::commun::{lire_reglages, lire_syslog_test, ConfigNotifications};
@@ -768,15 +793,17 @@ fn audit_champs_sans_remplissage() {
     assert!(essai(&ConfigNotifications { expediteur: format!("a@exemple.test{}", "\u{2007}".repeat(5)), ..actuelle.clone() }).is_err());
     // Adresses autorisées de l'API : chiffres, « . », « / », « , » et espaces simples seulement
     let reglages = |adresses: &str| lire_reglages(&format!(r#"{{"Langue":"fr","Api":{{"Actif":true,"Port":8642,"Reseau":true,"Adresses":"{adresses}"}}}}"#));
-    assert!(reglages("192.168.1.10, 10.0.0.0/8").is_ok());
-    assert!(reglages(&format!("192.168.1.10{},203.0.113.0/24", " ".repeat(30_000))).is_err());
-    assert!(reglages("192.168.1.10\u{3000},203.0.113.0/24").is_err());
+    assert!(reglages("192.0.2.10, 198.51.100.0/24").is_ok());
+    assert!(reglages(&format!("192.0.2.10{},203.0.113.0/24", " ".repeat(30_000))).is_err());
+    assert!(reglages("192.0.2.10\u{3000},203.0.113.0/24").is_err());
     assert!(reglages(&"1.2.3.4,".repeat(200)).is_err(), "longueur bornée");
     // Hôte syslog : « : » seulement dans une adresse IPv6 valide
     assert!(lire_syslog_test(r#"{"Hote":"fd00::5","Port":514,"Protocole":"UDP"}"#).is_ok());
-    assert!(lire_syslog_test(r#"{"Hote":"10.0.0.5:25","Port":514,"Protocole":"UDP"}"#).is_err());
+    assert!(lire_syslog_test(r#"{"Hote":"192.0.2.5:25","Port":514,"Protocole":"UDP"}"#).is_err());
 }
 
+/// Relecture de #58 (D2) : chemins complets des commandes (ce que le service appelle), sur ce que l'interface envoie
+/// réellement (aucun refus) et sur les contournements (refus)
 #[test]
 fn audit_reglages_commandes_completes() {
     use crate::commun::{lire_reglages, lire_syslog_test, Config};

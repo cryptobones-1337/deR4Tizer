@@ -145,11 +145,34 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
         if let Some(r) = remplissage(v, if nom == "destinataires" { 1000 } else { 254 }) {
             return Err(format!("{nom} : {r}"));
         }
+        // ASCII imprimable seulement (S60-02) : les champs SMTP n'en demandent pas plus, et un caractère blanc qui n'est
+        // pas une espace (U+2800, signes combinants, étiquettes) cachait une adresse ajoutée
+        if !v.bytes().all(|b| b == b' ' || b.is_ascii_graphic()) {
+            return Err(format!("{nom} : seulement des caractères ASCII"));
+        }
+    }
+    // Destinataires (S60-01) : 10 au plus, chacun une adresse, sans doublon ; une suite collée sans espace cachait une
+    // adresse ajoutée au bout d'une ligne trop large pour l'écran
+    let liste: Vec<&str> = nouvelle.destinataires.split([',', ';', ' ']).filter(|d| !d.is_empty()).collect();
+    if liste.len() > 10 {
+        return Err("destinataires : 10 au plus".into());
+    }
+    if liste.iter().any(|d| !d.contains('@')) {
+        return Err("destinataires : seulement des adresses de courriel".into());
+    }
+    let mut vues = std::collections::HashSet::new();
+    if !liste.iter().all(|d| vues.insert(d.to_ascii_lowercase())) {
+        return Err("destinataires : adresse en double".into());
     }
     // Adresses ntfy et Teams : ASCII imprimable seulement (homoglyphes, caractères invisibles : audit de sécurité, C1)
     for (nom, v) in [("adresse ntfy", &s.ntfy_url), ("adresse Teams", &s.teams_url)] {
         if v.chars().any(|c| !c.is_ascii_graphic()) {
             return Err(format!("{nom} : seulement des caractères ASCII visibles"));
+        }
+        // Longueur bornée : une adresse démesurée remplissait la confirmation et cachait ce qui la suivait (relecture
+        // de #60)
+        if v.len() > 600 {
+            return Err(format!("{nom} : 600 caractères au plus"));
         }
         // Forme https://hôte[:port]/chemin : ni compte (« @ »), ni barre oblique inverse, ni autre caractère dans l'hôte.
         // Une adresse que l'interface ne sait pas lire s'affichait « ? » à la confirmation, et curl pouvait y voir un
