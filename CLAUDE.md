@@ -4,13 +4,13 @@ Ce fichier cadre tout le travail de Claude Code sur ce dépôt. Il prime sur tou
 
 ## 1. Mission
 
-deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent.
+deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. En dehors des téléchargements déjà documentés (listes de menaces, JA3, GeoIP, LOLDrivers, mise à jour) et des alertes, aucune donnée de l'utilisateur ne part vers un tiers, sauf par une fonctionnalité qu'il active lui-même et qui l'annonce (phase 7, section 5).
 
 Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise. Une capacité n'existe que si elle est démontrée par des tests reproductibles. Le code qui compile ne prouve rien.
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seule exception : la phase 7 (section 5), ouverte par écrit par le mainteneur, une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -41,7 +41,16 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ### Pendant
 
-- Écrire d'abord le test qui échoue sur le code actuel quand c'est possible, puis la correction.
+- Écrire d'abord le test qui échoue sur le code actuel quand c'est possible, puis la correction. Pour tout test
+  ajouté ou modifié, avant la PR : le test échoue quand on retire le correctif (ou sous une mutation du correctif),
+  puis réussit quand on le remet, chaque variante recompilée dans son propre dossier de compilation. Un test qui n'a
+  jamais échoué ne prouve pas qu'il attrape le défaut.
+- Aucune affirmation « corrigé », « réussi » ou « vert » sans une sortie fraîche de la commande qui le prouve, sur le
+  commit et l'arbre annoncés ; le rapport d'un agent n'est pas une preuve : relire le diff ou le tableau.
+- Une cause reste une hypothèse, et se dit comme telle, tant qu'un essai ne l'a pas confirmée ; relever l'état (journal,
+  registre, valeurs) avant de corriger, et avant toute remise à l'instantané qui l'effacerait (passage bloqué compris).
+- Un contrôle qui n'a rien eu à vérifier (zéro événement, zéro fichier, lecture impossible) ne vaut pas réussite :
+  prévoir un témoin qui doit être retenu et un témoin qui doit être écarté, et faire échouer une lecture impossible.
 - Lancer `cargo test --release` et la compilation de l'interface quand l'environnement le permet.
 - Relire son propre diff : régressions, changements hors sujet, secrets, découpages de chaînes.
 
@@ -227,6 +236,29 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
+5. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
+   mots : « Open a phase for the feature > do it like your example », l'exemple proposé étant « Phase 7: domain-name
+   filtering (DNS, ads, tracking) ». Commence une fois les phases 1, 3, 4 et 6 validées par la relecture et par
+   cryptobones-1337 ; c'est la seule exception au gel (section 2, règle 1).
+   - Contenu : navigation sécurisée par le DNS (domaines malveillants des listes de menaces, changement de serveur DNS
+     détecté, DNS chiffré si le dossier de conception le justifie) et blocage des domaines de publicité et de pistage,
+     par un même mécanisme.
+   - Pour toute la phase : dossier de conception d'abord (agent concepteur-fonctionnalites), puis une PR par étape ;
+     désactivé par défaut ; retour arrière garanti (désinstallation, panne du service) ; aucun pilote noyau ; aucune
+     dépendance nouvelle sans accord ; lignes de l'utilisateur du fichier hosts jamais réécrites ; jamais d'exclusion
+     ni d'affaiblissement de Defender (règle 2) : si Defender signale le mécanisme, on en change ; effets sur les VPN,
+     les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
+     si l'utilisateur le choisit, et il est nommé dans l'interface.
+   - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas.
+   Demandées aussi par le mainteneur, pas encore ouvertes (chacune attend sa propre phase, ouverte par écrit, et une
+   exception écrite dans la section 2, règle 1) :
+   configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques), dont le mode ne changerait que
+   l'affichage, jamais les droits ni la validation du service ; surveillance des fuites de données pour des adresses
+   de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (« ok to rely on third party as long
+   as it's free », 2026-10-25 : sans service gratuit qui convienne, la fonctionnalité n'est pas faite), jamais par la
+   lecture de fichiers de données volées, propriété de l'adresse vérifiée par le service tiers ou par un code envoyé à
+   l'adresse (à trancher dans le dossier, qui nomme alors le serveur d'envoi), adresse jamais journalisée ni envoyée
+   ailleurs qu'à ce service (et au serveur d'envoi du code, s'il est retenu), désactivée par défaut.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
 
