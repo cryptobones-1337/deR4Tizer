@@ -501,6 +501,8 @@ fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
     ] {
         assert_eq!(essai(&n, Secrets::default()).unwrap().smtp_mot_de_passe, "-", "{}:{} {}", n.smtp_serveur, n.smtp_port, n.smtp_utilisateur);
     }
+    // Sécurité SMTP changée (TLS vers « aucune ») sans nouveau mot de passe : effacé (il partirait en clair)
+    assert_eq!(essai(&ConfigNotifications { smtp_securite: "aucune".into(), ..actuelle.clone() }, Secrets::default()).unwrap().smtp_mot_de_passe, "-");
     // Nouveau mot de passe fourni avec le nouveau serveur : gardé
     let n = ConfigNotifications { smtp_serveur: "smtp2.exemple.test".into(), ..actuelle.clone() };
     assert_eq!(essai(&n, Secrets { smtp_mot_de_passe: "nouveau".into(), ..Default::default() }).unwrap().smtp_mot_de_passe, "nouveau");
@@ -653,6 +655,23 @@ fn audit_upnp_reponse_goutte_a_goutte_bornee() {
     assert!(crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\n\r\n", Duration::ZERO).is_none());
     assert!(debut.elapsed() < Duration::from_millis(100));
     assert!(crate::upnp::ECHEANCE_PASSAGE <= Duration::from_secs(30));
+    // Échéance du passage UPnP entier (relecture de #55, D2) : une requête du passage n'attend jamais au-delà de la fin
+    // du passage, même si l'échéance d'une réponse (10 s) est plus loin ; fin dépassée : rien n'est tenté
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((c, _)) = ecoute.accept() {
+            std::thread::sleep(Duration::from_secs(4));
+            drop(c);
+        }
+    });
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now() + Duration::from_millis(500)).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(1500), "fin du passage ignorée : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now()).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
 }
 
 /// Audit AUD4-02, AUD4-03 : tables de déduplication alimentées par des adresses du réseau, jamais purgées

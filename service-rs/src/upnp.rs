@@ -209,6 +209,12 @@ pub fn chemin_sur_test(c: &str) -> bool {
     chemin_sur(c)
 }
 
+#[cfg(test)]
+pub fn http_test(adresse: SocketAddr, requete: &str, fin: Instant) -> Option<(u16, String)> {
+    http(adresse, requete, fin)
+}
+
+#[cfg(test)]
 pub fn decouper_url_test(url: &str) -> Option<(SocketAddr, String)> {
     decouper_url(url)
 }
