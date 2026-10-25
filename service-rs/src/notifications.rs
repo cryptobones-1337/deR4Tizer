@@ -443,8 +443,9 @@ fn curl(parametres: &str, corps: &[u8]) -> Result<(), String> {
     let r = (|| {
         fs::write(&f_corps, corps).map_err(|e| e.to_string())?;
         fs::write(&f_param, format!("{parametres}\nsilent\nshow-error\nfail\nmax-time = 30\nproto = \"=https,smtps,smtp\"\n")).map_err(|e| e.to_string())?;
+        // -q en premier : aucun fichier de réglages de curl lu (.curlrc), seulement le nôtre (-K)
         let sortie = Command::new("curl.exe")
-            .arg("-K").arg(&f_param)
+            .arg("-q").arg("-K").arg(&f_param)
             .arg("--data-binary").arg(format!("@{}", f_corps.display()))
             .creation_flags(0x0800_0000)
             .output()
@@ -567,7 +568,7 @@ fn courriel_curl(parametres: &str, message: &[u8]) -> Result<(), String> {
     let r = (|| {
         fs::write(&f, format!("{parametres}\nsilent\nshow-error\nmax-time = 30\n")).map_err(|e| e.to_string())?;
         let mut enfant = Command::new("curl.exe")
-            .arg("-K").arg(&f)
+            .arg("-q").arg("-K").arg(&f)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())

@@ -177,7 +177,7 @@ impl Menaces {
             }
             let tmp = f.with_extension("tmp");
             let resultat = Command::new("curl.exe")
-                .args(["-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
+                .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
                     "--max-time", "180", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                 .arg(&tmp)
                 .arg(s.url)

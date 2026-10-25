@@ -241,7 +241,7 @@ fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
 
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
     let sortie = Command::new("curl.exe")
-        .args(["-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
+        .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
             "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
         .arg(destination)
         .arg(url)
@@ -448,7 +448,7 @@ pub fn script_installation(p: &ParametresScript) -> String {
         ),
         None => (
             format!("{}; ", ps_canal(commun::NOM_SERVICE, commun::NOM_SERVICE)),
-            "Start-Process msiexec.exe -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')".to_string(),
+            "Start-Process (Join-Path ([Environment]::SystemDirectory) 'msiexec.exe') -Wait -ArgumentList '/i', ('\"' + $paquet + '\"'), '/qn', '/norestart', '/l*v', ('\"' + $journal + '\"')".to_string(),
             30,
             2,
         ),
