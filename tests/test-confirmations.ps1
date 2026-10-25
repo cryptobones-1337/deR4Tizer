@@ -82,6 +82,21 @@ try {
         Verifier-Fenetre 'fenêtre : « Continuer » seul renvoie Oui' { $continuer.DialogResult -eq 'Yes' }
         Verifier-Fenetre 'fenêtre : « Continuer » désarmé à l''ouverture (armé 1 s après l''affichage)' { -not $continuer.Enabled }
     } finally { $f.Dispose() }
+    # Armement réel (fenêtre montrée hors de l'écran, jamais à l'emplacement visible) : inactif à l'affichage, actif après
+    # 1 s, désarmé quand une autre fenêtre prend le premier plan, réarmé 1 s après le retour (S69-02, S69-03)
+    $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @('essai', $false))
+    $autre = New-Object Windows.Forms.Form
+    try {
+        $f.StartPosition = 'Manual'; $f.Location = New-Object Drawing.Point(-4000, -4000); $f.ShowInTaskbar = $false
+        $autre.StartPosition = 'Manual'; $autre.Location = New-Object Drawing.Point(-4000, -3000); $autre.ShowInTaskbar = $false
+        $k = $f.Controls.Find('Continuer', $true)[0]
+        function Attendre([int]$ms) { $fin = [DateTime]::UtcNow.AddMilliseconds($ms); while ([DateTime]::UtcNow -lt $fin) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 20 } }
+        $f.Show(); Attendre 150; $a0 = $k.Enabled; Attendre 1400; $a1 = $k.Enabled
+        $autre.Show(); $autre.Activate(); Attendre 300; $a2 = $k.Enabled; Attendre 1300; $a3 = $k.Enabled
+        $f.Activate(); Attendre 200; $a4 = $k.Enabled; Attendre 1400; $a5 = $k.Enabled
+        Verifier-Fenetre 'armement : inactif à l''affichage, actif après 1 s' { if (-not $a0 -and $a1) { $true } else { "0,15 s : $a0 ; 1,55 s : $a1" } }
+        Verifier-Fenetre 'armement : désarmé hors du premier plan, réarmé 1 s après le retour' { if (-not $a2 -and -not $a3 -and -not $a4 -and $a5) { $true } else { "perte : $a2/$a3 ; retour : $a4/$a5" } }
+    } finally { $autre.Dispose(); $f.Dispose() }
     $c = [Activator]::CreateInstance($cmdT); $c.Action = 'majConfig'; $c.Valeur = '{"Auto":false,"Url":""}'
     $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
     Verifier-Fenetre 'majConfig : adresse vide = adresse par défaut, affichée' { $t -match 'adresse par défaut https://github\.com/' }
