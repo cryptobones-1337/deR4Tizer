@@ -10,7 +10,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seule exception : la phase 7 (section 5), ouverte par écrit par le mainteneur, une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : les phases 7, 8 et 9 (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -102,6 +102,7 @@ Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par un
 1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
 2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c dans la VM Hyper-V de test, remise à son instantané « propre » avant et après chaque scénario (tests/vm/lancer.ps1 ; instantané pris avec Microsoft Defender actif et sans exclusion : son état est relevé à chaque scénario, et n'est exigé « pleinement actif » que par le lot 3d, tests/vm/lot3d.ps1 ; compte standard connecté à la console avec -SessionStandard, sinon la session de l'instantané). Windows Sandbox (tests/bac-a-sable/lancer.ps1) reste un secours, signalé comme tel dans la preuve. Passage complet : tests/bac-a-sable/passage-complet.ps1. Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés. Un passage dans la VM ne vaut pas, à lui seul, réussite du lot 3d.
    Tout passage est surveillé par une vigie (tests/bac-a-sable/vigie.ps1, une vérification par minute) qui signale chaque scénario terminé, tout blocage (bac à sable jamais ouvert ou fermé sans résultat, VM arrêtée, aucun fichier de travail du scénario écrit pendant 30 minutes) et la fin. Un passage bloqué est arrêté, nettoyé (bac à sable fermé, clés de test effacées, VM remise à son instantané) et relancé ; il ne compte jamais comme preuve.
+   Dispense (mainteneur, 2026-10-25 : « No vm for documentation ») : une PR qui ne modifie que des fichiers Markdown (`*.md`), aucun n'étant livré dans le MSI, n'a pas de passage VM ; relecture, contrôle des données personnelles et barrière d'arbre (point 4) restent obligatoires, et sa preuve en commentaire le dit (« documentation seule : passage non requis », liste des fichiers modifiés). Une PR qui touche aussi un autre fichier, même un script de test, a son passage.
 3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
 4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
 5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
@@ -250,15 +251,22 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
      si l'utilisateur le choisit, et il est nommé dans l'interface.
    - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas.
-   Demandées aussi par le mainteneur, pas encore ouvertes (chacune attend sa propre phase, ouverte par écrit, et une
-   exception écrite dans la section 2, règle 1) :
-   configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques), dont le mode ne changerait que
-   l'affichage, jamais les droits ni la validation du service ; surveillance des fuites de données pour des adresses
-   de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (« ok to rely on third party as long
-   as it's free », 2026-10-25 : sans service gratuit qui convienne, la fonctionnalité n'est pas faite), jamais par la
-   lecture de fichiers de données volées, propriété de l'adresse vérifiée par le service tiers ou par un code envoyé à
-   l'adresse (à trancher dans le dossier, qui nomme alors le serveur d'envoi), adresse jamais journalisée ni envoyée
-   ailleurs qu'à ce service (et au serveur d'envoi du code, s'il est retenu), désactivée par défaut.
+6. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
+   le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
+   une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
+   montre, jamais les droits ni la validation du service ; mode standard par défaut ; bascule visible et réversible ;
+   aucune option qui affaiblit la protection sans avertissement clair. Mêmes garde-fous que la phase 7 (dossier de
+   conception d'abord, une PR par étape, aucune dépendance nouvelle sans accord).
+7. Phase 9 : surveillance des fuites de données. Ouverte par le mainteneur le 2026-10-25 (« Add the phases », en réponse
+   à la proposition « Phase 9: breach monitoring »), avec cette condition : « Breach monitoring > ok to rely on third
+   party as long as it's free ». Commence une fois la phase 8 validée par la relecture et par cryptobones-1337. Pour des
+   adresses de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (sans service gratuit qui
+   convienne, la fonctionnalité n'est pas faite), jamais par la lecture de fichiers de données volées ; propriété de
+   l'adresse vérifiée par le service tiers ou par un code envoyé à l'adresse (à trancher dans le dossier, qui nomme
+   alors le serveur d'envoi) ; adresse jamais journalisée ni envoyée ailleurs qu'à ce service (et au serveur d'envoi du
+   code, s'il est retenu) ; désactivée par défaut ; service tiers nommé dans l'interface. Mêmes garde-fous que la phase
+   7.
+   L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
 
