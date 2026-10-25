@@ -240,8 +240,8 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - #65 : files d'alertes reprises à l'arrêt du service ;
      - texte des confirmations de l'assistant élevé passé par `Visible()` partout ;
      - fenêtre de confirmation qui renvoie à la ligne et défile, et montre le domaine enregistrable (S60-06/07).
-   - Une fois ces correctifs fusionnés, chacun avec sa relecture et un passage VM sans ÉCHOUÉ, la phase 1 est validée par cryptobones-1337.
-   - La phase 3 s'ouvre alors. Pour son ouverture et pour ses PR, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub, et de la validation des lots 3 et 3d qui en dépend.
+   - Une fois ces correctifs fusionnés, chacun relu et couvert par un passage VM sans ÉCHOUÉ sur l'arbre intégré, la phase 1 est validée par cryptobones-1337.
+   - La phase 3 s'ouvre alors. Pour son ouverture et pour ses PR, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub.
    - Rien ne change pour la distribution : la règle de la section 4 reste entière (CI GitHub verte, lot 3d réussi, binaires signés, relecture indépendante).
 2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
