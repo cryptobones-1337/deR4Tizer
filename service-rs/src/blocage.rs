@@ -132,7 +132,7 @@ const SAUVEGARDES_HOSTS: usize = 20;
 
 /// Réécrit le bloc de deR4Tizer (audit SEC-005) : sauvegarde obligatoire avant toute écriture (échec : rien n'est
 /// écrit), puis fichier temporaire dans le même dossier et remplacement (jamais de fichier hosts tronqué) ; seules les
-/// SAUVEGARDES_HOSTS dernières sauvegardes sont gardées.
+/// SAUVEGARDES_HOSTS dernières sauvegardes sont gardées, plus la toute première (fichier d'origine, jamais effacée).
 pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind, Write};
     let hosts = fichier_hosts();
@@ -148,8 +148,20 @@ pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
     let sauvegardes = commun::dossier().join("sauvegardes");
     fs::create_dir_all(&sauvegardes)?;
     if !original.is_empty() {
+        // Fichier d'origine : gardé à part, hors rotation (sinon effacé après 20 écritures)
+        let origine = sauvegardes.join("origine-hosts.bak");
+        if !origine.exists() {
+            fs::write(&origine, &original)?;
+        }
+        // Nom unique : deux écritures dans la même seconde ne s'écrasent pas
         let horodatage = commun::maintenant().replace([':', ' '], "-");
-        fs::write(sauvegardes.join(format!("hosts-{horodatage}.bak")), &original)?;
+        let mut nom = sauvegardes.join(format!("hosts-{horodatage}.bak"));
+        let mut n = 1;
+        while nom.exists() {
+            nom = sauvegardes.join(format!("hosts-{horodatage}-{n:02}.bak"));
+            n += 1;
+        }
+        fs::write(&nom, &original)?;
         let mut anciennes: Vec<_> = fs::read_dir(&sauvegardes)?.filter_map(Result::ok)
             .filter(|e| e.file_name().to_string_lossy().starts_with("hosts-")).map(|e| e.path()).collect();
         anciennes.sort();
