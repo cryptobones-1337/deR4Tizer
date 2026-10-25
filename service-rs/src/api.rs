@@ -165,7 +165,7 @@ fn regle_parefeu(config: &ConfigApi) {
             Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue; \
             New-NetFirewallRule -Name '{NOM_REGLE}-public' -DisplayName 'deR4Tizer API (réseau public bloqué)' -Group '{}' \
             -Direction Inbound -Protocol TCP -LocalPort {} -Action Block -Profile Public | Out-Null",
-            crate::blocage::GROUPE, config.port, adresses_autorisees(config).join(","), crate::blocage::GROUPE, config.port)
+            crate::blocage::GROUPE, config.port, liste_powershell(&adresses_autorisees(config)), crate::blocage::GROUPE, config.port)
     } else {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue")
     };
@@ -176,11 +176,34 @@ fn regle_parefeu(config: &ConfigApi) {
         .output();
 }
 
-/// Adresses ou réseaux (CIDR) autorisés à interroger l'API depuis le réseau
+/// Une adresse autorisée : IPv4 exacte, ou réseau IPv4 de /8 à /32 (l'API n'écoute qu'en IPv4). Tout le reste est
+/// refusé : avant, seule la partie avant « / » était vérifiée et la suite allait telle quelle dans un script
+/// PowerShell exécuté en SYSTEM (audit, SEC-009) ; un réseau IPv6 ouvrait le pare-feu sans jamais être reconnu (SEC-007).
+pub fn adresse_autorisee_valide(a: &str) -> bool {
+    match a.split_once('/') {
+        None => a.parse::<std::net::Ipv4Addr>().is_ok(),
+        Some((ip, l)) => ip.parse::<std::net::Ipv4Addr>().is_ok() && l.len() <= 2 && l.bytes().all(|b| b.is_ascii_digit())
+            && l.parse::<u32>().is_ok_and(|n| (8..=32).contains(&n)),
+    }
+}
+
+/// Entrées invalides de la liste saisie (vide : liste valide)
+pub fn adresses_invalides(texte: &str) -> Vec<String> {
+    texte.split([',', ';', ' ', '\t', '\r', '\n']).map(str::trim).filter(|a| !a.is_empty() && !adresse_autorisee_valide(a)).map(String::from).collect()
+}
+
+/// Adresses ou réseaux (CIDR) autorisés à interroger l'API depuis le réseau (seulement des entrées valides)
 fn adresses_autorisees(config: &ConfigApi) -> Vec<String> {
-    config.adresses.split([',', ';', ' ']).map(str::trim)
-        .filter(|a| { let ip = a.split('/').next().unwrap_or(""); !a.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() })
+    config.adresses.split([',', ';', ' ', '\t', '\r', '\n']).map(str::trim)
+        .filter(|a| !a.is_empty() && adresse_autorisee_valide(a))
         .map(String::from).collect()
+}
+
+/// Liste PowerShell de chaînes entre apostrophes (chiffres, points et « / » seulement après validation) ; vide : rien
+/// n'est autorisé (« 127.0.0.1 »)
+pub fn liste_powershell(adresses: &[String]) -> String {
+    let l: Vec<String> = adresses.iter().filter(|a| adresse_autorisee_valide(a)).map(|a| format!("'{a}'")).collect();
+    if l.is_empty() { "'127.0.0.1'".into() } else { format!("@({})", l.join(",")) }
 }
 
 fn autorisee(ip: std::net::IpAddr, autorisees: &[String]) -> bool {
@@ -201,11 +224,19 @@ fn autorisee(ip: std::net::IpAddr, autorisees: &[String]) -> bool {
 
 fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
     flux.set_nonblocking(false)?;
-    flux.set_read_timeout(Some(Duration::from_secs(5)))?;
     flux.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut demande = Vec::new();
     let mut tampon = [0u8; 2048];
+    // Échéance totale de lecture de la requête (audit, AUD3-05) : avant, un client qui envoyait un octet toutes les
+    // 4 s tenait la connexion des heures ; 16 connexions lentes rendaient l'API indisponible. Chaque lecture attend au
+    // plus le temps qui reste (5 s au plus) : 10 s en tout, jamais 10 s plus une dernière lecture
+    let debut = std::time::Instant::now();
     while !demande.windows(4).any(|w| w == b"\r\n\r\n") {
+        let reste = Duration::from_secs(10).saturating_sub(debut.elapsed());
+        if reste.is_zero() {
+            return Ok(());
+        }
+        flux.set_read_timeout(Some(reste.min(Duration::from_secs(5))))?;
         let n = flux.read(&mut tampon)?;
         if n == 0 || demande.len() > 16 * 1024 {
             break;

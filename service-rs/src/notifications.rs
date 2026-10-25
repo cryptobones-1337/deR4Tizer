@@ -81,7 +81,36 @@ pub fn lire_secrets() -> Secrets {
         .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
-/// Met à jour les secrets : une valeur vide laisse l'ancienne, « - » l'efface
+/// Caractère de contrôle (Cc) ou de mise en forme invisible (principaux Cf : sens d'écriture, largeur nulle, BOM)
+pub fn caractere_interdit(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+}
+
+/// Avant d'enregistrer de nouveaux réglages de remontée (décision pure, audit AUD6-02 et AUD3-07) :
+/// - aucun caractère de contrôle ni de mise en forme invisible dans les champs du courriel (sinon ajout d'en-têtes ou
+///   de destinataires, ou adresse affichée à l'envers dans la confirmation : U+202E…) ;
+/// - serveur, port ou compte SMTP changé sans nouveau mot de passe : l'ancien est effacé, jamais envoyé au nouveau
+///   serveur ; de même, jeton ntfy effacé si l'adresse ntfy change sans nouveau jeton.
+pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, actuels: &Secrets, s: &mut Secrets) -> Result<(), String> {
+    for (nom, v) in [("serveur SMTP", &nouvelle.smtp_serveur), ("compte SMTP", &nouvelle.smtp_utilisateur), ("expéditeur", &nouvelle.expediteur),
+                     ("destinataires", &nouvelle.destinataires), ("sécurité SMTP", &nouvelle.smtp_securite), ("niveau", &nouvelle.niveau_min)] {
+        if v.chars().any(caractere_interdit) {
+            return Err(format!("{nom} : caractère de contrôle ou de mise en forme refusé"));
+        }
+    }
+    let compte_change = nouvelle.smtp_serveur.trim() != actuelle.smtp_serveur.trim() || nouvelle.smtp_port != actuelle.smtp_port
+        || nouvelle.smtp_utilisateur.trim() != actuelle.smtp_utilisateur.trim();
+    if compte_change && s.smtp_mot_de_passe.trim().is_empty() {
+        s.smtp_mot_de_passe = "-".into();
+    }
+    let ntfy = s.ntfy_url.trim();
+    if !ntfy.is_empty() && ntfy != "-" && ntfy != actuels.ntfy_url.trim() && s.ntfy_jeton.trim().is_empty() {
+        s.ntfy_jeton = "-".into();
+    }
+    Ok(())
+}
+
 pub fn enregistrer_secrets(n: &Secrets) -> Result<(), String> {
     preparer_dossier()?;
     let mut s = lire_secrets();

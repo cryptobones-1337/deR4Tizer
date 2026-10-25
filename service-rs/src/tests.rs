@@ -295,6 +295,26 @@ fn api_adresses_autorisees() {
     assert_eq!(crate::api::decoder_test("a%20b+c%3A%"), "a b c:%");
 }
 
+/// Audit SEC-009 (AUD3-01) et SEC-007 (AUD3-04) : seule la partie avant « / » était vérifiée, la suite allait telle
+/// quelle dans un script PowerShell exécuté en SYSTEM ; un réseau IPv6 ouvrait le pare-feu sans être jamais reconnu
+#[test]
+fn audit_api_adresses_autorisees_strictes() {
+    use crate::api::{adresse_autorisee_valide as valide, adresses_invalides, liste_powershell};
+    for a in ["10.0.0.1", "192.168.1.0/24", "10.0.0.0/8", "203.0.113.7/32"] {
+        assert!(valide(a), "{a}");
+    }
+    for a in ["10.0.0.1/$(New-Item C:\\x)", "10.0.0.1/x|Out-Null", "10.0.0.1/8;calc", "10.0.0.1/24`n", "fd00::/64", "2001:db8::1",
+              "10.0.0.1/7", "10.0.0.1/33", "10.0.0.1/0", "10.0.0.1/", "10.0.0.1/+24", "10.0.0.1/024", "exemple.test"] {
+        assert!(!valide(a), "{a} : refusé");
+    }
+    assert_eq!(adresses_invalides("10.0.0.1, 10.0.0.1/x|Out-Null ; fd00::/64"), vec!["10.0.0.1/x|Out-Null", "fd00::/64"]);
+    assert!(adresses_invalides("10.0.0.1;192.168.1.0/24").is_empty());
+    // Script : chaînes entre apostrophes, jamais de texte libre ; liste vide : rien n'est ouvert
+    assert_eq!(liste_powershell(&["10.0.0.1".into(), "192.168.1.0/24".into()]), "@('10.0.0.1','192.168.1.0/24')");
+    assert_eq!(liste_powershell(&["10.0.0.1/$(x)".into()]), "'127.0.0.1'");
+    assert_eq!(liste_powershell(&[]), "'127.0.0.1'");
+}
+
 #[test]
 fn reglages_de_l_interface_avec_blocs_nuls() {
     // Ce qu'envoie l'interface tant que config.json n'existe pas (première installation) : blocs non créés,
@@ -375,6 +395,24 @@ fn alerte(niveau: &str, destination: &str, raisons: &str, score: i32) -> crate::
     }
 }
 
+/// Audit AUD5-01 : la protection des processus critiques se contentait du nom et d'un chemin qui COMMENÇAIT par le
+/// dossier Windows : une copie de powershell.exe nommée explorer.exe dans C:\Windows\Tasks (où tout compte peut écrire)
+/// échappait à la suspension d'un rançongiciel. Chemin exact maintenant.
+#[test]
+fn audit_processus_critiques_par_chemin_exact() {
+    use crate::reponse::chemin_critique as critique;
+    let w = r"C:\Windows";
+    for c in [r"C:\Windows\System32\svchost.exe", r"C:\WINDOWS\system32\LSASS.EXE", r"C:\Windows\explorer.exe", r"C:\Windows\System32\csrss.exe"] {
+        assert!(critique(c, w), "{c}");
+    }
+    for c in [r"C:\Windows\Tasks\explorer.exe", r"C:\Windows\Temp\svchost.exe", r"C:\Windows\System32\spool\drivers\color\svchost.exe",
+              r"C:\WindowsX\explorer.exe", r"C:\Windows\System32\..\Tasks\svchost.exe", r"D:\Windows\explorer.exe", r"C:\Users\x\explorer.exe",
+              r"C:\Windows\System32\notepad.exe", r"C:\Windows\SysWOW64\explorer.exe"] {
+        assert!(!critique(c, w), "{c} : pas un processus critique");
+    }
+    assert!(critique(r"C:\Windows\explorer.exe", r"C:\Windows\"), "dossier Windows avec barre finale");
+}
+
 #[test]
 fn b1_leurre_touche_par_rundll32_suspendu() {
     // rundll32 : binaire Windows, mais ni logiciel connu ni processus critique → suspendu
@@ -404,6 +442,53 @@ fn b3_vraie_alerte_visible_parmi_300_usurpations() {
     assert!(t.contains("USURPATION ARP"), "l'alerte unique doit apparaître");
     assert!(t.contains("300 × serveur DHCP"), "les 300 usurpations doivent tenir sur une ligne : {t}");
     assert!(t.find("USURPATION ARP").unwrap() < t.find("300 ×").unwrap(), "l'alerte unique d'abord");
+}
+
+/// Audit AUD6-02 et AUD3-07 : un serveur SMTP changé sans nouveau mot de passe recevait l'ancien (le dialogue de
+/// confirmation ne montrait pas le serveur) ; une fin de ligne dans l'expéditeur ou les destinataires ajoutait des
+/// en-têtes au message
+#[test]
+fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
+    use crate::commun::ConfigNotifications;
+    use crate::notifications::{preparer, Secrets};
+    let actuelle = ConfigNotifications { smtp_serveur: "smtp.exemple.test".into(), smtp_utilisateur: "alertes".into(), ..Default::default() };
+    let actuels = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() };
+    let essai = |nouvelle: &ConfigNotifications, s: Secrets| { let mut s = s; preparer(&actuelle, nouvelle, &actuels, &mut s).map(|_| s) };
+    // Même serveur, même compte, sans nouveau mot de passe : l'ancien est gardé
+    assert_eq!(essai(&actuelle, Secrets::default()).unwrap().smtp_mot_de_passe, "");
+    // Serveur, port ou compte changé sans nouveau mot de passe : l'ancien est effacé
+    for n in [
+        ConfigNotifications { smtp_serveur: "smtp.attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { smtp_port: 2525, ..actuelle.clone() },
+        ConfigNotifications { smtp_utilisateur: "autre".into(), ..actuelle.clone() },
+    ] {
+        assert_eq!(essai(&n, Secrets::default()).unwrap().smtp_mot_de_passe, "-", "{}:{} {}", n.smtp_serveur, n.smtp_port, n.smtp_utilisateur);
+    }
+    // Nouveau mot de passe fourni avec le nouveau serveur : gardé
+    let n = ConfigNotifications { smtp_serveur: "smtp2.exemple.test".into(), ..actuelle.clone() };
+    assert_eq!(essai(&n, Secrets { smtp_mot_de_passe: "nouveau".into(), ..Default::default() }).unwrap().smtp_mot_de_passe, "nouveau");
+    // Adresse ntfy changée sans nouveau jeton : jeton effacé ; même adresse : gardé
+    assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.attaquant.test/b".into(), ..Default::default() }).unwrap().ntfy_jeton, "-");
+    assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() }).unwrap().ntfy_jeton, "");
+    // Caractères de contrôle : refus (en-têtes ajoutés)
+    for n in [
+        ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { destinataires: "b@exemple.test\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
+        ConfigNotifications { smtp_serveur: "smtp.exemple.test\0".into(), ..actuelle.clone() },
+        ConfigNotifications { expediteur: "a@exemple.test\u{202E}tset.tnaquatta".into(), ..actuelle.clone() },
+        ConfigNotifications { destinataires: "b@exemple\u{200B}.test".into(), ..actuelle.clone() },
+    ] {
+        assert!(essai(&n, Secrets::default()).is_err());
+    }
+}
+
+/// Audit AUD3-06 : CEF n'échappait que les fins de ligne ; NUL, ESC et tabulations passaient vers le SIEM
+#[test]
+fn audit_cef_sans_caractere_de_controle() {
+    let mut a = alerte("Alerte", "dest\u{1b}[31m\u{0}x", "raison\twith\u{7}bell", 5);
+    a.processus = "p\u{0}r\u{1b}oc".into();
+    let ligne = crate::export::cef(&a);
+    assert!(!ligne.chars().any(char::is_control), "{ligne:?}");
 }
 
 #[test]
@@ -501,6 +586,8 @@ fn fonctions_texte_sans_panique() {
     torturer_texte(r#"alert tcp any any -> any any (msg:"é"; content:"|41|é"; sid:9;)"#, &mut |t| { let _ = crate::ids::lire_texte_test(t); });
     torturer_texte(r"C:\Users\marie\AppData\x.exe", &mut |t| { let _ = crate::commun::masquer_chemin(t); });
     torturer_texte("Brave Software, Inc.", &mut |t| { let _ = crate::moniteur::ip_directe_normale(t); });
+    torturer_texte("192.168.1.0/24", &mut |t| { let _ = crate::api::adresse_autorisee_valide(t); let _ = crate::api::adresses_invalides(t); });
+    torturer_texte(r"C:\Windows\System32\svchost.exe", &mut |t| { let _ = crate::reponse::chemin_critique(t, r"C:\Windows"); let _ = crate::reponse::chemin_critique(r"C:\Windows\explorer.exe", t); });
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
