@@ -53,7 +53,8 @@ $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').U
 "arbre testé : $(git rev-parse 'HEAD^{tree}')"
 "MSI (3a, 3b) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
-foreach ($s in @('installation', 'quarantaine', 'lot3d') | Where-Object { $Scenarios -contains $_ }) {
+# « mesure » (mesure du cycle, environ 25 min) seulement si demandé : ne fait pas partie de la preuve de CLAUDE.md
+foreach ($s in @('installation', 'quarantaine', 'lot3d', 'mesure') | Where-Object { $Scenarios -contains $_ }) {
     Attendre-Fermeture
     # Exception du lanceur (VM injoignable, console vide…) : notée, et les scénarios suivants tournent quand même
     # (avant : elle arrêtait tout le passage)
