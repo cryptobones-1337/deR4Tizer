@@ -49,13 +49,24 @@ pub fn empreinte_hosts() -> String {
     crate::hygiene::empreinte_fichier(&fichier_hosts()).unwrap_or_default()
 }
 
-/// Bornes du bloc de deR4Tizer : (ligne de début, ligne de fin), seulement si les deux marqueurs sont présents dans
-/// cet ordre ; un début sans fin n'est pas un bloc (sinon toutes les lignes suivantes de l'utilisateur seraient perdues)
+/// Bornes du bloc de deR4Tizer : (ligne de début, ligne de fin) : la première fin précédée d'un début, et le DERNIER
+/// début avant elle. Un début sans fin, ou une fin sans début, est une ligne de l'utilisateur, gardée telle quelle :
+/// avant, le premier début était pris, et une seconde écriture effaçait toutes les lignes de l'utilisateur entre un
+/// faux début (fichier laissé tronqué par l'ancien code) et la fin du vrai bloc (relecture de #54)
 fn bornes_du_bloc(lignes: &[&[u8]]) -> Option<(usize, usize)> {
     let net = |l: &[u8]| -> Vec<u8> { l.strip_suffix(b"\r").unwrap_or(l).to_vec() };
-    let debut = lignes.iter().position(|l| net(l) == DEBUT_BLOC.as_bytes())?;
-    let fin = lignes[debut + 1..].iter().position(|l| net(l) == FIN_BLOC.as_bytes())? + debut + 1;
-    Some((debut, fin))
+    let mut debut = None;
+    for (i, l) in lignes.iter().enumerate() {
+        let l = net(l);
+        if l == DEBUT_BLOC.as_bytes() {
+            debut = Some(i);
+        } else if l == FIN_BLOC.as_bytes() {
+            if let Some(d) = debut {
+                return Some((d, i));
+            }
+        }
+    }
+    None
 }
 
 /// Nouveau contenu du fichier hosts (pur, testé) : les lignes de l'utilisateur hors du bloc sont recopiées OCTET POUR
@@ -73,8 +84,13 @@ pub fn nouveau_contenu(original: &[u8], domaines: &[String]) -> Result<Vec<u8>, 
         _ => (lignes.clone(), lignes.is_empty()),
     };
     let mut garder: Vec<&[u8]> = lignes.clone();
+    let mut fin_de_ligne = fin_de_ligne;
     if let Some((d, f)) = bornes_du_bloc(&lignes) {
         garder.drain(d..=f);
+        // Bloc en fin de fichier sans fin de ligne finale : la ligne qui le précédait gardait la sienne
+        if f + 1 == lignes.len() {
+            fin_de_ligne = true;
+        }
     }
     // Lignes gardées rejointes telles quelles (avec leur \r éventuel), fin de ligne finale seulement si l'original
     // en avait une : sans bloc, le contenu est exactement l'original
@@ -87,7 +103,7 @@ pub fn nouveau_contenu(original: &[u8], domaines: &[String]) -> Result<Vec<u8>, 
     liste.dedup();
     if !liste.is_empty() {
         if !sortie.is_empty() && !sortie.ends_with(b"\n") {
-            sortie.extend_from_slice(b"\r\n");
+            sortie.extend_from_slice(if sortie.ends_with(b"\r") { b"\n" } else { b"\r\n" });
         }
         for l in std::iter::once(DEBUT_BLOC.to_string()).chain(liste.iter().map(|d| format!("127.0.0.1\t{d}"))).chain(std::iter::once(FIN_BLOC.to_string())) {
             sortie.extend_from_slice(l.as_bytes());

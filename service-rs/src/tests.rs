@@ -625,6 +625,13 @@ fn fonctions_texte_sans_panique() {
     torturer_texte("Brave Software, Inc.", &mut |t| { let _ = crate::moniteur::ip_directe_normale(t); });
     torturer_texte("192.168.1.0/24", &mut |t| { let _ = crate::api::adresse_autorisee_valide(t); let _ = crate::api::adresses_invalides(t); });
     torturer_texte(r"C:\Windows\System32\svchost.exe", &mut |t| { let _ = crate::reponse::chemin_critique(t, r"C:\Windows"); let _ = crate::reponse::chemin_critique(r"C:\Windows\explorer.exe", t); });
+    torturer_texte("# u\r\n# >>> deR4Tizer (bloc gere par le service, ne pas modifier a la main)\r\n127.0.0.1\ta.test\r\n# <<< deR4Tizer\r\n", &mut |t| {
+        let d = ["b.test".to_string()];
+        if let Ok(un) = crate::blocage::nouveau_contenu(t.as_bytes(), &d) {
+            // Idempotence sur toute entrée : réécrire avec les mêmes domaines ne change rien
+            assert_eq!(crate::blocage::nouveau_contenu(&un, &d).unwrap(), un, "{t:?}");
+        }
+    });
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
@@ -2216,6 +2223,26 @@ fn audit_fichier_hosts_lignes_de_l_utilisateur_intactes() {
     let faux = [utilisateur, format!("{DEBUT_BLOC}\r\n10.6.6.6 banque.test\r\n").as_bytes()].concat();
     let n = nouveau_contenu(&faux, &d(&["c.test"])).unwrap();
     assert!(n.starts_with(&faux), "le faux début de bloc et la ligne suivante sont gardés");
+    // Écritures successives (relecture de #54) : faux début AVANT le vrai bloc ; la seconde écriture ne doit rien
+    // perdre de l'utilisateur, et une écriture répétée avec les mêmes domaines ne change rien (idempotence)
+    let faux_avant = format!("# u\r\n{DEBUT_BLOC}\r\n10.0.0.9 nas.test\r\n# ligne de l'utilisateur\r\n").into_bytes();
+    let un = nouveau_contenu(&faux_avant, &d(&["c.test"])).unwrap();
+    assert!(un.starts_with(&faux_avant));
+    let deux = nouveau_contenu(&un, &d(&["d.test"])).unwrap();
+    let t = String::from_utf8(deux.clone()).unwrap();
+    assert!(t.starts_with(std::str::from_utf8(&faux_avant).unwrap()), "seconde écriture : lignes de l'utilisateur perdues : {t:?}");
+    assert!(t.contains("127.0.0.1\td.test") && !t.contains("c.test"), "{t:?}");
+    assert_eq!(nouveau_contenu(&deux, &d(&["d.test"])).unwrap(), deux, "même domaines : contenu inchangé");
+    assert_eq!(nouveau_contenu(&deux, &[]).unwrap(), faux_avant, "bloc retiré : exactement les lignes de l'utilisateur");
+    // Fin sans début avant le bloc : ligne de l'utilisateur, gardée
+    let fin_seule = format!("{FIN_BLOC}\r\n# u\r\n").into_bytes();
+    let n = nouveau_contenu(&fin_seule, &d(&["e.test"])).unwrap();
+    assert!(n.starts_with(&fin_seule) && nouveau_contenu(&n, &[]).unwrap() == fin_seule);
+    // Bloc en fin de fichier sans fin de ligne finale : jamais « \r\r\n », ni ligne laissée sans sa fin de ligne
+    let sans_fin = format!("# u\r\n{DEBUT_BLOC}\r\n127.0.0.1\tf.test\r\n{FIN_BLOC}").into_bytes();
+    let n = nouveau_contenu(&sans_fin, &d(&["g.test"])).unwrap();
+    assert!(!n.windows(3).any(|w| w == b"\r\r\n") && n.starts_with(b"# u\r\n"), "{:?}", String::from_utf8_lossy(&n));
+    assert_eq!(nouveau_contenu(&sans_fin, &[]).unwrap(), b"# u\r\n");
     // UTF-16 : refusé plutôt que cassé
     assert!(nouveau_contenu(&[0xFF, 0xFE, b'#', 0], &d(&["a.test"])).is_err());
 }
