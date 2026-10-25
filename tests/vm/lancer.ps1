@@ -121,11 +121,14 @@ try {
         Start-ScheduledTask -TaskName $nom
         $code = "C:\sortie\$Scenario-code.txt"
         $fin = (Get-Date).AddMinutes($Minutes)
-        while (-not (Test-Path $code) -and (Get-Date) -lt $fin) { Start-Sleep 10 }
-        $etat = (Get-ScheduledTask -TaskName $nom).State
+        # Fin de l'attente dès que la tâche ne tourne plus (échec au lancement : pas 60 minutes d'attente pour rien)
+        Start-Sleep 15
+        while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and (Get-ScheduledTask -TaskName $nom).State -eq 'Running') { Start-Sleep 10 }
+        Start-Sleep 5
+        $etat = "$((Get-ScheduledTask -TaskName $nom).State), résultat 0x$('{0:X}' -f (Get-ScheduledTaskInfo -TaskName $nom).LastTaskResult)"
         Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
-        if (Test-Path $code) { "exécuteur ($mode) terminé" } else { "délai dépassé ($mode, tâche $etat) : exécuteur arrêté" }
+        if (Test-Path $code) { "exécuteur ($mode) terminé" } else { "exécuteur ($mode) arrêté sans résultat (tâche $etat)" }
     }
     Write-Host $resultat
     Invoke-Command -Session $s { "Windows de la VM : $((Get-CimInstance Win32_OperatingSystem).Version).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR)" } |

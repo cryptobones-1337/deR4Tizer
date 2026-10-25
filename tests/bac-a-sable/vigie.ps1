@@ -12,10 +12,14 @@ $signales = @{}
 $absent = 0
 $ecritVm = $null; $vuVm = Get-Date; $arretVm = 0; $scenarioVm = ''
 $journalVu = Get-Date; $tailleJournal = -1
+# Marqueurs de fin déjà présents au lancement de la vigie (journal de plusieurs passages enchaînés) : seule une fin
+# NOUVELLE termine la vigie
+$motifFin = 'modifications du worktree après passage|exited with code|préparation en échec|préparation -Maj en échec'
+$finsDejaVues = if (Test-Path $Journal) { @((Get-Content $Journal -ErrorAction SilentlyContinue) | Select-String $motifFin).Count } else { 0 }
 while ($true) {
     Start-Sleep 60
     $j = if (Test-Path $Journal) { Get-Content $Journal -Raw -ErrorAction SilentlyContinue } else { '' }
-    if ($j -match 'modifications du worktree après passage|exited with code|préparation en échec|préparation -Maj en échec') {
+    if (@(($j -split "`n") | Select-String $motifFin).Count -gt $finsDejaVues) {
         "FIN du passage ($(Get-Date -Format HH:mm)) : " + (($j -split "`n" | Select-String '^==|ÉCHOUÉ \||échec|exited') -join ' / ')
         exit 0
     }
