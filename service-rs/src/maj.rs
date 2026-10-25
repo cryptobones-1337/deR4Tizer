@@ -240,8 +240,9 @@ fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
 }
 
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
+    // -g : pas de motifs (« [1-99] », « {a,b} ») dans l'adresse, un seul transfert (audit de sécurité de #68, S68-03)
     let sortie = Command::new("curl.exe")
-        .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
+        .args(["-q", "-g", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
             "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
         .arg(destination)
         .arg(url)
