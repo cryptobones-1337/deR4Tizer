@@ -805,7 +805,11 @@ impl Moniteur {
         commun::marquer_modele(&mut a);
         // Décisions sur le texte entier (MITRE, signal fort, apprentissage), puis bornage avant tout usage (S72-06)
         mitre::enrichir(&mut a);
+        // Empreinte du comportement, sur le texte entier, pour les exceptions posées plus tard depuis cette alerte
+        // (S72-10) ; seulement là où une exception peut s'appliquer (ni Critique ni Info)
+        let empreinte = if a.niveau != "Critique" && a.niveau != "Info" { commun::empreinte_signature(&crate::apprentissage::signature(&a)) } else { String::new() };
         crate::apprentissage::filtrer(&mut a);
+        a.signature = empreinte;
         commun::borner_alerte(&mut a);
         if let Some(cle) = cle {
             if let Some(t) = self.dernieres_alertes.get(&cle) {
@@ -960,7 +964,10 @@ impl Moniteur {
             }
             // ---------------- bruit : « ne plus alerter pour ce comportement » (Cible : identifiant de l'alerte)
             "exception" => match self.alertes.iter().find(|a| Some(a.id.as_str()) == c.cible.as_deref()).cloned() {
-                Some(a) => Reponse::ok(format!("Ce comportement ne déclenchera plus qu'une information : {}", crate::apprentissage::ajouter_exception(&a))),
+                Some(a) => match crate::apprentissage::ajouter_exception(&a) {
+                    Ok(d) => Reponse::ok(format!("Ce comportement ne déclenchera plus qu'une information : {d}")),
+                    Err(e) => Reponse::erreur(e),
+                },
                 None => Reponse::erreur("Alerte introuvable."),
             },
             "apprentissage" => match crate::apprentissage::commande(c.valeur.as_deref().unwrap_or("")) {
