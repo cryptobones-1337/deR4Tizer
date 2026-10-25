@@ -82,6 +82,7 @@ impl Interne {
         }
         self.deja.insert(cle, Instant::now());
         self.alertes.lock().unwrap().push(Alerte {
+            regle: crate::regles::EXP_NDR_001.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
             niveau: niveau.into(),

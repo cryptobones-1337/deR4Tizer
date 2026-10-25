@@ -46,6 +46,11 @@ pub struct Evenement {
     pub message: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub mitre: String,
+    /// Version du modèle d'événement (docs/detection/modele-evenement.md) : 0 pour une ligne d'avant la phase 3
+    pub modele: u32,
+    /// Règle de l'alerte d'origine (docs/detection/regles.md), vide pour un événement qui n'en vient pas
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub regle: String,
 }
 
 fn is_zero(p: &u16) -> bool {
@@ -73,7 +78,10 @@ pub fn dossier() -> PathBuf {
 }
 
 /// Ajoute un événement (perdu si la file est pleine : la surveillance passe avant)
-pub fn enregistrer(e: Evenement) {
+pub fn enregistrer(mut e: Evenement) {
+    if e.modele == 0 {
+        e.modele = commun::MODELE_ALERTE;
+    }
     if let Some(f) = FILE.get() {
         let _ = f.lock().unwrap().try_send(e);
     }
@@ -120,8 +128,18 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>, journaux_windows: bool) {
 // ------------------------------------------------------------ sources internes
 
 pub fn depuis_alerte(a: &Alerte) {
+    enregistrer(evenement_de_alerte(a));
+}
+
+/// Règle du registre d'une corrélation (décision pure, testée) : « R1 » → « COR-R1 », vide si le numéro n'y est pas
+pub fn regle_correlation(r: &str) -> String {
+    crate::regles::regle(&format!("COR-{r}")).map(|x| x.id.to_string()).unwrap_or_default()
+}
+
+/// Événement SIEM d'une alerte (décision pure, testée) : la règle de l'alerte est reprise (phase 3.2)
+pub fn evenement_de_alerte(a: &Alerte) -> Evenement {
     let incident = a.destination.starts_with("incident : ");
-    enregistrer(Evenement {
+    Evenement {
         heure: a.heure.clone(),
         source: "alerte".into(),
         type_: if incident { "incident".into() } else if a.mitre.is_empty() { "detection".into() } else { a.mitre.split_whitespace().next().unwrap_or("").into() },
@@ -133,8 +151,9 @@ pub fn depuis_alerte(a: &Alerte) {
         destination: a.destination.clone(),
         message: a.raisons.clone(),
         mitre: a.mitre.clone(),
+        regle: a.regle.clone(),
         ..Default::default()
-    });
+    }
 }
 
 pub fn connexion(processus: &str, pid: u32, ip: &str, port: u16, nom: Option<&str>) {
@@ -447,6 +466,8 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
             for i in &nouveaux {
                 commun::journal(&format!("incident {} : {} — {}", i.niveau, i.titre, i.resume));
                 alertes.lock().unwrap().push(Alerte {
+                    // Corrélation R<n> : règle COR-R<n> du registre
+                    regle: regle_correlation(&i.regle),
                     id: commun::nouvel_id(),
                     heure: i.heure.clone(),
                     niveau: i.niveau.clone(),

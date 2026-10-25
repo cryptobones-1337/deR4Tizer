@@ -196,6 +196,7 @@ pub fn traduire(xml: &str, signataire: &dyn Fn(&str) -> String) -> Option<(Evene
         None
     };
     let alerte = alerte.map(|(niveau, score, raisons)| Alerte {
+        regle: if operation == "toutes supprimées" { crate::regles::SYS_003 } else { crate::regles::SYS_002 }.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: niveau.into(),
@@ -231,6 +232,7 @@ pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str
                         let n = crate::blocage::nombre_regles().unwrap_or(0);
                         if n < 50 {
                             f.lock().unwrap().push(Alerte {
+                                regle: crate::regles::SYS_003.into(),
                                 id: commun::nouvel_id(),
                                 heure: commun::maintenant(),
                                 niveau: "Critique".into(),
@@ -477,6 +479,7 @@ impl LecteurJournal {
             self.alertees.insert(cle, Instant::now());
             let accepte = action == "ACCEPTÉ";
             alertes.push(Alerte {
+                regle: crate::regles::RES_005.into(),
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),
                 niveau: if accepte { "Critique" } else { "Alerte" }.into(),

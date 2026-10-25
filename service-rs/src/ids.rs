@@ -513,6 +513,7 @@ impl Ids {
             bloque: bloquer,
         };
         self.alertes.lock().unwrap().push(Alerte {
+            regle: crate::regles::EXP_IDS_001.into(),
             id: commun::nouvel_id(),
             heure: d.heure.clone(),
             niveau: niveau.into(),

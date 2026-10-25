@@ -210,6 +210,7 @@ pub fn analyser(xml: &str, dossiers: &[(String, &'static Cible)]) -> Option<Aler
     let suspect = processus.to_lowercase().contains(r"\temp\") || processus.to_lowercase().contains(r"\downloads\")
         || processus.to_lowercase().contains(r"\users\public\");
     Some(Alerte {
+        regle: crate::regles::VOL_001.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: if suspect { "Critique" } else { "Alerte" }.into(),
@@ -250,6 +251,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             if connu {
                 // Sauvegarde, synchronisation, antivirus, indexation : on le note sans rien suspendre
                 file.lock().unwrap().push(Alerte {
+                    regle: crate::regles::LEU_002.into(),
                     id: commun::nouvel_id(),
                     heure: commun::maintenant(),
                     niveau: "Info".into(),
@@ -269,6 +271,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             let suspendu = suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
                 && crate::reponse::suspendre(pid, true).is_ok();
             file.lock().unwrap().push(Alerte {
+                regle: crate::regles::LEU_002.into(),
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),
                 niveau: "Critique".into(),

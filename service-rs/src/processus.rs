@@ -38,24 +38,35 @@ pub struct Processus {
     pub source: Arc<Mutex<String>>,
 }
 
-fn regles() -> &'static [(Regex, &'static str)] {
-    static R: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+fn regles() -> &'static [(Regex, &'static str, &'static str)] {
+    static R: OnceLock<Vec<(Regex, &'static str, &'static str)>> = OnceLock::new();
     R.get_or_init(|| {
         vec![
             (Regex::new(r"(?i)(powershell|pwsh).*(\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|frombase64string|downloadstring|downloadfile|net\.webclient|invoke-expression|\biex\b.*(http|\$)|-w(indowstyle)?\s+h(idden)?.*(http|iex|-enc))").unwrap(),
-             "PowerShell obscurci ou qui télécharge du code"),
+             "PowerShell obscurci ou qui télécharge du code", crate::regles::PRC_002),
             (Regex::new(r"(?i)certutil.*(-urlcache|-decode|-f\s+http)|bitsadmin.*/transfer|mshta.*(http|javascript:|vbscript:)|regsvr32.*/i:http|rundll32.*javascript:|wmic.*process\s+call\s+create").unwrap(),
-             "détournement d'outil Windows (LOLBin)"),
+             "détournement d'outil Windows (LOLBin)", crate::regles::PRC_003),
             (Regex::new(r#"(?i)(^|[\\/"\s])(chrome|msedge|brave)\.exe"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
-             "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)"),
+             "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)", crate::regles::PRC_004),
             (Regex::new(r"(?i)vssadmin.*delete\s+shadows|wbadmin.*delete\s+(catalog|systemstatebackup)|bcdedit.*recoveryenabled\s+no|wmic.*shadowcopy\s+delete").unwrap(),
-             "suppression des sauvegardes (typique d'un rançongiciel)"),
+             "suppression des sauvegardes (typique d'un rançongiciel)", crate::regles::PRC_005),
         ]
     })
 }
 
 pub fn suspicion(ligne: &str) -> Option<&'static str> {
-    regles().iter().find(|(r, _)| r.is_match(ligne)).map(|(_, n)| *n)
+    suspicion_regle(ligne).map(|(n, _)| n)
+}
+
+/// Règle portée par une alerte de processus (décision pure, testée) : la plus forte qu'elle contient, le document qui
+/// lance un interpréteur (PRC-001) avant le motif de la ligne de commande
+pub fn regle_retenue(document_interpreteur: bool, motif: Option<&'static str>) -> &'static str {
+    if document_interpreteur { crate::regles::PRC_001 } else { motif.unwrap_or("") }
+}
+
+/// Premier motif trouvé dans une ligne de commande, avec l'identifiant de sa règle (docs/detection/regles.md)
+pub fn suspicion_regle(ligne: &str) -> Option<(&'static str, &'static str)> {
+    regles().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, n, id)| (*n, *id))
 }
 
 thread_local! {
@@ -188,15 +199,19 @@ impl Processus {
     fn analyser(&self, pid: u32, p: &InfoProcessus) {
         let exe = Path::new(&p.image).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
         let mut raisons = Vec::new();
+        let mut document = false;
         if let Some(parent) = &p.parent {
             let pb = parent.to_lowercase();
             if BUREAUTIQUE.contains(&pb.as_str()) && INTERPRETEURS.contains(&exe.as_str()) {
                 raisons.push(format!("document {parent} qui lance {exe} (macro ou exploit probable)"));
+                document = true;
             }
         }
-        if let Some(r) = p.ligne_commande.as_deref().and_then(suspicion) {
+        let motif = p.ligne_commande.as_deref().and_then(suspicion_regle);
+        if let Some((r, _)) = motif {
             raisons.push(r.to_string());
         }
+        let regle = regle_retenue(document, motif.map(|(_, id)| id));
         if raisons.is_empty() {
             return;
         }
@@ -206,6 +221,7 @@ impl Processus {
         // document bureautique qui lance un interpréteur (macro ou exploit)
         let fort = raisons.iter().any(|r| r.contains("suppression des sauvegardes") || r.contains("(macro ou exploit probable)"));
         self.detections.lock().unwrap().push(Alerte {
+            regle: regle.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
             niveau: if fort { "Critique" } else { "Alerte" }.into(),

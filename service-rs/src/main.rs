@@ -30,6 +30,7 @@ mod mitre;
 mod menaces;
 mod mesure;
 mod moniteur;
+mod regles;
 mod natif;
 mod parefeu;
 mod persistance;

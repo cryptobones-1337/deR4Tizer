@@ -193,6 +193,7 @@ impl Arbre {
             self.deja_alertees.insert(cle, c.score);
             let dernier = c.noeuds.iter().rev().find(|n| n.score > 0).cloned().unwrap_or_default();
             a.push(Alerte {
+                regle: crate::regles::CHA_001.into(),
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),
                 niveau: "Critique".into(),

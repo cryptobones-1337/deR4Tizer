@@ -88,9 +88,10 @@ impl Persistance {
     }
 }
 
-fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
+pub(crate) fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
     let suspect = !e.remarque.is_empty();
     Alerte {
+        regle: if quoi.starts_with("NOUVEAU") { crate::regles::PER_001 } else { crate::regles::PER_002 }.into(),
         id: commun::nouvel_id(),
         heure: commun::maintenant(),
         niveau: if suspect { "Alerte" } else { "Info" }.into(),
