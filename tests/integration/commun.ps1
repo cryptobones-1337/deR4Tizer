@@ -499,8 +499,11 @@ function Controle-Systeme([string]$Racine) {
     $s = En-TantQueSysteme @"
 `$T = [Security.Principal.SecurityIdentifier]
 function Voir(`$e) {
-    try { `$a = Get-Acl -LiteralPath `$e.FullName } catch {
-        if (`$e.Name -like '*.tmp' -and -not (Test-Path -LiteralPath `$e.FullName)) { return }
+    # -ErrorAction Stop : le script SYSTEM tourne en « Continue » ; sans lui, une lecture impossible donnait `$null et
+    # des écarts trompeurs (« lien », propriétaire vide) au lieu d'atteindre le catch (relecture de #70)
+    try { `$a = Get-Acl -LiteralPath `$e.FullName -ErrorAction Stop } catch {
+        # Fichier de travail du service (*.tmp renommé) disparu : ni écart ni élément contrôlé (retiré du compte)
+        if (`$e.Name -like '*.tmp' -and -not (Test-Path -LiteralPath `$e.FullName)) { "IGNORE|`$(`$e.FullName)"; return }
         "ECART|`$(`$e.FullName)|droits illisibles en SYSTEM"; return
     }
     if (`$e.Attributes -band [IO.FileAttributes]::ReparsePoint) { "ECART|`$(`$e.FullName)|lien" }
@@ -526,7 +529,7 @@ while (`$pile.Count) {
 "FIN|`$n"
 "@
     if ($s -notmatch '(?m)^FIN\|(\d+)') { return "contrôle SYSTEM interrompu : $($s -replace "`r?`n", ' ')" }
-    $n = $Matches[1]
+    $n = [int]$Matches[1] - @($s -split "`r?`n" | Where-Object { $_ -like 'IGNORE|*' }).Count
     $ecarts = @($s -split "`r?`n" | Where-Object { $_ -like 'ECART|*' })
     if ($ecarts.Count) { return "$($ecarts.Count) écart(s) sur $n élément(s) (contrôle en SYSTEM) : " + (($ecarts | Select-Object -First 8) -join ' ; ') }
     $true
