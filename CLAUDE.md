@@ -4,7 +4,7 @@ Ce fichier cadre tout le travail de Claude Code sur ce dépôt. Il prime sur tou
 
 ## 1. Mission
 
-deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. En dehors des téléchargements déjà documentés (listes de menaces, JA3, GeoIP, LOLDrivers, mise à jour) et des alertes, aucune donnée de l'utilisateur ne part vers un tiers, sauf par une fonctionnalité qu'il active lui-même et qui l'annonce (phase 7, section 5).
+deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. En dehors des téléchargements déjà documentés (listes de menaces, JA3, GeoIP, LOLDrivers, mise à jour) et des alertes, aucune donnée de l'utilisateur ne part vers un tiers, sauf par une fonctionnalité qu'il active lui-même et qui l'annonce (phases 7 et 9, section 5).
 
 Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise. Une capacité n'existe que si elle est démontrée par des tests reproductibles. Le code qui compile ne prouve rien.
 
@@ -102,7 +102,7 @@ Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par un
 1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
 2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c dans la VM Hyper-V de test, remise à son instantané « propre » avant et après chaque scénario (tests/vm/lancer.ps1 ; instantané pris avec Microsoft Defender actif et sans exclusion : son état est relevé à chaque scénario, et n'est exigé « pleinement actif » que par le lot 3d, tests/vm/lot3d.ps1 ; compte standard connecté à la console avec -SessionStandard, sinon la session de l'instantané). Windows Sandbox (tests/bac-a-sable/lancer.ps1) reste un secours, signalé comme tel dans la preuve. Passage complet : tests/bac-a-sable/passage-complet.ps1. Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés. Un passage dans la VM ne vaut pas, à lui seul, réussite du lot 3d.
    Tout passage est surveillé par une vigie (tests/bac-a-sable/vigie.ps1, une vérification par minute) qui signale chaque scénario terminé, tout blocage (bac à sable jamais ouvert ou fermé sans résultat, VM arrêtée, aucun fichier de travail du scénario écrit pendant 30 minutes) et la fin. Un passage bloqué est arrêté, nettoyé (bac à sable fermé, clés de test effacées, VM remise à son instantané) et relancé ; il ne compte jamais comme preuve.
-   Dispense (mainteneur, 2026-10-25 : « No vm for documentation ») : une PR qui ne modifie que des fichiers Markdown (`*.md`), aucun n'étant livré dans le MSI, n'a pas de passage VM ; relecture, contrôle des données personnelles et barrière d'arbre (point 4) restent obligatoires, et sa preuve en commentaire le dit (« documentation seule : passage non requis », liste des fichiers modifiés). Une PR qui touche aussi un autre fichier, même un script de test, a son passage.
+   Dispense (mainteneur, 2026-10-25 : « No vm for documentation », en réponse à la proposition « exempt PRs that touch only *.md files outside src/ and service-rs/ ») : une PR qui ne modifie que des fichiers Markdown (`*.md`) hors de `src/` et de `service-rs/` n'a pas de passage VM. Relecture et contrôle des données personnelles restent obligatoires ; le verdict est « Go » (sans réserve de passage) ; la preuve en commentaire le dit (« documentation seule : passage non requis », liste des fichiers modifiés, arbre relu). Barrière d'arbre : le commit relu tient lieu de commit testé (`git diff <commit relu> main` vide après la fusion). Une PR qui touche aussi un autre fichier, même un script de test ou un .md sous `src/` ou `service-rs/`, a son passage. Une PR de documentation fusionnée entre le passage d'une PR de code et sa fusion change main : elle passe avant le passage, ou le passage est refait.
 3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
 4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
 5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
@@ -240,7 +240,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 5. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
    mots : « Open a phase for the feature > do it like your example », l'exemple proposé étant « Phase 7: domain-name
    filtering (DNS, ads, tracking) ». Commence une fois les phases 1, 3, 4 et 6 validées par la relecture et par
-   cryptobones-1337 ; c'est la seule exception au gel (section 2, règle 1).
+   cryptobones-1337 ; c'est l'une des exceptions au gel (section 2, règle 1), avec les phases 8 et 9.
    - Contenu : navigation sécurisée par le DNS (domaines malveillants des listes de menaces, changement de serveur DNS
      détecté, DNS chiffré si le dossier de conception le justifie) et blocage des domaines de publicité et de pistage,
      par un même mécanisme.
@@ -255,7 +255,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
    montre, jamais les droits ni la validation du service ; mode standard par défaut ; bascule visible et réversible ;
-   aucune option qui affaiblit la protection sans avertissement clair. Mêmes garde-fous que la phase 7 (dossier de
+   aucune option du mode avancé n'affaiblit la protection. Mêmes garde-fous que la phase 7 (dossier de
    conception d'abord, une PR par étape, aucune dépendance nouvelle sans accord).
 7. Phase 9 : surveillance des fuites de données. Ouverte par le mainteneur le 2026-10-25 (« Add the phases », en réponse
    à la proposition « Phase 9: breach monitoring »), avec cette condition : « Breach monitoring > ok to rely on third
