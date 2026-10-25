@@ -251,10 +251,12 @@ function Nouveau-CompteStandard([string]$Nom = 'd4t_standard') {
 # -SansAttendre. Le code est écrit dans un fichier (UTF-8 avec BOM), jamais sur la ligne de commande.
 $script:NumeroScript = 0
 # Session 0 (exécuteur lancé par une tâche à ouverture de session par mot de passe, cas tests\vm\lancer.ps1
-# -SessionStandard) : Start-Process -Credential n'y lance rien (constaté dans la VM le 25/10/2026). Le script du compte
-# standard part alors d'une tâche planifiée à son nom (ouverture par mot de passe : compte de test jetable de la VM).
-# Renvoie le processus démarré, comme Start-Process -PassThru, ou $null s'il a déjà fini. Tâche jamais supprimée
-# pendant que son processus tourne (fichier tenu ouvert) : l'instantané de la VM l'efface.
+# -SessionStandard) : les actions lancées par Start-Process -Credential n'y ont rien produit (passage VM du 25/10/2026 :
+# sorties vides ; mécanisme exact non isolé par un essai). Le script du compte standard part alors d'une tâche planifiée
+# à son nom (ouverture par mot de passe : compte de test jetable de la VM, mot de passe aléatoire gardé par le
+# Planificateur jusqu'à la remise à l'instantané). Renvoie le processus démarré, comme Start-Process -PassThru, ou $null
+# s'il a déjà fini avec succès. Tâche jamais supprimée (son processus peut tenir un fichier ouvert) : l'instantané de la
+# VM l'efface ; arrêtée si elle n'a pas démarré à temps, pour ne pas partir pendant les contrôles suivants.
 function Demarrer-ParTache($Compte, [string]$Fichier) {
     $nom = "d4t-essai-standard-$($script:NumeroScript)"
     $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
@@ -263,16 +265,22 @@ function Demarrer-ParTache($Compte, [string]$Fichier) {
     Register-ScheduledTask -TaskName $nom -Action $action -Settings $reglages -User $Compte.Nom `
         -Password $Compte.Credential.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
     Start-ScheduledTask -TaskName $nom
-    $fin = (Get-Date).AddSeconds(30)
+    # 90 s : la première ouverture de session du compte crée son profil
+    $fin = (Get-Date).AddSeconds(90)
     do {
         Start-Sleep -Milliseconds 200
         $c = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -like "*$Fichier*" } | Select-Object -First 1
         if ($c) { $p = Get-Process -Id $c.ProcessId -ErrorAction SilentlyContinue; if ($p) { return $p } }
         $info = Get-ScheduledTaskInfo -TaskName $nom
-        # Déjà fini : la tâche a tourné (heure de dernier lancement posée) et n'est plus en cours
-        if ($info.LastRunTime -gt (Get-Date).AddMinutes(-5) -and (Get-ScheduledTask -TaskName $nom).State -eq 'Ready') { return $null }
+        # Déjà fini : la tâche a tourné (heure de dernier lancement posée) et n'est plus en cours ; succès exigé, sinon
+        # la cause (ouverture de session refusée, droit « ouvrir une session en tant que tâche »…) serait perdue
+        if ($info.LastRunTime -gt (Get-Date).AddMinutes(-5) -and (Get-ScheduledTask -TaskName $nom).State -eq 'Ready') {
+            if ($info.LastTaskResult -eq 0) { return $null }
+            throw "tâche du compte standard en échec (résultat 0x$('{0:X8}' -f $info.LastTaskResult))"
+        }
     } while ((Get-Date) -lt $fin)
-    throw "tâche du compte standard : processus non démarré (résultat $($info.LastTaskResult))"
+    Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
+    throw "tâche du compte standard : processus non démarré en 90 s (résultat $($info.LastTaskResult)), tâche arrêtée"
 }
 function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Secondes = 60) {
     $script:NumeroScript++
