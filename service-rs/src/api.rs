@@ -278,7 +278,8 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
     };
     match chemin {
         "/api/v1/alertes" => {
-            let mut alertes: Vec<Alerte> = commun::lire("alertes.json").unwrap_or_default();
+            // Lecture tolérante sans effet (phase 3.1) : un élément illisible ne vide plus la réponse
+            let mut alertes: Vec<Alerte> = commun::lire_alertes_sans_effet();
             if let Some(d) = parametre("depuis") {
                 let d = d.replace('T', " ");
                 alertes.retain(|a| a.heure.as_str() > d.as_str());

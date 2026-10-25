@@ -326,6 +326,9 @@ Verifier 'Alerte de persistance produite juste avant un arrêt : enregistrée da
         if ($null -eq (Arreter-Chrono)) { return 'service toujours en marche 60 s après la demande d''arrêt' }
         $a = Join-Path $script:Donnees 'alertes.json'
         if (-not ((Test-Path $a) -and (Get-Content $a -Raw -Encoding UTF8) -match $nomTemoin)) { return "aucune alerte pour $nomTemoin dans alertes.json" }
+        # Modèle d'événement (phase 3.1) : la nouvelle alerte porte le modèle 1
+        $temoin = @((Get-Content $a -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Destination) $($_.Raisons)" -match $nomTemoin })
+        if (-not $temoin.Count -or $temoin[-1].Modele -ne 1) { return "alerte témoin sans le modèle 1 (Modele = $(if ($temoin.Count) { $temoin[-1].Modele } else { 'absente' }))" }
         $true
     } finally {
         Remove-ItemProperty -Path $cleRun -Name $nomTemoin -ErrorAction SilentlyContinue

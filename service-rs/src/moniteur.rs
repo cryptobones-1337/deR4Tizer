@@ -182,7 +182,7 @@ impl Moniteur {
             dernieres_alertes: HashMap::new(),
             apprentissage: exes.is_none(),
             executables_vus: exes.unwrap_or_default().into_iter().map(|e| e.to_lowercase()).collect(),
-            alertes: commun::lire("alertes.json").unwrap_or_default(),
+            alertes: commun::lire_alertes(),
             blocages: commun::lire("blocages.json").unwrap_or_default(),
             dernieres_connexions: Vec::new(),
             empreinte_hosts: blocage::empreinte_hosts(),
@@ -426,6 +426,10 @@ impl Moniteur {
         if self.alertes.len() > 1000 {
             let surplus = self.alertes.len() - 1000;
             self.alertes.drain(..surplus);
+        }
+        // Mise de côté d'un historique illisible encore en attente : rien n'est réécrit (relecture de #72, S72-02)
+        if !commun::ecriture_alertes_permise() {
+            return;
         }
         let _ = commun::ecrire("alertes.json", &self.alertes);
     }
@@ -798,8 +802,11 @@ impl Moniteur {
     }
 
     fn ajouter_alerte_brute(&mut self, mut a: Alerte, cle: Option<String>) -> bool {
+        commun::marquer_modele(&mut a);
+        // Décisions sur le texte entier (MITRE, signal fort, apprentissage), puis bornage avant tout usage (S72-06)
         mitre::enrichir(&mut a);
         crate::apprentissage::filtrer(&mut a);
+        commun::borner_alerte(&mut a);
         if let Some(cle) = cle {
             if let Some(t) = self.dernieres_alertes.get(&cle) {
                 if t.elapsed() < Duration::from_secs(24 * 3600) {
