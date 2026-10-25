@@ -41,6 +41,15 @@ function Detections {
     [pscustomobject]@{ Menaces = $m; Evenements = $ev; Nombre = $m.Count + $ev.Count }
 }
 
+function Reglages-Defender {
+    $p = Get-MpPreference
+    $r = [ordered]@{}
+    foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|Cim.*)$' } | Sort-Object)) {
+        $r[$n] = (@($p.$n) | ForEach-Object { "$_" }) -join '|'
+    }
+    $r
+}
+$reglagesAvant = Reglages-Defender
 $avant = Etat-Defender
 $actif = Actif $avant
 if ($actif) { Noter 'Defender pleinement actif avant le passage' 'RÉUSSI' (Decrire $avant) }
@@ -135,29 +144,16 @@ Verifier 'Aucune détection Defender pendant le passage' {
 $apres = Etat-Defender
 if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI' (Decrire $apres) }
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
-# Configuration de Defender modifiée pendant le passage (événement 5007) : deR4Tizer ne doit jamais y toucher
-Verifier 'Configuration de Defender inchangée pendant le passage (événement 5007)' {
-    # Échec fermé : TOUT changement de réglage de Defender compte, sauf une liste fermée de réglages internes que
-    # Defender écrit lui-même (constatés dans la VM : Features\Controls, Features\EcsConfigs, Spynet\MAPSconcurrency…).
-    # La nouvelle valeur est lue dans les données de l'événement (« New Value »), qui ne sont pas traduites : un
-    # libellé du message (« New value: », « Nouvelle valeur : ») dépendrait de la langue de Windows.
-    # Liste fermée relevée sur un poste réel (701 événements) et dans la VM : valeurs d'état écrites par Defender,
-    # jamais un interrupteur de protection (PUAProtection, SpyNetReporting, SubmitSamplesConsent, exclusions, ASR…
-    # restent comptés)
-    $bruit = '(\\Windows Defender\\(Diagnostics|CoreService|Features\\(Controls|EcsConfigs|SCC))\\)' +
-        '|(\\Windows Defender\\(ProductAppDataPath|ServiceStartStates|IsServiceRunning|InstallLocation|UUPFlags|SAC_ClientWaitForRpc) =)' +
-        '|(\\Windows Defender\\SpyNet\\(LastMAPS|MAPSconcurrency|SpyNetReportingLocation))' +
-        '|(^Default\\(ServiceStartStates|ProductAppDataPath) =)'
-    $nouvelle = {
-        param($ev)
-        $x = [xml]$ev.ToXml()
-        $v = @($x.Event.EventData.Data | Where-Object { $_.Name -eq 'New Value' } | ForEach-Object { $_.'#text' }) | Select-Object -First 1
-        if ($v) { "$v" } else { "$(($ev.Message -split "`n") | Where-Object { $_ -match 'HKLM\\' } | Select-Object -Last 1)".Trim() }
-    }
-    $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue |
-        ForEach-Object { & $nouvelle $_ } | Where-Object { $_ -notmatch $bruit })
-    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 4) -join ' ; ') }
+# Réglages de Defender inchangés pendant le passage : deR4Tizer ne doit jamais y toucher. Comparaison de tous les
+# réglages (Get-MpPreference) avant et après ; les événements 5007 ne sont rapportés qu'à titre d'information
+Verifier 'Réglages de Defender inchangés pendant le passage (tous les réglages de Get-MpPreference)' {
+    $reglagesApres = Reglages-Defender
+    $diff = @((@($reglagesAvant.Keys) + @($reglagesApres.Keys)) | Sort-Object -Unique | Where-Object { $reglagesAvant[$_] -ne $reglagesApres[$_] } |
+        ForEach-Object { "$_ : « $($reglagesAvant[$_]) » → « $($reglagesApres[$_]) »" })
+    if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) : " + (($diff | Select-Object -First 5) -join ' ; ') }
     $true
 }
+$n5007 = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue).Count
+Noter 'Événements 5007 pendant le passage (information : Defender en écrit lui-même sur ses valeurs internes)' 'RÉUSSI' "$n5007 événement(s) ; réglages comparés ci-dessus"
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'
