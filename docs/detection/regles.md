@@ -4,6 +4,12 @@ Inventaire des détections **qui existent déjà** dans le service. Aucune règl
 de la règle, ce qu'elle couvre, la télémétrie dont elle dépend et ce qui se passe si cette télémétrie manque, son niveau,
 ses faux positifs attendus, ses tests et son état de mesure.
 
+**Les identifiants ne sont pas encore portés par les alertes** : ils le seront avec la PR 3.2 (registre des règles).
+Jusque-là, ce document est un inventaire.
+
+Les niveaux indiqués sont ceux que le code produit **avant** l'apprentissage et les exceptions : `apprentissage::filtrer`
+peut faire passer une « Alerte » en « Info ». Seuls les niveaux « Critique » et « Info » sont garantis tels quels.
+
 État de mesure de toutes les fiches à ce jour : **non mesurée**. Aucune n'a encore de test positif et négatif à son nom,
 ni de faux positifs comptés. Les PR de domaine de la phase 3 les mesurent une à une (en labo, puis en VM quand c'est
 permis) et mettent la fiche et `docs/roadmap/capability-matrix.md` à jour.
@@ -12,10 +18,11 @@ Règles de forme :
 
 - identifiant `DOM-NNN`, jamais réutilisé ; une règle retirée reste listée, marquée « retirée » ;
 - `COR-R1` à `COR-R10` gardent les numéros actuels du SIEM (`incidents.json`) ;
-- `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle est ajoutée à leurs
-  alertes, sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
-- une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte (par exemple
-  PRC-001 et PRC-002 dans la même alerte : PRC-001).
+- `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle sera ajoutée à leurs
+  alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
+- une alerte qui réunit plusieurs indices d'un même domaine portera l'identifiant de la règle la plus forte qu'elle
+  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001). Limite actuelle : pour les lignes de commande,
+  `processus::suspicion` ne rend que le **premier** motif trouvé (voir PRC-002 à PRC-005).
 
 « Si la télémétrie manque » décrit le comportement **actuel** : dans la plupart des cas, la règle se tait sans le dire.
 L'état des collectes (PR 3.3) rendra ce silence visible.
@@ -52,7 +59,8 @@ modules expérimentaux.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés.
-- **Tests** : à écrire, un positif et un négatif par indice.
+- **Tests** : existant pour l'indice « IP directe » : `ip_directe_editeurs_exacts` ; à écrire, un positif et un négatif
+  par indice.
 
 ### RES-003 : première connexion à Internet d'un programme
 - **Code** : `moniteur.rs` (niveau Info).
@@ -66,6 +74,8 @@ modules expérimentaux.
 ### RES-004 : adresse publique directement sur le PC
 - **Code** : `moniteur.rs` (« PC EXPOSÉ À INTERNET : adresse publique directement sur le PC »).
 - **Justification** : un PC sans box ni NAT devant lui est joignable depuis Internet.
+- **Conditions** : contrôle tous les 100 passages du cycle ; l'alerte ne part que si le **nombre** d'adresses publiques
+  augmente. Un PC déjà exposé au démarrage du service ne déclenche donc aucune alerte.
 - **Télémétrie** : adresses des cartes réseau.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Alerte.
@@ -80,6 +90,27 @@ modules expérimentaux.
 - **Niveau** : Critique si le paquet est accepté, Alerte s'il est bloqué. Une alerte par source, port et action en
   24 h.
 - **Faux positifs attendus** : box en DMZ ou redirection de port voulue (signalé aussi par la revue UX).
+- **Tests** : existants : `exposition_reelle_sans_faux_positifs`, `exposition_udp_reponse_reconnue_par_le_flux`,
+  `exposition_paquet_bloque_reponse_a_un_flux`.
+
+### RES-006 : nouveau port ouvert en écoute sur le réseau
+- **Code** : `surveillances.rs` (`ports_ouverts`).
+- **Justification** : un programme qui se met à écouter sur le réseau peut être une porte dérobée.
+- **Télémétrie** : table des connexions TCP (ports en écoute), signature du programme.
+- **Si elle manque** : table illisible : aucun port vu ; premier relevé (`ecoutes-connues.json` absent) : apprentissage,
+  aucune alerte, voulu.
+- **Niveau** : Alerte si le programme n'est pas signé, Info sinon.
+- **Faux positifs attendus** : logiciels qui ouvrent un port de service local (synchronisation, partage).
+- **Tests** : à écrire.
+
+### RES-007 : connexion entrante depuis Internet
+- **Code** : `surveillances.rs` (`ports_ouverts`, « CONNEXION ENTRANTE depuis Internet »).
+- **Justification** : quelqu'un d'Internet est connecté à un port en écoute du PC. Distincte de RES-005 : elle vient de
+  la table TCP (connexion établie), pas du journal du pare-feu.
+- **Télémétrie** : table des connexions TCP, signature du programme.
+- **Si elle manque** : table illisible : la règle se tait.
+- **Niveau** : Critique si le programme n'est pas signé, Alerte sinon.
+- **Faux positifs attendus** : serveur volontairement exposé (jeu, accès distant voulu).
 - **Tests** : à écrire.
 
 ## DNS
@@ -112,7 +143,8 @@ modules expérimentaux.
 - **Si elle manque** : processus terminé avant la lecture WMI : ligne de commande absente, la règle se tait.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : scripts d'administration ou d'installation encodés.
-- **Tests** : à écrire. En VM, `powershell -enc` d'un `Write-Output 1` ; à remplacer si Defender (AMSI) réagit.
+- **Tests** : à écrire. En VM, `powershell -enc` d'un `Write-Output 1` (40 caractères en base64 : juste au minimum du
+  motif, à allonger) ; à remplacer si Defender (AMSI) réagit.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
 - **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
@@ -130,7 +162,7 @@ modules expérimentaux.
 - **Si elle manque** : comme PRC-002.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : développeurs web, outils de test automatisé.
-- **Tests** : à écrire.
+- **Tests** : existant : `debogage_a_distance_ancre_sur_l_executable` (cas positifs et négatifs).
 
 ### PRC-005 : suppression des sauvegardes
 - **Code** : `processus.rs` (`vssadmin delete shadows`, `wbadmin delete`, `bcdedit … recoveryenabled no`,
@@ -138,10 +170,13 @@ modules expérimentaux.
 - **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
-- **Niveau** : Critique (signal fort, jamais adouci).
+- **Niveau** : Critique (signal fort, jamais adouci). **Limite** : `processus::suspicion` ne rend que le premier motif
+  trouvé, dans l'ordre PowerShell, LOLBin, débogage, sauvegardes. Une ligne qui contient aussi un motif PowerShell (par
+  exemple `… DownloadString(…); vssadmin delete shadows`) ne porte que PRC-002, au niveau Alerte : faux négatif connu.
 - **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur.
 - **Tests** : à écrire. En VM, `cmd /c echo vssadmin delete shadows` (vssadmin n'est pas lancé) ; négatif :
-  `vssadmin list shadows`.
+  `vssadmin list shadows`. Sans Sysmon, la ligne de commande d'un processus aussi bref est souvent perdue par WMI : le
+  scénario risque d'être instable.
 
 ## CHA : chaînes de processus
 
@@ -160,17 +195,21 @@ modules expérimentaux.
 - **Code** : `persistance.rs` (« NOUVEAU démarrage automatique »).
 - **Justification** : un malware s'installe presque toujours pour survivre au redémarrage.
 - **Télémétrie** : relevé des démarrages automatiques (clés Run, services, tâches…), toutes les minutes.
-- **Si elle manque** : premier relevé (apprentissage) : aucune alerte, voulu ; relevé impossible : silence.
+- **Si elle manque** : premier relevé (apprentissage) : aucune alerte, voulu. Relevé **partiel**, sans échec signalé :
+  une tâche illisible est sautée, un échec WMI n'est noté qu'au journal. L'entrée sort alors de la référence, puis
+  revient au relevé suivant comme un « NOUVEAU démarrage automatique » : faux positif (au niveau Alerte pour une entrée
+  WMI, marquée « technique de persistance rare »), pas un silence.
 - **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
-- **Faux positifs attendus** : installation d'un logiciel.
-- **Tests** : 3a, « Alerte de persistance produite juste avant un arrêt » (bout en bout) ; à écrire à son nom. En VM,
-  clé Run de test vers `cmd.exe /c rem`.
+- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus).
+- **Tests** : existants : `tache_com_cible_le_serveur_du_clsid`, `tache_com_hors_windows_sans_serveur_signalee` ; 3a,
+  « Alerte de persistance produite juste avant un arrêt » (bout en bout) ; à écrire à son nom. En VM, clé Run de test vers
+  `cmd.exe /c rem`.
 
 ### PER-002 : démarrage automatique modifié
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
 - **Justification** : un démarrage légitime détourné vers une autre commande.
 - **Télémétrie** : comme PER-001.
-- **Si elle manque** : comme PER-001.
+- **Si elle manque** : comme PER-001 (relevé partiel : faux « nouveau »).
 - **Niveau** : Alerte si suspecte, sinon Info.
 - **Faux positifs attendus** : mises à jour des logiciels (nouveau chemin de version).
 - **Tests** : à écrire.
@@ -210,14 +249,14 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## LEU : leurres anti-rançongiciel
 
-### LEU-001 : leurre modifié (empreinte)
-- **Code** : `hygiene.rs` (contrôle des empreintes des leurres).
-- **Justification** : un fichier que rien ne devrait toucher a changé : chiffrement en cours probable.
-- **Télémétrie** : leurres posés et leurs empreintes.
-- **Si elle manque** : leurres absents : la règle se tait.
+### LEU-001 : leurre modifié, supprimé, renommé ou remplacé par un lien
+- **Code** : `hygiene.rs` (`verifier_leurres`, empreinte lue par handle vérifié).
+- **Justification** : un fichier que rien ne devrait toucher a changé ou disparu : chiffrement en cours probable.
+- **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console.
+- **Si elle manque** : leurres non posés : la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
-- **Tests** : à écrire.
+- **Tests** : existant : `leurres_par_handle_jamais_a_travers_un_lien`.
 
 ### LEU-002 : leurre touché (audit des accès)
 - **Code** : `vol_donnees.rs` (événement 4663 sur un leurre).
@@ -228,13 +267,15 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Niveau** : Critique ; Info si le programme est un logiciel connu et signé (sauvegarde, synchronisation, antivirus),
   qui n'est pas suspendu.
 - **Faux positifs attendus** : logiciel de sauvegarde ou d'indexation non encore reconnu.
-- **Tests** : à écrire.
+- **Tests** : existant : `b1_leurre_touche_par_rundll32_suspendu`.
 
 ## VOL : vol de données
 
-### VOL-001 : accès aux secrets des navigateurs par un autre programme
+### VOL-001 : accès aux secrets d'un logiciel par un autre programme
 - **Code** : `vol_donnees.rs` (« comportement typique d'un VOLEUR DE DONNÉES »).
-- **Justification** : les voleurs d'identifiants lisent les bases de mots de passe et de cookies des navigateurs.
+- **Justification** : les voleurs d'identifiants lisent les bases de mots de passe et de cookies des navigateurs, les
+  jetons de Discord et de Telegram, les portefeuilles de cryptomonnaie (Ledger, Exodus, Electrum, MetaMask).
+- **Conditions** : une alerte au plus par programme et par cible toutes les 24 h.
 - **Télémétrie** : journal Sécurité 4663 et audit (SACL) sur les fichiers des profils.
 - **Si elle manque** : audit désactivé : la règle se tait.
 - **Niveau** : Critique si le programme vient d'un dossier temporaire, des téléchargements ou du profil public, sinon
@@ -248,9 +289,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `moniteur.rs` (empreinte du fichier hosts).
 - **Justification** : redirection de domaines vers un serveur de l'attaquant, ou blocage des mises à jour de sécurité.
 - **Télémétrie** : empreinte du fichier hosts.
-- **Si elle manque** : fichier illisible : aucune comparaison.
+- **Si elle manque** : fichier illisible : l'empreinte vaut « » (`empreinte_hosts`), différente de la précédente :
+  l'alerte « modifié par un autre programme » part **à tort**, puis repart quand le fichier redevient lisible.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement.
+- **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement ; fichier momentanément
+  illisible (ci-dessus).
 - **Tests** : à écrire. En VM, ligne de commentaire ajoutée au fichier hosts.
 
 ### SYS-002 : règle de pare-feu ajoutée ou modifiée
@@ -263,12 +306,16 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Faux positifs attendus** : installeurs de logiciels qui ouvrent leurs ports.
 - **Tests** : à écrire.
 
-### SYS-003 : règles du pare-feu disparues
-- **Code** : `parefeu.rs` (après une suppression de toutes les règles, moins de 50 revenues en 60 s).
+### SYS-003 : toutes les règles du pare-feu supprimées
+- **Code** : `parefeu.rs` (opération « toutes supprimées »).
 - **Justification** : un pare-feu vidé désarme le poste.
+- **Variantes** :
+  - par un autre auteur que le service Windows (svchost, binaire Windows) : Critique, tout de suite ;
+  - par svchost (rechargement par la stratégie de groupe, `gpupdate`) : Info (« règles du pare-feu rechargées par
+    Windows ») ; puis, si moins de 50 règles sont revenues 60 s après : Critique (« pare-feu vidé »).
 - **Télémétrie** : journal du pare-feu, nombre de règles.
 - **Si elle manque** : comme SYS-002.
-- **Niveau** : Critique.
+- **Niveau** : Critique ; Info pour le rechargement par la stratégie de groupe.
 - **Faux positifs attendus** : réinitialisation volontaire du pare-feu par un administrateur.
 - **Tests** : à écrire.
 
@@ -278,7 +325,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `hygiene.rs` (liste LOLDrivers, une fois par jour).
 - **Justification** : un pilote signé mais vulnérable permet de désactiver les protections (BYOVD).
 - **Télémétrie** : liste LOLDrivers chargée, pilotes du disque.
-- **Si elle manque** : liste vide ou illisible : « aucun pilote vulnérable », à tort.
+- **Si elle manque** : liste vide ou illisible : aucune alerte (silence), comme s'il n'y avait aucun pilote vulnérable.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : ancien pilote de matériel encore présent mais inutilisé.
 - **Tests** : à écrire.
@@ -290,7 +337,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Justification** : une extension malveillante lit tout ce que l'utilisateur fait dans le navigateur.
 - **Télémétrie** : profils des navigateurs.
 - **Si elle manque** : profil illisible : la règle se tait.
-- **Niveau** : Alerte.
+- **Niveau** : Alerte si l'extension a des permissions sensibles, Info sinon.
 - **Faux positifs attendus** : chaque extension installée volontairement.
 - **Tests** : à écrire.
 
@@ -316,6 +363,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `baseline.rs` (`derives`, toutes les 10 min).
 - **Justification** : un réglage de durcissement qui revient en arrière (par un malware, une mise à jour ou une
   personne) rouvre une faiblesse.
+- **Conditions** : seuls les réglages appliqués par deR4Tizer, passés de « conforme » à « non conforme », sont suivis.
 - **Télémétrie** : évaluation de la baseline.
 - **Si elle manque** : évaluation impossible : aucune dérive calculée.
 - **Niveau** : Alerte.
@@ -328,7 +376,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 |---|---|---|---|
 | COR-R1 | Tentatives de mot de passe en série | Alerte | T1110 |
 | COR-R2 | Session ouverte après une série d'échecs | Critique | T1110 |
-| COR-R3 | Nouveau compte administrateur | Critique | T1136.001 |
+| COR-R3 | Nouveau compte administrateur (créé il y a moins de 30 min puis ajouté aux Administrateurs) | Critique | T1136.001 |
+| COR-R3b | Ajout d'un compte existant au groupe Administrateurs | Alerte | T1098 |
 | COR-R4 | Journal d'événements effacé | Critique | T1070.001 |
 | COR-R5 | Service installé depuis un emplacement suspect | Critique | T1543.003 |
 | COR-R6 | Attaque en plusieurs étapes (3 détections d'un même programme en 10 min) | Critique | — |
@@ -339,7 +388,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 - **Code** : `siem.rs` (`Correlation`).
 - **Télémétrie** : journaux Sécurité et Système ; audit avancé (profil de baseline « journalisation »).
-- **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait.
+- **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait. Sauf COR-R6, qui se nourrit des
+  alertes du service et non de l'audit.
 - **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire.
 - **Tests** : à écrire. En VM, COR-R1 : cinq échecs d'ouverture de session d'un compte de test.
 
@@ -353,7 +403,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Justification** : un dossier de données mal protégé ou un tube squatté donnerait la main sur le service.
 - **Télémétrie** : aucune externe (contrôles du service lui-même).
 - **Faux positifs attendus** : aucun connu.
-- **Tests** : 3a (premier démarrage en échec fermé) pour INT-001 ; à écrire à leur nom.
+- **Tests** : existants : `lot1_alerte_critique_locale_en_echec` (INT-001), `lot5_canal_squat_pid_et_alerte_critique`
+  (INT-002) ; 3a (premier démarrage en échec fermé) pour INT-001.
 
 ## EXP : modules expérimentaux (gelés)
 
@@ -363,7 +414,9 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | EXP-DPI-* | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
 | EXP-NDR-* | NDR | `ndr.rs` |
 
-- Gelés par `CLAUDE.md` : seule une ligne qui pose l'identifiant de règle est ajoutée à leurs alertes, sans autre
-  changement de logique (mainteneur, 2026-10-25).
+- Gelés par `CLAUDE.md` : seule une ligne qui pose l'identifiant de règle sera ajoutée à leurs alertes (PR 3.2), sans
+  autre changement de logique (mainteneur, 2026-10-25).
+- `EXP-DPI-*` et `EXP-NDR-*` sont des familles : leurs identifiants exacts seront fixés ici avant d'être posés dans le
+  code (PR 3.2), pour ne jamais en réutiliser un.
 - **Télémétrie** : capture réseau.
 - **Tests** : ceux des modules, inchangés ; aucune mesure de faux positifs pendant la phase 3.
