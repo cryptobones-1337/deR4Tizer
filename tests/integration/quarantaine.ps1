@@ -23,7 +23,12 @@ $Zone = "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=https://exemple.invalid/essai.bin
 function Nouveau-Fichier([string]$Chemin, [byte[]]$Contenu = (Octets-Aleatoires 200000)) {
     New-Item -ItemType Directory -Force -Path (Split-Path $Chemin) | Out-Null
     [IO.File]::WriteAllBytes($Chemin, $Contenu)
-    Set-Content -LiteralPath $Chemin -Stream Zone.Identifier -Value $Zone
+    # Marque écrite en plusieurs essais : un fichier tout neuf peut être tenu un instant par un autre processus
+    # (« Stream was not readable » dans le passage de 75e0d92, Defender soupçonné, non prouvé) ; échec après 10 essais
+    for ($i = 1; ; $i++) {
+        try { Set-Content -LiteralPath $Chemin -Stream Zone.Identifier -Value $Zone -ErrorAction Stop; break }
+        catch { if ($i -ge 10) { throw }; Start-Sleep -Milliseconds 300 }
+    }
     Sha256 $Chemin
 }
 
