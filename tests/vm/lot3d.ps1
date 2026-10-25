@@ -137,15 +137,26 @@ if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
 # Configuration de Defender modifiée pendant le passage (événement 5007) : deR4Tizer ne doit jamais y toucher
 Verifier 'Configuration de Defender inchangée pendant le passage (événement 5007)' {
-    # Seulement les interrupteurs de protection, par le chemin de la NOUVELLE valeur : une exclusion, une protection
-    # en temps réel ou une analyse désactivée, le niveau du cloud et l'envoi d'échantillons, la protection contre les
-    # falsifications, la désactivation de Defender. Defender écrit lui-même des dizaines à des centaines de 5007 sur
-    # ses réglages internes (Features\Controls, Features\EcsConfigs, Spynet\MAPSconcurrency…), constaté dans la VM :
-    # ils ne comptent pas.
-    $protection = 'New value:\s*HKLM\\SOFTWARE\\(Policies\\)?Microsoft\\Windows Defender\\(Exclusions\\|Real-Time Protection\\Disable|Scan\\Disable|Spynet\\(SpynetReporting|SubmitSamplesConsent)\b|Features\\TamperProtection\b|DisableAnti)'
+    # Échec fermé : TOUT changement de réglage de Defender compte, sauf une liste fermée de réglages internes que
+    # Defender écrit lui-même (constatés dans la VM : Features\Controls, Features\EcsConfigs, Spynet\MAPSconcurrency…).
+    # La nouvelle valeur est lue dans les données de l'événement (« New Value »), qui ne sont pas traduites : un
+    # libellé du message (« New value: », « Nouvelle valeur : ») dépendrait de la langue de Windows.
+    # Liste fermée relevée sur un poste réel (701 événements) et dans la VM : valeurs d'état écrites par Defender,
+    # jamais un interrupteur de protection (PUAProtection, SpyNetReporting, SubmitSamplesConsent, exclusions, ASR…
+    # restent comptés)
+    $bruit = '(\\Windows Defender\\(Diagnostics|CoreService|Features\\(Controls|EcsConfigs|SCC))\\)' +
+        '|(\\Windows Defender\\(ProductAppDataPath|ServiceStartStates|IsServiceRunning|InstallLocation|UUPFlags|SAC_ClientWaitForRpc) =)' +
+        '|(\\Windows Defender\\SpyNet\\(LastMAPS|MAPSconcurrency|SpyNetReportingLocation))' +
+        '|(^Default\\(ServiceStartStates|ProductAppDataPath) =)'
+    $nouvelle = {
+        param($ev)
+        $x = [xml]$ev.ToXml()
+        $v = @($x.Event.EventData.Data | Where-Object { $_.Name -eq 'New Value' } | ForEach-Object { $_.'#text' }) | Select-Object -First 1
+        if ($v) { "$v" } else { "$(($ev.Message -split "`n") | Where-Object { $_ -match 'HKLM\\' } | Select-Object -Last 1)".Trim() }
+    }
     $m = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue |
-        Where-Object { $_.Message -match $protection })
-    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 3 | ForEach-Object { (($_.Message -split "`n") | Where-Object { $_ -match 'New value' } | ForEach-Object { $_.Trim() }) -join ' ' }) -join ' ; ') }
+        ForEach-Object { & $nouvelle $_ } | Where-Object { $_ -notmatch $bruit })
+    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 4) -join ' ; ') }
     $true
 }
 
