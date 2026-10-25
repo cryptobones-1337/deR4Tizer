@@ -257,7 +257,48 @@ $script:NumeroScript = 0
 # Planificateur jusqu'à la remise à l'instantané). Renvoie le processus démarré, comme Start-Process -PassThru, ou $null
 # s'il a déjà fini avec succès. Tâche jamais supprimée (son processus peut tenir un fichier ouvert) : l'instantané de la
 # VM l'efface ; arrêtée si elle n'a pas démarré à temps, pour ne pas partir pendant les contrôles suivants.
+#
+# Un compte standard n'a pas le droit « ouvrir une session en tant que tâche » (SeBatchLogonRight : administrateurs,
+# opérateurs de sauvegarde et utilisateurs du journal de performances seulement) : sans lui, la tâche ne démarre jamais
+# (passage VM du 25/10/2026 : 0x41303, « pas encore exécutée »). Accordé au compte de test jetable, une fois, par l'API
+# LSA ; seulement dans ce chemin (session 0 : VM -SessionStandard), effacé avec l'instantané.
+$script:DroitTacheAccorde = @{}
+function Accorder-OuvertureTache($Compte) {
+    if ($script:DroitTacheAccorde[$Compte.Sid]) { return }
+    if (-not ('D4tLsa' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class D4tLsa {
+    [StructLayout(LayoutKind.Sequential)] struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+    [StructLayout(LayoutKind.Sequential)] struct LSA_OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+    [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr systemName, ref LSA_OBJECT_ATTRIBUTES attributes, uint access, out IntPtr policy);
+    [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LSA_UNICODE_STRING[] rights, uint count);
+    [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+    [DllImport("advapi32.dll")] static extern uint LsaNtStatusToWinError(uint status);
+    // 0 si accordé, sinon le code d'erreur Windows
+    public static uint Accorder(byte[] sid, string droit) {
+        var oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(oa);
+        IntPtr h;
+        uint s = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x00000010 | 0x00000800, out h); // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+        if (s != 0) return LsaNtStatusToWinError(s);
+        var u = new LSA_UNICODE_STRING();
+        u.Buffer = Marshal.StringToHGlobalUni(droit); u.Length = (ushort)(droit.Length * 2); u.MaximumLength = (ushort)(u.Length + 2);
+        try { s = LsaAddAccountRights(h, sid, new[] { u }, 1); return s == 0 ? 0 : LsaNtStatusToWinError(s); }
+        finally { Marshal.FreeHGlobal(u.Buffer); LsaClose(h); }
+    }
+}
+'@
+    }
+    $sid = New-Object Security.Principal.SecurityIdentifier($Compte.Sid)
+    $octets = New-Object byte[] $sid.BinaryLength
+    $sid.GetBinaryForm($octets, 0)
+    $r = [D4tLsa]::Accorder($octets, 'SeBatchLogonRight')
+    if ($r -ne 0) { throw "droit « ouvrir une session en tant que tâche » non accordé au compte de test (erreur $r)" }
+    $script:DroitTacheAccorde[$Compte.Sid] = $true
+}
 function Demarrer-ParTache($Compte, [string]$Fichier) {
+    Accorder-OuvertureTache $Compte
     $nom = "d4t-essai-standard-$($script:NumeroScript)"
     $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Fichier`"" -WorkingDirectory $script:Commun
