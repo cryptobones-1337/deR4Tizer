@@ -720,6 +720,32 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
+/// Relecture de #61 : à l'arrêt, une alerte de persistance d'un relevé encore en cours (déjà retirée de la référence
+/// demarrage.json) est attendue et récupérée, jamais perdue
+#[test]
+fn phase1_persistance_videe_a_l_arret() {
+    use crate::moniteur::vider_persistance;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    let en_cours = Arc::new(AtomicBool::new(true));
+    let file: Arc<Mutex<Vec<crate::commun::Alerte>>> = Arc::new(Mutex::new(Vec::new()));
+    let (e, f) = (en_cours.clone(), file.clone());
+    // Relevé qui finit 200 ms après la demande d'arrêt
+    let fil = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        f.lock().unwrap().push(crate::commun::Alerte { raisons: "démarrage automatique AJOUTÉ".into(), ..Default::default() });
+        e.store(false, Ordering::SeqCst);
+    });
+    let reste = vider_persistance(&en_cours, &file, Duration::from_secs(5));
+    let _ = fil.join();
+    assert_eq!(reste.len(), 1, "alerte du relevé en cours perdue à l'arrêt");
+    // Rien en cours : retour immédiat, file vidée
+    file.lock().unwrap().push(crate::commun::Alerte::default());
+    assert_eq!(vider_persistance(&AtomicBool::new(false), &file, Duration::from_secs(5)).len(), 1);
+    assert!(file.lock().unwrap().is_empty());
+}
+
 #[test]
 fn fonctions_texte_sans_panique() {
     torturer_texte("a%20b+c%3A%C3%A9", &mut |t| { let _ = crate::api::decoder_test(t); });
