@@ -626,6 +626,27 @@ fn audit_upnp_reponse_goutte_a_goutte_bornee() {
     assert!(debut.elapsed() < Duration::from_secs(4), "réponse goutte à goutte : {:?}", debut.elapsed());
     assert!(r.is_none(), "réponse incomplète à l'échéance : abandonnée");
     let _ = serveur.join();
+    // Réponse qui finit juste avant l'échéance puis se tait : la dernière lecture ne dépasse pas l'échéance
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            std::thread::sleep(Duration::from_secs(6));
+        }
+    });
+    let debut = Instant::now();
+    let _ = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_millis(2800), "échéance dépassée par la dernière lecture : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    // Échéance nulle (passage UPnP épuisé) : rien n'est tenté
+    let debut = Instant::now();
+    assert!(crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\n\r\n", Duration::ZERO).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
+    assert!(crate::upnp::ECHEANCE_PASSAGE <= Duration::from_secs(30));
 }
 
 /// Audit AUD4-02, AUD4-03 : tables de déduplication alimentées par des adresses du réseau, jamais purgées

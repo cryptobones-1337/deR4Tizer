@@ -41,9 +41,18 @@ fn decouper_url(url: &str) -> Option<(SocketAddr, String)> {
 /// Corps d'une réponse HTTP/1.1 (gère « Transfer-Encoding: chunked ») et son code de statut. Tout le découpage
 /// se fait sur les octets : une taille de bloc tombant au milieu d'un caractère UTF-8 (envoyé par un appareil
 /// malveillant du réseau, ou par une box au nom accentué) ne doit jamais faire paniquer le service
-fn http(adresse: SocketAddr, requete: &str) -> Option<(u16, String)> {
-    http_avec_echeance(adresse, requete, ECHEANCE_HTTP)
+fn http(adresse: SocketAddr, requete: &str, fin: Instant) -> Option<(u16, String)> {
+    let reste = fin.saturating_duration_since(Instant::now());
+    if reste.is_zero() {
+        return None;
+    }
+    http_avec_echeance(adresse, requete, reste.min(ECHEANCE_HTTP))
 }
+
+/// Durée maximale d'un passage UPnP entier (découverte, descriptions, jusqu'à 64 requêtes SOAP), sur le fil de
+/// l'analyse ARP (relecture de #55) : avec une échéance par réponse seulement, un appareil qui finissait chaque
+/// réponse juste avant elle tenait le fil 13 à 18 min, toutes les 10 min (détection ARP aveugle)
+pub const ECHEANCE_PASSAGE: Duration = Duration::from_secs(30);
 
 /// Durée maximale d'une réponse UPnP entière (audit AUD4-04) : avant, le délai ne portait que sur chaque lecture, et un
 /// appareil qui répondait octet par octet bloquait le fil NDR (plus de détection d'usurpation ARP) pendant des jours
@@ -51,15 +60,26 @@ pub const ECHEANCE_HTTP: Duration = Duration::from_secs(10);
 
 pub fn http_avec_echeance(adresse: SocketAddr, requete: &str, echeance: Duration) -> Option<(u16, String)> {
     let debut = std::time::Instant::now();
-    let mut flux = TcpStream::connect_timeout(&adresse, Duration::from_secs(3)).ok()?;
-    let _ = flux.set_read_timeout(Some(Duration::from_secs(5).min(echeance)));
+    // Connexion, écriture et chaque lecture attendent au plus le temps qui reste : la réponse entière tient dans
+    // l'échéance (avant : échéance, puis encore une lecture de 5 s)
+    let reste = || echeance.saturating_sub(debut.elapsed());
+    if echeance.is_zero() {
+        return None;
+    }
+    let mut flux = TcpStream::connect_timeout(&adresse, Duration::from_secs(3).min(echeance)).ok()?;
+    if reste().is_zero() {
+        return None;
+    }
+    let _ = flux.set_write_timeout(Some(reste()));
     flux.write_all(requete.as_bytes()).ok()?;
     let mut brut = Vec::new();
     let mut tampon = [0u8; 8192];
     while brut.len() < TAILLE_MAX {
-        if debut.elapsed() >= echeance {
+        let r = reste();
+        if r.is_zero() {
             return None;
         }
+        let _ = flux.set_read_timeout(Some(r.min(Duration::from_secs(5))));
         match flux.read(&mut tampon) {
             Ok(0) | Err(_) => break,
             Ok(n) => brut.extend_from_slice(&tampon[..n]),
@@ -105,7 +125,7 @@ fn balise<'a>(xml: &'a str, nom: &str) -> Option<&'a str> {
 }
 
 /// Service de redirection de la box : (adresse, URL de contrôle, type de service)
-fn service_igd(locale_ip: Ipv4Addr) -> Option<(SocketAddr, String, String)> {
+fn service_igd(locale_ip: Ipv4Addr, fin: Instant) -> Option<(SocketAddr, String, String)> {
     let s = UdpSocket::bind(SocketAddr::from((locale_ip, 0))).ok()?;
     let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
     let recherche = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
@@ -123,7 +143,7 @@ fn service_igd(locale_ip: Ipv4Addr) -> Option<(SocketAddr, String, String)> {
     }
     for url in emplacements {
         let Some((adresse, chemin)) = decouper_url(&url) else { continue };
-        let Some((200, description)) = http(adresse, &format!("GET {chemin} HTTP/1.1\r\nHost: {adresse}\r\nConnection: close\r\n\r\n")) else { continue };
+        let Some((200, description)) = http(adresse, &format!("GET {chemin} HTTP/1.1\r\nHost: {adresse}\r\nConnection: close\r\n\r\n"), fin) else { continue };
         for bloc in description.split("<service>").skip(1) {
             let Some(type_) = balise(bloc, "serviceType") else { continue };
             if type_.contains("WANIPConnection") || type_.contains("WANPPPConnection") {
@@ -140,9 +160,14 @@ fn service_igd(locale_ip: Ipv4Addr) -> Option<(SocketAddr, String, String)> {
 
 /// Redirections de la box ; Err si aucune box UPnP ne répond (UPnP désactivé, ce qui est préférable)
 pub fn redirections(locale_ip: Ipv4Addr) -> Result<Vec<Redirection>, String> {
-    let (adresse, controle, type_) = service_igd(locale_ip).ok_or("aucune box UPnP ne répond (UPnP désactivé ou absent)")?;
+    let fin = Instant::now() + ECHEANCE_PASSAGE;
+    let (adresse, controle, type_) = service_igd(locale_ip, fin).ok_or("aucune box UPnP ne répond (UPnP désactivé ou absent)")?;
     let mut l = Vec::new();
     for i in 0..64 {
+        if Instant::now() >= fin {
+            crate::commun::journal(&format!("UPnP : passage arrêté après {} s, liste des redirections peut-être incomplète ({} lues)", ECHEANCE_PASSAGE.as_secs(), l.len()));
+            break;
+        }
         let corps = format!(
             "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
              s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:GetGenericPortMappingEntry xmlns:u=\"{type_}\">\
@@ -150,7 +175,7 @@ pub fn redirections(locale_ip: Ipv4Addr) -> Result<Vec<Redirection>, String> {
         let requete = format!(
             "POST {controle} HTTP/1.1\r\nHost: {adresse}\r\nContent-Type: text/xml; charset=\"utf-8\"\r\n\
              SOAPAction: \"{type_}#GetGenericPortMappingEntry\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{corps}", corps.len());
-        let Some((statut, reponse)) = http(adresse, &requete) else { break };
+        let Some((statut, reponse)) = http(adresse, &requete, fin) else { break };
         if statut != 200 {
             break; // fin de la liste (SpecifiedArrayIndexInvalid)
         }
