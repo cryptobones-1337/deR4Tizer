@@ -107,7 +107,7 @@ pub fn traduire(xml: &str) -> Option<Alerte> {
 /// S'abonne au journal de Defender ; chaque alerte est déposée dans la file
 pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) -> bool {
     evenements::abonner(JOURNAL, "*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007 or EventID=5010 or EventID=5012 or (EventID>=1121 and EventID<=1126))]]",
-        move |xml| {
+        crate::collectes::Collecte::JournalDefender, move |xml| {
             if let Some(a) = traduire(&xml) {
                 file.lock().unwrap().push(a);
             }

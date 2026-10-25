@@ -1,5 +1,6 @@
 //! Lecture des journaux d'événements de Windows (Sécurité, Système, DNS, Sysmon…) : historique puis suivi.
 
+use crate::collectes::{self, Collecte};
 use crate::natif::large;
 use regex::Regex;
 use std::collections::HashMap;
@@ -99,15 +100,24 @@ fn dernier_numero(canal: &str) -> Option<u64> {
 /// tourne dans un fil dédié. Lecture incrémentale par numéro d'événement toutes les 2 s, plutôt qu'un
 /// abonnement EvtSubscribe : sur un journal très actif (Sécurité avec l'audit des fichiers), un abonnement
 /// qui prend du retard est déclaré périmé par Windows et ne livre plus rien.
-pub fn abonner(canal: &str, requete: &str, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
+/// Chaque lecture du numéro du dernier événement est notée pour la collecte `collecte` (réussie ou impossible).
+pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
     let Some(conditions) = requete.trim().strip_prefix("*[System[").and_then(|r| r.strip_suffix("]]")).map(String::from) else { return false };
-    let Some(mut dernier) = dernier_numero(canal) else { return false };
+    let Some(mut dernier) = dernier_numero(canal) else {
+        collectes::echec(collecte, &format!("journal {canal} illisible"));
+        return false;
+    };
+    collectes::succes(collecte);
     let canal = canal.to_string();
     std::thread::Builder::new()
         .name(format!("journal {canal}"))
         .spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let Some(n) = dernier_numero(&canal) else { continue };
+            let Some(n) = dernier_numero(&canal) else {
+                collectes::echec(collecte, &format!("journal {canal} illisible"));
+                continue;
+            };
+            collectes::succes(collecte);
             if n < dernier {
                 // Journal effacé : on repart du début
                 dernier = 0;

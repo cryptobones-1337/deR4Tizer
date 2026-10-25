@@ -25,8 +25,15 @@ Règles de forme :
   porte qu'une règle. Limite actuelle : pour les lignes de commande, `processus::suspicion_regle` ne rend que le
   **premier** motif trouvé (voir PRC-002 à PRC-005).
 
-« Si la télémétrie manque » décrit le comportement **actuel** : dans la plupart des cas, la règle se tait sans le dire.
-L'état des collectes (PR 3.3) rendra ce silence visible.
+« Si la télémétrie manque » décrit le comportement des détections elles-mêmes : dans la plupart des cas, la règle se
+tait. Depuis la PR 3.3a, ce silence est publié dans `etat.json` : `Collectes` donne l'état de chaque source de
+télémétrie et `ReglesSansCollecte` les règles dont une source nécessaire n'est pas lue (une source jamais notée compte
+comme non lue). L'interface ne l'affiche qu'à partir de la PR 3.4. Correspondance règle → sources :
+`collectes::besoins` ; sources branchées en 3.3a : connexions, journaux (Defender, Sécurité, Système, pare-feu, DNS,
+Sysmon), état de Defender, WMI des processus, listes de menaces et de domaines, LOLDrivers. Les autres (processus,
+persistance, baseline, leurres, audit des données, `pfirewall.log`, extensions, périphériques, capture) restent
+« Inconnue » jusqu'à la PR 3.3b : leurs règles sont donc publiées « sans collecte ». Ne suivent aucune source :
+RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002.
 
 Domaines : `RES` connexions, `DNS`, `PRC` processus, `CHA` chaînes de processus, `PER` persistance, `DEF` Defender,
 `LEU` leurres, `VOL` vol de données, `SYS` fichier hosts et pare-feu, `PIL` pilotes, `EXT` extensions de navigateur,

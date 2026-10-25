@@ -18,6 +18,7 @@ mod notifications;
 mod trafic;
 mod upnp;
 mod chaines;
+mod collectes;
 mod api;
 mod apprentissage;
 mod commun;

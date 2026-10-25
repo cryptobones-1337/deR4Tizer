@@ -97,6 +97,9 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>, journaux_windows: bool) {
     }
     std::thread::Builder::new().name("siem".into()).spawn(move || boucle(rx, alertes)).unwrap();
     if !journaux_windows {
+        for c in [crate::collectes::Collecte::JournalSecurite, crate::collectes::Collecte::JournalSysteme] {
+            crate::collectes::desactivee(c, "mode console : journaux Sécurité et Système non lus");
+        }
         return;
     }
     // Journal Sécurité : sessions, comptes, groupes, politique d'audit, processus, effacement
@@ -115,8 +118,8 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>, journaux_windows: bool) {
             });
         }
     }
-    for (canal, requete) in [("Security", securite), ("System", systeme)] {
-        let ok = crate::evenements::abonner(canal, requete, |xml| {
+    for (canal, requete, collecte) in [("Security", securite, crate::collectes::Collecte::JournalSecurite), ("System", systeme, crate::collectes::Collecte::JournalSysteme)] {
+        let ok = crate::evenements::abonner(canal, requete, collecte, |xml| {
             if let Some(e) = traduire(&xml) {
                 enregistrer(e);
             }
