@@ -99,6 +99,12 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
             return Err(format!("{nom} : caractère de contrôle ou de mise en forme refusé"));
         }
     }
+    // Adresses ntfy et Teams : ASCII imprimable seulement (homoglyphes, caractères invisibles : audit de sécurité, C1)
+    for (nom, v) in [("adresse ntfy", &s.ntfy_url), ("adresse Teams", &s.teams_url)] {
+        if v.chars().any(|c| !c.is_ascii_graphic()) {
+            return Err(format!("{nom} : seulement des caractères ASCII visibles"));
+        }
+    }
     let compte_change = nouvelle.smtp_serveur.trim() != actuelle.smtp_serveur.trim() || nouvelle.smtp_port != actuelle.smtp_port
         || nouvelle.smtp_utilisateur.trim() != actuelle.smtp_utilisateur.trim();
     if compte_change && s.smtp_mot_de_passe.trim().is_empty() {

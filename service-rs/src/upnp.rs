@@ -35,7 +35,17 @@ fn decouper_url(url: &str) -> Option<(SocketAddr, String)> {
     let (hote, chemin) = reste.split_once('/').map(|(h, c)| (h, format!("/{c}"))).unwrap_or((reste, "/".into()));
     let (ip, port) = hote.split_once(':').map(|(i, p)| (i, p.parse().ok())).unwrap_or((hote, Some(80)));
     let adresse = SocketAddr::new(ip.parse().ok()?, port?);
+    // Chemin réinjecté dans la ligne de requête : un retour à la ligne y ajouterait des en-têtes choisis par l'appareil
+    // (audit de sécurité de #55, C4)
+    if !chemin_sur(&chemin) {
+        return None;
+    }
     locale(&adresse.ip()).then_some((adresse, chemin))
+}
+
+/// Chemin HTTP sûr à mettre dans une ligne de requête : ASCII visible seulement (ni espace, ni contrôle)
+fn chemin_sur(c: &str) -> bool {
+    !c.is_empty() && c.chars().all(|c| c.is_ascii_graphic())
 }
 
 /// Corps d'une réponse HTTP/1.1 (gère « Transfer-Encoding: chunked ») et son code de statut. Tout le découpage
@@ -151,6 +161,9 @@ fn service_igd(locale_ip: Ipv4Addr, fin: Instant) -> Option<(SocketAddr, String,
                 let controle = if controle.starts_with("http://") {
                     decouper_url(&controle).map(|(_, c)| c)?
                 } else if controle.starts_with('/') { controle } else { format!("/{controle}") };
+                if !chemin_sur(&controle) || !type_.chars().all(|c| c.is_ascii_graphic()) {
+                    return None;
+                }
                 return Some((adresse, controle, type_.to_string()));
             }
         }
@@ -192,6 +205,10 @@ pub fn redirections(locale_ip: Ipv4Addr) -> Result<Vec<Redirection>, String> {
 }
 
 #[cfg(test)]
+pub fn chemin_sur_test(c: &str) -> bool {
+    chemin_sur(c)
+}
+
 pub fn decouper_url_test(url: &str) -> Option<(SocketAddr, String)> {
     decouper_url(url)
 }

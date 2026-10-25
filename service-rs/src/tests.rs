@@ -507,6 +507,12 @@ fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
     // Adresse ntfy changée sans nouveau jeton : jeton effacé ; même adresse : gardé
     assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.attaquant.test/b".into(), ..Default::default() }).unwrap().ntfy_jeton, "-");
     assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() }).unwrap().ntfy_jeton, "");
+    // Adresses ntfy et Teams : homoglyphes, espaces et caractères invisibles refusés ; adresse ordinaire acceptée
+    for u in ["https://ntfy.\u{0455}h/sujet", "https://ntfy.sh/a b", "https://ntfy.sh/a\u{200B}", "https://ntfy.sh/a\r\nX: y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    assert!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.sh/mon-sujet".into(), ..Default::default() }).is_ok());
     // Caractères de contrôle : refus (en-têtes ajoutés)
     for n in [
         ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
@@ -681,6 +687,10 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     });
     assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
     assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
+    // Chemin avec retour à la ligne ou espace (en-têtes ajoutés à la requête) : refusé
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/d.xml\r\nX-Injecte: 1").is_none());
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/a b").is_none());
+    assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
 #[test]

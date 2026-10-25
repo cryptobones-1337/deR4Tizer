@@ -239,11 +239,13 @@ namespace DeR4Tizer
             }
         }
 
-        // Nom d'hôte d'une adresse web, sans le chemin (qui peut être secret)
+        // Adresse web entière, en ASCII (IdnHost : un hôte en homoglyphes reste visible) : l'hôte seul ne suffisait pas
+        // (audit de sécurité de #52, C1) : « https://ntfy.sh/sujet-d-un-attaquant » s'affichait « ntfy.sh », comme le
+        // réglage légitime, et les alertes partaient chez l'attaquant. La confirmation est vue par l'administrateur seul.
         static string Hote(string url)
         {
             Uri u;
-            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Host : "?";
+            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Scheme + "://" + u.IdnHost + (u.IsDefaultPort ? "" : ":" + u.Port) + u.PathAndQuery : "?";
         }
 
         public static void Afficher(Reponse r)

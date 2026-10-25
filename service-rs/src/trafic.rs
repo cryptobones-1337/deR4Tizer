@@ -90,7 +90,8 @@ struct Destination {
     derniere: Option<Instant>,
 }
 
-/// Nombre maximal de destinations suivies (élaguées à 4000 au-delà de 5000, toutes les 5 s)
+/// Nombre maximal de destinations suivies : au-delà de 5000, les 1000 plus petites sont retirées (toutes les 5 s) ;
+/// aucune adresse nouvelle n'est acceptée au-delà de MAX_DESTINATIONS entre deux élagages
 pub const MAX_DESTINATIONS: usize = 6000;
 
 pub struct Trafic {
