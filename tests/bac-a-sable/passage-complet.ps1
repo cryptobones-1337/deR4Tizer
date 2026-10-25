@@ -55,8 +55,10 @@ $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').U
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
 foreach ($s in @('installation', 'quarantaine', 'lot3d') | Where-Object { $Scenarios -contains $_ }) {
     Attendre-Fermeture
-    & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"
-    if (-not $?) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
+    # Exception du lanceur (VM injoignable, console vide…) : notée, et les scénarios suivants tournent quand même
+    # (avant : elle arrêtait tout le passage)
+    try { & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"; $ok = $? } catch { $ok = $false; "== $s : exception du lanceur : $($_.Exception.Message)" }
+    if (-not $ok) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
     Resume $s
     if ($Cible -eq 'vm') { $v = Dossier-Du-Passage $s | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
 }
@@ -66,8 +68,8 @@ if ($Scenarios -contains 'maj') { try {
     if (-not $? -or -not (Test-Path (Join-Path $Racine 'entree\maj\versions.txt'))) { 'préparation -Maj en échec'; Get-Content "$env:TEMP\d4t-prep-maj.log" -Tail 25 }
     else {
         "MSI (3c, reconstruit après les paquets de test) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
-        & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"
-        if (-not $?) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
+        try { & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"; $ok = $? } catch { $ok = $false; "== maj : exception du lanceur : $($_.Exception.Message)" }
+        if (-not $ok) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
         Resume 'maj'
         if ($Cible -eq 'vm') { $v = Dossier-Du-Passage 'maj' | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }

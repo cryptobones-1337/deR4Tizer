@@ -79,12 +79,19 @@ try {
             Set-ItemProperty $w -Name DefaultPassword -Value $mdp
         }
         Remove-PSSession $s; $s = $null
-        Restart-VM -Name $Vm -Force -Wait -For Heartbeat
-        $s = Session
-        $fin = (Get-Date).AddMinutes(8)
-        do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
-        while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
-        if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après le redémarrage ($console)." }
+        # Ouverture de session automatique parfois manquée au premier démarrage (constaté le 25/10/2026 : console vide
+        # après 8 min, alors que les passages précédents l'avaient) : un second redémarrage, puis échec
+        for ($essai = 1; $essai -le 2; $essai++) {
+            if ($s) { Remove-PSSession $s; $s = $null }
+            Restart-VM -Name $Vm -Force -Wait -For Heartbeat
+            $s = Session
+            $fin = (Get-Date).AddMinutes(8)
+            do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
+            while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
+            if ($console -like '*\d4t_console') { break }
+            "Compte standard absent de la console après le redémarrage $essai ($console)"
+        }
+        if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après deux redémarrages ($console)." }
         # Réellement standard : pas membre des Administrateurs (comptes locaux seulement dans la VM de test : pas de
         # groupe de domaine imbriqué)
         # Échec fermé : liste illisible = refus (Get-LocalGroupMember échoue sur un SID orphelin ; net localgroup non)
