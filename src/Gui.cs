@@ -174,19 +174,19 @@ namespace DeR4Tizer
                     {
                         var r = Commun.Json().Deserialize<Config>(v) ?? new Config();
                         // Tout ce qui est appliqué est affiché, port de l'API et protocole syslog compris (audit AUD6-04)
-                        string api = r.Api != null && r.Api.Actif ? "port " + r.Api.Port + ", " + (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
+                        string api = r.Api != null && r.Api.Actif ? "port " + r.Api.Port + ", " + (r.Api.Reseau ? (en ? "network, allowed " : "réseau, autorisé ") + Lignes(r.Api.Adresses) : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
                         // Syslog désactivé : sa destination reste en configuration (et sert au message de test), elle est donc
                         // affichée aussi (audit de sécurité S58-03) ; texte affiché sans caractère de contrôle ni de mise en
                         // forme (S58-02 : un texte long ou inversé pouvait cacher le vrai contenu)
-                        string dest = r.Syslog == null ? "" : r.Syslog.Hote + ":" + r.Syslog.Port + " (" + r.Syslog.Protocole + ", " + r.Syslog.Format + ", minimum " + r.Syslog.NiveauMin + ")";
+                        string dest = r.Syslog == null ? "" : Visible(r.Syslog.Hote + ":" + r.Syslog.Port + " (" + r.Syslog.Protocole + ", " + r.Syslog.Format + ", minimum " + r.Syslog.NiveauMin + ")");
                         string sys = r.Syslog != null && r.Syslog.Actif ? dest : (en ? "off" : "désactivé") + (r.Syslog != null && !string.IsNullOrEmpty(r.Syslog.Hote) ? " (" + dest + ")" : "");
-                        return Visible((en ? "Change settings — language: " : "Modifier les réglages — langue : ") + r.Langue + " · syslog : " + sys + " · API : " + api);
+                        return (en ? "Change settings\n  • language: " : "Modifier les réglages\n  • langue : ") + Visible(r.Langue) + "\n  • syslog : " + sys + "\n  • API : " + api;
                     }
                 case "testerSyslog":
                     {
                         var s = Commun.Json().Deserialize<ConfigSyslog>(v);
-                        return Visible((en ? "Send a syslog test message to " : "Envoyer un message syslog de test à ")
-                            + (s == null ? (en ? "the configured server" : "le serveur configuré") : s.Hote + ":" + s.Port + " (" + s.Protocole + ")"));
+                        return Visible(s == null ? (en ? "Send a syslog test message to the configured server" : "Envoyer un message syslog de test au serveur configuré")
+                            : (en ? "Send a syslog test message to " : "Envoyer un message syslog de test à ") + s.Hote + ":" + s.Port + " (" + s.Protocole + ")");
                     }
                 case "jetonApi": return en ? "Show the export API token" : "Afficher le jeton de l'API d'export";
                 case "nouveauJeton": return en ? "REPLACE the export API token" : "REMPLACER le jeton de l'API d'export";
@@ -198,7 +198,7 @@ namespace DeR4Tizer
                         object o;
                         var conf = d.TryGetValue("Config", out o) ? o as Dictionary<string, object> : null;
                         Func<string, bool> actif = k => conf != null && conf.ContainsKey(k) && conf[k] is bool && (bool)conf[k];
-                        Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Hote((string)o)) : "";
+                        Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Visible(Hote((string)o))) : "";
                         if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
                         if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
                         // Canal désactivé dont l'adresse change quand même, et jeton ntfy : affichés aussi
@@ -209,19 +209,22 @@ namespace DeR4Tizer
                         // Tout ce qui sera appliqué est affiché (audit, AUD6-02) : serveur, port, sécurité, compte, expéditeur
                         // et mot de passe (nouveau, effacé ou inchangé) ; un serveur, un port, un compte ou une sécurité changés sans nouveau mot de passe effacent
                         // l'ancien côté service, jamais envoyé à un autre serveur
-                        Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? conf[k].ToString() : "";
+                        Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? Visible(conf[k].ToString()) : "";
                         if (actif("Smtp"))
                         {
                             string mdp = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
                                 ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau"))
                                 : (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
-                            canaux.Add((en ? "e-mail to " : "e-mail à ") + champ("Destinataires") + (en ? " via " : " par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
+                            canaux.Add((en ? "e-mail via " : "e-mail par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
                                 + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
-                                + (en ? ", password " : ", mot de passe ") + mdp + ")");
+                                + (en ? ", password " : ", mot de passe ") + mdp + ")" + (en ? ", recipients " : ", destinataires ")
+                                + Lignes(conf != null && conf.ContainsKey("Destinataires") && conf["Destinataires"] != null ? conf["Destinataires"].ToString() : ""));
                         }
                         if (conf != null) canaux.Add((en ? "minimum level " : "niveau minimal ") + champ("NiveauMin") + (en ? ", at most " : ", au plus ") + champ("MaxParHeure") + (en ? " per hour" : " par heure"));
-                        return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
-                            + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
+                        // Chaque texte de la commande passe par Visible ; un canal par ligne, destinataires un par ligne (S58-05,
+                        // S60-01) ; jamais tronqué (l'appelant refuse une confirmation trop longue)
+                        return (c.Action == "testerNotifications" ? (en ? "Send a test notification" : "Envoyer une notification de test") : (en ? "Change alert forwarding" : "Modifier la remontée des alertes"))
+                            + (canaux.Count == 0 ? (en ? " — all channels off" : " — tous les canaux désactivés") : string.Concat(canaux.Select(x => "\n  • " + x)));
                     }
                 case "exception":
                     {
@@ -254,10 +257,26 @@ namespace DeR4Tizer
         static string Visible(string s)
         {
             if (s == null) return "";
+            // Espaces de toute sorte (insécables, idéographiques…) ramenés à une seule espace simple (S58-05, S58-06 ; le
+            // service les refuse aussi). Jamais de troncature : une confirmation trop longue est refusée par l'appelant.
+            // À appliquer à chaque texte venu de la commande ; les retours à la ligne de la mise en page sont ajoutés après
             var b = new System.Text.StringBuilder(s.Length);
+            bool espace = false;
             foreach (char ch in s)
+            {
+                if (char.IsWhiteSpace(ch) && ch != '\n') { if (!espace) b.Append(' '); espace = true; continue; }
+                espace = false;
                 b.Append(char.IsControl(ch) || char.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.Format ? '?' : ch);
+            }
             return b.ToString();
+        }
+
+        // Liste (destinataires, adresses autorisées) : un élément par ligne, avec leur nombre, découpée comme le service
+        // la découpe (« , », « ; », espace) : rien ne se cache au bout d'une ligne trop large (S60-01, S60-03)
+        static string Lignes(string brut)
+        {
+            var l = (brut ?? "").Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            return "(" + l.Length + ")" + string.Concat(l.Select(x => "\n      • " + Visible(x)));
         }
 
         // Adresse web entière, en ASCII (IdnHost : un hôte en homoglyphes reste visible) : l'hôte seul ne suffisait pas
@@ -1481,7 +1500,17 @@ namespace DeR4Tizer
                 }
                 catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
                 if (c == null) return 1;
-                if (MessageBox.Show((L.En ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + Canal.Decrire(c)
+                // Confirmation jamais tronquée : trop longue (plus de 4000 caractères ou 40 lignes), ou impossible à
+                // produire, la commande est refusée sans rien envoyer (relecture de #60 : une troncature cachait la suite)
+                string texte;
+                try { texte = Canal.Decrire(c); }
+                catch (Exception e) { MessageBox.Show((L.En ? "Command refused: " : "Commande refusée : ") + e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+                if (texte.Length > 4000 || texte.Split('\n').Length > 40)
+                {
+                    MessageBox.Show(L.En ? "Command refused: its confirmation would be too long to be read in full." : "Commande refusée : sa confirmation serait trop longue pour être lue en entier.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 1;
+                }
+                if (MessageBox.Show((L.En ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + texte
                         + (L.En ? "\n\nContinue?" : "\n\nContinuer ?"), "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                     return 1;
                 var r = Canal.Envoyer(c);
