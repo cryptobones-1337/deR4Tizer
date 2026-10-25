@@ -23,11 +23,12 @@ try {
         'installation' { & "$entree\integration\installation.ps1" -Msi "$entree\deR4Tizer.msi" -MsiAncien "$entree\deR4Tizer-ancien.msi" -Version $version }
         'quarantaine' { & "$entree\integration\quarantaine.ps1" -Msi "$entree\deR4Tizer.msi" }
         # VM seulement : empreinte du MSI calculée sur l'hôte et déposée par tests\vm\lancer.ps1
-        'mesure' { & "$entree\vm\mesure.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         'lot3d' {
             $attendu = if (Test-Path "$entree\msi-sha256-hote.txt") { (Get-Content "$entree\msi-sha256-hote.txt" -Raw).Trim() } else { '' }
             & "$entree\vm\lot3d.ps1" -Msi "$entree\deR4Tizer.msi" -Sha256Attendu $attendu
         }
+        # VM seulement : mesure du cycle (environ 25 min), hors de la preuve de CLAUDE.md sauf demande
+        'mesure' { & "$entree\vm\mesure.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         'maj' {
             # Python embarquable (lecture seule) pour le serveur local ; versions préparées par preparer.ps1 -Maj
             $env:PATH = "$entree\python;$env:PATH"

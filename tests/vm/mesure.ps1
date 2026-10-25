@@ -30,27 +30,40 @@ if ($installe) {
     $travail = Join-Path $env:RUNNER_TEMP 'mesure-activite'
     New-Item -ItemType Directory -Force -Path $travail | Out-Null
     $ecoute = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $ecoute.Start()
-    $port = $ecoute.LocalEndpoint.Port
-    $fin = (Get-Date).AddMinutes($Minutes)
     $n = 0
-    while ((Get-Date) -lt $fin) {
-        $n++
-        Start-Process -FilePath "$env:WINDIR\System32\cmd.exe" -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -Wait
-        Set-Content -LiteralPath (Join-Path $travail "f$($n % 20).txt") -Value "activité $n" -Encoding Ascii
-        if ($n % 3 -eq 0) {
-            try { $c = [Net.Sockets.TcpClient]::new('127.0.0.1', $port); $s = $ecoute.AcceptTcpClient(); $s.Close(); $c.Close() } catch { }
+    # Dans un Verifier (exception notée ÉCHOUÉ, le tableau reste complet) et un finally (écouteur arrêté, dossier
+    # effacé quoi qu'il arrive) : relecture de #59, D2
+    Verifier 'Activité pendant la mesure' {
+        try {
+            $ecoute.Start()
+            $port = $ecoute.LocalEndpoint.Port
+            $fin = (Get-Date).AddMinutes($Minutes)
+            while ((Get-Date) -lt $fin) {
+                $script:n++
+                Start-Process -FilePath "$env:WINDIR\System32\cmd.exe" -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -Wait
+                Set-Content -LiteralPath (Join-Path $travail "f$($script:n % 20).txt") -Value "activite $($script:n)" -Encoding Ascii
+                if ($script:n % 3 -eq 0) {
+                    try { $c = [Net.Sockets.TcpClient]::new('127.0.0.1', $port); $s = $ecoute.AcceptTcpClient(); $s.Close(); $c.Close() } catch { }
+                }
+                Start-Sleep 10
+            }
+        } finally {
+            $ecoute.Stop()
+            Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
         }
-        Start-Sleep 10
+        $true
     }
-    $ecoute.Stop()
-    Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
-    Noter 'Activité pendant la mesure' 'INFORMATION' "$Minutes min, $n tours (programme lancé et fichier écrit à chaque tour, connexion locale un tour sur trois)"
+    Noter 'Tours d''activité' 'INFORMATION' "$Minutes min, $n tours (programme lancé et fichier écrit à chaque tour, connexion locale un tour sur trois)"
 
-    Verifier 'mesures.json écrit par le service' {
+    Verifier 'mesures.json écrit par le service (deux écritures au moins, service toujours actif)' {
+        if (-not (Attendre-Canal 30)) { return 'le service ne répond plus après la mesure' }
         if (-not (Test-Path -LiteralPath $fichier)) { return "absent après $Minutes min ($fichier)" }
         $m = Get-Content -LiteralPath $fichier -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $m.cumul) { return 'cumul absent' }
+        # Au moins deux écritures : la fenêtre en cours commence après le début du cumul ; étapes mesurées présentes
+        # (relecture de #59, D3)
+        if (-not $m.fenetre -or [string]$m.fenetre.depuis -le [string]$m.cumul.depuis) { return "une seule écriture (cumul depuis $($m.cumul.depuis), fenêtre depuis $($m.fenetre.depuis))" }
+        if (-not $m.cumul.etapes -or -not @($m.cumul.etapes.PSObject.Properties).Count) { return 'aucune étape mesurée' }
         Copy-Item -LiteralPath $fichier -Destination (Join-Path $Sortie 'mesure-mesures.json') -Force
         $true
     }
