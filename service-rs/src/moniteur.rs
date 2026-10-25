@@ -964,7 +964,10 @@ impl Moniteur {
             }
             // ---------------- bruit : « ne plus alerter pour ce comportement » (Cible : identifiant de l'alerte)
             "exception" => match self.alertes.iter().find(|a| Some(a.id.as_str()) == c.cible.as_deref()).cloned() {
-                Some(a) => Reponse::ok(format!("Ce comportement ne déclenchera plus qu'une information : {}", crate::apprentissage::ajouter_exception(&a))),
+                Some(a) => match crate::apprentissage::ajouter_exception(&a) {
+                    Ok(d) => Reponse::ok(format!("Ce comportement ne déclenchera plus qu'une information : {d}")),
+                    Err(e) => Reponse::erreur(e),
+                },
                 None => Reponse::erreur("Alerte introuvable."),
             },
             "apprentissage" => match crate::apprentissage::commande(c.valeur.as_deref().unwrap_or("")) {

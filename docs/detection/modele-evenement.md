@@ -62,7 +62,9 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
   alerte au chemin long ne s'appliquait jamais, et un programme posé au chemin borné littéral pouvait en hériter. Les
   nouveaux comportements appris sont mémorisés par leur empreinte (taille fixe : `apprentissage.json` reste borné). Les
   exceptions et comportements déjà enregistrés en clair restent reconnus. Une alerte d'avant cette version n'a pas
-  d'empreinte : une exception posée depuis elle reprend l'ancienne signature.
+  d'empreinte : une exception posée depuis elle reprend l'ancienne signature, seulement si elle est de niveau « Alerte »
+  et qu'aucun champ de sa signature n'a été borné ; sinon l'exception est refusée (audit de sécurité de #73, S73-01). Une
+  empreinte mal formée est refusée aussi (S73-02).
 - **Limite supplémentaire** : si la protection du dossier est en échec, quelqu'un qui pré-crée tous les noms de mise de
   côté possibles (100 par seconde d'horodatage) peut empêcher la mise de côté, donc retenir l'écriture d'`alertes.json` :
   les nouvelles alertes restent en mémoire (1000 au plus) et sont perdues à l'arrêt. L'échec n'est écrit qu'une fois au

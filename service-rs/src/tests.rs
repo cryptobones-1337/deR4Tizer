@@ -3085,7 +3085,30 @@ fn phase3_exception_sur_alerte_bornee() {
     let d = m.find("fn ajouter_alerte_brute").unwrap();
     let corps = &m[d..d + 900];
     assert!(corps.find("commun::empreinte_signature(").expect("empreinte") < corps.find("commun::borner_alerte(&mut a)").unwrap());
-    assert!(include_str!("apprentissage.rs").contains("if a.signature.is_empty() { signature(a) } else { a.signature.clone() }"));
+    // L'exception vise l'empreinte de l'alerte (cible_exception)
+    let avec = Alerte { niveau: "Info".into(), signature: empreinte_signature(&sig), ..bornee.clone() };
+    assert_eq!(crate::apprentissage::cible_exception(&avec).as_deref(), Ok(empreinte_signature(&sig).as_str()));
+}
+
+/// Audit de sécurité de #73, S73-01 et S73-02 : sans empreinte, une alerte Info ou Critique, ou une alerte dont un champ
+/// de la signature a été borné, ne donne pas d'exception (sinon, la signature du texte borné couvrirait un programme posé
+/// au chemin borné) ; une empreinte mal formée est refusée ; une alerte ancienne non bornée garde l'ancienne signature
+#[test]
+fn phase3_exception_sans_empreinte() {
+    use crate::apprentissage::{cible_exception, signature_avec};
+    use crate::commun::{borner_alerte, Alerte};
+    let longue = Alerte { niveau: "Alerte".into(), chemin: format!(r"C:\{}\x.exe", "a".repeat(700)), destination: "203.0.113.9".into(), ..Default::default() };
+    let mut bornee = longue.clone();
+    borner_alerte(&mut bornee);
+    assert!(cible_exception(&bornee).is_err(), "alerte bornée sans empreinte : exception acceptée");
+    for niveau in ["Info", "Critique"] {
+        assert!(cible_exception(&Alerte { niveau: niveau.into(), chemin: r"C:\x.exe".into(), ..Default::default() }).is_err(), "{niveau}");
+    }
+    let courte = Alerte { niveau: "Alerte".into(), chemin: r"C:\Outils\x.exe".into(), destination: "203.0.113.9".into(), ..Default::default() };
+    assert_eq!(cible_exception(&courte), Ok(signature_avec(&courte, &crate::apprentissage::editeur_pour_test(&courte.chemin))));
+    for mauvaise in ["sha256:XYZ", "md5:00", "sha256:0123", &format!("sha256:{}|x", "a".repeat(64))] {
+        assert!(cible_exception(&Alerte { niveau: "Alerte".into(), signature: mauvaise.to_string(), ..Default::default() }).is_err(), "{mauvaise}");
+    }
 }
 
 /// Audit de sécurité de #72, S72-11 : la borne de taille vaut pour TOUS les champs, même remplis de caractères de
