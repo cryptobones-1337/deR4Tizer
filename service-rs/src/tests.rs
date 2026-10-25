@@ -3199,7 +3199,8 @@ fn phase3_chaque_producteur_pose_sa_regle() {
         (1116, String::new(), "DEF-001"), (1117, String::new(), "DEF-002"), (5001, String::new(), "DEF-003"), (5012, String::new(), "DEF-004"),
         (5007, d("New Value", r"HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths\C:\x = 0x0"), "DEF-005"),
         (5007, d("New Value", r"HKLM\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection\DisableRealtimeMonitoring = 0x1"), "DEF-006"),
-        (1121, String::new(), "DEF-007"), (1124, String::new(), "DEF-008"), (1126, String::new(), "DEF-009"),
+        (1121, String::new(), "DEF-007"), (1122, String::new(), "DEF-007"), (1123, String::new(), "DEF-008"), (1124, String::new(), "DEF-008"),
+        (1125, String::new(), "DEF-009"), (1126, String::new(), "DEF-009"),
     ];
     for (id, extra, attendu) in cas {
         let a = crate::defender::traduire(&xml(id, &extra)).unwrap_or_else(|| panic!("événement {id} non traduit"));

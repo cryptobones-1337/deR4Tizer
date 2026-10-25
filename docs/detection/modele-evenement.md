@@ -2,8 +2,8 @@
 
 Ce document décrit le format des alertes du service (`Alerte`, `service-rs/src/commun.rs`) tel que la phase 3 le
 versionne. Depuis la PR 3.1, les champs `Modele`, `Regle` et `Collecte` existent (et `Signature` depuis la PR 3.1b) et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
-est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre des règles), `Collecte` jusqu'à la PR 3.3
-(état des collectes) : vides, ils ne sont pas écrits.
+est lu élément par élément. Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle dans `Regle` (registre
+`regles.rs`) ; `Collecte` reste vide jusqu'à la PR 3.3 (état des collectes) : vide, il n'est pas écrit.
 
 ## Principe
 
@@ -24,8 +24,10 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
   ancien fichier garde 0, son histoire n'est pas réécrite.
 - Une alerte est **toujours** produite, même si la recherche de sa règle échoue (`Regle` vide).
-- Les mêmes champs seront ajoutés aux événements du SIEM (`siem::Evenement`) avec la PR 3.2, en même temps que les
-  identifiants de règle ; les lignes NDJSON existantes resteront lisibles.
+- Événements du SIEM (`siem::Evenement`, PR 3.2) : seuls `Modele` et `Regle` y sont ajoutés (pas `Collecte` ni
+  `Signature`). `Modele` vaut 1 sur **tous** les événements enregistrés depuis cette version, qu'ils viennent d'une
+  alerte ou d'un journal de Windows ; `Regle` est repris de l'alerte d'origine (vide pour un événement qui n'en vient pas).
+  Les lignes NDJSON existantes se relisent, avec `Modele` 0.
 
 ## Compatibilité
 

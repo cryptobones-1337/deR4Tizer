@@ -20,9 +20,10 @@ Règles de forme :
 - `COR-R1` à `COR-R10` gardent les numéros actuels du SIEM (`incidents.json`) ;
 - `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle est ajoutée à leurs
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
-- une alerte qui réunit plusieurs indices d'un même domaine portera l'identifiant de la règle la plus forte qu'elle
-  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001). Limite actuelle : pour les lignes de commande,
-  `processus::suspicion` ne rend que le **premier** motif trouvé (voir PRC-002 à PRC-005).
+- une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte qu'elle
+  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001 ; `processus::regle_retenue`). Une alerte ne
+  porte qu'une règle. Limite actuelle : pour les lignes de commande, `processus::suspicion_regle` ne rend que le
+  **premier** motif trouvé (voir PRC-002 à PRC-005).
 
 « Si la télémétrie manque » décrit le comportement **actuel** : dans la plupart des cas, la règle se tait sans le dire.
 L'état des collectes (PR 3.3) rendra ce silence visible.
