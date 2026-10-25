@@ -276,11 +276,14 @@ function Demarrer-ParTache($Compte, [string]$Fichier) {
         # la cause (ouverture de session refusée, droit « ouvrir une session en tant que tâche »…) serait perdue
         if ($info.LastRunTime -gt (Get-Date).AddMinutes(-5) -and (Get-ScheduledTask -TaskName $nom).State -eq 'Ready') {
             if ($info.LastTaskResult -eq 0) { return $null }
-            throw "tâche du compte standard en échec (résultat 0x$('{0:X8}' -f $info.LastTaskResult))"
+            # Sortie du script (même numéro) : la cause de l'échec
+            $sortie = $Fichier -replace '\\script-(\d+)\.ps1$', '\sortie-$1.txt'
+            $cause = if (Test-Path -LiteralPath $sortie) { ((Get-Content -LiteralPath $sortie -Encoding UTF8 -Tail 3) -join ' / ') } else { 'aucune sortie' }
+            throw "tâche du compte standard en échec (résultat 0x$('{0:X8}' -f $info.LastTaskResult)) : $cause"
         }
     } while ((Get-Date) -lt $fin)
     Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
-    throw "tâche du compte standard : processus non démarré en 90 s (résultat $($info.LastTaskResult)), tâche arrêtée"
+    throw "tâche du compte standard : processus non démarré en 90 s (résultat 0x$('{0:X8}' -f $info.LastTaskResult)), tâche arrêtée"
 }
 function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Secondes = 60) {
     $script:NumeroScript++

@@ -38,6 +38,10 @@ function Decrire($e) { "service $($e.Service), antivirus $($e.Antivirus), temps 
 # Événements du journal de Defender : « aucun événement » rend une liste vide, mais un journal illisible lève une
 # exception (avant, -ErrorAction SilentlyContinue le confondait avec zéro événement : RÉUSSI sans rien vérifier)
 function Evenements-Defender([int[]]$Ids) {
+    # Lecture témoin : une requête filtrée sur un journal illisible rend aussi NoMatchingEventsFound (constaté sous 5.1
+    # par la relecture de #56) ; le journal de Defender n'est jamais vide sur un poste où Defender tourne
+    $temoin = @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 1 -ErrorAction Stop)
+    if (-not $temoin.Count) { throw 'journal de Defender vide ou illisible (lecture témoin)' }
     try {
         @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = $Ids; StartTime = $debut } -ErrorAction Stop)
     } catch {
