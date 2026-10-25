@@ -43,11 +43,20 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 - **Limites** : une erreur de lecture passagère (fichier tenu ouvert ailleurs pendant la lecture) reprend à vide, et le
   premier ajout réécrit le fichier ; les fichiers mis de côté ne sont jamais purgés ; seule la décision est testée en
   labo, la mise de côté elle-même (renommage, copie) ne l'est ni en labo ni en VM.
-- **Champs bornés** (audit de sécurité de #72, S72-01) : les champs d'une alerte qui peuvent venir de l'extérieur sont
-  bornés à sa création (`borner_alerte`, dans `ajouter_alerte_brute`) : `Raisons` à 1000 caractères, `Chemin` et
-  `Parent` à 520, les autres à 256, suivis de « … » ; les caractères de contrôle deviennent « ? ». Une alerte bornée
-  tient en moins de 16 Ko, 1000 alertes en moins de 16 Mo : un compte standard ne peut plus faire mettre l'historique
-  de côté en créant quelques démarrages automatiques géants.
+- **Champs bornés** (audit de sécurité de #72, S72-01, S72-06, S72-07) : dans `ajouter_alerte_brute`, les décisions sont
+  prises sur le texte **entier** (technique MITRE, signal fort, apprentissage), puis l'alerte est bornée (`borner_alerte`)
+  avant tout usage (journal, export, notifications, SIEM, `alertes.json`). `Raisons` est gardé à 1000 caractères,
+  `Chemin`, `Parent` et `Conseil` à 520, les autres champs à 256, en gardant le **début et la fin** (« … » au milieu) :
+  la conclusion d'une alerte (remarque, motif) est souvent à la fin, après une donnée externe longue. Les caractères de
+  contrôle deviennent « ? ». Une alerte bornée tient en moins de 16 Ko, 1000 alertes en moins de 16 Mo : un compte
+  standard ne peut plus faire mettre l'historique de côté en créant quelques démarrages automatiques géants, ni faire
+  disparaître le motif d'une persistance en le repoussant au-delà de la borne.
+- **Apprentissage** : un fichier mis de côté compte comme historique (`historique_alertes_existe`) : une mise de côté ne
+  fait pas prendre un poste déjà en service pour une première installation (relecture de #72, D7).
+- **Limite supplémentaire** : si la protection du dossier est en échec, quelqu'un qui pré-crée tous les noms de mise de
+  côté possibles (100 par seconde d'horodatage) peut empêcher la mise de côté, donc retenir l'écriture d'`alertes.json` :
+  les nouvelles alertes restent en mémoire (1000 au plus) et sont perdues à l'arrêt. L'échec n'est écrit qu'une fois au
+  journal par série.
 - **Interface** : elle lit `alertes.json` avec un lecteur JSON qui ignore les champs qu'elle ne connaît pas (vérifié :
   une alerte avec `Modele`, `Regle` et `Collecte` se lit).
 - **Retour arrière** vers une version précédente : elle ignore les champs inconnus, puis réécrit le fichier sans eux.

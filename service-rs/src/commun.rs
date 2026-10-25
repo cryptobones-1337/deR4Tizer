@@ -487,23 +487,32 @@ pub const MAX_RAISONS_ALERTE: usize = 1000;
 pub const MAX_CHEMIN_ALERTE: usize = 520;
 pub const MAX_CHAMP_ALERTE: usize = 256;
 
+/// Garde le début et la fin (moitié chacun, « … » entre les deux) : la conclusion d'une alerte (remarque, motif) est
+/// souvent à la fin, après une donnée externe longue (audit de sécurité de #72, S72-06)
 fn borner(s: &mut String, max: usize) {
-    if s.chars().count() > max || s.chars().any(|c| c.is_control()) {
-        let mut b: String = s.chars().take(max).map(|c| if c.is_control() { '?' } else { c }).collect();
-        if s.chars().count() > max {
-            b.push('…');
-        }
-        *s = b;
+    let n = s.chars().count();
+    if n > max || s.chars().any(|c| c.is_control()) {
+        let propre = |c: char| if c.is_control() { '?' } else { c };
+        *s = if n > max {
+            let debut: String = s.chars().take(max / 2).map(propre).collect();
+            let fin: String = s.chars().skip(n - (max - max / 2)).map(propre).collect();
+            format!("{debut} … {fin}")
+        } else {
+            s.chars().map(propre).collect()
+        };
     }
 }
 
-/// Borne les champs d'une alerte venus de l'extérieur (appelé à un seul endroit : ajouter_alerte_brute, avant tout
-/// usage : journal, export, notifications, SIEM, alertes.json)
+/// Borne les champs d'une alerte (appelé à un seul endroit : ajouter_alerte_brute, APRÈS les décisions prises sur le
+/// texte entier : MITRE, signal fort, apprentissage ; AVANT tout usage : journal, export, notifications, SIEM,
+/// alertes.json). Les champs posés par le code (Mitre, Conseil, Regle, Collecte) sont bornés aussi, pour que la borne
+/// de taille reste vraie quand ils s'allongent (S72-07)
 pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
-    for s in [&mut a.processus, &mut a.destination, &mut a.niveau, &mut a.heure, &mut a.id] {
+    borner(&mut a.conseil, MAX_CHEMIN_ALERTE);
+    for s in [&mut a.processus, &mut a.destination, &mut a.niveau, &mut a.heure, &mut a.id, &mut a.mitre, &mut a.regle, &mut a.collecte] {
         borner(s, MAX_CHAMP_ALERTE);
     }
     for o in [&mut a.ip, &mut a.nom_dns] {
@@ -638,17 +647,43 @@ fn mettre_alertes_de_cote(f: &Path, raison: &str, copie: bool) -> bool {
         journal(&format!("alertes.json {raison} : aucun nom libre pour la mise de côté"));
         return false;
     };
-    let r = if copie { fs::copy(f, &dest).map(|_| ()) } else { fs::rename(f, &dest) };
+    // Copie : destination créée neuve (create_new), jamais un fichier ou un lien posé entre-temps (relecture de #72, R4)
+    let r = if copie {
+        fs::OpenOptions::new().write(true).create_new(true).open(&dest)
+            .and_then(|mut d| fs::File::open(f).and_then(|mut s| std::io::copy(&mut s, &mut d)).map(|_| ()))
+    } else {
+        fs::rename(f, &dest)
+    };
+    static ECHEC_SIGNALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     match r {
         Ok(()) => {
             journal(&format!("alertes.json {raison} : {} ({})", if copie { "copie gardée" } else { "mis de côté, historique repris à vide" }, dest.display()));
+            ECHEC_SIGNALE.store(false, std::sync::atomic::Ordering::Relaxed);
             true
         }
         Err(e) => {
-            journal(&format!("alertes.json {raison} : mise de côté impossible ({e}), écriture retenue jusqu'à ce qu'elle réussisse"));
+            // Une ligne au journal par série d'échecs, pas une par alerte (audit de sécurité de #72, S72-08)
+            if !ECHEC_SIGNALE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                journal(&format!("alertes.json {raison} : mise de côté impossible ({e}), écriture retenue jusqu'à ce qu'elle réussisse"));
+            }
             false
         }
     }
+}
+
+/// Un historique d'alertes existe-t-il (décision pure, testée) ? alertes.json, ou un fichier mis de côté
+/// (alertes-<raison>-…json) : sert à ne pas prendre un poste déjà en service pour une première installation (relecture
+/// de #72, D7 : une mise de côté renommait alertes.json et pouvait relancer l'apprentissage)
+pub fn historique_alertes_existe(noms: &[String]) -> bool {
+    noms.iter().any(|n| {
+        let n = n.to_ascii_lowercase();
+        n == "alertes.json" || (n.starts_with("alertes-") && n.ends_with(".json"))
+    })
+}
+
+/// Noms des fichiers du dossier de données (premier niveau)
+pub fn noms_du_dossier() -> Vec<String> {
+    fs::read_dir(dossier()).map(|l| l.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default()
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

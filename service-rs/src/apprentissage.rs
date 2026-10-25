@@ -51,7 +51,7 @@ fn etat() -> &'static Mutex<Etat> {
             e.debut = commun::maintenant();
             // Première installation : apprentissage de 7 jours. Poste déjà en service (des alertes existent) : pas
             // d'apprentissage automatique, il peut être relancé depuis les réglages
-            let deja_en_service = commun::dossier().join("alertes.json").exists();
+            let deja_en_service = commun::historique_alertes_existe(&commun::noms_du_dossier());
             e.fin = if deja_en_service { e.debut.clone() } else { commun::heure(SystemTime::now() + Duration::from_secs(JOURS_PAR_DEFAUT * 86_400)) };
         }
         if e.format != FORMAT {

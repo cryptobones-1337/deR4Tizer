@@ -802,10 +802,11 @@ impl Moniteur {
     }
 
     fn ajouter_alerte_brute(&mut self, mut a: Alerte, cle: Option<String>) -> bool {
-        commun::borner_alerte(&mut a);
         commun::marquer_modele(&mut a);
+        // Décisions sur le texte entier (MITRE, signal fort, apprentissage), puis bornage avant tout usage (S72-06)
         mitre::enrichir(&mut a);
         crate::apprentissage::filtrer(&mut a);
+        commun::borner_alerte(&mut a);
         if let Some(cle) = cle {
             if let Some(t) = self.dernieres_alertes.get(&cle) {
                 if t.elapsed() < Duration::from_secs(24 * 3600) {
