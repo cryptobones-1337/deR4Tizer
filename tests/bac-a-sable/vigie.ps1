@@ -35,7 +35,9 @@ while ($true) {
     # était regardé : fins manquées au passage de 75e0d92)
     foreach ($x in $dossiers) {
         $cx = Get-ChildItem $x.FullName -Filter '*-code.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($cx -and -not $signales[$x.Name]) { $signales[$x.Name] = $true; "Scénario terminé ($(Get-Date -Format HH:mm)) : $($x.Name), code $((Get-Content $cx.FullName -Raw).Trim())" }
+        # Fichier de code encore vide (en cours d'écriture) : relu au relevé suivant (relecture de #63)
+        $vx = if ($cx) { "$(Get-Content $cx.FullName -Raw -ErrorAction SilentlyContinue)".Trim() } else { '' }
+        if ($vx -and -not $signales[$x.Name]) { $signales[$x.Name] = $true; "Scénario terminé ($(Get-Date -Format HH:mm)) : $($x.Name), code $vx" }
     }
     $d = $dossiers | Select-Object -Last 1
     if (-not $d) {
