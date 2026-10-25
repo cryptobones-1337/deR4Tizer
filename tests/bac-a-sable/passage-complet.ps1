@@ -11,7 +11,16 @@ $lanceur = if ($Cible -eq 'vm') { '.\tests\vm\lancer.ps1' } else { '.\tests\bac-
 $prefixe = if ($Cible -eq 'vm') { 'sortie-vm' } else { 'sortie' }
 $ErrorActionPreference = 'Continue'
 Set-Location $Depot -ErrorAction Stop
-$debutPassage = Get-Date
+# En UTC : un passage peut franchir le changement d'heure (constaté le 25/10/2026 : à 03:00 CEST, retour à 02:00 CET,
+# les dossiers créés après le changement paraissaient antérieurs au début du passage)
+$debutPassage = (Get-Date).ToUniversalTime()
+# Dossier de sortie d'un scénario créé par CE passage : nom exact (« -standard » seulement avec -SessionStandard, pour ne
+# jamais prendre le dossier d'un passage administrateur pour celui d'un passage en session standard), heure UTC
+function Dossier-Du-Passage([string]$Scenario) {
+    $motif = '^' + [regex]::Escape("$prefixe-$Scenario") + $(if ($SessionStandard) { '-standard' } else { '' }) + '-\d{8}-\d{6}$'
+    Get-ChildItem $Racine -Directory | Where-Object { $_.Name -match $motif -and $_.CreationTimeUtc -ge $debutPassage } |
+        Sort-Object CreationTimeUtc | Select-Object -Last 1
+}
 "commit : $(git rev-parse --short HEAD) ; modifications : $(@(git status --porcelain).Count)"
 
 # Windows Sandbox n'accepte qu'une instance : attendre la fermeture complète de la précédente (elle peut traîner
@@ -25,7 +34,7 @@ function Attendre-Fermeture {
 
 function Resume([string]$Scenario) {
     # Seulement un dossier créé par CE passage : jamais le tableau d'un passage antérieur
-    $s = Get-ChildItem $Racine -Directory -Filter "$prefixe-$Scenario-*" | Where-Object CreationTime -ge $debutPassage | Sort-Object CreationTime | Select-Object -Last 1
+    $s = Dossier-Du-Passage $Scenario
     if (-not $s) { "== $Scenario : AUCUN RÉSULTAT de ce passage (le lanceur a échoué avant le scénario)"; return }
     $t = Get-ChildItem $s.FullName -Filter '*-tableau.md' -ErrorAction SilentlyContinue
     if (-not $t) { "== $Scenario : pas de tableau ($($s.Name))"; return }
@@ -46,10 +55,12 @@ $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').U
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
 foreach ($s in @('installation', 'quarantaine', 'lot3d') | Where-Object { $Scenarios -contains $_ }) {
     Attendre-Fermeture
-    & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"
-    if (-not $?) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
+    # Exception du lanceur (VM injoignable, console vide…) : notée, et les scénarios suivants tournent quand même
+    # (avant : elle arrêtait tout le passage)
+    try { & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"; $ok = $? } catch { $ok = $false; "== $s : exception du lanceur : $($_.Exception.Message)" }
+    if (-not $ok) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
     Resume $s
-    if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-$s-*" | Where-Object CreationTime -ge $debutPassage | Sort-Object CreationTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
+    if ($Cible -eq 'vm') { $v = Dossier-Du-Passage $s | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
 }
 if ($Scenarios -contains 'maj') { try {
     Attendre-Fermeture
@@ -57,10 +68,10 @@ if ($Scenarios -contains 'maj') { try {
     if (-not $? -or -not (Test-Path (Join-Path $Racine 'entree\maj\versions.txt'))) { 'préparation -Maj en échec'; Get-Content "$env:TEMP\d4t-prep-maj.log" -Tail 25 }
     else {
         "MSI (3c, reconstruit après les paquets de test) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
-        & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"
-        if (-not $?) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
+        try { & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"; $ok = $? } catch { $ok = $false; "== maj : exception du lanceur : $($_.Exception.Message)" }
+        if (-not $ok) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
         Resume 'maj'
-        if ($Cible -eq 'vm') { $v = Get-ChildItem $Racine -Directory -Filter "$prefixe-maj-*" | Where-Object CreationTime -ge $debutPassage | Sort-Object CreationTime | Select-Object -Last 1 | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
+        if ($Cible -eq 'vm') { $v = Dossier-Du-Passage 'maj' | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }
 } finally {
     Remove-Item (Join-Path $Racine 'entree\maj'), (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue

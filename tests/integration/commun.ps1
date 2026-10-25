@@ -250,16 +250,95 @@ function Nouveau-CompteStandard([string]$Nom = 'd4t_standard') {
 # Exécute du PowerShell sous l'identité du compte standard ; renvoie sa sortie (texte), ou le processus si
 # -SansAttendre. Le code est écrit dans un fichier (UTF-8 avec BOM), jamais sur la ligne de commande.
 $script:NumeroScript = 0
+# Session 0 (exécuteur lancé par une tâche à ouverture de session par mot de passe, cas tests\vm\lancer.ps1
+# -SessionStandard) : les actions lancées par Start-Process -Credential n'y ont rien produit (passage VM du 25/10/2026 :
+# sorties vides ; mécanisme exact non isolé par un essai). Le script du compte standard part alors d'une tâche planifiée
+# à son nom (ouverture par mot de passe : compte de test jetable de la VM, mot de passe aléatoire gardé par le
+# Planificateur jusqu'à la remise à l'instantané). Renvoie le processus démarré, comme Start-Process -PassThru, ou $null
+# s'il a déjà fini avec succès. Tâche jamais supprimée (son processus peut tenir un fichier ouvert) : l'instantané de la
+# VM l'efface ; arrêtée si elle n'a pas démarré à temps, pour ne pas partir pendant les contrôles suivants.
+#
+# Un compte standard n'a pas le droit « ouvrir une session en tant que tâche » (SeBatchLogonRight : administrateurs,
+# opérateurs de sauvegarde et utilisateurs du journal de performances seulement) : sans lui, la tâche ne démarre jamais
+# (passage VM du 25/10/2026 : 0x41303, « pas encore exécutée »). Accordé au compte de test jetable, une fois, par l'API
+# LSA ; seulement dans ce chemin (session 0 : VM -SessionStandard), effacé avec l'instantané.
+$script:DroitTacheAccorde = @{}
+function Accorder-OuvertureTache($Compte) {
+    if ($script:DroitTacheAccorde[$Compte.Sid]) { return }
+    if (-not ('D4tLsa' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class D4tLsa {
+    [StructLayout(LayoutKind.Sequential)] struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+    [StructLayout(LayoutKind.Sequential)] struct LSA_OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+    [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr systemName, ref LSA_OBJECT_ATTRIBUTES attributes, uint access, out IntPtr policy);
+    [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LSA_UNICODE_STRING[] rights, uint count);
+    [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+    [DllImport("advapi32.dll")] static extern uint LsaNtStatusToWinError(uint status);
+    // 0 si accordé, sinon le code d'erreur Windows
+    public static uint Accorder(byte[] sid, string droit) {
+        var oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(oa);
+        IntPtr h;
+        uint s = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x00000010 | 0x00000800, out h); // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+        if (s != 0) return LsaNtStatusToWinError(s);
+        var u = new LSA_UNICODE_STRING();
+        u.Buffer = Marshal.StringToHGlobalUni(droit); u.Length = (ushort)(droit.Length * 2); u.MaximumLength = (ushort)(u.Length + 2);
+        try { s = LsaAddAccountRights(h, sid, new[] { u }, 1); return s == 0 ? 0 : LsaNtStatusToWinError(s); }
+        finally { Marshal.FreeHGlobal(u.Buffer); LsaClose(h); }
+    }
+}
+'@
+    }
+    $sid = New-Object Security.Principal.SecurityIdentifier($Compte.Sid)
+    $octets = New-Object byte[] $sid.BinaryLength
+    $sid.GetBinaryForm($octets, 0)
+    $r = [D4tLsa]::Accorder($octets, 'SeBatchLogonRight')
+    if ($r -ne 0) { throw "droit « ouvrir une session en tant que tâche » non accordé au compte de test (erreur $r)" }
+    $script:DroitTacheAccorde[$Compte.Sid] = $true
+}
+function Demarrer-ParTache($Compte, [string]$Fichier) {
+    Accorder-OuvertureTache $Compte
+    $nom = "d4t-essai-standard-$($script:NumeroScript)"
+    $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Fichier`"" -WorkingDirectory $script:Commun
+    $reglages = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    Register-ScheduledTask -TaskName $nom -Action $action -Settings $reglages -User $Compte.Nom `
+        -Password $Compte.Credential.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
+    Start-ScheduledTask -TaskName $nom
+    # 90 s : la première ouverture de session du compte crée son profil
+    $fin = (Get-Date).AddSeconds(90)
+    do {
+        Start-Sleep -Milliseconds 200
+        $c = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -like "*$Fichier*" } | Select-Object -First 1
+        if ($c) { $p = Get-Process -Id $c.ProcessId -ErrorAction SilentlyContinue; if ($p) { return $p } }
+        $info = Get-ScheduledTaskInfo -TaskName $nom
+        # Déjà fini : la tâche a tourné (heure de dernier lancement posée) et n'est plus en cours ; succès exigé, sinon
+        # la cause (ouverture de session refusée, droit « ouvrir une session en tant que tâche »…) serait perdue
+        if ($info.LastRunTime -gt (Get-Date).AddMinutes(-5) -and (Get-ScheduledTask -TaskName $nom).State -eq 'Ready') {
+            if ($info.LastTaskResult -eq 0) { return $null }
+            # Sortie du script (même numéro) : la cause de l'échec
+            $sortie = $Fichier -replace '\\script-(\d+)\.ps1$', '\sortie-$1.txt'
+            $cause = if (Test-Path -LiteralPath $sortie) { ((Get-Content -LiteralPath $sortie -Encoding UTF8 -Tail 3) -join ' / ') } else { 'aucune sortie' }
+            throw "tâche du compte standard en échec (résultat 0x$('{0:X8}' -f $info.LastTaskResult)) : $cause"
+        }
+    } while ((Get-Date) -lt $fin)
+    Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
+    throw "tâche du compte standard : processus non démarré en 90 s (résultat 0x$('{0:X8}' -f $info.LastTaskResult)), tâche arrêtée"
+}
 function En-TantQue($Compte, [string]$Code, [switch]$SansAttendre, [int]$Secondes = 60) {
     $script:NumeroScript++
     $f = Join-Path $script:Commun "script-$($script:NumeroScript).ps1"
     $sortie = Join-Path $script:Commun "sortie-$($script:NumeroScript).txt"
     $corps = "`$ErrorActionPreference = 'Continue'`r`n& {`r`n$Code`r`n} *>&1 | Out-File -LiteralPath '$sortie' -Encoding utf8 -Width 4096"
     [IO.File]::WriteAllText($f, $corps, (New-Object Text.UTF8Encoding($true)))
-    $p = Start-Process powershell.exe -Credential $Compte.Credential -PassThru -WindowStyle Hidden -WorkingDirectory $script:Commun `
-        -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$f`""
+    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { $p = Demarrer-ParTache $Compte $f }
+    else {
+        $p = Start-Process powershell.exe -Credential $Compte.Credential -PassThru -WindowStyle Hidden -WorkingDirectory $script:Commun `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$f`""
+    }
     if ($SansAttendre) { return $p }
-    if (-not $p.WaitForExit($Secondes * 1000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw "délai dépassé ($Secondes s)" }
+    if ($p -and -not $p.WaitForExit($Secondes * 1000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; throw "délai dépassé ($Secondes s)" }
     if (Test-Path $sortie) { return (Get-Content -LiteralPath $sortie -Raw -Encoding UTF8) }
     return ''
 }

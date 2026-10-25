@@ -35,21 +35,56 @@ function Actif($e) { $e.Service -and $e.Antivirus -and $e.TempsReel -and $e.Comp
 function Decrire($e) { "service $($e.Service), antivirus $($e.Antivirus), temps réel $($e.TempsReel), comportement $($e.Comportement), accès $($e.Acces), téléchargements $($e.Telechargements), mode $($e.Mode), falsification $($e.Falsification), cloud $($e.Cloud), exclusions $(@($e.Exclusions).Count), plateforme $($e.Plateforme), signatures $($e.Signatures) ($($e.AgeSignatures) j)" }
 
 # Détections depuis le début du passage : menaces et événements 1116 (détection) et 1117 (action)
+# Événements du journal de Defender : « aucun événement » rend une liste vide, mais un journal illisible lève une
+# exception (avant, -ErrorAction SilentlyContinue le confondait avec zéro événement : RÉUSSI sans rien vérifier)
+function Evenements-Defender([int[]]$Ids) {
+    # Lecture témoin : une requête filtrée sur un journal illisible rend aussi NoMatchingEventsFound (constaté sous 5.1
+    # par la relecture de #56) ; le journal de Defender n'est jamais vide sur un poste où Defender tourne
+    $temoin = @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 1 -ErrorAction Stop)
+    if (-not $temoin.Count) { throw 'journal de Defender vide ou illisible (lecture témoin)' }
+    try {
+        @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = $Ids; StartTime = $debut } -ErrorAction Stop)
+    } catch {
+        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return @() }
+        throw "journal de Defender illisible : $($_.Exception.Message)"
+    }
+}
 function Detections {
     $m = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $debut })
-    $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1116, 1117; StartTime = $debut } -ErrorAction SilentlyContinue)
+    $ev = @(Evenements-Defender 1116, 1117)
     [pscustomobject]@{ Menaces = $m; Evenements = $ev; Nombre = $m.Count + $ev.Count }
 }
 
 function Reglages-Defender {
     $p = Get-MpPreference
     $r = [ordered]@{}
-    foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|Cim.*)$' } | Sort-Object)) {
+    foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|PSShowComputerName|RunspaceId|Cim.*)$' } | Sort-Object)) {
         $r[$n] = (@($p.$n) | ForEach-Object { "$_" }) -join '|'
     }
     $r
 }
+# Stratégies de Defender (registre) : Get-MpPreference ne rend pas toujours la valeur posée par stratégie
+function Strategies-Defender {
+    $r = [ordered]@{}
+    foreach ($racine in 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Advanced Threat Protection') {
+        if (-not (Test-Path -LiteralPath $racine)) { continue }
+        # Clé illisible (droits de Defender) : notée comme telle, pas d'arrêt du scénario ; qu'elle change d'état compte
+        $illisibles = @()
+        $cles = @(Get-Item -LiteralPath $racine) + @(Get-ChildItem -LiteralPath $racine -Recurse -ErrorAction SilentlyContinue -ErrorVariable +illisibles)
+        foreach ($i in $illisibles) { $r["(illisible) $($i.TargetObject)"] = 'illisible' }
+        foreach ($k in $cles) {
+            $r["$($k.Name)\"] = ''
+            foreach ($n in $k.GetValueNames() | Sort-Object) { $r["$($k.Name)\$n"] = (@($k.GetValue($n, $null, 'DoNotExpandEnvironmentNames')) | ForEach-Object { "$_" }) -join '|' }
+        }
+    }
+    $r
+}
+function Differences($a, $b) {
+    @((@($a.Keys) + @($b.Keys)) | Sort-Object -Unique | Where-Object { -not $a.Contains($_) -or -not $b.Contains($_) -or $a[$_] -ne $b[$_] } |
+        ForEach-Object { "$_ : « $(if ($a.Contains($_)) { $a[$_] } else { '(absent)' }) » → « $(if ($b.Contains($_)) { $b[$_] } else { '(absent)' }) »" })
+}
 $reglagesAvant = Reglages-Defender
+$strategiesAvant = Strategies-Defender
 $avant = Etat-Defender
 $actif = Actif $avant
 if ($actif) { Noter 'Defender pleinement actif avant le passage' 'RÉUSSI' (Decrire $avant) }
@@ -57,7 +92,9 @@ else { NonExecute 'Defender pleinement actif avant le passage' (Decrire $avant) 
 
 if (-not $actif) {
     foreach ($s in 'Empreinte du MSI', 'Installation avec Defender actif', 'Quarantaine d''un fichier bénin', 'Redémarrage du service',
-                   'Restauration à l''identique', 'Désinstallation', 'Aucune détection Defender pendant le passage') {
+                   'Restauration à l''identique', 'Désinstallation', 'Aucune détection Defender pendant le passage',
+                   'Réglages de Defender inchangés pendant le passage', 'Stratégies de Defender inchangées pendant le passage',
+                   'Aucun interrupteur de protection modifié pendant le passage (5007)') {
         NonExecute $s 'Defender n''est pas pleinement actif : passage sans valeur de preuve'
     }
     Bilan 'Lot 3d : exécution avec Microsoft Defender actif'
@@ -144,16 +181,52 @@ Verifier 'Aucune détection Defender pendant le passage' {
 $apres = Etat-Defender
 if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI' (Decrire $apres) }
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
-# Réglages de Defender inchangés pendant le passage : deR4Tizer ne doit jamais y toucher. Comparaison de tous les
-# réglages (Get-MpPreference) avant et après ; les événements 5007 ne sont rapportés qu'à titre d'information
-Verifier 'Réglages de Defender inchangés pendant le passage (tous les réglages de Get-MpPreference)' {
-    $reglagesApres = Reglages-Defender
-    $diff = @((@($reglagesAvant.Keys) + @($reglagesApres.Keys)) | Sort-Object -Unique | Where-Object { $reglagesAvant[$_] -ne $reglagesApres[$_] } |
-        ForEach-Object { "$_ : « $($reglagesAvant[$_]) » → « $($reglagesApres[$_]) »" })
-    if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) : " + (($diff | Select-Object -First 5) -join ' ; ') }
+# Réglages de Defender inchangés pendant le passage : deR4Tizer ne doit jamais y toucher. Trois contrôles en échec
+# fermé : tous les réglages de Get-MpPreference avant/après ; les stratégies du registre avant/après ; et, pour un
+# changement défait avant la fin (exclusion ajoutée puis retirée, temps réel coupé puis rétabli), les événements 5007
+# dont la clé est un interrupteur de protection (liste fermée ; aucune des valeurs internes que Defender réécrit
+# lui-même : relevé avec ce filtre sous Windows PowerShell 5.1 sur un poste réel, 701 événements en deux ans, 25
+# valeurs retenues, anciennes et nouvelles, toutes des changements de configuration volontaires ; témoin dans le contrôle).
+# Limites, non couvertes : fournisseurs AMSI, atténuations de processus (Get-ProcessMitigation), démarrage de WinDefend.
+Verifier 'Réglages de Defender inchangés pendant le passage' {
+    $diff = Differences $reglagesAvant (Reglages-Defender)
+    if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) (Get-MpPreference) : " + (($diff | Select-Object -First 5) -join ' ; ') }
     $true
 }
-$n5007 = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 5007; StartTime = $debut } -ErrorAction SilentlyContinue).Count
-Noter 'Événements 5007 pendant le passage (information : Defender en écrit lui-même sur ses valeurs internes)' 'RÉUSSI' "$n5007 événement(s) ; réglages comparés ci-dessus"
+Verifier 'Stratégies de Defender inchangées pendant le passage' {
+    $diff = Differences $strategiesAvant (Strategies-Defender)
+    if ($diff.Count) { return "$($diff.Count) valeur(s) de stratégie modifiée(s) : " + (($diff | Select-Object -First 5) -join ' ; ') }
+    $true
+}
+$evenements5007 = $null
+Verifier 'Aucun interrupteur de protection modifié pendant le passage (5007)' {
+    # Valeurs lues dans les données de l'événement, non traduites : « New Value » et « Old Value » (un retrait, par
+    # exemple d'une exclusion, n'apparaît que dans l'ancienne valeur) ; sous Microsoft\Windows Defender comme sous
+    # Policies\Microsoft\Windows Defender. Barres obliques doublées : expression régulière, pas chemin
+    $interrupteurs = '\\Windows Defender\\(Exclusions\\|Real-Time Protection\\|Windows Defender Exploit Guard\\|Features\\TamperProtection\b)' +
+        '|\\SpyNet\\(SpyNetReporting|SubmitSamplesConsent)\b|\\(DisableAntiSpyware|DisableAntiVirus|PUAProtection|DisableRealtimeMonitoring)\b'
+    # Témoin : le filtre retient des interrupteurs connus et écarte le bruit connu de Defender, sinon il ne prouve rien
+    $retenus = 'HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths\C:\x = 0x0',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection\DisableRealtimeMonitoring = 0x1',
+               'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules\X = 0x1',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection = 0x4',
+               'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\SpyNet\SubmitSamplesConsent = 0x1',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\PUAProtection = 0x0'
+    $ecartes = 'HKLM\SOFTWARE\Microsoft\Windows Defender\SmartLockerMode = 0x1',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\SpyNet\SSLOptions = 0x3',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtectionSource = 0x5',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\Features\Controls\79 = 0x1',
+               'HKLM\SOFTWARE\Microsoft\Windows Defender\Signature Updates\SignatureType = 0x0'
+    $faux = @($retenus | Where-Object { $_ -notmatch $interrupteurs }) + @($ecartes | Where-Object { $_ -match $interrupteurs })
+    if ($faux.Count) { return "filtre des interrupteurs invalide (témoin) : $($faux -join ' ; ')" }
+    $script:evenements5007 = @(Evenements-Defender 5007)
+    $m = @($script:evenements5007 | ForEach-Object {
+            $x = [xml]$_.ToXml()
+            @($x.Event.EventData.Data | Where-Object { $_.Name -in 'New Value', 'Old Value' } | ForEach-Object { "$($_.'#text')" })
+        } | Where-Object { $_ -match $interrupteurs } | Sort-Object -Unique)
+    if ($m.Count) { return "$($m.Count) changement(s) : " + (($m | Select-Object -First 4) -join ' ; ') }
+    $true
+}
+Noter 'Événements 5007 pendant le passage' 'INFORMATION' $(if ($null -eq $evenements5007) { 'non relus (voir le contrôle ci-dessus)' } else { "$($evenements5007.Count) événement(s) ; Defender en écrit lui-même sur ses valeurs internes" })
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'

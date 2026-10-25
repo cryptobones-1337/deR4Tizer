@@ -62,11 +62,17 @@ try {
     if ($SessionStandard) {
         # Compte standard jetable, mot de passe aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte ;
         # ouverture de session automatique à la console, puis redémarrage
-        Invoke-Command -Session $s {
+        # Écrit avant CHAQUE redémarrage (relecture de #56, M1) : compte créé ou nouveau mot de passe, puis valeurs de
+        # Winlogon
+        $preparerConsole = {
             $car = [char[]]'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
             $mdp = (-join (1..24 | ForEach-Object { $car | Get-Random })) + 'a7!K'
-            New-LocalUser -Name 'd4t_console' -Password (ConvertTo-SecureString $mdp -AsPlainText -Force) -PasswordNeverExpires -AccountNeverExpires | Out-Null
-            Add-LocalGroupMember -SID 'S-1-5-32-545' -Member 'd4t_console'
+            $secret = ConvertTo-SecureString $mdp -AsPlainText -Force
+            if (Get-LocalUser 'd4t_console' -ErrorAction SilentlyContinue) { Set-LocalUser -Name 'd4t_console' -Password $secret }
+            else {
+                New-LocalUser -Name 'd4t_console' -Password $secret -PasswordNeverExpires -AccountNeverExpires | Out-Null
+                Add-LocalGroupMember -SID 'S-1-5-32-545' -Member 'd4t_console'
+            }
             # Windows 11 ignore l'ouverture de session automatique tant que l'option « connexion sans mot de passe »
             # (DevicePasswordLessBuildVersion = 2) est active : constaté dans la VM, console vide après le redémarrage
             $sansMdp = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
@@ -78,13 +84,30 @@ try {
             Set-ItemProperty $w -Name DefaultDomainName -Value $env:COMPUTERNAME
             Set-ItemProperty $w -Name DefaultPassword -Value $mdp
         }
-        Remove-PSSession $s; $s = $null
-        Restart-VM -Name $Vm -Force -Wait -For Heartbeat
-        $s = Session
-        $fin = (Get-Date).AddMinutes(8)
-        do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
-        while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
-        if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après le redémarrage ($console)." }
+        # État de l'ouverture automatique, sans le mot de passe (présent ou non) : preuve en cas d'échec
+        $etatConsole = {
+            $w = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            $d = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device' -ErrorAction SilentlyContinue).DevicePasswordLessBuildVersion
+            "AutoAdminLogon=$($w.AutoAdminLogon) DefaultUserName=$($w.DefaultUserName) mot de passe=$(if ($w.DefaultPassword) { 'présent' } else { 'absent' }) DevicePasswordLessBuildVersion=$d compte=$([bool](Get-LocalUser d4t_console -ErrorAction SilentlyContinue))"
+        }
+        # Redémarrage PROPRE (arrêt du système par les services d'intégration, puis démarrage) : Restart-VM -Force est
+        # une remise à zéro brutale, qui perdait les écritures du registre pas encore sur le disque (constaté le
+        # 25/10/2026 : console vide une fois sur deux, valeurs de Winlogon et option sans mot de passe revenues à
+        # celles de l'instantané)
+        for ($essai = 1; $essai -le 2; $essai++) {
+            Invoke-Command -Session $s $preparerConsole
+            Remove-PSSession $s; $s = $null
+            Stop-VM -Name $Vm -Force
+            Start-VM -Name $Vm
+            Wait-VM -Name $Vm -For Heartbeat -Timeout 600
+            $s = Session
+            $fin = (Get-Date).AddMinutes(8)
+            do { Start-Sleep 10; $console = Invoke-Command -Session $s { (Get-CimInstance Win32_ComputerSystem).UserName } }
+            while ($console -notlike '*\d4t_console' -and (Get-Date) -lt $fin)
+            if ($console -like '*\d4t_console') { break }
+            "Compte standard absent de la console après le redémarrage $essai ($console) : $(Invoke-Command -Session $s $etatConsole)"
+        }
+        if ($console -notlike '*\d4t_console') { throw "Compte standard absent de la console après deux redémarrages ($console) : $(Invoke-Command -Session $s $etatConsole)." }
         # Réellement standard : pas membre des Administrateurs (comptes locaux seulement dans la VM de test : pas de
         # groupe de domaine imbriqué)
         # Échec fermé : liste illisible = refus (Get-LocalGroupMember échoue sur un SID orphelin ; net localgroup non)

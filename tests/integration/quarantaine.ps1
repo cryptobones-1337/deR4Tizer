@@ -397,11 +397,19 @@ if ($sessionSid) {
         if ($autres.Count) { return "droits du dossier d'origine : $(($autres | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
         $r = Commande-Cible 'restaurer' $e.Id
         if (-not $r.Ok) { return "refusée : $($r.Message)" }
-        if (-not (Test-Path $fC)) { return 'fichier absent' }
-        if ((Sha256 $fC) -ne $hC) { return 'contenu différent' }
-        $z = Get-Content -LiteralPath $fC -Stream Zone.Identifier -Raw -ErrorAction SilentlyContinue
+        # Relu en SYSTEM : le dossier n'est ouvert qu'à l'utilisateur de la session, et l'administrateur qui exécute le
+        # test n'y a aucun droit quand cet utilisateur est un compte standard (-SessionStandard, constaté le 25/10/2026)
+        $v = @((En-TantQueSysteme @"
+if (-not (Test-Path -LiteralPath '$fC')) { 'ABSENT'; return }
+(Get-FileHash -LiteralPath '$fC' -Algorithm SHA256).Hash
+'ZONE=' + ([string](Get-Content -LiteralPath '$fC' -Stream Zone.Identifier -Raw -ErrorAction SilentlyContinue) -replace '\r?\n', ' ')
+'PROPRIETAIRE=' + (Get-Acl -LiteralPath '$fC').GetOwner([Security.Principal.SecurityIdentifier]).Value
+"@) -split "`r?`n" | Where-Object { $_ })
+        if ($v[0] -eq 'ABSENT' -or $v.Count -lt 3) { return "fichier absent ou illisible en SYSTEM : $($v -join ' ')" }
+        if ($v[0] -ne $hC) { return 'contenu différent' }
+        $z = ($v | Where-Object { $_ -like 'ZONE=*' }) -join ' '
         if ($z -notmatch 'ZoneId=3') { return "marque Internet : $z" }
-        $o = (Droits $fC).Proprietaire
+        $o = (($v | Where-Object { $_ -like 'PROPRIETAIRE=*' }) -replace '^PROPRIETAIRE=', '')
         if ($o -notin $sessionSid, 'S-1-5-32-544') { return "propriétaire du fichier restauré : $o" }
         if (Entree-Quarantaine $fC) { return 'entrée toujours dans quarantaine.json' }
         $true
