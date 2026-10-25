@@ -479,7 +479,41 @@ pub fn marquer_modele(a: &mut Alerte) {
     }
 }
 
-/// Taille maximale d'alertes.json lue (1000 alertes en font quelques centaines de Ko) : au-delà, rien n'est lu
+/// Longueurs maximales (caractères) des champs d'une alerte qui peuvent venir de l'extérieur (audit de sécurité de #72,
+/// S72-01 : une valeur Run d'1 Mo faisait une alerte de 6 Mo, trois suffisaient à faire mettre de côté l'historique) ;
+/// caractères de contrôle remplacés par « ? ». En UTF-8, 4 octets au plus par caractère une fois écrit : une alerte
+/// bornée tient en moins de 16 Ko, 1000 alertes en moins de TAILLE_MAX_ALERTES
+pub const MAX_RAISONS_ALERTE: usize = 1000;
+pub const MAX_CHEMIN_ALERTE: usize = 520;
+pub const MAX_CHAMP_ALERTE: usize = 256;
+
+fn borner(s: &mut String, max: usize) {
+    if s.chars().count() > max || s.chars().any(|c| c.is_control()) {
+        let mut b: String = s.chars().take(max).map(|c| if c.is_control() { '?' } else { c }).collect();
+        if s.chars().count() > max {
+            b.push('…');
+        }
+        *s = b;
+    }
+}
+
+/// Borne les champs d'une alerte venus de l'extérieur (appelé à un seul endroit : ajouter_alerte_brute, avant tout
+/// usage : journal, export, notifications, SIEM, alertes.json)
+pub fn borner_alerte(a: &mut Alerte) {
+    borner(&mut a.raisons, MAX_RAISONS_ALERTE);
+    borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
+    borner(&mut a.parent, MAX_CHEMIN_ALERTE);
+    for s in [&mut a.processus, &mut a.destination, &mut a.niveau, &mut a.heure, &mut a.id] {
+        borner(s, MAX_CHAMP_ALERTE);
+    }
+    for o in [&mut a.ip, &mut a.nom_dns] {
+        if let Some(s) = o {
+            borner(s, MAX_CHAMP_ALERTE);
+        }
+    }
+}
+
+/// Taille maximale d'alertes.json lue (1000 alertes bornées par borner_alerte en font moins) : au-delà, rien n'est lu
 pub const TAILLE_MAX_ALERTES: u64 = 16 * 1024 * 1024;
 
 /// Lecture tolérante d'alertes.json (décision pure, testée) : chaque élément du tableau est lu à part, un élément
@@ -498,36 +532,122 @@ pub fn lire_alertes_texte(texte: &str) -> Option<(Vec<Alerte>, usize)> {
     Some((alertes, ecartees))
 }
 
-/// alertes.json du dossier de données, par la lecture tolérante. Trop grand ou illisible comme tableau : mis de côté
-/// (alertes-<raison>-<horodatage>.json, dans le dossier de données) au lieu d'être écrasé au premier ajout
-pub fn lire_alertes() -> Vec<Alerte> {
-    let f = dossier().join("alertes.json");
-    let Ok(m) = fs::symlink_metadata(&f) else { return Vec::new() };
-    if m.len() > TAILLE_MAX_ALERTES {
-        mettre_alertes_de_cote(&f, "trop-grand");
-        return Vec::new();
+/// Ce que le service fait d'alertes.json au démarrage (décision pure, testée ; relecture de #72)
+pub enum DecisionAlertes {
+    /// Lecture refusée (propriétaire, lien, protection) ou fichier absent : rien n'est lu, rien n'est déplacé
+    Rien,
+    /// Fichier gardé à part sous ce nom de raison, historique repris à vide (jamais écrasé)
+    MettreDeCote(&'static str),
+    /// Alertes lues ; si des éléments ont été écartés (nombre), une copie du fichier d'origine est gardée d'abord
+    Lire(Vec<Alerte>, usize),
+}
+
+/// Ordre des contrôles : autorisation de lecture d'abord (un fichier refusé n'est jamais déplacé, même trop grand),
+/// puis taille, puis contenu. Un contenu qui n'est pas de l'UTF-8 est mis de côté comme illisible (avant, il passait
+/// pour « lecture refusée » et le premier ajout l'écrasait)
+pub fn decision_alertes(autorisee: bool, taille: u64, contenu: Option<&[u8]>) -> DecisionAlertes {
+    if !autorisee {
+        return DecisionAlertes::Rien;
     }
-    // Lecture refusée (propriétaire, lien, protection) : rien n'est lu ni déplacé
-    let Some(texte) = lire_fichier(&f) else { return Vec::new() };
+    if taille > TAILLE_MAX_ALERTES {
+        return DecisionAlertes::MettreDeCote("trop-grand");
+    }
+    let Some(octets) = contenu else { return DecisionAlertes::Rien };
+    let Ok(texte) = std::str::from_utf8(octets) else { return DecisionAlertes::MettreDeCote("illisible") };
     match lire_alertes_texte(texte.trim_start_matches('\u{feff}')) {
-        Some((a, 0)) => a,
-        Some((a, n)) => {
-            journal(&format!("alertes.json : {n} alerte(s) illisible(s) écartée(s), {} gardée(s)", a.len()));
-            a
-        }
-        None => {
-            mettre_alertes_de_cote(&f, "illisible");
-            Vec::new()
+        Some((a, n)) => DecisionAlertes::Lire(a, n),
+        None => DecisionAlertes::MettreDeCote("illisible"),
+    }
+}
+
+/// Lecture contrôlée autorisée (mêmes règles que lire_fichier), sans rien lire
+fn lecture_fichier_autorisee(chemin: &Path) -> bool {
+    let relatif = chemin.strip_prefix(dossier()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
+    let systeme = crate::natif::est_systeme();
+    let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
+    let existe = fs::symlink_metadata(chemin).is_ok();
+    match lecture_autorisee(systeme, !lisible_en_echec(&relatif), echec_protection().is_some(), existe, proprietaire) {
+        Ok(()) => true,
+        Err(raison) => {
+            signaler_une_fois(chemin, raison);
+            false
         }
     }
 }
 
-fn mettre_alertes_de_cote(f: &Path, raison: &str) {
+/// alertes.json du dossier de données, par la lecture tolérante (decision_alertes). Trop grand, pas en UTF-8 ou pas un
+/// tableau : mis de côté (alertes-<raison>-<horodatage>.json, dans le dossier de données) au lieu d'être écrasé au
+/// premier ajout. Éléments écartés : copie du fichier d'origine gardée (alertes-partiel-<horodatage>.json). Limites :
+/// une erreur de lecture passagère (fichier tenu ailleurs) reprend à vide et le premier ajout réécrit le fichier ; les
+/// fichiers mis de côté ne sont jamais purgés
+pub fn lire_alertes() -> Vec<Alerte> {
+    let f = dossier().join("alertes.json");
+    let Ok(m) = fs::symlink_metadata(&f) else { return Vec::new() };
+    let autorisee = lecture_fichier_autorisee(&f);
+    let contenu = if autorisee && m.len() <= TAILLE_MAX_ALERTES { fs::read(&f).ok() } else { None };
+    match decision_alertes(autorisee, m.len(), contenu.as_deref()) {
+        DecisionAlertes::Rien => Vec::new(),
+        DecisionAlertes::MettreDeCote(raison) => {
+            if !mettre_alertes_de_cote(&f, raison, false) {
+                *MISE_DE_COTE_EN_ATTENTE.lock().unwrap() = Some((raison, false));
+            }
+            Vec::new()
+        }
+        DecisionAlertes::Lire(a, 0) => a,
+        DecisionAlertes::Lire(a, n) => {
+            if !mettre_alertes_de_cote(&f, "partiel", true) {
+                *MISE_DE_COTE_EN_ATTENTE.lock().unwrap() = Some(("partiel", true));
+            }
+            journal(&format!("alertes.json : {n} alerte(s) illisible(s) écartée(s), {} gardée(s)", a.len()));
+            a
+        }
+    }
+}
+
+/// Mise de côté d'alertes.json qui a échoué au démarrage (fichier tenu ouvert ailleurs) : raison et copie ou renommage
+static MISE_DE_COTE_EN_ATTENTE: std::sync::Mutex<Option<(&'static str, bool)>> = std::sync::Mutex::new(None);
+
+/// Le service peut-il réécrire alertes.json ? Non tant qu'une mise de côté a échoué : elle est retentée à chaque appel,
+/// les nouvelles alertes restent en mémoire jusque-là (audit de sécurité de #72, S72-02 : le premier ajout écrasait
+/// l'historique qu'on n'avait pas pu mettre de côté)
+pub fn ecriture_alertes_permise() -> bool {
+    let mut attente = MISE_DE_COTE_EN_ATTENTE.lock().unwrap();
+    let Some((raison, copie)) = *attente else { return true };
+    let f = dossier().join("alertes.json");
+    if fs::symlink_metadata(&f).is_err() || mettre_alertes_de_cote(&f, raison, copie) {
+        *attente = None;
+        return true;
+    }
+    false
+}
+
+/// Lecture d'alertes.json sans aucun effet (API) : lecture contrôlée et tolérante, rien n'est déplacé
+pub fn lire_alertes_sans_effet() -> Vec<Alerte> {
+    lire_fichier(&dossier().join("alertes.json"))
+        .and_then(|t| lire_alertes_texte(t.trim_start_matches('\u{feff}')))
+        .map(|(a, _)| a)
+        .unwrap_or_default()
+}
+
+/// Garde alertes.json à part sous un nom neuf (jamais un fichier existant : horodatage, puis numéro), par renommage, ou
+/// par copie si `copie` (le fichier d'origine reste en place). Vrai si c'est fait
+fn mettre_alertes_de_cote(f: &Path, raison: &str, copie: bool) -> bool {
     let horodatage: String = maintenant().chars().filter(|c| c.is_ascii_digit()).collect();
-    let dest = f.with_file_name(format!("alertes-{raison}-{horodatage}.json"));
-    match fs::rename(f, &dest) {
-        Ok(()) => journal(&format!("alertes.json {raison} : mis de côté ({}), historique repris à vide", dest.display())),
-        Err(e) => journal(&format!("alertes.json {raison} : mise de côté impossible ({e})")),
+    let Some(dest) = (0..100).map(|i| f.with_file_name(if i == 0 { format!("alertes-{raison}-{horodatage}.json") } else { format!("alertes-{raison}-{horodatage}-{i}.json") }))
+        .find(|d| fs::symlink_metadata(d).is_err()) else {
+        journal(&format!("alertes.json {raison} : aucun nom libre pour la mise de côté"));
+        return false;
+    };
+    let r = if copie { fs::copy(f, &dest).map(|_| ()) } else { fs::rename(f, &dest) };
+    match r {
+        Ok(()) => {
+            journal(&format!("alertes.json {raison} : {} ({})", if copie { "copie gardée" } else { "mis de côté, historique repris à vide" }, dest.display()));
+            true
+        }
+        Err(e) => {
+            journal(&format!("alertes.json {raison} : mise de côté impossible ({e}), écriture retenue jusqu'à ce qu'elle réussisse"));
+            false
+        }
     }
 }
 

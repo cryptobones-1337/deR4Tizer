@@ -427,6 +427,10 @@ impl Moniteur {
             let surplus = self.alertes.len() - 1000;
             self.alertes.drain(..surplus);
         }
+        // Mise de côté d'un historique illisible encore en attente : rien n'est réécrit (relecture de #72, S72-02)
+        if !commun::ecriture_alertes_permise() {
+            return;
+        }
         let _ = commun::ecrire("alertes.json", &self.alertes);
     }
 
@@ -798,6 +802,7 @@ impl Moniteur {
     }
 
     fn ajouter_alerte_brute(&mut self, mut a: Alerte, cle: Option<String>) -> bool {
+        commun::borner_alerte(&mut a);
         commun::marquer_modele(&mut a);
         mitre::enrichir(&mut a);
         crate::apprentissage::filtrer(&mut a);

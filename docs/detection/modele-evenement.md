@@ -29,20 +29,35 @@ est lu élément par élément. `Regle` reste vide jusqu'à la PR 3.2 (registre 
 ## Compatibilité
 
 - **Lecture des anciens fichiers** : les champs absents prennent leur valeur par défaut (`Modele` 0, textes vides).
-- **Lecture tolérante** (PR 3.1, `commun::lire_alertes`) : `alertes.json` est lu élément par élément. Un élément
-  illisible est écarté et compté (une ligne au journal), les autres sont gardés ; avant, une seule alerte mal formée
-  faisait perdre tout l'historique, puis le fichier était réécrit vide. Un fichier de plus de 16 Mo, ou qui n'est pas un
-  tableau JSON, n'est pas lu : il est mis de côté (`alertes-trop-grand-<horodatage>.json` ou
-  `alertes-illisible-<horodatage>.json`, dans le dossier de données) au lieu d'être écrasé. Une lecture refusée
-  (propriétaire, lien, protection du dossier) ne lit ni ne déplace rien.
+- **Lecture tolérante** (PR 3.1, `commun::lire_alertes`, décision `decision_alertes`). Ordre des contrôles :
+  - lecture refusée (propriétaire, protection du dossier) : rien n'est lu ni déplacé, même si le fichier est trop grand ;
+  - plus de 16 Mo : mis de côté (`alertes-trop-grand-<horodatage>.json`, dans le dossier de données) ;
+  - contenu qui n'est pas de l'UTF-8, ou qui n'est pas un tableau JSON : mis de côté (`alertes-illisible-…`) ;
+  - sinon, chaque élément est lu à part ; un élément illisible est écarté et compté (une ligne au journal), les autres
+    sont gardés, et une copie du fichier d'origine est gardée d'abord (`alertes-partiel-…`).
+
+  Avant, une seule alerte mal formée faisait perdre tout l'historique, puis le fichier était réécrit vide. Une mise de
+  côté qui échoue (fichier tenu ouvert ailleurs) est retentée à chaque écriture, et `alertes.json` n'est pas réécrit
+  tant qu'elle n'a pas réussi : les nouvelles alertes restent en mémoire. Le nom de mise de côté n'écrase jamais un
+  fichier existant.
+- **Limites** : une erreur de lecture passagère (fichier tenu ouvert ailleurs pendant la lecture) reprend à vide, et le
+  premier ajout réécrit le fichier ; les fichiers mis de côté ne sont jamais purgés ; seule la décision est testée en
+  labo, la mise de côté elle-même (renommage, copie) ne l'est ni en labo ni en VM.
+- **Champs bornés** (audit de sécurité de #72, S72-01) : les champs d'une alerte qui peuvent venir de l'extérieur sont
+  bornés à sa création (`borner_alerte`, dans `ajouter_alerte_brute`) : `Raisons` à 1000 caractères, `Chemin` et
+  `Parent` à 520, les autres à 256, suivis de « … » ; les caractères de contrôle deviennent « ? ». Une alerte bornée
+  tient en moins de 16 Ko, 1000 alertes en moins de 16 Mo : un compte standard ne peut plus faire mettre l'historique
+  de côté en créant quelques démarrages automatiques géants.
 - **Interface** : elle lit `alertes.json` avec un lecteur JSON qui ignore les champs qu'elle ne connaît pas (vérifié :
   une alerte avec `Modele`, `Regle` et `Collecte` se lit).
 - **Retour arrière** vers une version précédente : elle ignore les champs inconnus, puis réécrit le fichier sans eux.
   Après une nouvelle mise à niveau, ces alertes repassent en `Modele` 0. Accepté.
 - **Exceptions et apprentissage** : inchangés pendant la phase 3. Leur signature dépend du texte `Mitre`, qui ne change
   pas (`mitre.rs` reste la source) ; la clé de déduplication des alertes ne change pas non plus.
-- **Export** : `Regle` et l'état des collectes sont ajoutés à l'API et à l'export JSON ; le syslog texte et CEF ne
-  changent pas.
+- **Export** : l'export JSON (syslog) et l'API (`/api/v1/alertes`, JSON et NDJSON) sérialisent l'alerte entière : `Modele`
+  y apparaît dès la PR 3.1, `Regle` et `Collecte` quand ils seront remplis (vides, ils ne sont pas écrits). Le CEF ne
+  change pas. L'API lit `alertes.json` par la même lecture tolérante, sans rien déplacer (`lire_alertes_sans_effet`) :
+  un élément illisible ne vide plus sa réponse.
 
 ## Règles de stabilité
 

@@ -2975,6 +2975,53 @@ fn phase3_une_alerte_mal_formee_ne_fait_pas_perdre_les_autres() {
     crate::tests::torturer_texte(&texte[..400.min(texte.len())], &mut |t| { let _ = lire_alertes_texte(t); });
 }
 
+/// Relecture de #72 : ordre des contrôles d'alertes.json ; un fichier refusé n'est jamais déplacé, même trop grand (D4) ;
+/// un contenu qui n'est pas de l'UTF-8 est mis de côté, pas laissé à l'écrasement (D5) ; des éléments écartés gardent
+/// une copie (décision « Lire » avec un nombre)
+#[test]
+fn phase3_decision_alertes() {
+    use crate::commun::{decision_alertes, DecisionAlertes, TAILLE_MAX_ALERTES};
+    let refuse = |d: DecisionAlertes| matches!(d, DecisionAlertes::Rien);
+    let de_cote = |d: DecisionAlertes, r: &str| matches!(d, DecisionAlertes::MettreDeCote(x) if x == r);
+    assert!(refuse(decision_alertes(false, TAILLE_MAX_ALERTES + 1, None)), "fichier refusé mais trop grand : déplacé");
+    assert!(refuse(decision_alertes(false, 10, Some(b"[]"))), "fichier refusé : lu");
+    assert!(de_cote(decision_alertes(true, TAILLE_MAX_ALERTES + 1, None), "trop-grand"));
+    assert!(de_cote(decision_alertes(true, 4, Some(&[0x5b, 0xff, 0xfe, 0x5d])), "illisible"), "non UTF-8 : laissé à l'écrasement");
+    assert!(de_cote(decision_alertes(true, 6, Some(b"{\"a\":1}")), "illisible"));
+    assert!(refuse(decision_alertes(true, 10, None)), "lecture impossible : rien de déplacé");
+    match decision_alertes(true, 40, Some(br#"[{"Id":"a"},{"Score":"x"}]"#)) {
+        DecisionAlertes::Lire(a, n) => assert_eq!((a.len(), n), (1, 1)),
+        _ => panic!("lecture partielle"),
+    }
+    let source = include_str!("api.rs");
+    assert!(source.contains("commun::lire_alertes_sans_effet()") && !source.contains(concat!("commun::lire(\"alertes", ".json\")")), "API en tout ou rien");
+}
+
+/// Audit de sécurité de #72, S72-01 : une alerte aux champs hostiles (valeur Run d'1 Mo de caractères de contrôle) est
+/// bornée ; 1000 alertes bornées tiennent sous TAILLE_MAX_ALERTES ; bornage et écriture retenue posés dans le moniteur
+#[test]
+fn phase3_alerte_bornee() {
+    use crate::commun::{borner_alerte, Alerte, MAX_RAISONS_ALERTE, TAILLE_MAX_ALERTES};
+    let hostile: String = std::iter::repeat_n('\u{1}', 524_287).collect();
+    let mut a = Alerte { raisons: hostile.clone(), chemin: hostile.clone(), parent: hostile.clone(), processus: hostile.clone(),
+        destination: hostile.clone(), ip: Some(hostile.clone()), nom_dns: Some("\u{10FFFF}".repeat(600_000)), ..Default::default() };
+    borner_alerte(&mut a);
+    let octets = serde_json::to_vec(&a).unwrap().len();
+    assert!(octets < 16 * 1024, "alerte bornée de {octets} octets");
+    assert!(octets * 1000 < TAILLE_MAX_ALERTES as usize);
+    assert_eq!(a.raisons.chars().count(), MAX_RAISONS_ALERTE + 1, "1000 caractères puis « … »");
+    assert!(!a.raisons.chars().any(|c| c.is_control()));
+    // Alerte ordinaire inchangée
+    let mut b = Alerte { raisons: "connexion vers 203.0.113.9".into(), chemin: r"C:\x.exe".into(), ..Default::default() };
+    borner_alerte(&mut b);
+    assert!(b.raisons == "connexion vers 203.0.113.9" && b.chemin == r"C:\x.exe");
+    let source = include_str!("moniteur.rs");
+    let debut = source.find("fn ajouter_alerte_brute").unwrap();
+    assert!(source[debut..debut + 300].contains("commun::borner_alerte(&mut a)"), "bornage absent d'ajouter_alerte_brute");
+    let e = source.find("fn ecrire_alertes").unwrap();
+    assert!(source[e..e + 600].contains("commun::ecriture_alertes_permise()"), "écriture d'alertes.json non retenue");
+}
+
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
 #[test]
 fn phase3_champs_inconnus_ignores() {
