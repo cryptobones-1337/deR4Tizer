@@ -57,7 +57,38 @@ try {
         }
     }
     "bilan : $ko cas non neutralisé(s) sur $n"
-    if ($ko) { exit 1 }
+
+    # Fenêtre de confirmation (S60-06/07) : texte entier, renvoi à la ligne, défilement, « Annuler » par défaut ; fin de
+    # l'hôte à part ; adresse de mise à jour vide présentée comme l'adresse par défaut (S68b-02). Construite, jamais affichée
+    Add-Type -AssemblyName System.Windows.Forms
+    $langue.GetField('En').SetValue($null, $false)
+    $kof = 0
+    function Verifier-Fenetre([string]$nom, [scriptblock]$controle) {
+        $r = try { & $controle } catch { "exception : $($_.Exception.Message)" }
+        if ($r -eq $true) { "$nom : ok" } else { $script:kof++; "$nom : ÉCHEC ($r)" }
+    }
+    # Hôte d'un seul tenant d'environ 250 caractères (labels de 60, sous la limite DNS de 63)
+    $long = 'https://' + ((('a' * 60) + '.') * 4) + 'attaquant.test/sujet'
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'notifications'
+    $c.Valeur = '{"Config":{"Ntfy":true},"NtfyUrl":"' + $long + '"}'
+    $texte = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'notifications : fin de l''hôte à part' { if ($texte -match "`n\s+l'hôte se termine par : attaquant\.test(`n|$)") { $true } else { $texte } }
+    $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @($texte, $false))
+    try {
+        $zone = $f.Controls.Find('Texte', $true)[0]; $annuler = $f.Controls.Find('Annuler', $true)[0]; $continuer = $f.Controls.Find('Continuer', $true)[0]
+        Verifier-Fenetre 'fenêtre : texte entier, sans troncature' { $zone.Text.Replace("`r`n", "`n").EndsWith($texte) -and $zone.Text.Contains(((('a' * 60) + '.') * 4) + 'attaquant.test') }
+        Verifier-Fenetre 'fenêtre : renvoi à la ligne et défilement, lecture seule' { $zone.Multiline -and $zone.WordWrap -and $zone.ReadOnly -and $zone.ScrollBars -eq 'Vertical' }
+        Verifier-Fenetre 'fenêtre : « Annuler » par défaut (Entrée, Échap)' { $f.AcceptButton -eq $annuler -and $f.CancelButton -eq $annuler -and $f.ActiveControl -eq $annuler -and $annuler.DialogResult -eq 'Cancel' }
+        Verifier-Fenetre 'fenêtre : « Continuer » seul renvoie Oui' { $continuer.DialogResult -eq 'Yes' }
+    } finally { $f.Dispose() }
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'majConfig'; $c.Valeur = '{"Auto":false,"Url":""}'
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'majConfig : adresse vide = adresse par défaut, affichée' { $t -match 'adresse par défaut https://github\.com/' }
+    $c.Valeur = '{"Auto":true,"Url":"https://attaquant.test/m.json"}'
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'majConfig : autre adresse signalée' { $t -match 'ADRESSE MODIFIÉE https://attaquant\.test/m\.json' -and $t -match "l'hôte se termine par : attaquant\.test" }
+    "bilan fenêtre : $kof échec(s)"
+    if ($ko -or $kof) { exit 1 }
 } finally {
     Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
 }
