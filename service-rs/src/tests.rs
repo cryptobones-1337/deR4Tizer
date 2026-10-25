@@ -218,6 +218,31 @@ fn reseaux_reserves() {
     assert!(!crate::menaces::recouvre_reserve_test(ip("8.8.8.0"), ip("8.8.8.255")));
 }
 
+/// Préfixe IPv6 hors bornes dans une liste de menaces téléchargée : « /129 » faisait lire ip[16] dans dans_reseau6
+/// (panique, service arrêté par panic = "abort", et de nouveau à chaque redémarrage tant que la liste est en cache).
+/// Une entrée invalide est écartée ; les préfixes de /16 à /128 restent pris en compte.
+#[test]
+fn liste_de_menaces_prefixe_ipv6_hors_bornes() {
+    use crate::menaces::ajouter_et_chercher_test as essai;
+    let cible = "2001:4860:4860::8888";
+    for l in [129, 130, 255, 999, 4294967295u32] {
+        let (n, trouve) = essai(&[&format!("2001:4860::/{l}")], cible);
+        assert_eq!((n, trouve), (0, None), "/{l} : entrée refusée, aucune panique");
+        // Le cas qui plantait : adresse cherchée identique au préfixe (les 16 octets comparés, puis ip[16])
+        assert_eq!(essai(&[&format!("{cible}/{l}")], cible), (0, None), "{cible}/{l}");
+    }
+    for l in [0, 8, 15] {
+        assert_eq!(essai(&[&format!("2001::/{l}")], cible).0, 0, "/{l} : trop large, refusé");
+    }
+    assert_eq!(essai(&["2001:4860::/16"], cible), (1, Some("essai".into())));
+    assert_eq!(essai(&["2001:4860:4860::/48"], cible), (1, Some("essai".into())));
+    assert_eq!(essai(&["2001:4860:4860::8888/127"], cible), (1, Some("essai".into())));
+    assert_eq!(essai(&["2001:4860:4860::8888/128"], cible), (1, Some("essai".into())));
+    assert_eq!(essai(&["2001:4860:4860::8889/128"], cible), (1, None));
+    // Une ligne invalide parmi d'autres n'empêche pas les suivantes
+    assert_eq!(essai(&["2001:db8::/200", "2001:4860::/32"], cible), (1, Some("essai".into())));
+}
+
 #[test]
 fn plages_du_mode_panique() {
     let epargnee: Ipv4Addr = "1.1.1.1".parse().unwrap();
