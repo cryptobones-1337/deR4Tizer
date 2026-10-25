@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -55,6 +55,11 @@ pub struct Partage {
     pub defender: Mutex<EtatDefender>,
     pub baseline_occupee: AtomicBool,
     pub arret: AtomicBool,
+    /// Alertes du relevé des démarrages automatiques (fil « persistance »), traitées comme avant, sans clé de
+    /// déduplication
+    pub alertes_persistance: Mutex<Vec<Alerte>>,
+    /// Nombre d'entrées de démarrage relevées (affichage console)
+    pub entrees_persistance: AtomicUsize,
 }
 
 pub struct Moniteur {
@@ -79,7 +84,6 @@ pub struct Moniteur {
     derniere_sauvegarde_dns: Instant,
     premier_passage: bool,
     numero_passage: u64,
-    persistance: Persistance,
     surveillances: Surveillances,
     processus: Processus,
     notre_dossier: String,
@@ -110,6 +114,8 @@ impl Moniteur {
             defender: Mutex::new(EtatDefender::default()),
             baseline_occupee: AtomicBool::new(false),
             arret: AtomicBool::new(false),
+            alertes_persistance: Mutex::new(Vec::new()),
+            entrees_persistance: AtomicUsize::new(0),
         });
         crate::siem::demarrer(partage.alertes_externes.clone(), !console);
         if !console {
@@ -174,7 +180,6 @@ impl Moniteur {
             udp_dynamique: parefeu::plage_dynamique_udp(),
             adresses_publiques: parefeu::adresses_publiques(),
             exposition: parefeu::Exposition::default(),
-            persistance: Persistance::nouvelle(),
             surveillances: Surveillances::nouvelles(),
             processus,
             notre_dossier,
@@ -240,6 +245,31 @@ impl Moniteur {
                         mesure::ecrire();
                     }
                     std::thread::sleep(Duration::from_secs(3));
+                }
+            }).unwrap();
+        }
+        // Démarrages automatiques toutes les minutes, dans leur propre fil (phase 1, mesure du cycle) : ce relevé, avec la
+        // vérification de signature de chaque cible, tenait le verrou du Moniteur jusqu'à 6,3 s une fois par minute
+        // (surveillance aveugle et commandes de l'interface en attente pendant ce temps). Le verrou n'est plus pris que par
+        // le cycle, qui reprend les alertes produites ici
+        {
+            let p = partage.clone();
+            std::thread::Builder::new().name("persistance".into()).spawn(move || {
+                let mut persistance = Persistance::nouvelle();
+                let mut cache = HashMap::new();
+                let notre = std::env::current_exe().ok().and_then(|x| x.parent().map(|d| d.to_string_lossy().to_lowercase())).unwrap_or_default();
+                while !p.arret.load(Ordering::Relaxed) {
+                    let t = Instant::now();
+                    let alertes = persistance.verifier(&mut |c| signataire_cache(&mut cache, &notre, c));
+                    p.entrees_persistance.store(persistance.entrees.len(), Ordering::Relaxed);
+                    p.alertes_persistance.lock().unwrap().extend(alertes);
+                    mesure::noter("controles.persistance (fil dédié, toutes les minutes)", t);
+                    for _ in 0..60 {
+                        if p.arret.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
                 }
             }).unwrap();
         }
@@ -559,14 +589,13 @@ impl Moniteur {
         }
 
         let t = mesure::noter("cycle.leurres_et_hosts", t);
-        // Modules : vie privée et accès distant à chaque passage, persistance toutes les minutes
+        // Modules : vie privée et accès distant à chaque passage ; persistance dans son propre fil (alertes reprises ici)
         let mut cache = std::mem::take(&mut self.signatures);
         let notre = self.notre_dossier.clone();
         let mut signer = |c: &str| signataire_cache(&mut cache, &notre, c);
         let alertes_surv = self.surveillances.verifier(&toutes, &liste, &mut signer);
         let t = mesure::noter("cycle.surveillances", t);
-        let alertes_pers = if self.numero_passage % 20 == 1 { self.persistance.verifier(&mut signer) } else { Vec::new() };
-        let t = if self.numero_passage % 20 == 1 { mesure::noter("cycle.persistance (1 cycle sur 20)", t) } else { t };
+        let alertes_pers: Vec<Alerte> = std::mem::take(&mut *self.partage.alertes_persistance.lock().unwrap());
         self.signatures = cache;
         for a in alertes_surv {
             let cle = cle_alerte(&a);
@@ -656,7 +685,7 @@ impl Moniteur {
             self.dernier_etat_ecrit = Instant::now();
             if self.console {
                 println!("{}  {} flux, {} alertes, {} IP connues par le DNS, {} entrées de démarrage, {} ports en écoute",
-                    commun::maintenant(), n, self.alertes.len(), ip_connues, self.persistance.entrees.len(), s.ecoutes.len());
+                    commun::maintenant(), n, self.alertes.len(), ip_connues, self.partage.entrees_persistance.load(Ordering::Relaxed), s.ecoutes.len());
             }
         }
         if self.derniere_sauvegarde_dns.elapsed() >= Duration::from_secs(300) {
