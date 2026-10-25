@@ -41,7 +41,15 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ### Pendant
 
-- Écrire d'abord le test qui échoue sur le code actuel quand c'est possible, puis la correction.
+- Écrire d'abord le test qui échoue sur le code actuel quand c'est possible, puis la correction. Avant la PR, le
+  vérifier : le test échoue quand on retire le correctif (ou sous une mutation du correctif), puis réussit quand on
+  le remet. Un test qui n'a jamais échoué ne prouve pas qu'il attrape le défaut.
+- Aucune affirmation « corrigé », « réussi » ou « vert » sans une sortie fraîche de la commande qui le prouve ; le
+  rapport d'un agent n'est pas une preuve : relire le diff ou le tableau.
+- Une cause reste une hypothèse, et se dit comme telle, tant qu'un essai ne l'a pas confirmée ; relever l'état (journal,
+  registre, valeurs) avant de corriger, et avant toute remise à l'instantané qui l'effacerait.
+- Un contrôle qui n'a rien eu à vérifier (zéro événement, zéro fichier, lecture impossible) ne vaut pas réussite :
+  prévoir un témoin qui doit être retenu et un témoin qui doit être écarté, et faire échouer une lecture impossible.
 - Lancer `cargo test --release` et la compilation de l'interface quand l'environnement le permet.
 - Relire son propre diff : régressions, changements hors sujet, secrets, découpages de chaînes.
 
@@ -227,6 +235,19 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
+5. Phase 7 (ouverte par le mainteneur le 2026-10-25 ; commence après la validation de la phase 6, qui lève le gel de
+   la section 2, règle 1, pour elle seule) : fonctionnalités demandées par le mainteneur. Chacune passe d'abord par un
+   dossier de conception (agent concepteur-fonctionnalites), puis une PR par étape ; désactivée par défaut ; retour
+   arrière garanti (désinstallation, panne du service) ; aucune dépendance nouvelle sans accord.
+   - Filtrage par nom de domaine : navigation sécurisée (DNS chiffré et filtré, domaines malveillants des listes de
+     menaces, changement de serveur DNS détecté) et bloqueur de publicités et de pistage, par un même mécanisme, sans
+     pilote noyau ; lignes de l'utilisateur du fichier hosts jamais réécrites ; effets sur les VPN, les réseaux
+     d'entreprise et les portails captifs traités dans le dossier.
+   - Configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques) : le mode ne change que ce que
+     l'interface montre, jamais les droits ni la validation du service.
+   - Surveillance des fuites de données pour des adresses de courriel indiquées par l'utilisateur : par un service
+     tiers gratuit seulement, jamais par la lecture de fichiers de données volées ; propriété de l'adresse vérifiée ;
+     adresse jamais journalisée ni envoyée ailleurs qu'à ce service ; désactivée par défaut.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
 
