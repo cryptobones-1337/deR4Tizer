@@ -2234,6 +2234,17 @@ fn audit_fichier_hosts_lignes_de_l_utilisateur_intactes() {
     assert!(t.contains("127.0.0.1\td.test") && !t.contains("c.test"), "{t:?}");
     assert_eq!(nouveau_contenu(&deux, &d(&["d.test"])).unwrap(), deux, "même domaines : contenu inchangé");
     assert_eq!(nouveau_contenu(&deux, &[]).unwrap(), faux_avant, "bloc retiré : exactement les lignes de l'utilisateur");
+    // Deux blocs complets (fichier laissé ainsi par une version ancienne, ou édité à la main) : tous retirés, idempotent
+    let deux = format!("# u\r\n{DEBUT_BLOC}\r\n127.0.0.1\ta.test\r\n{FIN_BLOC}\r\n# v\r\n{DEBUT_BLOC}\r\n127.0.0.1\tb.test\r\n{FIN_BLOC}\r\n# w\r\n").into_bytes();
+    assert_eq!(nouveau_contenu(&deux, &[]).unwrap(), b"# u\r\n# v\r\n# w\r\n", "retrait complet : aucun bloc ne reste");
+    let un = nouveau_contenu(&deux, &d(&["c.test"])).unwrap();
+    let t = String::from_utf8(un.clone()).unwrap();
+    assert_eq!(t.matches(DEBUT_BLOC).count(), 1, "{t:?}");
+    assert!(!t.contains("a.test") && !t.contains("b.test") && t.contains("c.test"), "{t:?}");
+    assert_eq!(nouveau_contenu(&un, &d(&["c.test"])).unwrap(), un, "idempotent après fusion des blocs");
+    let (hors, bloc) = crate::blocage::decouper_hosts(&deux);
+    assert_eq!(hors, ["# u", "# v", "# w"]);
+    assert_eq!(bloc, ["a.test", "b.test"]);
     // Fin sans début avant le bloc : ligne de l'utilisateur, gardée
     let fin_seule = format!("{FIN_BLOC}\r\n# u\r\n").into_bytes();
     let n = nouveau_contenu(&fin_seule, &d(&["e.test"])).unwrap();

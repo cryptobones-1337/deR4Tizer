@@ -22,25 +22,31 @@ pub fn fichier_hosts() -> PathBuf {
     PathBuf::from(natif::dossier_systeme()).join(r"drivers\etc\hosts")
 }
 
-/// Lignes du fichier hosts hors de notre bloc, et domaines de notre bloc
+/// Lignes du fichier hosts hors de nos blocs, et domaines de nos blocs : mêmes bornes que nouveau_contenu (un début ou
+/// une fin isolés sont des lignes de l'utilisateur ; tous les blocs complets sont à nous)
 pub fn lignes_hors_bloc() -> std::io::Result<(Vec<String>, Vec<String>)> {
-    let texte = fs::read(fichier_hosts())?;
-    let texte = String::from_utf8_lossy(&texte);
+    let octets = fs::read(fichier_hosts())?;
+    Ok(decouper_hosts(&octets))
+}
+
+/// (lignes hors de nos blocs, domaines de nos blocs), pur et testé
+pub fn decouper_hosts(octets: &[u8]) -> (Vec<String>, Vec<String>) {
     let motif = Regex::new(r"^\s*\S+\s+(\S+)").unwrap();
-    let (mut hors, mut bloc) = (Vec::new(), Vec::new());
-    let mut dans = false;
-    for l in texte.lines() {
-        if l == DEBUT_BLOC {
-            dans = true;
-        } else if l == FIN_BLOC {
-            dans = false;
-        } else if !dans {
-            hors.push(l.to_string());
-        } else if let Some(c) = motif.captures(l) {
-            bloc.push(c[1].to_string());
-        }
+    let mut garder: Vec<&[u8]> = if octets.is_empty() { Vec::new() } else { octets.split(|&b| b == b'\n').collect() };
+    if garder.last().is_some_and(|d| d.is_empty()) {
+        garder.pop();
     }
-    Ok((hors, bloc))
+    let mut bloc = Vec::new();
+    while let Some((d, f)) = bornes_du_bloc(&garder) {
+        for l in &garder[d + 1..f] {
+            if let Some(c) = motif.captures(&String::from_utf8_lossy(l)) {
+                bloc.push(c[1].to_string());
+            }
+        }
+        garder.drain(d..=f);
+    }
+    let hors = garder.iter().map(|l| String::from_utf8_lossy(l.strip_suffix(b"\r").unwrap_or(l)).into_owned()).collect();
+    (hors, bloc)
 }
 
 /// Empreinte du fichier hosts ENTIER : avant, seules les lignes hors du bloc de deR4Tizer comptaient, et une ligne
@@ -85,12 +91,14 @@ pub fn nouveau_contenu(original: &[u8], domaines: &[String]) -> Result<Vec<u8>, 
     };
     let mut garder: Vec<&[u8]> = lignes.clone();
     let mut fin_de_ligne = fin_de_ligne;
-    if let Some((d, f)) = bornes_du_bloc(&lignes) {
-        garder.drain(d..=f);
+    // TOUS les blocs complets (relecture de #54 : avec deux blocs, seul le premier était retiré ; un domaine débloqué
+    // restait bloqué, même après la désinstallation)
+    while let Some((d, f)) = bornes_du_bloc(&garder) {
         // Bloc en fin de fichier sans fin de ligne finale : la ligne qui le précédait gardait la sienne
-        if f + 1 == lignes.len() {
+        if f + 1 == garder.len() {
             fin_de_ligne = true;
         }
+        garder.drain(d..=f);
     }
     // Lignes gardées rejointes telles quelles (avec leur \r éventuel), fin de ligne finale seulement si l'original
     // en avait une : sans bloc, le contenu est exactement l'original
