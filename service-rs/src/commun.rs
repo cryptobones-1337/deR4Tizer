@@ -458,6 +458,77 @@ pub struct Alerte {
     /// Chemin du programme parent, s'il est connu (détections de processus)
     #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
     pub parent: String,
+    /// Version du modèle d'événement (docs/detection/modele-evenement.md) : 0 pour une alerte d'avant la phase 3,
+    /// MODELE_ALERTE pour une alerte créée par cette version ; jamais réécrite pour une alerte relue
+    pub modele: u32,
+    /// Identifiant de la règle (docs/detection/regles.md), vide si l'alerte n'est rattachée à aucune (PR 3.2)
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub regle: String,
+    /// Collecteur d'où vient l'alerte (état des collectes, PR 3.3)
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub collecte: String,
+}
+
+/// Version actuelle du modèle d'événement des alertes
+pub const MODELE_ALERTE: u32 = 1;
+
+/// Pose le modèle actuel sur une alerte qui n'en a pas (appelé à un seul endroit : ajouter_alerte_brute)
+pub fn marquer_modele(a: &mut Alerte) {
+    if a.modele == 0 {
+        a.modele = MODELE_ALERTE;
+    }
+}
+
+/// Taille maximale d'alertes.json lue (1000 alertes en font quelques centaines de Ko) : au-delà, rien n'est lu
+pub const TAILLE_MAX_ALERTES: u64 = 16 * 1024 * 1024;
+
+/// Lecture tolérante d'alertes.json (décision pure, testée) : chaque élément du tableau est lu à part, un élément
+/// illisible est écarté et compté, les autres sont gardés. None si le texte n'est pas un tableau JSON. Avant : une seule
+/// alerte mal formée faisait perdre tout l'historique, puis le premier ajout réécrivait un fichier vide
+pub fn lire_alertes_texte(texte: &str) -> Option<(Vec<Alerte>, usize)> {
+    let serde_json::Value::Array(elements) = serde_json::from_str::<serde_json::Value>(texte).ok()? else { return None };
+    let mut ecartees = 0;
+    let mut alertes = Vec::with_capacity(elements.len());
+    for e in elements {
+        match serde_json::from_value::<Alerte>(e) {
+            Ok(a) => alertes.push(a),
+            Err(_) => ecartees += 1,
+        }
+    }
+    Some((alertes, ecartees))
+}
+
+/// alertes.json du dossier de données, par la lecture tolérante. Trop grand ou illisible comme tableau : mis de côté
+/// (alertes-<raison>-<horodatage>.json, dans le dossier de données) au lieu d'être écrasé au premier ajout
+pub fn lire_alertes() -> Vec<Alerte> {
+    let f = dossier().join("alertes.json");
+    let Ok(m) = fs::symlink_metadata(&f) else { return Vec::new() };
+    if m.len() > TAILLE_MAX_ALERTES {
+        mettre_alertes_de_cote(&f, "trop-grand");
+        return Vec::new();
+    }
+    // Lecture refusée (propriétaire, lien, protection) : rien n'est lu ni déplacé
+    let Some(texte) = lire_fichier(&f) else { return Vec::new() };
+    match lire_alertes_texte(texte.trim_start_matches('\u{feff}')) {
+        Some((a, 0)) => a,
+        Some((a, n)) => {
+            journal(&format!("alertes.json : {n} alerte(s) illisible(s) écartée(s), {} gardée(s)", a.len()));
+            a
+        }
+        None => {
+            mettre_alertes_de_cote(&f, "illisible");
+            Vec::new()
+        }
+    }
+}
+
+fn mettre_alertes_de_cote(f: &Path, raison: &str) {
+    let horodatage: String = maintenant().chars().filter(|c| c.is_ascii_digit()).collect();
+    let dest = f.with_file_name(format!("alertes-{raison}-{horodatage}.json"));
+    match fs::rename(f, &dest) {
+        Ok(()) => journal(&format!("alertes.json {raison} : mis de côté ({}), historique repris à vide", dest.display())),
+        Err(e) => journal(&format!("alertes.json {raison} : mise de côté impossible ({e})")),
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

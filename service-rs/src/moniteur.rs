@@ -182,7 +182,7 @@ impl Moniteur {
             dernieres_alertes: HashMap::new(),
             apprentissage: exes.is_none(),
             executables_vus: exes.unwrap_or_default().into_iter().map(|e| e.to_lowercase()).collect(),
-            alertes: commun::lire("alertes.json").unwrap_or_default(),
+            alertes: commun::lire_alertes(),
             blocages: commun::lire("blocages.json").unwrap_or_default(),
             dernieres_connexions: Vec::new(),
             empreinte_hosts: blocage::empreinte_hosts(),
@@ -798,6 +798,7 @@ impl Moniteur {
     }
 
     fn ajouter_alerte_brute(&mut self, mut a: Alerte, cle: Option<String>) -> bool {
+        commun::marquer_modele(&mut a);
         mitre::enrichir(&mut a);
         crate::apprentissage::filtrer(&mut a);
         if let Some(cle) = cle {

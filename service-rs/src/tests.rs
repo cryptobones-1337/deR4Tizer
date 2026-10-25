@@ -2939,3 +2939,72 @@ fn exposition_paquet_bloque_reponse_a_un_flux() {
     assert!(!raisons.iter().any(|r| r.contains("203.0.113.40")), "{raisons:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Phase 3.1 (docs/detection/modele-evenement.md) : un alertes.json au format d'avant la phase 3 se relit champ par
+/// champ, avec le modèle 0 ; les champs Regle et Collecte vides ne sont pas écrits
+#[test]
+fn phase3_alerte_ancienne_relue_sans_perte() {
+    use crate::commun::lire_alertes_texte;
+    let ancien = r#"[{"Id":"a1","Heure":"2026-10-20 10:00:00","Niveau":"Alerte","Score":3,"Processus":"x","Chemin":"C:\\x.exe",
+        "Destination":"203.0.113.9","Ip":"203.0.113.9","NomDns":null,"Port":443,"Raisons":"r","Pid":42,"Mitre":"T1071","Conseil":"c"}]"#;
+    let (a, ecartees) = lire_alertes_texte(ancien).expect("tableau lisible");
+    assert_eq!(ecartees, 0);
+    assert_eq!(a.len(), 1);
+    let x = &a[0];
+    assert!(x.id == "a1" && x.niveau == "Alerte" && x.score == 3 && x.port == 443 && x.pid == Some(42) && x.mitre == "T1071");
+    assert_eq!(x.modele, 0, "une alerte relue garde son modèle d'origine");
+    let json = serde_json::to_string(&a[0]).unwrap();
+    assert!(json.contains("\"Modele\":0") && !json.contains("\"Regle\"") && !json.contains("\"Collecte\""), "{json}");
+}
+
+/// Phase 3.1 : une seule alerte illisible ne fait plus perdre tout l'historique (avant : lire rendait None, puis le
+/// premier ajout réécrivait un fichier vide)
+#[test]
+fn phase3_une_alerte_mal_formee_ne_fait_pas_perdre_les_autres() {
+    use crate::commun::{lire_alertes_texte, Alerte};
+    let mut v: Vec<serde_json::Value> = (0..999).map(|i| serde_json::json!({ "Id": format!("a{i}"), "Niveau": "Info", "Score": 0 })).collect();
+    v.insert(500, serde_json::json!({ "Id": "mauvaise", "Score": "pas un nombre" }));
+    let texte = serde_json::to_string(&v).unwrap();
+    assert!(serde_json::from_str::<Vec<Alerte>>(&texte).is_err(), "témoin : la lecture d'un bloc échoue");
+    let (a, ecartees) = lire_alertes_texte(&texte).expect("tableau lisible");
+    assert_eq!((a.len(), ecartees), (999, 1));
+    assert!(a.iter().all(|x| x.id != "mauvaise"));
+    // Texte qui n'est pas un tableau : illisible (le fichier sera mis de côté, jamais écrasé)
+    assert!(lire_alertes_texte("{\"Id\":\"a\"}").is_none());
+    assert!(lire_alertes_texte("pas du json").is_none());
+    crate::tests::torturer_texte(&texte[..400.min(texte.len())], &mut |t| { let _ = lire_alertes_texte(t); });
+}
+
+/// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
+#[test]
+fn phase3_champs_inconnus_ignores() {
+    use crate::commun::lire_alertes_texte;
+    let (a, ecartees) = lire_alertes_texte(r#"[{"Id":"a","Modele":2,"Regle":"DEF-005","Collecte":"JournalDefender","ChampFutur":{"x":1}}]"#).unwrap();
+    assert_eq!(ecartees, 0);
+    assert!(a[0].modele == 2 && a[0].regle == "DEF-005" && a[0].collecte == "JournalDefender");
+}
+
+/// Phase 3.1 : toute nouvelle alerte porte le modèle actuel, posé à un seul endroit (ajouter_alerte_brute) ; une alerte
+/// qui a déjà un modèle le garde
+#[test]
+fn phase3_nouvelle_alerte_porte_le_modele() {
+    use crate::commun::{marquer_modele, Alerte, MODELE_ALERTE};
+    assert_eq!(MODELE_ALERTE, 1);
+    let mut a = Alerte::default();
+    marquer_modele(&mut a);
+    assert_eq!(a.modele, MODELE_ALERTE);
+    let mut b = Alerte { modele: 2, ..Default::default() };
+    marquer_modele(&mut b);
+    assert_eq!(b.modele, 2);
+    let source = include_str!("moniteur.rs");
+    let debut = source.find("fn ajouter_alerte_brute").expect("ajouter_alerte_brute");
+    assert!(source[debut..debut + 400].contains("commun::marquer_modele(&mut a)"), "ajouter_alerte_brute ne pose plus le modèle");
+}
+
+/// Phase 3.1 : le moniteur lit alertes.json par la lecture tolérante, plus par commun::lire (tout ou rien)
+#[test]
+fn phase3_moniteur_lit_les_alertes_par_element() {
+    let source = include_str!("moniteur.rs");
+    assert!(source.contains("alertes: commun::lire_alertes(),"), "chargement des alertes");
+    assert!(!source.contains(concat!("commun::lire(\"alertes", ".json\")")), "lecture tout ou rien d'alertes.json");
+}
