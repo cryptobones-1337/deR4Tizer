@@ -746,6 +746,41 @@ fn phase1_persistance_videe_a_l_arret() {
     assert!(file.lock().unwrap().is_empty());
 }
 
+/// Phase 1 : à l'arrêt, les alertes encore en file des autres fils (Defender, baseline, extensions, pilotes, DNS,
+/// pare-feu, SIEM, détections de processus) sont reprises comme celles de la persistance ; elles étaient perdues
+/// si le service s'arrêtait avant le cycle suivant (même défaut que #61 pour la persistance)
+#[test]
+fn phase1_files_d_alertes_videes_a_l_arret() {
+    use crate::commun::Alerte;
+    use crate::moniteur::vider_a_l_arret;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    let a = |r: &str| Alerte { raisons: r.into(), ..Default::default() };
+    let persistance = Mutex::new(vec![a("démarrage automatique AJOUTÉ")]);
+    let externes = Mutex::new(vec![a("Defender : protection en temps réel désactivée"), a("baseline : dérive")]);
+    let detections = Mutex::new(vec![a("processus : leurre touché")]);
+    let (sans_cle, avec_cle) = vider_a_l_arret(&AtomicBool::new(false), &persistance, &[&externes, &detections], Duration::from_secs(5));
+    assert_eq!(sans_cle.len(), 1, "persistance");
+    let r: Vec<&str> = avec_cle.iter().map(|x| x.raisons.as_str()).collect();
+    assert_eq!(r, ["Defender : protection en temps réel désactivée", "baseline : dérive", "processus : leurre touché"]);
+    assert!(persistance.lock().unwrap().is_empty() && externes.lock().unwrap().is_empty() && detections.lock().unwrap().is_empty());
+    // Ordre : les autres files sont prises APRÈS l'attente du relevé de persistance ; une alerte qu'un fil y pose
+    // pendant cette attente est reprise (relecture de #65 : sans ce cas, l'ordre inverse passait)
+    let en_cours = Arc::new(AtomicBool::new(true));
+    let externes = Arc::new(Mutex::new(Vec::new()));
+    let (e, x) = (en_cours.clone(), externes.clone());
+    let fil = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        x.lock().unwrap().push(a("pare-feu : règle ajoutée"));
+        std::thread::sleep(Duration::from_millis(100));
+        e.store(false, Ordering::SeqCst);
+    });
+    let (_, avec_cle) = vider_a_l_arret(&en_cours, &Mutex::new(Vec::new()), &[&externes], Duration::from_secs(5));
+    let _ = fil.join();
+    assert_eq!(avec_cle.len(), 1, "alerte posée pendant l'attente du relevé perdue");
+}
+
 /// Audit de sécurité S58-02 : champs texte des réglages en listes fermées (langue, protocole, format, niveau) et hôte
 /// syslog sans caractère de contrôle ni de mise en forme (la confirmation pouvait être repoussée hors de l'écran ou
 /// inversée) ; les valeurs que l'interface envoie passent

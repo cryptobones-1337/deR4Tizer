@@ -75,6 +75,15 @@ pub fn vider_persistance(en_cours: &AtomicBool, file: &Mutex<Vec<Alerte>>, atten
     std::mem::take(&mut *file.lock().unwrap())
 }
 
+/// Toutes les files d'alertes à l'arrêt : celle de la persistance (relevé en cours attendu, `vider_persistance`), puis
+/// les autres (alertes externes des fils, détections de processus), prises après cette attente pour reprendre aussi ce
+/// qu'elles ont reçu pendant. Rend (alertes sans clé de déduplication, alertes avec clé), comme le cycle les traite
+pub fn vider_a_l_arret(en_cours: &AtomicBool, persistance: &Mutex<Vec<Alerte>>, autres: &[&Mutex<Vec<Alerte>>], attente: Duration) -> (Vec<Alerte>, Vec<Alerte>) {
+    let sans_cle = vider_persistance(en_cours, persistance, attente);
+    let avec_cle = autres.iter().flat_map(|f| std::mem::take(&mut *f.lock().unwrap())).collect();
+    (sans_cle, avec_cle)
+}
+
 pub struct Moniteur {
     partage: Arc<Partage>,
     console: bool,
@@ -391,18 +400,34 @@ impl Moniteur {
 
     pub fn arreter(&mut self) {
         self.partage.arret.store(true, Ordering::SeqCst);
-        // Alertes de persistance pas encore reprises par le cycle, relevé en cours compris : enregistrées avant l'arrêt
-        // (relecture de #61). Relevé attendu 8 s au plus, sous les 10 s annoncées à Windows (wait_hint) ; au-delà, ou si
-        // Windows tue le service à l'extinction, l'alerte d'un relevé en cours peut encore être perdue
-        let reste = vider_persistance(&self.partage.persistance_en_cours, &self.partage.alertes_persistance, Duration::from_secs(8));
-        if !reste.is_empty() {
-            for a in reste {
-                self.ajouter_alerte_brute(a, None);
-            }
-            let _ = commun::ecrire("alertes.json", &self.alertes);
+        // Alertes pas encore reprises par le cycle, enregistrées avant l'arrêt : persistance, relevé en cours compris
+        // (relecture de #61), puis files des autres fils et détections de processus (phase 1). Relevé attendu 8 s au plus,
+        // sous les 10 s annoncées à Windows (wait_hint) ; au-delà, ou si Windows tue le service à l'extinction, l'alerte
+        // d'un relevé en cours peut encore être perdue, comme celle qu'un autre fil produit après la reprise
+        let (sans_cle, avec_cle) = vider_a_l_arret(&self.partage.persistance_en_cours, &self.partage.alertes_persistance,
+            &[&self.partage.alertes_externes, &self.processus.detections], Duration::from_secs(8));
+        let mut modifiees = false;
+        for a in sans_cle {
+            modifiees |= self.ajouter_alerte_brute(a, None);
+        }
+        for a in avec_cle {
+            let cle = cle_alerte(&a);
+            modifiees |= self.ajouter_alerte_brute(a, Some(cle));
+        }
+        if modifiees {
+            self.ecrire_alertes();
         }
         let _ = commun::ecrire("dns.json", &*self.partage.dns.lock().unwrap());
         commun::journal("arrêt");
+    }
+
+    /// alertes.json, borné aux 1000 dernières (cycle et arrêt)
+    fn ecrire_alertes(&mut self) {
+        if self.alertes.len() > 1000 {
+            let surplus = self.alertes.len() - 1000;
+            self.alertes.drain(..surplus);
+        }
+        let _ = commun::ecrire("alertes.json", &self.alertes);
     }
 
     // ------------------------------------------------------------ signatures
@@ -669,11 +694,7 @@ impl Moniteur {
 
         let t = mesure::noter("cycle.chaines", t);
         if alertes_modifiees {
-            if self.alertes.len() > 1000 {
-                let surplus = self.alertes.len() - 1000;
-                self.alertes.drain(..surplus);
-            }
-            let _ = commun::ecrire("alertes.json", &self.alertes);
+            self.ecrire_alertes();
         }
         if exes_modifies {
             let _ = commun::ecrire("executables.json", &self.executables_vus.iter().collect::<Vec<_>>());
