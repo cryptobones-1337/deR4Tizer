@@ -9,9 +9,9 @@
 # Defender n'est que relevé (avant et après, par l'exécuteur) ; son état « pleinement actif » n'est exigé que par le
 # lot 3d (tests\vm\lot3d.ps1). Sans -SessionStandard, la session de console est celle de l'instantané.
 #
-# Usage : .\tests\vm\lancer.ps1 -Scenario installation|quarantaine|maj|lot3d [-Vm deR4Tizer-test-26H2] [-Instantane <nom>]
+# Usage : .\tests\vm\lancer.ps1 -Scenario installation|quarantaine|maj|lot3d|mesure [-Vm deR4Tizer-test-26H2] [-Instantane <nom>]
 param(
-    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d')] [string]$Scenario,
+    [Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d', 'mesure')] [string]$Scenario,
     [string]$Racine = 'C:\d4t-bac-a-sable',
     [string]$Vm = 'deR4Tizer-test-26H2',
     # Par défaut : l'instantané le plus récent dont le nom commence par « propre »
