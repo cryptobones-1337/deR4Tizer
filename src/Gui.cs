@@ -220,8 +220,9 @@ namespace DeR4Tizer
                                 + (en ? ", password " : ", mot de passe ") + mdp + ")");
                         }
                         if (conf != null) canaux.Add((en ? "minimum level " : "niveau minimal ") + champ("NiveauMin") + (en ? ", at most " : ", au plus ") + champ("MaxParHeure") + (en ? " per hour" : " par heure"));
-                        return (c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
-                            + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux));
+                        // Sans caractère de contrôle ni de mise en forme, suites d'espaces réduites (audit de sécurité S58-05)
+                        return Visible((c.Action == "testerNotifications" ? (en ? "Send a test notification — " : "Envoyer une notification de test — ") : (en ? "Change alert forwarding — " : "Modifier la remontée des alertes — "))
+                            + (canaux.Count == 0 ? (en ? "all channels off" : "tous les canaux désactivés") : string.Join(" · ", canaux)));
                     }
                 case "exception":
                     {
@@ -254,9 +255,17 @@ namespace DeR4Tizer
         static string Visible(string s)
         {
             if (s == null) return "";
-            var b = new System.Text.StringBuilder(s.Length);
+            // Espaces de toute sorte (insécables, idéographiques…) ramenés à une seule espace simple, et texte borné : un
+            // remplissage ne repousse plus rien hors de l'écran (S58-05, S58-06 ; le service les refuse aussi)
+            var b = new System.Text.StringBuilder(Math.Min(s.Length, 4000));
+            bool espace = false;
             foreach (char ch in s)
+            {
+                if (char.IsWhiteSpace(ch) && ch != '\n') { if (!espace) b.Append(' '); espace = true; continue; }
+                espace = false;
                 b.Append(char.IsControl(ch) || char.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.Format ? '?' : ch);
+                if (b.Length >= 4000) { b.Append(" […]"); break; }
+            }
             return b.ToString();
         }
 

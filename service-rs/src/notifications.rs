@@ -106,6 +106,22 @@ pub fn adresse_https_simple(u: &str) -> bool {
         && port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Raison de refuser un champ texte rempli pour cacher une partie de la confirmation : espace autre que l'espace
+/// simple (insécable, idéographique, de largeur fixe…), plus de deux espaces à la suite, longueur au-delà de `max`
+/// octets
+pub fn remplissage(v: &str, max: usize) -> Option<String> {
+    if v.len() > max {
+        return Some(format!("trop long ({} caractères au plus)", max));
+    }
+    if v.chars().any(|c| c.is_whitespace() && c != ' ') || ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'].iter().any(|c| v.contains(*c)) {
+        return Some("seulement des espaces simples".into());
+    }
+    if v.contains("   ") {
+        return Some("trop d'espaces à la suite".into());
+    }
+    None
+}
+
 /// Caractère de contrôle (Cc) ou de mise en forme invisible (principaux Cf : sens d'écriture, largeur nulle, BOM)
 pub fn caractere_interdit(c: char) -> bool {
     c.is_control() || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
@@ -122,6 +138,12 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
                      ("destinataires", &nouvelle.destinataires), ("sécurité SMTP", &nouvelle.smtp_securite), ("niveau", &nouvelle.niveau_min)] {
         if v.chars().any(caractere_interdit) {
             return Err(format!("{nom} : caractère de contrôle ou de mise en forme refusé"));
+        }
+        // Remplissage (audit de sécurité S58-05) : la confirmation montrait l'adresse légitime suivie de blanc et
+        // repoussait hors de l'écran une adresse ajoutée. Espace simple seulement, jamais plus de deux à la suite,
+        // longueur bornée
+        if let Some(r) = remplissage(v, if nom == "destinataires" { 1000 } else { 254 }) {
+            return Err(format!("{nom} : {r}"));
         }
     }
     // Adresses ntfy et Teams : ASCII imprimable seulement (homoglyphes, caractères invisibles : audit de sécurité, C1)

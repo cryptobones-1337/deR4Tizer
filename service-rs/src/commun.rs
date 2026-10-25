@@ -248,8 +248,16 @@ pub fn reglages_invalides(n: &Config) -> Option<String> {
         || !["Info", "Alerte", "Critique"].contains(&s.niveau_min.as_str()) {
         return Some("protocole, format ou niveau syslog inconnu".into());
     }
-    if s.hote.len() > 253 || !s.hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':') {
+    // « : » seulement dans une adresse IPv6 valide : « 10.0.0.5:25 » s'affichait « 10.0.0.5:25:514 » (S58-07)
+    if s.hote.len() > 253 || !s.hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':')
+        || (s.hote.contains(':') && s.hote.parse::<std::net::Ipv6Addr>().is_err()) {
         return Some("serveur syslog : seulement un nom ou une adresse".into());
+    }
+    // Adresses autorisées de l'API (S58-06) : chiffres, « . », « / », « , », « ; » et espaces simples, longueur bornée
+    // (un remplissage d'espaces cachait à la confirmation un réseau ouvert au pare-feu)
+    let a = &n.api.adresses;
+    if a.len() > 1000 || !a.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'/' | b',' | b';' | b' ')) || a.contains("   ") {
+        return Some("adresses autorisées de l'API : adresses IPv4 ou réseaux, séparés par des virgules".into());
     }
     None
 }

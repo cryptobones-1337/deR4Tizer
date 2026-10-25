@@ -752,6 +752,34 @@ fn audit_reglages_champs_texte_fermes() {
 
 /// Relecture de #58 (D2) : chemins complets des commandes (ce que le service appelle), sur ce que l'interface envoie
 /// réellement (aucun refus) et sur les contournements (refus)
+/// Audit de sécurité S58-05, S58-06, S58-07 : champs remplis d'espaces (la confirmation en administrateur montrait
+/// l'adresse légitime suivie de blanc, et repoussait hors de l'écran une adresse ajoutée) et « : » dans l'hôte syslog
+#[test]
+fn audit_champs_sans_remplissage() {
+    use crate::commun::{lire_reglages, lire_syslog_test, ConfigNotifications};
+    use crate::notifications::{preparer, Secrets};
+    let actuelle = ConfigNotifications { smtp_serveur: "smtp.exemple.test".into(), smtp_utilisateur: "alertes".into(), ..Default::default() };
+    let essai = |n: &ConfigNotifications| { let mut s = Secrets::default(); preparer(&actuelle, n, &Secrets::default(), &mut s) };
+    // Ce que l'utilisateur tape d'ordinaire : accepté
+    assert!(essai(&ConfigNotifications { destinataires: "a@exemple.test, b@exemple.test;c@exemple.test".into(), ..actuelle.clone() }).is_ok());
+    // Remplissage : suites d'espaces, espaces non ASCII, longueur démesurée
+    let cache = format!("admin@legit.example{},x@attacker.example", " ".repeat(30_000));
+    for d in [cache.as_str(), "a@exemple.test\u{00A0}\u{00A0},x@attacker.example", "a@exemple.test\u{3000},x@attacker.example", "a@exemple.test    ,x@attacker.example"] {
+        assert!(essai(&ConfigNotifications { destinataires: d.into(), ..actuelle.clone() }).is_err(), "{:?}", &d[..d.len().min(40)]);
+    }
+    assert!(essai(&ConfigNotifications { destinataires: format!("{}@exemple.test", "a".repeat(1100)), ..actuelle.clone() }).is_err());
+    assert!(essai(&ConfigNotifications { expediteur: format!("a@exemple.test{}", "\u{2007}".repeat(5)), ..actuelle.clone() }).is_err());
+    // Adresses autorisées de l'API : chiffres, « . », « / », « , » et espaces simples seulement
+    let reglages = |adresses: &str| lire_reglages(&format!(r#"{{"Langue":"fr","Api":{{"Actif":true,"Port":8642,"Reseau":true,"Adresses":"{adresses}"}}}}"#));
+    assert!(reglages("192.168.1.10, 10.0.0.0/8").is_ok());
+    assert!(reglages(&format!("192.168.1.10{},203.0.113.0/24", " ".repeat(30_000))).is_err());
+    assert!(reglages("192.168.1.10\u{3000},203.0.113.0/24").is_err());
+    assert!(reglages(&"1.2.3.4,".repeat(200)).is_err(), "longueur bornée");
+    // Hôte syslog : « : » seulement dans une adresse IPv6 valide
+    assert!(lire_syslog_test(r#"{"Hote":"fd00::5","Port":514,"Protocole":"UDP"}"#).is_ok());
+    assert!(lire_syslog_test(r#"{"Hote":"10.0.0.5:25","Port":514,"Protocole":"UDP"}"#).is_err());
+}
+
 #[test]
 fn audit_reglages_commandes_completes() {
     use crate::commun::{lire_reglages, lire_syslog_test, Config};
