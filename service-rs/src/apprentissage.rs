@@ -104,6 +104,11 @@ pub fn signature(a: &Alerte) -> String {
     signature_avec(a, &editeur(&a.chemin))
 }
 
+#[cfg(test)]
+pub fn editeur_pour_test(chemin: &str) -> String {
+    editeur(chemin)
+}
+
 /// Signaux forts : jamais appris ni adoucis par l'apprentissage, même au niveau « Alerte »
 pub fn signal_fort(a: &Alerte) -> bool {
     let r = a.raisons.to_lowercase();
@@ -116,10 +121,12 @@ pub fn decider(niveau: &str, signature: &str, en_apprentissage: bool, appris: &B
     if niveau == "Critique" || niveau == "Info" {
         return None;
     }
-    if exceptions.iter().any(|e| e.signature == signature) {
+    // Exceptions et comportements appris : par empreinte (format actuel) ou par signature en clair (anciens fichiers)
+    let empreinte = commun::empreinte_signature(signature);
+    if exceptions.iter().any(|e| e.signature == signature || e.signature == empreinte) {
         return Some(("Info", " [exception enregistrée]", false));
     }
-    if appris.contains(signature) {
+    if appris.contains(signature) || appris.contains(&empreinte) {
         return Some(("Info", " [comportement appris]", false));
     }
     if en_apprentissage {
@@ -145,21 +152,46 @@ pub fn filtrer(a: &mut Alerte) {
         a.niveau = niveau.into();
         a.score = a.score.min(1);
         a.raisons.push_str(mention);
-        if memoriser && e.appris.len() < 5000 && e.appris.insert(sig) {
+        // Mémorisé par son empreinte : taille fixe, apprentissage.json borné (relecture de #72, R7)
+        if memoriser && e.appris.len() < 5000 && e.appris.insert(commun::empreinte_signature(&sig)) {
             let _ = commun::ecrire(FICHIER, &*e);
         }
     }
 }
 
-pub fn ajouter_exception(a: &Alerte) -> String {
+/// Signature visée par une exception posée depuis une alerte enregistrée (décision pure, testée ; audit de sécurité de
+/// #73) : son empreinte, si elle a la forme attendue (S73-02) ; sans empreinte, l'ancienne signature seulement si
+/// l'alerte est de niveau « Alerte » et qu'aucun champ de la signature n'a été borné (S73-01 : sinon, la signature du
+/// texte borné couvrirait un programme posé au chemin borné littéral, pas le programme légitime)
+pub fn cible_exception(a: &Alerte) -> Result<String, &'static str> {
+    if !a.signature.is_empty() {
+        let hex = a.signature.strip_prefix("sha256:").unwrap_or("");
+        return if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+            Ok(a.signature.clone())
+        } else {
+            Err("empreinte de l'alerte illisible")
+        };
+    }
+    if a.niveau == "Critique" || a.niveau == "Info" {
+        return Err("une exception ne s'applique qu'à une alerte de niveau « Alerte »");
+    }
+    let borne = [&a.chemin, &a.parent, &a.destination].iter().any(|s| s.contains(" … "))
+        || a.nom_dns.as_deref().is_some_and(|s| s.contains(" … "));
+    if borne {
+        return Err("alerte trop ancienne et tronquée : posez l'exception depuis une nouvelle alerte de ce comportement");
+    }
+    Ok(signature(a))
+}
+
+pub fn ajouter_exception(a: &Alerte) -> Result<String, String> {
+    let sig = cible_exception(a).map_err(|r| format!("Exception refusée : {r}."))?;
     let mut e = etat().lock().unwrap();
-    let sig = signature(a);
     let description = format!("{} — {} — {}", a.processus, a.destination, a.raisons.chars().take(120).collect::<String>());
     if !e.exceptions.iter().any(|x| x.signature == sig) {
         e.exceptions.push(Exception { signature: sig, description: description.clone(), date: commun::maintenant() });
         let _ = commun::ecrire(FICHIER, &*e);
     }
-    description
+    Ok(description)
 }
 
 /// « terminer », « recommencer » (7 jours, comportements appris oubliés) ou « oublier » (exceptions)

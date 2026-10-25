@@ -467,6 +467,17 @@ pub struct Alerte {
     /// Collecteur d'où vient l'alerte (état des collectes, PR 3.3)
     #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
     pub collecte: String,
+    /// Empreinte (« sha256:… ») du comportement, calculée sur le texte entier avant le bornage : c'est elle qu'une
+    /// exception posée depuis cette alerte vise (audit de sécurité de #72, S72-10)
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub signature: String,
+}
+
+/// Empreinte d'une signature de comportement (apprentissage, exceptions) : taille fixe, quel que soit le texte
+pub fn empreinte_signature(sig: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(sig.as_bytes());
+    format!("sha256:{}", h.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// Version actuelle du modèle d'événement des alertes
@@ -511,9 +522,13 @@ pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
-    borner(&mut a.conseil, MAX_CHEMIN_ALERTE);
-    for s in [&mut a.processus, &mut a.destination, &mut a.niveau, &mut a.heure, &mut a.id, &mut a.mitre, &mut a.regle, &mut a.collecte] {
+    for s in [&mut a.processus, &mut a.destination, &mut a.conseil] {
         borner(s, MAX_CHAMP_ALERTE);
+    }
+    // Champs posés par le code, courts par nature : bornes serrées, pour que la taille vaille dans le pire cas (S72-11)
+    for (s, max) in [(&mut a.mitre, 128), (&mut a.regle, 64), (&mut a.collecte, 64), (&mut a.niveau, 16), (&mut a.heure, 32),
+                     (&mut a.id, 64), (&mut a.signature, 80)] {
+        borner(s, max);
     }
     for o in [&mut a.ip, &mut a.nom_dns] {
         if let Some(s) = o {
