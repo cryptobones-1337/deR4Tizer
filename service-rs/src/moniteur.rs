@@ -724,6 +724,10 @@ impl Moniteur {
                     return false;
                 }
             }
+            // Table bornée : des clés venues du réseau (adresses usurpées) la faisaient grossir sans fin (audit AUD4-03)
+            if self.dernieres_alertes.len() >= 20_000 {
+                commun::purger_anciens(&mut self.dernieres_alertes, Duration::from_secs(24 * 3600), 10_000);
+            }
             self.dernieres_alertes.insert(cle, Instant::now());
         }
         commun::journal(&format!("{} : {} -> {}{} ({})", a.niveau, a.processus, a.destination,

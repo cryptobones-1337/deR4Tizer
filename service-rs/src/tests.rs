@@ -501,12 +501,28 @@ fn audit_notifications_secret_jamais_envoye_a_un_autre_serveur() {
     ] {
         assert_eq!(essai(&n, Secrets::default()).unwrap().smtp_mot_de_passe, "-", "{}:{} {}", n.smtp_serveur, n.smtp_port, n.smtp_utilisateur);
     }
+    // Sécurité SMTP changée (TLS vers « aucune ») sans nouveau mot de passe : effacé (il partirait en clair)
+    assert_eq!(essai(&ConfigNotifications { smtp_securite: "aucune".into(), ..actuelle.clone() }, Secrets::default()).unwrap().smtp_mot_de_passe, "-");
     // Nouveau mot de passe fourni avec le nouveau serveur : gardé
     let n = ConfigNotifications { smtp_serveur: "smtp2.exemple.test".into(), ..actuelle.clone() };
     assert_eq!(essai(&n, Secrets { smtp_mot_de_passe: "nouveau".into(), ..Default::default() }).unwrap().smtp_mot_de_passe, "nouveau");
     // Adresse ntfy changée sans nouveau jeton : jeton effacé ; même adresse : gardé
     assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.attaquant.test/b".into(), ..Default::default() }).unwrap().ntfy_jeton, "-");
     assert_eq!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() }).unwrap().ntfy_jeton, "");
+    // Adresses ntfy et Teams : homoglyphes, espaces et caractères invisibles refusés ; adresse ordinaire acceptée
+    for u in ["https://ntfy.\u{0455}h/sujet", "https://ntfy.sh/a b", "https://ntfy.sh/a\u{200B}", "https://ntfy.sh/a\r\nX: y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    assert!(essai(&actuelle, Secrets { ntfy_url: "https://ntfy.sh/mon-sujet".into(), ..Default::default() }).is_ok());
+    // Forme de l'adresse : compte, barre oblique inverse, autre schéma refusés ; port accepté ; « - » efface
+    for u in [r"https://ntfy.sh\@evil.test/sujet", "https://ntfy.sh@evil.test/sujet", "http://ntfy.sh/sujet", "https://:443/x", "https://ntfy.sh:44a/x", "ftp://x/y"] {
+        assert!(essai(&actuelle, Secrets { ntfy_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_err(), "{u:?}");
+    }
+    for u in ["https://ntfy.exemple.test:8443/a", "https://prod-01.westeurope.logic.azure.com/workflows/x?api-version=1", "-"] {
+        assert!(essai(&actuelle, Secrets { teams_url: u.into(), ..Default::default() }).is_ok(), "{u:?}");
+    }
     // Caractères de contrôle : refus (en-têtes ajoutés)
     for n in [
         ConfigNotifications { expediteur: "a@exemple.test\r\nBcc: x@attaquant.test".into(), ..actuelle.clone() },
@@ -600,6 +616,89 @@ fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
     }
 }
 
+/// Audit AUD4-04 : un appareil du réseau local qui répond à la découverte UPnP octet par octet bloquait le fil NDR
+/// (délai par lecture seulement). Échéance globale de la réponse.
+#[test]
+fn audit_upnp_reponse_goutte_a_goutte_bornee() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            for _ in 0..40 {
+                if c.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    });
+    let debut = Instant::now();
+    let r = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_secs(4), "réponse goutte à goutte : {:?}", debut.elapsed());
+    assert!(r.is_none(), "réponse incomplète à l'échéance : abandonnée");
+    let _ = serveur.join();
+    // Réponse qui finit juste avant l'échéance puis se tait : la dernière lecture ne dépasse pas l'échéance
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((mut c, _)) = ecoute.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\n");
+            std::thread::sleep(Duration::from_secs(6));
+        }
+    });
+    let debut = Instant::now();
+    let _ = crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", Duration::from_secs(2));
+    assert!(debut.elapsed() < Duration::from_millis(2800), "échéance dépassée par la dernière lecture : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    // Échéance nulle (passage UPnP épuisé) : rien n'est tenté
+    let debut = Instant::now();
+    assert!(crate::upnp::http_avec_echeance(adresse, "GET / HTTP/1.1\r\n\r\n", Duration::ZERO).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
+    assert!(crate::upnp::ECHEANCE_PASSAGE <= Duration::from_secs(30));
+    // Échéance du passage UPnP entier (relecture de #55, D2) : une requête du passage n'attend jamais au-delà de la fin
+    // du passage, même si l'échéance d'une réponse (10 s) est plus loin ; fin dépassée : rien n'est tenté
+    let ecoute = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let adresse = ecoute.local_addr().unwrap();
+    let serveur = std::thread::spawn(move || {
+        if let Ok((c, _)) = ecoute.accept() {
+            std::thread::sleep(Duration::from_secs(4));
+            drop(c);
+        }
+    });
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now() + Duration::from_millis(500)).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(1500), "fin du passage ignorée : {:?}", debut.elapsed());
+    let _ = serveur.join();
+    let debut = Instant::now();
+    assert!(crate::upnp::http_test(adresse, "GET / HTTP/1.1\r\n\r\n", Instant::now()).is_none());
+    assert!(debut.elapsed() < Duration::from_millis(100));
+}
+
+/// Audit AUD4-02, AUD4-03 : tables de déduplication alimentées par des adresses du réseau, jamais purgées
+#[test]
+fn audit_tables_de_deduplication_bornees() {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    let mut m: HashMap<u32, Instant> = HashMap::new();
+    let maintenant = Instant::now();
+    for i in 0..100u32 {
+        m.insert(i, maintenant.checked_sub(Duration::from_secs(u64::from(i) * 60)).unwrap_or(maintenant));
+    }
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(30 * 60 + 30), 1000);
+    assert_eq!(m.len(), 31, "entrées de plus de 30 min retirées");
+    crate::commun::purger_anciens(&mut m, Duration::from_secs(86400), 10);
+    assert_eq!(m.len(), 10, "au-delà du maximum, les plus anciennes retirées");
+    assert!(m.contains_key(&0) && !m.contains_key(&30), "les plus récentes gardées");
+}
+
 #[test]
 fn n1_upnp_sans_panique_sur_utf8_coupe() {
     // Cas reproduit par la revue : bloc de 2 octets invalides en UTF-8
@@ -615,6 +714,10 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     });
     assert!(crate::upnp::decouper_url_test("http://192.168.1.254:5000/desc.xml").is_some());
     assert!(crate::upnp::decouper_url_test("http://203.0.113.9/desc.xml").is_none(), "jamais de requête vers Internet");
+    // Chemin avec retour à la ligne ou espace (en-têtes ajoutés à la requête) : refusé
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/d.xml\r\nX-Injecte: 1").is_none());
+    assert!(crate::upnp::decouper_url_test("http://192.168.1.1/a b").is_none());
+    assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
 #[test]

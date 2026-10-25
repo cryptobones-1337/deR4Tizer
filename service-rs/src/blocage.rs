@@ -163,7 +163,8 @@ pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
         }
         // Nom unique : deux écritures dans la même seconde ne s'écrasent pas
         let horodatage = commun::maintenant().replace([':', ' '], "-");
-        let mut nom = sauvegardes.join(format!("hosts-{horodatage}.bak"));
+        // Suffixe toujours présent (-00, -01…) : l'ordre alphabétique reste l'ordre chronologique dans une même seconde
+        let mut nom = sauvegardes.join(format!("hosts-{horodatage}-00.bak"));
         let mut n = 1;
         while nom.exists() {
             nom = sauvegardes.join(format!("hosts-{horodatage}-{n:02}.bak"));

@@ -467,9 +467,12 @@ impl LecteurJournal {
                 e.programme = programme.clone();
             }
             modifie = true;
-            // Une alerte par source, port et action toutes les 24 h
+            // Une alerte par source, port et action toutes les 24 h ; table bornée (sources usurpées)
             if self.alertees.get(&cle).map(|t| t.elapsed() < Duration::from_secs(86400)).unwrap_or(false) {
                 continue;
+            }
+            if self.alertees.len() >= 20_000 {
+                commun::purger_anciens(&mut self.alertees, Duration::from_secs(86400), 10_000);
             }
             self.alertees.insert(cle, Instant::now());
             let accepte = action == "ACCEPTÉ";

@@ -81,6 +81,18 @@ pub fn lire_secrets() -> Secrets {
         .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+/// https://hôte[:port][/chemin] : hôte en lettres, chiffres, « . » et « - », port numérique
+pub fn adresse_https_simple(u: &str) -> bool {
+    let Some(reste) = u.strip_prefix("https://") else { return false };
+    let autorite = reste.split(['/', '?', '#']).next().unwrap_or("");
+    let (hote, port) = match autorite.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (autorite, None),
+    };
+    !hote.is_empty() && hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        && port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Caractère de contrôle (Cc) ou de mise en forme invisible (principaux Cf : sens d'écriture, largeur nulle, BOM)
 pub fn caractere_interdit(c: char) -> bool {
     c.is_control() || matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
@@ -90,7 +102,7 @@ pub fn caractere_interdit(c: char) -> bool {
 /// Avant d'enregistrer de nouveaux réglages de remontée (décision pure, audit AUD6-02 et AUD3-07) :
 /// - aucun caractère de contrôle ni de mise en forme invisible dans les champs du courriel (sinon ajout d'en-têtes ou
 ///   de destinataires, ou adresse affichée à l'envers dans la confirmation : U+202E…) ;
-/// - serveur, port ou compte SMTP changé sans nouveau mot de passe : l'ancien est effacé, jamais envoyé au nouveau
+/// - serveur, port, compte ou sécurité SMTP changé sans nouveau mot de passe : l'ancien est effacé, jamais envoyé au nouveau
 ///   serveur ; de même, jeton ntfy effacé si l'adresse ntfy change sans nouveau jeton.
 pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, actuels: &Secrets, s: &mut Secrets) -> Result<(), String> {
     for (nom, v) in [("serveur SMTP", &nouvelle.smtp_serveur), ("compte SMTP", &nouvelle.smtp_utilisateur), ("expéditeur", &nouvelle.expediteur),
@@ -99,8 +111,23 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
             return Err(format!("{nom} : caractère de contrôle ou de mise en forme refusé"));
         }
     }
+    // Adresses ntfy et Teams : ASCII imprimable seulement (homoglyphes, caractères invisibles : audit de sécurité, C1)
+    for (nom, v) in [("adresse ntfy", &s.ntfy_url), ("adresse Teams", &s.teams_url)] {
+        if v.chars().any(|c| !c.is_ascii_graphic()) {
+            return Err(format!("{nom} : seulement des caractères ASCII visibles"));
+        }
+        // Forme https://hôte[:port]/chemin : ni compte (« @ »), ni barre oblique inverse, ni autre caractère dans l'hôte.
+        // Une adresse que l'interface ne sait pas lire s'affichait « ? » à la confirmation, et curl pouvait y voir un
+        // autre hôte (relecture de #55)
+        let v = v.trim();
+        if !v.is_empty() && v != "-" && !adresse_https_simple(v) {
+            return Err(format!("{nom} : adresse attendue de la forme https://hôte/chemin"));
+        }
+    }
     let compte_change = nouvelle.smtp_serveur.trim() != actuelle.smtp_serveur.trim() || nouvelle.smtp_port != actuelle.smtp_port
-        || nouvelle.smtp_utilisateur.trim() != actuelle.smtp_utilisateur.trim();
+        || nouvelle.smtp_utilisateur.trim() != actuelle.smtp_utilisateur.trim()
+        // Sécurité changée (TLS vers « aucune ») : le mot de passe partirait en clair (relecture de #52)
+        || nouvelle.smtp_securite.trim() != actuelle.smtp_securite.trim();
     if compte_change && s.smtp_mot_de_passe.trim().is_empty() {
         s.smtp_mot_de_passe = "-".into();
     }

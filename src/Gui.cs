@@ -197,14 +197,14 @@ namespace DeR4Tizer
                         if (d.TryGetValue("NtfyJeton", out o) && o is string && ((string)o).Length > 0)
                             canaux.Add((en ? "ntfy token " : "jeton ntfy ") + (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau")));
                         // Tout ce qui sera appliqué est affiché (audit, AUD6-02) : serveur, port, sécurité, compte, expéditeur
-                        // et mot de passe (nouveau, effacé ou inchangé) ; un serveur changé sans nouveau mot de passe efface
+                        // et mot de passe (nouveau, effacé ou inchangé) ; un serveur, un port, un compte ou une sécurité changés sans nouveau mot de passe effacent
                         // l'ancien côté service, jamais envoyé à un autre serveur
                         Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? conf[k].ToString() : "";
                         if (actif("Smtp"))
                         {
                             string mdp = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
                                 ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau"))
-                                : (en ? "unchanged (cleared if the server or account changes)" : "inchangé (effacé si le serveur ou le compte change)");
+                                : (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
                             canaux.Add((en ? "e-mail to " : "e-mail à ") + champ("Destinataires") + (en ? " via " : " par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
                                 + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
                                 + (en ? ", password " : ", mot de passe ") + mdp + ")");
@@ -239,11 +239,13 @@ namespace DeR4Tizer
             }
         }
 
-        // Nom d'hôte d'une adresse web, sans le chemin (qui peut être secret)
+        // Adresse web entière, en ASCII (IdnHost : un hôte en homoglyphes reste visible) : l'hôte seul ne suffisait pas
+        // (audit de sécurité de #52, C1) : « https://ntfy.sh/sujet-d-un-attaquant » s'affichait « ntfy.sh », comme le
+        // réglage légitime, et les alertes partaient chez l'attaquant. La confirmation est vue par l'administrateur seul.
         static string Hote(string url)
         {
             Uri u;
-            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Host : "?";
+            return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Scheme + "://" + u.IdnHost + (u.IsDefaultPort ? "" : ":" + u.Port) + u.PathAndQuery : "?";
         }
 
         public static void Afficher(Reponse r)
