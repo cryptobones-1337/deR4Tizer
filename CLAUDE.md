@@ -4,7 +4,7 @@ Ce fichier cadre tout le travail de Claude Code sur ce dépôt. Il prime sur tou
 
 ## 1. Mission
 
-deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. Les seuls autres flux sortants vers des tiers sont ceux d'une fonctionnalité que l'utilisateur active lui-même et qui les annonce (phase 7, section 5).
+deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. En dehors des téléchargements déjà documentés (listes de menaces, JA3, GeoIP, LOLDrivers, mise à jour) et des alertes, aucune donnée de l'utilisateur ne part vers un tiers, sauf par une fonctionnalité qu'il active lui-même et qui l'annonce (phase 7, section 5).
 
 Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise. Une capacité n'existe que si elle est démontrée par des tests reproductibles. Le code qui compile ne prouve rien.
 
@@ -250,13 +250,15 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
      si l'utilisateur le choisit, et il est nommé dans l'interface.
    - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas.
-   Demandées aussi par le mainteneur, pas encore ouvertes (chacune attend sa propre phase, ouverte par écrit) :
+   Demandées aussi par le mainteneur, pas encore ouvertes (chacune attend sa propre phase, ouverte par écrit, et une
+   exception écrite dans la section 2, règle 1) :
    configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques), dont le mode ne changerait que
    l'affichage, jamais les droits ni la validation du service ; surveillance des fuites de données pour des adresses
    de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (« ok to rely on third party as long
    as it's free », 2026-10-25 : sans service gratuit qui convienne, la fonctionnalité n'est pas faite), jamais par la
    lecture de fichiers de données volées, propriété de l'adresse vérifiée par le service tiers ou par un code envoyé à
-   l'adresse (à trancher dans le dossier), adresse jamais journalisée.
+   l'adresse (à trancher dans le dossier, qui nomme alors le serveur d'envoi), adresse jamais journalisée ni envoyée
+   ailleurs qu'à ce service (et au serveur d'envoi du code, s'il est retenu), désactivée par défaut.
 
 L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
 
