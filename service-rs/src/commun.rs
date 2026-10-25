@@ -228,23 +228,47 @@ pub fn lire_reglages(texte: &str) -> Result<Config, String> {
     }
 }
 
-/// Lecture d'une commande « majConfig » (décision pure, testée ; audit de sécurité de #67) : clé ambiguë refusée
-/// (S67-01, comme les réglages), adresse du manifeste vide ou https:// en ASCII imprimable sans espace, 600 caractères
-/// au plus (S67-02 : un hôte en homoglyphes ou un caractère invisible pouvait passer pour l'adresse habituelle)
+/// Lecture d'une commande « majConfig » (décision pure, testée ; audits de sécurité de #67 et #68) : objet JSON
+/// seulement (S68-04), clé ambiguë refusée (S67-01, comme les réglages), adresse du manifeste de forme simple
+/// (`adresse_manifeste_simple`) ; adresse vide remplacée par l'adresse par défaut (S68-02 : vide, elle coupait la
+/// vérification des mises à jour sans que la confirmation le dise)
 pub fn lire_config_maj(texte: &str) -> Result<ConfigMaj, String> {
+    if !texte.trim_start().starts_with('{') {
+        return Err("réglages de mise à jour illisibles".into());
+    }
     if let Some(k) = cle_ambigue(texte, &serde_json::to_value(ConfigMaj::default()).unwrap_or_default()) {
         return Err(raison_refus("réglages de mise à jour refusés", &k));
     }
-    let m: ConfigMaj = serde_json::from_str(texte).map_err(|_| "réglages de mise à jour illisibles".to_string())?;
-    if !m.url.is_empty() {
-        if !m.url.starts_with("https://") {
-            return Err("L'adresse du manifeste doit commencer par https://".into());
-        }
-        if m.url.len() > 600 || !m.url.bytes().all(|b| b.is_ascii_graphic()) {
-            return Err("adresse du manifeste refusée : caractères ASCII visibles seulement, sans espace, 600 au plus".into());
-        }
+    let mut m: ConfigMaj = serde_json::from_str(texte).map_err(|_| "réglages de mise à jour illisibles".to_string())?;
+    if m.url.is_empty() {
+        m.url = ConfigMaj::default().url;
+    }
+    if !adresse_manifeste_simple(&m.url) {
+        return Err("adresse du manifeste refusée : https://hôte[:port]/chemin, lettres, chiffres, « . », « - », « _ », « ~ » et « / » seulement, sans segment « . » ni « .. », 600 caractères au plus".into());
     }
     Ok(m)
+}
+
+/// Adresse du manifeste lisible telle qu'elle sera suivie : https://hôte[:port]/chemin ; hôte en lettres, chiffres,
+/// « . » et « - » (S67-02 : pas d'homoglyphe) ; port de 1 à 65535 ; chemin non vide en lettres, chiffres, « . », « - »,
+/// « _ », « ~ » et « / », sans segment « . » ni « .. » (S68-01 : ni « ../ » derrière le début habituel, ni « @ », ni
+/// « % », ni « \ ») ; ni « [ ] { } » (S68-03 : motifs de curl) ; 600 caractères au plus
+pub fn adresse_manifeste_simple(url: &str) -> bool {
+    let Some(reste) = url.strip_prefix("https://") else { return false };
+    if url.len() > 600 {
+        return false;
+    }
+    let Some((autorite, chemin)) = reste.split_once('/') else { return false };
+    let (hote, port) = match autorite.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (autorite, None),
+    };
+    let hote_ok = !hote.is_empty() && hote.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+    let port_ok = port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()) && matches!(p.parse::<u32>(), Ok(1..=65535)));
+    let chemin_ok = !chemin.is_empty()
+        && chemin.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-~/".contains(&b))
+        && chemin.split('/').all(|s| s != "." && s != "..");
+    hote_ok && port_ok && chemin_ok
 }
 
 /// Lecture d'une commande « testerSyslog » (décision pure, testée) : mêmes contrôles que les réglages

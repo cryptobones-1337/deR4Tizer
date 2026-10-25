@@ -852,9 +852,6 @@ fn audit_reglages_commandes_completes() {
     assert!(controler_demande(r#"{"NtfyUrl":"https://ntfy.sh/a","X":"\uD800"}"#).is_err());
 }
 
-/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
-/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
-/// passe
 #[test]
 fn audit67_maj_config_cle_ambigue_et_adresse_ascii() {
     // Audit de sécurité de #67 : S67-01, une clé qui ne diffère que par la casse faisait afficher une adresse (lecture
@@ -863,12 +860,22 @@ fn audit67_maj_config_cle_ambigue_et_adresse_ascii() {
     use crate::commun::lire_config_maj;
     let m = lire_config_maj(r#"{"Auto":true,"Url":"https://exemple.test/manifeste.json"}"#).unwrap();
     assert!(m.auto && m.url == "https://exemple.test/manifeste.json");
-    assert!(lire_config_maj(r#"{"Auto":false,"Url":""}"#).is_ok(), "adresse vide : manifeste par défaut");
+    // Adresse vide : remplacée par l'adresse par défaut (S68-02 : vide, elle coupait la vérification sans le dire)
+    assert_eq!(lire_config_maj(r#"{"Auto":false,"Url":""}"#).unwrap().url, crate::commun::ConfigMaj::default().url);
+    assert!(lire_config_maj(&serde_json::to_string(&crate::commun::ConfigMaj::default()).unwrap()).is_ok(), "manifeste par défaut");
+    assert!(lire_config_maj(r#"{"Auto":true,"Url":"https://localhost:8443/d/r/latest/download/manifeste.json"}"#).is_ok(), "adresse du scénario 3c");
     let casse = r#"{"Auto":true,"Url":"https://attaquant.test/m.json","auto":false,"url":"https://exemple.test/manifeste.json"}"#;
     assert!(serde_json::from_str::<crate::commun::ConfigMaj>(casse).is_ok(), "témoin : serde lit ce texte");
     assert!(lire_config_maj(casse).is_err(), "clé ambiguë acceptée");
     for mauvaise in ["https://git\\u0570ub.com/m.json", "https://exemple.test/a b", "https://exemple.test/\\u202Ex",
-                     "http://exemple.test/m.json", "https://exemple.test/\\r\\nx"] {
+                     "http://exemple.test/m.json", "https://exemple.test/\\r\\nx",
+                     // S68-01 : ASCII lisible, mais qui commence comme l'adresse habituelle et mène ailleurs
+                     "https://github.com/c/d/releases/latest/download/manifeste.json/../../../../attaquant/m.json",
+                     "https://github.com@attaquant.test/m.json", "https://exemple.test/a/%2e%2e/m.json",
+                     "https://exemple.test/./m.json", "https://exemple.test\\\\@attaquant.test/m.json",
+                     // S68-03 : motifs de curl ([1-99999999], {a,b}) ; hôte ou chemin absents
+                     "https://attaquant.test/[1-99999999]", "https://attaquant.test/{a,b}", "https://", "https:///m.json",
+                     "https://exemple.test", "https://exemple.test:/m.json", "https://exemple.test:99999/m.json"] {
         let t = format!(r#"{{"Auto":false,"Url":"{mauvaise}"}}"#);
         assert!(serde_json::from_str::<crate::commun::ConfigMaj>(&t).is_ok(), "témoin : {mauvaise}");
         assert!(lire_config_maj(&t).is_err(), "adresse acceptée : {mauvaise}");
@@ -876,8 +883,14 @@ fn audit67_maj_config_cle_ambigue_et_adresse_ascii() {
     let longue = format!(r#"{{"Url":"https://exemple.test/{}"}}"#, "a".repeat(600));
     assert!(lire_config_maj(&longue).is_err(), "adresse démesurée acceptée");
     assert!(lire_config_maj("pas du json").is_err());
+    // S68-04 : serde lit une structure depuis un tableau ; seul un objet est accepté
+    assert!(serde_json::from_str::<crate::commun::ConfigMaj>(r#"[true,"https://attaquant.test/m.json"]"#).is_ok(), "témoin : tableau lu par serde");
+    assert!(lire_config_maj(r#"[true,"https://attaquant.test/m.json"]"#).is_err(), "tableau accepté");
 }
 
+/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
+/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
+/// passe
 #[test]
 fn audit_reglages_cle_ambigue_refusee() {
     use crate::commun::{cle_ambigue, Config};
