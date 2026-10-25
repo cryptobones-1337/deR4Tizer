@@ -57,7 +57,58 @@ try {
         }
     }
     "bilan : $ko cas non neutralisé(s) sur $n"
-    if ($ko) { exit 1 }
+
+    # Fenêtre de confirmation (S60-06/07) : texte entier, renvoi à la ligne, défilement, « Annuler » par défaut ; fin de
+    # l'hôte à part ; adresse de mise à jour vide présentée comme l'adresse par défaut (S68b-02). Construite, jamais affichée
+    Add-Type -AssemblyName System.Windows.Forms
+    $langue.GetField('En').SetValue($null, $false)
+    $kof = 0
+    function Verifier-Fenetre([string]$nom, [scriptblock]$controle) {
+        $r = try { & $controle } catch { "exception : $($_.Exception.Message)" }
+        if ($r -eq $true) { "$nom : ok" } else { $script:kof++; "$nom : ÉCHEC ($r)" }
+    }
+    # Hôte d'un seul tenant d'environ 250 caractères (labels de 60, sous la limite DNS de 63)
+    $long = 'https://' + ((('a' * 60) + '.') * 4) + 'attaquant.test/sujet'
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'notifications'
+    $c.Valeur = '{"Config":{"Ntfy":true},"NtfyUrl":"' + $long + '"}'
+    $texte = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'notifications : fin de l''hôte à part' { if ($texte -match "`n\s+l'hôte se termine par : attaquant\.test(`n|$)") { $true } else { $texte } }
+    $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @($texte, $false))
+    try {
+        $zone = $f.Controls.Find('Texte', $true)[0]; $annuler = $f.Controls.Find('Annuler', $true)[0]; $continuer = $f.Controls.Find('Continuer', $true)[0]
+        Verifier-Fenetre 'fenêtre : texte entier, sans troncature' { $zone.Text.Replace("`r`n", "`n").EndsWith($texte) -and $zone.Text.Contains(((('a' * 60) + '.') * 4) + 'attaquant.test') }
+        Verifier-Fenetre 'fenêtre : renvoi à la ligne et défilement, lecture seule' { $zone.Multiline -and $zone.WordWrap -and $zone.ReadOnly -and $zone.ScrollBars -eq 'Vertical' }
+        Verifier-Fenetre 'fenêtre : « Annuler » par défaut (Entrée, Échap)' { $f.AcceptButton -eq $annuler -and $f.CancelButton -eq $annuler -and $f.ActiveControl -eq $annuler -and $annuler.DialogResult -eq 'Cancel' }
+        Verifier-Fenetre 'fenêtre : « Continuer » seul renvoie Oui' { $continuer.DialogResult -eq 'Yes' }
+        Verifier-Fenetre 'fenêtre : « Continuer » désarmé à l''ouverture (armé 1 s après l''affichage)' { -not $continuer.Enabled }
+    } finally { $f.Dispose() }
+    # Armement réel (fenêtre montrée hors de l'écran, jamais à l'emplacement visible) : inactif à l'affichage, actif après
+    # 1 s, désarmé quand une autre fenêtre prend le premier plan, réarmé 1 s après le retour (S69-02, S69-03)
+    $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @('essai', $false))
+    $autre = New-Object Windows.Forms.Form
+    try {
+        $f.StartPosition = 'Manual'; $f.Location = New-Object Drawing.Point(-4000, -4000); $f.ShowInTaskbar = $false
+        $autre.StartPosition = 'Manual'; $autre.Location = New-Object Drawing.Point(-4000, -3000); $autre.ShowInTaskbar = $false
+        $k = $f.Controls.Find('Continuer', $true)[0]
+        function Attendre([int]$ms) { $fin = [DateTime]::UtcNow.AddMilliseconds($ms); while ([DateTime]::UtcNow -lt $fin) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 20 } }
+        $f.Show(); Attendre 150; $a0 = $k.Enabled; Attendre 1400; $a1 = $k.Enabled
+        $autre.Show(); $autre.Activate(); Attendre 300; $a2 = $k.Enabled; Attendre 1300; $a3 = $k.Enabled
+        $f.Activate(); Attendre 200; $a4 = $k.Enabled; Attendre 1400; $a5 = $k.Enabled
+        Verifier-Fenetre 'armement : inactif à l''affichage, actif après 1 s' { if (-not $a0 -and $a1) { $true } else { "0,15 s : $a0 ; 1,55 s : $a1" } }
+        Verifier-Fenetre 'armement : désarmé hors du premier plan, réarmé 1 s après le retour' { if (-not $a2 -and -not $a3 -and -not $a4 -and $a5) { $true } else { "perte : $a2/$a3 ; retour : $a4/$a5" } }
+    } finally { $autre.Dispose(); $f.Dispose() }
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'majConfig'; $c.Valeur = '{"Auto":false,"Url":""}'
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'majConfig : adresse vide = adresse par défaut, affichée' { $t -match 'adresse par défaut https://github\.com/' }
+    $c.Valeur = '{"Auto":true,"Url":"https://attaquant.test/m.json"}'
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'majConfig : autre adresse signalée' { $t -match 'ADRESSE MODIFIÉE https://attaquant\.test/m\.json' -and $t -match "l'hôte se termine par : attaquant\.test" }
+    # Signes combinants (S69-04) : remplacés, ils ne s'empilent plus sur les lignes voisines
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'quarantaine'; $c.Cible = 'C:\x\a' + ([string][char]0x0489 * 50) + ([string][char]0x0301 * 50)
+    $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'signes combinants neutralisés' { -not ($t.ToCharArray() | Where-Object { [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -in 'NonSpacingMark', 'EnclosingMark' }) }
+    "bilan fenêtre : $kof échec(s)"
+    if ($ko -or $kof) { exit 1 }
 } finally {
     Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
 }

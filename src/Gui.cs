@@ -201,7 +201,8 @@ namespace DeR4Tizer
                         object o;
                         var conf = d.TryGetValue("Config", out o) ? o as Dictionary<string, object> : null;
                         Func<string, bool> actif = k => conf != null && conf.ContainsKey(k) && conf[k] is bool && (bool)conf[k];
-                        Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Visible(Hote((string)o))) : "";
+                        // Adresse entière, puis la fin de son hôte à part (S60-06/07 : un hôte d'un seul tenant pouvait cacher sa fin)
+                        Func<string, string> secret = k => d.TryGetValue(k, out o) && o is string && ((string)o).Length > 0 ? (((string)o) == "-" ? (en ? " (cleared)" : " (effacée)") : " → " + Visible(Hote((string)o)) + FinHoteLigne((string)o, en)) : "";
                         if (actif("Ntfy")) canaux.Add("ntfy" + secret("NtfyUrl"));
                         if (actif("Teams")) canaux.Add("Teams" + secret("TeamsUrl"));
                         // Canal désactivé dont l'adresse change quand même, et jeton ntfy : affichés aussi
@@ -243,7 +244,10 @@ namespace DeR4Tizer
                 case "majConfig":
                     {
                         var m = Commun.Json().Deserialize<ConfigMaj>(v) ?? new ConfigMaj();
-                        return (en ? "Update settings — automatic installation: " : "Réglages de mise à jour — installation automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non")) + " · " + Visible(m.Url);
+                        // Adresse vide : le service applique l'adresse par défaut (S68b-02) ; une autre adresse est signalée
+                        string defaut = new ConfigMaj().Url, url = string.IsNullOrEmpty(m.Url) ? defaut : m.Url;
+                        return (en ? "Update settings\n  • automatic installation: " : "Réglages de mise à jour\n  • installation automatique : ") + (m.Auto ? (en ? "yes" : "oui") : (en ? "no" : "non"))
+                            + (en ? "\n  • manifest: " : "\n  • manifeste : ") + (url == defaut ? (en ? "default address " : "adresse par défaut ") : (en ? "MODIFIED ADDRESS " : "ADRESSE MODIFIÉE ")) + Visible(url) + FinHoteLigne(url, en);
                     }
                 case "autoriserLecteur":
                     {
@@ -269,7 +273,10 @@ namespace DeR4Tizer
             {
                 if (char.IsWhiteSpace(ch) && ch != '\n') { if (!espace) b.Append(' '); espace = true; continue; }
                 espace = false;
-                b.Append(char.IsControl(ch) || char.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.Format ? '?' : ch);
+                // Signes combinants (Mn, Me) aussi : empilés, ils débordaient sur les lignes voisines (audit de #69, S69-04)
+                var cat = char.GetUnicodeCategory(ch);
+                b.Append(char.IsControl(ch) || cat == System.Globalization.UnicodeCategory.Format || cat == System.Globalization.UnicodeCategory.NonSpacingMark
+                    || cat == System.Globalization.UnicodeCategory.EnclosingMark ? '?' : ch);
             }
             return b.ToString();
         }
@@ -289,6 +296,53 @@ namespace DeR4Tizer
         {
             Uri u;
             return Uri.TryCreate(url, UriKind.Absolute, out u) ? u.Scheme + "://" + u.IdnHost + (u.IsDefaultPort ? "" : ":" + u.Port) + u.PathAndQuery : "?";
+        }
+
+        // Fin de l'hôte d'une adresse, sur sa propre ligne : adresse IP entière, sinon ses deux derniers niveaux (approximation
+        // du domaine enregistrable, sans liste des suffixes publics : « exemple.co.uk » donne « co.uk »)
+        static string FinHoteLigne(string url, bool en)
+        {
+            Uri u;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out u)) return "";
+            string h = u.IdnHost.TrimEnd('.');
+            if (u.HostNameType != UriHostNameType.Dns) return (en ? "\n      host: " : "\n      hôte : ") + Visible(h);
+            var n = h.Split('.');
+            return (en ? "\n      host ends with: " : "\n      l'hôte se termine par : ") + Visible(n.Length <= 2 ? h : n[n.Length - 2] + "." + n[n.Length - 1]);
+        }
+
+        // Fenêtre de confirmation de l'assistant élevé (S60-06/07) : texte entier, renvoyé à la ligne même au milieu d'un mot
+        // d'un seul tenant, avec défilement ; rien ne sort de l'écran. « Annuler » par défaut (Entrée, Échap, fermeture)
+        public static Form FenetreConfirmation(string texte, bool en)
+        {
+            var f = new Form
+            {
+                Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", StartPosition = FormStartPosition.CenterScreen,
+                FormBorderStyle = FormBorderStyle.Sizable, MinimizeBox = false, MaximizeBox = true, ShowInTaskbar = true, TopMost = true,
+                ClientSize = new Size(640, 420), MinimumSize = new Size(420, 300), Font = SystemFonts.MessageBoxFont
+            };
+            var zone = new TextBox
+            {
+                Name = "Texte", Multiline = true, ReadOnly = true, WordWrap = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
+                TabStop = false, BackColor = SystemColors.Window,
+                Text = ((en ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + texte).Replace("\n", "\r\n")
+            };
+            var bas = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Padding = new Padding(8) };
+            var annuler = new Button { Name = "Annuler", Text = en ? "Cancel" : "Annuler", DialogResult = DialogResult.Cancel, AutoSize = true };
+            var continuer = new Button { Name = "Continuer", Text = en ? "Continue" : "Continuer", DialogResult = DialogResult.Yes, AutoSize = true };
+            bas.Controls.Add(annuler); bas.Controls.Add(continuer);
+            f.Controls.Add(zone); f.Controls.Add(bas);
+            f.AcceptButton = annuler; f.CancelButton = annuler;
+            // « Continuer » armé une seconde après l'affichage, et de nouveau après chaque retour au premier plan : un clic
+            // préparé ou une fenêtre posée par-dessus juste avant ne tombe pas sur lui (audit de #69, S69-02, S69-03)
+            continuer.Enabled = false;
+            var armement = new System.Windows.Forms.Timer { Interval = 1000 };
+            armement.Tick += (s, e) => { armement.Stop(); continuer.Enabled = true; };
+            f.Activated += (s, e) => { continuer.Enabled = false; armement.Stop(); armement.Start(); };
+            f.Deactivate += (s, e) => { continuer.Enabled = false; armement.Stop(); };
+            f.FormClosed += (s, e) => armement.Dispose();
+            f.Shown += (s, e) => { annuler.Focus(); zone.SelectionLength = 0; };
+            f.ActiveControl = annuler;
+            return f;
         }
 
         public static void Afficher(Reponse r)
@@ -1513,9 +1567,8 @@ namespace DeR4Tizer
                     MessageBox.Show(L.En ? "Command refused: its confirmation would be too long to be read in full." : "Commande refusée : sa confirmation serait trop longue pour être lue en entier.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 1;
                 }
-                if (MessageBox.Show((L.En ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + texte
-                        + (L.En ? "\n\nContinue?" : "\n\nContinuer ?"), "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
-                    return 1;
+                using (var fenetre = Canal.FenetreConfirmation(texte, L.En))
+                    if (fenetre.ShowDialog() != DialogResult.Yes) return 1;
                 var r = Canal.Envoyer(c);
                 Canal.Afficher(r);
                 return r.Ok ? 0 : 1;
