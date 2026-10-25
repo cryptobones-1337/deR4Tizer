@@ -173,11 +173,21 @@ namespace DeR4Tizer
                 case "reglages":
                     {
                         var r = Commun.Json().Deserialize<Config>(v) ?? new Config();
-                        string api = r.Api != null && r.Api.Actif ? (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
-                        string sys = r.Syslog != null && r.Syslog.Actif ? r.Syslog.Hote + ":" + r.Syslog.Port : (en ? "off" : "désactivé");
-                        return (en ? "Change settings — language: " : "Modifier les réglages — langue : ") + r.Langue + " · syslog : " + sys + " · API : " + api;
+                        // Tout ce qui est appliqué est affiché, port de l'API et protocole syslog compris (audit AUD6-04)
+                        string api = r.Api != null && r.Api.Actif ? "port " + r.Api.Port + ", " + (r.Api.Reseau ? (en ? "network, allowed: " : "réseau, autorisé : ") + r.Api.Adresses : (en ? "this computer only" : "cet ordinateur seulement")) : (en ? "off" : "désactivée");
+                        // Syslog désactivé : sa destination reste en configuration (et sert au message de test), elle est donc
+                        // affichée aussi (audit de sécurité S58-03) ; texte affiché sans caractère de contrôle ni de mise en
+                        // forme (S58-02 : un texte long ou inversé pouvait cacher le vrai contenu)
+                        string dest = r.Syslog == null ? "" : r.Syslog.Hote + ":" + r.Syslog.Port + " (" + r.Syslog.Protocole + ", " + r.Syslog.Format + ", minimum " + r.Syslog.NiveauMin + ")";
+                        string sys = r.Syslog != null && r.Syslog.Actif ? dest : (en ? "off" : "désactivé") + (r.Syslog != null && !string.IsNullOrEmpty(r.Syslog.Hote) ? " (" + dest + ")" : "");
+                        return Visible((en ? "Change settings — language: " : "Modifier les réglages — langue : ") + r.Langue + " · syslog : " + sys + " · API : " + api);
                     }
-                case "testerSyslog": return en ? "Send a syslog test message" : "Envoyer un message syslog de test";
+                case "testerSyslog":
+                    {
+                        var s = Commun.Json().Deserialize<ConfigSyslog>(v);
+                        return Visible((en ? "Send a syslog test message to " : "Envoyer un message syslog de test à ")
+                            + (s == null ? (en ? "the configured server" : "le serveur configuré") : s.Hote + ":" + s.Port + " (" + s.Protocole + ")"));
+                    }
                 case "jetonApi": return en ? "Show the export API token" : "Afficher le jeton de l'API d'export";
                 case "nouveauJeton": return en ? "REPLACE the export API token" : "REMPLACER le jeton de l'API d'export";
                 case "notifications":
@@ -237,6 +247,17 @@ namespace DeR4Tizer
                     }
                 default: return c.Action + " " + cible;
             }
+        }
+
+        // Texte de confirmation sans caractère de contrôle (retours à la ligne compris) ni de mise en forme invisible (sens
+        // d'écriture, largeur nulle) : remplacés par « ? », pour que rien ne repousse ni n'inverse le reste (S58-02)
+        static string Visible(string s)
+        {
+            if (s == null) return "";
+            var b = new System.Text.StringBuilder(s.Length);
+            foreach (char ch in s)
+                b.Append(char.IsControl(ch) || char.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.Format ? '?' : ch);
+            return b.ToString();
         }
 
         // Adresse web entière, en ASCII (IdnHost : un hôte en homoglyphes reste visible) : l'hôte seul ne suffisait pas

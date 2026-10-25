@@ -720,6 +720,79 @@ fn n1_upnp_sans_panique_sur_utf8_coupe() {
     assert!(!crate::upnp::chemin_sur_test("/ctl\r\nHost: x") && crate::upnp::chemin_sur_test("/upnp/control/WANIPConn1"));
 }
 
+/// Audit AUD6-03 : une clé qui ne diffère d'une clé connue que par la casse est refusée (l'interface en afficherait
+/// la valeur, le service appliquerait l'autre) ; une clé inconnue sans homonyme reste ignorée ; une commande ordinaire
+/// passe
+/// Audit de sécurité S58-02 : champs texte des réglages en listes fermées (langue, protocole, format, niveau) et hôte
+/// syslog sans caractère de contrôle ni de mise en forme (la confirmation pouvait être repoussée hors de l'écran ou
+/// inversée) ; les valeurs que l'interface envoie passent
+#[test]
+fn audit_reglages_champs_texte_fermes() {
+    use crate::commun::{reglages_invalides, Config, ConfigSyslog};
+    let ok = Config { langue: "en".into(), syslog: ConfigSyslog { actif: true, hote: "siem.exemple.test".into(), ..Default::default() }, ..Default::default() };
+    assert_eq!(reglages_invalides(&ok), None);
+    for (p, f, n) in [("UDP", "JSON", "Info"), ("TCP", "CEF", "Alerte"), ("UDP", "CEF", "Critique")] {
+        let c = Config { syslog: ConfigSyslog { actif: true, hote: "10.0.0.5".into(), protocole: p.into(), format: f.into(), niveau_min: n.into(), ..Default::default() }, ..ok.clone() };
+        assert_eq!(reglages_invalides(&c), None, "{p} {f} {n}");
+    }
+    let mauvais = [
+        Config { langue: "fr · syslog : désactivé\n\n".into(), ..ok.clone() },
+        Config { langue: "EN".into(), ..ok.clone() },
+        Config { syslog: ConfigSyslog { protocole: "udp".into(), ..ok.syslog.clone() }, ..ok.clone() },
+        Config { syslog: ConfigSyslog { format: "XML".into(), ..ok.syslog.clone() }, ..ok.clone() },
+        Config { syslog: ConfigSyslog { niveau_min: "Tout".into(), ..ok.syslog.clone() }, ..ok.clone() },
+        Config { syslog: ConfigSyslog { hote: "siem\u{202E}tset".into(), ..ok.syslog.clone() }, ..ok.clone() },
+        Config { syslog: ConfigSyslog { hote: "siem.test\r\n".into(), ..ok.syslog.clone() }, ..ok.clone() },
+        Config { syslog: ConfigSyslog { actif: false, hote: "a b".into(), ..ok.syslog.clone() }, ..ok.clone() },
+    ];
+    for c in mauvais {
+        assert!(reglages_invalides(&c).is_some(), "{:?} {:?}", c.langue, c.syslog.hote);
+    }
+}
+
+/// Relecture de #58 (D2) : chemins complets des commandes (ce que le service appelle), sur ce que l'interface envoie
+/// réellement (aucun refus) et sur les contournements (refus)
+#[test]
+fn audit_reglages_commandes_completes() {
+    use crate::commun::{lire_reglages, lire_syslog_test, Config};
+    use crate::notifications::controler_demande;
+    // Ce que l'interface envoie : Config complète (mêmes noms de champs), demande de notifications
+    let interface = serde_json::to_string(&Config { langue: "en".into(), ..Config::default() }).unwrap();
+    assert_eq!(lire_reglages(&interface).unwrap().langue, "en");
+    assert!(lire_syslog_test(r#"{"Actif":true,"Hote":"siem.exemple.test","Port":514,"Protocole":"TCP","Format":"CEF","NiveauMin":"Alerte"}"#).is_ok());
+    assert!(controler_demande(r#"{"Config":{"Ntfy":true},"NtfyUrl":"https://ntfy.sh/a","NtfyJeton":"","TeamsUrl":"","SmtpMotDePasse":""}"#).is_ok());
+    assert!(controler_demande(r#"{"Config":null}"#).is_ok());
+    // Contournements : clé ambiguë, texte illisible comme valeur, valeur hors liste
+    let syslog_cache = r#"{"Langue":"fr","Syslog":{"Actif":true,"Hote":"203.0.113.9","Port":514,"Protocole":"TCP","Format":"JSON","NiveauMin":"Info"},"syslog":{"Actif":false},"Zz":"\uD800"}"#;
+    assert!(lire_reglages(syslog_cache).is_err());
+    assert!(lire_reglages(r#"{"Langue":"fr","langue":"en"}"#).is_err());
+    assert!(lire_reglages(r#"{"Langue":"fr","Syslog":{"Actif":true,"Hote":"s.test","NiveauMin":"critique"}}"#).is_err(), "« critique » traité comme Info");
+    assert!(lire_syslog_test(r#"{"Hote":"10.0.0.5","Port":25,"Protocole":"tcp"}"#).is_err());
+    assert!(lire_syslog_test(r#"{"Hote":"10.0.0.5","hote":"10.0.0.6"}"#).is_err());
+    assert!(controler_demande(r#"{"Config":{"Ntfy":true},"config":{"Ntfy":false}}"#).is_err());
+    assert!(controler_demande(r#"{"NtfyUrl":"https://ntfy.sh/a","ntfyurl":"https://ntfy.sh/b"}"#).is_err());
+    assert!(controler_demande(r#"{"NtfyUrl":"https://ntfy.sh/a","X":"\uD800"}"#).is_err());
+}
+
+#[test]
+fn audit_reglages_cle_ambigue_refusee() {
+    use crate::commun::{cle_ambigue, Config};
+    let modele = serde_json::to_value(Config::default()).unwrap();
+    assert_eq!(cle_ambigue(r#"{"Langue":"fr","langue":"en"}"#, &modele).as_deref(), Some("langue"));
+    assert_eq!(cle_ambigue(r#"{"Api":{"Actif":true,"port":80,"Port":8642}}"#, &modele).as_deref(), Some("Api.port"));
+    assert_eq!(cle_ambigue(r#"{"SYSLOG":{"Actif":true}}"#, &modele).as_deref(), Some("SYSLOG"));
+    assert_eq!(cle_ambigue(r#"{"Langue":"fr","Api":{"Actif":false,"Port":8642},"Inconnue":1}"#, &modele), None);
+    assert_eq!(cle_ambigue(&serde_json::to_string(&Config::default()).unwrap(), &modele), None);
+    // Texte que serde_json ne lit pas comme valeur, mais qu'il lit comme Config (audit de sécurité S58-01 : surrogat
+    // isolé ou nombre hors plage dans un champ ignoré) : refusé, jamais laissé passer
+    assert!(cle_ambigue("pas du json", &modele).is_some());
+    let contournement = r#"{"Langue":"fr","Syslog":{"Actif":true,"Hote":"203.0.113.9","Port":514,"Protocole":"TCP","Format":"JSON","NiveauMin":"Info"},"syslog":{"Actif":false},"Zz":"\uD800"}"#;
+    assert!(serde_json::from_str::<Config>(contournement).is_ok(), "témoin : serde lit bien ce texte comme Config");
+    assert!(cle_ambigue(contournement, &modele).is_some(), "surrogat isolé : refusé");
+    assert!(cle_ambigue(r#"{"Langue":"fr","langue":"en","Zz":1e400}"#, &modele).is_some(), "nombre hors plage : refusé");
+    crate::tests::torturer_texte(r#"{"Langue":"fr","Api":{"Port":8642}}"#, &mut |t| { let _ = cle_ambigue(t, &modele); });
+}
+
 #[test]
 fn fonctions_texte_sans_panique() {
     torturer_texte("a%20b+c%3A%C3%A9", &mut |t| { let _ = crate::api::decoder_test(t); });

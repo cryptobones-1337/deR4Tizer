@@ -81,6 +81,19 @@ pub fn lire_secrets() -> Secrets {
         .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+/// Contrôle d'une demande « notifications » ou « testerNotifications » avant lecture (décision pure, testée) : texte
+/// illisible ou clé ambiguë par la casse refusés (AUD6-03, S58-01). Clés connues : « Config » et les secrets, à plat.
+pub fn controler_demande(texte: &str) -> Result<(), String> {
+    let mut modele = serde_json::to_value(Secrets::default()).unwrap_or_default();
+    if let Some(o) = modele.as_object_mut() {
+        o.insert("Config".into(), serde_json::to_value(crate::commun::ConfigNotifications::default()).unwrap_or_default());
+    }
+    match crate::commun::cle_ambigue(texte, &modele) {
+        Some(k) => Err(format!("réglages des notifications refusés : clé « {} » ambiguë ou texte illisible", crate::commun::ligne_de_journal(&k))),
+        None => Ok(()),
+    }
+}
+
 /// https://hôte[:port][/chemin] : hôte en lettres, chiffres, « . » et « - », port numérique
 pub fn adresse_https_simple(u: &str) -> bool {
     let Some(reste) = u.strip_prefix("https://") else { return false };
