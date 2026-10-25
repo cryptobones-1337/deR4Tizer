@@ -753,8 +753,8 @@ fn phase1_persistance_videe_a_l_arret() {
 fn phase1_files_d_alertes_videes_a_l_arret() {
     use crate::commun::Alerte;
     use crate::moniteur::vider_a_l_arret;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     let a = |r: &str| Alerte { raisons: r.into(), ..Default::default() };
     let persistance = Mutex::new(vec![a("démarrage automatique AJOUTÉ")]);
@@ -765,6 +765,20 @@ fn phase1_files_d_alertes_videes_a_l_arret() {
     let r: Vec<&str> = avec_cle.iter().map(|x| x.raisons.as_str()).collect();
     assert_eq!(r, ["Defender : protection en temps réel désactivée", "baseline : dérive", "processus : leurre touché"]);
     assert!(persistance.lock().unwrap().is_empty() && externes.lock().unwrap().is_empty() && detections.lock().unwrap().is_empty());
+    // Ordre : les autres files sont prises APRÈS l'attente du relevé de persistance ; une alerte qu'un fil y pose
+    // pendant cette attente est reprise (relecture de #65 : sans ce cas, l'ordre inverse passait)
+    let en_cours = Arc::new(AtomicBool::new(true));
+    let externes = Arc::new(Mutex::new(Vec::new()));
+    let (e, x) = (en_cours.clone(), externes.clone());
+    let fil = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        x.lock().unwrap().push(a("pare-feu : règle ajoutée"));
+        std::thread::sleep(Duration::from_millis(100));
+        e.store(false, Ordering::SeqCst);
+    });
+    let (_, avec_cle) = vider_a_l_arret(&en_cours, &Mutex::new(Vec::new()), &[&externes], Duration::from_secs(5));
+    let _ = fil.join();
+    assert_eq!(avec_cle.len(), 1, "alerte posée pendant l'attente du relevé perdue");
 }
 
 /// Audit de sécurité S58-02 : champs texte des réglages en listes fermées (langue, protocole, format, niveau) et hôte
