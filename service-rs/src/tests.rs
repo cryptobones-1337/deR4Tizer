@@ -3083,7 +3083,8 @@ fn phase3_exception_sur_alerte_bornee() {
     // Le moniteur pose l'empreinte sur le texte entier, avant le bornage ; l'exception la reprend
     let m = include_str!("moniteur.rs");
     let d = m.find("fn ajouter_alerte_brute").unwrap();
-    let corps = &m[d..d + 900];
+    // Fenêtre élargie (PR 3.3c : collecte d'origine posée avant le bornage)
+    let corps = &m[d..d + 1400];
     let (calcul, filtre, pose, borne) = (corps.find("commun::empreinte_signature(").expect("empreinte"), corps.find("apprentissage::filtrer(&mut a)").unwrap(),
         corps.find("a.signature = empreinte;").expect("empreinte jamais posée sur l'alerte (relecture de #73, D1)"), corps.find("commun::borner_alerte(&mut a)").unwrap());
     assert!(calcul < filtre && filtre < pose && pose < borne, "ordre : empreinte, filtrer, pose, bornage");
@@ -3365,21 +3366,64 @@ fn phase3_decision_comptes() {
 fn phase3_journal_bloque_saute() {
     use crate::evenements::{apres_blocage, Blocage, Lecture, LIMITE_BLOCAGE};
     let zero = Blocage::default();
-    let b = |tours, pas| Blocage { tours, pas, delais: 0 };
+    let b = |sans_progres, pas| Blocage { sans_progres, pas };
     assert_eq!(apres_blocage(10, 20, 20, Lecture::Complete, b(7, 4)), (20, zero, 0));
     assert_eq!(apres_blocage(10, 15, 20, Lecture::Erreur, b(7, 4)), (15, zero, 0), "progrès : blocage remis à zéro");
+    assert_eq!(apres_blocage(10, 12, 20, Lecture::Delai, b(40, 1)), (12, zero, 0), "délai avec progrès : remis à zéro");
     assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, zero), (10, b(1, 1), 0));
-    // Délai dépassé (journal inondé) : jamais compté comme un blocage, rien n'est sauté ; les délais sans progrès sont
-    // comptés (au-delà de LIMITE_BLOCAGE, la collecte passe « Indisponible »), un progrès les remet à zéro
-    assert_eq!(apres_blocage(10, 10, 20, Lecture::Delai, b(LIMITE_BLOCAGE - 1, 1)), (10, Blocage { tours: 0, pas: 1, delais: 1 }, 0));
-    let (_, d, sautes) = (0..LIMITE_BLOCAGE).fold((10, zero, 0), |(_, bl, s), _| { let (r, bl, x) = apres_blocage(10, 10, 20, Lecture::Delai, bl); (r, bl, s + x) });
-    assert!(d.delais >= LIMITE_BLOCAGE && sautes == 0, "délais sans progrès : comptés, rien sauté");
-    assert_eq!(apres_blocage(10, 12, 20, Lecture::Delai, d), (12, zero, 0), "délai avec progrès : remis à zéro");
-    assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, b(LIMITE_BLOCAGE - 2, 1)), (10, b(LIMITE_BLOCAGE - 1, 1), 0));
-    // Bloqué : un seul numéro sauté, juste après le dernier lu (pas tout l'intervalle) ; puis 2, 4… sans dépasser n
+    // Délai dépassé (journal inondé) : compté, jamais sauté, même au-delà de la limite (la collecte passe alors
+    // « Indisponible ») ; délais et erreurs mêlés comptent ensemble (une alternance finit aussi par agir)
+    let (_, d, sautes) = (0..LIMITE_BLOCAGE + 5).fold((10, zero, 0), |(_, bl, s), _| { let (r, bl, x) = apres_blocage(10, 10, 20, Lecture::Delai, bl); (r, bl, s + x) });
+    assert!(d.sans_progres >= LIMITE_BLOCAGE && sautes == 0, "délais sans progrès : comptés, rien sauté");
+    let (_, m, _) = (0..LIMITE_BLOCAGE - 1).fold((10, zero, 0), |(_, bl, s), i| {
+        let (r, bl, x) = apres_blocage(10, 10, 20, if i % 2 == 0 { Lecture::Delai } else { Lecture::Erreur }, bl);
+        (r, bl, s + x)
+    });
+    assert_eq!(m.sans_progres, LIMITE_BLOCAGE - 1, "alternance délai / erreur : un seul compteur");
+    assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, m).2, 1, "alternance : l'erreur à la limite fait sauter");
+    // Bloqué sur une erreur : un seul numéro sauté, juste après le dernier lu ; puis 2, 4… sans dépasser n
     assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, b(LIMITE_BLOCAGE - 1, 1)), (11, b(LIMITE_BLOCAGE - 1, 2), 1));
     assert_eq!(apres_blocage(11, 11, 20, Lecture::Erreur, b(LIMITE_BLOCAGE - 1, 2)), (13, b(LIMITE_BLOCAGE - 1, 4), 2));
     assert_eq!(apres_blocage(13, 13, 15, Lecture::Erreur, b(LIMITE_BLOCAGE - 1, 4)), (15, b(LIMITE_BLOCAGE - 1, 8), 2));
+}
+
+/// Phase 3.3c : lecture par fenêtres bornées (un journal inondé d'événements écartés ne fige plus la lecture) ;
+/// numéros écrasés par la rotation avant d'être lus : repris au plus ancien présent, perte comptée
+#[test]
+fn phase3_journal_fenetre_et_rotation() {
+    use crate::evenements::{fenetre, perte_rotation, FENETRE};
+    assert_eq!(fenetre(10, 20), 20);
+    assert_eq!(fenetre(10, 10 + FENETRE + 7), 10 + FENETRE);
+    assert_eq!(fenetre(u64::MAX - 1, u64::MAX), u64::MAX);
+    assert_eq!(perte_rotation(100, 101), None, "rien d'écrasé : le prochain à lire est le plus ancien");
+    assert_eq!(perte_rotation(100, 50), None);
+    assert_eq!(perte_rotation(100, 151), Some((150, 50)), "101 à 150 écrasés");
+    assert_eq!(perte_rotation(0, 1), None, "journal neuf");
+}
+
+/// Phase 3.3c : journal désactivé : seul le journal DNS-Client est réactivé (D4) ; collecte d'origine d'une alerte :
+/// la source lue du premier groupe de la règle, sinon la première listée ; vide sans source suivie
+#[test]
+fn phase3_reactivation_et_collecte_d_origine() {
+    use crate::collectes::{collecte_de, Collecte, EtatPublie};
+    use crate::evenements::a_reactiver;
+    assert!(a_reactiver("Microsoft-Windows-DNS-Client/Operational"));
+    assert!(!a_reactiver("Microsoft-Windows-Windows Defender/Operational"));
+    assert!(!a_reactiver("Security"));
+    let sysmon_seul = |c| if c == Collecte::Sysmon { EtatPublie::Active } else { EtatPublie::Inconnue };
+    assert_eq!(collecte_de("DNS-001", &sysmon_seul), "Sysmon");
+    assert_eq!(collecte_de("DNS-001", &|_| EtatPublie::Active), "JournalDns");
+    assert_eq!(collecte_de("DNS-001", &|_| EtatPublie::Inconnue), "JournalDns", "aucune lue : la première listée");
+    let wmi = |c| if c == Collecte::WmiProcessus { EtatPublie::Partielle("p".into()) } else { EtatPublie::Desactivee("d".into()) };
+    assert_eq!(collecte_de("PRC-002", &wmi), "WmiProcessus");
+    assert_eq!(collecte_de("DEF-001", &|_| EtatPublie::Active), "JournalDefender");
+    assert_eq!(collecte_de("INT-001", &|_| EtatPublie::Active), "");
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let d = m.find("fn ajouter_alerte_brute(").unwrap();
+    let f = &m[d..d + 2500];
+    let c = f.find("a.collecte = collectes::collecte_de_l_alerte(&a.regle).to_string();").expect("collecte d'origine non posée");
+    assert!(c < f.find("commun::borner_alerte(&mut a);").unwrap(), "collecte posée après le bornage");
+    assert!(c > f.find("a.signature = ").unwrap_or(0), "collecte posée avant la signature (elle n'en fait pas partie)");
 }
 
 /// Phase 3.3b : branchements des collectes restantes (contrôle du source : ces lectures Windows ne s'exécutent pas en
@@ -3417,9 +3461,13 @@ fn phase3_branchements_des_collectes_restantes() {
     let na = include_str!("natif.rs").replace("\r\n", "\n");
     assert!(na.contains("else { return Err(\"instantané des processus impossible\".into()) };") && na.contains("if !premier {\n            return Err("));
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
-    assert!(e.contains("let (suivant, b, sautes) = apres_blocage(dernier, lu_jusqu_a, n, lecture, blocage);"), "abonner : blocage non traité");
-    assert!(e.contains("Lecture::Delai => collectes::partielle(collecte,"), "abonner : lecture lente non notée");
-    assert!(e.contains("Lecture::Delai if b.delais >= LIMITE_BLOCAGE => {\n                    collectes::echec(collecte,"), "abonner : délais sans progrès restés « Partielle »");
+    assert!(e.contains("let (suivant, b, sautes) = apres_blocage(dernier, lu_jusqu_a, fin, lecture, blocage);"), "abonner : blocage non traité");
+    assert!(e.contains("Some(Lecture::Delai) => collectes::partielle(collecte,"), "abonner : lecture lente non notée");
+    assert!(e.contains("Some(Lecture::Delai) if b.sans_progres >= LIMITE_BLOCAGE => {\n                        collectes::echec(collecte,"), "abonner : délais sans progrès restés « Partielle »");
+    assert!(e.contains("let fin = fenetre(dernier, n);") && e.contains("(EventRecordID <= {fin})"), "abonner : lecture non bornée");
+    assert!(e.contains("if n - dernier > FENETRE || blocage.sans_progres > 0 {\n                if let Some((reprise, perdus)) = plus_ancien_numero(&canal).and_then(|a| perte_rotation(dernier, a)) {"), "abonner : rotation non vérifiée quand le lecteur est en retard ou lent");
+    assert!(e.contains("let desactive = canal_actif(&canal) == Some(false);") && e.contains("if desactive && !reactive {\n                    collectes::echec(collecte,"), "abonner : journal désactivé non noté");
+    assert!(e.contains("if a_reactiver(&canal) && !desactivation_signalee {\n                    reactive = activer_journal(&canal, true);"), "abonner : journal DNS non réactivé (D4)");
     assert!(n.contains("journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),"), "interface et indice : même état du journal DNS");
     assert!(e.contains("Some((t, n)) if t.elapsed().as_secs() < 3600 => {\n            collectes::partielle(collecte,"), "saut d'événements : collecte redevenue active aussitôt");
     assert!(n.contains("let dns_lu = collectes::lue_recemment(Collecte::JournalDns);"), "IP directe : un échec passager du journal DNS la retire");
@@ -3505,16 +3553,17 @@ fn phase3_branchements_des_collectes() {
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
     let d = e.find("pub fn abonner(").unwrap();
     let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
-    assert_eq!(f.matches("collectes::echec(collecte,").count(), 4, "abonner : échec initial, numéro illisible, délais sans progrès, événements illisibles");
+    assert_eq!(f.matches("collectes::echec(collecte,").count(), 5, "abonner : échec initial, numéro illisible, journal désactivé, délais sans progrès, événements illisibles");
     assert_eq!(f.matches("collectes::succes(collecte)").count(), 1, "abonner : départ (les autres succès passent par noter_lu)");
-    assert_eq!(f.matches("noter_lu(collecte, &saut)").count(), 3, "abonner : première lecture après un départ illisible, rien de nouveau, événements lus");
+    assert_eq!(f.matches("noter(None, &blocage, &perte);").count(), 2, "abonner : première lecture après un départ illisible, rien de nouveau");
+    assert!(f.contains("noter(Some(lecture), &blocage, &perte);") && f.contains("None | Some(Lecture::Complete) => noter_lu(collecte, perte),"), "abonner : événements lus non notés");
     assert_eq!(f.matches("return false").count(), 1, "abonner : seule une requête mal formée abandonne le suivi (pas un départ illisible)");
     assert!(f.contains("let Some(mut dernier) = depart else {"), "abonner : le fil doit chercher le dernier numéro quand le départ a échoué");
     // Le numéro de reprise est réécrit à chaque issue du tour (sinon tout le journal serait relu à chaque tour)
-    assert!(f.contains("depart = Some(n);") && f.contains("noter_lu(collecte, &saut);\n                depart = Some(dernier);\n                continue;")
-        && f.contains("dernier = suivant;\n            depart = Some(dernier);"), "abonner : numéro de reprise non conservé");
-    assert!(f.contains("let lecture = historique(") && f.contains("Lecture::Complete => noter_lu(collecte, &saut),"), "succès noté avant la lecture des événements");
-    assert!(f.contains("prochain_dernier(dernier, n, ok, traite)") && !f.contains("dernier = n;"), "événements perdus après un échec");
+    assert!(f.contains("depart = Some(n);") && f.contains("noter(None, &blocage, &perte);\n                depart = Some(dernier);\n                continue;")
+        && f.contains("noter(Some(lecture), &blocage, &perte);\n            depart = Some(suivant);"), "abonner : numéro de reprise non conservé");
+    assert!(f.contains("let lecture = historique("), "succès noté avant la lecture des événements");
+    assert!(f.contains("prochain_dernier(dernier, fin, lecture == Lecture::Complete, traite)") && !f.contains("dernier = n;"), "événements perdus après un échec");
     assert!(e.contains("return if fin_des_resultats(&e) {\n                Lecture::Complete\n            } else if (e.code().0 as u32) & 0xFFFF == 1460 {"), "vider : échec d'EvtNext pris pour la fin, ou délai pris pour une erreur");
     assert!(e.contains("Err(_) => None,"), "dernier_numero : échec pris pour un journal vide");
     for (nom, s, c) in [("defender", include_str!("defender.rs"), "JournalDefender"), ("parefeu", include_str!("parefeu.rs"), "JournalParefeu"),

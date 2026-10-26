@@ -284,9 +284,10 @@ if ($compte) {
 # Témoin retenu : toutes les collectes sont notées (aucune « Inconnue ») ; celles que la VM fournit sont lues
 # (Sysmon absent : désactivée, WMI partielle ; listes de domaines désactivées par le réglage par défaut) et leurs règles
 # ne sont pas « sans collecte ». Témoin écarté : une liste LOLDrivers vide (posée par l'administrateur, propriétaire
-# contrôlé) rend LOLDrivers « Indisponible » et PIL-001 sans collecte. Écarts au dossier : le journal DNS coupé après
-# le démarrage (D4) vient avec la PR 3.3c ; aucun témoin écarté n'exerce une branche « Indisponible » propre à la
-# PR 3.3b (leurres, capture, persistance…) : les provoquer en VM toucherait au fonctionnement du poste de test.
+# contrôlé) rend LOLDrivers « Indisponible » et PIL-001 sans collecte. Le journal DNS coupé après le
+# démarrage (D4) et un témoin écarté « Indisponible » (journal du pare-feu coupé) viennent avec la PR 3.3c, plus bas ;
+# aucun témoin n'exerce les branches « Indisponible » des leurres, de la capture ou de la persistance : les provoquer en
+# VM toucherait au fonctionnement du poste de test.
 Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     # Defender, extensions, LOLDrivers (téléchargement : 300 s au plus) puis baseline sont lus par le fil « contrôles »
     # au démarrage : attendus en 7 min au plus
@@ -345,6 +346,54 @@ Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL
     Write-Host "  LOLDrivers : $($l.Etat) ($($l.Raison))"
     # Liste vide retirée : les contrôles suivants retrouvent une liste téléchargée au prochain démarrage
     Remove-Item (Join-Path $script:Donnees 'menaces\loldrivers.json') -Force -ErrorAction SilentlyContinue
+    $true
+}
+
+# Phase 3.3c, décision D4 : le journal DNS-Client coupé après le démarrage est réactivé par le service (il le lit à
+# chaque tour de 2 s), avec une ligne dans journal.txt
+Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, ligne de journal (D4)' {
+    $dns = 'Microsoft-Windows-DNS-Client/Operational'
+    wevtutil sl $dns /e:false
+    $fin = (Get-Date).AddSeconds(60)
+    do {
+        Start-Sleep 2
+        $actif = [bool]((wevtutil gl $dns) -match 'enabled:\s*true')
+    } while (-not $actif -and (Get-Date) -lt $fin)
+    if (-not $actif) {
+        wevtutil sl $dns /e:true
+        return "journal DNS non réactivé en 60 s ; journal : $(Journal 'DNS-Client')"
+    }
+    $l = Journal 'DNS-Client/Operational désactivé'
+    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal : $l" }
+    $true
+}
+
+# Phase 3.3c, témoin écarté d'une branche « Indisponible » (relecture de la PR 3.3b, D7) : le journal du pare-feu coupé
+# n'est pas réactivé (D4 ne vise que le DNS) ; la collecte passe « Indisponible » et SYS-002 sans collecte, puis
+# redevient « Active » une fois le journal rallumé par le script
+Verifier 'Journal du pare-feu coupé : collecte indisponible, SYS-002 sans collecte, puis de nouveau active' {
+    $pf = 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'
+    $etat = {
+        param($Attendu)
+        $fin = (Get-Date).AddSeconds(90)
+        do {
+            Start-Sleep 3
+            $e = Etat
+            $j = if ($e) { @($e.Collectes | Where-Object { $_.Id -eq 'JournalParefeu' }) | Select-Object -First 1 }
+        } while ((-not $j -or $j.Etat -ne $Attendu) -and (Get-Date) -lt $fin)
+        @{ E = $e; J = $j }
+    }
+    wevtutil sl $pf /e:false
+    try {
+        $r = & $etat 'Indisponible'; $e = $r.E; $j = $r.J
+        if (-not $j -or $j.Etat -ne 'Indisponible') { return "journal du pare-feu coupé, collecte : $($j.Etat) ($($j.Raison))" }
+        if (@($e.ReglesSansCollecte) -notcontains 'SYS-002') { return "SYS-002 absente des règles sans collecte : $(@($e.ReglesSansCollecte) -join ', ')" }
+        Write-Host "  pare-feu coupé : $($j.Etat) ($($j.Raison))"
+    } finally {
+        wevtutil sl $pf /e:true
+    }
+    $r = & $etat 'Active'; $j = $r.J
+    if (-not $j -or $j.Etat -ne 'Active') { return "journal du pare-feu rallumé, collecte : $($j.Etat) ($($j.Raison))" }
     $true
 }
 

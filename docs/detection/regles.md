@@ -38,8 +38,9 @@ restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « san
 
 Ce que garantit « Active » : la source se **lit** (pour un journal suivi, le numéro du dernier événement et les
 nouveaux événements sont lus ; une lecture interrompue passe en « Indisponible » et les événements sont relus au tour
-suivant). Cela ne garantit pas que Windows **produit** les événements attendus. Cas connus non détectés :
-- journal DNS-Client coupé après le démarrage (D4, PR 3.3c) ;
+suivant ; depuis la PR 3.3c, un journal désactivé passe en « Indisponible » même s'il reste lisible, et le journal
+DNS-Client est réactivé : décision D4). Cela ne garantit pas que Windows **produit** les événements attendus. Cas
+connus non détectés :
 - politique d'audit modifiée (ouvertures de session non auditées : COR-R1, R2, R3, R9 restent couvertes) ;
 - Sysmon configuré sans l'événement 22 (il couvre quand même DNS-001), ou service Sysmon arrêté alors que son journal
   reste lisible ;
@@ -60,14 +61,21 @@ suivant). Cela ne garantit pas que Windows **produit** les événements attendus
   leur prochaine lecture (échec fermé).
 
 Lecture d'un journal suivi :
-- un délai dépassé (journal très chargé ou inondé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour
-  suivant là où elle s'est arrêtée ; la collecte est « Partielle » tant que la lecture progresse, « Indisponible » après
-  une minute de délais sans aucun progrès (une inondation continue peut ainsi figer la lecture : elle reprend quand
-  l'inondation cesse, sauf pour les événements écrasés entre-temps par la rotation du journal, perdus sans trace) ;
-- une erreur sans progrès 30 tours de suite (une minute) : un seul numéro d'événement est sauté, juste après le dernier
-  lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` et la collecte reste « Partielle » une
-  heure (« N numéro(s) d'événement sauté(s) ») ; les événements perdus sont ceux des numéros sautés : au plus deux fois
-  l'écart entre le dernier lu et l'événement fautif.
+- par fenêtres de 5 000 numéros au plus (PR 3.3c) : une fenêtre lue jusqu'au bout avance jusqu'à sa borne, même sans
+  événement retenu ; un journal inondé d'événements que la requête écarte ne fige donc plus la lecture ;
+- journal désactivé (encore lisible, mais Windows n'y écrit plus) : « Indisponible », une ligne dans `journal.txt` ; le
+  journal DNS-Client est réactivé (une tentative par épisode, D4), les autres sont seulement signalés ;
+- un délai dépassé (journal très chargé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour suivant là
+  où elle s'est arrêtée ; la collecte est « Partielle » tant que la lecture progresse ;
+- tours sans progrès (délais dépassés et erreurs comptés ensemble) : après 30 tours (une minute), sur un délai, rien
+  n'est sauté et la collecte passe « Indisponible » ; sur une erreur (événement illisible), un seul numéro est sauté,
+  juste après le dernier lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` ; les événements
+  perdus sont ceux des numéros sautés : au plus deux fois l'écart entre le dernier lu et l'événement fautif ;
+- événements écrasés par la rotation du journal avant d'être lus (lecteur en retard d'une fenêtre, ou lent au tour
+  précédent) : la lecture reprend au plus ancien numéro encore présent, la perte est comptée et écrite dans
+  `journal.txt` ;
+- après un saut ou une rotation, la collecte reste « Partielle » une heure (« N numéro(s) d'événement perdu(s) »).
+  Limite : une rotation survenue alors que le lecteur n'était ni en retard d'une fenêtre ni lent n'est pas vérifiée.
 
 Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
 première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI
@@ -103,8 +111,8 @@ modules expérimentaux.
   journal DNS.
 - **Si elle manque** : sans lecture du journal DNS depuis plus de trois intervalles (90 s), l'indice « IP directe » n'est
   pas compté (PR 3.3b : il suivait l'état du journal au démarrage et pouvait se déclencher à tort) ; un journal DNS coupé
-  mais encore lisible le laisse compter à tort (D4, PR 3.3c) ; sans ligne de commande (WMI), l'indice correspondant
-  manque.
+  est réactivé, ou, s'il ne peut l'être, noté indisponible (PR 3.3c, D4), et l'indice tombe 90 s plus tard ; sans ligne
+  de commande (WMI), l'indice correspondant manque.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés.

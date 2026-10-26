@@ -3,8 +3,10 @@
 Ce document décrit le format des alertes du service (`Alerte`, `service-rs/src/commun.rs`) tel que la phase 3 le
 versionne. Depuis la PR 3.1, les champs `Modele`, `Regle` et `Collecte` existent (et `Signature` depuis la PR 3.1b) et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
 est lu élément par élément. Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle dans `Regle` (registre
-`regles.rs`) ; `Collecte` reste vide jusqu'à la PR 3.3b (l'état des collectes de la PR 3.3a est publié dans
-`etat.json`, pas dans les alertes) : vide, il n'est pas écrit.
+`regles.rs`). Depuis la PR 3.3c, `Collecte` porte la collecte d'où vient l'alerte (`collectes::collecte_de` : la
+première source lue du premier groupe de télémétrie de sa règle, sinon la première listée) ; elle reste vide, et
+n'est pas écrite, pour une règle qui ne suit aucune source (INT-*, COR-R6…). Elle n'entre pas dans la signature des
+exceptions.
 
 ## Principe
 
@@ -19,7 +21,7 @@ est lu élément par élément. Depuis la PR 3.2, chaque alerte porte l'identifi
 |---|---|---|---|
 | `Modele` | entier | 0 | version du modèle ; 1 pour les alertes créées par la version qui l'introduit |
 | `Regle` | texte, omis si vide | « » | identifiant de la règle (`docs/detection/regles.md`), « » si l'alerte n'est rattachée à aucune |
-| `Collecte` | texte, omis si vide | « » | collecteur d'où vient l'alerte (état des collectes, PR 3.3) |
+| `Collecte` | texte, omis si vide | « » | collecte d'où vient l'alerte (identifiant de `etat.json`, `Collectes`), PR 3.3c |
 | `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » avant le filtrage (y compris celles que l'apprentissage baisse en « Info ») ; c'est elle qu'une exception posée depuis l'alerte vise |
 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
