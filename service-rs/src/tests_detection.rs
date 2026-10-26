@@ -276,6 +276,26 @@ fn per_002_devenu_suspect_passager() {
     assert!(attente.is_empty());
 }
 
+/// Relecture de #83, R4-D1 : un échec de vérification de signature n'est pas gardé comme un résultat : il ne vaut qu'une
+/// tranche de 30 s, et le relevé suivant (une minute plus tard) le refait ; un résultat signé, lui, est gardé
+#[test]
+fn per_002_echec_de_signature_non_garde() {
+    use crate::moniteur::{cle_echec_signature, signataire_cache};
+    assert_ne!(cle_echec_signature("c|1", 10), cle_echec_signature("c|1", 11), "une clé par tranche");
+    assert_ne!(cle_echec_signature("c|1", 10), "c|1", "jamais la clé d'un résultat");
+    // Fichier non signé hors de Windows : vérification exécutée, résultat vide rangé sous la clé d'échec seulement
+    let d = std::env::temp_dir().join(format!("d4t-sig-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("outil.exe");
+    std::fs::write(&f, b"MZ pas un vrai programme").unwrap();
+    let mut cache = std::collections::HashMap::new();
+    let s = signataire_cache(&mut cache, "", &f.to_string_lossy());
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(s.is_empty(), "fichier non signé : {s}");
+    assert_eq!(cache.len(), 1);
+    assert!(cache.keys().all(|k| k.contains("|échec|")), "échec gardé comme un résultat : {:?}", cache.keys().collect::<Vec<_>>());
+}
+
 #[test]
 fn per_002_devenu_suspect_negatif() {
     let suspecte = entree_demarrage("t1", "x.exe", "", "NON SIGNÉ");

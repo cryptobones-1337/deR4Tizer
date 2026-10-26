@@ -23,7 +23,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const JOURNAL_DNS: &str = "Microsoft-Windows-DNS-Client/Operational";
 const NAVIGATEURS_DOH: &[&str] = &["chrome", "brave", "firefox", "msedge", "opera", "vivaldi"];
@@ -1279,7 +1279,7 @@ En-tête : Authorization: Bearer {j}"))
 }
 
 /// Signataire d'un exécutable, mis en cache par chemin et date de modification
-fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
+pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
     if chemin.is_empty() {
         return "?".into();
     }
@@ -1302,6 +1302,13 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
     if let Some(s) = cache.get(&cle) {
         return s.clone();
     }
+    // Un échec (signataire vide) n'est gardé que 30 s (relecture de #83, R4-D1) : une vérification passagèrement
+    // impossible, au démarrage du PC par exemple, est refaite au relevé suivant au lieu d'être confirmée par le cache
+    let tranche = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 30).unwrap_or(0);
+    let cle_echec = cle_echec_signature(&cle, tranche);
+    if let Some(s) = cache.get(&cle_echec) {
+        return s.clone();
+    }
     let windows = natif::dossier_windows().to_lowercase();
     let s = match natif::signataire_valide(chemin) {
         Some(nom) if nom.is_empty() => "signé".to_string(),
@@ -1311,8 +1318,19 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
         None if (chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin)) && natif::signe_par_catalogue(chemin) => "Windows (catalogue)".into(),
         None => String::new(),
     };
-    cache.insert(cle, s.clone());
+    if s.is_empty() {
+        // Deux tranches au plus par chemin : la précédente est retirée
+        cache.remove(&cle_echec_signature(&cle, tranche.saturating_sub(1)));
+        cache.insert(cle_echec, s.clone());
+    } else {
+        cache.insert(cle, s.clone());
+    }
     s
+}
+
+/// Décision pure (testée) : clé du cache d'un échec de vérification, valable une tranche de 30 s seulement
+pub(crate) fn cle_echec_signature(cle: &str, tranche: u64) -> String {
+    format!("{cle}|échec|{tranche}")
 }
 
 fn cle_alerte(a: &Alerte) -> String {
