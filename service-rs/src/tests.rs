@@ -3328,10 +3328,44 @@ fn phase3_collecte_notes_et_publication() {
     collectes::desactivee(Collecte::Capture, &"x".repeat(500));
     let e = ligne("Capture");
     assert!(e.etat == "Desactivee" && e.raison.chars().count() == 200);
+    // Masquage de tout chemin de profil : nom avec espace, barres obliques, préfixes \\?\ et \Device\…
+    for (texte, nom) in [(r"lecture de C:\Users\Jean Dupont\AppData impossible", "Dupont"), ("C:/Users/Quelquun/x", "Quelquun"),
+                         (r"\\?\C:\Users\Autre\x", "Autre"), (r"\Device\HarddiskVolume3\Users\Encore\x", "Encore"),
+                         (r"fin c:\users\Dernier", "Dernier")] {
+        let b = collectes::borner(texte);
+        assert!(!b.contains(nom) && b.contains("%USERPROFILE%"), "{texte} → {b}");
+    }
+    assert_eq!(collectes::borner(r"journal Microsoft-Windows-DNS-Client/Operational illisible"), r"journal Microsoft-Windows-DNS-Client/Operational illisible");
+}
+
+/// Phase 3.3 : lecture d'un journal suivi interrompue : les événements non lus sont relus au tour suivant (aucune perte),
+/// à partir du dernier traité (aucun doublon) ; lecture complète : on avance au dernier numéro
+#[test]
+fn phase3_journal_interrompu_relu() {
+    use crate::evenements::prochain_dernier;
+    assert_eq!(prochain_dernier(10, 20, true, Some(15)), 20);
+    assert_eq!(prochain_dernier(10, 20, true, None), 20);
+    assert_eq!(prochain_dernier(10, 20, false, None), 10);
+    assert_eq!(prochain_dernier(10, 20, false, Some(15)), 15);
+    // Numéro aberrant : borné à l'intervalle demandé
+    assert_eq!(prochain_dernier(10, 20, false, Some(99)), 20);
+    assert_eq!(prochain_dernier(10, 20, false, Some(3)), 10);
+}
+
+/// Phase 3.3 : listes de menaces : aucune source activée (réglage par défaut pour les domaines, toutes à licence
+/// restreinte) : désactivée, pas indisponible ; des sources activées sans entrée : indisponible
+#[test]
+fn phase3_listes_desactivees_par_reglage() {
+    use crate::collectes::{decision_listes, Note};
+    assert_eq!(decision_listes(0, 0), Note::Desactivee);
+    assert_eq!(decision_listes(0, 7), Note::Desactivee);
+    assert_eq!(decision_listes(2, 0), Note::Indisponible);
+    assert_eq!(decision_listes(2, 7), Note::Active);
 }
 
 /// Phase 3.3 : une liste LOLDrivers absente, illisible ou sans empreinte est indisponible (PIL-001 sans collecte), pas
-/// « aucun pilote vulnérable » ; des listes de menaces vides sont indisponibles
+/// « aucun pilote vulnérable » (décision exécutée ; son branchement dans liste_loldrivers : contrôle du source) ; des
+/// listes de menaces activées mais vides sont indisponibles, des listes non activées désactivées
 #[test]
 fn phase3_loldrivers_vide_est_indisponible() {
     use crate::hygiene::empreintes_loldrivers;
@@ -3346,14 +3380,19 @@ fn phase3_loldrivers_vide_est_indisponible() {
     assert!(f.contains("Err(raison) => crate::collectes::echec(crate::collectes::Collecte::Loldrivers"), "échec LOLDrivers non noté");
     // Listes de menaces (ListesMenaces, ListesDomaines : notées par le seul fil des listes, absent des tests)
     use crate::collectes::{publier, noter_listes};
-    noter_listes(0, 5);
+    noter_listes(2, 0, 1, 5);
     let p = publier();
     let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
     assert_eq!((etat("ListesMenaces").as_str(), etat("ListesDomaines").as_str()), ("Indisponible", "Active"));
-    noter_listes(3, 0);
+    noter_listes(2, 3, 1, 0);
     let p = publier();
     let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
     assert_eq!((etat("ListesMenaces").as_str(), etat("ListesDomaines").as_str()), ("Active", "Indisponible"));
+    noter_listes(2, 3, 0, 0);
+    let p = publier();
+    let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
+    assert_eq!(etat("ListesDomaines"), "Desactivee");
+    assert!(p.1.contains(&"DNS-001".to_string()), "domaines désactivés : DNS-001 reste sans collecte");
 }
 
 /// Phase 3.3 : branchements (contrôle du source, ces appels Windows ne s'exécutent pas en test) : une table TCP
@@ -3366,8 +3405,11 @@ fn phase3_branchements_des_collectes() {
     let f = &natif[d..d + natif[d..].find("\n}\n").unwrap()];
     assert!(f.contains("if r != 0 {\n            return Err("), "table TCP en échec non rendue");
     assert!(f.trim_end().ends_with("))"), "table qui grossit sans fin non rendue en échec");
-    let m = include_str!("moniteur.rs");
+    let m_crlf = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let m = m_crlf.as_str();
     assert!(m.contains("Err(e) => collectes::echec(Collecte::Connexions, &e),"), "échec de la table TCP non noté");
+    assert!(m.contains("if etat.disponible {\n                        collectes::succes(Collecte::EtatDefender);\n                    } else {\n                        collectes::echec(Collecte::EtatDefender,"), "état de Defender : note inversée ou absente");
+    assert!(m.contains("collectes::noter_listes(actives(\"IP\"), i.total_ip + i.total_reseaux, actives(\"Domaines\"), i.total_domaines);"));
     assert!(!m.contains("natif::lister_tcp()"), "le cycle doit lire la table avec son échec");
     assert!(m.contains("collectes::echec(Collecte::EtatDefender,"));
     assert!(m.contains("collectes::noter_listes("));
@@ -3376,13 +3418,18 @@ fn phase3_branchements_des_collectes() {
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
     let d = e.find("pub fn abonner(").unwrap();
     let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
-    assert_eq!(f.matches("collectes::echec(collecte,").count(), 2, "abonner : échec initial et échec en boucle");
-    assert_eq!(f.matches("collectes::succes(collecte);").count(), 2);
+    assert_eq!(f.matches("collectes::echec(collecte,").count(), 3, "abonner : échec initial, numéro illisible, événements illisibles");
+    assert_eq!(f.matches("collectes::succes(collecte);").count(), 3, "abonner : départ, rien de nouveau, événements lus");
+    assert!(f.contains("let ok = historique(") && f.contains("if ok {\n                collectes::succes(collecte);"), "succès noté avant la lecture des événements");
+    assert!(f.contains("dernier = prochain_dernier(dernier, n, ok, traite);") && !f.contains("dernier = n;"), "événements perdus après un échec");
+    assert!(e.contains("Err(e) => {\n            return fin_des_resultats(&e);") || e.contains("if let Err(e) = unsafe { EvtNext(resultats, &mut evenements, 1000, 0, &mut n) } {\n            return fin_des_resultats(&e);"), "vider : échec d'EvtNext pris pour la fin");
+    assert!(e.contains("Err(_) => None,"), "dernier_numero : échec pris pour un journal vide");
     for (nom, s, c) in [("defender", include_str!("defender.rs"), "JournalDefender"), ("parefeu", include_str!("parefeu.rs"), "JournalParefeu"),
                         ("vol_donnees", include_str!("vol_donnees.rs"), "JournalSecurite"), ("processus", include_str!("processus.rs"), "Sysmon"),
-                        ("moniteur", m, "JournalDns"), ("siem", include_str!("siem.rs"), "JournalSysteme")] {
-        assert!(s.contains(&format!("Collecte::{c}")), "{nom} : collecte {c} non créditée");
+                        ("moniteur", m, "JournalDns")] {
+        assert!(s.contains(&format!("Collecte::{c}, move |xml|")) || s.contains(&format!("Collecte::{c},\n")) || s.contains(&format!("Collecte::{c}, move")), "{nom} : collecte {c} non passée à abonner");
     }
+    assert!(include_str!("siem.rs").contains(r#"("Security", securite, crate::collectes::Collecte::JournalSecurite), ("System", systeme, crate::collectes::Collecte::JournalSysteme)"#), "siem : journaux sans leur collecte");
     let p = include_str!("processus.rs");
     assert!(p.contains("collectes::desactivee(Collecte::Sysmon,"), "Sysmon absent non noté");
     assert!(p.contains("collectes::desactivee(Collecte::WmiProcessus,"), "WMI inutile (Sysmon lu) non noté");

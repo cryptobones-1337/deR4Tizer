@@ -1288,7 +1288,8 @@ fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {
     let statuts = Menaces::telecharger(forcer);
     let nouvelles = Menaces::charger(&statuts);
     let i = &nouvelles.infos;
-    collectes::noter_listes(i.total_ip + i.total_reseaux, i.total_domaines);
+    let actives = |t: &str| i.sources.iter().filter(|s| s.type_ == t && !s.statut.starts_with("désactivée")).count();
+    collectes::noter_listes(actives("IP"), i.total_ip + i.total_reseaux, actives("Domaines"), i.total_domaines);
     *p.menaces.write().unwrap() = nouvelles;
 }
 

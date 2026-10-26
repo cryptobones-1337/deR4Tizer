@@ -9,10 +9,11 @@
 //! répété (fil DNS, cycle) ne prend aucun verrou.
 
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum Collecte {
     Connexions,
     Processus,
@@ -44,6 +45,17 @@ pub const TOUTES: [Collecte; 21] = [
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
     Extensions, Peripheriques, Capture,
 ];
+
+// TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
+// collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
+const _: () = {
+    assert!(TOUTES.len() == Capture as usize + 1);
+    let mut i = 0;
+    while i < TOUTES.len() {
+        assert!(TOUTES[i] as usize == i);
+        i += 1;
+    }
+};
 
 impl Collecte {
     pub fn id(self) -> &'static str {
@@ -90,7 +102,7 @@ impl Collecte {
     }
 
     fn index(self) -> usize {
-        TOUTES.iter().position(|c| *c == self).unwrap_or(0)
+        self as usize
     }
 }
 
@@ -227,14 +239,26 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
     }
 }
 
-/// Listes de menaces chargées : aucune adresse ni réseau, RES-001 est muette ; aucun domaine, DNS-001 l'est. Une
-/// liste vide est une collecte indisponible, pas « aucune menace connue ».
-pub fn noter_listes(ip_et_reseaux: usize, domaines: usize) {
-    for (c, n, raison) in [(ListesMenaces, ip_et_reseaux, "aucune adresse de menace chargée"), (ListesDomaines, domaines, "aucun domaine de menace chargé")] {
-        if n == 0 {
-            echec(c, raison);
-        } else {
-            succes(c);
+/// Décision pure (testée) : note d'un type de listes de menaces. Aucune source activée (réglage : listes à licence
+/// restreinte coupées) : désactivée ; des sources activées sans aucune entrée chargée : indisponible, pas « aucune
+/// menace connue ». Une copie locale ancienne compte comme chargée (son âge n'est pas suivi ici).
+pub fn decision_listes(sources_actives: usize, entrees: usize) -> Note {
+    if sources_actives == 0 {
+        Note::Desactivee
+    } else if entrees == 0 {
+        Note::Indisponible
+    } else {
+        Note::Active
+    }
+}
+
+/// Listes chargées : adresses et réseaux (RES-001), domaines (DNS-001)
+pub fn noter_listes(ip_actives: usize, ip_et_reseaux: usize, domaines_actives: usize, domaines: usize) {
+    for (c, actives, n, quoi) in [(ListesMenaces, ip_actives, ip_et_reseaux, "adresse"), (ListesDomaines, domaines_actives, domaines, "domaine")] {
+        match decision_listes(actives, n) {
+            Note::Desactivee => desactivee(c, &format!("aucune liste de {quoi}s activée (listes à licence restreinte coupées)")),
+            Note::Indisponible => echec(c, &format!("aucun {quoi} de menace chargé")),
+            _ => succes(c),
         }
     }
 }
@@ -246,10 +270,24 @@ struct Case {
     dernier_succes: AtomicU64,
     depuis: AtomicU64,
     raison: Mutex<String>,
+    /// Dernière ligne écrite dans journal.txt pour cette collecte, et changements tus depuis (une ligne par minute au
+    /// plus : une collecte qui oscille ne chasse pas l'historique utile)
+    journal: AtomicU64,
+    tus: AtomicU32,
+    /// Muette (plus de trois intervalles sans lecture réussie) au dernier relevé publié
+    muette: AtomicBool,
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
-const CASE: Case = Case { note: AtomicU8::new(0), dernier_succes: AtomicU64::new(0), depuis: AtomicU64::new(0), raison: Mutex::new(String::new()) };
+const CASE: Case = Case {
+    note: AtomicU8::new(0),
+    dernier_succes: AtomicU64::new(0),
+    depuis: AtomicU64::new(0),
+    raison: Mutex::new(String::new()),
+    journal: AtomicU64::new(0),
+    tus: AtomicU32::new(0),
+    muette: AtomicBool::new(false),
+};
 static CASES: [Case; 21] = [CASE; 21];
 
 fn maintenant() -> u64 {
@@ -268,15 +306,36 @@ fn noter(c: Collecte, note: Note, raison: &str, succes: bool) {
         return;
     }
     let raison = borner(raison);
-    let mut r = case.raison.lock().unwrap_or_else(|e| e.into_inner());
-    if avant != note || *r != raison {
-        if avant != note {
-            case.depuis.store(t, Ordering::Relaxed);
-            crate::commun::journal(&format!("collecte {} : {}{}", c.id(), nom_note(note), if raison.is_empty() { String::new() } else { format!(" ({raison})") }));
+    let mut message = None;
+    {
+        let mut r = case.raison.lock().unwrap_or_else(|e| e.into_inner());
+        if avant != note || *r != raison {
+            if avant != note {
+                case.depuis.store(t, Ordering::Relaxed);
+                message = Some(format!("{}{}", nom_note(note), if raison.is_empty() { String::new() } else { format!(" ({raison})") }));
+            }
+            *r = raison;
+            case.note.store(note as u8, Ordering::Relaxed);
         }
-        *r = raison;
-        case.note.store(note as u8, Ordering::Relaxed);
     }
+    // Hors du verrou : l'écriture dans journal.txt ne retient pas la publication
+    if let Some(m) = message {
+        journaliser(c, &m, t);
+    }
+}
+
+/// Une ligne par collecte et par minute au plus ; les changements tus entre-temps sont comptés dans la ligne suivante
+fn journaliser(c: Collecte, message: &str, t: u64) {
+    let case = &CASES[c.index()];
+    let avant = case.journal.load(Ordering::Relaxed);
+    if avant != 0 && t.saturating_sub(avant) < 60 * 10_000_000 {
+        case.tus.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    case.journal.store(t, Ordering::Relaxed);
+    let tus = case.tus.swap(0, Ordering::Relaxed);
+    let suite = if tus > 0 { format!(" ; {tus} changement(s) tu(s) dans la minute précédente") } else { String::new() };
+    crate::commun::journal(&format!("collecte {} : {message}{suite}", c.id()));
 }
 
 fn nom_note(n: Note) -> &'static str {
@@ -289,11 +348,12 @@ fn nom_note(n: Note) -> &'static str {
     }
 }
 
-/// Raison publiée : sans nom de compte (tout chemin de profil, où qu'il soit dans le texte), sans caractère de contrôle,
-/// 200 caractères au plus
+/// Raison publiée : sans nom de compte (tout chemin de profil, où qu'il soit dans le texte : « C:\Users\… », « C:/Users/… »,
+/// « \\?\C:\Users\… », « \Device\HarddiskVolumeN\Users\… » ; le nom va jusqu'au séparateur suivant, espaces compris),
+/// sans caractère de contrôle, 200 caractères au plus
 pub fn borner(raison: &str) -> String {
     static PROFIL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let profil = PROFIL.get_or_init(|| regex::Regex::new(r"(?i)[a-z]:\\users\\[^\\\s]+").unwrap());
+    let profil = PROFIL.get_or_init(|| regex::Regex::new(r"(?i)(?:[a-z]:|\\device\\harddiskvolume\d+)[\\/]+users[\\/]+[^\\/]+").unwrap());
     profil.replace_all(raison, "%USERPROFILE%").chars().map(|c| if c.is_control() { '?' } else { c }).take(200).collect()
 }
 
@@ -344,11 +404,19 @@ pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>) {
         .zip(&etats)
         .map(|(c, e)| {
             let case = &CASES[c.index()];
+            let note = Note::depuis_u8(case.note.load(Ordering::Relaxed));
+            let succes = case.dernier_succes.load(Ordering::Relaxed);
+            // Muette : « Depuis » est la fin du délai de trois intervalles, et le passage est journalisé
+            let muette = matches!(note, Note::Active | Note::Partielle) && matches!(e, EtatPublie::Indisponible(_));
+            if case.muette.swap(muette, Ordering::Relaxed) != muette {
+                journaliser(*c, if muette { e.raison() } else { "de nouveau lue" }, t);
+            }
+            let depuis = if muette { succes + 3 * c.periode() * 10_000_000 } else { case.depuis.load(Ordering::Relaxed) };
             EtatCollecte {
                 id: c.id().into(),
                 etat: e.nom().into(),
-                depuis: heure(case.depuis.load(Ordering::Relaxed)),
-                dernier_succes: heure(case.dernier_succes.load(Ordering::Relaxed)),
+                depuis: heure(depuis),
+                dernier_succes: heure(succes),
                 raison: e.raison().to_string(),
             }
         })

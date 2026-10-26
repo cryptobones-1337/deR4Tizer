@@ -33,7 +33,20 @@ comme non lue). L'interface ne l'affiche qu'à partir de la PR 3.4. Correspondan
 Sysmon), état de Defender, WMI des processus, listes de menaces et de domaines, LOLDrivers. Les autres (processus,
 persistance, baseline, leurres, audit des données, `pfirewall.log`, extensions, périphériques, capture) restent
 « Inconnue » jusqu'à la PR 3.3b : leurs règles sont donc publiées « sans collecte ». Ne suivent aucune source :
-RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002.
+RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002. Par défaut, les listes de domaines sont toutes à licence
+restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « sans collecte ».
+
+Ce que garantit « Active » : la source se **lit** (pour un journal suivi, le numéro du dernier événement et les
+nouveaux événements sont lus ; une lecture interrompue passe en « Indisponible » et les événements sont relus au tour
+suivant). Cela ne garantit pas que Windows **produit** les événements attendus. Cas connus non détectés :
+- journal DNS-Client coupé après le démarrage (D4, PR 3.3b) ;
+- politique d'audit modifiée (ouvertures de session non auditées : COR-R1, R2, R3, R9 restent couvertes) ;
+- Sysmon configuré sans l'événement 22 (il couvre quand même DNS-001), ou service Sysmon arrêté alors que son journal
+  reste lisible ;
+- listes de menaces chargées depuis une copie locale ancienne (l'âge n'est pas suivi) ;
+- `JournalSecurite` noté par deux lecteurs (SIEM et accès aux fichiers 4663) : un seul en panne ne se voit pas, l'autre
+  continuant de lire le même journal.
+« Partielle » (WMI sans Sysmon) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées dégradées.
 
 Domaines : `RES` connexions, `DNS`, `PRC` processus, `CHA` chaînes de processus, `PER` persistance, `DEF` Defender,
 `LEU` leurres, `VOL` vol de données, `SYS` fichier hosts et pare-feu, `PIL` pilotes, `EXT` extensions de navigateur,

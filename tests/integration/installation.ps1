@@ -281,9 +281,11 @@ if ($compte) {
 }
 
 # ---------------------------------------------------------------- état des collectes (phase 3.3)
-# Témoin retenu : les collectes branchées sont lues dans la VM (Sysmon absent : désactivée, WMI partielle) et leurs
-# règles ne sont pas « sans collecte ». Témoin écarté : la capture (gelée) n'est pas encore notée, elle reste
-# « Inconnue » et EXP-IDS-001 est publiée sans collecte : l'inconnu ne vaut jamais « rien de suspect ».
+# Témoin retenu : les collectes branchées sont lues dans la VM (Sysmon absent : désactivée, WMI partielle ; listes de
+# domaines désactivées par le réglage par défaut) et leurs règles ne sont pas « sans collecte ». Témoins écartés : la
+# capture (gelée) n'est pas encore notée, elle reste « Inconnue » et EXP-IDS-001 est publiée sans collecte ; puis une
+# liste LOLDrivers vide (posée par l'administrateur, propriétaire contrôlé) rend LOLDrivers « Indisponible » et
+# PIL-001 sans collecte. Écart au dossier : le journal DNS coupé après le démarrage (D4) vient avec la PR 3.3b.
 Verifier 'État des collectes : collectes branchées actives, inconnue publiée sans collecte' {
     # L'état de Defender est lu par le fil « contrôles » au démarrage : attendu en 3 min au plus
     $fin = (Get-Date).AddSeconds(180)
@@ -308,6 +310,7 @@ Verifier 'État des collectes : collectes branchées actives, inconnue publiée 
         if ($c['WmiProcessus'].Etat -ne 'Partielle') { return "WMI des processus : $($c['WmiProcessus'].Etat) ; $vu" }
     }
     if ($c['Capture'].Etat -ne 'Inconnue') { return "capture : $($c['Capture'].Etat) (attendue inconnue, non notée) ; $vu" }
+    if ($c['ListesDomaines'].Etat -ne 'Desactivee') { return "listes de domaines : $($c['ListesDomaines'].Etat) (attendues désactivées par défaut) ; $vu" }
     $sans = @($e.ReglesSansCollecte)
     foreach ($r in 'DEF-001', 'DEF-010', 'RES-003', 'SYS-002', 'COR-R1') {
         if ($sans -contains $r) { return "règle $r publiée sans collecte ; sans collecte : $($sans -join ', ')" }
@@ -317,6 +320,25 @@ Verifier 'État des collectes : collectes branchées actives, inconnue publiée 
     if (-not $sysmon -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul) non dégradée : $($deg -join ', ')" }
     Write-Host "  collectes : $vu"
     Write-Host "  sans collecte : $($sans -join ', ')"
+    $true
+}
+
+Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL-001 sans collecte' {
+    # Récente : le service ne la retélécharge pas ; lue au premier tour du fil « contrôles »
+    New-Item -ItemType Directory -Force (Join-Path $script:Donnees 'menaces') | Out-Null
+    Poser-EnAdministrateur 'menaces\loldrivers.json' '[]'
+    $d = Redemarrer-Service
+    $fin = (Get-Date).AddSeconds(180)
+    do {
+        $e = Attendre-Etat $d 60
+        $l = if ($e) { @($e.Collectes | Where-Object { $_.Id -eq 'Loldrivers' }) | Select-Object -First 1 }
+        if ($l -and $l.Etat -ne 'Inconnue') { break }
+        Start-Sleep 3
+    } while ((Get-Date) -lt $fin)
+    if (-not $l) { return 'collecte Loldrivers absente' }
+    if ($l.Etat -ne 'Indisponible') { return "LOLDrivers : $($l.Etat) ($($l.Raison))" }
+    if (@($e.ReglesSansCollecte) -notcontains 'PIL-001') { return "PIL-001 absente des règles sans collecte : $(@($e.ReglesSansCollecte) -join ', ')" }
+    Write-Host "  LOLDrivers : $($l.Etat) ($($l.Raison))"
     $true
 }
 

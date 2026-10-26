@@ -143,9 +143,9 @@ impl Processus {
                 }
             };
             *moi.source.lock().unwrap() = "WMI".into();
-            // WMI ne donne la ligne de commande que d'un processus encore vivant : PRC-002 à PRC-005 peuvent manquer
-            // un processus bref
-            collectes::partielle(Collecte::WmiProcessus, "WMI : ligne de commande absente pour un processus déjà terminé");
+            // WMI ne décrit (parent, ligne de commande) qu'un processus encore vivant : PRC-001 à PRC-005 peuvent
+            // manquer un processus bref
+            collectes::partielle(Collecte::WmiProcessus, "WMI : processus brefs manqués (parent ou ligne de commande absents)");
             for evenement in flux.flatten() {
                 let (Some(pid), Some(ppid)) = (nombre(&evenement, "ProcessID"), nombre(&evenement, "ParentProcessID")) else { continue };
                 let mut info = moi.interroger(pid).unwrap_or(InfoProcessus {
