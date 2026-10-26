@@ -464,6 +464,10 @@ namespace DeR4Tizer
         DateTime demarrageVu, menacesVu, configVu, baselineVu, extensionsVu, quarantaineVu, parefeuVu;
         bool majCase, paniqueActive;
         string etatVu = "", alertesVues = "", blocagesVus = "";
+        // Dernier état lu et dernières alertes : la liste vide dit si des détections sont muettes (état des collectes)
+        Etat dernierEtat;
+        List<Alerte> alertesAffichees = new List<Alerte>();
+        string couvertureVue;
         string derniereLue = "";
         HashSet<string> idsConnus;
         bool quitter, astuceMontree;
@@ -822,9 +826,15 @@ namespace DeR4Tizer
                     Couleur = etat.SourceProcessus == "aucune" ? Theme.Jaune : Theme.Cyan
                 });
                 var actifs = (etat.Peripheriques ?? new List<UsagePeripherique>()).Where(u => u.EnCours).ToList();
-                pastilles.Add(actifs.Count == 0
-                    ? new Entete.Pastille { Texte = "CAM / MIC OFF", Couleur = Theme.TexteDim }
-                    : new Entete.Pastille { Texte = string.Join(" + ", actifs.Select(u => u.Peripherique.ToUpperInvariant() + " : " + u.Programme)), Couleur = Theme.Rouge, Clignote = true });
+                // « OFF » seulement si le magasin des consentements est lu : sinon rien ne prouve que la caméra est éteinte
+                pastilles.Add(actifs.Count > 0
+                    ? new Entete.Pastille { Texte = string.Join(" + ", actifs.Select(u => u.Peripherique.ToUpperInvariant() + " : " + u.Programme)), Couleur = Theme.Rouge, Clignote = true }
+                    : Couverture.CamMicLue(etat)
+                        ? new Entete.Pastille { Texte = "CAM / MIC OFF", Couleur = Theme.TexteDim }
+                        : new Entete.Pastille { Texte = L.T("CAM / MIC : COLLECTE INDISPONIBLE"), Couleur = Theme.Jaune });
+                // Collectes en panne : jaune (rien d'avéré), jamais rouge ; le détail est dans la page Alertes
+                var enPanne = Couverture.Pastille(etat);
+                if (enPanne != "") pastilles.Add(new Entete.Pastille { Texte = enPanne, Couleur = Theme.Jaune });
                 if (etat.Panique) pastilles.Insert(0, new Entete.Pastille { Texte = "MODE PANIQUE : INTERNET COUPÉ", Couleur = Theme.Rouge, Clignote = true });
                 // Échec fermé côté service : configuration et secrets ignorés tant que les droits ne sont pas vérifiés
                 if (!string.IsNullOrEmpty(etat.ProtectionDonnees))
@@ -834,6 +844,9 @@ namespace DeR4Tizer
                     pastilles.Add(def.TempsReel && def.Antivirus
                         ? new Entete.Pastille { Texte = def.ProtectionFalsification ? "DEFENDER OK" : "DEFENDER (FALSIFICATION OFF)", Couleur = def.ProtectionFalsification ? Theme.Vert : Theme.Jaune }
                         : new Entete.Pastille { Texte = "DEFENDER DÉSACTIVÉ", Couleur = Theme.Rouge, Clignote = true });
+                else
+                    // État illisible : ni « OK » ni « désactivé », c'est dit (phase 3.4)
+                    pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
                 if (etat.Exposition != null && etat.Exposition.Exposee)
                     pastilles.Insert(1, new Entete.Pastille { Texte = "PC EXPOSÉ À INTERNET", Couleur = Theme.Rouge, Clignote = true });
                 paniqueActive = etat.Panique;
@@ -842,8 +855,10 @@ namespace DeR4Tizer
                 if (etat.OutilsDistants != null && etat.OutilsDistants.Count > 0)
                     pastilles.Add(new Entete.Pastille { Texte = "PRISE EN MAIN : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
 
+                int muettes = etat.ReglesSansCollecte == null ? 0 : etat.ReglesSansCollecte.Count;
                 statut.Text = "▸ mis à jour " + etat.MisAJour + "   ▸ service démarré le " + etat.Demarrage + "   ▸ v" + (etat.Version ?? "?")
-                    + (etat.JournalDnsActif ? "" : "   ▸ journal DNS inactif : impossible de repérer les IP contactées directement");
+                    + (etat.JournalDnsActif ? "" : "   ▸ journal DNS inactif : impossible de repérer les IP contactées directement")
+                    + (muettes == 0 ? "" : "   ▸ " + string.Format(L.T("{0} détection(s) sans collecte (détail : page Alertes)"), muettes));
                 navVie.Badge = actifs.Count + (etat.OutilsDistants ?? new List<OutilDistant>()).Count + (etat.BureauADistance ? 1 : 0);
                 navVie.CouleurBadge = Theme.Rouge;
                 navVie.TexteBadge = navVie.Badge > 0 ? "LIVE" : null;
@@ -921,11 +936,20 @@ namespace DeR4Tizer
 
             var alertes = Commun.Lire<List<Alerte>>("alertes.json") ?? new List<Alerte>();
             string cleAlertes = alertes.Count + "|" + (alertes.Count > 0 ? alertes[alertes.Count - 1].Id : "");
+            dernierEtat = etat;
+            string couverture = Couverture.AucuneAlerte(etat);
             if (cleAlertes != alertesVues)
             {
                 alertesVues = cleAlertes;
+                couvertureVue = couverture;
                 NotifierNouvelles(alertes);
                 RemplirAlertes(alertes);
+            }
+            else if (couverture != couvertureVue)
+            {
+                // Liste inchangée, état des collectes changé : le message de la liste vide suit
+                couvertureVue = couverture;
+                RemplirAlertes(alertesAffichees);
             }
 
             var blocages = Commun.Lire<List<Blocage>>("blocages.json") ?? new List<Blocage>();
@@ -989,8 +1013,17 @@ namespace DeR4Tizer
 
         void RemplirAlertes(List<Alerte> alertes)
         {
+            alertesAffichees = alertes;
             lvAlertes.BeginUpdate();
             lvAlertes.Items.Clear();
+            if (alertes.Count == 0)
+            {
+                // « Aucune alerte » seul seulement si chaque détection a sa collecte ; sinon, lesquelles sont muettes
+                string message = Couverture.AucuneAlerte(dernierEtat);
+                var vide = new ListViewItem(new[] { "", "", "", "", "", message, "" }) { ToolTipText = message };
+                vide.ForeColor = message == L.T("Aucune alerte.") ? Theme.TexteDim : Theme.Jaune;
+                lvAlertes.Items.Add(vide);
+            }
             foreach (var a in Enumerable.Reverse(alertes))
             {
                 var item = new ListViewItem(new[]
@@ -1330,7 +1363,8 @@ namespace DeR4Tizer
             if (lvAlertes.SelectedItems.Count == 0) return;
             var a = lvAlertes.SelectedItems[0].Tag as Alerte;
             if (a == null) return;
-            detailAlerte.Text = (string.IsNullOrEmpty(a.Mitre) ? "" : "TECHNIQUE : " + a.Mitre + "\n")
+            detailAlerte.Text = (string.IsNullOrEmpty(a.Regle) ? "" : L.T("RÈGLE") + " : " + a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : "   (" + L.T("collecte présumée") + " : " + a.Collecte + ")") + "\n")
+                + (string.IsNullOrEmpty(a.Mitre) ? "" : "TECHNIQUE : " + a.Mitre + "\n")
                 + (string.IsNullOrEmpty(a.Conseil) ? "" : "QUE FAIRE : " + a.Conseil + "\n")
                 + a.Raisons;
         }
