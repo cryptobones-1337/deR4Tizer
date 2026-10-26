@@ -153,16 +153,20 @@ modules expérimentaux.
 ### RES-004 : adresse publique directement sur le PC
 - **Code** : `moniteur.rs` (« PC EXPOSÉ À INTERNET : adresse publique directement sur le PC »).
 - **Justification** : un PC sans box ni NAT devant lui est joignable depuis Internet.
-- **Conditions** : contrôle tous les 100 passages du cycle ; l'alerte ne part que si le **nombre** d'adresses publiques
-  augmente. Un PC déjà exposé au démarrage du service ne déclenche donc aucune alerte.
+- **Conditions** : contrôle tous les 100 passages du cycle ; l'alerte part quand un réseau public apparaît sur une carte
+  réseau depuis le relevé précédent : une adresse IPv4 publique, ou un préfixe /64 IPv6 global. Les adresses IPv6
+  temporaires, que Windows renouvelle chaque jour dans le même préfixe, ne comptent pas (relecture de #87, D1). Avant la
+  PR 3.8, seul un **nombre** d'adresses en hausse alertait. Un PC déjà exposé au démarrage du service ne déclenche aucune
+  alerte (adresses relevées au démarrage). Limite inchangée : un relevé qui échoue rend une liste vide, et les adresses
+  revues au relevé suivant passent pour nouvelles.
 - **Télémétrie** : adresses des cartes réseau.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : réseau d'entreprise avec adresses publiques volontaires ; IPv6 globale (selon le cas).
   Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'a pas d'adresse publique. La
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_004_positif` (adresse apparue ; adresse qui en remplace une autre), `res_004_negatif` (mêmes adresses ;
-  adresse disparue) ; décision pure `moniteur::alerte_adresses_publiques`. PR 3.8 : comparaison adresse par adresse ;
+- **Tests** : `res_004_positif` (adresse apparue ; adresse qui en remplace une autre ; nouveau préfixe IPv6),
+  `res_004_negatif` (mêmes adresses ; adresse disparue ; adresse temporaire IPv6 renouvelée dans le même préfixe) ; décision pure `moniteur::alerte_adresses_publiques`. PR 3.8 : comparaison adresse par adresse ;
   avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en remplaçait une autre passait
   inaperçue (faux négatif, corrigé). Non exercée en VM.
 

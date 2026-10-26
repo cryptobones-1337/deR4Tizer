@@ -646,6 +646,8 @@ fn res_004_positif() {
     assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("RES-004", "Alerte"));
     // PR 3.8 : une adresse publique qui en remplace une autre (même nombre d'adresses) alerte aussi
     assert!(alerte_adresses_publiques(&["203.0.113.7".into()], &["198.51.100.9".into()]).is_some());
+    // IPv6 : nouveau préfixe /64 (adresses de documentation, RFC 3849)
+    assert!(alerte_adresses_publiques(&["2001:db8:1:1::10".into()], &["2001:db8:1:2::10".into()]).is_some());
 }
 
 #[test]
@@ -655,6 +657,11 @@ fn res_004_negatif() {
     assert!(alerte_adresses_publiques(&["203.0.113.7".into()], &["203.0.113.7".into()]).is_none());
     assert!(alerte_adresses_publiques(&["203.0.113.7".into(), "198.51.100.9".into()], &["203.0.113.7".into()]).is_none());
     assert!(alerte_adresses_publiques(&[], &[]).is_none());
+    // Relecture de #87, D1 : adresse temporaire IPv6 renouvelée dans le même préfixe /64 (chaque jour, et à chaque
+    // reconnexion) : pas une exposition nouvelle
+    assert!(alerte_adresses_publiques(&["2001:db8:1:1:a1b2:c3d4:e5f6:1".into()], &["2001:db8:1:1:9f8e:7d6c:5b4a:2".into()]).is_none());
+    assert!(alerte_adresses_publiques(&["2001:db8:1:1::10".into(), "2001:db8:1:1:a1b2:c3d4:e5f6:1".into()],
+                                      &["2001:db8:1:1::10".into(), "2001:db8:1:1:9f8e:7d6c:5b4a:2".into()]).is_none());
 }
 
 #[test]

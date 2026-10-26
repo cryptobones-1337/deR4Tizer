@@ -1493,11 +1493,14 @@ pub(crate) fn premiere_connexion_signalee(apprentissage: bool, premier_passage: 
     !apprentissage && !premier_passage
 }
 
-/// Décision pure (testée, RES-004) : adresse publique apparue sur une carte réseau depuis le relevé précédent. PR 3.8 :
-/// comparée adresse par adresse ; avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en
-/// remplaçait une autre passait inaperçue
+/// Décision pure (testée, RES-004) : réseau public apparu sur une carte réseau depuis le relevé précédent. PR 3.8 :
+/// comparé réseau par réseau ; avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en
+/// remplaçait une autre passait inaperçue. Une adresse IPv4 est son propre réseau ; une adresse IPv6 compte par son
+/// préfixe /64 : les adresses temporaires que Windows renouvelle chaque jour dans le même préfixe ne sont pas une
+/// exposition nouvelle (relecture de #87, D1)
 pub(crate) fn alerte_adresses_publiques(avant: &[String], apres: &[String]) -> Option<Alerte> {
-    if !apres.iter().any(|a| !avant.contains(a)) {
+    let connus: Vec<String> = avant.iter().map(|a| reseau_public(a)).collect();
+    if !apres.iter().any(|a| !connus.contains(&reseau_public(a))) {
         return None;
     }
     Some(Alerte {
@@ -1507,6 +1510,18 @@ pub(crate) fn alerte_adresses_publiques(avant: &[String], apres: &[String]) -> O
         raisons: format!("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC ({})", apres.join(", ")),
         ..Default::default()
     })
+}
+
+/// Réseau d'une adresse publique : l'adresse IPv4 elle-même, le préfixe /64 d'une adresse IPv6 ; un texte illisible est
+/// gardé tel quel
+fn reseau_public(adresse: &str) -> String {
+    match adresse.parse::<IpAddr>() {
+        Ok(IpAddr::V6(v6)) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        _ => adresse.to_string(),
+    }
 }
 
 fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
