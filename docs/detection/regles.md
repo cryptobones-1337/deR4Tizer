@@ -67,7 +67,9 @@ Lecture d'un journal suivi :
 - journal désactivé (encore lisible, mais Windows n'y écrit plus) : « Indisponible », une ligne dans `journal.txt` ; le
   journal DNS-Client est réactivé (une tentative par épisode, D4), les autres sont seulement signalés ; un journal coupé
   par le service lui-même (retour arrière de la baseline, demandé par l'administrateur) est laissé coupé et noté
-  « Desactivee » ;
+  « Desactivee », jusqu'à ce qu'il soit réactivé par un autre moyen (une coupure ultérieure par un tiers est alors de
+  nouveau réactivée) ; limite : cette coupure n'est retenue qu'en mémoire, et au redémarrage du service le journal
+  DNS-Client est réactivé comme à chaque démarrage (le retour arrière ne vaut que jusque-là) ;
 - angles morts de la désactivation : une coupure suivie d'une réactivation ne laisse aucune trace de la plage pendant
   laquelle Windows n'a rien écrit ; une coupure et une réactivation par un tiers entre deux tours (2 s) ne sont pas
   vues ; une configuration du canal illisible est prise pour « activé » ;
@@ -77,7 +79,7 @@ Lecture d'un journal suivi :
   n'est sauté et la collecte passe « Indisponible » ; sur une erreur (événement illisible), un seul numéro est sauté,
   juste après le dernier lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` ; les événements
   perdus sont ceux des numéros sautés : au plus deux fois l'écart entre le dernier lu et l'événement fautif ;
-- événements écrasés par la rotation du journal avant d'être lus : vérifié à chaque tour qui a du nouveau (un petit
+- événements écrasés par la rotation du journal avant d'être lus : vérifié avant chaque fenêtre lue (un petit
   journal, comme DNS-Client ou Defender, tourne en quelques milliers d'événements) ; la lecture reprend au plus ancien
   numéro encore présent, la perte est comptée et écrite dans `journal.txt` ; un journal qui grossit plus vite que le
   service ne le lit (plus de 5 000 numéros par fenêtre, 1,5 s de lecture par tour de 2 s) finit ainsi par perdre des
