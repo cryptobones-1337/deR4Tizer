@@ -51,7 +51,9 @@ Le dossier de compilation du service est commun à toutes les copies du dépôt 
 par sa date : sans précaution, une copie dont les sources sont plus anciennes que la dernière compilation d'une autre
 copie livrait le binaire de l'autre copie. C'est arrivé le 2026-10-26, sur un passage de mesure seule : le binaire de
 `main` a été testé sous la tête d'une PR, avec le nombre de tests unitaires de `main`. `cible-cargo.ps1`, chargé par
-`compiler-rs.ps1` et `preparer.ps1`, nettoie notre paquet quand la copie change. Les rapports gardent le nombre de tests
+`compiler-rs.ps1` et `preparer.ps1`, donne à chaque copie son propre dossier de compilation
+(`%USERPROFILE%\.der4tizer-build-msvc\<empreinte du chemin>`), ce qui couvre aussi deux compilations simultanées ; les
+dossiers des copies retirées sont effacés. Les rapports gardent le nombre de tests
 unitaires lancés, à comparer à celui de la tête testée.
 
 2026-10-24, arbre `370e4d272d88515c1e6901882933bc8340995602`, identique à `main` après la fusion des PR #10 à #27

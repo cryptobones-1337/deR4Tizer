@@ -9,7 +9,7 @@ param([switch]$Debug)
 $ErrorActionPreference = 'Stop'
 $chaine = 'stable-x86_64-pc-windows-msvc'
 $env:PATH = "$(Join-Path $env:USERPROFILE '.cargo\bin');$env:PATH"
-# Dossier de compilation commun, nettoyé pour notre paquet quand la copie du dépôt change (cible-cargo.ps1)
+# Dossier de compilation propre à cette copie du dépôt (cible-cargo.ps1)
 . (Join-Path $PSScriptRoot 'cible-cargo.ps1')
 
 Push-Location (Join-Path $PSScriptRoot 'service-rs')

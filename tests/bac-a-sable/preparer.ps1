@@ -30,7 +30,7 @@ Remove-Item -LiteralPath $entree -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $entree, (Join-Path $entree 'integration') | Out-Null
 
 Etape 'Tests unitaires (MSVC)'
-# Dossier de compilation commun, nettoyé pour notre paquet quand la copie du dépôt change (cible-cargo.ps1)
+# Dossier de compilation propre à cette copie du dépôt (cible-cargo.ps1)
 . (Join-Path $depot 'cible-cargo.ps1')
 Push-Location (Join-Path $depot 'service-rs')
 try { cargo "+$chaine" test --release; if ($LASTEXITCODE) { throw 'tests unitaires en échec' } } finally { Pop-Location }
