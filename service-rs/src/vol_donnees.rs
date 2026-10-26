@@ -241,7 +241,13 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
         let _ = std::thread::Builder::new().name("audit données sensibles".into()).spawn(move || loop {
             let (n, echecs) = poser_audit();
             commun::journal(&format!("audit de lecture posé sur {n} dossier(s) de données sensibles{}", if echecs > 0 { format!(", {echecs} en échec") } else { String::new() }));
-            crate::collectes::noter_comptes(crate::collectes::Collecte::AuditDonnees, n, echecs, "dossier de données sensibles");
+            let utilisateurs = format!(r"{}\Users", crate::natif::dossier_windows().get(..2).unwrap_or("C:"));
+            if std::fs::read_dir(&utilisateurs).is_err() {
+                // Aucun dossier trouvé parce que les profils sont illisibles : pas « rien à auditer »
+                crate::collectes::echec(crate::collectes::Collecte::AuditDonnees, "dossier des profils illisible");
+            } else {
+                crate::collectes::noter_comptes(crate::collectes::Collecte::AuditDonnees, n, echecs, "dossiers de données sensibles");
+            }
             *dossiers.lock().unwrap() = dossiers_presents();
             std::thread::sleep(Duration::from_secs(3600));
         });

@@ -273,12 +273,12 @@ pub fn decision_comptes(lus: usize, en_echec: usize) -> Note {
     }
 }
 
-/// Note une lecture faite sur plusieurs éléments (`decision_comptes`) ; `quoi` nomme les éléments dans la raison
+/// Note une lecture faite sur plusieurs éléments (`decision_comptes`) ; `quoi` nomme les éléments, au pluriel
 pub fn noter_comptes(c: Collecte, lus: usize, en_echec: usize, quoi: &str) {
     match decision_comptes(lus, en_echec) {
-        Note::Desactivee => desactivee(c, &format!("aucun {quoi} à lire")),
-        Note::Indisponible => echec(c, &format!("{en_echec} {quoi}(s), aucun lu")),
-        Note::Partielle => partielle(c, &format!("{en_echec} {quoi}(s) sur {} non lu(s)", lus + en_echec)),
+        Note::Desactivee => desactivee(c, &format!("{quoi} : rien à lire")),
+        Note::Indisponible => echec(c, &format!("{quoi} : {en_echec} en échec, aucun lu")),
+        Note::Partielle => partielle(c, &format!("{quoi} : {en_echec} non lu(s) sur {}", lus + en_echec)),
         _ => succes(c),
     }
 }
@@ -286,6 +286,16 @@ pub fn noter_comptes(c: Collecte, lus: usize, en_echec: usize, quoi: &str) {
 /// La collecte est-elle lue maintenant (« Active ») ?
 pub fn est_active(c: Collecte) -> bool {
     etat_a(c, maintenant()) == EtatPublie::Active
+}
+
+/// Dernière lecture réussie il y a moins de trois intervalles (un échec passager ne compte pas)
+pub fn lue_recemment(c: Collecte) -> bool {
+    lue_dans_le_delai(CASES[c.index()].dernier_succes.load(Ordering::Relaxed), c.periode(), maintenant())
+}
+
+/// Décision pure (testée) : une lecture réussie (FILETIME, 0 : jamais) date-t-elle de moins de trois intervalles ?
+pub fn lue_dans_le_delai(dernier_succes: u64, periode: u64, maintenant: u64) -> bool {
+    dernier_succes != 0 && maintenant.saturating_sub(dernier_succes) <= 3 * periode * 10_000_000
 }
 
 /// Listes chargées : adresses et réseaux (RES-001), domaines (DNS-001)

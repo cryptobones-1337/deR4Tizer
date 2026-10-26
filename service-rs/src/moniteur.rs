@@ -377,7 +377,7 @@ impl Moniteur {
                     if !p.baseline_occupee.load(Ordering::Relaxed) {
                         let b = baseline::evaluer();
                         let inconnues = b.regles.iter().filter(|r| r.etat == "inconnu").count();
-                        collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues, "réglage de la baseline");
+                        collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues, "réglages de la baseline");
                         // Le service applique lui-même le profil « journalisation » (demandé par l'utilisateur),
                         // une fois au démarrage, s'il n'est pas conforme
                         if premier && !console && baseline::gestion().is_none() && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
@@ -495,8 +495,9 @@ impl Moniteur {
         let mut cles_vues = HashSet::new();
         let (mut alertes_modifiees, mut exes_modifies) = (false, false);
 
-        // Indice « IP directe » : seulement si le journal DNS est lu maintenant (sinon toute connexion sans nom le prendrait)
-        let dns_lu = collectes::est_active(Collecte::JournalDns);
+        // Indice « IP directe » : seulement si le journal DNS a été lu récemment (sinon toute connexion sans nom le
+        // prendrait) ; un échec passager (lecture lente) ne le retire pas
+        let dns_lu = collectes::lue_recemment(Collecte::JournalDns);
         for ((pid, ip, port), groupe) in &groupes {
             let chemin = chemins.entry(*pid).or_insert_with(|| natif::chemin_processus(*pid)).clone();
             let nom_processus = if !chemin.is_empty() {

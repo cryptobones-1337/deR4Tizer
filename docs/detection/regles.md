@@ -48,12 +48,23 @@ suivant). Cela ne garantit pas que Windows **produit** les événements attendus
   continuant de lire le même journal ;
 - l'audit des données (SACL) posé ne prouve pas que la politique d'audit des accès aux objets est active : sans elle,
   aucun 4663 n'est produit (VOL-001, LEU-002) ; l'audit posé sur les leurres eux-mêmes n'est pas suivi (journal seul) ;
-- capture : « Active » dit que le fil de capture tourne, pas qu'il reçoit des paquets ;
-- leurres : « Active » dit qu'au moins un leurre est suivi, pas que chaque profil en a un.
+- capture : « Active » dit que le fil de capture tourne, pas qu'il reçoit des paquets (une réception toujours en
+  échec n'est pas vue) ;
+- leurres : « Active » dit qu'au moins un leurre est suivi, pas que chaque profil en a un ;
+- audit des données : un dossier dont le parcours est tronqué (20 000 éléments) ou dont des éléments sont écartés
+  (liens) compte comme audité ;
+- `pfirewall.log` : un fichier présent alors que la journalisation des paquets a été coupée reste lu (« Active ») ;
+- démarrages automatiques : un relevé partiel mais non vide compte comme lu ;
+- veille ou hibernation : le délai de trois intervalles se compte en heure murale ; au réveil, les sources à long
+  intervalle (baseline, Defender, extensions : 10 min ; audit, listes : 1 h) peuvent rester « Indisponible » jusqu'à
+  leur prochaine lecture (échec fermé).
 
-Un événement qui fait toujours échouer la lecture (journal corrompu) ne bloque plus le suivi sans fin : après 30 tours
-(une minute) sans progrès, l'intervalle est sauté et le saut est écrit dans `journal.txt` (les événements de
-l'intervalle sont perdus).
+Lecture d'un journal suivi :
+- un délai dépassé (journal très chargé ou inondé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour
+  suivant là où elle s'est arrêtée, et la collecte est « Partielle » tant que dure la lenteur ;
+- une erreur sans progrès 30 tours de suite (une minute) : un seul numéro d'événement est sauté, juste après le dernier
+  lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` et la collecte reste « Partielle » une
+  heure (« N numéro(s) d'événement sauté(s) ») ; seuls les événements du voisinage du point de blocage sont perdus.
 
 Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
 première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI
@@ -87,8 +98,10 @@ modules expérimentaux.
   balise (connexions régulières) ; port inhabituel ; télémétrie.
 - **Télémétrie** : connexions, processus (chemin, signature, ligne de commande) ; l'indice « IP directe » exige le
   journal DNS.
-- **Si elle manque** : sans journal DNS, l'indice « IP directe » peut se déclencher à tort ou manquer ; sans ligne de
-  commande (WMI), l'indice correspondant manque.
+- **Si elle manque** : sans lecture du journal DNS depuis plus de trois intervalles (90 s), l'indice « IP directe » n'est
+  pas compté (PR 3.3b : il suivait l'état du journal au démarrage et pouvait se déclencher à tort) ; un journal DNS coupé
+  mais encore lisible le laisse compter à tort (D4, PR 3.3c) ; sans ligne de commande (WMI), l'indice correspondant
+  manque.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés.

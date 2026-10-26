@@ -284,11 +284,13 @@ if ($compte) {
 # Témoin retenu : toutes les collectes sont notées (aucune « Inconnue ») ; celles que la VM fournit sont lues
 # (Sysmon absent : désactivée, WMI partielle ; listes de domaines désactivées par le réglage par défaut) et leurs règles
 # ne sont pas « sans collecte ». Témoin écarté : une liste LOLDrivers vide (posée par l'administrateur, propriétaire
-# contrôlé) rend LOLDrivers « Indisponible » et PIL-001 sans collecte. Écart au dossier : le journal DNS coupé après le
-# démarrage (D4) vient avec la PR 3.3c.
+# contrôlé) rend LOLDrivers « Indisponible » et PIL-001 sans collecte. Écarts au dossier : le journal DNS coupé après
+# le démarrage (D4) vient avec la PR 3.3c ; aucun témoin écarté n'exerce une branche « Indisponible » propre à la
+# PR 3.3b (leurres, capture, persistance…) : les provoquer en VM toucherait au fonctionnement du poste de test.
 Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
-    # Defender, extensions et baseline sont lus par le fil « contrôles » au démarrage : attendus en 3 min au plus
-    $fin = (Get-Date).AddSeconds(180)
+    # Defender, extensions, LOLDrivers (téléchargement : 300 s au plus) puis baseline sont lus par le fil « contrôles »
+    # au démarrage : attendus en 7 min au plus
+    $fin = (Get-Date).AddSeconds(420)
     do {
         $e = Etat
         $c = @{}
