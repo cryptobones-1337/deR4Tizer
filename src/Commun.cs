@@ -200,6 +200,15 @@ namespace DeR4Tizer
                 panne.Count, Expliquer(e, panne)) + suite;
         }
 
+        // Ligne de la liste vide : courte (la colonne la coupe) ; le message entier va dans le panneau de détail
+        public static string LigneVide(Etat e)
+        {
+            if (!Alarme(e)) return L.T("Aucune alerte.");
+            int n = e == null ? 0 : ReglesEnPanne(e).Count;
+            if (n == 0) return L.T("Aucune alerte, état illisible ↓");
+            return string.Format(n == 1 ? L.T("Aucune alerte, {0} détection muette ↓") : L.T("Aucune alerte, {0} détections muettes ↓"), n);
+        }
+
         // Bandeau de la page Alertes, toujours visible (même avec des alertes) : chaque collecte en panne expliquée,
         // puis les collectes désactivées par choix ; vide si tout est lu
         public static string Detail(Etat e)

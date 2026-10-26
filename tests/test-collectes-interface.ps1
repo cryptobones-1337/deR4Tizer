@@ -108,6 +108,12 @@ try {
     Cas 'liste des alertes vide : message de Couverture' ($g.Contains("if (alertes.Count == 0)`n            {") -and $g.Contains('string message = Couverture.AucuneAlerte(dernierEtat);'))
     Cas 'message suivi quand seul l''état change' ($g.Contains("else if (couverture != couvertureVue)"))
     Cas 'détail d''une alerte : règle et collecte présumée' ($g.Contains('L.T("RÈGLE") + " : " + a.Regle'))
+    # Ligne courte (la colonne la coupe), message entier dans le panneau de détail ; bandeau mis à la hauteur de son texte
+    $t = & $appel 'LigneVide' (Etat @((Collecte 'Leurres' 'Indisponible')) @('LEU-001') @{ 'LEU-001' = @('Leurres') })
+    Cas 'ligne vide courte, en panne' ($t -eq 'Aucune alerte, 1 détection muette ↓') $t
+    Cas 'ligne vide sans panne : « Aucune alerte. »' ((& $appel 'LigneVide' (Etat @((Collecte 'ListesDomaines' 'Desactivee')) @('DNS-001') @{ 'DNS-001' = @('ListesDomaines') })) -eq 'Aucune alerte.')
+    Cas 'message entier dans le panneau de détail' ($g.Contains('Couverture.LigneVide(dernierEtat)') -and $g.Contains("lvAlertes.Items.Add(vide);`n                detailAlerte.Text = message;"))
+    Cas 'bandeau : hauteur mesurée sur le texte' ($g.Contains('TextRenderer.MeasureText(t, bandeauCollectes.Font, new Size(largeur, 0), TextFormatFlags.WordBreak)'))
     # Relecture de #80, D1 : la ligne « Aucune alerte… » n'a pas d'alerte derrière ; aucune action ne la convertit de force
     Cas 'aucune conversion forcée d''une ligne en alerte' (-not $g.Contains('(Alerte)lvAlertes.SelectedItems[0].Tag'))
     Cas 'exception et blocage : ligne sans alerte ignorée' ($g.Contains("var a = lvAlertes.SelectedItems[0].Tag as Alerte;`n            if (a == null) return;") -and $g.Contains('if (a == null || (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns))) return;'))
@@ -115,6 +121,34 @@ try {
     Cas 'barre d''état : seulement les détections en panne' ($g.Contains('int muettes = Couverture.ReglesEnPanne(etat).Count;'))
     Cas 'couleur du message : jaune seulement sur panne' ($g.Contains('vide.ForeColor = Couverture.Alarme(dernierEtat) ? Theme.Jaune : Theme.TexteDim;'))
     Cas 'Defender : « lecture en cours » au démarrage' ($g.Contains('else if (Couverture.DefenderPasEncoreLu(etat))'))
+
+    # Relecture de #80, D1, exécuté : la fenêtre est construite sans être affichée (dossier de données de test, aucun
+    # service), la liste des alertes vide reçoit sa ligne « Aucune alerte… », elle est sélectionnée, puis les deux
+    # actions du menu qui plantaient sont appelées
+    $donnees = Join-Path $travail 'donnees'; New-Item -ItemType Directory -Path $donnees | Out-Null
+    $asm.GetType('DeR4Tizer.Commun').GetField('Dossier').SetValue($null, $donnees)
+    $fenT = $asm.GetType('DeR4Tizer.Fenetre')
+    $prive = [Reflection.BindingFlags]'Instance,NonPublic,Public'
+    $fen = $fenT.GetConstructor($prive, $null, @([bool]), $null).Invoke(@($true))
+    try {
+        $fen.CreateControl()
+        $alerteT = $asm.GetType('DeR4Tizer.Alerte')
+        $vide = & $liste $alerteT
+        $fenT.GetMethod('RemplirAlertes', $prive).Invoke($fen, @(, $vide)) | Out-Null
+        $lv = $fenT.GetField('lvAlertes', $prive).GetValue($fen)
+        Cas 'liste vide : une seule ligne, sans alerte derrière' ($lv.Items.Count -eq 1 -and $null -eq $lv.Items[0].Tag) "$($lv.Items.Count) ligne(s)"
+        # Sans poignée, la sélection n'est pas retenue et les actions sortent aussitôt : on la crée, et on vérifie
+        [void]$lv.Handle
+        $lv.Items[0].Selected = $true
+        Cas 'ligne « Aucune alerte… » réellement sélectionnée (sinon le cas suivant ne prouverait rien)' ($lv.SelectedItems.Count -eq 1) "$($lv.SelectedItems.Count) sélectionnée(s)"
+        foreach ($action in 'ExceptionAlerte', 'BloquerAlerte', 'DetaillerAlerte') {
+            $erreur = $null
+            try { $fenT.GetMethod($action, $prive).Invoke($fen, @()) | Out-Null } catch { $erreur = $_.Exception.InnerException }
+            Cas "ligne « Aucune alerte… » sélectionnée : $action sans plantage" ($null -eq $erreur) "$erreur"
+        }
+    } finally {
+        $fen.Dispose()
+    }
 } finally {
     Remove-Item -Recurse -Force $travail -ErrorAction SilentlyContinue
 }

@@ -526,6 +526,7 @@ namespace DeR4Tizer
             pageAlertes = Page("Alertes", "Critique : menace avérée. Alerte : comportement suspect. Info : première fois qu'un programme fait quelque chose.", lvAlertes);
             lvAlertes.Parent.Controls.Add(detailAlerte);
             lvAlertes.Parent.Controls.Add(bandeauCollectes);
+            lvAlertes.Parent.Resize += (s, e) => AjusterBandeau();
 
             // ---------------- Chaînes de processus
             lvChaines.Colonnes("Processus", 330, "PID", 70, "Score", 70, "Raisons", 560, "Ligne de commande", 520);
@@ -968,8 +969,8 @@ namespace DeR4Tizer
                 bandeauCollectes.Tag = detail;
                 bandeauCollectes.Text = detail;
                 bandeauCollectes.ForeColor = Couverture.EnPannes(etat).Count > 0 ? Theme.Jaune : Theme.TexteDim;
-                bandeauCollectes.Height = detail == "" ? 0 : 12 + 16 * (detail.Split('\n').Length);
                 bandeauCollectes.Visible = detail != "";
+                AjusterBandeau();
             }
 
             var blocages = Commun.Lire<List<Blocage>>("blocages.json") ?? new List<Blocage>();
@@ -1038,11 +1039,13 @@ namespace DeR4Tizer
             lvAlertes.Items.Clear();
             if (alertes.Count == 0)
             {
-                // « Aucune alerte » seul seulement si chaque détection a sa collecte ; sinon, lesquelles sont muettes
+                // « Aucune alerte » seul seulement si chaque détection a sa collecte ; sinon, lesquelles sont muettes. La
+                // ligne reste courte (la colonne la couperait) ; le message entier va dans le panneau de détail
                 string message = Couverture.AucuneAlerte(dernierEtat);
-                var vide = new ListViewItem(new[] { "", "", "", "", "", message, "" }) { ToolTipText = message };
+                var vide = new ListViewItem(new[] { "", "", "", "", "", Couverture.LigneVide(dernierEtat), "" }) { ToolTipText = message };
                 vide.ForeColor = Couverture.Alarme(dernierEtat) ? Theme.Jaune : Theme.TexteDim;
                 lvAlertes.Items.Add(vide);
+                detailAlerte.Text = message;
             }
             foreach (var a in Enumerable.Reverse(alertes))
             {
@@ -1376,6 +1379,16 @@ namespace DeR4Tizer
                 lvQuarantaine.Items.Add(new ListViewItem(new[] { q.Date, q.CheminOrigine, q.Raison, (q.Taille / 1024).ToString("N0") + " Ko" }) { Tag = q });
             lvQuarantaine.EndUpdate();
             navQuarantaine.Badge = liste.Count;
+        }
+
+        // Hauteur du bandeau d'après son texte, mis à la largeur de la page (lignes longues renvoyées, toute échelle d'affichage)
+        void AjusterBandeau()
+        {
+            var t = bandeauCollectes.Text;
+            if (string.IsNullOrEmpty(t)) { bandeauCollectes.Height = 0; return; }
+            int largeur = Math.Max(200, bandeauCollectes.Parent == null ? 800 : bandeauCollectes.Parent.ClientSize.Width - bandeauCollectes.Padding.Horizontal);
+            var taille = TextRenderer.MeasureText(t, bandeauCollectes.Font, new Size(largeur, 0), TextFormatFlags.WordBreak);
+            bandeauCollectes.Height = taille.Height + bandeauCollectes.Padding.Vertical + 4;
         }
 
         void DetaillerAlerte()
