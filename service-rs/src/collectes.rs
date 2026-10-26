@@ -35,21 +35,24 @@ pub enum Collecte {
     Leurres,
     Extensions,
     Peripheriques,
-    Capture,
+    /// Capture des paquets de la route par défaut (trafic, DPI, IDS)
+    CaptureTrafic,
+    /// Capture des paquets du réseau local (NDR)
+    CaptureReseauLocal,
 }
 
 use Collecte::*;
 
-pub const TOUTES: [Collecte; 21] = [
+pub const TOUTES: [Collecte; 22] = [
     Connexions, Processus, Sysmon, WmiProcessus, JournalDns, JournalDefender, EtatDefender, JournalSecurite, AuditDonnees,
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
-    Extensions, Peripheriques, Capture,
+    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal,
 ];
 
 // TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
 // collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
 const _: () = {
-    assert!(TOUTES.len() == Capture as usize + 1);
+    assert!(TOUTES.len() == CaptureReseauLocal as usize + 1);
     let mut i = 0;
     while i < TOUTES.len() {
         assert!(TOUTES[i] as usize == i);
@@ -80,7 +83,8 @@ impl Collecte {
             Leurres => "Leurres",
             Extensions => "Extensions",
             Peripheriques => "Peripheriques",
-            Capture => "Capture",
+            CaptureTrafic => "CaptureTrafic",
+            CaptureReseauLocal => "CaptureReseauLocal",
         }
     }
 
@@ -91,13 +95,18 @@ impl Collecte {
             // Journaux relus toutes les 2 s (evenements::abonner), table des connexions à chaque cycle : marge pour
             // un lot d'événements long à traiter
             Connexions | Sysmon | JournalDns | JournalDefender | JournalSecurite | JournalSysteme | JournalParefeu => 30,
+            // Relus à chaque cycle de surveillance
+            Processus | PaquetsParefeu | Leurres | Peripheriques => 30,
+            // Capture : notée à chaque seconde (tic des analyseurs) ; réouverture toutes les 30 s en cas d'échec
+            CaptureTrafic | CaptureReseauLocal => 60,
             WmiProcessus => 0,
+            // Relevé des démarrages automatiques toutes les minutes (11 s au plus mesurées)
+            Persistance => 120,
             // Fil « contrôles » : toutes les 10 min (relectures au démarrage du PC comprises, 10 min au plus)
-            EtatDefender | Extensions => 600,
-            // Rechargées toutes les heures
-            ListesMenaces | ListesDomaines => 3600,
+            EtatDefender | Extensions | Baseline => 600,
+            // Audit des données reposé toutes les heures ; listes rechargées toutes les heures
+            AuditDonnees | ListesMenaces | ListesDomaines => 3600,
             Loldrivers => 86_400,
-            Processus | AuditDonnees | PaquetsParefeu | Persistance | Baseline | Leurres | Peripheriques | Capture => 600,
         }
     }
 
@@ -232,7 +241,8 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "COR-R4" | "COR-R5" => &[SECURITE_OU_SYSTEME],
         "COR-R7" => &[&[JournalSecurite], &[JournalSysteme]],
         "COR-R10" => &[SECURITE_OU_SYSTEME, &[Loldrivers]],
-        "EXP-IDS-001" | "EXP-DPI-001" | "EXP-NDR-001" => &[&[Capture]],
+        "EXP-IDS-001" | "EXP-DPI-001" => &[&[CaptureTrafic]],
+        "EXP-NDR-001" => &[&[CaptureReseauLocal]],
         // RES-004, SYS-001, VIE-003, CHA… : lectures locales du service, non suivies ici ; INT-* : contrôles internes ;
         // COR-R6 : tiré des alertes elles-mêmes
         _ => &[],
@@ -250,6 +260,37 @@ pub fn decision_listes(sources_actives: usize, entrees: usize) -> Note {
     } else {
         Note::Active
     }
+}
+
+/// Décision pure (testée) : note d'une lecture faite sur plusieurs éléments (dossiers audités, règles de la baseline) :
+/// aucun élément à lire, désactivée ; aucun lu, indisponible ; une partie seulement, partielle ; tous, active
+pub fn decision_comptes(lus: usize, en_echec: usize) -> Note {
+    match (lus, en_echec) {
+        (0, 0) => Note::Desactivee,
+        (0, _) => Note::Indisponible,
+        (_, 0) => Note::Active,
+        _ => Note::Partielle,
+    }
+}
+
+/// Note une lecture faite sur plusieurs éléments (`decision_comptes`) ; `quoi` nomme les éléments, au pluriel
+pub fn noter_comptes(c: Collecte, lus: usize, en_echec: usize, quoi: &str) {
+    match decision_comptes(lus, en_echec) {
+        Note::Desactivee => desactivee(c, &format!("{quoi} : rien à lire")),
+        Note::Indisponible => echec(c, &format!("{quoi} : {en_echec} en échec, aucun lu")),
+        Note::Partielle => partielle(c, &format!("{quoi} : {en_echec} non lu(s) sur {}", lus + en_echec)),
+        _ => succes(c),
+    }
+}
+
+/// Dernière lecture réussie il y a moins de trois intervalles (un échec passager ne compte pas)
+pub fn lue_recemment(c: Collecte) -> bool {
+    lue_dans_le_delai(CASES[c.index()].dernier_succes.load(Ordering::Relaxed), c.periode(), maintenant())
+}
+
+/// Décision pure (testée) : une lecture réussie (FILETIME, 0 : jamais) date-t-elle de moins de trois intervalles ?
+pub fn lue_dans_le_delai(dernier_succes: u64, periode: u64, maintenant: u64) -> bool {
+    dernier_succes != 0 && maintenant.saturating_sub(dernier_succes) <= 3 * periode * 10_000_000
 }
 
 /// Listes chargées : adresses et réseaux (RES-001), domaines (DNS-001)
@@ -288,7 +329,7 @@ const CASE: Case = Case {
     tus: AtomicU32::new(0),
     muette: AtomicBool::new(false),
 };
-static CASES: [Case; 21] = [CASE; 21];
+static CASES: [Case; 22] = [CASE; 22];
 
 fn maintenant() -> u64 {
     crate::commun::filetime(std::time::SystemTime::now())
@@ -349,11 +390,12 @@ fn nom_note(n: Note) -> &'static str {
 }
 
 /// Raison publiée : sans nom de compte (tout chemin de profil, où qu'il soit dans le texte : « C:\Users\… », « C:/Users/… »,
-/// « \\?\C:\Users\… », « \Device\HarddiskVolumeN\Users\… » ; le nom va jusqu'au séparateur suivant, espaces compris),
+/// « \\?\C:\Users\… », « \Device\HarddiskVolumeN\Users\… », partage administratif « \\serveur\c$\Users\… » ; le nom va
+/// jusqu'au séparateur suivant, espaces compris),
 /// sans caractère de contrôle, 200 caractères au plus
 pub fn borner(raison: &str) -> String {
     static PROFIL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let profil = PROFIL.get_or_init(|| regex::Regex::new(r"(?i)(?:[a-z]:|\\device\\harddiskvolume\d+)[\\/]+users[\\/]+[^\\/]+").unwrap());
+    let profil = PROFIL.get_or_init(|| regex::Regex::new(r"(?i)(?:[a-z][:$]|\\device\\harddiskvolume\d+)[\\/]+users[\\/]+[^\\/]+").unwrap());
     profil.replace_all(raison, "%USERPROFILE%").chars().map(|c| if c.is_control() { '?' } else { c }).take(200).collect()
 }
 

@@ -213,6 +213,7 @@ fn decoder(d: &[u8], locale: Ipv4Addr) -> Option<Paquet<'_>> {
 /// sans interface, le fil attend. Renvoie immédiatement.
 pub fn demarrer(
     nom: &str,
+    collecte: crate::collectes::Collecte,
     mut analyseurs: Vec<Box<dyn Analyseur>>,
     interface: impl Fn() -> Option<Ipv4Addr> + Send + 'static,
     arret: impl Fn() -> bool + Send + 'static,
@@ -226,12 +227,14 @@ pub fn demarrer(
         let contexte = Contexte::default();
         while !arret() {
             let Some(locale) = interface() else {
+                crate::collectes::echec(collecte, "aucune interface réseau à écouter");
                 std::thread::sleep(Duration::from_secs(30));
                 continue;
             };
             let socket = match ouvrir(locale) {
                 Ok(s) => s,
                 Err(e) => {
+                    crate::collectes::echec(collecte, &format!("ouverture de la capture impossible : {e}"));
                     if e != derniere_erreur {
                         commun::journal(&format!("capture des paquets ({nom}) impossible : {e}"));
                         derniere_erreur = e;
@@ -241,6 +244,7 @@ pub fn demarrer(
                 }
             };
             commun::journal(&format!("capture des paquets ({nom}) active sur {locale}"));
+            crate::collectes::succes(collecte);
             derniere_erreur.clear();
             let mut verification = Instant::now();
             while !arret() {
@@ -255,6 +259,8 @@ pub fn demarrer(
                 }
                 if dernier_tic.elapsed() >= Duration::from_secs(1) {
                     dernier_tic = Instant::now();
+                    // Le fil de capture tourne : la collecte reste lue même sans paquet
+                    crate::collectes::succes(collecte);
                     if contexte.age() > Duration::from_secs(2) {
                         contexte.rafraichir();
                     }

@@ -171,8 +171,9 @@ const MAXIMUM_PAR_DOSSIER: usize = 20_000;
 /// handle (natif::poser_audit_arborescence), jamais par chemin ni par PowerShell : une jonction posée par
 /// l'utilisateur à la place d'un dossier de son profil ne fait rien écrire ailleurs, et seule la SACL est écrite
 /// (Set-Acl réécrivait le descripteur complet, DACL comprise).
-pub fn poser_audit() -> Result<usize, String> {
-    let mut n = 0;
+/// Pose l'audit sur chaque dossier présent ; rend (dossiers audités, dossiers en échec)
+pub fn poser_audit() -> (usize, usize) {
+    let (mut n, mut echecs) = (0, 0);
     for (d, c) in dossiers_presents() {
         match crate::natif::poser_audit_arborescence(Path::new(&d), sddl_audit_dossier(c.recursif), SDDL_AUDIT_FICHIER, c.recursif, MAXIMUM_PAR_DOSSIER) {
             Ok(b) => {
@@ -182,10 +183,13 @@ pub fn poser_audit() -> Result<usize, String> {
                         b.ecartes, if b.tronque { " ; parcours arrêté au nombre maximal d'éléments" } else { "" }));
                 }
             }
-            Err(e) => commun::journal(&format!("audit des données sensibles : erreur : {d} : {e}")),
+            Err(e) => {
+                echecs += 1;
+                commun::journal(&format!("audit des données sensibles : erreur : {d} : {e}"));
+            }
         }
     }
-    Ok(n)
+    (n, echecs)
 }
 
 /// Analyse un événement 4663 : renvoie une alerte si un programme inattendu lit des données sensibles
@@ -235,9 +239,14 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     {
         let dossiers = dossiers.clone();
         let _ = std::thread::Builder::new().name("audit données sensibles".into()).spawn(move || loop {
-            match poser_audit() {
-                Ok(n) => commun::journal(&format!("audit de lecture posé sur {n} dossier(s) de données sensibles")),
-                Err(e) => commun::journal(&format!("audit des données sensibles impossible : {e}")),
+            let (n, echecs) = poser_audit();
+            commun::journal(&format!("audit de lecture posé sur {n} dossier(s) de données sensibles{}", if echecs > 0 { format!(", {echecs} en échec") } else { String::new() }));
+            let utilisateurs = format!(r"{}\Users", crate::natif::dossier_windows().get(..2).unwrap_or("C:"));
+            if std::fs::read_dir(&utilisateurs).is_err() {
+                // Aucun dossier trouvé parce que les profils sont illisibles : pas « rien à auditer »
+                crate::collectes::echec(crate::collectes::Collecte::AuditDonnees, "dossier des profils illisible");
+            } else {
+                crate::collectes::noter_comptes(crate::collectes::Collecte::AuditDonnees, n, echecs, "dossiers de données sensibles");
             }
             *dossiers.lock().unwrap() = dossiers_presents();
             std::thread::sleep(Duration::from_secs(3600));

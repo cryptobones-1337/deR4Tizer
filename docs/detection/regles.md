@@ -29,25 +29,45 @@ Règles de forme :
 tait. Depuis la PR 3.3a, ce silence est publié dans `etat.json` : `Collectes` donne l'état de chaque source de
 télémétrie et `ReglesSansCollecte` les règles dont une source nécessaire n'est pas lue (une source jamais notée compte
 comme non lue). L'interface ne l'affiche qu'à partir de la PR 3.4. Correspondance règle → sources :
-`collectes::besoins` ; sources branchées en 3.3a : connexions, journaux (Defender, Sécurité, Système, pare-feu, DNS,
-Sysmon), état de Defender, WMI des processus, listes de menaces et de domaines, LOLDrivers. Les autres (processus,
-persistance, baseline, leurres, audit des données, `pfirewall.log`, extensions, périphériques, capture) restent
-« Inconnue » jusqu'à la PR 3.3b : leurs règles sont donc publiées « sans collecte ». Ne suivent aucune source :
-RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002. Par défaut, les listes de domaines sont toutes à licence
+`collectes::besoins`. Depuis la PR 3.3b, toutes les sources sont notées : connexions, liste des processus, journaux
+(Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
+domaines, LOLDrivers, relevé des démarrages automatiques, baseline, leurres, audit des données (SACL), `pfirewall.log`,
+extensions, magasin des consentements (caméra, micro), capture du trafic et du réseau local. Ne suivent aucune
+source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002. Par défaut, les listes de domaines sont toutes à licence
 restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « sans collecte ».
 
 Ce que garantit « Active » : la source se **lit** (pour un journal suivi, le numéro du dernier événement et les
 nouveaux événements sont lus ; une lecture interrompue passe en « Indisponible » et les événements sont relus au tour
 suivant). Cela ne garantit pas que Windows **produit** les événements attendus. Cas connus non détectés :
-- journal DNS-Client coupé après le démarrage (D4, PR 3.3b) ;
+- journal DNS-Client coupé après le démarrage (D4, PR 3.3c) ;
 - politique d'audit modifiée (ouvertures de session non auditées : COR-R1, R2, R3, R9 restent couvertes) ;
 - Sysmon configuré sans l'événement 22 (il couvre quand même DNS-001), ou service Sysmon arrêté alors que son journal
   reste lisible ;
 - listes de menaces chargées depuis une copie locale ancienne (l'âge n'est pas suivi) ;
 - `JournalSecurite` noté par deux lecteurs (SIEM et accès aux fichiers 4663) : un seul en panne ne se voit pas, l'autre
   continuant de lire le même journal ;
-- un événement qui fait toujours échouer la lecture (journal corrompu) bloque le suivi juste avant lui : la collecte
-  reste « Indisponible », les événements suivants ne sont pas lus.
+- l'audit des données (SACL) posé ne prouve pas que la politique d'audit des accès aux objets est active : sans elle,
+  aucun 4663 n'est produit (VOL-001, LEU-002) ; l'audit posé sur les leurres eux-mêmes n'est pas suivi (journal seul) ;
+- capture : « Active » dit que le fil de capture tourne, pas qu'il reçoit des paquets (une réception toujours en
+  échec n'est pas vue) ;
+- leurres : « Active » dit qu'au moins un leurre est suivi, pas que chaque profil en a un ;
+- audit des données : un dossier dont le parcours est tronqué (20 000 éléments) ou dont des éléments sont écartés
+  (liens) compte comme audité ;
+- `pfirewall.log` : un fichier présent alors que la journalisation des paquets a été coupée reste lu (« Active ») ;
+- démarrages automatiques : un relevé partiel mais non vide compte comme lu ;
+- veille ou hibernation : le délai de trois intervalles se compte en heure murale ; au réveil, les sources à long
+  intervalle (baseline, Defender, extensions : 10 min ; audit, listes : 1 h) peuvent rester « Indisponible » jusqu'à
+  leur prochaine lecture (échec fermé).
+
+Lecture d'un journal suivi :
+- un délai dépassé (journal très chargé ou inondé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour
+  suivant là où elle s'est arrêtée ; la collecte est « Partielle » tant que la lecture progresse, « Indisponible » après
+  une minute de délais sans aucun progrès (une inondation continue peut ainsi figer la lecture : elle reprend quand
+  l'inondation cesse, sauf pour les événements écrasés entre-temps par la rotation du journal, perdus sans trace) ;
+- une erreur sans progrès 30 tours de suite (une minute) : un seul numéro d'événement est sauté, juste après le dernier
+  lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` et la collecte reste « Partielle » une
+  heure (« N numéro(s) d'événement sauté(s) ») ; les événements perdus sont ceux des numéros sautés : au plus deux fois
+  l'écart entre le dernier lu et l'événement fautif.
 
 Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
 première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI
@@ -81,8 +101,10 @@ modules expérimentaux.
   balise (connexions régulières) ; port inhabituel ; télémétrie.
 - **Télémétrie** : connexions, processus (chemin, signature, ligne de commande) ; l'indice « IP directe » exige le
   journal DNS.
-- **Si elle manque** : sans journal DNS, l'indice « IP directe » peut se déclencher à tort ou manquer ; sans ligne de
-  commande (WMI), l'indice correspondant manque.
+- **Si elle manque** : sans lecture du journal DNS depuis plus de trois intervalles (90 s), l'indice « IP directe » n'est
+  pas compté (PR 3.3b : il suivait l'état du journal au démarrage et pouvait se déclencher à tort) ; un journal DNS coupé
+  mais encore lisible le laisse compter à tort (D4, PR 3.3c) ; sans ligne de commande (WMI), l'indice correspondant
+  manque.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés.

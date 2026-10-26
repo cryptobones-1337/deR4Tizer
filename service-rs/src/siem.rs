@@ -124,7 +124,7 @@ pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>, journaux_windows: bool) {
                 enregistrer(e);
             }
         });
-        commun::journal(&format!("mini-SIEM : abonnement au journal {canal} {}", if ok { "actif" } else { "IMPOSSIBLE" }));
+        commun::journal(&format!("mini-SIEM : suivi du journal {canal} {}", if ok { "lancé (lecture : état des collectes)" } else { "IMPOSSIBLE" }));
     }
 }
 

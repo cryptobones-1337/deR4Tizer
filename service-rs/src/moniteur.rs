@@ -89,7 +89,6 @@ pub struct Moniteur {
     partage: Arc<Partage>,
     console: bool,
     demarrage: String,
-    journal_dns_actif: bool,
     config: Config,
     signatures: HashMap<String, String>,
     premieres_vues: HashMap<String, String>,
@@ -157,6 +156,8 @@ impl Moniteur {
         if !console {
             // Pose d'audit (SACL) : réservée au service, qui tourne en SYSTEM
             crate::vol_donnees::surveiller(partage.alertes_externes.clone());
+        } else {
+            collectes::desactivee(Collecte::AuditDonnees, "mode console : audit des données non posé");
         }
         let exes: Option<Vec<String>> = commun::lire("executables.json");
         let processus = Processus::nouveau();
@@ -175,7 +176,6 @@ impl Moniteur {
             partage: partage.clone(),
             console,
             demarrage: commun::maintenant(),
-            journal_dns_actif,
             config: commun::lire("config.json").unwrap_or_default(),
             signatures: HashMap::new(),
             premieres_vues: HashMap::new(),
@@ -197,7 +197,12 @@ impl Moniteur {
             chaines: Vec::new(),
             origines: HashMap::new(),
             // Les leurres ne sont posés que par le service (pas lors d'un test en console)
-            leurres: if console { Vec::new() } else { hygiene::poser_leurres() },
+            leurres: if console {
+                collectes::desactivee(Collecte::Leurres, "mode console : leurres non posés");
+                Vec::new()
+            } else {
+                hygiene::poser_leurres()
+            },
             pose_leurres: if console { None } else { Some(Instant::now()) },
             balises: HashMap::new(),
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
@@ -231,10 +236,14 @@ impl Moniteur {
                 Box::new(crate::ids::Ids::nouveau(partage.alertes_externes.clone(), partage.blocages_ips.clone())),
             ];
             let p = partage.clone();
-            crate::capture::demarrer("trafic", analyseurs, crate::capture::adresse_locale, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
+            crate::capture::demarrer("trafic", Collecte::CaptureTrafic, analyseurs, crate::capture::adresse_locale, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
             let ndr = crate::ndr::demarrer(partage.alertes_externes.clone());
             let p = partage.clone();
-            crate::capture::demarrer("réseau local", vec![Box::new(ndr)], crate::ndr::adresse_lan, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
+            crate::capture::demarrer("réseau local", Collecte::CaptureReseauLocal, vec![Box::new(ndr)], crate::ndr::adresse_lan, move || p.arret.load(std::sync::atomic::Ordering::Relaxed));
+        } else {
+            for c in [Collecte::CaptureTrafic, Collecte::CaptureReseauLocal] {
+                collectes::desactivee(c, "mode console : capture des paquets non lancée");
+            }
         }
         if !console {
             crate::api::demarrer(&m.config.api);
@@ -293,6 +302,12 @@ impl Moniteur {
                     let t = Instant::now();
                     let alertes = persistance.verifier(&mut |c| signataire_cache(&mut cache, &notre, c));
                     p.entrees_persistance.store(persistance.entrees.len(), Ordering::Relaxed);
+                    // Un relevé sans aucune entrée (aucun Windows n'en a zéro : services, pilotes) est une lecture impossible
+                    if persistance.entrees.is_empty() {
+                        collectes::echec(Collecte::Persistance, "relevé des démarrages automatiques vide");
+                    } else {
+                        collectes::succes(Collecte::Persistance);
+                    }
                     p.alertes_persistance.lock().unwrap().extend(alertes);
                     p.persistance_en_cours.store(false, Ordering::SeqCst);
                     mesure::noter("controles.persistance (fil dédié, toutes les minutes)", t);
@@ -361,6 +376,8 @@ impl Moniteur {
 
                     if !p.baseline_occupee.load(Ordering::Relaxed) {
                         let b = baseline::evaluer();
+                        let inconnues = b.regles.iter().filter(|r| r.etat == "inconnu").count();
+                        collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues, "réglages de la baseline");
                         // Le service applique lui-même le profil « journalisation » (demandé par l'utilisateur),
                         // une fois au démarrage, s'il n'est pas conforme
                         if premier && !console && baseline::gestion().is_none() && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
@@ -456,7 +473,16 @@ impl Moniteur {
             Ok(()) => collectes::succes(Collecte::Connexions),
             Err(e) => collectes::echec(Collecte::Connexions, &e),
         }
-        let liste = natif::processus();
+        let liste = match natif::processus_lu() {
+            Ok(l) => {
+                collectes::succes(Collecte::Processus);
+                l
+            }
+            Err(e) => {
+                collectes::echec(Collecte::Processus, &e);
+                HashMap::new()
+            }
+        };
         self.arbre.maj(&liste);
         let t = mesure::noter("cycle.connexions_et_processus", t);
         let connexions: Vec<Connexion> = toutes.iter().filter(|c| (c.etat == 5 || c.etat == 3) && !est_locale(&c.ip)).cloned().collect();
@@ -469,6 +495,9 @@ impl Moniteur {
         let mut cles_vues = HashSet::new();
         let (mut alertes_modifiees, mut exes_modifies) = (false, false);
 
+        // Indice « IP directe » : seulement si le journal DNS a été lu récemment (sinon toute connexion sans nom le
+        // prendrait) ; un échec passager (lecture lente) ne le retire pas
+        let dns_lu = collectes::lue_recemment(Collecte::JournalDns);
         for ((pid, ip, port), groupe) in &groupes {
             let chemin = chemins.entry(*pid).or_insert_with(|| natif::chemin_processus(*pid)).clone();
             let nom_processus = if !chemin.is_empty() {
@@ -530,7 +559,7 @@ impl Moniteur {
                     raisons.push("IP sans DNS (navigateur, DoH probable)".into());
                 } else if ip_directe_normale(&signataire) {
                     raisons.push("IP sans DNS (application connue : VPN, messagerie, notifications, jeu…)".into());
-                } else if self.journal_dns_actif && !self.preexistants.contains(&cle) {
+                } else if dns_lu && !self.preexistants.contains(&cle) {
                     raisons.push("IP DIRECTE (aucune requête DNS)".into());
                     score += 2;
                 } else {
@@ -648,6 +677,14 @@ impl Moniteur {
         for a in hygiene::verifier_leurres(&mut self.leurres) {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
+        if self.pose_leurres.is_some() {
+            // Aucun leurre suivi (pose refusée partout, ou leurres déjà signalés et pas encore reposés) : LEU-001 muette
+            if self.leurres.is_empty() {
+                collectes::echec(Collecte::Leurres, "aucun leurre posé");
+            } else {
+                collectes::succes(Collecte::Leurres);
+            }
+        }
         self.balises.retain(|_, (_, t)| t.last().map(|x| x.elapsed() < Duration::from_secs(3600)).unwrap_or(false));
 
         let empreinte = blocage::empreinte_hosts();
@@ -737,7 +774,8 @@ impl Moniteur {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
                 version: commun::VERSION.into(),
-                journal_dns_actif: self.journal_dns_actif,
+                // Même critère que l'indice « IP directe » : dernière lecture réussie il y a moins de trois intervalles
+                journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),
                 ip_connues,
                 source_processus: self.processus.source.lock().unwrap().clone(),
                 bureau_a_distance: s.rdp,
