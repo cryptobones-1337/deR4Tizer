@@ -47,6 +47,15 @@ Mêmes scripts, lancés par `tests/bac-a-sable/preparer.ps1` puis `lancer.ps1 -S
 (et `preparer.ps1 -Maj` pour 3c), dans une Windows Sandbox jetable. Signal, pas preuve : ni poste réel ni Defender
 actif (désactivé dans la Sandbox) ; jamais compté comme « validé sur Windows (VM) ».
 
+Le dossier de compilation du service est commun à toutes les copies du dépôt (worktrees). Cargo juge un fichier à jour
+par sa date : sans précaution, une copie dont les sources sont plus anciennes que la dernière compilation d'une autre
+copie livrait le binaire de l'autre copie. C'est arrivé le 2026-10-26, sur un passage de mesure seule : le binaire de
+`main` a été testé sous la tête d'une PR, avec le nombre de tests unitaires de `main`. `cible-cargo.ps1`, chargé par
+`compiler-rs.ps1` et `preparer.ps1`, donne à chaque copie son propre dossier de compilation
+(`%USERPROFILE%\.der4tizer-build-msvc\<empreinte du chemin>`), ce qui couvre aussi deux compilations simultanées ; les
+dossiers des copies retirées sont effacés. Les rapports gardent le nombre de tests
+unitaires lancés, à comparer à celui de la tête testée.
+
 2026-10-24, arbre `370e4d272d88515c1e6901882933bc8340995602`, identique à `main` après la fusion des PR #10 à #27
 (l'historique a été réécrit le 2026-10-24 pour en retirer des données personnelles : l'arbre testé `370e4d27`
 est identique, aux adresses IP des données de test près, à celui de `main` `7ff8309` ; anciens identifiants de
