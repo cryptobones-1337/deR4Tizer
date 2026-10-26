@@ -3,10 +3,12 @@
 Ce document décrit le format des alertes du service (`Alerte`, `service-rs/src/commun.rs`) tel que la phase 3 le
 versionne. Depuis la PR 3.1, les champs `Modele`, `Regle` et `Collecte` existent (et `Signature` depuis la PR 3.1b) et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
 est lu élément par élément. Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle dans `Regle` (registre
-`regles.rs`). Depuis la PR 3.3c, `Collecte` porte la collecte d'où vient l'alerte (`collectes::collecte_de` : la
-première source lue du premier groupe de télémétrie de sa règle, sinon la première listée) ; elle reste vide, et
-n'est pas écrite, pour une règle qui ne suit aucune source (INT-*, COR-R6…). Elle n'entre pas dans la signature des
-exceptions.
+`regles.rs`). Depuis la PR 3.3c, `Collecte` porte une **présomption** de la collecte d'où vient l'alerte
+(`collectes::collecte_de` : la première source lue du premier groupe de télémétrie de sa règle, sinon la première
+listée), pas la source réellement lue par le producteur. Exemples d'écart : DNS-001 venue de Sysmon est notée
+`JournalDns` si les deux sont lus ; COR-R4 et COR-R5 venues du journal Système sont notées `JournalSecurite` ; LEU-002,
+tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, pour une règle qui ne suit aucune source
+(INT-*, COR-R6…). Elle n'entre pas dans la signature des exceptions.
 
 ## Principe
 

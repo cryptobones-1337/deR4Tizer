@@ -3399,6 +3399,15 @@ fn phase3_journal_fenetre_et_rotation() {
     assert_eq!(perte_rotation(100, 50), None);
     assert_eq!(perte_rotation(100, 151), Some((150, 50)), "101 à 150 écrasés");
     assert_eq!(perte_rotation(0, 1), None, "journal neuf");
+    assert_eq!(perte_rotation(100, 0), None, "journal vide : plus ancien 0");
+    // Fenêtres enchaînées dans un tour : seulement après une lecture complète, s'il reste des numéros, sous 1,5 s
+    use crate::evenements::{encore_une_fenetre, Lecture};
+    use std::time::Duration;
+    assert!(encore_une_fenetre(Lecture::Complete, 10, 20, Duration::from_millis(100)));
+    assert!(!encore_une_fenetre(Lecture::Complete, 20, 20, Duration::from_millis(100)), "rattrapé");
+    assert!(!encore_une_fenetre(Lecture::Complete, 10, 20, Duration::from_millis(1500)), "budget du tour épuisé");
+    assert!(!encore_une_fenetre(Lecture::Delai, 10, 20, Duration::from_millis(100)));
+    assert!(!encore_une_fenetre(Lecture::Erreur, 10, 20, Duration::from_millis(100)));
 }
 
 /// Phase 3.3c : journal désactivé : seul le journal DNS-Client est réactivé (D4) ; collecte d'origine d'une alerte :
@@ -3465,9 +3474,17 @@ fn phase3_branchements_des_collectes_restantes() {
     assert!(e.contains("Some(Lecture::Delai) => collectes::partielle(collecte,"), "abonner : lecture lente non notée");
     assert!(e.contains("Some(Lecture::Delai) if b.sans_progres >= LIMITE_BLOCAGE => {\n                        collectes::echec(collecte,"), "abonner : délais sans progrès restés « Partielle »");
     assert!(e.contains("let fin = fenetre(dernier, n);") && e.contains("(EventRecordID <= {fin})"), "abonner : lecture non bornée");
-    assert!(e.contains("if n - dernier > FENETRE || blocage.sans_progres > 0 {\n                if let Some((reprise, perdus)) = plus_ancien_numero(&canal).and_then(|a| perte_rotation(dernier, a)) {"), "abonner : rotation non vérifiée quand le lecteur est en retard ou lent");
+    // Rotation vérifiée à chaque tour qui a du nouveau (relecture de la PR 3.3c, D1 ; audit S78-02), sans condition
+    let r = e.find("if let Some((reprise, perdus)) = plus_ancien_numero(&canal).and_then(|a| perte_rotation(dernier, a)) {").expect("abonner : rotation non vérifiée");
+    assert!(!e[r - 200..r].contains("if n - dernier > FENETRE"), "abonner : rotation vérifiée seulement en cas de retard");
+    assert!(e.contains("if !encore_une_fenetre(lecture, dernier, n, debut.elapsed()) {\n                    break lecture;"), "abonner : une seule fenêtre par tour (débit plafonné)");
+    // Journal coupé par le retour arrière de la baseline : ni réactivé, ni noté en échec
+    assert!(e.contains("let coupe = desactive && coupe_par_le_service(&canal);") && e.contains("if a_reactiver(&canal) && !coupe && !desactivation_signalee {"), "abonner : coupure de la baseline annulée");
+    assert!(e.contains("if coupe {\n                    collectes::desactivee(collecte,"), "abonner : coupure de la baseline notée en échec");
+    let a = e.find("pub fn activer_journal(").unwrap();
+    assert!(e[a..a + 600].contains("if !actif {\n            c.push(canal.to_string());"), "activer_journal : coupure du service non retenue");
     assert!(e.contains("let desactive = canal_actif(&canal) == Some(false);") && e.contains("if desactive && !reactive {\n                    collectes::echec(collecte,"), "abonner : journal désactivé non noté");
-    assert!(e.contains("if a_reactiver(&canal) && !desactivation_signalee {\n                    reactive = activer_journal(&canal, true);"), "abonner : journal DNS non réactivé (D4)");
+    assert!(e.contains("if a_reactiver(&canal) && !coupe && !desactivation_signalee {\n                    reactive = activer_journal(&canal, true);"), "abonner : journal DNS non réactivé (D4)");
     assert!(n.contains("journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),"), "interface et indice : même état du journal DNS");
     assert!(e.contains("Some((t, n)) if t.elapsed().as_secs() < 3600 => {\n            collectes::partielle(collecte,"), "saut d'événements : collecte redevenue active aussitôt");
     assert!(n.contains("let dns_lu = collectes::lue_recemment(Collecte::JournalDns);"), "IP directe : un échec passager du journal DNS la retire");
@@ -3561,7 +3578,7 @@ fn phase3_branchements_des_collectes() {
     assert!(f.contains("let Some(mut dernier) = depart else {"), "abonner : le fil doit chercher le dernier numéro quand le départ a échoué");
     // Le numéro de reprise est réécrit à chaque issue du tour (sinon tout le journal serait relu à chaque tour)
     assert!(f.contains("depart = Some(n);") && f.contains("noter(None, &blocage, &perte);\n                depart = Some(dernier);\n                continue;")
-        && f.contains("noter(Some(lecture), &blocage, &perte);\n            depart = Some(suivant);"), "abonner : numéro de reprise non conservé");
+        && f.contains("noter(Some(lecture), &blocage, &perte);\n            depart = Some(dernier);") && f.contains("                dernier = suivant;\n"), "abonner : numéro de reprise non conservé");
     assert!(f.contains("let lecture = historique("), "succès noté avant la lecture des événements");
     assert!(f.contains("prochain_dernier(dernier, fin, lecture == Lecture::Complete, traite)") && !f.contains("dernier = n;"), "événements perdus après un échec");
     assert!(e.contains("return if fin_des_resultats(&e) {\n                Lecture::Complete\n            } else if (e.code().0 as u32) & 0xFFFF == 1460 {"), "vider : échec d'EvtNext pris pour la fin, ou délai pris pour une erreur");
