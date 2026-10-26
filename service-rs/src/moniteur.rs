@@ -1280,6 +1280,12 @@ En-tête : Authorization: Bearer {j}"))
 
 /// Signataire d'un exécutable, mis en cache par chemin et date de modification
 pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
+    let maintenant = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    signataire_cache_a(cache, notre, chemin, maintenant)
+}
+
+/// `signataire_cache` à une heure donnée (secondes), pour les tests
+pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &str, chemin: &str, maintenant: u64) -> String {
     if chemin.is_empty() {
         return "?".into();
     }
@@ -1303,11 +1309,11 @@ pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str,
         return s.clone();
     }
     // Un échec (signataire vide) n'est gardé que 30 s (relecture de #83, R4-D1) : une vérification passagèrement
-    // impossible, au démarrage du PC par exemple, est refaite au relevé suivant au lieu d'être confirmée par le cache
-    let tranche = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 30).unwrap_or(0);
-    let cle_echec = cle_echec_signature(&cle, tranche);
-    if let Some(s) = cache.get(&cle_echec) {
-        return s.clone();
+    // impossible, au démarrage du PC par exemple, est refaite au relevé suivant au lieu d'être confirmée par le cache.
+    // Une seule clé d'échec par chemin, réécrite à chaque échec (R5-D1 : pas d'accumulation dans le service)
+    let cle_echec = format!("{chemin}|échec");
+    if cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant)) {
+        return String::new();
     }
     let windows = natif::dossier_windows().to_lowercase();
     let s = match natif::signataire_valide(chemin) {
@@ -1319,18 +1325,19 @@ pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str,
         None => String::new(),
     };
     if s.is_empty() {
-        // Deux tranches au plus par chemin : la précédente est retirée
-        cache.remove(&cle_echec_signature(&cle, tranche.saturating_sub(1)));
-        cache.insert(cle_echec, s.clone());
+        cache.insert(cle_echec, format!("{date}|{maintenant}"));
     } else {
+        cache.remove(&cle_echec);
         cache.insert(cle, s.clone());
     }
     s
 }
 
-/// Décision pure (testée) : clé du cache d'un échec de vérification, valable une tranche de 30 s seulement
-pub(crate) fn cle_echec_signature(cle: &str, tranche: u64) -> String {
-    format!("{cle}|échec|{tranche}")
+/// Décision pure (testée) : l'échec noté (« date du fichier|heure de la vérification ») vaut-il encore pour ce fichier ?
+/// Même date de modification, et vérifié il y a moins de 30 s
+pub(crate) fn echec_recent(valeur: &str, date: u64, maintenant: u64) -> bool {
+    let Some((d, t)) = valeur.split_once('|') else { return false };
+    d.parse() == Ok(date) && t.parse::<u64>().is_ok_and(|t| maintenant.saturating_sub(t) < 30)
 }
 
 fn cle_alerte(a: &Alerte) -> String {
