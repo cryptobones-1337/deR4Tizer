@@ -67,9 +67,11 @@ impl Persistance {
 }
 
 /// Décision pure (testée, PER-001 et PER-002) : compare un relevé, déjà évalué (cible, signataire, remarque), à la
-/// référence. Entrée inconnue : NOUVELLE (PER-001) ; commande changée : MODIFIÉE (PER-002) ; signataire ou remarque
-/// changés seuls : notés (référence réécrite), sans alerte. Apprentissage : rien n'alerte. Rend (alertes, référence à
-/// réécrire).
+/// référence. Entrée inconnue : NOUVELLE (PER-001) ; commande changée : MODIFIÉE (PER-002) ; commande inchangée mais
+/// entrée DEVENUE SUSPECTE, sans remarque avant, avec une remarque maintenant (PER-002, PR 3.6 : une classe COM surchargée
+/// après coup dans le profil d'un utilisateur, un fichier remplacé par un fichier non signé…) ; autre changement du
+/// signataire ou de la remarque : noté (référence réécrite), sans alerte. Apprentissage : rien n'alerte. Rend (alertes,
+/// référence à réécrire).
 pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mut [EntreeDemarrage], apprentissage: bool) -> (Vec<Alerte>, bool) {
     let mut alertes = Vec::new();
     let mut modifie = releve.len() != reference.len();
@@ -85,6 +87,9 @@ pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mu
                     if !apprentissage {
                         alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
                     }
+                } else if ancienne.remarque.is_empty() && !e.remarque.is_empty() && !apprentissage {
+                    // Audit de #83, S83-06 : sinon une surcharge posée en deux temps ne serait jamais remontée
+                    alertes.push(alerter(e, "démarrage automatique MODIFIÉ, DEVENU SUSPECT (même commande)"));
                 }
             }
             None => {
@@ -240,7 +245,7 @@ fn serveur_com(clsid: &str) -> Option<String> {
 }
 
 /// Classe COM empaquetée (tâches « SoftLanding » de Windows, par exemple) : enregistrée pour la machine sous
-/// `Classes\PackagedCom` (écriture réservée aux administrateurs), son serveur est un fichier du dossier du paquet
+/// `Classes\PackagedCom` (écrite par le système : le service de déploiement des paquets), son serveur est un fichier du dossier du paquet
 /// (`DllPath`, sinon l'`Executable` de son serveur) ; la version la plus récente du paquet est retenue
 fn serveur_com_empaquete(hklm: &RegKey, clsid: &str) -> Option<String> {
     // Classe surchargée dans le profil d'un utilisateur chargé (HKCU) : détournement COM possible, aucune résolution

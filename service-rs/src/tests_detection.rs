@@ -243,6 +243,22 @@ fn per_002_positif() {
     let (a, modifie) = regles_comparer(&[avant], &[apres], false);
     assert_eq!(a, [("PER-002".to_string(), "Alerte".to_string())]);
     assert!(modifie);
+    // Audit de #83, S83-06 : même commande, entrée devenue suspecte (classe COM surchargée après coup dans un profil)
+    let tache = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "Microsoft Windows", "");
+    let surchargee = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "?", "serveur COM non enregistré pour la machine");
+    assert_eq!(regles_comparer(&[tache], &[surchargee], false).0, [("PER-002".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn per_002_devenu_suspect_negatif() {
+    let suspecte = entree_demarrage("t1", "x.exe", "", "NON SIGNÉ");
+    // Déjà suspecte au relevé précédent (remarque changée, pas apparue) : une seule alerte, au moment où elle l'est devenue
+    assert!(regles_comparer(&[suspecte.clone()], &[entree_demarrage("t1", "x.exe", "", "NON SIGNÉ, dossier suspect")], false).0.is_empty());
+    // Redevenue propre : pas d'alerte
+    assert!(regles_comparer(&[suspecte], &[entree_demarrage("t1", "x.exe", "Éditeur", "")], false).0.is_empty());
+    // Devenue suspecte pendant l'apprentissage : pas d'alerte
+    let propre = entree_demarrage("t2", "y.exe", "Éditeur", "");
+    assert!(regles_comparer(&[propre], &[entree_demarrage("t2", "y.exe", "", "NON SIGNÉ")], true).0.is_empty());
 }
 
 #[test]

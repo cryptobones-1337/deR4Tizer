@@ -298,8 +298,13 @@ modules expérimentaux.
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM) : PER-002 Info 4, les tâches de Defender dont la commande
   passe de `Program Files` au dossier de sa plateforme après une mise à jour. Gardées (Info) : un changement de commande
   est exactement ce que la règle doit voir.
-- **Tests** : `per_002_positif` (commande changée vers un dossier suspect : Alerte), `per_002_negatif` (signataire changé
-  seul, commande changée pendant l'apprentissage : pas d'alerte). État : testé en labo.
+- **Devenu suspect** (PR 3.6) : une entrée connue dont la commande n'a pas changé, sans remarque au relevé précédent et
+  avec une remarque maintenant, lève aussi PER-002 (« DEVENU SUSPECT ») : classe COM surchargée après coup dans le profil
+  d'un utilisateur, fichier remplacé par un fichier non signé ou déplacé vers un dossier suspect. Une seule alerte, au
+  moment où elle le devient ; aucune pendant l'apprentissage.
+- **Tests** : `per_002_positif` (commande changée vers un dossier suspect ; entrée COM devenue suspecte : Alerte),
+  `per_002_negatif` (signataire changé seul, commande changée pendant l'apprentissage : pas d'alerte),
+  `per_002_devenu_suspect_negatif` (déjà suspecte, redevenue propre, apprentissage). État : testé en labo.
 
 ## DEF : Microsoft Defender
 
