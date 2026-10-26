@@ -33,6 +33,9 @@ if ($installe) {
     $n = 0
     # Dans un Verifier (exception notée ÉCHOUÉ, le tableau reste complet) et un finally (écouteur arrêté, dossier
     # effacé quoi qu'il arrive) : relecture de #59, D2
+    # Heure du début de l'activité (horloge de la VM, celle du service) : les alertes comptées comme faux positifs sont
+    # celles produites après, pas celles de l'installation et du premier relevé
+    $debutActivite = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     Verifier 'Activité pendant la mesure' {
         try {
             $ecoute.Start()
@@ -66,6 +69,26 @@ if ($installe) {
         if (-not $m.cumul.etapes -or -not @($m.cumul.etapes.PSObject.Properties).Count) { return 'aucune étape mesurée' }
         Copy-Item -LiteralPath $fichier -Destination (Join-Path $Sortie 'mesure-mesures.json') -Force
         $true
+    }
+
+    # Faux positifs (phase 3, PR par domaine) : alertes produites par l'activité synthétique, comptées par règle et par
+    # niveau ; limite écrite dans les fiches : une activité de VM ne représente pas un poste réel
+    try {
+        $fa = Join-Path $script:Donnees 'alertes.json'
+        # Windows PowerShell 5.1 : ConvertFrom-Json rend un tableau JSON comme un seul objet ; @() sur la variable, pas
+        # sur l'appel, le déplie (relecture de #81, D1 ; même forme qu'installation.ps1)
+        $alertes = @()
+        if (Test-Path -LiteralPath $fa) { $lu = Get-Content -LiteralPath $fa -Raw -Encoding UTF8 | ConvertFrom-Json; $alertes = @($lu) }
+        $toutes = $alertes.Count
+        $alertes = @($alertes | Where-Object { [string]$_.Heure -ge $debutActivite })
+        $parHeure = 60.0 / [Math]::Max(1, $Minutes)
+        $groupes = @($alertes | Group-Object { if ($_.Regle) { "$($_.Regle) $($_.Niveau)" } else { "(sans règle) $($_.Niveau)" } } | Sort-Object Count -Descending)
+        $lignes = @($groupes | ForEach-Object { "$($_.Name) : $($_.Count) ({0:N1}/h)" -f ($_.Count * $parHeure) })
+        $entete = "$($alertes.Count) alerte(s) pendant les $Minutes min d'activité (depuis $debutActivite ; $toutes depuis l'installation) ; service en apprentissage (alertes non critiques notées Info)"
+        Set-Content -LiteralPath (Join-Path $Sortie 'mesure-alertes-par-regle.txt') -Value (@($entete) + $lignes) -Encoding UTF8
+        Noter 'Alertes par règle pendant la mesure (faux positifs)' 'INFORMATION' $(if ($lignes.Count) { "$entete : " + ($lignes -join ' ; ') } else { $entete })
+    } catch {
+        Noter 'Alertes par règle pendant la mesure (faux positifs)' 'NON EXÉCUTÉ' "alertes.json illisible : $($_.Exception.Message)"
     }
 
     Verifier 'Désinstallation' {

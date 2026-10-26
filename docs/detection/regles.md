@@ -307,13 +307,26 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   doivent remonter.
 - **Télémétrie** : journal Microsoft-Windows-Windows Defender/Operational (DEF-001 à 009) ; état WMI de Defender,
   toutes les 10 min (DEF-010 à 012).
-- **Si elle manque** : le résultat de l'abonnement au journal est ignoré aujourd'hui (silence) ; état WMI illisible :
-  aucun écart calculé.
+- **Si elle manque** : journal illisible ou coupé : collecte `JournalDefender` « Indisponible », DEF-001 à 009 publiées
+  sans collecte (PR 3.3) ; état WMI illisible : aucun écart calculé, collecte `EtatDefender` « Indisponible », DEF-010
+  à 012 sans collecte.
 - **Faux positifs attendus** : DEF-005 et DEF-006 quand un administrateur règle Defender lui-même ; DEF-007 à 009 en
   mode audit sur des logiciels métier.
-- **Tests** : à écrire, par exemple `def_005_positif` (5007 dont la valeur contient `\Exclusions\`) et
-  `def_005_negatif` (5007, autre valeur). DEF-001 avec un fichier EICAR : non en VM tant que le lot 3d exige « aucune
-  détection ».
+- **Faux positifs mesurés** : comptage par règle et par heure du scénario `mesure` (22 min d'activité synthétique en VM,
+  alertes produites après le début de l'activité, PR 3.5) ; le service y est fraîchement installé, donc en apprentissage
+  (7 jours : les alertes non critiques y sont notées « Info ») ; aucune règle DEF n'y est attendue, ce qui ne dit rien
+  d'un poste réel (limite D12 : pas de mesure sur poste réel).
+- **Limite** : DEF-006 ne voit que `DisableRealtimeMonitoring = 0x1`, `DisableAntiSpyware = 0x1` et
+  `TamperProtection = 0x4` ; les autres réglages `Disable*` (comportement, IOAV, scripts) et `TamperProtection = 0x0`
+  ne lèvent rien (DEF-010 à 012 voient l'effet sur l'état WMI pour le temps réel, la falsification et l'antivirus).
+- **Tests** (PR 3.5, `service-rs/src/tests_detection.rs`) : un positif et un négatif par règle, de `def_001_positif` à
+  `def_012_negatif`. Négatifs : événement voisin non suivi (2000, 1118, 5000, 5009, 5011, 1120, 1127) ; exclusion
+  retirée et autre réglage modifié (DEF-005) ; protection rétablie (DEF-006) ; audit jamais au niveau « Alerte »
+  (DEF-008) ; état déjà coupé au relevé précédent ou illisible (DEF-010 à 012). Ils décrivent le comportement existant
+  (aucun changement de `defender.rs`) ; 9 mutations de `defender.rs` les font échouer.
+- **En VM** : aucune règle DEF n'est exercée (Defender intouchable, lot 3d) ; DEF-001 avec un fichier EICAR : non tant
+  que le lot 3d exige « aucune détection » (D10). Le journal et l'état sont lus en VM (collectes « Active » au 3a).
+  État : testé en labo.
 
 ## LEU : leurres anti-rançongiciel
 

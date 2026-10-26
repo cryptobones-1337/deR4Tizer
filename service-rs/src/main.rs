@@ -43,6 +43,8 @@ mod surveillances;
 mod validation;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_detection;
 mod vol_donnees;
 
 use std::ffi::OsString;
