@@ -483,6 +483,17 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Si elle manque** : fichier illisible : l'empreinte vaut « » (`empreinte_hosts`). Depuis la PR 3.10, ce relevé ne
   déclenche rien et l'empreinte connue est gardée : un changement fait pendant la panne est signalé dès que le fichier
   redevient lisible. Avant, l'alerte partait **à tort** à la panne, puis repartait au retour du fichier.
+- **Limites** (audit de #90) :
+  - un fichier gardé illisible en permanence (un compte standard peut l'ouvrir sans partage) rend la règle muette, sans
+    aucun signal dans `etat.json` ni dans le journal (S90-01). Aucune modification n'est possible pendant ce verrou, et
+    une modification faite après sa levée est signalée ;
+  - une référence vide (fichier illisible au démarrage du service, ou relecture ratée juste après une écriture du
+    service) fait adopter le premier relevé lisible sans alerte (S90-02) ;
+  - la référence n'est pas conservée d'un démarrage à l'autre : une modification faite service arrêté n'est jamais
+    signalée (S90-03, antérieure à la PR 3.10).
+  Ces trois limites demandent les droits d'administrateur pour modifier le fichier, qui suffisent déjà à le modifier
+  avant le démarrage du service. Correction prévue : empreinte conservée dans le dossier de données, calculée sur le
+  contenu écrit par le service, et panne durable notée.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun.
 - **Tests** : `sys_001_positif` (empreinte changée ; changement fait pendant une panne de lecture, signalé au retour),
