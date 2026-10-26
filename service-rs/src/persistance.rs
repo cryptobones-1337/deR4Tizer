@@ -119,7 +119,8 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
-    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows && !nettoyage_onedrive(&e.commande) {
+    let nettoyage = e.categorie.starts_with("RunOnce") && nettoyage_onedrive(&e.commande);
+    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows && !nettoyage {
         r.push(format!("lancé via {exe}"));
     }
     if e.signataire.is_empty() {
@@ -149,7 +150,9 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
 pub(crate) fn nettoyage_onedrive(commande: &str) -> bool {
     static MOTIF: OnceLock<Regex> = OnceLock::new();
     MOTIF.get_or_init(|| {
-        Regex::new(r#"(?i)^[a-z]:\\windows\\system32\\cmd\.exe /q /c del /q "[a-z]:\\users\\[^\\"&|<>]+\\appdata\\local\\microsoft\\onedrive\\(update|standaloneupdater)\\onedrivesetup\.exe"$"#).unwrap()
+        // Ni « % » (variable remplacée par cmd avant l'analyse de la ligne : injection), ni « ^ », « ! », caractère de
+        // contrôle (audit de #83, S83-01)
+        Regex::new(r#"(?i)^[a-z]:\\windows\\system32\\cmd\.exe /q /c del /q "[a-z]:\\users\\[^\\"&|<>%^!()\x00-\x1f]+\\appdata\\local\\microsoft\\onedrive\\(update|standaloneupdater)\\onedrivesetup\.exe"$"#).unwrap()
     }).is_match(commande.trim())
 }
 
@@ -240,8 +243,20 @@ fn serveur_com(clsid: &str) -> Option<String> {
 /// `Classes\PackagedCom` (écriture réservée aux administrateurs), son serveur est un fichier du dossier du paquet
 /// (`DllPath`, sinon l'`Executable` de son serveur) ; la version la plus récente du paquet est retenue
 fn serveur_com_empaquete(hklm: &RegKey, clsid: &str) -> Option<String> {
+    // Classe surchargée dans le profil d'un utilisateur chargé (HKCU) : détournement COM possible, aucune résolution
+    // (la remarque « serveur COM non enregistré pour la machine » reste ; audit de #83, S83-02)
+    let hku = RegKey::predef(HKEY_USERS);
+    let surchargee = hku.enum_keys().map_while(Result::ok).filter(|s| s.starts_with("S-1-5-21-")).any(|s| {
+        let chemin = if s.ends_with("_Classes") { format!(r"{s}\CLSID\{clsid}") } else { format!(r"{s}\Software\Classes\CLSID\{clsid}") };
+        hku.open_subkey(chemin).is_ok()
+    });
+    if surchargee {
+        return None;
+    }
     let index = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\ClassIndex\{clsid}")).ok()?;
-    let paquet = index.enum_keys().map_while(Result::ok).max_by(|a, b| version_paquet(a).cmp(&version_paquet(b)))?;
+    // Paquets de Windows seulement (éditeur Microsoft) : un paquet installé par un utilisateur, signé par son propre
+    // certificat, ne fait pas taire la remarque (audit de #83, S83-03)
+    let paquet = index.enum_keys().map_while(Result::ok).filter(|p| paquet_de_windows(p)).max_by(|a, b| version_paquet(a).cmp(&version_paquet(b)))?;
     let classe = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\Package\{paquet}\Class\{clsid}")).ok()?;
     let relatif = texte_registre(&classe, "DllPath").filter(|v| !v.trim().is_empty()).or_else(|| {
         let id: u32 = classe.get_value("ServerId").ok()?;
@@ -250,7 +265,31 @@ fn serveur_com_empaquete(hklm: &RegKey, clsid: &str) -> Option<String> {
     })?;
     let depot = hklm.open_subkey(format!(r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PackageRepository\Packages\{paquet}")).ok()?;
     let racine = texte_registre(&depot, "Path")?;
+    if !racine_systeme_de_paquets(&racine, &natif::dossier_windows(), &std::env::var("ProgramFiles").unwrap_or_default()) {
+        return None;
+    }
     chemin_dans_paquet(&racine, &relatif).map(|c| format!("\"{c}\""))
+}
+
+/// Décision pure (testée) : paquet publié par Microsoft (identifiants d'éditeur de Windows et du Store de Microsoft)
+pub(crate) fn paquet_de_windows(nom_complet: &str) -> bool {
+    let bas = nom_complet.to_ascii_lowercase();
+    bas.ends_with("__cw5n1h2txyewy") || bas.ends_with("__8wekyb3d8bbwe")
+}
+
+/// Décision pure (testée) : dossier d'un paquet installé par le système (`Windows\SystemApps` ou
+/// `Program Files\WindowsApps`, protégés), pas un dossier de développement ou du profil
+pub(crate) fn racine_systeme_de_paquets(racine: &str, windows: &str, program_files: &str) -> bool {
+    let r = racine.trim().to_ascii_lowercase().replace('/', "\\");
+    let sous = |base: &str, dossier: &str| {
+        let b = format!(r"{}\{dossier}\", base.trim().trim_end_matches('\\').to_ascii_lowercase());
+        !base.trim().is_empty() && r.starts_with(&b) && r.len() > b.len()
+    };
+    // Aucun segment « .. » (ni fait seulement de points et d'espaces) : la racine ne remonte pas hors de ces dossiers
+    if r.split('\\').any(|p| !p.is_empty() && p.chars().all(|c| c == '.' || c == ' ')) {
+        return false;
+    }
+    sous(windows, "systemapps") || sous(program_files, "windowsapps")
 }
 
 /// Décision pure (testée) : version d'un nom complet de paquet (« Nom_1000.26100.372.0_x64__éditeur »), comparée
@@ -263,7 +302,9 @@ pub(crate) fn version_paquet(nom: &str) -> Vec<u64> {
 /// dossier du paquet : ni absolu, ni lecteur, ni « .. », ni flux NTFS
 pub(crate) fn chemin_dans_paquet(racine: &str, relatif: &str) -> Option<String> {
     let r = relatif.trim().trim_start_matches(['\\', '/']);
-    if racine.trim().is_empty() || r.is_empty() || r.contains(':') || r.split(['\\', '/']).any(|p| p.trim() == "..") || relatif.trim().starts_with("\\\\") {
+    // Un segment fait seulement de points et d'espaces (« .. », « ... », « . . ») est refusé : Win32 retire les points et
+    // espaces de fin (audit de #83, S83-04)
+    if racine.trim().is_empty() || r.is_empty() || r.contains(':') || r.split(['\\', '/']).any(|p| !p.is_empty() && p.chars().all(|c| c == '.' || c == ' ')) || relatif.trim().starts_with("\\\\") {
         return None;
     }
     Some(format!(r"{}\{}", racine.trim().trim_end_matches(['\\', '/']), r.replace('/', "\\")))

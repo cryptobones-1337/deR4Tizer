@@ -273,10 +273,15 @@ modules expérimentaux.
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
-    (`Classes\PackagedCom`, écrite par les administrateurs seulement), désormais résolue vers le fichier de son paquet,
-    signé (le chemin lu dans le registre ne peut pas sortir du dossier du paquet) ;
-  - `RunOnce` de OneDrive « lancé via cmd » : la commande exacte de nettoyage de son installeur n'est plus suspecte
-    (toute variante l'est toujours).
+    (`Classes\PackagedCom`, écrite par le système, c'est-à-dire le service de déploiement des paquets), désormais
+    résolue vers le fichier de son paquet, signé. Seulement pour un paquet de Windows (éditeur Microsoft) installé sous
+    `Windows\SystemApps` ou `Program Files\WindowsApps` ; le chemin lu dans le registre ne peut pas sortir du dossier du
+    paquet ; une classe surchargée dans le profil d'un utilisateur chargé (HKCU) n'est jamais résolue : la remarque
+    reste, et la tâche est signalée comme avant (détournement COM possible) ;
+  - `RunOnce` de OneDrive « lancé via cmd » : la commande exacte de nettoyage de son installeur n'est plus suspecte, dans
+    `RunOnce` seulement ; le nom du profil n'accepte ni `%` (variable remplacée par cmd avant l'analyse de la ligne), ni
+    `^ ! ( )`, ni caractère de contrôle ; toute variante reste suspecte.
+  Limite : la surcharge dans le profil d'un utilisateur dont la ruche n'est pas chargée n'est pas vue.
   Restent en Info : entrées OneDrive, services et tâches de Windows qui apparaissent à la première session.
 - **Tests** : `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
   `per_001_nettoyage_onedrive` ; existants : `tache_com_cible_le_serveur_du_clsid`,

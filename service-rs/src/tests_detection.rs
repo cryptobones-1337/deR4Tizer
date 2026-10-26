@@ -265,10 +265,30 @@ fn per_001_com_empaquete_chemin_borne() {
     let racine = r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy";
     assert_eq!(chemin_dans_paquet(racine, r"SoftLandingTask\SoftLandingTask.exe").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SoftLandingTask\SoftLandingTask.exe"));
     assert_eq!(chemin_dans_paquet(&format!(r"{racine}\"), "a/b.dll").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\a\b.dll"));
-    for mauvais in [r"..\..\Users\Public\x.exe", r"a\..\..\x.exe", r"C:\Users\Public\x.exe", r"\\serveur\partage\x.exe", "a.exe:flux", "", "  "] {
+    for mauvais in [r"..\..\Users\Public\x.exe", r"a\..\..\x.exe", r"C:\Users\Public\x.exe", r"\\serveur\partage\x.exe", "a.exe:flux", "", "  ",
+                    r"...\x.exe", r". .\x.exe", r"a\ .. \x.exe"] {
         assert_eq!(chemin_dans_paquet(racine, mauvais), None, "{mauvais}");
     }
     assert_eq!(chemin_dans_paquet("", "a.exe"), None);
+    // Paquets de Windows seulement (audit de #83, S83-03) ; racine sous SystemApps ou WindowsApps, sans remontée
+    use crate::persistance::{paquet_de_windows, racine_systeme_de_paquets};
+    assert!(paquet_de_windows("MicrosoftWindows.Client.CBS_1000.26100.372.0_x64__cw5n1h2txyewy"));
+    assert!(paquet_de_windows("Microsoft.WindowsStore_22410.1401.3.0_x64__8wekyb3d8bbwe"));
+    assert!(!paquet_de_windows("Editeur.Outil_1.0.0.0_x64__abcdefghijklm"));
+    assert!(!paquet_de_windows("Editeur.Outil_1.0.0.0_x64__cw5n1h2txyewyx"));
+    let (w, pf) = (r"C:\WINDOWS", r"C:\Program Files");
+    assert!(racine_systeme_de_paquets(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy", w, pf));
+    assert!(racine_systeme_de_paquets(r"C:\Program Files\WindowsApps\Microsoft.X_1.0_x64__8wekyb3d8bbwe", w, pf));
+    for mauvaise in [r"C:\Users\u\AppData\Local\Packages\X", r"C:\WINDOWS\SystemApps", r"C:\WINDOWS\SystemApps\..\Temp", r"D:\dev\paquet", r"C:\WINDOWS\SystemAppsX\Y", ""] {
+        assert!(!racine_systeme_de_paquets(mauvaise, w, pf), "{mauvaise}");
+    }
+    assert!(!racine_systeme_de_paquets(r"C:\WINDOWS\SystemApps\X", "", ""), "dossiers système inconnus : refus");
+    // Classe surchargée dans un profil (HKCU) : jamais résolue (contrôle du source : le registre n'est pas lu ici)
+    let p = include_str!("persistance.rs").replace("\r\n", "\n");
+    let d = p.find("fn serveur_com_empaquete(").unwrap();
+    let f = &p[d..d + p[d..].find("\n}\n").unwrap()];
+    assert!(f.find("if surchargee {\n        return None;").unwrap() < f.find(r"PackagedCom\ClassIndex").unwrap(), "classe surchargée dans un profil résolue quand même");
+    assert!(f.contains(".filter(|p| paquet_de_windows(p))") && f.contains("if !racine_systeme_de_paquets("), "paquet ou racine non vérifiés");
     // La version la plus récente, comparée nombre par nombre
     assert!(version_paquet("P_1000.26100.372.0_x64__e") > version_paquet("P_1000.26100.360.0_x64__e"));
     assert!(version_paquet("P_1.100.0.0_x64__e") > version_paquet("P_1.99.0.0_x64__e"));
@@ -287,6 +307,11 @@ fn per_001_nettoyage_onedrive() {
         r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u&calc\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
         r#"C:\WINDOWS\system32\cmd.exe /c powershell -enc AAAA"#,
         r#"C:\Users\u\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        // Audit de #83, S83-01 : variable remplacée par cmd avant l'analyse (injection), et autres caractères spéciaux
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\%Z%\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u^&calc\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\!Z!\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u)(x\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
     ] {
         assert!(!nettoyage_onedrive(c), "{c}");
     }
@@ -297,4 +322,8 @@ fn per_001_nettoyage_onedrive() {
     };
     assert!(!crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#)).contains("lancé via cmd"));
     assert!(crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe" & calc"#)).contains("lancé via cmd"));
+    // Exemption réservée à « RunOnce » : la même commande dans « Run » ou une tâche reste suspecte (S83-01)
+    let mut run = e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#);
+    run.categorie = "Run (u)".into();
+    assert!(crate::persistance::evaluer(&run).contains("lancé via cmd"));
 }
