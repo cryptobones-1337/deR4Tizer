@@ -106,8 +106,9 @@ fn def_007_positif() {
 
 #[test]
 fn def_007_negatif() {
-    // 1120 : hors de la plage suivie
+    // 1120 : hors de la plage suivie ; l'audit (1122) n'est jamais une alerte, seul le blocage (1121) l'est
     assert_eq!(regle_defender(1120, &[("ID", "D4F940AB-401B-4EFC-AADC-AD5F3C50688A")]), None);
+    assert_ne!(regle_defender(1122, &[("ID", "D4F940AB-401B-4EFC-AADC-AD5F3C50688A")]).map(|(_, n)| n), Some("Alerte".into()));
 }
 
 #[test]
@@ -176,4 +177,17 @@ fn def_012_negatif() {
     illisible.disponible = false;
     assert!(regles_ecarts(&etat_defender(true, true, true), &illisible).is_empty());
     assert!(regles_ecarts(&illisible, &etat_defender(true, true, true)).is_empty());
+}
+
+/// Dossier phase 3, § 7.1 : `defender::traduire` lit le journal de Defender (données écrites par Defender, mais aussi les
+/// chemins et noms de menace qu'il recopie) : aucune panique sur un XML altéré
+#[test]
+fn def_traduire_sans_panique() {
+    for id in [1116u32, 1117, 5007, 1121, 1123, 1125] {
+        let valide = evenement_defender(id, &[("Threat Name", "Trojan:Win32/Test"), ("Path", "file:_C:\\x\\a.exe"), ("Process Name", "C:\\x\\p.exe"),
+            ("New Value", r"HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths\C:\x = 0x0"), ("ID", "D4F940AB-401B-4EFC-AADC-AD5F3C50688A")]);
+        crate::tests::torturer_texte(&valide, &mut |x| {
+            let _ = crate::defender::traduire(x);
+        });
+    }
 }

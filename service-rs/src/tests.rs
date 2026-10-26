@@ -608,7 +608,7 @@ fn chemins_de_profil_masques() {
 
 /// Variante du mini-fuzz pour les fonctions qui prennent du texte : octets aléatoires (dont non ASCII)
 /// convertis par from_utf8_lossy, comme le texte reçu du réseau
-fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
+pub(crate) fn torturer_texte(valide: &str, f: &mut dyn FnMut(&str)) {
     torturer(valide.as_bytes(), &mut |d| f(&String::from_utf8_lossy(d)));
     for t in ["é", "Révolution", "\u{212A}", "\u{FFFD}\u{FFFD}", "日本語", "\u{1F600}"] {
         f(t);
