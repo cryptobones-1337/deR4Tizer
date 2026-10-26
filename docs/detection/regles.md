@@ -430,8 +430,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
   Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
-  l'activité synthétique n'écrit pas dans les dossiers des leurres, et la session de mesure n'en a
-  peut-être aucun.
+  les leurres sont posés (le contrôle du 3a exige la collecte `Leurres` « Active »), mais aucun
+  programme de l'activité synthétique ne les touche.
 - **Tests** : `leu_001_positif` (leurre modifié, leurre supprimé, sur de vrais fichiers : deux alertes Critique, et les
   leurres signalés ne sont plus suivis, pour ne pas alerter à chaque tour), `leu_001_negatif` (leurre lu sans être
   modifié) ; existant : `leurres_par_handle_jamais_a_travers_un_lien`. Pose des leurres exercée en VM (scénario 3b) ;

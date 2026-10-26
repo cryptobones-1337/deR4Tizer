@@ -855,15 +855,20 @@ fn leu_002_negatif() {
     assert!(a.raisons.contains("non suspendu"));
 }
 
+/// Cible surveillée par son nom (pas par sa place dans la table)
+fn cible_vol(nom: &str) -> &'static crate::vol_donnees::Cible {
+    crate::vol_donnees::CIBLES.iter().find(|c| c.nom == nom).unwrap_or_else(|| panic!("cible {nom}"))
+}
+
 fn evenement_vol(objet: &str, processus: &str) -> String {
     evenement_defender(4663, &[("ObjectName", objet), ("ProcessName", processus), ("ProcessId", "0x2c")])
 }
 
 #[test]
 fn vol_001_positif() {
-    use crate::vol_donnees::{analyser, CIBLES};
+    use crate::vol_donnees::analyser;
     let mots_de_passe = r"C:\Users\essai\AppData\Local\Google\Chrome\User Data\Default";
-    let dossiers = vec![(mots_de_passe.to_string(), &CIBLES[1])];
+    let dossiers = vec![(mots_de_passe.to_string(), cible_vol("mots de passe de Chrome"))];
     let objet = format!(r"{mots_de_passe}\Login Data");
     // Programme lancé depuis un dossier temporaire : Critique ; ailleurs : Alerte
     let a = analyser(&evenement_vol(&objet, r"C:\Users\essai\AppData\Local\Temp\voleur.exe"), &dossiers).expect("alerte");
@@ -876,10 +881,10 @@ fn vol_001_positif() {
 
 #[test]
 fn vol_001_negatif() {
-    use crate::vol_donnees::{analyser, CIBLES};
+    use crate::vol_donnees::analyser;
     let d = dossier_regle("vol1");
     let dossier = d.to_string_lossy().to_string();
-    let dossiers = vec![(dossier.clone(), &CIBLES[1])];
+    let dossiers = vec![(dossier.clone(), cible_vol("mots de passe de Chrome"))];
     std::fs::create_dir_all(d.join("Network")).unwrap();
     // Fichier hors des dossiers surveillés ; dossier parcouru (aucune donnée lue) ; notre propre service
     assert!(analyser(&evenement_vol(r"C:\Users\essai\Documents\note.txt", r"C:\Outils\lecteur.exe"), &dossiers).is_none());
