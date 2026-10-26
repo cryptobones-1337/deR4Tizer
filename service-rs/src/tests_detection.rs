@@ -191,3 +191,110 @@ fn def_traduire_sans_panique() {
         });
     }
 }
+
+// ------------------------------------------------------------ PER : démarrages automatiques (PR 3.6)
+// Relevé des démarrages automatiques comparé à la référence (persistance::comparer, décision pure) ; le relevé lui-même
+// (registre, services, tâches) n'est pas exécuté ici. En VM : l'alerte de la clé Run de test (lot 3a).
+
+fn entree_demarrage(cle: &str, commande: &str, signataire: &str, remarque: &str) -> crate::commun::EntreeDemarrage {
+    crate::commun::EntreeDemarrage {
+        cle: cle.into(), categorie: "Run (HKLM)".into(), nom: "Outil".into(), commande: commande.into(), cible: r"C:\Program Files\Outil\outil.exe".into(),
+        signataire: signataire.into(), remarque: remarque.into(), ..Default::default()
+    }
+}
+
+fn reference_demarrage(entrees: &[crate::commun::EntreeDemarrage]) -> std::collections::HashMap<String, crate::commun::EntreeDemarrage> {
+    entrees.iter().map(|e| (e.cle.clone(), e.clone())).collect()
+}
+
+fn regles_comparer(reference: &[crate::commun::EntreeDemarrage], releve: &[crate::commun::EntreeDemarrage], apprentissage: bool) -> (Vec<(String, String)>, bool) {
+    let mut r = releve.to_vec();
+    let (a, modifie) = crate::persistance::comparer(&reference_demarrage(reference), &mut r, apprentissage);
+    (a.into_iter().map(|a| (a.regle, a.niveau)).collect(), modifie)
+}
+
+#[test]
+fn per_001_positif() {
+    let connue = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let nouvelle = entree_demarrage("k2", r#"powershell -w hidden -enc AAAA"#, "", "lancé via powershell");
+    let (a, modifie) = regles_comparer(&[connue.clone()], &[connue, nouvelle], false);
+    assert_eq!(a, [("PER-001".to_string(), "Alerte".to_string())], "entrée inconnue et suspecte : PER-001 au niveau Alerte");
+    assert!(modifie);
+    // Inconnue mais sans remarque : PER-001 au niveau Info
+    let banale = entree_demarrage("k3", r#""C:\Program Files\Autre\autre.exe""#, "Éditeur", "");
+    assert_eq!(regles_comparer(&[], &[banale], false).0, [("PER-001".to_string(), "Info".to_string())]);
+}
+
+#[test]
+fn per_001_negatif() {
+    let connue = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    // Relevé identique : rien
+    assert_eq!(regles_comparer(&[connue.clone()], &[connue.clone()], false), (vec![], false));
+    // Entrée nouvelle pendant l'apprentissage (premier relevé) : apprise, pas d'alerte
+    let nouvelle = entree_demarrage("k2", "x.exe", "", "NON SIGNÉ");
+    let (a, modifie) = regles_comparer(&[connue.clone()], &[connue, nouvelle], true);
+    assert!(a.is_empty() && modifie, "apprentissage : référence réécrite, aucune alerte");
+}
+
+#[test]
+fn per_002_positif() {
+    let avant = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let apres = entree_demarrage("k1", r#""C:\Users\Public\outil.exe""#, "", "dossier suspect");
+    let (a, modifie) = regles_comparer(&[avant], &[apres], false);
+    assert_eq!(a, [("PER-002".to_string(), "Alerte".to_string())]);
+    assert!(modifie);
+}
+
+#[test]
+fn per_002_negatif() {
+    // Même commande, signataire ou remarque changés (mise à jour signée par un autre certificat) : noté, sans alerte
+    let avant = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let apres = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur 2", "");
+    let (a, modifie) = regles_comparer(&[avant.clone()], &[apres], false);
+    assert!(a.is_empty() && modifie, "signataire changé : référence réécrite, aucune alerte");
+    // Commande changée pendant l'apprentissage : pas d'alerte
+    let modifiee = entree_demarrage("k1", "autre.exe", "Éditeur", "");
+    assert!(regles_comparer(&[avant], &[modifiee], true).0.is_empty());
+}
+
+/// Bruit mesuré (PR 3.6) : tâches « SoftLanding » de Windows dont la classe COM est empaquetée (AppX). Leur serveur est
+/// un fichier du dossier du paquet ; le chemin lu dans le registre ne doit jamais en sortir
+#[test]
+fn per_001_com_empaquete_chemin_borne() {
+    use crate::persistance::{chemin_dans_paquet, version_paquet};
+    let racine = r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy";
+    assert_eq!(chemin_dans_paquet(racine, r"SoftLandingTask\SoftLandingTask.exe").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SoftLandingTask\SoftLandingTask.exe"));
+    assert_eq!(chemin_dans_paquet(&format!(r"{racine}\"), "a/b.dll").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\a\b.dll"));
+    for mauvais in [r"..\..\Users\Public\x.exe", r"a\..\..\x.exe", r"C:\Users\Public\x.exe", r"\\serveur\partage\x.exe", "a.exe:flux", "", "  "] {
+        assert_eq!(chemin_dans_paquet(racine, mauvais), None, "{mauvais}");
+    }
+    assert_eq!(chemin_dans_paquet("", "a.exe"), None);
+    // La version la plus récente, comparée nombre par nombre
+    assert!(version_paquet("P_1000.26100.372.0_x64__e") > version_paquet("P_1000.26100.360.0_x64__e"));
+    assert!(version_paquet("P_1.100.0.0_x64__e") > version_paquet("P_1.99.0.0_x64__e"));
+}
+
+/// Bruit mesuré (PR 3.6) : le nettoyage que OneDrive pose dans « RunOnce » (effacer son installeur) n'est plus pris pour
+/// un interpréteur suspect ; la moindre variation de la commande l'y remet
+#[test]
+fn per_001_nettoyage_onedrive() {
+    use crate::persistance::nettoyage_onedrive;
+    assert!(nettoyage_onedrive(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#));
+    assert!(nettoyage_onedrive(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\Jean Dupont\AppData\Local\Microsoft\OneDrive\StandaloneUpdater\OneDriveSetup.exe""#));
+    for c in [
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe" & calc.exe"#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\Autre.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u&calc\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /c powershell -enc AAAA"#,
+        r#"C:\Users\u\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+    ] {
+        assert!(!nettoyage_onedrive(c), "{c}");
+    }
+    // Branché dans l'évaluation : la commande exacte n'est plus « lancé via cmd », une variante l'est toujours
+    let e = |commande: &str| crate::commun::EntreeDemarrage {
+        categorie: "RunOnce (u)".into(), nom: "Delete Cached Update Binary".into(), commande: commande.into(),
+        cible: r"C:\WINDOWS\system32\cmd.exe".into(), signataire: "Microsoft Windows".into(), ..Default::default()
+    };
+    assert!(!crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#)).contains("lancé via cmd"));
+    assert!(crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe" & calc"#)).contains("lancé via cmd"));
+}

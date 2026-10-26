@@ -86,6 +86,8 @@ if ($installe) {
         $lignes = @($groupes | ForEach-Object { "$($_.Name) : $($_.Count) ({0:N1}/h)" -f ($_.Count * $parHeure) })
         $entete = "$($alertes.Count) alerte(s) pendant les $Minutes min d'activité (depuis $debutActivite ; $toutes depuis l'installation) ; service en apprentissage (alertes non critiques notées Info)"
         Set-Content -LiteralPath (Join-Path $Sortie 'mesure-alertes-par-regle.txt') -Value (@($entete) + $lignes) -Encoding UTF8
+        # Les alertes elles-mêmes, pour expliquer le bruit (chemins de la VM de test seulement, rien d'un poste réel)
+        if (Test-Path -LiteralPath $fa) { Copy-Item -LiteralPath $fa -Destination (Join-Path $Sortie 'mesure-alertes.json') -Force }
         Noter 'Alertes par règle pendant la mesure (faux positifs)' 'INFORMATION' $(if ($lignes.Count) { "$entete : " + ($lignes -join ' ; ') } else { $entete })
     } catch {
         Noter 'Alertes par règle pendant la mesure (faux positifs)' 'NON EXÉCUTÉ' "alertes.json illisible : $($_.Exception.Message)"

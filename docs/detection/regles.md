@@ -268,10 +268,20 @@ modules expérimentaux.
   revient au relevé suivant comme un « NOUVEAU démarrage automatique » : faux positif (au niveau Alerte pour une entrée
   WMI, marquée « technique de persistance rare »), pas un silence.
 - **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
-- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus).
-- **Tests** : existants : `tache_com_cible_le_serveur_du_clsid`, `tache_com_hors_windows_sans_serveur_signalee` ; 3a,
-  « Alerte de persistance produite juste avant un arrêt » (bout en bout) ; à écrire à son nom. En VM, clé Run de test vers
-  `cmd.exe /c rem`.
+- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus) ; première session d'un compte
+  (OneDrive, tâches de Windows par utilisateur).
+- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
+  PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
+  - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
+    (`Classes\PackagedCom`, écrite par les administrateurs seulement), désormais résolue vers le fichier de son paquet,
+    signé (le chemin lu dans le registre ne peut pas sortir du dossier du paquet) ;
+  - `RunOnce` de OneDrive « lancé via cmd » : la commande exacte de nettoyage de son installeur n'est plus suspecte
+    (toute variante l'est toujours).
+  Restent en Info : entrées OneDrive, services et tâches de Windows qui apparaissent à la première session.
+- **Tests** : `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
+  `per_001_nettoyage_onedrive` ; existants : `tache_com_cible_le_serveur_du_clsid`,
+  `tache_com_hors_windows_sans_serveur_signalee`. En VM : clé Run de test vers `cmd.exe /c rem` (3a, « Alerte de
+  persistance produite juste avant un arrêt », bout en bout). État : validé sur Windows (VM) pour la clé Run.
 
 ### PER-002 : démarrage automatique modifié
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
@@ -280,7 +290,11 @@ modules expérimentaux.
 - **Si elle manque** : comme PER-001 (relevé partiel : faux « nouveau »).
 - **Niveau** : Alerte si suspecte, sinon Info.
 - **Faux positifs attendus** : mises à jour des logiciels (nouveau chemin de version).
-- **Tests** : à écrire.
+- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM) : PER-002 Info 4, les tâches de Defender dont la commande
+  passe de `Program Files` au dossier de sa plateforme après une mise à jour. Gardées (Info) : un changement de commande
+  est exactement ce que la règle doit voir.
+- **Tests** : `per_002_positif` (commande changée vers un dossier suspect : Alerte), `per_002_negatif` (signataire changé
+  seul, commande changée pendant l'apprentissage : pas d'alerte). État : testé en labo.
 
 ## DEF : Microsoft Defender
 

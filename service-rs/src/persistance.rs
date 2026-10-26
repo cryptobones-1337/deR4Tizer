@@ -49,35 +49,13 @@ impl Persistance {
                 releve.push(e);
             }
         }
-        let mut alertes = Vec::new();
-        let mut modifie = releve.len() != self.reference.len();
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
             // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
             e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
-            match self.reference.get(&e.cle) {
-                Some(ancienne) => {
-                    e.depuis = ancienne.depuis.clone();
-                    if ancienne.signataire != e.signataire || ancienne.remarque != e.remarque {
-                        modifie = true;
-                    }
-                    if ancienne.commande != e.commande {
-                        modifie = true;
-                        if !self.apprentissage {
-                            alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
-                        }
-                    }
-                }
-                None => {
-                    e.depuis = commun::maintenant();
-                    modifie = true;
-                    if !self.apprentissage {
-                        alertes.push(alerter(e, "NOUVEAU démarrage automatique"));
-                    }
-                }
-            }
         }
+        let (alertes, modifie) = comparer(&self.reference, &mut releve, self.apprentissage);
         self.reference = releve.iter().map(|e| (e.cle.clone(), e.clone())).collect();
         if modifie {
             let _ = commun::ecrire("demarrage.json", &releve);
@@ -86,6 +64,39 @@ impl Persistance {
         self.apprentissage = false;
         alertes
     }
+}
+
+/// Décision pure (testée, PER-001 et PER-002) : compare un relevé, déjà évalué (cible, signataire, remarque), à la
+/// référence. Entrée inconnue : NOUVELLE (PER-001) ; commande changée : MODIFIÉE (PER-002) ; signataire ou remarque
+/// changés seuls : notés (référence réécrite), sans alerte. Apprentissage : rien n'alerte. Rend (alertes, référence à
+/// réécrire).
+pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mut [EntreeDemarrage], apprentissage: bool) -> (Vec<Alerte>, bool) {
+    let mut alertes = Vec::new();
+    let mut modifie = releve.len() != reference.len();
+    for e in releve.iter_mut() {
+        match reference.get(&e.cle) {
+            Some(ancienne) => {
+                e.depuis = ancienne.depuis.clone();
+                if ancienne.signataire != e.signataire || ancienne.remarque != e.remarque {
+                    modifie = true;
+                }
+                if ancienne.commande != e.commande {
+                    modifie = true;
+                    if !apprentissage {
+                        alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
+                    }
+                }
+            }
+            None => {
+                e.depuis = commun::maintenant();
+                modifie = true;
+                if !apprentissage {
+                    alertes.push(alerter(e, "NOUVEAU démarrage automatique"));
+                }
+            }
+        }
+    }
+    (alertes, modifie)
 }
 
 pub(crate) fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
@@ -108,7 +119,7 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
-    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows {
+    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows && !nettoyage_onedrive(&e.commande) {
         r.push(format!("lancé via {exe}"));
     }
     if e.signataire.is_empty() {
@@ -130,6 +141,16 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
         r.push("serveur COM non enregistré pour la machine".into());
     }
     r.join(", ")
+}
+
+/// Décision pure (testée) : nettoyage que l'installation de OneDrive pose pour l'utilisateur (« RunOnce », effacer son
+/// propre installeur). Commande exacte seulement : un seul « del » de OneDriveSetup.exe dans le dossier OneDrive du
+/// profil, rien avant ni après ; tout ajout (« & », « | », autre fichier) la remet au rang des interpréteurs suspects
+pub(crate) fn nettoyage_onedrive(commande: &str) -> bool {
+    static MOTIF: OnceLock<Regex> = OnceLock::new();
+    MOTIF.get_or_init(|| {
+        Regex::new(r#"(?i)^[a-z]:\\windows\\system32\\cmd\.exe /q /c del /q "[a-z]:\\users\\[^\\"&|<>]+\\appdata\\local\\microsoft\\onedrive\\(update|standaloneupdater)\\onedrivesetup\.exe"$"#).unwrap()
+    }).is_match(commande.trim())
 }
 
 fn developper(s: &str) -> String {
@@ -205,13 +226,47 @@ pub(crate) fn commande_com(class_id: &str) -> String {
     format!("COM {{{id}}}")
 }
 
-/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32
+/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32 ; à défaut, classe COM d'un paquet
+/// installé pour la machine (AppX, `PackagedCom`, PR 3.6)
 fn serveur_com(clsid: &str) -> Option<String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ["InprocServer32", "LocalServer32"].iter().find_map(|s| {
         let k = hklm.open_subkey(format!(r"SOFTWARE\Classes\CLSID\{clsid}\{s}")).ok()?;
         texte_registre(&k, "").filter(|v| !v.trim().is_empty())
-    })
+    }).or_else(|| serveur_com_empaquete(&hklm, clsid))
+}
+
+/// Classe COM empaquetée (tâches « SoftLanding » de Windows, par exemple) : enregistrée pour la machine sous
+/// `Classes\PackagedCom` (écriture réservée aux administrateurs), son serveur est un fichier du dossier du paquet
+/// (`DllPath`, sinon l'`Executable` de son serveur) ; la version la plus récente du paquet est retenue
+fn serveur_com_empaquete(hklm: &RegKey, clsid: &str) -> Option<String> {
+    let index = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\ClassIndex\{clsid}")).ok()?;
+    let paquet = index.enum_keys().map_while(Result::ok).max_by(|a, b| version_paquet(a).cmp(&version_paquet(b)))?;
+    let classe = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\Package\{paquet}\Class\{clsid}")).ok()?;
+    let relatif = texte_registre(&classe, "DllPath").filter(|v| !v.trim().is_empty()).or_else(|| {
+        let id: u32 = classe.get_value("ServerId").ok()?;
+        let serveur = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\Package\{paquet}\Server\{id}")).ok()?;
+        texte_registre(&serveur, "Executable")
+    })?;
+    let depot = hklm.open_subkey(format!(r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PackageRepository\Packages\{paquet}")).ok()?;
+    let racine = texte_registre(&depot, "Path")?;
+    chemin_dans_paquet(&racine, &relatif).map(|c| format!("\"{c}\""))
+}
+
+/// Décision pure (testée) : version d'un nom complet de paquet (« Nom_1000.26100.372.0_x64__éditeur »), comparée
+/// nombre par nombre (« 100 » après « 99 »)
+pub(crate) fn version_paquet(nom: &str) -> Vec<u64> {
+    nom.split('_').nth(1).unwrap_or("").split('.').map(|n| n.parse().unwrap_or(0)).collect()
+}
+
+/// Décision pure (testée) : chemin d'un fichier du paquet. Le chemin relatif lu dans le registre ne doit pas sortir du
+/// dossier du paquet : ni absolu, ni lecteur, ni « .. », ni flux NTFS
+pub(crate) fn chemin_dans_paquet(racine: &str, relatif: &str) -> Option<String> {
+    let r = relatif.trim().trim_start_matches(['\\', '/']);
+    if racine.trim().is_empty() || r.is_empty() || r.contains(':') || r.split(['\\', '/']).any(|p| p.trim() == "..") || relatif.trim().starts_with("\\\\") {
+        return None;
+    }
+    Some(format!(r"{}\{}", racine.trim().trim_end_matches(['\\', '/']), r.replace('/', "\\")))
 }
 
 // ------------------------------------------------------------ relevé
