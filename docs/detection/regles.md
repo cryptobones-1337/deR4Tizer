@@ -145,7 +145,7 @@ modules expérimentaux.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Info.
 - **Faux positifs attendus** : chaque nouveau programme ou nouvelle version (attendu, par nature). Mesurés en VM
-  (scénario `mesure`, 22 min, compte neuf) : 11 à 13 alertes Info, soit 30 à 35 par heure, surtout au premier usage
+  (scénario `mesure`, 22 min, compte neuf) : 9 à 13 alertes Info, soit 24 à 35 par heure, surtout au premier usage
   (OneDrive, Edge, services de Windows).
 - **Tests** : `res_003_positif`, `res_003_negatif` (apprentissage ; premier passage) ; décision pure
   `moniteur::premiere_connexion_signalee` (PR 3.8). Exercée en VM (alertes Info du scénario `mesure`).
@@ -163,7 +163,9 @@ modules expérimentaux.
 - **Télémétrie** : adresses des cartes réseau.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : réseau d'entreprise avec adresses publiques volontaires ; IPv6 globale (selon le cas).
+- **Faux positifs attendus** : réseau d'entreprise avec adresses publiques volontaires ; IPv6 globale (selon le cas) ;
+  opérateur qui change le préfixe IPv6 chaque jour : au plus une alerte par jour, cohérent avec la règle (relecture de
+  #87).
   Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'a pas d'adresse publique. La
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 - **Tests** : `res_004_positif` (adresse apparue ; adresse qui en remplace une autre ; nouveau préfixe IPv6),
