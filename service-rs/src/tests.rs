@@ -3349,6 +3349,22 @@ fn phase3_lue_dans_le_delai() {
     assert!(!lue_dans_le_delai(0, 30, 10 * s), "jamais lue");
 }
 
+/// Phase 3.3d : cause d'une règle sans collecte : le premier groupe de besoins sans source lue (ni active ni partielle) ;
+/// aucune cause pour une règle couverte ; la publication porte une cause par règle sans collecte
+#[test]
+fn phase3_cause_sans_collecte() {
+    use crate::collectes::{besoins, groupe_non_couvert, Collecte::*, EtatPublie};
+    let actives = |liste: &'static [crate::collectes::Collecte]| move |c| if liste.contains(&c) { EtatPublie::Active } else { EtatPublie::Indisponible("r".into()) };
+    assert_eq!(groupe_non_couvert(besoins("DNS-001"), &actives(&[])), Some(&[JournalDns, Sysmon][..]));
+    assert_eq!(groupe_non_couvert(besoins("DNS-001"), &actives(&[Sysmon])), Some(&[ListesDomaines][..]));
+    assert_eq!(groupe_non_couvert(besoins("DNS-001"), &actives(&[Sysmon, ListesDomaines])), None);
+    assert_eq!(groupe_non_couvert(besoins("PRC-002"), &|c| if c == WmiProcessus { EtatPublie::Partielle("p".into()) } else { EtatPublie::Desactivee("d".into()) }), None, "partielle : couverte (dégradée)");
+    assert_eq!(groupe_non_couvert(besoins("INT-001"), &actives(&[])), None);
+    let (_, sans, _, causes) = crate::collectes::publier();
+    assert_eq!(sans.len(), causes.len(), "une cause par règle sans collecte");
+    assert!(sans.iter().zip(&causes).all(|(r, c)| *r == c.regle && !c.collectes.is_empty()));
+}
+
 /// Phase 3.3b : lecture sur plusieurs éléments (dossiers audités, réglages de la baseline) : rien à lire, désactivée ;
 /// rien de lu, indisponible ; une partie, partielle
 #[test]
@@ -3476,14 +3492,28 @@ fn phase3_branchements_des_collectes_restantes() {
     assert!(e.contains("let fin = fenetre(dernier, n);") && e.contains("(EventRecordID <= {fin})"), "abonner : lecture non bornée");
     // Rotation vérifiée à chaque tour qui a du nouveau (relecture de la PR 3.3c, D1 ; audit S78-02), sans condition
     let r = e.find("if let Some((reprise, perdus)) = plus_ancien_numero(&canal).and_then(|a| perte_rotation(dernier, a)) {").expect("abonner : rotation non vérifiée");
-    assert!(!e[r - 200..r].contains("if n - dernier > FENETRE"), "abonner : rotation vérifiée seulement en cas de retard");
+    // Les quatre lignes qui précèdent (découpage sur des fins de ligne : aucun risque de couper un caractère accentué)
+    let avant = &e[..r];
+    let debut_bloc = avant.rmatch_indices('\n').nth(4).map_or(0, |(i, _)| i);
+    assert!(!avant[debut_bloc..].contains("if n - dernier > FENETRE"), "abonner : rotation vérifiée seulement en cas de retard");
+    // PR 3.3d (S78-06, S78-07) : vérifiée avant chaque fenêtre, dans la boucle ; reprise bornée par n
+    assert!(avant.rfind("let lecture = loop {").is_some_and(|l| avant[l..].matches('\n').count() < 6), "abonner : rotation vérifiée une seule fois par tour");
+    // Découpes sur des fins de ligne (aucun risque de couper un caractère accentué)
+    let lignes_apres = |d: usize, k: usize| { let s = &e[d..]; let f = s.match_indices('\n').nth(k).map_or(s.len(), |(i, _)| i); &s[..f] };
+    assert!(lignes_apres(r, 3).contains("let reprise = reprise.min(n);"), "abonner : reprise après rotation non bornée par n");
+    // S78-05 : coupure retenue seulement après une coupure réussie, oubliée dès que le journal est revu actif
+    let a = e.find("pub fn activer_journal(").unwrap();
+    let af = lignes_apres(a, 25);
+    // Retenue avant wevtutil (relecture de #79, D1), retirée si la coupure échoue (audit S78-05)
+    assert!(af.find("c.push(canal.to_string());").unwrap() < af.find("let ok = Command::new(\"wevtutil\")").unwrap(), "activer_journal : coupure retenue après wevtutil (course avec le fil de suivi)");
+    assert!(af.contains("if actif == ok {\n        // Réactivé, ou coupure refusée : plus rien à retenir\n        oublier_coupe(canal);"), "activer_journal : coupure refusée encore retenue");
+    assert!(e.contains("if etat_canal == Some(true) {\n                    oublier_coupe(&canal);"), "abonner : coupure retenue après une réactivation par un autre moyen");
     assert!(e.contains("if !encore_une_fenetre(lecture, dernier, n, debut.elapsed()) {\n                    break lecture;"), "abonner : une seule fenêtre par tour (débit plafonné)");
     // Journal coupé par le retour arrière de la baseline : ni réactivé, ni noté en échec
     assert!(e.contains("let coupe = desactive && coupe_par_le_service(&canal);") && e.contains("if a_reactiver(&canal) && !coupe && !desactivation_signalee {"), "abonner : coupure de la baseline annulée");
     assert!(e.contains("if coupe {\n                    collectes::desactivee(collecte,"), "abonner : coupure de la baseline notée en échec");
-    let a = e.find("pub fn activer_journal(").unwrap();
-    assert!(e[a..a + 600].contains("if !actif {\n            c.push(canal.to_string());"), "activer_journal : coupure du service non retenue");
-    assert!(e.contains("let desactive = canal_actif(&canal) == Some(false);") && e.contains("if desactive && !reactive {\n                    collectes::echec(collecte,"), "abonner : journal désactivé non noté");
+    assert!(af.contains("if !actif {\n        let mut c = COUPES_PAR_LE_SERVICE.lock()"), "activer_journal : coupure du service non retenue");
+    assert!(e.contains("let etat_canal = canal_actif(&canal);\n            let desactive = etat_canal == Some(false);") && e.contains("if desactive && !reactive {\n                    collectes::echec(collecte,"), "abonner : journal désactivé non noté");
     assert!(e.contains("if a_reactiver(&canal) && !coupe && !desactivation_signalee {\n                    reactive = activer_journal(&canal, true);"), "abonner : journal DNS non réactivé (D4)");
     assert!(n.contains("journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),"), "interface et indice : même état du journal DNS");
     assert!(e.contains("Some((t, n)) if t.elapsed().as_secs() < 3600 => {\n            collectes::partielle(collecte,"), "saut d'événements : collecte redevenue active aussitôt");
@@ -3502,6 +3532,8 @@ fn phase3_journal_interrompu_relu() {
     // Numéro aberrant : borné à l'intervalle demandé
     assert_eq!(prochain_dernier(10, 20, false, Some(99)), 20);
     assert_eq!(prochain_dernier(10, 20, false, Some(3)), 10);
+    // PR 3.3d (S78-07) : `dernier` au-delà de `n` (journal recommencé entre deux lectures) : aucune panique, pas de recul
+    assert_eq!(prochain_dernier(30, 20, false, Some(25)), 30);
 }
 
 /// Phase 3.3 : listes de menaces : aucune source activée (réglage par défaut pour les domaines, toutes à licence

@@ -321,6 +321,9 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     foreach ($r in 'DEF-001', 'DEF-010', 'RES-002', 'RES-003', 'SYS-002', 'COR-R1', 'PER-001', 'CHA-001', 'LEU-001', 'EXT-001', 'VIE-001', 'EXP-IDS-001') {
         if ($sans -contains $r) { return "règle $r publiée sans collecte ; sans collecte : $($sans -join ', ')" }
     }
+    # Cause publiée (PR 3.3d) : DNS-001, sans collecte par défaut, manque des listes de domaines (coupées par défaut)
+    $cause = @($e.CausesSansCollecte | Where-Object { $_.Regle -eq 'DNS-001' }) | Select-Object -First 1
+    if ($sans -contains 'DNS-001' -and (-not $cause -or @($cause.Collectes) -notcontains 'ListesDomaines')) { return "cause de DNS-001 absente ou fausse : $(if ($cause) { @($cause.Collectes) -join ', ' } else { 'aucune' })" }
     $deg = @($e.ReglesDegradees)
     if (-not $sysmon -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul) non dégradée : $($deg -join ', ')" }
     Write-Host "  collectes : $vu"

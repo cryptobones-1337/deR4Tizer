@@ -211,6 +211,21 @@ pub fn couverture(besoins: &[&[Collecte]], etat: &dyn Fn(Collecte) -> EtatPublie
     if degradee { Couverture::Degradee } else { Couverture::Assuree }
 }
 
+/// Décision pure (testée) : premier groupe de besoins sans aucune source lue (ni active ni partielle), c'est-à-dire les
+/// sources dont l'une au moins manque pour que la règle puisse se déclencher ; None si la règle est couverte
+pub fn groupe_non_couvert(besoins: &'static [&'static [Collecte]], etat: &dyn Fn(Collecte) -> EtatPublie) -> Option<&'static [Collecte]> {
+    besoins.iter().copied().find(|g| !g.iter().any(|c| matches!(etat(*c), EtatPublie::Active | EtatPublie::Partielle(_))))
+}
+
+/// Règle sans collecte et les sources dont l'une au moins manque (etat.json, `CausesSansCollecte`) : l'interface dit
+/// pourquoi une détection est muette
+#[derive(Serialize, serde::Deserialize, Clone, Default)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct CauseSansCollecte {
+    pub regle: String,
+    pub collectes: Vec<String>,
+}
+
 /// Télémétrie dont dépend chaque règle du registre (docs/detection/regles.md, « Télémétrie »). Vide : aucune collecte
 /// externe suivie (contrôles du service lui-même, empreinte du fichier hosts, adresses des cartes, registre).
 pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
@@ -450,8 +465,9 @@ pub struct EtatCollecte {
     pub raison: String,
 }
 
-/// Publication dans etat.json : l'état de chaque collecte, les règles sans collecte et les règles dégradées
-pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>) {
+/// Publication dans etat.json : l'état de chaque collecte, les règles sans collecte, les règles dégradées, et la
+/// cause de chaque règle sans collecte
+pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>, Vec<CauseSansCollecte>) {
     let t = maintenant();
     let etats: Vec<EtatPublie> = TOUTES.iter().map(|c| etat_a(*c, t)).collect();
     let heure = |f: u64| if f == 0 { String::new() } else { crate::commun::heure_filetime(f) };
@@ -483,13 +499,18 @@ pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>) {
         })
         .collect();
     let lire = |c: Collecte| etats[c.index()].clone();
-    let (mut sans, mut degradees) = (Vec::new(), Vec::new());
+    let (mut sans, mut degradees, mut causes) = (Vec::new(), Vec::new(), Vec::new());
     for r in crate::regles::REGLES {
         match couverture(besoins(r.id), &lire) {
-            Couverture::Indisponible => sans.push(r.id.to_string()),
+            Couverture::Indisponible => {
+                sans.push(r.id.to_string());
+                if let Some(g) = groupe_non_couvert(besoins(r.id), &lire) {
+                    causes.push(CauseSansCollecte { regle: r.id.to_string(), collectes: g.iter().map(|c| c.id().to_string()).collect() });
+                }
+            }
             Couverture::Degradee => degradees.push(r.id.to_string()),
             Couverture::Assuree => {}
         }
     }
-    (collectes, sans, degradees)
+    (collectes, sans, degradees, causes)
 }

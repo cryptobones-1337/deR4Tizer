@@ -769,7 +769,7 @@ impl Moniteur {
         if signature_etat != self.derniere_signature_etat || self.dernier_etat_ecrit.elapsed() >= Duration::from_secs(30) {
             let ip_connues = self.partage.dns.lock().unwrap().len();
             let n = flux.len();
-            let (etats_collectes, regles_sans_collecte, regles_degradees) = collectes::publier();
+            let (etats_collectes, regles_sans_collecte, regles_degradees, causes_sans_collecte) = collectes::publier();
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
@@ -791,6 +791,7 @@ impl Moniteur {
                 collectes: etats_collectes,
                 regles_sans_collecte,
                 regles_degradees,
+                causes_sans_collecte,
             });
             self.derniere_signature_etat = signature_etat;
             self.dernier_etat_ecrit = Instant::now();

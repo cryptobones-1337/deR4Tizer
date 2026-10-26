@@ -82,6 +82,8 @@ pub struct Etat {
     pub collectes: Vec<crate::collectes::EtatCollecte>,
     pub regles_sans_collecte: Vec<String>,
     pub regles_degradees: Vec<String>,
+    /// Pour chaque règle sans collecte, les sources dont l'une au moins manque (phase 3.3d, lues par l'interface)
+    pub causes_sans_collecte: Vec<crate::collectes::CauseSansCollecte>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
