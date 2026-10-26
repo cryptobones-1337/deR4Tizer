@@ -100,6 +100,13 @@ namespace DeR4Tizer
             return c != null && (c.Etat == "Indisponible" || c.Etat == "Inconnue");
         }
 
+        static EtatCollecte Trouver(Etat e, string id)
+        {
+            if (e == null || e.Collectes == null) return null;
+            foreach (var c in e.Collectes) if (c != null && c.Id == id) return c;
+            return null;
+        }
+
         // Collectes en panne (indisponibles, ou jamais lues : échec fermé) ; les collectes désactivées par choix n'y sont pas
         public static List<EtatCollecte> EnPannes(Etat e)
         {
@@ -124,46 +131,99 @@ namespace DeR4Tizer
             return c.Id + " " + etat + (string.IsNullOrEmpty(c.Raison) ? "" : " (" + c.Raison + ")") + " : " + Consequence(c.Id);
         }
 
-        // Pourquoi des détections sont muettes : règles regroupées par sources manquantes (« DNS-001 : JournalDns ou Sysmon »)
-        public static string Causes(Etat e)
+        static List<string> SourcesDe(Etat e, string regle)
         {
-            if (e == null || e.ReglesSansCollecte == null || e.ReglesSansCollecte.Count == 0) return "";
-            var parSources = new Dictionary<string, List<string>>();
-            var ordre = new List<string>();
-            foreach (var r in e.ReglesSansCollecte)
+            if (e != null && e.CausesSansCollecte != null)
+                foreach (var c in e.CausesSansCollecte)
+                    if (c != null && c.Regle == regle && c.Collectes != null && c.Collectes.Count > 0) return c.Collectes;
+            return null;
+        }
+
+        // Règle muette par réglage : toutes ses sources manquantes sont désactivées par choix (listes de domaines coupées,
+        // Sysmon absent…). Sans cause publiée, ou avec une source en panne ou introuvable : muette par panne (échec fermé)
+        public static bool ParReglage(Etat e, string regle)
+        {
+            var s = SourcesDe(e, regle);
+            if (s == null) return false;
+            foreach (var id in s)
             {
-                string sources = "";
-                if (e.CausesSansCollecte != null)
-                    foreach (var c in e.CausesSansCollecte)
-                        if (c != null && c.Regle == r && c.Collectes != null) sources = string.Join(L.T(" ou "), c.Collectes);
-                if (!parSources.ContainsKey(sources)) { parSources[sources] = new List<string>(); ordre.Add(sources); }
-                parSources[sources].Add(r);
+                var c = Trouver(e, id);
+                if (c == null || c.Etat != "Desactivee") return false;
             }
+            return true;
+        }
+
+        static List<string> Regles(Etat e, bool parReglage)
+        {
+            var l = new List<string>();
+            if (e == null || e.ReglesSansCollecte == null) return l;
+            foreach (var r in e.ReglesSansCollecte) if (ParReglage(e, r) == parReglage) l.Add(r);
+            return l;
+        }
+
+        // Détections qui ne peuvent pas se déclencher à cause d'une collecte en panne (pas d'un réglage)
+        public static List<string> ReglesEnPanne(Etat e) { return Regles(e, false); }
+
+        // Détections coupées par un réglage voulu (neutre, pas une alarme)
+        public static List<string> ReglesParReglage(Etat e) { return Regles(e, true); }
+
+        // « DNS-001 : domaines malveillants connus non reconnus (manque ListesDomaines) » : la conséquence en clair, la
+        // source en second
+        static string Expliquer(Etat e, List<string> regles)
+        {
             var morceaux = new List<string>();
-            foreach (var s in ordre)
+            foreach (var r in regles)
             {
-                string regles = string.Join(", ", parSources[s]);
-                morceaux.Add(s == "" ? regles : regles + " (" + L.T("manque") + " " + s + ")");
+                var s = SourcesDe(e, r);
+                morceaux.Add(s == null ? r : r + " : " + Consequence(s[0]) + " (" + L.T("manque") + " " + string.Join(L.T(" ou "), s) + ")");
             }
             return string.Join(" ; ", morceaux);
         }
 
-        // Liste des alertes vide : « Aucune alerte. » seulement si chaque détection a sa collecte
+        // Le message doit-il alerter (jaune) ? Oui si une détection est muette par panne, ou si l'état est illisible
+        public static bool Alarme(Etat e)
+        {
+            return e == null || ReglesEnPanne(e).Count > 0;
+        }
+
+        // Liste des alertes vide : « Aucune alerte. » seul seulement si chaque détection a sa collecte ; les détections
+        // coupées par réglage sont dites en neutre, celles qui sont muettes par panne en premier
         public static string AucuneAlerte(Etat e)
         {
             if (e == null) return L.T("Aucune alerte, mais l'état du service est illisible : rien ne prouve que la surveillance fonctionne.");
             if (e.Collectes == null) return L.T("Aucune alerte (état des collectes non publié par ce service).");
-            int n = e.ReglesSansCollecte == null ? 0 : e.ReglesSansCollecte.Count;
-            if (n == 0) return L.T("Aucune alerte.");
-            return string.Format(n == 1 ? L.T("Aucune alerte, mais {0} détection ne peut pas se déclencher : {1}.") : L.T("Aucune alerte, mais {0} détections ne peuvent pas se déclencher : {1}."), n, Causes(e));
+            var panne = ReglesEnPanne(e);
+            var reglage = ReglesParReglage(e);
+            string suite = reglage.Count == 0 ? "" : " " + L.T("Désactivé par réglage") + " : " + Expliquer(e, reglage) + ".";
+            if (panne.Count == 0) return L.T("Aucune alerte.") + suite;
+            return string.Format(panne.Count == 1 ? L.T("Aucune alerte, mais {0} détection ne peut pas se déclencher : {1}.") : L.T("Aucune alerte, mais {0} détections ne peuvent pas se déclencher : {1}."),
+                panne.Count, Expliquer(e, panne)) + suite;
+        }
+
+        // Bandeau de la page Alertes, toujours visible (même avec des alertes) : chaque collecte en panne expliquée,
+        // puis les collectes désactivées par choix ; vide si tout est lu
+        public static string Detail(Etat e)
+        {
+            if (e == null || e.Collectes == null) return "";
+            var lignes = new List<string>();
+            foreach (var c in EnPannes(e)) lignes.Add("▲ " + Decrire(c));
+            foreach (var c in e.Collectes) if (c != null && c.Etat == "Desactivee") lignes.Add("○ " + Decrire(c));
+            return string.Join("\n", lignes);
         }
 
         // Pastille caméra et micro : « OFF » seulement si le magasin des consentements est lu
         public static bool CamMicLue(Etat e)
         {
             if (e == null || e.Collectes == null) return true;
-            foreach (var c in e.Collectes) if (c != null && c.Id == "Peripheriques") return c.Etat == "Active" || c.Etat == "Partielle";
-            return false;
+            var c = Trouver(e, "Peripheriques");
+            return c != null && (c.Etat == "Active" || c.Etat == "Partielle");
+        }
+
+        // État de Defender pas encore lu (premier relevé au démarrage du PC) : « lecture en cours », pas « illisible »
+        public static bool DefenderPasEncoreLu(Etat e)
+        {
+            var c = Trouver(e, "EtatDefender");
+            return c != null && c.Etat == "Inconnue";
         }
     }
 

@@ -21,6 +21,7 @@ try {
     $couv = $asm.GetType('DeR4Tizer.Couverture'); $langue = $asm.GetType('DeR4Tizer.L')
     $etatT = $asm.GetType('DeR4Tizer.Etat'); $colT = $asm.GetType('DeR4Tizer.EtatCollecte'); $causeT = $asm.GetType('DeR4Tizer.CauseSansCollecte')
     $appel = { param($m, $e) $couv.GetMethod($m).Invoke($null, @(, $e)) }
+    $alarme = { param($e) [bool]$couv.GetMethod('Alarme').Invoke($null, @(, $e)) }
     $liste = { param($t) $l = [Activator]::CreateInstance([Collections.Generic.List`1].MakeGenericType($t)); , $l }
     function Collecte([string]$Id, [string]$Etat, [string]$Raison = '') { $c = [Activator]::CreateInstance($colT); $c.Id = $Id; $c.Etat = $Etat; $c.Raison = $Raison; $c }
     function Etat($Collectes, [string[]]$Sans = @(), $Causes = $null) {
@@ -44,11 +45,34 @@ try {
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'Connexions' 'Active')))
     Cas 'toutes les détections couvertes : « Aucune alerte. »' ($t -eq 'Aucune alerte.') $t
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'JournalDns' 'Indisponible')) @('DNS-001', 'COR-R1') @{ 'DNS-001' = @('JournalDns', 'Sysmon'); 'COR-R1' = @('JournalSecurite') })
-    Cas 'détections muettes : nombre, règles et sources manquantes' ($t -match '^Aucune alerte, mais 2 détections' -and $t -match 'DNS-001 \(manque JournalDns ou Sysmon\)' -and $t -match 'COR-R1 \(manque JournalSecurite\)') $t
+    Cas 'détections muettes : nombre, conséquence en clair, sources manquantes' ($t -match '^Aucune alerte, mais 2 détections' -and $t -match 'DNS-001 : domaines contactés non vus \(manque JournalDns ou Sysmon\)' -and $t -match 'COR-R1 : ouvertures de session et accès aux fichiers non vus \(manque JournalSecurite\)') $t
+    $eAlarme = Etat @((Collecte 'JournalDns' 'Indisponible')) @('DNS-001') @{ 'DNS-001' = @('JournalDns', 'Sysmon') }
+    Cas 'détections muettes par panne : message en jaune' (& $alarme $eAlarme)
+    # Réglage voulu (listes de domaines coupées par défaut) : dit, mais en neutre, et pas compté comme une panne
+    $e = Etat @((Collecte 'ListesDomaines' 'Desactivee' 'aucune liste activée'), (Collecte 'Connexions' 'Active')) @('DNS-001') @{ 'DNS-001' = @('ListesDomaines') }
+    $t = & $appel 'AucuneAlerte' $e
+    Cas 'réglage voulu : « Aucune alerte. » puis la détection coupée, nommée en clair' ($t -eq 'Aucune alerte. Désactivé par réglage : DNS-001 : domaines malveillants connus non reconnus (manque ListesDomaines).') $t
+    Cas 'réglage voulu : pas d''alarme (neutre)' (-not (& $alarme $e))
+    Cas 'réglage voulu : pas compté dans les détections en panne' ($couv.GetMethod('ReglesEnPanne').Invoke($null, @(, $e)).Count -eq 0)
+    # Panne et réglage mêlés : la panne d'abord, le réglage ensuite
+    $e = Etat @((Collecte 'ListesDomaines' 'Desactivee'), (Collecte 'Leurres' 'Indisponible')) @('DNS-001', 'LEU-001') @{ 'DNS-001' = @('ListesDomaines'); 'LEU-001' = @('Leurres') }
+    $t = & $appel 'AucuneAlerte' $e
+    Cas 'panne et réglage mêlés' ($t -match '^Aucune alerte, mais 1 détection ne peut pas se déclencher : LEU-001 : ' -and $t -match 'Désactivé par réglage : DNS-001 : ') $t
+    # Échec fermé : une source citée mais absente de Collectes, ou une règle sans cause, compte comme une panne
+    $e = Etat @((Collecte 'ListesDomaines' 'Desactivee')) @('DNS-001') @{ 'DNS-001' = @('ListesDomaines', 'Introuvable') }
+    Cas 'source citée introuvable : panne, pas réglage' ($couv.GetMethod('ReglesEnPanne').Invoke($null, @(, $e)).Count -eq 1)
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'Leurres' 'Indisponible')) @('LEU-001') @{ 'LEU-001' = @('Leurres') })
     Cas 'une détection muette : singulier' ($t -match '^Aucune alerte, mais 1 détection ne peut pas') $t
+    # Bandeau de la page Alertes : panne (▲) puis désactivée (○), chacune expliquée ; vide si tout est lu
+    $t = & $appel 'Detail' (Etat @((Collecte 'Leurres' 'Indisponible' 'aucun leurre posé'), (Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'Connexions' 'Active')))
+    Cas 'bandeau : panne puis désactivée, état, raison, conséquence' ($t -eq ("▲ Leurres indisponible (aucun leurre posé) : chiffrement par un rançongiciel non repéré par les leurres`n○ Sysmon désactivée (Sysmon absent) : créations de programmes non vues")) $t
+    Cas 'bandeau : rien quand tout est lu' ((& $appel 'Detail' (Etat @((Collecte 'Connexions' 'Active')))) -eq '')
+    # Defender au démarrage du PC : pas encore lu, pas « illisible »
+    Cas 'Defender pas encore lu' ([bool](& $appel 'DefenderPasEncoreLu' (Etat @((Collecte 'EtatDefender' 'Inconnue')))))
+    Cas 'Defender indisponible : pas « lecture en cours »' (-not [bool](& $appel 'DefenderPasEncoreLu' (Etat @((Collecte 'EtatDefender' 'Indisponible')))))
     $t = & $appel 'AucuneAlerte' (Etat @() @('PER-001'))
     Cas 'règle muette sans cause publiée : la règle est dite quand même' ($t -match 'PER-001') $t
+    Cas 'règle muette sans cause publiée : panne (échec fermé), pas réglage' ($t -match '^Aucune alerte, mais 1 détection' -and (& $alarme (Etat @() @('PER-001')))) $t
 
     # Pastille : collectes en panne (indisponibles ou jamais lues), pas les désactivées par choix
     $e = Etat @((Collecte 'JournalDns' 'Indisponible' 'journal illisible'), (Collecte 'Leurres' 'Inconnue'), (Collecte 'Sysmon' 'Desactivee'), (Collecte 'WmiProcessus' 'Partielle'))
@@ -72,7 +96,7 @@ try {
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'Connexions' 'Active')))
     Cas 'anglais : « No alerts. »' ($t -eq 'No alerts.') $t
     $t = & $appel 'AucuneAlerte' (Etat @() @('DNS-001') @{ 'DNS-001' = @('JournalDns', 'Sysmon') })
-    Cas 'anglais : détections muettes' ($t -match '^No alerts, but 1 detection cannot trigger: DNS-001 \(missing JournalDns or Sysmon\)') $t
+    Cas 'anglais : détections muettes' ($t -match '^No alerts, but 1 detection cannot trigger: DNS-001 : contacted domains not seen \(missing JournalDns or Sysmon\)') $t
     Cas 'anglais : pastille' ((& $appel 'Pastille' (Etat @((Collecte 'Leurres' 'Indisponible')))) -eq '1 COLLECTION UNAVAILABLE')
     $langue.GetField('En').SetValue($null, $false)
 
@@ -84,6 +108,13 @@ try {
     Cas 'liste des alertes vide : message de Couverture' ($g.Contains("if (alertes.Count == 0)`n            {") -and $g.Contains('string message = Couverture.AucuneAlerte(dernierEtat);'))
     Cas 'message suivi quand seul l''état change' ($g.Contains("else if (couverture != couvertureVue)"))
     Cas 'détail d''une alerte : règle et collecte présumée' ($g.Contains('L.T("RÈGLE") + " : " + a.Regle'))
+    # Relecture de #80, D1 : la ligne « Aucune alerte… » n'a pas d'alerte derrière ; aucune action ne la convertit de force
+    Cas 'aucune conversion forcée d''une ligne en alerte' (-not $g.Contains('(Alerte)lvAlertes.SelectedItems[0].Tag'))
+    Cas 'exception et blocage : ligne sans alerte ignorée' ($g.Contains("var a = lvAlertes.SelectedItems[0].Tag as Alerte;`n            if (a == null) return;") -and $g.Contains('if (a == null || (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns))) return;'))
+    Cas 'bandeau des collectes dans la page Alertes' ($g.Contains('lvAlertes.Parent.Controls.Add(bandeauCollectes);') -and $g.Contains('var detail = Couverture.Detail(etat);'))
+    Cas 'barre d''état : seulement les détections en panne' ($g.Contains('int muettes = Couverture.ReglesEnPanne(etat).Count;'))
+    Cas 'couleur du message : jaune seulement sur panne' ($g.Contains('vide.ForeColor = Couverture.Alarme(dernierEtat) ? Theme.Jaune : Theme.TexteDim;'))
+    Cas 'Defender : « lecture en cours » au démarrage' ($g.Contains('else if (Couverture.DefenderPasEncoreLu(etat))'))
 } finally {
     Remove-Item -Recurse -Force $travail -ErrorAction SilentlyContinue
 }

@@ -450,6 +450,12 @@ namespace DeR4Tizer
             Dock = DockStyle.Bottom, Height = 92, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit,
             Padding = new Padding(12, 8, 12, 8), Text = L.T("Sélectionnez une alerte pour voir la technique d'attaque et quoi faire.")
         };
+        // Bandeau de la page Alertes : chaque collecte en panne ou désactivée expliquée (état, raison, conséquence)
+        readonly Label bandeauCollectes = new Label
+        {
+            Dock = DockStyle.Top, AutoSize = false, Height = 0, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit,
+            Padding = new Padding(12, 6, 12, 6), Visible = false
+        };
         readonly Label detailBaseline = new Label
         {
             Dock = DockStyle.Bottom, Height = 64, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Padding = new Padding(12, 8, 12, 8)
@@ -519,6 +525,7 @@ namespace DeR4Tizer
             lvAlertes.SelectedIndexChanged += (s, e) => DetaillerAlerte();
             pageAlertes = Page("Alertes", "Critique : menace avérée. Alerte : comportement suspect. Info : première fois qu'un programme fait quelque chose.", lvAlertes);
             lvAlertes.Parent.Controls.Add(detailAlerte);
+            lvAlertes.Parent.Controls.Add(bandeauCollectes);
 
             // ---------------- Chaînes de processus
             lvChaines.Colonnes("Processus", 330, "PID", 70, "Score", 70, "Raisons", 560, "Ligne de commande", 520);
@@ -844,6 +851,9 @@ namespace DeR4Tizer
                     pastilles.Add(def.TempsReel && def.Antivirus
                         ? new Entete.Pastille { Texte = def.ProtectionFalsification ? "DEFENDER OK" : "DEFENDER (FALSIFICATION OFF)", Couleur = def.ProtectionFalsification ? Theme.Vert : Theme.Jaune }
                         : new Entete.Pastille { Texte = "DEFENDER DÉSACTIVÉ", Couleur = Theme.Rouge, Clignote = true });
+                else if (Couverture.DefenderPasEncoreLu(etat))
+                    // Premier relevé au démarrage du PC : pas encore lu, ce n'est pas une panne
+                    pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : LECTURE EN COURS"), Couleur = Theme.TexteDim });
                 else
                     // État illisible : ni « OK » ni « désactivé », c'est dit (phase 3.4)
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
@@ -855,7 +865,8 @@ namespace DeR4Tizer
                 if (etat.OutilsDistants != null && etat.OutilsDistants.Count > 0)
                     pastilles.Add(new Entete.Pastille { Texte = "PRISE EN MAIN : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
 
-                int muettes = etat.ReglesSansCollecte == null ? 0 : etat.ReglesSansCollecte.Count;
+                // Seules les détections muettes par panne : celles coupées par un réglage voulu ne sont pas une alarme
+                int muettes = Couverture.ReglesEnPanne(etat).Count;
                 statut.Text = "▸ mis à jour " + etat.MisAJour + "   ▸ service démarré le " + etat.Demarrage + "   ▸ v" + (etat.Version ?? "?")
                     + (etat.JournalDnsActif ? "" : "   ▸ journal DNS inactif : impossible de repérer les IP contactées directement")
                     + (muettes == 0 ? "" : "   ▸ " + string.Format(L.T("{0} détection(s) sans collecte (détail : page Alertes)"), muettes));
@@ -951,6 +962,15 @@ namespace DeR4Tizer
                 couvertureVue = couverture;
                 RemplirAlertes(alertesAffichees);
             }
+            var detail = Couverture.Detail(etat);
+            if (detail != (bandeauCollectes.Tag as string))
+            {
+                bandeauCollectes.Tag = detail;
+                bandeauCollectes.Text = detail;
+                bandeauCollectes.ForeColor = Couverture.EnPannes(etat).Count > 0 ? Theme.Jaune : Theme.TexteDim;
+                bandeauCollectes.Height = detail == "" ? 0 : 12 + 16 * (detail.Split('\n').Length);
+                bandeauCollectes.Visible = detail != "";
+            }
 
             var blocages = Commun.Lire<List<Blocage>>("blocages.json") ?? new List<Blocage>();
             string cleBlocages = string.Join("|", blocages.Select(b => b.Type + b.Cible));
@@ -1021,7 +1041,7 @@ namespace DeR4Tizer
                 // « Aucune alerte » seul seulement si chaque détection a sa collecte ; sinon, lesquelles sont muettes
                 string message = Couverture.AucuneAlerte(dernierEtat);
                 var vide = new ListViewItem(new[] { "", "", "", "", "", message, "" }) { ToolTipText = message };
-                vide.ForeColor = message == L.T("Aucune alerte.") ? Theme.TexteDim : Theme.Jaune;
+                vide.ForeColor = Couverture.Alarme(dernierEtat) ? Theme.Jaune : Theme.TexteDim;
                 lvAlertes.Items.Add(vide);
             }
             foreach (var a in Enumerable.Reverse(alertes))
@@ -1481,7 +1501,9 @@ namespace DeR4Tizer
         void ExceptionAlerte()
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
-            var a = (Alerte)lvAlertes.SelectedItems[0].Tag;
+            // Ligne « Aucune alerte… » : pas d'alerte derrière
+            var a = lvAlertes.SelectedItems[0].Tag as Alerte;
+            if (a == null) return;
             if (a.Niveau == "Critique")
             {
                 MessageBox.Show(L.En ? "Critical alerts cannot be silenced." : "Une alerte critique ne peut pas être mise en exception.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1493,8 +1515,8 @@ namespace DeR4Tizer
         void BloquerAlerte()
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
-            var a = (Alerte)lvAlertes.SelectedItems[0].Tag;
-            if (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns)) return;
+            var a = lvAlertes.SelectedItems[0].Tag as Alerte;
+            if (a == null || (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns))) return;
             Bloquer(a.Processus, a.Ip, a.NomDns);
         }
 
