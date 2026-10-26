@@ -23,7 +23,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const JOURNAL_DNS: &str = "Microsoft-Windows-DNS-Client/Operational";
 const NAVIGATEURS_DOH: &[&str] = &["chrome", "brave", "firefox", "msedge", "opera", "vivaldi"];
@@ -300,7 +300,7 @@ impl Moniteur {
                         return;
                     }
                     let t = Instant::now();
-                    let alertes = persistance.verifier(&mut |c| signataire_cache(&mut cache, &notre, c));
+                    let alertes = persistance.verifier(&mut |c| signataire_cache_releve(&mut cache, &notre, c));
                     p.entrees_persistance.store(persistance.entrees.len(), Ordering::Relaxed);
                     // Un relevé sans aucune entrée (aucun Windows n'en a zéro : services, pilotes) est une lecture impossible
                     if persistance.entrees.is_empty() {
@@ -1278,8 +1278,26 @@ En-tête : Authorization: Bearer {j}"))
     }
 }
 
-/// Signataire d'un exécutable, mis en cache par chemin et date de modification
-fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
+/// Signataire d'un exécutable, mis en cache par chemin et date de modification ; un échec est gardé tant que le fichier
+/// ne change pas (cycle de surveillance, sous le verrou : pas de nouvelle vérification à chaque tour)
+pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
+    signataire_cache_a(cache, notre, chemin, maintenant_s(), u64::MAX)
+}
+
+/// Comme `signataire_cache`, mais un échec n'est gardé que 30 s (relevé des démarrages automatiques, relecture de #83,
+/// R4-D1 : une vérification passagèrement impossible, au démarrage du PC par exemple, est refaite au relevé suivant au
+/// lieu d'être confirmée par le cache ; limité à ce fil, la mesure du cycle ayant montré le coût d'une nouvelle
+/// vérification toutes les 30 s sous le verrou)
+pub(crate) fn signataire_cache_releve(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
+    signataire_cache_a(cache, notre, chemin, maintenant_s(), 30)
+}
+
+fn maintenant_s() -> u64 {
+    SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// `signataire_cache` à une heure donnée (secondes), un échec gardé `duree_echec` secondes, pour les tests
+pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &str, chemin: &str, maintenant: u64, duree_echec: u64) -> String {
     if chemin.is_empty() {
         return "?".into();
     }
@@ -1302,6 +1320,12 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
     if let Some(s) = cache.get(&cle) {
         return s.clone();
     }
+    // Un échec (signataire vide) n'est gardé que `duree_echec` secondes et tant que le fichier ne change pas. Une seule
+    // clé d'échec par chemin, réécrite à chaque échec (relecture de #83, R5-D1 : pas d'accumulation dans le service)
+    let cle_echec = format!("{chemin}|échec");
+    if cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant, duree_echec)) {
+        return String::new();
+    }
     let windows = natif::dossier_windows().to_lowercase();
     let s = match natif::signataire_valide(chemin) {
         Some(nom) if nom.is_empty() => "signé".to_string(),
@@ -1311,8 +1335,21 @@ fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &s
         None if (chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin)) && natif::signe_par_catalogue(chemin) => "Windows (catalogue)".into(),
         None => String::new(),
     };
-    cache.insert(cle, s.clone());
+    if s.is_empty() {
+        cache.insert(cle_echec, format!("{date}|{maintenant}"));
+    } else {
+        cache.remove(&cle_echec);
+        cache.insert(cle, s.clone());
+    }
     s
+}
+
+/// Décision pure (testée) : l'échec noté (« date du fichier|heure de la vérification ») vaut-il encore pour ce fichier ?
+/// Même date de modification, et vérifié il y a moins de `duree` secondes ; une horloge qui a reculé depuis la
+/// vérification la fait refaire (relecture de #83, R6-D1)
+pub(crate) fn echec_recent(valeur: &str, date: u64, maintenant: u64, duree: u64) -> bool {
+    let Some((d, t)) = valeur.split_once('|') else { return false };
+    d.parse() == Ok(date) && t.parse::<u64>().is_ok_and(|t| maintenant >= t && maintenant - t < duree)
 }
 
 fn cle_alerte(a: &Alerte) -> String {

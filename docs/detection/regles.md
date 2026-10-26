@@ -268,10 +268,25 @@ modules expérimentaux.
   revient au relevé suivant comme un « NOUVEAU démarrage automatique » : faux positif (au niveau Alerte pour une entrée
   WMI, marquée « technique de persistance rare »), pas un silence.
 - **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
-- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus).
-- **Tests** : existants : `tache_com_cible_le_serveur_du_clsid`, `tache_com_hors_windows_sans_serveur_signalee` ; 3a,
-  « Alerte de persistance produite juste avant un arrêt » (bout en bout) ; à écrire à son nom. En VM, clé Run de test vers
-  `cmd.exe /c rem`.
+- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus) ; première session d'un compte
+  (OneDrive, tâches de Windows par utilisateur).
+- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
+  PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
+  - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
+    (`Classes\PackagedCom`, écrite par le système, c'est-à-dire le service de déploiement des paquets), désormais
+    résolue vers le fichier de son paquet, signé. Seulement pour un paquet de Windows (éditeur Microsoft) installé sous
+    `Windows\SystemApps` ou `Program Files\WindowsApps` ; le chemin lu dans le registre ne peut pas sortir du dossier du
+    paquet ; une classe surchargée dans le profil d'un utilisateur chargé (HKCU) n'est jamais résolue : la remarque
+    reste, et la tâche est signalée comme avant (détournement COM possible) ;
+  - `RunOnce` de OneDrive « lancé via cmd » : la commande exacte de nettoyage de son installeur n'est plus suspecte, dans
+    `RunOnce` seulement ; le nom du profil n'accepte ni `%` (variable remplacée par cmd avant l'analyse de la ligne), ni
+    `^ ! ( )`, ni caractère de contrôle ; toute variante reste suspecte.
+  Limite : la surcharge dans le profil d'un utilisateur dont la ruche n'est pas chargée n'est pas vue.
+  Restent en Info : entrées OneDrive, services et tâches de Windows qui apparaissent à la première session.
+- **Tests** : `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
+  `per_001_nettoyage_onedrive` ; existants : `tache_com_cible_le_serveur_du_clsid`,
+  `tache_com_hors_windows_sans_serveur_signalee`. En VM : clé Run de test vers `cmd.exe /c rem` (3a, « Alerte de
+  persistance produite juste avant un arrêt », bout en bout). État : validé sur Windows (VM) pour la clé Run.
 
 ### PER-002 : démarrage automatique modifié
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
@@ -280,7 +295,22 @@ modules expérimentaux.
 - **Si elle manque** : comme PER-001 (relevé partiel : faux « nouveau »).
 - **Niveau** : Alerte si suspecte, sinon Info.
 - **Faux positifs attendus** : mises à jour des logiciels (nouveau chemin de version).
-- **Tests** : à écrire.
+- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM) : PER-002 Info 4, les tâches de Defender dont la commande
+  passe de `Program Files` au dossier de sa plateforme après une mise à jour. Gardées (Info) : un changement de commande
+  est exactement ce que la règle doit voir.
+- **Devenu suspect** (PR 3.6) : une entrée connue dont la commande n'a pas changé, sans remarque au relevé précédent et
+  avec une remarque maintenant, lève aussi PER-002 (« DEVENU SUSPECT ») : classe COM surchargée après coup dans le profil
+  d'un utilisateur, fichier remplacé par un fichier non signé ou déplacé vers un dossier suspect. Une seule alerte, si la
+  remarque est encore là au relevé suivant (une minute plus tard) ; aucune pendant l'apprentissage. Un échec de
+  vérification de signature n'est gardé en cache que 30 s : le relevé suivant refait la vérification au lieu de
+  confirmer l'échec. Limites : une vérification impossible au moins deux relevés de suite (services de chiffrement
+  lents plus d'une minute au démarrage du PC, fichier verrouillé par une mise à jour) peut lever une fausse alerte
+  « NON SIGNÉ » ; aucun scénario ne redémarre la VM avec le service installé pour le mesurer. L'attente de confirmation
+  ne vit qu'en mémoire : si le service s'arrête entre les deux relevés, l'entrée devenue suspecte n'est jamais signalée
+  (la référence relue porte déjà la remarque).
+- **Tests** : `per_002_positif` (commande changée vers un dossier suspect ; entrée COM devenue suspecte : Alerte),
+  `per_002_negatif` (signataire changé seul, commande changée pendant l'apprentissage : pas d'alerte),
+  `per_002_devenu_suspect_negatif` (déjà suspecte, redevenue propre, apprentissage). État : testé en labo.
 
 ## DEF : Microsoft Defender
 

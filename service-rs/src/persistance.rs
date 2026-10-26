@@ -23,6 +23,8 @@ pub struct Persistance {
     reference: HashMap<String, EntreeDemarrage>,
     apprentissage: bool,
     pub entrees: Vec<EntreeDemarrage>,
+    /// Entrées devenues suspectes au relevé précédent, à confirmer au suivant (anti-rebond de « DEVENU SUSPECT »)
+    en_attente: std::collections::HashSet<String>,
 }
 
 fn dossier_suspect() -> &'static Regex {
@@ -38,7 +40,7 @@ impl Persistance {
         let apprentissage = sauvegarde.is_none() || !marqueur.exists();
         let _ = fs::write(&marqueur, commun::maintenant());
         let reference = sauvegarde.unwrap_or_default().into_iter().map(|e| (e.cle.clone(), e)).collect();
-        Persistance { reference, apprentissage, entrees: Vec::new() }
+        Persistance { reference, apprentissage, entrees: Vec::new(), en_attente: Default::default() }
     }
 
     pub fn verifier(&mut self, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
@@ -49,35 +51,13 @@ impl Persistance {
                 releve.push(e);
             }
         }
-        let mut alertes = Vec::new();
-        let mut modifie = releve.len() != self.reference.len();
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
             // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
             e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
-            match self.reference.get(&e.cle) {
-                Some(ancienne) => {
-                    e.depuis = ancienne.depuis.clone();
-                    if ancienne.signataire != e.signataire || ancienne.remarque != e.remarque {
-                        modifie = true;
-                    }
-                    if ancienne.commande != e.commande {
-                        modifie = true;
-                        if !self.apprentissage {
-                            alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
-                        }
-                    }
-                }
-                None => {
-                    e.depuis = commun::maintenant();
-                    modifie = true;
-                    if !self.apprentissage {
-                        alertes.push(alerter(e, "NOUVEAU démarrage automatique"));
-                    }
-                }
-            }
         }
+        let (alertes, modifie) = comparer(&self.reference, &mut releve, self.apprentissage, &mut self.en_attente);
         self.reference = releve.iter().map(|e| (e.cle.clone(), e.clone())).collect();
         if modifie {
             let _ = commun::ecrire("demarrage.json", &releve);
@@ -86,6 +66,53 @@ impl Persistance {
         self.apprentissage = false;
         alertes
     }
+}
+
+/// Décision pure (testée, PER-001 et PER-002) : compare un relevé, déjà évalué (cible, signataire, remarque), à la
+/// référence. Entrée inconnue : NOUVELLE (PER-001) ; commande changée : MODIFIÉE (PER-002) ; commande inchangée mais
+/// entrée DEVENUE SUSPECTE, sans remarque avant, avec une remarque maintenant (PER-002, PR 3.6 : une classe COM surchargée
+/// après coup dans le profil d'un utilisateur, un fichier remplacé par un fichier non signé…), si la remarque est encore
+/// là au relevé suivant (`en_attente` : une vérification de signature impossible un instant, au démarrage du PC par
+/// exemple, ne lève rien) ; autre changement du signataire ou de la remarque : noté (référence réécrite), sans alerte.
+/// Apprentissage : rien n'alerte. Rend (alertes, référence à réécrire).
+pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mut [EntreeDemarrage], apprentissage: bool,
+                       en_attente: &mut std::collections::HashSet<String>) -> (Vec<Alerte>, bool) {
+    let mut alertes = Vec::new();
+    let mut modifie = releve.len() != reference.len();
+    for e in releve.iter_mut() {
+        match reference.get(&e.cle) {
+            Some(ancienne) => {
+                e.depuis = ancienne.depuis.clone();
+                if ancienne.signataire != e.signataire || ancienne.remarque != e.remarque {
+                    modifie = true;
+                }
+                if ancienne.commande != e.commande {
+                    modifie = true;
+                    if !apprentissage {
+                        alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
+                    }
+                } else if ancienne.remarque.is_empty() && !e.remarque.is_empty() {
+                    // Audit de #83, S83-06 : sinon une surcharge posée en deux temps ne serait jamais remontée ; confirmée
+                    // au relevé suivant (relecture de #83, R3-D1 : vérification de signature passagèrement impossible)
+                    if !apprentissage {
+                        en_attente.insert(e.cle.clone());
+                    }
+                } else if en_attente.remove(&e.cle) && !e.remarque.is_empty() && !apprentissage {
+                    alertes.push(alerter(e, "démarrage automatique MODIFIÉ, DEVENU SUSPECT (même commande)"));
+                }
+            }
+            None => {
+                e.depuis = commun::maintenant();
+                modifie = true;
+                if !apprentissage {
+                    alertes.push(alerter(e, "NOUVEAU démarrage automatique"));
+                }
+            }
+        }
+    }
+    // Entrées disparues ou dont la commande a changé : plus rien à confirmer
+    en_attente.retain(|c| releve.iter().any(|e| &e.cle == c && reference.get(c).is_some_and(|a| a.commande == e.commande)));
+    (alertes, modifie)
 }
 
 pub(crate) fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
@@ -108,7 +135,8 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
-    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows {
+    let nettoyage = e.categorie.starts_with("RunOnce") && nettoyage_onedrive(&e.commande);
+    if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows && !nettoyage {
         r.push(format!("lancé via {exe}"));
     }
     if e.signataire.is_empty() {
@@ -130,6 +158,18 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
         r.push("serveur COM non enregistré pour la machine".into());
     }
     r.join(", ")
+}
+
+/// Décision pure (testée) : nettoyage que l'installation de OneDrive pose pour l'utilisateur (« RunOnce », effacer son
+/// propre installeur). Commande exacte seulement : un seul « del » de OneDriveSetup.exe dans le dossier OneDrive du
+/// profil, rien avant ni après ; tout ajout (« & », « | », autre fichier) la remet au rang des interpréteurs suspects
+pub(crate) fn nettoyage_onedrive(commande: &str) -> bool {
+    static MOTIF: OnceLock<Regex> = OnceLock::new();
+    MOTIF.get_or_init(|| {
+        // Ni « % » (variable remplacée par cmd avant l'analyse de la ligne : injection), ni « ^ », « ! », caractère de
+        // contrôle (audit de #83, S83-01)
+        Regex::new(r#"(?i)^[a-z]:\\windows\\system32\\cmd\.exe /q /c del /q "[a-z]:\\users\\[^\\"&|<>%^!()\x00-\x1f]+\\appdata\\local\\microsoft\\onedrive\\(update|standaloneupdater)\\onedrivesetup\.exe"$"#).unwrap()
+    }).is_match(commande.trim())
 }
 
 fn developper(s: &str) -> String {
@@ -205,13 +245,85 @@ pub(crate) fn commande_com(class_id: &str) -> String {
     format!("COM {{{id}}}")
 }
 
-/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32
+/// Serveur enregistré pour un CLSID (machine) : InprocServer32, sinon LocalServer32 ; à défaut, classe COM d'un paquet
+/// installé pour la machine (AppX, `PackagedCom`, PR 3.6)
 fn serveur_com(clsid: &str) -> Option<String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ["InprocServer32", "LocalServer32"].iter().find_map(|s| {
         let k = hklm.open_subkey(format!(r"SOFTWARE\Classes\CLSID\{clsid}\{s}")).ok()?;
         texte_registre(&k, "").filter(|v| !v.trim().is_empty())
-    })
+    }).or_else(|| serveur_com_empaquete(&hklm, clsid))
+}
+
+/// Classe COM empaquetée (tâches « SoftLanding » de Windows, par exemple) : enregistrée pour la machine sous
+/// `Classes\PackagedCom` (écrite par le système : le service de déploiement des paquets), son serveur est un fichier du dossier du paquet
+/// (`DllPath`, sinon l'`Executable` de son serveur) ; la version la plus récente du paquet est retenue
+fn serveur_com_empaquete(hklm: &RegKey, clsid: &str) -> Option<String> {
+    // Classe surchargée dans le profil d'un utilisateur chargé (HKCU) : détournement COM possible, aucune résolution
+    // (la remarque « serveur COM non enregistré pour la machine » reste ; audit de #83, S83-02)
+    let hku = RegKey::predef(HKEY_USERS);
+    let surchargee = hku.enum_keys().map_while(Result::ok).filter(|s| s.starts_with("S-1-5-21-")).any(|s| {
+        let chemin = if s.ends_with("_Classes") { format!(r"{s}\CLSID\{clsid}") } else { format!(r"{s}\Software\Classes\CLSID\{clsid}") };
+        hku.open_subkey(chemin).is_ok()
+    });
+    if surchargee {
+        return None;
+    }
+    let index = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\ClassIndex\{clsid}")).ok()?;
+    // Paquets de Windows seulement (éditeur Microsoft) : un paquet installé par un utilisateur, signé par son propre
+    // certificat, ne fait pas taire la remarque (audit de #83, S83-03)
+    let paquet = index.enum_keys().map_while(Result::ok).filter(|p| paquet_de_windows(p)).max_by(|a, b| version_paquet(a).cmp(&version_paquet(b)))?;
+    let classe = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\Package\{paquet}\Class\{clsid}")).ok()?;
+    let relatif = texte_registre(&classe, "DllPath").filter(|v| !v.trim().is_empty()).or_else(|| {
+        let id: u32 = classe.get_value("ServerId").ok()?;
+        let serveur = hklm.open_subkey(format!(r"SOFTWARE\Classes\PackagedCom\Package\{paquet}\Server\{id}")).ok()?;
+        texte_registre(&serveur, "Executable")
+    })?;
+    let depot = hklm.open_subkey(format!(r"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PackageRepository\Packages\{paquet}")).ok()?;
+    let racine = texte_registre(&depot, "Path")?;
+    if !racine_systeme_de_paquets(&racine, &natif::dossier_windows(), &std::env::var("ProgramFiles").unwrap_or_default()) {
+        return None;
+    }
+    chemin_dans_paquet(&racine, &relatif).map(|c| format!("\"{c}\""))
+}
+
+/// Décision pure (testée) : paquet publié par Microsoft (identifiants d'éditeur de Windows et du Store de Microsoft)
+pub(crate) fn paquet_de_windows(nom_complet: &str) -> bool {
+    let bas = nom_complet.to_ascii_lowercase();
+    bas.ends_with("__cw5n1h2txyewy") || bas.ends_with("__8wekyb3d8bbwe")
+}
+
+/// Décision pure (testée) : dossier d'un paquet installé par le système (`Windows\SystemApps` ou
+/// `Program Files\WindowsApps`, protégés), pas un dossier de développement ou du profil
+pub(crate) fn racine_systeme_de_paquets(racine: &str, windows: &str, program_files: &str) -> bool {
+    let r = racine.trim().to_ascii_lowercase().replace('/', "\\");
+    let sous = |base: &str, dossier: &str| {
+        let b = format!(r"{}\{dossier}\", base.trim().trim_end_matches('\\').to_ascii_lowercase());
+        !base.trim().is_empty() && r.starts_with(&b) && r.len() > b.len()
+    };
+    // Aucun segment « .. » (ni fait seulement de points et d'espaces) : la racine ne remonte pas hors de ces dossiers
+    if r.split('\\').any(|p| !p.is_empty() && p.chars().all(|c| c == '.' || c == ' ')) {
+        return false;
+    }
+    sous(windows, "systemapps") || sous(program_files, "windowsapps")
+}
+
+/// Décision pure (testée) : version d'un nom complet de paquet (« Nom_1000.26100.372.0_x64__éditeur »), comparée
+/// nombre par nombre (« 100 » après « 99 »)
+pub(crate) fn version_paquet(nom: &str) -> Vec<u64> {
+    nom.split('_').nth(1).unwrap_or("").split('.').map(|n| n.parse().unwrap_or(0)).collect()
+}
+
+/// Décision pure (testée) : chemin d'un fichier du paquet. Le chemin relatif lu dans le registre ne doit pas sortir du
+/// dossier du paquet : ni absolu, ni lecteur, ni « .. », ni flux NTFS
+pub(crate) fn chemin_dans_paquet(racine: &str, relatif: &str) -> Option<String> {
+    let r = relatif.trim().trim_start_matches(['\\', '/']);
+    // Un segment fait seulement de points et d'espaces (« .. », « ... », « . . ») est refusé : Win32 retire les points et
+    // espaces de fin (audit de #83, S83-04)
+    if racine.trim().is_empty() || r.is_empty() || r.contains(':') || r.split(['\\', '/']).any(|p| !p.is_empty() && p.chars().all(|c| c == '.' || c == ' ')) || relatif.trim().starts_with("\\\\") {
+        return None;
+    }
+    Some(format!(r"{}\{}", racine.trim().trim_end_matches(['\\', '/']), r.replace('/', "\\")))
 }
 
 // ------------------------------------------------------------ relevé

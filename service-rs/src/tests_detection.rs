@@ -191,3 +191,221 @@ fn def_traduire_sans_panique() {
         });
     }
 }
+
+// ------------------------------------------------------------ PER : démarrages automatiques (PR 3.6)
+// Relevé des démarrages automatiques comparé à la référence (persistance::comparer, décision pure) ; le relevé lui-même
+// (registre, services, tâches) n'est pas exécuté ici. En VM : l'alerte de la clé Run de test (lot 3a).
+
+fn entree_demarrage(cle: &str, commande: &str, signataire: &str, remarque: &str) -> crate::commun::EntreeDemarrage {
+    crate::commun::EntreeDemarrage {
+        cle: cle.into(), categorie: "Run (HKLM)".into(), nom: "Outil".into(), commande: commande.into(), cible: r"C:\Program Files\Outil\outil.exe".into(),
+        signataire: signataire.into(), remarque: remarque.into(), ..Default::default()
+    }
+}
+
+fn reference_demarrage(entrees: &[crate::commun::EntreeDemarrage]) -> std::collections::HashMap<String, crate::commun::EntreeDemarrage> {
+    entrees.iter().map(|e| (e.cle.clone(), e.clone())).collect()
+}
+
+fn regles_comparer(reference: &[crate::commun::EntreeDemarrage], releve: &[crate::commun::EntreeDemarrage], apprentissage: bool) -> (Vec<(String, String)>, bool) {
+    regles_comparer_avec(reference, releve, apprentissage, &mut Default::default())
+}
+
+fn regles_comparer_avec(reference: &[crate::commun::EntreeDemarrage], releve: &[crate::commun::EntreeDemarrage], apprentissage: bool,
+                        en_attente: &mut std::collections::HashSet<String>) -> (Vec<(String, String)>, bool) {
+    let mut r = releve.to_vec();
+    let (a, modifie) = crate::persistance::comparer(&reference_demarrage(reference), &mut r, apprentissage, en_attente);
+    (a.into_iter().map(|a| (a.regle, a.niveau)).collect(), modifie)
+}
+
+#[test]
+fn per_001_positif() {
+    let connue = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let nouvelle = entree_demarrage("k2", r#"powershell -w hidden -enc AAAA"#, "", "lancé via powershell");
+    let (a, modifie) = regles_comparer(&[connue.clone()], &[connue, nouvelle], false);
+    assert_eq!(a, [("PER-001".to_string(), "Alerte".to_string())], "entrée inconnue et suspecte : PER-001 au niveau Alerte");
+    assert!(modifie);
+    // Inconnue mais sans remarque : PER-001 au niveau Info
+    let banale = entree_demarrage("k3", r#""C:\Program Files\Autre\autre.exe""#, "Éditeur", "");
+    assert_eq!(regles_comparer(&[], &[banale], false).0, [("PER-001".to_string(), "Info".to_string())]);
+}
+
+#[test]
+fn per_001_negatif() {
+    let connue = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    // Relevé identique : rien
+    assert_eq!(regles_comparer(&[connue.clone()], &[connue.clone()], false), (vec![], false));
+    // Entrée nouvelle pendant l'apprentissage (premier relevé) : apprise, pas d'alerte
+    let nouvelle = entree_demarrage("k2", "x.exe", "", "NON SIGNÉ");
+    let (a, modifie) = regles_comparer(&[connue.clone()], &[connue, nouvelle], true);
+    assert!(a.is_empty() && modifie, "apprentissage : référence réécrite, aucune alerte");
+}
+
+#[test]
+fn per_002_positif() {
+    let avant = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let apres = entree_demarrage("k1", r#""C:\Users\Public\outil.exe""#, "", "dossier suspect");
+    let (a, modifie) = regles_comparer(&[avant], &[apres], false);
+    assert_eq!(a, [("PER-002".to_string(), "Alerte".to_string())]);
+    assert!(modifie);
+    // Audit de #83, S83-06 : même commande, entrée devenue suspecte (classe COM surchargée après coup dans un profil)
+    // Confirmée au relevé suivant (relecture de #83, R3-D1) : rien au premier, l'alerte au second
+    let tache = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "Microsoft Windows", "");
+    let surchargee = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "?", "serveur COM non enregistré pour la machine");
+    let mut attente = std::collections::HashSet::new();
+    assert!(regles_comparer_avec(&[tache], &[surchargee.clone()], false, &mut attente).0.is_empty(), "premier relevé : à confirmer");
+    assert_eq!(regles_comparer_avec(&[surchargee.clone()], &[surchargee.clone()], false, &mut attente).0, [("PER-002".to_string(), "Alerte".to_string())]);
+    assert!(attente.is_empty());
+    assert!(regles_comparer_avec(&[surchargee.clone()], &[surchargee], false, &mut attente).0.is_empty(), "une seule alerte");
+}
+
+#[test]
+fn per_002_devenu_suspect_passager() {
+    // Relecture de #83, R3-D1 : signature passagèrement invérifiable (démarrage du PC) : « NON SIGNÉ » un relevé, propre
+    // au suivant ; aucune alerte
+    let propre = entree_demarrage("s1", r#"C:\WINDOWS\System32\svchost.exe -k x"#, "Microsoft Windows", "");
+    let passagere = entree_demarrage("s1", r#"C:\WINDOWS\System32\svchost.exe -k x"#, "", "NON SIGNÉ");
+    let mut attente = std::collections::HashSet::new();
+    assert!(regles_comparer_avec(&[propre.clone()], &[passagere.clone()], false, &mut attente).0.is_empty());
+    assert!(regles_comparer_avec(&[passagere], &[propre], false, &mut attente).0.is_empty());
+    assert!(attente.is_empty(), "plus rien à confirmer");
+    // Entrée disparue, ou commande changée, entre les deux relevés : oubliée
+    let mut attente: std::collections::HashSet<String> = ["s2".to_string()].into();
+    let autre = entree_demarrage("s3", "z.exe", "Éditeur", "");
+    regles_comparer_avec(&[autre.clone()], &[autre], false, &mut attente);
+    assert!(attente.is_empty());
+}
+
+/// Relecture de #83, R4-D1 : un échec de vérification de signature n'est pas gardé comme un résultat : il ne vaut que
+/// 30 s, et le relevé suivant (une minute plus tard) le refait ; un résultat signé, lui, est gardé. R5-D1 : une seule
+/// clé d'échec par chemin, quel que soit le nombre d'échecs
+#[test]
+fn per_002_echec_de_signature_non_garde() {
+    use crate::moniteur::{echec_recent, signataire_cache_a};
+    assert!(echec_recent("7|100", 7, 129, 30));
+    assert!(!echec_recent("7|100", 7, 130, 30), "30 s passées");
+    assert!(!echec_recent("7|100", 8, 101, 30), "fichier modifié depuis");
+    assert!(!echec_recent("7|100", 7, 99, 30), "horloge reculée (R6-D1)");
+    assert!(echec_recent("7|100", 7, 90_000, u64::MAX), "cycle de surveillance : gardé tant que le fichier ne change pas");
+    assert!(!echec_recent("7|100", 8, 101, u64::MAX));
+    assert!(!echec_recent("", 0, 0, 30) && !echec_recent("x|y", 0, 0, 30));
+    // Fichier non signé hors de Windows : vérification exécutée, résultat vide rangé sous la clé d'échec seulement
+    let d = std::env::temp_dir().join(format!("d4t-sig-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("outil.exe");
+    std::fs::write(&f, b"MZ pas un vrai programme").unwrap();
+    let chemin = f.to_string_lossy().to_string();
+    let mut cache = std::collections::HashMap::new();
+    let s = signataire_cache_a(&mut cache, "", &chemin, 1_000, 30);
+    let premier = cache.clone();
+    // Dans les 30 s : échec repris du cache, sans nouvelle vérification (heure notée inchangée)
+    signataire_cache_a(&mut cache, "", &chemin, 1_010, 30);
+    assert_eq!(cache, premier);
+    // Cycle de surveillance (durée illimitée) : repris bien plus tard, sans nouvelle vérification
+    signataire_cache_a(&mut cache, "", &chemin, 80_000, u64::MAX);
+    assert_eq!(cache, premier);
+    // Échecs dans des tranches éloignées : toujours une seule clé, réécrite
+    signataire_cache_a(&mut cache, "", &chemin, 5_000, 30);
+    let s3 = signataire_cache_a(&mut cache, "", &chemin, 90_000, 30);
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(s.is_empty() && s3.is_empty(), "fichier non signé : {s} {s3}");
+    assert_eq!(cache.len(), 1, "{:?}", cache);
+    let (cle, valeur) = cache.iter().next().unwrap();
+    assert_eq!(cle, &format!("{chemin}|échec"), "échec gardé comme un résultat");
+    assert!(valeur.ends_with("|90000"), "{valeur}");
+}
+
+#[test]
+fn per_002_devenu_suspect_negatif() {
+    let suspecte = entree_demarrage("t1", "x.exe", "", "NON SIGNÉ");
+    // Déjà suspecte au relevé précédent (remarque changée, pas apparue) : une seule alerte, au moment où elle l'est devenue
+    assert!(regles_comparer(&[suspecte.clone()], &[entree_demarrage("t1", "x.exe", "", "NON SIGNÉ, dossier suspect")], false).0.is_empty());
+    // Redevenue propre : pas d'alerte
+    assert!(regles_comparer(&[suspecte], &[entree_demarrage("t1", "x.exe", "Éditeur", "")], false).0.is_empty());
+    // Devenue suspecte pendant l'apprentissage : pas d'alerte
+    let propre = entree_demarrage("t2", "y.exe", "Éditeur", "");
+    assert!(regles_comparer(&[propre], &[entree_demarrage("t2", "y.exe", "", "NON SIGNÉ")], true).0.is_empty());
+}
+
+#[test]
+fn per_002_negatif() {
+    // Même commande, signataire ou remarque changés (mise à jour signée par un autre certificat) : noté, sans alerte
+    let avant = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur", "");
+    let apres = entree_demarrage("k1", r#""C:\Program Files\Outil\outil.exe""#, "Éditeur 2", "");
+    let (a, modifie) = regles_comparer(&[avant.clone()], &[apres], false);
+    assert!(a.is_empty() && modifie, "signataire changé : référence réécrite, aucune alerte");
+    // Commande changée pendant l'apprentissage : pas d'alerte
+    let modifiee = entree_demarrage("k1", "autre.exe", "Éditeur", "");
+    assert!(regles_comparer(&[avant], &[modifiee], true).0.is_empty());
+}
+
+/// Bruit mesuré (PR 3.6) : tâches « SoftLanding » de Windows dont la classe COM est empaquetée (AppX). Leur serveur est
+/// un fichier du dossier du paquet ; le chemin lu dans le registre ne doit jamais en sortir
+#[test]
+fn per_001_com_empaquete_chemin_borne() {
+    use crate::persistance::{chemin_dans_paquet, version_paquet};
+    let racine = r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy";
+    assert_eq!(chemin_dans_paquet(racine, r"SoftLandingTask\SoftLandingTask.exe").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SoftLandingTask\SoftLandingTask.exe"));
+    assert_eq!(chemin_dans_paquet(&format!(r"{racine}\"), "a/b.dll").as_deref(), Some(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\a\b.dll"));
+    for mauvais in [r"..\..\Users\Public\x.exe", r"a\..\..\x.exe", r"C:\Users\Public\x.exe", r"\\serveur\partage\x.exe", "a.exe:flux", "", "  ",
+                    r"...\x.exe", r". .\x.exe", r"a\ .. \x.exe"] {
+        assert_eq!(chemin_dans_paquet(racine, mauvais), None, "{mauvais}");
+    }
+    assert_eq!(chemin_dans_paquet("", "a.exe"), None);
+    // Paquets de Windows seulement (audit de #83, S83-03) ; racine sous SystemApps ou WindowsApps, sans remontée
+    use crate::persistance::{paquet_de_windows, racine_systeme_de_paquets};
+    assert!(paquet_de_windows("MicrosoftWindows.Client.CBS_1000.26100.372.0_x64__cw5n1h2txyewy"));
+    assert!(paquet_de_windows("Microsoft.WindowsStore_22410.1401.3.0_x64__8wekyb3d8bbwe"));
+    assert!(!paquet_de_windows("Editeur.Outil_1.0.0.0_x64__abcdefghijklm"));
+    assert!(!paquet_de_windows("Editeur.Outil_1.0.0.0_x64__cw5n1h2txyewyx"));
+    let (w, pf) = (r"C:\WINDOWS", r"C:\Program Files");
+    assert!(racine_systeme_de_paquets(r"C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy", w, pf));
+    assert!(racine_systeme_de_paquets(r"C:\Program Files\WindowsApps\Microsoft.X_1.0_x64__8wekyb3d8bbwe", w, pf));
+    for mauvaise in [r"C:\Users\u\AppData\Local\Packages\X", r"C:\WINDOWS\SystemApps", r"C:\WINDOWS\SystemApps\..\Temp", r"D:\dev\paquet", r"C:\WINDOWS\SystemAppsX\Y", ""] {
+        assert!(!racine_systeme_de_paquets(mauvaise, w, pf), "{mauvaise}");
+    }
+    assert!(!racine_systeme_de_paquets(r"C:\WINDOWS\SystemApps\X", "", ""), "dossiers système inconnus : refus");
+    // Classe surchargée dans un profil (HKCU) : jamais résolue (contrôle du source : le registre n'est pas lu ici)
+    let p = include_str!("persistance.rs").replace("\r\n", "\n");
+    let d = p.find("fn serveur_com_empaquete(").unwrap();
+    let f = &p[d..d + p[d..].find("\n}\n").unwrap()];
+    assert!(f.find("if surchargee {\n        return None;").unwrap() < f.find(r"PackagedCom\ClassIndex").unwrap(), "classe surchargée dans un profil résolue quand même");
+    assert!(f.contains(".filter(|p| paquet_de_windows(p))") && f.contains("if !racine_systeme_de_paquets("), "paquet ou racine non vérifiés");
+    // La version la plus récente, comparée nombre par nombre
+    assert!(version_paquet("P_1000.26100.372.0_x64__e") > version_paquet("P_1000.26100.360.0_x64__e"));
+    assert!(version_paquet("P_1.100.0.0_x64__e") > version_paquet("P_1.99.0.0_x64__e"));
+}
+
+/// Bruit mesuré (PR 3.6) : le nettoyage que OneDrive pose dans « RunOnce » (effacer son installeur) n'est plus pris pour
+/// un interpréteur suspect ; la moindre variation de la commande l'y remet
+#[test]
+fn per_001_nettoyage_onedrive() {
+    use crate::persistance::nettoyage_onedrive;
+    assert!(nettoyage_onedrive(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#));
+    assert!(nettoyage_onedrive(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\Jean Dupont\AppData\Local\Microsoft\OneDrive\StandaloneUpdater\OneDriveSetup.exe""#));
+    for c in [
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe" & calc.exe"#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\Autre.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u&calc\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /c powershell -enc AAAA"#,
+        r#"C:\Users\u\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        // Audit de #83, S83-01 : variable remplacée par cmd avant l'analyse (injection), et autres caractères spéciaux
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\%Z%\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u^&calc\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\!Z!\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+        r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u)(x\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#,
+    ] {
+        assert!(!nettoyage_onedrive(c), "{c}");
+    }
+    // Branché dans l'évaluation : la commande exacte n'est plus « lancé via cmd », une variante l'est toujours
+    let e = |commande: &str| crate::commun::EntreeDemarrage {
+        categorie: "RunOnce (u)".into(), nom: "Delete Cached Update Binary".into(), commande: commande.into(),
+        cible: r"C:\WINDOWS\system32\cmd.exe".into(), signataire: "Microsoft Windows".into(), ..Default::default()
+    };
+    assert!(!crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#)).contains("lancé via cmd"));
+    assert!(crate::persistance::evaluer(&e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe" & calc"#)).contains("lancé via cmd"));
+    // Exemption réservée à « RunOnce » : la même commande dans « Run » ou une tâche reste suspecte (S83-01)
+    let mut run = e(r#"C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Users\u\AppData\Local\Microsoft\OneDrive\Update\OneDriveSetup.exe""#);
+    run.categorie = "Run (u)".into();
+    assert!(crate::persistance::evaluer(&run).contains("lancé via cmd"));
+}
