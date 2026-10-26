@@ -32,6 +32,20 @@ pub struct InfoProcessus {
     vu: Instant,
 }
 
+#[cfg(test)]
+impl InfoProcessus {
+    /// Processus synthétique pour les tests des règles (tests_detection.rs)
+    pub(crate) fn pour_test(image: &str, ligne_commande: Option<&str>, parent_chemin: Option<&str>) -> InfoProcessus {
+        InfoProcessus {
+            image: image.into(),
+            ligne_commande: ligne_commande.map(Into::into),
+            parent: parent_chemin.map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
+            parent_chemin: parent_chemin.map(Into::into),
+            vu: Instant::now(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Processus {
     infos: Arc<Mutex<HashMap<u32, InfoProcessus>>>,
@@ -59,15 +73,69 @@ pub fn suspicion(ligne: &str) -> Option<&'static str> {
     suspicion_regle(ligne).map(|(n, _)| n)
 }
 
-/// Règle portée par une alerte de processus (décision pure, testée) : la plus forte qu'elle contient, le document qui
-/// lance un interpréteur (PRC-001) avant le motif de la ligne de commande
-pub fn regle_retenue(document_interpreteur: bool, motif: Option<&'static str>) -> &'static str {
-    if document_interpreteur { crate::regles::PRC_001 } else { motif.unwrap_or("") }
+/// Règle portée par une alerte de processus (décision pure, testée) : la plus forte qu'elle contient. Le document qui
+/// lance un interpréteur (PRC-001), puis la suppression des sauvegardes (PRC-005), puis le premier motif de la ligne de
+/// commande (PR 3.7 : une ligne qui télécharge du code et supprime les sauvegardes porte PRC-005, au niveau Critique)
+pub fn regle_retenue(document_interpreteur: bool, motifs: &[&'static str]) -> &'static str {
+    if document_interpreteur {
+        crate::regles::PRC_001
+    } else if motifs.contains(&crate::regles::PRC_005) {
+        crate::regles::PRC_005
+    } else {
+        motifs.first().copied().unwrap_or("")
+    }
 }
 
 /// Premier motif trouvé dans une ligne de commande, avec l'identifiant de sa règle (docs/detection/regles.md)
 pub fn suspicion_regle(ligne: &str) -> Option<(&'static str, &'static str)> {
     regles().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, n, id)| (*n, *id))
+}
+
+/// Tous les motifs trouvés dans une ligne de commande, dans l'ordre de la table, avec l'identifiant de leur règle
+pub fn suspicions_regles(ligne: &str) -> Vec<(&'static str, &'static str)> {
+    regles().iter().filter(|(r, _, _)| r.is_match(ligne)).map(|(_, n, id)| (*n, *id)).collect()
+}
+
+/// Alerte d'un processus qui vient de démarrer (décision pure, testée : docs/detection/regles.md, PRC-001 à PRC-005), ou
+/// rien. Document bureautique qui lance un interpréteur, et motifs de la ligne de commande ; signaux forts (document,
+/// suppression des sauvegardes) au niveau Critique, jamais adoucis
+pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
+    let exe = Path::new(&p.image).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let mut raisons = Vec::new();
+    let mut document = false;
+    if let Some(parent) = &p.parent {
+        let pb = parent.to_lowercase();
+        if BUREAUTIQUE.contains(&pb.as_str()) && INTERPRETEURS.contains(&exe.as_str()) {
+            raisons.push(format!("document {parent} qui lance {exe} (macro ou exploit probable)"));
+            document = true;
+        }
+    }
+    let motifs = p.ligne_commande.as_deref().map(suspicions_regles).unwrap_or_default();
+    raisons.extend(motifs.iter().map(|(r, _)| r.to_string()));
+    if raisons.is_empty() {
+        return None;
+    }
+    let ids: Vec<&'static str> = motifs.iter().map(|(_, id)| *id).collect();
+    let regle = regle_retenue(document, &ids);
+    let ligne = p.ligne_commande.clone().unwrap_or_default();
+    let ligne: String = if ligne.chars().count() > 300 { ligne.chars().take(300).collect::<String>() + "…" } else { ligne };
+    // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
+    // document bureautique qui lance un interpréteur (macro ou exploit)
+    let fort = document || ids.contains(&crate::regles::PRC_005);
+    Some(Alerte {
+        regle: regle.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: if fort { "Critique" } else { "Alerte" }.into(),
+        score: if fort { 10 } else { 5 },
+        parent: p.parent_chemin.clone().unwrap_or_default(),
+        processus: exe,
+        chemin: p.image.clone(),
+        destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),
+        raisons: format!("{} : {ligne}", raisons.join(", ")),
+        pid: Some(pid),
+        ..Default::default()
+    })
 }
 
 thread_local! {
@@ -218,43 +286,9 @@ impl Processus {
     }
 
     fn analyser(&self, pid: u32, p: &InfoProcessus) {
-        let exe = Path::new(&p.image).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let mut raisons = Vec::new();
-        let mut document = false;
-        if let Some(parent) = &p.parent {
-            let pb = parent.to_lowercase();
-            if BUREAUTIQUE.contains(&pb.as_str()) && INTERPRETEURS.contains(&exe.as_str()) {
-                raisons.push(format!("document {parent} qui lance {exe} (macro ou exploit probable)"));
-                document = true;
-            }
+        if let Some(a) = alerte_processus(pid, p) {
+            self.detections.lock().unwrap().push(a);
         }
-        let motif = p.ligne_commande.as_deref().and_then(suspicion_regle);
-        if let Some((r, _)) = motif {
-            raisons.push(r.to_string());
-        }
-        let regle = regle_retenue(document, motif.map(|(_, id)| id));
-        if raisons.is_empty() {
-            return;
-        }
-        let ligne = p.ligne_commande.clone().unwrap_or_default();
-        let ligne: String = if ligne.chars().count() > 300 { ligne.chars().take(300).collect::<String>() + "…" } else { ligne };
-        // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
-        // document bureautique qui lance un interpréteur (macro ou exploit)
-        let fort = raisons.iter().any(|r| r.contains("suppression des sauvegardes") || r.contains("(macro ou exploit probable)"));
-        self.detections.lock().unwrap().push(Alerte {
-            regle: regle.into(),
-            id: commun::nouvel_id(),
-            heure: commun::maintenant(),
-            niveau: if fort { "Critique" } else { "Alerte" }.into(),
-            score: if fort { 10 } else { 5 },
-            parent: p.parent_chemin.clone().unwrap_or_default(),
-            processus: exe,
-            chemin: p.image.clone(),
-            destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),
-            raisons: format!("{} : {ligne}", raisons.join(", ")),
-            pid: Some(pid),
-            ..Default::default()
-        });
     }
 
     pub fn nettoyer(&self) {
