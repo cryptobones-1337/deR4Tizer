@@ -647,15 +647,8 @@ impl Moniteur {
         }
         self.balises.retain(|_, (_, t)| t.last().map(|x| x.elapsed() < Duration::from_secs(3600)).unwrap_or(false));
 
-        let empreinte = blocage::empreinte_hosts();
-        if empreinte != self.empreinte_hosts {
-            self.empreinte_hosts = empreinte;
-            alertes_modifiees |= self.ajouter_alerte_brute(Alerte {
-                regle: crate::regles::SYS_001.into(),
-                id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 3,
-                processus: "?".into(), destination: "fichier hosts".into(),
-                raisons: "le fichier hosts a été modifié par un autre programme".into(), ..Default::default()
-            }, None);
+        if let Some(a) = relever_hosts(&mut self.empreinte_hosts, blocage::empreinte_hosts()) {
+            alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
 
         let t = mesure::noter("cycle.leurres_et_hosts", t);
@@ -1509,6 +1502,33 @@ pub(crate) fn alerte_adresses_publiques(avant: &[String], apres: &[String]) -> O
         destination: "carte réseau".into(),
         raisons: format!("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC ({})", apres.join(", ")),
         ..Default::default()
+    })
+}
+
+/// Décision pure (testée, SYS-001) : relevé de l'empreinte du fichier hosts, comparé à la dernière connue, qui est
+/// mise à jour. Nos propres écritures (blocages par nom) mettent l'empreinte connue à jour aussitôt, et ne passent donc
+/// pas ici. PR 3.10 : un relevé illisible (empreinte vide) ne déclenche rien et garde l'empreinte connue, pour qu'un
+/// changement fait pendant la panne soit signalé dès le retour du fichier ; avant, l'alerte partait à tort à la panne
+/// et au retour. Fichier illisible au démarrage : le premier relevé lisible devient la référence, sans alerte
+pub(crate) fn relever_hosts(connue: &mut String, actuelle: String) -> Option<Alerte> {
+    if actuelle.is_empty() {
+        return None;
+    }
+    let a = alerte_hosts(connue, &actuelle);
+    *connue = actuelle;
+    a
+}
+
+/// Empreinte du fichier hosts changée depuis la dernière connue (référence inconnue : rien)
+pub(crate) fn alerte_hosts(connue: &str, actuelle: &str) -> Option<Alerte> {
+    if actuelle == connue || connue.is_empty() {
+        return None;
+    }
+    Some(Alerte {
+        regle: crate::regles::SYS_001.into(),
+        id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 3,
+        processus: "?".into(), destination: "fichier hosts".into(),
+        raisons: "le fichier hosts a été modifié par un autre programme".into(), ..Default::default()
     })
 }
 

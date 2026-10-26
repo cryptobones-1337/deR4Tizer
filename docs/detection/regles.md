@@ -480,12 +480,14 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `moniteur.rs` (empreinte du fichier hosts).
 - **Justification** : redirection de domaines vers un serveur de l'attaquant, ou blocage des mises à jour de sécurité.
 - **Télémétrie** : empreinte du fichier hosts.
-- **Si elle manque** : fichier illisible : l'empreinte vaut « » (`empreinte_hosts`), différente de la précédente :
-  l'alerte « modifié par un autre programme » part **à tort**, puis repart quand le fichier redevient lisible.
+- **Si elle manque** : fichier illisible : l'empreinte vaut « » (`empreinte_hosts`). Depuis la PR 3.10, ce relevé ne
+  déclenche rien et l'empreinte connue est gardée : un changement fait pendant la panne est signalé dès que le fichier
+  redevient lisible. Avant, l'alerte partait **à tort** à la panne, puis repartait au retour du fichier.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement ; fichier momentanément
-  illisible (ci-dessus).
-- **Tests** : à écrire. En VM, ligne de commentaire ajoutée au fichier hosts.
+- **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun.
+- **Tests** : `sys_001_positif` (empreinte changée ; changement fait pendant une panne de lecture, signalé au retour),
+  `sys_001_negatif` (même empreinte ; fichier illisible) ; décision pure `moniteur::alerte_hosts` (PR 3.10). Non
+  exercée en VM (le scénario n'écrit pas dans le fichier hosts).
 
 ### SYS-002 : règle de pare-feu ajoutée ou modifiée
 - **Code** : `parefeu.rs` (suivi des modifications du pare-feu).
@@ -494,8 +496,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   entrante par un auteur introuvable : Alerte ; par un programme tiers signé ou un installeur de mise à jour : Info.
 - **Télémétrie** : journal du pare-feu (Windows Firewall With Advanced Security), signature de l'auteur.
 - **Si elle manque** : le résultat de l'abonnement est ignoré aujourd'hui (silence).
-- **Faux positifs attendus** : installeurs de logiciels qui ouvrent leurs ports.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : installeurs de logiciels qui ouvrent leurs ports. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun.
+- **Tests** : `sys_002_positif` (port entrant ouvert par netsh : Alerte ; règle modifiée par un programme non signé :
+  Critique), `sys_002_negatif` (nos propres règles ; règle sortante changée par Windows ; événement sans rapport), sur
+  `parefeu::traduire` avec des événements synthétiques.
 
 ### SYS-003 : toutes les règles du pare-feu supprimées
 - **Code** : `parefeu.rs` (opération « toutes supprimées »).
@@ -507,8 +511,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : journal du pare-feu, nombre de règles.
 - **Si elle manque** : comme SYS-002.
 - **Niveau** : Critique ; Info pour le rechargement par la stratégie de groupe.
-- **Faux positifs attendus** : réinitialisation volontaire du pare-feu par un administrateur.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : réinitialisation volontaire du pare-feu par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : une alerte Info par passage, le rechargement des règles par la stratégie de groupe au démarrage de la VM (attendu, Info).
+- **Tests** : `sys_003_positif` (toutes supprimées par un autre programme : Critique), `sys_003_negatif` (svchost de
+  Windows : Info ; un « svchost.exe » hors de Windows reste Critique), sur `parefeu::traduire`. La vérification du
+  retour des règles, une minute après, n'est pas testée (appel Windows).
 
 ## PIL : pilotes
 
@@ -518,8 +524,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : liste LOLDrivers chargée, pilotes du disque.
 - **Si elle manque** : liste vide ou illisible : aucune alerte (silence), comme s'il n'y avait aucun pilote vulnérable.
 - **Niveau** : Critique.
-- **Faux positifs attendus** : ancien pilote de matériel encore présent mais inutilisé.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : ancien pilote de matériel encore présent mais inutilisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la liste LOLDrivers est vide dans la VM (PIL-001 sans collecte, contrôle du 3a).
+- **Tests** : `pil_001_positif` (pilote .sys dont l'empreinte est dans la liste : Critique, une seule fois),
+  `pil_001_negatif` (pilote sain ; même contenu sous un autre type de fichier ; pilote absent), sur de vrais fichiers
+  temporaires ; décision `hygiene::pilotes_vulnerables` (PR 3.10). Existant : `chemins_des_pilotes`.
 
 ## EXT : extensions de navigateur
 
@@ -529,8 +537,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : profils des navigateurs.
 - **Si elle manque** : profil illisible : la règle se tait.
 - **Niveau** : Alerte si l'extension a des permissions sensibles, Info sinon.
-- **Faux positifs attendus** : chaque extension installée volontairement.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : chaque extension installée volontairement. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; aucun navigateur n'installe d'extension pendant la mesure.
+- **Tests** : `ext_001_positif` (apprentissage au premier relevé ; puis nouvelle extension : Alerte si ses permissions
+  sont sensibles, sinon Info ; date de première vue notée), `ext_001_negatif` (extension déjà connue, date reprise ; même
+  identifiant dans un autre navigateur : nouvelle) ; décision pure `hygiene::nouvelles_extensions` (PR 3.10, sans
+  fichier de données).
 
 ## VIE : vie privée et accès distant
 
