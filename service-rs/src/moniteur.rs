@@ -774,7 +774,8 @@ impl Moniteur {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
                 version: commun::VERSION.into(),
-                journal_dns_actif: collectes::est_active(Collecte::JournalDns),
+                // Même critère que l'indice « IP directe » : dernière lecture réussie il y a moins de trois intervalles
+                journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),
                 ip_connues,
                 source_processus: self.processus.source.lock().unwrap().clone(),
                 bureau_a_distance: s.rdp,

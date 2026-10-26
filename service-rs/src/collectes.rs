@@ -283,11 +283,6 @@ pub fn noter_comptes(c: Collecte, lus: usize, en_echec: usize, quoi: &str) {
     }
 }
 
-/// La collecte est-elle lue maintenant (« Active ») ?
-pub fn est_active(c: Collecte) -> bool {
-    etat_a(c, maintenant()) == EtatPublie::Active
-}
-
 /// Dernière lecture réussie il y a moins de trois intervalles (un échec passager ne compte pas)
 pub fn lue_recemment(c: Collecte) -> bool {
     lue_dans_le_delai(CASES[c.index()].dernier_succes.load(Ordering::Relaxed), c.periode(), maintenant())

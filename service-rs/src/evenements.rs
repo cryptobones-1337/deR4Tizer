@@ -188,6 +188,10 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
             }
             match lecture {
                 Lecture::Complete => noter_lu(collecte, &saut),
+                // Lent mais progresse : partielle ; aucun progrès depuis une minute : plus rien n'est lu, indisponible
+                Lecture::Delai if b.delais >= LIMITE_BLOCAGE => {
+                    collectes::echec(collecte, &format!("lecture du journal {canal} bloquée par des délais dépassés (journal inondé ?), rien n'est sauté"))
+                }
                 Lecture::Delai => collectes::partielle(collecte, &format!("lecture du journal {canal} trop lente (délai dépassé) : reprise au tour suivant")),
                 Lecture::Erreur => collectes::echec(collecte, &format!("événements du journal {canal} illisibles")),
             }
@@ -211,16 +215,17 @@ fn noter_lu(collecte: Collecte, saut: &Option<(std::time::Instant, u64)>) {
 /// Tours de suite en erreur sans aucun progrès avant de sauter (2 s par tour : une minute)
 pub const LIMITE_BLOCAGE: u32 = 30;
 
-/// Lecture bloquée en cours : tours en erreur sans progrès, et pas du prochain saut
+/// Lecture bloquée en cours : tours en erreur sans progrès, pas du prochain saut, tours en délai dépassé sans progrès
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Blocage {
     pub tours: u32,
     pub pas: u64,
+    pub delais: u32,
 }
 
 impl Default for Blocage {
     fn default() -> Self {
-        Blocage { tours: 0, pas: 1 }
+        Blocage { tours: 0, pas: 1, delais: 0 }
     }
 }
 
@@ -228,7 +233,8 @@ impl Default for Blocage {
 /// sans fin, sans pour autant jeter tout l'intervalle. Rend (numéro de reprise, blocage, numéros sautés).
 /// - lecture complète, ou progrès : reprise normale, blocage remis à zéro ;
 /// - délai dépassé (journal chargé, inondé) : ce n'est pas un blocage, rien n'est sauté, la lecture reprend où elle
-///   s'est arrêtée (la collecte est « Partielle » tant que dure la lenteur) ;
+///   s'est arrêtée ; les délais sans progrès sont comptés (`delais`) : au-delà de `LIMITE_BLOCAGE`, la collecte est
+///   « Indisponible » (plus rien n'est lu), en deçà « Partielle » ;
 /// - erreur sans progrès `LIMITE_BLOCAGE` tours de suite : on saute `pas` numéros juste après le dernier lu (1, puis
 ///   2, 4… si le blocage persiste, sans dépasser `n`) ; seul le voisinage du point de blocage est perdu.
 pub fn apres_blocage(dernier: u64, suivant: u64, n: u64, lecture: Lecture, b: Blocage) -> (u64, Blocage, u64) {
@@ -236,14 +242,14 @@ pub fn apres_blocage(dernier: u64, suivant: u64, n: u64, lecture: Lecture, b: Bl
         return (suivant, Blocage::default(), 0);
     }
     if lecture == Lecture::Delai {
-        return (suivant, Blocage { tours: 0, ..b }, 0);
+        return (suivant, Blocage { tours: 0, delais: b.delais.saturating_add(1), ..b }, 0);
     }
     if b.tours + 1 < LIMITE_BLOCAGE {
-        return (suivant, Blocage { tours: b.tours + 1, ..b }, 0);
+        return (suivant, Blocage { tours: b.tours + 1, delais: 0, ..b }, 0);
     }
     let reprise = suivant.saturating_add(b.pas).min(n);
     // Encore bloqué au tour suivant : nouveau saut aussitôt, deux fois plus long
-    (reprise, Blocage { tours: LIMITE_BLOCAGE - 1, pas: b.pas.saturating_mul(2) }, reprise - suivant)
+    (reprise, Blocage { tours: LIMITE_BLOCAGE - 1, pas: b.pas.saturating_mul(2), delais: 0 }, reprise - suivant)
 }
 
 /// Journal lisible maintenant (numéro de son dernier événement lu) ?

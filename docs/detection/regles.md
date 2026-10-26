@@ -61,10 +61,13 @@ suivant). Cela ne garantit pas que Windows **produit** les événements attendus
 
 Lecture d'un journal suivi :
 - un délai dépassé (journal très chargé ou inondé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour
-  suivant là où elle s'est arrêtée, et la collecte est « Partielle » tant que dure la lenteur ;
+  suivant là où elle s'est arrêtée ; la collecte est « Partielle » tant que la lecture progresse, « Indisponible » après
+  une minute de délais sans aucun progrès (une inondation continue peut ainsi figer la lecture : elle reprend quand
+  l'inondation cesse, sauf pour les événements écrasés entre-temps par la rotation du journal, perdus sans trace) ;
 - une erreur sans progrès 30 tours de suite (une minute) : un seul numéro d'événement est sauté, juste après le dernier
   lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` et la collecte reste « Partielle » une
-  heure (« N numéro(s) d'événement sauté(s) ») ; seuls les événements du voisinage du point de blocage sont perdus.
+  heure (« N numéro(s) d'événement sauté(s) ») ; les événements perdus sont ceux des numéros sautés : au plus deux fois
+  l'écart entre le dernier lu et l'événement fautif.
 
 Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
 première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI

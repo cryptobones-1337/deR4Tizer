@@ -3365,12 +3365,16 @@ fn phase3_decision_comptes() {
 fn phase3_journal_bloque_saute() {
     use crate::evenements::{apres_blocage, Blocage, Lecture, LIMITE_BLOCAGE};
     let zero = Blocage::default();
-    let b = |tours, pas| Blocage { tours, pas };
+    let b = |tours, pas| Blocage { tours, pas, delais: 0 };
     assert_eq!(apres_blocage(10, 20, 20, Lecture::Complete, b(7, 4)), (20, zero, 0));
     assert_eq!(apres_blocage(10, 15, 20, Lecture::Erreur, b(7, 4)), (15, zero, 0), "progrès : blocage remis à zéro");
     assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, zero), (10, b(1, 1), 0));
-    // Délai dépassé (journal inondé) : jamais compté comme un blocage, rien n'est sauté
-    assert_eq!(apres_blocage(10, 10, 20, Lecture::Delai, b(LIMITE_BLOCAGE - 1, 1)), (10, b(0, 1), 0));
+    // Délai dépassé (journal inondé) : jamais compté comme un blocage, rien n'est sauté ; les délais sans progrès sont
+    // comptés (au-delà de LIMITE_BLOCAGE, la collecte passe « Indisponible »), un progrès les remet à zéro
+    assert_eq!(apres_blocage(10, 10, 20, Lecture::Delai, b(LIMITE_BLOCAGE - 1, 1)), (10, Blocage { tours: 0, pas: 1, delais: 1 }, 0));
+    let (_, d, sautes) = (0..LIMITE_BLOCAGE).fold((10, zero, 0), |(_, bl, s), _| { let (r, bl, x) = apres_blocage(10, 10, 20, Lecture::Delai, bl); (r, bl, s + x) });
+    assert!(d.delais >= LIMITE_BLOCAGE && sautes == 0, "délais sans progrès : comptés, rien sauté");
+    assert_eq!(apres_blocage(10, 12, 20, Lecture::Delai, d), (12, zero, 0), "délai avec progrès : remis à zéro");
     assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, b(LIMITE_BLOCAGE - 2, 1)), (10, b(LIMITE_BLOCAGE - 1, 1), 0));
     // Bloqué : un seul numéro sauté, juste après le dernier lu (pas tout l'intervalle) ; puis 2, 4… sans dépasser n
     assert_eq!(apres_blocage(10, 10, 20, Lecture::Erreur, b(LIMITE_BLOCAGE - 1, 1)), (11, b(LIMITE_BLOCAGE - 1, 2), 1));
@@ -3415,6 +3419,8 @@ fn phase3_branchements_des_collectes_restantes() {
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
     assert!(e.contains("let (suivant, b, sautes) = apres_blocage(dernier, lu_jusqu_a, n, lecture, blocage);"), "abonner : blocage non traité");
     assert!(e.contains("Lecture::Delai => collectes::partielle(collecte,"), "abonner : lecture lente non notée");
+    assert!(e.contains("Lecture::Delai if b.delais >= LIMITE_BLOCAGE => {\n                    collectes::echec(collecte,"), "abonner : délais sans progrès restés « Partielle »");
+    assert!(n.contains("journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),"), "interface et indice : même état du journal DNS");
     assert!(e.contains("Some((t, n)) if t.elapsed().as_secs() < 3600 => {\n            collectes::partielle(collecte,"), "saut d'événements : collecte redevenue active aussitôt");
     assert!(n.contains("let dns_lu = collectes::lue_recemment(Collecte::JournalDns);"), "IP directe : un échec passager du journal DNS la retire");
 }
@@ -3499,7 +3505,7 @@ fn phase3_branchements_des_collectes() {
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
     let d = e.find("pub fn abonner(").unwrap();
     let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
-    assert_eq!(f.matches("collectes::echec(collecte,").count(), 3, "abonner : échec initial, numéro illisible, événements illisibles");
+    assert_eq!(f.matches("collectes::echec(collecte,").count(), 4, "abonner : échec initial, numéro illisible, délais sans progrès, événements illisibles");
     assert_eq!(f.matches("collectes::succes(collecte)").count(), 1, "abonner : départ (les autres succès passent par noter_lu)");
     assert_eq!(f.matches("noter_lu(collecte, &saut)").count(), 3, "abonner : première lecture après un départ illisible, rien de nouveau, événements lus");
     assert_eq!(f.matches("return false").count(), 1, "abonner : seule une requête mal formée abandonne le suivi (pas un départ illisible)");
