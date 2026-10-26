@@ -282,10 +282,13 @@ fn per_002_devenu_suspect_passager() {
 #[test]
 fn per_002_echec_de_signature_non_garde() {
     use crate::moniteur::{echec_recent, signataire_cache_a};
-    assert!(echec_recent("7|100", 7, 129));
-    assert!(!echec_recent("7|100", 7, 130), "30 s passées");
-    assert!(!echec_recent("7|100", 8, 101), "fichier modifié depuis");
-    assert!(!echec_recent("", 0, 0) && !echec_recent("x|y", 0, 0));
+    assert!(echec_recent("7|100", 7, 129, 30));
+    assert!(!echec_recent("7|100", 7, 130, 30), "30 s passées");
+    assert!(!echec_recent("7|100", 8, 101, 30), "fichier modifié depuis");
+    assert!(!echec_recent("7|100", 7, 99, 30), "horloge reculée (R6-D1)");
+    assert!(echec_recent("7|100", 7, 90_000, u64::MAX), "cycle de surveillance : gardé tant que le fichier ne change pas");
+    assert!(!echec_recent("7|100", 8, 101, u64::MAX));
+    assert!(!echec_recent("", 0, 0, 30) && !echec_recent("x|y", 0, 0, 30));
     // Fichier non signé hors de Windows : vérification exécutée, résultat vide rangé sous la clé d'échec seulement
     let d = std::env::temp_dir().join(format!("d4t-sig-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -293,14 +296,17 @@ fn per_002_echec_de_signature_non_garde() {
     std::fs::write(&f, b"MZ pas un vrai programme").unwrap();
     let chemin = f.to_string_lossy().to_string();
     let mut cache = std::collections::HashMap::new();
-    let s = signataire_cache_a(&mut cache, "", &chemin, 1_000);
+    let s = signataire_cache_a(&mut cache, "", &chemin, 1_000, 30);
     let premier = cache.clone();
     // Dans les 30 s : échec repris du cache, sans nouvelle vérification (heure notée inchangée)
-    signataire_cache_a(&mut cache, "", &chemin, 1_010);
+    signataire_cache_a(&mut cache, "", &chemin, 1_010, 30);
+    assert_eq!(cache, premier);
+    // Cycle de surveillance (durée illimitée) : repris bien plus tard, sans nouvelle vérification
+    signataire_cache_a(&mut cache, "", &chemin, 80_000, u64::MAX);
     assert_eq!(cache, premier);
     // Échecs dans des tranches éloignées : toujours une seule clé, réécrite
-    signataire_cache_a(&mut cache, "", &chemin, 5_000);
-    let s3 = signataire_cache_a(&mut cache, "", &chemin, 90_000);
+    signataire_cache_a(&mut cache, "", &chemin, 5_000, 30);
+    let s3 = signataire_cache_a(&mut cache, "", &chemin, 90_000, 30);
     let _ = std::fs::remove_dir_all(&d);
     assert!(s.is_empty() && s3.is_empty(), "fichier non signé : {s} {s3}");
     assert_eq!(cache.len(), 1, "{:?}", cache);
