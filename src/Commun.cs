@@ -46,6 +46,194 @@ namespace DeR4Tizer
         public bool Panique { get; set; }
         public Exposition Exposition { get; set; }
         public string ProtectionDonnees { get; set; }   // vide : droits du dossier de données vérifiés
+        // État des collectes (phase 3.3) : null pour un service plus ancien
+        public List<EtatCollecte> Collectes { get; set; }
+        public List<string> ReglesSansCollecte { get; set; }
+        public List<string> ReglesDegradees { get; set; }
+        public List<CauseSansCollecte> CausesSansCollecte { get; set; }
+    }
+
+    // État d'une collecte publié par le service (etat.json, phase 3.3)
+    public class EtatCollecte
+    {
+        public string Id { get; set; }
+        public string Etat { get; set; }            // Inconnue, Active, Indisponible, Desactivee, Partielle
+        public string Depuis { get; set; }
+        public string DernierSucces { get; set; }
+        public string Raison { get; set; }
+    }
+
+    // Règle sans collecte et les sources dont l'une au moins manque (etat.json, phase 3.3d)
+    public class CauseSansCollecte
+    {
+        public string Regle { get; set; }
+        public List<string> Collectes { get; set; }
+    }
+
+    // Textes de l'état des collectes pour l'interface (décisions pures, vérifiées par tests\test-collectes-interface.ps1) :
+    // « aucune alerte » n'est jamais affiché seul quand une détection ne peut pas se déclencher
+    public static class Couverture
+    {
+        static readonly Dictionary<string, string> Consequences = new Dictionary<string, string>
+        {
+            { "Connexions", "connexions réseau non vues" }, { "Processus", "programmes en cours non listés" },
+            { "Sysmon", "créations de programmes non vues" }, { "WmiProcessus", "créations de programmes non vues" },
+            { "JournalDns", "domaines contactés non vus" }, { "JournalDefender", "détections et réglages de Defender non vus" },
+            { "EtatDefender", "état de Defender inconnu" }, { "JournalSecurite", "ouvertures de session et accès aux fichiers non vus" },
+            { "AuditDonnees", "accès aux données sensibles non vus" }, { "JournalSysteme", "services et pilotes installés non vus" },
+            { "JournalParefeu", "changements du pare-feu non vus" }, { "PaquetsParefeu", "paquets entrants non vus" },
+            { "Persistance", "démarrages automatiques non vus" }, { "Baseline", "réglages de sécurité non vérifiés" },
+            { "ListesMenaces", "adresses malveillantes connues non reconnues" }, { "ListesDomaines", "domaines malveillants connus non reconnus" },
+            { "Loldrivers", "pilotes vulnérables non reconnus" }, { "Leurres", "chiffrement par un rançongiciel non repéré par les leurres" },
+            { "Extensions", "extensions de navigateur non vues" }, { "Peripheriques", "usage de la caméra et du micro non vu" },
+            { "CaptureTrafic", "trafic non analysé (modules expérimentaux)" }, { "CaptureReseauLocal", "réseau local non analysé (module expérimental)" },
+        };
+
+        public static string Consequence(string id)
+        {
+            string c;
+            return id != null && Consequences.TryGetValue(id, out c) ? L.T(c) : L.T("conséquence inconnue");
+        }
+
+        static bool EnPanne(EtatCollecte c)
+        {
+            return c != null && (c.Etat == "Indisponible" || c.Etat == "Inconnue");
+        }
+
+        static EtatCollecte Trouver(Etat e, string id)
+        {
+            if (e == null || e.Collectes == null) return null;
+            foreach (var c in e.Collectes) if (c != null && c.Id == id) return c;
+            return null;
+        }
+
+        // Collectes en panne (indisponibles, ou jamais lues : échec fermé) ; les collectes désactivées par choix n'y sont pas
+        public static List<EtatCollecte> EnPannes(Etat e)
+        {
+            var l = new List<EtatCollecte>();
+            if (e == null || e.Collectes == null) return l;
+            foreach (var c in e.Collectes) if (EnPanne(c)) l.Add(c);
+            return l;
+        }
+
+        // Pastille d'en-tête : vide si aucune collecte n'est en panne
+        public static string Pastille(Etat e)
+        {
+            int n = EnPannes(e).Count;
+            if (n == 0) return "";
+            return n == 1 ? L.T("1 COLLECTE INDISPONIBLE") : string.Format(L.T("{0} COLLECTES INDISPONIBLES"), n);
+        }
+
+        // Une collecte en mots : identifiant, état, raison et conséquence
+        public static string Decrire(EtatCollecte c)
+        {
+            string etat = c.Etat == "Inconnue" ? L.T("pas encore lue") : c.Etat == "Desactivee" ? L.T("désactivée") : c.Etat == "Partielle" ? L.T("partielle") : L.T("indisponible");
+            return c.Id + " " + etat + (string.IsNullOrEmpty(c.Raison) ? "" : " (" + c.Raison + ")") + " : " + Consequence(c.Id);
+        }
+
+        static List<string> SourcesDe(Etat e, string regle)
+        {
+            if (e != null && e.CausesSansCollecte != null)
+                foreach (var c in e.CausesSansCollecte)
+                    if (c != null && c.Regle == regle && c.Collectes != null && c.Collectes.Count > 0) return c.Collectes;
+            return null;
+        }
+
+        // Règle muette par réglage : toutes ses sources manquantes sont désactivées par choix (listes de domaines coupées,
+        // Sysmon absent…). Sans cause publiée, ou avec une source en panne ou introuvable : muette par panne (échec fermé)
+        public static bool ParReglage(Etat e, string regle)
+        {
+            var s = SourcesDe(e, regle);
+            if (s == null) return false;
+            foreach (var id in s)
+            {
+                var c = Trouver(e, id);
+                if (c == null || c.Etat != "Desactivee") return false;
+            }
+            return true;
+        }
+
+        static List<string> Regles(Etat e, bool parReglage)
+        {
+            var l = new List<string>();
+            if (e == null || e.ReglesSansCollecte == null) return l;
+            foreach (var r in e.ReglesSansCollecte) if (ParReglage(e, r) == parReglage) l.Add(r);
+            return l;
+        }
+
+        // Détections qui ne peuvent pas se déclencher à cause d'une collecte en panne (pas d'un réglage)
+        public static List<string> ReglesEnPanne(Etat e) { return Regles(e, false); }
+
+        // Détections coupées par un réglage voulu (neutre, pas une alarme)
+        public static List<string> ReglesParReglage(Etat e) { return Regles(e, true); }
+
+        // « DNS-001 : domaines malveillants connus non reconnus (manque ListesDomaines) » : la conséquence en clair, la
+        // source en second
+        static string Expliquer(Etat e, List<string> regles)
+        {
+            var morceaux = new List<string>();
+            foreach (var r in regles)
+            {
+                var s = SourcesDe(e, r);
+                morceaux.Add(s == null ? r : r + " : " + Consequence(s[0]) + " (" + L.T("manque") + " " + string.Join(L.T(" ou "), s) + ")");
+            }
+            return string.Join(" ; ", morceaux);
+        }
+
+        // Le message doit-il alerter (jaune) ? Oui si une détection est muette par panne, ou si l'état est illisible
+        public static bool Alarme(Etat e)
+        {
+            return e == null || ReglesEnPanne(e).Count > 0;
+        }
+
+        // Liste des alertes vide : « Aucune alerte. » seul seulement si chaque détection a sa collecte ; les détections
+        // coupées par réglage sont dites en neutre, celles qui sont muettes par panne en premier
+        public static string AucuneAlerte(Etat e)
+        {
+            if (e == null) return L.T("Aucune alerte, mais l'état du service est illisible : rien ne prouve que la surveillance fonctionne.");
+            if (e.Collectes == null) return L.T("Aucune alerte (état des collectes non publié par ce service).");
+            var panne = ReglesEnPanne(e);
+            var reglage = ReglesParReglage(e);
+            string suite = reglage.Count == 0 ? "" : " " + L.T("Désactivé par réglage") + " : " + Expliquer(e, reglage) + ".";
+            if (panne.Count == 0) return L.T("Aucune alerte.") + suite;
+            return string.Format(panne.Count == 1 ? L.T("Aucune alerte, mais {0} détection ne peut pas se déclencher : {1}.") : L.T("Aucune alerte, mais {0} détections ne peuvent pas se déclencher : {1}."),
+                panne.Count, Expliquer(e, panne)) + suite;
+        }
+
+        // Ligne de la liste vide : courte (la colonne la coupe) ; le message entier va dans le panneau de détail
+        public static string LigneVide(Etat e)
+        {
+            if (!Alarme(e)) return L.T("Aucune alerte.");
+            int n = e == null ? 0 : ReglesEnPanne(e).Count;
+            if (n == 0) return L.T("Aucune alerte, état illisible ↓");
+            return string.Format(n == 1 ? L.T("Aucune alerte, {0} détection muette ↓") : L.T("Aucune alerte, {0} détections muettes ↓"), n);
+        }
+
+        // Bandeau de la page Alertes, toujours visible (même avec des alertes) : chaque collecte en panne expliquée,
+        // puis les collectes désactivées par choix ; vide si tout est lu
+        public static string Detail(Etat e)
+        {
+            if (e == null || e.Collectes == null) return "";
+            var lignes = new List<string>();
+            foreach (var c in EnPannes(e)) lignes.Add("▲ " + Decrire(c));
+            foreach (var c in e.Collectes) if (c != null && c.Etat == "Desactivee") lignes.Add("○ " + Decrire(c));
+            return string.Join("\n", lignes);
+        }
+
+        // Pastille caméra et micro : « OFF » seulement si le magasin des consentements est lu
+        public static bool CamMicLue(Etat e)
+        {
+            if (e == null || e.Collectes == null) return true;
+            var c = Trouver(e, "Peripheriques");
+            return c != null && (c.Etat == "Active" || c.Etat == "Partielle");
+        }
+
+        // État de Defender pas encore lu (premier relevé au démarrage du PC) : « lecture en cours », pas « illisible »
+        public static bool DefenderPasEncoreLu(Etat e)
+        {
+            var c = Trouver(e, "EtatDefender");
+            return c != null && c.Etat == "Inconnue";
+        }
     }
 
     // Exposition du PC à Internet (paquets entrants venus d'Internet, adresses publiques)
@@ -410,6 +598,10 @@ namespace DeR4Tizer
         public int? Pid { get; set; }
         public string Mitre { get; set; }
         public string Conseil { get; set; }
+        // Modèle d'événement (phase 3) : version, règle du registre, collecte présumée d'origine
+        public int Modele { get; set; }
+        public string Regle { get; set; }
+        public string Collecte { get; set; }
     }
 
     public class Blocage

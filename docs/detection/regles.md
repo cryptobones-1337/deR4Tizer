@@ -28,7 +28,9 @@ Règles de forme :
 « Si la télémétrie manque » décrit le comportement des détections elles-mêmes : dans la plupart des cas, la règle se
 tait. Depuis la PR 3.3a, ce silence est publié dans `etat.json` : `Collectes` donne l'état de chaque source de
 télémétrie et `ReglesSansCollecte` les règles dont une source nécessaire n'est pas lue (une source jamais notée compte
-comme non lue). L'interface ne l'affiche qu'à partir de la PR 3.4. Correspondance règle → sources :
+comme non lue). Depuis la PR 3.4, l'interface le montre : la liste des alertes vide ne dit « Aucune alerte. » que si
+chaque détection a sa collecte, sinon elle nomme les détections muettes et les sources qui leur manquent ; une
+pastille jaune compte les collectes en panne. Correspondance règle → sources :
 `collectes::besoins`. Depuis la PR 3.3b, toutes les sources sont notées : connexions, liste des processus, journaux
 (Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
 domaines, LOLDrivers, relevé des démarrages automatiques, baseline, leurres, audit des données (SACL), `pfirewall.log`,
