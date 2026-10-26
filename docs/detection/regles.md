@@ -429,7 +429,13 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Si elle manque** : leurres non posés : la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
-- **Tests** : existant : `leurres_par_handle_jamais_a_travers_un_lien`.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
+  l'activité synthétique n'écrit pas dans les dossiers des leurres, et la session de mesure n'en a
+  peut-être aucun.
+- **Tests** : `leu_001_positif` (leurre modifié, leurre supprimé, sur de vrais fichiers : deux alertes Critique, et les
+  leurres signalés ne sont plus suivis, pour ne pas alerter à chaque tour), `leu_001_negatif` (leurre lu sans être
+  modifié) ; existant : `leurres_par_handle_jamais_a_travers_un_lien`. Pose des leurres exercée en VM (scénario 3b) ;
+  la règle elle-même n'y est pas déclenchée.
 
 ### LEU-002 : leurre touché (audit des accès)
 - **Code** : `vol_donnees.rs` (événement 4663 sur un leurre).
@@ -440,7 +446,13 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Niveau** : Critique ; Info si le programme est un logiciel connu et signé (sauvegarde, synchronisation, antivirus),
   qui n'est pas suspendu.
 - **Faux positifs attendus** : logiciel de sauvegarde ou d'indexation non encore reconnu.
-- **Tests** : existant : `b1_leurre_touche_par_rundll32_suspendu`.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
+  aucun programme de l'activité ne touche un leurre.
+- **Tests** : `leu_002_positif` (événement 4663 sur un leurre, nom sans tenir compte de la casse : Critique, suspension
+  annoncée seulement si elle a eu lieu), `leu_002_negatif` (autre fichier ; logiciel connu : Info, non suspendu) ;
+  décisions pures `hygiene::pid_touchant_leurre_parmi` et `vol_donnees::alerte_leurre_touche` (PR 3.9 : noms des
+  leurres passés en paramètre, sans lire ni créer le fichier des noms) ; existant : `b1_leurre_touche_par_rundll32_suspendu`
+  (décision de suspension). Non exercée en VM.
 
 ## VOL : vol de données
 
@@ -454,7 +466,13 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Niveau** : Critique si le programme vient d'un dossier temporaire, des téléchargements ou du profil public, sinon
   Alerte.
 - **Faux positifs attendus** : gestionnaires de mots de passe, outils de migration de profil.
-- **Tests** : à écrire.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
+  aucun navigateur ni portefeuille n'est installé ou ouvert pendant la mesure.
+- **Tests** : `vol_001_positif` (lecture d'une base de mots de passe de Chrome par un programme d'un dossier temporaire :
+  Critique ; d'ailleurs : Alerte ; par un « chrome.exe » non signé par Google : alerte), `vol_001_negatif` (fichier hors
+  des dossiers surveillés ; dossier parcouru sans lecture ; notre propre service ; une alerte par programme et par cible
+  en 24 h, `vol_donnees::premiere_en_24h`, PR 3.9) ; décision `vol_donnees::analyser` sur des événements 4663
+  synthétiques. Non exercée en VM.
 
 ## SYS : fichier hosts et pare-feu
 

@@ -779,3 +779,120 @@ fn dns_001_negatif() {
     assert!(crate::moniteur::alerte_dns(&m, "www.malveillant.example").is_none());
     assert!(crate::moniteur::alerte_dns(&m, "").is_none());
 }
+
+// ------------------------------------------------------------ LEU et VOL : leurres et vol de données (PR 3.9)
+// hygiene::verifier_leurres sur de vrais fichiers temporaires ; décisions pures hygiene::pid_touchant_leurre_parmi,
+// vol_donnees::alerte_leurre_touche, vol_donnees::analyser et vol_donnees::premiere_en_24h sur des événements 4663
+// synthétiques (aucun fichier du dossier de données lu ni écrit).
+
+fn dossier_regle(nom: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("d4t-regle-{nom}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn leurre_de_test(d: &std::path::Path, nom: &str) -> crate::hygiene::Leurre {
+    let f = d.join(nom);
+    std::fs::write(&f, b"contenu du leurre").unwrap();
+    let empreinte = crate::hygiene::empreinte_verifiee(&f).expect("empreinte");
+    crate::hygiene::Leurre { chemin: f.to_string_lossy().to_string(), empreinte }
+}
+
+#[test]
+fn leu_001_positif() {
+    let d = dossier_regle("leu1");
+    let mut liste = vec![leurre_de_test(&d, "0 Factures 1234.docx"), leurre_de_test(&d, "0 Budget 5678.xlsx")];
+    std::fs::write(d.join("0 Factures 1234.docx"), b"contenu chiffre").unwrap();
+    std::fs::remove_file(d.join("0 Budget 5678.xlsx")).unwrap();
+    let a = crate::hygiene::verifier_leurres(&mut liste);
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str())).collect::<Vec<_>>(), [("LEU-001", "Critique"), ("LEU-001", "Critique")]);
+    assert!(a[0].raisons.contains("MODIFIÉ") && a[1].raisons.contains("SUPPRIMÉ"), "{} / {}", a[0].raisons, a[1].raisons);
+    assert!(liste.is_empty(), "un leurre signalé n'est plus suivi (pas d'alerte à chaque tour)");
+}
+
+#[test]
+fn leu_001_negatif() {
+    let d = dossier_regle("leu1n");
+    let mut liste = vec![leurre_de_test(&d, "0 Contrat 4321.docx")];
+    // Leurre lu sans être modifié (sa date d'accès peut changer) : rien
+    let _ = std::fs::read(d.join("0 Contrat 4321.docx")).unwrap();
+    let a = crate::hygiene::verifier_leurres(&mut liste);
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(a.is_empty());
+    assert_eq!(liste.len(), 1);
+}
+
+fn noms_de_test() -> Vec<(String, String)> {
+    vec![("Documents".into(), "0 Factures 1234.docx".into()), ("Pictures".into(), "0 IMG_5678.jpg".into())]
+}
+
+#[test]
+fn leu_002_positif() {
+    let xml = evenement_defender(4663, &[("ObjectName", r"C:\Users\essai\Documents\0 Factures 1234.docx"), ("ProcessId", "0x1a2b"),
+                                        ("ProcessName", r"C:\Users\essai\AppData\Local\Temp\chiffreur.exe")]);
+    let (pid, programme, objet) = crate::hygiene::pid_touchant_leurre_parmi(&xml, &noms_de_test()).expect("leurre touché");
+    assert_eq!(pid, 0x1a2b);
+    // Programme inconnu : Critique, suspendu si la réponse automatique l'a fait
+    let a = crate::vol_donnees::alerte_leurre_touche(pid, &programme, &objet, false, true);
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.score), ("LEU-002", "Critique", 15));
+    assert!(a.raisons.contains("RANÇONGICIEL PROBABLE") && a.raisons.contains("SUSPENDU"), "{}", a.raisons);
+    let a = crate::vol_donnees::alerte_leurre_touche(pid, &programme, &objet, false, false);
+    assert!(!a.raisons.contains("SUSPENDU"), "pas de suspension annoncée sans suspension : {}", a.raisons);
+    // La casse du nom ne compte pas
+    let xml = evenement_defender(4663, &[("ObjectName", r"C:\Users\essai\Pictures\0 img_5678.JPG"), ("ProcessId", "0x10")]);
+    assert!(crate::hygiene::pid_touchant_leurre_parmi(&xml, &noms_de_test()).is_some());
+}
+
+#[test]
+fn leu_002_negatif() {
+    // Autre fichier ; logiciel connu et signé (sauvegarde, synchronisation, antivirus) : Info, jamais suspendu
+    let xml = evenement_defender(4663, &[("ObjectName", r"C:\Users\essai\Documents\Rapport.docx"), ("ProcessId", "0x1a2b")]);
+    assert!(crate::hygiene::pid_touchant_leurre_parmi(&xml, &noms_de_test()).is_none());
+    let a = crate::vol_donnees::alerte_leurre_touche(0x1a2b, r"C:\Program Files\Sauvegarde\agent.exe", r"C:\Users\essai\Documents\0 Factures 1234.docx", true, false);
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("LEU-002", "Info"));
+    assert!(a.raisons.contains("non suspendu"));
+}
+
+fn evenement_vol(objet: &str, processus: &str) -> String {
+    evenement_defender(4663, &[("ObjectName", objet), ("ProcessName", processus), ("ProcessId", "0x2c")])
+}
+
+#[test]
+fn vol_001_positif() {
+    use crate::vol_donnees::{analyser, CIBLES};
+    let mots_de_passe = r"C:\Users\essai\AppData\Local\Google\Chrome\User Data\Default";
+    let dossiers = vec![(mots_de_passe.to_string(), &CIBLES[1])];
+    let objet = format!(r"{mots_de_passe}\Login Data");
+    // Programme lancé depuis un dossier temporaire : Critique ; ailleurs : Alerte
+    let a = analyser(&evenement_vol(&objet, r"C:\Users\essai\AppData\Local\Temp\voleur.exe"), &dossiers).expect("alerte");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.score, a.pid), ("VOL-001", "Critique", 10, Some(0x2c)));
+    let a = analyser(&evenement_vol(&objet, r"C:\Outils\lecteur.exe"), &dossiers).expect("alerte");
+    assert_eq!((a.niveau.as_str(), a.score), ("Alerte", 7));
+    // Un « chrome.exe » qui n'est pas signé par Google n'est pas le propriétaire
+    assert!(analyser(&evenement_vol(&objet, r"C:\Users\essai\Downloads\chrome.exe"), &dossiers).is_some());
+}
+
+#[test]
+fn vol_001_negatif() {
+    use crate::vol_donnees::{analyser, CIBLES};
+    let d = dossier_regle("vol1");
+    let dossier = d.to_string_lossy().to_string();
+    let dossiers = vec![(dossier.clone(), &CIBLES[1])];
+    std::fs::create_dir_all(d.join("Network")).unwrap();
+    // Fichier hors des dossiers surveillés ; dossier parcouru (aucune donnée lue) ; notre propre service
+    assert!(analyser(&evenement_vol(r"C:\Users\essai\Documents\note.txt", r"C:\Outils\lecteur.exe"), &dossiers).is_none());
+    assert!(analyser(&evenement_vol(&d.join("Network").to_string_lossy(), r"C:\Outils\lecteur.exe"), &dossiers).is_none());
+    let nous = std::env::current_exe().unwrap().to_string_lossy().to_string();
+    assert!(analyser(&evenement_vol(&d.join("Login Data").to_string_lossy(), &nous), &dossiers).is_none());
+    let _ = std::fs::remove_dir_all(&d);
+    // Même programme et même cible : une alerte par 24 h
+    use crate::vol_donnees::premiere_en_24h;
+    let mut vues = std::collections::HashMap::new();
+    let t0 = std::time::Instant::now();
+    assert!(premiere_en_24h(&mut vues, "lecteur|cookies".into(), t0));
+    assert!(!premiere_en_24h(&mut vues, "lecteur|cookies".into(), t0 + std::time::Duration::from_secs(3600)));
+    assert!(premiere_en_24h(&mut vues, "lecteur|mots de passe".into(), t0 + std::time::Duration::from_secs(3600)), "autre cible");
+    assert!(premiere_en_24h(&mut vues, "lecteur|cookies".into(), t0 + std::time::Duration::from_secs(90_000)), "24 h passées");
+}

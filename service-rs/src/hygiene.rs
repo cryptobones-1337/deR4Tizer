@@ -303,10 +303,16 @@ pub fn verifier_leurres(liste: &mut Vec<Leurre>) -> Vec<Alerte> {
 
 /// Événement 4663 sur un leurre : renvoie le PID du programme qui l'a touché
 pub fn pid_touchant_leurre(xml: &str) -> Option<(u32, String, String)> {
+    pid_touchant_leurre_parmi(xml, &noms_leurres())
+}
+
+/// Décision pure (testée, LEU-002) : événement 4663 sur un fichier qui porte l'un des noms de leurres donnés : (PID,
+/// programme, fichier)
+pub(crate) fn pid_touchant_leurre_parmi(xml: &str, noms: &[(String, String)]) -> Option<(u32, String, String)> {
     let d = crate::evenements::donnees(xml);
     let objet = d.get("ObjectName")?;
     let nom = Path::new(objet.as_str()).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if !noms_leurres().iter().any(|(_, n)| n.to_lowercase() == nom) {
+    if !noms.iter().any(|(_, n)| n.to_lowercase() == nom) {
         return None;
     }
     let pid = u32::from_str_radix(d.get("ProcessId")?.trim_start_matches("0x"), 16).ok()?;

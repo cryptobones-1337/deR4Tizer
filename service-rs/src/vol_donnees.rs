@@ -257,53 +257,67 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
             let connu = leurre_autorise(&programme);
-            if connu {
-                // Sauvegarde, synchronisation, antivirus, indexation : on le note sans rien suspendre
-                file.lock().unwrap().push(Alerte {
-                    regle: crate::regles::LEU_002.into(),
-                    id: commun::nouvel_id(),
-                    heure: commun::maintenant(),
-                    niveau: "Info".into(),
-                    processus: Path::new(&programme).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
-                    chemin: programme.clone(),
-                    destination: "leurre anti-rançongiciel".into(),
-                    raisons: format!("{programme} (logiciel connu et signé : sauvegarde, synchronisation ou antivirus) a touché le fichier leurre {objet} — non suspendu"),
-                    pid: Some(pid),
-                    ..Default::default()
-                });
-                return;
-            }
-            let config: commun::Config = commun::lire("config.json").unwrap_or_default();
-            // rundll32, regsvr32, mshta, powershell… sont des binaires Windows par lesquels passent beaucoup de
-            // rançongiciels : ils sont suspendus. Seuls les processus critiques (csrss, lsass, svchost…) sont
-            // protégés, par reponse::protege()
-            let suspendu = suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
-                && crate::reponse::suspendre(pid, true).is_ok();
-            file.lock().unwrap().push(Alerte {
-                regle: crate::regles::LEU_002.into(),
-                id: commun::nouvel_id(),
-                heure: commun::maintenant(),
-                niveau: "Critique".into(),
-                score: 15,
-                processus: Path::new(&programme).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
-                chemin: programme.clone(),
-                destination: "leurre anti-rançongiciel".into(),
-                raisons: format!("{programme} a modifié ou supprimé le fichier leurre {objet} : RANÇONGICIEL PROBABLE{}",
-                    if suspendu { " — programme SUSPENDU automatiquement (vérifiez puis tuez-le ou reprenez-le)" } else { "" }),
-                pid: Some(pid),
-                ..Default::default()
-            });
+            // Sauvegarde, synchronisation, antivirus, indexation : noté sans rien suspendre. Sinon, rundll32,
+            // regsvr32, mshta, powershell… sont des binaires Windows par lesquels passent beaucoup de rançongiciels :
+            // ils sont suspendus. Seuls les processus critiques (csrss, lsass, svchost…) sont protégés, par
+            // reponse::protege()
+            let suspendu = !connu && {
+                let config: commun::Config = commun::lire("config.json").unwrap_or_default();
+                suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
+                    && crate::reponse::suspendre(pid, true).is_ok()
+            };
+            file.lock().unwrap().push(alerte_leurre_touche(pid, &programme, &objet, connu, suspendu));
             return;
         }
         let Some(a) = analyser(&xml, &dossiers.lock().unwrap()) else { return };
         // Une alerte par programme et par cible toutes les 24 h
-        let cle = format!("{}|{}", a.chemin, a.destination);
-        if vues.get(&cle).map(|t| t.elapsed() < Duration::from_secs(86400)).unwrap_or(false) {
-            return;
+        if premiere_en_24h(&mut vues, format!("{}|{}", a.chemin, a.destination), Instant::now()) {
+            file.lock().unwrap().push(a);
         }
-        vues.insert(cle, Instant::now());
-        file.lock().unwrap().push(a);
     });
+}
+
+/// Décision pure (testée, LEU-002) : alerte d'un leurre touché. Logiciel connu et signé (sauvegarde, synchronisation,
+/// antivirus) : Info, non suspendu ; sinon Critique, rançongiciel probable, avec la suspension si elle a eu lieu
+pub(crate) fn alerte_leurre_touche(pid: u32, programme: &str, objet: &str, connu: bool, suspendu: bool) -> Alerte {
+    let processus = Path::new(programme).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    if connu {
+        return Alerte {
+            regle: crate::regles::LEU_002.into(),
+            id: commun::nouvel_id(),
+            heure: commun::maintenant(),
+            niveau: "Info".into(),
+            processus,
+            chemin: programme.into(),
+            destination: "leurre anti-rançongiciel".into(),
+            raisons: format!("{programme} (logiciel connu et signé : sauvegarde, synchronisation ou antivirus) a touché le fichier leurre {objet} — non suspendu"),
+            pid: Some(pid),
+            ..Default::default()
+        };
+    }
+    Alerte {
+        regle: crate::regles::LEU_002.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        score: 15,
+        processus,
+        chemin: programme.into(),
+        destination: "leurre anti-rançongiciel".into(),
+        raisons: format!("{programme} a modifié ou supprimé le fichier leurre {objet} : RANÇONGICIEL PROBABLE{}",
+            if suspendu { " — programme SUSPENDU automatiquement (vérifiez puis tuez-le ou reprenez-le)" } else { "" }),
+        pid: Some(pid),
+        ..Default::default()
+    }
+}
+
+/// Décision pure (testée, VOL-001) : une alerte par programme et par cible toutes les 24 h ; note l'heure si elle part
+pub(crate) fn premiere_en_24h(vues: &mut HashMap<String, Instant>, cle: String, maintenant: Instant) -> bool {
+    if vues.get(&cle).is_some_and(|t| maintenant.saturating_duration_since(*t) < Duration::from_secs(86400)) {
+        return false;
+    }
+    vues.insert(cle, maintenant);
+    true
 }
 
 /// Décision sur un programme qui a touché un leurre : suspendre seulement en réponse automatique, si ce n'est ni
