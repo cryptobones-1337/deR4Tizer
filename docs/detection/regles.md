@@ -22,8 +22,8 @@ Règles de forme :
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
 - une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte qu'elle
   contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001 ; `processus::regle_retenue`). Une alerte ne
-  porte qu'une règle. Limite actuelle : pour les lignes de commande, `processus::suspicion_regle` ne rend que le
-  **premier** motif trouvé (voir PRC-002 à PRC-005).
+  porte qu'une règle. Pour les lignes de commande, tous les motifs sont cherchés et nommés dans les raisons, et la
+  suppression des sauvegardes (PRC-005) l'emporte sur les autres motifs (PR 3.7).
 
 « Si la télémétrie manque » décrit le comportement des détections elles-mêmes : dans la plupart des cas, la règle se
 tait. Depuis la PR 3.3a, ce silence est publié dans `etat.json` : `Collectes` donne l'état de chaque source de
@@ -201,8 +201,10 @@ modules expérimentaux.
 - **Télémétrie** : création de processus (Sysmon 1 ou WMI) avec le parent.
 - **Si elle manque** : flux WMI arrêté : la source reste affichée « WMI » et la règle se tait.
 - **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
-- **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `prc_001_positif` (Word qui lance PowerShell, avec ou sans ligne de commande, et avec un motif PowerShell en
+  plus : PRC-001 l'emporte), `prc_001_negatif` (PowerShell lancé par l'Explorateur ; Word qui lance un programme qui
+  n'est pas un interpréteur) ; décision pure `processus::alerte_processus`. Non exercée en VM : aucun Office dans la VM.
 
 ### PRC-002 : PowerShell obscurci ou qui télécharge du code
 - **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code »).
@@ -210,9 +212,11 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande (Sysmon 1, ou WMI tant que le processus vit).
 - **Si elle manque** : processus terminé avant la lecture WMI : ligne de commande absente, la règle se tait.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : scripts d'administration ou d'installation encodés.
-- **Tests** : à écrire. En VM, `powershell -enc` d'un `Write-Output 1` (40 caractères en base64 : juste au minimum du
-  motif, à allonger) ; à remplacer si Defender (AMSI) réagit.
+- **Faux positifs attendus** : scripts d'administration ou d'installation encodés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `prc_002_positif` (`-enc` d'une charge de plus de 40 caractères ; `IEX` d'un `DownloadString`),
+  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court). Non exercée en VM : sans Sysmon, la ligne de
+  commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
+  qu'on ne touche pas.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
 - **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
@@ -220,8 +224,9 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
+  `rundll32 shell32.dll,Control_RunDLL`). Non exercée en VM (comme PRC-002).
 
 ### PRC-004 : navigateur lancé en débogage à distance
 - **Code** : `processus.rs` (`--remote-debugging-port` ou `-pipe` sur Chrome, Edge, Brave).
@@ -229,8 +234,9 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : développeurs web, outils de test automatisé.
-- **Tests** : existant : `debogage_a_distance_ancre_sur_l_executable` (cas positifs et négatifs).
+- **Faux positifs attendus** : développeurs web, outils de test automatisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `prc_004_positif` (Chrome avec `--remote-debugging-port`), `prc_004_negatif` (WebView2 en débogage ;
+  Chrome normal) ; existant : `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
 
 ### PRC-005 : suppression des sauvegardes
 - **Code** : `processus.rs` (`vssadmin delete shadows`, `wbadmin delete`, `bcdedit … recoveryenabled no`,
@@ -238,13 +244,14 @@ modules expérimentaux.
 - **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
-- **Niveau** : Critique (signal fort, jamais adouci). **Limite** : `processus::suspicion` ne rend que le premier motif
-  trouvé, dans l'ordre PowerShell, LOLBin, débogage, sauvegardes. Une ligne qui contient aussi un motif PowerShell (par
-  exemple `… DownloadString(…); vssadmin delete shadows`) ne porte que PRC-002, au niveau Alerte : faux négatif connu.
-- **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur.
-- **Tests** : à écrire. En VM, `cmd /c echo vssadmin delete shadows` (vssadmin n'est pas lancé) ; négatif :
-  `vssadmin list shadows`. Sans Sysmon, la ligne de commande d'un processus aussi bref est souvent perdue par WMI : le
-  scénario risque d'être instable.
+- **Niveau** : Critique (signal fort, jamais adouci), même quand la ligne contient d'autres motifs. Avant la PR 3.7,
+  seul le premier motif trouvé comptait : une ligne comme `… DownloadString(…); vssadmin delete shadows` ne portait que
+  PRC-002, au niveau Alerte (faux négatif, corrigé).
+- **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `prc_005_positif` (`vssadmin delete shadows`, `bcdedit … recoveryenabled No`, et la ligne qui télécharge du
+  code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
+  (`vssadmin list shadows`, `wbadmin get versions`). Non exercée en VM : sans Sysmon, la ligne de commande d'un processus
+  aussi bref est souvent perdue par WMI, le scénario serait instable.
 
 ## CHA : chaînes de processus
 
@@ -254,8 +261,11 @@ modules expérimentaux.
 - **Télémétrie** : arbre des processus et signaux des autres règles.
 - **Si elle manque** : sans processus, aucune chaîne.
 - **Niveau** : Critique.
-- **Faux positifs attendus** : installeurs qui enchaînent des outils signalés.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : installeurs qui enchaînent des outils signalés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Tests** : `cha_001_positif` (deux signaux dans la même descendance, score cumulé au seuil de 12 : une alerte
+  Critique, pas de nouvelle alerte au même score, une autre quand le score monte), `cha_001_negatif` (un seul signal,
+  même fort ; deux signaux sous le seuil ; deux signaux dans deux descendances distinctes de l'Explorateur, qui est une
+  racine). Non exercée en VM (signaux des autres règles nécessaires).
 
 ## PER : persistance
 

@@ -3213,9 +3213,12 @@ fn phase3_chaque_producteur_pose_sa_regle() {
     assert_eq!(r, ["DEF-010", "DEF-011", "DEF-012"]);
     // Processus : la plus forte d'abord (document → interpréteur avant le motif de la ligne de commande)
     use crate::processus::regle_retenue;
-    assert_eq!(regle_retenue(true, Some("PRC-002")), "PRC-001");
-    assert_eq!(regle_retenue(false, Some("PRC-005")), "PRC-005");
-    assert_eq!(regle_retenue(true, None), "PRC-001");
+    assert_eq!(regle_retenue(true, &["PRC-002"]), "PRC-001");
+    assert_eq!(regle_retenue(false, &["PRC-005"]), "PRC-005");
+    assert_eq!(regle_retenue(true, &[]), "PRC-001");
+    assert_eq!(regle_retenue(false, &["PRC-002", "PRC-005"]), "PRC-005", "PR 3.7 : la plus forte, pas la première");
+    assert_eq!(regle_retenue(false, &["PRC-002", "PRC-003"]), "PRC-002");
+    assert_eq!(regle_retenue(false, &[]), "");
     // Persistance : nouveau ou modifié
     let e = crate::commun::EntreeDemarrage::default();
     assert_eq!(crate::persistance::alerter(&e, "NOUVEAU démarrage automatique").regle, "PER-001");
