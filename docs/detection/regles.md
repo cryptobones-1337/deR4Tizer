@@ -45,7 +45,13 @@ suivant). Cela ne garantit pas que Windows **produit** les événements attendus
   reste lisible ;
 - listes de menaces chargées depuis une copie locale ancienne (l'âge n'est pas suivi) ;
 - `JournalSecurite` noté par deux lecteurs (SIEM et accès aux fichiers 4663) : un seul en panne ne se voit pas, l'autre
-  continuant de lire le même journal.
+  continuant de lire le même journal ;
+- un événement qui fait toujours échouer la lecture (journal corrompu) bloque le suivi juste avant lui : la collecte
+  reste « Indisponible », les événements suivants ne sont pas lus.
+
+Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
+première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI
+prend le relais.
 « Partielle » (WMI sans Sysmon) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées dégradées.
 
 Domaines : `RES` connexions, `DNS`, `PRC` processus, `CHA` chaînes de processus, `PER` persistance, `DEF` Defender,

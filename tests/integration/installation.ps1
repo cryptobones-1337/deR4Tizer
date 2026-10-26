@@ -339,6 +339,8 @@ Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL
     if ($l.Etat -ne 'Indisponible') { return "LOLDrivers : $($l.Etat) ($($l.Raison))" }
     if (@($e.ReglesSansCollecte) -notcontains 'PIL-001') { return "PIL-001 absente des règles sans collecte : $(@($e.ReglesSansCollecte) -join ', ')" }
     Write-Host "  LOLDrivers : $($l.Etat) ($($l.Raison))"
+    # Liste vide retirée : les contrôles suivants retrouvent une liste téléchargée au prochain démarrage
+    Remove-Item (Join-Path $script:Donnees 'menaces\loldrivers.json') -Force -ErrorAction SilentlyContinue
     $true
 }
 

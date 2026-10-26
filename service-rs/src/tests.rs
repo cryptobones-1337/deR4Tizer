@@ -3419,7 +3419,12 @@ fn phase3_branchements_des_collectes() {
     let d = e.find("pub fn abonner(").unwrap();
     let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
     assert_eq!(f.matches("collectes::echec(collecte,").count(), 3, "abonner : échec initial, numéro illisible, événements illisibles");
-    assert_eq!(f.matches("collectes::succes(collecte);").count(), 3, "abonner : départ, rien de nouveau, événements lus");
+    assert_eq!(f.matches("collectes::succes(collecte)").count(), 4, "abonner : départ, première lecture après un départ illisible, rien de nouveau, événements lus");
+    assert_eq!(f.matches("return false").count(), 1, "abonner : seule une requête mal formée abandonne le suivi (pas un départ illisible)");
+    assert!(f.contains("let Some(mut dernier) = depart else {"), "abonner : le fil doit chercher le dernier numéro quand le départ a échoué");
+    // Le numéro de reprise est réécrit à chaque issue du tour (sinon tout le journal serait relu à chaque tour)
+    assert!(f.contains("depart = Some(n);") && f.contains("collectes::succes(collecte);\n                depart = Some(dernier);\n                continue;")
+        && f.contains("dernier = prochain_dernier(dernier, n, ok, traite);\n            depart = Some(dernier);"), "abonner : numéro de reprise non conservé");
     assert!(f.contains("let ok = historique(") && f.contains("if ok {\n                collectes::succes(collecte);"), "succès noté avant la lecture des événements");
     assert!(f.contains("dernier = prochain_dernier(dernier, n, ok, traite);") && !f.contains("dernier = n;"), "événements perdus après un échec");
     assert!(e.contains("Err(e) => {\n            return fin_des_resultats(&e);") || e.contains("if let Err(e) = unsafe { EvtNext(resultats, &mut evenements, 1000, 0, &mut n) } {\n            return fin_des_resultats(&e);"), "vider : échec d'EvtNext pris pour la fin");
@@ -3432,6 +3437,8 @@ fn phase3_branchements_des_collectes() {
     assert!(include_str!("siem.rs").contains(r#"("Security", securite, crate::collectes::Collecte::JournalSecurite), ("System", systeme, crate::collectes::Collecte::JournalSysteme)"#), "siem : journaux sans leur collecte");
     let p = include_str!("processus.rs");
     assert!(p.contains("collectes::desactivee(Collecte::Sysmon,"), "Sysmon absent non noté");
+    assert!(p.contains("if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {"), "Sysmon illisible au démarrage : pas de repli sur WMI");
+    assert!(p.contains("collectes::echec(Collecte::Sysmon,"), "Sysmon illisible non noté");
     assert!(p.contains("collectes::desactivee(Collecte::WmiProcessus,"), "WMI inutile (Sysmon lu) non noté");
     assert!(p.contains("collectes::partielle(Collecte::WmiProcessus,"), "WMI partielle non notée");
     let fin = p.find("// Flux terminé : plus aucune création de processus n'est vue").expect("fin du flux WMI non notée");

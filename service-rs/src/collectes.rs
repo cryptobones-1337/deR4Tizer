@@ -412,6 +412,11 @@ pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>) {
                 journaliser(*c, if muette { e.raison() } else { "de nouveau lue" }, t);
             }
             let depuis = if muette { succes + 3 * c.periode() * 10_000_000 } else { case.depuis.load(Ordering::Relaxed) };
+            // Changements tus et minute écoulée : l'état actuel est écrit, journal.txt ne reste pas sur un état périmé
+            if case.tus.load(Ordering::Relaxed) > 0 && t.saturating_sub(case.journal.load(Ordering::Relaxed)) >= 60 * 10_000_000 {
+                let r = e.raison();
+                journaliser(*c, &format!("état actuel {}{}", e.nom(), if r.is_empty() { String::new() } else { format!(" ({r})") }), t);
+            }
             EtatCollecte {
                 id: c.id().into(),
                 etat: e.nom().into(),

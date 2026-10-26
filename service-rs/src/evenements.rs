@@ -116,14 +116,16 @@ fn dernier_numero(canal: &str) -> Option<u64> {
 /// qui prend du retard est déclaré périmé par Windows et ne livre plus rien.
 /// Chaque tour est noté pour la collecte `collecte` : réussi si le numéro du dernier événement est lu et, s'il y a du
 /// nouveau, si les nouveaux événements le sont aussi ; sinon impossible, et les événements non lus sont relus au tour
-/// suivant (`prochain_dernier`).
+/// suivant (`prochain_dernier`). Un journal illisible au départ (erreur passagère au démarrage du PC) est suivi quand
+/// même : le fil cherche son dernier numéro à chaque tour, et le suivi part de là. Rend false seulement si la requête
+/// est mal formée ou si le fil ne démarre pas.
 pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
     let Some(conditions) = requete.trim().strip_prefix("*[System[").and_then(|r| r.strip_suffix("]]")).map(String::from) else { return false };
-    let Some(mut dernier) = dernier_numero(canal) else {
-        collectes::echec(collecte, &format!("journal {canal} illisible"));
-        return false;
-    };
-    collectes::succes(collecte);
+    let mut depart = dernier_numero(canal);
+    match depart {
+        Some(_) => collectes::succes(collecte),
+        None => collectes::echec(collecte, &format!("journal {canal} illisible")),
+    }
     let canal = canal.to_string();
     std::thread::Builder::new()
         .name(format!("journal {canal}"))
@@ -133,12 +135,19 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
                 collectes::echec(collecte, &format!("journal {canal} illisible"));
                 continue;
             };
+            let Some(mut dernier) = depart else {
+                // Première lecture réussie après un départ illisible : le suivi part d'ici
+                depart = Some(n);
+                collectes::succes(collecte);
+                continue;
+            };
             if n < dernier {
                 // Journal effacé : on repart du début
                 dernier = 0;
             }
             if n == dernier {
                 collectes::succes(collecte);
+                depart = Some(dernier);
                 continue;
             }
             let q = format!("*[System[(EventRecordID > {dernier}) and (EventRecordID <= {n}) and ({conditions})]]");
@@ -155,8 +164,14 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
                 collectes::echec(collecte, &format!("événements du journal {canal} illisibles"));
             }
             dernier = prochain_dernier(dernier, n, ok, traite);
+            depart = Some(dernier);
         })
         .is_ok()
+}
+
+/// Journal lisible maintenant (numéro de son dernier événement lu) ?
+pub fn lisible(canal: &str) -> bool {
+    dernier_numero(canal).is_some()
 }
 
 /// Numéro (EventRecordID) d'un événement rendu en XML

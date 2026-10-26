@@ -114,13 +114,16 @@ impl Processus {
 
     /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon
     pub fn demarrer(&self, sur_dns: impl Fn(&str, &str) + Send + 'static) {
-        if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) {
+        // Sysmon illisible maintenant : WMI à la place (abonner suivrait le journal quand même, sans source entre-temps)
+        if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {
             let moi = self.clone();
             if evenements::abonner(JOURNAL_SYSMON, "*[System[(EventID=1 or EventID=22)]]", Collecte::Sysmon, move |xml| moi.traiter_sysmon(&xml, &sur_dns)) {
                 *self.source.lock().unwrap() = "Sysmon".into();
                 collectes::desactivee(Collecte::WmiProcessus, "inutile : Sysmon est lu");
                 return;
             }
+        } else if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) {
+            collectes::echec(Collecte::Sysmon, "journal Sysmon illisible au démarrage : WMI à la place");
         } else {
             collectes::desactivee(Collecte::Sysmon, "Sysmon absent ou son journal inactif");
         }
