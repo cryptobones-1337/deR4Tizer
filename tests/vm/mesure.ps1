@@ -68,6 +68,19 @@ if ($installe) {
         $true
     }
 
+    # Faux positifs (phase 3, PR par domaine) : alertes produites par l'activité synthétique, comptées par règle et par
+    # niveau ; limite écrite dans les fiches : une activité de VM ne représente pas un poste réel
+    try {
+        $fa = Join-Path $script:Donnees 'alertes.json'
+        $alertes = if (Test-Path -LiteralPath $fa) { @(Get-Content -LiteralPath $fa -Raw -Encoding UTF8 | ConvertFrom-Json) } else { @() }
+        $groupes = @($alertes | Group-Object { if ($_.Regle) { "$($_.Regle) $($_.Niveau)" } else { "(sans règle) $($_.Niveau)" } } | Sort-Object Count -Descending)
+        $lignes = @($groupes | ForEach-Object { "$($_.Name) : $($_.Count)" })
+        Set-Content -LiteralPath (Join-Path $Sortie 'mesure-alertes-par-regle.txt') -Value (@("$($alertes.Count) alerte(s) en $Minutes min") + $lignes) -Encoding UTF8
+        Noter 'Alertes par règle pendant la mesure (faux positifs)' 'INFORMATION' $(if ($lignes.Count) { "$($alertes.Count) en $Minutes min : " + ($lignes -join ' ; ') } else { "aucune alerte en $Minutes min" })
+    } catch {
+        Noter 'Alertes par règle pendant la mesure (faux positifs)' 'NON EXÉCUTÉ' "alertes.json illisible : $($_.Exception.Message)"
+    }
+
     Verifier 'Désinstallation' {
         $c = Desinstaller (Join-Path $Journaux 'desinstallation-mesure.log')
         if ($c -ne 0) { return "msiexec a rendu $c" }
