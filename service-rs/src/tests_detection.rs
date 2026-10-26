@@ -208,8 +208,13 @@ fn reference_demarrage(entrees: &[crate::commun::EntreeDemarrage]) -> std::colle
 }
 
 fn regles_comparer(reference: &[crate::commun::EntreeDemarrage], releve: &[crate::commun::EntreeDemarrage], apprentissage: bool) -> (Vec<(String, String)>, bool) {
+    regles_comparer_avec(reference, releve, apprentissage, &mut Default::default())
+}
+
+fn regles_comparer_avec(reference: &[crate::commun::EntreeDemarrage], releve: &[crate::commun::EntreeDemarrage], apprentissage: bool,
+                        en_attente: &mut std::collections::HashSet<String>) -> (Vec<(String, String)>, bool) {
     let mut r = releve.to_vec();
-    let (a, modifie) = crate::persistance::comparer(&reference_demarrage(reference), &mut r, apprentissage);
+    let (a, modifie) = crate::persistance::comparer(&reference_demarrage(reference), &mut r, apprentissage, en_attente);
     (a.into_iter().map(|a| (a.regle, a.niveau)).collect(), modifie)
 }
 
@@ -244,9 +249,31 @@ fn per_002_positif() {
     assert_eq!(a, [("PER-002".to_string(), "Alerte".to_string())]);
     assert!(modifie);
     // Audit de #83, S83-06 : même commande, entrée devenue suspecte (classe COM surchargée après coup dans un profil)
+    // Confirmée au relevé suivant (relecture de #83, R3-D1) : rien au premier, l'alerte au second
     let tache = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "Microsoft Windows", "");
     let surchargee = entree_demarrage("t1", "COM {F47D8C53-0B74-4A66-959D-367710AB1F84}", "?", "serveur COM non enregistré pour la machine");
-    assert_eq!(regles_comparer(&[tache], &[surchargee], false).0, [("PER-002".to_string(), "Alerte".to_string())]);
+    let mut attente = std::collections::HashSet::new();
+    assert!(regles_comparer_avec(&[tache], &[surchargee.clone()], false, &mut attente).0.is_empty(), "premier relevé : à confirmer");
+    assert_eq!(regles_comparer_avec(&[surchargee.clone()], &[surchargee.clone()], false, &mut attente).0, [("PER-002".to_string(), "Alerte".to_string())]);
+    assert!(attente.is_empty());
+    assert!(regles_comparer_avec(&[surchargee.clone()], &[surchargee], false, &mut attente).0.is_empty(), "une seule alerte");
+}
+
+#[test]
+fn per_002_devenu_suspect_passager() {
+    // Relecture de #83, R3-D1 : signature passagèrement invérifiable (démarrage du PC) : « NON SIGNÉ » un relevé, propre
+    // au suivant ; aucune alerte
+    let propre = entree_demarrage("s1", r#"C:\WINDOWS\System32\svchost.exe -k x"#, "Microsoft Windows", "");
+    let passagere = entree_demarrage("s1", r#"C:\WINDOWS\System32\svchost.exe -k x"#, "", "NON SIGNÉ");
+    let mut attente = std::collections::HashSet::new();
+    assert!(regles_comparer_avec(&[propre.clone()], &[passagere.clone()], false, &mut attente).0.is_empty());
+    assert!(regles_comparer_avec(&[passagere], &[propre], false, &mut attente).0.is_empty());
+    assert!(attente.is_empty(), "plus rien à confirmer");
+    // Entrée disparue, ou commande changée, entre les deux relevés : oubliée
+    let mut attente: std::collections::HashSet<String> = ["s2".to_string()].into();
+    let autre = entree_demarrage("s3", "z.exe", "Éditeur", "");
+    regles_comparer_avec(&[autre.clone()], &[autre], false, &mut attente);
+    assert!(attente.is_empty());
 }
 
 #[test]

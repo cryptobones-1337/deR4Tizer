@@ -23,6 +23,8 @@ pub struct Persistance {
     reference: HashMap<String, EntreeDemarrage>,
     apprentissage: bool,
     pub entrees: Vec<EntreeDemarrage>,
+    /// Entrées devenues suspectes au relevé précédent, à confirmer au suivant (anti-rebond de « DEVENU SUSPECT »)
+    en_attente: std::collections::HashSet<String>,
 }
 
 fn dossier_suspect() -> &'static Regex {
@@ -38,7 +40,7 @@ impl Persistance {
         let apprentissage = sauvegarde.is_none() || !marqueur.exists();
         let _ = fs::write(&marqueur, commun::maintenant());
         let reference = sauvegarde.unwrap_or_default().into_iter().map(|e| (e.cle.clone(), e)).collect();
-        Persistance { reference, apprentissage, entrees: Vec::new() }
+        Persistance { reference, apprentissage, entrees: Vec::new(), en_attente: Default::default() }
     }
 
     pub fn verifier(&mut self, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
@@ -55,7 +57,7 @@ impl Persistance {
             e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
         }
-        let (alertes, modifie) = comparer(&self.reference, &mut releve, self.apprentissage);
+        let (alertes, modifie) = comparer(&self.reference, &mut releve, self.apprentissage, &mut self.en_attente);
         self.reference = releve.iter().map(|e| (e.cle.clone(), e.clone())).collect();
         if modifie {
             let _ = commun::ecrire("demarrage.json", &releve);
@@ -69,10 +71,12 @@ impl Persistance {
 /// Décision pure (testée, PER-001 et PER-002) : compare un relevé, déjà évalué (cible, signataire, remarque), à la
 /// référence. Entrée inconnue : NOUVELLE (PER-001) ; commande changée : MODIFIÉE (PER-002) ; commande inchangée mais
 /// entrée DEVENUE SUSPECTE, sans remarque avant, avec une remarque maintenant (PER-002, PR 3.6 : une classe COM surchargée
-/// après coup dans le profil d'un utilisateur, un fichier remplacé par un fichier non signé…) ; autre changement du
-/// signataire ou de la remarque : noté (référence réécrite), sans alerte. Apprentissage : rien n'alerte. Rend (alertes,
-/// référence à réécrire).
-pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mut [EntreeDemarrage], apprentissage: bool) -> (Vec<Alerte>, bool) {
+/// après coup dans le profil d'un utilisateur, un fichier remplacé par un fichier non signé…), si la remarque est encore
+/// là au relevé suivant (`en_attente` : une vérification de signature impossible un instant, au démarrage du PC par
+/// exemple, ne lève rien) ; autre changement du signataire ou de la remarque : noté (référence réécrite), sans alerte.
+/// Apprentissage : rien n'alerte. Rend (alertes, référence à réécrire).
+pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mut [EntreeDemarrage], apprentissage: bool,
+                       en_attente: &mut std::collections::HashSet<String>) -> (Vec<Alerte>, bool) {
     let mut alertes = Vec::new();
     let mut modifie = releve.len() != reference.len();
     for e in releve.iter_mut() {
@@ -87,8 +91,13 @@ pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mu
                     if !apprentissage {
                         alertes.push(alerter(e, &format!("démarrage automatique MODIFIÉ (avant : {})", ancienne.commande)));
                     }
-                } else if ancienne.remarque.is_empty() && !e.remarque.is_empty() && !apprentissage {
-                    // Audit de #83, S83-06 : sinon une surcharge posée en deux temps ne serait jamais remontée
+                } else if ancienne.remarque.is_empty() && !e.remarque.is_empty() {
+                    // Audit de #83, S83-06 : sinon une surcharge posée en deux temps ne serait jamais remontée ; confirmée
+                    // au relevé suivant (relecture de #83, R3-D1 : vérification de signature passagèrement impossible)
+                    if !apprentissage {
+                        en_attente.insert(e.cle.clone());
+                    }
+                } else if en_attente.remove(&e.cle) && !e.remarque.is_empty() && !apprentissage {
                     alertes.push(alerter(e, "démarrage automatique MODIFIÉ, DEVENU SUSPECT (même commande)"));
                 }
             }
@@ -101,6 +110,8 @@ pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mu
             }
         }
     }
+    // Entrées disparues ou dont la commande a changé : plus rien à confirmer
+    en_attente.retain(|c| releve.iter().any(|e| &e.cle == c && reference.get(c).is_some_and(|a| a.commande == e.commande)));
     (alertes, modifie)
 }
 

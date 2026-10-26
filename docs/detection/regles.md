@@ -300,8 +300,11 @@ modules expérimentaux.
   est exactement ce que la règle doit voir.
 - **Devenu suspect** (PR 3.6) : une entrée connue dont la commande n'a pas changé, sans remarque au relevé précédent et
   avec une remarque maintenant, lève aussi PER-002 (« DEVENU SUSPECT ») : classe COM surchargée après coup dans le profil
-  d'un utilisateur, fichier remplacé par un fichier non signé ou déplacé vers un dossier suspect. Une seule alerte, au
-  moment où elle le devient ; aucune pendant l'apprentissage.
+  d'un utilisateur, fichier remplacé par un fichier non signé ou déplacé vers un dossier suspect. Une seule alerte, si la
+  remarque est encore là au relevé suivant (une minute plus tard) ; aucune pendant l'apprentissage. Limite : une
+  vérification de signature impossible plus d'une minute de suite (services de chiffrement lents au démarrage du PC,
+  fichier verrouillé par une mise à jour) peut lever une fausse alerte « NON SIGNÉ » ; aucun scénario ne redémarre la VM
+  avec le service installé pour le mesurer.
 - **Tests** : `per_002_positif` (commande changée vers un dossier suspect ; entrée COM devenue suspecte : Alerte),
   `per_002_negatif` (signataire changé seul, commande changée pendant l'apprentissage : pas d'alerte),
   `per_002_devenu_suspect_negatif` (déjà suspecte, redevenue propre, apprentissage). État : testé en labo.
