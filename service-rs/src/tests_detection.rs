@@ -639,29 +639,44 @@ fn res_003_negatif() {
     assert!(!crate::moniteur::premiere_connexion_signalee(false, true));
 }
 
+/// Adresse publique sous la forme relevée par parefeu::adresses_publiques : « adresse (carte) »
+fn releve(adresse: &str) -> String {
+    format!("{adresse} (Wi-Fi)")
+}
+
 #[test]
 fn res_004_positif() {
     use crate::moniteur::alerte_adresses_publiques;
-    let a = alerte_adresses_publiques(&[], &["203.0.113.7".into()]).expect("adresse apparue");
+    let a = alerte_adresses_publiques(&[], &[releve("203.0.113.7")]).expect("adresse apparue");
     assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("RES-004", "Alerte"));
     // PR 3.8 : une adresse publique qui en remplace une autre (même nombre d'adresses) alerte aussi
-    assert!(alerte_adresses_publiques(&["203.0.113.7".into()], &["198.51.100.9".into()]).is_some());
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &[releve("198.51.100.9")]).is_some());
     // IPv6 : nouveau préfixe /64 (adresses de documentation, RFC 3849)
-    assert!(alerte_adresses_publiques(&["2001:db8:1:1::10".into()], &["2001:db8:1:2::10".into()]).is_some());
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1::10")], &[releve("2001:db8:1:2::10")]).is_some());
 }
 
 #[test]
 fn res_004_negatif() {
     use crate::moniteur::alerte_adresses_publiques;
     // Mêmes adresses, ou adresse disparue
-    assert!(alerte_adresses_publiques(&["203.0.113.7".into()], &["203.0.113.7".into()]).is_none());
-    assert!(alerte_adresses_publiques(&["203.0.113.7".into(), "198.51.100.9".into()], &["203.0.113.7".into()]).is_none());
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &[releve("203.0.113.7")]).is_none());
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7"), releve("198.51.100.9")], &[releve("203.0.113.7")]).is_none());
     assert!(alerte_adresses_publiques(&[], &[]).is_none());
-    // Relecture de #87, D1 : adresse temporaire IPv6 renouvelée dans le même préfixe /64 (chaque jour, et à chaque
-    // reconnexion) : pas une exposition nouvelle
-    assert!(alerte_adresses_publiques(&["2001:db8:1:1:a1b2:c3d4:e5f6:1".into()], &["2001:db8:1:1:9f8e:7d6c:5b4a:2".into()]).is_none());
-    assert!(alerte_adresses_publiques(&["2001:db8:1:1::10".into(), "2001:db8:1:1:a1b2:c3d4:e5f6:1".into()],
-                                      &["2001:db8:1:1::10".into(), "2001:db8:1:1:9f8e:7d6c:5b4a:2".into()]).is_none());
+    // Relecture de #87, D1 et R2-D1 : adresse temporaire IPv6 renouvelée dans le même préfixe /64 (chaque jour, et à
+    // chaque reconnexion), sous la forme relevée : pas une exposition nouvelle
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1:a1b2:c3d4:e5f6:1")], &[releve("2001:db8:1:1:9f8e:7d6c:5b4a:2")]).is_none());
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1::10"), releve("2001:db8:1:1:a1b2:c3d4:e5f6:1")],
+                                      &[releve("2001:db8:1:1::10"), releve("2001:db8:1:1:9f8e:7d6c:5b4a:2")]).is_none());
+    // Même adresse vue sur une autre carte : pas une exposition nouvelle
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &["203.0.113.7 (Ethernet)".into()]).is_none());
+}
+
+/// Relecture de #87, R2-D1 : la forme lue par alerte_adresses_publiques est celle que parefeu::adresses_publiques produit
+/// (contrôle du source : l'appel Windows ne s'exécute pas en test)
+#[test]
+fn res_004_forme_du_releve() {
+    let p = include_str!("parefeu.rs").replace("\r\n", "\n");
+    assert!(p.contains("l.push(format!(\"{ip} ({nom})\"));"), "forme « adresse (carte) » changée : revoir moniteur::reseau_public et releve()");
 }
 
 #[test]

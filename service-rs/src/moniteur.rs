@@ -1512,9 +1512,11 @@ pub(crate) fn alerte_adresses_publiques(avant: &[String], apres: &[String]) -> O
     })
 }
 
-/// Réseau d'une adresse publique : l'adresse IPv4 elle-même, le préfixe /64 d'une adresse IPv6 ; un texte illisible est
-/// gardé tel quel
-fn reseau_public(adresse: &str) -> String {
+/// Réseau d'une adresse publique relevée par `parefeu::adresses_publiques` (« adresse (carte) ») : l'adresse IPv4
+/// elle-même, le préfixe /64 d'une adresse IPv6, sans le nom de la carte (relecture de #87, R2-D1 : l'adresse est lue
+/// avant le premier espace) ; un texte illisible est gardé tel quel
+fn reseau_public(releve: &str) -> String {
+    let adresse = releve.split(' ').next().unwrap_or(releve);
     match adresse.parse::<IpAddr>() {
         Ok(IpAddr::V6(v6)) => {
             let s = v6.segments();
