@@ -201,7 +201,9 @@ modules expérimentaux.
 - **Télémétrie** : création de processus (Sysmon 1 ou WMI) avec le parent.
 - **Si elle manque** : flux WMI arrêté : la source reste affichée « WMI » et la règle se tait.
 - **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
-- **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_001_positif` (Word qui lance PowerShell, avec ou sans ligne de commande, et avec un motif PowerShell en
   plus : PRC-001 l'emporte), `prc_001_negatif` (PowerShell lancé par l'Explorateur ; Word qui lance un programme qui
   n'est pas un interpréteur) ; décision pure `processus::alerte_processus`. Non exercée en VM : aucun Office dans la VM.
@@ -212,7 +214,9 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande (Sysmon 1, ou WMI tant que le processus vit).
 - **Si elle manque** : processus terminé avant la lecture WMI : ligne de commande absente, la règle se tait.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : scripts d'administration ou d'installation encodés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : scripts d'administration ou d'installation encodés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_002_positif` (`-enc` d'une charge de plus de 40 caractères ; `IEX` d'un `DownloadString`),
   `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court). Non exercée en VM : sans Sysmon, la ligne de
   commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
@@ -224,7 +228,9 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
   `rundll32 shell32.dll,Control_RunDLL`). Non exercée en VM (comme PRC-002).
 
@@ -234,7 +240,9 @@ modules expérimentaux.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : développeurs web, outils de test automatisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : développeurs web, outils de test automatisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_004_positif` (Chrome avec `--remote-debugging-port`), `prc_004_negatif` (WebView2 en débogage ;
   Chrome normal) ; existant : `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
 
@@ -247,7 +255,9 @@ modules expérimentaux.
 - **Niveau** : Critique (signal fort, jamais adouci), même quand la ligne contient d'autres motifs. Avant la PR 3.7,
   seul le premier motif trouvé comptait : une ligne comme `… DownloadString(…); vssadmin delete shadows` ne portait que
   PRC-002, au niveau Alerte (faux négatif, corrigé).
-- **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_005_positif` (`vssadmin delete shadows`, `bcdedit … recoveryenabled No`, et la ligne qui télécharge du
   code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
   (`vssadmin list shadows`, `wbadmin get versions`). Non exercée en VM : sans Sysmon, la ligne de commande d'un processus
@@ -261,7 +271,9 @@ modules expérimentaux.
 - **Télémétrie** : arbre des processus et signaux des autres règles.
 - **Si elle manque** : sans processus, aucune chaîne.
 - **Niveau** : Critique.
-- **Faux positifs attendus** : installeurs qui enchaînent des outils signalés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions locales) : aucun.
+- **Faux positifs attendus** : installeurs qui enchaînent des outils signalés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
+  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `cha_001_positif` (deux signaux dans la même descendance, score cumulé au seuil de 12 : une alerte
   Critique, pas de nouvelle alerte au même score, une autre quand le score monte), `cha_001_negatif` (un seul signal,
   même fort ; deux signaux sous le seuil ; deux signaux dans deux descendances distinctes de l'Explorateur, qui est une
