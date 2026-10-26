@@ -9,7 +9,8 @@ use std::process::Command;
 use std::sync::OnceLock;
 use windows::core::PCWSTR;
 use windows::Win32::System::EventLog::{
-    EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryReverseDirection, EvtRender, EvtRenderEventXml, EVT_HANDLE,
+    EvtChannelConfigEnabled, EvtClose, EvtGetChannelConfigProperty, EvtNext, EvtOpenChannelConfig, EvtQuery, EvtQueryChannelPath,
+    EvtQueryReverseDirection, EvtRender, EvtRenderEventXml, EVT_HANDLE, EVT_VARIANT,
 };
 
 /// Journal activé ? (lu avec wevtutil, qui affiche « enabled: true/false »)
@@ -23,11 +24,26 @@ pub fn journal_actif(canal: &str) -> Option<bool> {
 }
 
 pub fn activer_journal(canal: &str, actif: bool) -> bool {
+    // Journal coupé par le service lui-même (retour arrière de la baseline) : son suivi ne le réactive pas
+    {
+        let mut c = COUPES_PAR_LE_SERVICE.lock().unwrap_or_else(|e| e.into_inner());
+        c.retain(|x| !x.eq_ignore_ascii_case(canal));
+        if !actif {
+            c.push(canal.to_string());
+        }
+    }
     Command::new("wevtutil")
         .args(["sl", canal, if actif { "/e:true" } else { "/e:false" }])
         .output()
         .map(|s| s.status.success())
         .unwrap_or(false)
+}
+
+static COUPES_PAR_LE_SERVICE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Journal coupé par le service lui-même (retour arrière de la baseline vers un journal qui était coupé) ?
+pub fn coupe_par_le_service(canal: &str) -> bool {
+    COUPES_PAR_LE_SERVICE.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|x| x.eq_ignore_ascii_case(canal))
 }
 
 fn rendre(evenement: EVT_HANDLE) -> Option<String> {
@@ -104,11 +120,22 @@ pub fn historique(canal: &str, requete: &str, traiter: &mut dyn FnMut(String)) -
 
 /// Numéro (EventRecordID) du dernier événement du journal ; None si le journal n'existe pas ou est illisible
 fn dernier_numero(canal: &str) -> Option<u64> {
+    numero_extreme(canal, true)
+}
+
+/// Numéro du plus ancien événement encore présent (les plus anciens sont écrasés par la rotation du journal) ; 0 pour
+/// un journal vide (`perte_rotation` n'y voit alors aucune perte)
+fn plus_ancien_numero(canal: &str) -> Option<u64> {
+    numero_extreme(canal, false)
+}
+
+fn numero_extreme(canal: &str, dernier: bool) -> Option<u64> {
     static MOTIF: OnceLock<Regex> = OnceLock::new();
     let motif = MOTIF.get_or_init(|| Regex::new(r"<EventRecordID>(\d+)</EventRecordID>").unwrap());
     let (c, r) = (large(canal), large("*"));
     unsafe {
-        let resultats = EvtQuery(None, PCWSTR(c.as_ptr()), PCWSTR(r.as_ptr()), EvtQueryChannelPath.0 as u32 | EvtQueryReverseDirection.0 as u32).ok()?;
+        let sens = if dernier { EvtQueryReverseDirection.0 as u32 } else { 0 };
+        let resultats = EvtQuery(None, PCWSTR(c.as_ptr()), PCWSTR(r.as_ptr()), EvtQueryChannelPath.0 as u32 | sens).ok()?;
         let mut evenements = [0isize; 1];
         let mut n = 0u32;
         let numero = match EvtNext(resultats, &mut evenements, 1000, 0, &mut n) {
@@ -146,8 +173,10 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
     }
     let canal = canal.to_string();
     let mut blocage = Blocage::default();
-    // Dernier saut (heure, nombre de numéros sautés) : la collecte reste « Partielle » une heure, pas « Active »
-    let mut saut: Option<(std::time::Instant, u64)> = None;
+    // Dernière perte (heure, nombre de numéros sautés ou écrasés) : la collecte reste « Partielle » une heure
+    let mut perte: Option<(std::time::Instant, u64)> = None;
+    // Désactivation du journal déjà écrite dans journal.txt (une ligne par épisode)
+    let mut desactivation_signalee = false;
     std::thread::Builder::new()
         .name(format!("journal {canal}"))
         .spawn(move || loop {
@@ -156,10 +185,52 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
                 collectes::echec(collecte, &format!("journal {canal} illisible"));
                 continue;
             };
+            // Journal désactivé : encore lisible, mais Windows n'y écrit plus rien. Le journal DNS est réactivé
+            // (décision D4) ; les autres sont seulement signalés.
+            let desactive = canal_actif(&canal) == Some(false);
+            let mut reactive = false;
+            // Coupé par le service lui-même (retour arrière de la baseline, demandé par l'administrateur) : respecté
+            let coupe = desactive && coupe_par_le_service(&canal);
+            if desactive {
+                // Une tentative par épisode : une réactivation refusée ne relance pas wevtutil toutes les 2 s
+                if a_reactiver(&canal) && !coupe && !desactivation_signalee {
+                    reactive = activer_journal(&canal, true);
+                }
+                if !desactivation_signalee || reactive {
+                    commun::journal(&format!("journal {canal} désactivé{}", match (coupe, a_reactiver(&canal), reactive) {
+                        (true, _, _) => " par le retour arrière de la baseline : laissé coupé",
+                        (_, true, true) => " par un autre programme : réactivé",
+                        (_, true, false) => " par un autre programme : réactivation impossible",
+                        _ => " par un autre programme",
+                    }));
+                }
+                desactivation_signalee = !reactive;
+            } else {
+                desactivation_signalee = false;
+            }
+            let noter = |issue: Option<Lecture>, b: &Blocage, perte: &Option<(std::time::Instant, u64)>| {
+                if coupe {
+                    collectes::desactivee(collecte, &format!("journal {canal} coupé par le retour arrière de la baseline"));
+                    return;
+                }
+                if desactive && !reactive {
+                    collectes::echec(collecte, &format!("journal {canal} désactivé : plus aucun événement n'y est écrit"));
+                    return;
+                }
+                match issue {
+                    None | Some(Lecture::Complete) => noter_lu(collecte, perte),
+                    // Aucun progrès depuis une minute (délais, ou délais et erreurs mêlés) : plus rien n'est lu
+                    Some(Lecture::Delai) if b.sans_progres >= LIMITE_BLOCAGE => {
+                        collectes::echec(collecte, &format!("lecture du journal {canal} bloquée par des délais dépassés (journal inondé ?), rien n'est sauté"))
+                    }
+                    Some(Lecture::Delai) => collectes::partielle(collecte, &format!("lecture du journal {canal} trop lente (délai dépassé) : reprise au tour suivant")),
+                    Some(Lecture::Erreur) => collectes::echec(collecte, &format!("événements du journal {canal} illisibles")),
+                }
+            };
             let Some(mut dernier) = depart else {
                 // Première lecture réussie après un départ illisible : le suivi part d'ici
                 depart = Some(n);
-                noter_lu(collecte, &saut);
+                noter(None, &blocage, &perte);
                 continue;
             };
             if n < dernier {
@@ -167,89 +238,141 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
                 dernier = 0;
             }
             if n == dernier {
-                noter_lu(collecte, &saut);
+                noter(None, &blocage, &perte);
                 depart = Some(dernier);
                 continue;
             }
-            let q = format!("*[System[(EventRecordID > {dernier}) and (EventRecordID <= {n}) and ({conditions})]]");
-            let mut traite: Option<u64> = None;
-            let lecture = historique(&canal, &q, &mut |xml| {
-                if let Some(id) = numero_evenement(&xml) {
-                    traite = Some(traite.map_or(id, |t| t.max(id)));
-                }
-                traiter(xml);
-            });
-            let ok = lecture == Lecture::Complete;
-            let lu_jusqu_a = prochain_dernier(dernier, n, ok, traite);
-            let (suivant, b, sautes) = apres_blocage(dernier, lu_jusqu_a, n, lecture, blocage);
-            if sautes > 0 {
-                commun::journal(&format!("journal {canal} : lecture bloquée {LIMITE_BLOCAGE} tours de suite au même endroit ; numéros {} à {suivant} sautés", lu_jusqu_a + 1));
-                saut = Some((std::time::Instant::now(), saut.filter(|(t, _)| t.elapsed().as_secs() < 3600).map_or(0, |(_, s)| s) + sautes));
+            // Des événements non lus ont pu être écrasés par la rotation du journal (un petit journal, DNS-Client ou
+            // Defender, tourne en quelques milliers d'événements) : vérifié à chaque tour qui a du nouveau ; on repart du
+            // plus ancien encore présent et la perte est signalée
+            if let Some((reprise, perdus)) = plus_ancien_numero(&canal).and_then(|a| perte_rotation(dernier, a)) {
+                commun::journal(&format!("journal {canal} : {perdus} événement(s) écrasé(s) par la rotation du journal avant d'être lus"));
+                perte = Some((std::time::Instant::now(), cumul_perte(&perte) + perdus));
+                dernier = reprise;
             }
-            match lecture {
-                Lecture::Complete => noter_lu(collecte, &saut),
-                // Lent mais progresse : partielle ; aucun progrès depuis une minute : plus rien n'est lu, indisponible
-                Lecture::Delai if b.delais >= LIMITE_BLOCAGE => {
-                    collectes::echec(collecte, &format!("lecture du journal {canal} bloquée par des délais dépassés (journal inondé ?), rien n'est sauté"))
+            // Fenêtres enchaînées tant qu'elles se lisent jusqu'au bout et que le budget du tour (1,5 s) le permet : un
+            // journal très actif est rattrapé sans figer le fil
+            let debut = std::time::Instant::now();
+            let lecture = loop {
+                let fin = fenetre(dernier, n);
+                let q = format!("*[System[(EventRecordID > {dernier}) and (EventRecordID <= {fin}) and ({conditions})]]");
+                let mut traite: Option<u64> = None;
+                let lecture = historique(&canal, &q, &mut |xml| {
+                    if let Some(id) = numero_evenement(&xml) {
+                        traite = Some(traite.map_or(id, |t| t.max(id)));
+                    }
+                    traiter(xml);
+                });
+                let lu_jusqu_a = prochain_dernier(dernier, fin, lecture == Lecture::Complete, traite);
+                let (suivant, b, sautes) = apres_blocage(dernier, lu_jusqu_a, fin, lecture, blocage);
+                if sautes > 0 {
+                    commun::journal(&format!("journal {canal} : lecture bloquée {LIMITE_BLOCAGE} tours de suite au même endroit ; numéros {} à {suivant} sautés", lu_jusqu_a + 1));
+                    perte = Some((std::time::Instant::now(), cumul_perte(&perte) + sautes));
                 }
-                Lecture::Delai => collectes::partielle(collecte, &format!("lecture du journal {canal} trop lente (délai dépassé) : reprise au tour suivant")),
-                Lecture::Erreur => collectes::echec(collecte, &format!("événements du journal {canal} illisibles")),
-            }
-            blocage = b;
-            dernier = suivant;
+                blocage = b;
+                dernier = suivant;
+                if !encore_une_fenetre(lecture, dernier, n, debut.elapsed()) {
+                    break lecture;
+                }
+            };
+            noter(Some(lecture), &blocage, &perte);
             depart = Some(dernier);
         })
         .is_ok()
 }
 
-/// Lecture réussie : « Active », ou « Partielle » pendant une heure après un saut d'événements
-fn noter_lu(collecte: Collecte, saut: &Option<(std::time::Instant, u64)>) {
-    match saut {
+/// Journal à réactiver s'il est désactivé (décision D4 : le journal DNS-Client, que le service active lui-même au
+/// démarrage) ; les autres journaux désactivés sont seulement signalés
+pub fn a_reactiver(canal: &str) -> bool {
+    canal.eq_ignore_ascii_case("Microsoft-Windows-DNS-Client/Operational")
+}
+
+/// Journal activé ? (configuration du canal, API native : assez léger pour chaque tour de 2 s) ; None si illisible
+pub fn canal_actif(canal: &str) -> Option<bool> {
+    let c = large(canal);
+    unsafe {
+        let h = EvtOpenChannelConfig(None, PCWSTR(c.as_ptr()), 0).ok()?;
+        let mut v = EVT_VARIANT::default();
+        let mut utilise = 0u32;
+        let r = EvtGetChannelConfigProperty(h, EvtChannelConfigEnabled, 0, std::mem::size_of::<EVT_VARIANT>() as u32, Some(&mut v), &mut utilise);
+        let _ = EvtClose(h);
+        r.ok()?;
+        // EvtVarTypeBoolean
+        (v.Type == 13).then(|| v.Anonymous.BooleanVal.as_bool())
+    }
+}
+
+/// Numéros lus au plus par tour : une fenêtre lue jusqu'au bout avance jusqu'à sa borne, même sans événement retenu
+/// (un journal inondé d'événements que la requête écarte ne fige plus la lecture)
+pub const FENETRE: u64 = 5000;
+
+/// Décision pure (testée) : lire une fenêtre de plus dans ce tour ? Seulement après une fenêtre lue jusqu'au bout, s'il
+/// reste des numéros et si le tour a duré moins de 1,5 s (le fil revient régulièrement noter son état)
+pub fn encore_une_fenetre(lecture: Lecture, dernier: u64, n: u64, ecoule: std::time::Duration) -> bool {
+    lecture == Lecture::Complete && dernier < n && ecoule < std::time::Duration::from_millis(1500)
+}
+
+/// Décision pure (testée) : borne de la fenêtre lue à ce tour
+pub fn fenetre(dernier: u64, n: u64) -> u64 {
+    n.min(dernier.saturating_add(FENETRE))
+}
+
+/// Décision pure (testée) : le plus ancien numéro encore présent est au-delà du prochain à lire ? Rend (numéro de
+/// reprise, numéros écrasés par la rotation avant d'être lus)
+pub fn perte_rotation(dernier: u64, plus_ancien: u64) -> Option<(u64, u64)> {
+    (plus_ancien > dernier.saturating_add(1)).then(|| (plus_ancien - 1, plus_ancien - 1 - dernier))
+}
+
+fn cumul_perte(perte: &Option<(std::time::Instant, u64)>) -> u64 {
+    perte.filter(|(t, _)| t.elapsed().as_secs() < 3600).map_or(0, |(_, s)| s)
+}
+
+/// Lecture réussie : « Active », ou « Partielle » pendant une heure après une perte (saut ou rotation)
+fn noter_lu(collecte: Collecte, perte: &Option<(std::time::Instant, u64)>) {
+    match perte {
         Some((t, n)) if t.elapsed().as_secs() < 3600 => {
-            collectes::partielle(collecte, &format!("{n} numéro(s) d'événement sauté(s) dans l'heure (lecture bloquée)"))
+            collectes::partielle(collecte, &format!("{n} numéro(s) d'événement perdu(s) dans l'heure (lecture bloquée ou rotation du journal)"))
         }
         _ => collectes::succes(collecte),
     }
 }
 
-/// Tours de suite en erreur sans aucun progrès avant de sauter (2 s par tour : une minute)
+/// Tours de suite sans aucun progrès (délais dépassés et erreurs comptés ensemble) avant d'agir (2 s par tour : une
+/// minute)
 pub const LIMITE_BLOCAGE: u32 = 30;
 
-/// Lecture bloquée en cours : tours en erreur sans progrès, pas du prochain saut, tours en délai dépassé sans progrès
+/// Lecture bloquée en cours : tours sans progrès, pas du prochain saut
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Blocage {
-    pub tours: u32,
+    pub sans_progres: u32,
     pub pas: u64,
-    pub delais: u32,
 }
 
 impl Default for Blocage {
     fn default() -> Self {
-        Blocage { tours: 0, pas: 1, delais: 0 }
+        Blocage { sans_progres: 0, pas: 1 }
     }
 }
 
-/// Décision pure (testée) : un événement qui fait toujours échouer la lecture (journal corrompu) ne bloque pas le suivi
-/// sans fin, sans pour autant jeter tout l'intervalle. Rend (numéro de reprise, blocage, numéros sautés).
+/// Décision pure (testée) : un journal dont la lecture ne progresse plus ne bloque pas le suivi sans fin, sans jeter
+/// tout l'intervalle. Rend (numéro de reprise, blocage, numéros sautés).
 /// - lecture complète, ou progrès : reprise normale, blocage remis à zéro ;
-/// - délai dépassé (journal chargé, inondé) : ce n'est pas un blocage, rien n'est sauté, la lecture reprend où elle
-///   s'est arrêtée ; les délais sans progrès sont comptés (`delais`) : au-delà de `LIMITE_BLOCAGE`, la collecte est
-///   « Indisponible » (plus rien n'est lu), en deçà « Partielle » ;
-/// - erreur sans progrès `LIMITE_BLOCAGE` tours de suite : on saute `pas` numéros juste après le dernier lu (1, puis
-///   2, 4… si le blocage persiste, sans dépasser `n`) ; seul le voisinage du point de blocage est perdu.
+/// - sinon, un tour sans progrès de plus (délai dépassé ou erreur, comptés ensemble : une alternance des deux finit
+///   aussi par agir) ; arrivé à `LIMITE_BLOCAGE` :
+///   - sur une erreur (événement illisible, journal corrompu) : on saute `pas` numéros juste après le dernier lu (1,
+///     puis 2, 4… si le blocage persiste, sans dépasser `n`) ;
+///   - sur un délai dépassé (journal inondé) : rien n'est sauté, la collecte passe « Indisponible ».
 pub fn apres_blocage(dernier: u64, suivant: u64, n: u64, lecture: Lecture, b: Blocage) -> (u64, Blocage, u64) {
     if lecture == Lecture::Complete || suivant > dernier {
         return (suivant, Blocage::default(), 0);
     }
-    if lecture == Lecture::Delai {
-        return (suivant, Blocage { tours: 0, delais: b.delais.saturating_add(1), ..b }, 0);
-    }
-    if b.tours + 1 < LIMITE_BLOCAGE {
-        return (suivant, Blocage { tours: b.tours + 1, delais: 0, ..b }, 0);
+    let sans_progres = b.sans_progres.saturating_add(1);
+    if sans_progres < LIMITE_BLOCAGE || lecture == Lecture::Delai {
+        return (suivant, Blocage { sans_progres, ..b }, 0);
     }
     let reprise = suivant.saturating_add(b.pas).min(n);
     // Encore bloqué au tour suivant : nouveau saut aussitôt, deux fois plus long
-    (reprise, Blocage { tours: LIMITE_BLOCAGE - 1, pas: b.pas.saturating_mul(2), delais: 0 }, reprise - suivant)
+    (reprise, Blocage { sans_progres: LIMITE_BLOCAGE - 1, pas: b.pas.saturating_mul(2) }, reprise - suivant)
 }
 
 /// Journal lisible maintenant (numéro de son dernier événement lu) ?

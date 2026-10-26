@@ -283,6 +283,20 @@ pub fn noter_comptes(c: Collecte, lus: usize, en_echec: usize, quoi: &str) {
     }
 }
 
+/// Décision pure (testée) : collecte d'où vient une alerte de la règle `regle` : la première source lue du premier
+/// groupe de ses besoins (celle qui a produit l'alerte quand plusieurs peuvent le faire, Sysmon ou journal DNS), sinon
+/// la première listée ; vide pour une règle sans source suivie
+pub fn collecte_de(regle: &str, etat: &dyn Fn(Collecte) -> EtatPublie) -> &'static str {
+    let Some(groupe) = besoins(regle).first() else { return "" };
+    groupe.iter().find(|c| matches!(etat(**c), EtatPublie::Active | EtatPublie::Partielle(_))).or(groupe.first()).map_or("", |c| c.id())
+}
+
+/// Collecte d'une alerte, d'après l'état actuel des collectes
+pub fn collecte_de_l_alerte(regle: &str) -> &'static str {
+    let t = maintenant();
+    collecte_de(regle, &|c| etat_a(c, t))
+}
+
 /// Dernière lecture réussie il y a moins de trois intervalles (un échec passager ne compte pas)
 pub fn lue_recemment(c: Collecte) -> bool {
     lue_dans_le_delai(CASES[c.index()].dernier_succes.load(Ordering::Relaxed), c.periode(), maintenant())

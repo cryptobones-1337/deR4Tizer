@@ -865,6 +865,10 @@ impl Moniteur {
         let empreinte = if a.niveau != "Critique" && a.niveau != "Info" { commun::empreinte_signature(&crate::apprentissage::signature(&a)) } else { String::new() };
         crate::apprentissage::filtrer(&mut a);
         a.signature = empreinte;
+        // Collecte d'origine (phase 3.3c), hors de la signature : les exceptions et l'apprentissage n'en dépendent pas
+        if a.collecte.is_empty() {
+            a.collecte = collectes::collecte_de_l_alerte(&a.regle).to_string();
+        }
         commun::borner_alerte(&mut a);
         if let Some(cle) = cle {
             if let Some(t) = self.dernieres_alertes.get(&cle) {
