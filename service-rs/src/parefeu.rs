@@ -384,7 +384,11 @@ impl LecteurJournal {
     /// Lit les lignes ajoutées depuis le dernier passage ; renvoie les alertes
     pub fn lire(&mut self, nom_processus: &dyn Fn(u32) -> String, ctx: &ContexteExposition) -> Vec<Alerte> {
         let mut alertes = Vec::new();
-        let Ok(mut f) = fs::File::open(&self.fichier) else { return alertes };
+        let Ok(mut f) = fs::File::open(&self.fichier) else {
+            crate::collectes::echec(crate::collectes::Collecte::PaquetsParefeu, "pfirewall.log absent ou illisible");
+            return alertes;
+        };
+        crate::collectes::succes(crate::collectes::Collecte::PaquetsParefeu);
         let taille = f.metadata().map(|m| m.len()).unwrap_or(0);
         if taille < self.position {
             self.position = 0; // le journal a été recommencé (taille maximale atteinte)

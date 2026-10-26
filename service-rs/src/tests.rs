@@ -3309,33 +3309,93 @@ fn phase3_chaque_regle_a_sa_telemetrie() {
 }
 
 /// Phase 3.3 : notes de l'état global et publication ; la raison publiée ne porte aucun nom de compte, aucun caractère
-/// de contrôle, et 200 caractères au plus. (Capture : non notée par le service dans cette version, libre pour le test.)
+/// de contrôle, et 200 caractères au plus. (CaptureReseauLocal : notée seulement par le fil de capture, absent des tests.)
 #[test]
 fn phase3_collecte_notes_et_publication() {
     use crate::collectes::{self, Collecte};
     let ligne = |id: &str| collectes::publier().0.into_iter().find(|e| e.id == id).unwrap();
-    assert_eq!(ligne("Capture").etat, "Inconnue");
-    assert!(collectes::publier().1.contains(&"EXP-IDS-001".to_string()), "collecte inconnue : règle sans collecte");
-    collectes::echec(Collecte::Capture, "lecture de C:\\Users\\Quelquun\\x impossible\nsuite");
-    let e = ligne("Capture");
+    assert_eq!(ligne("CaptureReseauLocal").etat, "Inconnue");
+    assert!(collectes::publier().1.contains(&"EXP-NDR-001".to_string()), "collecte inconnue : règle sans collecte");
+    collectes::echec(Collecte::CaptureReseauLocal, "lecture de C:\\Users\\Quelquun\\x impossible\nsuite");
+    let e = ligne("CaptureReseauLocal");
     assert_eq!(e.etat, "Indisponible");
     assert!(!e.raison.contains("Quelquun") && e.raison.contains("%USERPROFILE%") && !e.raison.contains('\n'), "{}", e.raison);
     assert!(!e.depuis.is_empty() && e.dernier_succes.is_empty());
-    collectes::succes(Collecte::Capture);
-    let e = ligne("Capture");
+    collectes::succes(Collecte::CaptureReseauLocal);
+    let e = ligne("CaptureReseauLocal");
     assert!(e.etat == "Active" && e.raison.is_empty() && !e.dernier_succes.is_empty());
-    assert!(!collectes::publier().1.contains(&"EXP-IDS-001".to_string()));
-    collectes::desactivee(Collecte::Capture, &"x".repeat(500));
-    let e = ligne("Capture");
+    assert!(!collectes::publier().1.contains(&"EXP-NDR-001".to_string()));
+    collectes::desactivee(Collecte::CaptureReseauLocal, &"x".repeat(500));
+    let e = ligne("CaptureReseauLocal");
     assert!(e.etat == "Desactivee" && e.raison.chars().count() == 200);
     // Masquage de tout chemin de profil : nom avec espace, barres obliques, préfixes \\?\ et \Device\…
     for (texte, nom) in [(r"lecture de C:\Users\Jean Dupont\AppData impossible", "Dupont"), ("C:/Users/Quelquun/x", "Quelquun"),
                          (r"\\?\C:\Users\Autre\x", "Autre"), (r"\Device\HarddiskVolume3\Users\Encore\x", "Encore"),
-                         (r"fin c:\users\Dernier", "Dernier")] {
+                         (r"fin c:\users\Dernier", "Dernier"), (r"\\poste\c$\Users\Partage\x", "Partage")] {
         let b = collectes::borner(texte);
         assert!(!b.contains(nom) && b.contains("%USERPROFILE%"), "{texte} → {b}");
     }
     assert_eq!(collectes::borner(r"journal Microsoft-Windows-DNS-Client/Operational illisible"), r"journal Microsoft-Windows-DNS-Client/Operational illisible");
+}
+
+/// Phase 3.3b : lecture sur plusieurs éléments (dossiers audités, réglages de la baseline) : rien à lire, désactivée ;
+/// rien de lu, indisponible ; une partie, partielle
+#[test]
+fn phase3_decision_comptes() {
+    use crate::collectes::{decision_comptes, Note};
+    assert_eq!(decision_comptes(0, 0), Note::Desactivee);
+    assert_eq!(decision_comptes(0, 3), Note::Indisponible);
+    assert_eq!(decision_comptes(2, 1), Note::Partielle);
+    assert_eq!(decision_comptes(5, 0), Note::Active);
+}
+
+/// Phase 3.3b : un événement qui fait toujours échouer la lecture ne bloque pas le suivi sans fin : après
+/// LIMITE_BLOCAGE tours sans progrès, l'intervalle est sauté (et le saut est signalé) ; un progrès remet le compte à zéro
+#[test]
+fn phase3_journal_bloque_saute() {
+    use crate::evenements::{apres_blocage, LIMITE_BLOCAGE};
+    assert_eq!(apres_blocage(10, 20, 20, true, 7), (20, 0, false));
+    assert_eq!(apres_blocage(10, 15, 20, false, 7), (15, 0, false), "progrès : compte remis à zéro");
+    assert_eq!(apres_blocage(10, 10, 20, false, 0), (10, 1, false));
+    assert_eq!(apres_blocage(10, 10, 20, false, LIMITE_BLOCAGE - 2), (10, LIMITE_BLOCAGE - 1, false));
+    assert_eq!(apres_blocage(10, 10, 20, false, LIMITE_BLOCAGE - 1), (20, 0, true), "bloqué : intervalle sauté");
+}
+
+/// Phase 3.3b : branchements des collectes restantes (contrôle du source : ces lectures Windows ne s'exécutent pas en
+/// test) ; chaque source note son échec, et l'indice « IP directe » suit l'état lu du journal DNS (pas son état au
+/// démarrage)
+#[test]
+fn phase3_branchements_des_collectes_restantes() {
+    let n = include_str!("moniteur.rs").replace("\r\n", "\n");
+    for (motif, quoi) in [
+        ("Err(e) => {\n                collectes::echec(Collecte::Processus, &e);", "instantané des processus en échec"),
+        ("collectes::echec(Collecte::Leurres, \"aucun leurre posé\")", "aucun leurre"),
+        ("collectes::desactivee(Collecte::Leurres, \"mode console", "leurres en console"),
+        ("if persistance.entrees.is_empty() {\n                        collectes::echec(Collecte::Persistance,", "relevé vide"),
+        ("collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues,", "baseline"),
+        ("collectes::desactivee(Collecte::AuditDonnees, \"mode console", "audit en console"),
+        ("crate::capture::demarrer(\"trafic\", Collecte::CaptureTrafic,", "capture du trafic"),
+        ("crate::capture::demarrer(\"réseau local\", Collecte::CaptureReseauLocal,", "capture du réseau local"),
+        ("collectes::desactivee(c, \"mode console : capture", "capture en console"),
+        ("} else if dns_lu && !self.preexistants.contains(&cle) {", "IP directe selon le journal DNS lu"),
+        ("let dns_lu = collectes::est_active(Collecte::JournalDns);", "état lu du journal DNS"),
+    ] {
+        assert!(n.contains(motif), "moniteur : {quoi}");
+    }
+    assert!(!n.contains("self.journal_dns_actif"), "IP directe : plus l'état de départ du journal DNS");
+    let c = include_str!("capture.rs").replace("\r\n", "\n");
+    assert!(c.contains("crate::collectes::echec(collecte, \"aucune interface réseau à écouter\");"));
+    assert!(c.contains("crate::collectes::echec(collecte, &format!(\"ouverture de la capture impossible"));
+    assert_eq!(c.matches("crate::collectes::succes(collecte);").count(), 2, "capture : ouverture et tic");
+    let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
+    assert!(v.contains("echecs += 1;") && v.contains("crate::collectes::noter_comptes(crate::collectes::Collecte::AuditDonnees, n, echecs,"));
+    assert!(include_str!("surveillances.rs").contains("Err(_) => crate::collectes::echec(crate::collectes::Collecte::Peripheriques,"));
+    assert!(include_str!("parefeu.rs").contains("crate::collectes::echec(crate::collectes::Collecte::PaquetsParefeu, \"pfirewall.log absent ou illisible\");"));
+    assert!(include_str!("hygiene.rs").contains("Err(_) => crate::collectes::echec(crate::collectes::Collecte::Extensions,"));
+    let na = include_str!("natif.rs").replace("\r\n", "\n");
+    assert!(na.contains("else { return Err(\"instantané des processus impossible\".into()) };") && na.contains("if !premier {\n            return Err("));
+    let e = include_str!("evenements.rs").replace("\r\n", "\n");
+    assert!(e.contains("let (suivant, b, saute) = apres_blocage(dernier, prochain_dernier(dernier, n, ok, traite), n, ok, bloques);"), "abonner : blocage non traité");
 }
 
 /// Phase 3.3 : lecture d'un journal suivi interrompue : les événements non lus sont relus au tour suivant (aucune perte),
@@ -3424,9 +3484,9 @@ fn phase3_branchements_des_collectes() {
     assert!(f.contains("let Some(mut dernier) = depart else {"), "abonner : le fil doit chercher le dernier numéro quand le départ a échoué");
     // Le numéro de reprise est réécrit à chaque issue du tour (sinon tout le journal serait relu à chaque tour)
     assert!(f.contains("depart = Some(n);") && f.contains("collectes::succes(collecte);\n                depart = Some(dernier);\n                continue;")
-        && f.contains("dernier = prochain_dernier(dernier, n, ok, traite);\n            depart = Some(dernier);"), "abonner : numéro de reprise non conservé");
+        && f.contains("dernier = suivant;\n            depart = Some(dernier);"), "abonner : numéro de reprise non conservé");
     assert!(f.contains("let ok = historique(") && f.contains("if ok {\n                collectes::succes(collecte);"), "succès noté avant la lecture des événements");
-    assert!(f.contains("dernier = prochain_dernier(dernier, n, ok, traite);") && !f.contains("dernier = n;"), "événements perdus après un échec");
+    assert!(f.contains("prochain_dernier(dernier, n, ok, traite)") && !f.contains("dernier = n;"), "événements perdus après un échec");
     assert!(e.contains("Err(e) => {\n            return fin_des_resultats(&e);") || e.contains("if let Err(e) = unsafe { EvtNext(resultats, &mut evenements, 1000, 0, &mut n) } {\n            return fin_des_resultats(&e);"), "vider : échec d'EvtNext pris pour la fin");
     assert!(e.contains("Err(_) => None,"), "dernier_numero : échec pris pour un journal vide");
     for (nom, s, c) in [("defender", include_str!("defender.rs"), "JournalDefender"), ("parefeu", include_str!("parefeu.rs"), "JournalParefeu"),

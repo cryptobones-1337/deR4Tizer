@@ -281,24 +281,27 @@ if ($compte) {
 }
 
 # ---------------------------------------------------------------- état des collectes (phase 3.3)
-# Témoin retenu : les collectes branchées sont lues dans la VM (Sysmon absent : désactivée, WMI partielle ; listes de
-# domaines désactivées par le réglage par défaut) et leurs règles ne sont pas « sans collecte ». Témoins écartés : la
-# capture (gelée) n'est pas encore notée, elle reste « Inconnue » et EXP-IDS-001 est publiée sans collecte ; puis une
-# liste LOLDrivers vide (posée par l'administrateur, propriétaire contrôlé) rend LOLDrivers « Indisponible » et
-# PIL-001 sans collecte. Écart au dossier : le journal DNS coupé après le démarrage (D4) vient avec la PR 3.3b.
-Verifier 'État des collectes : collectes branchées actives, inconnue publiée sans collecte' {
-    # L'état de Defender est lu par le fil « contrôles » au démarrage : attendu en 3 min au plus
+# Témoin retenu : toutes les collectes sont notées (aucune « Inconnue ») ; celles que la VM fournit sont lues
+# (Sysmon absent : désactivée, WMI partielle ; listes de domaines désactivées par le réglage par défaut) et leurs règles
+# ne sont pas « sans collecte ». Témoin écarté : une liste LOLDrivers vide (posée par l'administrateur, propriétaire
+# contrôlé) rend LOLDrivers « Indisponible » et PIL-001 sans collecte. Écart au dossier : le journal DNS coupé après le
+# démarrage (D4) vient avec la PR 3.3c.
+Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
+    # Defender, extensions et baseline sont lus par le fil « contrôles » au démarrage : attendus en 3 min au plus
     $fin = (Get-Date).AddSeconds(180)
     do {
         $e = Etat
         $c = @{}
         if ($e -and $e.Collectes) { foreach ($x in $e.Collectes) { $c[$x.Id] = $x } }
-        if ($c.Count -and $c['EtatDefender'] -and $c['EtatDefender'].Etat -ne 'Inconnue') { break }
+        if ($c.Count -and -not @($c.Values | Where-Object { $_.Etat -eq 'Inconnue' }).Count) { break }
         Start-Sleep 3
     } while ((Get-Date) -lt $fin)
     if (-not $c.Count) { return 'etat.json sans Collectes' }
     $vu = ($c.Values | ForEach-Object { "$($_.Id)=$($_.Etat)" }) -join ' '
-    foreach ($id in 'Connexions', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns') {
+    $inconnues = @($c.Values | Where-Object { $_.Etat -eq 'Inconnue' } | ForEach-Object { $_.Id })
+    if ($inconnues.Count) { return "collecte(s) jamais notée(s) : $($inconnues -join ', ') ; $vu" }
+    foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns',
+                    'Persistance', 'Leurres', 'Extensions', 'Peripheriques', 'CaptureTrafic') {
         if (-not $c[$id]) { return "collecte $id absente ; $vu" }
         if ($c[$id].Etat -ne 'Active') { return "collecte $id : $($c[$id].Etat) ($($c[$id].Raison)) ; $vu" }
     }
@@ -309,13 +312,12 @@ Verifier 'État des collectes : collectes branchées actives, inconnue publiée 
         if ($c['Sysmon'].Etat -ne 'Desactivee') { return "Sysmon absent mais collecte $($c['Sysmon'].Etat) ; $vu" }
         if ($c['WmiProcessus'].Etat -ne 'Partielle') { return "WMI des processus : $($c['WmiProcessus'].Etat) ; $vu" }
     }
-    if ($c['Capture'].Etat -ne 'Inconnue') { return "capture : $($c['Capture'].Etat) (attendue inconnue, non notée) ; $vu" }
+    if ($c['Baseline'].Etat -notin 'Active', 'Partielle') { return "baseline : $($c['Baseline'].Etat) ($($c['Baseline'].Raison)) ; $vu" }
     if ($c['ListesDomaines'].Etat -ne 'Desactivee') { return "listes de domaines : $($c['ListesDomaines'].Etat) (attendues désactivées par défaut) ; $vu" }
     $sans = @($e.ReglesSansCollecte)
-    foreach ($r in 'DEF-001', 'DEF-010', 'RES-003', 'SYS-002', 'COR-R1') {
+    foreach ($r in 'DEF-001', 'DEF-010', 'RES-002', 'RES-003', 'SYS-002', 'COR-R1', 'PER-001', 'CHA-001', 'LEU-001', 'EXT-001', 'VIE-001', 'EXP-IDS-001') {
         if ($sans -contains $r) { return "règle $r publiée sans collecte ; sans collecte : $($sans -join ', ')" }
     }
-    if ($sans -notcontains 'EXP-IDS-001') { return "EXP-IDS-001 (capture inconnue) absente des règles sans collecte : $($sans -join ', ')" }
     $deg = @($e.ReglesDegradees)
     if (-not $sysmon -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul) non dégradée : $($deg -join ', ')" }
     Write-Host "  collectes : $vu"

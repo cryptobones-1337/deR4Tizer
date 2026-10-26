@@ -34,6 +34,12 @@ passer pour le service sur le canal.
 - Risques résiduels : un fichier mis de côté dans `ecartes` reste modifiable par son auteur (jamais lu) ; le
   scénario avec un compte standard connecté à la console n'est pas exécuté (VM) ; la course
   contrôle-création de la restauration n'est pas reproduite.
+- Angles morts publiés (phase 3, état des collectes) : `etat.json` est lisible par les comptes lecteurs, dont le compte
+  connecté à la console par défaut. Un programme qui tourne sous ce compte y lit quelles collectes manquent
+  (`Collectes`, `ReglesSansCollecte`, `ReglesDegradees` : Sysmon absent, journal illisible, règles PRC dégradées sous
+  WMI) et peut choisir une technique que le service ne voit pas. Le champ « Source » des processus le montrait déjà en
+  partie. Choix assumé : l'utilisateur doit voir ce qui n'est pas surveillé ; les raisons publiées ne portent aucun
+  nom de compte. Réserver ces champs aux administrateurs reste possible (décision du mainteneur).
 
 ### Appareil du réseau local
 Veut exploiter les parseurs (paquets capturés, réponses UPnP), interroger l'API, écouter l'export, ou empoisonner

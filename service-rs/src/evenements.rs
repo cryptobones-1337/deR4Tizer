@@ -1,6 +1,7 @@
 //! Lecture des journaux d'événements de Windows (Sécurité, Système, DNS, Sysmon…) : historique puis suivi.
 
 use crate::collectes::{self, Collecte};
+use crate::commun;
 use crate::natif::large;
 use regex::Regex;
 use std::collections::HashMap;
@@ -127,6 +128,7 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
         None => collectes::echec(collecte, &format!("journal {canal} illisible")),
     }
     let canal = canal.to_string();
+    let mut bloques = 0u32;
     std::thread::Builder::new()
         .name(format!("journal {canal}"))
         .spawn(move || loop {
@@ -163,10 +165,28 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
             } else {
                 collectes::echec(collecte, &format!("événements du journal {canal} illisibles"));
             }
-            dernier = prochain_dernier(dernier, n, ok, traite);
+            let (suivant, b, saute) = apres_blocage(dernier, prochain_dernier(dernier, n, ok, traite), n, ok, bloques);
+            if saute {
+                commun::journal(&format!("journal {canal} : lecture bloquée {LIMITE_BLOCAGE} tours de suite au même endroit ; événements {} à {n} sautés", dernier + 1));
+            }
+            bloques = b;
+            dernier = suivant;
             depart = Some(dernier);
         })
         .is_ok()
+}
+
+/// Tours de suite sans aucun progrès avant de sauter l'intervalle illisible (2 s par tour : une minute)
+pub const LIMITE_BLOCAGE: u32 = 30;
+
+/// Décision pure (testée) : un événement qui fait toujours échouer la lecture (journal corrompu) ne bloque pas le suivi
+/// sans fin. Rend (numéro de reprise, tours bloqués, intervalle sauté). Après `LIMITE_BLOCAGE` tours en échec sans
+/// aucun progrès, on reprend après `n` : les événements de l'intervalle sont perdus, et c'est écrit au journal.
+pub fn apres_blocage(dernier: u64, suivant: u64, n: u64, lecture_complete: bool, bloques: u32) -> (u64, u32, bool) {
+    if lecture_complete || suivant > dernier {
+        return (suivant, 0, false);
+    }
+    if bloques + 1 >= LIMITE_BLOCAGE { (n, 0, true) } else { (suivant, bloques + 1, false) }
 }
 
 /// Journal lisible maintenant (numéro de son dernier événement lu) ?

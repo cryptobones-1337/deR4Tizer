@@ -202,11 +202,17 @@ pub struct InfoListe {
 
 /// Liste de tous les processus : pid -> nom (sans .exe) et pid du parent
 pub fn processus() -> HashMap<u32, InfoListe> {
+    processus_lu().unwrap_or_default()
+}
+
+/// Liste des processus ; un instantané impossible est une erreur, pas « aucun processus » (état des collectes)
+pub fn processus_lu() -> Result<HashMap<u32, InfoListe>, String> {
     let mut carte = HashMap::new();
     unsafe {
-        let Ok(h) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return carte };
+        let Ok(h) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return Err("instantané des processus impossible".into()) };
         let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-        if Process32FirstW(h, &mut e).is_ok() {
+        let premier = Process32FirstW(h, &mut e).is_ok();
+        if premier {
             loop {
                 let nom = texte(&e.szExeFile);
                 let nom = nom.strip_suffix(".exe").or_else(|| nom.strip_suffix(".EXE")).unwrap_or(&nom).to_string();
@@ -217,8 +223,11 @@ pub fn processus() -> HashMap<u32, InfoListe> {
             }
         }
         let _ = CloseHandle(h);
+        if !premier {
+            return Err("liste des processus illisible".into());
+        }
     }
-    carte
+    Ok(carte)
 }
 
 /// Décision pure : processus enfants directs de `parent` dont le nom (sans .exe) est l'un de `noms`, casse ignorée

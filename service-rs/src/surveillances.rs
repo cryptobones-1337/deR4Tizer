@@ -90,6 +90,11 @@ impl Surveillances {
     // ------------------------------------------------------------ caméra et micro
 
     fn camera(&mut self, alertes: &mut Vec<Alerte>) {
+        // Le magasin des consentements existe sur tout Windows 10 et 11 : illisible, VIE-001 est muette
+        match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(CONSENTEMENT) {
+            Ok(_) => crate::collectes::succes(crate::collectes::Collecte::Peripheriques),
+            Err(_) => crate::collectes::echec(crate::collectes::Collecte::Peripheriques, "magasin des consentements (caméra, micro) illisible"),
+        }
         let mut usages = Vec::new();
         lire_consentement(&RegKey::predef(HKEY_LOCAL_MACHINE), CONSENTEMENT, &mut usages);
         let hku = RegKey::predef(HKEY_USERS);
