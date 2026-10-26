@@ -3,6 +3,7 @@
 //! demandeur). Sinon : traces de démarrage de processus de WMI. Applique quelques règles de détection
 //! inspirées de Sigma (document Office qui lance un interpréteur, PowerShell obscurci, LOLBins, rançongiciels).
 
+use crate::collectes::{self, Collecte};
 use crate::commun::{self, Alerte};
 use crate::evenements;
 use regex::Regex;
@@ -113,25 +114,41 @@ impl Processus {
 
     /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon
     pub fn demarrer(&self, sur_dns: impl Fn(&str, &str) + Send + 'static) {
-        if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) {
+        // Sysmon illisible maintenant : WMI à la place (abonner suivrait le journal quand même, sans source entre-temps)
+        if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {
             let moi = self.clone();
-            if evenements::abonner(JOURNAL_SYSMON, "*[System[(EventID=1 or EventID=22)]]", move |xml| moi.traiter_sysmon(&xml, &sur_dns)) {
+            if evenements::abonner(JOURNAL_SYSMON, "*[System[(EventID=1 or EventID=22)]]", Collecte::Sysmon, move |xml| moi.traiter_sysmon(&xml, &sur_dns)) {
                 *self.source.lock().unwrap() = "Sysmon".into();
+                collectes::desactivee(Collecte::WmiProcessus, "inutile : Sysmon est lu");
                 return;
             }
+        } else if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) {
+            collectes::echec(Collecte::Sysmon, "journal Sysmon illisible au démarrage : WMI à la place");
+        } else {
+            collectes::desactivee(Collecte::Sysmon, "Sysmon absent ou son journal inactif");
         }
         let moi = self.clone();
         let _ = std::thread::Builder::new().name("traces de processus".into()).spawn(move || {
-            let Ok(com) = COMLibrary::without_security() else { return };
-            let Ok(con) = WMIConnection::new(com) else { return };
+            let Ok(com) = COMLibrary::without_security() else {
+                collectes::echec(Collecte::WmiProcessus, "COM indisponible");
+                return;
+            };
+            let Ok(con) = WMIConnection::new(com) else {
+                collectes::echec(Collecte::WmiProcessus, "connexion WMI impossible");
+                return;
+            };
             let flux = match con.raw_notification::<HashMap<String, Variant>>("SELECT * FROM Win32_ProcessStartTrace") {
                 Ok(f) => f,
                 Err(e) => {
                     commun::journal(&format!("traces de processus WMI indisponibles : {e}"));
+                    collectes::echec(Collecte::WmiProcessus, "abonnement WMI aux créations de processus refusé");
                     return;
                 }
             };
             *moi.source.lock().unwrap() = "WMI".into();
+            // WMI ne décrit (parent, ligne de commande) qu'un processus encore vivant : PRC-001 à PRC-005 peuvent
+            // manquer un processus bref
+            collectes::partielle(Collecte::WmiProcessus, "WMI : processus brefs manqués (parent ou ligne de commande absents)");
             for evenement in flux.flatten() {
                 let (Some(pid), Some(ppid)) = (nombre(&evenement, "ProcessID"), nombre(&evenement, "ParentProcessID")) else { continue };
                 let mut info = moi.interroger(pid).unwrap_or(InfoProcessus {
@@ -149,6 +166,10 @@ impl Processus {
                 }
                 moi.analyser(pid, &info);
             }
+            // Flux terminé : plus aucune création de processus n'est vue
+            commun::journal("traces de processus WMI interrompues");
+            collectes::echec(Collecte::WmiProcessus, "flux WMI des créations de processus interrompu");
+            *moi.source.lock().unwrap() = "aucune".into();
         });
         // La source passe à « WMI » dès que l'abonnement est établi ; on lui laisse un instant
         std::thread::sleep(Duration::from_millis(500));

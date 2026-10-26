@@ -3,7 +3,8 @@
 Ce document décrit le format des alertes du service (`Alerte`, `service-rs/src/commun.rs`) tel que la phase 3 le
 versionne. Depuis la PR 3.1, les champs `Modele`, `Regle` et `Collecte` existent (et `Signature` depuis la PR 3.1b) et toute nouvelle alerte porte `Modele` 1, et `alertes.json`
 est lu élément par élément. Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle dans `Regle` (registre
-`regles.rs`) ; `Collecte` reste vide jusqu'à la PR 3.3 (état des collectes) : vide, il n'est pas écrit.
+`regles.rs`) ; `Collecte` reste vide jusqu'à la PR 3.3b (l'état des collectes de la PR 3.3a est publié dans
+`etat.json`, pas dans les alertes) : vide, il n'est pas écrit.
 
 ## Principe
 

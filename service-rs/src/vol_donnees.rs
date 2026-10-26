@@ -244,7 +244,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
         });
     }
     let mut vues: HashMap<String, Instant> = HashMap::new();
-    evenements::abonner("Security", "*[System[EventID=4663]]", move |xml| {
+    evenements::abonner("Security", "*[System[EventID=4663]]", crate::collectes::Collecte::JournalSecurite, move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
             let connu = leurre_autorise(&programme);

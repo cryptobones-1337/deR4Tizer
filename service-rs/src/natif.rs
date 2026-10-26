@@ -62,13 +62,19 @@ fn ip_texte(ip: IpAddr) -> String {
 }
 
 pub fn lister_tcp() -> Vec<Connexion> {
-    let mut liste = Vec::new();
-    lire_table(2, &mut liste);
-    lire_table(23, &mut liste);
-    liste
+    lister_tcp_lu().0
 }
 
-fn lire_table(famille: u32, liste: &mut Vec<Connexion>) {
+/// Connexions TCP, et l'échec de lecture d'une des deux tables s'il y en a un : une table illisible n'est pas
+/// « aucune connexion » (état des collectes)
+pub fn lister_tcp_lu() -> (Vec<Connexion>, Result<(), String>) {
+    let mut liste = Vec::new();
+    let r4 = lire_table(2, &mut liste);
+    let r6 = lire_table(23, &mut liste);
+    (liste, r4.and(r6))
+}
+
+fn lire_table(famille: u32, liste: &mut Vec<Connexion>) -> Result<(), String> {
     let mut taille: u32 = 0;
     unsafe {
         GetExtendedTcpTable(None, &mut taille, false, famille, TCP_TABLE_OWNER_PID_ALL, 0);
@@ -83,7 +89,7 @@ fn lire_table(famille: u32, liste: &mut Vec<Connexion>) {
             continue; // la table a grossi entre les deux appels
         }
         if r != 0 {
-            return;
+            return Err(format!("table TCP {} illisible (erreur {r})", if famille == 2 { "IPv4" } else { "IPv6" }));
         }
         let lire32 = |pos: usize| u32::from_le_bytes(tampon[pos..pos + 4].try_into().unwrap());
         let n = lire32(0) as usize;
@@ -123,8 +129,9 @@ fn lire_table(famille: u32, liste: &mut Vec<Connexion>) {
                 p += 56;
             }
         }
-        return;
+        return Ok(());
     }
+    Err(format!("table TCP {} illisible (elle grossit plus vite qu'elle ne se lit)", if famille == 2 { "IPv4" } else { "IPv6" }))
 }
 
 /// Ports UDP IPv4 ouverts : (port local, pid)

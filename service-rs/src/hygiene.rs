@@ -332,8 +332,20 @@ pub fn liste_loldrivers() -> HashSet<String> {
             .and_then(|_| fs::rename(f.with_extension("tmp"), &f).ok());
     }
     // Propriétaire contrôlé, comme tout fichier du dossier de données
-    let Some(t) = commun::lire_fichier_proprietaire(&f) else { return HashSet::new() };
-    Regex::new(r#""SHA256":\s*"([0-9a-fA-F]{64})""#).unwrap().captures_iter(&t).map(|c| c[1].to_lowercase()).collect()
+    let lu = empreintes_loldrivers(commun::lire_fichier_proprietaire(&f).as_deref());
+    match &lu {
+        Ok(_) => crate::collectes::succes(crate::collectes::Collecte::Loldrivers),
+        Err(raison) => crate::collectes::echec(crate::collectes::Collecte::Loldrivers, raison),
+    }
+    lu.unwrap_or_default()
+}
+
+/// Empreintes de la liste LOLDrivers (décision pure, testée) : une liste absente, illisible ou sans empreinte est une
+/// collecte indisponible, pas « aucun pilote vulnérable »
+pub fn empreintes_loldrivers(texte: Option<&str>) -> Result<HashSet<String>, &'static str> {
+    let Some(t) = texte else { return Err("liste LOLDrivers absente ou illisible") };
+    let e: HashSet<String> = Regex::new(r#""SHA256":\s*"([0-9a-fA-F]{64})""#).unwrap().captures_iter(t).map(|c| c[1].to_lowercase()).collect();
+    if e.is_empty() { Err("liste LOLDrivers sans aucune empreinte") } else { Ok(e) }
 }
 
 /// Chemin d'un ImagePath de service ou de pilote (« \\SystemRoot\\… », « \\??\\C:\\… », « System32\\… »)

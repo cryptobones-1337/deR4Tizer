@@ -4,6 +4,7 @@
 use crate::baseline;
 use crate::blocage;
 use crate::chaines::{Arbre, Chaine};
+use crate::collectes::{self, Collecte};
 use crate::reponse;
 use crate::{hygiene, mitre, parefeu};
 use crate::defender::{self, EtatDefender};
@@ -337,6 +338,11 @@ impl Moniteur {
                     defender_publie = true;
                     let ecarts = defender::ecarts(&p.defender.lock().unwrap(), &etat);
                     p.alertes_externes.lock().unwrap().extend(ecarts);
+                    if etat.disponible {
+                        collectes::succes(Collecte::EtatDefender);
+                    } else {
+                        collectes::echec(Collecte::EtatDefender, "état de Defender illisible (WMI)");
+                    }
                     *p.defender.lock().unwrap() = etat;
 
                     // Extensions de navigateur toutes les 10 min ; pilotes vulnérables une fois par jour
@@ -445,7 +451,11 @@ impl Moniteur {
     fn passage(&mut self) {
         self.numero_passage += 1;
         let t = Instant::now();
-        let toutes = natif::lister_tcp();
+        let (toutes, lecture) = natif::lister_tcp_lu();
+        match lecture {
+            Ok(()) => collectes::succes(Collecte::Connexions),
+            Err(e) => collectes::echec(Collecte::Connexions, &e),
+        }
         let liste = natif::processus();
         self.arbre.maj(&liste);
         let t = mesure::noter("cycle.connexions_et_processus", t);
@@ -722,6 +732,7 @@ impl Moniteur {
         if signature_etat != self.derniere_signature_etat || self.dernier_etat_ecrit.elapsed() >= Duration::from_secs(30) {
             let ip_connues = self.partage.dns.lock().unwrap().len();
             let n = flux.len();
+            let (etats_collectes, regles_sans_collecte, regles_degradees) = collectes::publier();
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
@@ -739,6 +750,9 @@ impl Moniteur {
                 panique: reponse::panique_active(),
                 exposition: self.exposition.clone(),
                 protection_donnees: commun::echec_protection().unwrap_or_default(),
+                collectes: etats_collectes,
+                regles_sans_collecte,
+                regles_degradees,
             });
             self.derniere_signature_etat = signature_etat;
             self.dernier_etat_ecrit = Instant::now();
@@ -1273,6 +1287,9 @@ fn est_telemetrie(nom: &str) -> bool {
 fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {
     let statuts = Menaces::telecharger(forcer);
     let nouvelles = Menaces::charger(&statuts);
+    let i = &nouvelles.infos;
+    let actives = |t: &str| i.sources.iter().filter(|s| s.type_ == t && !s.statut.starts_with("désactivée")).count();
+    collectes::noter_listes(actives("IP"), i.total_ip + i.total_reseaux, actives("Domaines"), i.total_domaines);
     *p.menaces.write().unwrap() = nouvelles;
 }
 
@@ -1287,6 +1304,7 @@ fn demarrer_dns(partage: &Arc<Partage>) -> bool {
     }
     if !actif {
         commun::journal("impossible d'activer le journal DNS");
+        collectes::echec(Collecte::JournalDns, "journal DNS-Client inactif et impossible à activer");
         return false;
     }
     let p = partage.clone();
@@ -1297,7 +1315,7 @@ fn demarrer_dns(partage: &Arc<Partage>) -> bool {
         }
     });
     let p = partage.clone();
-    evenements::abonner(JOURNAL_DNS, "*[System[EventID=3008]]", move |xml| {
+    evenements::abonner(JOURNAL_DNS, "*[System[EventID=3008]]", Collecte::JournalDns, move |xml| {
         let d = evenements::donnees(&xml);
         if let Some(n) = d.get("QueryName") {
             traiter_dns(&p, n, d.get("QueryResults").map(|s| s.as_str()).unwrap_or(""));

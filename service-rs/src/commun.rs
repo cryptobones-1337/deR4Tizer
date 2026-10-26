@@ -78,6 +78,10 @@ pub struct Etat {
     pub exposition: crate::parefeu::Exposition,
     /// Vide si la protection du dossier de données est vérifiée ; sinon la raison de l'échec
     pub protection_donnees: String,
+    /// État de chaque collecte (phase 3.3) et règles dont la télémétrie n'est pas lue (ou ne l'est qu'en partie)
+    pub collectes: Vec<crate::collectes::EtatCollecte>,
+    pub regles_sans_collecte: Vec<String>,
+    pub regles_degradees: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

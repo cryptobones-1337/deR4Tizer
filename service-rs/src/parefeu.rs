@@ -214,7 +214,7 @@ pub fn traduire(xml: &str, signataire: &dyn Fn(&str) -> String) -> Option<(Evene
 pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str) -> String + Send + 'static) -> bool {
     let mut historique: Vec<EvenementRegle> = commun::lire("parefeu.json").unwrap_or_default();
     evenements::abonner(JOURNAL, "*[System[(EventID=2004 or EventID=2005 or EventID=2006 or EventID=2032 or EventID=2033 or EventID=2052 or EventID=2059 or EventID=2071 or EventID=2072 or EventID=2097 or EventID=2099)]]",
-        move |xml| {
+        crate::collectes::Collecte::JournalParefeu, move |xml| {
             let Some((e, a)) = traduire(&xml, &signataire) else { return };
             crate::siem::regle_parefeu(&e.operation, &e.regle, &e.sens, &e.action, &e.auteur);
             historique.push(e);

@@ -3251,6 +3251,200 @@ fn phase3_evenement_siem_modele_et_regle() {
     assert!(s[d..d + 300].contains("e.modele = commun::MODELE_ALERTE;"), "modèle non posé à l'enregistrement");
 }
 
+/// Phase 3.3 : une collecte active muette plus de trois intervalles devient indisponible ; une source à événements
+/// (intervalle 0) ne l'est pas par son silence ; les notes « indisponible » et « désactivée » gardent leur raison
+#[test]
+fn phase3_collecte_muette_devient_indisponible() {
+    use crate::collectes::{evaluer, EtatPublie, Note};
+    let s = 10_000_000u64; // une seconde en FILETIME
+    let t = 1_000_000 * s;
+    assert_eq!(evaluer(Note::Active, "", t - 90 * s, 30, t), EtatPublie::Active);
+    assert!(matches!(evaluer(Note::Active, "", t - 91 * s, 30, t), EtatPublie::Indisponible(_)));
+    assert!(matches!(evaluer(Note::Partielle, "p", t - 91 * s, 30, t), EtatPublie::Indisponible(_)));
+    assert_eq!(evaluer(Note::Partielle, "p", t - 10 * s, 30, t), EtatPublie::Partielle("p".into()));
+    assert_eq!(evaluer(Note::Partielle, "p", 0, 0, t), EtatPublie::Partielle("p".into()));
+    assert_eq!(evaluer(Note::Inconnue, "", 0, 30, t), EtatPublie::Inconnue);
+    assert_eq!(evaluer(Note::Indisponible, "r", t, 30, t), EtatPublie::Indisponible("r".into()));
+    assert_eq!(evaluer(Note::Desactivee, "d", 0, 30, t), EtatPublie::Desactivee("d".into()));
+    // Horloge reculée : pas de dépassement, la collecte reste active
+    assert_eq!(evaluer(Note::Active, "", t + 100 * s, 30, t), EtatPublie::Active);
+}
+
+/// Phase 3.3 : « Inconnue » (jamais lue) ne vaut jamais « rien de suspect » ; ET de OU : une source active suffit
+/// dans un groupe, une source partielle seule rend la règle dégradée, une source désactivée ne couvre rien
+#[test]
+fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
+    use crate::collectes::{couverture, Collecte::*, Couverture, EtatPublie};
+    let actives = |liste: &'static [crate::collectes::Collecte]| move |c| if liste.contains(&c) { EtatPublie::Active } else { EtatPublie::Inconnue };
+    assert_eq!(couverture(&[&[Connexions]], &|_| EtatPublie::Inconnue), Couverture::Indisponible);
+    assert_eq!(couverture(&[&[Connexions]], &actives(&[Connexions])), Couverture::Assuree);
+    assert_eq!(couverture(&[&[Connexions], &[ListesMenaces]], &actives(&[Connexions])), Couverture::Indisponible);
+    assert_eq!(couverture(&[&[JournalDns, Sysmon]], &actives(&[Sysmon])), Couverture::Assuree);
+    assert_eq!(couverture(&[&[Sysmon, WmiProcessus]], &|c| match c {
+        WmiProcessus => EtatPublie::Partielle("p".into()),
+        _ => EtatPublie::Desactivee("d".into()),
+    }), Couverture::Degradee);
+    assert_eq!(couverture(&[&[Sysmon]], &|_| EtatPublie::Desactivee("d".into())), Couverture::Indisponible);
+    assert_eq!(couverture(&[&[Sysmon]], &|_| EtatPublie::Indisponible("r".into())), Couverture::Indisponible);
+    assert_eq!(couverture(&[], &|_| EtatPublie::Inconnue), Couverture::Assuree);
+}
+
+/// Phase 3.3 : chaque règle du registre a sa télémétrie, sauf celles qui ne lisent aucune collecte suivie (liste
+/// fermée : une règle nouvelle sans correspondance fait échouer le test) ; règles de la documentation : DNS-001 suit
+/// le journal DNS ou Sysmon et les listes de domaines, PIL-001 la liste LOLDrivers
+#[test]
+fn phase3_chaque_regle_a_sa_telemetrie() {
+    use crate::collectes::{besoins, Collecte::*};
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002"];
+    for r in crate::regles::REGLES {
+        assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
+    }
+    assert!(besoins("XYZ-001").is_empty());
+    assert_eq!(besoins("DNS-001"), &[&[JournalDns, Sysmon][..], &[ListesDomaines][..]]);
+    assert_eq!(besoins("PIL-001"), &[&[Loldrivers][..]]);
+    assert_eq!(besoins("RES-001"), &[&[Connexions][..], &[ListesMenaces][..]]);
+    // Identifiants publiés : uniques
+    let ids: std::collections::BTreeSet<&str> = crate::collectes::TOUTES.iter().map(|c| c.id()).collect();
+    assert_eq!(ids.len(), crate::collectes::TOUTES.len());
+}
+
+/// Phase 3.3 : notes de l'état global et publication ; la raison publiée ne porte aucun nom de compte, aucun caractère
+/// de contrôle, et 200 caractères au plus. (Capture : non notée par le service dans cette version, libre pour le test.)
+#[test]
+fn phase3_collecte_notes_et_publication() {
+    use crate::collectes::{self, Collecte};
+    let ligne = |id: &str| collectes::publier().0.into_iter().find(|e| e.id == id).unwrap();
+    assert_eq!(ligne("Capture").etat, "Inconnue");
+    assert!(collectes::publier().1.contains(&"EXP-IDS-001".to_string()), "collecte inconnue : règle sans collecte");
+    collectes::echec(Collecte::Capture, "lecture de C:\\Users\\Quelquun\\x impossible\nsuite");
+    let e = ligne("Capture");
+    assert_eq!(e.etat, "Indisponible");
+    assert!(!e.raison.contains("Quelquun") && e.raison.contains("%USERPROFILE%") && !e.raison.contains('\n'), "{}", e.raison);
+    assert!(!e.depuis.is_empty() && e.dernier_succes.is_empty());
+    collectes::succes(Collecte::Capture);
+    let e = ligne("Capture");
+    assert!(e.etat == "Active" && e.raison.is_empty() && !e.dernier_succes.is_empty());
+    assert!(!collectes::publier().1.contains(&"EXP-IDS-001".to_string()));
+    collectes::desactivee(Collecte::Capture, &"x".repeat(500));
+    let e = ligne("Capture");
+    assert!(e.etat == "Desactivee" && e.raison.chars().count() == 200);
+    // Masquage de tout chemin de profil : nom avec espace, barres obliques, préfixes \\?\ et \Device\…
+    for (texte, nom) in [(r"lecture de C:\Users\Jean Dupont\AppData impossible", "Dupont"), ("C:/Users/Quelquun/x", "Quelquun"),
+                         (r"\\?\C:\Users\Autre\x", "Autre"), (r"\Device\HarddiskVolume3\Users\Encore\x", "Encore"),
+                         (r"fin c:\users\Dernier", "Dernier")] {
+        let b = collectes::borner(texte);
+        assert!(!b.contains(nom) && b.contains("%USERPROFILE%"), "{texte} → {b}");
+    }
+    assert_eq!(collectes::borner(r"journal Microsoft-Windows-DNS-Client/Operational illisible"), r"journal Microsoft-Windows-DNS-Client/Operational illisible");
+}
+
+/// Phase 3.3 : lecture d'un journal suivi interrompue : les événements non lus sont relus au tour suivant (aucune perte),
+/// à partir du dernier traité (aucun doublon) ; lecture complète : on avance au dernier numéro
+#[test]
+fn phase3_journal_interrompu_relu() {
+    use crate::evenements::prochain_dernier;
+    assert_eq!(prochain_dernier(10, 20, true, Some(15)), 20);
+    assert_eq!(prochain_dernier(10, 20, true, None), 20);
+    assert_eq!(prochain_dernier(10, 20, false, None), 10);
+    assert_eq!(prochain_dernier(10, 20, false, Some(15)), 15);
+    // Numéro aberrant : borné à l'intervalle demandé
+    assert_eq!(prochain_dernier(10, 20, false, Some(99)), 20);
+    assert_eq!(prochain_dernier(10, 20, false, Some(3)), 10);
+}
+
+/// Phase 3.3 : listes de menaces : aucune source activée (réglage par défaut pour les domaines, toutes à licence
+/// restreinte) : désactivée, pas indisponible ; des sources activées sans entrée : indisponible
+#[test]
+fn phase3_listes_desactivees_par_reglage() {
+    use crate::collectes::{decision_listes, Note};
+    assert_eq!(decision_listes(0, 0), Note::Desactivee);
+    assert_eq!(decision_listes(0, 7), Note::Desactivee);
+    assert_eq!(decision_listes(2, 0), Note::Indisponible);
+    assert_eq!(decision_listes(2, 7), Note::Active);
+}
+
+/// Phase 3.3 : une liste LOLDrivers absente, illisible ou sans empreinte est indisponible (PIL-001 sans collecte), pas
+/// « aucun pilote vulnérable » (décision exécutée ; son branchement dans liste_loldrivers : contrôle du source) ; des
+/// listes de menaces activées mais vides sont indisponibles, des listes non activées désactivées
+#[test]
+fn phase3_loldrivers_vide_est_indisponible() {
+    use crate::hygiene::empreintes_loldrivers;
+    assert!(empreintes_loldrivers(None).is_err());
+    assert!(empreintes_loldrivers(Some("[]")).is_err());
+    assert!(empreintes_loldrivers(Some("pas du json")).is_err());
+    let h = "ab".repeat(32);
+    assert_eq!(empreintes_loldrivers(Some(&format!(r#"[{{"SHA256": "{}"}}]"#, h.to_uppercase()))).unwrap(), [h].into_iter().collect());
+    let s = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let d = s.find("pub fn liste_loldrivers(").unwrap();
+    let f = &s[d..d + s[d..].find("\n}\n").unwrap()];
+    assert!(f.contains("Err(raison) => crate::collectes::echec(crate::collectes::Collecte::Loldrivers"), "échec LOLDrivers non noté");
+    // Listes de menaces (ListesMenaces, ListesDomaines : notées par le seul fil des listes, absent des tests)
+    use crate::collectes::{publier, noter_listes};
+    noter_listes(2, 0, 1, 5);
+    let p = publier();
+    let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
+    assert_eq!((etat("ListesMenaces").as_str(), etat("ListesDomaines").as_str()), ("Indisponible", "Active"));
+    noter_listes(2, 3, 1, 0);
+    let p = publier();
+    let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
+    assert_eq!((etat("ListesMenaces").as_str(), etat("ListesDomaines").as_str()), ("Active", "Indisponible"));
+    noter_listes(2, 3, 0, 0);
+    let p = publier();
+    let etat = |id: &str| p.0.iter().find(|e| e.id == id).unwrap().etat.clone();
+    assert_eq!(etat("ListesDomaines"), "Desactivee");
+    assert!(p.1.contains(&"DNS-001".to_string()), "domaines désactivés : DNS-001 reste sans collecte");
+}
+
+/// Phase 3.3 : branchements (contrôle du source, ces appels Windows ne s'exécutent pas en test) : une table TCP
+/// illisible est notée et n'est pas « aucune connexion » ; chaque lecture d'un journal suivi crédite sa collecte ;
+/// la fin du flux WMI des processus le rend indisponible ; l'état de Defender illisible est noté
+#[test]
+fn phase3_branchements_des_collectes() {
+    let natif = include_str!("natif.rs").replace("\r\n", "\n");
+    let d = natif.find("fn lire_table(").unwrap();
+    let f = &natif[d..d + natif[d..].find("\n}\n").unwrap()];
+    assert!(f.contains("if r != 0 {\n            return Err("), "table TCP en échec non rendue");
+    assert!(f.trim_end().ends_with("))"), "table qui grossit sans fin non rendue en échec");
+    let m_crlf = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let m = m_crlf.as_str();
+    assert!(m.contains("Err(e) => collectes::echec(Collecte::Connexions, &e),"), "échec de la table TCP non noté");
+    assert!(m.contains("if etat.disponible {\n                        collectes::succes(Collecte::EtatDefender);\n                    } else {\n                        collectes::echec(Collecte::EtatDefender,"), "état de Defender : note inversée ou absente");
+    assert!(m.contains("collectes::noter_listes(actives(\"IP\"), i.total_ip + i.total_reseaux, actives(\"Domaines\"), i.total_domaines);"));
+    assert!(!m.contains("natif::lister_tcp()"), "le cycle doit lire la table avec son échec");
+    assert!(m.contains("collectes::echec(Collecte::EtatDefender,"));
+    assert!(m.contains("collectes::noter_listes("));
+    assert!(m.contains("collectes::echec(Collecte::JournalDns, \"journal DNS-Client inactif"), "journal DNS impossible à activer non noté");
+    assert!(include_str!("siem.rs").contains("crate::collectes::desactivee(c, \"mode console"), "journaux non lus en console non notés");
+    let e = include_str!("evenements.rs").replace("\r\n", "\n");
+    let d = e.find("pub fn abonner(").unwrap();
+    let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
+    assert_eq!(f.matches("collectes::echec(collecte,").count(), 3, "abonner : échec initial, numéro illisible, événements illisibles");
+    assert_eq!(f.matches("collectes::succes(collecte)").count(), 4, "abonner : départ, première lecture après un départ illisible, rien de nouveau, événements lus");
+    assert_eq!(f.matches("return false").count(), 1, "abonner : seule une requête mal formée abandonne le suivi (pas un départ illisible)");
+    assert!(f.contains("let Some(mut dernier) = depart else {"), "abonner : le fil doit chercher le dernier numéro quand le départ a échoué");
+    // Le numéro de reprise est réécrit à chaque issue du tour (sinon tout le journal serait relu à chaque tour)
+    assert!(f.contains("depart = Some(n);") && f.contains("collectes::succes(collecte);\n                depart = Some(dernier);\n                continue;")
+        && f.contains("dernier = prochain_dernier(dernier, n, ok, traite);\n            depart = Some(dernier);"), "abonner : numéro de reprise non conservé");
+    assert!(f.contains("let ok = historique(") && f.contains("if ok {\n                collectes::succes(collecte);"), "succès noté avant la lecture des événements");
+    assert!(f.contains("dernier = prochain_dernier(dernier, n, ok, traite);") && !f.contains("dernier = n;"), "événements perdus après un échec");
+    assert!(e.contains("Err(e) => {\n            return fin_des_resultats(&e);") || e.contains("if let Err(e) = unsafe { EvtNext(resultats, &mut evenements, 1000, 0, &mut n) } {\n            return fin_des_resultats(&e);"), "vider : échec d'EvtNext pris pour la fin");
+    assert!(e.contains("Err(_) => None,"), "dernier_numero : échec pris pour un journal vide");
+    for (nom, s, c) in [("defender", include_str!("defender.rs"), "JournalDefender"), ("parefeu", include_str!("parefeu.rs"), "JournalParefeu"),
+                        ("vol_donnees", include_str!("vol_donnees.rs"), "JournalSecurite"), ("processus", include_str!("processus.rs"), "Sysmon"),
+                        ("moniteur", m, "JournalDns")] {
+        assert!(s.contains(&format!("Collecte::{c}, move |xml|")) || s.contains(&format!("Collecte::{c},\n")) || s.contains(&format!("Collecte::{c}, move")), "{nom} : collecte {c} non passée à abonner");
+    }
+    assert!(include_str!("siem.rs").contains(r#"("Security", securite, crate::collectes::Collecte::JournalSecurite), ("System", systeme, crate::collectes::Collecte::JournalSysteme)"#), "siem : journaux sans leur collecte");
+    let p = include_str!("processus.rs");
+    assert!(p.contains("collectes::desactivee(Collecte::Sysmon,"), "Sysmon absent non noté");
+    assert!(p.contains("if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {"), "Sysmon illisible au démarrage : pas de repli sur WMI");
+    assert!(p.contains("collectes::echec(Collecte::Sysmon,"), "Sysmon illisible non noté");
+    assert!(p.contains("collectes::desactivee(Collecte::WmiProcessus,"), "WMI inutile (Sysmon lu) non noté");
+    assert!(p.contains("collectes::partielle(Collecte::WmiProcessus,"), "WMI partielle non notée");
+    let fin = p.find("// Flux terminé : plus aucune création de processus n'est vue").expect("fin du flux WMI non notée");
+    assert!(p[fin..fin + 300].contains("collectes::echec(Collecte::WmiProcessus,"));
+}
+
 /// Phase 3.1 : une alerte d'un modèle plus récent (retour arrière) se lit, ses champs inconnus sont ignorés
 #[test]
 fn phase3_champs_inconnus_ignores() {
