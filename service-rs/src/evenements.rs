@@ -24,21 +24,22 @@ pub fn journal_actif(canal: &str) -> Option<bool> {
 }
 
 pub fn activer_journal(canal: &str, actif: bool) -> bool {
+    // Journal coupé par le service lui-même (retour arrière de la baseline) : son suivi ne le réactive pas. Retenu avant
+    // la coupure (le fil de suivi, qui peut la voir avant la fin de wevtutil, ne la prend pas pour celle d'un tiers),
+    // retiré si elle échoue ; oublié dès qu'il est réactivé, par le service ou par un autre moyen
+    if !actif {
+        let mut c = COUPES_PAR_LE_SERVICE.lock().unwrap_or_else(|e| e.into_inner());
+        c.retain(|x| !x.eq_ignore_ascii_case(canal));
+        c.push(canal.to_string());
+    }
     let ok = Command::new("wevtutil")
         .args(["sl", canal, if actif { "/e:true" } else { "/e:false" }])
         .output()
         .map(|s| s.status.success())
         .unwrap_or(false);
-    // Journal coupé par le service lui-même (retour arrière de la baseline) : son suivi ne le réactive pas. Retenu
-    // seulement si la coupure a réussi ; oublié dès qu'il est réactivé, par le service ou par un autre moyen
-    if ok {
-        if actif {
-            oublier_coupe(canal);
-        } else {
-            let mut c = COUPES_PAR_LE_SERVICE.lock().unwrap_or_else(|e| e.into_inner());
-            c.retain(|x| !x.eq_ignore_ascii_case(canal));
-            c.push(canal.to_string());
-        }
+    if actif == ok {
+        // Réactivé, ou coupure refusée : plus rien à retenir
+        oublier_coupe(canal);
     }
     ok
 }
