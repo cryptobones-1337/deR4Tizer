@@ -83,7 +83,9 @@ impl Surveillances {
         self.camera(&mut alertes);
         self.outils_distants(liste, signataire, &mut alertes);
         self.bureau_a_distance(&mut alertes);
-        self.ports_ouverts(tcp, signataire, &mut alertes);
+        if ports_ouverts(&mut self.ecoutes_connues, &mut self.apprentissage_ecoutes, &mut self.ecoutes, tcp, &natif::chemin_processus, signataire, &mut alertes) {
+            let _ = commun::ecrire("ecoutes-connues.json", &self.ecoutes_connues);
+        }
         alertes
     }
 
@@ -172,76 +174,78 @@ impl Surveillances {
         }
         self.rdp_avant = Some(self.rdp);
     }
+}
 
-    // ------------------------------------------------------------ ports ouverts et connexions entrantes
+// ------------------------------------------------------------ ports ouverts et connexions entrantes
 
-    fn ports_ouverts(&mut self, tcp: &[Connexion], signataire: &mut dyn FnMut(&str) -> String, alertes: &mut Vec<Alerte>) {
-        let mut ecoutes: Vec<Ecoute> = Vec::new();
-        let mut modifiees = false;
-        let mut ports_ecoute = HashSet::new();
-        for c in tcp.iter().filter(|c| c.etat == 2 && !c.ip_locale.starts_with("127.") && c.ip_locale != "::1") {
-            ports_ecoute.insert((c.pid, c.port_local));
-            let chemin = natif::chemin_processus(c.pid);
-            let sig = if chemin.is_empty() { "?".to_string() } else { signataire(&chemin) };
-            let systeme = sig == "Windows (catalogue)" || sig.starts_with("Microsoft");
-            if systeme && c.port_local >= 49152 {
-                continue; // ports RPC dynamiques de Windows, changent à chaque démarrage
-            }
-            let cle = format!("{}|{}", if chemin.is_empty() { format!("PID {}", c.pid) } else { chemin.clone() }, c.port_local);
-            let depuis = match self.ecoutes_connues.get(&cle) {
-                Some(d) => d.clone(),
-                None => {
-                    let d = commun::maintenant();
-                    self.ecoutes_connues.insert(cle, d.clone());
-                    modifiees = true;
-                    if !self.apprentissage_ecoutes {
-                        let non_signe = sig.is_empty();
-                        alertes.push(alerte(crate::regles::RES_006, if non_signe { "Alerte" } else { "Info" }, if non_signe { 3 } else { 0 }, &nom_fichier(&chemin), &chemin,
-                            &format!("port {}", c.port_local),
-                            format!("nouveau port ouvert en écoute sur le réseau ({}:{}){}", c.ip_locale, c.port_local,
-                                if non_signe { ", programme NON SIGNÉ" } else { "" })));
-                    }
-                    d
+/// Ports en écoute et connexions entrantes (testé : RES-006, RES-007 ; `chemin_de` rend le chemin d'un PID). Rend vrai si
+/// les écoutes connues ont changé (à réécrire dans `ecoutes-connues.json` par l'appelant)
+pub(crate) fn ports_ouverts(ecoutes_connues: &mut HashMap<String, String>, apprentissage_ecoutes: &mut bool, ecoutes_publiees: &mut Vec<Ecoute>,
+                            tcp: &[Connexion], chemin_de: &dyn Fn(u32) -> String, signataire: &mut dyn FnMut(&str) -> String,
+                            alertes: &mut Vec<Alerte>) -> bool {
+    let mut ecoutes: Vec<Ecoute> = Vec::new();
+    let mut modifiees = false;
+    let mut ports_ecoute = HashSet::new();
+    for c in tcp.iter().filter(|c| c.etat == 2 && !c.ip_locale.starts_with("127.") && c.ip_locale != "::1") {
+        ports_ecoute.insert((c.pid, c.port_local));
+        let chemin = chemin_de(c.pid);
+        let sig = if chemin.is_empty() { "?".to_string() } else { signataire(&chemin) };
+        let systeme = sig == "Windows (catalogue)" || sig.starts_with("Microsoft");
+        if systeme && c.port_local >= 49152 {
+            continue; // ports RPC dynamiques de Windows, changent à chaque démarrage
+        }
+        let cle = format!("{}|{}", if chemin.is_empty() { format!("PID {}", c.pid) } else { chemin.clone() }, c.port_local);
+        let depuis = match ecoutes_connues.get(&cle) {
+            Some(d) => d.clone(),
+            None => {
+                let d = commun::maintenant();
+                ecoutes_connues.insert(cle, d.clone());
+                modifiees = true;
+                if !*apprentissage_ecoutes {
+                    let non_signe = sig.is_empty();
+                    alertes.push(alerte(crate::regles::RES_006, if non_signe { "Alerte" } else { "Info" }, if non_signe { 3 } else { 0 }, &nom_fichier(&chemin), &chemin,
+                        &format!("port {}", c.port_local),
+                        format!("nouveau port ouvert en écoute sur le réseau ({}:{}){}", c.ip_locale, c.port_local,
+                            if non_signe { ", programme NON SIGNÉ" } else { "" })));
                 }
-            };
-            if ecoutes.iter().any(|e| e.pid == c.pid && e.port == c.port_local) {
-                continue;
+                d
             }
-            let programme = if !chemin.is_empty() { nom_fichier(&chemin) } else if c.pid == 4 { "System (partage de fichiers)".into() } else { format!("PID {}", c.pid) };
-            ecoutes.push(Ecoute {
-                programme,
-                chemin,
-                pid: c.pid,
-                adresse: c.ip_locale.clone(),
-                port: c.port_local,
-                signataire: if sig.is_empty() { "-".into() } else { sig },
-                depuis,
-            });
+        };
+        if ecoutes.iter().any(|e| e.pid == c.pid && e.port == c.port_local) {
+            continue;
         }
-        if modifiees {
-            let _ = commun::ecrire("ecoutes-connues.json", &self.ecoutes_connues);
-        }
-        self.apprentissage_ecoutes = false;
-        ecoutes.sort_by_key(|e| e.port);
-        self.ecoutes = ecoutes;
-
-        // Connexion établie sur un port en écoute, depuis une adresse d'Internet : quelqu'un se connecte à ce PC
-        for c in tcp.iter().filter(|c| c.etat == 5 && ports_ecoute.contains(&(c.pid, c.port_local)) && !est_locale(&c.ip)) {
-            let Ok(ip) = c.ip.parse::<std::net::IpAddr>() else { continue };
-            if !crate::parefeu::publique(&ip) {
-                continue;
-            }
-            let chemin = natif::chemin_processus(c.pid);
-            let non_signe = !chemin.is_empty() && signataire(&chemin).is_empty();
-            let mut a = alerte(crate::regles::RES_007, if non_signe { "Critique" } else { "Alerte" }, if non_signe { 8 } else { 5 }, &nom_fichier(&chemin), &chemin, &c.ip,
-                format!("CONNEXION ENTRANTE depuis Internet ({} vers le port local {}) : PC EXPOSÉ À INTERNET{}", c.ip, c.port_local,
-                    if non_signe { ", programme NON SIGNÉ" } else { "" }));
-            a.pid = Some(c.pid);
-            a.ip = Some(c.ip.clone());
-            a.port = c.port_local;
-            alertes.push(a);
-        }
+        let programme = if !chemin.is_empty() { nom_fichier(&chemin) } else if c.pid == 4 { "System (partage de fichiers)".into() } else { format!("PID {}", c.pid) };
+        ecoutes.push(Ecoute {
+            programme,
+            chemin,
+            pid: c.pid,
+            adresse: c.ip_locale.clone(),
+            port: c.port_local,
+            signataire: if sig.is_empty() { "-".into() } else { sig },
+            depuis,
+        });
     }
+    *apprentissage_ecoutes = false;
+    ecoutes.sort_by_key(|e| e.port);
+    *ecoutes_publiees = ecoutes;
+
+    // Connexion établie sur un port en écoute, depuis une adresse d'Internet : quelqu'un se connecte à ce PC
+    for c in tcp.iter().filter(|c| c.etat == 5 && ports_ecoute.contains(&(c.pid, c.port_local)) && !est_locale(&c.ip)) {
+        let Ok(ip) = c.ip.parse::<std::net::IpAddr>() else { continue };
+        if !crate::parefeu::publique(&ip) {
+            continue;
+        }
+        let chemin = chemin_de(c.pid);
+        let non_signe = !chemin.is_empty() && signataire(&chemin).is_empty();
+        let mut a = alerte(crate::regles::RES_007, if non_signe { "Critique" } else { "Alerte" }, if non_signe { 8 } else { 5 }, &nom_fichier(&chemin), &chemin, &c.ip,
+            format!("CONNEXION ENTRANTE depuis Internet ({} vers le port local {}) : PC EXPOSÉ À INTERNET{}", c.ip, c.port_local,
+                if non_signe { ", programme NON SIGNÉ" } else { "" }));
+        a.pid = Some(c.pid);
+        a.ip = Some(c.ip.clone());
+        a.port = c.port_local;
+        alertes.push(a);
+    }
+    modifiees
 }
 
 fn lire_consentement(racine: &RegKey, chemin: &str, usages: &mut Vec<UsagePeripherique>) {

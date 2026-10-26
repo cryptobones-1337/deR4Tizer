@@ -47,6 +47,14 @@ pub struct Connexion {
     brut: Option<[u32; 4]>,
 }
 
+#[cfg(test)]
+impl Connexion {
+    /// Connexion synthétique pour les tests des règles
+    pub(crate) fn pour_test(pid: u32, etat: u32, ip_locale: &str, port_local: u16, ip: &str, port: u16) -> Connexion {
+        Connexion { pid, etat, ip: ip.into(), port, ip_locale: ip_locale.into(), port_local, brut: None }
+    }
+}
+
 fn port_reseau(v: u32) -> u16 {
     (((v & 0xFF) << 8) | ((v >> 8) & 0xFF)) as u16
 }

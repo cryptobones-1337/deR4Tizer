@@ -424,6 +424,22 @@ fn fusionner(mut plages: Vec<Plage>) -> Vec<Plage> {
     resultat
 }
 
+/// Listes de menaces synthétiques pour les tests des règles (source « essai », liste haute)
+#[cfg(test)]
+pub(crate) fn menaces_test(adresses: &[&str], domaines: &[&str]) -> Menaces {
+    let mut m = Menaces::default();
+    let mut plages = Vec::new();
+    for a in adresses {
+        // Une adresse privée ou réservée est refusée au chargement
+        m.ajouter(a, "essai", true, &mut plages);
+    }
+    m.plages_hautes = fusionner(plages);
+    let mut h: Vec<u64> = domaines.iter().map(|d| empreinte(&d.to_lowercase())).collect();
+    h.sort_unstable();
+    m.domaines.push(("essai".into(), h));
+    m
+}
+
 #[cfg(test)]
 pub fn recouvre_reserve_test(debut: u32, fin: u32) -> bool {
     recouvre_reserve(debut, fin)

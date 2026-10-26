@@ -109,8 +109,11 @@ modules expérimentaux.
 - **Télémétrie** : table des connexions TCP, listes de menaces chargées ; journal DNS pour rattacher un domaine.
 - **Si elle manque** : table illisible : aucune connexion vue ; listes vides ou absentes : la règle se tait.
 - **Niveau** : Critique. Peut déclencher le blocage automatique (niveau 3 de `docs/reponse/politique.md`).
-- **Faux positifs attendus** : adresse partagée (hébergement mutualisé) ajoutée à une liste ; liste périmée.
-- **Tests** : à écrire (`res_001_positif`, `res_001_negatif`).
+- **Faux positifs attendus** : adresse partagée (hébergement mutualisé) ajoutée à une liste ; liste périmée. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; aucune liste de menaces n'est chargée dans la VM. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `res_001_positif` (adresse d'une liste synthétique trouvée, score 10, alerte même pour une connexion déjà
+  ouverte au démarrage), `res_001_negatif` (adresse privée refusée au chargement de la liste ; adresse absente) ;
+  décisions pures `moniteur::score_flux` et `moniteur::regle_flux` (PR 3.8). Non exercée en VM.
 
 ### RES-002 : nouvelle connexion au score suspect (≥ 3)
 - **Code** : `moniteur.rs` (calcul du score des flux, niveau Alerte).
@@ -126,9 +129,14 @@ modules expérimentaux.
   de commande (WMI), l'indice correspondant manque.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
-  signés.
-- **Tests** : existant pour l'indice « IP directe » : `ip_directe_editeurs_exacts` ; à écrire, un positif et un négatif
-  par indice.
+  signés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `res_002_positif` (non signé ; IP directe et port inhabituel ; non signé, téléchargé hier et balise),
+  `res_002_negatif` (connexion banale ; origine Internet d'un programme signé ; navigateur sans DNS ; journal DNS non lu ;
+  connexion déjà ouverte au démarrage ; connexion déjà vue ou premier passage) ; existant pour l'indice « IP directe » :
+  `ip_directe_editeurs_exacts`. Décision pure `moniteur::score_flux` (PR 3.8) : les indices sont lus dans le cycle, le
+  calcul est testé à part. Les indices non couverts un par un : dossier temporaire, ligne de commande suspecte,
+  télémétrie (chacun ajoute son poids, comme ceux testés).
 
 ### RES-003 : première connexion à Internet d'un programme
 - **Code** : `moniteur.rs` (niveau Info).
@@ -136,8 +144,11 @@ modules expérimentaux.
 - **Télémétrie** : connexions.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Info.
-- **Faux positifs attendus** : chaque nouveau programme ou nouvelle version (attendu, par nature).
-- **Tests** : à écrire.
+- **Faux positifs attendus** : chaque nouveau programme ou nouvelle version (attendu, par nature). Mesurés en VM
+  (scénario `mesure`, 22 min, compte neuf) : 11 à 13 alertes Info, soit 30 à 35 par heure, surtout au premier usage
+  (OneDrive, Edge, services de Windows).
+- **Tests** : `res_003_positif`, `res_003_negatif` (apprentissage ; premier passage) ; décision pure
+  `moniteur::premiere_connexion_signalee` (PR 3.8). Exercée en VM (alertes Info du scénario `mesure`).
 
 ### RES-004 : adresse publique directement sur le PC
 - **Code** : `moniteur.rs` (« PC EXPOSÉ À INTERNET : adresse publique directement sur le PC »).
@@ -148,7 +159,12 @@ modules expérimentaux.
 - **Si elle manque** : la règle se tait.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : réseau d'entreprise avec adresses publiques volontaires ; IPv6 globale (selon le cas).
-- **Tests** : à écrire.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'a pas d'adresse publique. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `res_004_positif` (adresse apparue ; adresse qui en remplace une autre), `res_004_negatif` (mêmes adresses ;
+  adresse disparue) ; décision pure `moniteur::alerte_adresses_publiques`. PR 3.8 : comparaison adresse par adresse ;
+  avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en remplaçait une autre passait
+  inaperçue (faux négatif, corrigé). Non exercée en VM.
 
 ### RES-005 : paquet entrant venu d'Internet
 - **Code** : `parefeu.rs` (journal du pare-feu, « PC EXPOSÉ À INTERNET : paquet entrant … »).
@@ -158,8 +174,11 @@ modules expérimentaux.
 - **Niveau** : Critique si le paquet est accepté, Alerte s'il est bloqué. Une alerte par source, port et action en
   24 h.
 - **Faux positifs attendus** : box en DMZ ou redirection de port voulue (signalé aussi par la revue UX).
-- **Tests** : existants : `exposition_reelle_sans_faux_positifs`, `exposition_udp_reponse_reconnue_par_le_flux`,
-  `exposition_paquet_bloque_reponse_a_un_flux`.
+- **Tests** : `res_005_positif` (paquet vers un port en écoute ; demande d'écho), `res_005_negatif` (réponse vers un port
+  éphémère ; réponse UDP ; réponse d'écho), sur `parefeu::exposition_reelle` ; existants, du journal à l'alerte :
+  `exposition_reelle_sans_faux_positifs`, `exposition_udp_reponse_reconnue_par_le_flux`,
+  `exposition_paquet_bloque_reponse_a_un_flux`. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'est pas exposée à Internet. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 
 ### RES-006 : nouveau port ouvert en écoute sur le réseau
 - **Code** : `surveillances.rs` (`ports_ouverts`).
@@ -169,7 +188,11 @@ modules expérimentaux.
   aucune alerte, voulu.
 - **Niveau** : Alerte si le programme n'est pas signé, Info sinon.
 - **Faux positifs attendus** : logiciels qui ouvrent un port de service local (synchronisation, partage).
-- **Tests** : à écrire.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `res_006_positif` (apprentissage au premier relevé ; port nouveau : Alerte si non signé, Info sinon),
+  `res_006_negatif` (boucle locale ; port RPC dynamique de Windows ; port déjà connu) ; `surveillances::ports_ouverts`
+  rendu testable (chemin d'un PID passé en paramètre, écriture de `ecoutes-connues.json` laissée à l'appelant, PR 3.8).
 
 ### RES-007 : connexion entrante depuis Internet
 - **Code** : `surveillances.rs` (`ports_ouverts`, « CONNEXION ENTRANTE depuis Internet »).
@@ -178,8 +201,11 @@ modules expérimentaux.
 - **Télémétrie** : table des connexions TCP, signature du programme.
 - **Si elle manque** : table illisible : la règle se tait.
 - **Niveau** : Critique si le programme n'est pas signé, Alerte sinon.
-- **Faux positifs attendus** : serveur volontairement exposé (jeu, accès distant voulu).
-- **Tests** : à écrire.
+- **Faux positifs attendus** : serveur volontairement exposé (jeu, accès distant voulu). Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'est pas exposée à Internet. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `res_007_positif` (connexion établie depuis Internet sur un port en écoute : Critique si non signé, Alerte
+  sinon), `res_007_negatif` (connexion entrante du réseau local ; connexion sortante) ; `surveillances::ports_ouverts`.
+  Non exercée en VM.
 
 ## DNS
 
@@ -190,7 +216,11 @@ modules expérimentaux.
 - **Si elle manque** : journal DNS coupé après le démarrage : jamais vu aujourd'hui, la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : domaine retiré tardivement d'une liste ; résolution provoquée par un outil de sécurité.
-- **Tests** : à écrire. En VM, domaine de test placé dans une liste locale de test, jamais un vrai domaine malveillant.
+  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; aucune liste de domaines n'est activée par défaut. La
+  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+- **Tests** : `dns_001_positif` (domaine d'une liste synthétique, sans tenir compte de la casse), `dns_001_negatif` (autre
+  domaine ; sous-domaine, les listes portant des noms exacts ; nom vide) ; décision pure `moniteur::alerte_dns`
+  (PR 3.8). Non exercée en VM : il faudrait une liste de domaines de test chargée par le service, que rien ne prévoit.
 
 ## PRC : processus
 

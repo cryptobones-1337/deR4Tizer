@@ -3470,7 +3470,9 @@ fn phase3_branchements_des_collectes_restantes() {
         ("crate::capture::demarrer(\"trafic\", Collecte::CaptureTrafic,", "capture du trafic"),
         ("crate::capture::demarrer(\"réseau local\", Collecte::CaptureReseauLocal,", "capture du réseau local"),
         ("collectes::desactivee(c, \"mode console : capture", "capture en console"),
-        ("} else if dns_lu && !self.preexistants.contains(&cle) {", "IP directe selon le journal DNS lu"),
+        ("} else if i.dns_lu && !i.preexistant {", "IP directe selon le journal DNS lu (score_flux)"),
+        ("                dns_lu,
+                preexistant: self.preexistants.contains(&cle),", "état lu du journal DNS passé à score_flux"),
         ("let dns_lu = collectes::lue_recemment(Collecte::JournalDns);", "lecture récente du journal DNS"),
     ] {
         assert!(n.contains(motif), "moniteur : {quoi}");
