@@ -523,66 +523,31 @@ impl Moniteur {
             }
             let origine = if *pid > 4 { self.processus.infos(*pid) } else { None };
 
-            let mut raisons: Vec<String> = Vec::new();
-            let mut score = 0;
             let menace = {
                 let m = self.partage.menaces.read().unwrap();
                 m.chercher_ip(ip).or_else(|| nom.as_deref().and_then(|n| m.chercher_domaine(n)))
             };
-            if let Some(m) = &menace {
-                raisons.push(format!("MENACE CONNUE ({})", m.source));
-                score += 10;
-            }
-            if !chemin.is_empty() && signataire.is_empty() {
-                raisons.push("NON SIGNÉ".into());
-                score += 3;
-            }
-            if dossier_suspect(&chemin) {
-                raisons.push("lancé depuis un dossier temporaire".into());
-                score += 3;
-            }
             // Origine du fichier : téléchargé depuis Internet, récent, non signé
             let origine_fichier = self.origines.entry(chemin.clone()).or_insert_with(|| reponse::origine(&chemin)).clone();
             let texte_origine = origine_fichier.as_ref().and_then(|o| o.texte());
-            if let (Some(o), Some(t)) = (&origine_fichier, &texte_origine) {
-                if signataire.is_empty() {
-                    raisons.push(t.clone());
-                    score += if o.age_jours < 2 { 3 } else { 2 };
-                }
-            }
-            if let Some(s) = origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).and_then(processus::suspicion) {
-                raisons.push(s.into());
-                score += 3;
-            }
-            if nom.is_none() {
-                if NAVIGATEURS_DOH.contains(&nom_processus.to_lowercase().as_str()) {
-                    raisons.push("IP sans DNS (navigateur, DoH probable)".into());
-                } else if ip_directe_normale(&signataire) {
-                    raisons.push("IP sans DNS (application connue : VPN, messagerie, notifications, jeu…)".into());
-                } else if dns_lu && !self.preexistants.contains(&cle) {
-                    raisons.push("IP DIRECTE (aucune requête DNS)".into());
-                    score += 2;
-                } else {
-                    raisons.push("nom DNS inconnu".into());
-                }
-            }
-            if let Some(intervalle) = self.balise(*pid, ip, *port, groupe) {
-                let fort = signataire.is_empty() || nom.is_none();
-                raisons.push(format!("balise régulière (nouvelle connexion toutes les ~{intervalle} s)"));
-                score += if fort { 3 } else { 1 };
-            }
-            if !PORTS_COURANTS.contains(port) {
-                raisons.push(format!("port inhabituel {port}"));
-                score += 1;
-            }
-            if nom.as_deref().map(est_telemetrie).unwrap_or(false) {
-                raisons.push("télémétrie connue".into());
-                score += 1;
-            }
             let bloque = self.est_bloque(ip, nom.as_deref());
-            if bloque {
-                raisons.push("BLOQUÉ".into());
-            }
+            let (score, raisons) = score_flux(&IndicesFlux {
+                menace: menace.as_ref().map(|m| m.source.as_str()),
+                // Chemin vide : signataire « ? », jamais vide
+                non_signe: signataire.is_empty(),
+                dossier_temporaire: dossier_suspect(&chemin),
+                origine: origine_fichier.as_ref().zip(texte_origine.as_deref()).map(|(o, t)| (t, o.age_jours)),
+                suspicion_ligne: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).and_then(processus::suspicion),
+                nom_dns_connu: nom.is_some(),
+                navigateur_doh: NAVIGATEURS_DOH.contains(&nom_processus.to_lowercase().as_str()),
+                application_ip_directe: ip_directe_normale(&signataire),
+                dns_lu,
+                preexistant: self.preexistants.contains(&cle),
+                balise: self.balise(*pid, ip, *port, groupe),
+                port: *port,
+                telemetrie: nom.as_deref().map(est_telemetrie).unwrap_or(false),
+                bloque,
+            });
 
             let f = FluxInfo {
                 cle: cle.clone(),
@@ -602,7 +567,8 @@ impl Moniteur {
                 origine: texte_origine,
             };
 
-            if let Some(m) = &menace {
+            let regle = regle_flux(menace.is_some(), nouveau, self.premier_passage, score);
+            if let (Some(crate::regles::RES_001), Some(m)) = (regle, &menace) {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
                 if blocage_automatique(m.haute, self.config.blocage_auto_menaces, bloque, commun::echec_protection().is_some()) {
@@ -610,14 +576,14 @@ impl Moniteur {
                     action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
                 }
                 alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_001, "Critique", &f, format!("{}{action}", f.raisons));
-            } else if nouveau && !self.premier_passage && score >= commun::SEUIL_ALERTE {
+            } else if regle == Some(crate::regles::RES_002) {
                 alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_002, "Alerte", &f, f.raisons.clone());
             }
 
             let exe = if chemin.is_empty() { nom_processus.to_lowercase() } else { chemin.to_lowercase() };
             if self.executables_vus.insert(exe) {
                 exes_modifies = true;
-                if !self.apprentissage && !self.premier_passage {
+                if premiere_connexion_signalee(self.apprentissage, self.premier_passage) {
                     let texte = format!("première connexion à Internet de ce programme{}",
                         f.parent.as_ref().map(|p| format!(" (lancé par {p})")).unwrap_or_default());
                     alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_003, "Info", &f, texte);
@@ -647,16 +613,10 @@ impl Moniteur {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
         if self.numero_passage % 100 == 0 {
-            let avant = self.adresses_publiques.len();
-            self.adresses_publiques = parefeu::adresses_publiques();
-            if self.adresses_publiques.len() > avant {
-                let a = Alerte {
-                    regle: crate::regles::RES_004.into(),
-                    id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 4, processus: "Windows".into(),
-                    destination: "carte réseau".into(),
-                    raisons: format!("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC ({})", self.adresses_publiques.join(", ")),
-                    ..Default::default()
-                };
+            let apres = parefeu::adresses_publiques();
+            let alerte = alerte_adresses_publiques(&self.adresses_publiques, &apres);
+            self.adresses_publiques = apres;
+            if let Some(a) = alerte {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, Some("adresse-publique".into()));
             }
         }
@@ -1409,21 +1369,161 @@ fn traiter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
         return;
     }
     let nom = nom.trim_end_matches('.');
-    if let Some(m) = p.menaces.read().unwrap().chercher_domaine(nom) {
-        p.alertes_externes.lock().unwrap().push(Alerte {
-            regle: crate::regles::DNS_001.into(),
-            id: commun::nouvel_id(),
-            heure: commun::maintenant(),
-            niveau: "Critique".into(),
-            score: 10,
-            processus: "?".into(),
-            destination: nom.into(),
-            nom_dns: Some(nom.into()),
-            raisons: format!("requête DNS vers un domaine MALVEILLANT connu ({})", m.source),
-            ..Default::default()
-        });
+    let alerte = alerte_dns(&p.menaces.read().unwrap(), nom);
+    if let Some(a) = alerte {
+        p.alertes_externes.lock().unwrap().push(a);
     }
     noter_dns(p, nom, resultats);
+}
+
+/// Décision pure (testée, DNS-001) : requête DNS vers un domaine des listes de menaces
+pub(crate) fn alerte_dns(menaces: &crate::menaces::Menaces, nom: &str) -> Option<Alerte> {
+    let m = menaces.chercher_domaine(nom)?;
+    Some(Alerte {
+        regle: crate::regles::DNS_001.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        score: 10,
+        processus: "?".into(),
+        destination: nom.into(),
+        nom_dns: Some(nom.into()),
+        raisons: format!("requête DNS vers un domaine MALVEILLANT connu ({})", m.source),
+        ..Default::default()
+    })
+}
+
+/// Indices d'une connexion, lus dans le cycle de surveillance (`score_flux`)
+pub(crate) struct IndicesFlux<'a> {
+    /// Source de la liste de menaces qui contient l'adresse ou le nom
+    pub menace: Option<&'a str>,
+    pub non_signe: bool,
+    pub dossier_temporaire: bool,
+    /// Texte « téléchargé depuis Internet… » et âge du fichier en jours
+    pub origine: Option<(&'a str, u64)>,
+    /// Motif suspect de la ligne de commande du processus
+    pub suspicion_ligne: Option<&'a str>,
+    pub nom_dns_connu: bool,
+    pub navigateur_doh: bool,
+    /// Éditeur connu pour joindre des adresses sans requête DNS (VPN, messagerie, jeu…)
+    pub application_ip_directe: bool,
+    /// Journal DNS lu récemment : l'absence de nom a un sens
+    pub dns_lu: bool,
+    /// Connexion déjà ouverte au démarrage du service
+    pub preexistant: bool,
+    /// Intervalle de la balise régulière, en secondes
+    pub balise: Option<u64>,
+    pub port: u16,
+    pub telemetrie: bool,
+    pub bloque: bool,
+}
+
+/// Décision pure (testée, RES-001 et RES-002) : score et raisons d'une connexion, dans l'ordre affiché
+pub(crate) fn score_flux(i: &IndicesFlux) -> (i32, Vec<String>) {
+    let mut raisons: Vec<String> = Vec::new();
+    let mut score = 0;
+    if let Some(source) = i.menace {
+        raisons.push(format!("MENACE CONNUE ({source})"));
+        score += 10;
+    }
+    if i.non_signe {
+        raisons.push("NON SIGNÉ".into());
+        score += 3;
+    }
+    if i.dossier_temporaire {
+        raisons.push("lancé depuis un dossier temporaire".into());
+        score += 3;
+    }
+    if let Some((texte, age_jours)) = i.origine {
+        if i.non_signe {
+            raisons.push(texte.into());
+            score += if age_jours < 2 { 3 } else { 2 };
+        }
+    }
+    if let Some(s) = i.suspicion_ligne {
+        raisons.push(s.into());
+        score += 3;
+    }
+    if !i.nom_dns_connu {
+        if i.navigateur_doh {
+            raisons.push("IP sans DNS (navigateur, DoH probable)".into());
+        } else if i.application_ip_directe {
+            raisons.push("IP sans DNS (application connue : VPN, messagerie, notifications, jeu…)".into());
+        } else if i.dns_lu && !i.preexistant {
+            raisons.push("IP DIRECTE (aucune requête DNS)".into());
+            score += 2;
+        } else {
+            raisons.push("nom DNS inconnu".into());
+        }
+    }
+    if let Some(intervalle) = i.balise {
+        let fort = i.non_signe || !i.nom_dns_connu;
+        raisons.push(format!("balise régulière (nouvelle connexion toutes les ~{intervalle} s)"));
+        score += if fort { 3 } else { 1 };
+    }
+    if !PORTS_COURANTS.contains(&i.port) {
+        raisons.push(format!("port inhabituel {}", i.port));
+        score += 1;
+    }
+    if i.telemetrie {
+        raisons.push("télémétrie connue".into());
+        score += 1;
+    }
+    if i.bloque {
+        raisons.push("BLOQUÉ".into());
+    }
+    (score, raisons)
+}
+
+/// Décision pure (testée) : règle d'une connexion. Menace connue : RES-001, même pour une connexion déjà ouverte au
+/// démarrage ; sinon nouvelle connexion au score suffisant, hors premier passage : RES-002
+pub(crate) fn regle_flux(menace: bool, nouveau: bool, premier_passage: bool, score: i32) -> Option<&'static str> {
+    if menace {
+        Some(crate::regles::RES_001)
+    } else if nouveau && !premier_passage && score >= commun::SEUIL_ALERTE {
+        Some(crate::regles::RES_002)
+    } else {
+        None
+    }
+}
+
+/// Décision pure (testée, RES-003) : première connexion d'un programme signalée, sauf en apprentissage et au premier
+/// passage (connexions déjà ouvertes au démarrage du service)
+pub(crate) fn premiere_connexion_signalee(apprentissage: bool, premier_passage: bool) -> bool {
+    !apprentissage && !premier_passage
+}
+
+/// Décision pure (testée, RES-004) : réseau public apparu sur une carte réseau depuis le relevé précédent. PR 3.8 :
+/// comparé réseau par réseau ; avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en
+/// remplaçait une autre passait inaperçue. Une adresse IPv4 est son propre réseau ; une adresse IPv6 compte par son
+/// préfixe /64 : les adresses temporaires que Windows renouvelle chaque jour dans le même préfixe ne sont pas une
+/// exposition nouvelle (relecture de #87, D1)
+pub(crate) fn alerte_adresses_publiques(avant: &[String], apres: &[String]) -> Option<Alerte> {
+    let connus: Vec<String> = avant.iter().map(|a| reseau_public(a)).collect();
+    if !apres.iter().any(|a| !connus.contains(&reseau_public(a))) {
+        return None;
+    }
+    Some(Alerte {
+        regle: crate::regles::RES_004.into(),
+        id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 4, processus: "Windows".into(),
+        destination: "carte réseau".into(),
+        raisons: format!("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC ({})", apres.join(", ")),
+        ..Default::default()
+    })
+}
+
+/// Réseau d'une adresse publique relevée par `parefeu::adresses_publiques` (« adresse (carte) ») : l'adresse IPv4
+/// elle-même, le préfixe /64 d'une adresse IPv6, sans le nom de la carte (relecture de #87, R2-D1 : l'adresse est lue
+/// avant le premier espace) ; un texte illisible est gardé tel quel
+fn reseau_public(releve: &str) -> String {
+    let adresse = releve.split(' ').next().unwrap_or(releve);
+    match adresse.parse::<IpAddr>() {
+        Ok(IpAddr::V6(v6)) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        _ => adresse.to_string(),
+    }
 }
 
 fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {

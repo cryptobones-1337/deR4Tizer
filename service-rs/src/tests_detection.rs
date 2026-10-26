@@ -554,3 +554,228 @@ fn cha_001_negatif() {
     arbre.signaler(500, 7, "connexion vers une adresse inconnue");
     assert!(arbre.alertes(&arbre.chaines()).is_empty(), "racines distinctes");
 }
+
+// ------------------------------------------------------------ RES et DNS : connexions et requêtes DNS (PR 3.8)
+// Décisions pures du cycle de surveillance (moniteur::score_flux, regle_flux, premiere_connexion_signalee,
+// alerte_adresses_publiques, alerte_dns), des ports en écoute (surveillances::ports_ouverts) et du journal du pare-feu
+// (parefeu::exposition_reelle). Adresses de documentation (RFC 5737) seulement.
+
+/// Indices d'une connexion banale : programme signé, nom DNS connu, port courant
+fn indices_banals() -> crate::moniteur::IndicesFlux<'static> {
+    crate::moniteur::IndicesFlux {
+        menace: None, non_signe: false, dossier_temporaire: false, origine: None, suspicion_ligne: None, nom_dns_connu: true,
+        navigateur_doh: false, application_ip_directe: false, dns_lu: true, preexistant: false, balise: None, port: 443,
+        telemetrie: false, bloque: false,
+    }
+}
+
+#[test]
+fn res_001_positif() {
+    use crate::moniteur::{regle_flux, score_flux, IndicesFlux};
+    // Adresse d'une liste de menaces trouvée ; l'alerte part même pour une connexion déjà ouverte au démarrage
+    let m = crate::menaces::menaces_test(&["203.0.113.66"], &[]);
+    let source = m.chercher_ip("203.0.113.66").expect("adresse de la liste").source;
+    let (score, raisons) = score_flux(&IndicesFlux { menace: Some(&source), ..indices_banals() });
+    assert_eq!((score, raisons[0].as_str()), (10, "MENACE CONNUE (essai)"));
+    assert_eq!(regle_flux(true, false, true, score), Some("RES-001"));
+}
+
+#[test]
+fn res_001_negatif() {
+    use crate::moniteur::regle_flux;
+    // Une liste ne fait jamais signaler une adresse privée (imprimante, box) ; adresse publique absente de la liste
+    let m = crate::menaces::menaces_test(&["203.0.113.66", "192.168.1.10"], &[]);
+    assert!(m.chercher_ip("192.168.1.10").is_none());
+    assert!(m.chercher_ip("203.0.113.67").is_none());
+    assert_eq!(regle_flux(false, false, true, 0), None);
+}
+
+#[test]
+fn res_002_positif() {
+    use crate::moniteur::{regle_flux, score_flux, IndicesFlux};
+    // Programme non signé : 3, au seuil
+    let (score, raisons) = score_flux(&IndicesFlux { non_signe: true, ..indices_banals() });
+    assert_eq!((score, raisons.join(", ").as_str()), (3, "NON SIGNÉ"));
+    assert_eq!(regle_flux(false, true, false, score), Some("RES-002"));
+    // IP directe (journal DNS lu, connexion nouvelle) et port inhabituel : 2 + 1
+    let (score, raisons) = score_flux(&IndicesFlux { nom_dns_connu: false, port: 4444, ..indices_banals() });
+    assert_eq!((score, raisons.join(", ").as_str()), (3, "IP DIRECTE (aucune requête DNS), port inhabituel 4444"));
+    assert_eq!(regle_flux(false, true, false, score), Some("RES-002"));
+    // Non signé, téléchargé depuis Internet hier, balise : 3 + 3 + 3 (balise forte : non signé)
+    let (score, _) = score_flux(&IndicesFlux { non_signe: true, origine: Some(("téléchargé depuis Internet", 1)), balise: Some(60), ..indices_banals() });
+    assert_eq!(score, 9);
+    // Balise d'un programme signé : forte sans nom DNS (3, plus l'IP directe : 2), faible avec un nom (1)
+    assert_eq!(score_flux(&IndicesFlux { nom_dns_connu: false, balise: Some(60), ..indices_banals() }).0, 5);
+    assert_eq!(score_flux(&IndicesFlux { balise: Some(60), ..indices_banals() }).0, 1);
+}
+
+#[test]
+fn res_002_negatif() {
+    use crate::moniteur::{regle_flux, score_flux, IndicesFlux};
+    // Connexion banale : 0
+    assert_eq!(score_flux(&indices_banals()).0, 0);
+    // Origine Internet d'un programme signé : pas comptée ; navigateur sans DNS (DoH) : pas compté
+    assert_eq!(score_flux(&IndicesFlux { origine: Some(("téléchargé depuis Internet", 0)), ..indices_banals() }).0, 0);
+    assert_eq!(score_flux(&IndicesFlux { nom_dns_connu: false, navigateur_doh: true, ..indices_banals() }).0, 0);
+    // Journal DNS non lu, ou connexion déjà ouverte au démarrage : « nom DNS inconnu », sans indice
+    let (score, raisons) = score_flux(&IndicesFlux { nom_dns_connu: false, dns_lu: false, ..indices_banals() });
+    assert_eq!((score, raisons.join(", ").as_str()), (0, "nom DNS inconnu"));
+    assert_eq!(score_flux(&IndicesFlux { nom_dns_connu: false, preexistant: true, ..indices_banals() }).0, 0);
+    // Score au seuil mais connexion déjà vue, ou premier passage : rien
+    assert_eq!(regle_flux(false, false, false, 5), None);
+    assert_eq!(regle_flux(false, true, true, 5), None);
+    assert_eq!(regle_flux(false, true, false, 2), None);
+}
+
+#[test]
+fn res_003_positif() {
+    assert!(crate::moniteur::premiere_connexion_signalee(false, false));
+}
+
+#[test]
+fn res_003_negatif() {
+    // Apprentissage, ou connexions déjà ouvertes au démarrage du service (premier passage)
+    assert!(!crate::moniteur::premiere_connexion_signalee(true, false));
+    assert!(!crate::moniteur::premiere_connexion_signalee(false, true));
+}
+
+/// Adresse publique sous la forme relevée par parefeu::adresses_publiques : « adresse (carte) »
+fn releve(adresse: &str) -> String {
+    format!("{adresse} (Wi-Fi)")
+}
+
+#[test]
+fn res_004_positif() {
+    use crate::moniteur::alerte_adresses_publiques;
+    let a = alerte_adresses_publiques(&[], &[releve("203.0.113.7")]).expect("adresse apparue");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("RES-004", "Alerte"));
+    // PR 3.8 : une adresse publique qui en remplace une autre (même nombre d'adresses) alerte aussi
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &[releve("198.51.100.9")]).is_some());
+    // IPv6 : nouveau préfixe /64 (adresses de documentation, RFC 3849)
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1::10")], &[releve("2001:db8:1:2::10")]).is_some());
+}
+
+#[test]
+fn res_004_negatif() {
+    use crate::moniteur::alerte_adresses_publiques;
+    // Mêmes adresses, ou adresse disparue
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &[releve("203.0.113.7")]).is_none());
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7"), releve("198.51.100.9")], &[releve("203.0.113.7")]).is_none());
+    assert!(alerte_adresses_publiques(&[], &[]).is_none());
+    // Relecture de #87, D1 et R2-D1 : adresse temporaire IPv6 renouvelée dans le même préfixe /64 (chaque jour, et à
+    // chaque reconnexion), sous la forme relevée : pas une exposition nouvelle
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1:a1b2:c3d4:e5f6:1")], &[releve("2001:db8:1:1:9f8e:7d6c:5b4a:2")]).is_none());
+    assert!(alerte_adresses_publiques(&[releve("2001:db8:1:1::10"), releve("2001:db8:1:1:a1b2:c3d4:e5f6:1")],
+                                      &[releve("2001:db8:1:1::10"), releve("2001:db8:1:1:9f8e:7d6c:5b4a:2")]).is_none());
+    // Même adresse vue sur une autre carte : pas une exposition nouvelle
+    assert!(alerte_adresses_publiques(&[releve("203.0.113.7")], &["203.0.113.7 (Ethernet)".into()]).is_none());
+}
+
+/// Relecture de #87, R2-D1 : la forme lue par alerte_adresses_publiques est celle que parefeu::adresses_publiques produit
+/// (contrôle du source : l'appel Windows ne s'exécute pas en test)
+#[test]
+fn res_004_forme_du_releve() {
+    let p = include_str!("parefeu.rs").replace("\r\n", "\n");
+    assert!(p.contains("l.push(format!(\"{ip} ({nom})\"));"), "forme « adresse (carte) » changée : revoir moniteur::reseau_public et releve()");
+}
+
+#[test]
+fn res_005_positif() {
+    use crate::parefeu::{exposition_reelle, ContexteExposition};
+    // Paquet venu d'Internet vers un port en écoute (la chaîne complète, du journal à l'alerte, est exercée par
+    // exposition_reelle_sans_faux_positifs)
+    let ctx = ContexteExposition { ecoute_tcp: [3389u16].into_iter().collect(), udp_dynamique: (49152, 65535), pid_service: 4000 };
+    assert!(exposition_reelle("TCP", 3389, 9999, "-", &ctx));
+    assert!(exposition_reelle("ICMP", 0, 9999, "8", &ctx), "demande d'écho venue d'Internet");
+}
+
+#[test]
+fn res_005_negatif() {
+    use crate::parefeu::{exposition_reelle, ContexteExposition};
+    // Réponse à une connexion sortante (port éphémère, rien n'y écoute), réponse UDP, réponse d'écho
+    let ctx = ContexteExposition { ecoute_tcp: [3389u16].into_iter().collect(), udp_dynamique: (49152, 65535), pid_service: 4000 };
+    assert!(!exposition_reelle("TCP", 51000, 9999, "-", &ctx));
+    assert!(!exposition_reelle("UDP", 50003, 9999, "-", &ctx));
+    assert!(!exposition_reelle("ICMP", 0, 9999, "0", &ctx));
+}
+
+/// Ports en écoute : un tour de surveillances::ports_ouverts, sans fichier ni appel Windows
+fn tour_ports(connues: &mut std::collections::HashMap<String, String>, apprentissage: &mut bool, tcp: &[crate::natif::Connexion],
+              signataire: &str) -> Vec<(String, String)> {
+    let mut ecoutes = Vec::new();
+    let mut alertes = Vec::new();
+    let chemin_de = |pid: u32| if pid == 4 { String::new() } else { format!(r"C:\Outils\serveur{pid}.exe") };
+    let sig = signataire.to_string();
+    crate::surveillances::ports_ouverts(connues, apprentissage, &mut ecoutes, tcp, &chemin_de, &mut |_| sig.clone(), &mut alertes);
+    alertes.into_iter().map(|a| (a.regle, a.niveau)).collect()
+}
+
+#[test]
+fn res_006_positif() {
+    use crate::natif::Connexion;
+    let mut connues = std::collections::HashMap::new();
+    // Premier relevé : apprentissage, rien ; puis un port nouveau, programme non signé : Alerte ; signé : Info
+    let mut apprentissage = true;
+    assert!(tour_ports(&mut connues, &mut apprentissage, &[Connexion::pour_test(700, 2, "0.0.0.0", 8000, "0.0.0.0", 0)], "").is_empty());
+    assert!(!apprentissage);
+    let ecoute = [Connexion::pour_test(700, 2, "0.0.0.0", 8000, "0.0.0.0", 0), Connexion::pour_test(701, 2, "0.0.0.0", 4444, "0.0.0.0", 0)];
+    assert_eq!(tour_ports(&mut connues, &mut apprentissage, &ecoute, ""), [("RES-006".to_string(), "Alerte".to_string())]);
+    let ecoute = [Connexion::pour_test(702, 2, "0.0.0.0", 9000, "0.0.0.0", 0)];
+    assert_eq!(tour_ports(&mut connues, &mut apprentissage, &ecoute, "Éditeur"), [("RES-006".to_string(), "Info".to_string())]);
+}
+
+#[test]
+fn res_006_negatif() {
+    use crate::natif::Connexion;
+    let mut connues = std::collections::HashMap::new();
+    let mut apprentissage = false;
+    // Écoute sur la boucle locale ; port RPC dynamique de Windows ; port déjà connu
+    let ecoute = [Connexion::pour_test(700, 2, "127.0.0.1", 8000, "0.0.0.0", 0), Connexion::pour_test(701, 2, "0.0.0.0", 49700, "0.0.0.0", 0)];
+    assert!(tour_ports(&mut connues, &mut apprentissage, &ecoute, "Microsoft Windows").is_empty());
+    let ecoute = [Connexion::pour_test(702, 2, "0.0.0.0", 8000, "0.0.0.0", 0)];
+    assert_eq!(tour_ports(&mut connues, &mut apprentissage, &ecoute, "Éditeur").len(), 1);
+    assert!(tour_ports(&mut connues, &mut apprentissage, &ecoute, "Éditeur").is_empty(), "déjà connu");
+}
+
+#[test]
+fn res_007_positif() {
+    use crate::natif::Connexion;
+    let mut connues = std::collections::HashMap::new();
+    let mut apprentissage = true;
+    // Connexion établie depuis Internet sur un port en écoute : Critique si le programme n'est pas signé, Alerte sinon
+    let tcp = [Connexion::pour_test(700, 2, "0.0.0.0", 3389, "0.0.0.0", 0), Connexion::pour_test(700, 5, "192.168.0.10", 3389, "203.0.113.9", 51515)];
+    assert_eq!(tour_ports(&mut connues, &mut apprentissage, &tcp, ""), [("RES-007".to_string(), "Critique".to_string())]);
+    assert_eq!(tour_ports(&mut connues, &mut apprentissage, &tcp, "Éditeur"), [("RES-007".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn res_007_negatif() {
+    use crate::natif::Connexion;
+    let mut connues = std::collections::HashMap::new();
+    let mut apprentissage = true;
+    // Connexion entrante depuis le réseau local ; connexion sortante (port local qui n'écoute pas)
+    let tcp = [Connexion::pour_test(700, 2, "0.0.0.0", 3389, "0.0.0.0", 0), Connexion::pour_test(700, 5, "192.168.0.10", 3389, "192.168.0.20", 51515),
+               Connexion::pour_test(800, 5, "192.168.0.10", 50123, "203.0.113.9", 443)];
+    assert!(tour_ports(&mut connues, &mut apprentissage, &tcp, "").is_empty());
+    // Adresse du partage d'adresses des opérateurs (CGNAT, 100.64.0.0/10) : ni locale, ni publique
+    let tcp = [Connexion::pour_test(700, 2, "0.0.0.0", 3389, "0.0.0.0", 0), Connexion::pour_test(700, 5, "100.64.1.5", 3389, "100.64.7.8", 51515)];
+    assert!(tour_ports(&mut connues, &mut apprentissage, &tcp, "").is_empty(), "CGNAT");
+}
+
+#[test]
+fn dns_001_positif() {
+    let m = crate::menaces::menaces_test(&[], &["malveillant.example"]);
+    let a = crate::moniteur::alerte_dns(&m, "malveillant.example").expect("domaine de la liste");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.score), ("DNS-001", "Critique", 10));
+    // La casse ne compte pas
+    assert!(crate::moniteur::alerte_dns(&m, "MALVEILLANT.example").is_some());
+}
+
+#[test]
+fn dns_001_negatif() {
+    let m = crate::menaces::menaces_test(&[], &["malveillant.example"]);
+    // Autre domaine, sous-domaine (les listes portent des noms exacts), nom vide
+    assert!(crate::moniteur::alerte_dns(&m, "sain.example").is_none());
+    assert!(crate::moniteur::alerte_dns(&m, "www.malveillant.example").is_none());
+    assert!(crate::moniteur::alerte_dns(&m, "").is_none());
+}
