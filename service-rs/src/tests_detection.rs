@@ -901,3 +901,140 @@ fn vol_001_negatif() {
     assert!(premiere_en_24h(&mut vues, "lecteur|mots de passe".into(), t0 + std::time::Duration::from_secs(3600)), "autre cible");
     assert!(premiere_en_24h(&mut vues, "lecteur|cookies".into(), t0 + std::time::Duration::from_secs(90_000)), "24 h passées");
 }
+
+// ------------------------------------------------------------ SYS, PIL, EXT : hosts, pare-feu, pilotes, extensions (PR 3.10)
+// Décisions moniteur::alerte_hosts, parefeu::traduire (événements du journal du pare-feu synthétiques),
+// hygiene::pilotes_vulnerables (vrais fichiers temporaires) et hygiene::nouvelles_extensions (sans fichier de données).
+
+#[test]
+fn sys_001_positif() {
+    use crate::moniteur::relever_hosts;
+    let mut connue = "empreinte-avant".to_string();
+    let a = relever_hosts(&mut connue, "empreinte-apres".into()).expect("hosts modifié");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.score), ("SYS-001", "Alerte", 3));
+    assert_eq!(connue, "empreinte-apres");
+    // PR 3.10 : changement fait pendant une panne de lecture, signalé au retour du fichier
+    assert!(relever_hosts(&mut connue, String::new()).is_none());
+    assert_eq!(connue, "empreinte-apres", "empreinte connue gardée pendant la panne");
+    assert!(relever_hosts(&mut connue, "empreinte-modifiee".into()).is_some());
+}
+
+#[test]
+fn sys_001_negatif() {
+    use crate::moniteur::relever_hosts;
+    // Même empreinte (nos propres écritures mettent l'empreinte connue à jour avant le contrôle)
+    let mut connue = "empreinte".to_string();
+    assert!(relever_hosts(&mut connue, "empreinte".into()).is_none());
+    // PR 3.10 : fichier illisible, puis relu inchangé : rien (avant : deux alertes à tort)
+    assert!(relever_hosts(&mut connue, String::new()).is_none());
+    assert!(relever_hosts(&mut connue, "empreinte".into()).is_none());
+    // Illisible au démarrage : le premier relevé lisible devient la référence
+    let mut connue = String::new();
+    assert!(relever_hosts(&mut connue, "empreinte".into()).is_none());
+    assert_eq!(connue, "empreinte");
+}
+
+/// Événement du journal du pare-feu (Microsoft-Windows-Windows Firewall With Advanced Security/Firewall)
+fn regle_parefeu(id: u32, donnees: &[(&str, &str)], signataire: &str) -> Option<(String, String)> {
+    let sig = signataire.to_string();
+    crate::parefeu::traduire(&evenement_defender(id, donnees), &|_| sig.clone()).and_then(|(_, a)| a).map(|a| (a.regle, a.niveau))
+}
+
+#[test]
+fn sys_002_positif() {
+    // Port entrant ouvert en ligne de commande (netsh) : Alerte
+    let netsh = [("RuleName", "porte"), ("Direction", "1"), ("Action", "3"), ("LocalPorts", "4444"), ("ModifyingApplication", r"C:\Windows\System32\netsh.exe")];
+    assert_eq!(regle_parefeu(2004, &netsh, "Microsoft Windows"), regle_et_niveau("SYS-002", "Alerte"));
+    // Règle modifiée par un programme non signé (fichier réel, signataire vide) : Critique
+    let d = dossier_regle("sys2");
+    let outil = d.join("outil.exe");
+    std::fs::write(&outil, b"MZ").unwrap();
+    let outil = outil.to_string_lossy().to_string();
+    let r = regle_parefeu(2005, &[("RuleName", "r"), ("Direction", "2"), ("Action", "2"), ("ModifyingApplication", &outil)], "");
+    let _ = std::fs::remove_dir_all(&d);
+    assert_eq!(r, regle_et_niveau("SYS-002", "Critique"));
+}
+
+#[test]
+fn sys_002_negatif() {
+    // Nos propres règles (blocages, isolements), même entrantes et posées par netsh ; règle sortante changée par
+    // Windows ; événement sans rapport
+    assert_eq!(regle_parefeu(2004, &[("RuleName", "deR4Tizer isolement"), ("Direction", "1"), ("Action", "3"),
+                                     ("ModifyingApplication", r"C:\Windows\System32\netsh.exe")], "Microsoft Windows"), None);
+    assert_eq!(regle_parefeu(2004, &[("RuleName", "r"), ("Direction", "2"), ("Action", "3"), ("ModifyingApplication", r"C:\Windows\System32\svchost.exe")], "Microsoft Windows"), None);
+    assert_eq!(regle_parefeu(2010, &[("RuleName", "r")], ""), None);
+}
+
+#[test]
+fn sys_003_positif() {
+    // Toutes les règles supprimées par un autre auteur que Windows : Critique
+    assert_eq!(regle_parefeu(2059, &[("ModifyingApplication", r"C:\Users\essai\AppData\Local\Temp\x.exe")], ""), regle_et_niveau("SYS-003", "Critique"));
+}
+
+#[test]
+fn sys_003_negatif() {
+    // Actualisation de la stratégie de groupe par svchost de Windows : Info (le retour des règles est vérifié une minute
+    // plus tard par surveiller_regles) ; un « svchost.exe » hors de Windows reste Critique
+    let svchost = format!(r"{}\System32\svchost.exe", crate::natif::dossier_windows());
+    assert_eq!(regle_parefeu(2059, &[("ModifyingApplication", &svchost)], "Microsoft Windows"), regle_et_niveau("SYS-003", "Info"));
+    assert_eq!(regle_parefeu(2059, &[("ModifyingApplication", r"C:\Users\essai\svchost.exe")], ""), regle_et_niveau("SYS-003", "Critique"));
+}
+
+#[test]
+fn pil_001_positif() {
+    use std::collections::HashSet;
+    let d = dossier_regle("pil1");
+    let pilote = d.join("vulnerable.sys");
+    std::fs::write(&pilote, b"pilote vulnerable de test").unwrap();
+    let connus: HashSet<String> = [crate::hygiene::empreinte_fichier(&pilote).unwrap()].into();
+    let mut deja = HashSet::new();
+    let a = crate::hygiene::pilotes_vulnerables(vec![pilote.clone()], &connus, &mut deja);
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str())).collect::<Vec<_>>(), [("PIL-001", "Critique")]);
+    // Déjà signalé : plus d'alerte
+    assert!(crate::hygiene::pilotes_vulnerables(vec![pilote], &connus, &mut deja).is_empty());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn pil_001_negatif() {
+    use std::collections::HashSet;
+    let d = dossier_regle("pil1n");
+    let sain = d.join("sain.sys");
+    std::fs::write(&sain, b"pilote sain").unwrap();
+    // Même contenu qu'un pilote connu, mais pas un .sys
+    let texte = d.join("copie.txt");
+    std::fs::write(&texte, b"pilote vulnerable de test").unwrap();
+    let connus: HashSet<String> = [crate::hygiene::empreinte_fichier(&texte).unwrap()].into();
+    let a = crate::hygiene::pilotes_vulnerables(vec![sain, texte, d.join("absent.sys")], &connus, &mut HashSet::new());
+    let _ = std::fs::remove_dir_all(&d);
+    assert!(a.is_empty());
+}
+
+fn extension(id: &str, dangereuse: bool) -> crate::hygiene::Extension {
+    crate::hygiene::Extension { navigateur: "Chrome".into(), id: id.into(), nom: format!("Extension {id}"), version: "1.0".into(),
+                                permissions: if dangereuse { "<all_urls>, cookies".into() } else { "storage".into() }, dangereuse, depuis: String::new() }
+}
+
+#[test]
+fn ext_001_positif() {
+    use crate::hygiene::nouvelles_extensions;
+    let mut connues = std::collections::HashMap::new();
+    assert!(nouvelles_extensions(&mut [extension("a", false)], &mut connues, true).is_empty(), "premier relevé : apprentissage");
+    let mut liste = [extension("a", false), extension("b", true), extension("c", false)];
+    let a = nouvelles_extensions(&mut liste, &mut connues, false);
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str())).collect::<Vec<_>>(), [("EXT-001", "Alerte"), ("EXT-001", "Info")]);
+    assert!(a[0].raisons.contains("permissions sensibles"));
+    assert!(!liste[1].depuis.is_empty(), "date de première vue notée");
+}
+
+#[test]
+fn ext_001_negatif() {
+    use crate::hygiene::nouvelles_extensions;
+    let mut connues = std::collections::HashMap::from([("Chrome|a".to_string(), "2026-10-01 10:00:00".to_string())]);
+    let mut liste = [extension("a", true)];
+    // Déjà connue : rien, et sa date de première vue est reprise ; même identifiant dans un autre navigateur : nouvelle
+    assert!(nouvelles_extensions(&mut liste, &mut connues, false).is_empty());
+    assert_eq!(liste[0].depuis, "2026-10-01 10:00:00");
+    let mut autre = [crate::hygiene::Extension { navigateur: "Edge".into(), ..extension("a", false) }];
+    assert_eq!(nouvelles_extensions(&mut autre, &mut connues, false).len(), 1);
+}

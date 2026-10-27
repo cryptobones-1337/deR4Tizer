@@ -419,9 +419,8 @@ fn pilotes_declares() -> Vec<PathBuf> {
 
 /// Compare les pilotes présents (dossier drivers et pilotes déclarés) à la liste
 pub fn verifier_pilotes(connus: &HashSet<String>, deja: &mut HashSet<String>) -> Vec<Alerte> {
-    let mut a = Vec::new();
     if connus.is_empty() {
-        return a;
+        return Vec::new();
     }
     let dossier = PathBuf::from(crate::natif::dossier_systeme()).join("drivers");
     let mut chemins: Vec<PathBuf> = fs::read_dir(&dossier).map(|d| d.map_while(Result::ok).map(|e| e.path()).collect()).unwrap_or_default();
@@ -430,6 +429,13 @@ pub fn verifier_pilotes(connus: &HashSet<String>, deja: &mut HashSet<String>) ->
             chemins.push(p);
         }
     }
+    pilotes_vulnerables(chemins, connus, deja)
+}
+
+/// Décision testée (PIL-001) : parmi ces fichiers, les pilotes (.sys) dont l'empreinte SHA-256 est dans la liste ; un
+/// pilote déjà signalé ne l'est plus (`deja`)
+pub(crate) fn pilotes_vulnerables(chemins: Vec<PathBuf>, connus: &HashSet<String>, deja: &mut HashSet<String>) -> Vec<Alerte> {
+    let mut a = Vec::new();
     for p in chemins {
         if p.extension().map(|x| !x.eq_ignore_ascii_case("sys")).unwrap_or(true) {
             continue;
@@ -564,6 +570,16 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     let apprentissage = connues.is_none();
     let mut connues = connues.unwrap_or_default();
     let mut liste = inventaire_extensions();
+    let alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
+    let _ = commun::ecrire("extensions-connues.json", &connues);
+    liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
+    let _ = commun::ecrire("extensions.json", &liste);
+    (liste, alertes)
+}
+
+/// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
+/// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
+pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMap<String, String>, apprentissage: bool) -> Vec<Alerte> {
     let mut alertes = Vec::new();
     for e in liste.iter_mut() {
         let cle = format!("{}|{}", e.navigateur, e.id);
@@ -581,8 +597,5 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
             }
         }
     }
-    let _ = commun::ecrire("extensions-connues.json", &connues);
-    liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
-    let _ = commun::ecrire("extensions.json", &liste);
-    (liste, alertes)
+    alertes
 }
