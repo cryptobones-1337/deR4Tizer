@@ -14,6 +14,8 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,8 +30,8 @@ pub struct Secrets {
 }
 
 /// État lisible par l'interface (sans secret)
-#[derive(Serialize, Default)]
-#[serde(rename_all = "PascalCase")]
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase", default)]
 struct Etat {
     ntfy_configure: bool,
     teams_configure: bool,
@@ -38,6 +40,123 @@ struct Etat {
     resumes: u64,
     dernier_envoi: String,
     derniere_erreur: String,
+    /// Phase 4, PR 4.4b : heure du premier échec de remontée non résolu (vide sinon)
+    echec_depuis: String,
+    /// Alertes en attente de remontée (file de reprise, en mémoire)
+    en_attente: usize,
+    /// Alertes abandonnées par la file de reprise (pleine ou plus de 24 h) depuis le démarrage
+    abandonnees: u64,
+    /// Date locale (AAAA-MM-JJ) du dernier battement envoyé ; relue au démarrage
+    dernier_battement: String,
+}
+
+/// Premier échec de remontée non résolu, en secondes (0 : aucun) ; lu par le fil « sante » (SAN-004)
+static ECHEC_DEPUIS: AtomicI64 = AtomicI64::new(0);
+
+/// Remontée en échec depuis (secondes), si elle est configurée et en échec
+pub fn echec_depuis() -> Option<i64> {
+    Some(ECHEC_DEPUIS.load(Ordering::Relaxed)).filter(|t| *t > 0)
+}
+
+fn secondes() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+// ------------------------------------------------------------ file de reprise (phase 4, PR 4.4b)
+
+/// 100 alertes au plus, 24 h au plus (D4-8 : en mémoire ; un redémarrage la vide)
+pub const REPRISE_MAX: usize = 100;
+pub const REPRISE_DUREE_S: i64 = 86_400;
+/// Essais à +1, +5, +15 et +60 min après l'échec, puis toutes les heures
+pub const REPRISE_DELAIS_S: [i64; 4] = [60, 300, 900, 3600];
+
+pub struct Reprise {
+    pub alerte: Alerte,
+    pub premier_echec: i64,
+    pub essais: usize,
+    pub prochain: i64,
+}
+
+/// File des alertes dont la remontée a échoué (décisions pures, testées)
+#[derive(Default)]
+pub struct FileReprise {
+    pub entrees: VecDeque<Reprise>,
+    pub abandonnees: u64,
+}
+
+/// Retentée après un échec : une alerte critique, ou un constat de santé (sauf SAN-004, local par nature)
+pub fn a_retenter(a: &Alerte) -> bool {
+    a.niveau == "Critique" || (a.regle.starts_with("SAN-") && a.regle != crate::regles::SAN_004)
+}
+
+impl FileReprise {
+    /// Met en file les alertes à retenter d'un lot non remis, sans doublon (même Id). Pleine, la plus ancienne de la
+    /// seconde moitié part : les 50 premières restent (audit de #99, S99-01 : sinon 100 alertes critiques provoquées
+    /// pendant une panne chasseraient la vraie, qui est la première)
+    pub fn ajouter(&mut self, lot: &[Alerte], t: i64) {
+        for a in lot.iter().filter(|a| a_retenter(a)) {
+            if self.entrees.iter().any(|r| r.alerte.id == a.id) {
+                continue;
+            }
+            if self.entrees.len() >= REPRISE_MAX {
+                self.entrees.remove(REPRISE_MAX / 2);
+                self.abandonnees += 1;
+            }
+            self.entrees.push_back(Reprise { alerte: a.clone(), premier_echec: t, essais: 0, prochain: t + REPRISE_DELAIS_S[0] });
+        }
+    }
+
+    /// Alertes dues à `t` ; celles en file depuis plus de 24 h sont abandonnées
+    pub fn dues(&mut self, t: i64) -> Vec<Alerte> {
+        let avant = self.entrees.len();
+        self.entrees.retain(|r| t - r.premier_echec < REPRISE_DUREE_S);
+        self.abandonnees += (avant - self.entrees.len()) as u64;
+        self.entrees.iter().filter(|r| r.prochain <= t).map(|r| r.alerte.clone()).collect()
+    }
+
+    /// Résultat d'un nouvel essai : remises, elles sortent de la file ; sinon, essai suivant
+    pub fn resultat(&mut self, ids: &[String], remis: bool, t: i64) {
+        if remis {
+            self.entrees.retain(|r| !ids.contains(&r.alerte.id));
+            return;
+        }
+        for r in self.entrees.iter_mut().filter(|r| ids.contains(&r.alerte.id)) {
+            r.essais += 1;
+            r.prochain = t + REPRISE_DELAIS_S.get(r.essais).copied().unwrap_or(3600);
+        }
+    }
+}
+
+// ------------------------------------------------------------ battement quotidien (phase 4, PR 4.4b, D4-6)
+
+/// Compteurs du battement, publiés par le fil « sante » : incidents non clos, collectes actives et indisponibles, et
+/// identifiants des collectes critiques indisponibles (aucun nom de compte, de programme ni de ligne de commande)
+#[derive(Clone, Default)]
+pub struct Compteurs {
+    pub incidents_non_clos: usize,
+    pub collectes_actives: usize,
+    pub collectes_indisponibles: usize,
+    pub critiques_indisponibles: Vec<&'static str>,
+}
+
+static COMPTEURS: Mutex<Option<Compteurs>> = Mutex::new(None);
+
+pub fn publier_compteurs(c: Compteurs) {
+    *COMPTEURS.lock().unwrap_or_else(|e| e.into_inner()) = Some(c);
+}
+
+/// Battement dû (pur, testé) : une fois par jour, à partir de 09:00 locale ; `maintenant` au format de
+/// `commun::maintenant` (« AAAA-MM-JJ HH:MM:SS »)
+pub fn battement_du(dernier: &str, maintenant: &str) -> bool {
+    let (Some(date), Some(heure)) = (maintenant.get(..10), maintenant.get(11..13).and_then(|h| h.parse::<u32>().ok())) else { return false };
+    heure >= 9 && dernier != date
+}
+
+/// Texte du battement (pur, testé) : compteurs seulement
+pub fn texte_battement(c: &Compteurs, en_attente: usize) -> String {
+    let critiques = if c.critiques_indisponibles.is_empty() { String::new() } else { format!(" (critiques : {})", c.critiques_indisponibles.join(", ")) };
+    format!("deR4Tizer actif : {} incident(s) non clos ; collectes : {} active(s), {} indisponible(s){critiques} ; {en_attente} alerte(s) en attente de remontée.",
+        c.incidents_non_clos, c.collectes_actives, c.collectes_indisponibles)
 }
 
 enum Message {
@@ -241,12 +360,44 @@ fn actif(c: &ConfigNotifications) -> bool {
 }
 
 fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
-    let mut etat = Etat::default();
+    // Dernier battement relu (propriétaire contrôlé) : pas un battement de plus à chaque redémarrage
+    let mut etat = Etat { dernier_battement: commun::lire::<Etat>("notifications.json").map(|e| e.dernier_battement).unwrap_or_default(), ..Default::default() };
     let mut fenetre = Instant::now();
     let mut envois_heure = 0u32;
     let mut retenues = 0usize;
+    let mut reprise = FileReprise::default();
     ecrire_etat(&mut etat);
     loop {
+        // File de reprise : les alertes dues partent en un lot ; battement quotidien (D4-6), hors plafond et hors niveau
+        // minimal. La boucle passe ici au moins une fois par minute (attente de 60 s au plus)
+        if actif(&config) {
+            let t = secondes();
+            let dues = reprise.dues(t);
+            if !dues.is_empty() {
+                let ids: Vec<String> = dues.iter().map(|a| a.id.clone()).collect();
+                let remis = envoyer_partout(&config, &dues, &mut etat);
+                reprise.resultat(&ids, remis, t);
+            }
+            let maintenant = commun::maintenant();
+            if battement_du(&etat.dernier_battement, &maintenant) {
+                etat.dernier_battement = maintenant.chars().take(10).collect();
+                let compteurs = COMPTEURS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+                let battement = Alerte {
+                    niveau: "Info".into(),
+                    heure: maintenant,
+                    processus: "deR4Tizer".into(),
+                    destination: "battement quotidien".into(),
+                    raisons: texte_battement(&compteurs, reprise.entrees.len()),
+                    ..Default::default()
+                };
+                envoyer_partout(&config, &[battement], &mut etat);
+            }
+        }
+        if etat.en_attente != reprise.entrees.len() || etat.abandonnees != reprise.abandonnees {
+            etat.en_attente = reprise.entrees.len();
+            etat.abandonnees = reprise.abandonnees;
+            ecrire_etat(&mut etat);
+        }
         // Résumé du surplus retenu, envoyé sur minuterie (même si aucune nouvelle alerte n'arrive)
         if fenetre.elapsed() > Duration::from_secs(3600) {
             fenetre = Instant::now();
@@ -269,9 +420,20 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
             Ok(Message::Config(c)) => {
                 config = c;
+                // Réglages changés (canaux, destinations) : la file n'est pas envoyée vers la nouvelle destination ;
+                // ses alertes sont comptées abandonnées et restent dans alertes.json (audit de #99, S99-03)
+                reprise.abandonnees += reprise.entrees.len() as u64;
+                reprise.entrees.clear();
+                // Remontée coupée : plus d'échec à signaler (SAN-004)
+                if !actif(&config) {
+                    etat.echec_depuis.clear();
+                    ECHEC_DEPUIS.store(0, Ordering::Relaxed);
+                }
                 ecrire_etat(&mut etat);
                 continue;
             }
+            // SAN-004 (remontée en échec) : constat local, jamais remonté
+            Ok(Message::Alerte(a)) if a.regle == crate::regles::SAN_004 => continue,
             Ok(Message::Alerte(a)) => a,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
@@ -285,7 +447,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         loop {
             let reste = limite.saturating_duration_since(Instant::now());
             match rx.recv_timeout(reste) {
-                Ok(Message::Alerte(a)) if crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
+                Ok(Message::Alerte(a)) if a.regle != crate::regles::SAN_004 && crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
                 Ok(Message::Alerte(_)) => {}
                 Ok(Message::Config(c)) => config = c,
                 Err(RecvTimeoutError::Timeout) => break,
@@ -299,8 +461,8 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         if compte {
             envois_heure += 1;
         }
-        if !a_envoyer.is_empty() {
-            envoyer_partout(&config, &a_envoyer, &mut etat);
+        if !a_envoyer.is_empty() && !envoyer_partout(&config, &a_envoyer, &mut etat) {
+            reprise.ajouter(&a_envoyer, secondes());
         }
     }
 }
@@ -321,25 +483,48 @@ pub fn repartir(lot: Vec<Alerte>, envois_heure: u32, max_par_heure: u32) -> (Vec
     }
 }
 
-fn envoyer_partout(config: &ConfigNotifications, lot: &[Alerte], etat: &mut Etat) {
+/// Envoie un lot sur les canaux configurés ; remis si au moins un canal tenté a réussi (pur, testé : `remis`). Un lot
+/// remis sur un seul canal n'est pas retenté : il y arriverait en double
+fn envoyer_partout(config: &ConfigNotifications, lot: &[Alerte], etat: &mut Etat) -> bool {
     let s = lire_secrets();
     let mut erreurs = Vec::new();
+    let mut tentes = 0;
     if config.ntfy && !s.ntfy_url.is_empty() {
+        tentes += 1;
         if let Err(e) = ntfy(&s, lot) { erreurs.push(format!("ntfy : {e}")); }
     }
     if config.teams && !s.teams_url.is_empty() {
+        tentes += 1;
         if let Err(e) = teams(&s, lot) { erreurs.push(format!("Teams : {e}")); }
     }
     if config.smtp && !config.smtp_serveur.is_empty() {
+        tentes += 1;
         if let Err(e) = courriel(config, &s, lot) { erreurs.push(format!("e-mail : {e}")); }
     }
+    if tentes == 0 {
+        erreurs.push("aucun canal utilisable (adresse, secret ou serveur absent)".to_string());
+    }
+    let ok = remis(tentes, erreurs.len().min(tentes));
     etat.envoyes += 1;
     etat.dernier_envoi = commun::maintenant();
     etat.derniere_erreur = erreurs.join(" ; ");
     if !erreurs.is_empty() {
         commun::journal(&format!("notifications : {}", etat.derniere_erreur));
     }
+    if ok {
+        etat.echec_depuis.clear();
+        ECHEC_DEPUIS.store(0, Ordering::Relaxed);
+    } else if etat.echec_depuis.is_empty() {
+        etat.echec_depuis = commun::maintenant();
+        ECHEC_DEPUIS.store(secondes(), Ordering::Relaxed);
+    }
     ecrire_etat(etat);
+    ok
+}
+
+/// Lot remis : au moins un canal tenté, et au moins un a réussi (pur, testé)
+pub fn remis(tentes: usize, erreurs: usize) -> bool {
+    tentes > 0 && erreurs < tentes
 }
 
 fn ecrire_etat(etat: &mut Etat) {
@@ -529,7 +714,7 @@ fn curl(parametres: &str, corps: &[u8]) -> Result<(), String> {
         fs::write(&f_corps, corps).map_err(|e| e.to_string())?;
         fs::write(&f_param, format!("{parametres}\nsilent\nshow-error\nfail\nmax-time = 30\nproto = \"=https,smtps,smtp\"\n")).map_err(|e| e.to_string())?;
         // -q en premier : aucun fichier de réglages de curl lu (.curlrc), seulement le nôtre (-K)
-        let sortie = Command::new("curl.exe")
+        let sortie = Command::new(crate::natif::curl_exe())
             .arg("-q").arg("-K").arg(&f_param)
             .arg("--data-binary").arg(format!("@{}", f_corps.display()))
             .creation_flags(0x0800_0000)
@@ -652,7 +837,7 @@ fn courriel_curl(parametres: &str, message: &[u8]) -> Result<(), String> {
     let f = d.join(format!("curl-{}.txt", commun::nouvel_id()));
     let r = (|| {
         fs::write(&f, format!("{parametres}\nsilent\nshow-error\nmax-time = 30\n")).map_err(|e| e.to_string())?;
-        let mut enfant = Command::new("curl.exe")
+        let mut enfant = Command::new(crate::natif::curl_exe())
             .arg("-q").arg("-K").arg(&f)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())

@@ -411,6 +411,11 @@ pub fn powershell_exe() -> String {
     format!(r"{}\WindowsPowerShell\v1.0\powershell.exe", dossier_systeme())
 }
 
+/// Chemin absolu de curl.exe (System32), pour la même raison qu'AUD2-02 (audit de #98, S98-05)
+pub fn curl_exe() -> String {
+    format!(r"{}\curl.exe", dossier_systeme())
+}
+
 // ------------------------------------------------------------ catalogues de sécurité et processus
 
 /// Fichier signé par un catalogue de sécurité installé (signature de Windows et des pilotes, rangée dans

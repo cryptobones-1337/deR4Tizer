@@ -436,15 +436,21 @@ impl Moniteur {
                 }
             }).unwrap();
         }
-        // Santé des collectes (phase 4, PR 4.4a) : historique et constats SAN-*, toutes les 30 s, hors du verrou (pris
-        // seulement pour lire le compteur des alertes non suivies)
+        // Santé des collectes (phase 4, PR 4.4a) et de la remontée (PR 4.4b) : historique, constats SAN-* et compteurs du
+        // battement, toutes les 30 s, hors du verrou (pris seulement pour lire deux compteurs)
         {
             let (m, p) = (m.clone(), partage.clone());
             std::thread::Builder::new().name("sante".into()).spawn(move || {
                 let mut sante = crate::sante::Sante::default();
                 while !p.arret.load(Ordering::Relaxed) {
-                    let non_suivies = m.lock().unwrap().non_suivies;
-                    let (changements, constats) = sante.observer(&collectes::instantane(), non_suivies, crate::sante::secondes());
+                    let (non_suivies, non_clos) = {
+                        let g = m.lock().unwrap();
+                        (g.non_suivies, g.suivis.iter().filter(|i| i.etat != crate::incidents::EtatIncident::Clos).count())
+                    };
+                    let (t, etats) = (crate::sante::secondes(), collectes::instantane());
+                    let (changements, mut constats) = sante.observer(&etats, non_suivies, t);
+                    constats.extend(sante.observer_remontee(crate::notifications::echec_depuis(), t));
+                    crate::notifications::publier_compteurs(crate::sante::compteurs(&etats, non_clos));
                     for c in &changements {
                         crate::siem::enregistrer(crate::sante::evenement(c));
                     }

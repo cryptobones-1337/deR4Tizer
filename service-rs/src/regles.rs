@@ -74,6 +74,7 @@ registre! {
     SAN_001 = "SAN-001" : "collecte critique indisponible plus de 30 min";
     SAN_002 = "SAN-002" : "collecte rétablie";
     SAN_003 = "SAN-003" : "Defender (journal et état) illisible plus de 30 min";
+    SAN_004 = "SAN-004" : "remontée des alertes en échec depuis plus d'une heure (constat local)";
     SAN_012 = "SAN-012" : "alertes non suivies (plus de 500 incidents non clos)";
     EXP_IDS_001 = "EXP-IDS-001" : "IDS expérimental : règle au format Suricata (identifiant de la règle IDS dans les raisons)";
     EXP_DPI_001 = "EXP-DPI-001" : "DPI expérimental";

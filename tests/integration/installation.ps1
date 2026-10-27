@@ -439,6 +439,25 @@ Verifier 'Santé : coupure du journal du pare-feu historisée dans le SIEM, aucu
     $true
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.4b : santé de la remontée
+# Remontée non configurée en VM : notifications.json publie les champs de la 4.4b sans échec ni attente, et aucun
+# constat SAN-004 n'est levé. Le chemin d'échec (file de reprise, SAN-004 après une heure) est couvert par les tests
+# unitaires seulement
+Verifier 'Remontée non configurée : notifications.json sans échec ni attente, aucun SAN-004' {
+    $f = Join-Path $script:Donnees 'notifications.json'
+    if (-not (Test-Path $f)) { return 'notifications.json absent' }
+    $brut = Get-Content $f -Raw -Encoding UTF8
+    foreach ($champ in 'EchecDepuis', 'EnAttente', 'Abandonnees', 'DernierBattement') {
+        if ($brut -notmatch "`"$champ`"") { return "champ $champ absent de notifications.json" }
+    }
+    $n = $brut | ConvertFrom-Json
+    if ("$($n.EchecDepuis)" -ne '' -or $n.EnAttente -ne 0) { return "échec ou attente sans remontée : EchecDepuis « $($n.EchecDepuis) », EnAttente $($n.EnAttente)" }
+    $alertes = Join-Path $script:Donnees 'alertes.json'
+    $san = @(if (Test-Path $alertes) { (Get-Content $alertes -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -eq 'SAN-004' } })
+    if ($san.Count) { return "SAN-004 levé sans remontée configurée" }
+    $true
+}
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en

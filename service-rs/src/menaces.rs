@@ -176,7 +176,7 @@ impl Menaces {
                 continue;
             }
             let tmp = f.with_extension("tmp");
-            let resultat = Command::new("curl.exe")
+            let resultat = Command::new(crate::natif::curl_exe())
                 .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
                     "--max-time", "180", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                 .arg(&tmp)
