@@ -436,6 +436,30 @@ impl Moniteur {
                 }
             }).unwrap();
         }
+        // Santé des collectes (phase 4, PR 4.4a) : historique et constats SAN-*, toutes les 30 s, hors du verrou (pris
+        // seulement pour lire le compteur des alertes non suivies)
+        {
+            let (m, p) = (m.clone(), partage.clone());
+            std::thread::Builder::new().name("sante".into()).spawn(move || {
+                let mut sante = crate::sante::Sante::default();
+                while !p.arret.load(Ordering::Relaxed) {
+                    let non_suivies = m.lock().unwrap().non_suivies;
+                    let (changements, constats) = sante.observer(&collectes::instantane(), non_suivies, crate::sante::secondes());
+                    for c in &changements {
+                        crate::siem::enregistrer(crate::sante::evenement(c));
+                    }
+                    if !constats.is_empty() {
+                        p.alertes_externes.lock().unwrap().extend(constats);
+                    }
+                    for _ in 0..crate::sante::PERIODE_S {
+                        if p.arret.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                }
+            }).unwrap();
+        }
         // Listes de menaces : vérifie toutes les heures, télécharge ce qui a plus de 12 h
         {
             let p = partage.clone();

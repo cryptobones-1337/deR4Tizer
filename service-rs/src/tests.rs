@@ -3181,7 +3181,7 @@ fn phase3_chaque_producteur_pose_sa_regle() {
         ("defender", include_str!("defender.rs")), ("dpi", include_str!("dpi.rs")), ("hygiene", include_str!("hygiene.rs")),
         ("ids", include_str!("ids.rs")), ("moniteur", include_str!("moniteur.rs")), ("ndr", include_str!("ndr.rs")),
         ("parefeu", include_str!("parefeu.rs")), ("persistance", include_str!("persistance.rs")), ("processus", include_str!("processus.rs")),
-        ("protection", include_str!("protection.rs")), ("siem", include_str!("siem.rs")), ("surveillances", include_str!("surveillances.rs")),
+        ("protection", include_str!("protection.rs")), ("sante", include_str!("sante.rs")), ("siem", include_str!("siem.rs")), ("surveillances", include_str!("surveillances.rs")),
         ("vol_donnees", include_str!("vol_donnees.rs")),
     ];
     for (nom, s) in sources {
@@ -3300,7 +3300,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-012"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -4221,5 +4221,167 @@ fn chronologie_a_recalculer_au_changement() {
     let many: Vec<_> = (0..80).map(|k| crate::incidents::IncidentSuivi { id: format!("i{k}"), ..Default::default() }).collect();
     let pris = a_recalculer(&many, &std::collections::HashMap::new(), 50);
     assert_eq!((pris.len(), pris[0].id.as_str()), (50, "i79"), "50 au plus, les plus récents d'abord");
+}
+
+// ------------------------------------------------------------ phase 4, PR 4.4a : santé des collectes
+
+fn sante_etats(indispo: &[crate::collectes::Collecte], desactivees: &[crate::collectes::Collecte]) -> Vec<(crate::collectes::Collecte, crate::collectes::EtatPublie)> {
+    use crate::collectes::{EtatPublie, TOUTES};
+    TOUTES.iter().map(|c| (*c, if indispo.contains(c) { EtatPublie::Indisponible("lecture impossible".into()) }
+        else if desactivees.contains(c) { EtatPublie::Desactivee("par choix".into()) } else { EtatPublie::Active })).collect()
+}
+
+fn sante_regles(a: &[crate::commun::Alerte]) -> Vec<(String, String, String)> {
+    a.iter().map(|x| (x.regle.clone(), x.niveau.clone(), x.destination.clone())).collect()
+}
+
+#[test]
+fn sante_collecte_muette_30_min() {
+    use crate::collectes::Collecte::JournalSecurite;
+    let mut s = crate::sante::Sante::default();
+    let t0 = 1_000_000;
+    assert!(s.observer(&sante_etats(&[], &[]), 0, t0).1.is_empty());
+    assert!(s.observer(&sante_etats(&[JournalSecurite], &[]), 0, t0 + 60).1.is_empty());
+    assert!(s.observer(&sante_etats(&[JournalSecurite], &[]), 0, t0 + 60 + 1799).1.is_empty(), "pas avant 30 min");
+    let (_, a) = s.observer(&sante_etats(&[JournalSecurite], &[]), 0, t0 + 60 + 1800);
+    assert_eq!(sante_regles(&a), [("SAN-001".to_string(), "Alerte".to_string(), "JournalSecurite".to_string())]);
+    assert!(a[0].raisons.contains("depuis 30 min") && a[0].raisons.contains("lecture impossible"), "{}", a[0].raisons);
+    assert!(s.observer(&sante_etats(&[JournalSecurite], &[]), 0, t0 + 7200).1.is_empty(), "une fois par 24 h");
+}
+
+#[test]
+fn sante_collecte_revenue_avant_30_min() {
+    use crate::collectes::Collecte::Connexions;
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[], &[]), 0, 0);
+    s.observer(&sante_etats(&[Connexions], &[]), 0, 10);
+    s.observer(&sante_etats(&[], &[]), 0, 1000);
+    let (_, a) = s.observer(&sante_etats(&[Connexions], &[]), 0, 1100);
+    assert!(a.is_empty());
+    assert!(s.observer(&sante_etats(&[Connexions], &[]), 0, 1100 + 1799).1.is_empty(), "la panne recommence à zéro");
+    // Une collecte non critique ne lève jamais SAN-001
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[crate::collectes::Collecte::Extensions], &[]), 0, 0);
+    assert!(s.observer(&sante_etats(&[crate::collectes::Collecte::Extensions], &[]), 0, 99_999).1.is_empty());
+}
+
+#[test]
+fn sante_collecte_retablie() {
+    use crate::collectes::Collecte::Processus;
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[Processus], &[]), 0, 0);
+    assert_eq!(s.observer(&sante_etats(&[Processus], &[]), 0, 1800).1.len(), 1);
+    let (_, a) = s.observer(&sante_etats(&[], &[]), 0, 2400);
+    assert_eq!(sante_regles(&a), [("SAN-002".to_string(), "Info".to_string(), "Processus".to_string())]);
+    assert!(a[0].raisons.contains("après 40 min"), "{}", a[0].raisons);
+    assert!(s.observer(&sante_etats(&[], &[]), 0, 2500).1.is_empty(), "une seule fois");
+}
+
+#[test]
+fn sante_desactivee_sans_alerte() {
+    use crate::collectes::Collecte::{JournalSecurite, ListesMenaces};
+    let mut s = crate::sante::Sante::default();
+    for t in [0, 1800, 90_000] {
+        assert!(s.observer(&sante_etats(&[], &[JournalSecurite, ListesMenaces]), 0, t).1.is_empty());
+    }
+}
+
+#[test]
+fn sante_inconnue_compte_indisponible() {
+    use crate::collectes::{Collecte::ListesMenaces, EtatPublie};
+    let mut s = crate::sante::Sante::default();
+    let mut e = sante_etats(&[], &[]);
+    e.iter_mut().find(|(c, _)| *c == ListesMenaces).unwrap().1 = EtatPublie::Inconnue;
+    s.observer(&e, 0, 0);
+    let (_, a) = s.observer(&e, 0, 1800);
+    assert_eq!(a.len(), 1);
+    assert!(a[0].raisons.contains("jamais lue"), "{}", a[0].raisons);
+}
+
+#[test]
+fn sante_defender_aveugle_critique() {
+    use crate::collectes::Collecte::{EtatDefender, JournalDefender};
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[JournalDefender], &[]), 0, 0);
+    s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 600);
+    // Journal muet depuis 0, état depuis 600 : SAN-001 du journal à 1800, puis SAN-003 à 2400 (les deux depuis 30 min)
+    assert_eq!(sante_regles(&s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 1800).1),
+               [("SAN-001".to_string(), "Alerte".to_string(), "JournalDefender".to_string())]);
+    let (_, a) = s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 2400);
+    assert_eq!(sante_regles(&a), [("SAN-003".to_string(), "Critique".to_string(), "Microsoft Defender".to_string())], "SAN-003 seul, sans SAN-001 de l'état");
+    assert!(s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 5000).1.is_empty());
+    // Retour : SAN-002 pour les deux
+    let (_, a) = s.observer(&sante_etats(&[], &[]), 0, 6000);
+    let r: Vec<_> = sante_regles(&a).into_iter().map(|x| (x.0, x.2)).collect();
+    assert_eq!(r, [("SAN-002".to_string(), "JournalDefender".to_string()), ("SAN-002".into(), "EtatDefender".into())]);
+}
+
+#[test]
+fn sante_defender_un_seul_collecteur() {
+    use crate::collectes::Collecte::EtatDefender;
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[EtatDefender], &[]), 0, 0);
+    let (_, a) = s.observer(&sante_etats(&[EtatDefender], &[]), 0, 1800);
+    assert_eq!(sante_regles(&a), [("SAN-001".to_string(), "Alerte".to_string(), "EtatDefender".to_string())], "pas de SAN-003");
+}
+
+#[test]
+fn sante_rappel_apres_24_h() {
+    use crate::collectes::Collecte::Connexions;
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[Connexions], &[]), 0, 0);
+    assert_eq!(s.observer(&sante_etats(&[Connexions], &[]), 0, 1800).1.len(), 1);
+    assert!(s.observer(&sante_etats(&[Connexions], &[]), 0, 1800 + 86_399).1.is_empty());
+    assert_eq!(s.observer(&sante_etats(&[Connexions], &[]), 0, 1800 + 86_400).1.len(), 1, "rappel après 24 h");
+}
+
+#[test]
+fn sante_historique_au_changement_et_instable() {
+    use crate::collectes::{Collecte::{Extensions, JournalDns}, EtatPublie, TOUTES};
+    let mut s = crate::sante::Sante::default();
+    // Démarrage : Inconnue puis Active, tu
+    let inconnues: Vec<_> = TOUTES.iter().map(|c| (*c, EtatPublie::Inconnue)).collect();
+    assert!(s.observer(&inconnues, 0, 0).0.is_empty());
+    assert!(s.observer(&sante_etats(&[], &[]), 0, 30).0.is_empty(), "Inconnue → Active tu");
+    assert!(s.observer(&sante_etats(&[], &[]), 0, 60).0.is_empty(), "pas de changement, rien");
+    let (c, _) = s.observer(&sante_etats(&[JournalDns], &[]), 0, 90);
+    assert_eq!(c, [crate::sante::Changement { collecte: "JournalDns", avant: "Active".into(), apres: "Indisponible".into(), raison: "lecture impossible".into(), instable: false }]);
+    let e = crate::sante::evenement(&c[0]);
+    assert_eq!((e.source.as_str(), e.type_.as_str(), e.niveau.as_str(), e.destination.as_str()), ("sante", "collecte", "Alerte", "JournalDns"));
+    // Instable : 6 changements dans l'heure écrits, puis une ligne par heure
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[], &[]), 0, 0);
+    let mut lignes = Vec::new();
+    for k in 1..=20i64 {
+        let (c, _) = s.observer(&sante_etats(if k % 2 == 1 { &[Extensions][..] } else { &[][..] }, &[]), 0, k * 60);
+        lignes.extend(c.into_iter().map(|x| x.instable));
+    }
+    assert_eq!(lignes, [false, false, false, false, false, false, true], "6 lignes, puis une seule « instable » dans l'heure");
+    let (c, _) = s.observer(&sante_etats(&[Extensions], &[]), 0, 7 * 60 + 3600);
+    assert_eq!(c.len(), 1, "une ligne l'heure suivante");
+    // Une heure sans changement : la collecte n'est plus « instable »
+    let (c, _) = s.observer(&sante_etats(&[], &[]), 0, 7 * 60 + 2 * 3600 + 1);
+    assert_eq!(c.iter().map(|x| x.instable).collect::<Vec<_>>(), [false], "redevenue stable");
+}
+
+#[test]
+fn incidents_plafond_non_clos() {
+    let mut s = crate::sante::Sante::default();
+    let e = sante_etats(&[], &[]);
+    assert!(s.observer(&e, 0, 0).1.is_empty());
+    let (_, a) = s.observer(&e, 3, 30);
+    assert_eq!(sante_regles(&a), [("SAN-012".to_string(), "Critique".to_string(), "suivi des incidents".to_string())]);
+    assert!(a[0].raisons.starts_with("3 alerte(s)"));
+    assert!(s.observer(&e, 50, 3600).1.is_empty(), "une fois par 24 h");
+    assert_eq!(s.observer(&e, 50, 30 + 86_400).1.len(), 1);
+    assert!(s.observer(&e, 50, 30 + 2 * 86_400).1.is_empty(), "rien de nouveau depuis le dernier constat");
+}
+
+#[test]
+fn sante_jamais_adoucie_par_l_apprentissage() {
+    let a = crate::commun::Alerte { regle: "SAN-001".into(), niveau: "Alerte".into(), destination: "Connexions".into(), ..Default::default() };
+    assert!(crate::apprentissage::signal_fort(&a));
+    let b = crate::commun::Alerte { regle: "RES-003".into(), niveau: "Alerte".into(), ..Default::default() };
+    assert!(!crate::apprentissage::signal_fort(&b));
 }
 

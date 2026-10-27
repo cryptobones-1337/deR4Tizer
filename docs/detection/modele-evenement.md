@@ -52,7 +52,7 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   change pas. Seule action qui n'y passe pas : la levée du mode panique au nettoyage de la désinstallation.
 - **Pertes de la file du SIEM** (phase 4, PR 4.1) : un événement qui ne trouve pas de place dans la file (20 000) est
   compté (`siem::pertes`), avec une ligne de journal à la 1re, 10e, 100e… perte ; avant, il disparaissait sans trace. Le
-  compteur sera publié avec la santé (PR 4.4).
+  compteur sera publié avec la santé de la remontée (PR 4.4b).
 
 ## Compatibilité
 
@@ -116,7 +116,26 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
 Décrit ici pour fixer le format avant le code (`docs/roadmap/phase4.md`) ; chaque point devient vrai avec la PR qui
 l'apporte, et cette section sera réécrite à ce moment-là.
 
-- **Source « sante »** (PR 4.4) : chaque changement d'état d'une collecte, écrit au changement seulement.
+- **Santé de la remontée** (PR 4.4b) : `notifications.json` gagne `EchecDepuis` et `EnAttente` (file retentée en
+  mémoire, 100 éléments, 24 h) ; constat local SAN-004 ; battement quotidien (compteurs seulement).
+
+## Santé des collectes (phase 4, PR 4.4a)
+
+Chaque changement d'état d'une collecte (`collectes::instantane`) est écrit dans le SIEM par le fil « sante » (toutes
+les 30 s, hors du verrou du moniteur), au changement seulement :
+
+| Champ | Valeur |
+|---|---|
+| `Source` | `sante` |
+| `Type` | `collecte` |
+| `Niveau` | `Alerte` si la collecte devient `Indisponible`, sinon `Info` |
+| `Destination` | identifiant de la collecte (`JournalSecurite`, `Connexions`…) |
+| `Message` | « collecte <id> : <avant> → <après> (<raison>) », borné à 400 caractères, nettoyé |
+
+- Le passage d'« Inconnue » à « Active » du démarrage n'est pas écrit.
+- Plus de 6 changements dans l'heure : collecte « instable », une ligne par heure au plus (le message le dit).
+- Une coupure plus courte que la période du fil (30 s) peut ne pas être vue.
+- Constats SAN-001, SAN-002, SAN-003 et SAN-012 : `docs/detection/regles.md`.
 
 ## Suivi des incidents (phase 4, PR 4.2)
 
@@ -154,7 +173,7 @@ qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations d
     S95-01). Les bornes garantissent qu'un suivi plein (500 incidents au pire) reste sous cette taille.
   - Illisible (droits, pas un tableau JSON) : suivi vide, **jamais réécrit**, commande `incident` refusée **jusqu'à une
     intervention manuelle** (déplacer le fichier). C'est plus prudent que pour `alertes.json`, et ce sera signalé par
-    la santé (PR 4.4).
+    la santé (PR 4.4b).
 - **Retour arrière** vers une version sans suivi : le fichier est ignoré, puis repris tel quel à la mise à niveau
   suivante.
 

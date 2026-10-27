@@ -400,6 +400,45 @@ Verifier 'Journal du pare-feu coupé : collecte indisponible, SYS-002 sans colle
     $true
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.4a : santé des collectes
+# Le fil « sante » (toutes les 30 s) écrit chaque changement d'état d'une collecte dans le SIEM (Source « sante ») : le
+# journal du pare-feu est coupé jusqu'à l'événement « Indisponible », puis rallumé jusqu'à l'événement « Active ». Aucun
+# constat SAN-* avant 30 min (la coupure dure moins), et Defender pleinement actif ne lève pas SAN-003
+Verifier 'Santé : coupure du journal du pare-feu historisée dans le SIEM, aucun constat SAN' {
+    $pf = 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'
+    $siem = Join-Path $script:Donnees 'siem'
+    # Seulement les événements de ce contrôle : la coupure précédente a pu en écrire
+    $debut = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $sante = {
+        param($Vers)
+        $fin = (Get-Date).AddSeconds(120)
+        do {
+            Start-Sleep 3
+            $l = @(Get-ChildItem $siem -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } |
+                Where-Object { $_ -match '"Source":"sante"' -and $_ -match '"Destination":"JournalParefeu"' -and $_ -match '"HeureUtc":"([^"]*)"' -and $Matches[1] -ge $debut } |
+                ForEach-Object { $_ | ConvertFrom-Json } |
+                Where-Object { $_.Message -match "→ $Vers" })
+        } while (-not $l.Count -and (Get-Date) -lt $fin)
+        $l | Select-Object -Last 1
+    }
+    wevtutil sl $pf /e:false
+    try {
+        $coupe = & $sante 'Indisponible'
+        if (-not $coupe) { return 'aucun événement « sante » JournalParefeu → Indisponible en 120 s' }
+        if ($coupe.Type -ne 'collecte' -or $coupe.Niveau -ne 'Alerte') { return "événement inattendu : $($coupe.Type) / $($coupe.Niveau) / $($coupe.Message)" }
+        Write-Host "  SIEM : $($coupe.Message)"
+    } finally {
+        wevtutil sl $pf /e:true
+    }
+    $retour = & $sante 'Active'
+    if (-not $retour) { return 'aucun événement « sante » JournalParefeu → Active en 120 s après le rallumage' }
+    Write-Host "  SIEM : $($retour.Message)"
+    $alertes = Join-Path $script:Donnees 'alertes.json'
+    $san = @(if (Test-Path $alertes) { (Get-Content $alertes -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -like 'SAN-*' } })
+    if ($san.Count) { return "constat(s) SAN inattendu(s) : $(($san | ForEach-Object { "$($_.Regle) $($_.Destination)" }) -join ', ')" }
+    $true
+}
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en

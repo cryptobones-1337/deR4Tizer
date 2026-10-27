@@ -37,7 +37,7 @@ Chaque PR part de `main` à jour, sans empilement, avec sa relecture et son pass
 | 4.1 | `HeureUtc` et `Seq` sur les alertes et les événements ; pertes de la file du SIEM comptées ; actions de réponse dans le SIEM (`Source` « reponse ») |
 | 4.2 | Incidents : modèle, rattachement des alertes, `suivi-incidents.json`, commande `incident` (administrateurs) |
 | 4.3 | Chronologie par incident (calcul hors du verrou du moniteur, trous de collecte, bornes) |
-| 4.4 | Santé des collectes : historique, constats SAN-001 à SAN-004, file de remontée retentée, battement quotidien |
+| 4.4 | Santé des collectes, en deux PR : **4.4a** historique et constats SAN-001, SAN-002, SAN-003, SAN-012 ; **4.4b** file de remontée retentée, SAN-004, battement quotidien (touche `notifications.rs`, chemin privilégié, audité à part) |
 | 4.5 | Santé de l'interface : repérage, SAN-010 et SAN-011, relance (décision D4-1) |
 | 4.6 | Interface : pages Incidents et Santé |
 

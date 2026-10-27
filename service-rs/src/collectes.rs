@@ -2,7 +2,7 @@
 //! de télémétrie (table des connexions, journaux, état de Defender, listes…) note ses lectures réussies ou en échec ;
 //! `evaluer` en tire l'état publié et `couverture` dit, pour chaque règle du registre, si la télémétrie dont elle dépend
 //! est lue. Une collecte jamais notée reste « Inconnue », qui ne vaut jamais « rien de suspect » (échec fermé de la
-//! réassurance). Aucune alerte n'est levée quand une collecte tombe (décision D5 : phase 4).
+//! réassurance). Depuis la phase 4 (PR 4.4a), `sante.rs` historise les changements d'état et lève les constats SAN-*.
 //!
 //! Un succès est une lecture réussie, pas un événement reçu : un journal sans nouvel événement reste actif tant que sa
 //! lecture répond. Stockage en tableau fixe d'atomiques : rien ne croît avec le nombre d'événements, et un succès
@@ -259,7 +259,7 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "EXP-IDS-001" | "EXP-DPI-001" => &[&[CaptureTrafic]],
         "EXP-NDR-001" => &[&[CaptureReseauLocal]],
         // RES-004, SYS-001, VIE-003, CHA… : lectures locales du service, non suivies ici ; INT-* : contrôles internes ;
-        // COR-R6 : tiré des alertes elles-mêmes
+        // COR-R6 : tiré des alertes elles-mêmes ; SAN-* : constats sur les collectes elles-mêmes (sante.rs)
         _ => &[],
     }
 }
@@ -453,6 +453,12 @@ fn etat_a(c: Collecte, t: u64) -> EtatPublie {
     let note = Note::depuis_u8(case.note.load(Ordering::Relaxed));
     let raison = if matches!(note, Note::Active | Note::Inconnue) { String::new() } else { case.raison.lock().unwrap_or_else(|e| e.into_inner()).clone() };
     evaluer(note, &raison, case.dernier_succes.load(Ordering::Relaxed), c.periode(), t)
+}
+
+/// État publié de chaque collecte, sans effet (ni journal ni relevé « muette ») : fil « sante » (phase 4, PR 4.4a)
+pub fn instantane() -> Vec<(Collecte, EtatPublie)> {
+    let t = maintenant();
+    TOUTES.iter().map(|c| (*c, etat_a(*c, t))).collect()
 }
 
 #[derive(Serialize, serde::Deserialize, Clone, Default)]
