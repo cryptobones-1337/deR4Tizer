@@ -605,6 +605,12 @@ const DUREE_MAX_CHRONOLOGIE: std::time::Duration = std::time::Duration::from_sec
 /// Durée d'un tour au plus (S96-05) : au-delà, les incidents restants attendent le tour suivant (une minute plus tard)
 const DUREE_MAX_TOUR: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Commencer une chronologie avec `reste` du tour (pur, testé, R3-D1) : seulement avec ses 5 s pleines ; sinon elle
+/// attend le tour suivant, au lieu d'être écrite incomplète faute de temps puis figée par son repère
+pub fn peut_commencer(reste: std::time::Duration) -> bool {
+    reste >= DUREE_MAX_CHRONOLOGIE
+}
+
 /// Texte cherché dans les lignes du SIEM pour une entité (pur, testé) : ce que `concerne` compare, sous sa forme dans une
 /// ligne JSON en minuscules (barres obliques inverses et guillemets échappés). Vide quand l'entité ne se cherche pas par
 /// un texte (corrélations regroupées, `COR-R<n>:…`) : seule la santé des collectes est lue
@@ -679,7 +685,7 @@ pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collec
     let pertes = crate::siem::pertes();
     let fin_tour = std::time::Instant::now() + DUREE_MAX_TOUR;
     for i in a_faire.iter().filter(|i| crate::validation::identifiant_valide(&i.id)) {
-        if std::time::Instant::now() >= fin_tour {
+        if !peut_commencer(fin_tour.saturating_duration_since(std::time::Instant::now())) {
             break;
         }
         let chemin = dossier.join(format!("{}.json", i.id));
@@ -694,7 +700,7 @@ pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collec
             continue;
         }
         let maintenant = std::time::SystemTime::now();
-        let echeance = (std::time::Instant::now() + DUREE_MAX_CHRONOLOGIE).min(fin_tour);
+        let echeance = std::time::Instant::now() + DUREE_MAX_CHRONOLOGIE;
         let (evenements, incomplete) = lire_siem_incident(i, echeance);
         let mut c = construire(i, &evenements, pertes, &commun::heure_utc_de(maintenant));
         c.repere = repere_i.clone();

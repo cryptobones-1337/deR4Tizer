@@ -4197,6 +4197,17 @@ fn chronologie_lien_par_le_nom_signale() {
     assert!(serde_json::to_string(&c).unwrap().contains("\"ParNom\":true"));
 }
 
+/// R3-D1 : une chronologie n'est commencée qu'avec ses 5 s pleines dans le tour
+#[test]
+fn chronologie_commencee_avec_son_budget_plein() {
+    use crate::incidents::peut_commencer;
+    use std::time::Duration;
+    assert!(peut_commencer(Duration::from_secs(10)));
+    assert!(peut_commencer(Duration::from_secs(5)));
+    assert!(!peut_commencer(Duration::from_millis(4999)));
+    assert!(!peut_commencer(Duration::ZERO));
+}
+
 #[test]
 fn chronologie_a_recalculer_au_changement() {
     use crate::incidents::{a_recalculer, repere};
