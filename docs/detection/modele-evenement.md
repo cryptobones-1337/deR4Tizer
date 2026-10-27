@@ -182,7 +182,7 @@ fichiers des incidents qui ne sont plus suivis sont effacés.
   (`incidents::cle_recherche`) puis la santé des collectes ; les connexions des autres programmes ne remplissent donc
   pas la lecture.
 - **Bornes** (dossier de phase 4) : 3 jours de fichiers au plus (fenêtre plus longue : les 3 derniers jours) ; 20 000
-  événements par lecture ; 5 s par chronologie ; 2000 éléments (au-delà, les 1000 premiers et les 1000 derniers,
+  événements par lecture ; 5 s par chronologie et 10 s par tour (les incidents restants attendent le tour suivant) ; 2000 éléments (au-delà, les 1000 premiers et les 1000 derniers,
   `Tronquee`) ; texte de chaque élément borné à 400 caractères, nettoyé. Si une borne de lecture est atteinte,
   `FenetreSiemIncomplete` le dit. `SansHeureUtc` compte les événements d'avant la phase 4, qui ne peuvent pas être
   placés ; `PertesSiem` dit combien d'événements la file du SIEM a perdus depuis le démarrage : des étapes peuvent

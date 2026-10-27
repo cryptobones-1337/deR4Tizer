@@ -602,6 +602,8 @@ pub const LIMITE_SIEM_CHRONOLOGIE: usize = 20_000;
 /// Bornes du dossier de phase 4 : 3 jours de fichiers au plus, 5 s au plus par chronologie
 const JOURS_SIEM_CHRONOLOGIE: i64 = 3;
 const DUREE_MAX_CHRONOLOGIE: std::time::Duration = std::time::Duration::from_secs(5);
+/// Durée d'un tour au plus (S96-05) : au-delà, les incidents restants attendent le tour suivant (une minute plus tard)
+const DUREE_MAX_TOUR: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Texte cherché dans les lignes du SIEM pour une entité (pur, testé) : ce que `concerne` compare, sous sa forme dans une
 /// ligne JSON en minuscules (barres obliques inverses et guillemets échappés). Vide quand l'entité ne se cherche pas par
@@ -675,7 +677,11 @@ pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collec
         }
     };
     let pertes = crate::siem::pertes();
+    let fin_tour = std::time::Instant::now() + DUREE_MAX_TOUR;
     for i in a_faire.iter().filter(|i| crate::validation::identifiant_valide(&i.id)) {
+        if std::time::Instant::now() >= fin_tour {
+            break;
+        }
         let chemin = dossier.join(format!("{}.json", i.id));
         let repere_i = repere(i);
         // Après un redémarrage (`calcules` vide) : une chronologie déjà écrite pour le même repère est gardée telle quelle
@@ -688,7 +694,7 @@ pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collec
             continue;
         }
         let maintenant = std::time::SystemTime::now();
-        let echeance = std::time::Instant::now() + DUREE_MAX_CHRONOLOGIE;
+        let echeance = (std::time::Instant::now() + DUREE_MAX_CHRONOLOGIE).min(fin_tour);
         let (evenements, incomplete) = lire_siem_incident(i, echeance);
         let mut c = construire(i, &evenements, pertes, &commun::heure_utc_de(maintenant));
         c.repere = repere_i.clone();
