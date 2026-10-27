@@ -414,6 +414,28 @@ impl Moniteur {
                 }
             }).unwrap();
         }
+        // Chronologies des incidents (phase 4, PR 4.3) : toutes les minutes, HORS du verrou (copie du suivi, puis lecture des
+        // fichiers du SIEM et écriture de chronologies\<id>.json)
+        {
+            let (m, p) = (m.clone(), partage.clone());
+            std::thread::Builder::new().name("chronologies".into()).spawn(move || {
+                let mut calcules = std::collections::HashMap::new();
+                while !p.arret.load(Ordering::Relaxed) {
+                    // Sous le verrou : seulement les incidents à recalculer (50 au plus) et les identifiants suivis
+                    let (a_faire, ids) = {
+                        let g = m.lock().unwrap();
+                        (crate::incidents::a_recalculer(&g.suivis, &calcules, 50), g.suivis.iter().map(|i| i.id.clone()).collect())
+                    };
+                    crate::incidents::calculer_chronologies(&a_faire, &ids, &mut calcules);
+                    for _ in 0..60 {
+                        if p.arret.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                }
+            }).unwrap();
+        }
         // Listes de menaces : vérifie toutes les heures, télécharge ce qui a plus de 12 h
         {
             let p = partage.clone();

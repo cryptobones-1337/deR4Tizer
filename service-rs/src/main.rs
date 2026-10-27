@@ -133,6 +133,7 @@ fn main() {
             depuis: String::new(),
             jusqua: String::new(),
             limite: 5,
+            echeance: None,
         };
         for e in siem::rechercher(&filtre) {
             println!("{} [{}] {} {}", e.heure, e.source, e.type_, e.message.chars().take(100).collect::<String>());

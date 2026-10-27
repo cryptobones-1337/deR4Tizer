@@ -78,6 +78,9 @@ pub struct Incident {
     pub resume: String,
     /// Événements à l'origine de l'incident (heure, source, message)
     pub evenements: Vec<String>,
+    /// Entité du suivi des incidents (phase 4, PR 4.3), reprise dans `Alerte.Entite`
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub entite: String,
 }
 
 static FILE: OnceLock<Mutex<SyncSender<Evenement>>> = OnceLock::new();
@@ -462,6 +465,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
 
 // ------------------------------------------------------------ recherche
 
+#[derive(Default)]
 pub struct Filtre {
     /// texte cherché dans tout l'événement (sans tenir compte de la casse)
     pub texte: String,
@@ -472,6 +476,8 @@ pub struct Filtre {
     pub depuis: String,
     pub jusqua: String,
     pub limite: usize,
+    /// Au-delà, la recherche s'arrête et rend ce qu'elle a (chronologies : 5 s au plus)
+    pub echeance: Option<Instant>,
 }
 
 /// Événements correspondants, du plus récent au plus ancien
@@ -492,9 +498,15 @@ pub fn rechercher(f: &Filtre) -> Vec<Evenement> {
     let rang = crate::export::rang(&f.niveau_min);
     let mut sortie = Vec::new();
     for (_, chemin) in fichiers {
+        if f.echeance.is_some_and(|d| Instant::now() >= d) {
+            return sortie;
+        }
         // Propriétaire contrôlé, comme tout fichier du dossier de données
         let Some(contenu) = commun::lire_fichier_proprietaire(&chemin) else { continue };
         for ligne in contenu.lines().rev() {
+            if f.echeance.is_some_and(|d| Instant::now() >= d) {
+                return sortie;
+            }
             if !texte.is_empty() && !ligne.to_lowercase().contains(&texte) {
                 continue;
             }
@@ -546,19 +558,7 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
         if !nouveaux.is_empty() {
             for i in &nouveaux {
                 commun::journal(&format!("incident {} : {} — {}", i.niveau, i.titre, i.resume));
-                alertes.lock().unwrap().push(Alerte {
-                    // Corrélation R<n> : règle COR-R<n> du registre
-                    regle: regle_correlation(&i.regle),
-                    id: commun::nouvel_id(),
-                    heure: i.heure.clone(),
-                    niveau: i.niveau.clone(),
-                    score: if i.niveau == "Critique" { 10 } else { 5 },
-                    processus: "corrélation".into(),
-                    destination: format!("incident : {}", i.titre),
-                    raisons: i.resume.clone(),
-                    mitre: i.mitre.clone(),
-                    ..Default::default()
-                });
+                alertes.lock().unwrap().push(alerte_de_correlation(i));
             }
             incidents.extend(nouveaux);
             if incidents.len() > 500 {
@@ -571,6 +571,24 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
             menage();
             dernier_menage = Instant::now();
         }
+    }
+}
+
+/// Alerte levée par un incident de corrélation ; elle porte l'entité du producteur (source ou compte, PR 4.3)
+pub(crate) fn alerte_de_correlation(i: &Incident) -> Alerte {
+    Alerte {
+        // Corrélation R<n> : règle COR-R<n> du registre
+        regle: regle_correlation(&i.regle),
+        id: commun::nouvel_id(),
+        heure: i.heure.clone(),
+        niveau: i.niveau.clone(),
+        score: if i.niveau == "Critique" { 10 } else { 5 },
+        processus: "corrélation".into(),
+        destination: format!("incident : {}", i.titre),
+        raisons: i.resume.clone(),
+        mitre: i.mitre.clone(),
+        entite: i.entite.clone(),
+        ..Default::default()
     }
 }
 
@@ -607,9 +625,36 @@ pub(crate) struct Correlation {
     comptes_crees: HashMap<String, Instant>,
     alertes_processus: HashMap<String, VecDeque<(Instant, String, String)>>,
     deja: HashMap<String, Instant>,
+    /// Entités récentes de chaque règle (une heure), pour `entite_bornee`
+    entites: HashMap<String, VecDeque<(Instant, String)>>,
+}
+
+/// Entités distinctes d'une même règle de corrélation par heure ; au-delà, regroupées
+pub(crate) const MAX_ENTITES_PAR_REGLE: usize = 10;
+
+/// Compte sans domaine, en minuscules (« POSTE\essai » → « essai »)
+fn compte_de(u: &str) -> String {
+    u.rsplit('\\').next().unwrap_or("").to_lowercase()
 }
 
 impl Correlation {
+    /// Entité d'un incident de corrélation, bornée (phase 4, PR 4.3) : au-delà de `MAX_ENTITES_PAR_REGLE` entités
+    /// distinctes d'une même règle en une heure, les suivantes sont regroupées sous `COR-<règle>:regroupees`. Une attaque
+    /// répartie sur des centaines d'adresses ou de comptes n'ouvre donc pas des centaines d'incidents (plafond du suivi :
+    /// 500, au-delà duquel les alertes ne sont plus suivies)
+    fn entite_bornee(&mut self, regle: &str, entite: String) -> String {
+        let vues = self.entites.entry(regle.to_string()).or_default();
+        vues.retain(|(t, _)| t.elapsed() < Duration::from_secs(3600));
+        if vues.iter().any(|(_, x)| *x == entite) {
+            return entite;
+        }
+        if vues.len() >= MAX_ENTITES_PAR_REGLE {
+            return format!("COR-{regle}:regroupees");
+        }
+        vues.push_back((Instant::now(), entite.clone()));
+        entite
+    }
+
     fn une_fois(&mut self, cle: String) -> bool {
         self.deja.retain(|_, t| t.elapsed() < Duration::from_secs(3600));
         if self.deja.contains_key(&cle) {
@@ -622,8 +667,12 @@ impl Correlation {
     /// Incidents levés par un événement (testé : tests_detection.rs, COR-R1 à COR-R9)
     pub(crate) fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
         let mut sortie = Vec::new();
-        let mut incident = |regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
+        // Entité de l'incident (phase 4, PR 4.3) : la source des échecs (adresse, ou compte sans adresse) pour COR-R1 ; le
+        // compte qui a ouvert la session pour COR-R2 et R9, qui se rejoignent ; le compte pour COR-R3 ; sinon la règle et
+        // sa clé. R1, R2 et R9 passent par `entite_bornee`
+        let mut incident = |entite: String, regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
             sortie.push(Incident {
+                entite,
                 id: commun::nouvel_id(),
                 heure: e.heure.clone(),
                 regle: regle.into(),
@@ -645,7 +694,8 @@ impl Correlation {
                 file.retain(|(t, _)| t.elapsed() < Duration::from_secs(1800));
                 let recents: Vec<String> = file.iter().filter(|(t, _)| t.elapsed() < Duration::from_secs(300)).map(|(_, s)| s.clone()).collect();
                 if recents.len() >= 5 && self.une_fois(format!("R1|{cle}")) {
-                    incident("R1", "Tentatives de mot de passe en série", "Alerte", "T1110",
+                    let entite = self.entite_bornee("R1", format!("source:{cle}"));
+                    incident(entite, "R1", "Tentatives de mot de passe en série", "Alerte", "T1110",
                         format!("{} échecs d'ouverture de session en 5 minutes ({cle})", recents.len()), recents.into_iter().rev().take(20).collect());
                 }
             }
@@ -656,7 +706,9 @@ impl Correlation {
                     let mut evts: Vec<String> = file.iter().map(|(_, s)| s.clone()).rev().take(19).collect();
                     if n >= 5 && self.une_fois(format!("R2|{cle}")) {
                         evts.insert(0, trace(e));
-                        incident("R2", "Session ouverte après une série d'échecs", "Critique", "T1110",
+                        let compte = compte_de(&e.utilisateur);
+                        let entite = self.entite_bornee("R2", if compte.is_empty() { format!("source:{cle}") } else { format!("compte:{compte}") });
+                        incident(entite, "R2", "Session ouverte après une série d'échecs", "Critique", "T1110",
                             format!("{} a ouvert une session après {n} échecs depuis la même source ({cle}) : mot de passe probablement deviné",
                                 e.utilisateur), evts);
                     }
@@ -664,7 +716,9 @@ impl Correlation {
                 // R9 : bureau à distance ou session réseau depuis une adresse publique
                 if !e.ip.is_empty() && e.ip.parse().map(|a| crate::parefeu::publique(&a)).unwrap_or(false) && self.une_fois(format!("R9|{}|{}", e.ip, e.utilisateur)) {
                     let rdp = e.message.contains("bureau à distance");
-                    incident("R9", if rdp { "Bureau à distance ouvert depuis Internet" } else { "Session ouverte depuis Internet" },
+                    let compte = compte_de(&e.utilisateur);
+                    let entite = self.entite_bornee("R9", if compte.is_empty() { format!("source:{}", e.ip) } else { format!("compte:{compte}") });
+                    incident(entite, "R9", if rdp { "Bureau à distance ouvert depuis Internet" } else { "Session ouverte depuis Internet" },
                         if rdp { "Critique" } else { "Alerte" }, "T1133", e.message.clone(), vec![trace(e)]);
                 }
             }
@@ -678,17 +732,17 @@ impl Correlation {
                 let nouveau = self.comptes_crees.keys().any(|c| !c.is_empty() && membre.contains(c.as_str()));
                 if self.une_fois(format!("R3|{membre}")) {
                     if nouveau {
-                        incident("R3", "Nouveau compte administrateur", "Critique", "T1136.001",
+                        incident(format!("compte:{membre}"), "R3", "Nouveau compte administrateur", "Critique", "T1136.001",
                             format!("un compte créé il y a moins de 30 minutes a été ajouté aux Administrateurs : {}", e.message), vec![trace(e)]);
                     } else {
-                        incident("R3b", "Ajout au groupe Administrateurs", "Alerte", "T1098", e.message.clone(), vec![trace(e)]);
+                        incident(format!("compte:{membre}"), "R3b", "Ajout au groupe Administrateurs", "Alerte", "T1098", e.message.clone(), vec![trace(e)]);
                     }
                 }
             }
             // R4 : effacement d'un journal
             "journal-efface" => {
                 if self.une_fois(format!("R4|{}", e.message)) {
-                    incident("R4", "Journal d'événements effacé", "Critique", "T1070.001",
+                    incident(format!("COR-R4:{}", e.message), "R4", "Journal d'événements effacé", "Critique", "T1070.001",
                         format!("{} : technique classique pour effacer les traces d'une intrusion", e.message), vec![trace(e)]);
                 }
             }
@@ -699,7 +753,7 @@ impl Correlation {
                 if image.extension().map(|x| x.eq_ignore_ascii_case("sys")).unwrap_or(false) {
                     if let Some(h) = crate::hygiene::pilote_vulnerable(&image) {
                         if self.une_fois(format!("R10|{h}")) {
-                            incident("R10", "Pilote vulnérable installé (BYOVD)", "Critique", "T1068",
+                            incident(format!("COR-R10:{h}"), "R10", "Pilote vulnérable installé (BYOVD)", "Critique", "T1068",
                                 format!("{} : ce pilote figure dans LOLDrivers (SHA-256 {}…) ; il sert à désactiver les antivirus depuis le noyau",
                                     e.message, &h[..16]), vec![trace(e)]);
                         }
@@ -709,14 +763,14 @@ impl Correlation {
                 let suspect = [r"\temp\", r"\appdata\", r"\users\public\", r"\downloads\", r"\téléchargements\", r"\programdata\"]
                     .iter().any(|d| m.contains(d)) || m.contains("powershell") || m.contains("cmd.exe /c") || m.contains("cmd /c");
                 if suspect && self.une_fois(format!("R5|{}", e.processus)) {
-                    incident("R5", "Service installé depuis un emplacement suspect", "Critique", "T1543.003",
+                    incident(format!("COR-R5:{}", e.processus), "R5", "Service installé depuis un emplacement suspect", "Critique", "T1543.003",
                         format!("{} : les services légitimes s'installent dans Program Files ou Windows", e.message), vec![trace(e)]);
                 }
             }
             // R7 : service de sécurité arrêté, politique d'audit modifiée
             "etat-service" | "politique-audit-modifiee" if e.niveau != "Info" => {
                 if self.une_fois(format!("R7|{}", e.message)) {
-                    incident("R7", "Protection affaiblie", "Alerte", &e.mitre.clone(), e.message.clone(), vec![trace(e)]);
+                    incident(format!("COR-R7:{}", e.message), "R7", "Protection affaiblie", "Alerte", &e.mitre.clone(), e.message.clone(), vec![trace(e)]);
                 }
             }
             _ => {}
@@ -734,7 +788,7 @@ impl Correlation {
                 let evts: Vec<String> = file.iter().map(|(_, _, s)| s.clone()).collect();
                 let n = distinctes.len();
                 if self.une_fois(format!("R6|{cle}")) {
-                    incident("R6", "Attaque en plusieurs étapes", "Critique", "",
+                    incident(format!("COR-R6:{cle}"), "R6", "Attaque en plusieurs étapes", "Critique", "",
                         format!("{} a déclenché {n} détections différentes en 10 minutes", e.processus), evts);
                 }
             }
