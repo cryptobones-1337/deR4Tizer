@@ -567,8 +567,19 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : registre (consentements d'accès aux périphériques, réglage du Bureau à distance), processus.
 - **Si elle manque** : registre illisible : la règle se tait ; l'interface affiche « CAM / MIC OFF » comme si rien
   n'était utilisé.
-- **Faux positifs attendus** : VIE-001 à la visioconférence ; VIE-002 pour un support informatique légitime.
-- **Tests** : à écrire. En VM, VIE-003 : Bureau à distance activé, puis effacé par l'instantané.
+- **Faux positifs attendus** : VIE-001 à la visioconférence ; VIE-002 pour un support informatique légitime. Faux
+  positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime, car
+  l'activité n'utilise ni caméra ni micro et ne lance aucun outil de prise en main à distance.
+- **Tests** (PR 3.12), sans registre ni fichier de données :
+  - `vie_001_positif` (apprentissage au premier relevé, puis un nouveau programme qui utilise la caméra : Alerte),
+    `vie_001_negatif` (programme connu ; usage terminé ; usage déjà en cours au relevé précédent), sur
+    `surveillances::premiers_usages` ;
+  - `vie_002_positif` (outil lancé, nom sans tenir compte de la casse ; relancé après sa fin : nouvelle alerte),
+    `vie_002_negatif` (programme ordinaire ; outil toujours en cours, une seule alerte), sur
+    `surveillances::outils_distants`, avec le chemin d'un PID passé en paramètre ;
+  - `vie_003_positif`, `vie_003_negatif` (premier relevé, toujours activé, désactivé), sur
+    `surveillances::alerte_bureau_a_distance`.
+  Non exercées en VM ; le relevé du magasin des consentements et du registre n'est pas testé.
 
 ## BAS : baseline
 
@@ -580,8 +591,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : évaluation de la baseline.
 - **Si elle manque** : évaluation impossible : aucune dérive calculée.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : stratégie de groupe ou administrateur qui change le réglage volontairement.
-- **Tests** : à écrire.
+- **Faux positifs attendus** : stratégie de groupe ou administrateur qui change le réglage volontairement. Faux
+  positifs mesurés en VM (scénario `mesure`, 22 min) : aucun ; aucun réglage n'est changé pendant la mesure.
+- **Tests** : `bas_001_positif` (règle appliquée par deR4Tizer, conforme puis non conforme : Alerte, valeurs attendue
+  et actuelle dans les raisons), `bas_001_negatif` (règle non appliquée par deR4Tizer ; déjà non conforme ; état
+  inconnu ; règle nouvelle), sur `baseline::derives`. Non exercée en VM.
 
 ## COR : corrélations du SIEM
 
