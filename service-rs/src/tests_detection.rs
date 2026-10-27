@@ -1206,3 +1206,21 @@ fn cor_r9_negatif() {
     assert!(incidents(&[evenement_siem("ouverture-session", &[("ip", "192.168.1.20"), ("utilisateur", "essai")])]).is_empty());
     assert!(incidents(&[evenement_siem("ouverture-session", &[("utilisateur", "essai")])]).is_empty());
 }
+
+/// Relecture de #91 : chaîne complète, du XML des journaux (4625, 4624) à l'incident, pour qu'un type ou un texte
+/// renommé d'un seul côté (siem::traduire ou siem::Correlation) fasse échouer un test. Cinq échecs depuis une adresse
+/// publique, puis une session Bureau à distance réussie depuis la même adresse : R1, R2 et R9 (Critique)
+#[test]
+fn cor_bout_en_bout() {
+    let echec = evenement_defender(4625, &[("TargetUserName", "essai"), ("TargetDomainName", "POSTE"), ("IpAddress", "203.0.113.9"), ("LogonType", "10")]);
+    let session = evenement_defender(4624, &[("TargetUserName", "essai"), ("TargetDomainName", "POSTE"), ("IpAddress", "203.0.113.9"), ("LogonType", "10")]);
+    let mut evenements: Vec<crate::siem::Evenement> = (0..5).map(|_| crate::siem::traduire(&echec).expect("4625 traduit")).collect();
+    evenements.push(crate::siem::traduire(&session).expect("4624 traduit"));
+    let i = incidents(&evenements);
+    for attendu in [("R1", "Alerte"), ("R2", "Critique"), ("R9", "Critique")] {
+        assert!(i.contains(&(attendu.0.to_string(), attendu.1.to_string())), "{attendu:?} absent de {i:?}");
+    }
+    // Session de service (type 5) : ignorée dès la traduction
+    let service = evenement_defender(4624, &[("TargetUserName", "essai"), ("IpAddress", "203.0.113.9"), ("LogonType", "5")]);
+    assert!(crate::siem::traduire(&service).is_none());
+}

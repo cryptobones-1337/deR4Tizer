@@ -234,7 +234,8 @@ fn ip_utile(ip: &str) -> String {
     if ip == "-" || ip == "::1" || ip == "127.0.0.1" { String::new() } else { ip.to_string() }
 }
 
-fn traduire(xml: &str) -> Option<Evenement> {
+/// Événement de journal Windows traduit pour le SIEM (testé de bout en bout avec la corrélation : cor_bout_en_bout)
+pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
     static ID: OnceLock<regex::Regex> = OnceLock::new();
     let id: u32 = ID.get_or_init(|| regex::Regex::new(r"<EventID[^>]*>(\d+)</EventID>").unwrap()).captures(xml)?[1].parse().ok()?;
     let d = crate::evenements::donnees(xml);
