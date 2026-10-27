@@ -133,11 +133,11 @@ qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations d
 | `DerniereActiviteUtc` | heure UTC de la dernière alerte jointe |
 | `Niveau` | le plus haut des alertes jointes (Alerte ou Critique) ; ne baisse jamais |
 | `Entite` | `programme:<chemin complet, en minuscules>` si le chemin est connu ; sinon `destination:<destination>` ; sinon `regle:<identifiant>`. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux incidents |
-| `Regles` | identifiants distincts des alertes jointes (32 au plus) |
+| `Regles` | identifiants distincts des alertes jointes (16 au plus) |
 | `Etat`, `MotifCloture` | `Ouvert`, `PrisEnCharge` ou `Clos` ; motif `Resolu`, `FauxPositif` ou `Accepte` pour un incident clos |
 | `Precedent` | incident clos de la même entité, s'il y en a un (récidive) |
-| `Alertes`, `NombreAlertes` | résumés des 5 premières et des 5 dernières alertes jointes (raisons bornées à 300 caractères), et leur nombre |
-| `Transitions` | 50 au plus : heure locale et UTC, état de départ et d'arrivée, motif, auteur (SID lu sur le jeton du client du tube, jamais pris dans la commande), note (300 caractères au plus, sans caractère de contrôle ni de mise en forme) |
+| `Alertes`, `NombreAlertes` | résumés des 5 premières et des 5 dernières alertes jointes (chemin 260, processus 64, destination 128 et raisons 200 caractères au plus, sans caractère de contrôle ni de mise en forme), et leur nombre |
+| `Transitions` | 20 au plus : heure locale et UTC, état de départ et d'arrivée, motif, auteur (SID lu sur le jeton du client du tube, jamais pris dans la commande ; une transition sans auteur connu est refusée), note (300 caractères au plus, sans caractère de contrôle ni de mise en forme) |
 
 - **Rattachement** : une alerte « Info » ne crée rien ; une alerte « Alerte » ou « Critique » rejoint l'incident non
   clos de la même entité dont la dernière activité date de moins de 24 h ; sinon elle ouvre un incident. Un incident
@@ -149,9 +149,15 @@ qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations d
 - **Bornes** : 500 incidents au plus. Au-delà, les plus anciens clos partent les premiers ; un incident non clos n'est
   jamais retiré. S'il n'y a que des incidents non clos, une alerte d'une nouvelle entité n'est pas suivie : elle est
   comptée (constat de santé SAN-012, PR 4.4) et reste dans `alertes.json`.
-- **Lecture** : propriétaire contrôlé, 16 Mo au plus, élément par élément (un élément illisible est écarté et compté,
-  les autres sont gardés et bornés). Un fichier illisible (droits, taille, format) laisse le suivi vide **et n'est
-  jamais réécrit**, pour ne pas effacer l'historique ; la commande `incident` est alors refusée.
+- **Lecture** (`incidents::decision_suivi`) : propriétaire contrôlé, élément par élément (un élément illisible est
+  écarté et compté, les autres sont gardés et bornés aux mêmes bornes qu'à la création).
+  - Lu en partie : une copie d'origine est mise de côté (`suivi-incidents-partiel-<horodatage>.json`) avant d'autoriser
+    la réécriture ; si la copie échoue, le suivi n'est pas réécrit (relecture de #95, D1).
+  - Plus de 64 Mo : mis de côté (`suivi-incidents-trop-grand-<horodatage>.json`), suivi repris à vide (audit de #95,
+    S95-01). Les bornes garantissent qu'un suivi plein (500 incidents au pire) reste sous cette taille.
+  - Illisible (droits, pas un tableau JSON) : suivi vide, **jamais réécrit**, commande `incident` refusée **jusqu'à une
+    intervention manuelle** (déplacer le fichier). C'est plus prudent que pour `alertes.json`, et ce sera signalé par
+    la santé (PR 4.4).
 - **Retour arrière** vers une version sans suivi : le fichier est ignoré, puis repris tel quel à la mise à niveau
   suivante.
 

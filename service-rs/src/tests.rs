@@ -3855,7 +3855,7 @@ fn incident_clos_jamais_rouvert_en_silence() {
     let mut s = Vec::new();
     appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0());
     let premier = s[0].id.clone();
-    transition(&mut s[0], EtatIncident::Clos, "Resolu", "", "S-1-5-21-0-0-0-500", "h", T0).unwrap();
+    transition(&mut s[0], EtatIncident::Clos, "Resolu", "", "S-1-5-32-544", "h", T0).unwrap();
     appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0() + 60);
     assert_eq!(s.len(), 2, "récidive : nouvel incident");
     assert_eq!((s[0].etat, s[1].etat), (EtatIncident::Clos, EtatIncident::Ouvert));
@@ -3885,6 +3885,7 @@ fn incident_transition_interdite_refusee() {
     assert!(transition(i, Clos, "", "", "S-1-5-32-544", "h", T0).is_err(), "clôture sans motif");
     assert!(transition(i, Clos, "Oublie", "", "S-1-5-32-544", "h", T0).is_err(), "motif inconnu");
     assert!(transition(i, PrisEnCharge, "Resolu", "", "S-1-5-32-544", "h", T0).is_err(), "motif hors clôture");
+    assert!(transition(i, PrisEnCharge, "", "", "", "h", T0).is_err(), "auteur inconnu (S95-03)");
     assert!(i.transitions.is_empty() && i.etat == Ouvert, "rien d'écrit");
     transition(i, PrisEnCharge, "", "vu par le prestataire", "S-1-5-32-544", "h1", T0).unwrap();
     transition(i, Clos, "FauxPositif", "", "S-1-5-32-544", "h2", T0).unwrap();
@@ -3969,5 +3970,48 @@ fn incident_commande_validee_et_auteur_du_jeton() {
     assert!(lu.auteur.is_empty(), "auteur jamais pris dans la commande");
     let canal = include_str!("canal.rs").replace("\r\n", "\n");
     assert!(canal.contains("let (client, sid) = crate::natif::identite_client_tube(tube);") && canal.contains("c.auteur = sid;"));
+}
+
+/// Audit de #95, S95-01 : 500 incidents au pire (toutes les listes et tous les textes à leur borne, en caractères de
+/// 4 octets) tiennent sous la taille maximale de lecture du suivi : un suivi plein ne se fige jamais au redémarrage
+#[test]
+fn incident_suivi_plein_pire_cas() {
+    use crate::incidents::{borner_incident, IncidentSuivi, ResumeAlerte, Transition, MAX_INCIDENTS, TAILLE_MAX_SUIVI};
+    let x: String = "\u{10FFFF}".repeat(5000);
+    let r = ResumeAlerte { id: x.clone(), heure: x.clone(), heure_utc: x.clone(), niveau: x.clone(), regle: x.clone(), processus: x.clone(),
+                           chemin: x.clone(), destination: x.clone(), raisons: x.clone() };
+    let tr = Transition { heure: x.clone(), heure_utc: x.clone(), motif: x.clone(), auteur: x.clone(), note: x.clone(), ..Default::default() };
+    let mut i = IncidentSuivi { modele: u32::MAX, id: x.clone(), ouverture: x.clone(), ouverture_utc: x.clone(), derniere_activite_utc: x.clone(),
+                                niveau: x.clone(), entite: x.clone(), regles: vec![x.clone(); 100], motif_cloture: x.clone(), precedent: x.clone(),
+                                alertes: vec![r; 100], nombre_alertes: u32::MAX, transitions: vec![tr; 100], ..Default::default() };
+    borner_incident(&mut i);
+    let octets = serde_json::to_vec(&i).unwrap().len() as u64;
+    assert!(octets * MAX_INCIDENTS as u64 + 1024 < TAILLE_MAX_SUIVI, "pire cas : {octets} octets par incident, {} Mo pour 500", octets * 500 / 1_048_576);
+    // Les résumés créés en direct ont les mêmes bornes et le même nettoyage (S95-02)
+    let mut a = alerte_incident("Alerte", &format!(r"C:\Outils\{}\a.exe", "\u{202E}".repeat(2000)), "PER-001", T0);
+    a.processus = "p".repeat(5000);
+    let mut s = Vec::new();
+    crate::incidents::appliquer(&mut s, &a, t0());
+    let mut relu = s[0].clone();
+    borner_incident(&mut relu);
+    assert_eq!(relu, s[0], "créé et relu identiques : l'entité relue retrouve son incident");
+    assert!(!s[0].entite.contains('\u{202E}') && !s[0].alertes[0].chemin.contains('\u{202E}'));
+}
+
+/// Relecture de #95, D1 : suivi lu en partie, copie mise de côté avant la réécriture ; trop grand, mis de côté ;
+/// illisible, jamais réécrit
+#[test]
+fn incident_decision_au_demarrage() {
+    use crate::incidents::{decision_suivi, DecisionSuivi, TAILLE_MAX_SUIVI};
+    assert_eq!(decision_suivi(false, 0, None), DecisionSuivi::Vide);
+    assert!(matches!(decision_suivi(true, 10, Some(r#"[{"Id":"a"}]"#)), DecisionSuivi::Lire(s) if s.len() == 1));
+    assert!(matches!(decision_suivi(true, 10, Some(r#"[{"Id":"a"}, {"Id":5}]"#)), DecisionSuivi::LirePartiel(s, 1) if s.len() == 1));
+    assert_eq!(decision_suivi(true, TAILLE_MAX_SUIVI + 1, None), DecisionSuivi::TropGrand);
+    assert_eq!(decision_suivi(true, 10, None), DecisionSuivi::Illisible, "droits refusés");
+    assert_eq!(decision_suivi(true, 10, Some("{}")), DecisionSuivi::Illisible, "pas un tableau");
+    // Branchement : écriture permise seulement si la mise de côté a réussi
+    let s = include_str!("incidents.rs").replace("\r\n", "\n");
+    assert!(s.contains("let ok = mettre_de_cote(&f, \"partiel\", true);") && s.contains("(s, ok)"));
+    assert!(s.contains("let ok = mettre_de_cote(&f, \"trop-grand\", false);") && s.contains("(Vec::new(), ok)"));
 }
 

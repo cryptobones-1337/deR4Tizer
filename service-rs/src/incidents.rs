@@ -11,10 +11,16 @@ pub const MAX_INCIDENTS: usize = 500;
 /// Résumés d'alertes gardés par incident : les premiers et les derniers
 const RESUMES_DEBUT: usize = 5;
 const RESUMES_FIN: usize = 5;
-const MAX_REGLES: usize = 32;
-const MAX_TRANSITIONS: usize = 50;
+// Bornes choisies pour que 500 incidents au pire (caractères de 4 octets partout) tiennent sous TAILLE_MAX_SUIVI
+// (audit de #95, S95-01 ; test incident_suivi_plein_pire_cas)
+const MAX_REGLES: usize = 16;
+const MAX_TRANSITIONS: usize = 20;
 pub const MAX_NOTE: usize = 300;
-const MAX_RAISONS_RESUME: usize = 300;
+const MAX_RAISONS_RESUME: usize = 200;
+const MAX_CHEMIN_RESUME: usize = 260;
+const MAX_PROCESSUS_RESUME: usize = 64;
+const MAX_DESTINATION_RESUME: usize = 128;
+const MAX_ENTITE: usize = 280;
 /// Une alerte rejoint l'incident non clos de son entité si sa dernière activité date de moins de 24 h
 const FENETRE_RATTACHEMENT_S: i64 = 24 * 3600;
 
@@ -79,14 +85,15 @@ pub struct IncidentSuivi {
 /// règle. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux entités
 pub fn entite(a: &Alerte) -> String {
     let chemin = a.chemin.trim();
-    if !chemin.is_empty() && chemin != "?" {
-        return format!("programme:{}", chemin.to_lowercase());
-    }
-    let dest = a.destination.trim();
-    if !dest.is_empty() && dest != "?" {
-        return format!("destination:{}", dest.to_lowercase());
-    }
-    format!("regle:{}", a.regle)
+    let e = if !chemin.is_empty() && chemin != "?" {
+        format!("programme:{}", chemin.to_lowercase())
+    } else {
+        let dest = a.destination.trim();
+        if !dest.is_empty() && dest != "?" { format!("destination:{}", dest.to_lowercase()) } else { format!("regle:{}", a.regle) }
+    };
+    // Bornée et nettoyée dès la création, comme à la relecture : l'entité d'une alerte et celle d'un incident relu sont
+    // identiques (audit de #95, S95-02)
+    crate::siem::texte_sur(&e, MAX_ENTITE)
 }
 
 fn rang(niveau: &str) -> u8 {
@@ -98,7 +105,7 @@ fn rang(niveau: &str) -> u8 {
 }
 
 fn resume(a: &Alerte) -> ResumeAlerte {
-    ResumeAlerte {
+    let mut r = ResumeAlerte {
         id: a.id.clone(),
         heure: a.heure.clone(),
         heure_utc: a.heure_utc.clone(),
@@ -107,7 +114,19 @@ fn resume(a: &Alerte) -> ResumeAlerte {
         processus: a.processus.clone(),
         chemin: a.chemin.clone(),
         destination: a.destination.clone(),
-        raisons: a.raisons.chars().take(MAX_RAISONS_RESUME).collect(),
+        raisons: a.raisons.clone(),
+    };
+    // Mêmes bornes et même nettoyage qu'à la relecture (S95-02 : un nom de fichier avec un caractère de sens d'écriture
+    // ne s'affiche pas trompeusement)
+    borner_resume(&mut r);
+    r
+}
+
+fn borner_resume(a: &mut ResumeAlerte) {
+    for (s, max) in [(&mut a.id, 64), (&mut a.heure, 32), (&mut a.heure_utc, 32), (&mut a.niveau, 16), (&mut a.regle, 64),
+                     (&mut a.processus, MAX_PROCESSUS_RESUME), (&mut a.chemin, MAX_CHEMIN_RESUME), (&mut a.destination, MAX_DESTINATION_RESUME),
+                     (&mut a.raisons, MAX_RAISONS_RESUME)] {
+        borne(s, max);
     }
 }
 
@@ -216,6 +235,10 @@ pub fn transition(i: &mut IncidentSuivi, vers: EtatIncident, motif: &str, note: 
     if vers != Clos && !motif.is_empty() {
         return Err("motif seulement pour une clôture".into());
     }
+    // Échec fermé pour l'historique : pas de transition sans auteur connu (audit de #95, S95-03)
+    if auteur.is_empty() {
+        return Err("auteur inconnu (jeton du client illisible)".into());
+    }
     if note.chars().count() > MAX_NOTE || note.chars().any(|c| c.is_control() || crate::siem::mise_en_forme(c)) {
         return Err(format!("note refusée : {MAX_NOTE} caractères au plus, sans caractère de contrôle ni de mise en forme"));
     }
@@ -251,7 +274,7 @@ fn borne(s: &mut String, max: usize) {
 /// Bornes d'un incident relu (fichier altéré : il faut être administrateur) : listes et textes ramenés à leurs maxima
 pub fn borner_incident(i: &mut IncidentSuivi) {
     for (s, max) in [(&mut i.id, 64), (&mut i.ouverture, 32), (&mut i.ouverture_utc, 32), (&mut i.derniere_activite_utc, 32),
-                     (&mut i.niveau, 16), (&mut i.entite, 600), (&mut i.motif_cloture, 16), (&mut i.precedent, 64)] {
+                     (&mut i.niveau, 16), (&mut i.entite, MAX_ENTITE), (&mut i.motif_cloture, 16), (&mut i.precedent, 64)] {
         borne(s, max);
     }
     i.regles.truncate(MAX_REGLES);
@@ -264,10 +287,7 @@ pub fn borner_incident(i: &mut IncidentSuivi) {
         i.alertes.extend(fin);
     }
     for a in &mut i.alertes {
-        for (s, max) in [(&mut a.id, 64), (&mut a.heure, 32), (&mut a.heure_utc, 32), (&mut a.niveau, 16), (&mut a.regle, 64),
-                         (&mut a.processus, 256), (&mut a.chemin, 600), (&mut a.destination, 256), (&mut a.raisons, MAX_RAISONS_RESUME)] {
-            borne(s, max);
-        }
+        borner_resume(a);
     }
     if i.transitions.len() > MAX_TRANSITIONS {
         i.transitions.drain(..i.transitions.len() - MAX_TRANSITIONS);
@@ -298,24 +318,70 @@ pub fn lire_suivi_texte(texte: &str) -> Option<(Vec<IncidentSuivi>, usize)> {
 }
 
 pub const FICHIER_SUIVI: &str = "suivi-incidents.json";
-/// Au-delà, le fichier n'est pas lu (même plafond qu'alertes.json)
-const TAILLE_MAX_SUIVI: u64 = 16 * 1024 * 1024;
+/// Au-delà, le fichier n'est pas lu : il est mis de côté. 500 incidents au pire, toutes bornes atteintes en caractères de
+/// 4 octets, tiennent en dessous (test incident_suivi_plein_pire_cas)
+pub const TAILLE_MAX_SUIVI: u64 = 64 * 1024 * 1024;
 
-/// Suivi au démarrage : (incidents, écriture permise). Absent : vide, écriture permise. Présent mais illisible (droits,
-/// taille, pas un tableau) : vide, et jamais réécrit, pour ne pas effacer l'historique (journal). Éléments écartés :
-/// gardés lisibles, réécriture permise (le reste du suivi n'est pas perdu)
+/// Ce que le service fait de `suivi-incidents.json` au démarrage (décision pure, testée)
+#[derive(Debug, PartialEq)]
+pub enum DecisionSuivi {
+    /// Fichier absent : suivi vide, écriture permise
+    Vide,
+    /// Lu entièrement : écriture permise
+    Lire(Vec<IncidentSuivi>),
+    /// Lu en partie (éléments écartés, comptés) : copie mise de côté avant d'autoriser la réécriture (relecture de #95,
+    /// D1), sinon les éléments écartés seraient perdus à la première écriture
+    LirePartiel(Vec<IncidentSuivi>, usize),
+    /// Trop grand (audit de #95, S95-01) : mis de côté, suivi repris à vide
+    TropGrand,
+    /// Illisible (droits, pas un tableau JSON) : vide, jamais réécrit, commande `incident` refusée
+    Illisible,
+}
+
+pub fn decision_suivi(present: bool, taille: u64, texte: Option<&str>) -> DecisionSuivi {
+    if !present {
+        return DecisionSuivi::Vide;
+    }
+    if taille > TAILLE_MAX_SUIVI {
+        return DecisionSuivi::TropGrand;
+    }
+    match texte.and_then(lire_suivi_texte) {
+        Some((s, 0)) => DecisionSuivi::Lire(s),
+        Some((s, n)) => DecisionSuivi::LirePartiel(s, n),
+        None => DecisionSuivi::Illisible,
+    }
+}
+
+/// Copie (ou déplacement) du suivi de côté, dans le dossier de données : `suivi-incidents-<raison>-<horodatage>.json`
+fn mettre_de_cote(f: &std::path::Path, raison: &str, copier: bool) -> bool {
+    let cote = f.with_file_name(format!("suivi-incidents-{raison}-{}.json", commun::filetime(std::time::SystemTime::now())));
+    commun::lecture_fichier_autorisee(f) && if copier { std::fs::copy(f, &cote).is_ok() } else { std::fs::rename(f, &cote).is_ok() }
+}
+
+/// Suivi au démarrage : (incidents, écriture permise), d'après `decision_suivi`. Une mise de côté qui échoue retient la
+/// réécriture (l'historique n'est jamais écrasé)
 pub fn lire_suivi() -> (Vec<IncidentSuivi>, bool) {
     let f = commun::dossier().join(FICHIER_SUIVI);
-    let Ok(m) = std::fs::symlink_metadata(&f) else { return (Vec::new(), true) };
-    let texte = if m.len() <= TAILLE_MAX_SUIVI { commun::lire_fichier(&f) } else { None };
-    match texte.as_deref().and_then(lire_suivi_texte) {
-        Some((suivis, 0)) => (suivis, true),
-        Some((suivis, n)) => {
-            commun::journal(&format!("suivi des incidents : {n} élément(s) illisible(s) écarté(s)"));
-            (suivis, true)
+    let m = std::fs::symlink_metadata(&f).ok();
+    let taille = m.as_ref().map(|m| m.len()).unwrap_or(0);
+    let texte = if m.is_some() && taille <= TAILLE_MAX_SUIVI { commun::lire_fichier(&f) } else { None };
+    match decision_suivi(m.is_some(), taille, texte.as_deref()) {
+        DecisionSuivi::Vide => (Vec::new(), true),
+        DecisionSuivi::Lire(s) => (s, true),
+        DecisionSuivi::LirePartiel(s, n) => {
+            let ok = mettre_de_cote(&f, "partiel", true);
+            commun::journal(&format!("suivi des incidents : {n} élément(s) illisible(s) écarté(s) ; {}",
+                if ok { "copie d'origine mise de côté" } else { "copie impossible, suivi non réécrit" }));
+            (s, ok)
         }
-        None => {
-            commun::journal("suivi des incidents illisible (droits, taille ou format) : non réécrit");
+        DecisionSuivi::TropGrand => {
+            let ok = mettre_de_cote(&f, "trop-grand", false);
+            commun::journal(&format!("suivi des incidents de {taille} octets, au-delà de la limite : {}",
+                if ok { "mis de côté, suivi repris à vide" } else { "mise de côté impossible, non réécrit" }));
+            (Vec::new(), ok)
+        }
+        DecisionSuivi::Illisible => {
+            commun::journal("suivi des incidents illisible (droits ou format) : non réécrit, transitions refusées jusqu'à une intervention");
             (Vec::new(), false)
         }
     }

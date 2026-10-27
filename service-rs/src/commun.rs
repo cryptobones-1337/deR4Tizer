@@ -661,7 +661,7 @@ pub fn decision_alertes(autorisee: bool, taille: u64, contenu: Option<&[u8]>) ->
 }
 
 /// Lecture contrôlée autorisée (mêmes règles que lire_fichier), sans rien lire
-fn lecture_fichier_autorisee(chemin: &Path) -> bool {
+pub(crate) fn lecture_fichier_autorisee(chemin: &Path) -> bool {
     let relatif = chemin.strip_prefix(dossier()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
     let systeme = crate::natif::est_systeme();
     let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };

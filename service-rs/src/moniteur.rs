@@ -1034,6 +1034,7 @@ impl Moniteur {
                     return Reponse::erreur("Suivi des incidents illisible au démarrage : aucune transition n'est enregistrée.");
                 }
                 let Some(i) = self.suivis.iter_mut().find(|i| i.id == id) else { return Reponse::erreur("Incident inconnu.") };
+                // Auteur vide (jeton du client illisible) : refusé par incidents::transition (S95-03)
                 let maintenant = std::time::SystemTime::now();
                 match crate::incidents::transition(i, vers, c.type_.as_deref().unwrap_or(""), c.raison.as_deref().unwrap_or(""), &c.auteur,
                     &commun::heure(maintenant), &commun::heure_utc_de(maintenant)) {

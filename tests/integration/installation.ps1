@@ -458,7 +458,7 @@ Verifier 'Alerte de persistance produite juste avant un arrêt : enregistrée da
 
 # ---------------------------------------------------------------- phase 4, PR 4.2 : suivi des incidents
 # Témoin retenu : apprentissage terminé (sinon les alertes non critiques sont baissées en Info), puis une clé Run vers un
-# programme absent de C:\Users\Public (« NON SIGNÉ ») : PER-001 au niveau Alerte ouvre un incident. Transitions par la
+# programme absent de C:\Users\Public (remarque « dossier suspect ») : PER-001 au niveau Alerte ouvre un incident. Transitions par la
 # commande « incident » en administrateur, avec l'auteur lu sur le jeton ; une transition interdite est refusée.
 Verifier 'Incidents : alerte témoin suivie, transitions historisées avec leur auteur, transition interdite refusée' {
     $cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
