@@ -268,6 +268,17 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
      si l'utilisateur le choisit, et il est nommé dans l'interface.
    - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas.
+   - Fin de phase 7 : campagne d'attaque complète depuis la VM Kali de test (`d4t-kali`, déjà déployée par le
+     mainteneur), demandée par le mainteneur le 2026-10-27 (« I propose to do a full test after phase 7, add it to
+     claude.md »). Elle vise la VM `deR4Tizer-test-26H2` et exerce ensemble la détection, les incidents et leur
+     chronologie (phase 4), la réponse et ses durées maximales (phase 6) et le filtrage DNS (phase 7).
+     - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet.
+     - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
+       brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
+       résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
+     - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
+       Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
+       mainteneur lance lui-même les scénarios.
 6. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
