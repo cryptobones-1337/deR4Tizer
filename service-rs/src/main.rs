@@ -27,6 +27,7 @@ mod evenements;
 mod export;
 mod gpo;
 mod hygiene;
+mod incidents;
 mod mitre;
 mod menaces;
 mod mesure;

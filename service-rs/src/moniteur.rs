@@ -97,6 +97,12 @@ pub struct Moniteur {
     executables_vus: HashSet<String>,
     apprentissage: bool,
     alertes: Vec<Alerte>,
+    /// Suivi des incidents (phase 4, PR 4.2), écrit avec alertes.json ; jamais réécrit s'il était illisible au démarrage
+    suivis: Vec<crate::incidents::IncidentSuivi>,
+    suivi_modifie: bool,
+    suivi_ecriture_permise: bool,
+    /// Alertes non suivies faute de place (500 incidents non clos) depuis le démarrage (SAN-012, PR 4.4)
+    pub non_suivies: u64,
     blocages: Vec<Blocage>,
     dernieres_connexions: Vec<Connexion>,
     empreinte_hosts: String,
@@ -172,6 +178,7 @@ impl Moniteur {
             processus.demarrer(move |nom, resultats| traiter_dns(&p, nom, resultats));
         }
 
+        let (suivis, suivi_ecriture_permise) = crate::incidents::lire_suivi();
         let m = Moniteur {
             partage: partage.clone(),
             console,
@@ -184,6 +191,10 @@ impl Moniteur {
             apprentissage: exes.is_none(),
             executables_vus: exes.unwrap_or_default().into_iter().map(|e| e.to_lowercase()).collect(),
             alertes: commun::lire_alertes(),
+            suivis,
+            suivi_modifie: false,
+            suivi_ecriture_permise,
+            non_suivies: 0,
             blocages: commun::lire("blocages.json").unwrap_or_default(),
             dernieres_connexions: Vec::new(),
             empreinte_hosts: blocage::empreinte_hosts(),
@@ -455,6 +466,7 @@ impl Moniteur {
             return;
         }
         let _ = commun::ecrire("alertes.json", &self.alertes);
+        self.ecrire_suivi();
     }
 
     // ------------------------------------------------------------ signatures
@@ -841,8 +853,33 @@ impl Moniteur {
         crate::export::alerte(&a);
         crate::notifications::alerte(&a);
         crate::siem::depuis_alerte(&a);
+        self.suivre(&a);
         self.alertes.push(a);
         true
+    }
+
+    /// Rattache une alerte au suivi des incidents (décision : incidents::appliquer)
+    fn suivre(&mut self, a: &Alerte) {
+        let maintenant = commun::secondes_utc(&a.heure_utc).unwrap_or(0);
+        match crate::incidents::appliquer(&mut self.suivis, a, maintenant) {
+            crate::incidents::Effet::Rien => {}
+            crate::incidents::Effet::Suivi => self.suivi_modifie = true,
+            crate::incidents::Effet::NonSuivi => {
+                self.non_suivies += 1;
+                if self.non_suivies == 1 {
+                    commun::journal("suivi des incidents plein (500 incidents non clos) : de nouvelles alertes ne sont plus suivies");
+                }
+            }
+        }
+    }
+
+    /// Écrit le suivi s'il a changé et que l'écriture est permise
+    fn ecrire_suivi(&mut self) {
+        if self.suivi_modifie && self.suivi_ecriture_permise {
+            if commun::ecrire(crate::incidents::FICHIER_SUIVI, &self.suivis).is_ok() {
+                self.suivi_modifie = false;
+            }
+        }
     }
 
     // ------------------------------------------------------------ commandes de l'interface
@@ -990,6 +1027,25 @@ impl Moniteur {
                 },
                 None => Reponse::erreur("Alerte introuvable."),
             },
+            "incident" => {
+                let id = c.cible.clone().unwrap_or_default();
+                let Some(vers) = crate::incidents::etat_de(c.valeur.as_deref().unwrap_or("")) else { return Reponse::erreur("état inconnu.") };
+                if !self.suivi_ecriture_permise {
+                    return Reponse::erreur("Suivi des incidents illisible au démarrage : aucune transition n'est enregistrée.");
+                }
+                let Some(i) = self.suivis.iter_mut().find(|i| i.id == id) else { return Reponse::erreur("Incident inconnu.") };
+                // Auteur vide (jeton du client illisible) : refusé par incidents::transition (S95-03)
+                let maintenant = std::time::SystemTime::now();
+                match crate::incidents::transition(i, vers, c.type_.as_deref().unwrap_or(""), c.raison.as_deref().unwrap_or(""), &c.auteur,
+                    &commun::heure(maintenant), &commun::heure_utc_de(maintenant)) {
+                    Ok(()) => {
+                        self.suivi_modifie = true;
+                        self.ecrire_suivi();
+                        Reponse::ok(format!("Incident {id} : {vers:?}."))
+                    }
+                    Err(e) => Reponse::erreur(format!("Incident {id} : {e}.")),
+                }
+            }
             "apprentissage" => match crate::apprentissage::commande(c.valeur.as_deref().unwrap_or("")) {
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),

@@ -456,6 +456,47 @@ Verifier 'Alerte de persistance produite juste avant un arrêt : enregistrée da
     }
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.2 : suivi des incidents
+# Témoin retenu : apprentissage terminé (sinon les alertes non critiques sont baissées en Info), puis une clé Run vers un
+# programme absent de C:\Users\Public (remarque « dossier suspect ») : PER-001 au niveau Alerte ouvre un incident. Transitions par la
+# commande « incident » en administrateur, avec l'auteur lu sur le jeton ; une transition interdite est refusée.
+Verifier 'Incidents : alerte témoin suivie, transitions historisées avec leur auteur, transition interdite refusée' {
+    $cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    $nom = 'd4t-incident-temoin'
+    $cible = 'C:\Users\Public\d4t-incident-temoin.exe'
+    try {
+        $r = Commande '{"Action":"apprentissage","Valeur":"terminer"}' 30000 | ConvertFrom-Json
+        if (-not $r.Ok) { return "fin de l'apprentissage refusée : $($r.Message)" }
+        New-ItemProperty -Path $cleRun -Name $nom -Value "`"$cible`" /d4t" -PropertyType String -Force | Out-Null
+        $suivi = Join-Path $script:Donnees 'suivi-incidents.json'
+        $fin = (Get-Date).AddSeconds(180)
+        $incident = $null
+        while ((Get-Date) -lt $fin -and -not $incident) {
+            if (Test-Path $suivi) {
+                $incident = @((Get-Content $suivi -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { $_.Entite -like '*d4t-incident-temoin.exe' }) | Select-Object -Last 1
+            }
+            if (-not $incident) { Start-Sleep 2 }
+        }
+        if (-not $incident) { return "aucun incident pour $cible en 180 s ; journal : $(Journal 'persistance|incident')" }
+        if ($incident.Etat -ne 'Ouvert' -or $incident.Regles -notcontains 'PER-001') { return "incident inattendu : $($incident.Etat) / $($incident.Regles -join ',')" }
+        $id = $incident.Id
+        $a = Commande (@{ Action = 'incident'; Cible = $id; Valeur = 'PrisEnCharge'; Raison = 'témoin 4.2' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+        if (-not $a.Ok) { return "prise en charge refusée : $($a.Message)" }
+        $b = Commande (@{ Action = 'incident'; Cible = $id; Valeur = 'Clos'; Type = 'Resolu' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+        if (-not $b.Ok) { return "clôture refusée : $($b.Message)" }
+        $c = Commande (@{ Action = 'incident'; Cible = $id; Valeur = 'PrisEnCharge' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+        if ($c.Ok) { return 'transition Clos vers PrisEnCharge acceptée' }
+        $i = @((Get-Content $suivi -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { $_.Id -eq $id }) | Select-Object -First 1
+        if ($i.Etat -ne 'Clos' -or $i.MotifCloture -ne 'Resolu') { return "état final inattendu : $($i.Etat) / $($i.MotifCloture)" }
+        if (@($i.Transitions).Count -ne 2) { return "$(@($i.Transitions).Count) transition(s) au lieu de 2" }
+        if (@($i.Transitions | Where-Object { $_.Auteur -notmatch '^S-1-5-' }).Count) { return "auteur absent ou mal formé : $(@($i.Transitions).Auteur -join ', ')" }
+        if ($i.Transitions[0].Note -ne 'témoin 4.2') { return "note perdue : « $($i.Transitions[0].Note) »" }
+        $true
+    } finally {
+        Remove-ItemProperty -Path $cleRun -Name $nom -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------------------------------------------------------- phase 4, PR 4.1 : actions de réponse dans le SIEM
 # Blocage manuel d'une adresse de documentation (RFC 5737 : aucune connexion n'est ouverte vers elle), puis sa levée :
 # deux événements « reponse » dans le SIEM, avec l'heure UTC et le numéro d'ordre (ordre total, D4-4)

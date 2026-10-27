@@ -149,9 +149,12 @@ pub(crate) fn evenement_reponse(action: &str, cible: &str, ok: bool, message: &s
 /// Texte borné à `max` caractères, sans caractère de contrôle ni de mise en forme (sens d'écriture, largeur nulle),
 /// remplacés par « ? » : il est affiché tel quel par l'interface (pur, testé)
 pub(crate) fn texte_sur(s: &str, max: usize) -> String {
-    let mise_en_forme = |c: char| matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}'
-                                              | '\u{2066}'..='\u{206F}' | '\u{FEFF}');
     s.chars().take(max).map(|c| if c.is_control() || mise_en_forme(c) { '?' } else { c }).collect()
+}
+
+/// Caractère de mise en forme : sens d'écriture, largeur nulle (affichés tels quels, ils trompent la lecture)
+pub(crate) fn mise_en_forme(c: char) -> bool {
+    matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}')
 }
 
 /// Journalise une action de réponse dans le SIEM

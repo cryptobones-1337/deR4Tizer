@@ -3767,3 +3767,256 @@ fn reponse_journalisee_dans_le_siem() {
     assert!(v.contains("if tentee {\n                crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu,"));
 }
 
+// ------------------------------------------------------------ phase 4, PR 4.2 : suivi des incidents
+
+fn alerte_incident(niveau: &str, chemin: &str, regle: &str, heure_utc: &str) -> crate::commun::Alerte {
+    crate::commun::Alerte { id: crate::commun::nouvel_id(), heure: "2026-10-27 08:00:00".into(), heure_utc: heure_utc.into(), niveau: niveau.into(),
+                            chemin: chemin.into(), regle: regle.into(), raisons: "r".into(), ..Default::default() }
+}
+
+const T0: &str = "2026-10-27T07:00:00Z";
+
+fn t0() -> i64 {
+    crate::commun::secondes_utc(T0).unwrap()
+}
+
+#[test]
+fn incident_secondes_utc_inverse_de_l_heure() {
+    use crate::commun::{heure_utc_de, secondes_utc};
+    use std::time::{Duration, UNIX_EPOCH};
+    for s in [0u64, 951_868_800, 1_709_251_199, 1_767_225_599, 1_792_891_800] {
+        assert_eq!(secondes_utc(&heure_utc_de(UNIX_EPOCH + Duration::from_secs(s))), Some(s as i64));
+    }
+    for mauvais in ["", "2026-10-27 07:00:00", "2026-13-01T00:00:00Z", "2026-10-27T07:00:00", "+026-10-27T07:00:00Z", "2026-10-27T25:00:00Z"] {
+        assert_eq!(secondes_utc(mauvais), None, "{mauvais}");
+    }
+}
+
+#[test]
+fn incident_alerte_ouvre_un_incident() {
+    use crate::incidents::{appliquer, EtatIncident, Effet};
+    let mut s = Vec::new();
+    assert_eq!(appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0()), Effet::Suivi);
+    assert_eq!(s.len(), 1);
+    assert_eq!((s[0].etat, s[0].niveau.as_str(), s[0].nombre_alertes, s[0].modele), (EtatIncident::Ouvert, "Alerte", 1, 1));
+    assert_eq!(s[0].entite, r"programme:c:\outils\a.exe");
+    assert_eq!(s[0].regles, ["PER-001"]);
+}
+
+#[test]
+fn incident_info_n_ouvre_rien() {
+    use crate::incidents::{appliquer, Effet};
+    let mut s = Vec::new();
+    assert_eq!(appliquer(&mut s, &alerte_incident("Info", r"C:\Outils\a.exe", "RES-003", T0), t0()), Effet::Rien);
+    assert!(s.is_empty());
+}
+
+#[test]
+fn incident_meme_entite_rejoint() {
+    use crate::incidents::appliquer;
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0());
+    // Même chemin (casse comprise), moins de 24 h : rejoint ; règle ajoutée une fois
+    appliquer(&mut s, &alerte_incident("Alerte", r"c:\OUTILS\a.exe", "RES-002", "2026-10-27T10:00:00Z"), t0() + 3 * 3600);
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "RES-002", "2026-10-27T11:00:00Z"), t0() + 4 * 3600);
+    assert_eq!((s.len(), s[0].nombre_alertes, s[0].regles.len()), (1, 3, 2));
+    assert_eq!(s[0].derniere_activite_utc, "2026-10-27T11:00:00Z");
+    // Plus de 24 h sans activité : nouvel incident
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", "2026-10-28T12:00:00Z"), t0() + 29 * 3600);
+    assert_eq!(s.len(), 2);
+    // Résumés bornés : 5 premiers et 5 derniers
+    for k in 0..30 {
+        appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", "2026-10-28T12:30:00Z"), t0() + 29 * 3600 + k);
+    }
+    assert_eq!((s[1].alertes.len(), s[1].nombre_alertes), (10, 31));
+}
+
+#[test]
+fn incident_meme_nom_autre_chemin_separe() {
+    use crate::incidents::{appliquer, entite};
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Program Files\Google\Chrome\Application\chrome.exe", "RES-002", T0), t0());
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Users\essai\AppData\Local\Temp\chrome.exe", "RES-002", T0), t0());
+    assert_eq!(s.len(), 2, "deux chrome.exe à des chemins différents");
+    // Sans chemin : destination, sinon règle ; jamais le nom seul
+    let mut a = alerte_incident("Alerte", "", "DNS-001", T0);
+    a.processus = "chrome".into();
+    a.destination = "malveillant.example".into();
+    assert_eq!(entite(&a), "destination:malveillant.example");
+    a.destination = String::new();
+    assert_eq!(entite(&a), "regle:DNS-001");
+    a.chemin = "?".into();
+    assert_eq!(entite(&a), "regle:DNS-001", "chemin inconnu (« ? ») ignoré");
+    // Audit de #95, S95-05 : deux chemins longs qui ne diffèrent qu'à la fin restent deux entités, bornées
+    let long = format!(r"C:\Outils\{}", "dossier\\".repeat(60));
+    let (e1, e2) = (entite(&alerte_incident("Alerte", &format!("{long}a.exe"), "PER-001", T0)), entite(&alerte_incident("Alerte", &format!("{long}b.exe"), "PER-001", T0)));
+    assert_ne!(e1, e2);
+    assert!(e1.chars().count() <= 280 && e2.chars().count() <= 280, "{}", e1.chars().count());
+}
+
+#[test]
+fn incident_clos_jamais_rouvert_en_silence() {
+    use crate::incidents::{appliquer, transition, EtatIncident};
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0());
+    let premier = s[0].id.clone();
+    transition(&mut s[0], EtatIncident::Clos, "Resolu", "", "S-1-5-32-544", "h", T0).unwrap();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0() + 60);
+    assert_eq!(s.len(), 2, "récidive : nouvel incident");
+    assert_eq!((s[0].etat, s[1].etat), (EtatIncident::Clos, EtatIncident::Ouvert));
+    assert_eq!(s[1].precedent, premier);
+}
+
+#[test]
+fn incident_niveau_ne_baisse_pas() {
+    use crate::incidents::appliquer;
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Critique", r"C:\Outils\a.exe", "LEU-002", T0), t0());
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "RES-002", T0), t0() + 10);
+    assert_eq!(s[0].niveau, "Critique");
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "RES-002", T0), t0());
+    appliquer(&mut s, &alerte_incident("Critique", r"C:\Outils\a.exe", "LEU-002", T0), t0() + 10);
+    assert_eq!(s[0].niveau, "Critique", "monte");
+}
+
+#[test]
+fn incident_transition_interdite_refusee() {
+    use crate::incidents::{appliquer, transition, EtatIncident::*};
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0());
+    let i = &mut s[0];
+    assert!(transition(i, Ouvert, "", "", "S-1-5-32-544", "h", T0).is_err(), "Ouvert vers Ouvert");
+    assert!(transition(i, Clos, "", "", "S-1-5-32-544", "h", T0).is_err(), "clôture sans motif");
+    assert!(transition(i, Clos, "Oublie", "", "S-1-5-32-544", "h", T0).is_err(), "motif inconnu");
+    assert!(transition(i, PrisEnCharge, "Resolu", "", "S-1-5-32-544", "h", T0).is_err(), "motif hors clôture");
+    assert!(transition(i, PrisEnCharge, "", "", "", "h", T0).is_err(), "auteur inconnu (S95-03)");
+    assert!(i.transitions.is_empty() && i.etat == Ouvert, "rien d'écrit");
+    transition(i, PrisEnCharge, "", "vu par le prestataire", "S-1-5-32-544", "h1", T0).unwrap();
+    transition(i, Clos, "FauxPositif", "", "S-1-5-32-544", "h2", T0).unwrap();
+    assert!(transition(i, PrisEnCharge, "", "", "S-1-5-32-544", "h3", T0).is_err(), "Clos vers PrisEnCharge");
+    assert_eq!((i.etat, i.motif_cloture.as_str(), i.transitions.len()), (Clos, "FauxPositif", 2));
+    assert_eq!((i.transitions[0].de, i.transitions[0].vers, i.transitions[0].auteur.as_str()), (Ouvert, PrisEnCharge, "S-1-5-32-544"));
+    // Réouverture explicite : le motif est effacé, l'historique garde la clôture
+    transition(i, Ouvert, "", "nouvelle analyse", "S-1-5-32-544", "h4", T0).unwrap();
+    assert_eq!((i.etat, i.motif_cloture.as_str(), i.transitions.len()), (Ouvert, "", 3));
+}
+
+#[test]
+fn incident_note_bornee_et_nettoyee() {
+    use crate::incidents::{appliquer, transition, EtatIncident::*};
+    let mut s = Vec::new();
+    appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\a.exe", "PER-001", T0), t0());
+    for note in ["x".repeat(10_000), "a\nb".to_string(), "texte \u{202E}inversé".to_string(), "\u{200B}".to_string()] {
+        assert!(transition(&mut s[0], PrisEnCharge, "", &note, "S-1-5-32-544", "h", T0).is_err(), "{note:?}");
+    }
+    assert!(s[0].transitions.is_empty());
+    assert!(transition(&mut s[0], PrisEnCharge, "", &"é".repeat(300), "S-1-5-32-544", "h", T0).is_ok(), "300 caractères");
+}
+
+#[test]
+fn incident_purge_clos_d_abord() {
+    use crate::incidents::{appliquer, transition, Effet, EtatIncident, MAX_INCIDENTS};
+    let mut s = Vec::new();
+    for k in 0..MAX_INCIDENTS {
+        appliquer(&mut s, &alerte_incident("Alerte", &format!(r"C:\Outils\{k}.exe"), "PER-001", T0), t0());
+    }
+    transition(&mut s[7], EtatIncident::Clos, "Resolu", "", "S-1-5-32-544", "h", T0).unwrap();
+    let clos = s[7].id.clone();
+    // 501e : le clos part, aucun non clos
+    assert_eq!(appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\nouveau.exe", "PER-001", T0), t0()), Effet::Suivi);
+    assert_eq!(s.len(), MAX_INCIDENTS);
+    assert!(!s.iter().any(|i| i.id == clos));
+    assert_eq!(s.iter().filter(|i| i.etat != EtatIncident::Clos).count(), MAX_INCIDENTS);
+    // Plein de non clos : la nouvelle entité n'est pas suivie (comptée par l'appelant), la jonction reste possible
+    assert_eq!(appliquer(&mut s, &alerte_incident("Alerte", r"C:\Outils\encore.exe", "PER-001", T0), t0()), Effet::NonSuivi);
+    assert_eq!(s.len(), MAX_INCIDENTS);
+    assert_eq!(appliquer(&mut s, &alerte_incident("Critique", r"C:\Outils\3.exe", "LEU-002", T0), t0() + 5), Effet::Suivi);
+    // Fichier relu de plus de 500 incidents : les clos partent d'abord, les non clos jamais ; le surplus est compté
+    use crate::incidents::{purger, IncidentSuivi};
+    let mut relu: Vec<IncidentSuivi> = (0..MAX_INCIDENTS + 1).map(|k| IncidentSuivi { id: format!("n{k}"), ..Default::default() }).collect();
+    relu.push(IncidentSuivi { id: "clos".into(), etat: EtatIncident::Clos, ..Default::default() });
+    assert_eq!(purger(&mut relu), 1, "un non clos de trop, compté");
+    assert_eq!(relu.len(), MAX_INCIDENTS + 1);
+    assert!(!relu.iter().any(|i| i.id == "clos") && relu[0].id == "n0", "le clos est parti, aucun non clos");
+}
+
+#[test]
+fn incident_fichier_mal_forme_tolere() {
+    use crate::incidents::lire_suivi_texte;
+    let texte = format!(r#"[{{"Id":"a1","Niveau":"Alerte","Etat":"Ouvert","Entite":"regle:PER-001"}}, {{"Id":5}}, "texte",
+        {{"Id":"a2","Etat":"Clos","Transitions":[{{"De":"Ouvert","Vers":"Clos","Note":"{}"}}],"Alertes":[{}]}}]"#,
+        "n".repeat(5000), (0..40).map(|k| format!(r#"{{"Id":"r{k}"}}"#)).collect::<Vec<_>>().join(","));
+    let (s, ecartes) = lire_suivi_texte(&texte).unwrap();
+    assert_eq!((s.len(), ecartes), (2, 2));
+    assert_eq!(s[1].transitions[0].note.chars().count(), crate::incidents::MAX_NOTE, "note relue bornée");
+    assert_eq!(s[1].alertes.len(), 10, "résumés relus bornés");
+    assert_eq!((s[1].alertes[0].id.as_str(), s[1].alertes[9].id.as_str()), ("r0", "r39"));
+    assert!(lire_suivi_texte("{}").is_none() && lire_suivi_texte("pas du json").is_none());
+    torturer_texte("[{\"Id\":\"a\",\"Etat\":\"Clos\"}]", &mut |t| { let _ = lire_suivi_texte(t); });
+}
+
+/// Commande `incident` : validée champ par champ ; l'auteur ne vient jamais de la commande, mais du jeton du client
+#[test]
+fn incident_commande_validee_et_auteur_du_jeton() {
+    use crate::commun::Commande;
+    use crate::validation::{autorisee, valider, Client};
+    let c = |cible: &str, valeur: &str, type_: Option<&str>, raison: Option<&str>| Commande {
+        action: Some("incident".into()), cible: Some(cible.into()), valeur: Some(valeur.into()), type_: type_.map(Into::into),
+        raison: raison.map(Into::into), ..Default::default() };
+    assert!(valider(&c("01dd6556a152bba9-000029b8-0000", "PrisEnCharge", None, None)).is_ok());
+    assert!(valider(&c("01dd6556a152bba9-000029b8-0000", "Clos", Some("Resolu"), Some("corrigé"))).is_ok());
+    assert!(valider(&c("../x", "Clos", Some("Resolu"), None)).is_err(), "identifiant");
+    assert!(valider(&c("01dd6556a152bba9-000029b8-0000", "Supprime", None, None)).is_err(), "état");
+    assert!(valider(&c("01dd6556a152bba9-000029b8-0000", "Clos", Some("Ignore"), None)).is_err(), "motif");
+    assert!(valider(&c("01dd6556a152bba9-000029b8-0000", "Clos", Some("Resolu"), Some(&"x".repeat(301)))).is_err(), "note");
+    assert!(autorisee("incident", Client::Administrateur) && !autorisee("incident", Client::Autre));
+    let lu: Commande = serde_json::from_str(r#"{"Action":"incident","Cible":"x","Valeur":"Clos","Auteur":"S-1-5-18"}"#).unwrap();
+    assert!(lu.auteur.is_empty(), "auteur jamais pris dans la commande");
+    let canal = include_str!("canal.rs").replace("\r\n", "\n");
+    assert!(canal.contains("let (client, sid) = crate::natif::identite_client_tube(tube);") && canal.contains("c.auteur = sid;"));
+}
+
+/// Audit de #95, S95-01 : 500 incidents au pire (toutes les listes et tous les textes à leur borne, en caractères de
+/// 4 octets) tiennent sous la taille maximale de lecture du suivi : un suivi plein ne se fige jamais au redémarrage
+#[test]
+fn incident_suivi_plein_pire_cas() {
+    use crate::incidents::{borner_incident, IncidentSuivi, ResumeAlerte, Transition, MAX_INCIDENTS, TAILLE_MAX_SUIVI};
+    let x: String = "\u{10FFFF}".repeat(5000);
+    let r = ResumeAlerte { id: x.clone(), heure: x.clone(), heure_utc: x.clone(), niveau: x.clone(), regle: x.clone(), processus: x.clone(),
+                           chemin: x.clone(), destination: x.clone(), raisons: x.clone() };
+    let tr = Transition { heure: x.clone(), heure_utc: x.clone(), motif: x.clone(), auteur: x.clone(), note: x.clone(), ..Default::default() };
+    let mut i = IncidentSuivi { modele: u32::MAX, id: x.clone(), ouverture: x.clone(), ouverture_utc: x.clone(), derniere_activite_utc: x.clone(),
+                                niveau: x.clone(), entite: x.clone(), regles: vec![x.clone(); 100], motif_cloture: x.clone(), precedent: x.clone(),
+                                alertes: vec![r; 100], nombre_alertes: u32::MAX, transitions: vec![tr; 100], ..Default::default() };
+    borner_incident(&mut i);
+    let octets = serde_json::to_vec(&i).unwrap().len() as u64;
+    assert!(octets * MAX_INCIDENTS as u64 + 1024 < TAILLE_MAX_SUIVI, "pire cas : {octets} octets par incident, {} Mo pour 500", octets * 500 / 1_048_576);
+    // Les résumés créés en direct ont les mêmes bornes et le même nettoyage (S95-02)
+    let mut a = alerte_incident("Alerte", &format!(r"C:\Outils\{}\a.exe", "\u{202E}".repeat(2000)), "PER-001", T0);
+    a.processus = "p".repeat(5000);
+    let mut s = Vec::new();
+    crate::incidents::appliquer(&mut s, &a, t0());
+    let mut relu = s[0].clone();
+    borner_incident(&mut relu);
+    assert_eq!(relu, s[0], "créé et relu identiques : l'entité relue retrouve son incident");
+    assert!(!s[0].entite.contains('\u{202E}') && !s[0].alertes[0].chemin.contains('\u{202E}'));
+}
+
+/// Relecture de #95, D1 : suivi lu en partie, copie mise de côté avant la réécriture ; trop grand, mis de côté ;
+/// illisible, jamais réécrit
+#[test]
+fn incident_decision_au_demarrage() {
+    use crate::incidents::{decision_suivi, DecisionSuivi, TAILLE_MAX_SUIVI};
+    assert_eq!(decision_suivi(false, 0, None), DecisionSuivi::Vide);
+    assert!(matches!(decision_suivi(true, 10, Some(r#"[{"Id":"a"}]"#)), DecisionSuivi::Lire(s) if s.len() == 1));
+    assert!(matches!(decision_suivi(true, 10, Some(r#"[{"Id":"a"}, {"Id":5}]"#)), DecisionSuivi::LirePartiel(s, 1) if s.len() == 1));
+    assert_eq!(decision_suivi(true, TAILLE_MAX_SUIVI + 1, None), DecisionSuivi::TropGrand);
+    assert_eq!(decision_suivi(true, 10, None), DecisionSuivi::Illisible, "droits refusés");
+    assert_eq!(decision_suivi(true, 10, Some("{}")), DecisionSuivi::Illisible, "pas un tableau");
+    // Branchement : écriture permise seulement si la mise de côté a réussi
+    let s = include_str!("incidents.rs").replace("\r\n", "\n");
+    assert!(s.contains("let ok = mettre_de_cote(&f, \"partiel\", true);") && s.contains("(s, ok)"));
+    assert!(s.contains("let ok = mettre_de_cote(&f, \"trop-grand\", false);") && s.contains("(Vec::new(), ok)"));
+}
+

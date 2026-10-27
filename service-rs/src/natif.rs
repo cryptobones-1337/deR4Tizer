@@ -503,6 +503,12 @@ pub fn est_systeme() -> bool {
 /// (GetNamedPipeClientProcessId), sans emprunter son identité : rien ne change sur le fil du service. Tout échec
 /// (processus disparu, jeton illisible) : « autre », donc refus (échec fermé).
 pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
+    identite_client_tube(tube).0
+}
+
+/// `client_tube`, avec le SID du compte du processus client (vide si illisible) : auteur des transitions d'incident
+/// (phase 4, PR 4.2). Le SID ne sert qu'à l'historique, jamais à une autorisation
+pub fn identite_client_tube(tube: HANDLE) -> (crate::validation::Client, String) {
     use crate::validation::Client;
     use windows::Win32::Foundation::BOOL;
     use windows::Win32::Security::{
@@ -514,19 +520,20 @@ pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
     unsafe {
         let mut pid = 0u32;
         if GetNamedPipeClientProcessId(tube, &mut pid).is_err() || pid == 0 {
-            return Client::Autre;
+            return (Client::Autre, String::new());
         }
-        let Ok(processus) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return Client::Autre };
+        let Ok(processus) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return (Client::Autre, String::new()) };
         let mut jeton = HANDLE::default();
         let ouvert = OpenProcessToken(processus, TOKEN_QUERY | TOKEN_DUPLICATE, &mut jeton).is_ok();
         let _ = CloseHandle(processus);
         if !ouvert {
-            return Client::Autre;
+            return (Client::Autre, String::new());
         }
         let mut tampon = vec![0u64; 64];
         let mut taille = 0u32;
-        let systeme = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok()
-            && IsWellKnownSid((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool();
+        let lu = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok();
+        let sid = if lu { sid_texte((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid) } else { String::new() };
+        let systeme = lu && IsWellKnownSid((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool();
         let mut client = if systeme { Client::Systeme } else { Client::Autre };
         if !systeme {
             // CheckTokenMembership exige un jeton d'emprunt : copie au niveau « identification » (aucun accès possible)
@@ -546,7 +553,7 @@ pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
             }
         }
         let _ = CloseHandle(jeton);
-        client
+        (client, sid)
     }
 }
 

@@ -522,6 +522,25 @@ pub fn horodater(heure_utc: &mut String, seq: &mut u64) {
     }
 }
 
+/// Secondes depuis 1970 d'une heure UTC au format de `heure_utc_de` (« AAAA-MM-JJTHH:MM:SSZ »), None sinon (pur, testé)
+pub fn secondes_utc(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z' {
+        return None;
+    }
+    let n = |a: usize, z: usize| s.get(a..z).filter(|t| t.bytes().all(|c| c.is_ascii_digit())).and_then(|t| t.parse::<i64>().ok());
+    let (an, mo, j, h, mi, se) = (n(0, 4)?, n(5, 7)?, n(8, 10)?, n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&j) || h > 23 || mi > 59 || se > 60 {
+        return None;
+    }
+    let a = if mo <= 2 { an - 1 } else { an };
+    let ere = a.div_euclid(400);
+    let ade = a - ere * 400;
+    let jda = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + j - 1;
+    let jde = ade * 365 + ade / 4 - ade / 100 + jda;
+    Some((ere * 146_097 + jde - 719_468) * 86_400 + h * 3600 + mi * 60 + se)
+}
+
 /// Heure UTC au format RFC 3339 à la seconde (« 2026-10-25T01:30:00Z »), sans dépendance (pur, testé) ; jours civils
 /// par l'algorithme de Howard Hinnant
 pub fn heure_utc_de(t: SystemTime) -> String {
@@ -642,7 +661,7 @@ pub fn decision_alertes(autorisee: bool, taille: u64, contenu: Option<&[u8]>) ->
 }
 
 /// Lecture contrôlée autorisée (mêmes règles que lire_fichier), sans rien lire
-fn lecture_fichier_autorisee(chemin: &Path) -> bool {
+pub(crate) fn lecture_fichier_autorisee(chemin: &Path) -> bool {
     let relatif = chemin.strip_prefix(dossier()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
     let systeme = crate::natif::est_systeme();
     let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
@@ -788,6 +807,10 @@ pub struct Commande {
     pub cible: Option<String>,
     pub raison: Option<String>,
     pub categories: Option<Vec<String>>,
+    /// SID du client du tube, posé par le canal après l'admission (jamais lu dans la commande) : auteur des
+    /// transitions d'incident (phase 4, PR 4.2)
+    #[serde(skip)]
+    pub auteur: String,
 }
 
 #[derive(Serialize)]
