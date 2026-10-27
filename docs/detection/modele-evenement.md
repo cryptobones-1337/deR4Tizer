@@ -111,14 +111,6 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   change pas. L'API lit `alertes.json` par la même lecture tolérante, sans rien déplacer (`lire_alertes_sans_effet`) :
   un élément illisible ne vide plus sa réponse.
 
-## Prévu en phase 4 (pas encore dans le code)
-
-Décrit ici pour fixer le format avant le code (`docs/roadmap/phase4.md`) ; chaque point devient vrai avec la PR qui
-l'apporte, et cette section sera réécrite à ce moment-là.
-
-- **Santé de la remontée** (PR 4.4b) : `notifications.json` gagne `EchecDepuis` et `EnAttente` (file retentée en
-  mémoire, 100 éléments, 24 h) ; constat local SAN-004 ; battement quotidien (compteurs seulement).
-
 ## Santé des collectes (phase 4, PR 4.4a)
 
 Chaque changement d'état d'une collecte (`collectes::instantane`) est écrit dans le SIEM par le fil « sante » (toutes
@@ -136,6 +128,30 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
 - Plus de 6 changements dans l'heure : collecte « instable », une ligne par heure au plus (le message le dit).
 - Une coupure plus courte que la période du fil (30 s) peut ne pas être vue.
 - Constats SAN-001, SAN-002, SAN-003 et SAN-012 : `docs/detection/regles.md`.
+
+## Santé de la remontée (phase 4, PR 4.4b)
+
+`notifications.json` (lu par l'interface, sans secret) gagne :
+
+| Champ | Valeur |
+|---|---|
+| `EchecDepuis` | heure locale du premier lot non remis d'une panne en cours ; vide sinon |
+| `EnAttente` | alertes dans la file de reprise |
+| `Abandonnees` | alertes abandonnées par la file (pleine, ou plus de 24 h) depuis le démarrage |
+| `DernierBattement` | date locale (AAAA-MM-JJ) du dernier battement ; relue au démarrage |
+
+- **Remis** : un lot est remis si au moins un canal tenté a réussi ; remis sur un seul canal, il n'est pas retenté (il
+  y arriverait en double). Aucun canal tenté (secrets absents) : non remis.
+- **File de reprise** : les alertes critiques et les constats SAN-* (sauf SAN-004) d'un lot non remis ; sans doublon
+  (même `Id`) ; 100 au plus (la plus ancienne part) ; 24 h au plus ; essais à +1, +5, +15, +60 min, puis toutes les
+  heures, en un lot. **En mémoire** (D4-8) : un redémarrage la vide ; les alertes restent dans `alertes.json`.
+- **SAN-004** : remontée en échec depuis plus d'une heure ; constat local, jamais remonté ni mis en file.
+- **Battement** (D4-6) : quand la remontée est configurée, un message par jour à partir de 09:00 locale, niveau
+  « Info », hors plafond et hors niveau minimal : incidents non clos, collectes actives et indisponibles (identifiants
+  des collectes critiques indisponibles), alertes en attente. Compteurs seulement : aucun nom de compte, de programme
+  ni de ligne de commande. Sans battement, le prestataire sait que le service est arrêté, le poste éteint ou la
+  remontée coupée.
+- Remontée coupée par l'administrateur : la file est vidée et l'échec effacé.
 
 ## Suivi des incidents (phase 4, PR 4.2)
 

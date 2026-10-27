@@ -61,7 +61,11 @@ pub struct Sante {
     san003: Option<i64>,
     san012: Option<i64>,
     non_suivies_signalees: u64,
+    san004: Option<i64>,
 }
+
+/// Remontée en échec depuis plus d'une heure : constat SAN-004
+pub const DELAI_REMONTEE_S: i64 = 3600;
 
 /// `Inconnue` compte comme indisponible (échec fermé) ; `Desactivee` (par choix) jamais
 fn indisponible(e: &EtatPublie) -> bool {
@@ -170,6 +174,34 @@ impl Sante {
                 format!("{non_suivies} alerte(s) non suivie(s) depuis le démarrage : 500 incidents non clos ; elles restent dans la liste des alertes")));
         }
         (changements, constats)
+    }
+}
+
+impl Sante {
+    /// SAN-004 (pure, testée) : remontée configurée et en échec depuis `echec_depuis` (secondes) ; une fois par panne et
+    /// par 24 h au plus. Constat local : la boucle des notifications ne le remonte jamais (on ne peut pas)
+    pub fn observer_remontee(&mut self, echec_depuis: Option<i64>, t: i64) -> Option<Alerte> {
+        let Some(d) = echec_depuis else {
+            self.san004 = None;
+            return None;
+        };
+        if t - d < DELAI_REMONTEE_S || self.san004.is_some_and(|x| t - x < RAPPEL_S) {
+            return None;
+        }
+        self.san004 = Some(t);
+        Some(constat(regles::SAN_004, "Alerte", "remontée des alertes",
+            format!("les alertes ne parviennent plus au prestataire depuis {} min (voir la page Santé) : elles restent dans la liste des alertes", minutes(t - d))))
+    }
+}
+
+/// Compteurs du battement quotidien (pur, testé) : collectes actives et indisponibles (Inconnue comptée indisponible ;
+/// désactivées ni l'un ni l'autre), et collectes critiques indisponibles
+pub fn compteurs(etats: &[(Collecte, EtatPublie, bool)], incidents_non_clos: usize) -> crate::notifications::Compteurs {
+    crate::notifications::Compteurs {
+        incidents_non_clos,
+        collectes_actives: etats.iter().filter(|(_, e, _)| matches!(e, EtatPublie::Active | EtatPublie::Partielle(_))).count(),
+        collectes_indisponibles: etats.iter().filter(|(_, e, _)| indisponible(e)).count(),
+        critiques_indisponibles: etats.iter().filter(|(c, e, _)| CRITIQUES.contains(c) && indisponible(e)).map(|(c, _, _)| c.id()).collect(),
     }
 }
 

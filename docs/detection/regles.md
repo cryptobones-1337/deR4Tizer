@@ -656,6 +656,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces` | `sante.rs` | Alerte |
 | SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
 | SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
+| SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
 
 - **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
@@ -685,7 +686,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   `sante_veille_silence_des_listes_sans_constat`, `sante_rappel_remis_a_zero_au_retablissement`,
   `incidents_plafond_non_clos`, `sante_jamais_adoucie_par_l_apprentissage` ; 3a (événement « sante » à l'arrêt d'une
   collecte).
-- SAN-004 (remontée en échec), SAN-010 et SAN-011 (interface) : PR 4.4b et 4.5.
+- **SAN-004** (PR 4.4b) : une panne de remontée commence au premier lot non remis (aucun canal tenté n'a réussi) et
+  finit au premier lot remis ; un constat par panne et par 24 h au plus ; remontée non configurée : rien. Tests :
+  `sante_remontee_echec_1h`, `sante_remontee_non_configuree`.
+- SAN-010 et SAN-011 (interface) : PR 4.5.
 
 ## EXP : modules expérimentaux (gelés)
 

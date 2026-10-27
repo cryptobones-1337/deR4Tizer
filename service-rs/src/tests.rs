@@ -3300,7 +3300,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-012"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -4430,5 +4430,112 @@ fn sante_jamais_adoucie_par_l_apprentissage() {
     assert!(crate::apprentissage::signal_fort(&a));
     let b = crate::commun::Alerte { regle: "RES-003".into(), niveau: "Alerte".into(), ..Default::default() };
     assert!(!crate::apprentissage::signal_fort(&b));
+}
+
+// ------------------------------------------------------------ phase 4, PR 4.4b : santé de la remontée
+
+fn alerte_remontee(id: &str, niveau: &str, regle: &str) -> crate::commun::Alerte {
+    crate::commun::Alerte { id: id.into(), niveau: niveau.into(), regle: regle.into(), ..Default::default() }
+}
+
+#[test]
+fn remontee_echec_retentee_sans_doublon() {
+    use crate::notifications::{a_retenter, FileReprise};
+    let mut f = FileReprise::default();
+    let lot = [alerte_remontee("a", "Critique", "INT-001"), alerte_remontee("b", "Alerte", "RES-003"), alerte_remontee("c", "Alerte", "SAN-001"),
+               alerte_remontee("d", "Alerte", "SAN-004")];
+    f.ajouter(&lot, 0);
+    f.ajouter(&lot, 10);
+    let ids: Vec<_> = f.entrees.iter().map(|r| r.alerte.id.as_str()).collect();
+    assert_eq!(ids, ["a", "c"], "critique et SAN-* (sauf SAN-004), une seule fois chacune");
+    assert!(!a_retenter(&alerte_remontee("x", "Info", "SAN-004")));
+    assert!(f.dues(59).is_empty());
+    assert_eq!(f.dues(60).len(), 2);
+    f.resultat(&["a".into()], true, 60);
+    assert_eq!(f.entrees.len(), 1, "remise : sortie de la file");
+}
+
+#[test]
+fn remontee_calendrier_1_5_15_60() {
+    use crate::notifications::FileReprise;
+    let mut f = FileReprise::default();
+    f.ajouter(&[alerte_remontee("a", "Critique", "")], 0);
+    let mut essais = Vec::new();
+    let mut t = 0;
+    while essais.len() < 6 {
+        t += 1;
+        if !f.dues(t).is_empty() {
+            essais.push(t);
+            f.resultat(&["a".into()], false, t);
+        }
+    }
+    assert_eq!(essais, [60, 360, 1260, 4860, 8460, 12060], "+1, +5, +15, +60 min, puis toutes les heures");
+}
+
+#[test]
+fn remontee_file_bornee_100_24h() {
+    use crate::notifications::{FileReprise, REPRISE_MAX};
+    let mut f = FileReprise::default();
+    let lot: Vec<_> = (0..REPRISE_MAX + 5).map(|k| alerte_remontee(&format!("a{k}"), "Critique", "")).collect();
+    f.ajouter(&lot, 0);
+    assert_eq!((f.entrees.len(), f.abandonnees, f.entrees[0].alerte.id.as_str()), (REPRISE_MAX, 5, "a5"), "les plus anciennes partent");
+    assert_eq!(f.dues(86_399).len(), REPRISE_MAX);
+    assert!(f.dues(86_400).is_empty(), "24 h au plus");
+    assert_eq!((f.entrees.len(), f.abandonnees), (0, 5 + REPRISE_MAX as u64));
+}
+
+#[test]
+fn remontee_remis_si_un_canal() {
+    use crate::notifications::remis;
+    assert!(remis(1, 0));
+    assert!(remis(3, 2), "remis sur un canal : pas retenté (doublon sur ce canal)");
+    assert!(!remis(2, 2));
+    assert!(!remis(0, 0), "aucun canal tenté : non remis");
+}
+
+#[test]
+fn sante_remontee_echec_1h() {
+    let mut s = crate::sante::Sante::default();
+    assert!(s.observer_remontee(Some(0), 3599).is_none());
+    let a = s.observer_remontee(Some(0), 3600).unwrap();
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("SAN-004", "Alerte"));
+    assert!(a.raisons.contains("depuis 60 min"), "{}", a.raisons);
+    assert!(s.observer_remontee(Some(0), 7200).is_none(), "une fois par panne");
+    assert!(s.observer_remontee(None, 7300).is_none(), "rétablie");
+    assert!(s.observer_remontee(Some(8000), 11_600).is_some(), "nouvelle panne signalée");
+}
+
+#[test]
+fn sante_remontee_non_configuree() {
+    let mut s = crate::sante::Sante::default();
+    for t in [0, 3600, 90_000] {
+        assert!(s.observer_remontee(None, t).is_none());
+    }
+    assert_eq!(crate::notifications::echec_depuis(), None, "aucun échec sans remontée");
+}
+
+#[test]
+fn battement_quotidien_apres_9h() {
+    use crate::notifications::battement_du;
+    assert!(!battement_du("", "2026-10-27 08:59:59"));
+    assert!(battement_du("", "2026-10-27 09:00:00"));
+    assert!(!battement_du("2026-10-27", "2026-10-27 18:00:00"), "un par jour");
+    assert!(battement_du("2026-10-27", "2026-10-28 09:30:00"));
+    assert!(!battement_du("", "illisible"));
+    // Format de commun::maintenant
+    let m = crate::commun::maintenant();
+    assert!(m.get(..10).is_some() && m.get(11..13).is_some_and(|h| h.parse::<u32>().is_ok()), "{m}");
+}
+
+#[test]
+fn battement_compteurs_seulement() {
+    use crate::collectes::{Collecte, EtatPublie};
+    let mut e = sante_etats(&[Collecte::JournalSecurite, Collecte::Extensions], &[Collecte::Sysmon]);
+    e.iter_mut().find(|(c, _, _)| *c == Collecte::ListesMenaces).unwrap().1 = EtatPublie::Inconnue;
+    let c = crate::sante::compteurs(&e, 4);
+    assert_eq!((c.incidents_non_clos, c.collectes_indisponibles, c.critiques_indisponibles.clone()), (4, 3, vec!["JournalSecurite", "ListesMenaces"]));
+    assert_eq!(c.collectes_actives, crate::collectes::TOUTES.len() - 4);
+    let t = crate::notifications::texte_battement(&c, 2);
+    assert_eq!(t, format!("deR4Tizer actif : 4 incident(s) non clos ; collectes : {} active(s), 3 indisponible(s) (critiques : JournalSecurite, ListesMenaces) ; 2 alerte(s) en attente de remontée.", c.collectes_actives));
 }
 
