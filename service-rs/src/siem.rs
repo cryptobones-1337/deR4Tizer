@@ -524,7 +524,7 @@ fn menage() {
 
 /// Moteur de corrélation : règles à fenêtre de temps, chaque incident n'est levé qu'une fois par clé et par heure
 #[derive(Default)]
-struct Correlation {
+pub(crate) struct Correlation {
     echecs: HashMap<String, VecDeque<(Instant, String)>>,
     comptes_crees: HashMap<String, Instant>,
     alertes_processus: HashMap<String, VecDeque<(Instant, String, String)>>,
@@ -541,7 +541,8 @@ impl Correlation {
         true
     }
 
-    fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
+    /// Incidents levés par un événement (testé : tests_detection.rs, COR-R1 à COR-R9)
+    pub(crate) fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
         let mut sortie = Vec::new();
         let mut incident = |regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
             sortie.push(Incident {
