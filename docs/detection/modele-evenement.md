@@ -91,6 +91,28 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   change pas. L'API lit `alertes.json` par la même lecture tolérante, sans rien déplacer (`lire_alertes_sans_effet`) :
   un élément illisible ne vide plus sa réponse.
 
+## Prévu en phase 4 (pas encore dans le code)
+
+Décrit ici pour fixer le format avant le code (`docs/roadmap/phase4.md`) ; chaque point devient vrai avec la PR qui
+l'apporte, et cette section sera réécrite à ce moment-là.
+
+- **Ordre total** (PR 4.1, décision D4-4) : `Alerte` et `Evenement` gagnent `HeureUtc` (RFC 3339, en « Z ») et `Seq`
+  (compteur croissant, remis à zéro à chaque démarrage du service). Ce sont des ajouts de champs : `Modele` reste à 1.
+  L'heure locale (`Heure`) est ambiguë pendant l'heure répétée du passage à l'heure d'hiver ; l'ordre se fera sur
+  (`HeureUtc`, `Seq`), et les éléments d'avant la phase 4, qui n'ont que l'heure locale, seront signalés « ordre
+  approximatif ».
+- **Nouvelles sources d'événements du SIEM** : `Source` « reponse » (PR 4.1 : chaque action de réponse existante, avec
+  sa cible, son résultat et son déclencheur) et « sante » (PR 4.4 : chaque changement d'état d'une collecte, écrit au
+  changement seulement).
+- **Suivi des incidents** (PR 4.2) : nouveau fichier `suivi-incidents.json`, tableau d'incidents, écrit par le moniteur
+  seul ; chaque élément porte `Modele` 1, un identifiant, l'heure d'ouverture (locale et UTC), la dernière activité, le
+  niveau (le plus haut des alertes jointes, qui ne baisse jamais), l'entité (chemin complet du programme, sinon
+  destination, sinon compte, sinon règle ; jamais un nom de programme seul), les règles jointes, l'état (Ouvert,
+  PrisEnCharge, Clos) et le motif de clôture, l'incident précédent de la même entité, des résumés bornés des alertes et
+  les transitions (auteur : SID de l'administrateur). 500 incidents au plus, les plus anciens clos partant les premiers ;
+  même plafond de taille et même lecture tolérante qu'`alertes.json`. `incidents.json` (corrélations du SIEM) ne change
+  pas.
+
 ## Règles de stabilité
 
 - Un champ ne change jamais de type.
