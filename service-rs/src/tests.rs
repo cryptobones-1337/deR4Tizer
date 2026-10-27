@@ -4225,10 +4225,57 @@ fn chronologie_a_recalculer_au_changement() {
 
 // ------------------------------------------------------------ phase 4, PR 4.4a : santé des collectes
 
-fn sante_etats(indispo: &[crate::collectes::Collecte], desactivees: &[crate::collectes::Collecte]) -> Vec<(crate::collectes::Collecte, crate::collectes::EtatPublie)> {
+fn sante_etats(indispo: &[crate::collectes::Collecte], desactivees: &[crate::collectes::Collecte]) -> Vec<(crate::collectes::Collecte, crate::collectes::EtatPublie, bool)> {
     use crate::collectes::{EtatPublie, TOUTES};
     TOUTES.iter().map(|c| (*c, if indispo.contains(c) { EtatPublie::Indisponible("lecture impossible".into()) }
-        else if desactivees.contains(c) { EtatPublie::Desactivee("par choix".into()) } else { EtatPublie::Active })).collect()
+        else if desactivees.contains(c) { EtatPublie::Desactivee("par choix".into()) } else { EtatPublie::Active }, false)).collect()
+}
+
+/// Comme `sante_etats`, ces collectes muettes seulement (notées actives, sans lecture depuis plus de trois périodes)
+fn sante_muettes(muettes: &[crate::collectes::Collecte]) -> Vec<(crate::collectes::Collecte, crate::collectes::EtatPublie, bool)> {
+    sante_etats(muettes, &[]).into_iter().map(|(c, e, _)| (c, e, muettes.contains(&c))).collect()
+}
+
+/// Relecture de #98, D1 : après une veille, les listes de menaces (relues toutes les heures) restent muettes jusqu'à
+/// leur prochain tour ; ce silence seul ne lève pas SAN-001. Notées indisponibles par leur source : SAN-001. Une
+/// collecte relue souvent (journal Sécurité) compte son silence
+#[test]
+fn sante_veille_silence_des_listes_sans_constat() {
+    use crate::collectes::Collecte::{JournalSecurite, ListesMenaces};
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_muettes(&[ListesMenaces]), 0, 0);
+    assert!(s.observer(&sante_muettes(&[ListesMenaces]), 0, 3 * 3600).1.is_empty(), "silence seul après une veille");
+    let (c, _) = s.observer(&sante_muettes(&[ListesMenaces]), 0, 3 * 3600 + 30);
+    assert!(c.is_empty(), "historique : rien de nouveau");
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[ListesMenaces], &[]), 0, 0);
+    assert_eq!(s.observer(&sante_etats(&[ListesMenaces], &[]), 0, 1800).1.len(), 1, "notée indisponible par la source");
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_muettes(&[JournalSecurite]), 0, 0);
+    assert_eq!(s.observer(&sante_muettes(&[JournalSecurite]), 0, 1800).1.len(), 1, "journal muet 30 min");
+    assert!(crate::sante::silence_compte(crate::collectes::Collecte::EtatDefender));
+    assert!(!crate::sante::silence_compte(ListesMenaces));
+}
+
+/// Audit de #98, S98-01 : rétablie, une collecte peut de nouveau être signalée sans attendre 24 h ; de même pour
+/// Defender aveugle
+#[test]
+fn sante_rappel_remis_a_zero_au_retablissement() {
+    use crate::collectes::Collecte::{Connexions, EtatDefender, JournalDefender};
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[Connexions], &[]), 0, 0);
+    assert_eq!(s.observer(&sante_etats(&[Connexions], &[]), 0, 1800).1.len(), 1, "panne d'essai");
+    assert_eq!(s.observer(&sante_etats(&[], &[]), 0, 2000).1.len(), 1, "SAN-002");
+    s.observer(&sante_etats(&[Connexions], &[]), 0, 3000);
+    let (_, a) = s.observer(&sante_etats(&[Connexions], &[]), 0, 4800);
+    assert_eq!(sante_regles(&a), [("SAN-001".to_string(), "Alerte".to_string(), "Connexions".to_string())], "vraie panne signalée");
+    let mut s = crate::sante::Sante::default();
+    s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 0);
+    assert_eq!(s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 1800).1.len(), 1);
+    s.observer(&sante_etats(&[], &[]), 0, 2000);
+    s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 3000);
+    let (_, a) = s.observer(&sante_etats(&[JournalDefender, EtatDefender], &[]), 0, 4800);
+    assert_eq!(sante_regles(&a).into_iter().map(|x| x.0).collect::<Vec<_>>(), ["SAN-003"], "Defender de nouveau aveugle");
 }
 
 fn sante_regles(a: &[crate::commun::Alerte]) -> Vec<(String, String, String)> {
@@ -4291,7 +4338,7 @@ fn sante_inconnue_compte_indisponible() {
     use crate::collectes::{Collecte::ListesMenaces, EtatPublie};
     let mut s = crate::sante::Sante::default();
     let mut e = sante_etats(&[], &[]);
-    e.iter_mut().find(|(c, _)| *c == ListesMenaces).unwrap().1 = EtatPublie::Inconnue;
+    e.iter_mut().find(|(c, _, _)| *c == ListesMenaces).unwrap().1 = EtatPublie::Inconnue;
     s.observer(&e, 0, 0);
     let (_, a) = s.observer(&e, 0, 1800);
     assert_eq!(a.len(), 1);
@@ -4340,7 +4387,7 @@ fn sante_historique_au_changement_et_instable() {
     use crate::collectes::{Collecte::{Extensions, JournalDns}, EtatPublie, TOUTES};
     let mut s = crate::sante::Sante::default();
     // Démarrage : Inconnue puis Active, tu
-    let inconnues: Vec<_> = TOUTES.iter().map(|c| (*c, EtatPublie::Inconnue)).collect();
+    let inconnues: Vec<_> = TOUTES.iter().map(|c| (*c, EtatPublie::Inconnue, false)).collect();
     assert!(s.observer(&inconnues, 0, 0).0.is_empty());
     assert!(s.observer(&sante_etats(&[], &[]), 0, 30).0.is_empty(), "Inconnue → Active tu");
     assert!(s.observer(&sante_etats(&[], &[]), 0, 60).0.is_empty(), "pas de changement, rien");

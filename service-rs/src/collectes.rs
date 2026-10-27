@@ -455,10 +455,16 @@ fn etat_a(c: Collecte, t: u64) -> EtatPublie {
     evaluer(note, &raison, case.dernier_succes.load(Ordering::Relaxed), c.periode(), t)
 }
 
-/// État publié de chaque collecte, sans effet (ni journal ni relevé « muette ») : fil « sante » (phase 4, PR 4.4a)
-pub fn instantane() -> Vec<(Collecte, EtatPublie)> {
+/// État publié de chaque collecte, sans effet (ni journal ni relevé « muette »), et si son indisponibilité vient
+/// seulement de son silence (notée active ou partielle, mais muette) : fil « sante » (phase 4, PR 4.4a)
+pub fn instantane() -> Vec<(Collecte, EtatPublie, bool)> {
     let t = maintenant();
-    TOUTES.iter().map(|c| (*c, etat_a(*c, t))).collect()
+    TOUTES.iter().map(|c| {
+        let e = etat_a(*c, t);
+        let note = Note::depuis_u8(CASES[c.index()].note.load(Ordering::Relaxed));
+        let muette = matches!(note, Note::Active | Note::Partielle) && matches!(e, EtatPublie::Indisponible(_));
+        (*c, e, muette)
+    }).collect()
 }
 
 #[derive(Serialize, serde::Deserialize, Clone, Default)]

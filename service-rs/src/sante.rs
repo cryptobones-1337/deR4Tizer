@@ -23,6 +23,13 @@ const HEURE_S: i64 = 3600;
 /// Période du fil « sante »
 pub const PERIODE_S: u64 = 30;
 
+/// Une collecte relue moins souvent que toutes les 15 min (moitié du délai) rattrape son silence après une veille en
+/// temps d'éveil, jusqu'à une période (listes de menaces : 1 h) : pour SAN-001, seule compte alors l'indisponibilité
+/// notée par la source elle-même, pas son seul silence (relecture de #98, D1 : fausse SAN-001 après chaque nuit)
+pub fn silence_compte(c: Collecte) -> bool {
+    (c.periode() as i64) <= DELAI_S / 2
+}
+
 #[derive(Default)]
 struct Suivi {
     etat: String,
@@ -83,11 +90,11 @@ impl Sante {
     /// Décision pure (testée) : à partir de l'état publié de chaque collecte (`etats`), du nombre d'alertes non suivies
     /// depuis le démarrage (`non_suivies`) et de l'heure `t` (secondes), les changements à écrire dans le SIEM et les
     /// constats à lever
-    pub fn observer(&mut self, etats: &[(Collecte, EtatPublie)], non_suivies: u64, t: i64) -> (Vec<Changement>, Vec<Alerte>) {
+    pub fn observer(&mut self, etats: &[(Collecte, EtatPublie, bool)], non_suivies: u64, t: i64) -> (Vec<Changement>, Vec<Alerte>) {
         let mut changements = Vec::new();
         let mut constats = Vec::new();
         // 1. Historique : écrit au changement seulement ; le passage d'« Inconnue » à « Active » (démarrage) est tu
-        for (c, e) in etats {
+        for (c, e, muette) in etats {
             let s = self.suivis.entry(c.id()).or_default();
             let nom = e.nom();
             if s.etat != nom {
@@ -107,7 +114,13 @@ impl Sante {
                 }
             }
             s.raison = e.raison().to_string();
-            s.indisponible_depuis = if indisponible(e) { Some(s.indisponible_depuis.unwrap_or(t)) } else { None };
+            let compte = indisponible(e) && !(*muette && !silence_compte(*c));
+            s.indisponible_depuis = if compte { Some(s.indisponible_depuis.unwrap_or(t)) } else { None };
+            // Audit de #98, S98-01 : le rappel de 24 h vaut pour un épisode ; rétablie, la collecte peut de nouveau être
+            // signalée (sinon une panne d'essai rendrait la vraie panne muette pendant 24 h)
+            if !indisponible(e) {
+                s.dernier_constat = None;
+            }
         }
         // 2. SAN-003 : Defender aveugle (journal et état) plus de 30 min ; remplace SAN-001 pour ces deux collectes
         let depuis = |s: &HashMap<&'static str, Suivi>, c: Collecte| s.get(c.id()).and_then(|x| x.indisponible_depuis);
@@ -115,6 +128,9 @@ impl Sante {
             (Some(a), Some(b)) => Some(a.max(b)).filter(|d| t - d >= DELAI_S),
             _ => None,
         };
+        if depuis(&self.suivis, Collecte::JournalDefender).is_none() || depuis(&self.suivis, Collecte::EtatDefender).is_none() {
+            self.san003 = None;
+        }
         if let Some(d) = aveugle {
             if self.san003.is_none_or(|x| t - x >= RAPPEL_S) {
                 self.san003 = Some(t);
