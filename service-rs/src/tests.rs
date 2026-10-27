@@ -3133,7 +3133,8 @@ fn phase3_alerte_bornee_pire_cas() {
     let x: String = "\u{10FFFF}".repeat(5000);
     let mut a = Alerte { id: x.clone(), heure: x.clone(), niveau: x.clone(), processus: x.clone(), chemin: x.clone(), destination: x.clone(),
         ip: Some(x.clone()), nom_dns: Some(x.clone()), raisons: x.clone(), mitre: x.clone(), conseil: x.clone(), parent: x.clone(),
-        regle: x.clone(), collecte: x.clone(), signature: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX };
+        regle: x.clone(), collecte: x.clone(), signature: x.clone(), heure_utc: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX,
+        seq: u64::MAX };
     borner_alerte(&mut a);
     let octets = serde_json::to_vec(&a).unwrap().len();
     assert!(octets < 16 * 1024 && octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte (promis : moins de 16 Ko)");
@@ -3669,3 +3670,100 @@ fn phase3_moniteur_lit_les_alertes_par_element() {
     assert!(source.contains("alertes: commun::lire_alertes(),"), "chargement des alertes");
     assert!(!source.contains(concat!("commun::lire(\"alertes", ".json\")")), "lecture tout ou rien d'alertes.json");
 }
+
+// ------------------------------------------------------------ phase 4, PR 4.1 : ordre total, pertes du SIEM, réponses
+
+/// D4-4 : heure UTC et numéro d'ordre. L'heure locale est ambiguë à l'heure répétée d'octobre (02:00 à 03:00 deux fois,
+/// le 2026-10-25 en France) ; l'heure UTC ne l'est pas, et le numéro d'ordre départage deux éléments de la même seconde
+#[test]
+fn chronologie_ordre_utc_et_seq() {
+    use crate::commun::{heure_utc_de, horodater};
+    use std::time::{Duration, UNIX_EPOCH};
+    assert_eq!(heure_utc_de(UNIX_EPOCH), "1970-01-01T00:00:00Z");
+    assert_eq!(heure_utc_de(UNIX_EPOCH + Duration::from_secs(1_792_891_800)), "2026-10-25T01:30:00Z");
+    assert_eq!(heure_utc_de(UNIX_EPOCH + Duration::from_secs(1_709_251_199)), "2024-02-29T23:59:59Z", "année bissextile");
+    assert_eq!(heure_utc_de(UNIX_EPOCH + Duration::from_secs(951_868_800)), "2000-03-01T00:00:00Z", "an 2000 bissextile");
+    assert_eq!(heure_utc_de(UNIX_EPOCH + Duration::from_secs(1_767_225_599)), "2025-12-31T23:59:59Z", "décembre");
+    // Deux heures UTC distinctes d'une heure, pendant l'heure répétée : même heure locale, ordre UTC correct
+    assert!(heure_utc_de(UNIX_EPOCH + Duration::from_secs(1_792_891_800)) < heure_utc_de(UNIX_EPOCH + Duration::from_secs(1_792_891_800 + 3600)));
+    // Horodatage : numéros strictement croissants ; une valeur déjà posée n'est jamais remplacée
+    let (mut h1, mut s1, mut h2, mut s2) = (String::new(), 0u64, String::new(), 0u64);
+    horodater(&mut h1, &mut s1);
+    horodater(&mut h2, &mut s2);
+    assert!(s1 > 0 && s2 > s1, "{s1} {s2}");
+    assert!(h1.ends_with('Z') && h1.len() == 20, "{h1}");
+    let (mut h, mut s) = ("2026-10-25T01:30:00Z".to_string(), 7u64);
+    horodater(&mut h, &mut s);
+    assert_eq!((h.as_str(), s), ("2026-10-25T01:30:00Z", 7));
+    // Une nouvelle alerte est horodatée ; une alerte d'avant la phase 4 se relit avec des champs vides, réécrits vides
+    let mut a = crate::commun::Alerte::default();
+    crate::commun::marquer_modele(&mut a);
+    assert!(!a.heure_utc.is_empty() && a.seq > 0);
+    // L'événement du SIEM tiré de l'alerte garde le même instant
+    assert_eq!(crate::siem::evenement_de_alerte(&a).heure_utc, a.heure_utc);
+    let json = serde_json::to_string(&a).unwrap();
+    assert!(json.contains("\"HeureUtc\"") && json.contains("\"Seq\""), "{json}");
+    let ancienne: crate::commun::Alerte = serde_json::from_str(r#"{"Id":"x","Heure":"2026-10-25 02:30:00","Niveau":"Alerte"}"#).unwrap();
+    // Audit de #94, S94-02 : une alerte relue d'un fichier altéré est bornée, HeureUtc comprise
+    let alteree = format!(r#"[{{"Id":"x","Niveau":"Alerte","HeureUtc":"{}","Raisons":"{}"}}]"#, "9".repeat(100_000), "r".repeat(100_000));
+    let (lues, ecartees) = crate::commun::lire_alertes_texte(&alteree).unwrap();
+    assert_eq!(ecartees, 0);
+    assert!(lues[0].heure_utc.chars().count() <= 40 && lues[0].raisons.chars().count() < 100_000, "relue bornée");
+    assert!(ancienne.heure_utc.is_empty() && ancienne.seq == 0);
+    let json = serde_json::to_string(&ancienne).unwrap();
+    assert!(!json.contains("HeureUtc") && !json.contains("\"Seq\""), "champs absents non écrits : {json}");
+}
+
+/// File du SIEM pleine : chaque événement perdu est compté (avant : perte silencieuse)
+#[test]
+fn siem_pertes_comptees() {
+    let (tx, _rx) = std::sync::mpsc::sync_channel::<crate::siem::Evenement>(1);
+    let avant = crate::siem::pertes();
+    crate::siem::deposer(&tx, crate::siem::Evenement::default());
+    assert_eq!(crate::siem::pertes(), avant, "place libre : rien de perdu");
+    crate::siem::deposer(&tx, crate::siem::Evenement::default());
+    crate::siem::deposer(&tx, crate::siem::Evenement::default());
+    assert!(crate::siem::pertes() >= avant + 2, "deux pertes comptées");
+    // Ligne de journal à la 1re, 10e, 100e… perte seulement
+    use crate::siem::puissance_de_dix;
+    assert!([1, 10, 100, 1000, 10_000_000].iter().all(|&n| puissance_de_dix(n)));
+    assert!([0, 2, 11, 110, 111, 101, 20, 1001].iter().all(|&n| !puissance_de_dix(n)));
+}
+
+/// Actions de réponse dans le SIEM, pour la chronologie : l'événement porte l'action, la cible, le résultat et le
+/// déclencheur ; le moniteur l'écrit après chaque commande de réponse et pour les blocages automatiques et leur levée
+#[test]
+fn reponse_journalisee_dans_le_siem() {
+    use crate::siem::{evenement_reponse, ACTIONS_DE_REPONSE};
+    let e = evenement_reponse("bloquerIp", "203.0.113.5", true, "IP bloquée", "commande d'administrateur");
+    assert_eq!((e.source.as_str(), e.type_.as_str(), e.niveau.as_str(), e.destination.as_str()), ("reponse", "bloquerIp", "Info", "203.0.113.5"));
+    assert!(e.message.contains("réussi") && e.message.contains("commande d'administrateur"), "{}", e.message);
+    let e = evenement_reponse("quarantaine", r"C:\x\a.exe", false, "fichier introuvable", "commande d'administrateur");
+    assert_eq!(e.niveau, "Alerte");
+    assert!(e.message.contains("refusé ou en échec") && e.message.contains("fichier introuvable"));
+    let e = evenement_reponse("tuer", "1234", true, &"x".repeat(5000), "automatique : règle");
+    assert!(e.message.chars().count() < 500, "message borné");
+    // Audit de #94, S94-01 : cible venue du canal, même refusée par la validation : bornée et nettoyée
+    let cible = format!("a\u{202E}b\n{}", "y".repeat(70_000));
+    let e = evenement_reponse("bloquer", &cible, false, "nom refusé", "commande d'administrateur");
+    assert!(e.message.chars().count() < 1000 && e.destination.chars().count() <= 300, "cible bornée");
+    assert!(!e.message.contains('\u{202E}') && !e.message.contains('\n') && e.message.starts_with("bloquer a?b?"), "{}", &e.message[..40]);
+    for a in ["bloquer", "bloquerIp", "debloquer", "tuer", "suspendre", "quarantaine", "restaurer", "isolerProgramme", "panique"] {
+        assert!(ACTIONS_DE_REPONSE.contains(&a), "{a}");
+    }
+    for a in ["config", "reglages", "verification", "exception"] {
+        assert!(!ACTIONS_DE_REPONSE.contains(&a), "{a} n'est pas une action de réponse");
+    }
+    // Contrôle du source : les appels Windows des actions ne s'exécutent pas en test
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let x = m.find("pub fn executer(").unwrap();
+    let corps = &m[x..x + 1200];
+    assert!(corps.contains("crate::siem::reponse(&action, &cible, r.ok, &r.message, \"commande d'administrateur\")"));
+    assert!(m.contains("crate::siem::reponse(\"bloquerIp\", ip, r.ok, &r.message, &format!(\"automatique : {raison}\"))"));
+    assert!(m.contains("crate::siem::reponse(\"debloquer\", &c, r.ok, &r.message, &format!(\"automatique : {pourquoi}\"))"));
+    // Suspension automatique d'un programme qui touche un leurre (relecture de #94, D1) : journalisée à chaque tentative
+    let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
+    assert!(v.contains("let suspendu = tentee && crate::reponse::suspendre(pid, true).is_ok();"));
+    assert!(v.contains("if tentee {\n                crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu,"));
+}
+

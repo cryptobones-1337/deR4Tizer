@@ -850,7 +850,14 @@ impl Moniteur {
     pub fn executer(&mut self, c: Commande, partage: &Arc<Partage>) -> Reponse {
         let debut = Instant::now();
         let action = c.action.clone().unwrap_or_default();
+        let cible = [c.nom_dns.as_deref(), c.ip.as_deref(), c.cible.as_deref(), c.valeur.as_deref()].into_iter().flatten()
+            .find(|s| !s.is_empty()).unwrap_or("").to_string();
         let r = self.executer_action(c, partage, &action);
+        // Actions de réponse dans le SIEM (phase 4, PR 4.1), pour la chronologie des incidents ; la logique des actions
+        // n'est pas touchée
+        if crate::siem::ACTIONS_DE_REPONSE.contains(&action.as_str()) {
+            crate::siem::reponse(&action, &cible, r.ok, &r.message, "commande d'administrateur");
+        }
         mesure::duree(&format!("commande.{}", action.chars().filter(|x| x.is_ascii_alphanumeric()).take(32).collect::<String>()), debut.elapsed());
         r
     }
@@ -1168,6 +1175,7 @@ En-tête : Authorization: Bearer {j}"))
     /// listes (adresse réattribuée, CDN…)
     fn bloquer_ip_auto(&mut self, ip: &str, raison: &str) -> Reponse {
         let r = self.bloquer_ip(ip, raison);
+        crate::siem::reponse("bloquerIp", ip, r.ok, &r.message, &format!("automatique : {raison}"));
         if r.ok {
             let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400));
             if let Some(b) = self.blocages.iter_mut().find(|b| b.type_ == "parefeu" && b.cible == ip && b.expire.is_empty() && b.raison == raison) {
@@ -1186,7 +1194,8 @@ En-tête : Authorization: Bearer {j}"))
             blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.chercher_ip(ip).is_some())
         };
         for (t, c, pourquoi) in a_retirer {
-            self.debloquer(&t, &c);
+            let r = self.debloquer(&t, &c);
+            crate::siem::reponse("debloquer", &c, r.ok, &r.message, &format!("automatique : {pourquoi}"));
             commun::journal(&format!("blocage automatique levé : {c} ({pourquoi})"));
         }
     }

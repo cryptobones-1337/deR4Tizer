@@ -51,6 +51,15 @@ pub struct Evenement {
     /// Règle de l'alerte d'origine (docs/detection/regles.md), vide pour un événement qui n'en vient pas
     #[serde(skip_serializing_if = "String::is_empty")]
     pub regle: String,
+    /// Heure UTC et numéro d'ordre (phase 4, PR 4.1), comme sur `Alerte`
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub heure_utc: String,
+    #[serde(skip_serializing_if = "est_nul")]
+    pub seq: u64,
+}
+
+fn est_nul(n: &u64) -> bool {
+    *n == 0
 }
 
 fn is_zero(p: &u16) -> bool {
@@ -77,14 +86,77 @@ pub fn dossier() -> PathBuf {
     commun::dossier().join("siem")
 }
 
-/// Ajoute un événement (perdu si la file est pleine : la surveillance passe avant)
+/// Événements perdus parce que la file était pleine, depuis le démarrage (phase 4, PR 4.1 : avant, perte silencieuse)
+static PERTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Ajoute un événement (perdu si la file est pleine : la surveillance passe avant ; la perte est comptée)
 pub fn enregistrer(mut e: Evenement) {
     if e.modele == 0 {
         e.modele = commun::MODELE_ALERTE;
     }
+    commun::horodater(&mut e.heure_utc, &mut e.seq);
     if let Some(f) = FILE.get() {
-        let _ = f.lock().unwrap().try_send(e);
+        deposer(&f.lock().unwrap(), e);
     }
+}
+
+/// Dépose un événement dans la file sans attendre ; file pleine ou fermée : perte comptée, une ligne de journal à la
+/// 1re, 10e, 100e… perte (testé)
+pub(crate) fn deposer(file: &SyncSender<Evenement>, e: Evenement) {
+    if file.try_send(e).is_err() {
+        let n = PERTES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if puissance_de_dix(n) {
+            commun::journal(&format!("mini-SIEM : file pleine, {n} événement(s) perdu(s) depuis le démarrage"));
+        }
+    }
+}
+
+/// 1, 10, 100… (relecture de #94, D2 : le test précédent acceptait aussi 11, 110…)
+pub(crate) fn puissance_de_dix(mut n: u64) -> bool {
+    while n >= 10 && n % 10 == 0 {
+        n /= 10;
+    }
+    n == 1
+}
+
+/// Événements perdus depuis le démarrage (file pleine)
+pub fn pertes() -> u64 {
+    PERTES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Actions de réponse journalisées dans le SIEM (phase 4, PR 4.1) : les commandes qui agissent sur le poste
+pub(crate) const ACTIONS_DE_REPONSE: &[&str] = &[
+    "bloquer", "bloquerIp", "debloquer", "toutDebloquer", "tuer", "suspendre", "reprendre", "tuerChaine", "quarantaine",
+    "restaurer", "restaurerRepli", "isolerProgramme", "panique",
+];
+
+/// Événement d'une action de réponse (pur, testé) : action, cible, résultat (réussi, ou refusé avec la raison) et
+/// déclencheur (« commande d'administrateur », ou « automatique : <raison> »)
+pub(crate) fn evenement_reponse(action: &str, cible: &str, ok: bool, message: &str, declencheur: &str) -> Evenement {
+    // Audit de #94, S94-01 : la cible vient du canal, même quand la validation la refuse ; bornée et nettoyée partout
+    let (cible, message, declencheur) = (texte_sur(cible, 300), texte_sur(message, 300), texte_sur(declencheur, 300));
+    Evenement {
+        heure: commun::maintenant(),
+        source: "reponse".into(),
+        type_: action.into(),
+        niveau: if ok { "Info" } else { "Alerte" }.into(),
+        destination: cible.clone(),
+        message: format!("{action} {cible} : {} ({declencheur}) — {message}", if ok { "réussi" } else { "refusé ou en échec" }),
+        ..Default::default()
+    }
+}
+
+/// Texte borné à `max` caractères, sans caractère de contrôle ni de mise en forme (sens d'écriture, largeur nulle),
+/// remplacés par « ? » : il est affiché tel quel par l'interface (pur, testé)
+pub(crate) fn texte_sur(s: &str, max: usize) -> String {
+    let mise_en_forme = |c: char| matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}'
+                                              | '\u{2066}'..='\u{206F}' | '\u{FEFF}');
+    s.chars().take(max).map(|c| if c.is_control() || mise_en_forme(c) { '?' } else { c }).collect()
+}
+
+/// Journalise une action de réponse dans le SIEM
+pub fn reponse(action: &str, cible: &str, ok: bool, message: &str, declencheur: &str) {
+    enregistrer(evenement_reponse(action, cible, ok, message, declencheur));
 }
 
 /// Lance l'écriture, la corrélation et l'abonnement aux journaux de Windows
@@ -155,6 +227,8 @@ pub fn evenement_de_alerte(a: &Alerte) -> Evenement {
         message: a.raisons.clone(),
         mitre: a.mitre.clone(),
         regle: a.regle.clone(),
+        // Même instant que l'alerte (son numéro d'ordre reste le sien : posé à l'enregistrement)
+        heure_utc: a.heure_utc.clone(),
         ..Default::default()
     }
 }

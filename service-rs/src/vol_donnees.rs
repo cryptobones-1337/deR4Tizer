@@ -261,11 +261,16 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             // regsvr32, mshta, powershell… sont des binaires Windows par lesquels passent beaucoup de rançongiciels :
             // ils sont suspendus. Seuls les processus critiques (csrss, lsass, svchost…) sont protégés, par
             // reponse::protege()
-            let suspendu = !connu && {
+            let tentee = !connu && {
                 let config: commun::Config = commun::lire("config.json").unwrap_or_default();
                 suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
-                    && crate::reponse::suspendre(pid, true).is_ok()
             };
+            let suspendu = tentee && crate::reponse::suspendre(pid, true).is_ok();
+            // Suspension automatique dans le SIEM, pour la chronologie (relecture de #94, D1)
+            if tentee {
+                crate::siem::reponse("suspendre", &pid.to_string(), suspendu, if suspendu { "programme suspendu" } else { "suspension en échec" },
+                    &format!("automatique : leurre touché par {programme}"));
+            }
             file.lock().unwrap().push(alerte_leurre_touche(pid, &programme, &objet, connu, suspendu));
             return;
         }
