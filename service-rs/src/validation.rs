@@ -22,7 +22,7 @@ pub const ACTIONS: &[&str] = &[
     "verification", "bloquer", "bloquerIp", "debloquer", "toutDebloquer", "config", "reglages", "testerSyslog",
     "notifications", "testerNotifications", "exception", "apprentissage", "majVerifier", "majConfig", "autoriserLecteur",
     "jetonApi", "nouveauJeton", "majMenaces", "tuer", "suspendre", "reprendre", "tuerChaine", "quarantaine", "restaurer",
-    "restaurerRepli", "isolerProgramme", "panique", "baseline",
+    "restaurerRepli", "isolerProgramme", "panique", "baseline", "incident",
 ];
 
 /// Réglages modifiables par « config »
@@ -200,6 +200,16 @@ pub fn valider(c: &Commande) -> Result<(), String> {
         }
         "panique" => matches!(c.valeur.as_deref(), None | Some("" | "on" | "off"))
             .then_some(()).ok_or_else(|| "valeur attendue : on ou off".into()),
+        // Transition d'un incident suivi (phase 4, PR 4.2) : Cible = identifiant, Valeur = état visé, Type = motif de
+        // clôture, Raison = note (300 caractères au plus ; caractères de contrôle déjà ôtés par `normaliser`)
+        "incident" => {
+            identifiant_valide(requis(&c.cible, "Cible")?).then_some(()).ok_or("identifiant invalide")?;
+            crate::incidents::etat_de(requis(&c.valeur, "Valeur")?).ok_or("état attendu : Ouvert, PrisEnCharge ou Clos")?;
+            matches!(c.type_.as_deref(), None | Some("" | "Resolu" | "FauxPositif" | "Accepte")).then_some(())
+                .ok_or("motif attendu : Resolu, FauxPositif ou Accepte")?;
+            (c.raison.as_deref().unwrap_or("").chars().count() <= crate::incidents::MAX_NOTE).then_some(())
+                .ok_or_else(|| format!("note de {} caractères au plus", crate::incidents::MAX_NOTE))
+        }
         "baseline" => {
             if !matches!(c.valeur.as_deref(), Some("appliquer" | "annuler" | "evaluer")) {
                 return Err("opération de baseline inconnue".into());

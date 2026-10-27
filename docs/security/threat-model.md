@@ -25,6 +25,10 @@ Veut lire les données de surveillance (lignes de commande, sessions, trafic), m
 listes pour aveugler le service, détourner une opération SYSTEM (lien, jonction, fichier précréé), ou se faire
 passer pour le service sur le canal.
 
+- Phase 4 (PR 4.2) : il ne peut ni clore ni modifier un incident (commande `incident` réservée aux administrateurs,
+  auteur lu sur le jeton du client). Il peut provoquer des alertes sur de nombreuses entités pour saturer le suivi
+  (500 incidents non clos) : seuls les clos sont retirés, le surplus est compté (SAN-012, PR 4.4) et reste dans
+  `alertes.json`.
 - Mesures : dossier de données protégé et vérifié, échec fermé ; canal réservé aux administrateurs ; opérations de
   fichiers par handle ; restauration sous l'identité de l'utilisateur ; PowerShell lancé par son chemin absolu (un
   nom nu était cherché dans le PATH machine) ; journal du service sans caractère de contrôle (fausses lignes).

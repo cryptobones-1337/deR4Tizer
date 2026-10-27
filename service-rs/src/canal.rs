@@ -243,10 +243,14 @@ fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>
     unsafe {
         // Client identifié dès la connexion, avant la lecture (jusqu'à DELAI_LECTURE) : un client qui écrirait puis se
         // terminerait laisserait sinon son PID libre pour un autre processus
-        let client = crate::natif::client_tube(tube);
+        let (client, sid) = crate::natif::identite_client_tube(tube);
         let demande = lire_commande(tube, DELAI_LECTURE);
         let reponse = match admettre(&demande, client, debit.accepter(Instant::now())) {
-            Ok(c) => moniteur.lock().unwrap().executer(c, partage),
+            Ok(mut c) => {
+                // Auteur des transitions d'incident : SID lu sur le jeton du client, jamais pris dans la commande
+                c.auteur = sid;
+                moniteur.lock().unwrap().executer(c, partage)
+            }
             Err(r) => r,
         };
         let mut sortie = serde_json::to_vec(&reponse).unwrap_or_default();

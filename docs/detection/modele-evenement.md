@@ -118,14 +118,42 @@ l'apporte, et cette section sera réécrite à ce moment-là.
 - **Ordre approximatif** : dans la chronologie (PR 4.3), les éléments d'avant la phase 4, qui n'ont que l'heure locale,
   seront signalés « ordre approximatif ».
 - **Source « sante »** (PR 4.4) : chaque changement d'état d'une collecte, écrit au changement seulement.
-- **Suivi des incidents** (PR 4.2) : nouveau fichier `suivi-incidents.json`, tableau d'incidents, écrit par le moniteur
-  seul ; chaque élément porte `Modele` 1, un identifiant, l'heure d'ouverture (locale et UTC), la dernière activité, le
-  niveau (le plus haut des alertes jointes, qui ne baisse jamais), l'entité (chemin complet du programme, sinon
-  destination, sinon compte, sinon règle ; jamais un nom de programme seul), les règles jointes, l'état (Ouvert,
-  PrisEnCharge, Clos) et le motif de clôture, l'incident précédent de la même entité, des résumés bornés des alertes et
-  les transitions (auteur : SID de l'administrateur). 500 incidents au plus, les plus anciens clos partant les premiers ;
-  même plafond de taille et même lecture tolérante qu'`alertes.json`. `incidents.json` (corrélations du SIEM) ne change
-  pas.
+- **Entité par compte** : l'entité d'une corrélation sur un compte (COR-R1, R2, R3, R9) sera le compte, avec la
+  chronologie (PR 4.3) ; en PR 4.2, ces alertes ont pour entité leur destination, sinon leur règle.
+
+## Suivi des incidents (phase 4, PR 4.2)
+
+`suivi-incidents.json` (dossier de données) est un tableau d'incidents, écrit par le moniteur seul, au même moment
+qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations du SIEM) ne change pas.
+
+| Champ | Sens |
+|---|---|
+| `Modele` | 1 |
+| `Id`, `Ouverture`, `OuvertureUtc` | identifiant, heure d'ouverture (locale et UTC) |
+| `DerniereActiviteUtc` | heure UTC de la dernière alerte jointe |
+| `Niveau` | le plus haut des alertes jointes (Alerte ou Critique) ; ne baisse jamais |
+| `Entite` | `programme:<chemin complet, en minuscules>` si le chemin est connu ; sinon `destination:<destination>` ; sinon `regle:<identifiant>`. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux incidents |
+| `Regles` | identifiants distincts des alertes jointes (32 au plus) |
+| `Etat`, `MotifCloture` | `Ouvert`, `PrisEnCharge` ou `Clos` ; motif `Resolu`, `FauxPositif` ou `Accepte` pour un incident clos |
+| `Precedent` | incident clos de la même entité, s'il y en a un (récidive) |
+| `Alertes`, `NombreAlertes` | résumés des 5 premières et des 5 dernières alertes jointes (raisons bornées à 300 caractères), et leur nombre |
+| `Transitions` | 50 au plus : heure locale et UTC, état de départ et d'arrivée, motif, auteur (SID lu sur le jeton du client du tube, jamais pris dans la commande), note (300 caractères au plus, sans caractère de contrôle ni de mise en forme) |
+
+- **Rattachement** : une alerte « Info » ne crée rien ; une alerte « Alerte » ou « Critique » rejoint l'incident non
+  clos de la même entité dont la dernière activité date de moins de 24 h ; sinon elle ouvre un incident. Un incident
+  clos n'est jamais rouvert en silence : la récidive ouvre un nouvel incident, qui nomme le précédent.
+- **Transitions** (commande `incident`, administrateurs seulement : `Cible` = identifiant, `Valeur` = état visé,
+  `Type` = motif, `Raison` = note) : Ouvert vers PrisEnCharge ou Clos ; PrisEnCharge vers Clos ; Clos vers Ouvert
+  (réouverture explicite, motif effacé, historique gardé). Toute autre transition est refusée, sans rien écrire. Clore
+  avec « FauxPositif » ne pose aucune exception (D4-10). Aucune fermeture automatique (D4-3).
+- **Bornes** : 500 incidents au plus. Au-delà, les plus anciens clos partent les premiers ; un incident non clos n'est
+  jamais retiré. S'il n'y a que des incidents non clos, une alerte d'une nouvelle entité n'est pas suivie : elle est
+  comptée (constat de santé SAN-012, PR 4.4) et reste dans `alertes.json`.
+- **Lecture** : propriétaire contrôlé, 16 Mo au plus, élément par élément (un élément illisible est écarté et compté,
+  les autres sont gardés et bornés). Un fichier illisible (droits, taille, format) laisse le suivi vide **et n'est
+  jamais réécrit**, pour ne pas effacer l'historique ; la commande `incident` est alors refusée.
+- **Retour arrière** vers une version sans suivi : le fichier est ignoré, puis repris tel quel à la mise à niveau
+  suivante.
 
 ## Règles de stabilité
 
