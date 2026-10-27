@@ -1038,3 +1038,189 @@ fn ext_001_negatif() {
     let mut autre = [crate::hygiene::Extension { navigateur: "Edge".into(), ..extension("a", false) }];
     assert_eq!(nouvelles_extensions(&mut autre, &mut connues, false).len(), 1);
 }
+
+// ------------------------------------------------------------ COR : corrélations du SIEM (PR 3.11)
+// siem::Correlation::analyser sur des événements synthétiques (journaux Sécurité et Système déjà traduits). Les
+// incidents portent « R<n> » ; le registre les publie en COR-R<n> (siem::regle_correlation). COR-R10 n'est pas exercée :
+// sa vérification (hygiene::pilote_vulnerable) télécharge la liste LOLDrivers.
+
+fn evenement_siem(type_: &str, champs: &[(&str, &str)]) -> crate::siem::Evenement {
+    let mut e = crate::siem::Evenement { heure: "2026-10-27 01:00:00".into(), source: "securite".into(), type_: type_.into(),
+                                         niveau: "Alerte".into(), message: format!("événement {type_}"), ..Default::default() };
+    for (c, v) in champs {
+        match *c {
+            "ip" => e.ip = v.to_string(),
+            "utilisateur" => e.utilisateur = v.to_string(),
+            "processus" => e.processus = v.to_string(),
+            "destination" => e.destination = v.to_string(),
+            "message" => e.message = v.to_string(),
+            "niveau" => e.niveau = v.to_string(),
+            "source" => e.source = v.to_string(),
+            "mitre" => e.mitre = v.to_string(),
+            _ => panic!("champ {c}"),
+        }
+    }
+    e
+}
+
+/// Incidents levés par une suite d'événements : (règle, niveau)
+fn incidents(evenements: &[crate::siem::Evenement]) -> Vec<(String, String)> {
+    let mut c = crate::siem::Correlation::default();
+    evenements.iter().flat_map(|e| c.analyser(e)).map(|i| (i.regle, i.niveau)).collect()
+}
+
+/// Échecs d'ouverture de session depuis le réseau local (une adresse publique lèverait aussi COR-R9)
+fn echecs(n: usize, ip: &str) -> Vec<crate::siem::Evenement> {
+    (0..n).map(|_| evenement_siem("echec-session", &[("ip", ip), ("utilisateur", "essai")])).collect()
+}
+
+#[test]
+fn cor_r1_positif() {
+    // Cinq échecs d'ouverture de session depuis la même source en 5 minutes : Alerte, une seule fois
+    let i = incidents(&echecs(7, "192.168.1.10"));
+    assert_eq!(i, [("R1".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn cor_r1_negatif() {
+    // Quatre échecs ; cinq échecs répartis sur deux sources
+    assert!(incidents(&echecs(4, "192.168.1.10")).is_empty());
+    let mut e = echecs(3, "192.168.1.10");
+    e.extend(echecs(2, "192.168.1.11"));
+    assert!(incidents(&e).is_empty());
+}
+
+#[test]
+fn cor_r2_positif() {
+    let mut e = echecs(5, "192.168.1.10");
+    e.push(evenement_siem("ouverture-session", &[("ip", "192.168.1.10"), ("utilisateur", "essai")]));
+    let i = incidents(&e);
+    assert!(i.contains(&("R2".to_string(), "Critique".to_string())), "{i:?}");
+}
+
+#[test]
+fn cor_r2_negatif() {
+    // Session ouverte après quatre échecs ; après cinq échecs d'une autre source
+    let mut e = echecs(4, "192.168.1.10");
+    e.push(evenement_siem("ouverture-session", &[("ip", "192.168.1.10"), ("utilisateur", "essai")]));
+    assert!(incidents(&e).is_empty());
+    let mut e = echecs(5, "192.168.1.11");
+    e.push(evenement_siem("ouverture-session", &[("ip", "192.168.1.10"), ("utilisateur", "autre")]));
+    assert!(!incidents(&e).iter().any(|(r, _)| r == "R2"));
+}
+
+#[test]
+fn cor_r3_positif() {
+    // Compte créé puis ajouté aux Administrateurs : R3 Critique ; compte existant ajouté : R3b Alerte
+    let e = [evenement_siem("compte-cree", &[("destination", r"POSTE\nouveau")]),
+             evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\nouveau")])];
+    assert_eq!(incidents(&e), [("R3".to_string(), "Critique".to_string())]);
+    assert_eq!(incidents(&[evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\ancien")])]), [("R3b".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn cor_r3_negatif() {
+    // Compte créé sans ajout aux Administrateurs ; même ajout signalé une seule fois par heure
+    assert!(incidents(&[evenement_siem("compte-cree", &[("destination", r"POSTE\nouveau")])]).is_empty());
+    let ajout = evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\ancien")]);
+    assert_eq!(incidents(&[ajout.clone(), ajout]).len(), 1);
+}
+
+#[test]
+fn cor_r4_positif() {
+    assert_eq!(incidents(&[evenement_siem("journal-efface", &[("message", "journal Sécurité effacé")])]), [("R4".to_string(), "Critique".to_string())]);
+}
+
+#[test]
+fn cor_r4_negatif() {
+    // Le même effacement n'est signalé qu'une fois par heure ; un autre type d'événement ne compte pas
+    let e = evenement_siem("journal-efface", &[("message", "journal Sécurité effacé")]);
+    assert_eq!(incidents(&[e.clone(), e]).len(), 1);
+    assert!(incidents(&[evenement_siem("processus-cree", &[("message", "journal Sécurité effacé")])]).is_empty());
+}
+
+#[test]
+fn cor_r5_positif() {
+    for m in [r"service « maj » : C:\Users\essai\AppData\Local\Temp\svc.exe", r"service « x » : powershell -enc AAAA", r"service « y » : C:\ProgramData\outil\svc.exe"] {
+        let e = evenement_siem("service-installe", &[("message", m), ("processus", m), ("destination", r"C:\Users\essai\AppData\Local\Temp\svc.exe")]);
+        assert_eq!(incidents(&[e]), [("R5".to_string(), "Critique".to_string())], "{m}");
+    }
+}
+
+#[test]
+fn cor_r5_negatif() {
+    // Services installés dans Program Files ou Windows
+    for m in [r"service « Éditeur » : C:\Program Files\Editeur\service.exe", r"service « wuauserv » : C:\Windows\System32\svchost.exe -k netsvcs"] {
+        let e = evenement_siem("service-installe", &[("message", m), ("processus", m), ("destination", r"C:\Program Files\Editeur\service.exe")]);
+        assert!(incidents(&[e]).is_empty(), "{m}");
+    }
+}
+
+fn alerte_siem(processus: &str, mitre: &str, niveau: &str) -> crate::siem::Evenement {
+    evenement_siem("alerte", &[("source", "alerte"), ("processus", processus), ("mitre", mitre), ("niveau", niveau)])
+}
+
+#[test]
+fn cor_r6_positif() {
+    // Trois détections différentes d'un même programme en 10 minutes
+    let e = [alerte_siem("outil.exe", "T1059.001", "Alerte"), alerte_siem("outil.exe", "T1105", "Alerte"), alerte_siem("Outil.exe", "T1547.001", "Critique")];
+    assert_eq!(incidents(&e), [("R6".to_string(), "Critique".to_string())]);
+}
+
+#[test]
+fn cor_r6_negatif() {
+    // Deux détections distinctes (la troisième répète la première) ; trois détections de trois programmes ; alertes Info
+    let e = [alerte_siem("outil.exe", "T1059.001", "Alerte"), alerte_siem("outil.exe", "T1105", "Alerte"), alerte_siem("outil.exe", "T1059.001", "Alerte")];
+    assert!(incidents(&e).is_empty());
+    let e = [alerte_siem("a.exe", "T1059.001", "Alerte"), alerte_siem("b.exe", "T1105", "Alerte"), alerte_siem("c.exe", "T1547.001", "Alerte")];
+    assert!(incidents(&e).is_empty());
+    let e = [alerte_siem("outil.exe", "T1", "Info"), alerte_siem("outil.exe", "T2", "Info"), alerte_siem("outil.exe", "T3", "Info")];
+    assert!(incidents(&e).is_empty());
+}
+
+#[test]
+fn cor_r7_positif() {
+    let e = [evenement_siem("etat-service", &[("message", "service Windows Defender arrêté"), ("niveau", "Alerte")]),
+             evenement_siem("politique-audit-modifiee", &[("message", "politique d'audit modifiée"), ("niveau", "Alerte")])];
+    assert_eq!(incidents(&e), [("R7".to_string(), "Alerte".to_string()), ("R7".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn cor_r7_negatif() {
+    // Changement d'état ordinaire (Info)
+    assert!(incidents(&[evenement_siem("etat-service", &[("message", "service démarré"), ("niveau", "Info")])]).is_empty());
+}
+
+#[test]
+fn cor_r9_positif() {
+    // Session ouverte depuis une adresse publique : Bureau à distance Critique, autre Alerte
+    let e = evenement_siem("ouverture-session", &[("ip", "203.0.113.9"), ("utilisateur", "essai"), ("message", "session bureau à distance de essai")]);
+    assert_eq!(incidents(&[e]), [("R9".to_string(), "Critique".to_string())]);
+    let e = evenement_siem("ouverture-session", &[("ip", "203.0.113.9"), ("utilisateur", "essai"), ("message", "session réseau de essai")]);
+    assert_eq!(incidents(&[e]), [("R9".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn cor_r9_negatif() {
+    // Session depuis le réseau local ; session locale (sans adresse)
+    assert!(incidents(&[evenement_siem("ouverture-session", &[("ip", "192.168.1.20"), ("utilisateur", "essai")])]).is_empty());
+    assert!(incidents(&[evenement_siem("ouverture-session", &[("utilisateur", "essai")])]).is_empty());
+}
+
+/// Relecture de #91 : chaîne complète, du XML des journaux (4625, 4624) à l'incident, pour qu'un type ou un texte
+/// renommé d'un seul côté (siem::traduire ou siem::Correlation) fasse échouer un test. Cinq échecs depuis une adresse
+/// publique, puis une session Bureau à distance réussie depuis la même adresse : R1, R2 et R9 (Critique)
+#[test]
+fn cor_bout_en_bout() {
+    let echec = evenement_defender(4625, &[("TargetUserName", "essai"), ("TargetDomainName", "POSTE"), ("IpAddress", "203.0.113.9"), ("LogonType", "10")]);
+    let session = evenement_defender(4624, &[("TargetUserName", "essai"), ("TargetDomainName", "POSTE"), ("IpAddress", "203.0.113.9"), ("LogonType", "10")]);
+    let mut evenements: Vec<crate::siem::Evenement> = (0..5).map(|_| crate::siem::traduire(&echec).expect("4625 traduit")).collect();
+    evenements.push(crate::siem::traduire(&session).expect("4624 traduit"));
+    let i = incidents(&evenements);
+    for attendu in [("R1", "Alerte"), ("R2", "Critique"), ("R9", "Critique")] {
+        assert!(i.contains(&(attendu.0.to_string(), attendu.1.to_string())), "{attendu:?} absent de {i:?}");
+    }
+    // Session de service (type 5) : ignorée dès la traduction
+    let service = evenement_defender(4624, &[("TargetUserName", "essai"), ("IpAddress", "203.0.113.9"), ("LogonType", "5")]);
+    assert!(crate::siem::traduire(&service).is_none());
+}

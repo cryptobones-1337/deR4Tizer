@@ -234,7 +234,8 @@ fn ip_utile(ip: &str) -> String {
     if ip == "-" || ip == "::1" || ip == "127.0.0.1" { String::new() } else { ip.to_string() }
 }
 
-fn traduire(xml: &str) -> Option<Evenement> {
+/// Événement de journal Windows traduit pour le SIEM (testé de bout en bout avec la corrélation : cor_bout_en_bout)
+pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
     static ID: OnceLock<regex::Regex> = OnceLock::new();
     let id: u32 = ID.get_or_init(|| regex::Regex::new(r"<EventID[^>]*>(\d+)</EventID>").unwrap()).captures(xml)?[1].parse().ok()?;
     let d = crate::evenements::donnees(xml);
@@ -524,7 +525,7 @@ fn menage() {
 
 /// Moteur de corrélation : règles à fenêtre de temps, chaque incident n'est levé qu'une fois par clé et par heure
 #[derive(Default)]
-struct Correlation {
+pub(crate) struct Correlation {
     echecs: HashMap<String, VecDeque<(Instant, String)>>,
     comptes_crees: HashMap<String, Instant>,
     alertes_processus: HashMap<String, VecDeque<(Instant, String, String)>>,
@@ -541,7 +542,8 @@ impl Correlation {
         true
     }
 
-    fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
+    /// Incidents levés par un événement (testé : tests_detection.rs, COR-R1 à COR-R9)
+    pub(crate) fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
         let mut sortie = Vec::new();
         let mut incident = |regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
             sortie.push(Incident {

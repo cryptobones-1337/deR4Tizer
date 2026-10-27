@@ -604,7 +604,22 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait. Sauf COR-R6, qui se nourrit des
   alertes du service et non de l'audit.
 - **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire.
-- **Tests** : à écrire. En VM, COR-R1 : cinq échecs d'ouverture de session d'un compte de test.
+- **Tests** : `cor_r1_positif` à `cor_r9_negatif` (PR 3.11), sur `siem::Correlation::analyser` avec des événements
+  synthétiques déjà traduits :
+  - COR-R1 : cinq échecs de la même source ; pas quatre, ni cinq répartis sur deux sources ;
+  - COR-R2 : session ouverte après cinq échecs de la même source ; pas après quatre, ni d'une autre source ;
+  - COR-R3 et COR-R3b : compte créé puis ajouté, compte existant ajouté, une fois par heure ;
+  - COR-R4 : effacement d'un journal, une fois par heure ;
+  - COR-R5 : service depuis un dossier temporaire, `ProgramData` ou PowerShell ; pas depuis Program Files ni Windows ;
+  - COR-R6 : trois détections différentes d'un même programme, sans tenir compte de la casse ; pas deux, ni trois
+    programmes, ni des alertes Info ;
+  - COR-R7 : service de sécurité arrêté, politique d'audit modifiée ; pas un changement d'état Info ;
+  - COR-R9 : Bureau à distance depuis une adresse publique (Critique), autre session (Alerte) ; pas depuis le réseau
+    local.
+  Les fenêtres de temps (5 min, 30 min, 10 min, une heure) ne sont pas exercées : le moteur lit l'horloge lui-même.
+  COR-R10 n'est pas testée : sa vérification télécharge la liste LOLDrivers. Aucune n'est exercée en VM. Faux positifs
+  mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun incident ; la mesure les sous-estime, car
+  l'activité n'ouvre aucune session, n'installe aucun service et ne change aucun compte.
 
 ## INT : intégrité du service
 
