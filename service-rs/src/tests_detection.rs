@@ -1224,3 +1224,115 @@ fn cor_bout_en_bout() {
     let service = evenement_defender(4624, &[("TargetUserName", "essai"), ("IpAddress", "203.0.113.9"), ("LogonType", "5")]);
     assert!(crate::siem::traduire(&service).is_none());
 }
+
+// ------------------------------------------------------------ VIE et BAS : vie privée, accès distant, baseline (PR 3.12)
+// Décisions surveillances::premiers_usages, surveillances::outils_distants (chemin d'un PID passé en paramètre),
+// surveillances::alerte_bureau_a_distance et baseline::derives, sans registre ni fichier de données.
+
+fn usage(peripherique: &str, programme: &str, en_cours: bool) -> crate::commun::UsagePeripherique {
+    crate::commun::UsagePeripherique { peripherique: peripherique.into(), programme: programme.into(),
+                                       chemin: format!(r"C:\Outils\{programme}.exe"), en_cours, ..Default::default() }
+}
+
+fn tour_usages(usages: &[crate::commun::UsagePeripherique], avant: &std::collections::HashSet<String>, connus: &mut std::collections::HashSet<String>,
+               apprentissage: bool) -> (Vec<(String, String)>, std::collections::HashSet<String>) {
+    let mut alertes = Vec::new();
+    let (en_cours, _) = crate::surveillances::premiers_usages(usages, avant, connus, apprentissage, &mut alertes);
+    (alertes.into_iter().map(|a| (a.regle, a.niveau)).collect(), en_cours)
+}
+
+#[test]
+fn vie_001_positif() {
+    let mut connus = std::collections::HashSet::new();
+    // Premier relevé : apprentissage ; puis un nouveau programme qui utilise la caméra : Alerte
+    let (a, avant) = tour_usages(&[usage("Micro", "visio", true)], &Default::default(), &mut connus, true);
+    assert!(a.is_empty());
+    let (a, _) = tour_usages(&[usage("Micro", "visio", true), usage("Caméra", "espion", true)], &avant, &mut connus, false);
+    assert_eq!(a, [("VIE-001".to_string(), "Alerte".to_string())]);
+}
+
+#[test]
+fn vie_001_negatif() {
+    let mut connus = std::collections::HashSet::new();
+    // Programme déjà connu (même périphérique) ; usage terminé ; usage déjà en cours au relevé précédent
+    tour_usages(&[usage("Caméra", "visio", false)], &Default::default(), &mut connus, true);
+    let (a, avant) = tour_usages(&[usage("Caméra", "visio", true), usage("Micro", "dictee", false)], &Default::default(), &mut connus, false);
+    assert!(a.is_empty(), "{a:?}");
+    assert!(tour_usages(&[usage("Caméra", "visio", true)], &avant, &mut connus, false).0.is_empty());
+}
+
+fn outils_test(outils_vus: &mut std::collections::HashMap<u32, String>, noms: &[(u32, &str)]) -> (Vec<(String, String)>, usize) {
+    use crate::natif::InfoListe;
+    let liste: std::collections::HashMap<u32, InfoListe> = noms.iter().map(|(p, n)| (*p, InfoListe { nom: n.to_string(), parent: 4 })).collect();
+    let mut alertes = Vec::new();
+    let actuels = crate::surveillances::outils_distants(outils_vus, &liste, &|pid| format!(r"C:\Outils\{pid}.exe"), &mut |_| String::new(), &mut alertes);
+    (alertes.into_iter().map(|a| (a.regle, a.niveau)).collect(), actuels.len())
+}
+
+#[test]
+fn vie_002_positif() {
+    let mut vus = std::collections::HashMap::new();
+    // AnyDesk lancé : une alerte, nom sans tenir compte de la casse ; relancé (autre PID) après sa fin : nouvelle alerte
+    let (a, n) = outils_test(&mut vus, &[(900, "AnyDesk"), (901, "notepad")]);
+    assert_eq!((a, n), (vec![("VIE-002".to_string(), "Alerte".to_string())], 1));
+    outils_test(&mut vus, &[(901, "notepad")]);
+    assert_eq!(outils_test(&mut vus, &[(950, "anydesk")]).0.len(), 1);
+    // Outil terminé, puis PID réutilisé par un nouveau lancement : oublié à sa fin, il est signalé de nouveau
+    outils_test(&mut vus, &[]);
+    assert_eq!(outils_test(&mut vus, &[(950, "anydesk")]).0.len(), 1, "PID réutilisé après la fin de l'outil");
+}
+
+#[test]
+fn vie_002_negatif() {
+    let mut vus = std::collections::HashMap::new();
+    // Programme ordinaire ; outil toujours en cours au relevé suivant (même PID) : une seule alerte
+    assert!(outils_test(&mut vus, &[(901, "notepad")]).0.is_empty());
+    outils_test(&mut vus, &[(900, "teamviewer")]);
+    let (a, n) = outils_test(&mut vus, &[(900, "teamviewer")]);
+    assert!(a.is_empty());
+    assert_eq!(n, 1, "toujours listé dans l'état");
+}
+
+#[test]
+fn vie_003_positif() {
+    let a = crate::surveillances::alerte_bureau_a_distance(true, Some(false)).expect("activé");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("VIE-003", "Alerte"));
+}
+
+#[test]
+fn vie_003_negatif() {
+    use crate::surveillances::alerte_bureau_a_distance;
+    // Premier relevé (déjà activé au démarrage) ; toujours activé ; désactivé
+    assert!(alerte_bureau_a_distance(true, None).is_none());
+    assert!(alerte_bureau_a_distance(true, Some(true)).is_none());
+    assert!(alerte_bureau_a_distance(false, Some(true)).is_none());
+}
+
+fn regle_baseline(id: &str, etat: &str, appliquee: bool) -> crate::baseline::EtatRegle {
+    crate::baseline::EtatRegle { id: id.into(), titre: format!("règle {id}"), etat: etat.into(), appliquee, attendu: "1".into(),
+                                 actuel: if etat == "conforme" { "1".into() } else { "0".into() }, ..Default::default() }
+}
+
+fn etat_baseline(regles: Vec<crate::baseline::EtatRegle>) -> crate::baseline::EtatBaseline {
+    crate::baseline::EtatBaseline { regles, ..Default::default() }
+}
+
+#[test]
+fn bas_001_positif() {
+    // Règle appliquée par deR4Tizer, conforme puis non conforme : quelqu'un l'a défaite
+    let avant = etat_baseline(vec![regle_baseline("pare-feu", "conforme", true)]);
+    let apres = etat_baseline(vec![regle_baseline("pare-feu", "non conforme", true)]);
+    let a = crate::baseline::derives(&avant, &apres);
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str())).collect::<Vec<_>>(), [("BAS-001", "Alerte")]);
+    assert!(a[0].raisons.contains("attendu : 1, actuel : 0"));
+}
+
+#[test]
+fn bas_001_negatif() {
+    use crate::baseline::derives;
+    // Règle non appliquée par deR4Tizer ; déjà non conforme au relevé précédent ; état inconnu ; règle nouvelle
+    let avant = etat_baseline(vec![regle_baseline("a", "conforme", false), regle_baseline("b", "non conforme", true), regle_baseline("c", "conforme", true)]);
+    let apres = etat_baseline(vec![regle_baseline("a", "non conforme", false), regle_baseline("b", "non conforme", true), regle_baseline("c", "inconnu", true),
+                                   regle_baseline("d", "non conforme", true)]);
+    assert!(derives(&avant, &apres).is_empty());
+}

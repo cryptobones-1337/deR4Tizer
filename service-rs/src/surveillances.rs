@@ -81,7 +81,7 @@ impl Surveillances {
     pub fn verifier(&mut self, tcp: &[Connexion], liste: &HashMap<u32, InfoListe>, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
         let mut alertes = Vec::new();
         self.camera(&mut alertes);
-        self.outils_distants(liste, signataire, &mut alertes);
+        self.outils = outils_distants(&mut self.outils_vus, liste, &natif::chemin_processus, signataire, &mut alertes);
         self.bureau_a_distance(&mut alertes);
         if ports_ouverts(&mut self.ecoutes_connues, &mut self.apprentissage_ecoutes, &mut self.ecoutes, tcp, &natif::chemin_processus, signataire, &mut alertes) {
             let _ = commun::ecrire("ecoutes-connues.json", &self.ecoutes_connues);
@@ -103,22 +103,7 @@ impl Surveillances {
         for sid in sids_utilisateurs() {
             lire_consentement(&hku, &format!(r"{sid}\{CONSENTEMENT}"), &mut usages);
         }
-        let mut modifies = false;
-        let mut en_cours = HashSet::new();
-        for u in &usages {
-            let cle = format!("{}|{}", u.peripherique, u.chemin).to_lowercase();
-            if u.en_cours {
-                en_cours.insert(cle.clone());
-                if !self.en_cours_avant.contains(&cle) && !self.peripheriques_connus.contains(&cle) && !self.apprentissage_peripheriques {
-                    let quoi = if u.peripherique == "Caméra" { "la caméra" } else { "le micro" };
-                    alertes.push(alerte(crate::regles::VIE_001, "Alerte", 3, &u.programme, &u.chemin, &u.peripherique,
-                        format!("{} utilise {quoi} pour la première fois", u.programme)));
-                }
-            }
-            if self.peripheriques_connus.insert(cle) {
-                modifies = true;
-            }
-        }
+        let (en_cours, modifies) = premiers_usages(&usages, &self.en_cours_avant, &mut self.peripheriques_connus, self.apprentissage_peripheriques, alertes);
         self.en_cours_avant = en_cours;
         if modifies {
             let _ = commun::ecrire("peripheriques-connus.json", &self.peripheriques_connus.iter().collect::<Vec<_>>());
@@ -138,42 +123,73 @@ impl Surveillances {
 
     // ------------------------------------------------------------ prise en main à distance
 
-    fn outils_distants(&mut self, liste: &HashMap<u32, InfoListe>, signataire: &mut dyn FnMut(&str) -> String, alertes: &mut Vec<Alerte>) {
-        let mut actuels = Vec::new();
-        let mut pids = HashSet::new();
-        for (&pid, p) in liste {
-            let nom = p.nom.to_lowercase();
-            let Some(&(_, outil)) = OUTILS.iter().find(|(n, _)| *n == nom) else { continue };
-            pids.insert(pid);
-            let chemin = natif::chemin_processus(pid);
-            let depuis = self.outils_vus.entry(pid).or_insert_with(|| {
-                alertes.push(alerte(crate::regles::VIE_002, "Alerte", 3, &p.nom, &chemin, outil,
-                    format!("outil de prise en main à distance en cours d'exécution ({outil})")));
-                commun::maintenant()
-            }).clone();
-            actuels.push(OutilDistant {
-                nom: outil.into(),
-                pid,
-                signataire: if chemin.is_empty() { "?".into() } else { signataire(&chemin) },
-                chemin,
-                depuis,
-            });
-        }
-        self.outils_vus.retain(|pid, _| pids.contains(pid));
-        self.outils = actuels;
-    }
-
     fn bureau_a_distance(&mut self, alertes: &mut Vec<Alerte>) {
         self.rdp = RegKey::predef(HKEY_LOCAL_MACHINE)
             .open_subkey(r"SYSTEM\CurrentControlSet\Control\Terminal Server")
             .and_then(|k| k.get_value::<u32, _>("fDenyTSConnections"))
             .map(|v| v == 0)
             .unwrap_or(false);
-        if self.rdp && self.rdp_avant == Some(false) {
-            alertes.push(alerte(crate::regles::VIE_003, "Alerte", 3, "Windows", "", "Bureau à distance", "le Bureau à distance vient d'être ACTIVÉ".into()));
-        }
+        alertes.extend(alerte_bureau_a_distance(self.rdp, self.rdp_avant));
         self.rdp_avant = Some(self.rdp);
     }
+}
+
+/// Décision pure (testée, VIE-001) : usages de la caméra et du micro en cours. Alerte pour un couple (périphérique,
+/// programme) jamais vu, sauf au premier relevé (apprentissage) ; rend les usages en cours et vrai si les couples connus
+/// ont changé (à écrire dans `peripheriques-connus.json` par l'appelant)
+pub(crate) fn premiers_usages(usages: &[UsagePeripherique], en_cours_avant: &HashSet<String>, connus: &mut HashSet<String>, apprentissage: bool,
+                              alertes: &mut Vec<Alerte>) -> (HashSet<String>, bool) {
+    let mut modifies = false;
+    let mut en_cours = HashSet::new();
+    for u in usages {
+        let cle = format!("{}|{}", u.peripherique, u.chemin).to_lowercase();
+        if u.en_cours {
+            en_cours.insert(cle.clone());
+            if !en_cours_avant.contains(&cle) && !connus.contains(&cle) && !apprentissage {
+                let quoi = if u.peripherique == "Caméra" { "la caméra" } else { "le micro" };
+                alertes.push(alerte(crate::regles::VIE_001, "Alerte", 3, &u.programme, &u.chemin, &u.peripherique,
+                    format!("{} utilise {quoi} pour la première fois", u.programme)));
+            }
+        }
+        if connus.insert(cle) {
+            modifies = true;
+        }
+    }
+    (en_cours, modifies)
+}
+
+/// Décision testée (VIE-002) : outils de prise en main à distance en cours d'exécution (`chemin_de` rend le chemin
+/// d'un PID). Une alerte par processus, à sa première vue ; les processus terminés sont oubliés
+pub(crate) fn outils_distants(outils_vus: &mut HashMap<u32, String>, liste: &HashMap<u32, InfoListe>, chemin_de: &dyn Fn(u32) -> String,
+                              signataire: &mut dyn FnMut(&str) -> String, alertes: &mut Vec<Alerte>) -> Vec<OutilDistant> {
+    let mut actuels = Vec::new();
+    let mut pids = HashSet::new();
+    for (&pid, p) in liste {
+        let nom = p.nom.to_lowercase();
+        let Some(&(_, outil)) = OUTILS.iter().find(|(n, _)| *n == nom) else { continue };
+        pids.insert(pid);
+        let chemin = chemin_de(pid);
+        let depuis = outils_vus.entry(pid).or_insert_with(|| {
+            alertes.push(alerte(crate::regles::VIE_002, "Alerte", 3, &p.nom, &chemin, outil,
+                format!("outil de prise en main à distance en cours d'exécution ({outil})")));
+            commun::maintenant()
+        }).clone();
+        actuels.push(OutilDistant {
+            nom: outil.into(),
+            pid,
+            signataire: if chemin.is_empty() { "?".into() } else { signataire(&chemin) },
+            chemin,
+            depuis,
+        });
+    }
+    outils_vus.retain(|pid, _| pids.contains(pid));
+    actuels
+}
+
+/// Décision pure (testée, VIE-003) : Bureau à distance activé depuis le relevé précédent (rien au premier relevé)
+pub(crate) fn alerte_bureau_a_distance(active: bool, avant: Option<bool>) -> Option<Alerte> {
+    (active && avant == Some(false))
+        .then(|| alerte(crate::regles::VIE_003, "Alerte", 3, "Windows", "", "Bureau à distance", "le Bureau à distance vient d'être ACTIVÉ".into()))
 }
 
 // ------------------------------------------------------------ ports ouverts et connexions entrantes
