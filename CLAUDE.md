@@ -272,7 +272,13 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      mainteneur), demandée par le mainteneur le 2026-10-27 (« I propose to do a full test after phase 7, add it to
      claude.md »). Elle vise la VM `deR4Tizer-test-26H2` et exerce ensemble la détection, les incidents et leur
      chronologie (phase 4), la réponse et ses durées maximales (phase 6) et le filtrage DNS (phase 7).
-     - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet.
+     - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet ; VM
+       adressées dans une plage de documentation (RFC 5737, par exemple 203.0.113.0/24), jamais une plage publique
+       réelle, pour que COR-R9 (session depuis une adresse publique) puisse se déclencher.
+     - VM cible remise à son instantané « propre » avant et après la campagne (Bureau à distance activé pour la force
+       brute, comptes de test, etc.).
+     - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
+       résultat, jamais un obstacle à contourner.
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
        brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
        résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
