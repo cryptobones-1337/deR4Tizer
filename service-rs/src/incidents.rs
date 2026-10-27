@@ -316,6 +316,8 @@ pub fn lire_suivi_texte(texte: &str) -> Option<(Vec<IncidentSuivi>, usize)> {
     let mut suivis = Vec::with_capacity(elements.len());
     for e in elements {
         match serde_json::from_value::<IncidentSuivi>(e) {
+            // L'identifiant nomme le fichier de la chronologie : hors de [A-Za-z0-9-], l'incident est écarté (S96-02)
+            Ok(i) if !crate::validation::identifiant_valide(&i.id) => ecartes += 1,
             Ok(mut i) => {
                 borner_incident(&mut i);
                 suivis.push(i);
@@ -435,6 +437,18 @@ pub struct ElementChronologie {
     pub type_: String,
     pub niveau: String,
     pub texte: String,
+    /// Événement rattaché au programme de l'incident par le seul nom du fichier (l'événement ne porte pas de chemin) : un
+    /// autre programme du même nom ailleurs peut en être l'auteur
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub par_nom: bool,
+}
+
+/// Lien d'un événement du SIEM avec l'entité d'un incident
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Lien {
+    Exact,
+    /// Programme reconnu par le seul nom du fichier
+    ParNom,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
@@ -454,6 +468,11 @@ pub struct Chronologie {
     pub sans_heure_utc: usize,
     /// Événements perdus par le SIEM (file pleine) depuis le démarrage du service : des étapes peuvent manquer
     pub pertes_siem: u64,
+    /// Lecture du SIEM incomplète : fenêtre de plus de 3 jours (les plus récents gardés), 20 000 événements atteints ou
+    /// 5 s dépassées ; des étapes peuvent manquer
+    pub fenetre_siem_incomplete: bool,
+    /// Repère de l'incident au calcul (`repere`) : après un redémarrage, une chronologie au même repère n'est pas réécrite
+    pub repere: String,
 }
 
 pub const MAX_ELEMENTS: usize = 2000;
@@ -464,32 +483,43 @@ const MAX_TEXTE_ELEMENT: usize = 400;
 /// complet cité), destination (destination, adresse ou texte), source d'une corrélation (adresse ou compte), compte, ou
 /// règle. La santé des collectes concerne tous les incidents de la fenêtre (trous de collecte)
 pub fn concerne(i: &IncidentSuivi, e: &crate::siem::Evenement) -> bool {
+    lien(i, e).is_some()
+}
+
+/// `concerne`, avec la nature du lien (pur, testé) : un événement qui porte un chemin complet n'est rattaché à un
+/// programme que par ce chemin ; sans chemin, par le nom du fichier seul (`Lien::ParNom`, signalé dans la chronologie)
+pub fn lien(i: &IncidentSuivi, e: &crate::siem::Evenement) -> Option<Lien> {
+    let exact = |b: bool| b.then_some(Lien::Exact);
     if e.source == "sante" {
-        return true;
+        return Some(Lien::Exact);
     }
     let message = e.message.to_lowercase();
     if let Some(chemin) = i.entite.strip_prefix("programme:") {
-        let nom = std::path::Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
         let proc_ = e.processus.to_lowercase();
+        if message.contains(chemin) || e.destination.to_lowercase() == chemin || proc_ == chemin {
+            return Some(Lien::Exact);
+        }
+        // Un chemin complet différent n'égale jamais le nom seul : il n'est donc pas rattaché par le nom
+        let nom = std::path::Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
         let proc_ = proc_.strip_suffix(".exe").unwrap_or(&proc_);
-        return (!nom.is_empty() && proc_ == nom) || message.contains(chemin) || e.destination.to_lowercase() == chemin;
+        return (!nom.is_empty() && proc_ == nom).then_some(Lien::ParNom);
     }
     if let Some(d) = i.entite.strip_prefix("destination:") {
-        return e.destination.to_lowercase() == d || e.ip.to_lowercase() == d || (d.len() >= 4 && message.contains(d));
+        return exact(e.destination.to_lowercase() == d || e.ip.to_lowercase() == d || (d.len() >= 4 && message.contains(d)));
     }
     if let Some(s) = i.entite.strip_prefix("source:") {
-        return match s.strip_prefix("compte ") {
+        return exact(match s.strip_prefix("compte ") {
             Some(compte) => e.utilisateur.to_lowercase() == compte || e.utilisateur.to_lowercase().ends_with(&format!("\\{compte}")),
             None => !s.is_empty() && e.ip.to_lowercase() == s,
-        };
+        });
     }
     if let Some(c) = i.entite.strip_prefix("compte:") {
-        return !c.is_empty() && (e.utilisateur.to_lowercase().contains(c) || e.processus.to_lowercase().contains(c));
+        return exact(!c.is_empty() && (e.utilisateur.to_lowercase().contains(c) || e.processus.to_lowercase().contains(c)));
     }
     if let Some(r) = i.entite.strip_prefix("regle:") {
-        return !r.is_empty() && e.regle.eq_ignore_ascii_case(r);
+        return exact(!r.is_empty() && e.regle.eq_ignore_ascii_case(r));
     }
-    false
+    None
 }
 
 /// Chronologie d'un incident (pure, testée) : résumés des alertes jointes, transitions, et événements du SIEM de l'entité
@@ -504,6 +534,7 @@ pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pert
         elements.push((commun::secondes_utc(&a.heure_utc).unwrap_or(i64::MIN), ElementChronologie {
             heure: a.heure.clone(), heure_utc: a.heure_utc.clone(), seq: 0, source: "alerte".into(), type_: a.regle.clone(),
             niveau: a.niveau.clone(), texte: texte(&format!("{} : {}", if a.processus.is_empty() { &a.destination } else { &a.processus }, a.raisons)),
+            par_nom: false,
         }));
     }
     for tr in &i.transitions {
@@ -512,10 +543,11 @@ pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pert
             niveau: "Info".into(),
             texte: texte(&format!("{:?} vers {:?}{}{} (par {})", tr.de, tr.vers, if tr.motif.is_empty() { String::new() } else { format!(", {}", tr.motif) },
                 if tr.note.is_empty() { String::new() } else { format!(" : {}", tr.note) }, tr.auteur)),
+            par_nom: false,
         }));
     }
     let mut sans_heure_utc = 0;
-    for e in evenements.iter().filter(|e| e.source != "alerte" && concerne(i, e)) {
+    for (e, l) in evenements.iter().filter(|e| e.source != "alerte").filter_map(|e| lien(i, e).map(|l| (e, l))) {
         let Some(t) = commun::secondes_utc(&e.heure_utc) else {
             sans_heure_utc += 1;
             continue;
@@ -525,7 +557,7 @@ pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pert
         }
         elements.push((t, ElementChronologie {
             heure: e.heure.clone(), heure_utc: e.heure_utc.clone(), seq: e.seq, source: e.source.clone(), type_: e.type_.clone(),
-            niveau: e.niveau.clone(), texte: texte(&e.message),
+            niveau: e.niveau.clone(), texte: texte(&e.message), par_nom: l == Lien::ParNom,
         }));
     }
     elements.sort_by(|a, b| (a.0, a.1.seq).cmp(&(b.0, b.1.seq)));
@@ -547,6 +579,8 @@ pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pert
         tronquee,
         sans_heure_utc,
         pertes_siem,
+        fenetre_siem_incomplete: false,
+        repere: String::new(),
     }
 }
 
@@ -563,34 +597,112 @@ pub fn a_recalculer(suivis: &[IncidentSuivi], calcules: &std::collections::HashM
 
 /// Dossier des chronologies, dans le dossier de données (mêmes droits)
 pub const DOSSIER_CHRONOLOGIES: &str = "chronologies";
+/// Événements du SIEM lus au plus pour une chronologie (du plus récent au plus ancien)
+pub const LIMITE_SIEM_CHRONOLOGIE: usize = 20_000;
+/// Bornes du dossier de phase 4 : 3 jours de fichiers au plus, 5 s au plus par chronologie
+const JOURS_SIEM_CHRONOLOGIE: i64 = 3;
+const DUREE_MAX_CHRONOLOGIE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Texte cherché dans les lignes du SIEM pour une entité (pur, testé) : ce que `concerne` compare, sous sa forme dans une
+/// ligne JSON en minuscules (barres obliques inverses et guillemets échappés). Vide quand l'entité ne se cherche pas par
+/// un texte (corrélations regroupées, `COR-R<n>:…`) : seule la santé des collectes est lue
+pub fn cle_recherche(entite: &str) -> String {
+    let brut = if let Some(c) = entite.strip_prefix("programme:") {
+        std::path::Path::new(c).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+    } else if let Some(s) = entite.strip_prefix("source:") {
+        s.strip_prefix("compte ").unwrap_or(s).to_string()
+    } else {
+        ["destination:", "compte:", "regle:"].iter().find_map(|p| entite.strip_prefix(p)).unwrap_or("").to_string()
+    };
+    brut.to_lowercase().replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Événements du SIEM de la fenêtre d'un incident : ceux qui citent son entité, et la santé des collectes ; 3 jours de
+/// fichiers au plus (les plus récents de la fenêtre), `LIMITE_SIEM_CHRONOLOGIE` par lecture, jusqu'à `echeance`. Rend
+/// aussi si la lecture est incomplète (fenêtre coupée, limite atteinte)
+fn lire_siem_incident(i: &IncidentSuivi, echeance: std::time::Instant) -> (Vec<crate::siem::Evenement>, bool) {
+    let (Some(debut), Some(fin)) = (commun::secondes_utc(&i.ouverture_utc), commun::secondes_utc(&i.derniere_activite_utc)) else {
+        return (Vec::new(), false);
+    };
+    let (debut, fin) = (debut - MARGE_FENETRE_S, fin + MARGE_FENETRE_S);
+    let coupee = fin - debut > JOURS_SIEM_CHRONOLOGIE * 86_400;
+    let debut = debut.max(fin - JOURS_SIEM_CHRONOLOGIE * 86_400);
+    // Bornes en heure locale (celle des fichiers et de `Heure`), élargies d'une heure pour le changement d'heure ;
+    // `construire` filtre ensuite à la seconde UTC
+    let local = |s: i64| commun::heure(std::time::UNIX_EPOCH + std::time::Duration::from_secs(s.max(0) as u64));
+    let filtre = |texte: String, source: &str| crate::siem::Filtre {
+        texte, source: source.into(), depuis: local(debut - 3600), jusqua: local(fin + 3600), limite: LIMITE_SIEM_CHRONOLOGIE,
+        echeance: Some(echeance), ..Default::default()
+    };
+    let cle = cle_recherche(&i.entite);
+    let mut evenements = if cle.is_empty() { Vec::new() } else { crate::siem::rechercher(&filtre(cle, "")) };
+    let mut incomplete = coupee || evenements.len() >= LIMITE_SIEM_CHRONOLOGIE;
+    evenements.retain(|e| e.source != "sante");
+    let sante = crate::siem::rechercher(&filtre(String::new(), "sante"));
+    incomplete |= sante.len() >= LIMITE_SIEM_CHRONOLOGIE;
+    evenements.extend(sante);
+    (evenements, incomplete)
+}
+
+/// Dossier des chronologies, préparé comme `restaurations` (S96-01) : rien quand la protection du dossier de données est
+/// en échec ; dossier créé avec ses droits, ouvert sans suivre de lien, droits vérifiés (et reposés s'il le faut)
+fn preparer_dossier_chronologies() -> Result<std::path::PathBuf, String> {
+    use crate::protection::{droits_conformes, SID_ADMINISTRATEURS, SID_SYSTEME};
+    let (sddl, lecteurs) = crate::protection::sddl_lecture();
+    let l: Vec<&str> = lecteurs.iter().map(String::as_str).collect();
+    let conforme = |s: &crate::natif::Securite| droits_conformes(s, &[SID_SYSTEME, SID_ADMINISTRATEURS], &l);
+    crate::reponse::preparer_dossier_repli(commun::dossier(), DOSSIER_CHRONOLOGIES, &sddl, commun::echec_protection().is_some(), &conforme)
+}
+
+static CHRONOLOGIES_REFUSEES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Un tour du calcul des chronologies, HORS du verrou du moniteur : `a_faire` (copie des incidents à recalculer, 50 au
-/// plus, prise sous le verrou par `a_recalculer`) et `suivis_ids` (identifiants suivis). Les événements du SIEM sont lus
-/// sur les 3 derniers jours de fichiers au plus (20 000 au plus) ; les fichiers des incidents qui ne sont plus suivis
-/// sont effacés
+/// plus, prise sous le verrou par `a_recalculer`) et `suivis_ids` (identifiants suivis). Le SIEM est lu pour chaque
+/// incident sur sa fenêtre (`lire_siem_incident`) ; les fichiers des incidents qui ne sont plus suivis sont effacés
 pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collections::HashSet<String>,
                              calcules: &mut std::collections::HashMap<String, String>) {
-    let dossier = commun::dossier().join(DOSSIER_CHRONOLOGIES);
-    if !a_faire.is_empty() {
-        let _ = std::fs::create_dir_all(&dossier);
-        let maintenant = std::time::SystemTime::now();
-        let depuis = commun::heure(maintenant - std::time::Duration::from_secs(2 * 86_400)).chars().take(10).collect::<String>();
-        let evenements = crate::siem::rechercher(&crate::siem::Filtre { depuis, limite: 20_000, ..Default::default() });
-        let pertes = crate::siem::pertes();
-        let calculee = commun::heure_utc_de(maintenant);
-        for i in a_faire {
-            let c = construire(i, &evenements, pertes, &calculee);
-            if commun::ecrire(&format!("{DOSSIER_CHRONOLOGIES}\\{}.json", i.id), &c).is_ok() {
-                calcules.insert(i.id.clone(), repere(i));
+    use std::sync::atomic::Ordering;
+    let dossier = match preparer_dossier_chronologies() {
+        Ok(d) => {
+            CHRONOLOGIES_REFUSEES.store(false, Ordering::Relaxed);
+            d
+        }
+        Err(e) => {
+            if !CHRONOLOGIES_REFUSEES.swap(true, Ordering::Relaxed) {
+                commun::journal(&format!("chronologies des incidents non écrites : {e}"));
             }
+            return;
+        }
+    };
+    let pertes = crate::siem::pertes();
+    for i in a_faire.iter().filter(|i| crate::validation::identifiant_valide(&i.id)) {
+        let chemin = dossier.join(format!("{}.json", i.id));
+        let repere_i = repere(i);
+        // Après un redémarrage (`calcules` vide) : une chronologie déjà écrite pour le même repère est gardée telle quelle
+        if !calcules.contains_key(&i.id)
+            && commun::lire_fichier_proprietaire(&chemin)
+                .and_then(|t| serde_json::from_str::<Chronologie>(t.trim_start_matches('\u{feff}')).ok())
+                .is_some_and(|c| c.repere == repere_i)
+        {
+            calcules.insert(i.id.clone(), repere_i);
+            continue;
+        }
+        let maintenant = std::time::SystemTime::now();
+        let echeance = std::time::Instant::now() + DUREE_MAX_CHRONOLOGIE;
+        let (evenements, incomplete) = lire_siem_incident(i, echeance);
+        let mut c = construire(i, &evenements, pertes, &commun::heure_utc_de(maintenant));
+        c.repere = repere_i.clone();
+        c.fenetre_siem_incomplete = incomplete || std::time::Instant::now() >= echeance;
+        if commun::ecrire_dans(&chemin, &c).is_ok() {
+            calcules.insert(i.id.clone(), repere_i);
         }
     }
-    // Ménage : chronologies d'incidents purgés
+    // Ménage : chronologies d'incidents purgés ; seulement des fichiers ordinaires nommés d'un identifiant valide
     calcules.retain(|id, _| suivis_ids.contains(id));
     for f in std::fs::read_dir(&dossier).into_iter().flatten().flatten() {
         let nom = f.file_name().to_string_lossy().to_string();
         if let Some(id) = nom.strip_suffix(".json") {
-            if !suivis_ids.contains(id) && f.file_type().is_ok_and(|t| t.is_file()) {
+            if crate::validation::identifiant_valide(id) && !suivis_ids.contains(id) && f.file_type().is_ok_and(|t| t.is_file()) {
                 let _ = std::fs::remove_file(f.path());
             }
         }

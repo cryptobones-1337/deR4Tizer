@@ -4057,20 +4057,21 @@ fn chronologie_entite_des_correlations() {
         }
     }
     entites.extend(c.analyser(&crate::tests_detection::evenement_siem("ouverture-session", &[("ip", "192.0.2.10"), ("utilisateur", "essai")])).into_iter().map(|i| (i.regle, i.entite)));
-    assert_eq!(entites, [("R1".to_string(), "source:192.0.2.10".to_string()), ("R1".into(), "source:192.0.2.11".into()), ("R2".into(), "source:192.0.2.10".into()),
-                         ("R9".into(), "source:192.0.2.10".into())], "adresse publique : R9 aussi, même source");
+    // R1 : la source des échecs ; R2 et R9 (adresse publique) : le compte qui a ouvert la session
+    assert_eq!(entites, [("R1".to_string(), "source:192.0.2.10".to_string()), ("R1".into(), "source:192.0.2.11".into()), ("R2".into(), "compte:essai".into()),
+                         ("R9".into(), "compte:essai".into())]);
     // L'alerte levée par l'incident porte son entité
     let mut c = Correlation::default();
     let i: Vec<_> = (0..5).flat_map(|_| c.analyser(&crate::tests_detection::evenement_siem("echec-session", &[("ip", "192.0.2.12"), ("utilisateur", "essai")]))).collect();
     let a = crate::siem::alerte_de_correlation(&i[0]);
     assert_eq!((a.regle.as_str(), a.entite.as_str()), ("COR-R1", "source:192.0.2.12"));
-    // Dans le suivi : l'entité nommée par le producteur passe avant la destination
-    let mut a = alerte_incident("Alerte", "", "COR-R1", T0);
-    a.destination = "incident : Tentatives de mot de passe en série".into();
-    a.entite = "source:192.0.2.10".into();
+    // Dans le suivi : l'entité nommée par le producteur passe avant la destination ; R2 et R9 du même compte se rejoignent
+    let mut a = alerte_incident("Alerte", "", "COR-R9", T0);
+    a.destination = "incident : Session ouverte depuis Internet".into();
+    a.entite = "compte:essai".into();
     let mut b = alerte_incident("Critique", "", "COR-R2", T0);
     b.destination = "incident : Session ouverte après une série d'échecs".into();
-    b.entite = "source:192.0.2.10".into();
+    b.entite = "compte:essai".into();
     let mut s = Vec::new();
     crate::incidents::appliquer(&mut s, &a, t0());
     crate::incidents::appliquer(&mut s, &b, t0() + 60);
@@ -4080,6 +4081,26 @@ fn chronologie_entite_des_correlations() {
     let mut c = Correlation::default();
     let i: Vec<_> = e.iter().flat_map(|e| c.analyser(e)).collect();
     assert_eq!(i[0].entite, "compte:nouveau");
+}
+
+/// Une force brute répartie sur de nombreuses adresses n'ouvre pas un incident par adresse : au-delà de 10 entités
+/// distinctes d'une règle en une heure, les suivantes sont regroupées
+#[test]
+fn chronologie_entites_regroupees_au_dela_du_seuil() {
+    use crate::siem::{Correlation, MAX_ENTITES_PAR_REGLE};
+    let mut c = Correlation::default();
+    let mut entites = Vec::new();
+    for k in 0..(MAX_ENTITES_PAR_REGLE + 3) {
+        let ip = format!("10.0.0.{k}");
+        for _ in 0..5 {
+            entites.extend(c.analyser(&crate::tests_detection::evenement_siem("echec-session", &[("ip", ip.as_str()), ("utilisateur", "essai")])).into_iter().map(|i| i.entite));
+        }
+    }
+    assert_eq!(entites.len(), MAX_ENTITES_PAR_REGLE + 3);
+    assert_eq!(entites[MAX_ENTITES_PAR_REGLE - 1], format!("source:10.0.0.{}", MAX_ENTITES_PAR_REGLE - 1));
+    assert!(entites[MAX_ENTITES_PAR_REGLE..].iter().all(|e| e == "COR-R1:regroupees"), "{entites:?}");
+    let distinctes: std::collections::HashSet<_> = entites.iter().collect();
+    assert_eq!(distinctes.len(), MAX_ENTITES_PAR_REGLE + 1);
 }
 
 #[test]
@@ -4142,6 +4163,38 @@ fn chronologie_bornee_tronquee() {
     assert_eq!((c.elements[0].seq, c.elements[MAX_ELEMENTS - 1].seq), (1, 5000), "premiers et derniers gardés");
     let long = evenement_chrono("securite", "2026-10-27T07:30:00Z", 1, &[("regle", "DNS-001"), ("message", &"m".repeat(5000))]);
     assert!(construire(&i, &[long], 0, "x").elements[0].texte.chars().count() <= 400, "texte borné");
+}
+
+/// S96-02 : un identifiant relu qui sortirait du dossier des chronologies écarte l'incident. Lecture du SIEM par entité :
+/// le texte cherché est ce que `concerne` compare, sous sa forme JSON
+#[test]
+fn chronologie_identifiant_et_cle_de_recherche() {
+    use crate::incidents::{cle_recherche, lire_suivi_texte};
+    let (s, ecartes) = lire_suivi_texte(r#"[{"Id":"a1-b2"},{"Id":"..\\..\\x"},{"Id":"a/b"},{"Id":""}]"#).unwrap();
+    assert_eq!((s.len(), s[0].id.as_str(), ecartes), (1, "a1-b2", 3));
+    assert_eq!(cle_recherche(r"programme:c:\outils\Voleur.exe"), "voleur");
+    assert_eq!(cle_recherche("source:192.0.2.10"), "192.0.2.10");
+    assert_eq!(cle_recherche("source:compte Essai"), "essai");
+    assert_eq!(cle_recherche("compte:essai"), "essai");
+    assert_eq!(cle_recherche(r"destination:c:\données\a"), r"c:\\données\\a", "forme JSON");
+    assert_eq!(cle_recherche("regle:DNS-001"), "dns-001");
+    assert_eq!(cle_recherche("COR-R1:regroupees"), "");
+    // Le texte cherché se trouve bien dans la ligne écrite par le SIEM
+    let e = evenement_chrono("securite", T0, 1, &[("destination", r"C:\Données\a")]);
+    assert!(serde_json::to_string(&e).unwrap().to_lowercase().contains(&cle_recherche(r"destination:c:\données\a")));
+}
+
+/// D3 : un événement qui porte un chemin complet n'est rattaché que par ce chemin ; par le nom seul, il est signalé
+#[test]
+fn chronologie_lien_par_le_nom_signale() {
+    use crate::incidents::{construire, lien, Lien};
+    let i = incident_chrono(r"programme:c:\outils\svchost.exe");
+    assert_eq!(lien(&i, &evenement_chrono("processus", T0, 1, &[("processus", r"C:\Windows\System32\svchost.exe")])), None, "autre chemin");
+    assert_eq!(lien(&i, &evenement_chrono("processus", T0, 1, &[("processus", r"C:\Outils\svchost.exe")])), Some(Lien::Exact));
+    assert_eq!(lien(&i, &evenement_chrono("processus", T0, 1, &[("processus", "svchost.exe")])), Some(Lien::ParNom));
+    let c = construire(&i, &[evenement_chrono("processus", "2026-10-27T07:30:00Z", 1, &[("processus", "svchost.exe")])], 0, "x");
+    assert!(c.elements[0].par_nom);
+    assert!(serde_json::to_string(&c).unwrap().contains("\"ParNom\":true"));
 }
 
 #[test]

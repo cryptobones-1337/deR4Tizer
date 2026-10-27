@@ -308,6 +308,7 @@ fn traiter(mut flux: TcpStream, jeton: &str) -> std::io::Result<()> {
                 depuis: p("depuis"),
                 jusqua: p("jusqua"),
                 limite: parametre("limite").and_then(|l| l.parse().ok()).unwrap_or(500usize).min(5000),
+                echeance: None,
             };
             let evenements = crate::siem::rechercher(&filtre);
             if parametre("format").as_deref() == Some("ndjson") {

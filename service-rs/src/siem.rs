@@ -476,6 +476,8 @@ pub struct Filtre {
     pub depuis: String,
     pub jusqua: String,
     pub limite: usize,
+    /// Au-delà, la recherche s'arrête et rend ce qu'elle a (chronologies : 5 s au plus)
+    pub echeance: Option<Instant>,
 }
 
 /// Événements correspondants, du plus récent au plus ancien
@@ -499,6 +501,9 @@ pub fn rechercher(f: &Filtre) -> Vec<Evenement> {
         // Propriétaire contrôlé, comme tout fichier du dossier de données
         let Some(contenu) = commun::lire_fichier_proprietaire(&chemin) else { continue };
         for ligne in contenu.lines().rev() {
+            if f.echeance.is_some_and(|d| Instant::now() >= d) {
+                return sortie;
+            }
             if !texte.is_empty() && !ligne.to_lowercase().contains(&texte) {
                 continue;
             }
@@ -617,9 +622,36 @@ pub(crate) struct Correlation {
     comptes_crees: HashMap<String, Instant>,
     alertes_processus: HashMap<String, VecDeque<(Instant, String, String)>>,
     deja: HashMap<String, Instant>,
+    /// Entités récentes de chaque règle (une heure), pour `entite_bornee`
+    entites: HashMap<String, VecDeque<(Instant, String)>>,
+}
+
+/// Entités distinctes d'une même règle de corrélation par heure ; au-delà, regroupées
+pub(crate) const MAX_ENTITES_PAR_REGLE: usize = 10;
+
+/// Compte sans domaine, en minuscules (« POSTE\essai » → « essai »)
+fn compte_de(u: &str) -> String {
+    u.rsplit('\\').next().unwrap_or("").to_lowercase()
 }
 
 impl Correlation {
+    /// Entité d'un incident de corrélation, bornée (phase 4, PR 4.3) : au-delà de `MAX_ENTITES_PAR_REGLE` entités
+    /// distinctes d'une même règle en une heure, les suivantes sont regroupées sous `COR-<règle>:regroupees`. Une attaque
+    /// répartie sur des centaines d'adresses ou de comptes n'ouvre donc pas des centaines d'incidents (plafond du suivi :
+    /// 500, au-delà duquel les alertes ne sont plus suivies)
+    fn entite_bornee(&mut self, regle: &str, entite: String) -> String {
+        let vues = self.entites.entry(regle.to_string()).or_default();
+        vues.retain(|(t, _)| t.elapsed() < Duration::from_secs(3600));
+        if vues.iter().any(|(_, x)| *x == entite) {
+            return entite;
+        }
+        if vues.len() >= MAX_ENTITES_PAR_REGLE {
+            return format!("COR-{regle}:regroupees");
+        }
+        vues.push_back((Instant::now(), entite.clone()));
+        entite
+    }
+
     fn une_fois(&mut self, cle: String) -> bool {
         self.deja.retain(|_, t| t.elapsed() < Duration::from_secs(3600));
         if self.deja.contains_key(&cle) {
@@ -632,8 +664,9 @@ impl Correlation {
     /// Incidents levés par un événement (testé : tests_detection.rs, COR-R1 à COR-R9)
     pub(crate) fn analyser(&mut self, e: &Evenement) -> Vec<Incident> {
         let mut sortie = Vec::new();
-        // Entité de l'incident (phase 4, PR 4.3) : la source (adresse ou compte) pour COR-R1, R2 et R9, qui se rejoignent ;
-        // le compte pour COR-R3 ; sinon la règle et sa clé
+        // Entité de l'incident (phase 4, PR 4.3) : la source des échecs (adresse, ou compte sans adresse) pour COR-R1 ; le
+        // compte qui a ouvert la session pour COR-R2 et R9, qui se rejoignent ; le compte pour COR-R3 ; sinon la règle et
+        // sa clé. R1, R2 et R9 passent par `entite_bornee`
         let mut incident = |entite: String, regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
             sortie.push(Incident {
                 entite,
@@ -658,7 +691,8 @@ impl Correlation {
                 file.retain(|(t, _)| t.elapsed() < Duration::from_secs(1800));
                 let recents: Vec<String> = file.iter().filter(|(t, _)| t.elapsed() < Duration::from_secs(300)).map(|(_, s)| s.clone()).collect();
                 if recents.len() >= 5 && self.une_fois(format!("R1|{cle}")) {
-                    incident(format!("source:{cle}"), "R1", "Tentatives de mot de passe en série", "Alerte", "T1110",
+                    let entite = self.entite_bornee("R1", format!("source:{cle}"));
+                    incident(entite, "R1", "Tentatives de mot de passe en série", "Alerte", "T1110",
                         format!("{} échecs d'ouverture de session en 5 minutes ({cle})", recents.len()), recents.into_iter().rev().take(20).collect());
                 }
             }
@@ -669,7 +703,9 @@ impl Correlation {
                     let mut evts: Vec<String> = file.iter().map(|(_, s)| s.clone()).rev().take(19).collect();
                     if n >= 5 && self.une_fois(format!("R2|{cle}")) {
                         evts.insert(0, trace(e));
-                        incident(format!("source:{cle}"), "R2", "Session ouverte après une série d'échecs", "Critique", "T1110",
+                        let compte = compte_de(&e.utilisateur);
+                        let entite = self.entite_bornee("R2", if compte.is_empty() { format!("source:{cle}") } else { format!("compte:{compte}") });
+                        incident(entite, "R2", "Session ouverte après une série d'échecs", "Critique", "T1110",
                             format!("{} a ouvert une session après {n} échecs depuis la même source ({cle}) : mot de passe probablement deviné",
                                 e.utilisateur), evts);
                     }
@@ -677,7 +713,9 @@ impl Correlation {
                 // R9 : bureau à distance ou session réseau depuis une adresse publique
                 if !e.ip.is_empty() && e.ip.parse().map(|a| crate::parefeu::publique(&a)).unwrap_or(false) && self.une_fois(format!("R9|{}|{}", e.ip, e.utilisateur)) {
                     let rdp = e.message.contains("bureau à distance");
-                    incident(format!("source:{}", e.ip), "R9", if rdp { "Bureau à distance ouvert depuis Internet" } else { "Session ouverte depuis Internet" },
+                    let compte = compte_de(&e.utilisateur);
+                    let entite = self.entite_bornee("R9", if compte.is_empty() { format!("source:{}", e.ip) } else { format!("compte:{compte}") });
+                    incident(entite, "R9", if rdp { "Bureau à distance ouvert depuis Internet" } else { "Session ouverte depuis Internet" },
                         if rdp { "Critique" } else { "Alerte" }, "T1133", e.message.clone(), vec![trace(e)]);
                 }
             }

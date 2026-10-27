@@ -27,7 +27,7 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
 | `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » avant le filtrage (y compris celles que l'apprentissage baisse en « Info ») ; c'est elle qu'une exception posée depuis l'alerte vise |
 | `HeureUtc` | texte, omis si vide | « » | heure UTC de création (RFC 3339 à la seconde, « …Z »), phase 4, PR 4.1 ; bornée à 32 caractères |
 | `Seq` | entier, omis si 0 | 0 | numéro d'ordre de création, croissant depuis le démarrage du service (remis à zéro à chaque démarrage), phase 4, PR 4.1 |
-| `Entite` | texte, omis si vide | « » | entité du suivi des incidents, quand le producteur la connaît (phase 4, PR 4.3) : `source:<adresse ou compte>` pour COR-R1, R2 et R9, `compte:<membre>` pour COR-R3 et R3b, `COR-R<n>:<clé>` pour les autres corrélations ; bornée à 160 caractères |
+| `Entite` | texte, omis si vide | « » | entité du suivi des incidents, quand le producteur la connaît (phase 4, PR 4.3) : `source:<adresse, ou « compte X » sans adresse>` pour COR-R1 ; `compte:<compte sans domaine>` pour COR-R2 et R9 (le compte qui a ouvert la session ; à défaut, la source) ; `compte:<membre>` pour COR-R3 et R3b ; `COR-R<n>:<clé>` pour les autres corrélations. Au-delà de 10 entités distinctes d'une même règle R1, R2 ou R9 en une heure, les suivantes sont regroupées sous `COR-R<n>:regroupees` : une attaque répartie sur des centaines d'adresses n'ouvre pas des centaines d'incidents. Bornée à 160 caractères |
 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
   ancien fichier garde 0, son histoire n'est pas réécrite.
@@ -165,20 +165,31 @@ le service **hors du verrou du moniteur** (fil « chronologies », toutes les mi
 alerte jointe, nouvelle transition), 50 incidents au plus par tour. L'interface la lit sans rien demander ; les
 fichiers des incidents qui ne sont plus suivis sont effacés.
 
+- **Dossier** : préparé comme `restaurations` : rien n'est écrit ni effacé quand la protection du dossier de données est
+  en échec ; le dossier est créé avec les droits du dossier de données (SYSTEM et administrateurs, lecteurs en lecture),
+  ouvert sans suivre de lien, ses droits vérifiés. Le nom d'un fichier est l'identifiant de l'incident, vérifié
+  (`[A-Za-z0-9-]`, 64 caractères) : un incident relu avec un autre identifiant est écarté ; le ménage n'efface que des
+  fichiers ordinaires ainsi nommés.
+
 - **Éléments** : les résumés des alertes jointes, les transitions, et les événements du SIEM de l'entité dans la fenêtre
   [ouverture − 30 min, dernière activité + 30 min] : actions de réponse, événements des journaux, connexions, et tout
   changement d'état d'une collecte (`Source` « sante », PR 4.4 : un trou de collecte apparaît dans la chronologie). Les
   alertes du SIEM sont écartées, déjà présentes par les résumés. Ordre : heure UTC, puis numéro d'ordre.
-- **Lien avec l'entité** (`incidents::concerne`) : programme (nom du fichier du processus, ou chemin complet cité),
-  destination (destination, adresse ou texte), source d'une corrélation (adresse, ou compte avec ou sans domaine),
-  compte, règle.
-- **Bornes** : événements du SIEM lus sur les 3 derniers jours de fichiers au plus (20 000 au plus) ; 2000 éléments au
-  plus (au-delà, les 1000 premiers et les 1000 derniers, `Tronquee`) ; texte de chaque élément borné à 400 caractères,
-  nettoyé. `SansHeureUtc` compte les événements d'avant la phase 4, qui ne peuvent pas être placés ; `PertesSiem` dit
-  combien d'événements la file du SIEM a perdus depuis le démarrage : des étapes peuvent manquer.
-- **Reconstituable** : la même chronologie est recalculée à l'identique après un redémarrage, tant que les fichiers du
-  SIEM existent (30 jours ; lecture limitée aux 3 derniers jours) ; au-delà restent les résumés et les transitions de
-  l'incident.
+- **Lien avec l'entité** (`incidents::lien`) : programme (chemin complet de l'événement ou cité ; sans chemin, nom du
+  fichier seul, et l'élément porte alors `ParNom` : un autre programme du même nom peut en être l'auteur), destination
+  (destination, adresse ou texte), source d'une corrélation (adresse, ou compte avec ou sans domaine), compte, règle.
+- **Lecture du SIEM** : pour chaque incident, sur sa fenêtre seulement, les lignes qui citent son entité
+  (`incidents::cle_recherche`) puis la santé des collectes ; les connexions des autres programmes ne remplissent donc
+  pas la lecture.
+- **Bornes** (dossier de phase 4) : 3 jours de fichiers au plus (fenêtre plus longue : les 3 derniers jours) ; 20 000
+  événements par lecture ; 5 s par chronologie ; 2000 éléments (au-delà, les 1000 premiers et les 1000 derniers,
+  `Tronquee`) ; texte de chaque élément borné à 400 caractères, nettoyé. Si une borne de lecture est atteinte,
+  `FenetreSiemIncomplete` le dit. `SansHeureUtc` compte les événements d'avant la phase 4, qui ne peuvent pas être
+  placés ; `PertesSiem` dit combien d'événements la file du SIEM a perdus depuis le démarrage : des étapes peuvent
+  manquer.
+- **Après un redémarrage** : une chronologie déjà écrite pour le même état de l'incident (`Repere` : dernière activité,
+  transitions, alertes) est gardée telle quelle, pas recalculée. Quand l'incident change, elle est recalculée sur ce que
+  le SIEM a encore (30 jours de fichiers) : au-delà restent les résumés et les transitions de l'incident.
 
 ## Règles de stabilité
 

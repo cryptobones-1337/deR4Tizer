@@ -114,6 +114,18 @@ fn sids_lecteurs(l: &[Lecteur]) -> Vec<&str> {
     l.iter().filter(|x| sid_valide(&x.sid)).map(|x| x.sid.as_str()).collect()
 }
 
+/// Droits d'un sous-dossier de données que l'interface lit (chronologies, PR 4.3) : ceux du dossier de données, et les
+/// SID des lecteurs pour `droits_conformes`
+pub fn sddl_lecture() -> (String, Vec<String>) {
+    let l = lecteurs();
+    let sids: Vec<String> = sids_lecteurs(&l).into_iter().map(String::from).collect();
+    let mut sddl = SDDL_DOSSIER.to_string();
+    for s in &sids {
+        sddl.push_str(&format!("(A;OICI;0x1200a9;;;{s})"));
+    }
+    (sddl, sids)
+}
+
 /// Pose les droits : SYSTEM et administrateurs en contrôle total, lecteurs en lecture, rien d'autre. La DACL
 /// est remplacée en entier (une entrée posée par quelqu'un d'autre ne survit pas)
 fn appliquer(lecteurs: &[Lecteur]) -> bool {
