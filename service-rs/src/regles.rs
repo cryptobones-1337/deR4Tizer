@@ -71,6 +71,10 @@ registre! {
     COR_R10 = "COR-R10" : "pilote vulnérable installé (BYOVD)";
     INT_001 = "INT-001" : "échec de la protection du dossier de données";
     INT_002 = "INT-002" : "tube de commandes déjà pris par un autre processus";
+    SAN_001 = "SAN-001" : "collecte critique indisponible plus de 30 min";
+    SAN_002 = "SAN-002" : "collecte rétablie";
+    SAN_003 = "SAN-003" : "Defender (journal et état) illisible plus de 30 min";
+    SAN_012 = "SAN-012" : "alertes non suivies (plus de 500 incidents non clos)";
     EXP_IDS_001 = "EXP-IDS-001" : "IDS expérimental : règle au format Suricata (identifiant de la règle IDS dans les raisons)";
     EXP_DPI_001 = "EXP-DPI-001" : "DPI expérimental";
     EXP_NDR_001 = "EXP-NDR-001" : "NDR expérimental";

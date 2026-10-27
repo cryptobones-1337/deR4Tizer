@@ -35,7 +35,8 @@ pastille jaune compte les collectes en panne. Correspondance règle → sources 
 (Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
 domaines, LOLDrivers, relevé des démarrages automatiques, baseline, leurres, audit des données (SACL), `pfirewall.log`,
 extensions, magasin des consentements (caméra, micro), capture du trafic et du réseau local. Ne suivent aucune
-source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002. Par défaut, les listes de domaines sont toutes à licence
+source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, et les constats de santé SAN-* (qui portent sur les
+collectes elles-mêmes). Par défaut, les listes de domaines sont toutes à licence
 restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « sans collecte ».
 
 Ce que garantit « Active » : la source se **lit** (pour un journal suivi, le numéro du dernier événement et les
@@ -647,6 +648,44 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Faux positifs attendus** : aucun connu.
 - **Tests** : existants : `lot1_alerte_critique_locale_en_echec` (INT-001), `lot5_canal_squat_pid_et_alerte_critique`
   (INT-002) ; 3a (premier démarrage en échec fermé) pour INT-001.
+
+## SAN : santé de deR4Tizer (phase 4)
+
+| Id | Constat | Code | Niveau |
+|---|---|---|---|
+| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces` | `sante.rs` | Alerte |
+| SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
+| SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
+| SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
+
+- **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
+  un poste calme. Couper la vue sur Defender est ce qu'un attaquant gagne le plus à faire (SAN-003).
+- **Télémétrie** : l'état publié des collectes (`collectes::instantane`, PR 3.3) ; le compteur des alertes non suivies
+  du moniteur (SAN-012). Fil « sante », toutes les 30 s, hors du verrou du moniteur.
+- **Bornes** : un constat par collecte (SAN-001), ou par règle (SAN-003, SAN-012), et par 24 h au plus **pour une même
+  panne** : rétablie, la collecte peut de nouveau être signalée (audit de #98, S98-01). `Inconnue`
+  compte comme indisponible (échec fermé) ; une collecte relue moins souvent que toutes les 15 min (listes de menaces :
+  toutes les heures) ne compte que l'indisponibilité notée par sa source, pas son seul silence, qu'elle rattrape après
+  une veille (relecture de #98, D1) ; `Desactivee` (Sysmon absent, mode console) ne lève jamais rien. Jamais
+  adoucis par l'apprentissage (`apprentissage::signal_fort`). Décision en mémoire : après un redémarrage, une panne
+  déjà signalée peut l'être une fois de plus.
+- **Historique** : chaque changement d'état d'une collecte est écrit dans le SIEM (`Source` « sante », `Type`
+  « collecte »), au changement seulement ; le passage d'« Inconnue » à « Active » du démarrage est tu ; plus de 6
+  changements dans l'heure : collecte « instable », une ligne par heure au plus. La chronologie d'un incident les
+  reprend (PR 4.3).
+- **Faux positifs attendus** : redémarrage de Defender pendant une mise à jour de sa plateforme ; journal Sécurité plein
+  (à mesurer en VM) ; listes de menaces jamais téléchargées (poste sans Internet). Écarté : la veille d'un portable
+  (silence des listes de menaces jusqu'à leur prochain tour, test `sante_veille_silence_des_listes_sans_constat`).
+- **Limite** : une collecte coupée à répétition, moins de 30 min chaque fois, ne lève jamais SAN-001 (l'historique la dit
+  « instable » au-delà de 6 changements dans l'heure) ; un constat « instable » pour les collectes critiques est à
+  reprendre plus tard.
+- **Tests** : `sante_collecte_muette_30_min`, `sante_collecte_revenue_avant_30_min`, `sante_collecte_retablie`,
+  `sante_desactivee_sans_alerte`, `sante_inconnue_compte_indisponible`, `sante_defender_aveugle_critique`,
+  `sante_defender_un_seul_collecteur`, `sante_rappel_apres_24_h`, `sante_historique_au_changement_et_instable`,
+  `sante_veille_silence_des_listes_sans_constat`, `sante_rappel_remis_a_zero_au_retablissement`,
+  `incidents_plafond_non_clos`, `sante_jamais_adoucie_par_l_apprentissage` ; 3a (événement « sante » à l'arrêt d'une
+  collecte).
+- SAN-004 (remontée en échec), SAN-010 et SAN-011 (interface) : PR 4.4b et 4.5.
 
 ## EXP : modules expérimentaux (gelés)
 

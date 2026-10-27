@@ -112,7 +112,10 @@ pub fn editeur_pour_test(chemin: &str) -> String {
 /// Signaux forts : jamais appris ni adoucis par l'apprentissage, même au niveau « Alerte »
 pub fn signal_fort(a: &Alerte) -> bool {
     let r = a.raisons.to_lowercase();
-    a.destination.starts_with("IDS :")
+    // Constats de santé (SAN-*, phase 4) : jamais appris, sinon une collecte muette pendant l'apprentissage ne serait
+    // plus jamais signalée
+    a.regle.starts_with("SAN-")
+        || a.destination.starts_with("IDS :")
         || ["télécharge du code", "lolbin", "débogage à distance", "suppression des sauvegardes", "macro ou exploit"].iter().any(|m| r.contains(m))
 }
 
