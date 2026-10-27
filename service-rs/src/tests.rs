@@ -3847,6 +3847,11 @@ fn incident_meme_nom_autre_chemin_separe() {
     assert_eq!(entite(&a), "regle:DNS-001");
     a.chemin = "?".into();
     assert_eq!(entite(&a), "regle:DNS-001", "chemin inconnu (« ? ») ignoré");
+    // Audit de #95, S95-05 : deux chemins longs qui ne diffèrent qu'à la fin restent deux entités, bornées
+    let long = format!(r"C:\Outils\{}", "dossier\\".repeat(60));
+    let (e1, e2) = (entite(&alerte_incident("Alerte", &format!("{long}a.exe"), "PER-001", T0)), entite(&alerte_incident("Alerte", &format!("{long}b.exe"), "PER-001", T0)));
+    assert_ne!(e1, e2);
+    assert!(e1.chars().count() <= 280 && e2.chars().count() <= 280, "{}", e1.chars().count());
 }
 
 #[test]

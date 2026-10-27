@@ -92,8 +92,14 @@ pub fn entite(a: &Alerte) -> String {
         if !dest.is_empty() && dest != "?" { format!("destination:{}", dest.to_lowercase()) } else { format!("regle:{}", a.regle) }
     };
     // Bornée et nettoyée dès la création, comme à la relecture : l'entité d'une alerte et celle d'un incident relu sont
-    // identiques (audit de #95, S95-02)
-    crate::siem::texte_sur(&e, MAX_ENTITE)
+    // identiques (audit de #95, S95-02). Trop longue : le début, puis l'empreinte du texte entier, pour que deux chemins
+    // qui ne diffèrent qu'à la fin restent deux entités (audit de #95, S95-05)
+    let e = crate::siem::texte_sur(&e, usize::MAX);
+    if e.chars().count() <= MAX_ENTITE {
+        return e;
+    }
+    let empreinte = commun::empreinte_signature(&e);
+    format!("{}…{}", e.chars().take(MAX_ENTITE - 82).collect::<String>(), &empreinte[..80.min(empreinte.len())])
 }
 
 fn rang(niveau: &str) -> u8 {
@@ -352,10 +358,24 @@ pub fn decision_suivi(present: bool, taille: u64, texte: Option<&str>) -> Decisi
     }
 }
 
-/// Copie (ou déplacement) du suivi de côté, dans le dossier de données : `suivi-incidents-<raison>-<horodatage>.json`
+/// Copie (ou déplacement) du suivi de côté, dans le dossier de données, sous un nom neuf
+/// (`suivi-incidents-<raison>-<horodatage>[-<n>].json`) ; la copie crée sa destination neuve (`create_new`), jamais un
+/// fichier ou un lien posé à ce nom (audit de #95, S95-04, comme pour alertes.json)
 fn mettre_de_cote(f: &std::path::Path, raison: &str, copier: bool) -> bool {
-    let cote = f.with_file_name(format!("suivi-incidents-{raison}-{}.json", commun::filetime(std::time::SystemTime::now())));
-    commun::lecture_fichier_autorisee(f) && if copier { std::fs::copy(f, &cote).is_ok() } else { std::fs::rename(f, &cote).is_ok() }
+    if !commun::lecture_fichier_autorisee(f) {
+        return false;
+    }
+    let horodatage = commun::filetime(std::time::SystemTime::now());
+    let Some(cote) = (0..100)
+        .map(|n| f.with_file_name(if n == 0 { format!("suivi-incidents-{raison}-{horodatage}.json") } else { format!("suivi-incidents-{raison}-{horodatage}-{n}.json") }))
+        .find(|d| std::fs::symlink_metadata(d).is_err()) else { return false };
+    if copier {
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&cote)
+            .and_then(|mut d| std::fs::File::open(f).and_then(|mut s| std::io::copy(&mut s, &mut d)).map(|_| ()))
+            .is_ok()
+    } else {
+        std::fs::rename(f, &cote).is_ok()
+    }
 }
 
 /// Suivi au démarrage : (incidents, écriture permise), d'après `decision_suivi`. Une mise de côté qui échoue retient la
