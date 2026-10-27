@@ -563,7 +563,8 @@ fn borner(s: &mut String, max: usize) {
     }
 }
 
-/// Borne les champs d'une alerte (appelé à un seul endroit : ajouter_alerte_brute, APRÈS les décisions prises sur le
+/// Borne les champs d'une alerte (à la création, dans ajouter_alerte_brute, et à la relecture d'alertes.json depuis
+/// l'audit de #94, S94-02 ; à la création, APRÈS les décisions prises sur le
 /// texte entier : MITRE, signal fort, apprentissage ; AVANT tout usage : journal, export, notifications, SIEM,
 /// alertes.json). Les champs posés par le code (Mitre, Conseil, Regle, Collecte) sont bornés aussi, pour que la borne
 /// de taille reste vraie quand ils s'allongent (S72-07)
@@ -571,7 +572,7 @@ pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
-    // Heure UTC : 20 caractères quand le service la pose ; plus longue, elle vient d'un fichier altéré
+    // Heure UTC : 20 caractères quand le service la pose
     borner(&mut a.heure_utc, 32);
     for s in [&mut a.processus, &mut a.destination, &mut a.conseil] {
         borner(s, MAX_CHAMP_ALERTE);
@@ -600,7 +601,12 @@ pub fn lire_alertes_texte(texte: &str) -> Option<(Vec<Alerte>, usize)> {
     let mut alertes = Vec::with_capacity(elements.len());
     for e in elements {
         match serde_json::from_value::<Alerte>(e) {
-            Ok(a) => alertes.push(a),
+            // Bornée à la relecture aussi (audit de #94, S94-02) : un fichier altéré par un administrateur ne fait plus
+            // passer de champ démesuré vers l'interface et l'API ; sans effet sur une alerte écrite par le service
+            Ok(mut a) => {
+                borner_alerte(&mut a);
+                alertes.push(a)
+            }
             Err(_) => ecartees += 1,
         }
     }

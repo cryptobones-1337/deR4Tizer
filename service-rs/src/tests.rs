@@ -3704,6 +3704,11 @@ fn chronologie_ordre_utc_et_seq() {
     let json = serde_json::to_string(&a).unwrap();
     assert!(json.contains("\"HeureUtc\"") && json.contains("\"Seq\""), "{json}");
     let ancienne: crate::commun::Alerte = serde_json::from_str(r#"{"Id":"x","Heure":"2026-10-25 02:30:00","Niveau":"Alerte"}"#).unwrap();
+    // Audit de #94, S94-02 : une alerte relue d'un fichier altéré est bornée, HeureUtc comprise
+    let alteree = format!(r#"[{{"Id":"x","Niveau":"Alerte","HeureUtc":"{}","Raisons":"{}"}}]"#, "9".repeat(100_000), "r".repeat(100_000));
+    let (lues, ecartees) = crate::commun::lire_alertes_texte(&alteree).unwrap();
+    assert_eq!(ecartees, 0);
+    assert!(lues[0].heure_utc.chars().count() <= 40 && lues[0].raisons.chars().count() < 100_000, "relue bornée");
     assert!(ancienne.heure_utc.is_empty() && ancienne.seq == 0);
     let json = serde_json::to_string(&ancienne).unwrap();
     assert!(!json.contains("HeureUtc") && !json.contains("\"Seq\""), "champs absents non écrits : {json}");
@@ -3719,6 +3724,10 @@ fn siem_pertes_comptees() {
     crate::siem::deposer(&tx, crate::siem::Evenement::default());
     crate::siem::deposer(&tx, crate::siem::Evenement::default());
     assert!(crate::siem::pertes() >= avant + 2, "deux pertes comptées");
+    // Ligne de journal à la 1re, 10e, 100e… perte seulement
+    use crate::siem::puissance_de_dix;
+    assert!([1, 10, 100, 1000, 10_000_000].iter().all(|&n| puissance_de_dix(n)));
+    assert!([0, 2, 11, 110, 111, 101, 20, 1001].iter().all(|&n| !puissance_de_dix(n)));
 }
 
 /// Actions de réponse dans le SIEM, pour la chronologie : l'événement porte l'action, la cible, le résultat et le
@@ -3734,6 +3743,11 @@ fn reponse_journalisee_dans_le_siem() {
     assert!(e.message.contains("refusé ou en échec") && e.message.contains("fichier introuvable"));
     let e = evenement_reponse("tuer", "1234", true, &"x".repeat(5000), "automatique : règle");
     assert!(e.message.chars().count() < 500, "message borné");
+    // Audit de #94, S94-01 : cible venue du canal, même refusée par la validation : bornée et nettoyée
+    let cible = format!("a\u{202E}b\n{}", "y".repeat(70_000));
+    let e = evenement_reponse("bloquer", &cible, false, "nom refusé", "commande d'administrateur");
+    assert!(e.message.chars().count() < 1000 && e.destination.chars().count() <= 300, "cible bornée");
+    assert!(!e.message.contains('\u{202E}') && !e.message.contains('\n') && e.message.starts_with("bloquer a?b?"), "{}", &e.message[..40]);
     for a in ["bloquer", "bloquerIp", "debloquer", "tuer", "suspendre", "quarantaine", "restaurer", "isolerProgramme", "panique"] {
         assert!(ACTIONS_DE_REPONSE.contains(&a), "{a}");
     }
@@ -3747,5 +3761,9 @@ fn reponse_journalisee_dans_le_siem() {
     assert!(corps.contains("crate::siem::reponse(&action, &cible, r.ok, &r.message, \"commande d'administrateur\")"));
     assert!(m.contains("crate::siem::reponse(\"bloquerIp\", ip, r.ok, &r.message, &format!(\"automatique : {raison}\"))"));
     assert!(m.contains("crate::siem::reponse(\"debloquer\", &c, r.ok, &r.message, &format!(\"automatique : {pourquoi}\"))"));
+    // Suspension automatique d'un programme qui touche un leurre (relecture de #94, D1) : journalisée à chaque tentative
+    let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
+    assert!(v.contains("let suspendu = tentee && crate::reponse::suspendre(pid, true).is_ok();"));
+    assert!(v.contains("if tentee {\n                crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu,"));
 }
 

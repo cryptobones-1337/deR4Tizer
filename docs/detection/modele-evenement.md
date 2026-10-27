@@ -42,10 +42,13 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   vides, et n'est pas réhorodatée.
 - **Actions de réponse dans le SIEM** (phase 4, PR 4.1) : chaque commande de réponse (`bloquer`, `bloquerIp`,
   `debloquer`, `toutDebloquer`, `tuer`, `suspendre`, `reprendre`, `tuerChaine`, `quarantaine`, `restaurer`,
-  `restaurerRepli`, `isolerProgramme`, `panique`), le blocage automatique d'une adresse et sa levée à l'échéance
+  `restaurerRepli`, `isolerProgramme`, `panique`), le blocage automatique d'une adresse (listes de menaces, IPS) et sa
+  levée à l'échéance, et la suspension automatique d'un programme qui touche un leurre (LEU-002, chaque tentative)
   produisent un événement `Source` « reponse », `Type` le nom de l'action, `Destination` la cible, niveau « Info » si
   l'action a réussi, « Alerte » sinon, et un message qui dit le résultat et le déclencheur (« commande
-  d'administrateur » ou « automatique : … »), borné à 300 caractères. La logique des actions ne change pas.
+  d'administrateur » ou « automatique : … »). Cible, message et déclencheur sont bornés à 300 caractères et nettoyés
+  (caractères de contrôle et de mise en forme remplacés par « ? », audit de #94, S94-01). La logique des actions ne
+  change pas. Seule action qui n'y passe pas : la levée du mode panique au nettoyage de la désinstallation.
 - **Pertes de la file du SIEM** (phase 4, PR 4.1) : un événement qui ne trouve pas de place dans la file (20 000) est
   compté (`siem::pertes`), avec une ligne de journal à la 1re, 10e, 100e… perte ; avant, il disparaissait sans trace. Le
   compteur sera publié avec la santé (PR 4.4).

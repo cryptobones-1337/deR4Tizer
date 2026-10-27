@@ -470,7 +470,11 @@ Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », He
     $vus = @()
     while ((Get-Date) -lt $fin) {
         $vus = @(Get-ChildItem $siem -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } |
-            Where-Object { $_ -match '"Source":"reponse"' -and $_ -match [regex]::Escape($ip) } | ForEach-Object { $_ | ConvertFrom-Json })
+            Where-Object { $_ -match '"Source":"reponse"' -and $_ -match [regex]::Escape($ip) } | ForEach-Object {
+                # HeureUtc lue sur la ligne brute : PowerShell 7 convertirait la chaîne en date
+                $o = $_ | ConvertFrom-Json
+                $o | Add-Member -NotePropertyName HeureBrute -NotePropertyValue $(if ($_ -match '"HeureUtc":"([^"]*)"') { $Matches[1] } else { '' }) -PassThru
+            })
         if (@($vus | Where-Object { $_.Type -eq 'debloquer' }).Count) { break }
         Start-Sleep 2
     }
@@ -479,7 +483,7 @@ Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », He
     if (-not $bloc) { return "aucun événement « reponse » bloquerIp pour $ip en 90 s ($($vus.Count) vus)" }
     if (-not $levee) { return "aucun événement « reponse » debloquer pour $ip en 90 s" }
     if ($bloc.Niveau -ne 'Info' -or $bloc.Message -notmatch 'commande d''administrateur') { return "événement de blocage inattendu : $($bloc.Niveau) / $($bloc.Message)" }
-    if ($bloc.HeureUtc -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$' -or -not ($bloc.Seq -gt 0)) { return "horodatage absent : HeureUtc « $($bloc.HeureUtc) », Seq « $($bloc.Seq) »" }
+    if ($bloc.HeureBrute -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$' -or -not ($bloc.Seq -gt 0)) { return "horodatage absent : HeureUtc « $($bloc.HeureBrute) », Seq « $($bloc.Seq) »" }
     if (-not ($levee.Seq -gt $bloc.Seq)) { return "ordre : Seq de la levée ($($levee.Seq)) pas après celui du blocage ($($bloc.Seq))" }
     $true
 }

@@ -105,10 +105,18 @@ pub fn enregistrer(mut e: Evenement) {
 pub(crate) fn deposer(file: &SyncSender<Evenement>, e: Evenement) {
     if file.try_send(e).is_err() {
         let n = PERTES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n.to_string().trim_start_matches('1').chars().all(|c| c == '0') {
+        if puissance_de_dix(n) {
             commun::journal(&format!("mini-SIEM : file pleine, {n} événement(s) perdu(s) depuis le démarrage"));
         }
     }
+}
+
+/// 1, 10, 100… (relecture de #94, D2 : le test précédent acceptait aussi 11, 110…)
+pub(crate) fn puissance_de_dix(mut n: u64) -> bool {
+    while n >= 10 && n % 10 == 0 {
+        n /= 10;
+    }
+    n == 1
 }
 
 /// Événements perdus depuis le démarrage (file pleine)
@@ -125,16 +133,25 @@ pub(crate) const ACTIONS_DE_REPONSE: &[&str] = &[
 /// Événement d'une action de réponse (pur, testé) : action, cible, résultat (réussi, ou refusé avec la raison) et
 /// déclencheur (« commande d'administrateur », ou « automatique : <raison> »)
 pub(crate) fn evenement_reponse(action: &str, cible: &str, ok: bool, message: &str, declencheur: &str) -> Evenement {
-    let message = message.chars().take(300).collect::<String>();
+    // Audit de #94, S94-01 : la cible vient du canal, même quand la validation la refuse ; bornée et nettoyée partout
+    let (cible, message, declencheur) = (texte_sur(cible, 300), texte_sur(message, 300), texte_sur(declencheur, 300));
     Evenement {
         heure: commun::maintenant(),
         source: "reponse".into(),
         type_: action.into(),
         niveau: if ok { "Info" } else { "Alerte" }.into(),
-        destination: cible.chars().take(300).collect(),
+        destination: cible.clone(),
         message: format!("{action} {cible} : {} ({declencheur}) — {message}", if ok { "réussi" } else { "refusé ou en échec" }),
         ..Default::default()
     }
+}
+
+/// Texte borné à `max` caractères, sans caractère de contrôle ni de mise en forme (sens d'écriture, largeur nulle),
+/// remplacés par « ? » : il est affiché tel quel par l'interface (pur, testé)
+pub(crate) fn texte_sur(s: &str, max: usize) -> String {
+    let mise_en_forme = |c: char| matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}'
+                                              | '\u{2066}'..='\u{206F}' | '\u{FEFF}');
+    s.chars().take(max).map(|c| if c.is_control() || mise_en_forme(c) { '?' } else { c }).collect()
 }
 
 /// Journalise une action de réponse dans le SIEM
