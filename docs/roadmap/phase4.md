@@ -47,12 +47,13 @@ concordent.
 
 ## Décisions
 
-Le mainteneur a demandé, le 2026-10-26, d'enchaîner sur la phase 4 sans attendre sa validation de la phase 3, les
-décisions ouvertes étant tranchées selon les recommandations du dossier de conception et écrites ici.
+Le mainteneur a demandé, le 2026-10-26, d'enchaîner sur la phase 4 sans attendre sa validation de la phase 3 (réponse
+« Enchaîner sur la phase 4 »). Dans le cadre de cette réponse, les décisions ouvertes ont été **tranchées par l'agent**,
+selon les recommandations du dossier de conception ; le mainteneur peut revenir sur chacune.
 
 | # | Décision | Retenu |
 |---|---|---|
-| D4-1 | Interface disparue : relancer ou alerter | Relance par une tâche planifiée posée par le MSI, sous l'identité de l'utilisateur ; repérage et alerte par le service (SAN-010 après 15 min d'absence, SAN-011 après 3 arrêts en une heure), remontés au prestataire. **Sous réserve d'un essai en VM avant la PR 4.5** : descripteur de la tâche (non modifiable par un compte standard), sessions Bureau à distance, changement rapide d'utilisateur, retour arrière vers une version sans relance. Si l'essai échoue : alerte seule (SAN-010, SAN-011), sans relance. Une relance directe par le service (création de processus dans la session) n'est pas retenue sans accord explicite du mainteneur. |
+| D4-1 | Interface disparue : relancer ou alerter | Repérage et alerte par le service (SAN-010 après 15 min d'absence, SAN-011 après 3 arrêts en une heure), remontés au prestataire : retenus. La **relance** par une tâche planifiée posée par le MSI, sous l'identité de l'utilisateur, est un comportement privilégié (`CLAUDE.md`, section 4, « Avant chaque lot », point 3) : elle attend **l'accord explicite du mainteneur** avant la PR 4.5, puis un essai en VM (descripteur de la tâche non modifiable par un compte standard, sessions Bureau à distance, changement rapide d'utilisateur, retour arrière vers une version sans relance). Sans cet accord, ou si l'essai échoue : alerte seule, sans relance. Une relance directe par le service (création de processus dans la session) n'est pas envisagée. |
 | D4-2 | Fichier du suivi | Nouveau `suivi-incidents.json`, écrit par le moniteur seul ; `incidents.json` (corrélations du SIEM) inchangé. |
 | D4-3 | Fermeture automatique d'un incident | Jamais. Un incident sans activité depuis 7 jours est seulement affiché « inactif ». |
 | D4-4 | `HeureUtc` et `Seq` dans `Alerte` et `Evenement` | Oui, en ajouts au modèle 1 : sans eux, la chronologie se trompe d'ordre pendant l'heure répétée du passage à l'heure d'hiver. |
@@ -65,6 +66,17 @@ décisions ouvertes étant tranchées selon les recommandations du dossier de co
 
 ## Preuve
 
-GitHub Actions est toujours désactivé. Comme pour la phase 3, la preuve locale en VM (`CLAUDE.md`, section 4,
-« Exception temporaire ») tient lieu de CI pour les PR de la phase 4. Rien ne change pour la distribution : CI GitHub
-verte, lot 3d réussi, binaires signés et relecture indépendante restent exigés.
+GitHub Actions est toujours désactivé. `CLAUDE.md` ne prévoit la preuve locale en VM à la place de la CI GitHub que pour
+la phase 3. Pour la phase 4, elle est **appliquée d'après la réponse du mainteneur du 2026-10-26**, en attendant qu'il
+l'inscrive dans `CLAUDE.md`. Rien ne change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et
+relecture indépendante restent exigés.
+
+## À inscrire dans `CLAUDE.md` par le mainteneur
+
+L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé, sous la section 5, point 3 :
+
+- Ouverture : le 2026-10-26, le mainteneur a demandé d'enchaîner sur la phase 4 à la fin de la phase 3, sans attendre sa
+  validation de celle-ci (réponse « Enchaîner sur la phase 4 »). Décisions de la phase : `docs/roadmap/phase4.md`.
+- Comme pour la phase 3, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub pour les
+  PR de la phase 4. Rien ne change pour la distribution.
+- D4-1 : la relance de l'interface par une tâche planifiée attend l'accord explicite du mainteneur avant la PR 4.5.
