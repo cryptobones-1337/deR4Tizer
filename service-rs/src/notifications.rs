@@ -90,14 +90,16 @@ pub fn a_retenter(a: &Alerte) -> bool {
 }
 
 impl FileReprise {
-    /// Met en file les alertes à retenter d'un lot non remis, sans doublon (même Id) ; pleine, la plus ancienne part
+    /// Met en file les alertes à retenter d'un lot non remis, sans doublon (même Id). Pleine, la plus ancienne de la
+    /// seconde moitié part : les 50 premières restent (audit de #99, S99-01 : sinon 100 alertes critiques provoquées
+    /// pendant une panne chasseraient la vraie, qui est la première)
     pub fn ajouter(&mut self, lot: &[Alerte], t: i64) {
         for a in lot.iter().filter(|a| a_retenter(a)) {
             if self.entrees.iter().any(|r| r.alerte.id == a.id) {
                 continue;
             }
             if self.entrees.len() >= REPRISE_MAX {
-                self.entrees.pop_front();
+                self.entrees.remove(REPRISE_MAX / 2);
                 self.abandonnees += 1;
             }
             self.entrees.push_back(Reprise { alerte: a.clone(), premier_echec: t, essais: 0, prochain: t + REPRISE_DELAIS_S[0] });
@@ -418,9 +420,12 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
             Ok(Message::Config(c)) => {
                 config = c;
-                // Remontée coupée : plus d'échec à signaler (SAN-004), plus rien à retenter
+                // Réglages changés (canaux, destinations) : la file n'est pas envoyée vers la nouvelle destination ;
+                // ses alertes sont comptées abandonnées et restent dans alertes.json (audit de #99, S99-03)
+                reprise.abandonnees += reprise.entrees.len() as u64;
+                reprise.entrees.clear();
+                // Remontée coupée : plus d'échec à signaler (SAN-004)
                 if !actif(&config) {
-                    reprise = FileReprise::default();
                     etat.echec_depuis.clear();
                     ECHEC_DEPUIS.store(0, Ordering::Relaxed);
                 }
@@ -496,7 +501,10 @@ fn envoyer_partout(config: &ConfigNotifications, lot: &[Alerte], etat: &mut Etat
         tentes += 1;
         if let Err(e) = courriel(config, &s, lot) { erreurs.push(format!("e-mail : {e}")); }
     }
-    let ok = remis(tentes, erreurs.len());
+    if tentes == 0 {
+        erreurs.push("aucun canal utilisable (adresse, secret ou serveur absent)".to_string());
+    }
+    let ok = remis(tentes, erreurs.len().min(tentes));
     etat.envoyes += 1;
     etat.dernier_envoi = commun::maintenant();
     etat.derniere_erreur = erreurs.join(" ; ");

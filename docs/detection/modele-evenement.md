@@ -143,15 +143,19 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
 - **Remis** : un lot est remis si au moins un canal tenté a réussi ; remis sur un seul canal, il n'est pas retenté (il
   y arriverait en double). Aucun canal tenté (secrets absents) : non remis.
 - **File de reprise** : les alertes critiques et les constats SAN-* (sauf SAN-004) d'un lot non remis ; sans doublon
-  (même `Id`) ; 100 au plus (la plus ancienne part) ; 24 h au plus ; essais à +1, +5, +15, +60 min, puis toutes les
+  (même `Id`) ; 100 au plus (pleine, les 50 premières restent et la seconde moitié tourne : des alertes provoquées en
+  nombre ne chassent pas la première) ; 24 h au plus ; essais à +1, +5, +15, +60 min, puis toutes les
   heures, en un lot. **En mémoire** (D4-8) : un redémarrage la vide ; les alertes restent dans `alertes.json`.
 - **SAN-004** : remontée en échec depuis plus d'une heure ; constat local, jamais remonté ni mis en file.
 - **Battement** (D4-6) : quand la remontée est configurée, un message par jour à partir de 09:00 locale, niveau
   « Info », hors plafond et hors niveau minimal : incidents non clos, collectes actives et indisponibles (identifiants
   des collectes critiques indisponibles), alertes en attente. Compteurs seulement : aucun nom de compte, de programme
-  ni de ligne de commande. Sans battement, le prestataire sait que le service est arrêté, le poste éteint ou la
-  remontée coupée.
-- Remontée coupée par l'administrateur : la file est vidée et l'échec effacé.
+  ni de ligne de commande. S'il surveille l'absence du battement, le prestataire peut en déduire que le service est
+  arrêté, le poste éteint ou la remontée coupée.
+- Réglages de la remontée changés : la file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir
+  vers la nouvelle destination ; remontée coupée : l'échec est aussi effacé.
+- Remis sur un seul canal, un lot compte comme remis : un canal cassé en permanence ne lève pas SAN-004 tant qu'un autre
+  marche ; son erreur reste dans `DerniereErreur`. Aucun canal utilisable : « aucun canal utilisable » y est écrit.
 
 ## Suivi des incidents (phase 4, PR 4.2)
 

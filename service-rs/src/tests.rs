@@ -4478,7 +4478,10 @@ fn remontee_file_bornee_100_24h() {
     let mut f = FileReprise::default();
     let lot: Vec<_> = (0..REPRISE_MAX + 5).map(|k| alerte_remontee(&format!("a{k}"), "Critique", "")).collect();
     f.ajouter(&lot, 0);
-    assert_eq!((f.entrees.len(), f.abandonnees, f.entrees[0].alerte.id.as_str()), (REPRISE_MAX, 5, "a5"), "les plus anciennes partent");
+    assert_eq!((f.entrees.len(), f.abandonnees), (REPRISE_MAX, 5));
+    let ids: Vec<_> = f.entrees.iter().map(|r| r.alerte.id.clone()).collect();
+    assert_eq!((ids[0].as_str(), ids[49].as_str(), ids[50].as_str(), ids[99].as_str()), ("a0", "a49", "a55", "a104"),
+               "les 50 premières restent ; la seconde moitié tourne (S99-01)");
     assert_eq!(f.dues(86_399).len(), REPRISE_MAX);
     assert!(f.dues(86_400).is_empty(), "24 h au plus");
     assert_eq!((f.entrees.len(), f.abandonnees), (0, 5 + REPRISE_MAX as u64));
