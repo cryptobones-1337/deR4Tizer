@@ -456,6 +456,34 @@ Verifier 'Alerte de persistance produite juste avant un arrêt : enregistrée da
     }
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.1 : actions de réponse dans le SIEM
+# Blocage manuel d'une adresse de documentation (RFC 5737 : aucune connexion n'est ouverte vers elle), puis sa levée :
+# deux événements « reponse » dans le SIEM, avec l'heure UTC et le numéro d'ordre (ordre total, D4-4)
+Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », HeureUtc, Seq)' {
+    $ip = '203.0.113.77'
+    $b = Commande (@{ Action = 'bloquerIp'; Ip = $ip; Raison = 'témoin 4.1' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+    if (-not $b.Ok) { return "blocage refusé : $($b.Message)" }
+    $d = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+    if (-not $d.Ok) { return "levée refusée : $($d.Message)" }
+    $siem = Join-Path $script:Donnees 'siem'
+    $fin = (Get-Date).AddSeconds(90)
+    $vus = @()
+    while ((Get-Date) -lt $fin) {
+        $vus = @(Get-ChildItem $siem -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } |
+            Where-Object { $_ -match '"Source":"reponse"' -and $_ -match [regex]::Escape($ip) } | ForEach-Object { $_ | ConvertFrom-Json })
+        if (@($vus | Where-Object { $_.Type -eq 'debloquer' }).Count) { break }
+        Start-Sleep 2
+    }
+    $bloc = @($vus | Where-Object { $_.Type -eq 'bloquerIp' }) | Select-Object -Last 1
+    $levee = @($vus | Where-Object { $_.Type -eq 'debloquer' }) | Select-Object -Last 1
+    if (-not $bloc) { return "aucun événement « reponse » bloquerIp pour $ip en 90 s ($($vus.Count) vus)" }
+    if (-not $levee) { return "aucun événement « reponse » debloquer pour $ip en 90 s" }
+    if ($bloc.Niveau -ne 'Info' -or $bloc.Message -notmatch 'commande d''administrateur') { return "événement de blocage inattendu : $($bloc.Niveau) / $($bloc.Message)" }
+    if ($bloc.HeureUtc -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$' -or -not ($bloc.Seq -gt 0)) { return "horodatage absent : HeureUtc « $($bloc.HeureUtc) », Seq « $($bloc.Seq) »" }
+    if (-not ($levee.Seq -gt $bloc.Seq)) { return "ordre : Seq de la levée ($($levee.Seq)) pas après celui du blocage ($($bloc.Seq))" }
+    $true
+}
+
 # ---------------------------------------------------------------- désinstallation complète
 $regles1 = Reglesparefeu
 Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés' {

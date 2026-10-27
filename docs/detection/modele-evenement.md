@@ -25,6 +25,8 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
 | `Regle` | texte, omis si vide | « » | identifiant de la règle (`docs/detection/regles.md`), « » si l'alerte n'est rattachée à aucune |
 | `Collecte` | texte, omis si vide | « » | collecte d'où vient l'alerte (identifiant de `etat.json`, `Collectes`), PR 3.3c |
 | `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » avant le filtrage (y compris celles que l'apprentissage baisse en « Info ») ; c'est elle qu'une exception posée depuis l'alerte vise |
+| `HeureUtc` | texte, omis si vide | « » | heure UTC de création (RFC 3339 à la seconde, « …Z »), phase 4, PR 4.1 ; bornée à 32 caractères |
+| `Seq` | entier, omis si 0 | 0 | numéro d'ordre de création, croissant depuis le démarrage du service (remis à zéro à chaque démarrage), phase 4, PR 4.1 |
 
 - `Modele` est posé à un seul endroit (`ajouter_alerte_brute`), et seulement s'il vaut 0 : une alerte relue d'un
   ancien fichier garde 0, son histoire n'est pas réécrite.
@@ -33,6 +35,20 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   `Signature`). `Modele` vaut 1 sur **tous** les événements enregistrés depuis cette version, qu'ils viennent d'une
   alerte ou d'un journal de Windows ; `Regle` est repris de l'alerte d'origine (vide pour un événement qui n'en vient pas).
   Les lignes NDJSON existantes se relisent, avec `Modele` 0.
+- **Ordre total** (phase 4, PR 4.1, décision D4-4) : `HeureUtc` et `Seq` sont posés sur chaque nouvelle alerte (au même
+  endroit que `Modele`) et sur chaque événement du SIEM à son enregistrement. L'événement tiré d'une alerte reprend son
+  `HeureUtc`. L'heure locale (`Heure`) reste, inchangée ; elle est ambiguë pendant l'heure répétée du passage à l'heure
+  d'hiver, l'ordre se fait sur (`HeureUtc`, `Seq`). Une alerte ou une ligne d'avant la phase 4 se relit avec ces champs
+  vides, et n'est pas réhorodatée.
+- **Actions de réponse dans le SIEM** (phase 4, PR 4.1) : chaque commande de réponse (`bloquer`, `bloquerIp`,
+  `debloquer`, `toutDebloquer`, `tuer`, `suspendre`, `reprendre`, `tuerChaine`, `quarantaine`, `restaurer`,
+  `restaurerRepli`, `isolerProgramme`, `panique`), le blocage automatique d'une adresse et sa levée à l'échéance
+  produisent un événement `Source` « reponse », `Type` le nom de l'action, `Destination` la cible, niveau « Info » si
+  l'action a réussi, « Alerte » sinon, et un message qui dit le résultat et le déclencheur (« commande
+  d'administrateur » ou « automatique : … »), borné à 300 caractères. La logique des actions ne change pas.
+- **Pertes de la file du SIEM** (phase 4, PR 4.1) : un événement qui ne trouve pas de place dans la file (20 000) est
+  compté (`siem::pertes`), avec une ligne de journal à la 1re, 10e, 100e… perte ; avant, il disparaissait sans trace. Le
+  compteur sera publié avec la santé (PR 4.4).
 
 ## Compatibilité
 
@@ -96,14 +112,9 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
 Décrit ici pour fixer le format avant le code (`docs/roadmap/phase4.md`) ; chaque point devient vrai avec la PR qui
 l'apporte, et cette section sera réécrite à ce moment-là.
 
-- **Ordre total** (PR 4.1, décision D4-4) : `Alerte` et `Evenement` gagnent `HeureUtc` (RFC 3339, en « Z ») et `Seq`
-  (compteur croissant, remis à zéro à chaque démarrage du service). Ce sont des ajouts de champs : `Modele` reste à 1.
-  L'heure locale (`Heure`) est ambiguë pendant l'heure répétée du passage à l'heure d'hiver ; l'ordre se fera sur
-  (`HeureUtc`, `Seq`), et les éléments d'avant la phase 4, qui n'ont que l'heure locale, seront signalés « ordre
-  approximatif ».
-- **Nouvelles sources d'événements du SIEM** : `Source` « reponse » (PR 4.1 : chaque action de réponse existante, avec
-  sa cible, son résultat et son déclencheur) et « sante » (PR 4.4 : chaque changement d'état d'une collecte, écrit au
-  changement seulement).
+- **Ordre approximatif** : dans la chronologie (PR 4.3), les éléments d'avant la phase 4, qui n'ont que l'heure locale,
+  seront signalés « ordre approximatif ».
+- **Source « sante »** (PR 4.4) : chaque changement d'état d'une collecte, écrit au changement seulement.
 - **Suivi des incidents** (PR 4.2) : nouveau fichier `suivi-incidents.json`, tableau d'incidents, écrit par le moniteur
   seul ; chaque élément porte `Modele` 1, un identifiant, l'heure d'ouverture (locale et UTC), la dernière activité, le
   niveau (le plus haut des alertes jointes, qui ne baisse jamais), l'entité (chemin complet du programme, sinon

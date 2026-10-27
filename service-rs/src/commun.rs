@@ -477,6 +477,16 @@ pub struct Alerte {
     /// exception posée depuis cette alerte vise (audit de sécurité de #72, S72-10)
     #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
     pub signature: String,
+    /// Heure UTC (RFC 3339, « …Z ») et numéro d'ordre de création (phase 4, PR 4.1, D4-4) : l'heure locale est ambiguë
+    /// pendant l'heure répétée du passage à l'heure d'hiver ; la chronologie ordonne sur (`HeureUtc`, `Seq`)
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub heure_utc: String,
+    #[serde(default, skip_serializing_if = "est_zero")]
+    pub seq: u64,
+}
+
+fn est_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// Empreinte d'une signature de comportement (apprentissage, exceptions) : taille fixe, quel que soit le texte
@@ -494,6 +504,39 @@ pub fn marquer_modele(a: &mut Alerte) {
     if a.modele == 0 {
         a.modele = MODELE_ALERTE;
     }
+    horodater(&mut a.heure_utc, &mut a.seq);
+}
+
+/// Numéro d'ordre de création des alertes et des événements, croissant depuis le démarrage du service (remis à zéro à
+/// chaque démarrage ; `Etat.Demarrage` dit lequel)
+static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Pose l'heure UTC et le numéro d'ordre s'ils manquent (une alerte relue d'un ancien fichier garde les siens, vides :
+/// son histoire n'est pas réécrite ; elle n'est horodatée qu'à sa création, par l'appelant de `marquer_modele`)
+pub fn horodater(heure_utc: &mut String, seq: &mut u64) {
+    if heure_utc.is_empty() {
+        *heure_utc = heure_utc_de(SystemTime::now());
+    }
+    if *seq == 0 {
+        *seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    }
+}
+
+/// Heure UTC au format RFC 3339 à la seconde (« 2026-10-25T01:30:00Z »), sans dépendance (pur, testé) ; jours civils
+/// par l'algorithme de Howard Hinnant
+pub fn heure_utc_de(t: SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let (jours, reste) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let z = jours + 719_468;
+    let ere = z.div_euclid(146_097);
+    let jde = z - ere * 146_097;
+    let ade = (jde - jde / 1460 + jde / 36_524 - jde / 146_096) / 365;
+    let jda = jde - (365 * ade + ade / 4 - ade / 100);
+    let mp = (5 * jda + 2) / 153;
+    let jour = jda - (153 * mp + 2) / 5 + 1;
+    let mois = if mp < 10 { mp + 3 } else { mp - 9 };
+    let an = ade + ere * 400 + if mois <= 2 { 1 } else { 0 };
+    format!("{an:04}-{mois:02}-{jour:02}T{:02}:{:02}:{:02}Z", reste / 3600, reste % 3600 / 60, reste % 60)
 }
 
 /// Longueurs maximales (caractères) des champs d'une alerte qui peuvent venir de l'extérieur (audit de sécurité de #72,
@@ -528,6 +571,8 @@ pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
+    // Heure UTC : 20 caractères quand le service la pose ; plus longue, elle vient d'un fichier altéré
+    borner(&mut a.heure_utc, 32);
     for s in [&mut a.processus, &mut a.destination, &mut a.conseil] {
         borner(s, MAX_CHAMP_ALERTE);
     }
