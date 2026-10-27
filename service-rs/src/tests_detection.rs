@@ -1044,7 +1044,7 @@ fn ext_001_negatif() {
 // incidents portent « R<n> » ; le registre les publie en COR-R<n> (siem::regle_correlation). COR-R10 n'est pas exercée :
 // sa vérification (hygiene::pilote_vulnerable) télécharge la liste LOLDrivers.
 
-fn evenement_siem(type_: &str, champs: &[(&str, &str)]) -> crate::siem::Evenement {
+pub(crate) fn evenement_siem(type_: &str, champs: &[(&str, &str)]) -> crate::siem::Evenement {
     let mut e = crate::siem::Evenement { heure: "2026-10-27 01:00:00".into(), source: "securite".into(), type_: type_.into(),
                                          niveau: "Alerte".into(), message: format!("événement {type_}"), ..Default::default() };
     for (c, v) in champs {

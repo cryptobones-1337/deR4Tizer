@@ -3133,7 +3133,7 @@ fn phase3_alerte_bornee_pire_cas() {
     let x: String = "\u{10FFFF}".repeat(5000);
     let mut a = Alerte { id: x.clone(), heure: x.clone(), niveau: x.clone(), processus: x.clone(), chemin: x.clone(), destination: x.clone(),
         ip: Some(x.clone()), nom_dns: Some(x.clone()), raisons: x.clone(), mitre: x.clone(), conseil: x.clone(), parent: x.clone(),
-        regle: x.clone(), collecte: x.clone(), signature: x.clone(), heure_utc: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX,
+        regle: x.clone(), collecte: x.clone(), signature: x.clone(), heure_utc: x.clone(), entite: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX,
         seq: u64::MAX };
     borner_alerte(&mut a);
     let octets = serde_json::to_vec(&a).unwrap().len();
@@ -4018,5 +4018,144 @@ fn incident_decision_au_demarrage() {
     let s = include_str!("incidents.rs").replace("\r\n", "\n");
     assert!(s.contains("let ok = mettre_de_cote(&f, \"partiel\", true);") && s.contains("(s, ok)"));
     assert!(s.contains("let ok = mettre_de_cote(&f, \"trop-grand\", false);") && s.contains("(Vec::new(), ok)"));
+}
+
+// ------------------------------------------------------------ phase 4, PR 4.3 : chronologie et entité des corrélations
+
+fn evenement_chrono(source: &str, heure_utc: &str, seq: u64, champs: &[(&str, &str)]) -> crate::siem::Evenement {
+    let mut e = crate::siem::Evenement { source: source.into(), heure_utc: heure_utc.into(), seq, heure: "h".into(), niveau: "Info".into(),
+                                         message: format!("{source} {seq}"), ..Default::default() };
+    for (c, v) in champs {
+        match *c {
+            "processus" => e.processus = v.to_string(),
+            "ip" => e.ip = v.to_string(),
+            "destination" => e.destination = v.to_string(),
+            "utilisateur" => e.utilisateur = v.to_string(),
+            "regle" => e.regle = v.to_string(),
+            "message" => e.message = v.to_string(),
+            _ => panic!("{c}"),
+        }
+    }
+    e
+}
+
+fn incident_chrono(entite: &str) -> crate::incidents::IncidentSuivi {
+    crate::incidents::IncidentSuivi { id: "i1".into(), entite: entite.into(), ouverture_utc: "2026-10-27T07:00:00Z".into(),
+                                      derniere_activite_utc: "2026-10-27T08:00:00Z".into(), ..Default::default() }
+}
+
+/// Corrélations du SIEM : l'entité est la source (adresse ou compte), et R1 puis R2 de la même source rejoignent le même
+/// incident ; deux sources font deux incidents
+#[test]
+fn chronologie_entite_des_correlations() {
+    use crate::siem::Correlation;
+    let mut c = Correlation::default();
+    let mut entites = Vec::new();
+    for ip in ["192.0.2.10", "192.0.2.11"] {
+        for _ in 0..5 {
+            entites.extend(c.analyser(&crate::tests_detection::evenement_siem("echec-session", &[("ip", ip), ("utilisateur", "essai")])).into_iter().map(|i| (i.regle, i.entite)));
+        }
+    }
+    entites.extend(c.analyser(&crate::tests_detection::evenement_siem("ouverture-session", &[("ip", "192.0.2.10"), ("utilisateur", "essai")])).into_iter().map(|i| (i.regle, i.entite)));
+    assert_eq!(entites, [("R1".to_string(), "source:192.0.2.10".to_string()), ("R1".into(), "source:192.0.2.11".into()), ("R2".into(), "source:192.0.2.10".into()),
+                         ("R9".into(), "source:192.0.2.10".into())], "adresse publique : R9 aussi, même source");
+    // L'alerte levée par l'incident porte son entité
+    let mut c = Correlation::default();
+    let i: Vec<_> = (0..5).flat_map(|_| c.analyser(&crate::tests_detection::evenement_siem("echec-session", &[("ip", "192.0.2.12"), ("utilisateur", "essai")]))).collect();
+    let a = crate::siem::alerte_de_correlation(&i[0]);
+    assert_eq!((a.regle.as_str(), a.entite.as_str()), ("COR-R1", "source:192.0.2.12"));
+    // Dans le suivi : l'entité nommée par le producteur passe avant la destination
+    let mut a = alerte_incident("Alerte", "", "COR-R1", T0);
+    a.destination = "incident : Tentatives de mot de passe en série".into();
+    a.entite = "source:192.0.2.10".into();
+    let mut b = alerte_incident("Critique", "", "COR-R2", T0);
+    b.destination = "incident : Session ouverte après une série d'échecs".into();
+    b.entite = "source:192.0.2.10".into();
+    let mut s = Vec::new();
+    crate::incidents::appliquer(&mut s, &a, t0());
+    crate::incidents::appliquer(&mut s, &b, t0() + 60);
+    assert_eq!((s.len(), s[0].niveau.as_str(), s[0].regles.len()), (1, "Critique", 2));
+    // Compte pour COR-R3
+    let e = [crate::tests_detection::evenement_siem("compte-cree", &[("destination", r"POSTE\nouveau")]), crate::tests_detection::evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\nouveau")])];
+    let mut c = Correlation::default();
+    let i: Vec<_> = e.iter().flat_map(|e| c.analyser(e)).collect();
+    assert_eq!(i[0].entite, "compte:nouveau");
+}
+
+#[test]
+fn chronologie_concerne_selon_l_entite() {
+    use crate::incidents::concerne;
+    let prog = incident_chrono(r"programme:c:\outils\voleur.exe");
+    assert!(concerne(&prog, &evenement_chrono("processus", T0, 1, &[("processus", "VOLEUR.exe")])));
+    assert!(concerne(&prog, &evenement_chrono("reponse", T0, 1, &[("destination", r"c:\outils\voleur.exe")])), "action de réponse sur le programme");
+    assert!(!concerne(&prog, &evenement_chrono("processus", T0, 1, &[("processus", "autre.exe")])));
+    let dest = incident_chrono("destination:203.0.113.9");
+    assert!(concerne(&dest, &evenement_chrono("reponse", T0, 1, &[("destination", "203.0.113.9")])));
+    assert!(concerne(&dest, &evenement_chrono("connexion", T0, 1, &[("ip", "203.0.113.9")])));
+    assert!(!concerne(&dest, &evenement_chrono("connexion", T0, 1, &[("ip", "203.0.113.90")])));
+    let source = incident_chrono("source:192.0.2.10");
+    assert!(concerne(&source, &evenement_chrono("securite", T0, 1, &[("ip", "192.0.2.10")])));
+    assert!(!concerne(&source, &evenement_chrono("securite", T0, 1, &[("ip", "192.0.2.100")])), "adresse entière, pas un préfixe");
+    let compte = incident_chrono("source:compte essai");
+    assert!(concerne(&compte, &evenement_chrono("securite", T0, 1, &[("utilisateur", r"POSTE\essai")])));
+    assert!(!concerne(&compte, &evenement_chrono("securite", T0, 1, &[("utilisateur", r"POSTE\essai2")])));
+    let regle = incident_chrono("regle:DNS-001");
+    assert!(concerne(&regle, &evenement_chrono("alerte", T0, 1, &[("regle", "DNS-001")])));
+    assert!(!concerne(&regle, &evenement_chrono("alerte", T0, 1, &[("regle", "DNS-002")])));
+    // Santé des collectes : concerne tous les incidents (trous de collecte)
+    assert!(concerne(&regle, &evenement_chrono("sante", T0, 1, &[])));
+}
+
+#[test]
+fn chronologie_ordre_fenetre_et_trous() {
+    use crate::incidents::{construire, transition, EtatIncident};
+    let mut i = incident_chrono(r"programme:c:\outils\a.exe");
+    i.alertes.push(crate::incidents::ResumeAlerte { heure_utc: "2026-10-27T07:00:00Z".into(), regle: "PER-001".into(), niveau: "Alerte".into(),
+                                                    processus: "a".into(), raisons: "nouveau démarrage".into(), ..Default::default() });
+    transition(&mut i, EtatIncident::PrisEnCharge, "", "", "S-1-5-32-544", "h", "2026-10-27T07:45:00Z").unwrap();
+    let evts = vec![
+        evenement_chrono("processus", "2026-10-27T07:30:00Z", 9, &[("processus", "a.exe")]),
+        evenement_chrono("processus", "2026-10-27T07:30:00Z", 4, &[("processus", "a.exe")]),
+        evenement_chrono("processus", "2026-10-27T06:00:00Z", 1, &[("processus", "a.exe")]),
+        evenement_chrono("processus", "2026-10-27T09:00:00Z", 2, &[("processus", "a.exe")]),
+        evenement_chrono("sante", "2026-10-27T07:10:00Z", 3, &[("message", "journal Sécurité indisponible")]),
+        evenement_chrono("processus", "", 0, &[("processus", "a.exe")]),
+        evenement_chrono("alerte", "2026-10-27T07:00:00Z", 5, &[("processus", "a")]),
+    ];
+    let c = construire(&i, &evts, 3, "2026-10-27T10:00:00Z");
+    let ordre: Vec<(String, u64)> = c.elements.iter().map(|e| (e.source.clone(), e.seq)).collect();
+    // Alerte jointe (07:00), trou de collecte (07:10), deux événements de 07:30 ordonnés par Seq, transition (07:45) ;
+    // 06:00 hors fenêtre (avant 06:30), 09:00 dans la fenêtre (jusqu'à 08:30) : non ; alerte du SIEM écartée
+    assert_eq!(ordre, [("alerte".to_string(), 0), ("sante".into(), 3), ("processus".into(), 4), ("processus".into(), 9), ("transition".into(), 0)]);
+    assert_eq!((c.sans_heure_utc, c.pertes_siem, c.tronquee), (1, 3, false));
+    assert_eq!((c.depuis_utc.as_str(), c.jusqua_utc.as_str()), ("2026-10-27T06:30:00Z", "2026-10-27T08:30:00Z"));
+}
+
+#[test]
+fn chronologie_bornee_tronquee() {
+    use crate::incidents::{construire, MAX_ELEMENTS};
+    let i = incident_chrono("regle:DNS-001");
+    let evts: Vec<_> = (0..5000u64).map(|k| evenement_chrono("securite", "2026-10-27T07:30:00Z", k + 1, &[("regle", "DNS-001")])).collect();
+    let c = construire(&i, &evts, 0, "x");
+    assert!(c.tronquee);
+    assert_eq!(c.elements.len(), MAX_ELEMENTS);
+    assert_eq!((c.elements[0].seq, c.elements[MAX_ELEMENTS - 1].seq), (1, 5000), "premiers et derniers gardés");
+    let long = evenement_chrono("securite", "2026-10-27T07:30:00Z", 1, &[("regle", "DNS-001"), ("message", &"m".repeat(5000))]);
+    assert!(construire(&i, &[long], 0, "x").elements[0].texte.chars().count() <= 400, "texte borné");
+}
+
+#[test]
+fn chronologie_a_recalculer_au_changement() {
+    use crate::incidents::{a_recalculer, repere};
+    let mut i = incident_chrono("regle:DNS-001");
+    let mut calcules = std::collections::HashMap::new();
+    assert_eq!(a_recalculer(std::slice::from_ref(&i), &calcules, 50).len(), 1, "jamais calculée");
+    calcules.insert(i.id.clone(), repere(&i));
+    assert!(a_recalculer(std::slice::from_ref(&i), &calcules, 50).is_empty(), "inchangée");
+    i.nombre_alertes += 1;
+    assert_eq!(a_recalculer(std::slice::from_ref(&i), &calcules, 50).len(), 1, "nouvelle alerte");
+    let many: Vec<_> = (0..80).map(|k| crate::incidents::IncidentSuivi { id: format!("i{k}"), ..Default::default() }).collect();
+    let pris = a_recalculer(&many, &std::collections::HashMap::new(), 50);
+    assert_eq!((pris.len(), pris[0].id.as_str()), (50, "i79"), "50 au plus, les plus récents d'abord");
 }
 

@@ -483,6 +483,10 @@ pub struct Alerte {
     pub heure_utc: String,
     #[serde(default, skip_serializing_if = "est_zero")]
     pub seq: u64,
+    /// Entité du suivi des incidents, quand le producteur la connaît mieux que le chemin ou la destination (phase 4,
+    /// PR 4.3 : la source ou le compte d'une corrélation du SIEM) ; vide sinon
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub entite: String,
 }
 
 fn est_zero(n: &u64) -> bool {
@@ -593,6 +597,7 @@ pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
     // Heure UTC : 20 caractères quand le service la pose
     borner(&mut a.heure_utc, 32);
+    borner(&mut a.entite, 160);
     for s in [&mut a.processus, &mut a.destination, &mut a.conseil] {
         borner(s, MAX_CHAMP_ALERTE);
     }

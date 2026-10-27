@@ -497,6 +497,34 @@ Verifier 'Incidents : alerte témoin suivie, transitions historisées avec leur 
     }
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.3 : chronologie
+# La chronologie de l'incident témoin (contrôle précédent) est calculée hors du verrou, au plus une fois par minute, et
+# écrite dans chronologies\<id>.json : l'alerte jointe puis les deux transitions, dans l'ordre
+Verifier 'Chronologie de l''incident témoin : alerte et transitions, dans l''ordre' {
+    $suivi = Join-Path $script:Donnees 'suivi-incidents.json'
+    if (-not (Test-Path $suivi)) { return 'suivi-incidents.json absent' }
+    $incident = @((Get-Content $suivi -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { $_.Entite -like '*d4t-incident-temoin.exe' }) | Select-Object -Last 1
+    if (-not $incident) { return 'incident témoin absent (contrôle précédent)' }
+    $f = Join-Path $script:Donnees "chronologies\$($incident.Id).json"
+    $fin = (Get-Date).AddSeconds(150)
+    $c = $null
+    while ((Get-Date) -lt $fin) {
+        if (Test-Path $f) {
+            $c = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (@($c.Elements | Where-Object { $_.Source -eq 'transition' }).Count -ge 2) { break }
+        }
+        Start-Sleep 5
+    }
+    if (-not $c) { return "chronologie jamais écrite en 150 s ($f)" }
+    $sources = @($c.Elements | ForEach-Object { $_.Source })
+    $premiere = [array]::IndexOf($sources, 'alerte')
+    $transitions = @(0..($sources.Count - 1) | Where-Object { $sources[$_] -eq 'transition' })
+    if ($premiere -lt 0) { return "aucune alerte dans la chronologie : $($sources -join ', ')" }
+    if ($transitions.Count -lt 2) { return "$($transitions.Count) transition(s) dans la chronologie : $($sources -join ', ')" }
+    if ($transitions[0] -lt $premiere) { return "ordre : une transition avant l'alerte ($($sources -join ', '))" }
+    $true
+}
+
 # ---------------------------------------------------------------- phase 4, PR 4.1 : actions de réponse dans le SIEM
 # Blocage manuel d'une adresse de documentation (RFC 5737 : aucune connexion n'est ouverte vers elle), puis sa levée :
 # deux événements « reponse » dans le SIEM, avec l'heure UTC et le numéro d'ordre (ordre total, D4-4)

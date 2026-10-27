@@ -85,7 +85,10 @@ pub struct IncidentSuivi {
 /// règle. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux entités
 pub fn entite(a: &Alerte) -> String {
     let chemin = a.chemin.trim();
-    let e = if !chemin.is_empty() && chemin != "?" {
+    // Entité nommée par le producteur (corrélations du SIEM, PR 4.3) : prioritaire
+    let e = if !a.entite.trim().is_empty() {
+        a.entite.trim().to_lowercase()
+    } else if !chemin.is_empty() && chemin != "?" {
         format!("programme:{}", chemin.to_lowercase())
     } else {
         let dest = a.destination.trim();
@@ -414,5 +417,182 @@ pub fn etat_de(nom: &str) -> Option<EtatIncident> {
         "PrisEnCharge" => Some(EtatIncident::PrisEnCharge),
         "Clos" => Some(EtatIncident::Clos),
         _ => None,
+    }
+}
+
+// ------------------------------------------------------------ chronologie (phase 4, PR 4.3)
+
+/// Élément d'une chronologie : alerte jointe, événement du SIEM (dont les actions de réponse et la santé) ou transition
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct ElementChronologie {
+    pub heure: String,
+    pub heure_utc: String,
+    pub seq: u64,
+    /// alerte, transition, ou la source de l'événement du SIEM (reponse, sante, securite, systeme, connexion…)
+    pub source: String,
+    #[serde(rename = "Type")]
+    pub type_: String,
+    pub niveau: String,
+    pub texte: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Chronologie {
+    pub modele: u32,
+    pub incident: String,
+    pub entite: String,
+    pub calculee_utc: String,
+    /// Fenêtre des événements du SIEM : de 30 min avant l'ouverture à 30 min après la dernière activité
+    pub depuis_utc: String,
+    pub jusqua_utc: String,
+    pub elements: Vec<ElementChronologie>,
+    /// Plus de MAX_ELEMENTS : les premiers et les derniers sont gardés
+    pub tronquee: bool,
+    /// Événements du SIEM sans heure UTC (antérieurs à la phase 4) : non placés, comptés
+    pub sans_heure_utc: usize,
+    /// Événements perdus par le SIEM (file pleine) depuis le démarrage du service : des étapes peuvent manquer
+    pub pertes_siem: u64,
+}
+
+pub const MAX_ELEMENTS: usize = 2000;
+const MARGE_FENETRE_S: i64 = 1800;
+const MAX_TEXTE_ELEMENT: usize = 400;
+
+/// Un événement du SIEM concerne-t-il cet incident (pur, testé) ? Selon l'entité : programme (nom du fichier, ou chemin
+/// complet cité), destination (destination, adresse ou texte), source d'une corrélation (adresse ou compte), compte, ou
+/// règle. La santé des collectes concerne tous les incidents de la fenêtre (trous de collecte)
+pub fn concerne(i: &IncidentSuivi, e: &crate::siem::Evenement) -> bool {
+    if e.source == "sante" {
+        return true;
+    }
+    let message = e.message.to_lowercase();
+    if let Some(chemin) = i.entite.strip_prefix("programme:") {
+        let nom = std::path::Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let proc_ = e.processus.to_lowercase();
+        let proc_ = proc_.strip_suffix(".exe").unwrap_or(&proc_);
+        return (!nom.is_empty() && proc_ == nom) || message.contains(chemin) || e.destination.to_lowercase() == chemin;
+    }
+    if let Some(d) = i.entite.strip_prefix("destination:") {
+        return e.destination.to_lowercase() == d || e.ip.to_lowercase() == d || (d.len() >= 4 && message.contains(d));
+    }
+    if let Some(s) = i.entite.strip_prefix("source:") {
+        return match s.strip_prefix("compte ") {
+            Some(compte) => e.utilisateur.to_lowercase() == compte || e.utilisateur.to_lowercase().ends_with(&format!("\\{compte}")),
+            None => !s.is_empty() && e.ip.to_lowercase() == s,
+        };
+    }
+    if let Some(c) = i.entite.strip_prefix("compte:") {
+        return !c.is_empty() && (e.utilisateur.to_lowercase().contains(c) || e.processus.to_lowercase().contains(c));
+    }
+    if let Some(r) = i.entite.strip_prefix("regle:") {
+        return !r.is_empty() && e.regle.eq_ignore_ascii_case(r);
+    }
+    false
+}
+
+/// Chronologie d'un incident (pure, testée) : résumés des alertes jointes, transitions, et événements du SIEM de l'entité
+/// dans la fenêtre, ordonnés par (heure UTC, numéro d'ordre) ; les alertes du SIEM (`Source` « alerte ») sont écartées,
+/// déjà présentes par les résumés
+pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pertes_siem: u64, calculee_utc: &str) -> Chronologie {
+    let debut = commun::secondes_utc(&i.ouverture_utc).map(|t| t - MARGE_FENETRE_S);
+    let fin = commun::secondes_utc(&i.derniere_activite_utc).map(|t| t + MARGE_FENETRE_S);
+    let mut elements: Vec<(i64, ElementChronologie)> = Vec::new();
+    let texte = |s: &str| crate::siem::texte_sur(s, MAX_TEXTE_ELEMENT);
+    for a in &i.alertes {
+        elements.push((commun::secondes_utc(&a.heure_utc).unwrap_or(i64::MIN), ElementChronologie {
+            heure: a.heure.clone(), heure_utc: a.heure_utc.clone(), seq: 0, source: "alerte".into(), type_: a.regle.clone(),
+            niveau: a.niveau.clone(), texte: texte(&format!("{} : {}", if a.processus.is_empty() { &a.destination } else { &a.processus }, a.raisons)),
+        }));
+    }
+    for tr in &i.transitions {
+        elements.push((commun::secondes_utc(&tr.heure_utc).unwrap_or(i64::MIN), ElementChronologie {
+            heure: tr.heure.clone(), heure_utc: tr.heure_utc.clone(), seq: 0, source: "transition".into(), type_: format!("{:?}", tr.vers),
+            niveau: "Info".into(),
+            texte: texte(&format!("{:?} vers {:?}{}{} (par {})", tr.de, tr.vers, if tr.motif.is_empty() { String::new() } else { format!(", {}", tr.motif) },
+                if tr.note.is_empty() { String::new() } else { format!(" : {}", tr.note) }, tr.auteur)),
+        }));
+    }
+    let mut sans_heure_utc = 0;
+    for e in evenements.iter().filter(|e| e.source != "alerte" && concerne(i, e)) {
+        let Some(t) = commun::secondes_utc(&e.heure_utc) else {
+            sans_heure_utc += 1;
+            continue;
+        };
+        if debut.is_some_and(|d| t < d) || fin.is_some_and(|f| t > f) {
+            continue;
+        }
+        elements.push((t, ElementChronologie {
+            heure: e.heure.clone(), heure_utc: e.heure_utc.clone(), seq: e.seq, source: e.source.clone(), type_: e.type_.clone(),
+            niveau: e.niveau.clone(), texte: texte(&e.message),
+        }));
+    }
+    elements.sort_by(|a, b| (a.0, a.1.seq).cmp(&(b.0, b.1.seq)));
+    let mut elements: Vec<ElementChronologie> = elements.into_iter().map(|(_, e)| e).collect();
+    let tronquee = elements.len() > MAX_ELEMENTS;
+    if tronquee {
+        let fin = elements.split_off(elements.len() - MAX_ELEMENTS / 2);
+        elements.truncate(MAX_ELEMENTS / 2);
+        elements.extend(fin);
+    }
+    Chronologie {
+        modele: commun::MODELE_ALERTE,
+        incident: i.id.clone(),
+        entite: i.entite.clone(),
+        calculee_utc: calculee_utc.into(),
+        depuis_utc: debut.map(|d| commun::heure_utc_de(std::time::UNIX_EPOCH + std::time::Duration::from_secs(d.max(0) as u64))).unwrap_or_default(),
+        jusqua_utc: fin.map(|f| commun::heure_utc_de(std::time::UNIX_EPOCH + std::time::Duration::from_secs(f.max(0) as u64))).unwrap_or_default(),
+        elements,
+        tronquee,
+        sans_heure_utc,
+        pertes_siem,
+    }
+}
+
+/// Repère d'un incident pour savoir si sa chronologie est à recalculer : sa dernière activité et ses transitions
+pub fn repere(i: &IncidentSuivi) -> String {
+    format!("{}|{}|{}", i.derniere_activite_utc, i.transitions.len(), i.nombre_alertes)
+}
+
+/// Incidents dont la chronologie est à (re)calculer (pure, testée) : repère changé depuis le dernier calcul ; `max` au
+/// plus par tour, les plus récents d'abord
+pub fn a_recalculer(suivis: &[IncidentSuivi], calcules: &std::collections::HashMap<String, String>, max: usize) -> Vec<IncidentSuivi> {
+    suivis.iter().rev().filter(|i| calcules.get(&i.id) != Some(&repere(i))).take(max).cloned().collect()
+}
+
+/// Dossier des chronologies, dans le dossier de données (mêmes droits)
+pub const DOSSIER_CHRONOLOGIES: &str = "chronologies";
+
+/// Un tour du calcul des chronologies, HORS du verrou du moniteur : `a_faire` (copie des incidents à recalculer, 50 au
+/// plus, prise sous le verrou par `a_recalculer`) et `suivis_ids` (identifiants suivis). Les événements du SIEM sont lus
+/// sur les 3 derniers jours de fichiers au plus (20 000 au plus) ; les fichiers des incidents qui ne sont plus suivis
+/// sont effacés
+pub fn calculer_chronologies(a_faire: &[IncidentSuivi], suivis_ids: &std::collections::HashSet<String>,
+                             calcules: &mut std::collections::HashMap<String, String>) {
+    let dossier = commun::dossier().join(DOSSIER_CHRONOLOGIES);
+    if !a_faire.is_empty() {
+        let _ = std::fs::create_dir_all(&dossier);
+        let maintenant = std::time::SystemTime::now();
+        let depuis = commun::heure(maintenant - std::time::Duration::from_secs(2 * 86_400)).chars().take(10).collect::<String>();
+        let evenements = crate::siem::rechercher(&crate::siem::Filtre { depuis, limite: 20_000, ..Default::default() });
+        let pertes = crate::siem::pertes();
+        let calculee = commun::heure_utc_de(maintenant);
+        for i in a_faire {
+            let c = construire(i, &evenements, pertes, &calculee);
+            if commun::ecrire(&format!("{DOSSIER_CHRONOLOGIES}\\{}.json", i.id), &c).is_ok() {
+                calcules.insert(i.id.clone(), repere(i));
+            }
+        }
+    }
+    // Ménage : chronologies d'incidents purgés
+    calcules.retain(|id, _| suivis_ids.contains(id));
+    for f in std::fs::read_dir(&dossier).into_iter().flatten().flatten() {
+        let nom = f.file_name().to_string_lossy().to_string();
+        if let Some(id) = nom.strip_suffix(".json") {
+            if !suivis_ids.contains(id) && f.file_type().is_ok_and(|t| t.is_file()) {
+                let _ = std::fs::remove_file(f.path());
+            }
+        }
     }
 }
