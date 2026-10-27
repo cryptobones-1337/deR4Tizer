@@ -4542,3 +4542,86 @@ fn battement_compteurs_seulement() {
     assert_eq!(t, format!("deR4Tizer actif : 4 incident(s) non clos ; collectes : {} active(s), 3 indisponible(s) (critiques : JournalSecurite, ListesMenaces) ; 2 alerte(s) en attente de remontée.", c.collectes_actives));
 }
 
+// ------------------------------------------------------------ phase 4, PR 4.5a : santé de l'interface
+
+fn interfaces_regles(a: &[crate::commun::Alerte]) -> Vec<(String, String)> {
+    a.iter().map(|x| (x.regle.clone(), x.destination.clone())).collect()
+}
+
+#[test]
+fn sante_interface_absente_15_min() {
+    let mut i = crate::sante::Interfaces::default();
+    assert!(i.observer(&[2], &[2], 0).1.is_empty());
+    let (e, _) = i.observer(&[2], &[], 60);
+    assert_eq!(e, [crate::sante::EvenementInterface { session: 2, texte: "interface disparue de la session 2".into(), niveau: "Alerte" }]);
+    assert!(i.observer(&[2], &[], 60 + 899).1.is_empty(), "pas avant 15 min");
+    let (_, a) = i.observer(&[2], &[], 60 + 900);
+    assert_eq!(interfaces_regles(&a), [("SAN-010".to_string(), "session 2".to_string())]);
+    assert!(a[0].raisons.contains("depuis 15 min") && a[0].raisons.contains("la surveillance et la remontée continuent"), "{}", a[0].raisons);
+    assert!(i.observer(&[2], &[], 7200).1.is_empty(), "une fois par épisode et par 24 h");
+    let ev = crate::sante::evenement_interface(&e[0]);
+    assert_eq!((ev.source.as_str(), ev.type_.as_str(), ev.niveau.as_str(), ev.destination.as_str()), ("sante", "interface", "Alerte", "session 2"));
+}
+
+#[test]
+fn sante_grace_ouverture_session() {
+    let mut i = crate::sante::Interfaces::default();
+    // Session vue sans interface : rien pendant le délai de grâce (5 min), puis 15 min d'absence
+    assert!(i.observer(&[3], &[], 0).0.is_empty());
+    assert!(i.observer(&[3], &[], 299).0.is_empty());
+    let (e, a) = i.observer(&[3], &[], 300);
+    assert_eq!((e.len(), a.len()), (1, 0), "absente après le délai de grâce, sans constat");
+    assert!(i.observer(&[3], &[], 300 + 899).1.is_empty());
+    assert_eq!(i.observer(&[3], &[], 1200).1.len(), 1, "SAN-010 à 20 min");
+    // Interface lancée pendant le délai de grâce : rien
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[4], &[], 0);
+    let (e, a) = i.observer(&[4], &[4], 120);
+    assert!(e.is_empty() && a.is_empty());
+    assert!(i.observer(&[4], &[4], 5000).1.is_empty());
+}
+
+#[test]
+fn sante_interface_trois_disparitions() {
+    let mut i = crate::sante::Interfaces::default();
+    let mut constats = Vec::new();
+    for k in 0..3i64 {
+        i.observer(&[1], &[1], k * 600);
+        constats.extend(i.observer(&[1], &[], k * 600 + 60).1);
+    }
+    assert_eq!(interfaces_regles(&constats), [("SAN-011".to_string(), "session 1".to_string())]);
+    assert!(constats[0].raisons.contains("3 fois en une heure"), "{}", constats[0].raisons);
+}
+
+#[test]
+fn sante_interface_deux_disparitions() {
+    let mut i = crate::sante::Interfaces::default();
+    let mut constats = Vec::new();
+    for k in 0..3i64 {
+        i.observer(&[1], &[1], k * 1900);
+        constats.extend(i.observer(&[1], &[], k * 1900 + 60).1);
+    }
+    assert!(constats.is_empty(), "deux disparitions par heure au plus : rien ({constats:?})", constats = interfaces_regles(&constats));
+}
+
+#[test]
+fn sante_interface_retour_et_session_fermee() {
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[5], &[5], 0);
+    i.observer(&[5], &[], 10);
+    assert_eq!(i.observer(&[5], &[], 910).1.len(), 1);
+    let (e, _) = i.observer(&[5], &[5], 1000);
+    assert_eq!(e[0].texte, "interface de nouveau présente dans la session 5");
+    i.observer(&[5], &[], 1100);
+    assert_eq!(i.observer(&[5], &[], 2000).1.len(), 1, "nouvel épisode, nouveau constat");
+    // Session fermée puis rouverte sous le même numéro : repart de zéro (délai de grâce)
+    i.observer(&[], &[], 2100);
+    i.observer(&[5], &[], 2200);
+    assert!(i.observer(&[5], &[], 2200 + 299 + 900).1.is_empty());
+    assert_eq!(i.observer(&[5], &[], 2200 + 300 + 900).1.len(), 1, "session rouverte : nouveau délai, puis signalée");
+    // Une autre session avec l'interface ne compte pas pour celle-ci
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[6, 7], &[7], 0);
+    assert_eq!(interfaces_regles(&i.observer(&[6, 7], &[7], 1200).1), [("SAN-010".to_string(), "session 6".to_string())]);
+}
+

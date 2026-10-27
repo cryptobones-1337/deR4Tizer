@@ -303,7 +303,7 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     $vu = ($c.Values | ForEach-Object { "$($_.Id)=$($_.Etat)" }) -join ' '
     $inconnues = @($c.Values | Where-Object { $_.Etat -eq 'Inconnue' } | ForEach-Object { $_.Id })
     if ($inconnues.Count) { return "collecte(s) jamais notée(s) : $($inconnues -join ', ') ; $vu" }
-    foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns',
+    foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns', 'Sessions',
                     'Persistance', 'Leurres', 'Extensions', 'Peripheriques', 'CaptureTrafic') {
         if (-not $c[$id]) { return "collecte $id absente ; $vu" }
         if ($c[$id].Etat -ne 'Active') { return "collecte $id : $($c[$id].Etat) ($($c[$id].Raison)) ; $vu" }

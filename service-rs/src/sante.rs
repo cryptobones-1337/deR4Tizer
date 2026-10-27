@@ -224,3 +224,105 @@ pub fn evenement(c: &Changement) -> crate::siem::Evenement {
 pub fn secondes() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
+
+// ------------------------------------------------------------ santé de l'interface (phase 4, PR 4.5a)
+
+/// Délai de grâce après l'ouverture d'une session (ou le démarrage du service) : lancement par la clé Run
+pub const GRACE_INTERFACE_S: i64 = 300;
+/// Interface absente plus de 15 min d'une session active : SAN-010
+pub const ABSENCE_INTERFACE_S: i64 = 900;
+/// 3 disparitions en une heure dans une même session : SAN-011
+pub const MAX_DISPARITIONS_HEURE: usize = 3;
+
+#[derive(Default)]
+struct SuiviSession {
+    vue_depuis: i64,
+    presente: bool,
+    /// Début de l'absence comptée (disparition, ou fin du délai de grâce si jamais vue)
+    absente_depuis: Option<i64>,
+    disparitions: VecDeque<i64>,
+    san010: Option<i64>,
+    san011: Option<i64>,
+}
+
+/// Événement de l'interface, écrit dans le SIEM (`Source` « sante », `Type` « interface »)
+#[derive(Debug, PartialEq)]
+pub struct EvenementInterface {
+    pub session: u32,
+    pub texte: String,
+    pub niveau: &'static str,
+}
+
+/// État des interfaces par session, gardé par le fil « sante » (en mémoire)
+#[derive(Default)]
+pub struct Interfaces {
+    sessions: HashMap<u32, SuiviSession>,
+}
+
+impl Interfaces {
+    /// Décision pure (testée) : `actives` (sessions actives avec un utilisateur) et `avec_interface` (sessions où tourne
+    /// l'interface installée, chemin exact) à l'heure `t`. Le service ne relance rien : il repère et signale. Il ne
+    /// distingue pas un « Quitter » volontaire d'un arrêt forcé (un programme sous le même compte ferait pareil)
+    pub fn observer(&mut self, actives: &[u32], avec_interface: &[u32], t: i64) -> (Vec<EvenementInterface>, Vec<Alerte>) {
+        let (mut evenements, mut constats) = (Vec::new(), Vec::new());
+        // Sessions fermées : oubliées
+        self.sessions.retain(|s, _| actives.contains(s));
+        for &id in actives {
+            let s = self.sessions.entry(id).or_insert_with(|| SuiviSession { vue_depuis: t, ..Default::default() });
+            if avec_interface.contains(&id) {
+                if !s.presente && s.absente_depuis.is_some() {
+                    evenements.push(EvenementInterface { session: id, texte: format!("interface de nouveau présente dans la session {id}"), niveau: "Info" });
+                }
+                s.presente = true;
+                s.absente_depuis = None;
+                s.san010 = None;
+                continue;
+            }
+            if s.presente {
+                s.presente = false;
+                s.absente_depuis = Some(t);
+                s.disparitions.push_back(t);
+                evenements.push(EvenementInterface { session: id, texte: format!("interface disparue de la session {id}"), niveau: "Alerte" });
+            } else if s.absente_depuis.is_none() && t - s.vue_depuis >= GRACE_INTERFACE_S {
+                s.absente_depuis = Some(s.vue_depuis + GRACE_INTERFACE_S);
+                evenements.push(EvenementInterface { session: id, texte: format!("interface absente de la session {id} après le délai de grâce"), niveau: "Alerte" });
+            }
+            while s.disparitions.front().is_some_and(|x| t - x >= 3600) {
+                s.disparitions.pop_front();
+            }
+            if let Some(d) = s.absente_depuis {
+                if t - d >= ABSENCE_INTERFACE_S && s.san010.is_none_or(|x| t - x >= RAPPEL_S) {
+                    s.san010 = Some(t);
+                    constats.push(constat(regles::SAN_010, "Alerte", &format!("session {id}"),
+                        format!("interface de deR4Tizer absente de la session {id} depuis {} min : plus de notification locale ; la surveillance et la remontée continuent", minutes(t - d))));
+                }
+            }
+            if s.disparitions.len() >= MAX_DISPARITIONS_HEURE && s.san011.is_none_or(|x| t - x >= RAPPEL_S) {
+                s.san011 = Some(t);
+                constats.push(constat(regles::SAN_011, "Alerte", &format!("session {id}"),
+                    format!("interface de deR4Tizer arrêtée {} fois en une heure dans la session {id}", s.disparitions.len())));
+            }
+        }
+        (evenements, constats)
+    }
+}
+
+/// Événement du SIEM de l'interface (pur, testé)
+pub fn evenement_interface(e: &EvenementInterface) -> crate::siem::Evenement {
+    crate::siem::Evenement {
+        heure: commun::maintenant(),
+        source: "sante".into(),
+        type_: "interface".into(),
+        niveau: e.niveau.into(),
+        destination: format!("session {}", e.session),
+        message: crate::siem::texte_sur(&e.texte, 400),
+        ..Default::default()
+    }
+}
+
+/// Chemin installé de l'interface : `deR4Tizer.exe` à côté du service
+pub fn chemin_interface() -> Option<String> {
+    let service = std::env::current_exe().ok()?;
+    Some(service.parent()?.join("deR4Tizer.exe").to_string_lossy().to_string())
+}
+

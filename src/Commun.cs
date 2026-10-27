@@ -87,6 +87,7 @@ namespace DeR4Tizer
             { "Loldrivers", "pilotes vulnérables non reconnus" }, { "Leurres", "chiffrement par un rançongiciel non repéré par les leurres" },
             { "Extensions", "extensions de navigateur non vues" }, { "Peripheriques", "usage de la caméra et du micro non vu" },
             { "CaptureTrafic", "trafic non analysé (modules expérimentaux)" }, { "CaptureReseauLocal", "réseau local non analysé (module expérimental)" },
+            { "Sessions", "interface de deR4Tizer non surveillée dans les sessions ouvertes" },
         };
 
         public static string Consequence(string id)

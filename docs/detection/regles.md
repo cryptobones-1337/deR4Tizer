@@ -657,6 +657,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
 | SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
 | SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |
+| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service) | `sante.rs`, `natif.rs` | Alerte |
+| SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
 
 - **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
@@ -689,7 +691,17 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **SAN-004** (PR 4.4b) : une panne de remontée commence au premier lot non remis (aucun canal tenté n'a réussi) et
   finit au premier lot remis ; un constat par panne et par 24 h au plus ; remontée non configurée : rien. Tests :
   `sante_remontee_echec_1h`, `sante_remontee_non_configuree`.
-- SAN-010 et SAN-011 (interface) : PR 4.5.
+- **SAN-010 et SAN-011** (PR 4.5a) : collecte `Sessions` (fil « sante », toutes les 30 s) ; sessions `WTSActive` avec un
+  jeton d'utilisateur ; interface reconnue par son chemin complet **égal** au chemin installé (`deR4Tizer.exe` à côté
+  du service) : une copie posée ailleurs ne compte pas. Énumération impossible : collecte indisponible, jamais
+  « interface présente », et SAN-010/011 sans collecte. Un constat par session, par épisode (SAN-010 : remis à zéro au
+  retour de l'interface) et par 24 h au plus ; chaque disparition et chaque retour sont écrits dans le SIEM (`Type`
+  « interface »). Le service ne relance rien (relance par une tâche planifiée : PR 4.5b) et ne distingue pas un
+  « Quitter » volontaire d'un arrêt forcé. Faux positifs attendus : utilisateur qui quitte l'interface (jusqu'à la PR
+  4.5b, rien ne la relance avant la prochaine ouverture de session) ; compte non autorisé à lire les données, qui
+  ferme l'interface ; session Bureau à distance sans bureau. Tests : `sante_interface_absente_15_min`,
+  `sante_grace_ouverture_session`, `sante_interface_trois_disparitions`, `sante_interface_deux_disparitions`,
+  `sante_interface_retour_et_session_fermee`.
 
 ## EXP : modules expérimentaux (gelés)
 

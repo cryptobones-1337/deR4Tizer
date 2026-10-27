@@ -419,17 +419,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         // Attente de la première alerte (une minute au plus, pour la minuterie du résumé)
         let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
             Ok(Message::Config(c)) => {
-                config = c;
-                // Réglages changés (canaux, destinations) : la file n'est pas envoyée vers la nouvelle destination ;
-                // ses alertes sont comptées abandonnées et restent dans alertes.json (audit de #99, S99-03)
-                reprise.abandonnees += reprise.entrees.len() as u64;
-                reprise.entrees.clear();
-                // Remontée coupée : plus d'échec à signaler (SAN-004)
-                if !actif(&config) {
-                    etat.echec_depuis.clear();
-                    ECHEC_DEPUIS.store(0, Ordering::Relaxed);
-                }
-                ecrire_etat(&mut etat);
+                nouveaux_reglages(&mut config, c, &mut reprise, &mut etat);
                 continue;
             }
             // SAN-004 (remontée en échec) : constat local, jamais remonté
@@ -449,10 +439,15 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
             match rx.recv_timeout(reste) {
                 Ok(Message::Alerte(a)) if a.regle != crate::regles::SAN_004 && crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
                 Ok(Message::Alerte(_)) => {}
-                Ok(Message::Config(c)) => config = c,
+                // Même traitement qu'en tête de boucle (audit de #99, S99-04)
+                Ok(Message::Config(c)) => nouveaux_reglages(&mut config, c, &mut reprise, &mut etat),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
+        }
+        // Remontée coupée pendant le regroupement : le lot n'est pas envoyé (il reste dans alertes.json)
+        if !actif(&config) {
+            continue;
         }
         // Les critiques partent toujours : un attaquant ne doit pas pouvoir noyer la vraie alerte sous des
         // alertes provoquées ; seules les autres comptent dans le plafond par heure
@@ -465,6 +460,20 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
             reprise.ajouter(&a_envoyer, secondes());
         }
     }
+}
+
+/// Nouveaux réglages de la remontée, en tête de boucle comme pendant le regroupement d'un lot (audit de #99, S99-03 et
+/// S99-04) : la file n'est pas envoyée vers la nouvelle destination, ses alertes sont comptées abandonnées et restent
+/// dans alertes.json ; remontée coupée, plus d'échec à signaler (SAN-004)
+fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, reprise: &mut FileReprise, etat: &mut Etat) {
+    *config = c;
+    reprise.abandonnees += reprise.entrees.len() as u64;
+    reprise.entrees.clear();
+    if !actif(config) {
+        etat.echec_depuis.clear();
+        ECHEC_DEPUIS.store(0, Ordering::Relaxed);
+    }
+    ecrire_etat(etat);
 }
 
 /// Les critiques partent toujours ; les autres seulement sous le plafond horaire.
