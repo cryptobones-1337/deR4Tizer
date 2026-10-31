@@ -90,6 +90,17 @@ pub fn a_retenter(a: &Alerte) -> bool {
 }
 
 impl FileReprise {
+    /// Après de nouveaux réglages (pur, testé) : mêmes destinations (« Tester », niveau, plafond), la file reste ; changées
+    /// ou secrets illisibles (`None`), elle est vidée et ses alertes comptées abandonnées : elle ne part pas vers les
+    /// nouvelles
+    pub fn apres_reglages(&mut self, vers: &mut String, nouvelles: Option<String>) {
+        if nouvelles.as_ref() != Some(vers) {
+            self.abandonnees += self.entrees.len() as u64;
+            self.entrees.clear();
+        }
+        *vers = nouvelles.unwrap_or_default();
+    }
+
     /// Met en file les alertes à retenter d'un lot non remis, sans doublon (même Id). Pleine, la plus ancienne de la
     /// seconde moitié part : les 50 premières restent (audit de #99, S99-01 : sinon 100 alertes critiques provoquées
     /// pendant une panne chasseraient la vraie, qui est la première)
@@ -161,8 +172,29 @@ pub fn texte_battement(c: &Compteurs, en_attente: usize) -> String {
 
 enum Message {
     Alerte(Alerte),
-    Config(ConfigNotifications),
+    /// Réveil seulement : les réglages attendent dans `DERNIERS_REGLAGES` (audit de #100, S100-05)
+    Reglages,
 }
+
+/// Derniers réglages demandés : une case écrasée, jamais perdue, même si la file des messages est pleine
+#[derive(Default)]
+pub struct CaseReglages(Mutex<Option<ConfigNotifications>>);
+
+impl CaseReglages {
+    pub const fn nouvelle() -> Self {
+        CaseReglages(Mutex::new(None))
+    }
+
+    pub fn poser(&self, c: ConfigNotifications) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(c);
+    }
+
+    pub fn prendre(&self) -> Option<ConfigNotifications> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+static DERNIERS_REGLAGES: CaseReglages = CaseReglages::nouvelle();
 
 static FILE: OnceLock<Mutex<SyncSender<Message>>> = OnceLock::new();
 
@@ -193,6 +225,15 @@ pub fn preparer_dossier() -> Result<(), String> {
     // Contenu : droits hérités (code d'icacls /C non probant ; la preuve est la relecture du dossier)
     crate::protection::icacls(&[&format!(r"{}\*", d.display()), "/reset", "/T", "/C", "/Q"]);
     verifier(&d, &complets, &[])
+}
+
+/// Secrets lus ; fichier absent : aucun secret ; illisible ou mal formé : `None` (audit de #100, S100-06)
+fn lire_secrets_verifie() -> Option<Secrets> {
+    let f = dossier_secrets().join("notifications.json");
+    if fs::symlink_metadata(&f).is_err() {
+        return Some(Secrets::default());
+    }
+    commun::lire_fichier(&f).and_then(|t| serde_json::from_str(&t).ok())
 }
 
 pub fn lire_secrets() -> Secrets {
@@ -344,8 +385,10 @@ pub fn demarrer(config: &ConfigNotifications) {
 }
 
 pub fn configurer(config: &ConfigNotifications) {
+    DERNIERS_REGLAGES.poser(config.clone());
     if let Some(f) = FILE.get() {
-        let _ = f.lock().unwrap().try_send(Message::Config(config.clone()));
+        // File pleine : le réveil se perd, pas les réglages (la boucle regarde la case à chaque tour)
+        let _ = f.lock().unwrap().try_send(Message::Reglages);
     }
 }
 
@@ -366,9 +409,16 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
     let mut envois_heure = 0u32;
     let mut retenues = 0usize;
     let mut reprise = FileReprise::default();
-    let mut vers = destinations(&config, &lire_secrets());
+    // Couple (réglages, secrets) de la boucle, remplacé d'un seul coup (audit de #100, S100-04) : jamais d'anciens réglages
+    // avec de nouveaux secrets, qui enverraient un nouveau mot de passe à l'ancien serveur
+    let mut secrets = Secrets::default();
+    let mut vers = String::new();
+    let depart = config.clone();
+    let mut secrets_illisibles = nouveaux_reglages(&mut config, depart, &mut secrets, &mut reprise, &mut etat, &mut vers);
     ecrire_etat(&mut etat);
     loop {
+        // Réglages en attente, avant tout envoi ; secrets illisibles (protection en échec au démarrage) : relus à chaque tour
+        secrets_illisibles = si_reglages(&mut config, &mut secrets, &mut reprise, &mut etat, &mut vers, secrets_illisibles);
         // File de reprise : les alertes dues partent en un lot ; battement quotidien (D4-6), hors plafond et hors niveau
         // minimal. La boucle passe ici au moins une fois par minute (attente de 60 s au plus)
         if actif(&config) {
@@ -376,7 +426,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
             let dues = reprise.dues(t);
             if !dues.is_empty() {
                 let ids: Vec<String> = dues.iter().map(|a| a.id.clone()).collect();
-                let remis = envoyer_partout(&config, &dues, &mut etat);
+                let remis = envoyer_partout(&config, &secrets, &dues, &mut etat);
                 reprise.resultat(&ids, remis, t);
             }
             let maintenant = commun::maintenant();
@@ -391,7 +441,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
                     raisons: texte_battement(&compteurs, reprise.entrees.len()),
                     ..Default::default()
                 };
-                envoyer_partout(&config, &[battement], &mut etat);
+                envoyer_partout(&config, &secrets, &[battement], &mut etat);
             }
         }
         if etat.en_attente != reprise.entrees.len() || etat.abandonnees != reprise.abandonnees {
@@ -414,15 +464,13 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
                 };
                 retenues = 0;
                 etat.resumes += 1;
-                envoyer_partout(&config, &[resume], &mut etat);
+                envoyer_partout(&config, &secrets, &[resume], &mut etat);
             }
         }
         // Attente de la première alerte (une minute au plus, pour la minuterie du résumé)
         let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
-            Ok(Message::Config(c)) => {
-                nouveaux_reglages(&mut config, c, &mut reprise, &mut etat, &mut vers);
-                continue;
-            }
+            // La case est lue en tête de boucle
+            Ok(Message::Reglages) => continue,
             // SAN-004 (remontée en échec) : constat local, jamais remonté
             Ok(Message::Alerte(a)) if a.regle == crate::regles::SAN_004 => continue,
             Ok(Message::Alerte(a)) => a,
@@ -441,12 +489,14 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
                 Ok(Message::Alerte(a)) if a.regle != crate::regles::SAN_004 && crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
                 Ok(Message::Alerte(_)) => {}
                 // Même traitement qu'en tête de boucle (audit de #99, S99-04)
-                Ok(Message::Config(c)) => nouveaux_reglages(&mut config, c, &mut reprise, &mut etat, &mut vers),
+                Ok(Message::Reglages) => secrets_illisibles = si_reglages(&mut config, &mut secrets, &mut reprise, &mut etat, &mut vers, secrets_illisibles),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        // Remontée coupée pendant le regroupement : le lot n'est pas envoyé (il reste dans alertes.json)
+        // Réveil perdu (file pleine) : la case est relue avant d'envoyer. Remontée coupée pendant le regroupement : le lot
+        // n'est pas envoyé (il reste dans alertes.json). Destinations changées : il part vers les nouvelles (alertes récentes)
+        secrets_illisibles = si_reglages(&mut config, &mut secrets, &mut reprise, &mut etat, &mut vers, secrets_illisibles);
         if !actif(&config) {
             continue;
         }
@@ -457,7 +507,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         if compte {
             envois_heure += 1;
         }
-        if !a_envoyer.is_empty() && !envoyer_partout(&config, &a_envoyer, &mut etat) {
+        if !a_envoyer.is_empty() && !envoyer_partout(&config, &secrets, &a_envoyer, &mut etat) {
             reprise.ajouter(&a_envoyer, secondes());
         }
     }
@@ -465,7 +515,8 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
 
 /// Destinations de la remontée (pur, testé) : canaux activés et leur adresse, en mémoire seulement, jamais écrites ni
 /// journalisées (l'adresse ntfy ou Teams est un secret). Ni le niveau, ni le plafond, ni les jetons et mots de passe
-/// n'en font partie : ils ne changent pas qui reçoit
+/// n'en font partie : ils ne changent pas qui reçoit. La sécurité et le compte SMTP en font partie : passer de TLS à
+/// sans TLS change ce qui protège la file
 pub fn destinations(c: &ConfigNotifications, s: &Secrets) -> String {
     let mut d = Vec::new();
     if c.ntfy {
@@ -475,7 +526,7 @@ pub fn destinations(c: &ConfigNotifications, s: &Secrets) -> String {
         d.push(format!("teams={}", s.teams_url));
     }
     if c.smtp {
-        d.push(format!("smtp={}:{}|{}|{}", c.smtp_serveur, c.smtp_port, c.expediteur, c.destinataires));
+        d.push(format!("smtp={}:{}|{}|{}|{}|{}", c.smtp_serveur, c.smtp_port, c.smtp_securite, c.smtp_utilisateur, c.expediteur, c.destinataires));
     }
     d.join("\n")
 }
@@ -483,20 +534,31 @@ pub fn destinations(c: &ConfigNotifications, s: &Secrets) -> String {
 /// Nouveaux réglages de la remontée, en tête de boucle comme pendant le regroupement d'un lot (audit de #99, S99-03 et
 /// S99-04) : destinations changées, la file n'est pas envoyée vers les nouvelles, ses alertes sont comptées abandonnées
 /// et restent dans alertes.json ; remontée coupée, plus d'échec à signaler (SAN-004)
-fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String) {
+fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, secrets: &mut Secrets, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String) -> bool {
     *config = c;
-    // Audit de #100, S100-03 : mêmes destinations (bouton « Tester », niveau, plafond) : la file reste
-    let nouvelles = destinations(config, &lire_secrets());
-    if nouvelles != *vers {
-        *vers = nouvelles;
-        reprise.abandonnees += reprise.entrees.len() as u64;
-        reprise.entrees.clear();
-    }
+    let lus = lire_secrets_verifie();
+    reprise.apres_reglages(vers, lus.as_ref().map(|s| destinations(config, s)));
+    let illisibles = lus.is_none();
+    // Illisibles : aucun secret plutôt que les anciens (rien ne part, « aucun canal utilisable » est écrit)
+    *secrets = lus.unwrap_or_default();
     if !actif(config) {
         etat.echec_depuis.clear();
         ECHEC_DEPUIS.store(0, Ordering::Relaxed);
     }
     ecrire_etat(etat);
+    illisibles
+}
+
+/// Applique les réglages en attente, ou relit des secrets illisibles ; rend si les secrets sont encore illisibles
+fn si_reglages(config: &mut ConfigNotifications, secrets: &mut Secrets, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String, illisibles: bool) -> bool {
+    match DERNIERS_REGLAGES.prendre() {
+        Some(c) => nouveaux_reglages(config, c, secrets, reprise, etat, vers),
+        None if illisibles => {
+            let c = config.clone();
+            nouveaux_reglages(config, c, secrets, reprise, etat, vers)
+        }
+        None => false,
+    }
 }
 
 /// Les critiques partent toujours ; les autres seulement sous le plafond horaire.
@@ -515,10 +577,16 @@ pub fn repartir(lot: Vec<Alerte>, envois_heure: u32, max_par_heure: u32) -> (Vec
     }
 }
 
-/// Envoie un lot sur les canaux configurés ; remis si au moins un canal tenté a réussi (pur, testé : `remis`). Un lot
-/// remis sur un seul canal n'est pas retenté : il y arriverait en double
-fn envoyer_partout(config: &ConfigNotifications, lot: &[Alerte], etat: &mut Etat) -> bool {
-    let s = lire_secrets();
+/// Secrets utilisés pour un envoi (pur, testé) : aucun si la protection du dossier de données est en échec, comme quand
+/// ils étaient relus à chaque envoi (l'alerte reste locale)
+pub fn secrets_pour_envoi(echec_protection: bool, s: &Secrets) -> Secrets {
+    if echec_protection { Secrets::default() } else { s.clone() }
+}
+
+/// Envoie un lot sur les canaux configurés, avec le couple (réglages, secrets) de la boucle ; remis si au moins un canal
+/// tenté a réussi (pur, testé : `remis`). Un lot remis sur un seul canal n'est pas retenté : il y arriverait en double
+fn envoyer_partout(config: &ConfigNotifications, secrets: &Secrets, lot: &[Alerte], etat: &mut Etat) -> bool {
+    let s = secrets_pour_envoi(commun::echec_protection().is_some(), secrets);
     let mut erreurs = Vec::new();
     let mut tentes = 0;
     if config.ntfy && !s.ntfy_url.is_empty() {

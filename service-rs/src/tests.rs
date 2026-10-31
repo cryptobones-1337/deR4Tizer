@@ -4643,5 +4643,45 @@ fn remontee_destinations_seules_videent_la_file() {
     assert_ne!(destinations(&ConfigNotifications { ntfy: false, ..c.clone() }, &s), base);
     assert_ne!(destinations(&ConfigNotifications { destinataires: "b@exemple.test".into(), ..c.clone() }, &s), base);
     assert_ne!(destinations(&ConfigNotifications { smtp_serveur: "autre.exemple.test".into(), ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { smtp_securite: "STARTTLS".into(), ..c.clone() }, &s), base, "sécurité SMTP");
+    assert_ne!(destinations(&ConfigNotifications { smtp_utilisateur: "autre".into(), ..c.clone() }, &s), base, "compte SMTP");
+}
+
+/// Relecture de #100 : la décision de vider la file, testée ; illisible (S100-06) : vidée, comptée
+#[test]
+fn remontee_file_apres_reglages() {
+    use crate::notifications::FileReprise;
+    let mut f = FileReprise::default();
+    f.ajouter(&[alerte_remontee("a", "Critique", "")], 0);
+    let mut vers = "A".to_string();
+    f.apres_reglages(&mut vers, Some("A".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees), (1, 0), "mêmes destinations : la file reste");
+    f.apres_reglages(&mut vers, Some("B".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 1, "B"), "changées : vidée et comptée");
+    f.ajouter(&[alerte_remontee("b", "Critique", "")], 0);
+    f.apres_reglages(&mut vers, None);
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 2, ""), "secrets illisibles : vidée");
+}
+
+/// S100-05 : des réglages ne se perdent pas, même sans place dans la file des messages ; le dernier gagne
+#[test]
+fn remontee_derniers_reglages_dans_la_case() {
+    use crate::commun::ConfigNotifications;
+    let c = crate::notifications::CaseReglages::nouvelle();
+    assert!(c.prendre().is_none());
+    c.poser(ConfigNotifications { max_par_heure: 1, ..Default::default() });
+    c.poser(ConfigNotifications { max_par_heure: 2, ..Default::default() });
+    assert_eq!(c.prendre().map(|x| x.max_par_heure), Some(2));
+    assert!(c.prendre().is_none(), "prise une seule fois");
+}
+
+/// Secrets gardés par la boucle : protection du dossier de données en échec, aucun n'est utilisé (comme avant)
+#[test]
+fn remontee_aucun_secret_si_protection_en_echec() {
+    use crate::notifications::{secrets_pour_envoi, Secrets};
+    let s = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), smtp_mot_de_passe: "m".into(), ..Default::default() };
+    assert_eq!(secrets_pour_envoi(false, &s).ntfy_url, s.ntfy_url);
+    let v = secrets_pour_envoi(true, &s);
+    assert!(v.ntfy_url.is_empty() && v.smtp_mot_de_passe.is_empty());
 }
 

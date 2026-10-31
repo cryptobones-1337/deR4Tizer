@@ -154,10 +154,15 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   des collectes critiques indisponibles), alertes en attente. Compteurs seulement : aucun nom de compte, de programme
   ni de ligne de commande. S'il surveille l'absence du battement, le prestataire peut en déduire que le service est
   arrêté, le poste éteint ou la remontée coupée.
-- Destinations de la remontée changées (canaux activés, adresses, serveur, destinataires) : la file est vidée (ses
-  alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ; le niveau, le plafond, un jeton, un mot
-  de passe ou le bouton « Tester » avec les mêmes destinations ne la vident pas ; remontée coupée : l'échec est aussi
-  effacé.
+- La boucle garde le couple (réglages, secrets) et le remplace d'un seul coup : jamais d'anciens réglages avec de
+  nouveaux secrets. Elle prend les réglages dans une case qui ne se perd pas, même file de messages pleine, avant chaque
+  tour d'envois et avant d'envoyer un lot. Les secrets restent donc en mémoire du service entre deux envois ; protection
+  du dossier de données en échec : aucun n'est utilisé.
+- Destinations de la remontée changées (canaux activés, adresses, serveur, sécurité et compte SMTP, destinataires), ou
+  secrets illisibles : la file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ;
+  le niveau, le plafond, un jeton, un mot de passe ou le bouton « Tester » avec les mêmes destinations ne la vident pas ;
+  remontée coupée : l'échec est aussi effacé. Le lot en cours de regroupement (15 s d'alertes récentes) part vers les
+  nouvelles destinations ; un envoi déjà commencé finit vers les anciennes, avec les anciens secrets.
 - Remis sur un seul canal, un lot compte comme remis : un canal cassé en permanence ne lève pas SAN-004 tant qu'un autre
   marche ; son erreur reste dans `DerniereErreur`. Aucun canal utilisable : « aucun canal utilisable » y est écrit.
 
