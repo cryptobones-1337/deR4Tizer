@@ -92,14 +92,15 @@ fn schtasks(arguments: &[&str]) -> Result<(), String> {
     if sortie.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&sortie.stderr).trim().chars().take(300).collect()) }
 }
 
-/// Tâche relue conforme à ce qui a été posé (pur, testé) : commande, arguments, groupe et niveau. `relue` est la sortie de
-/// `schtasks /Query /XML`, dans laquelle le chemin est échappé de la même façon
+/// Tâche relue conforme à ce qui a été posé (pur, testé) : commande, arguments, groupe, jamais élevée. `relue` est la sortie
+/// de `schtasks /Query /XML` : Windows y omet les valeurs par défaut, dont `<RunLevel>LeastPrivilege` (constaté en VM le
+/// 2026-10-31), et y échappe le chemin de la même façon
 pub fn definition_conforme(relue: &str, interface: &str) -> bool {
     let r = relue.to_lowercase();
     r.contains(&format!("<command>{}</command>", echappe_xml(interface).to_lowercase()))
         && r.contains("<arguments>--cache --relance</arguments>")
         && r.contains(&format!("<groupid>{}</groupid>", GROUPE_UTILISATEURS.to_lowercase()))
-        && r.contains("<runlevel>leastprivilege</runlevel>")
+        && !r.contains("highestavailable")
         && !r.contains("<userid>")
 }
 

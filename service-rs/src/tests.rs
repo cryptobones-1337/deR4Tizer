@@ -4779,6 +4779,7 @@ fn relance_relue_conforme() {
     let x = definition_tache(i);
     assert!(c(&x, i));
     assert!(c(&x, &i.to_uppercase()), "sans tenir compte de la casse");
+    assert!(c(&x.replace("<RunLevel>LeastPrivilege</RunLevel>", ""), i), "Windows omet la valeur par défaut à la relecture");
     assert!(!c(&x, r"C:\Temp\deR4Tizer.exe"), "autre commande");
     assert!(!c(&x.replace("--cache --relance", "--cache"), i));
     assert!(!c(&x.replace("LeastPrivilege", "HighestAvailable"), i), "élevée");

@@ -356,6 +356,13 @@ Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL
 # chaque tour de 2 s), avec une ligne dans journal.txt
 Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, ligne de journal (D4)' {
     $dns = 'Microsoft-Windows-DNS-Client/Operational'
+    # Au premier tour après un démarrage, le service applique le profil « journalisation » s'il le voit non conforme, ce qui
+    # réactiverait aussi ce journal, sans la ligne attendue ici (échecs du 2026-10-31 : cause probable, d'après le code, non
+    # mesurée). Attente de la fin de ce tour : baseline.json écrit depuis le démarrage du service
+    $demarrage = (Get-Process -Id (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId).StartTime
+    $baseline = Join-Path $script:Donnees 'baseline.json'
+    $fin = (Get-Date).AddSeconds(180)
+    while (((-not (Test-Path $baseline)) -or (Get-Item $baseline).LastWriteTime -lt $demarrage) -and (Get-Date) -lt $fin) { Start-Sleep 2 }
     wevtutil sl $dns /e:false
     # La coupure doit être constatée : sinon « réactivé » ne prouverait rien. La relecture peut tomber après la réactivation
     # (tour de 2 s) : la ligne de journal le dira plus bas
@@ -376,7 +383,7 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
         if ($l -match 'réactivé') { break }
         Start-Sleep 1
     } while ((Get-Date) -lt $fin)
-    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; journal : $(Journal 'DNS' 4)" }
+    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; baseline : $(Journal 'baseline' 3) ; journal : $(Journal 'DNS' 4)" }
     $true
 }
 
@@ -476,7 +483,8 @@ Verifier 'Relance : tâche posée, groupe Utilisateurs, sans élévation, chemin
     $t = [xml]$x
     $p = $t.Task.Principals.Principal
     if ($p.GroupId -ne 'S-1-5-32-545') { return "principal : groupe « $($p.GroupId) », compte « $($p.UserId) »" }
-    if ($p.RunLevel -ne 'LeastPrivilege') { return "niveau : $($p.RunLevel)" }
+    # Windows omet LeastPrivilege, valeur par défaut, à la relecture
+    if ($p.RunLevel -eq 'HighestAvailable') { return "niveau : $($p.RunLevel)" }
     $attendu = Join-Path $script:Programme 'deR4Tizer.exe'
     if ($t.Task.Actions.Exec.Command -ne $attendu) { return "commande : $($t.Task.Actions.Exec.Command), attendu $attendu" }
     if ($t.Task.Actions.Exec.Arguments -ne '--cache --relance') { return "arguments : $($t.Task.Actions.Exec.Arguments)" }
