@@ -270,8 +270,50 @@ pub fn terminer_enfants(noms: &[&str]) -> usize {
 
 // ------------------------------------------------------------ signatures
 
-/// Vérifie la signature Authenticode intégrée au fichier ; renvoie le nom du signataire si elle est valide
+/// Lecture d'un exécutable à échéance : un compte standard peut poser un verrou opportuniste sur son propre fichier, y compris en
+/// cours d'exécution, et l'ouverture attend alors sans délai maximal connu (audit de #103, S103-07). Ces lectures se font sous
+/// le verrou du moniteur : ni la surveillance, ni le canal, ni l'arrêt du service ne doivent rester suspendus à ce fichier. Au plus
+/// `MAX_FILS_FICHIERS` fils bloqués, soit un retard d'une minute environ, une fois pour un même lot de fichiers
+const ECHEANCE_FICHIER: std::time::Duration = std::time::Duration::from_secs(8);
+const MAX_FILS_FICHIERS: usize = 8;
+
+/// Lecture hors délai, ou trop de lectures déjà bloquées
+#[derive(Debug, PartialEq)]
+pub struct HorsDelai;
+
+fn lecture_a_echeance<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, HorsDelai> {
+    static FILS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    crate::commun::avec_echeance_bornee(&FILS, MAX_FILS_FICHIERS, ECHEANCE_FICHIER, f).ok_or(HorsDelai)
+}
+
+/// Signature à échéance, en distinguant le délai dépassé de l'absence de signature
+pub fn signataire_a_echeance(chemin: &str) -> Result<Option<String>, HorsDelai> {
+    let c = chemin.to_string();
+    lecture_a_echeance(move || signataire_direct(&c))
+}
+
+pub fn catalogue_a_echeance(chemin: &str) -> Result<bool, HorsDelai> {
+    let c = chemin.to_string();
+    lecture_a_echeance(move || catalogue_direct(&c))
+}
+
+/// Empreinte à échéance. None aussi si le fichier est illisible
+pub fn empreinte_a_echeance(chemin: &str) -> Result<Option<String>, HorsDelai> {
+    let c = std::path::PathBuf::from(chemin);
+    lecture_a_echeance(move || crate::hygiene::empreinte_fichier(&c))
+}
+
+/// Signataire valide, ou None : aussi bien sans signature que hors délai, ce qui ne donne jamais confiance
 pub fn signataire_valide(chemin: &str) -> Option<String> {
+    signataire_a_echeance(chemin).ok().flatten()
+}
+
+pub fn signe_par_catalogue(chemin: &str) -> bool {
+    catalogue_a_echeance(chemin).unwrap_or(false)
+}
+
+/// Vérifie la signature Authenticode intégrée au fichier ; renvoie le nom du signataire si elle est valide
+fn signataire_direct(chemin: &str) -> Option<String> {
     let chemin_large = large(chemin);
     let mut fichier = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -420,7 +462,7 @@ pub fn curl_exe() -> String {
 
 /// Fichier signé par un catalogue de sécurité installé (signature de Windows et des pilotes, rangée dans
 /// System32\CatRoot et non dans le fichier lui-même) : vrai contrôle de l'empreinte, pas du dossier
-pub fn signe_par_catalogue(chemin: &str) -> bool {
+fn catalogue_direct(chemin: &str) -> bool {
     use windows::Win32::Security::Cryptography::Catalog::{
         CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2, CryptCATAdminEnumCatalogFromHash,
         CryptCATAdminReleaseCatalogContext, CryptCATAdminReleaseContext,

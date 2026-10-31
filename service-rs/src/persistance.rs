@@ -25,6 +25,8 @@ pub struct Persistance {
     pub entrees: Vec<EntreeDemarrage>,
     /// Dernier relevé des tâches tronqué ou hors délai : collecte « partielle » (relecture de #103, D2)
     pub incomplet: bool,
+    /// Relevé des tâches hors délai depuis cet instant : au-delà de 30 min, collecte indisponible (S103-06)
+    bloque_depuis: Option<std::time::Instant>,
     /// Entrées devenues suspectes au relevé précédent, à confirmer au suivant (anti-rebond de « DEVENU SUSPECT »)
     en_attente: std::collections::HashSet<String>,
 }
@@ -42,7 +44,11 @@ impl Persistance {
         let apprentissage = sauvegarde.is_none() || !marqueur.exists();
         let _ = fs::write(&marqueur, commun::maintenant());
         let reference = sauvegarde.unwrap_or_default().into_iter().map(|e| (e.cle.clone(), e)).collect();
-        Persistance { reference, apprentissage, entrees: Vec::new(), incomplet: false, en_attente: Default::default() }
+        Persistance { reference, apprentissage, entrees: Vec::new(), incomplet: false, bloque_depuis: None, en_attente: Default::default() }
+    }
+
+    pub fn bloque_depuis_longtemps(&self) -> bool {
+        releve_bloque(self.bloque_depuis.map(|t| t.elapsed()))
     }
 
     pub fn verifier(&mut self, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
@@ -53,6 +59,8 @@ impl Persistance {
                 releve.push(e);
             }
         }
+        let hors_delai = releve.iter().any(|e| e.nom == anomalie_incomplet(QUOI_DELAI).0);
+        self.bloque_depuis = if hors_delai { self.bloque_depuis.or(Some(std::time::Instant::now())) } else { None };
         self.incomplet = garder_taches_non_vues(&self.reference, &mut releve);
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
@@ -467,6 +475,11 @@ fn services(l: &mut Vec<EntreeDemarrage>) {
 
 /// Bornes du relevé des tâches : les comptes authentifiés peuvent créer des éléments dans ce dossier, que le service lit en
 /// SYSTEM toutes les minutes (audit de #102, S102-01)
+/// Décision pure (testée) : un relevé hors délai depuis plus de 30 min n'est plus « partiel », et SAN-001 finira par le dire
+pub(crate) fn releve_bloque(depuis: Option<std::time::Duration>) -> bool {
+    depuis.is_some_and(|d| d.as_secs() > 1800)
+}
+
 pub(crate) struct BornesTaches {
     pub profondeur: usize,
     pub par_dossier: usize,
@@ -476,6 +489,7 @@ pub(crate) struct BornesTaches {
     pub octets: u64,
     pub tiers: usize,
     pub octets_tiers: u64,
+    pub dossiers_tiers: usize,
     pub anomalies: usize,
 }
 
@@ -489,6 +503,7 @@ const BORNES_TACHES: BornesTaches = BornesTaches {
     octets: 64 * 1024 * 1024,
     tiers: 64,
     octets_tiers: 8 * 1024 * 1024,
+    dossiers_tiers: 1000,
     anomalies: 16,
 };
 
@@ -505,7 +520,9 @@ pub(crate) const REMARQUE_ANOMALIE_TACHES: &str = "élément anormal du dossier 
 /// point d'analyse n'est suivi (jonction, lien). Les éléments d'un propriétaire autre que SYSTEM ou Administrateurs restent
 /// lus, une tâche de compte standard étant légitime, sur leur budget : ils ne privent pas de lecture les autres, et leurs
 /// dossiers passent après (S103-02). Au-delà de `par_dossier`, les fichiers d'un dossier ne sont plus lus, mais l'énumération
-/// continue pour trouver ses sous-dossiers : saturer la racine ne cache pas `\Microsoft` (S103-08). Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
+/// continue pour trouver ses sous-dossiers : saturer la racine ne cache pas ses autres dossiers (S103-08). `\Microsoft`, où les
+/// comptes standard n'écrivent pas (droits lus), est lu en premier : rien ne le retarde ni ne le masque (S103-09). Au-delà de
+/// `dossiers_tiers`, le propriétaire d'un dossier n'est plus lu et le dossier n'est plus parcouru : ni temps ni mémoire sans borne. Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
 /// PER-002 à chaque relevé
 pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok: &dyn Fn(&Path) -> bool,
                                traiter: &mut dyn FnMut(&str, &[u8])) -> Vec<(String, String)> {
@@ -519,6 +536,12 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
     let (mut elements, mut enumeres, mut octets, mut tiers, mut octets_tiers) = (0usize, 0usize, 0u64, 0usize, 0u64);
     let mut pile = vec![(racine.to_path_buf(), 0usize)];
     let mut pile_tiers = Vec::new();
+    let mut dossiers_tiers = 0usize;
+    let prioritaire = racine.join("Microsoft");
+    let vrai_dossier = fs::symlink_metadata(&prioritaire).is_ok_and(|m| m.is_dir() && m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0);
+    if vrai_dossier {
+        pile.push((prioritaire.clone(), 1));
+    }
     'parcours: while let Some((d, niveau)) = pile.pop().or_else(|| pile_tiers.pop()) {
         let Ok(entrees) = fs::read_dir(&d) else { continue };
         for (rang, e) in entrees.map_while(Result::ok).enumerate() {
@@ -538,6 +561,9 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
                 }
             }
             let p = e.path();
+            if vrai_dossier && p == prioritaire {
+                continue;
+            }
             let nom = p.to_string_lossy()[longueur..].to_string();
             // Métadonnées de l'entrée elle-même : le lien n'est pas suivi
             let Ok(m) = e.metadata() else { continue };
@@ -559,6 +585,10 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
                 }
                 continue;
             }
+            if m.is_dir() && dossiers_tiers >= b.dossiers_tiers {
+                incomplet.insert("dossiers de tiers");
+                continue;
+            }
             let fiable = proprietaire_ok(&p);
             if m.is_dir() {
                 if niveau + 1 >= b.profondeur {
@@ -566,6 +596,7 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
                 } else if fiable {
                     pile.push((p, niveau + 1));
                 } else {
+                    dossiers_tiers += 1;
                     pile_tiers.push((p, niveau + 1));
                 }
                 continue;
@@ -605,6 +636,7 @@ fn anomalie_incomplet(quoi: &str) -> (String, String) {
 }
 
 const PREFIXE_INCOMPLET: &str = r"\(relevé incomplet : ";
+const QUOI_DELAI: &str = "délai";
 
 /// Relevé incomplet : les tâches connues non vues restent dans la référence, sinon elles reviendraient en « NOUVEAU » au relevé
 /// complet suivant, ce qu'un compte standard pourrait provoquer à volonté (relecture de #103, D1). Rend s'il est incomplet
@@ -618,24 +650,21 @@ pub(crate) fn garder_taches_non_vues(reference: &HashMap<String, EntreeDemarrage
     true
 }
 
-/// Le relevé des tâches à échéance. Un seul à la fois : tant qu'un relevé reste bloqué, aucun autre fil n'est lancé
+/// Le relevé des tâches à échéance. Un seul à la fois : tant qu'un relevé reste bloqué, aucun autre fil n'est lancé. Hors délai, ce
+/// qui a été lu reste (S103-06)
 fn taches_a_echeance(l: &mut Vec<EntreeDemarrage>) {
     static EN_COURS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let lu = commun::avec_echeance_unique(&EN_COURS, ECHEANCE_TACHES, || {
-        let mut v = Vec::new();
-        taches(&mut v);
-        v
-    });
-    match lu {
-        Some(v) => l.extend(v),
-        None => {
-            let (nom, motif) = anomalie_incomplet("délai");
-            ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
-        }
+    let partiel = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sortie = partiel.clone();
+    let fini = commun::avec_echeance_unique(&EN_COURS, ECHEANCE_TACHES, move || taches(&sortie)).is_some();
+    l.append(&mut partiel.lock().unwrap());
+    if !fini {
+        let (nom, motif) = anomalie_incomplet(QUOI_DELAI);
+        ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
     }
 }
 
-fn taches(l: &mut Vec<EntreeDemarrage>) {
+fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
     let racine = format!(r"{}\Tasks", natif::dossier_systeme());
     let action = Regex::new(r"(?s)<Command>(.*?)</Command>(?:\s*<Arguments>(.*?)</Arguments>)?").unwrap();
     let com = Regex::new(r"(?s)<ComHandler>\s*<ClassId>(.*?)</ClassId>").unwrap();
@@ -647,15 +676,17 @@ fn taches(l: &mut Vec<EntreeDemarrage>) {
         if desactivee.is_match(&xml) {
             nom.push_str(" (désactivée)");
         }
+        let mut l = sortie.lock().unwrap();
         if let Some(m) = action.captures(&xml) {
             let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
-            ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
+            ajouter(&mut l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
         } else if let Some(c) = com.captures(&xml) {
-            ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
+            ajouter(&mut l, "Tâche planifiée", &nom, &commande_com(&c[1]));
         }
     });
+    let mut l = sortie.lock().unwrap();
     for (nom, motif) in anomalies {
-        ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
+        ajouter(&mut l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
     }
 }
 

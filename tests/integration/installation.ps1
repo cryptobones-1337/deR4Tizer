@@ -604,6 +604,78 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
 }
 }
 
+# Audit de #103, S103-07 : un compte standard pose un verrou opportuniste sur son propre exécutable en cours d'exécution, qui ouvre une
+# connexion. La signature se calcule sous le verrou du moniteur : le service doit rester joignable, et s'arrêter
+$verrouExe = Join-Path $script:Commun 'd4t-verrou.exe'
+$verrouMarque = Join-Path $script:Commun 'd4t-verrou.txt'
+$verrouScript = Join-Path $script:Commun 'd4t-verrou.ps1'
+Copy-Item (Join-Path $PSHOME 'powershell.exe') $verrouExe -Force
+Remove-Item $verrouMarque -Force -ErrorAction SilentlyContinue
+@"
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class D4tVerrou {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr CreateFileW(string n, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool DeviceIoControl(IntPtr h, uint c, IntPtr i, uint il, IntPtr o, uint ol, out uint r, IntPtr ov);
+  public static string Poser(string chemin) {
+    IntPtr h = CreateFileW(chemin, 0x80000000, 7, IntPtr.Zero, 3, 0x40000000, IntPtr.Zero);
+    if (h == new IntPtr(-1)) return "ouverture " + Marshal.GetLastWin32Error();
+    IntPtr ov = Marshal.AllocHGlobal(64);
+    for (int i = 0; i < 64; i++) Marshal.WriteByte(ov, i, 0);
+    uint r; bool ok = DeviceIoControl(h, 0x00090008, IntPtr.Zero, 0, IntPtr.Zero, 0, out r, ov);
+    int e = Marshal.GetLastWin32Error();
+    return (!ok && e == 997) ? "accorde" : ("refus " + e);
+  }
+}
+'@
+`$r = [D4tVerrou]::Poser('$verrouExe')
+Set-Content -LiteralPath '$verrouMarque' -Value `$r
+`$fin = (Get-Date).AddSeconds(240)
+while ((Get-Date) -lt `$fin) {
+  `$c = New-Object Net.Sockets.TcpClient
+  `$null = `$c.BeginConnect('192.0.2.1', 443, `$null, `$null)
+  Start-Sleep 15
+  `$c.Close()
+}
+"@ | Set-Content -LiteralPath $verrouScript -Encoding UTF8
+icacls $verrouExe /grant "$($script:compte.Nom):RX" | Out-Null
+$verrouP = En-TantQue $script:compte "& '$verrouExe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$verrouScript'" -SansAttendre
+$fin = (Get-Date).AddSeconds(40)
+while (-not (Test-Path $verrouMarque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+$verrouEtat = if (Test-Path $verrouMarque) { (Get-Content $verrouMarque -Raw).Trim() } else { 'marque absente' }
+$titreVerrou = 'Verrou opportuniste sur un exécutable, par un compte standard : service joignable, signature hors délai au journal, arrêt possible'
+if ($verrouEtat -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $verrouEtat"
+} else {
+Verifier $titreVerrou {
+    try {
+        # Sans cette ligne, le contrôle ne prouverait pas que la lecture a été bloquée
+        $fin = (Get-Date).AddSeconds(120)
+        while ((Journal 'lecture hors délai' 2) -notmatch 'd4t-verrou' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+        $l = Journal 'lecture hors délai' 2
+        if ($l -notmatch 'd4t-verrou') { return "aucune lecture hors délai au journal en 120 s" }
+        Write-Host "  journal : $l"
+        # Moins de 30 s : le verrou du moniteur n'est tenu que le temps de l'échéance
+        $t = Get-Date
+        $j = Attendre-Canal 30
+        if (-not $j) { return 'canal muet après 30 s, verrou encore posé' }
+        Write-Host "  canal : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+        $t = Get-Date
+        Stop-Service deR4Tizer -ErrorAction Stop
+        (Get-Service deR4Tizer).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(45))
+        Write-Host "  arrêt, verrou posé : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+        $true
+    } catch {
+        return "exception : $($_.Exception.Message)"
+    } finally {
+        Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        if ($verrouP) { Stop-Process -Id $verrouP.Id -Force -ErrorAction SilentlyContinue }
+        if ((Get-Service deR4Tizer).Status -ne 'Running') { Start-Service deR4Tizer; Attendre-Canal 60 | Out-Null }
+    }
+}
+}
+Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en

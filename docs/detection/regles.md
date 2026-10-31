@@ -336,23 +336,26 @@ modules expérimentaux.
   niveaux, 5 000 éléments par dossier, 100 000 au total, 1 Mo par fichier, 64 Mo au total ; pour les éléments dont le propriétaire
   n'est ni SYSTEM ni Administrateurs, 64 fichiers et 8 Mo, sur un budget à part, et leurs dossiers après les autres (mesuré
   en VM : 252 fichiers, 6 de tiers pour 2 comptes ; un seul poste mesuré). Au-delà de 5 000 éléments, les fichiers du dossier ne sont plus lus,
-  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés. Le relevé a 30 s pour finir. Chaque lien ou fichier
+  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés et 1 000 dossiers de tiers ; `\Microsoft`, où les
+  comptes standard n'écrivent pas (droits lus), est lu en premier. Le relevé a 30 s pour finir. Chaque lien ou fichier
   trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à
   chaque apparition, y compris au premier relevé. Tant que le relevé est incomplet, la collecte est « partielle » et les tâches
   connues non vues restent dans la référence. Limites : un premier relevé incomplet termine quand même l'apprentissage, sinon toute la persistance se tairait : les tâches
-  qu'il n'a pas lues lèvent une fois « NOUVEAU » au relevé complet suivant ; des dossiers vides ne comptent pas dans le total
-  (175 µs chacun mesurés) : environ 170 000 feraient expirer le relevé à chaque tour, par extrapolation ; dans un dossier saturé, un fichier de
+  qu'il n'a pas lues lèvent une fois « NOUVEAU » au relevé complet suivant ; dans un dossier saturé, un fichier de
   tâche classé après la borne n'est plus vu (l'alerte le dit) ; une tâche connue reste en référence, ancienne version comprise,
   tant que le relevé reste incomplet ; 64 fichiers de tiers bien classés masquent les tâches de comptes standard suivantes ; plus
   de 64 fichiers de tiers sur un poste sain, soit une vingtaine de comptes d'après la mesure, laisserait le relevé incomplet en permanence ;
   un compte standard peut lever 64 fausses tâches par relevé, et 16 anomalies, en renommant ses éléments, soit 1 000 alertes
   en 16 min environ, qui chassent les vraies ; remplacer
   un dossier par une jonction entre le contrôle et la lecture reste possible, avec pour seul effet le texte de `<Command>` d'un
-  fichier lu ailleurs ; un verrou opportuniste sur son propre fichier fait perdre tout le relevé des tâches, qui reste « partiel » sans SAN-001 et
-  ne repart pas tant que le verrou tient. **À corriger avant la distribution** : le calcul de signature sous le verrou du
-  moniteur (S103-07, d'après le code, service non rejoué : un verrou sur un exécutable pourrait figer tout le service, SAN-001
-  compris) ; le relevé bloqué (S103-06) ; la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne
-  serait plus une tâche (S103-02, S103-03).
+  fichier lu ailleurs ; un verrou opportuniste sur son propre fichier arrête le relevé des tâches à ce fichier : ce qui a été lu reste, le relevé
+  est « partiel » puis, au-delà de 30 min, la collecte est indisponible, et SAN-001 le dit après son délai. **Lecture bloquée d'un
+  exécutable** (signature, empreinte) : 8 s au plus, puis « non signé » pendant 5 min et une ligne au journal, sans nouvelle tentative ;
+  au plus 8 lectures bloquées à la fois, au-delà tout fichier nouveau est « non signé » tant qu'elles le restent, signé ou
+  non : un compte standard peut donc faire passer de vrais programmes pour non signés, et retarder la surveillance d'une minute
+  environ une fois pour 8 fichiers. Les pilotes (`hygiene.rs`) sont lus sans échéance : le registre des services, qui les désigne, n'est écrit que
+  par un administrateur. **À corriger avant la distribution** : la lecture par le Planificateur (énumération COM), où un fichier
+  non enregistré ne serait plus une tâche (S103-02, S103-03).
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée

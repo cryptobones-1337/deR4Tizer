@@ -1849,7 +1849,7 @@ fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches
 }
 
 fn bornes_taches() -> crate::persistance::BornesTaches {
-    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, anomalies: 2 }
+    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, dossiers_tiers: 3, anomalies: 2 }
 }
 
 fn dossier_taches(nom: &str) -> std::path::PathBuf {
@@ -1981,13 +1981,27 @@ fn taches_budgets_de_tiers_separes() {
     assert!(lus.contains(&r"\Microsoft\vraie".to_string()), "sous-dossier trouvé malgré la saturation : {lus:?}");
     assert_eq!(lus.iter().filter(|n| n.starts_with(r"\a")).count(), 3, "fichiers au-delà de la borne non lus : {lus:?}");
     assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
-    // La borne dure de l'énumération arrête tout
+    // La borne dure de l'énumération arrête tout, sauf \Microsoft, lu d'abord (S103-09)
+    std::fs::create_dir_all(d4.join("zz")).unwrap();
+    std::fs::write(d4.join(r"zz\apres"), "x").unwrap();
     let mut b = bornes_taches();
-    b.par_dossier = 3;
     b.enumeres = 6;
     let (lus, _) = taches_de_test(&d4, &b, &|_| false);
-    assert!(!lus.contains(&r"\Microsoft\vraie".to_string()), "borne dure : {lus:?}");
-    for x in [d, d2, d3, d4] {
+    assert!(lus.contains(&r"\Microsoft\vraie".to_string()), "lu en premier : {lus:?}");
+    assert!(!lus.contains(&r"\zz\apres".to_string()), "borne dure : {lus:?}");
+    let (lus, _) = taches_de_test(&d4, &bornes_taches(), &|_| false);
+    assert_eq!(lus.iter().filter(|n| n.contains("Microsoft")).count(), 1, "pas lu deux fois : {lus:?}");
+    // Dossiers de tiers plafonnés, propriétaire non lu au-delà
+    let d5 = dossier_taches("dossiers");
+    for i in 0..6 {
+        std::fs::create_dir_all(d5.join(format!(r"tiers{i}"))).unwrap();
+    }
+    let lectures = std::cell::Cell::new(0);
+    let est_tiers = |_: &std::path::Path| { lectures.set(lectures.get() + 1); true };
+    let (_, a) = taches_de_test(&d5, &bornes_taches(), &est_tiers);
+    assert!(a.iter().any(|(n, _)| n.contains("dossiers de tiers")), "{a:?}");
+    assert_eq!(lectures.get(), 3, "plus de lecture de propriétaire au-delà du plafond");
+    for x in [d, d2, d3, d4, d5] {
         std::fs::remove_dir_all(x).unwrap();
     }
 }
@@ -2032,6 +2046,60 @@ fn taches_releve_incomplet_laisse_alerter_le_reste() {
     assert!(garder_taches_non_vues(&Default::default(), &mut r));
     let (alertes, _) = comparer(&Default::default(), &mut r, false, &mut Default::default());
     assert!(alertes.iter().any(|a| a.destination.starts_with("Run")), "clé Run nouvelle signalée");
+}
+
+/// S103-06 : hors délai depuis plus de 30 min, le relevé n'est plus « partiel »
+#[test]
+fn taches_releve_bloque_apres_30_min() {
+    use crate::persistance::releve_bloque as b;
+    use std::time::Duration as D;
+    assert!(!b(None));
+    assert!(!b(Some(D::from_secs(1800))));
+    assert!(b(Some(D::from_secs(1801))));
+    let s = include_str!("moniteur.rs");
+    assert!(s.contains("persistance.bloque_depuis_longtemps()"), "collecte non passée indisponible");
+    assert!(s.contains("natif::empreinte_a_echeance(chemin)"), "S103-07 : empreinte sous le verrou, sans échéance");
+    assert!(include_str!("persistance.rs").contains("l.append(&mut partiel.lock().unwrap());"), "ce qui a été lu est perdu");
+    let n = include_str!("natif.rs");
+    assert!(n.contains("signataire_a_echeance(chemin).ok().flatten()") && n.contains("catalogue_a_echeance(chemin).unwrap_or(false)"), "lecture sans échéance");
+}
+
+/// S103-07 : plafond de fils, abandonnés compris ; le compteur redescend quand ils finissent
+#[test]
+fn avec_echeance_bornee_plafonne() {
+    use crate::commun::avec_echeance_bornee as b;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration as D;
+    static FILS: AtomicUsize = AtomicUsize::new(0);
+    let long = || std::thread::sleep(D::from_millis(400));
+    assert_eq!(b(&FILS, 2, D::from_millis(10), long), None);
+    assert_eq!(b(&FILS, 2, D::from_millis(10), long), None);
+    let t = std::time::Instant::now();
+    assert_eq!(b(&FILS, 2, D::from_secs(5), || 1), None, "plafond atteint : rien de lancé");
+    assert!(t.elapsed() < D::from_millis(200), "et sans attendre");
+    std::thread::sleep(D::from_millis(600));
+    assert_eq!(b(&FILS, 2, D::from_secs(5), || 1), Some(1), "compteur redescendu");
+}
+
+/// S103-07 : lecture hors délai : non signé, une trace, pas de nouvelle tentative pendant le délai ; pas de confiance ensuite
+#[test]
+fn signature_hors_delai_sans_confiance() {
+    use crate::moniteur::signataire_cache_avec as s;
+    use crate::natif::HorsDelai;
+    let exe = std::env::current_exe().unwrap();
+    let c = exe.to_string_lossy().to_string();
+    let appels = std::cell::Cell::new(0);
+    let bloque = |_: &str| { appels.set(appels.get() + 1); Err(HorsDelai) };
+    let catalogue = |_: &str| Ok(false);
+    let mut cache = std::collections::HashMap::new();
+    assert_eq!(s(&mut cache, "", &c, 1000, u64::MAX, &bloque, &catalogue), "");
+    assert_eq!(s(&mut cache, "", &c, 1299, u64::MAX, &bloque, &catalogue), "");
+    assert_eq!(appels.get(), 1, "pas de nouveau fil pendant le délai");
+    assert_eq!(s(&mut cache, "", &c, 1300, u64::MAX, &bloque, &catalogue), "");
+    assert_eq!(appels.get(), 2, "nouvelle tentative après le délai");
+    // Le hors délai n'est pas un échec définitif : la lecture rétablie donne le signataire, malgré un cache d'échec sans limite
+    let lue = |_: &str| Ok(Some("Éditeur".to_string()));
+    assert_eq!(s(&mut cache, "", &c, 1600, u64::MAX, &lue, &catalogue), "Éditeur");
 }
 
 /// Un seul fil bloqué à la fois ; la garde se libère quand il finit
