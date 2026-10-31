@@ -54,7 +54,10 @@ function Commande([string]$Json, [int]$Delai = 5000) {
         $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true
         $r = New-Object IO.StreamReader($c)
         $w.WriteLine($Json)
-        return $r.ReadLine()
+        # Lecture bornée : un service qui accepte le tube mais reste bloqué sur son verrou ferait attendre sans fin (relecture de #104, D4)
+        $t = $r.ReadLineAsync()
+        if (-not $t.Wait([Math]::Max($Delai, 60000))) { throw 'canal : pas de réponse' }
+        return $t.Result
     } finally { $c.Dispose() }
 }
 

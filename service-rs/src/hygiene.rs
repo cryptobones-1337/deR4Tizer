@@ -286,7 +286,11 @@ pub fn verifier_leurres(liste: &mut Vec<Leurre>) -> Vec<Alerte> {
     let mut a = Vec::new();
     for l in liste.iter_mut() {
         // Par handle vérifié : un leurre remplacé par un lien compte comme supprimé, rien n'est lu ailleurs
-        let etat = match empreinte_verifiee(Path::new(&l.chemin)) {
+        // Lecture hors délai : le propriétaire du profil peut y poser un verrou opportuniste. Ni alerte ni blocage : l'audit des accès (LEU-002)
+        // voit les fichiers touchés, et la vérification reprend quand la lecture aboutit
+        let chemin = l.chemin.clone();
+        let Ok(lue) = crate::natif::lecture_fichier("leurre", &l.chemin, move || empreinte_verifiee(Path::new(&chemin))) else { continue };
+        let etat = match lue {
             None => Some("SUPPRIMÉ, RENOMMÉ ou REMPLACÉ PAR UN LIEN"),
             Some(e) if e != l.empreinte => Some("MODIFIÉ"),
             Some(_) => None,

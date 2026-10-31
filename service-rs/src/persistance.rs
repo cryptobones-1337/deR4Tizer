@@ -490,6 +490,7 @@ pub(crate) struct BornesTaches {
     pub tiers: usize,
     pub octets_tiers: u64,
     pub dossiers_tiers: usize,
+    pub lectures_proprietaire: usize,
     pub anomalies: usize,
 }
 
@@ -504,6 +505,7 @@ const BORNES_TACHES: BornesTaches = BornesTaches {
     tiers: 64,
     octets_tiers: 8 * 1024 * 1024,
     dossiers_tiers: 1000,
+    lectures_proprietaire: 20_000,
     anomalies: 16,
 };
 
@@ -522,7 +524,8 @@ pub(crate) const REMARQUE_ANOMALIE_TACHES: &str = "élément anormal du dossier 
 /// dossiers passent après (S103-02). Au-delà de `par_dossier`, les fichiers d'un dossier ne sont plus lus, mais l'énumération
 /// continue pour trouver ses sous-dossiers : saturer la racine ne cache pas ses autres dossiers (S103-08). `\Microsoft`, où les
 /// comptes standard n'écrivent pas (droits lus), est lu en premier : rien ne le retarde ni ne le masque (S103-09). Au-delà de
-/// `dossiers_tiers`, le propriétaire d'un dossier n'est plus lu et le dossier n'est plus parcouru : ni temps ni mémoire sans borne. Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
+/// `dossiers_tiers`, les dossiers de tiers ne sont plus parcourus ; au-delà de `lectures_proprietaire`, plus aucun propriétaire de dossier n'est
+/// lu : ni temps ni mémoire sans borne. Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
 /// PER-002 à chaque relevé
 pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok: &dyn Fn(&Path) -> bool,
                                traiter: &mut dyn FnMut(&str, &[u8])) -> Vec<(String, String)> {
@@ -536,7 +539,7 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
     let (mut elements, mut enumeres, mut octets, mut tiers, mut octets_tiers) = (0usize, 0usize, 0u64, 0usize, 0u64);
     let mut pile = vec![(racine.to_path_buf(), 0usize)];
     let mut pile_tiers = Vec::new();
-    let mut dossiers_tiers = 0usize;
+    let (mut dossiers_tiers, mut lectures_proprietaire) = (0usize, 0usize);
     let prioritaire = racine.join("Microsoft");
     let vrai_dossier = fs::symlink_metadata(&prioritaire).is_ok_and(|m| m.is_dir() && m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0);
     if vrai_dossier {
@@ -585,16 +588,19 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
                 }
                 continue;
             }
-            if m.is_dir() && dossiers_tiers >= b.dossiers_tiers {
+            if m.is_dir() && lectures_proprietaire >= b.lectures_proprietaire {
                 incomplet.insert("dossiers de tiers");
                 continue;
             }
+            lectures_proprietaire += usize::from(m.is_dir());
             let fiable = proprietaire_ok(&p);
             if m.is_dir() {
                 if niveau + 1 >= b.profondeur {
                     incomplet.insert("profondeur");
                 } else if fiable {
                     pile.push((p, niveau + 1));
+                } else if dossiers_tiers >= b.dossiers_tiers {
+                    incomplet.insert("dossiers de tiers");
                 } else {
                     dossiers_tiers += 1;
                     pile_tiers.push((p, niveau + 1));
@@ -651,13 +657,22 @@ pub(crate) fn garder_taches_non_vues(reference: &HashMap<String, EntreeDemarrage
 }
 
 /// Le relevé des tâches à échéance. Un seul à la fois : tant qu'un relevé reste bloqué, aucun autre fil n'est lancé. Hors délai, ce
-/// qui a été lu reste (S103-06)
+/// qui a été lu reste, tour après tour tant que ce relevé est bloqué (S103-06, S104-04). Le fichier bloqué n'est pas sauté : ce qui vient
+/// après lui reste à lire
 fn taches_a_echeance(l: &mut Vec<EntreeDemarrage>) {
     static EN_COURS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let partiel = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    type Partiel = std::sync::Arc<std::sync::Mutex<Vec<EntreeDemarrage>>>;
+    static DERNIER: std::sync::Mutex<Option<Partiel>> = std::sync::Mutex::new(None);
+    let partiel = Partiel::default();
     let sortie = partiel.clone();
+    let bloque = EN_COURS.load(std::sync::atomic::Ordering::SeqCst);
+    if !bloque {
+        *DERNIER.lock().unwrap() = Some(partiel);
+    }
     let fini = commun::avec_echeance_unique(&EN_COURS, ECHEANCE_TACHES, move || taches(&sortie)).is_some();
-    l.append(&mut partiel.lock().unwrap());
+    if let Some(p) = DERNIER.lock().unwrap().as_ref() {
+        l.extend(p.lock().unwrap().iter().cloned());
+    }
     if !fini {
         let (nom, motif) = anomalie_incomplet(QUOI_DELAI);
         ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));

@@ -1019,21 +1019,6 @@ pub fn avec_echeance<T: Send + 'static>(duree: std::time::Duration, f: impl FnOn
     reception.recv_timeout(duree).ok()
 }
 
-/// Comme `avec_echeance`, avec au plus `max` fils en cours pour ce `compteur`, abandonnés compris : au-delà, rend None sans lancer `f`
-pub fn avec_echeance_bornee<T: Send + 'static>(compteur: &'static std::sync::atomic::AtomicUsize, max: usize, duree: std::time::Duration,
-                                               f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-    use std::sync::atomic::Ordering;
-    if compteur.fetch_add(1, Ordering::SeqCst) >= max {
-        compteur.fetch_sub(1, Ordering::SeqCst);
-        return None;
-    }
-    avec_echeance(duree, move || {
-        let r = f();
-        compteur.fetch_sub(1, Ordering::SeqCst);
-        r
-    })
-}
-
 /// Comme `avec_echeance`, un seul fil à la fois par `garde` : tant que le précédent reste bloqué, `f` n'est pas lancée et rend None.
 /// Le nombre de fils abandonnés reste borné
 pub fn avec_echeance_unique<T: Send + 'static>(garde: &'static std::sync::atomic::AtomicBool, duree: std::time::Duration,

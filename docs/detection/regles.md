@@ -336,8 +336,8 @@ modules expérimentaux.
   niveaux, 5 000 éléments par dossier, 100 000 au total, 1 Mo par fichier, 64 Mo au total ; pour les éléments dont le propriétaire
   n'est ni SYSTEM ni Administrateurs, 64 fichiers et 8 Mo, sur un budget à part, et leurs dossiers après les autres (mesuré
   en VM : 252 fichiers, 6 de tiers pour 2 comptes ; un seul poste mesuré). Au-delà de 5 000 éléments, les fichiers du dossier ne sont plus lus,
-  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés et 1 000 dossiers de tiers ; `\Microsoft`, où les
-  comptes standard n'écrivent pas (droits lus), est lu en premier. Le relevé a 30 s pour finir. Chaque lien ou fichier
+  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés, 1 000 dossiers de tiers et 20 000 lectures de propriétaire de dossier ; au-delà, un
+  dossier de tâches d'éditeur n'est plus lu ; `\Microsoft`, où les comptes standard n'écrivent pas (droits lus, contrôlé en VM), est lu en premier. Le relevé a 30 s pour finir. Chaque lien ou fichier
   trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à
   chaque apparition, y compris au premier relevé. Tant que le relevé est incomplet, la collecte est « partielle » et les tâches
   connues non vues restent dans la référence. Limites : un premier relevé incomplet termine quand même l'apprentissage, sinon toute la persistance se tairait : les tâches
@@ -348,14 +348,21 @@ modules expérimentaux.
   un compte standard peut lever 64 fausses tâches par relevé, et 16 anomalies, en renommant ses éléments, soit 1 000 alertes
   en 16 min environ, qui chassent les vraies ; remplacer
   un dossier par une jonction entre le contrôle et la lecture reste possible, avec pour seul effet le texte de `<Command>` d'un
-  fichier lu ailleurs ; un verrou opportuniste sur son propre fichier arrête le relevé des tâches à ce fichier : ce qui a été lu reste, le relevé
-  est « partiel » puis, au-delà de 30 min, la collecte est indisponible, et SAN-001 le dit après son délai. **Lecture bloquée d'un
-  exécutable** (signature, empreinte) : 8 s au plus, puis « non signé » pendant 5 min et une ligne au journal, sans nouvelle tentative ;
-  au plus 8 lectures bloquées à la fois, au-delà tout fichier nouveau est « non signé » tant qu'elles le restent, signé ou
-  non : un compte standard peut donc faire passer de vrais programmes pour non signés, et retarder la surveillance d'une minute
-  environ une fois pour 8 fichiers. Les pilotes (`hygiene.rs`) sont lus sans échéance : le registre des services, qui les désigne, n'est écrit que
-  par un administrateur. **À corriger avant la distribution** : la lecture par le Planificateur (énumération COM), où un fichier
-  non enregistré ne serait plus une tâche (S103-02, S103-03).
+  fichier lu ailleurs ; un verrou opportuniste, qu'un simple droit de lecture permet de poser, arrête le relevé des tâches au fichier
+  visé : ce qui a été lu reste, le relevé est « partiel » puis, au-delà de 30 min, la collecte est indisponible, et SAN-001 le dit après
+  son délai ; ce qui vient après ce fichier n'est plus lu. **Lecture bloquée** (signature, empreinte, `hosts`, leurres) : 8 s au plus, une
+  lecture à la fois par fichier, 16 s d'attente par minute au total ; son résultat, même tardif, est repris au tour suivant. Signature :
+  « non signé » tant qu'elle ne répond pas, une ligne au journal, rien en cache. `hosts` et leurres : pas de comparaison tant qu'ils ne répondent pas,
+  donc un leurre verrouillé ne lève pas LEU-001 (LEU-002 reste). Au plus 8 lectures bloquées à la fois : au-delà, tout fichier nouveau est
+  « non signé », ce qui fait passer de vrais programmes pour non signés et peut faire suspendre un outil de sauvegarde signé qui touche un
+  leurre ; la garde des processus critiques, elle, reste fermée hors délai. Les pilotes (`hygiene.rs`), désignés par le registre des services,
+  écrit par un administrateur, sont lus sans échéance, comme le paquet de mise à jour, dans un dossier réservé à SYSTEM. **Chien de garde** : passage bloqué 3 min, attente du
+  verrou comprise : un événement dans le journal Application, et le processus se termine, relancé par le gestionnaire de services ; il
+  ne dépend ni du verrou du moniteur ni des fichiers du service. **À corriger avant la distribution** : S103-07 reste ouvert pour
+  ce qui s'écrit sous le verrou du moniteur (`journal.txt`, `etat.json`, `alertes.json`, `reseau.json`, pose des leurres) : un compte qui
+  peut les lire, par défaut le compte connecté, peut figer le service 3 min, puis recommencer après chaque relance, ce qui coupe la
+  surveillance ; la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne serait plus une tâche (S103-02,
+  S103-03), et où un fichier bloqué ne couperait plus le relevé (S104-04).
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée

@@ -604,15 +604,13 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
 }
 }
 
-# Audit de #103, S103-07 : un compte standard pose un verrou opportuniste sur son propre exécutable en cours d'exécution, qui ouvre une
-# connexion. La signature se calcule sous le verrou du moniteur : le service doit rester joignable, et s'arrêter
+# Audits de #103 et #104, S103-07, S104-02 : verrou opportuniste, sous lequel une ouverture attend sans délai maximal connu
 $verrouExe = Join-Path $script:Commun 'd4t-verrou.exe'
-$verrouMarque = Join-Path $script:Commun 'd4t-verrou.txt'
 $verrouScript = Join-Path $script:Commun 'd4t-verrou.ps1'
 Copy-Item (Join-Path $PSHOME 'powershell.exe') $verrouExe -Force
-Remove-Item $verrouMarque -Force -ErrorAction SilentlyContinue
-@"
-Add-Type -TypeDefinition @'
+@'
+param([string]$Cible, [string]$Marque, [switch]$Connexion)
+Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 public static class D4tVerrou {
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr CreateFileW(string n, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
@@ -627,54 +625,148 @@ public static class D4tVerrou {
     return (!ok && e == 997) ? "accorde" : ("refus " + e);
   }
 }
-'@
-`$r = [D4tVerrou]::Poser('$verrouExe')
-Set-Content -LiteralPath '$verrouMarque' -Value `$r
-`$fin = (Get-Date).AddSeconds(240)
-while ((Get-Date) -lt `$fin) {
-  `$c = New-Object Net.Sockets.TcpClient
-  `$null = `$c.BeginConnect('192.0.2.1', 443, `$null, `$null)
-  Start-Sleep 15
-  `$c.Close()
+"@
+$r = [D4tVerrou]::Poser($Cible)
+Set-Content -LiteralPath $Marque -Value $r
+$fin = (Get-Date).AddSeconds(300)
+while ((Get-Date) -lt $fin) {
+  if ($Connexion) {
+    $c = New-Object Net.Sockets.TcpClient
+    $null = $c.BeginConnect('192.0.2.1', 443, $null, $null)
+    Start-Sleep 15
+    $c.Close()
+  } else { Start-Sleep 15 }
 }
-"@ | Set-Content -LiteralPath $verrouScript -Encoding UTF8
+'@ | Set-Content -LiteralPath $verrouScript -Encoding UTF8
 icacls $verrouExe /grant "$($script:compte.Nom):RX" | Out-Null
-$verrouP = En-TantQue $script:compte "& '$verrouExe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$verrouScript'" -SansAttendre
-$fin = (Get-Date).AddSeconds(40)
-while (-not (Test-Path $verrouMarque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
-$verrouEtat = if (Test-Path $verrouMarque) { (Get-Content $verrouMarque -Raw).Trim() } else { 'marque absente' }
-$titreVerrou = 'Verrou opportuniste sur un exécutable, par un compte standard : service joignable, signature hors délai au journal, arrêt possible'
-if ($verrouEtat -ne 'accorde') {
-    NonExecute $titreVerrou "verrou non obtenu : $verrouEtat"
+
+# Pose le verrou : $Compte nul, en administrateur. Rend « accorde » ou la raison de l'échec
+function Poser-Verrou([string]$Cible, $Compte, [switch]$Connexion) {
+    $marque = Join-Path $script:Commun "d4t-verrou-$([guid]::NewGuid().ToString('N')).txt"
+    $args1 = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$verrouScript`" -Cible `"$Cible`" -Marque `"$marque`"" + $(if ($Connexion) { ' -Connexion' } else { '' })
+    if ($Compte) { $null = En-TantQue $Compte "& '$verrouExe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$verrouScript' -Cible '$Cible' -Marque '$marque'$(if ($Connexion) { ' -Connexion' })" -SansAttendre }
+    else { $null = Start-Process $verrouExe -ArgumentList $args1 -WindowStyle Hidden -PassThru }
+    # Add-Type peut être lent sur une VM chargée
+    $fin = (Get-Date).AddSeconds(90)
+    while (-not (Test-Path $marque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+    if (Test-Path $marque) { (Get-Content $marque -Raw).Trim() } else { 'marque absente en 90 s' }
+}
+function Retirer-Verrou {
+    Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+# Une ouverture du fichier reste-t-elle bloquée 4 s ? Sans cela, le contrôle ne prouverait rien. Le témoin est rendu pour être arrêté ensuite
+function Temoin-Blocage([string]$Cible) {
+    $p = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', "[IO.File]::ReadAllBytes('$Cible') | Out-Null" -WindowStyle Hidden -PassThru
+    Start-Sleep 4
+    @{ Bloque = -not $p.HasExited; Processus = $p }
+}
+function Service-Pid { (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId }
+# Remet le service en marche, borné : ni Stop-Service ni Start-Service, qui attendent sans limite
+function Service-Relance {
+    $fin = (Get-Date).AddSeconds(60)
+    while ((Get-Service deR4Tizer).Status -notin 'Running', 'Stopped' -and (Get-Date) -lt $fin) { Start-Sleep 2 }
+    if ((Get-Service deR4Tizer).Status -eq 'Stopped') { sc.exe start deR4Tizer | Out-Null }
+    Attendre-Canal 60 | Out-Null
+}
+
+$titreVerrou = 'Verrou sur un exécutable lancé, par un compte standard : canal joignable, lecture hors délai au journal, arrêt possible'
+$e = Poser-Verrou $verrouExe $script:compte -Connexion
+if ($e -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $e"
 } else {
 Verifier $titreVerrou {
     try {
-        # Sans cette ligne, le contrôle ne prouverait pas que la lecture a été bloquée
+        # Sans cette ligne, la lecture n'aurait pas été bloquée
         $fin = (Get-Date).AddSeconds(120)
         while ((Journal 'lecture hors délai' 2) -notmatch 'd4t-verrou' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
         $l = Journal 'lecture hors délai' 2
         if ($l -notmatch 'd4t-verrou') { return "aucune lecture hors délai au journal en 120 s" }
         Write-Host "  journal : $l"
-        # Moins de 30 s : le verrou du moniteur n'est tenu que le temps de l'échéance
         $t = Get-Date
-        $j = Attendre-Canal 30
-        if (-not $j) { return 'canal muet après 30 s, verrou encore posé' }
-        Write-Host "  canal : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+        if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+        $d = ((Get-Date) - $t).TotalSeconds
+        Write-Host "  canal : $([math]::Round($d, 1)) s"
+        if ($d -gt 30) { return "canal en $d s" }
         $t = Get-Date
-        Stop-Service deR4Tizer -ErrorAction Stop
-        (Get-Service deR4Tizer).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(45))
+        sc.exe stop deR4Tizer | Out-Null
+        $fin = (Get-Date).AddSeconds(45)
+        while ((Get-Service deR4Tizer).Status -ne 'Stopped' -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+        if ((Get-Service deR4Tizer).Status -ne 'Stopped') { return 'service non arrêté en 45 s, verrou posé' }
         Write-Host "  arrêt, verrou posé : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
         $true
-    } catch {
-        return "exception : $($_.Exception.Message)"
     } finally {
-        Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        if ($verrouP) { Stop-Process -Id $verrouP.Id -Force -ErrorAction SilentlyContinue }
-        if ((Get-Service deR4Tizer).Status -ne 'Running') { Start-Service deR4Tizer; Attendre-Canal 60 | Out-Null }
+        Retirer-Verrou
+        Service-Relance
     }
 }
 }
-Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Retirer-Verrou
+
+$hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+$titreVerrou = 'Verrou sur hosts, par un compte standard, qui n''a que la lecture : surveillance et canal continuent'
+$e = Poser-Verrou $hosts $script:compte
+if ($e -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $e"
+} else {
+Verifier $titreVerrou {
+    $w = $null
+    try {
+        $w = Temoin-Blocage $hosts
+        if (-not $w.Bloque) { return 'ouverture de hosts non bloquée : contrôle sans valeur' }
+        # Deux écritures d'état de suite, le verrou posé : le passage n'est pas figé
+        $e1 = Attendre-Etat (Get-Date) 60
+        if (-not $e1) { return 'etat.json non écrit en 60 s' }
+        $e2 = Attendre-Etat (Get-Date) 60
+        if (-not $e2) { return 'etat.json écrit une seule fois en 120 s' }
+        if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+        $true
+    } finally {
+        if ($w) { Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue }
+        Retirer-Verrou
+    }
+}
+}
+Retirer-Verrou
+
+# Le journal, écrit sous le verrou du moniteur, reste bloquant (non fermé) : le chien de garde doit alors relancer le service. Verrou en
+# administrateur : le compte lecteur peut en faire autant. `Journal` et le fichier ne sont pas lus tant qu'il tient
+$journalService = Join-Path $script:Donnees 'journal.txt'
+$titreVerrou = 'Verrou sur journal.txt : chien de garde, service relancé en 5 min, événement dans le journal Application'
+$pidAvant = Service-Pid
+$avant = Get-Date
+$e = Poser-Verrou $journalService $null
+if ($e -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $e"
+} else {
+Verifier $titreVerrou {
+    try {
+        $w = Temoin-Blocage $journalService
+        Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
+        if (-not $w.Bloque) { return 'ouverture du journal non bloquée : contrôle sans valeur' }
+        $fin = (Get-Date).AddMinutes(5)
+        while ((Service-Pid) -in $pidAvant, 0 -and (Get-Date) -lt $fin) { Start-Sleep 5 }
+        $nouveau = Service-Pid
+        if ($nouveau -in $pidAvant, 0) { return 'service non relancé en 5 min' }
+        Write-Host "  relancé après $([math]::Round(((Get-Date) - $avant).TotalSeconds)) s"
+        Retirer-Verrou
+        $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'deR4Tizer'; StartTime = $avant } -ErrorAction SilentlyContinue)
+        if (-not $ev.Count) { return 'aucun événement dans le journal Application' }
+        if (-not (Attendre-Canal 60)) { return 'canal muet après la relance' }
+        $true
+    } finally {
+        Retirer-Verrou
+        Service-Relance
+    }
+}
+}
+Retirer-Verrou
+
+Verifier 'Dossier Microsoft des tâches : pas d''écriture pour un compte standard (lu en premier par le relevé)' {
+    $m = Join-Path $env:SystemRoot 'System32\Tasks\Microsoft\d4t-essai'
+    $r = En-TantQue $script:compte "try { Set-Content -LiteralPath '$m' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
+    if ("$r".Trim() -ne 'refuse') { Remove-Item -LiteralPath $m -Force -ErrorAction SilentlyContinue; return "écriture acceptée ($r)" }
+    $true
+}
 
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)

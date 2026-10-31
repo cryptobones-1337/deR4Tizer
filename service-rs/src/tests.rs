@@ -1849,7 +1849,7 @@ fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches
 }
 
 fn bornes_taches() -> crate::persistance::BornesTaches {
-    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, dossiers_tiers: 3, anomalies: 2 }
+    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, dossiers_tiers: 3, lectures_proprietaire: 4, anomalies: 2 }
 }
 
 fn dossier_taches(nom: &str) -> std::path::PathBuf {
@@ -1991,7 +1991,7 @@ fn taches_budgets_de_tiers_separes() {
     assert!(!lus.contains(&r"\zz\apres".to_string()), "borne dure : {lus:?}");
     let (lus, _) = taches_de_test(&d4, &bornes_taches(), &|_| false);
     assert_eq!(lus.iter().filter(|n| n.contains("Microsoft")).count(), 1, "pas lu deux fois : {lus:?}");
-    // Dossiers de tiers plafonnés, propriétaire non lu au-delà
+    // Dossiers de tiers plafonnés ; plus de lecture de propriétaire au-delà de sa borne, un dossier fiable passant jusque-là
     let d5 = dossier_taches("dossiers");
     for i in 0..6 {
         std::fs::create_dir_all(d5.join(format!(r"tiers{i}"))).unwrap();
@@ -2000,7 +2000,20 @@ fn taches_budgets_de_tiers_separes() {
     let est_tiers = |_: &std::path::Path| { lectures.set(lectures.get() + 1); true };
     let (_, a) = taches_de_test(&d5, &bornes_taches(), &est_tiers);
     assert!(a.iter().any(|(n, _)| n.contains("dossiers de tiers")), "{a:?}");
-    assert_eq!(lectures.get(), 3, "plus de lecture de propriétaire au-delà du plafond");
+    assert_eq!(lectures.get(), 4, "plus de lecture de propriétaire au-delà de la borne");
+    // Plafond des dossiers de tiers seul : les dossiers au-delà ne sont pas parcourus
+    let d6 = dossier_taches("dossiers-parcourus");
+    for i in 0..6 {
+        std::fs::create_dir_all(d6.join(format!("tiers{i}"))).unwrap();
+        std::fs::write(d6.join(format!(r"tiers{i}\f")), "x").unwrap();
+    }
+    let mut b = bornes_taches();
+    b.lectures_proprietaire = 100;
+    b.tiers = 100;
+    let (lus, a) = taches_de_test(&d6, &b, &|_| true);
+    assert_eq!(lus.len(), 3, "{lus:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("dossiers de tiers")), "{a:?}");
+    std::fs::remove_dir_all(d6).unwrap();
     for x in [d, d2, d3, d4, d5] {
         std::fs::remove_dir_all(x).unwrap();
     }
@@ -2059,29 +2072,104 @@ fn taches_releve_bloque_apres_30_min() {
     let s = include_str!("moniteur.rs");
     assert!(s.contains("persistance.bloque_depuis_longtemps()"), "collecte non passée indisponible");
     assert!(s.contains("natif::empreinte_a_echeance(chemin)"), "S103-07 : empreinte sous le verrou, sans échéance");
-    assert!(include_str!("persistance.rs").contains("l.append(&mut partiel.lock().unwrap());"), "ce qui a été lu est perdu");
+    assert!(include_str!("persistance.rs").contains("l.extend(p.lock().unwrap().iter().cloned());"), "ce qui a été lu est perdu");
     let n = include_str!("natif.rs");
-    assert!(n.contains("signataire_a_echeance(chemin).ok().flatten()") && n.contains("catalogue_a_echeance(chemin).unwrap_or(false)"), "lecture sans échéance");
+    assert!(n.contains("signataire_a_echeance(chemin).ok().flatten()"), "lecture sans échéance");
+    assert!(s.contains("blocage::empreinte_hosts_lue().and_then("), "S104-02 : hosts sans échéance");
+    assert!(s.contains("natif::terminer_processus();") && s.matches("PASSAGE.fetch_add(1, Ordering::SeqCst);").count() == 2, "S104-02 : chien de garde non branché");
+    assert!(include_str!("hygiene.rs").contains("lecture_fichier(\"leurre\""), "S104-02 : leurres sans échéance");
+    assert!(include_str!("reponse.rs").contains("garde_critique(natif::binaire_windows_lu(&chemin))"), "S104-01 : garde sans décision testée");
+    let a = include_str!("apprentissage.rs");
+    assert!(a.contains("let Ok(lue) = crate::natif::signataire_a_echeance(chemin) else { return \"non signé\".into() };"), "D2 : hors délai en cache");
+    assert!(include_str!("vol_donnees.rs").contains("let Ok(s) = crate::natif::signataire_a_echeance(chemin) else { return None };"), "D2 : hors délai en cache");
 }
 
-/// S103-07 : plafond de fils, abandonnés compris ; le compteur redescend quand ils finissent
+fn lecture_lente(ms: u64, valeur: &str) -> impl FnOnce() -> Option<String> + Send + 'static {
+    let v = valeur.to_string();
+    move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        Some(v)
+    }
+}
+
+/// S103-07, relecture de #104, D2 et D3 : une lecture par clé, résultat tardif gardé, plafond de lectures
 #[test]
-fn avec_echeance_bornee_plafonne() {
-    use crate::commun::avec_echeance_bornee as b;
-    use std::sync::atomic::AtomicUsize;
+fn lecteur_une_lecture_par_cle_et_resultat_tardif() {
+    use crate::natif::{HorsDelai, Lecteur};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration as D;
-    static FILS: AtomicUsize = AtomicUsize::new(0);
-    let long = || std::thread::sleep(D::from_millis(400));
-    assert_eq!(b(&FILS, 2, D::from_millis(10), long), None);
-    assert_eq!(b(&FILS, 2, D::from_millis(10), long), None);
+    let l = Lecteur::nouveau(2, D::from_millis(30), D::from_secs(60));
+    assert_eq!(l.lire("a", lecture_lente(300, "tard")), Err(HorsDelai));
+    static RELANCE: AtomicBool = AtomicBool::new(false);
     let t = std::time::Instant::now();
-    assert_eq!(b(&FILS, 2, D::from_secs(5), || 1), None, "plafond atteint : rien de lancé");
-    assert!(t.elapsed() < D::from_millis(200), "et sans attendre");
-    std::thread::sleep(D::from_millis(600));
-    assert_eq!(b(&FILS, 2, D::from_secs(5), || 1), Some(1), "compteur redescendu");
+    assert_eq!(l.lire("a", || { RELANCE.store(true, Ordering::SeqCst); None }), Err(HorsDelai));
+    assert!(t.elapsed() < D::from_millis(25), "en cours : réponse immédiate, sans attendre");
+    assert!(!RELANCE.load(Ordering::SeqCst), "pas de seconde lecture sur la même clé");
+    assert_eq!(l.lire("b", lecture_lente(300, "b")), Err(HorsDelai));
+    let t = std::time::Instant::now();
+    assert_eq!(l.lire("c", || Some("c".into())), Err(HorsDelai), "plafond atteint");
+    assert!(t.elapsed() < D::from_millis(25));
+    std::thread::sleep(D::from_millis(500));
+    assert_eq!(l.lire("a", || None), Ok(Some("tard".to_string())), "résultat tardif pris au prochain appel");
+    assert_eq!(l.lire("c", || Some("c".into())), Ok(Some("c".to_string())), "plafond redescendu");
 }
 
-/// S103-07 : lecture hors délai : non signé, une trace, pas de nouvelle tentative pendant le délai ; pas de confiance ensuite
+/// D3 : le budget d'attente borne le retard, quel que soit le nombre de fichiers
+#[test]
+fn lecteur_budget_d_attente() {
+    use crate::natif::Lecteur;
+    use std::time::Duration as D;
+    let l = Lecteur::nouveau(50, D::from_millis(100), D::from_millis(250));
+    let t = std::time::Instant::now();
+    for i in 0..20 {
+        assert!(l.lire(&format!("f{i}"), lecture_lente(800, "x")).is_err());
+    }
+    assert!(t.elapsed() < D::from_millis(600), "attente bornée par le budget : {:?}", t.elapsed());
+    assert!(t.elapsed() >= D::from_millis(200), "le budget est bien attendu : {:?}", t.elapsed());
+}
+
+/// S104-01 : hors délai, un chemin critique reste protégé ; D1 : `binaire_windows` ne fait pas confiance
+#[test]
+fn garde_critique_fermee_hors_delai() {
+    use crate::natif::{decision_binaire_windows as d, HorsDelai};
+    use crate::reponse::garde_critique;
+    assert!(garde_critique(Err(HorsDelai)));
+    assert!(garde_critique(Ok(true)));
+    assert!(!garde_critique(Ok(false)));
+    assert_eq!(d(Err(HorsDelai), &|| Ok(true)), Err(HorsDelai));
+    assert_eq!(d(Ok(None), &|| Err(HorsDelai)), Err(HorsDelai));
+    assert_eq!(d(Ok(Some("Microsoft Windows".into())), &|| Ok(false)), Ok(true));
+    assert_eq!(d(Ok(Some("Autre".into())), &|| Ok(false)), Ok(false));
+    assert_eq!(d(Ok(None), &|| Ok(true)), Ok(true));
+}
+
+/// S104-02 : le même passage en cours à 12 relevés ; un passage fini ou nouveau remet à zéro
+#[test]
+fn chien_de_garde_passage_bloque() {
+    use crate::moniteur::ChienDeGarde;
+    let mut g = ChienDeGarde::default();
+    assert!(!g.observer(0), "aucun passage");
+    assert!(!g.observer(1), "premier relevé de ce passage");
+    for _ in 0..11 {
+        assert!(!g.observer(1));
+    }
+    assert!(g.observer(1), "12 relevés");
+    let mut g = ChienDeGarde::default();
+    for _ in 0..6 {
+        g.observer(1);
+    }
+    assert!(!g.observer(2), "fini");
+    for _ in 0..50 {
+        assert!(!g.observer(2), "repos : jamais");
+    }
+    assert!(!g.observer(3));
+    for _ in 0..11 {
+        assert!(!g.observer(3));
+    }
+    assert!(g.observer(3), "compte repris de zéro");
+}
+
+/// S103-07 : lecture hors délai : non signé, rien en cache ; la lecture rétablie donne le signataire
 #[test]
 fn signature_hors_delai_sans_confiance() {
     use crate::moniteur::signataire_cache_avec as s;
@@ -2093,10 +2181,9 @@ fn signature_hors_delai_sans_confiance() {
     let catalogue = |_: &str| Ok(false);
     let mut cache = std::collections::HashMap::new();
     assert_eq!(s(&mut cache, "", &c, 1000, u64::MAX, &bloque, &catalogue), "");
-    assert_eq!(s(&mut cache, "", &c, 1299, u64::MAX, &bloque, &catalogue), "");
-    assert_eq!(appels.get(), 1, "pas de nouveau fil pendant le délai");
-    assert_eq!(s(&mut cache, "", &c, 1300, u64::MAX, &bloque, &catalogue), "");
-    assert_eq!(appels.get(), 2, "nouvelle tentative après le délai");
+    assert_eq!(s(&mut cache, "", &c, 1001, u64::MAX, &bloque, &catalogue), "");
+    assert_eq!(appels.get(), 2, "pas de cache : le résultat tardif sera pris dès qu'il arrive");
+    assert!(!cache.keys().any(|k| k.ends_with("|échec")), "pas d'échec durable");
     // Le hors délai n'est pas un échec définitif : la lecture rétablie donne le signataire, malgré un cache d'échec sans limite
     let lue = |_: &str| Ok(Some("Éditeur".to_string()));
     assert_eq!(s(&mut cache, "", &c, 1600, u64::MAX, &lue, &catalogue), "Éditeur");

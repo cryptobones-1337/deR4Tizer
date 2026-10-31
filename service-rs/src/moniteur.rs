@@ -272,6 +272,19 @@ impl Moniteur {
         }
         let m = Arc::new(Mutex::new(m));
 
+        // Chien de garde (audit de #104, S104-02) : ni le verrou du moniteur ni les fichiers du service, qu'un verrou opportuniste peut bloquer
+        if !console {
+            std::thread::Builder::new().name("garde".into()).spawn(|| {
+                let mut garde = ChienDeGarde::default();
+                loop {
+                    std::thread::sleep(Duration::from_secs(GARDE_PERIODE_S));
+                    if garde.observer(PASSAGE.load(Ordering::SeqCst)) {
+                        natif::evenement_windows("deR4Tizer : passage de surveillance bloqué depuis plus de 3 min, service relancé");
+                        natif::terminer_processus();
+                    }
+                }
+            }).unwrap();
+        }
         // Surveillance toutes les 3 s
         {
             let (m, p) = (m.clone(), partage.clone());
@@ -279,10 +292,12 @@ impl Moniteur {
                 let mut cycles = 0u64;
                 while !p.arret.load(Ordering::Relaxed) {
                     let t = Instant::now();
+                    PASSAGE.fetch_add(1, Ordering::SeqCst);
                     let mut g = m.lock().unwrap();
                     let t = mesure::noter("verrou.attente.surveillance", t);
                     g.passage();
                     drop(g);
+                    PASSAGE.fetch_add(1, Ordering::SeqCst);
                     mesure::noter("verrou.tenu.surveillance (cycle complet)", t);
                     cycles += 1;
                     if cycles.is_multiple_of(200) {
@@ -741,7 +756,8 @@ impl Moniteur {
         }
         self.balises.retain(|_, (_, t)| t.last().map(|x| x.elapsed() < Duration::from_secs(3600)).unwrap_or(false));
 
-        if let Some(a) = relever_hosts(&mut self.empreinte_hosts, blocage::empreinte_hosts()) {
+        // Lecture hors délai : pas de comparaison à ce tour, sinon une empreinte vide passerait pour un changement
+        if let Some(a) = blocage::empreinte_hosts_lue().and_then(|e| relever_hosts(&mut self.empreinte_hosts, e)) {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
 
@@ -1380,6 +1396,31 @@ En-tête : Authorization: Bearer {j}"))
 
 /// Signataire d'un exécutable, mis en cache par chemin et date de modification ; un échec est gardé tant que le fichier
 /// ne change pas (cycle de surveillance, sous le verrou : pas de nouvelle vérification à chaque tour)
+/// Compteur de passages : impair pendant un passage, attente du verrou comprise
+static PASSAGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const GARDE_PERIODE_S: u64 = 15;
+const GARDE_RELEVES: u32 = 12;
+
+/// Décision pure (testée) : le même passage, en cours à `GARDE_RELEVES` relevés de suite. En relevés, pas en heures : une mise en veille
+/// ne compte pas
+#[derive(Default)]
+pub(crate) struct ChienDeGarde {
+    vu: u64,
+    releves: u32,
+}
+
+impl ChienDeGarde {
+    pub(crate) fn observer(&mut self, passage: u64) -> bool {
+        if passage != self.vu || passage % 2 == 0 {
+            self.vu = passage;
+            self.releves = 0;
+            return false;
+        }
+        self.releves += 1;
+        self.releves >= GARDE_RELEVES
+    }
+}
+
 pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
     signataire_cache_a(cache, notre, chemin, maintenant_s(), u64::MAX)
 }
@@ -1400,9 +1441,6 @@ fn maintenant_s() -> u64 {
 pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &str, chemin: &str, maintenant: u64, duree_echec: u64) -> String {
     signataire_cache_avec(cache, notre, chemin, maintenant, duree_echec, &natif::signataire_a_echeance, &natif::catalogue_a_echeance)
 }
-
-/// Un fichier dont la lecture dépasse l'échéance est traité comme non signé pendant ce délai, sans nouvelle tentative
-const DELAI_HORS_DELAI_S: u64 = 300;
 
 type LectureSignature<'a> = &'a dyn Fn(&str) -> Result<Option<String>, natif::HorsDelai>;
 type LectureCatalogue<'a> = &'a dyn Fn(&str) -> Result<bool, natif::HorsDelai>;
@@ -1438,14 +1476,12 @@ pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: 
     if cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant, duree_echec)) {
         return String::new();
     }
-    // Lecture bloquée (S103-07) : pas de confiance, pas de nouveau fil à chaque tour, et une trace
+    // Lecture bloquée (S103-07) : pas de confiance, rien en cache, une seule ligne au journal ; le résultat tardif sera pris au prochain appel
     let cle_delai = format!("{chemin}|délai");
-    if cache.get(&cle_delai).and_then(|v| v.parse::<u64>().ok()).is_some_and(|t| maintenant.saturating_sub(t) < DELAI_HORS_DELAI_S) {
-        return String::new();
-    }
     let hors_delai = |cache: &mut HashMap<String, String>| {
-        commun::journal(&format!("signature de {chemin} : lecture hors délai, traitée comme non signée pendant {DELAI_HORS_DELAI_S} s"));
-        cache.insert(cle_delai.clone(), maintenant.to_string());
+        if cache.insert(cle_delai.clone(), String::new()).is_none() {
+            commun::journal(&format!("signature de {chemin} : lecture hors délai, traitée comme non signée tant qu'elle ne répond pas"));
+        }
         String::new()
     };
     let windows = natif::dossier_windows().to_lowercase();
@@ -1465,6 +1501,7 @@ pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: 
         },
         None => String::new(),
     };
+    cache.remove(&cle_delai);
     if s.is_empty() {
         cache.insert(cle_echec, format!("{date}|{maintenant}"));
     } else {

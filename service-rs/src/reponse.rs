@@ -90,6 +90,12 @@ pub fn chemin_critique(chemin: &str, dossier_windows: &str) -> bool {
 }
 
 /// Raison de refuser d'agir sur ce processus, s'il y en a une
+/// Décision pure (testée) : sur un chemin critique, une lecture hors délai protège : un compte standard ne doit pas pouvoir ouvrir cette
+/// garde en bloquant des lectures (audit de #104, S104-01)
+pub(crate) fn garde_critique(lecture: Result<bool, natif::HorsDelai>) -> bool {
+    lecture.unwrap_or(true)
+}
+
 pub fn protege(pid: u32) -> Option<String> {
     if pid <= 4 || pid == std::process::id() {
         return Some("processus du système ou de deR4Tizer".into());
@@ -97,7 +103,7 @@ pub fn protege(pid: u32) -> Option<String> {
     // Chemin complet canonique (QueryFullProcessImageName), comparé exactement ; signature Microsoft en plus
     let chemin = natif::chemin_processus(pid);
     let nom = Path::new(&chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    (chemin_critique(&chemin, &natif::dossier_windows()) && natif::binaire_windows(&chemin))
+    (chemin_critique(&chemin, &natif::dossier_windows()) && garde_critique(natif::binaire_windows_lu(&chemin)))
         .then(|| format!("{nom} est un processus critique de Windows (le système ou le réseau se figerait)"))
 }
 
