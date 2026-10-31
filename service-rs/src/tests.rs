@@ -2179,6 +2179,16 @@ fn chien_de_garde_passage_bloque() {
         assert!(!g.observer(5, true));
     }
     assert!(g.observer(5, true), "120 relevés");
+    // S104-12 : juste après une opération longue, le passage qui l'attendait a encore 12 relevés
+    let mut g = ChienDeGarde::default();
+    for _ in 0..20 {
+        assert!(!g.observer(5, true));
+    }
+    assert!(!g.observer(5, false), "opération finie, passage pas encore repris");
+    for _ in 0..10 {
+        assert!(!g.observer(5, false));
+    }
+    assert!(g.observer(5, false), "toujours bloqué : 12 relevés plus tard");
     assert!(include_str!("moniteur.rs").matches("let _longue = OperationLongue::debut();").count() == 3, "S104-11 : opération longue non signalée");
 }
 

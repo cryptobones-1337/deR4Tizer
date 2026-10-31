@@ -1426,10 +1426,16 @@ impl Drop for OperationLongue {
 pub(crate) struct ChienDeGarde {
     vu: u64,
     releves: u32,
+    longue: bool,
 }
 
 impl ChienDeGarde {
     pub(crate) fn observer(&mut self, passage: u64, operation_longue: bool) -> bool {
+        // Fin d'une opération longue : le passage qui l'attendait n'a pas encore repris, ce n'est pas un blocage (audit de #104, S104-12)
+        if self.longue && !operation_longue {
+            self.releves = 0;
+        }
+        self.longue = operation_longue;
         if passage != self.vu || passage % 2 == 0 {
             self.vu = passage;
             self.releves = 0;
