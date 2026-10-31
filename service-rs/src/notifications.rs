@@ -366,6 +366,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
     let mut envois_heure = 0u32;
     let mut retenues = 0usize;
     let mut reprise = FileReprise::default();
+    let mut vers = destinations(&config, &lire_secrets());
     ecrire_etat(&mut etat);
     loop {
         // File de reprise : les alertes dues partent en un lot ; battement quotidien (D4-6), hors plafond et hors niveau
@@ -419,7 +420,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         // Attente de la première alerte (une minute au plus, pour la minuterie du résumé)
         let premiere = match rx.recv_timeout(Duration::from_secs(60)) {
             Ok(Message::Config(c)) => {
-                nouveaux_reglages(&mut config, c, &mut reprise, &mut etat);
+                nouveaux_reglages(&mut config, c, &mut reprise, &mut etat, &mut vers);
                 continue;
             }
             // SAN-004 (remontée en échec) : constat local, jamais remonté
@@ -440,7 +441,7 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
                 Ok(Message::Alerte(a)) if a.regle != crate::regles::SAN_004 && crate::export::rang(&a.niveau) >= crate::export::rang(&config.niveau_min) => lot.push(a),
                 Ok(Message::Alerte(_)) => {}
                 // Même traitement qu'en tête de boucle (audit de #99, S99-04)
-                Ok(Message::Config(c)) => nouveaux_reglages(&mut config, c, &mut reprise, &mut etat),
+                Ok(Message::Config(c)) => nouveaux_reglages(&mut config, c, &mut reprise, &mut etat, &mut vers),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -462,13 +463,35 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
     }
 }
 
+/// Destinations de la remontée (pur, testé) : canaux activés et leur adresse, en mémoire seulement, jamais écrites ni
+/// journalisées (l'adresse ntfy ou Teams est un secret). Ni le niveau, ni le plafond, ni les jetons et mots de passe
+/// n'en font partie : ils ne changent pas qui reçoit
+pub fn destinations(c: &ConfigNotifications, s: &Secrets) -> String {
+    let mut d = Vec::new();
+    if c.ntfy {
+        d.push(format!("ntfy={}", s.ntfy_url));
+    }
+    if c.teams {
+        d.push(format!("teams={}", s.teams_url));
+    }
+    if c.smtp {
+        d.push(format!("smtp={}:{}|{}|{}", c.smtp_serveur, c.smtp_port, c.expediteur, c.destinataires));
+    }
+    d.join("\n")
+}
+
 /// Nouveaux réglages de la remontée, en tête de boucle comme pendant le regroupement d'un lot (audit de #99, S99-03 et
-/// S99-04) : la file n'est pas envoyée vers la nouvelle destination, ses alertes sont comptées abandonnées et restent
-/// dans alertes.json ; remontée coupée, plus d'échec à signaler (SAN-004)
-fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, reprise: &mut FileReprise, etat: &mut Etat) {
+/// S99-04) : destinations changées, la file n'est pas envoyée vers les nouvelles, ses alertes sont comptées abandonnées
+/// et restent dans alertes.json ; remontée coupée, plus d'échec à signaler (SAN-004)
+fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String) {
     *config = c;
-    reprise.abandonnees += reprise.entrees.len() as u64;
-    reprise.entrees.clear();
+    // Audit de #100, S100-03 : mêmes destinations (bouton « Tester », niveau, plafond) : la file reste
+    let nouvelles = destinations(config, &lire_secrets());
+    if nouvelles != *vers {
+        *vers = nouvelles;
+        reprise.abandonnees += reprise.entrees.len() as u64;
+        reprise.entrees.clear();
+    }
     if !actif(config) {
         etat.echec_depuis.clear();
         ECHEC_DEPUIS.store(0, Ordering::Relaxed);

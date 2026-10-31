@@ -154,8 +154,10 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   des collectes critiques indisponibles), alertes en attente. Compteurs seulement : aucun nom de compte, de programme
   ni de ligne de commande. S'il surveille l'absence du battement, le prestataire peut en déduire que le service est
   arrêté, le poste éteint ou la remontée coupée.
-- Réglages de la remontée changés : la file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir
-  vers la nouvelle destination ; remontée coupée : l'échec est aussi effacé.
+- Destinations de la remontée changées (canaux activés, adresses, serveur, destinataires) : la file est vidée (ses
+  alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ; le niveau, le plafond, un jeton, un mot
+  de passe ou le bouton « Tester » avec les mêmes destinations ne la vident pas ; remontée coupée : l'échec est aussi
+  effacé.
 - Remis sur un seul canal, un lot compte comme remis : un canal cassé en permanence ne lève pas SAN-004 tant qu'un autre
   marche ; son erreur reste dans `DerniereErreur`. Aucun canal utilisable : « aucun canal utilisable » y est écrit.
 

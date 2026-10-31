@@ -4625,3 +4625,23 @@ fn sante_interface_retour_et_session_fermee() {
     assert_eq!(interfaces_regles(&i.observer(&[6, 7], &[7], 1200).1), [("SAN-010".to_string(), "session 6".to_string())]);
 }
 
+/// Audit de #100, S100-03 : la file de reprise n'est vidée que si les destinations changent
+#[test]
+fn remontee_destinations_seules_videent_la_file() {
+    use crate::commun::ConfigNotifications;
+    use crate::notifications::{destinations, Secrets};
+    let c = ConfigNotifications { ntfy: true, smtp: true, smtp_serveur: "smtp.exemple.test".into(), smtp_port: 587, destinataires: "a@exemple.test".into(), ..Default::default() };
+    let s = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ntfy_jeton: "j1".into(), smtp_mot_de_passe: "m1".into(), ..Default::default() };
+    let base = destinations(&c, &s);
+    // Mêmes destinations : niveau, plafond, jeton, mot de passe, adresse d'un canal coupé
+    let c2 = ConfigNotifications { niveau_min: "Critique".into(), max_par_heure: 1, ..c.clone() };
+    let s2 = Secrets { ntfy_jeton: "j2".into(), smtp_mot_de_passe: "m2".into(), teams_url: "https://teams.exemple.test/x".into(), ..s.clone() };
+    assert_eq!(destinations(&c2, &s2), base);
+    // Destinations changées
+    assert_ne!(destinations(&c, &Secrets { ntfy_url: "https://ntfy.exemple.test/b".into(), ..s.clone() }), base);
+    assert_ne!(destinations(&ConfigNotifications { teams: true, ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { ntfy: false, ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { destinataires: "b@exemple.test".into(), ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { smtp_serveur: "autre.exemple.test".into(), ..c.clone() }, &s), base);
+}
+

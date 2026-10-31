@@ -1451,8 +1451,11 @@ pub fn sessions_actives() -> Result<Vec<u32>, String> {
         let mut sessions: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
         let mut n = 0u32;
         WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut n).map_err(|e| format!("sessions : {e}"))?;
-        let liste = std::slice::from_raw_parts(sessions, n as usize).to_vec();
-        WTSFreeMemory(sessions as *mut c_void);
+        // Audit de #100, S100-02 : from_raw_parts exige un pointeur non nul, même pour zéro élément
+        let liste = if sessions.is_null() || n == 0 { Vec::new() } else { std::slice::from_raw_parts(sessions, n as usize).to_vec() };
+        if !sessions.is_null() {
+            WTSFreeMemory(sessions as *mut c_void);
+        }
         let mut actives = Vec::new();
         for s in liste.iter().filter(|s| s.State == WTSActive) {
             let mut jeton = HANDLE::default();
@@ -1494,8 +1497,11 @@ pub fn avec_jeton_de<T>(sid: &str, f: impl FnOnce() -> T) -> Result<T, String> {
         let mut sessions: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
         let mut n = 0u32;
         WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut n).map_err(|e| format!("sessions : {e}"))?;
-        let liste = std::slice::from_raw_parts(sessions, n as usize).to_vec();
-        WTSFreeMemory(sessions as *mut c_void);
+        // Audit de #100, S100-02 : from_raw_parts exige un pointeur non nul, même pour zéro élément
+        let liste = if sessions.is_null() || n == 0 { Vec::new() } else { std::slice::from_raw_parts(sessions, n as usize).to_vec() };
+        if !sessions.is_null() {
+            WTSFreeMemory(sessions as *mut c_void);
+        }
         for s in liste {
             let mut jeton = HANDLE::default();
             if WTSQueryUserToken(s.SessionId, &mut jeton).is_err() {
