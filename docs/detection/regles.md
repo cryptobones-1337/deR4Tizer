@@ -339,7 +339,9 @@ modules expérimentaux.
   mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés. Le relevé a 30 s pour finir. Chaque lien ou fichier
   trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à
   chaque apparition, y compris au premier relevé. Tant que le relevé est incomplet, la collecte est « partielle » et les tâches
-  connues non vues restent dans la référence. Un premier relevé incomplet ne met pas fin à l'apprentissage. Limites : dans un dossier saturé, un fichier de
+  connues non vues restent dans la référence. Limites : un premier relevé incomplet termine quand même l'apprentissage, sinon toute la persistance se tairait : les tâches
+  qu'il n'a pas lues lèvent une fois « NOUVEAU » au relevé complet suivant ; des dossiers vides ne comptent pas dans le total
+  (175 µs chacun mesurés) : environ 170 000 feraient expirer le relevé à chaque tour, par extrapolation ; dans un dossier saturé, un fichier de
   tâche classé après la borne n'est plus vu (l'alerte le dit) ; une tâche connue reste en référence, ancienne version comprise,
   tant que le relevé reste incomplet ; 64 fichiers de tiers bien classés masquent les tâches de comptes standard suivantes ; plus
   de 64 fichiers de tiers sur un poste sain, soit une vingtaine de comptes d'après la mesure, laisserait le relevé incomplet en permanence ;

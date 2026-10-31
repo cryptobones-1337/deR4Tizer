@@ -66,8 +66,10 @@ impl Persistance {
             let _ = commun::ecrire("demarrage.json", &releve);
         }
         self.entrees = releve;
-        // Premier relevé incomplet : ce qu'il n'a pas lu n'a pas été appris, le suivant le lèverait en « NOUVEAU » (relecture de #103, D7)
-        self.apprentissage = apprentissage_suivant(self.apprentissage, self.incomplet);
+        // Même si ce premier relevé est incomplet : prolonger l'apprentissage ferait taire PER-001 et PER-002 pour tout le relevé tant
+        // qu'il le reste, ce qu'un compte standard obtiendrait avec 65 fichiers vides (audit de #103, S103-10). Le prix : une seule
+        // vague de « NOUVEAU » pour les tâches non lues
+        self.apprentissage = false;
         alertes
     }
 }
@@ -603,10 +605,6 @@ fn anomalie_incomplet(quoi: &str) -> (String, String) {
 }
 
 const PREFIXE_INCOMPLET: &str = r"\(relevé incomplet : ";
-
-pub(crate) fn apprentissage_suivant(apprentissage: bool, incomplet: bool) -> bool {
-    apprentissage && incomplet
-}
 
 /// Relevé incomplet : les tâches connues non vues restent dans la référence, sinon elles reviendraient en « NOUVEAU » au relevé
 /// complet suivant, ce qu'un compte standard pourrait provoquer à volonté (relecture de #103, D1). Rend s'il est incomplet

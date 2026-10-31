@@ -2018,14 +2018,20 @@ fn taches_releve_incomplet_garde_la_reference() {
     assert!(comparer(&Default::default(), &mut normale, true, &mut Default::default()).0.is_empty(), "le reste s'apprend en silence");
 }
 
-/// D7 : ce qu'un premier relevé incomplet n'a pas lu n'est pas appris ; un relevé complet met fin à l'apprentissage
+/// S103-10 : le premier relevé termine l'apprentissage, même incomplet (`verifier` n'est pas exécutable en test : contrôle du
+/// source) ; ensuite une clé Run nouvelle lève PER-001 malgré un relevé des tâches incomplet
 #[test]
-fn taches_apprentissage_garde_si_incomplet() {
-    use crate::persistance::apprentissage_suivant as s;
-    assert!(s(true, true));
-    assert!(!s(true, false));
-    assert!(!s(false, true), "hors apprentissage, un relevé incomplet n'y fait pas revenir");
-    assert!(include_str!("persistance.rs").contains("self.apprentissage = apprentissage_suivant(self.apprentissage, self.incomplet);"));
+fn taches_releve_incomplet_laisse_alerter_le_reste() {
+    use crate::commun::EntreeDemarrage as E;
+    use crate::persistance::{comparer, garder_taches_non_vues, ANOMALIE_TACHES};
+    assert!(include_str!("persistance.rs").contains("        self.apprentissage = false;\n") || include_str!("persistance.rs").contains("        self.apprentissage = false;\r\n"));
+    let mut r = vec![
+        E { cle: "Tâche planifiée|i".into(), categorie: "Tâche planifiée".into(), nom: r"\(relevé incomplet : éléments)".into(), commande: format!("{ANOMALIE_TACHES}x"), ..Default::default() },
+        E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: "p.exe".into(), ..Default::default() },
+    ];
+    assert!(garder_taches_non_vues(&Default::default(), &mut r));
+    let (alertes, _) = comparer(&Default::default(), &mut r, false, &mut Default::default());
+    assert!(alertes.iter().any(|a| a.destination.starts_with("Run")), "clé Run nouvelle signalée");
 }
 
 /// Un seul fil bloqué à la fois ; la garde se libère quand il finit
