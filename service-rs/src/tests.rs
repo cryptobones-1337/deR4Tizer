@@ -1849,7 +1849,7 @@ fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches
 }
 
 fn bornes_taches() -> crate::persistance::BornesTaches {
-    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, anomalies: 2 }
+    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, anomalies: 2 }
 }
 
 fn dossier_taches(nom: &str) -> std::path::PathBuf {
@@ -1967,7 +1967,27 @@ fn taches_budgets_de_tiers_separes() {
     assert_eq!(lus.iter().filter(|n| n.contains("a-sature")).count(), 3, "{lus:?}");
     assert!(lus.contains(&r"\b-sain\vraie".to_string()), "{lus:?}");
     assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
-    for x in [d, d2, d3] {
+    // S103-08, D6 : racine saturée, noms classés avant : les sous-dossiers restent trouvés, et saturer ne pèse pas sur le total
+    let d4 = dossier_taches("racine");
+    for i in 0..8 {
+        std::fs::write(d4.join(format!("a{i}")), "x").unwrap();
+    }
+    std::fs::create_dir_all(d4.join("Microsoft")).unwrap();
+    std::fs::write(d4.join(r"Microsoft\vraie"), "x").unwrap();
+    let mut b = bornes_taches();
+    b.par_dossier = 3;
+    b.elements = 5;
+    let (lus, a) = taches_de_test(&d4, &b, &|_| false);
+    assert!(lus.contains(&r"\Microsoft\vraie".to_string()), "sous-dossier trouvé malgré la saturation : {lus:?}");
+    assert_eq!(lus.iter().filter(|n| n.starts_with(r"\a")).count(), 3, "fichiers au-delà de la borne non lus : {lus:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
+    // La borne dure de l'énumération arrête tout
+    let mut b = bornes_taches();
+    b.par_dossier = 3;
+    b.enumeres = 6;
+    let (lus, _) = taches_de_test(&d4, &b, &|_| false);
+    assert!(!lus.contains(&r"\Microsoft\vraie".to_string()), "borne dure : {lus:?}");
+    for x in [d, d2, d3, d4] {
         std::fs::remove_dir_all(x).unwrap();
     }
 }
@@ -1998,6 +2018,31 @@ fn taches_releve_incomplet_garde_la_reference() {
     assert!(comparer(&Default::default(), &mut normale, true, &mut Default::default()).0.is_empty(), "le reste s'apprend en silence");
 }
 
+/// D7 : ce qu'un premier relevé incomplet n'a pas lu n'est pas appris ; un relevé complet met fin à l'apprentissage
+#[test]
+fn taches_apprentissage_garde_si_incomplet() {
+    use crate::persistance::apprentissage_suivant as s;
+    assert!(s(true, true));
+    assert!(!s(true, false));
+    assert!(!s(false, true), "hors apprentissage, un relevé incomplet n'y fait pas revenir");
+    assert!(include_str!("persistance.rs").contains("self.apprentissage = apprentissage_suivant(self.apprentissage, self.incomplet);"));
+}
+
+/// Un seul fil bloqué à la fois ; la garde se libère quand il finit
+#[test]
+fn avec_echeance_unique_borne_les_fils() {
+    use crate::commun::avec_echeance_unique as u;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    static GARDE: AtomicBool = AtomicBool::new(false);
+    static LANCE: AtomicBool = AtomicBool::new(false);
+    assert_eq!(u(&GARDE, Duration::from_millis(20), || std::thread::sleep(Duration::from_millis(400))), None);
+    assert_eq!(u(&GARDE, Duration::from_secs(1), || LANCE.store(true, Ordering::SeqCst)), None);
+    assert!(!LANCE.load(Ordering::SeqCst), "pas de second fil tant que le premier tourne");
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(u(&GARDE, Duration::from_secs(5), || 7), Some(7), "garde libérée");
+}
+
 #[test]
 fn avec_echeance_ne_reste_pas_bloque() {
     use crate::commun::avec_echeance;
@@ -2015,7 +2060,16 @@ fn avec_echeance_ne_reste_pas_bloque() {
 /// D3 : ni adoucie ni apprise ; S103-04 : collecte critique pour SAN-001
 #[test]
 fn taches_anomalie_signal_fort() {
-    let a = crate::commun::Alerte { raisons: "NOUVEAU démarrage automatique : Dossier des tâches : lien non suivi [élément anormal du dossier des tâches]".into(), ..Default::default() };
+    let e = crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(),
+        nom: r"\boucle".into(),
+        commande: format!("{}lien non suivi", crate::persistance::ANOMALIE_TACHES),
+        signataire: "?".into(),
+        remarque: crate::persistance::REMARQUE_ANOMALIE_TACHES.into(),
+        ..Default::default()
+    };
+    let a = crate::persistance::alerter(&e, "NOUVEAU démarrage automatique");
+    assert_eq!(a.niveau, "Alerte");
     assert!(crate::apprentissage::signal_fort(&a));
     assert!(crate::sante::CRITIQUES.contains(&crate::collectes::Collecte::Persistance));
 }

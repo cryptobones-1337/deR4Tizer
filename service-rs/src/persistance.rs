@@ -66,7 +66,8 @@ impl Persistance {
             let _ = commun::ecrire("demarrage.json", &releve);
         }
         self.entrees = releve;
-        self.apprentissage = false;
+        // Premier relevé incomplet : ce qu'il n'a pas lu n'a pas été appris, le suivant le lèverait en « NOUVEAU » (relecture de #103, D7)
+        self.apprentissage = apprentissage_suivant(self.apprentissage, self.incomplet);
         alertes
     }
 }
@@ -156,7 +157,7 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
         r.push("technique de persistance rare".into());
     }
     if e.categorie == "Tâche planifiée" && e.commande.starts_with(ANOMALIE_TACHES) {
-        r.push("élément anormal du dossier des tâches".into());
+        r.push(REMARQUE_ANOMALIE_TACHES.into());
     }
     // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
     // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
@@ -468,6 +469,7 @@ pub(crate) struct BornesTaches {
     pub profondeur: usize,
     pub par_dossier: usize,
     pub elements: usize,
+    pub enumeres: usize,
     pub taille: u64,
     pub octets: u64,
     pub tiers: usize,
@@ -480,9 +482,10 @@ const BORNES_TACHES: BornesTaches = BornesTaches {
     profondeur: 8,
     par_dossier: 5000,
     elements: 100_000,
+    enumeres: 2_000_000,
     taille: 1024 * 1024,
     octets: 64 * 1024 * 1024,
-    tiers: 256,
+    tiers: 64,
     octets_tiers: 8 * 1024 * 1024,
     anomalies: 16,
 };
@@ -493,11 +496,14 @@ const ECHEANCE_TACHES: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Début de la commande d'une entrée qui signale une anomalie du dossier, pas une tâche
 pub(crate) const ANOMALIE_TACHES: &str = "Dossier des tâches : ";
+/// Remarque d'une telle entrée, signal fort de l'apprentissage ; en minuscules, comparée à des raisons mises en minuscules
+pub(crate) const REMARQUE_ANOMALIE_TACHES: &str = "élément anormal du dossier des tâches";
 
 /// Parcourt le dossier des tâches dans ses bornes ; `traiter` reçoit le nom relatif et le contenu de chaque fichier lu. Aucun
 /// point d'analyse n'est suivi (jonction, lien). Les éléments d'un propriétaire autre que SYSTEM ou Administrateurs restent
 /// lus, une tâche de compte standard étant légitime, sur leur budget : ils ne privent pas de lecture les autres, et leurs
-/// dossiers passent après (S103-02). Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
+/// dossiers passent après (S103-02). Au-delà de `par_dossier`, les fichiers d'un dossier ne sont plus lus, mais l'énumération
+/// continue pour trouver ses sous-dossiers : saturer la racine ne cache pas `\Microsoft` (S103-08). Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
 /// PER-002 à chaque relevé
 pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok: &dyn Fn(&Path) -> bool,
                                traiter: &mut dyn FnMut(&str, &[u8])) -> Vec<(String, String)> {
@@ -508,25 +514,34 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
     let longueur = racine.to_string_lossy().len();
     let mut anomalies: Vec<(String, String)> = Vec::new();
     let mut incomplet = std::collections::BTreeSet::new();
-    let (mut elements, mut octets, mut tiers, mut octets_tiers) = (0usize, 0u64, 0usize, 0u64);
+    let (mut elements, mut enumeres, mut octets, mut tiers, mut octets_tiers) = (0usize, 0usize, 0u64, 0usize, 0u64);
     let mut pile = vec![(racine.to_path_buf(), 0usize)];
     let mut pile_tiers = Vec::new();
     'parcours: while let Some((d, niveau)) = pile.pop().or_else(|| pile_tiers.pop()) {
         let Ok(entrees) = fs::read_dir(&d) else { continue };
         for (rang, e) in entrees.map_while(Result::ok).enumerate() {
-            if rang >= b.par_dossier {
-                incomplet.insert("éléments");
-                break;
-            }
-            elements += 1;
-            if elements > b.elements {
+            enumeres += 1;
+            if enumeres > b.enumeres {
                 incomplet.insert("éléments");
                 break 'parcours;
+            }
+            let sature = rang >= b.par_dossier;
+            if sature {
+                incomplet.insert("éléments");
+            } else {
+                elements += 1;
+                if elements > b.elements {
+                    incomplet.insert("éléments");
+                    break 'parcours;
+                }
             }
             let p = e.path();
             let nom = p.to_string_lossy()[longueur..].to_string();
             // Métadonnées de l'entrée elle-même : le lien n'est pas suivi
             let Ok(m) = e.metadata() else { continue };
+            if sature && !m.is_dir() && m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                continue;
+            }
             let anomalie = if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
                 Some("lien non suivi")
             } else if !m.is_dir() && m.len() > b.taille {
@@ -589,6 +604,10 @@ fn anomalie_incomplet(quoi: &str) -> (String, String) {
 
 const PREFIXE_INCOMPLET: &str = r"\(relevé incomplet : ";
 
+pub(crate) fn apprentissage_suivant(apprentissage: bool, incomplet: bool) -> bool {
+    apprentissage && incomplet
+}
+
 /// Relevé incomplet : les tâches connues non vues restent dans la référence, sinon elles reviendraient en « NOUVEAU » au relevé
 /// complet suivant, ce qu'un compte standard pourrait provoquer à volonté (relecture de #103, D1). Rend s'il est incomplet
 pub(crate) fn garder_taches_non_vues(reference: &HashMap<String, EntreeDemarrage>, releve: &mut Vec<EntreeDemarrage>) -> bool {
@@ -604,17 +623,11 @@ pub(crate) fn garder_taches_non_vues(reference: &HashMap<String, EntreeDemarrage
 /// Le relevé des tâches à échéance. Un seul à la fois : tant qu'un relevé reste bloqué, aucun autre fil n'est lancé
 fn taches_a_echeance(l: &mut Vec<EntreeDemarrage>) {
     static EN_COURS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    use std::sync::atomic::Ordering;
-    let lu = if EN_COURS.swap(true, Ordering::SeqCst) {
-        None
-    } else {
-        commun::avec_echeance(ECHEANCE_TACHES, || {
-            let mut v = Vec::new();
-            taches(&mut v);
-            EN_COURS.store(false, Ordering::SeqCst);
-            v
-        })
-    };
+    let lu = commun::avec_echeance_unique(&EN_COURS, ECHEANCE_TACHES, || {
+        let mut v = Vec::new();
+        taches(&mut v);
+        v
+    });
     match lu {
         Some(v) => l.extend(v),
         None => {
