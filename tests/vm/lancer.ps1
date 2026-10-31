@@ -6,6 +6,10 @@
 # Prérequis : VM avec un instantané « propre » (Defender actif, sans exclusion), PowerShell Direct ; compte
 # administrateur de la VM enregistré par Export-Clixml (DPAPI, jamais affiché) ; membre du groupe « Administrateurs
 # Hyper-V » ; preparer.ps1 exécuté (et preparer.ps1 -Maj pour le 3c).
+# Entretien de l'instantané : les signatures de plus de 7 jours mettent le lot 3d en NON EXÉCUTÉ, et une plateforme de
+# Defender dépassée se met à jour toute seule pendant un scénario, à une heure qui varie (redémarrage, réglage ajouté).
+# Remettre l'instantané, laisser Defender se mettre à jour seul sans rien lui demander, vérifier qu'il est pleinement actif
+# et sans exclusion, puis Checkpoint-VM sous un nom commençant par « propre » : le plus récent est pris par défaut.
 # Defender n'est que relevé (avant et après, par l'exécuteur) ; son état « pleinement actif » n'est exigé que par le
 # lot 3d (tests\vm\lot3d.ps1). Sans -SessionStandard, la session de console est celle de l'instantané.
 #

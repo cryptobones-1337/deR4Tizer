@@ -87,8 +87,8 @@ function Differences($a, $b) {
     @((@($a.Keys) + @($b.Keys)) | Sort-Object -Unique | Where-Object { -not $a.Contains($_) -or -not $b.Contains($_) -or $a[$_] -ne $b[$_] } |
         ForEach-Object { "$_ : « $(if ($a.Contains($_)) { $a[$_] } else { '(absent)' }) » → « $(if ($b.Contains($_)) { $b[$_] } else { '(absent)' }) »" })
 }
-# Une mise à jour automatique de Defender le rend injoignable quelques secondes (erreur 0x800106ba, observée le 2026-10-31,
-# plateforme redémarrée) : attente qu'il réponde, 3 min au plus ; au-delà, Reglages-Defender échoue et le lot s'arrête
+# Defender peut être injoignable quelques secondes (erreur 0x800106ba, observée le 2026-10-31 pendant une mise à jour
+# automatique de sa plateforme) : attente qu'il réponde, 3 min au plus ; au-delà, Reglages-Defender échoue et le lot s'arrête
 $fin = (Get-Date).AddMinutes(3)
 while ((Get-Date) -lt $fin) {
     try { Get-MpPreference -ErrorAction Stop | Out-Null; break } catch { Start-Sleep 5 }
@@ -203,7 +203,7 @@ Verifier 'Réglages de Defender inchangés pendant le passage' {
     $diff = Differences $reglagesAvant (Reglages-Defender)
     # Une mise à jour de la plateforme pendant le passage peut ajouter un réglage (PromptEvidenceCollection, 4.18.26100.4) :
     # le contrôle échoue quand même, le texte dit de relancer, jamais de conclure
-    $maj = if ($avant.Plateforme -ne $apres.Plateforme) { " ; plateforme de Defender mise à jour pendant le passage ($($avant.Plateforme) → $($apres.Plateforme)) : relancer" } else { '' }
+    $maj = if ($avant.Plateforme -ne $apres.Plateforme) { " ; plateforme de Defender mise à jour pendant le passage ($($avant.Plateforme) → $($apres.Plateforme)) : relancer, ou refaire l'instantané (tests\vm\lancer.ps1)" } else { '' }
     if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) (Get-MpPreference) : " + (($diff | Select-Object -First 5) -join ' ; ') + $maj }
     $true
 }
@@ -243,7 +243,9 @@ Verifier 'Aucun interrupteur de protection modifié pendant le passage (5007)' {
 }
 Noter 'Événements 5007 pendant le passage' 'INFORMATION' $(if ($null -eq $evenements5007) { 'non relus (voir le contrôle ci-dessus)' } else { "$($evenements5007.Count) événement(s) ; Defender en écrit lui-même sur ses valeurs internes" })
 
-Noter 'ComputerID de Defender pendant le passage (non comparé)' 'INFORMATION' "$computerIdAvant → $((Get-MpPreference).ComputerID)"
+# Lecture seulement informative : Defender injoignable à cet instant ne doit pas faire perdre le tableau
+$computerIdApres = try { (Get-MpPreference -ErrorAction Stop).ComputerID } catch { "illisible ($($_.Exception.Message))" }
+Noter 'ComputerID de Defender pendant le passage (non comparé)' 'INFORMATION' "$(if ($computerIdAvant -eq $computerIdApres) { 'inchangé' } else { "changé ; $computerIdApres" })"
 Noter 'Plateforme et signatures de Defender pendant le passage' 'INFORMATION' "$($avant.Plateforme) → $($apres.Plateforme) ; $($avant.Signatures) → $($apres.Signatures)"
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'
