@@ -733,44 +733,38 @@ Verifier $titreVerrou {
 }
 Retirer-Verrou
 
-# Le journal, écrit sous le verrou du moniteur, reste bloquant (non fermé) : le chien de garde doit alors relancer le service. Verrou en
-# administrateur : le compte lecteur peut en faire autant. `Journal` et le fichier ne sont pas lus tant qu'il tient
-$journalService = Join-Path $script:Donnees 'journal.txt'
-$titreVerrou = 'Verrou sur journal.txt : chien de garde, service relancé en 5 min, événement 7031, canal rétabli une fois le verrou retiré'
-$pidAvant = Service-Pid
-$avant = Get-Date
-$e = Poser-Verrou $journalService $null
-if ($e -ne 'accorde') {
-    NonExecute $titreVerrou "verrou non obtenu : $e"
-} else {
-Verifier $titreVerrou {
-    try {
-        $w = Temoin-Blocage $journalService
-        Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
-        if (-not $w.Bloque) { return 'ouverture du journal non bloquée : contrôle sans valeur' }
-        # Les autres fils se bloquent seuls, hors du verrou du moniteur : une commande écrit au journal sous ce verrou
-        try { $null = Commande '{"Action":"verification"}' 2000 } catch { }
-        $fin = (Get-Date).AddMinutes(5)
-        while ((Service-Pid) -in $pidAvant, 0 -and (Get-Date) -lt $fin) { Start-Sleep 5 }
-        $nouveau = Service-Pid
-        if ($nouveau -in $pidAvant, 0) { return 'service non relancé en 5 min' }
-        Write-Host "  relancé après $([math]::Round(((Get-Date) - $avant).TotalSeconds)) s"
+# Fichiers du service sous verrou, posé en administrateur ; le compte lecteur peut en faire autant. Mesuré en VM le 2026-11-01 (5 min chaque) : ni journal.txt
+# ni etat.json ni reseau.json ne figent le service, une commande prend 9 s au plus (cause de ces 9 s non établie) ; etat.json cesse d'être écrit tant
+# que le verrou tient. Ces fichiers ne sont lus ici qu'une fois le verrou retiré
+foreach ($nomVerrou in 'journal.txt', 'etat.json') {
+    $titreVerrou = "Verrou sur $nomVerrou : ni gel ni relance, canal joignable"
+    $e = Poser-Verrou (Join-Path $script:Donnees $nomVerrou) $null
+    if ($e -ne 'accorde') {
+        NonExecute $titreVerrou "verrou non obtenu : $e"
         Retirer-Verrou
-        # 7031 du gestionnaire de services : la preuve. L'événement Application peut être écrit par n'importe quel compte (S104 : source non enregistrée)
-        $arret = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7031; StartTime = $avant } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'deR4Tizer' })
-        if (-not $arret.Count) { return 'aucun événement 7031 pour le service' }
-        $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $avant } -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -eq 'deR4Tizer' })
-        if (-not $ev.Count) { return 'aucun événement deR4Tizer dans le journal Application' }
-        # Verrou retiré avant : le service relancé pendant qu'il tient resterait figé à son démarrage (S104-07, ouvert) ; ceci prouve la relance, pas la reprise sous verrou
-        if (-not (Attendre-Canal 60)) { return 'canal muet après la relance' }
-        $true
-    } finally {
-        Retirer-Verrou
-        Service-Relance
+        continue
     }
+    Verifier $titreVerrou {
+        $pidAvant = Service-Pid
+        try {
+            $t = Get-Date
+            $r = try { Commande '{"Action":"verification"}' 2000 } catch { $null }
+            if (-not $r) { return 'pas de réponse à la commande en 60 s' }
+            Write-Host "  commande : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+            Start-Sleep 30
+            if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+            if ((Service-Pid) -ne $pidAvant) { return "service relancé : $pidAvant, puis $(Service-Pid)" }
+            $true
+        } finally {
+            Retirer-Verrou
+            Service-Relance
+        }
+    }
+    Retirer-Verrou
 }
-}
-Retirer-Verrou
+
+# Le fil et la fin du processus n'ont jamais tourné en vrai : la décision est testée, mais aucun verrou essayé en VM n'a figé un passage
+NonExecute 'Chien de garde : relance réelle du service, événement 7031' 'aucun gel reproduit : verrous sur journal.txt, etat.json, reseau.json, 5 min chaque ; hosts et les exécutables sont à échéance'
 
 Verifier 'Dossier Microsoft des tâches : pas d''écriture pour un compte standard (lu en premier par le relevé)' {
     $m = Join-Path $env:SystemRoot 'System32\Tasks\Microsoft\d4t-essai'

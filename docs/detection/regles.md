@@ -358,10 +358,11 @@ modules expérimentaux.
   leurre ; la garde des processus critiques, elle, reste fermée hors délai. Les pilotes (`hygiene.rs`), désignés par le registre des services,
   écrit par un administrateur, sont lus sans échéance, comme le paquet de mise à jour, dans un dossier réservé à SYSTEM. **Chien de garde** : passage bloqué 3 min, attente du
   verrou comprise, 30 min pendant une quarantaine ou une restauration : un événement dans le journal Application, et le processus se termine,
-  relancé par le gestionnaire de services sans limite de nombre ; il ne dépend ni du verrou du moniteur ni des fichiers du service. Sa relance n'est pas encore signalée au destinataire : l'événement du journal Application est lisible mais non probant, n'importe quel compte peut en écrire, seul le 7031 du journal Système l'est. **À corriger avant la distribution** : S103-07 reste ouvert pour
-  ce qui s'écrit sous le verrou du moniteur (`journal.txt`, `etat.json`, `alertes.json`, `reseau.json`, pose des leurres, écritures de
-  `hosts`) : un compte qui peut les lire, par défaut le compte connecté, peut figer le service 3 min, ou 30 pendant une quarantaine ; **tant
-  qu'il tient son verrou, le service relancé reste figé à son démarrage, avant le chien de garde** (S104-07, d'après le code, non rejoué) ; la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne serait plus une tâche (S103-02,
+  relancé par le gestionnaire de services sans limite de nombre ; il ne dépend ni du verrou du moniteur ni des fichiers du service. **Jamais déclenché en conditions réelles** : seule sa décision est testée, aucun gel n'ayant pu être reproduit. Sa relance n'est pas signalée au destinataire : l'événement du journal Application est lisible mais non probant, n'importe quel compte peut en écrire, seul le 7031 du journal Système l'est. **Mesuré en VM le 2026-11-01** : une ouverture en lecture de `hosts` ou d'un fichier ordinaire reste bloquée plus de 150 s ; mais un verrou
+  tenu 5 min sur `journal.txt`, `etat.json` ou `reseau.json` ne fige pas le service : une commande prend 9 s au plus (cause de ces 9 s non établie),
+  la détection continue ; `etat.json` cesse alors d'être écrit, sans aucun signal, l'erreur étant ignorée. **À vérifier avant la distribution** : S103-07 pour les autres
+  fichiers lus ou écrits sous le verrou du moniteur (`alertes.json`, pose des leurres, écritures de `hosts`) et les commandes sur des fichiers d'utilisateur, non essayés ; le démarrage
+  du service sous verrou, avant le chien de garde (S104-07, d'après le code, non rejoué) ; un état périmé sans signal ; la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne serait plus une tâche (S103-02,
   S103-03), et où un fichier bloqué ne couperait plus le relevé (S104-04).
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
