@@ -1808,6 +1808,140 @@ fn restaurer_test(dq: &std::path::Path, liste: &mut Vec<crate::reponse::ElementQ
     crate::reponse::restaurer_transaction(dq, liste, id, &cible, &crate::reponse::creer_sans_lien, ecrire)
 }
 
+#[test]
+fn secrets_illisibles_issue_selon_la_cause() {
+    use crate::notifications::message_secrets_illisibles as m;
+    assert!(!m(true).contains("supprime "), "protection en échec : les secrets sont sans doute valides");
+    assert!(m(true).contains("protection"));
+    assert!(m(false).contains("supprime "));
+}
+
+/// Fichier, dossier, jonction, ou rien, sous le nom de la tâche (constaté en VM : un fichier empêche la création)
+#[test]
+fn relance_element_precree_ecarte() {
+    use crate::relance::ecarter_precree as e;
+    let d = dossier_taches("precree");
+    let c = d.join("tache");
+    e(&c).unwrap();
+    std::fs::write(&c, "x").unwrap();
+    e(&c).unwrap();
+    assert!(!c.exists(), "fichier");
+    std::fs::create_dir_all(c.join("sous")).unwrap();
+    std::fs::write(c.join(r"sous\f"), "x").unwrap();
+    e(&c).unwrap();
+    assert!(!c.exists(), "dossier non vide");
+    let garde = d.join("garde");
+    std::fs::create_dir(&garde).unwrap();
+    std::fs::write(garde.join("precieux"), "x").unwrap();
+    jonction(&c, &garde);
+    e(&c).unwrap();
+    assert!(std::fs::symlink_metadata(&c).is_err(), "jonction retirée");
+    assert!(garde.join("precieux").exists(), "ce qu'elle désigne reste");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// Relevé des tâches, audit de #102, S102-01 : parcours d'un dossier de test, bornes réduites
+fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches, tiers: &dyn Fn(&std::path::Path) -> bool) -> (Vec<String>, Vec<(String, String)>) {
+    let mut lus = Vec::new();
+    let a = crate::persistance::parcourir_taches(racine, b, &|p| !tiers(p), &mut |n, _| lus.push(n.to_string()));
+    lus.sort();
+    (lus, a)
+}
+
+fn bornes_taches() -> crate::persistance::BornesTaches {
+    crate::persistance::BornesTaches { profondeur: 3, elements: 100, taille: 1000, octets: 10_000, tiers: 2, anomalies: 2 }
+}
+
+fn dossier_taches(nom: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("d4t-taches-{nom}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn taches_jonction_non_suivie() {
+    let d = dossier_taches("jonction");
+    std::fs::write(d.join("vraie"), "x").unwrap();
+    jonction(&d.join("boucle"), &d);
+    let (lus, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
+    assert_eq!(lus, [r"\vraie"], "lue une seule fois, pas de parcours par la jonction");
+    assert_eq!(a, [(r"\boucle".to_string(), "lien non suivi".to_string())]);
+    std::fs::remove_dir(d.join("boucle")).unwrap();
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn taches_profondeur_et_taille_bornees() {
+    let d = dossier_taches("bornes");
+    std::fs::create_dir_all(d.join(r"a\b\c")).unwrap();
+    std::fs::write(d.join(r"a\b\permis"), "x").unwrap();
+    std::fs::write(d.join(r"a\b\c\trop-loin"), "x").unwrap();
+    std::fs::write(d.join("gros"), vec![0u8; 1001]).unwrap();
+    std::fs::write(d.join("limite"), vec![0u8; 1000]).unwrap();
+    let (lus, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
+    assert_eq!(lus, [r"\a\b\permis", r"\limite"]);
+    assert!(a.contains(&(r"\gros".to_string(), "fichier trop gros".to_string())), "{a:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("profondeur")), "{a:?}");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn taches_octets_elements_anomalies_bornes() {
+    let d = dossier_taches("totaux");
+    for i in 0..5 {
+        std::fs::write(d.join(format!("f{i}")), vec![0u8; 1000]).unwrap();
+    }
+    let mut b = bornes_taches();
+    b.octets = 3000;
+    let (lus, a) = taches_de_test(&d, &b, &|_| false);
+    assert_eq!(lus.len(), 3, "total d'octets borné");
+    assert!(a.iter().any(|(n, _)| n.contains("octets")), "{a:?}");
+    let mut b = bornes_taches();
+    b.elements = 2;
+    let (lus, a) = taches_de_test(&d, &b, &|_| false);
+    assert_eq!(lus.len(), 2, "nombre d'éléments borné");
+    assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
+    for i in 0..5 {
+        std::fs::write(d.join(format!("gros{i}")), vec![0u8; 1001]).unwrap();
+    }
+    let (_, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
+    assert_eq!(a.iter().filter(|(_, m)| m == "fichier trop gros").count(), 2, "anomalies bornées : {a:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// Les faux fichiers d'un compte standard ne passent pas le plafond ; ceux de SYSTEM ou Administrateurs sont tous lus
+#[test]
+fn taches_fichiers_de_tiers_plafonnes() {
+    let d = dossier_taches("tiers");
+    for i in 0..5 {
+        std::fs::write(d.join(format!("tiers{i}")), "x").unwrap();
+    }
+    for i in 0..5 {
+        std::fs::write(d.join(format!("vraie{i}")), "x").unwrap();
+    }
+    let est_tiers = |p: &std::path::Path| p.file_name().unwrap().to_string_lossy().starts_with("tiers");
+    let (lus, a) = taches_de_test(&d, &bornes_taches(), &est_tiers);
+    assert_eq!(lus.iter().filter(|n| n.contains("tiers")).count(), 2);
+    assert_eq!(lus.iter().filter(|n| n.contains("vraie")).count(), 5);
+    assert!(a.iter().any(|(n, _)| n.contains("fichiers de tiers")), "{a:?}");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// Une anomalie du dossier lève au niveau Alerte, quel que soit le nom posé, même sous \Microsoft\Windows
+#[test]
+fn taches_anomalie_jugee_suspecte() {
+    let e = crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(),
+        nom: r"\Microsoft\Windows\boucle".into(),
+        commande: format!("{}lien non suivi", crate::persistance::ANOMALIE_TACHES),
+        signataire: "?".into(),
+        ..Default::default()
+    };
+    assert!(crate::persistance::evaluer(&e).contains("élément anormal"));
+}
+
 /// Jonction (pas besoin d'élévation) `lien` → `cible`
 fn jonction(lien: &std::path::Path, cible: &std::path::Path) {
     let s = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(lien).arg(cible).output().unwrap();
@@ -4789,7 +4923,7 @@ fn relance_lecture_du_lancement_echec_ferme() {
 fn remontee_file_attend_les_secrets() {
     let s = include_str!("notifications.rs").replace("\r\n", "\n");
     assert!(s.contains("if !dues.is_empty() && !secrets_illisibles {"), "file envoyée malgré des secrets illisibles");
-    assert!(s.contains("lire_secrets_verifie().ok_or("), "enregistrer_secrets : secrets illisibles non refusés");
+    assert!(s.contains("lire_secrets_verifie().ok_or_else("), "enregistrer_secrets : secrets illisibles non refusés");
 }
 
 /// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée

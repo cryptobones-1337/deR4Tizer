@@ -151,6 +151,9 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     if matches!(e.categorie.as_str(), "IFEO" | "AppInit" | "WMI") {
         r.push("technique de persistance rare".into());
     }
+    if e.categorie == "Tâche planifiée" && e.commande.starts_with(ANOMALIE_TACHES) {
+        r.push("élément anormal du dossier des tâches".into());
+    }
     // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
     // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
     // Préfixe « COM » seul (pas le format exact) : un ClassId mal formé ne doit pas faire taire la remarque
@@ -455,33 +458,119 @@ fn services(l: &mut Vec<EntreeDemarrage>) {
     }
 }
 
+/// Bornes du relevé des tâches : les comptes authentifiés peuvent créer des éléments dans ce dossier, que le service lit en
+/// SYSTEM toutes les minutes (audit de #102, S102-01)
+pub(crate) struct BornesTaches {
+    pub profondeur: usize,
+    pub elements: usize,
+    pub taille: u64,
+    pub octets: u64,
+    pub tiers: usize,
+    pub anomalies: usize,
+}
+
+const BORNES_TACHES: BornesTaches =
+    BornesTaches { profondeur: 8, elements: 20_000, taille: 1024 * 1024, octets: 64 * 1024 * 1024, tiers: 64, anomalies: 16 };
+
+/// Début de la commande d'une entrée qui signale une anomalie du dossier, pas une tâche
+pub(crate) const ANOMALIE_TACHES: &str = "Dossier des tâches : ";
+
+/// Parcourt le dossier des tâches dans ses bornes ; `traiter` reçoit le nom relatif et le contenu de chaque fichier lu. Aucun
+/// point d'analyse n'est suivi (jonction, lien). Les fichiers d'un propriétaire autre que SYSTEM ou Administrateurs restent
+/// lus, une tâche de compte standard étant légitime, jusqu'à `tiers` : au-delà, ils ne chassent plus les vraies alertes. Rend
+/// les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait PER-002 à chaque relevé
+pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok: &dyn Fn(&Path) -> bool,
+                               traiter: &mut dyn FnMut(&str, &[u8])) -> Vec<(String, String)> {
+    use std::io::Read;
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let longueur = racine.to_string_lossy().len();
+    let mut anomalies: Vec<(String, String)> = Vec::new();
+    let mut incomplet = std::collections::BTreeSet::new();
+    let (mut elements, mut octets, mut tiers) = (0usize, 0u64, 0usize);
+    let mut pile = vec![(racine.to_path_buf(), 0usize)];
+    'parcours: while let Some((d, niveau)) = pile.pop() {
+        let Ok(entrees) = fs::read_dir(&d) else { continue };
+        for e in entrees.map_while(Result::ok) {
+            elements += 1;
+            if elements > b.elements {
+                incomplet.insert("éléments");
+                break 'parcours;
+            }
+            let p = e.path();
+            let nom = p.to_string_lossy()[longueur..].to_string();
+            // Métadonnées de l'entrée elle-même : le lien n'est pas suivi
+            let Ok(m) = e.metadata() else { continue };
+            let anomalie = if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                Some("lien non suivi")
+            } else if !m.is_dir() && m.len() > b.taille {
+                Some("fichier trop gros")
+            } else {
+                None
+            };
+            if let Some(motif) = anomalie {
+                if anomalies.len() < b.anomalies {
+                    anomalies.push((nom, motif.into()));
+                } else {
+                    incomplet.insert("anomalies");
+                }
+                continue;
+            }
+            if m.is_dir() {
+                if niveau + 1 < b.profondeur {
+                    pile.push((p, niveau + 1));
+                } else {
+                    incomplet.insert("profondeur");
+                }
+                continue;
+            }
+            if octets + m.len() > b.octets {
+                incomplet.insert("octets");
+                break 'parcours;
+            }
+            if !proprietaire_ok(&p) {
+                tiers += 1;
+                if tiers > b.tiers {
+                    incomplet.insert("fichiers de tiers");
+                    continue;
+                }
+            }
+            // Devenu un lien entre-temps : ouvert sans le suivre, sa lecture échoue
+            let Ok(f) = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(&p) else { continue };
+            let mut contenu = Vec::new();
+            if f.take(b.taille).read_to_end(&mut contenu).is_err() {
+                continue;
+            }
+            octets += contenu.len() as u64;
+            traiter(&nom, &contenu);
+        }
+    }
+    anomalies.extend(incomplet.into_iter().map(|k| (format!(r"\(relevé incomplet : {k})"), "relevé incomplet, bornes atteintes".to_string())));
+    anomalies
+}
+
 fn taches(l: &mut Vec<EntreeDemarrage>) {
     let racine = format!(r"{}\Tasks", natif::dossier_systeme());
     let action = Regex::new(r"(?s)<Command>(.*?)</Command>(?:\s*<Arguments>(.*?)</Arguments>)?").unwrap();
     let com = Regex::new(r"(?s)<ComHandler>\s*<ClassId>(.*?)</ClassId>").unwrap();
     let desactivee = Regex::new(r"(?s)<Settings>.*?<Enabled>false</Enabled>").unwrap();
-    let mut pile = vec![std::path::PathBuf::from(&racine)];
-    while let Some(d) = pile.pop() {
-        let Ok(entrees) = fs::read_dir(&d) else { continue };
-        for e in entrees.map_while(Result::ok) {
-            let p = e.path();
-            if p.is_dir() {
-                pile.push(p);
-                continue;
-            }
-            let Ok(octets) = fs::read(&p) else { continue };
-            let xml = decoder_texte(&octets);
-            let mut nom = p.to_string_lossy()[racine.len()..].to_string();
-            if desactivee.is_match(&xml) {
-                nom.push_str(" (désactivée)");
-            }
-            if let Some(m) = action.captures(&xml) {
-                let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
-                ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
-            } else if let Some(c) = com.captures(&xml) {
-                ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
-            }
+    let proprietaire_ok = |p: &Path| natif::lire_securite(p).is_some_and(|s| crate::protection::proprietaire_acceptable(&s.proprietaire));
+    let anomalies = parcourir_taches(Path::new(&racine), &BORNES_TACHES, &proprietaire_ok, &mut |nom, octets| {
+        let xml = decoder_texte(octets);
+        let mut nom = nom.to_string();
+        if desactivee.is_match(&xml) {
+            nom.push_str(" (désactivée)");
         }
+        if let Some(m) = action.captures(&xml) {
+            let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
+            ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
+        } else if let Some(c) = com.captures(&xml) {
+            ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
+        }
+    });
+    for (nom, motif) in anomalies {
+        ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
     }
 }
 

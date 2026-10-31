@@ -332,6 +332,13 @@ modules expérimentaux.
 - **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
 - **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus) ; première session d'un compte
   (OneDrive, tâches de Windows par utilisateur).
+- **Dossier des tâches, borné** : les comptes authentifiés peuvent y créer des éléments. Aucun lien n'est suivi, et le relevé
+  s'arrête à 8 niveaux, 20 000 éléments, 1 Mo par fichier, 64 Mo au total et 64 fichiers dont le propriétaire n'est ni SYSTEM
+  ni Administrateurs. Chaque lien ou fichier trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au
+  niveau Alerte, une fois. Limites : au-delà d'une borne, une vraie tâche peut ne plus être vue (l'alerte le dit) ; le premier
+  relevé apprend en silence ce qui existe déjà ; remplacer un dossier par une jonction entre le contrôle et la lecture reste
+  possible, avec pour seul effet le texte de `<Command>` d'un fichier lu ailleurs ; un verrou opportuniste posé par un compte
+  standard sur son propre fichier pourrait faire attendre la lecture (non essayé).
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée

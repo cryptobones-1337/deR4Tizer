@@ -360,10 +360,19 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
     Ok(())
 }
 
+/// Issue selon la cause (audit de #102, S102-06) : protection en échec, les secrets sont sans doute valides, ne pas les supprimer
+pub fn message_secrets_illisibles(protection_en_echec: bool) -> String {
+    if protection_en_echec {
+        "secrets illisibles : réglages non enregistrés ; protection du dossier de données en échec : la corriger puis redémarrer le service, sans supprimer les secrets".into()
+    } else {
+        "secrets illisibles : réglages non enregistrés ; s'ils le restent, un administrateur supprime secrets\\notifications.json dans le dossier de données, puis les secrets sont à saisir de nouveau".into()
+    }
+}
+
 pub fn enregistrer_secrets(n: &Secrets) -> Result<(), String> {
     preparer_dossier()?;
     // Illisibles : refus, sinon les secrets absents de la demande seraient perdus (audit de #100, S100-16)
-    let mut s = lire_secrets_verifie().ok_or("secrets illisibles : réglages non enregistrés ; s'ils le restent, un administrateur supprime secrets\\notifications.json dans le dossier de données, puis les secrets sont à saisir de nouveau")?;
+    let mut s = lire_secrets_verifie().ok_or_else(|| message_secrets_illisibles(commun::echec_protection().is_some()))?;
     let maj = |ancien: &mut String, nouveau: &str| match nouveau.trim() {
         "" => {}
         "-" => ancien.clear(),
