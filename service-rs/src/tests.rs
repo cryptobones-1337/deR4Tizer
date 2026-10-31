@@ -4542,3 +4542,166 @@ fn battement_compteurs_seulement() {
     assert_eq!(t, format!("deR4Tizer actif : 4 incident(s) non clos ; collectes : {} active(s), 3 indisponible(s) (critiques : JournalSecurite, ListesMenaces) ; 2 alerte(s) en attente de remontée.", c.collectes_actives));
 }
 
+// ------------------------------------------------------------ phase 4, PR 4.5a : santé de l'interface
+
+fn interfaces_regles(a: &[crate::commun::Alerte]) -> Vec<(String, String)> {
+    a.iter().map(|x| (x.regle.clone(), x.destination.clone())).collect()
+}
+
+#[test]
+fn sante_interface_absente_15_min() {
+    let mut i = crate::sante::Interfaces::default();
+    assert!(i.observer(&[2], &[2], 0).1.is_empty());
+    let (e, _) = i.observer(&[2], &[], 60);
+    assert_eq!(e, [crate::sante::EvenementInterface { session: 2, texte: "interface disparue de la session 2".into(), niveau: "Alerte" }]);
+    assert!(i.observer(&[2], &[], 60 + 899).1.is_empty(), "pas avant 15 min");
+    let (_, a) = i.observer(&[2], &[], 60 + 900);
+    assert_eq!(interfaces_regles(&a), [("SAN-010".to_string(), "session 2".to_string())]);
+    assert!(a[0].raisons.contains("depuis 15 min") && a[0].raisons.contains("la surveillance et la remontée continuent"), "{}", a[0].raisons);
+    assert!(i.observer(&[2], &[], 7200).1.is_empty(), "une fois par épisode et par 24 h");
+    let ev = crate::sante::evenement_interface(&e[0]);
+    assert_eq!((ev.source.as_str(), ev.type_.as_str(), ev.niveau.as_str(), ev.destination.as_str()), ("sante", "interface", "Alerte", "session 2"));
+}
+
+#[test]
+fn sante_grace_ouverture_session() {
+    let mut i = crate::sante::Interfaces::default();
+    // Session vue sans interface : rien pendant le délai de grâce (5 min), puis 15 min d'absence
+    assert!(i.observer(&[3], &[], 0).0.is_empty());
+    assert!(i.observer(&[3], &[], 299).0.is_empty());
+    let (e, a) = i.observer(&[3], &[], 300);
+    assert_eq!((e.len(), a.len()), (1, 0), "absente après le délai de grâce, sans constat");
+    assert!(i.observer(&[3], &[], 300 + 899).1.is_empty());
+    assert_eq!(i.observer(&[3], &[], 1200).1.len(), 1, "SAN-010 à 20 min");
+    // Interface lancée pendant le délai de grâce : rien
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[4], &[], 0);
+    let (e, a) = i.observer(&[4], &[4], 120);
+    assert!(e.is_empty() && a.is_empty());
+    assert!(i.observer(&[4], &[4], 5000).1.is_empty());
+}
+
+#[test]
+fn sante_interface_trois_disparitions() {
+    let mut i = crate::sante::Interfaces::default();
+    let mut constats = Vec::new();
+    for k in 0..3i64 {
+        i.observer(&[1], &[1], k * 600);
+        constats.extend(i.observer(&[1], &[], k * 600 + 60).1);
+    }
+    assert_eq!(interfaces_regles(&constats), [("SAN-011".to_string(), "session 1".to_string())]);
+    assert!(constats[0].raisons.contains("3 fois en une heure"), "{}", constats[0].raisons);
+}
+
+#[test]
+fn sante_interface_deux_disparitions() {
+    let mut i = crate::sante::Interfaces::default();
+    let mut constats = Vec::new();
+    for k in 0..3i64 {
+        i.observer(&[1], &[1], k * 1900);
+        constats.extend(i.observer(&[1], &[], k * 1900 + 60).1);
+    }
+    assert!(constats.is_empty(), "deux disparitions par heure au plus : rien ({constats:?})", constats = interfaces_regles(&constats));
+}
+
+#[test]
+fn sante_interface_retour_et_session_fermee() {
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[5], &[5], 0);
+    i.observer(&[5], &[], 10);
+    assert_eq!(i.observer(&[5], &[], 910).1.len(), 1);
+    let (e, _) = i.observer(&[5], &[5], 1000);
+    assert_eq!(e[0].texte, "interface de nouveau présente dans la session 5");
+    i.observer(&[5], &[], 1100);
+    assert_eq!(i.observer(&[5], &[], 2000).1.len(), 1, "nouvel épisode, nouveau constat");
+    // Session fermée puis rouverte sous le même numéro : repart de zéro (délai de grâce)
+    i.observer(&[], &[], 2100);
+    i.observer(&[5], &[], 2200);
+    assert!(i.observer(&[5], &[], 2200 + 299 + 900).1.is_empty());
+    assert_eq!(i.observer(&[5], &[], 2200 + 300 + 900).1.len(), 1, "session rouverte : nouveau délai, puis signalée");
+    // Une autre session avec l'interface ne compte pas pour celle-ci
+    let mut i = crate::sante::Interfaces::default();
+    i.observer(&[6, 7], &[7], 0);
+    assert_eq!(interfaces_regles(&i.observer(&[6, 7], &[7], 1200).1), [("SAN-010".to_string(), "session 6".to_string())]);
+}
+
+/// Audit de #100, S100-03 : la file de reprise n'est vidée que si les destinations changent
+#[test]
+fn remontee_destinations_seules_videent_la_file() {
+    use crate::commun::ConfigNotifications;
+    use crate::notifications::{destinations, Secrets};
+    let c = ConfigNotifications { ntfy: true, smtp: true, smtp_serveur: "smtp.exemple.test".into(), smtp_port: 587, destinataires: "a@exemple.test".into(), ..Default::default() };
+    let s = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ntfy_jeton: "j1".into(), smtp_mot_de_passe: "m1".into(), ..Default::default() };
+    let base = destinations(&c, &s);
+    // Mêmes destinations : niveau, plafond, jeton, mot de passe, adresse d'un canal coupé
+    let c2 = ConfigNotifications { niveau_min: "Critique".into(), max_par_heure: 1, ..c.clone() };
+    let s2 = Secrets { ntfy_jeton: "j2".into(), smtp_mot_de_passe: "m2".into(), teams_url: "https://teams.exemple.test/x".into(), ..s.clone() };
+    assert_eq!(destinations(&c2, &s2), base);
+    // Destinations changées
+    assert_ne!(destinations(&c, &Secrets { ntfy_url: "https://ntfy.exemple.test/b".into(), ..s.clone() }), base);
+    assert_ne!(destinations(&ConfigNotifications { teams: true, ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { ntfy: false, ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { destinataires: "b@exemple.test".into(), ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { smtp_serveur: "autre.exemple.test".into(), ..c.clone() }, &s), base);
+    assert_ne!(destinations(&ConfigNotifications { smtp_securite: "STARTTLS".into(), ..c.clone() }, &s), base, "sécurité SMTP");
+    assert_ne!(destinations(&ConfigNotifications { smtp_utilisateur: "autre".into(), ..c.clone() }, &s), base, "compte SMTP");
+}
+
+/// Relecture de #100 : la décision de vider la file, testée ; une lecture ratée ne la perd pas
+#[test]
+fn remontee_file_apres_reglages() {
+    use crate::notifications::FileReprise;
+    let mut f = FileReprise::default();
+    f.ajouter(&[alerte_remontee("a", "Critique", "")], 0);
+    let mut vers = "A".to_string();
+    f.apres_reglages(&mut vers, Some("A".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees), (1, 0), "mêmes destinations : la file reste");
+    f.apres_reglages(&mut vers, Some("B".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 1, "B"), "changées : vidée et comptée");
+    f.ajouter(&[alerte_remontee("b", "Critique", "")], 0);
+    f.apres_reglages(&mut vers, None);
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (1, 1, "B"), "lecture ratée : la file et les destinations restent");
+    f.apres_reglages(&mut vers, Some("B".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees), (1, 1), "retour aux mêmes destinations : la file reste");
+    f.apres_reglages(&mut vers, None);
+    f.apres_reglages(&mut vers, Some("C".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 2, "C"), "changées pendant la panne de lecture : vidée au retour");
+}
+
+/// S100-05 : des réglages ne se perdent pas, même sans place dans la file des messages ; le dernier gagne
+#[test]
+fn remontee_derniers_reglages_dans_la_case() {
+    use crate::commun::ConfigNotifications;
+    let c = crate::notifications::CaseReglages::nouvelle();
+    assert!(c.prendre().is_none());
+    c.poser(ConfigNotifications { max_par_heure: 1, ..Default::default() });
+    c.poser(ConfigNotifications { max_par_heure: 2, ..Default::default() });
+    assert_eq!(c.prendre().map(|x| x.max_par_heure), Some(2));
+    assert!(c.prendre().is_none(), "prise une seule fois");
+}
+
+/// S100-07 : fichier retiré ou illisible, la remontée s'arrête ; illisible, une seule fois (rien n'est réécrit à chaque
+/// tour) ; redevenu lisible, rechargé ; modifié à la main, pas adopté
+#[test]
+fn remontee_secrets_a_recharger() {
+    use crate::notifications::{secrets_a_recharger as r, Secrets};
+    let m = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() };
+    assert!(r(false, &m, Some(&Secrets::default())), "fichier retiré");
+    assert!(r(false, &m, None), "devenu illisible");
+    assert!(!r(true, &Secrets::default(), None), "toujours illisible : rien");
+    assert!(r(true, &Secrets::default(), Some(&m)), "redevenu lisible");
+    assert!(!r(false, &m, Some(&m)), "inchangé");
+    assert!(!r(false, &m, Some(&Secrets { ntfy_url: "https://autre.exemple.test/b".into(), ..Default::default() })), "modifié à la main : pas adopté");
+    assert!(!r(false, &Secrets::default(), Some(&Secrets::default())), "jamais configuré");
+}
+
+/// Secrets gardés par la boucle : protection du dossier de données en échec, aucun n'est utilisé (comme avant)
+#[test]
+fn remontee_aucun_secret_si_protection_en_echec() {
+    use crate::notifications::{secrets_pour_envoi, Secrets};
+    let s = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), smtp_mot_de_passe: "m".into(), ..Default::default() };
+    assert_eq!(secrets_pour_envoi(false, &s).ntfy_url, s.ntfy_url);
+    let v = secrets_pour_envoi(true, &s);
+    assert!(v.ntfy_url.is_empty() && v.smtp_mot_de_passe.is_empty());
+}
+

@@ -39,20 +39,22 @@ pub enum Collecte {
     CaptureTrafic,
     /// Capture des paquets du réseau local (NDR)
     CaptureReseauLocal,
+    /// Sessions ouvertes et interface de chacune (phase 4, PR 4.5a)
+    Sessions,
 }
 
 use Collecte::*;
 
-pub const TOUTES: [Collecte; 22] = [
+pub const TOUTES: [Collecte; 23] = [
     Connexions, Processus, Sysmon, WmiProcessus, JournalDns, JournalDefender, EtatDefender, JournalSecurite, AuditDonnees,
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
-    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal,
+    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions,
 ];
 
 // TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
 // collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
 const _: () = {
-    assert!(TOUTES.len() == CaptureReseauLocal as usize + 1);
+    assert!(TOUTES.len() == Sessions as usize + 1);
     let mut i = 0;
     while i < TOUTES.len() {
         assert!(TOUTES[i] as usize == i);
@@ -85,6 +87,7 @@ impl Collecte {
             Peripheriques => "Peripheriques",
             CaptureTrafic => "CaptureTrafic",
             CaptureReseauLocal => "CaptureReseauLocal",
+            Sessions => "Sessions",
         }
     }
 
@@ -99,6 +102,8 @@ impl Collecte {
             Processus | PaquetsParefeu | Leurres | Peripheriques => 30,
             // Capture : notée à chaque seconde (tic des analyseurs) ; réouverture toutes les 30 s en cas d'échec
             CaptureTrafic | CaptureReseauLocal => 60,
+            // Fil « sante » : toutes les 30 s
+            Sessions => 30,
             WmiProcessus => 0,
             // Relevé des démarrages automatiques toutes les minutes (11 s au plus mesurées)
             Persistance => 120,
@@ -258,6 +263,7 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "COR-R10" => &[SECURITE_OU_SYSTEME, &[Loldrivers]],
         "EXP-IDS-001" | "EXP-DPI-001" => &[&[CaptureTrafic]],
         "EXP-NDR-001" => &[&[CaptureReseauLocal]],
+        "SAN-010" | "SAN-011" => &[&[Sessions]],
         // RES-004, SYS-001, VIE-003, CHA… : lectures locales du service, non suivies ici ; INT-* : contrôles internes ;
         // COR-R6 : tiré des alertes elles-mêmes ; SAN-* : constats sur les collectes elles-mêmes (sante.rs)
         _ => &[],
@@ -358,7 +364,7 @@ const CASE: Case = Case {
     tus: AtomicU32::new(0),
     muette: AtomicBool::new(false),
 };
-static CASES: [Case; 22] = [CASE; 22];
+static CASES: [Case; 23] = [CASE; 23];
 
 fn maintenant() -> u64 {
     crate::commun::filetime(std::time::SystemTime::now())

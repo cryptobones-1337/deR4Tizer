@@ -125,6 +125,8 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
 | `Message` | « collecte <id> : <avant> → <après> (<raison>) », borné à 400 caractères, nettoyé |
 
 - Le passage d'« Inconnue » à « Active » du démarrage n'est pas écrit.
+- Interface (PR 4.5a) : `Type` « interface », `Destination` « session <n> », `Niveau` Alerte à la disparition (ou à
+  l'absence constatée après le délai de grâce de 5 min), Info au retour.
 - Plus de 6 changements dans l'heure : collecte « instable », une ligne par heure au plus (le message le dit).
 - Une coupure plus courte que la période du fil (30 s) peut ne pas être vue.
 - Constats SAN-001, SAN-002, SAN-003 et SAN-012 : `docs/detection/regles.md`.
@@ -152,8 +154,21 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   des collectes critiques indisponibles), alertes en attente. Compteurs seulement : aucun nom de compte, de programme
   ni de ligne de commande. S'il surveille l'absence du battement, le prestataire peut en déduire que le service est
   arrêté, le poste éteint ou la remontée coupée.
-- Réglages de la remontée changés : la file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir
-  vers la nouvelle destination ; remontée coupée : l'échec est aussi effacé.
+- La boucle garde le couple (réglages, secrets) et le remplace d'un seul coup, ce qui écarte l'envoi de nouveaux secrets
+  avec d'anciens réglages ; il reste une fenêtre de quelques millisecondes, le fichier de secrets étant écrit juste avant
+  le dépôt des réglages. Elle prend les réglages dans une case qui ne se perd pas, même file de messages pleine, avant
+  chaque tour d'envois et avant d'envoyer un lot. Les secrets restent donc en mémoire du service entre deux envois ;
+  protection du dossier de données en échec : aucun n'est utilisé.
+- Fichier de secrets retiré : vu au tour suivant (une minute environ, plus pendant un regroupement ou un envoi), secrets
+  abandonnés et file vidée (les destinations ont changé). Illisible : secrets abandonnés, file gardée mais pas envoyée ; elle
+  n'est vidée au retour que si les destinations relues diffèrent. Une lecture ratée au démarrage la vide au retour. Dans les deux cas, ntfy et Teams ne partent plus ; un serveur SMTP
+  sans compte reste joignable. Modifié à la main : pas adopté avant le
+  prochain réglage ou redémarrage, alors que le test et le mode panique lisent le fichier.
+- Destinations de la remontée changées (canaux activés, adresses, serveur, sécurité et compte SMTP, destinataires) : la
+  file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ;
+  le niveau, le plafond, un jeton, un mot de passe ou le bouton « Tester » avec les mêmes destinations ne la vident pas ;
+  remontée coupée : l'échec est aussi effacé. Le lot en cours de regroupement (15 s d'alertes récentes) part vers les
+  nouvelles destinations ; un envoi déjà commencé finit vers les anciennes, avec les anciens secrets.
 - Remis sur un seul canal, un lot compte comme remis : un canal cassé en permanence ne lève pas SAN-004 tant qu'un autre
   marche ; son erreur reste dans `DerniereErreur`. Aucun canal utilisable : « aucun canal utilisable » y est écrit.
 

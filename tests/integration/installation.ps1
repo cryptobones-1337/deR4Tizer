@@ -303,7 +303,7 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     $vu = ($c.Values | ForEach-Object { "$($_.Id)=$($_.Etat)" }) -join ' '
     $inconnues = @($c.Values | Where-Object { $_.Etat -eq 'Inconnue' } | ForEach-Object { $_.Id })
     if ($inconnues.Count) { return "collecte(s) jamais notée(s) : $($inconnues -join ', ') ; $vu" }
-    foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns',
+    foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns', 'Sessions',
                     'Persistance', 'Leurres', 'Extensions', 'Peripheriques', 'CaptureTrafic') {
         if (-not $c[$id]) { return "collecte $id absente ; $vu" }
         if ($c[$id].Etat -ne 'Active') { return "collecte $id : $($c[$id].Etat) ($($c[$id].Raison)) ; $vu" }
@@ -357,6 +357,9 @@ Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL
 Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, ligne de journal (D4)' {
     $dns = 'Microsoft-Windows-DNS-Client/Operational'
     wevtutil sl $dns /e:false
+    # La coupure doit être constatée : sinon « réactivé » ne prouverait rien. La relecture peut tomber après la réactivation
+    # (tour de 2 s) : la ligne de journal le dira plus bas
+    $coupe = [bool]((wevtutil gl $dns) -match 'enabled:\s*false')
     $fin = (Get-Date).AddSeconds(60)
     do {
         Start-Sleep 2
@@ -366,8 +369,14 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
         wevtutil sl $dns /e:true
         return "journal DNS non réactivé en 60 s ; journal : $(Journal 'DNS-Client')"
     }
-    $l = Journal 'DNS-Client/Operational désactivé'
-    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal : $l" }
+    # Le service écrit la ligne juste après wevtutil : 15 s pour l'écrire (échec du 2026-10-31 : lue une seule fois, vide)
+    $fin = (Get-Date).AddSeconds(15)
+    do {
+        $l = Journal 'DNS-Client/Operational désactivé'
+        if ($l -match 'réactivé') { break }
+        Start-Sleep 1
+    } while ((Get-Date) -lt $fin)
+    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; journal : $(Journal 'DNS' 4)" }
     $true
 }
 

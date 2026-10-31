@@ -1443,6 +1443,49 @@ pub fn proprietaire_par_handle(f: &std::fs::File) -> Option<String> {
     }
 }
 
+/// Sessions actives avec un utilisateur (phase 4, PR 4.5a) : état `WTSActive` et jeton de session lisible ; une
+/// énumération impossible est une erreur, jamais « aucune session »
+pub fn sessions_actives() -> Result<Vec<u32>, String> {
+    use windows::Win32::System::RemoteDesktop::{WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSQueryUserToken, WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW};
+    unsafe {
+        let mut sessions: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+        let mut n = 0u32;
+        WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut n).map_err(|e| format!("sessions : {e}"))?;
+        // Audit de #100, S100-02 : from_raw_parts exige un pointeur non nul, même pour zéro élément
+        let liste = if sessions.is_null() || n == 0 { Vec::new() } else { std::slice::from_raw_parts(sessions, n as usize).to_vec() };
+        if !sessions.is_null() {
+            WTSFreeMemory(sessions as *mut c_void);
+        }
+        let mut actives = Vec::new();
+        for s in liste.iter().filter(|s| s.State == WTSActive) {
+            let mut jeton = HANDLE::default();
+            if WTSQueryUserToken(s.SessionId, &mut jeton).is_ok() {
+                let _ = CloseHandle(jeton);
+                actives.push(s.SessionId);
+            }
+        }
+        Ok(actives)
+    }
+}
+
+/// Sessions où tourne un processus dont le chemin complet est **exactement** `chemin` (sans tenir compte de la casse) :
+/// une copie de l'interface posée ailleurs ne compte pas (phase 4, PR 4.5a). Instantané impossible : erreur
+pub fn sessions_du_programme(chemin: &str) -> Result<Vec<u32>, String> {
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    let nom = std::path::Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let mut sessions = Vec::new();
+    for (pid, info) in processus_lu()? {
+        if info.nom.to_lowercase() != nom || !chemin_processus(pid).eq_ignore_ascii_case(chemin) {
+            continue;
+        }
+        let mut session = 0u32;
+        if unsafe { ProcessIdToSessionId(pid, &mut session) }.is_ok() && !sessions.contains(&session) {
+            sessions.push(session);
+        }
+    }
+    Ok(sessions)
+}
+
 /// Exécute `f` sous l'identité d'un utilisateur dont une session est ouverte (jeton de sa session), sur ce
 /// fil seulement : Windows applique alors SES droits, pas ceux de SYSTEM. Erreur si aucune session de ce
 /// compte n'est ouverte. Si le retour au jeton du service échoue, le service s'arrête plutôt que de
@@ -1454,8 +1497,11 @@ pub fn avec_jeton_de<T>(sid: &str, f: impl FnOnce() -> T) -> Result<T, String> {
         let mut sessions: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
         let mut n = 0u32;
         WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut n).map_err(|e| format!("sessions : {e}"))?;
-        let liste = std::slice::from_raw_parts(sessions, n as usize).to_vec();
-        WTSFreeMemory(sessions as *mut c_void);
+        // Audit de #100, S100-02 : from_raw_parts exige un pointeur non nul, même pour zéro élément
+        let liste = if sessions.is_null() || n == 0 { Vec::new() } else { std::slice::from_raw_parts(sessions, n as usize).to_vec() };
+        if !sessions.is_null() {
+            WTSFreeMemory(sessions as *mut c_void);
+        }
         for s in liste {
             let mut jeton = HANDLE::default();
             if WTSQueryUserToken(s.SessionId, &mut jeton).is_err() {

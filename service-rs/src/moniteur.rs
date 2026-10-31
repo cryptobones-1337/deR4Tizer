@@ -442,6 +442,8 @@ impl Moniteur {
             let (m, p) = (m.clone(), partage.clone());
             std::thread::Builder::new().name("sante".into()).spawn(move || {
                 let mut sante = crate::sante::Sante::default();
+                let mut interfaces = crate::sante::Interfaces::default();
+                let chemin_interface = crate::sante::chemin_interface();
                 while !p.arret.load(Ordering::Relaxed) {
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -453,6 +455,20 @@ impl Moniteur {
                     crate::notifications::publier_compteurs(crate::sante::compteurs(&etats, non_clos));
                     for c in &changements {
                         crate::siem::enregistrer(crate::sante::evenement(c));
+                    }
+                    // Interface de chaque session active (PR 4.5a) : énumération impossible, collecte « Sessions »
+                    // indisponible, jamais « interface présente »
+                    match (crate::natif::sessions_actives(), chemin_interface.as_deref().map(crate::natif::sessions_du_programme)) {
+                        (Ok(actives), Some(Ok(avec))) => {
+                            collectes::succes(Collecte::Sessions);
+                            let (evenements, c) = interfaces.observer(&actives, &avec, t);
+                            for e in &evenements {
+                                crate::siem::enregistrer(crate::sante::evenement_interface(e));
+                            }
+                            constats.extend(c);
+                        }
+                        (Err(e), _) | (_, Some(Err(e))) => collectes::echec(Collecte::Sessions, &e),
+                        (_, None) => collectes::echec(Collecte::Sessions, "chemin de l'interface introuvable"),
                     }
                     if !constats.is_empty() {
                         p.alertes_externes.lock().unwrap().extend(constats);
