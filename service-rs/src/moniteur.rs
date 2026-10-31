@@ -444,7 +444,9 @@ impl Moniteur {
                 let mut sante = crate::sante::Sante::default();
                 let mut interfaces = crate::sante::Interfaces::default();
                 let chemin_interface = crate::sante::chemin_interface();
-                crate::relance::signaler_etat();
+                // Dans son propre fil : schtasks peut mettre 60 s à répondre, le fil « sante » n'attend pas (relecture de #101, O2)
+                std::thread::spawn(crate::relance::signaler_etat);
+                let mut lancement_avant = None;
                 while !p.arret.load(Ordering::Relaxed) {
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -462,6 +464,12 @@ impl Moniteur {
                     match (crate::natif::sessions_actives().and_then(|a| crate::relance::lancement_pose().map(|l| (a, l))), chemin_interface.as_deref().map(crate::natif::sessions_du_programme)) {
                         (Ok((actives, lancement)), Some(Ok(avec))) => {
                             collectes::succes(Collecte::Sessions);
+                            // Valeur Run retirée pendant que le service tourne : plus de SAN-010 ni de SAN-011, écrit au journal
+                            // (audit de #101, S101-14)
+                            if lancement_avant == Some(true) && !lancement {
+                                commun::journal("lancement de l'interface à l'ouverture de session retiré : son absence n'est plus signalée");
+                            }
+                            lancement_avant = Some(lancement);
                             let actives = crate::sante::sessions_attendues(lancement, actives);
                             let (evenements, c) = interfaces.observer(&actives, &avec, t);
                             for e in &evenements {

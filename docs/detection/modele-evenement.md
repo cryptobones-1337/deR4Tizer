@@ -161,7 +161,7 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   protection du dossier de données en échec : aucun n'est utilisé.
 - Fichier de secrets retiré : vu au tour suivant (une minute environ, plus pendant un regroupement ou un envoi), secrets
   abandonnés et file vidée (les destinations ont changé). Illisible : secrets abandonnés, file gardée mais pas envoyée ; elle
-  n'est vidée au retour que si les destinations relues diffèrent. Une lecture ratée au démarrage la vide au retour. Dans les deux cas, ntfy et Teams ne partent plus ; un serveur SMTP
+  n'est vidée au retour que si les destinations relues diffèrent. Une lecture ratée au démarrage la vide au retour. Réglages reçus pendant une panne de lecture : refusés, pour ne pas perdre les secrets absents de la demande. Dans les deux cas, ntfy et Teams ne partent plus ; un serveur SMTP
   sans compte reste joignable. Modifié à la main : pas adopté avant le
   prochain réglage ou redémarrage, alors que le test et le mode panique lisent le fichier.
 - Destinations de la remontée changées (canaux activés, adresses, serveur, sécurité et compte SMTP, destinataires) : la

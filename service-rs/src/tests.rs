@@ -4689,6 +4689,9 @@ fn remontee_secrets_a_recharger() {
     use crate::notifications::{secrets_a_recharger as r, Secrets};
     let m = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() };
     assert!(r(false, &m, Some(&Secrets::default())), "fichier retiré");
+    // Le seul jeton ntfy retiré à la main (audit de #100, S100-12)
+    let avec_jeton = Secrets { ntfy_jeton: "j".into(), ..m.clone() };
+    assert!(r(false, &avec_jeton, Some(&m)), "jeton retiré");
     assert!(r(false, &m, None), "devenu illisible");
     assert!(!r(true, &Secrets::default(), None), "toujours illisible : rien");
     assert!(r(true, &Secrets::default(), Some(&m)), "redevenu lisible");
@@ -4755,6 +4758,15 @@ fn sante_interface_san010_plafonne() {
         t += 60;
     }
     assert_eq!((levés, plafond), (MAX_SAN010_JOUR, 1));
+    // Le dernier constat dit que le plafond est atteint (S101-19) ; les précédents non
+    let mut i2 = Interfaces::default();
+    let textes: Vec<String> = (0..MAX_SAN010_JOUR as i64).flat_map(|k| {
+        let t0 = k * 2000;
+        i2.observer(&[1], &[1], t0);
+        i2.observer(&[1], &[], t0 + 60);
+        i2.observer(&[1], &[], t0 + 960).1.into_iter().map(|a| a.raisons)
+    }).collect();
+    assert_eq!(textes.iter().map(|x| x.contains("plafond atteint")).collect::<Vec<_>>(), [false, false, true]);
     // Le lendemain, de nouveau
     i.observer(&[1], &[1], t + 86_400);
     i.observer(&[1], &[], t + 86_460);
@@ -4769,6 +4781,15 @@ fn relance_lecture_du_lancement_echec_ferme() {
     assert_eq!(d(Ok("x".into())), Ok(true));
     assert_eq!(d(Err(Error::from(ErrorKind::NotFound))), Ok(false));
     assert!(d(Err(Error::from(ErrorKind::PermissionDenied))).is_err());
+}
+
+/// S100-13, S100-18 : tant que les secrets sont illisibles, la file n'est pas envoyée (la boucle n'est pas exécutable en test :
+/// contrôle du source)
+#[test]
+fn remontee_file_attend_les_secrets() {
+    let s = include_str!("notifications.rs").replace("\r\n", "\n");
+    assert!(s.contains("if !dues.is_empty() && !secrets_illisibles {"), "file envoyée malgré des secrets illisibles");
+    assert!(s.contains("lire_secrets_verifie().ok_or("), "enregistrer_secrets : secrets illisibles non refusés");
 }
 
 /// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée

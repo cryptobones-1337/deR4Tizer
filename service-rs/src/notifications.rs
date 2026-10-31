@@ -362,7 +362,8 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
 
 pub fn enregistrer_secrets(n: &Secrets) -> Result<(), String> {
     preparer_dossier()?;
-    let mut s = lire_secrets();
+    // Illisibles : refus, sinon les secrets absents de la demande seraient perdus (audit de #100, S100-16)
+    let mut s = lire_secrets_verifie().ok_or("secrets illisibles : réglages non enregistrés")?;
     let maj = |ancien: &mut String, nouveau: &str| match nouveau.trim() {
         "" => {}
         "-" => ancien.clear(),
@@ -564,7 +565,7 @@ pub fn secrets_a_recharger(illisibles: bool, memoire: &Secrets, lus: Option<&Sec
     match lus {
         None => !illisibles,
         Some(_) if illisibles => true,
-        Some(l) => retire(&memoire.ntfy_url, &l.ntfy_url) || retire(&memoire.teams_url, &l.teams_url) || retire(&memoire.smtp_mot_de_passe, &l.smtp_mot_de_passe),
+        Some(l) => retire(&memoire.ntfy_url, &l.ntfy_url) || retire(&memoire.teams_url, &l.teams_url) || retire(&memoire.smtp_mot_de_passe, &l.smtp_mot_de_passe) || retire(&memoire.ntfy_jeton, &l.ntfy_jeton),
     }
 }
 

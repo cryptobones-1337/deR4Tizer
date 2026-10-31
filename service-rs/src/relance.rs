@@ -153,7 +153,7 @@ pub fn signaler_etat() {
     let interface = crate::sante::chemin_interface().unwrap_or_default();
     match verifier(&interface) {
         Ok(()) => {}
-        Err(e) => crate::commun::journal(&format!("tâche de relance de l'interface absente ou non conforme : {e} ; l'interface ne sera pas relancée")),
+        Err(e) => crate::commun::journal(&format!("tâche de relance de l'interface absente, non conforme, ou Planificateur pas encore prêt : {e} ; l'interface ne sera pas relancée")),
     }
 }
 
