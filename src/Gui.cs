@@ -4,6 +4,7 @@
 // l'exécutable en administrateur avec --commande, qui transmet la demande au service.
 //   deR4Tizer.exe            ouvre la fenêtre
 //   deR4Tizer.exe --cache    démarre directement dans la zone de notification (démarrage de session)
+//   deR4Tizer.exe --cache --relance    idem, lancé par la tâche planifiée de relance : aucune invite
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -702,7 +703,7 @@ namespace DeR4Tizer
             icone.Visible = true;
             icone.ContextMenuStrip = MenuContextuel(rendu,
                 new ToolStripMenuItem("Ouvrir", null, (s, e) => Montrer(null, null)),
-                new ToolStripMenuItem("Quitter", null, (s, e) => { quitter = true; Close(); }));
+                new ToolStripMenuItem("Quitter", null, (s, e) => { if (ConfirmerQuitter()) { quitter = true; Close(); } }));
             icone.DoubleClick += (s, e) => Montrer(null, null);
             icone.BalloonTipClicked += (s, e) => Montrer(navAlertes, pageAlertes);
 
@@ -781,6 +782,26 @@ namespace DeR4Tizer
             // Démarrage en arrière-plan : la fenêtre ne s'affiche pas tant qu'on ne l'ouvre pas
             if (demarrerCache && !IsHandleCreated) { CreateHandle(); value = false; }
             base.SetVisibleCore(value);
+        }
+
+        // « Quitter » dit la vérité : relance par la tâche planifiée posée avec le lancement à l'ouverture de session (PR 4.5b)
+        static bool ConfirmerQuitter()
+        {
+            bool relance = false;
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"))
+                    relance = k != null && k.GetValue("deR4Tizer") != null;
+            }
+            catch { }
+            string texte = L.En
+                ? (relance
+                    ? "The interface will restart within 5 minutes. Monitoring and alert forwarding continue. If it stays closed, deR4Tizer records an alert.\n\nQuit?"
+                    : "Monitoring and alert forwarding continue, without local notifications.\n\nQuit?")
+                : (relance
+                    ? "L'interface se relancera dans 5 minutes au plus. La surveillance et la remontée continuent. Si elle reste fermée, deR4Tizer enregistre une alerte.\n\nQuitter ?"
+                    : "La surveillance et la remontée continuent, sans notification locale.\n\nQuitter ?");
+            return MessageBox.Show(texte, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1643,8 +1664,9 @@ namespace DeR4Tizer
                 return r.Ok ? 0 : 1;
             }
 
-            // Données réservées : ce compte n'est peut-être pas autorisé à les lire
-            if (args.Length == 0 || args.Contains("--cache") || args.Contains("--page"))
+            // Données réservées : ce compte n'est peut-être pas autorisé à les lire. Relance par la tâche planifiée : rien n'est
+            // demandé (une invite toutes les 5 min, sans geste de l'utilisateur)
+            if ((args.Length == 0 || args.Contains("--cache") || args.Contains("--page")) && !args.Contains("--relance"))
             {
                 bool refuse = false;
                 try { Directory.GetFiles(Commun.Dossier); } catch (UnauthorizedAccessException) { refuse = true; } catch { }

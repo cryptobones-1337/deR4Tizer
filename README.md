@@ -76,7 +76,7 @@ Déploiement sur un parc (GPO, Intune, prestataire) :
 
 ```bat
 msiexec /i deR4Tizer.msi /qn
-msiexec /i deR4Tizer.msi /qn LANCEMENT_SESSION=0     :: sans lancement de l'interface à l'ouverture de session
+msiexec /i deR4Tizer.msi /qn LANCEMENT_SESSION=0     :: sans lancement de l'interface à l'ouverture de session, ni tâche de relance (conservé aux mises à jour)
 ```
 
 Désinstallation depuis « Applications », ou `msiexec /x deR4Tizer.msi /qn`. Elle retire les blocages, les règles de
@@ -257,7 +257,7 @@ No version has been released yet. Once released: download `deR4Tizer.msi` from t
 [releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) and open it. The service starts immediately; the interface is in the Start menu and starts at logon. New versions are reported;
 automatic installation can be turned on in the settings (signed releases).
 
-Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0` to skip the logon
+Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
 Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service

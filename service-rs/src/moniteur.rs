@@ -444,6 +444,7 @@ impl Moniteur {
                 let mut sante = crate::sante::Sante::default();
                 let mut interfaces = crate::sante::Interfaces::default();
                 let chemin_interface = crate::sante::chemin_interface();
+                crate::relance::signaler_etat();
                 while !p.arret.load(Ordering::Relaxed) {
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -458,9 +459,10 @@ impl Moniteur {
                     }
                     // Interface de chaque session active (PR 4.5a) : énumération impossible, collecte « Sessions »
                     // indisponible, jamais « interface présente »
-                    match (crate::natif::sessions_actives(), chemin_interface.as_deref().map(crate::natif::sessions_du_programme)) {
-                        (Ok(actives), Some(Ok(avec))) => {
+                    match (crate::natif::sessions_actives().and_then(|a| crate::relance::lancement_pose().map(|l| (a, l))), chemin_interface.as_deref().map(crate::natif::sessions_du_programme)) {
+                        (Ok((actives, lancement)), Some(Ok(avec))) => {
                             collectes::succes(Collecte::Sessions);
+                            let actives = crate::sante::sessions_attendues(lancement, actives);
                             let (evenements, c) = interfaces.observer(&actives, &avec, t);
                             for e in &evenements {
                                 crate::siem::enregistrer(crate::sante::evenement_interface(e));
@@ -1696,6 +1698,7 @@ fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
 
 /// Désinstallation : retire tous les blocages et désactive le journal DNS s'il l'avait activé
 pub fn nettoyer() {
+    crate::relance::compte_rendu("retirée", crate::relance::retirer());
     // Dossier de travail de la mise à jour (Program Files) : inconnu du paquet MSI, retiré ici
     match fs::remove_dir_all(crate::maj::dossier_travail()) {
         Ok(()) => println!("Dossier de mise à jour supprimé."),

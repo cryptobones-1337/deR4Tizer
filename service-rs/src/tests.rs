@@ -4557,6 +4557,7 @@ fn sante_interface_absente_15_min() {
     assert!(i.observer(&[2], &[], 60 + 899).1.is_empty(), "pas avant 15 min");
     let (_, a) = i.observer(&[2], &[], 60 + 900);
     assert_eq!(interfaces_regles(&a), [("SAN-010".to_string(), "session 2".to_string())]);
+    assert_eq!(a[0].niveau, "Critique", "décision du mainteneur, 2026-10-31");
     assert!(a[0].raisons.contains("depuis 15 min") && a[0].raisons.contains("la surveillance et la remontée continuent"), "{}", a[0].raisons);
     assert!(i.observer(&[2], &[], 7200).1.is_empty(), "une fois par épisode et par 24 h");
     let ev = crate::sante::evenement_interface(&e[0]);
@@ -4590,6 +4591,7 @@ fn sante_interface_trois_disparitions() {
         constats.extend(i.observer(&[1], &[], k * 600 + 60).1);
     }
     assert_eq!(interfaces_regles(&constats), [("SAN-011".to_string(), "session 1".to_string())]);
+    assert_eq!(constats[0].niveau, "Alerte");
     assert!(constats[0].raisons.contains("3 fois en une heure"), "{}", constats[0].raisons);
 }
 
@@ -4703,5 +4705,117 @@ fn remontee_aucun_secret_si_protection_en_echec() {
     assert_eq!(secrets_pour_envoi(false, &s).ntfy_url, s.ntfy_url);
     let v = secrets_pour_envoi(true, &s);
     assert!(v.ntfy_url.is_empty() && v.smtp_mot_de_passe.is_empty());
+}
+
+// ------------------------------------------------------------ phase 4, PR 4.5b : relance de l'interface
+
+#[test]
+fn relance_definition_de_la_tache() {
+    let x = crate::relance::definition_tache(r"C:\Program Files\deR4Tizer & co\deR4Tizer.exe");
+    assert!(x.contains(r"<Command>C:\Program Files\deR4Tizer &amp; co\deR4Tizer.exe</Command>"), "chemin échappé : {x}");
+    assert!(x.contains("<Arguments>--cache --relance</Arguments>"));
+    assert!(x.contains("<GroupId>S-1-5-32-545</GroupId><RunLevel>LeastPrivilege</RunLevel>"), "sans élévation, groupe Utilisateurs par son SID");
+    assert!(!x.contains("HighestAvailable") && !x.contains("S-1-5-18"), "jamais SYSTEM ni élevée");
+    assert!(x.contains("<LogonTrigger>") && x.contains("<Interval>PT5M</Interval>"), "ouverture de session et toutes les 5 min");
+    assert!(x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"), "sinon Windows fermerait l'interface au bout de 3 jours");
+    assert!(x.contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"), "une instance par session");
+    assert!(x.contains("encoding=\"UTF-16\""));
+    assert!(x.contains("<SecurityDescriptor>D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;AU)</SecurityDescriptor>"), "droits explicites (S101-01), lecture seule pour les autres (S101-09)");
+    assert!(x.contains("<AllowStartOnDemand>false</AllowStartOnDemand>"), "pas de lancement à la demande (S101-03)");
+}
+
+/// `LANCEMENT_SESSION=0` : une session sans interface n'a rien d'anormal, ni SAN-010 ni événement
+#[test]
+fn sante_interface_lancement_refuse_sans_constat() {
+    use crate::sante::{sessions_attendues as a, Interfaces};
+    assert_eq!(a(true, vec![1, 2]), [1, 2]);
+    assert!(a(false, vec![1, 2]).is_empty());
+    let mut i = Interfaces::default();
+    for t in [0, 300, 1200, 90_000] {
+        let (e, c) = i.observer(&a(false, vec![1]), &[], t);
+        assert!(e.is_empty() && c.is_empty());
+    }
+}
+
+/// S101-15 : un programme qui alterne arrêt et retour de l'interface ne fait pas plus de 3 critiques par session et par 24 h
+#[test]
+fn sante_interface_san010_plafonne() {
+    use crate::sante::{Interfaces, MAX_SAN010_JOUR};
+    let mut i = Interfaces::default();
+    let (mut levés, mut plafond) = (0, 0);
+    let mut t = 0;
+    for _ in 0..8 {
+        i.observer(&[1], &[1], t);
+        t += 60;
+        i.observer(&[1], &[], t);
+        t += 900;
+        let (e, a) = i.observer(&[1], &[], t);
+        levés += a.iter().filter(|x| x.regle == "SAN-010").count();
+        plafond += e.iter().filter(|x| x.texte.contains("plafond")).count();
+        t += 60;
+    }
+    assert_eq!((levés, plafond), (MAX_SAN010_JOUR, 1));
+    // Le lendemain, de nouveau
+    i.observer(&[1], &[1], t + 86_400);
+    i.observer(&[1], &[], t + 86_460);
+    assert_eq!(i.observer(&[1], &[], t + 86_460 + 900).1.len(), 1);
+}
+
+/// D7 : seule l'absence de la valeur vaut refus du lancement
+#[test]
+fn relance_lecture_du_lancement_echec_ferme() {
+    use crate::relance::decision_lancement as d;
+    use std::io::{Error, ErrorKind};
+    assert_eq!(d(Ok("x".into())), Ok(true));
+    assert_eq!(d(Err(Error::from(ErrorKind::NotFound))), Ok(false));
+    assert!(d(Err(Error::from(ErrorKind::PermissionDenied))).is_err());
+}
+
+/// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée
+#[test]
+fn relance_relue_conforme() {
+    use crate::relance::{definition_conforme as c, definition_tache};
+    let i = r"C:\Program Files\deR4Tizer\deR4Tizer.exe";
+    let x = definition_tache(i);
+    assert!(c(&x, i));
+    assert!(c(&x, &i.to_uppercase()), "sans tenir compte de la casse");
+    assert!(c(&x.replace("<RunLevel>LeastPrivilege</RunLevel>", ""), i), "Windows omet la valeur par défaut à la relecture");
+    assert!(!c(&x, r"C:\Temp\deR4Tizer.exe"), "autre commande");
+    assert!(!c(&x.replace("--cache --relance", "--cache"), i));
+    assert!(!c(&x.replace("LeastPrivilege", "HighestAvailable"), i), "élevée");
+    assert!(!c(&x.replace("S-1-5-32-545", "S-1-5-21-1-2-3-1001"), i), "autre groupe");
+    assert!(!c(&x.replace("<GroupId>S-1-5-32-545</GroupId>", "<GroupId>S-1-5-32-545</GroupId><UserId>x</UserId>"), i), "un compte");
+}
+
+#[test]
+fn relance_droits_sans_ecriture_de_tiers() {
+    use crate::natif::{Ace, Securite};
+    use crate::protection::{sans_ecriture_de_tiers as d, SID_ADMINISTRATEURS, SID_SYSTEME};
+    let complets = [SID_SYSTEME, SID_ADMINISTRATEURS];
+    let s = |proprietaire: &str, aces: Vec<(&str, u32, bool)>, inconnue: bool| Securite {
+        proprietaire: proprietaire.into(), protege: true, ace_inconnue: inconnue,
+        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise }).collect(),
+    };
+    let lecture = 0x1200a9;
+    assert!(d(&s(SID_SYSTEME, vec![(SID_SYSTEME, 0x1f01ff, true), ("S-1-5-11", lecture, true)], false), &complets).is_ok());
+    assert!(d(&s("S-1-5-21-1-2-3-1001", vec![], false), &complets).is_err(), "propriétaire : le compte qui l'a créée");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-21-1-2-3-1001", 0x1f01ff, true)], false), &complets).is_err(), "contrôle total à un tiers");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x2, true)], false), &complets).is_err(), "écriture à un tiers");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x1f01ff, false)], false), &complets).is_ok(), "refus : sans effet");
+    assert!(d(&s(SID_SYSTEME, vec![], true), &complets).is_err(), "entrée inconnue");
+}
+
+/// La tâche cible notre exécutable, reconnu par son empreinte : pas de remarque de persistance ni d'interpréteur
+#[test]
+fn incident_tache_relance_sans_alerte_persistance() {
+    let e = crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(),
+        nom: format!(r"\{}", crate::relance::NOM_TACHE),
+        commande: r"C:\Program Files\deR4Tizer\deR4Tizer.exe --cache --relance".into(),
+        cible: r"C:\Program Files\deR4Tizer\deR4Tizer.exe".into(),
+        signataire: "deR4Tizer (empreinte)".into(),
+        ..Default::default()
+    };
+    assert_eq!(crate::persistance::evaluer(&e), "");
 }
 
