@@ -153,7 +153,7 @@ pub fn signaler_etat() {
     let interface = crate::sante::chemin_interface().unwrap_or_default();
     match verifier(&interface) {
         Ok(()) => {}
-        Err(e) => crate::commun::journal(&format!("tâche de relance de l'interface absente ou non conforme : {e} ; l'interface ne sera pas relancée")),
+        Err(e) => crate::commun::journal(&format!("tâche de relance de l'interface absente, non conforme, ou Planificateur pas encore prêt : {e} ; l'interface peut ne pas être relancée")),
     }
 }
 
@@ -167,17 +167,18 @@ fn verifier(interface: &str) -> Result<(), String> {
     crate::protection::sans_ecriture_de_tiers(&s, &[crate::protection::SID_SYSTEME, crate::protection::SID_ADMINISTRATEURS])
 }
 
-fn existe() -> bool {
-    lancer_schtasks(&["/Query", "/TN", NOM_TACHE]).map(|s| s.status.success()).unwrap_or(false)
+/// `/Query` en échec vaut absence : son code ne distingue pas l'absence d'une panne, et son texte dépend de la langue. D'où
+/// la suppression toujours tentée dans `retirer`
+fn existe() -> Result<bool, String> {
+    lancer_schtasks(&["/Query", "/TN", NOM_TACHE]).map(|s| s.status.success())
 }
 
 /// Retire la tâche (désinstallation, ou LANCEMENT_SESSION=0) ; erreur si elle existe encore ensuite
 pub fn retirer() -> Result<(), String> {
-    if !existe() {
-        return Ok(());
-    }
+    // Toujours tentée : un `/Query` en panne ne doit pas laisser une tâche orpheline (audit de #102, S102-04). Une tâche
+    // absente la fait échouer, sans effet
     let resultat = schtasks(&["/Delete", "/F", "/TN", NOM_TACHE]);
-    if existe() { Err(resultat.err().unwrap_or_else(|| "tâche toujours présente".into())) } else { Ok(()) }
+    if existe()? { Err(resultat.err().unwrap_or_else(|| "tâche toujours présente".into())) } else { Ok(()) }
 }
 
 /// Option de la ligne de commande : le résultat sur la sortie seulement. Action du MSI, avant la protection du dossier de

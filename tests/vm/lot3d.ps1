@@ -61,7 +61,7 @@ function Reglages-Defender {
     # ComputerID n'est pas comparé : ce n'est pas un réglage (Set-MpPreference n'a pas ce paramètre). Observé trois fois le
     # 2026-10-31, deR4Tizer non installé : il change moins de 32 s après la remise à l'instantané, vers une valeur
     # différente à chaque fois ; un relevé de 20 min le montre stable ensuite, mise à jour de la plateforme comprise.
-    # Mécanisme non établi. Sa valeur avant et après reste dans le tableau (INFORMATION)
+    # Mécanisme non établi. Le tableau dit s'il a changé (INFORMATION)
     foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|PSShowComputerName|RunspaceId|ComputerID|Cim.*)$' } | Sort-Object)) {
         $r[$n] = (@($p.$n) | ForEach-Object { "$_" }) -join '|'
     }
@@ -244,8 +244,8 @@ Verifier 'Aucun interrupteur de protection modifié pendant le passage (5007)' {
 Noter 'Événements 5007 pendant le passage' 'INFORMATION' $(if ($null -eq $evenements5007) { 'non relus (voir le contrôle ci-dessus)' } else { "$($evenements5007.Count) événement(s) ; Defender en écrit lui-même sur ses valeurs internes" })
 
 # Lecture seulement informative : Defender injoignable à cet instant ne doit pas faire perdre le tableau
-$computerIdApres = try { (Get-MpPreference -ErrorAction Stop).ComputerID } catch { "illisible ($($_.Exception.Message))" }
-Noter 'ComputerID de Defender pendant le passage (non comparé)' 'INFORMATION' "$(if ($computerIdAvant -eq $computerIdApres) { 'inchangé' } else { "changé ; $computerIdApres" })"
+$etatComputerId = try { if ((Get-MpPreference -ErrorAction Stop).ComputerID -eq $computerIdAvant) { 'inchangé' } else { 'changé' } } catch { "illisible ($($_.Exception.Message))" }
+Noter 'ComputerID de Defender pendant le passage (non comparé)' 'INFORMATION' $etatComputerId
 Noter 'Plateforme et signatures de Defender pendant le passage' 'INFORMATION' "$($avant.Plateforme) → $($apres.Plateforme) ; $($avant.Signatures) → $($apres.Signatures)"
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'

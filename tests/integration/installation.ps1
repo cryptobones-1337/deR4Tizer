@@ -374,6 +374,7 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
     } while (-not $actif -and (Get-Date) -lt $fin)
     if (-not $actif) {
         wevtutil sl $dns /e:true
+        Copy-Item (Join-Path $script:Donnees 'journal.txt') (Join-Path $Journaux 'journal-apres-d4.txt') -Force -ErrorAction SilentlyContinue
         return "journal DNS non réactivé en 60 s ; journal : $(Journal 'DNS-Client')"
     }
     # Le service écrit la ligne juste après wevtutil : 15 s pour l'écrire (échec du 2026-10-31 : lue une seule fois, vide)
@@ -383,7 +384,10 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
         if ($l -match 'réactivé') { break }
         Start-Sleep 1
     } while ((Get-Date) -lt $fin)
-    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; baseline : $(Journal 'baseline' 3) ; journal : $(Journal 'DNS' 4)" }
+    if ($l -notmatch 'réactivé') { Copy-Item (Join-Path $script:Donnees 'journal.txt') (Join-Path $Journaux 'journal-apres-d4.txt') -Force -ErrorAction SilentlyContinue; return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; baseline : $(Journal 'baseline' 3) ; journal : $(Journal 'DNS' 4)" }
+    # Trace du contrôle, réussi ou non (cause des échecs du 2026-10-31 : probable, non mesurée)
+    Write-Host "  coupure constatée : $coupe ; baseline : $(Journal 'baseline' 3)"
+    Copy-Item (Join-Path $script:Donnees 'journal.txt') (Join-Path $Journaux 'journal-apres-d4.txt') -Force -ErrorAction SilentlyContinue
     $true
 }
 
@@ -764,34 +768,69 @@ Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''
     }
 }
 }
+# Audit de #101, S101-16 : System32\Tasks accepte la création par les comptes authentifiés. Un fichier précréé sous ce nom,
+# sans tâche enregistrée : l'installation aboutit et aucune tâche ne porte une autre commande que l'interface
+$f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
+$s = En-TantQue $script:compte "try { Set-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'cree' } catch { `$_.Exception.Message }"
+if ("$s".Trim() -ne 'cree') {
+    NonExecute 'Relance : fichier précréé par un compte standard dans le dossier des tâches : installation aboutie, aucune tâche étrangère' "Windows a refusé la précréation ($s)"
+} else {
+Verifier 'Relance : fichier précréé par un compte standard dans le dossier des tâches : installation aboutie, aucune tâche étrangère' {
+    $c = Installer $Msi (Join-Path $Journaux 'installation-fichier-precree.log')
+    if ($c -ne 0) { return "msiexec a rendu $c" }
+    try {
+        $pose = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
+        Write-Host "  tâche posée : $pose"
+        if ($pose) {
+            $x = schtasks /Query /TN $tacheRelance /XML | Out-String
+            if (([xml]$x).Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "tâche étrangère : $x" }
+            # Le vrai risque : une tâche posée dans un fichier que le compte standard peut encore modifier
+            $r = En-TantQue $script:compte "try { Add-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
+            if ("$r".Trim() -ne 'refuse') { return "fichier de la tâche modifiable par le compte standard ($r)" }
+            Write-Host "  propriétaire du fichier : $((Get-Acl -LiteralPath $f).Owner)"
+        } else {
+            # Échec fermé : il doit se voir dans le journal, pas seulement au bout du délai de SAN-010
+            $fin = (Get-Date).AddSeconds(90)
+            # Journal rend un texte quand le fichier n'existe pas encore : le motif est à chercher
+            while ((Journal 'tâche de relance' 1) -notmatch 'tâche de relance' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+            $l = Journal 'tâche de relance' 3
+            if ($l -notmatch 'tâche de relance') { return 'tâche non posée, sans ligne au journal' }
+            Write-Host "  journal : $l"
+        }
+        $true
+    } finally {
+        Desinstaller (Join-Path $Journaux 'desinstallation-fichier-precree.log') | Out-Null
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    }
+}
+}
 # S101-08 : création sans /F sur une tâche existante, entrée fermée : elle doit échouer vite, sans changer la tâche
 Verifier 'Relance : création sur une tâche existante, sans réponse possible : échec en moins de 60 s, tâche intacte' {
     $temoin = 'd4t-temoin-creation'
     Schtasks-Code /Create /TN $temoin /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F | Out-Null
     try {
+        # Une définition différente : un écrasement se verrait à la relecture (audit de #101, S101-21)
         $f = Join-Path $env:TEMP 'd4t-temoin-creation.xml'
-        schtasks /Query /TN $temoin /XML | Set-Content $f -Encoding Unicode
+        $avant = schtasks /Query /TN $temoin /XML | Out-String
+        ($avant -replace 'exit 0', 'exit 7') | Set-Content $f -Encoding Unicode
         $vide = Join-Path $env:TEMP 'd4t-vide.txt'
         Set-Content $vide '' -NoNewline
         $p = Start-Process schtasks.exe -ArgumentList "/Create /TN $temoin /XML `"$f`"" -RedirectStandardInput $vide -WindowStyle Hidden -PassThru
+        # Sans cette lecture, ExitCode reste vide une fois le processus fini
+        $null = $p.Handle
         if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; return 'schtasks sans réponse après 60 s (blocage possible de l''installation)' }
         Write-Host "  code de retour sans /F sur une tâche existante : $($p.ExitCode)"
         if ($p.ExitCode -eq 0) { return 'création acceptée sur une tâche existante, sans /F' }
+        if ((schtasks /Query /TN $temoin /XML | Out-String) -notmatch 'exit 0') { return 'tâche existante modifiée' }
         $true
     } finally {
         Schtasks-Code /Delete /F /TN $temoin | Out-Null
     }
 }
-# D4-1 : retour arrière vers une version sans relance : relevé, pas de décision ici. La version ancienne ne connaît pas la tâche
-Noter 'Retour arrière vers une version sans relance (voir D4-1)' 'INFORMATION' $(
-    Installer $Msi (Join-Path $Journaux 'retour-arriere-nouvelle.log') | Out-Null
-    $c = Installer $MsiAncien (Join-Path $Journaux 'retour-arriere-ancienne.log')
-    $apres = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
-    Desinstaller (Join-Path $Journaux 'retour-arriere-desinstallation.log') | Out-Null
-    $orpheline = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
-    Schtasks-Code /Delete /F /TN $tacheRelance | Out-Null
-    "version ancienne installée : code $c ; tâche encore là ensuite : $apres ; encore là après sa désinstallation : $orpheline"
-)
+# D4-1 : retour arrière vers une version sans relance. Le paquet de référence (4.1.0) refuse de descendre (code 1603,
+# WIX_DOWNGRADE_DETECTED), ce qui n'est pas le chemin réel de maj.rs : aucun essai possible ici tant qu'il n'y a pas de paquet
+# sans relance qui accepte le retour arrière (audit de #101, S101-20)
+NonExecute 'Retour arrière vers une version sans relance (D4-1)' 'le paquet de référence 4.1.0 refuse de descendre ; il faudrait un paquet sans relance qui accepte le retour arrière'
 # Relecture de #101, D1 : le refus du lancement survit à une mise à niveau, qui ne repasse pas LANCEMENT_SESSION
 $cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
 Installer $MsiAncien (Join-Path $Journaux 'installation-ancienne-sans-lancement.log') @('LANCEMENT_SESSION=0') | Out-Null
