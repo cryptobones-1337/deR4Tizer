@@ -23,6 +23,12 @@
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="LANCEMENT_SESSION" Value="1" />
+    <!-- Choix installé, relu à chaque mise à niveau et réparation : LANCEMENT_SESSION n'est pas mémorisé, et maj.rs lance msiexec
+         sans le repasser. Sans valeur Run installée, le lancement reste refusé (relecture de #101, D1) -->
+    <Property Id="LANCEMENT_INSTALLE">
+      <RegistrySearch Id="ChercherLancement" Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="deR4Tizer" Type="raw" Win64="yes" />
+    </Property>
+    <SetProperty Id="LANCEMENT_SESSION" Value="0" Before="CostInitialize" Sequence="execute"><![CDATA[(WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE]]></SetProperty>
     <Property Id="GARDER_DONNEES" Secure="yes" />
     <Property Id="GARDER_BASELINE" Secure="yes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/cryptobones-1337/deR4Tizer" />
@@ -93,11 +99,19 @@
     </Feature>
 
     <!-- Désinstallation (pas lors d'une mise à jour) : le service arrêté, on retire ce qu'il a posé, avant d'effacer les fichiers -->
+    <!-- Relance de l'interface (D4-1, option C) : tâche planifiée posée en SYSTEM, lancée par Windows sous l'identité de chaque
+         utilisateur connecté, sans élévation ; retirée à la désinstallation (Nettoyer) ou avec LANCEMENT_SESSION=0 -->
+    <CustomAction Id="SuspendreRelance" Directory="INSTALLFOLDER" ExeCommand="&quot;[SystemFolder]schtasks.exe&quot; /Change /TN &quot;deR4Tizer Relance interface&quot; /DISABLE" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="PoserRelance" FileKey="ServiceExe" ExeCommand="--poser-relance" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="RetirerRelance" FileKey="ServiceExe" ExeCommand="--retirer-relance" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="Nettoyer" FileKey="ServiceExe" ExeCommand="--nettoyer" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="AnnulerBaseline" FileKey="ServiceExe" ExeCommand="--annuler-baseline" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="SupprimerDonnees" FileKey="ServiceExe" ExeCommand="--supprimer-donnees" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="FermerInterface" Directory="INSTALLFOLDER" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM deR4Tizer.exe" Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
+      <Custom Action="PoserRelance" After="InstallFiles"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION="1"]]></Custom>
+      <Custom Action="RetirerRelance" After="PoserRelance"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION<>"1"]]></Custom>
+      <Custom Action="SuspendreRelance" Before="FermerInterface">REMOVE OR UPGRADINGPRODUCTCODE OR WIX_UPGRADE_DETECTED</Custom>
       <Custom Action="FermerInterface" Before="StopServices">REMOVE OR UPGRADINGPRODUCTCODE OR WIX_UPGRADE_DETECTED</Custom>
       <Custom Action="Nettoyer" After="StopServices"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE]]></Custom>
       <Custom Action="AnnulerBaseline" After="Nettoyer"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND GARDER_BASELINE<>"1"]]></Custom>

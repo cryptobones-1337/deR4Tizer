@@ -62,6 +62,21 @@ pub fn droits_conformes_pour(s: &crate::natif::Securite, proprietaire_ok: &dyn F
     Ok(())
 }
 
+/// Personne d'autre que `complets` ne peut écrire, supprimer ni changer les droits, et le propriétaire est acceptable (pur,
+/// testé) : tâche planifiée, que tout le monde peut lire
+pub fn sans_ecriture_de_tiers(s: &crate::natif::Securite, complets: &[&str]) -> Result<(), String> {
+    if !proprietaire_acceptable(&s.proprietaire) {
+        return Err(format!("propriétaire {}", s.proprietaire));
+    }
+    if s.ace_inconnue {
+        return Err("entrée de droits d'un type inattendu".into());
+    }
+    match s.aces.iter().find(|a| a.autorise && a.masque & DROITS_ECRITURE != 0 && !complets.contains(&a.sid.as_str())) {
+        Some(a) => Err(format!("écriture accordée à {} (masque {:#x})", a.sid, a.masque)),
+        None => Ok(()),
+    }
+}
+
 /// Relit les droits d'un chemin et les compare à l'attendu
 pub fn verifier(chemin: &Path, complets: &[&str], lecteurs: &[&str]) -> Result<(), String> {
     let s = crate::natif::lire_securite(chemin).ok_or_else(|| format!("droits de {} illisibles", chemin.display()))?;

@@ -35,6 +35,9 @@ if ($installe) {
     # effacé quoi qu'il arrive) : relecture de #59, D2
     # Heure du début de l'activité (horloge de la VM, celle du service) : les alertes comptées comme faux positifs sont
     # celles produites après, pas celles de l'installation et du premier relevé
+    # PR 4.5b : tâche de relance retirée et interface arrêtée, pour le contrôle de SAN-010 en fin de mesure
+    Schtasks-Code /Delete /F /TN 'deR4Tizer Relance interface' | Out-Null
+    Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     $debutActivite = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     Verifier 'Activité pendant la mesure' {
         try {
@@ -58,6 +61,17 @@ if ($installe) {
     }
     Noter 'Tours d''activité' 'INFORMATION' "$Minutes min, $n tours (programme lancé et fichier écrit à chaque tour, connexion locale un tour sur trois)"
 
+    # Interface absente d'une session active : SAN-010 après le délai de grâce (5 min) et 15 min d'absence, non adouci par
+    # l'apprentissage. La mesure dure 22 min
+    Verifier 'SAN-010 : tâche de relance retirée, interface absente : constat levé, niveau Critique' {
+        if (-not (Get-CimInstance Win32_ComputerSystem).UserName) { return 'aucun compte connecté à la console : contrôle sans objet' }
+        $a = Join-Path $script:Donnees 'alertes.json'
+        $l = @(if (Test-Path $a) { (Get-Content $a -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -eq 'SAN-010' } })
+        if (-not $l.Count) { return "aucun SAN-010 après $Minutes min ; collecte Sessions : $(@((Etat).Collectes | Where-Object Id -eq 'Sessions') | ConvertTo-Json -Compress)" }
+        if ($l[0].Niveau -ne 'Critique') { return "niveau : $($l[0].Niveau)" }
+        Write-Host "  $($l[0].Regle) $($l[0].Destination) : $($l[0].Raisons)"
+        $true
+    }
     Verifier 'mesures.json écrit par le service (deux écritures au moins, service toujours actif)' {
         if (-not (Attendre-Canal 30)) { return 'le service ne répond plus après la mesure' }
         if (-not (Test-Path -LiteralPath $fichier)) { return "absent après $Minutes min ($fichier)" }

@@ -356,6 +356,13 @@ Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL
 # chaque tour de 2 s), avec une ligne dans journal.txt
 Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, ligne de journal (D4)' {
     $dns = 'Microsoft-Windows-DNS-Client/Operational'
+    # Au premier tour après un démarrage, le service applique le profil « journalisation » s'il le voit non conforme, ce qui
+    # réactiverait aussi ce journal, sans la ligne attendue ici (échecs du 2026-10-31 : cause probable, d'après le code, non
+    # mesurée). Attente de la fin de ce tour : baseline.json écrit depuis le démarrage du service
+    $demarrage = (Get-Process -Id (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId).StartTime
+    $baseline = Join-Path $script:Donnees 'baseline.json'
+    $fin = (Get-Date).AddSeconds(180)
+    while (((-not (Test-Path $baseline)) -or (Get-Item $baseline).LastWriteTime -lt $demarrage) -and (Get-Date) -lt $fin) { Start-Sleep 2 }
     wevtutil sl $dns /e:false
     # La coupure doit être constatée : sinon « réactivé » ne prouverait rien. La relecture peut tomber après la réactivation
     # (tour de 2 s) : la ligne de journal le dira plus bas
@@ -376,7 +383,7 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
         if ($l -match 'réactivé') { break }
         Start-Sleep 1
     } while ((Get-Date) -lt $fin)
-    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; journal : $(Journal 'DNS' 4)" }
+    if ($l -notmatch 'réactivé') { return "réactivé sans ligne de journal en 15 s : « $l » ; coupure constatée : $coupe ; baseline : $(Journal 'baseline' 3) ; journal : $(Journal 'DNS' 4)" }
     $true
 }
 
@@ -464,6 +471,86 @@ Verifier 'Remontée non configurée : notifications.json sans échec ni attente,
     $alertes = Join-Path $script:Donnees 'alertes.json'
     $san = @(if (Test-Path $alertes) { (Get-Content $alertes -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -eq 'SAN-004' } })
     if ($san.Count) { return "SAN-004 levé sans remontée configurée" }
+    $true
+}
+
+# ---------------------------------------------------------------- phase 4, PR 4.5b : relance de l'interface
+# Tâche posée par le MSI (D4-1, option C) : lancée par Windows sous l'identité de l'utilisateur, jamais par le service
+$tacheRelance = 'deR4Tizer Relance interface'
+Verifier 'Relance : tâche posée, groupe Utilisateurs, sans élévation, chemin installé' {
+    $x = schtasks /Query /TN $tacheRelance /XML 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { return "tâche absente : $x" }
+    $t = [xml]$x
+    $p = $t.Task.Principals.Principal
+    if ($p.GroupId -ne 'S-1-5-32-545') { return "principal : groupe « $($p.GroupId) », compte « $($p.UserId) »" }
+    # Windows omet LeastPrivilege, valeur par défaut, à la relecture
+    if ($p.RunLevel -eq 'HighestAvailable') { return "niveau : $($p.RunLevel)" }
+    $attendu = Join-Path $script:Programme 'deR4Tizer.exe'
+    if ($t.Task.Actions.Exec.Command -ne $attendu) { return "commande : $($t.Task.Actions.Exec.Command), attendu $attendu" }
+    if ($t.Task.Actions.Exec.Arguments -ne '--cache --relance') { return "arguments : $($t.Task.Actions.Exec.Arguments)" }
+    $true
+}
+Verifier 'Relance : tâche non modifiable par un compte standard' {
+    $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
+    $ecriture = 'Write|Modify|FullControl|Delete|ChangePermissions|TakeOwnership'
+    $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match $ecriture -and
+        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
+    if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
+    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'") {
+        $s = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
+        if ("$s".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
+    }
+    $etat = [xml](schtasks /Query /TN $tacheRelance /XML | Out-String)
+    if ($etat.Task.Settings.Enabled -eq 'false') { return 'tâche désactivée par le compte standard' }
+    $true
+}
+function Interfaces-EnSession {
+    $chemin = Join-Path $script:Programme 'deR4Tizer.exe'
+    @(Get-CimInstance Win32_Process -Filter "Name='deR4Tizer.exe'" | Where-Object { $_.ExecutablePath -eq $chemin -and $_.SessionId -gt 0 })
+}
+function Attendre-Interface([int]$Secondes = 360) {
+    $fin = (Get-Date).AddSeconds($Secondes)
+    do {
+        $i = @(Interfaces-EnSession)
+        if ($i.Count) { return $i }
+        Start-Sleep 5
+    } while ((Get-Date) -lt $fin)
+    @()
+}
+if ((Get-CimInstance Win32_ComputerSystem).UserName) {
+    Verifier 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' {
+        $i = @(Attendre-Interface)
+        if (-not $i.Count) { return "aucune interface en session après 6 min ; tâche : $(schtasks /Query /TN $tacheRelance /FO LIST /V 2>&1 | Select-String 'Last Result|Dernier résultat' | Out-String)" }
+        $proprietaire = (Invoke-CimMethod -InputObject $i[0] -MethodName GetOwner).User
+        Write-Host "  interface : pid $($i[0].ProcessId), session $($i[0].SessionId), compte $proprietaire"
+        if ($proprietaire -eq 'SYSTEM') { return 'interface lancée en SYSTEM' }
+        $true
+    }
+    Verifier 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' {
+        $avant = @(Interfaces-EnSession)
+        foreach ($p in $avant) { Stop-Process -Id $p.ProcessId -Force }
+        Start-Sleep 2
+        $i = @(Attendre-Interface)
+        if (-not $i.Count) { return 'interface non relancée après 6 min' }
+        if ($i.ProcessId -contains $avant[0].ProcessId) { return 'même processus : arrêt sans effet' }
+        # S101-09 : une instance tourne, un compte standard ne l'arrête pas par la tâche
+        $fin = En-TantQue $script:compte "schtasks /End /TN '$tacheRelance' 2>&1 | Out-Null; `$LASTEXITCODE"
+        Start-Sleep 3
+        if (-not @(Interfaces-EnSession).Count) { return "interface arrêtée par schtasks /End d'un compte standard (code $fin)" }
+        # Le tour suivant de la tâche sort aussitôt (mutex) : toujours une seule interface par session
+        Start-Sleep 310
+        $doublons = @(Interfaces-EnSession | Group-Object SessionId | Where-Object Count -gt 1)
+        if ($doublons.Count) { return "plusieurs interfaces dans une session : $(($doublons | ForEach-Object { "$($_.Name) : $($_.Count)" }) -join ', ')" }
+        $true
+    }
+} else {
+    NonExecute 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' 'aucun compte connecté à la console'
+    NonExecute 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' 'aucun compte connecté à la console'
+}
+Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
+    $a = Join-Path $script:Donnees 'alertes.json'
+    $l = @(if (Test-Path $a) { (Get-Content $a -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -like 'PER-*' -and "$($_.Destination) $($_.Raisons)" -match 'Relance interface' } })
+    if ($l.Count) { return "$($l.Count) alerte(s) : $($l[0].Regle) $($l[0].Raisons)" }
     $true
 }
 
@@ -634,6 +721,7 @@ Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données 
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
     if (Test-Path $script:Donnees) { $reste += 'données' }
     if (@(Produits).Count) { $reste += 'entrée « Applications »' }
+    if ((Schtasks-Code /Query /TN $tacheRelance) -eq 0) { $reste += 'tâche de relance' }
     if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }
     $true
 }
@@ -643,6 +731,85 @@ if ($regles1) {
     }
 } else {
     NonExecute 'Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées' 'aucune règle du groupe deR4Tizer avant la désinstallation (rien à prouver)'
+}
+
+# ---------------------------------------------------------------- phase 4, PR 4.5b : tâche de relance, cas de pose
+# Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant l'installation
+$s = En-TantQue $script:compte "schtasks /Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+if ("$s".Trim() -ne '0') {
+    # Sans précréation, le contrôle ne prouverait rien (S101-12)
+    NonExecute 'Relance : tâche précréée par un compte standard, remplacée à l''installation, plus modifiable par lui' "Windows a refusé la précréation ($s)"
+} else {
+Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''installation, plus modifiable par lui' {
+    $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
+    $c = Installer $Msi (Join-Path $Journaux 'installation-tache-precreee.log')
+    if ($c -ne 0) { return "msiexec a rendu $c" }
+    try {
+        $x = schtasks /Query /TN $tacheRelance /XML 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { return "tâche absente après l'installation : $x" }
+        $t = [xml]$x
+        if ($t.Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "commande conservée : $($t.Task.Actions.Exec.Command)" }
+        $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match 'Write|Modify|FullControl|Delete|ChangePermissions|TakeOwnership' -and
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
+        if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
+        foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F") {
+            $r = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
+            if ("$r".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
+        }
+        $x2 = [xml](schtasks /Query /TN $tacheRelance /XML | Out-String)
+        if ($x2.Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe') -or $x2.Task.Settings.Enabled -eq 'false') { return 'tâche modifiée par le compte standard' }
+        $true
+    } finally {
+        Desinstaller (Join-Path $Journaux 'desinstallation-tache-precreee.log') | Out-Null
+    }
+}
+}
+# S101-08 : création sans /F sur une tâche existante, entrée fermée : elle doit échouer vite, sans changer la tâche
+Verifier 'Relance : création sur une tâche existante, sans réponse possible : échec en moins de 60 s, tâche intacte' {
+    $temoin = 'd4t-temoin-creation'
+    Schtasks-Code /Create /TN $temoin /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F | Out-Null
+    try {
+        $f = Join-Path $env:TEMP 'd4t-temoin-creation.xml'
+        schtasks /Query /TN $temoin /XML | Set-Content $f -Encoding Unicode
+        $vide = Join-Path $env:TEMP 'd4t-vide.txt'
+        Set-Content $vide '' -NoNewline
+        $p = Start-Process schtasks.exe -ArgumentList "/Create /TN $temoin /XML `"$f`"" -RedirectStandardInput $vide -WindowStyle Hidden -PassThru
+        if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; return 'schtasks sans réponse après 60 s (blocage possible de l''installation)' }
+        Write-Host "  code de retour sans /F sur une tâche existante : $($p.ExitCode)"
+        if ($p.ExitCode -eq 0) { return 'création acceptée sur une tâche existante, sans /F' }
+        $true
+    } finally {
+        Schtasks-Code /Delete /F /TN $temoin | Out-Null
+    }
+}
+# D4-1 : retour arrière vers une version sans relance : relevé, pas de décision ici. La version ancienne ne connaît pas la tâche
+Noter 'Retour arrière vers une version sans relance (voir D4-1)' 'INFORMATION' $(
+    Installer $Msi (Join-Path $Journaux 'retour-arriere-nouvelle.log') | Out-Null
+    $c = Installer $MsiAncien (Join-Path $Journaux 'retour-arriere-ancienne.log')
+    $apres = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
+    Desinstaller (Join-Path $Journaux 'retour-arriere-desinstallation.log') | Out-Null
+    $orpheline = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
+    Schtasks-Code /Delete /F /TN $tacheRelance | Out-Null
+    "version ancienne installée : code $c ; tâche encore là ensuite : $apres ; encore là après sa désinstallation : $orpheline"
+)
+# Relecture de #101, D1 : le refus du lancement survit à une mise à niveau, qui ne repasse pas LANCEMENT_SESSION
+$cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+Installer $MsiAncien (Join-Path $Journaux 'installation-ancienne-sans-lancement.log') @('LANCEMENT_SESSION=0') | Out-Null
+if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyContinue)) {
+    NonExecute 'LANCEMENT_SESSION=0 : mise à niveau sans la propriété, ni clé Run ni tâche' 'la version ancienne a posé la clé Run malgré LANCEMENT_SESSION=0'
+    Desinstaller (Join-Path $Journaux 'desinstallation-ancienne-sans-lancement.log') | Out-Null
+} else {
+    Verifier 'LANCEMENT_SESSION=0 : mise à niveau sans la propriété, ni clé Run ni tâche' {
+        $c = Installer $Msi (Join-Path $Journaux 'mise-a-niveau-sans-lancement.log')
+        if ($c -ne 0) { return "msiexec a rendu $c" }
+        try {
+            if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyContinue)) { return 'clé Run posée par la mise à niveau' }
+            if ((Schtasks-Code /Query /TN $tacheRelance) -eq 0) { return 'tâche posée par la mise à niveau' }
+            $true
+        } finally {
+            Desinstaller (Join-Path $Journaux 'desinstallation-sans-lancement.log') | Out-Null
+        }
+    }
 }
 
 # ---------------------------------------------------------------- mise à niveau depuis une version plus ancienne

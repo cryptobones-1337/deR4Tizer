@@ -72,6 +72,14 @@ function Attendre-Canal([int]$Secondes = 120) {
 }
 
 # Dernières lignes du journal du service qui contiennent un motif (diagnostic des échecs)
+# Code de retour de schtasks sans sortie : sous Windows PowerShell 5.1 en mode Stop, une redirection de sa sortie d'erreur lève
+# une exception quand il échoue (tâche absente), avant que le code puisse être lu
+function Schtasks-Code {
+    $ancien = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { schtasks @args *> $null; $LASTEXITCODE } finally { $ErrorActionPreference = $ancien }
+}
+
 function Journal([string]$Motif, [int]$Nombre = 6) {
     $f = Join-Path $script:Donnees 'journal.txt'
     if (-not (Test-Path $f)) { return '(pas de journal)' }

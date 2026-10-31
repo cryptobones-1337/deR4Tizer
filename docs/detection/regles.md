@@ -657,7 +657,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
 | SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
 | SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |
-| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service) | `sante.rs`, `natif.rs` | Alerte |
+| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) |
 | SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
 
@@ -693,12 +693,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   `sante_remontee_echec_1h`, `sante_remontee_non_configuree`.
 - **SAN-010 et SAN-011** (PR 4.5a) : collecte `Sessions` (fil « sante », toutes les 30 s) ; sessions `WTSActive` avec un
   jeton d'utilisateur ; interface reconnue par son chemin complet **égal** au chemin installé (`deR4Tizer.exe` à côté
-  du service) : une copie posée ailleurs ne compte pas. Énumération impossible : collecte indisponible, jamais
+  du service) : une copie posée ailleurs ne compte pas. Installation avec `LANCEMENT_SESSION=0` (pas de valeur Run) : aucune session attendue, aucun constat. Énumération impossible : collecte indisponible, jamais
   « interface présente », et SAN-010/011 sans collecte. Un constat par session, par épisode (SAN-010 : remis à zéro au
-  retour de l'interface) et par 24 h au plus ; chaque disparition et chaque retour sont écrits dans le SIEM (`Type`
-  « interface »). Le service ne relance rien (relance par une tâche planifiée : PR 4.5b) et ne distingue pas un
-  « Quitter » volontaire d'un arrêt forcé. Faux positif certain jusqu'à la PR 4.5b : **chaque installation et chaque mise à jour** (le MSI ferme l'interface, rien ne la relance avant la prochaine ouverture de session) lève SAN-010 une vingtaine de minutes plus tard pour chaque session ouverte ; aucune version ne doit être publiée entre la 4.5a et la 4.5b. Limite : une interface au bon chemin mais suspendue compte comme présente ; un programme sous le compte de l'utilisateur peut donc couper les notifications locales sans SAN-010 (audit de #100, S100-01) ; la surveillance et la remontée continuent ; il faudrait un signe de vie de l'interface pour aller plus loin. Autres faux positifs attendus : utilisateur qui quitte l'interface (jusqu'à la PR
-  4.5b, rien ne la relance avant la prochaine ouverture de session) ; compte non autorisé à lire les données, qui
+  retour de l'interface, 3 constats au plus par session et par 24 h, puis une ligne dans le SIEM) et par 24 h au plus ; chaque disparition et chaque retour sont écrits dans le SIEM (`Type`
+  « interface »). Le service ne relance rien : une tâche planifiée posée par le MSI le fait sous l'identité de l'utilisateur (PR 4.5b), toutes les 5 min, et SAN-010 signale l'absence au-delà. Il ne distingue pas un
+  « Quitter » volontaire d'un arrêt forcé. Limite : une interface au bon chemin mais suspendue compte comme présente ; un programme sous le compte de l'utilisateur peut donc couper les notifications locales sans SAN-010 (audit de #100, S100-01) ; la surveillance et la remontée continuent ; il faudrait un signe de vie de l'interface pour aller plus loin. Autres faux positifs attendus : tâche de relance retirée ou interdite (poste géré) ; compte non autorisé à lire les données, qui
   ferme l'interface ; session Bureau à distance sans bureau. Tests : `sante_interface_absente_15_min`,
   `sante_grace_ouverture_session`, `sante_interface_trois_disparitions`, `sante_interface_deux_disparitions`,
   `sante_interface_retour_et_session_fermee`.
