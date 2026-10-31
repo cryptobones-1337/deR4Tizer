@@ -4718,6 +4718,41 @@ fn relance_definition_de_la_tache() {
     assert!(x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"), "sinon Windows fermerait l'interface au bout de 3 jours");
     assert!(x.contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"), "une instance par session");
     assert!(x.contains("encoding=\"UTF-16\""));
+    assert!(x.contains("<SecurityDescriptor>D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;AU)</SecurityDescriptor>"), "droits explicites (S101-01)");
+    assert!(x.contains("<AllowStartOnDemand>false</AllowStartOnDemand>"), "pas de lancement à la demande (S101-03)");
+}
+
+/// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée
+#[test]
+fn relance_relue_conforme() {
+    use crate::relance::{definition_conforme as c, definition_tache};
+    let i = r"C:\Program Files\deR4Tizer\deR4Tizer.exe";
+    let x = definition_tache(i);
+    assert!(c(&x, i));
+    assert!(c(&x, &i.to_uppercase()), "sans tenir compte de la casse");
+    assert!(!c(&x, r"C:\Temp\deR4Tizer.exe"), "autre commande");
+    assert!(!c(&x.replace("--cache --relance", "--cache"), i));
+    assert!(!c(&x.replace("LeastPrivilege", "HighestAvailable"), i), "élevée");
+    assert!(!c(&x.replace("S-1-5-32-545", "S-1-5-21-1-2-3-1001"), i), "autre groupe");
+    assert!(!c(&x.replace("<GroupId>S-1-5-32-545</GroupId>", "<GroupId>S-1-5-32-545</GroupId><UserId>x</UserId>"), i), "un compte");
+}
+
+#[test]
+fn relance_droits_sans_ecriture_de_tiers() {
+    use crate::natif::{Ace, Securite};
+    use crate::protection::{sans_ecriture_de_tiers as d, SID_ADMINISTRATEURS, SID_SYSTEME};
+    let complets = [SID_SYSTEME, SID_ADMINISTRATEURS];
+    let s = |proprietaire: &str, aces: Vec<(&str, u32, bool)>, inconnue: bool| Securite {
+        proprietaire: proprietaire.into(), protege: true, ace_inconnue: inconnue,
+        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise }).collect(),
+    };
+    let lecture = 0x1200a9;
+    assert!(d(&s(SID_SYSTEME, vec![(SID_SYSTEME, 0x1f01ff, true), ("S-1-5-11", lecture, true)], false), &complets).is_ok());
+    assert!(d(&s("S-1-5-21-1-2-3-1001", vec![], false), &complets).is_err(), "propriétaire : le compte qui l'a créée");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-21-1-2-3-1001", 0x1f01ff, true)], false), &complets).is_err(), "contrôle total à un tiers");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x2, true)], false), &complets).is_err(), "écriture à un tiers");
+    assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x1f01ff, false)], false), &complets).is_ok(), "refus : sans effet");
+    assert!(d(&s(SID_SYSTEME, vec![], true), &complets).is_err(), "entrée inconnue");
 }
 
 /// La tâche cible notre exécutable, reconnu par son empreinte : pas de remarque de persistance ni d'interpréteur

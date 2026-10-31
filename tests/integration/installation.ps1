@@ -488,8 +488,10 @@ Verifier 'Relance : tâche non modifiable par un compte standard' {
     $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match $ecriture -and
         $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
     if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
-    $s = En-TantQue $script:compte "schtasks /Change /TN '$tacheRelance' /DISABLE 2>&1 | Out-Null; `$LASTEXITCODE"
-    if ("$s".Trim() -eq '0') { return 'le compte standard a modifié la tâche' }
+    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'") {
+        $s = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
+        if ("$s".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
+    }
     $etat = [xml](schtasks /Query /TN $tacheRelance /XML | Out-String)
     if ($etat.Task.Settings.Enabled -eq 'false') { return 'tâche désactivée par le compte standard' }
     $true
@@ -718,6 +720,55 @@ if ($regles1) {
     }
 } else {
     NonExecute 'Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées' 'aucune règle du groupe deR4Tizer avant la désinstallation (rien à prouver)'
+}
+
+# ---------------------------------------------------------------- phase 4, PR 4.5b : tâche de relance, cas de pose
+# Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant l'installation
+Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''installation, plus modifiable par lui' {
+    $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
+    $s = En-TantQue $script:compte "schtasks /Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+    $precree = "$s".Trim() -eq '0'
+    Write-Host "  précréation par le compte standard : $(if ($precree) { 'acceptée par Windows' } else { "refusée ($s)" })"
+    $c = Installer $Msi (Join-Path $Journaux 'installation-tache-precreee.log')
+    if ($c -ne 0) { return "msiexec a rendu $c" }
+    try {
+        $x = schtasks /Query /TN $tacheRelance /XML 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { return "tâche absente après l'installation : $x" }
+        $t = [xml]$x
+        if ($t.Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "commande conservée : $($t.Task.Actions.Exec.Command)" }
+        $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match 'Write|Modify|FullControl|Delete|ChangePermissions|TakeOwnership' -and
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
+        if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
+        foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F") {
+            $r = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
+            if ("$r".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
+        }
+        $x2 = [xml](schtasks /Query /TN $tacheRelance /XML | Out-String)
+        if ($x2.Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe') -or $x2.Task.Settings.Enabled -eq 'false') { return 'tâche modifiée par le compte standard' }
+        $true
+    } finally {
+        Desinstaller (Join-Path $Journaux 'desinstallation-tache-precreee.log') | Out-Null
+    }
+}
+# Relecture de #101, D1 : le refus du lancement survit à une mise à niveau, qui ne repasse pas LANCEMENT_SESSION
+$cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+Installer $MsiAncien (Join-Path $Journaux 'installation-ancienne-sans-lancement.log') @('LANCEMENT_SESSION=0') | Out-Null
+if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyContinue)) {
+    NonExecute 'LANCEMENT_SESSION=0 : mise à niveau sans la propriété, ni clé Run ni tâche' 'la version ancienne a posé la clé Run malgré LANCEMENT_SESSION=0'
+    Desinstaller (Join-Path $Journaux 'desinstallation-ancienne-sans-lancement.log') | Out-Null
+} else {
+    Verifier 'LANCEMENT_SESSION=0 : mise à niveau sans la propriété, ni clé Run ni tâche' {
+        $c = Installer $Msi (Join-Path $Journaux 'mise-a-niveau-sans-lancement.log')
+        if ($c -ne 0) { return "msiexec a rendu $c" }
+        try {
+            if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyContinue)) { return 'clé Run posée par la mise à niveau' }
+            schtasks /Query /TN $tacheRelance *> $null
+            if ($LASTEXITCODE -eq 0) { return 'tâche posée par la mise à niveau' }
+            $true
+        } finally {
+            Desinstaller (Join-Path $Journaux 'desinstallation-sans-lancement.log') | Out-Null
+        }
+    }
 }
 
 # ---------------------------------------------------------------- mise à niveau depuis une version plus ancienne

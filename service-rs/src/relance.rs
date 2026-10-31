@@ -3,7 +3,6 @@
 //! Windows la lance sous l'identité de chaque utilisateur connecté, sans élévation. L'interface sort aussitôt si elle tourne
 //! déjà dans la session (mutex). Un compte standard ne peut pas modifier une tâche posée par SYSTEM.
 
-use crate::commun;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -11,6 +10,9 @@ use std::process::Command;
 pub const NOM_TACHE: &str = "deR4Tizer Relance interface";
 /// Groupe local « Utilisateurs » (SID, indépendant de la langue de Windows)
 const GROUPE_UTILISATEURS: &str = "S-1-5-32-545";
+/// Droits de la tâche, posés explicitement : SYSTEM et administrateurs ; lecture et exécution seules pour les autres.
+/// Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant nous
+const DROITS_TACHE: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;AU)";
 
 fn echappe_xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
@@ -27,6 +29,7 @@ pub fn definition_tache(interface: &str) -> String {
     <Author>deR4Tizer</Author>
     <Description>Relance l'interface de deR4Tizer si elle ne tourne plus dans la session.</Description>
     <URI>\{nom}</URI>
+    <SecurityDescriptor>{droits}</SecurityDescriptor>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
@@ -46,7 +49,7 @@ pub fn definition_tache(interface: &str) -> String {
     <AllowHardTerminate>true</AllowHardTerminate>
     <StartWhenAvailable>false</StartWhenAvailable>
     <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <AllowStartOnDemand>false</AllowStartOnDemand>
     <Enabled>true</Enabled>
     <Hidden>false</Hidden>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
@@ -59,6 +62,7 @@ pub fn definition_tache(interface: &str) -> String {
 "#,
         nom = echappe_xml(NOM_TACHE),
         groupe = GROUPE_UTILISATEURS,
+        droits = DROITS_TACHE,
         interface = echappe_xml(interface),
     )
 }
@@ -69,36 +73,69 @@ fn schtasks(arguments: &[&str]) -> Result<(), String> {
     if sortie.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&sortie.stderr).trim().chars().take(300).collect()) }
 }
 
-/// Pose (ou remplace) la tâche : action du MSI, en SYSTEM. Le fichier de définition passe par le dossier d'installation
-/// (administrateurs seulement), puis il est effacé
+/// Tâche relue conforme à ce qui a été posé (pur, testé) : commande, arguments, groupe et niveau. `relue` est la sortie de
+/// `schtasks /Query /XML`, dans laquelle le chemin est échappé de la même façon
+pub fn definition_conforme(relue: &str, interface: &str) -> bool {
+    let r = relue.to_lowercase();
+    r.contains(&format!("<command>{}</command>", echappe_xml(interface).to_lowercase()))
+        && r.contains("<arguments>--cache --relance</arguments>")
+        && r.contains(&format!("<groupid>{}</groupid>", GROUPE_UTILISATEURS.to_lowercase()))
+        && r.contains("<runlevel>leastprivilege</runlevel>")
+        && !r.contains("<userid>")
+}
+
+/// Pose la tâche : action du MSI, en SYSTEM. Toute tâche de ce nom est d'abord supprimée (S101-01 : `/F` pourrait garder les
+/// droits d'une tâche créée par un compte standard), puis la création se fait sans `/F` : si quelqu'un l'a recréée
+/// entre-temps, elle échoue, et SAN-010 finira par le signaler. Relecture ensuite : commande et droits ; écart, tâche retirée.
+/// Le fichier de définition passe par le dossier d'installation (administrateurs seulement), puis il est effacé
 pub fn poser() -> Result<(), String> {
+    retirer()?;
     let service = std::env::current_exe().map_err(|e| e.to_string())?;
     let dossier = service.parent().ok_or("dossier du service introuvable")?;
     let interface = dossier.join("deR4Tizer.exe");
     let fichier = dossier.join("relance-tache.xml");
     let octets: Vec<u8> = "\u{feff}".encode_utf16().chain(definition_tache(&interface.to_string_lossy()).encode_utf16()).flat_map(u16::to_le_bytes).collect();
     std::fs::write(&fichier, octets).map_err(|e| format!("{} : {e}", fichier.display()))?;
-    let resultat = schtasks(&["/Create", "/F", "/TN", NOM_TACHE, "/XML", &fichier.to_string_lossy()]);
+    let resultat = schtasks(&["/Create", "/TN", NOM_TACHE, "/XML", &fichier.to_string_lossy()]);
     let _ = std::fs::remove_file(Path::new(&fichier));
-    resultat
+    resultat?;
+    if let Err(e) = verifier(&interface.to_string_lossy()) {
+        let _ = retirer();
+        return Err(format!("tâche retirée : {e}"));
+    }
+    Ok(())
 }
 
-/// Retire la tâche (désinstallation, ou LANCEMENT_SESSION=0) ; absente : rien à faire
-pub fn retirer() -> Result<(), String> {
+fn verifier(interface: &str) -> Result<(), String> {
     let exe = format!(r"{}\schtasks.exe", crate::natif::dossier_systeme());
-    let existe = Command::new(exe).args(["/Query", "/TN", NOM_TACHE]).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false);
-    if !existe {
+    let sortie = Command::new(exe).args(["/Query", "/TN", NOM_TACHE, "/XML"]).creation_flags(0x0800_0000).output().map_err(|e| e.to_string())?;
+    if !definition_conforme(&String::from_utf8_lossy(&sortie.stdout), interface) {
+        return Err("définition relue différente".into());
+    }
+    let fichier = Path::new(&crate::natif::dossier_systeme()).join("Tasks").join(NOM_TACHE);
+    let s = crate::natif::lire_securite(&fichier).ok_or("droits de la tâche illisibles")?;
+    crate::protection::sans_ecriture_de_tiers(&s, &[crate::protection::SID_SYSTEME, crate::protection::SID_ADMINISTRATEURS])
+}
+
+fn existe() -> bool {
+    let exe = format!(r"{}\schtasks.exe", crate::natif::dossier_systeme());
+    Command::new(exe).args(["/Query", "/TN", NOM_TACHE]).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
+}
+
+/// Retire la tâche (désinstallation, ou LANCEMENT_SESSION=0) ; erreur si elle existe encore ensuite
+pub fn retirer() -> Result<(), String> {
+    if !existe() {
         return Ok(());
     }
-    schtasks(&["/Delete", "/F", "/TN", NOM_TACHE])
+    let resultat = schtasks(&["/Delete", "/F", "/TN", NOM_TACHE]);
+    if existe() { Err(resultat.err().unwrap_or_else(|| "tâche toujours présente".into())) } else { Ok(()) }
 }
 
-/// Option de la ligne de commande : écrit le résultat au journal et sur la sortie (le MSI ignore le code de retour)
+/// Option de la ligne de commande : le résultat sur la sortie seulement. Action du MSI, avant la protection du dossier de
+/// données : rien n'y est écrit (relecture et audit de #101, S101-02), et le MSI ignore le code de retour
 pub fn compte_rendu(quoi: &str, resultat: Result<(), String>) {
-    let message = match resultat {
-        Ok(()) => format!("tâche de relance de l'interface : {quoi}"),
-        Err(e) => format!("tâche de relance de l'interface : {quoi} impossible : {e}"),
-    };
-    println!("{message}");
-    commun::journal(&message);
+    match resultat {
+        Ok(()) => println!("tâche de relance de l'interface : {quoi}"),
+        Err(e) => println!("tâche de relance de l'interface : {quoi} impossible : {e}"),
+    }
 }
