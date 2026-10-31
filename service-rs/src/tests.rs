@@ -4675,6 +4675,21 @@ fn remontee_derniers_reglages_dans_la_case() {
     assert!(c.prendre().is_none(), "prise une seule fois");
 }
 
+/// S100-07 : fichier retiré ou illisible, la remontée s'arrête ; illisible, une seule fois (rien n'est réécrit à chaque
+/// tour) ; redevenu lisible, rechargé ; modifié à la main, pas adopté
+#[test]
+fn remontee_secrets_a_recharger() {
+    use crate::notifications::{secrets_a_recharger as r, Secrets};
+    let m = Secrets { ntfy_url: "https://ntfy.exemple.test/a".into(), ..Default::default() };
+    assert!(r(false, &m, Some(&Secrets::default())), "fichier retiré");
+    assert!(r(false, &m, None), "devenu illisible");
+    assert!(!r(true, &Secrets::default(), None), "toujours illisible : rien");
+    assert!(r(true, &Secrets::default(), Some(&m)), "redevenu lisible");
+    assert!(!r(false, &m, Some(&m)), "inchangé");
+    assert!(!r(false, &m, Some(&Secrets { ntfy_url: "https://autre.exemple.test/b".into(), ..Default::default() })), "modifié à la main : pas adopté");
+    assert!(!r(false, &Secrets::default(), Some(&Secrets::default())), "jamais configuré");
+}
+
 /// Secrets gardés par la boucle : protection du dossier de données en échec, aucun n'est utilisé (comme avant)
 #[test]
 fn remontee_aucun_secret_si_protection_en_echec() {

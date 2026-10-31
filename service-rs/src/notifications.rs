@@ -230,8 +230,10 @@ pub fn preparer_dossier() -> Result<(), String> {
 /// Secrets lus ; fichier absent : aucun secret ; illisible ou mal formé : `None` (audit de #100, S100-06)
 fn lire_secrets_verifie() -> Option<Secrets> {
     let f = dossier_secrets().join("notifications.json");
-    if fs::symlink_metadata(&f).is_err() {
-        return Some(Secrets::default());
+    match fs::symlink_metadata(&f) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Secrets::default()),
+        Err(_) => return None,
+        Ok(_) => {}
     }
     commun::lire_fichier(&f).and_then(|t| serde_json::from_str(&t).ok())
 }
@@ -539,7 +541,8 @@ fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, s
     let lus = lire_secrets_verifie();
     reprise.apres_reglages(vers, lus.as_ref().map(|s| destinations(config, s)));
     let illisibles = lus.is_none();
-    // Illisibles : aucun secret plutôt que les anciens (rien ne part, « aucun canal utilisable » est écrit)
+    // Illisibles : aucun secret plutôt que les anciens (ntfy et Teams ne partent plus ; un serveur SMTP sans compte reste
+    // joignable, sans mot de passe)
     *secrets = lus.unwrap_or_default();
     if !actif(config) {
         etat.echec_depuis.clear();
@@ -549,16 +552,29 @@ fn nouveaux_reglages(config: &mut ConfigNotifications, c: ConfigNotifications, s
     illisibles
 }
 
-/// Applique les réglages en attente, ou relit des secrets illisibles ; rend si les secrets sont encore illisibles
-fn si_reglages(config: &mut ConfigNotifications, secrets: &mut Secrets, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String, illisibles: bool) -> bool {
-    match DERNIERS_REGLAGES.prendre() {
-        Some(c) => nouveaux_reglages(config, c, secrets, reprise, etat, vers),
-        None if illisibles => {
-            let c = config.clone();
-            nouveaux_reglages(config, c, secrets, reprise, etat, vers)
-        }
-        None => false,
+/// Secrets à recharger hors de tout réglage (pur, testé) : redevenus lisibles, ou retirés du fichier alors qu'ils servent
+/// encore (audit de #100, S100-07 : supprimer le fichier coupe la remontée, comme quand il était relu à chaque envoi). Une
+/// simple modification à la main n'est pas adoptée : elle attend le prochain réglage ou le redémarrage
+pub fn secrets_a_recharger(illisibles: bool, memoire: &Secrets, lus: Option<&Secrets>) -> bool {
+    let retire = |m: &str, f: &str| !m.is_empty() && f.is_empty();
+    match lus {
+        None => !illisibles,
+        Some(_) if illisibles => true,
+        Some(l) => retire(&memoire.ntfy_url, &l.ntfy_url) || retire(&memoire.teams_url, &l.teams_url) || retire(&memoire.smtp_mot_de_passe, &l.smtp_mot_de_passe),
     }
+}
+
+/// Applique les réglages en attente ; sinon recharge les secrets s'il le faut. Tant qu'ils restent illisibles, rien n'est
+/// réécrit. Rend si les secrets sont illisibles
+fn si_reglages(config: &mut ConfigNotifications, secrets: &mut Secrets, reprise: &mut FileReprise, etat: &mut Etat, vers: &mut String, illisibles: bool) -> bool {
+    if let Some(c) = DERNIERS_REGLAGES.prendre() {
+        return nouveaux_reglages(config, c, secrets, reprise, etat, vers);
+    }
+    if !secrets_a_recharger(illisibles, secrets, lire_secrets_verifie().as_ref()) {
+        return illisibles;
+    }
+    let c = config.clone();
+    nouveaux_reglages(config, c, secrets, reprise, etat, vers)
 }
 
 /// Les critiques partent toujours ; les autres seulement sous le plafond horaire.
