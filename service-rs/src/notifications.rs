@@ -363,7 +363,7 @@ pub fn preparer(actuelle: &ConfigNotifications, nouvelle: &ConfigNotifications, 
 pub fn enregistrer_secrets(n: &Secrets) -> Result<(), String> {
     preparer_dossier()?;
     // Illisibles : refus, sinon les secrets absents de la demande seraient perdus (audit de #100, S100-16)
-    let mut s = lire_secrets_verifie().ok_or("secrets illisibles : réglages non enregistrés")?;
+    let mut s = lire_secrets_verifie().ok_or("secrets illisibles : réglages non enregistrés ; s'ils le restent, un administrateur supprime secrets\\notifications.json dans le dossier de données, puis les secrets sont à saisir de nouveau")?;
     let maj = |ancien: &mut String, nouveau: &str| match nouveau.trim() {
         "" => {}
         "-" => ancien.clear(),

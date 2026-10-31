@@ -1019,13 +1019,7 @@ pub fn journal(message: &str) {
     // DNS, NBNS, UPnP, lignes de commande venus du poste ou du réseau ajoutaient de fausses lignes horodatées,
     // audit AUD4-05)
     let propre = ligne_de_journal(message);
-    // Un second essai : une ouverture refusée un instant (analyse du fichier, rotation d'un autre fil) perdait la ligne
-    let ouvrir = || fs::OpenOptions::new().create(true).append(true).open(&f);
-    let ouvert = ouvrir().or_else(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        ouvrir()
-    });
-    if let Ok(mut fichier) = ouvert {
+    if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
         let _ = writeln!(fichier, "{}  {}\r", maintenant(), propre);
     }
 }

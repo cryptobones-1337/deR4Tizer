@@ -374,6 +374,7 @@ Verifier 'Journal DNS coupé après le démarrage : réactivé par le service, l
     } while (-not $actif -and (Get-Date) -lt $fin)
     if (-not $actif) {
         wevtutil sl $dns /e:true
+        Copy-Item (Join-Path $script:Donnees 'journal.txt') (Join-Path $Journaux 'journal-apres-d4.txt') -Force -ErrorAction SilentlyContinue
         return "journal DNS non réactivé en 60 s ; journal : $(Journal 'DNS-Client')"
     }
     # Le service écrit la ligne juste après wevtutil : 15 s pour l'écrire (échec du 2026-10-31 : lue une seule fois, vide)
@@ -778,10 +779,22 @@ Verifier 'Relance : fichier précréé par un compte standard dans le dossier de
     $c = Installer $Msi (Join-Path $Journaux 'installation-fichier-precree.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
     try {
-        $x = schtasks /Query /TN $tacheRelance /XML 2>&1 | Out-String
-        $pose = $LASTEXITCODE -eq 0
-        if ($pose -and ([xml]$x).Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "tâche étrangère : $x" }
-        Write-Host "  tâche posée : $pose ; journal : $(Journal 'relance' 3)"
+        $pose = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
+        Write-Host "  tâche posée : $pose"
+        if ($pose) {
+            $x = schtasks /Query /TN $tacheRelance /XML | Out-String
+            if (([xml]$x).Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "tâche étrangère : $x" }
+            # Le vrai risque : une tâche posée dans un fichier que le compte standard peut encore modifier
+            $r = En-TantQue $script:compte "try { Add-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
+            if ("$r".Trim() -ne 'refuse') { return "fichier de la tâche modifiable par le compte standard ($r)" }
+        } else {
+            # Échec fermé : il doit se voir dans le journal, pas seulement au bout du délai de SAN-010
+            $fin = (Get-Date).AddSeconds(90)
+            while (-not (Journal 'tâche de relance' 1) -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+            $l = Journal 'tâche de relance' 3
+            if (-not $l) { return 'tâche non posée, sans ligne au journal' }
+            Write-Host "  journal : $l"
+        }
         $true
     } finally {
         Desinstaller (Join-Path $Journaux 'desinstallation-fichier-precree.log') | Out-Null

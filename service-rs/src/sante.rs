@@ -313,7 +313,7 @@ impl Interfaces {
                         // Critique (décision du mainteneur, 2026-10-31) : constat local que personne ne voit, l'interface étant absente
                         constats.push(constat(regles::SAN_010, "Critique", &format!("session {id}"),
                             format!("interface de deR4Tizer absente de la session {id} depuis {} min : plus de notification locale ; la surveillance et la remontée continuent{}", minutes(t - d),
-                                if s.constats_san010.len() == MAX_SAN010_JOUR { " ; plafond atteint, plus de constat pour cette session pendant 24 h" } else { "" })));
+                                if s.constats_san010.len() == MAX_SAN010_JOUR { " ; plafond atteint, plus de constat pour cette session jusqu'à 24 h" } else { "" })));
                     }
                 }
             }
