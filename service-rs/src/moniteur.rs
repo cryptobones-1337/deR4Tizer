@@ -316,6 +316,8 @@ impl Moniteur {
                     // Un relevé sans aucune entrée (aucun Windows n'en a zéro : services, pilotes) est une lecture impossible
                     if persistance.entrees.is_empty() {
                         collectes::echec(Collecte::Persistance, "relevé des démarrages automatiques vide");
+                    } else if persistance.incomplet {
+                        collectes::partielle(Collecte::Persistance, "relevé des tâches incomplet : bornes atteintes ou délai dépassé");
                     } else {
                         collectes::succes(Collecte::Persistance);
                     }

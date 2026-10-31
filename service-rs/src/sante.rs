@@ -9,9 +9,9 @@ use crate::regles;
 use std::collections::{HashMap, VecDeque};
 
 /// Collectes critiques pour SAN-001 (D4-5)
-pub const CRITIQUES: [Collecte; 6] = [
+pub const CRITIQUES: [Collecte; 7] = [
     Collecte::JournalDefender, Collecte::EtatDefender, Collecte::JournalSecurite, Collecte::Connexions, Collecte::Processus,
-    Collecte::ListesMenaces,
+    Collecte::ListesMenaces, Collecte::Persistance,
 ];
 /// Indisponible depuis plus de 30 min : constat
 pub const DELAI_S: i64 = 1800;

@@ -1009,6 +1009,31 @@ pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
 }
 
+/// `f` dans un fil, attendu `duree` au plus : au-delà, rend None et laisse le fil, qui peut rester bloqué. Lecture ou suppression
+/// d'un élément qu'un compte standard peut verrouiller, sans délai maximal connu (audit de #103, S103-01)
+pub fn avec_echeance<T: Send + 'static>(duree: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (envoi, reception) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = envoi.send(f());
+    });
+    reception.recv_timeout(duree).ok()
+}
+
+/// Comme `avec_echeance`, un seul fil à la fois par `garde` : tant que le précédent reste bloqué, `f` n'est pas lancée et rend None.
+/// Le nombre de fils abandonnés reste borné
+pub fn avec_echeance_unique<T: Send + 'static>(garde: &'static std::sync::atomic::AtomicBool, duree: std::time::Duration,
+                                               f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    use std::sync::atomic::Ordering;
+    if garde.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    avec_echeance(duree, move || {
+        let r = f();
+        garde.store(false, Ordering::SeqCst);
+        r
+    })
+}
+
 pub fn journal(message: &str) {
     let f = dossier().join("journal.txt");
     // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)

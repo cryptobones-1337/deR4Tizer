@@ -558,6 +558,52 @@ Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
     $true
 }
 
+# Relecture de #103, D5 : sur un Windows sain, aucune borne atteinte, sinon le faux positif serait partout et permanent
+Verifier 'Relevé des tâches : aucune anomalie sur un Windows sain' {
+    $f = Join-Path $script:Donnees 'demarrage.json'
+    $fin = (Get-Date).AddSeconds(120)
+    while (-not (Test-Path $f) -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+    if (-not (Test-Path $f)) { return 'demarrage.json absent après 120 s' }
+    $e = @(Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ })
+    $taches = @($e | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+    if (-not $taches.Count) { return 'aucune tâche relevée' }
+    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' })
+    if ($mauvais.Count) { return "$(($mauvais | ForEach-Object { "$($_.Nom) : $($_.Commande)" }) -join ' ; ')" }
+    Write-Host "  tâches relevées : $($taches.Count)"
+    $true
+}
+
+# Audit de #102, S102-01 : un compte standard pose une jonction en boucle dans le dossier des tâches, relu en SYSTEM
+$dossierTaches = Join-Path $env:SystemRoot 'System32\Tasks'
+$boucle = Join-Path $dossierTaches 'd4t-boucle'
+$pidAvant = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+$s = En-TantQue $script:compte "try { New-Item -ItemType Junction -Path '$boucle' -Target '$dossierTaches' -ErrorAction Stop | Out-Null; 'cree' } catch { `$_.Exception.Message }"
+if ("$s".Trim() -ne 'cree') {
+    NonExecute 'Relevé des tâches : jonction en boucle posée par un compte standard : non suivie, signalée, service vivant' "Windows a refusé la jonction ($s)"
+} else {
+Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard : non suivie, signalée, service vivant' {
+    try {
+        $a = $null
+        $fin = (Get-Date).AddSeconds(180)
+        do {
+            Start-Sleep 5
+            $a = @(Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } |
+                Where-Object { $_.Regle -eq 'PER-001' -and $_.Destination -match 'd4t-boucle' }) | Select-Object -First 1
+        } while (-not $a -and (Get-Date) -lt $fin)
+        if (-not $a) { return 'aucune alerte PER-001 pour la jonction en 180 s' }
+        if ($a.Niveau -ne 'Alerte') { return "niveau : $($a.Niveau)" }
+        $service = Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'"
+        if ($service.ProcessId -ne $pidAvant) { return "service redémarré : $pidAvant, puis $($service.ProcessId)" }
+        $memoire = (Get-Process -Id $service.ProcessId).WorkingSet64 / 1MB
+        Write-Host "  mémoire du service : $([math]::Round($memoire)) Mo ; $($a.Raisons)"
+        $true
+    } finally {
+        # rmdir sans /s : la jonction seule, jamais ce qu'elle désigne
+        cmd /c rmdir "$boucle" 2>&1 | Out-Null
+    }
+}
+}
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en
@@ -768,41 +814,35 @@ Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''
     }
 }
 }
-# Audit de #101, S101-16 : System32\Tasks accepte la création par les comptes authentifiés. Un fichier précréé sous ce nom,
-# sans tâche enregistrée : l'installation aboutit et aucune tâche ne porte une autre commande que l'interface
+# Audit de #101, S101-16 : System32\Tasks accepte la création par les comptes authentifiés. Un fichier ou un dossier précréé sous
+# ce nom empêchait la pose (constaté en VM le 2026-10-31) : il est écarté à l'installation
 $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
-$s = En-TantQue $script:compte "try { Set-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'cree' } catch { `$_.Exception.Message }"
-if ("$s".Trim() -ne 'cree') {
-    NonExecute 'Relance : fichier précréé par un compte standard dans le dossier des tâches : installation aboutie, aucune tâche étrangère' "Windows a refusé la précréation ($s)"
-} else {
-Verifier 'Relance : fichier précréé par un compte standard dans le dossier des tâches : installation aboutie, aucune tâche étrangère' {
-    $c = Installer $Msi (Join-Path $Journaux 'installation-fichier-precree.log')
-    if ($c -ne 0) { return "msiexec a rendu $c" }
-    try {
-        $pose = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
-        Write-Host "  tâche posée : $pose"
-        if ($pose) {
+foreach ($precree in @{ Quoi = 'fichier'; Code = "Set-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop" },
+                     @{ Quoi = 'dossier'; Code = "New-Item -ItemType Directory -Path '$f' -ErrorAction Stop | Out-Null; Set-Content -LiteralPath '$f\x' -Value 'x' -ErrorAction Stop" }) {
+    $titre = "Relance : $($precree.Quoi) précréé par un compte standard dans le dossier des tâches : écarté, tâche posée, plus modifiable par lui"
+    $s = En-TantQue $script:compte "try { $($precree.Code); 'cree' } catch { `$_.Exception.Message }"
+    if ("$s".Trim() -ne 'cree') {
+        NonExecute $titre "Windows a refusé la précréation ($s)"
+        continue
+    }
+    Verifier $titre {
+        $c = Installer $Msi (Join-Path $Journaux "installation-$($precree.Quoi)-precree.log")
+        if ($c -ne 0) { return "msiexec a rendu $c" }
+        try {
+            if ((Schtasks-Code /Query /TN $tacheRelance) -ne 0) { return "tâche non posée ; journal : $(Journal 'tâche de relance' 3)" }
             $x = schtasks /Query /TN $tacheRelance /XML | Out-String
             if (([xml]$x).Task.Actions.Exec.Command -ne (Join-Path $script:Programme 'deR4Tizer.exe')) { return "tâche étrangère : $x" }
-            # Le vrai risque : une tâche posée dans un fichier que le compte standard peut encore modifier
             $r = En-TantQue $script:compte "try { Add-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
             if ("$r".Trim() -ne 'refuse') { return "fichier de la tâche modifiable par le compte standard ($r)" }
-            Write-Host "  propriétaire du fichier : $((Get-Acl -LiteralPath $f).Owner)"
-        } else {
-            # Échec fermé : il doit se voir dans le journal, pas seulement au bout du délai de SAN-010
-            $fin = (Get-Date).AddSeconds(90)
-            # Journal rend un texte quand le fichier n'existe pas encore : le motif est à chercher
-            while ((Journal 'tâche de relance' 1) -notmatch 'tâche de relance' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
-            $l = Journal 'tâche de relance' 3
-            if ($l -notmatch 'tâche de relance') { return 'tâche non posée, sans ligne au journal' }
-            Write-Host "  journal : $l"
+            $proprietaire = (Get-Acl -LiteralPath $f).Owner
+            Write-Host "  propriétaire du fichier : $proprietaire"
+            if ($proprietaire -match [regex]::Escape($script:compte.Nom)) { return "propriétaire : $proprietaire" }
+            $true
+        } finally {
+            Desinstaller (Join-Path $Journaux "desinstallation-$($precree.Quoi)-precree.log") | Out-Null
+            Remove-Item -LiteralPath $f -Recurse -Force -ErrorAction SilentlyContinue
         }
-        $true
-    } finally {
-        Desinstaller (Join-Path $Journaux 'desinstallation-fichier-precree.log') | Out-Null
-        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
     }
-}
 }
 # S101-08 : création sans /F sur une tâche existante, entrée fermée : elle doit échouer vite, sans changer la tâche
 Verifier 'Relance : création sur une tâche existante, sans réponse possible : échec en moins de 60 s, tâche intacte' {

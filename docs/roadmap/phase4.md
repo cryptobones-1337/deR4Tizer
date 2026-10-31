@@ -57,7 +57,7 @@ selon les recommandations du dossier de conception ; le mainteneur peut revenir 
 | D4-2 | Fichier du suivi | Nouveau `suivi-incidents.json`, écrit par le moniteur seul ; `incidents.json` (corrélations du SIEM) inchangé. |
 | D4-3 | Fermeture automatique d'un incident | Jamais. Un incident sans activité depuis 7 jours est seulement affiché « inactif ». |
 | D4-4 | `HeureUtc` et `Seq` dans `Alerte` et `Evenement` | Oui, en ajouts au modèle 1 : sans eux, la chronologie se trompe d'ordre pendant l'heure répétée du passage à l'heure d'hiver. |
-| D4-5 | Collectes « critiques » pour SAN-001 | `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`. |
+| D4-5 | Collectes « critiques » pour SAN-001 | `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, et `Persistance` depuis l'audit de #103 (S103-04), qui élargit le choix initial. |
 | D4-6 | Battement quotidien au prestataire | Oui, quand la remontée est configurée : compteurs seulement, une fois par jour. |
 | D4-7 | Suivi et chronologie dans l'API d'export | Non pendant la phase 4 (à reprendre avec la phase 8, mode avancé). |
 | D4-8 | File de remontée sur disque | Non : en mémoire, bornée (100 éléments, 24 h) ; la perte au redémarrage est une limite écrite. |

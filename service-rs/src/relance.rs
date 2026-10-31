@@ -110,6 +110,10 @@ pub fn definition_conforme(relue: &str, interface: &str) -> bool {
 /// Le fichier de définition passe par le dossier d'installation (administrateurs seulement), puis il est effacé
 pub fn poser() -> Result<(), String> {
     retirer()?;
+    // À échéance : l'action du MSI attend ici, service arrêté, et un compte standard peut bloquer cette suppression (S103-01)
+    let precree = Path::new(&crate::natif::dossier_systeme()).join("Tasks").join(NOM_TACHE);
+    crate::commun::avec_echeance(std::time::Duration::from_secs(60), move || ecarter_precree(&precree))
+        .unwrap_or_else(|| Err("élément précréé : pas de suppression en 60 s".into()))?;
     let service = std::env::current_exe().map_err(|e| e.to_string())?;
     let dossier = service.parent().ok_or("dossier du service introuvable")?;
     let interface = dossier.join("deR4Tizer.exe");
@@ -124,6 +128,29 @@ pub fn poser() -> Result<(), String> {
         return Err(format!("tâche retirée : {e}"));
     }
     Ok(())
+}
+
+/// Élément de ce nom dans le dossier des tâches sans tâche enregistrée : les comptes authentifiés peuvent y créer un fichier ou
+/// un dossier, ce qui fait échouer la création (constaté en VM le 2026-10-31, S101-16) et priverait le poste de relance. Retiré
+/// sans suivre de lien : la jonction seule, jamais ce qu'elle désigne
+pub fn ecarter_precree(chemin: &Path) -> Result<(), String> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let m = match std::fs::symlink_metadata(chemin) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{} : {e}", chemin.display())),
+    };
+    // Les attributs, pas is_dir : une jonction n'est pas un dossier pour lui, et remove_file la refuse
+    let dossier = m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let lien = m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    let resultat = match (dossier, lien) {
+        (false, _) => std::fs::remove_file(chemin),
+        (true, true) => std::fs::remove_dir(chemin),
+        (true, false) => std::fs::remove_dir_all(chemin),
+    };
+    resultat.map_err(|e| format!("élément précréé {} : {e}", chemin.display()))
 }
 
 /// Décision pure (testée) d'après la lecture de la valeur Run : absente, le choix de `LANCEMENT_SESSION=0` ; toute autre
@@ -147,8 +174,16 @@ pub fn lancement_pose() -> Result<bool, String> {
 
 /// Au démarrage du service, après la protection du dossier : un échec de pose n'a pas d'autre trace (S101-11)
 pub fn signaler_etat() {
-    if lancement_pose() != Ok(true) {
-        return;
+    match lancement_pose() {
+        Ok(true) => {}
+        // LANCEMENT_SESSION=0 alors qu'une tâche est restée : la relance continuerait contre ce choix (audit de #102, S102-07)
+        Ok(false) => {
+            if existe() == Ok(true) {
+                crate::commun::journal("tâche de relance de l'interface présente alors que le lancement à l'ouverture de session est refusé : à retirer");
+            }
+            return;
+        }
+        Err(_) => return,
     }
     let interface = crate::sante::chemin_interface().unwrap_or_default();
     match verifier(&interface) {
