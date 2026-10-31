@@ -787,12 +787,14 @@ Verifier 'Relance : fichier précréé par un compte standard dans le dossier de
             # Le vrai risque : une tâche posée dans un fichier que le compte standard peut encore modifier
             $r = En-TantQue $script:compte "try { Add-Content -LiteralPath '$f' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
             if ("$r".Trim() -ne 'refuse') { return "fichier de la tâche modifiable par le compte standard ($r)" }
+            Write-Host "  propriétaire du fichier : $((Get-Acl -LiteralPath $f).Owner)"
         } else {
             # Échec fermé : il doit se voir dans le journal, pas seulement au bout du délai de SAN-010
             $fin = (Get-Date).AddSeconds(90)
-            while (-not (Journal 'tâche de relance' 1) -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+            # Journal rend un texte quand le fichier n'existe pas encore : le motif est à chercher
+            while ((Journal 'tâche de relance' 1) -notmatch 'tâche de relance' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
             $l = Journal 'tâche de relance' 3
-            if (-not $l) { return 'tâche non posée, sans ligne au journal' }
+            if ($l -notmatch 'tâche de relance') { return 'tâche non posée, sans ligne au journal' }
             Write-Host "  journal : $l"
         }
         $true
