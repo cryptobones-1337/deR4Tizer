@@ -1009,6 +1009,16 @@ pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
 }
 
+/// `f` dans un fil, attendu `duree` au plus : au-delà, rend None et laisse le fil, qui peut rester bloqué. Lecture ou suppression
+/// d'un élément qu'un compte standard peut verrouiller, sans délai maximal connu (audit de #103, S103-01)
+pub fn avec_echeance<T: Send + 'static>(duree: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (envoi, reception) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = envoi.send(f());
+    });
+    reception.recv_timeout(duree).ok()
+}
+
 pub fn journal(message: &str) {
     let f = dossier().join("journal.txt");
     // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)

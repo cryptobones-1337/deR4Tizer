@@ -1849,7 +1849,7 @@ fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches
 }
 
 fn bornes_taches() -> crate::persistance::BornesTaches {
-    crate::persistance::BornesTaches { profondeur: 3, elements: 100, taille: 1000, octets: 10_000, tiers: 2, anomalies: 2 }
+    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, anomalies: 2 }
 }
 
 fn dossier_taches(nom: &str) -> std::path::PathBuf {
@@ -1927,6 +1927,97 @@ fn taches_fichiers_de_tiers_plafonnes() {
     assert_eq!(lus.iter().filter(|n| n.contains("vraie")).count(), 5);
     assert!(a.iter().any(|(n, _)| n.contains("fichiers de tiers")), "{a:?}");
     std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// S103-02, D2 : les éléments d'un compte standard ne privent pas de lecture les vraies tâches
+#[test]
+fn taches_budgets_de_tiers_separes() {
+    let d = dossier_taches("budgets");
+    let est_tiers = |p: &std::path::Path| p.to_string_lossy().contains("tiers");
+    // Octets de tiers épuisés : les autres restent lus, et le gros fichier de tiers est écarté
+    std::fs::write(d.join("tiers1"), vec![0u8; 1000]).unwrap();
+    std::fs::write(d.join("tiers2"), vec![0u8; 1000]).unwrap();
+    std::fs::write(d.join("vraie"), vec![0u8; 1000]).unwrap();
+    let (lus, a) = taches_de_test(&d, &bornes_taches(), &est_tiers);
+    assert_eq!(lus, [r"\tiers1", r"\vraie"], "budget d'octets des tiers propre");
+    assert!(a.iter().any(|(n, _)| n.contains("fichiers de tiers")), "{a:?}");
+    // Dossier de tiers saturé : un dossier fiable passe avant, quel que soit l'ordre des noms
+    let d2 = dossier_taches("ordre");
+    std::fs::create_dir_all(d2.join("aa")).unwrap();
+    std::fs::write(d2.join(r"aa\vraie"), "x").unwrap();
+    std::fs::create_dir_all(d2.join("tiers-dossier")).unwrap();
+    for i in 0..10 {
+        std::fs::write(d2.join(format!(r"tiers-dossier\f{i}")), "x").unwrap();
+    }
+    let mut b = bornes_taches();
+    b.elements = 3;
+    let (lus, _) = taches_de_test(&d2, &b, &est_tiers);
+    assert_eq!(lus, [r"\aa\vraie"], "dossier fiable d'abord : {lus:?}");
+    // Trop d'éléments dans un dossier : ce dossier seul s'arrête, le suivant est lu
+    let d3 = dossier_taches("pardossier");
+    std::fs::create_dir_all(d3.join("a-sature")).unwrap();
+    std::fs::create_dir_all(d3.join("b-sain")).unwrap();
+    for i in 0..5 {
+        std::fs::write(d3.join(format!(r"a-sature\f{i}")), "x").unwrap();
+    }
+    std::fs::write(d3.join(r"b-sain\vraie"), "x").unwrap();
+    let mut b = bornes_taches();
+    b.par_dossier = 3;
+    let (lus, a) = taches_de_test(&d3, &b, &|_| false);
+    assert_eq!(lus.iter().filter(|n| n.contains("a-sature")).count(), 3, "{lus:?}");
+    assert!(lus.contains(&r"\b-sain\vraie".to_string()), "{lus:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
+    for x in [d, d2, d3] {
+        std::fs::remove_dir_all(x).unwrap();
+    }
+}
+
+/// D1 : relevé tronqué puis complet : aucune alerte pour une tâche connue ; une anomalie reste dite en apprentissage (S103-02)
+#[test]
+fn taches_releve_incomplet_garde_la_reference() {
+    use crate::commun::EntreeDemarrage as E;
+    use crate::persistance::{comparer, garder_taches_non_vues as g, ANOMALIE_TACHES};
+    let t = |nom: &str, c: &str| E { cle: format!("Tâche planifiée|{nom}"), categorie: "Tâche planifiée".into(), nom: nom.into(), commande: c.into(), ..Default::default() };
+    let connue = t(r"\Microsoft\Connue", "a.exe");
+    let reference: std::collections::HashMap<String, E> = [(connue.cle.clone(), connue.clone())].into_iter().collect();
+    let incomplet = t(r"\(relevé incomplet : éléments)", &format!("{ANOMALIE_TACHES}relevé incomplet, bornes atteintes"));
+    let mut r = vec![incomplet.clone()];
+    assert!(g(&reference, &mut r), "incomplet");
+    assert!(r.iter().any(|e| e.cle == connue.cle), "tâche connue gardée");
+    let mut complet = vec![connue.clone()];
+    assert!(!g(&reference, &mut complet));
+    let mut sans = Vec::new();
+    assert!(!g(&reference, &mut sans), "relevé complet : une tâche disparue sort");
+    assert!(sans.is_empty());
+    // Une anomalie autre qu'un relevé incomplet ne garde rien
+    let mut lien = vec![t(r"\boucle", &format!("{ANOMALIE_TACHES}lien non suivi"))];
+    assert!(!g(&reference, &mut lien));
+    let (alertes, _) = comparer(&Default::default(), &mut lien, true, &mut Default::default());
+    assert_eq!(alertes.len(), 1, "anomalie dite pendant l'apprentissage");
+    let mut normale = vec![t(r"\autre", "b.exe")];
+    assert!(comparer(&Default::default(), &mut normale, true, &mut Default::default()).0.is_empty(), "le reste s'apprend en silence");
+}
+
+#[test]
+fn avec_echeance_ne_reste_pas_bloque() {
+    use crate::commun::avec_echeance;
+    use std::time::{Duration, Instant};
+    let t = Instant::now();
+    assert_eq!(avec_echeance(Duration::from_millis(50), || std::thread::sleep(Duration::from_secs(5))), None);
+    assert!(t.elapsed() < Duration::from_secs(2));
+    assert_eq!(avec_echeance(Duration::from_secs(5), || 7), Some(7));
+    let s = include_str!("relance.rs");
+    assert!(s.contains("avec_echeance(std::time::Duration::from_secs(60), move || ecarter_precree"), "S103-01 : retrait sans échéance");
+    let p = include_str!("persistance.rs");
+    assert!(p.contains("taches_a_echeance(&mut l);"), "S103-04 : relevé sans échéance");
+}
+
+/// D3 : ni adoucie ni apprise ; S103-04 : collecte critique pour SAN-001
+#[test]
+fn taches_anomalie_signal_fort() {
+    let a = crate::commun::Alerte { raisons: "NOUVEAU démarrage automatique : Dossier des tâches : lien non suivi [élément anormal du dossier des tâches]".into(), ..Default::default() };
+    assert!(crate::apprentissage::signal_fort(&a));
+    assert!(crate::sante::CRITIQUES.contains(&crate::collectes::Collecte::Persistance));
 }
 
 /// Une anomalie du dossier lève au niveau Alerte, quel que soit le nom posé, même sous \Microsoft\Windows

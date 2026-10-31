@@ -332,13 +332,19 @@ modules expérimentaux.
 - **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
 - **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus) ; première session d'un compte
   (OneDrive, tâches de Windows par utilisateur).
-- **Dossier des tâches, borné** : les comptes authentifiés peuvent y créer des éléments. Aucun lien n'est suivi, et le relevé
-  s'arrête à 8 niveaux, 20 000 éléments, 1 Mo par fichier, 64 Mo au total et 64 fichiers dont le propriétaire n'est ni SYSTEM
-  ni Administrateurs. Chaque lien ou fichier trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au
-  niveau Alerte, une fois. Limites : au-delà d'une borne, une vraie tâche peut ne plus être vue (l'alerte le dit) ; le premier
-  relevé apprend en silence ce qui existe déjà ; remplacer un dossier par une jonction entre le contrôle et la lecture reste
-  possible, avec pour seul effet le texte de `<Command>` d'un fichier lu ailleurs ; un verrou opportuniste posé par un compte
-  standard sur son propre fichier pourrait faire attendre la lecture (non essayé).
+- **Dossier des tâches, borné** : les comptes authentifiés peuvent y créer des éléments. Aucun lien n'est suivi. Bornes : 8
+  niveaux, 5 000 éléments par dossier, 100 000 au total, 1 Mo par fichier, 64 Mo au total ; pour les éléments dont le propriétaire
+  n'est ni SYSTEM ni Administrateurs, 256 fichiers et 8 Mo, sur un budget à part, et leurs dossiers après les autres (mesuré
+  en VM : 252 fichiers, 6 de tiers pour 2 comptes ; un seul poste mesuré). Le relevé a 30 s pour finir. Chaque lien ou fichier
+  trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à
+  chaque apparition, y compris au premier relevé. Tant que le relevé est incomplet, la collecte est « partielle » et les tâches
+  connues non vues restent dans la référence. Limites : dans un dossier saturé, une vraie tâche peut ne plus être vue (l'alerte
+  le dit) ; un compte standard peut lever 256 fausses tâches par relevé, et 16 anomalies, en renommant ses éléments ; remplacer
+  un dossier par une jonction entre le contrôle et la lecture reste possible, avec pour seul effet le texte de `<Command>` d'un
+  fichier lu ailleurs ; un verrou opportuniste sur son propre fichier bloque le relevé des tâches, qui reste alors « partiel » et
+  ne repart pas tant que le verrou tient. Hors de ce dossier : le calcul du signataire d'une cible choisie par un compte standard
+  peut encore bloquer tout le fil « persistance » de la même façon (non essayé) ; la collecte finit alors indisponible, et SAN-001 le dit. La lecture
+  par le Planificateur (énumération COM) reste à faire avant la distribution : un fichier non enregistré n'y serait plus une tâche.
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
@@ -660,7 +666,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 | Id | Constat | Code | Niveau |
 |---|---|---|---|
-| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces` | `sante.rs` | Alerte |
+| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5, plus `Persistance` depuis l'audit de #103) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces` | `sante.rs` | Alerte |
 | SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
 | SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
 | SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |

@@ -23,6 +23,8 @@ pub struct Persistance {
     reference: HashMap<String, EntreeDemarrage>,
     apprentissage: bool,
     pub entrees: Vec<EntreeDemarrage>,
+    /// Dernier relevé des tâches tronqué ou hors délai : collecte « partielle » (relecture de #103, D2)
+    pub incomplet: bool,
     /// Entrées devenues suspectes au relevé précédent, à confirmer au suivant (anti-rebond de « DEVENU SUSPECT »)
     en_attente: std::collections::HashSet<String>,
 }
@@ -40,7 +42,7 @@ impl Persistance {
         let apprentissage = sauvegarde.is_none() || !marqueur.exists();
         let _ = fs::write(&marqueur, commun::maintenant());
         let reference = sauvegarde.unwrap_or_default().into_iter().map(|e| (e.cle.clone(), e)).collect();
-        Persistance { reference, apprentissage, entrees: Vec::new(), en_attente: Default::default() }
+        Persistance { reference, apprentissage, entrees: Vec::new(), incomplet: false, en_attente: Default::default() }
     }
 
     pub fn verifier(&mut self, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
@@ -51,6 +53,7 @@ impl Persistance {
                 releve.push(e);
             }
         }
+        self.incomplet = garder_taches_non_vues(&self.reference, &mut releve);
         for e in releve.iter_mut() {
             e.cible = cible(&e.commande);
             // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
@@ -104,7 +107,8 @@ pub(crate) fn comparer(reference: &HashMap<String, EntreeDemarrage>, releve: &mu
             None => {
                 e.depuis = commun::maintenant();
                 modifie = true;
-                if !apprentissage {
+                // Une anomalie du dossier des tâches n'est pas apprise : présente au premier relevé, elle reste à dire (S103-02)
+                if !apprentissage || e.commande.starts_with(ANOMALIE_TACHES) {
                     alertes.push(alerter(e, "NOUVEAU démarrage automatique"));
                 }
             }
@@ -335,7 +339,7 @@ fn releve_complet() -> Vec<EntreeDemarrage> {
     let mut l = Vec::new();
     registre(&mut l);
     services(&mut l);
-    taches(&mut l);
+    taches_a_echeance(&mut l);
     dossiers_demarrage(&mut l);
     if let Err(e) = wmi_consommateurs(&mut l) {
         commun::journal(&format!("relevé de persistance (WMI) : {e}"));
@@ -462,23 +466,39 @@ fn services(l: &mut Vec<EntreeDemarrage>) {
 /// SYSTEM toutes les minutes (audit de #102, S102-01)
 pub(crate) struct BornesTaches {
     pub profondeur: usize,
+    pub par_dossier: usize,
     pub elements: usize,
     pub taille: u64,
     pub octets: u64,
     pub tiers: usize,
+    pub octets_tiers: u64,
     pub anomalies: usize,
 }
 
-const BORNES_TACHES: BornesTaches =
-    BornesTaches { profondeur: 8, elements: 20_000, taille: 1024 * 1024, octets: 64 * 1024 * 1024, tiers: 64, anomalies: 16 };
+/// Mesuré en VM le 2026-10-31 : 252 fichiers, profondeur 5, 5,8 Ko au plus, 6 fichiers de tiers pour 2 comptes
+const BORNES_TACHES: BornesTaches = BornesTaches {
+    profondeur: 8,
+    par_dossier: 5000,
+    elements: 100_000,
+    taille: 1024 * 1024,
+    octets: 64 * 1024 * 1024,
+    tiers: 256,
+    octets_tiers: 8 * 1024 * 1024,
+    anomalies: 16,
+};
+
+/// Échéance du relevé des tâches : une lecture bloquée (verrou opportuniste d'un compte standard sur son fichier, S103-04) ne
+/// doit pas faire taire toute la persistance
+const ECHEANCE_TACHES: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Début de la commande d'une entrée qui signale une anomalie du dossier, pas une tâche
 pub(crate) const ANOMALIE_TACHES: &str = "Dossier des tâches : ";
 
 /// Parcourt le dossier des tâches dans ses bornes ; `traiter` reçoit le nom relatif et le contenu de chaque fichier lu. Aucun
-/// point d'analyse n'est suivi (jonction, lien). Les fichiers d'un propriétaire autre que SYSTEM ou Administrateurs restent
-/// lus, une tâche de compte standard étant légitime, jusqu'à `tiers` : au-delà, ils ne chassent plus les vraies alertes. Rend
-/// les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait PER-002 à chaque relevé
+/// point d'analyse n'est suivi (jonction, lien). Les éléments d'un propriétaire autre que SYSTEM ou Administrateurs restent
+/// lus, une tâche de compte standard étant légitime, sur leur budget : ils ne privent pas de lecture les autres, et leurs
+/// dossiers passent après (S103-02). Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait
+/// PER-002 à chaque relevé
 pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok: &dyn Fn(&Path) -> bool,
                                traiter: &mut dyn FnMut(&str, &[u8])) -> Vec<(String, String)> {
     use std::io::Read;
@@ -488,11 +508,16 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
     let longueur = racine.to_string_lossy().len();
     let mut anomalies: Vec<(String, String)> = Vec::new();
     let mut incomplet = std::collections::BTreeSet::new();
-    let (mut elements, mut octets, mut tiers) = (0usize, 0u64, 0usize);
+    let (mut elements, mut octets, mut tiers, mut octets_tiers) = (0usize, 0u64, 0usize, 0u64);
     let mut pile = vec![(racine.to_path_buf(), 0usize)];
-    'parcours: while let Some((d, niveau)) = pile.pop() {
+    let mut pile_tiers = Vec::new();
+    'parcours: while let Some((d, niveau)) = pile.pop().or_else(|| pile_tiers.pop()) {
         let Ok(entrees) = fs::read_dir(&d) else { continue };
-        for e in entrees.map_while(Result::ok) {
+        for (rang, e) in entrees.map_while(Result::ok).enumerate() {
+            if rang >= b.par_dossier {
+                incomplet.insert("éléments");
+                break;
+            }
             elements += 1;
             if elements > b.elements {
                 incomplet.insert("éléments");
@@ -517,24 +542,28 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
                 }
                 continue;
             }
+            let fiable = proprietaire_ok(&p);
             if m.is_dir() {
-                if niveau + 1 < b.profondeur {
+                if niveau + 1 >= b.profondeur {
+                    incomplet.insert("profondeur");
+                } else if fiable {
                     pile.push((p, niveau + 1));
                 } else {
-                    incomplet.insert("profondeur");
+                    pile_tiers.push((p, niveau + 1));
                 }
                 continue;
             }
-            if octets + m.len() > b.octets {
-                incomplet.insert("octets");
-                break 'parcours;
-            }
-            if !proprietaire_ok(&p) {
-                tiers += 1;
-                if tiers > b.tiers {
+            if fiable {
+                if octets + m.len() > b.octets {
+                    incomplet.insert("octets");
+                    continue;
+                }
+            } else {
+                if tiers >= b.tiers || octets_tiers + m.len() > b.octets_tiers {
                     incomplet.insert("fichiers de tiers");
                     continue;
                 }
+                tiers += 1;
             }
             // Devenu un lien entre-temps : ouvert sans le suivre, sa lecture échoue
             let Ok(f) = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(&p) else { continue };
@@ -542,12 +571,57 @@ pub(crate) fn parcourir_taches(racine: &Path, b: &BornesTaches, proprietaire_ok:
             if f.take(b.taille).read_to_end(&mut contenu).is_err() {
                 continue;
             }
-            octets += contenu.len() as u64;
+            if fiable {
+                octets += contenu.len() as u64;
+            } else {
+                octets_tiers += contenu.len() as u64;
+            }
             traiter(&nom, &contenu);
         }
     }
-    anomalies.extend(incomplet.into_iter().map(|k| (format!(r"\(relevé incomplet : {k})"), "relevé incomplet, bornes atteintes".to_string())));
+    anomalies.extend(incomplet.into_iter().map(|k| anomalie_incomplet(k)));
     anomalies
+}
+
+fn anomalie_incomplet(quoi: &str) -> (String, String) {
+    (format!(r"{PREFIXE_INCOMPLET}{quoi})"), "relevé incomplet, bornes atteintes".to_string())
+}
+
+const PREFIXE_INCOMPLET: &str = r"\(relevé incomplet : ";
+
+/// Relevé incomplet : les tâches connues non vues restent dans la référence, sinon elles reviendraient en « NOUVEAU » au relevé
+/// complet suivant, ce qu'un compte standard pourrait provoquer à volonté (relecture de #103, D1). Rend s'il est incomplet
+pub(crate) fn garder_taches_non_vues(reference: &HashMap<String, EntreeDemarrage>, releve: &mut Vec<EntreeDemarrage>) -> bool {
+    let anomalie = |e: &EntreeDemarrage| e.categorie == "Tâche planifiée" && e.commande.starts_with(ANOMALIE_TACHES);
+    if !releve.iter().any(|e| anomalie(e) && e.nom.starts_with(PREFIXE_INCOMPLET)) {
+        return false;
+    }
+    let vues: std::collections::HashSet<String> = releve.iter().map(|e| e.cle.clone()).collect();
+    releve.extend(reference.values().filter(|e| e.categorie == "Tâche planifiée" && !anomalie(e) && !vues.contains(&e.cle)).cloned());
+    true
+}
+
+/// Le relevé des tâches à échéance. Un seul à la fois : tant qu'un relevé reste bloqué, aucun autre fil n'est lancé
+fn taches_a_echeance(l: &mut Vec<EntreeDemarrage>) {
+    static EN_COURS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    use std::sync::atomic::Ordering;
+    let lu = if EN_COURS.swap(true, Ordering::SeqCst) {
+        None
+    } else {
+        commun::avec_echeance(ECHEANCE_TACHES, || {
+            let mut v = Vec::new();
+            taches(&mut v);
+            EN_COURS.store(false, Ordering::SeqCst);
+            v
+        })
+    };
+    match lu {
+        Some(v) => l.extend(v),
+        None => {
+            let (nom, motif) = anomalie_incomplet("délai");
+            ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}{motif}"));
+        }
+    }
 }
 
 fn taches(l: &mut Vec<EntreeDemarrage>) {

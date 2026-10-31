@@ -558,6 +558,21 @@ Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
     $true
 }
 
+# Relecture de #103, D5 : sur un Windows sain, aucune borne atteinte, sinon le faux positif serait partout et permanent
+Verifier 'Relevé des tâches : aucune anomalie sur un Windows sain' {
+    $f = Join-Path $script:Donnees 'demarrage.json'
+    $fin = (Get-Date).AddSeconds(120)
+    while (-not (Test-Path $f) -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+    if (-not (Test-Path $f)) { return 'demarrage.json absent après 120 s' }
+    $e = @(Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ })
+    $taches = @($e | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+    if (-not $taches.Count) { return 'aucune tâche relevée' }
+    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' })
+    if ($mauvais.Count) { return "$(($mauvais | ForEach-Object { "$($_.Nom) : $($_.Commande)" }) -join ' ; ')" }
+    Write-Host "  tâches relevées : $($taches.Count)"
+    $true
+}
+
 # Audit de #102, S102-01 : un compte standard pose une jonction en boucle dans le dossier des tâches, relu en SYSTEM
 $dossierTaches = Join-Path $env:SystemRoot 'System32\Tasks'
 $boucle = Join-Path $dossierTaches 'd4t-boucle'
@@ -821,7 +836,7 @@ foreach ($precree in @{ Quoi = 'fichier'; Code = "Set-Content -LiteralPath '$f' 
             if ("$r".Trim() -ne 'refuse') { return "fichier de la tâche modifiable par le compte standard ($r)" }
             $proprietaire = (Get-Acl -LiteralPath $f).Owner
             Write-Host "  propriétaire du fichier : $proprietaire"
-            if ($proprietaire -match [regex]::Escape($script:compte)) { return "propriétaire : $proprietaire" }
+            if ($proprietaire -match [regex]::Escape($script:compte.Nom)) { return "propriétaire : $proprietaire" }
             $true
         } finally {
             Desinstaller (Join-Path $Journaux "desinstallation-$($precree.Quoi)-precree.log") | Out-Null

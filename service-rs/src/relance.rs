@@ -110,7 +110,10 @@ pub fn definition_conforme(relue: &str, interface: &str) -> bool {
 /// Le fichier de définition passe par le dossier d'installation (administrateurs seulement), puis il est effacé
 pub fn poser() -> Result<(), String> {
     retirer()?;
-    ecarter_precree(&Path::new(&crate::natif::dossier_systeme()).join("Tasks").join(NOM_TACHE))?;
+    // À échéance : l'action du MSI attend ici, service arrêté, et un compte standard peut bloquer cette suppression (S103-01)
+    let precree = Path::new(&crate::natif::dossier_systeme()).join("Tasks").join(NOM_TACHE);
+    crate::commun::avec_echeance(std::time::Duration::from_secs(60), move || ecarter_precree(&precree))
+        .unwrap_or_else(|| Err("élément précréé : pas de suppression en 60 s".into()))?;
     let service = std::env::current_exe().map_err(|e| e.to_string())?;
     let dossier = service.parent().ok_or("dossier du service introuvable")?;
     let interface = dossier.join("deR4Tizer.exe");
