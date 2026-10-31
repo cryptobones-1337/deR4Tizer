@@ -36,7 +36,7 @@ if ($installe) {
     # Heure du début de l'activité (horloge de la VM, celle du service) : les alertes comptées comme faux positifs sont
     # celles produites après, pas celles de l'installation et du premier relevé
     # PR 4.5b : tâche de relance retirée et interface arrêtée, pour le contrôle de SAN-010 en fin de mesure
-    schtasks /Delete /F /TN 'deR4Tizer Relance interface' *> $null
+    Schtasks-Code /Delete /F /TN 'deR4Tizer Relance interface' | Out-Null
     Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     $debutActivite = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     Verifier 'Activité pendant la mesure' {

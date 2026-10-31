@@ -4737,6 +4737,40 @@ fn sante_interface_lancement_refuse_sans_constat() {
     }
 }
 
+/// S101-15 : un programme qui alterne arrêt et retour de l'interface ne fait pas plus de 3 critiques par session et par 24 h
+#[test]
+fn sante_interface_san010_plafonne() {
+    use crate::sante::{Interfaces, MAX_SAN010_JOUR};
+    let mut i = Interfaces::default();
+    let (mut levés, mut plafond) = (0, 0);
+    let mut t = 0;
+    for _ in 0..8 {
+        i.observer(&[1], &[1], t);
+        t += 60;
+        i.observer(&[1], &[], t);
+        t += 900;
+        let (e, a) = i.observer(&[1], &[], t);
+        levés += a.iter().filter(|x| x.regle == "SAN-010").count();
+        plafond += e.iter().filter(|x| x.texte.contains("plafond")).count();
+        t += 60;
+    }
+    assert_eq!((levés, plafond), (MAX_SAN010_JOUR, 1));
+    // Le lendemain, de nouveau
+    i.observer(&[1], &[1], t + 86_400);
+    i.observer(&[1], &[], t + 86_460);
+    assert_eq!(i.observer(&[1], &[], t + 86_460 + 900).1.len(), 1);
+}
+
+/// D7 : seule l'absence de la valeur vaut refus du lancement
+#[test]
+fn relance_lecture_du_lancement_echec_ferme() {
+    use crate::relance::decision_lancement as d;
+    use std::io::{Error, ErrorKind};
+    assert_eq!(d(Ok("x".into())), Ok(true));
+    assert_eq!(d(Err(Error::from(ErrorKind::NotFound))), Ok(false));
+    assert!(d(Err(Error::from(ErrorKind::PermissionDenied))).is_err());
+}
+
 /// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée
 #[test]
 fn relance_relue_conforme() {

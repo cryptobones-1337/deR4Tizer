@@ -233,6 +233,9 @@ pub const GRACE_INTERFACE_S: i64 = 300;
 pub const ABSENCE_INTERFACE_S: i64 = 900;
 /// 3 disparitions en une heure dans une même session : SAN-011
 pub const MAX_DISPARITIONS_HEURE: usize = 3;
+/// SAN-010 est critique, donc hors du plafond de la remontée : 3 constats au plus par session et par 24 h. Sinon un programme
+/// du compte, qui alterne arrêt et retour de l'interface, en ferait 90 par jour (audit de #101, S101-15)
+pub const MAX_SAN010_JOUR: usize = 3;
 
 #[derive(Default)]
 struct SuiviSession {
@@ -243,6 +246,9 @@ struct SuiviSession {
     disparitions: VecDeque<i64>,
     san010: Option<i64>,
     san011: Option<i64>,
+    /// Constats SAN-010 des dernières 24 h, et plafond déjà signalé
+    constats_san010: VecDeque<i64>,
+    plafond_signale: bool,
 }
 
 /// Événement de l'interface, écrit dans le SIEM (`Source` « sante », `Type` « interface »)
@@ -293,9 +299,21 @@ impl Interfaces {
             if let Some(d) = s.absente_depuis {
                 if t - d >= ABSENCE_INTERFACE_S && s.san010.is_none_or(|x| t - x >= RAPPEL_S) {
                     s.san010 = Some(t);
-                    // Critique (décision du mainteneur, 2026-10-31) : constat local que personne ne voit, l'interface étant absente
-                    constats.push(constat(regles::SAN_010, "Critique", &format!("session {id}"),
-                        format!("interface de deR4Tizer absente de la session {id} depuis {} min : plus de notification locale ; la surveillance et la remontée continuent", minutes(t - d))));
+                    while s.constats_san010.front().is_some_and(|x| t - x >= RAPPEL_S) {
+                        s.constats_san010.pop_front();
+                    }
+                    if s.constats_san010.len() >= MAX_SAN010_JOUR {
+                        if !s.plafond_signale {
+                            s.plafond_signale = true;
+                            evenements.push(EvenementInterface { session: id, texte: format!("interface absente de la session {id} : plafond de {MAX_SAN010_JOUR} constats par 24 h atteint, les suivants ne sont plus levés"), niveau: "Alerte" });
+                        }
+                    } else {
+                        s.plafond_signale = false;
+                        s.constats_san010.push_back(t);
+                        // Critique (décision du mainteneur, 2026-10-31) : constat local que personne ne voit, l'interface étant absente
+                        constats.push(constat(regles::SAN_010, "Critique", &format!("session {id}"),
+                            format!("interface de deR4Tizer absente de la session {id} depuis {} min : plus de notification locale ; la surveillance et la remontée continuent", minutes(t - d))));
+                    }
                 }
             }
             if s.disparitions.len() >= MAX_DISPARITIONS_HEURE && s.san011.is_none_or(|x| t - x >= RAPPEL_S) {

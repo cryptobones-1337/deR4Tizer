@@ -488,7 +488,7 @@ Verifier 'Relance : tâche non modifiable par un compte standard' {
     $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match $ecriture -and
         $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
     if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
-    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'", "/End /TN '$tacheRelance'") {
+    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'") {
         $s = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
         if ("$s".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
     }
@@ -525,6 +525,10 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
         $i = @(Attendre-Interface)
         if (-not $i.Count) { return 'interface non relancée après 6 min' }
         if ($i.ProcessId -contains $avant[0].ProcessId) { return 'même processus : arrêt sans effet' }
+        # S101-09 : une instance tourne, un compte standard ne l'arrête pas par la tâche
+        $fin = En-TantQue $script:compte "schtasks /End /TN '$tacheRelance' 2>&1 | Out-Null; `$LASTEXITCODE"
+        Start-Sleep 3
+        if (-not @(Interfaces-EnSession).Count) { return "interface arrêtée par schtasks /End d'un compte standard (code $fin)" }
         # Le tour suivant de la tâche sort aussitôt (mutex) : toujours une seule interface par session
         Start-Sleep 310
         $doublons = @(Interfaces-EnSession | Group-Object SessionId | Where-Object Count -gt 1)
@@ -709,8 +713,7 @@ Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données 
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
     if (Test-Path $script:Donnees) { $reste += 'données' }
     if (@(Produits).Count) { $reste += 'entrée « Applications »' }
-    schtasks /Query /TN $tacheRelance *> $null
-    if ($LASTEXITCODE -eq 0) { $reste += 'tâche de relance' }
+    if ((Schtasks-Code /Query /TN $tacheRelance) -eq 0) { $reste += 'tâche de relance' }
     if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }
     $true
 }
@@ -756,7 +759,7 @@ Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''
 # S101-08 : création sans /F sur une tâche existante, entrée fermée : elle doit échouer vite, sans changer la tâche
 Verifier 'Relance : création sur une tâche existante, sans réponse possible : échec en moins de 60 s, tâche intacte' {
     $temoin = 'd4t-temoin-creation'
-    schtasks /Create /TN $temoin /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F *> $null
+    Schtasks-Code /Create /TN $temoin /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F | Out-Null
     try {
         $f = Join-Path $env:TEMP 'd4t-temoin-creation.xml'
         schtasks /Query /TN $temoin /XML | Set-Content $f -Encoding Unicode
@@ -768,19 +771,17 @@ Verifier 'Relance : création sur une tâche existante, sans réponse possible :
         if ($p.ExitCode -eq 0) { return 'création acceptée sur une tâche existante, sans /F' }
         $true
     } finally {
-        schtasks /Delete /F /TN $temoin *> $null
+        Schtasks-Code /Delete /F /TN $temoin | Out-Null
     }
 }
 # D4-1 : retour arrière vers une version sans relance : relevé, pas de décision ici. La version ancienne ne connaît pas la tâche
 Noter 'Retour arrière vers une version sans relance (voir D4-1)' 'INFORMATION' $(
     Installer $Msi (Join-Path $Journaux 'retour-arriere-nouvelle.log') | Out-Null
     $c = Installer $MsiAncien (Join-Path $Journaux 'retour-arriere-ancienne.log')
-    schtasks /Query /TN $tacheRelance *> $null
-    $apres = $LASTEXITCODE -eq 0
+    $apres = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
     Desinstaller (Join-Path $Journaux 'retour-arriere-desinstallation.log') | Out-Null
-    schtasks /Query /TN $tacheRelance *> $null
-    $orpheline = $LASTEXITCODE -eq 0
-    schtasks /Delete /F /TN $tacheRelance *> $null
+    $orpheline = (Schtasks-Code /Query /TN $tacheRelance) -eq 0
+    Schtasks-Code /Delete /F /TN $tacheRelance | Out-Null
     "version ancienne installée : code $c ; tâche encore là ensuite : $apres ; encore là après sa désinstallation : $orpheline"
 )
 # Relecture de #101, D1 : le refus du lancement survit à une mise à niveau, qui ne repasse pas LANCEMENT_SESSION
@@ -795,8 +796,7 @@ if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyCon
         if ($c -ne 0) { return "msiexec a rendu $c" }
         try {
             if ($null -ne (Get-ItemProperty $cleRun -Name deR4Tizer -ErrorAction SilentlyContinue)) { return 'clé Run posée par la mise à niveau' }
-            schtasks /Query /TN $tacheRelance *> $null
-            if ($LASTEXITCODE -eq 0) { return 'tâche posée par la mise à niveau' }
+            if ((Schtasks-Code /Query /TN $tacheRelance) -eq 0) { return 'tâche posée par la mise à niveau' }
             $true
         } finally {
             Desinstaller (Join-Path $Journaux 'desinstallation-sans-lancement.log') | Out-Null

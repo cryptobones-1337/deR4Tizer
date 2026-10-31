@@ -125,19 +125,28 @@ pub fn poser() -> Result<(), String> {
     Ok(())
 }
 
-/// Lancement de l'interface posé à l'installation : valeur Run de la machine (la tâche n'existe qu'avec elle). Sans elle, le
-/// choix de `LANCEMENT_SESSION=0` : une session sans interface n'a rien d'anormal
-pub fn lancement_pose() -> bool {
+/// Décision pure (testée) d'après la lecture de la valeur Run : absente, le choix de `LANCEMENT_SESSION=0` ; toute autre
+/// erreur n'est pas un refus de lancement (relecture de #101, D7 : échec fermé)
+pub fn decision_lancement(lecture: std::io::Result<String>) -> Result<bool, String> {
+    match lecture {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("lancement à l'ouverture de session illisible : {e}")),
+    }
+}
+
+/// Lancement de l'interface posé à l'installation : valeur Run de la machine (la tâche n'existe qu'avec elle). Sans elle, une
+/// session sans interface n'a rien d'anormal
+pub fn lancement_pose() -> Result<bool, String> {
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY};
-    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+    decision_lancement(winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
         .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_READ | KEY_WOW64_64KEY)
-        .and_then(|k| k.get_value::<String, _>("deR4Tizer"))
-        .is_ok()
+        .and_then(|k| k.get_value::<String, _>("deR4Tizer")))
 }
 
 /// Au démarrage du service, après la protection du dossier : un échec de pose n'a pas d'autre trace (S101-11)
 pub fn signaler_etat() {
-    if !lancement_pose() {
+    if lancement_pose() != Ok(true) {
         return;
     }
     let interface = crate::sante::chemin_interface().unwrap_or_default();

@@ -797,10 +797,10 @@ namespace DeR4Tizer
             string texte = L.En
                 ? (relance
                     ? "The interface will restart within 5 minutes. Monitoring and alert forwarding continue. If it stays closed, deR4Tizer records an alert.\n\nQuit?"
-                    : "Monitoring and alert forwarding continue, without local notifications. If the interface stays closed, deR4Tizer records an alert.\n\nQuit?")
+                    : "Monitoring and alert forwarding continue, without local notifications.\n\nQuit?")
                 : (relance
                     ? "L'interface se relancera dans 5 minutes au plus. La surveillance et la remontée continuent. Si elle reste fermée, deR4Tizer enregistre une alerte.\n\nQuitter ?"
-                    : "La surveillance et la remontée continuent, sans notification locale. Si l'interface reste fermée, deR4Tizer enregistre une alerte.\n\nQuitter ?");
+                    : "La surveillance et la remontée continuent, sans notification locale.\n\nQuitter ?");
             return MessageBox.Show(texte, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         }
 
