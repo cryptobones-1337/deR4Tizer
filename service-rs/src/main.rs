@@ -33,6 +33,7 @@ mod menaces;
 mod mesure;
 mod moniteur;
 mod regles;
+mod relance;
 mod sante;
 mod natif;
 mod parefeu;
@@ -297,6 +298,15 @@ fn main() {
             Ok(m) => println!("Baseline : {m}"),
             Err(e) => println!("Baseline : {e}"),
         }
+        return;
+    }
+    // Actions du MSI : tâche de relance de l'interface (PR 4.5b)
+    if args.iter().any(|a| a == "--poser-relance") {
+        relance::compte_rendu("posée", relance::poser());
+        return;
+    }
+    if args.iter().any(|a| a == "--retirer-relance") {
+        relance::compte_rendu("retirée", relance::retirer());
         return;
     }
     if args.iter().any(|a| a == "--nettoyer") {

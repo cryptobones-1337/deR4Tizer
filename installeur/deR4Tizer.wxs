@@ -93,11 +93,17 @@
     </Feature>
 
     <!-- Désinstallation (pas lors d'une mise à jour) : le service arrêté, on retire ce qu'il a posé, avant d'effacer les fichiers -->
+    <!-- Relance de l'interface (D4-1, option C) : tâche planifiée posée en SYSTEM, lancée par Windows sous l'identité de chaque
+         utilisateur connecté, sans élévation ; retirée à la désinstallation (Nettoyer) ou avec LANCEMENT_SESSION=0 -->
+    <CustomAction Id="PoserRelance" FileKey="ServiceExe" ExeCommand="--poser-relance" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="RetirerRelance" FileKey="ServiceExe" ExeCommand="--retirer-relance" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="Nettoyer" FileKey="ServiceExe" ExeCommand="--nettoyer" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="AnnulerBaseline" FileKey="ServiceExe" ExeCommand="--annuler-baseline" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="SupprimerDonnees" FileKey="ServiceExe" ExeCommand="--supprimer-donnees" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="FermerInterface" Directory="INSTALLFOLDER" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM deR4Tizer.exe" Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
+      <Custom Action="PoserRelance" After="InstallFiles"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION="1"]]></Custom>
+      <Custom Action="RetirerRelance" After="PoserRelance"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION<>"1"]]></Custom>
       <Custom Action="FermerInterface" Before="StopServices">REMOVE OR UPGRADINGPRODUCTCODE OR WIX_UPGRADE_DETECTED</Custom>
       <Custom Action="Nettoyer" After="StopServices"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE]]></Custom>
       <Custom Action="AnnulerBaseline" After="Nettoyer"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND GARDER_BASELINE<>"1"]]></Custom>

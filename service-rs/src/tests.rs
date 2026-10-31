@@ -4705,3 +4705,32 @@ fn remontee_aucun_secret_si_protection_en_echec() {
     assert!(v.ntfy_url.is_empty() && v.smtp_mot_de_passe.is_empty());
 }
 
+// ------------------------------------------------------------ phase 4, PR 4.5b : relance de l'interface
+
+#[test]
+fn relance_definition_de_la_tache() {
+    let x = crate::relance::definition_tache(r"C:\Program Files\deR4Tizer & co\deR4Tizer.exe");
+    assert!(x.contains(r"<Command>C:\Program Files\deR4Tizer &amp; co\deR4Tizer.exe</Command>"), "chemin échappé : {x}");
+    assert!(x.contains("<Arguments>--cache --relance</Arguments>"));
+    assert!(x.contains("<GroupId>S-1-5-32-545</GroupId><RunLevel>LeastPrivilege</RunLevel>"), "sans élévation, groupe Utilisateurs par son SID");
+    assert!(!x.contains("HighestAvailable") && !x.contains("S-1-5-18"), "jamais SYSTEM ni élevée");
+    assert!(x.contains("<LogonTrigger>") && x.contains("<Interval>PT5M</Interval>"), "ouverture de session et toutes les 5 min");
+    assert!(x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"), "sinon Windows fermerait l'interface au bout de 3 jours");
+    assert!(x.contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"), "une instance par session");
+    assert!(x.contains("encoding=\"UTF-16\""));
+}
+
+/// La tâche cible notre exécutable, reconnu par son empreinte : pas de remarque de persistance ni d'interpréteur
+#[test]
+fn incident_tache_relance_sans_alerte_persistance() {
+    let e = crate::commun::EntreeDemarrage {
+        categorie: "Tâche planifiée".into(),
+        nom: format!(r"\{}", crate::relance::NOM_TACHE),
+        commande: r"C:\Program Files\deR4Tizer\deR4Tizer.exe --cache --relance".into(),
+        cible: r"C:\Program Files\deR4Tizer\deR4Tizer.exe".into(),
+        signataire: "deR4Tizer (empreinte)".into(),
+        ..Default::default()
+    };
+    assert_eq!(crate::persistance::evaluer(&e), "");
+}
+

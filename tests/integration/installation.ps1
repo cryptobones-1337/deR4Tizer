@@ -467,6 +467,79 @@ Verifier 'Remontée non configurée : notifications.json sans échec ni attente,
     $true
 }
 
+# ---------------------------------------------------------------- phase 4, PR 4.5b : relance de l'interface
+# Tâche posée par le MSI (D4-1, option C) : lancée par Windows sous l'identité de l'utilisateur, jamais par le service
+$tacheRelance = 'deR4Tizer Relance interface'
+Verifier 'Relance : tâche posée, groupe Utilisateurs, sans élévation, chemin installé' {
+    $x = schtasks /Query /TN $tacheRelance /XML 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { return "tâche absente : $x" }
+    $t = [xml]$x
+    $p = $t.Task.Principals.Principal
+    if ($p.GroupId -ne 'S-1-5-32-545') { return "principal : groupe « $($p.GroupId) », compte « $($p.UserId) »" }
+    if ($p.RunLevel -ne 'LeastPrivilege') { return "niveau : $($p.RunLevel)" }
+    $attendu = Join-Path $script:Programme 'deR4Tizer.exe'
+    if ($t.Task.Actions.Exec.Command -ne $attendu) { return "commande : $($t.Task.Actions.Exec.Command), attendu $attendu" }
+    if ($t.Task.Actions.Exec.Arguments -ne '--cache --relance') { return "arguments : $($t.Task.Actions.Exec.Arguments)" }
+    $true
+}
+Verifier 'Relance : tâche non modifiable par un compte standard' {
+    $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
+    $ecriture = 'Write|Modify|FullControl|Delete|ChangePermissions|TakeOwnership'
+    $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match $ecriture -and
+        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
+    if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
+    $s = En-TantQue $script:compte "schtasks /Change /TN '$tacheRelance' /DISABLE 2>&1 | Out-Null; `$LASTEXITCODE"
+    if ("$s".Trim() -eq '0') { return 'le compte standard a modifié la tâche' }
+    $etat = [xml](schtasks /Query /TN $tacheRelance /XML | Out-String)
+    if ($etat.Task.Settings.Enabled -eq 'false') { return 'tâche désactivée par le compte standard' }
+    $true
+}
+function Interfaces-EnSession {
+    $chemin = Join-Path $script:Programme 'deR4Tizer.exe'
+    @(Get-CimInstance Win32_Process -Filter "Name='deR4Tizer.exe'" | Where-Object { $_.ExecutablePath -eq $chemin -and $_.SessionId -gt 0 })
+}
+function Attendre-Interface([int]$Secondes = 360) {
+    $fin = (Get-Date).AddSeconds($Secondes)
+    do {
+        $i = @(Interfaces-EnSession)
+        if ($i.Count) { return $i }
+        Start-Sleep 5
+    } while ((Get-Date) -lt $fin)
+    @()
+}
+if ((Get-CimInstance Win32_ComputerSystem).UserName) {
+    Verifier 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' {
+        $i = @(Attendre-Interface)
+        if (-not $i.Count) { return "aucune interface en session après 6 min ; tâche : $(schtasks /Query /TN $tacheRelance /FO LIST /V 2>&1 | Select-String 'Last Result|Dernier résultat' | Out-String)" }
+        $proprietaire = (Invoke-CimMethod -InputObject $i[0] -MethodName GetOwner).User
+        Write-Host "  interface : pid $($i[0].ProcessId), session $($i[0].SessionId), compte $proprietaire"
+        if ($proprietaire -eq 'SYSTEM') { return 'interface lancée en SYSTEM' }
+        $true
+    }
+    Verifier 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' {
+        $avant = @(Interfaces-EnSession)
+        foreach ($p in $avant) { Stop-Process -Id $p.ProcessId -Force }
+        Start-Sleep 2
+        $i = @(Attendre-Interface)
+        if (-not $i.Count) { return 'interface non relancée après 6 min' }
+        if ($i.ProcessId -contains $avant[0].ProcessId) { return 'même processus : arrêt sans effet' }
+        # Le tour suivant de la tâche sort aussitôt (mutex) : toujours une seule interface par session
+        Start-Sleep 310
+        $doublons = @(Interfaces-EnSession | Group-Object SessionId | Where-Object Count -gt 1)
+        if ($doublons.Count) { return "plusieurs interfaces dans une session : $(($doublons | ForEach-Object { "$($_.Name) : $($_.Count)" }) -join ', ')" }
+        $true
+    }
+} else {
+    NonExecute 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' 'aucun compte connecté à la console'
+    NonExecute 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' 'aucun compte connecté à la console'
+}
+Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
+    $a = Join-Path $script:Donnees 'alertes.json'
+    $l = @(if (Test-Path $a) { (Get-Content $a -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -like 'PER-*' -and "$($_.Destination) $($_.Raisons)" -match 'Relance interface' } })
+    if ($l.Count) { return "$($l.Count) alerte(s) : $($l[0].Regle) $($l[0].Raisons)" }
+    $true
+}
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en
@@ -634,6 +707,8 @@ Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données 
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
     if (Test-Path $script:Donnees) { $reste += 'données' }
     if (@(Produits).Count) { $reste += 'entrée « Applications »' }
+    schtasks /Query /TN $tacheRelance *> $null
+    if ($LASTEXITCODE -eq 0) { $reste += 'tâche de relance' }
     if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }
     $true
 }

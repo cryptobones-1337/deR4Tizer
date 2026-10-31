@@ -92,6 +92,7 @@ prestataire).
 
 ## Hors du modèle
 
+- Un programme sous le compte de l'utilisateur peut fermer ou suspendre l'interface : la tâche planifiée la relance (5 min au plus), SAN-010 et SAN-011 signalent une absence ou des arrêts répétés, une interface suspendue n'est pas vue ; la surveillance et la remontée continuent. La tâche, posée par SYSTEM, n'est pas modifiable par un compte standard.
 - Un attaquant déjà administrateur ou SYSTEM : il peut arrêter le service, modifier ses fichiers et ses droits. Depuis la phase 4 (PR 4.4b), quand la remontée est configurée, le battement quotidien cesse : le prestataire peut voir
   qu'un poste ne répond plus, sans savoir pourquoi (service arrêté, poste éteint, réseau coupé).
   deR4Tizer complète Microsoft Defender, il ne le remplace pas.

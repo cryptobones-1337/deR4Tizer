@@ -1696,6 +1696,7 @@ fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
 
 /// Désinstallation : retire tous les blocages et désactive le journal DNS s'il l'avait activé
 pub fn nettoyer() {
+    crate::relance::compte_rendu("retirée", crate::relance::retirer());
     // Dossier de travail de la mise à jour (Program Files) : inconnu du paquet MSI, retiré ici
     match fs::remove_dir_all(crate::maj::dossier_travail()) {
         Ok(()) => println!("Dossier de mise à jour supprimé."),
