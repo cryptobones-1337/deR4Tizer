@@ -58,7 +58,9 @@ function Detections {
 function Reglages-Defender {
     $p = Get-MpPreference
     $r = [ordered]@{}
-    foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|PSShowComputerName|RunspaceId|Cim.*)$' } | Sort-Object)) {
+    # ComputerID n'est pas un réglage : un identifiant que Defender régénère seul. Constaté le 2026-10-31 : changé 31 s après
+    # la remise à l'instantané, sans deR4Tizer installé, avec une autre valeur que pendant le passage de la PR #100
+    foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|PSShowComputerName|RunspaceId|ComputerID|Cim.*)$' } | Sort-Object)) {
         $r[$n] = (@($p.$n) | ForEach-Object { "$_" }) -join '|'
     }
     $r

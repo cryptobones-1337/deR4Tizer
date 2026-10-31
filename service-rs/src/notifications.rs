@@ -90,15 +90,17 @@ pub fn a_retenter(a: &Alerte) -> bool {
 }
 
 impl FileReprise {
-    /// Après de nouveaux réglages (pur, testé) : mêmes destinations (« Tester », niveau, plafond), la file reste ; changées
-    /// ou secrets illisibles (`None`), elle est vidée et ses alertes comptées abandonnées : elle ne part pas vers les
-    /// nouvelles
+    /// Après de nouveaux réglages ou une relecture des secrets (pur, testé) : mêmes destinations (« Tester », niveau,
+    /// plafond), la file reste ; changées, elle est vidée et ses alertes comptées abandonnées : elle ne part pas vers les
+    /// nouvelles. Secrets illisibles (`None`) : la file et les destinations connues restent, rien ne part puisqu'il n'y a
+    /// plus de secret, et la comparaison se fait au retour (relecture de #100 : une lecture ratée ne perd pas la file)
     pub fn apres_reglages(&mut self, vers: &mut String, nouvelles: Option<String>) {
-        if nouvelles.as_ref() != Some(vers) {
+        let Some(nouvelles) = nouvelles else { return };
+        if nouvelles != *vers {
             self.abandonnees += self.entrees.len() as u64;
             self.entrees.clear();
+            *vers = nouvelles;
         }
-        *vers = nouvelles.unwrap_or_default();
     }
 
     /// Met en file les alertes à retenter d'un lot non remis, sans doublon (même Id). Pleine, la plus ancienne de la

@@ -159,11 +159,13 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   le dépôt des réglages. Elle prend les réglages dans une case qui ne se perd pas, même file de messages pleine, avant
   chaque tour d'envois et avant d'envoyer un lot. Les secrets restent donc en mémoire du service entre deux envois ;
   protection du dossier de données en échec : aucun n'est utilisé.
-- Fichier de secrets retiré ou illisible : vu au tour suivant (une minute au plus), secrets abandonnés et file vidée ;
-  ntfy et Teams ne partent plus, un serveur SMTP sans compte reste joignable. Modifié à la main : pas adopté avant le
+- Fichier de secrets retiré : vu au tour suivant (une minute environ, plus pendant un regroupement ou un envoi), secrets
+  abandonnés et file vidée (les destinations ont changé). Illisible : secrets abandonnés, file gardée ; elle n'est vidée
+  au retour que si les destinations relues diffèrent. Dans les deux cas, ntfy et Teams ne partent plus ; un serveur SMTP
+  sans compte reste joignable. Modifié à la main : pas adopté avant le
   prochain réglage ou redémarrage, alors que le test et le mode panique lisent le fichier.
-- Destinations de la remontée changées (canaux activés, adresses, serveur, sécurité et compte SMTP, destinataires), ou
-  secrets illisibles : la file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ;
+- Destinations de la remontée changées (canaux activés, adresses, serveur, sécurité et compte SMTP, destinataires) : la
+  file est vidée (ses alertes comptées dans `Abandonnees`), pour ne pas partir vers les nouvelles ;
   le niveau, le plafond, un jeton, un mot de passe ou le bouton « Tester » avec les mêmes destinations ne la vident pas ;
   remontée coupée : l'échec est aussi effacé. Le lot en cours de regroupement (15 s d'alertes récentes) part vers les
   nouvelles destinations ; un envoi déjà commencé finit vers les anciennes, avec les anciens secrets.

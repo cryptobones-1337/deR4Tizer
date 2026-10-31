@@ -4647,7 +4647,7 @@ fn remontee_destinations_seules_videent_la_file() {
     assert_ne!(destinations(&ConfigNotifications { smtp_utilisateur: "autre".into(), ..c.clone() }, &s), base, "compte SMTP");
 }
 
-/// Relecture de #100 : la décision de vider la file, testée ; illisible (S100-06) : vidée, comptée
+/// Relecture de #100 : la décision de vider la file, testée ; une lecture ratée ne la perd pas
 #[test]
 fn remontee_file_apres_reglages() {
     use crate::notifications::FileReprise;
@@ -4660,7 +4660,12 @@ fn remontee_file_apres_reglages() {
     assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 1, "B"), "changées : vidée et comptée");
     f.ajouter(&[alerte_remontee("b", "Critique", "")], 0);
     f.apres_reglages(&mut vers, None);
-    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 2, ""), "secrets illisibles : vidée");
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (1, 1, "B"), "lecture ratée : la file et les destinations restent");
+    f.apres_reglages(&mut vers, Some("B".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees), (1, 1), "retour aux mêmes destinations : la file reste");
+    f.apres_reglages(&mut vers, None);
+    f.apres_reglages(&mut vers, Some("C".into()));
+    assert_eq!((f.entrees.len(), f.abandonnees, vers.as_str()), (0, 2, "C"), "changées pendant la panne de lecture : vidée au retour");
 }
 
 /// S100-05 : des réglages ne se perdent pas, même sans place dans la file des messages ; le dernier gagne
