@@ -657,7 +657,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
 | SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
 | SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |
-| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service) | `sante.rs`, `natif.rs` | Alerte |
+| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) |
 | SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
 

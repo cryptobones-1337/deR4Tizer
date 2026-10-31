@@ -282,6 +282,8 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
        brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
        résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
+     - Inclut les essais reportés de la décision D4-1 (décision du mainteneur, 2026-10-31) : relance de l'interface dans une
+       session Bureau à distance et au changement rapide d'utilisateur. Aucune version publiée avant ces essais.
      - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
        Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
        mainteneur lance lui-même les scénarios.

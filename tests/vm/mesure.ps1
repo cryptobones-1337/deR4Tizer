@@ -63,12 +63,12 @@ if ($installe) {
 
     # Interface absente d'une session active : SAN-010 après le délai de grâce (5 min) et 15 min d'absence, non adouci par
     # l'apprentissage. La mesure dure 22 min
-    Verifier 'SAN-010 : tâche de relance retirée, interface absente : constat levé, niveau Alerte' {
+    Verifier 'SAN-010 : tâche de relance retirée, interface absente : constat levé, niveau Critique' {
         if (-not (Get-CimInstance Win32_ComputerSystem).UserName) { return 'aucun compte connecté à la console : contrôle sans objet' }
         $a = Join-Path $script:Donnees 'alertes.json'
         $l = @(if (Test-Path $a) { (Get-Content $a -Raw -Encoding UTF8 | ConvertFrom-Json) | Where-Object { "$($_.Regle)" -eq 'SAN-010' } })
         if (-not $l.Count) { return "aucun SAN-010 après $Minutes min ; collecte Sessions : $(@((Etat).Collectes | Where-Object Id -eq 'Sessions') | ConvertTo-Json -Compress)" }
-        if ($l[0].Niveau -ne 'Alerte') { return "niveau : $($l[0].Niveau)" }
+        if ($l[0].Niveau -ne 'Critique') { return "niveau : $($l[0].Niveau)" }
         Write-Host "  $($l[0].Regle) $($l[0].Destination) : $($l[0].Raisons)"
         $true
     }

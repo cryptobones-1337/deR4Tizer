@@ -4557,6 +4557,7 @@ fn sante_interface_absente_15_min() {
     assert!(i.observer(&[2], &[], 60 + 899).1.is_empty(), "pas avant 15 min");
     let (_, a) = i.observer(&[2], &[], 60 + 900);
     assert_eq!(interfaces_regles(&a), [("SAN-010".to_string(), "session 2".to_string())]);
+    assert_eq!(a[0].niveau, "Critique", "décision du mainteneur, 2026-10-31");
     assert!(a[0].raisons.contains("depuis 15 min") && a[0].raisons.contains("la surveillance et la remontée continuent"), "{}", a[0].raisons);
     assert!(i.observer(&[2], &[], 7200).1.is_empty(), "une fois par épisode et par 24 h");
     let ev = crate::sante::evenement_interface(&e[0]);
@@ -4590,6 +4591,7 @@ fn sante_interface_trois_disparitions() {
         constats.extend(i.observer(&[1], &[], k * 600 + 60).1);
     }
     assert_eq!(interfaces_regles(&constats), [("SAN-011".to_string(), "session 1".to_string())]);
+    assert_eq!(constats[0].niveau, "Alerte");
     assert!(constats[0].raisons.contains("3 fois en une heure"), "{}", constats[0].raisons);
 }
 

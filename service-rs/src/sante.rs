@@ -293,7 +293,8 @@ impl Interfaces {
             if let Some(d) = s.absente_depuis {
                 if t - d >= ABSENCE_INTERFACE_S && s.san010.is_none_or(|x| t - x >= RAPPEL_S) {
                     s.san010 = Some(t);
-                    constats.push(constat(regles::SAN_010, "Alerte", &format!("session {id}"),
+                    // Critique (décision du mainteneur, 2026-10-31) : constat local que personne ne voit, l'interface étant absente
+                    constats.push(constat(regles::SAN_010, "Critique", &format!("session {id}"),
                         format!("interface de deR4Tizer absente de la session {id} depuis {} min : plus de notification locale ; la surveillance et la remontée continuent", minutes(t - d))));
                 }
             }
