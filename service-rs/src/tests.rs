@@ -2098,7 +2098,7 @@ fn lecteur_une_lecture_par_cle_et_resultat_tardif() {
     use crate::natif::{HorsDelai, Lecteur};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration as D;
-    let l = Lecteur::nouveau(2, D::from_millis(30), D::from_secs(60));
+    let l = Lecteur::nouveau(2, D::from_millis(30), D::from_secs(60), D::from_secs(60));
     assert_eq!(l.lire("a", lecture_lente(300, "tard")), Err(HorsDelai));
     static RELANCE: AtomicBool = AtomicBool::new(false);
     let t = std::time::Instant::now();
@@ -2119,13 +2119,18 @@ fn lecteur_une_lecture_par_cle_et_resultat_tardif() {
 fn lecteur_budget_d_attente() {
     use crate::natif::Lecteur;
     use std::time::Duration as D;
-    let l = Lecteur::nouveau(50, D::from_millis(100), D::from_millis(250));
+    let l = Lecteur::nouveau(50, D::from_millis(100), D::from_millis(250), D::from_secs(60));
     let t = std::time::Instant::now();
     for i in 0..20 {
         assert!(l.lire(&format!("f{i}"), lecture_lente(800, "x")).is_err());
     }
     assert!(t.elapsed() < D::from_millis(600), "attente bornée par le budget : {:?}", t.elapsed());
     assert!(t.elapsed() >= D::from_millis(200), "le budget est bien attendu : {:?}", t.elapsed());
+    // Fenêtre écoulée : le budget repart, sinon toute première lecture répondrait « hors délai » pour toujours
+    let l = Lecteur::nouveau(50, D::from_millis(300), D::from_millis(50), D::from_millis(100));
+    assert!(l.lire("a", lecture_lente(800, "x")).is_err(), "budget consommé");
+    std::thread::sleep(D::from_millis(150));
+    assert_eq!(l.lire("b", lecture_lente(10, "b")), Ok(Some("b".to_string())), "budget reparti");
 }
 
 /// S104-01 : hors délai, un chemin critique reste protégé ; D1 : `binaire_windows` ne fait pas confiance
@@ -2148,25 +2153,33 @@ fn garde_critique_fermee_hors_delai() {
 fn chien_de_garde_passage_bloque() {
     use crate::moniteur::ChienDeGarde;
     let mut g = ChienDeGarde::default();
-    assert!(!g.observer(0), "aucun passage");
-    assert!(!g.observer(1), "premier relevé de ce passage");
+    assert!(!g.observer(0, false), "aucun passage");
+    assert!(!g.observer(1, false), "premier relevé de ce passage");
     for _ in 0..11 {
-        assert!(!g.observer(1));
+        assert!(!g.observer(1, false));
     }
-    assert!(g.observer(1), "12 relevés");
+    assert!(g.observer(1, false), "12 relevés");
     let mut g = ChienDeGarde::default();
     for _ in 0..6 {
-        g.observer(1);
+        g.observer(1, false);
     }
-    assert!(!g.observer(2), "fini");
+    assert!(!g.observer(2, false), "fini");
     for _ in 0..50 {
-        assert!(!g.observer(2), "repos : jamais");
+        assert!(!g.observer(2, false), "repos : jamais");
     }
-    assert!(!g.observer(3));
+    assert!(!g.observer(3, false));
     for _ in 0..11 {
-        assert!(!g.observer(3));
+        assert!(!g.observer(3, false));
     }
-    assert!(g.observer(3), "compte repris de zéro");
+    assert!(g.observer(3, false), "compte repris de zéro");
+    // S104-11 : une quarantaine longue attend 30 min, pas sans fin
+    let mut g = ChienDeGarde::default();
+    g.observer(5, true);
+    for _ in 0..119 {
+        assert!(!g.observer(5, true));
+    }
+    assert!(g.observer(5, true), "120 relevés");
+    assert!(include_str!("moniteur.rs").matches("let _longue = OperationLongue::debut();").count() == 3, "S104-11 : opération longue non signalée");
 }
 
 /// S103-07 : lecture hors délai : non signé, rien en cache ; la lecture rétablie donne le signataire

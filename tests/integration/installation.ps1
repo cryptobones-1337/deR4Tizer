@@ -654,9 +654,14 @@ function Poser-Verrou([string]$Cible, $Compte, [switch]$Connexion) {
 function Retirer-Verrou {
     Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
-# Une ouverture du fichier reste-t-elle bloquée 4 s ? Sans cela, le contrôle ne prouverait rien. Le témoin est rendu pour être arrêté ensuite
+# Une ouverture du fichier reste-t-elle bloquée 4 s ? Sans cela, le contrôle ne prouverait rien. Mesuré depuis la marque écrite juste avant
+# la lecture : le démarrage de powershell peut à lui seul prendre ce temps. Le témoin est rendu pour être arrêté ensuite
 function Temoin-Blocage([string]$Cible) {
-    $p = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', "[IO.File]::ReadAllBytes('$Cible') | Out-Null" -WindowStyle Hidden -PassThru
+    $marque = Join-Path $script:Commun "d4t-temoin-$([guid]::NewGuid().ToString('N')).txt"
+    $p = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', "Set-Content -LiteralPath '$marque' -Value x; [IO.File]::ReadAllBytes('$Cible') | Out-Null" -WindowStyle Hidden -PassThru
+    $fin = (Get-Date).AddSeconds(60)
+    while (-not (Test-Path $marque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+    if (-not (Test-Path $marque)) { return @{ Bloque = $false; Processus = $p } }
     Start-Sleep 4
     @{ Bloque = -not $p.HasExited; Processus = $p }
 }
@@ -731,7 +736,7 @@ Retirer-Verrou
 # Le journal, écrit sous le verrou du moniteur, reste bloquant (non fermé) : le chien de garde doit alors relancer le service. Verrou en
 # administrateur : le compte lecteur peut en faire autant. `Journal` et le fichier ne sont pas lus tant qu'il tient
 $journalService = Join-Path $script:Donnees 'journal.txt'
-$titreVerrou = 'Verrou sur journal.txt : chien de garde, service relancé en 5 min, événement dans le journal Application'
+$titreVerrou = 'Verrou sur journal.txt : chien de garde, service relancé en 5 min, événement 7031, canal rétabli une fois le verrou retiré'
 $pidAvant = Service-Pid
 $avant = Get-Date
 $e = Poser-Verrou $journalService $null
@@ -743,14 +748,20 @@ Verifier $titreVerrou {
         $w = Temoin-Blocage $journalService
         Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
         if (-not $w.Bloque) { return 'ouverture du journal non bloquée : contrôle sans valeur' }
+        # Les autres fils se bloquent seuls, hors du verrou du moniteur : une commande écrit au journal sous ce verrou
+        try { $null = Commande '{"Action":"verification"}' 2000 } catch { }
         $fin = (Get-Date).AddMinutes(5)
         while ((Service-Pid) -in $pidAvant, 0 -and (Get-Date) -lt $fin) { Start-Sleep 5 }
         $nouveau = Service-Pid
         if ($nouveau -in $pidAvant, 0) { return 'service non relancé en 5 min' }
         Write-Host "  relancé après $([math]::Round(((Get-Date) - $avant).TotalSeconds)) s"
         Retirer-Verrou
-        $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'deR4Tizer'; StartTime = $avant } -ErrorAction SilentlyContinue)
-        if (-not $ev.Count) { return 'aucun événement dans le journal Application' }
+        # 7031 du gestionnaire de services : la preuve. L'événement Application peut être écrit par n'importe quel compte (S104 : source non enregistrée)
+        $arret = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7031; StartTime = $avant } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'deR4Tizer' })
+        if (-not $arret.Count) { return 'aucun événement 7031 pour le service' }
+        $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $avant } -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -eq 'deR4Tizer' })
+        if (-not $ev.Count) { return 'aucun événement deR4Tizer dans le journal Application' }
+        # Verrou retiré avant : le service relancé pendant qu'il tient resterait figé à son démarrage (S104-07, ouvert) ; ceci prouve la relance, pas la reprise sous verrou
         if (-not (Attendre-Canal 60)) { return 'canal muet après la relance' }
         $true
     } finally {

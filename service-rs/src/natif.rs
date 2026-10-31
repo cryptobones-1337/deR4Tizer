@@ -297,18 +297,20 @@ pub struct Lecteur {
     max: usize,
     echeance: std::time::Duration,
     budget: std::time::Duration,
+    fenetre: std::time::Duration,
 }
 
 const MAX_RESULTATS_GARDES: usize = 512;
 
 impl Lecteur {
-    pub fn nouveau(max: usize, echeance: std::time::Duration, budget: std::time::Duration) -> std::sync::Arc<Lecteur> {
+    pub fn nouveau(max: usize, echeance: std::time::Duration, budget: std::time::Duration, fenetre: std::time::Duration) -> std::sync::Arc<Lecteur> {
         std::sync::Arc::new(Lecteur {
             etat: std::sync::Mutex::new(Lectures { etats: Default::default(), en_cours: 0, fenetre: std::time::Instant::now(), attendu: Default::default() }),
             fini: std::sync::Condvar::new(),
             max,
             echeance,
             budget,
+            fenetre,
         })
     }
 
@@ -339,7 +341,7 @@ impl Lecteur {
             e.etats.insert(c, EtatLecture::Fini(v));
             moi.fini.notify_all();
         });
-        if e.fenetre.elapsed() >= Duration::from_secs(60) {
+        if e.fenetre.elapsed() >= self.fenetre {
             e.fenetre = Instant::now();
             e.attendu = Duration::ZERO;
         }
@@ -362,7 +364,7 @@ impl Lecteur {
 pub fn lecture_fichier(quoi: &str, chemin: &str, f: impl FnOnce() -> Option<String> + Send + 'static) -> Result<Option<String>, HorsDelai> {
     static LECTEUR: std::sync::OnceLock<std::sync::Arc<Lecteur>> = std::sync::OnceLock::new();
     let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(crate::commun::filetime).unwrap_or(0);
-    LECTEUR.get_or_init(|| Lecteur::nouveau(8, std::time::Duration::from_secs(8), std::time::Duration::from_secs(16))).lire(&format!("{quoi}|{chemin}|{date}"), f)
+    LECTEUR.get_or_init(|| Lecteur::nouveau(8, std::time::Duration::from_secs(8), std::time::Duration::from_secs(16), std::time::Duration::from_secs(60))).lire(&format!("{quoi}|{chemin}|{date}"), f)
 }
 
 /// Signature à échéance, en distinguant le délai dépassé de l'absence de signature
