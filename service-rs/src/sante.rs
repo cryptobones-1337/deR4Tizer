@@ -307,6 +307,12 @@ impl Interfaces {
     }
 }
 
+/// Sessions où l'interface est attendue (pur, testé) : aucune si le lancement a été refusé à l'installation
+/// (`LANCEMENT_SESSION=0` : une session sans interface est le choix de l'administrateur, SAN-010 serait faux)
+pub fn sessions_attendues(lancement_pose: bool, actives: Vec<u32>) -> Vec<u32> {
+    if lancement_pose { actives } else { Vec::new() }
+}
+
 /// Événement du SIEM de l'interface (pur, testé)
 pub fn evenement_interface(e: &EvenementInterface) -> crate::siem::Evenement {
     crate::siem::Evenement {

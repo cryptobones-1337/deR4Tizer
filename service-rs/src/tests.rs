@@ -4718,8 +4718,21 @@ fn relance_definition_de_la_tache() {
     assert!(x.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"), "sinon Windows fermerait l'interface au bout de 3 jours");
     assert!(x.contains("<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>"), "une instance par session");
     assert!(x.contains("encoding=\"UTF-16\""));
-    assert!(x.contains("<SecurityDescriptor>D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;AU)</SecurityDescriptor>"), "droits explicites (S101-01)");
+    assert!(x.contains("<SecurityDescriptor>D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;AU)</SecurityDescriptor>"), "droits explicites (S101-01), lecture seule pour les autres (S101-09)");
     assert!(x.contains("<AllowStartOnDemand>false</AllowStartOnDemand>"), "pas de lancement à la demande (S101-03)");
+}
+
+/// `LANCEMENT_SESSION=0` : une session sans interface n'a rien d'anormal, ni SAN-010 ni événement
+#[test]
+fn sante_interface_lancement_refuse_sans_constat() {
+    use crate::sante::{sessions_attendues as a, Interfaces};
+    assert_eq!(a(true, vec![1, 2]), [1, 2]);
+    assert!(a(false, vec![1, 2]).is_empty());
+    let mut i = Interfaces::default();
+    for t in [0, 300, 1200, 90_000] {
+        let (e, c) = i.observer(&a(false, vec![1]), &[], t);
+        assert!(e.is_empty() && c.is_empty());
+    }
 }
 
 /// S101-01 : relecture après la pose ; une tâche détournée (autre commande, autre compte, élevée) est refusée

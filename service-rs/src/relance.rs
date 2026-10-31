@@ -5,14 +5,18 @@
 
 use std::os::windows::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 pub const NOM_TACHE: &str = "deR4Tizer Relance interface";
 /// Groupe local « Utilisateurs » (SID, indépendant de la langue de Windows)
 const GROUPE_UTILISATEURS: &str = "S-1-5-32-545";
 /// Droits de la tâche, posés explicitement : SYSTEM et administrateurs ; lecture et exécution seules pour les autres.
 /// Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant nous
-const DROITS_TACHE: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;AU)";
+const DROITS_TACHE: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;AU)";
+/// `schtasks` peut poser une question : pas d'entrée, et 60 s au plus. L'action du MSI est synchrone, le service attend
+/// (audit de #101, S101-08)
+const DUREE_MAX_SCHTASKS: Duration = Duration::from_secs(60);
 
 fn echappe_xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
@@ -67,9 +71,24 @@ pub fn definition_tache(interface: &str) -> String {
     )
 }
 
-fn schtasks(arguments: &[&str]) -> Result<(), String> {
+fn lancer_schtasks(arguments: &[&str]) -> Result<Output, String> {
     let exe = format!(r"{}\schtasks.exe", crate::natif::dossier_systeme());
-    let sortie = Command::new(exe).args(arguments).creation_flags(0x0800_0000).output().map_err(|e| e.to_string())?;
+    let mut enfant = Command::new(exe).args(arguments).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .creation_flags(0x0800_0000).spawn().map_err(|e| e.to_string())?;
+    let fin = Instant::now() + DUREE_MAX_SCHTASKS;
+    while enfant.try_wait().map_err(|e| e.to_string())?.is_none() {
+        if Instant::now() >= fin {
+            let _ = enfant.kill();
+            let _ = enfant.wait();
+            return Err(format!("schtasks sans réponse après {} s", DUREE_MAX_SCHTASKS.as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    enfant.wait_with_output().map_err(|e| e.to_string())
+}
+
+fn schtasks(arguments: &[&str]) -> Result<(), String> {
+    let sortie = lancer_schtasks(arguments)?;
     if sortie.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&sortie.stderr).trim().chars().take(300).collect()) }
 }
 
@@ -106,9 +125,30 @@ pub fn poser() -> Result<(), String> {
     Ok(())
 }
 
+/// Lancement de l'interface posé à l'installation : valeur Run de la machine (la tâche n'existe qu'avec elle). Sans elle, le
+/// choix de `LANCEMENT_SESSION=0` : une session sans interface n'a rien d'anormal
+pub fn lancement_pose() -> bool {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY};
+    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", KEY_READ | KEY_WOW64_64KEY)
+        .and_then(|k| k.get_value::<String, _>("deR4Tizer"))
+        .is_ok()
+}
+
+/// Au démarrage du service, après la protection du dossier : un échec de pose n'a pas d'autre trace (S101-11)
+pub fn signaler_etat() {
+    if !lancement_pose() {
+        return;
+    }
+    let interface = crate::sante::chemin_interface().unwrap_or_default();
+    match verifier(&interface) {
+        Ok(()) => {}
+        Err(e) => crate::commun::journal(&format!("tâche de relance de l'interface absente ou non conforme : {e} ; l'interface ne sera pas relancée")),
+    }
+}
+
 fn verifier(interface: &str) -> Result<(), String> {
-    let exe = format!(r"{}\schtasks.exe", crate::natif::dossier_systeme());
-    let sortie = Command::new(exe).args(["/Query", "/TN", NOM_TACHE, "/XML"]).creation_flags(0x0800_0000).output().map_err(|e| e.to_string())?;
+    let sortie = lancer_schtasks(&["/Query", "/TN", NOM_TACHE, "/XML"])?;
     if !definition_conforme(&String::from_utf8_lossy(&sortie.stdout), interface) {
         return Err("définition relue différente".into());
     }
@@ -118,8 +158,7 @@ fn verifier(interface: &str) -> Result<(), String> {
 }
 
 fn existe() -> bool {
-    let exe = format!(r"{}\schtasks.exe", crate::natif::dossier_systeme());
-    Command::new(exe).args(["/Query", "/TN", NOM_TACHE]).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
+    lancer_schtasks(&["/Query", "/TN", NOM_TACHE]).map(|s| s.status.success()).unwrap_or(false)
 }
 
 /// Retire la tâche (désinstallation, ou LANCEMENT_SESSION=0) ; erreur si elle existe encore ensuite

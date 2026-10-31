@@ -693,7 +693,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   `sante_remontee_echec_1h`, `sante_remontee_non_configuree`.
 - **SAN-010 et SAN-011** (PR 4.5a) : collecte `Sessions` (fil « sante », toutes les 30 s) ; sessions `WTSActive` avec un
   jeton d'utilisateur ; interface reconnue par son chemin complet **égal** au chemin installé (`deR4Tizer.exe` à côté
-  du service) : une copie posée ailleurs ne compte pas. Énumération impossible : collecte indisponible, jamais
+  du service) : une copie posée ailleurs ne compte pas. Installation avec `LANCEMENT_SESSION=0` (pas de valeur Run) : aucune session attendue, aucun constat. Énumération impossible : collecte indisponible, jamais
   « interface présente », et SAN-010/011 sans collecte. Un constat par session, par épisode (SAN-010 : remis à zéro au
   retour de l'interface) et par 24 h au plus ; chaque disparition et chaque retour sont écrits dans le SIEM (`Type`
   « interface »). Le service ne relance rien : une tâche planifiée posée par le MSI le fait sous l'identité de l'utilisateur (PR 4.5b), toutes les 5 min, et SAN-010 signale l'absence au-delà. Il ne distingue pas un

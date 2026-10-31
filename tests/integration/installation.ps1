@@ -488,7 +488,7 @@ Verifier 'Relance : tâche non modifiable par un compte standard' {
     $mauvais = @((Get-Acl -LiteralPath $f).Access | Where-Object { $_.AccessControlType -eq 'Allow' -and "$($_.FileSystemRights)" -match $ecriture -and
         $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin 'S-1-5-18', 'S-1-5-32-544' })
     if ($mauvais.Count) { return "droits d'écriture : $(($mauvais | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" }) -join ', ')" }
-    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'") {
+    foreach ($essai in "/Change /TN '$tacheRelance' /DISABLE", "/Delete /F /TN '$tacheRelance'", "/Run /TN '$tacheRelance'", "/End /TN '$tacheRelance'") {
         $s = En-TantQue $script:compte "schtasks $essai 2>&1 | Out-Null; `$LASTEXITCODE"
         if ("$s".Trim() -eq '0') { return "le compte standard a pu faire : schtasks $essai" }
     }
@@ -724,11 +724,13 @@ if ($regles1) {
 
 # ---------------------------------------------------------------- phase 4, PR 4.5b : tâche de relance, cas de pose
 # Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant l'installation
+$s = En-TantQue $script:compte "schtasks /Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+if ("$s".Trim() -ne '0') {
+    # Sans précréation, le contrôle ne prouverait rien (S101-12)
+    NonExecute 'Relance : tâche précréée par un compte standard, remplacée à l''installation, plus modifiable par lui' "Windows a refusé la précréation ($s)"
+} else {
 Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''installation, plus modifiable par lui' {
     $f = Join-Path $env:SystemRoot "System32\Tasks\$tacheRelance"
-    $s = En-TantQue $script:compte "schtasks /Create /TN '$tacheRelance' /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
-    $precree = "$s".Trim() -eq '0'
-    Write-Host "  précréation par le compte standard : $(if ($precree) { 'acceptée par Windows' } else { "refusée ($s)" })"
     $c = Installer $Msi (Join-Path $Journaux 'installation-tache-precreee.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
     try {
@@ -750,6 +752,37 @@ Verifier 'Relance : tâche précréée par un compte standard, remplacée à l''
         Desinstaller (Join-Path $Journaux 'desinstallation-tache-precreee.log') | Out-Null
     }
 }
+}
+# S101-08 : création sans /F sur une tâche existante, entrée fermée : elle doit échouer vite, sans changer la tâche
+Verifier 'Relance : création sur une tâche existante, sans réponse possible : échec en moins de 60 s, tâche intacte' {
+    $temoin = 'd4t-temoin-creation'
+    schtasks /Create /TN $temoin /TR 'cmd.exe /c exit 0' /SC ONCE /ST 23:59 /F *> $null
+    try {
+        $f = Join-Path $env:TEMP 'd4t-temoin-creation.xml'
+        schtasks /Query /TN $temoin /XML | Set-Content $f -Encoding Unicode
+        $vide = Join-Path $env:TEMP 'd4t-vide.txt'
+        Set-Content $vide '' -NoNewline
+        $p = Start-Process schtasks.exe -ArgumentList "/Create /TN $temoin /XML `"$f`"" -RedirectStandardInput $vide -WindowStyle Hidden -PassThru
+        if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; return 'schtasks sans réponse après 60 s (blocage possible de l''installation)' }
+        Write-Host "  code de retour sans /F sur une tâche existante : $($p.ExitCode)"
+        if ($p.ExitCode -eq 0) { return 'création acceptée sur une tâche existante, sans /F' }
+        $true
+    } finally {
+        schtasks /Delete /F /TN $temoin *> $null
+    }
+}
+# D4-1 : retour arrière vers une version sans relance : relevé, pas de décision ici. La version ancienne ne connaît pas la tâche
+Noter 'Retour arrière vers une version sans relance (voir D4-1)' 'INFORMATION' $(
+    Installer $Msi (Join-Path $Journaux 'retour-arriere-nouvelle.log') | Out-Null
+    $c = Installer $MsiAncien (Join-Path $Journaux 'retour-arriere-ancienne.log')
+    schtasks /Query /TN $tacheRelance *> $null
+    $apres = $LASTEXITCODE -eq 0
+    Desinstaller (Join-Path $Journaux 'retour-arriere-desinstallation.log') | Out-Null
+    schtasks /Query /TN $tacheRelance *> $null
+    $orpheline = $LASTEXITCODE -eq 0
+    schtasks /Delete /F /TN $tacheRelance *> $null
+    "version ancienne installée : code $c ; tâche encore là ensuite : $apres ; encore là après sa désinstallation : $orpheline"
+)
 # Relecture de #101, D1 : le refus du lancement survit à une mise à niveau, qui ne repasse pas LANCEMENT_SESSION
 $cleRun = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
 Installer $MsiAncien (Join-Path $Journaux 'installation-ancienne-sans-lancement.log') @('LANCEMENT_SESSION=0') | Out-Null

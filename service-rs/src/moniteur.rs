@@ -444,6 +444,7 @@ impl Moniteur {
                 let mut sante = crate::sante::Sante::default();
                 let mut interfaces = crate::sante::Interfaces::default();
                 let chemin_interface = crate::sante::chemin_interface();
+                crate::relance::signaler_etat();
                 while !p.arret.load(Ordering::Relaxed) {
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -461,6 +462,7 @@ impl Moniteur {
                     match (crate::natif::sessions_actives(), chemin_interface.as_deref().map(crate::natif::sessions_du_programme)) {
                         (Ok(actives), Some(Ok(avec))) => {
                             collectes::succes(Collecte::Sessions);
+                            let actives = crate::sante::sessions_attendues(crate::relance::lancement_pose(), actives);
                             let (evenements, c) = interfaces.observer(&actives, &avec, t);
                             for e in &evenements {
                                 crate::siem::enregistrer(crate::sante::evenement_interface(e));
