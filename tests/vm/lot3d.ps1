@@ -58,8 +58,10 @@ function Detections {
 function Reglages-Defender {
     $p = Get-MpPreference
     $r = [ordered]@{}
-    # ComputerID n'est pas un réglage : un identifiant que Defender régénère seul. Constaté le 2026-10-31 : changé 31 s après
-    # la remise à l'instantané, sans deR4Tizer installé, avec une autre valeur que pendant le passage de la PR #100
+    # ComputerID n'est pas comparé : ce n'est pas un réglage (Set-MpPreference n'a pas ce paramètre). Observé trois fois le
+    # 2026-10-31, deR4Tizer non installé : il change moins de 32 s après la remise à l'instantané, vers une valeur
+    # différente à chaque fois ; un relevé de 20 min le montre stable ensuite, mise à jour de la plateforme comprise.
+    # Mécanisme non établi. Sa valeur avant et après reste dans le tableau (INFORMATION)
     foreach ($n in ($p.PSObject.Properties.Name | Where-Object { $_ -notmatch '^(PSComputerName|PSShowComputerName|RunspaceId|ComputerID|Cim.*)$' } | Sort-Object)) {
         $r[$n] = (@($p.$n) | ForEach-Object { "$_" }) -join '|'
     }
@@ -85,6 +87,13 @@ function Differences($a, $b) {
     @((@($a.Keys) + @($b.Keys)) | Sort-Object -Unique | Where-Object { -not $a.Contains($_) -or -not $b.Contains($_) -or $a[$_] -ne $b[$_] } |
         ForEach-Object { "$_ : « $(if ($a.Contains($_)) { $a[$_] } else { '(absent)' }) » → « $(if ($b.Contains($_)) { $b[$_] } else { '(absent)' }) »" })
 }
+# Une mise à jour automatique de Defender le rend injoignable quelques secondes (erreur 0x800106ba, observée le 2026-10-31,
+# plateforme redémarrée) : attente qu'il réponde, 3 min au plus ; au-delà, Reglages-Defender échoue et le lot s'arrête
+$fin = (Get-Date).AddMinutes(3)
+while ((Get-Date) -lt $fin) {
+    try { Get-MpPreference -ErrorAction Stop | Out-Null; break } catch { Start-Sleep 5 }
+}
+$computerIdAvant = (Get-MpPreference).ComputerID
 $reglagesAvant = Reglages-Defender
 $strategiesAvant = Strategies-Defender
 $avant = Etat-Defender
@@ -184,7 +193,7 @@ $apres = Etat-Defender
 if (Actif $apres) { Noter 'Defender pleinement actif après le passage' 'RÉUSSI' (Decrire $apres) }
 else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $apres) }
 # Réglages de Defender inchangés pendant le passage : deR4Tizer ne doit jamais y toucher. Trois contrôles en échec
-# fermé : tous les réglages de Get-MpPreference avant/après ; les stratégies du registre avant/après ; et, pour un
+# fermé : tous les réglages de Get-MpPreference avant/après, sauf ComputerID (voir Reglages-Defender) ; les stratégies du registre avant/après ; et, pour un
 # changement défait avant la fin (exclusion ajoutée puis retirée, temps réel coupé puis rétabli), les événements 5007
 # dont la clé est un interrupteur de protection (liste fermée ; aucune des valeurs internes que Defender réécrit
 # lui-même : relevé avec ce filtre sous Windows PowerShell 5.1 sur un poste réel, 701 événements en deux ans, 25
@@ -192,7 +201,10 @@ else { Noter 'Defender pleinement actif après le passage' 'ÉCHOUÉ' (Decrire $
 # Limites, non couvertes : fournisseurs AMSI, atténuations de processus (Get-ProcessMitigation), démarrage de WinDefend.
 Verifier 'Réglages de Defender inchangés pendant le passage' {
     $diff = Differences $reglagesAvant (Reglages-Defender)
-    if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) (Get-MpPreference) : " + (($diff | Select-Object -First 5) -join ' ; ') }
+    # Une mise à jour de la plateforme pendant le passage peut ajouter un réglage (PromptEvidenceCollection, 4.18.26100.4) :
+    # le contrôle échoue quand même, le texte dit de relancer, jamais de conclure
+    $maj = if ($avant.Plateforme -ne $apres.Plateforme) { " ; plateforme de Defender mise à jour pendant le passage ($($avant.Plateforme) → $($apres.Plateforme)) : relancer" } else { '' }
+    if ($diff.Count) { return "$($diff.Count) réglage(s) modifié(s) (Get-MpPreference) : " + (($diff | Select-Object -First 5) -join ' ; ') + $maj }
     $true
 }
 Verifier 'Stratégies de Defender inchangées pendant le passage' {
@@ -230,5 +242,8 @@ Verifier 'Aucun interrupteur de protection modifié pendant le passage (5007)' {
     $true
 }
 Noter 'Événements 5007 pendant le passage' 'INFORMATION' $(if ($null -eq $evenements5007) { 'non relus (voir le contrôle ci-dessus)' } else { "$($evenements5007.Count) événement(s) ; Defender en écrit lui-même sur ses valeurs internes" })
+
+Noter 'ComputerID de Defender pendant le passage (non comparé)' 'INFORMATION' "$computerIdAvant → $((Get-MpPreference).ComputerID)"
+Noter 'Plateforme et signatures de Defender pendant le passage' 'INFORMATION' "$($avant.Plateforme) → $($apres.Plateforme) ; $($avant.Signatures) → $($apres.Signatures)"
 
 Bilan 'Lot 3d : exécution avec Microsoft Defender actif'

@@ -92,8 +92,8 @@ pub fn a_retenter(a: &Alerte) -> bool {
 impl FileReprise {
     /// Après de nouveaux réglages ou une relecture des secrets (pur, testé) : mêmes destinations (« Tester », niveau,
     /// plafond), la file reste ; changées, elle est vidée et ses alertes comptées abandonnées : elle ne part pas vers les
-    /// nouvelles. Secrets illisibles (`None`) : la file et les destinations connues restent, rien ne part puisqu'il n'y a
-    /// plus de secret, et la comparaison se fait au retour (relecture de #100 : une lecture ratée ne perd pas la file)
+    /// nouvelles. Secrets illisibles (`None`) : la file et les destinations connues restent, la boucle ne l'envoie pas, et
+    /// la comparaison se fait au retour (relecture de #100 : une lecture ratée ne perd pas la file)
     pub fn apres_reglages(&mut self, vers: &mut String, nouvelles: Option<String>) {
         let Some(nouvelles) = nouvelles else { return };
         if nouvelles != *vers {
@@ -428,7 +428,9 @@ fn boucle(mut config: ConfigNotifications, rx: Receiver<Message>) {
         if actif(&config) {
             let t = secondes();
             let dues = reprise.dues(t);
-            if !dues.is_empty() {
+            // Secrets illisibles : la file attend (la purge des 24 h continue). Un serveur SMTP sans compte n'a pas besoin de
+            // secret : sinon la file partirait vers de nouvelles destinations avant la comparaison (audit de #100, S100-13)
+            if !dues.is_empty() && !secrets_illisibles {
                 let ids: Vec<String> = dues.iter().map(|a| a.id.clone()).collect();
                 let remis = envoyer_partout(&config, &secrets, &dues, &mut etat);
                 reprise.resultat(&ids, remis, t);
