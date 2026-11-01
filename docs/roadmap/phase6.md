@@ -1,0 +1,89 @@
+# Phase 6 : politique de réponse appliquée dans le code
+
+Ouverte le 2026-11-01, à la fin de la phase 4, sur l'accord explicite du mainteneur (réponse « Oui, selon le dossier »,
+`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Rien de ce
+qu'il décrit n'existe encore dans le code : chaque élément passe à « testé en labo » dans la matrice
+(`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
+
+## Besoin
+
+Une action de réponse coupe ou modifie quelque chose sur un poste sans informaticien sur place. Quatre manques :
+
+1. **Le niveau 3 déborde** : avec le réglage « listes restreintes », le blocage automatique s'étend à FireHOL niveau 1 et
+   à ThreatView, ce que la politique ne permet pas.
+2. **L'identité n'est pas revalidée** : entre la décision et l'action, un PID réutilisé peut désigner un autre programme.
+3. **Rien ne borne la répétition** : une adresse débloquée à la main est rebloquée au cycle suivant, et un programme
+   repris peut être suspendu de nouveau sans limite.
+4. **Rien n'a d'échéance** : un processus suspendu, un programme isolé ou le mode panique le restent sans que personne
+   ne soit relancé.
+
+## Ce que la phase ne fait pas
+
+- aucune nouvelle action, aucun nouveau déclencheur automatique, aucun élargissement du niveau 3 ;
+- aucun arrêt automatique d'un processus, aucune mise en quarantaine automatique ;
+- aucune modification de la logique de l'IDS, du DPI ou du NDR, qui restent gelés : la politique s'applique en aval, dans
+  le moniteur ;
+- rien de Microsoft Defender, ni rien des phases 7 à 9.
+
+## Découpage
+
+Chaque PR part de `main` à jour, sans empilement, avec sa relecture, son audit et son passage complet en VM avant la
+fusion. Celles qui touchent le même fichier passent l'une après l'autre.
+
+| PR | Contenu |
+|---|---|
+| 6.0 | Ce document, la section « Prévu en phase 6 » de la politique, les lignes « prévu » de la matrice |
+| 6.1 | Niveau 3 restreint par l'identité de la source : Spamhaus DROP et Feodo Tracker seulement, quel que soit le réglage |
+| 6.2 | Point de décision unique (`politique.rs`) et garde contre les boucles ; tous les déclencheurs automatiques y passent |
+| 6.3 | Identité revalidée par handle, action sur ce même handle ; nouveaux champs de commande ; confirmation complète |
+| 6.4 | Registre `reponses.json`, échéances, relances (`REP-001`) |
+| 6.5 | Mode panique transactionnel, état effectif, PowerShell hors du verrou |
+| 6.6 | Isolation sur le chemin final, lu par handle |
+| 6.7 | Interface : page « Réponses en cours », portée et retour arrière du mode panique |
+
+Les fiches `REP-*` entrent dans `docs/detection/regles.md` avec leur entrée au registre (`regles.rs`), leur code et leurs
+tests, dans la PR qui les apporte : le test du registre exige que les fiches et le registre concordent.
+
+## Décisions
+
+Accord explicite du mainteneur le 2026-11-01 sur les recommandations du dossier de conception. La question posée
+rappelait : listes restreintes en alerte seule, identité revalidée avant chaque action, au-delà de 3 suspensions
+automatiques par heure alerte « Critique » sans suspension, décision humaine prioritaire 7 jours, jamais de reprise
+automatique.
+
+| # | Décision | Retenu |
+|---|---|---|
+| D6-1 | Politique et IPS, sans dégeler l'IDS | En aval, dans le moniteur, sur la file des blocages ; `ids.rs` intact. |
+| D6-2 | Identité d'un processus | PID, heure de création et chemin complet, revalidés et appliqués sur un même handle. L'empreinte SHA-256 de l'exécutable n'est exigée que pour la liste « décision humaine ». |
+| D6-3 | Échéances | Voir la politique : ce sont des rendez-vous de relance, jamais une levée pour la suspension, l'isolation et le mode panique. |
+| D6-4 | Durée d'un blocage par l'IPS | 24 h, au lieu des 7 jours hérités. |
+| D6-5 | Seuils de la garde | 3 actions par cible et par 24 h ; 30 blocages et 3 suspensions par heure ; 50 adresses par heure pour l'IPS ; décision humaine prioritaire 7 jours. Aucun réglage dans l'interface. |
+| D6-6 | Relance sans remontée configurée | Locale seulement, et la page Santé le dit. Sans canal, personne n'est prévenu : limite écrite. |
+| D6-7 | Échec de `--nettoyer` à la désinstallation | La désinstallation n'est jamais bloquée ; un compte rendu est écrit et vérifié. |
+| D6-8 | Nouvelle dépendance | Aucune. |
+| D6-9 | Arrêt automatique d'un processus | Hors du niveau 3, comme aujourd'hui. |
+| D6-10 | Suspension sur leurre, protection du dossier en échec | Gardée : elle ne dépend d'aucun fichier du dossier de données. Seules les actions alimentées par ces fichiers sont refusées. |
+
+## Compromis accepté
+
+Au-delà de 3 suspensions automatiques par heure, pendant une vraie attaque à plusieurs processus, l'alerte « Critique »
+part mais le programme suivant n'est pas suspendu. Le plafond évite qu'un faux positif répété rende le poste inutilisable.
+
+## Preuve
+
+GitHub Actions est toujours désactivé. Pour la phase 6, la preuve locale en VM tient lieu de CI GitHub, d'après la même
+réponse du mainteneur, qui portait aussi sur ce régime de preuve, en attendant qu'il l'inscrive dans `CLAUDE.md`. Rien ne
+change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et relecture indépendante restent exigés.
+
+Les échéances longues (2 h, 24 h, 7 jours) ne seront vérifiées qu'en labo : aucun réglage de test dans le binaire livré.
+La reprise par le Moniteur de ressources de Windows est décrite, pas testée, et le cas d'un processus suspendu sans
+registre n'est pas reproduit. Les scénarios le déclareront « non exécuté ».
+
+## À inscrire dans `CLAUDE.md` par le mainteneur
+
+L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé, sous la section 5, point 4 :
+
+- Ouverture : le 2026-11-01, à la fin de la phase 4, accord explicite du mainteneur pour coder la phase selon le dossier
+  de conception (réponse « Oui, selon le dossier »). Décisions de la phase : `docs/roadmap/phase6.md`.
+- Comme pour les phases 3 et 4, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub pour
+  les PR de la phase 6. Rien ne change pour la distribution.
