@@ -52,7 +52,14 @@ pub fn decouper_hosts(octets: &[u8]) -> (Vec<String>, Vec<String>) {
 /// Empreinte du fichier hosts ENTIER : avant, seules les lignes hors du bloc de deR4Tizer comptaient, et une ligne
 /// ajoutée dans le bloc (ou un faux début de bloc) passait sans alerte (audit AUD5-06)
 pub fn empreinte_hosts() -> String {
-    crate::hygiene::empreinte_fichier(&fichier_hosts()).unwrap_or_default()
+    empreinte_hosts_lue().unwrap_or_default()
+}
+
+/// None : lecture hors délai. Tout compte standard peut lire `hosts`, donc y poser un verrou opportuniste (audit de #104, S104-02)
+pub fn empreinte_hosts_lue() -> Option<String> {
+    let f = fichier_hosts();
+    let c = f.clone();
+    crate::natif::lecture_fichier("hosts", &f.to_string_lossy(), move || crate::hygiene::empreinte_fichier(&c)).ok().map(Option::unwrap_or_default)
 }
 
 /// Bornes du bloc de deR4Tizer : (ligne de début, ligne de fin) : la première fin précédée d'un début, et le DERNIER

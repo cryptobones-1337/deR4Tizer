@@ -270,8 +270,127 @@ pub fn terminer_enfants(noms: &[&str]) -> usize {
 
 // ------------------------------------------------------------ signatures
 
-/// Vérifie la signature Authenticode intégrée au fichier ; renvoie le nom du signataire si elle est valide
+/// Lecture hors délai, ou déjà en cours, ou trop de lectures bloquées
+#[derive(Debug, PartialEq)]
+pub struct HorsDelai;
+
+enum EtatLecture {
+    EnCours,
+    Fini(Option<String>),
+}
+
+struct Lectures {
+    etats: std::collections::HashMap<String, EtatLecture>,
+    en_cours: usize,
+    fenetre: std::time::Instant,
+    attendu: std::time::Duration,
+}
+
+/// Lectures de fichiers à échéance, sous le verrou du moniteur. Un compte qui peut ouvrir un fichier en lecture peut y poser un verrou
+/// opportuniste, y compris sur un exécutable en cours d'exécution ou sur `hosts`, et l'ouverture attend alors sans délai maximal connu
+/// (audits de #103 et #104, S103-07, S104-02). Une seule lecture à la fois par clé ; son résultat, même tardif, est gardé pour
+/// l'appel suivant ; au plus `max` lectures en cours, bloquées comprises ; et un budget d'attente par minute, qui borne le retard
+/// quel que soit le nombre de fichiers
+pub struct Lecteur {
+    etat: std::sync::Mutex<Lectures>,
+    fini: std::sync::Condvar,
+    max: usize,
+    echeance: std::time::Duration,
+    budget: std::time::Duration,
+    fenetre: std::time::Duration,
+}
+
+const MAX_RESULTATS_GARDES: usize = 512;
+
+impl Lecteur {
+    pub fn nouveau(max: usize, echeance: std::time::Duration, budget: std::time::Duration, fenetre: std::time::Duration) -> std::sync::Arc<Lecteur> {
+        std::sync::Arc::new(Lecteur {
+            etat: std::sync::Mutex::new(Lectures { etats: Default::default(), en_cours: 0, fenetre: std::time::Instant::now(), attendu: Default::default() }),
+            fini: std::sync::Condvar::new(),
+            max,
+            echeance,
+            budget,
+            fenetre,
+        })
+    }
+
+    pub fn lire(self: &std::sync::Arc<Self>, cle: &str, f: impl FnOnce() -> Option<String> + Send + 'static) -> Result<Option<String>, HorsDelai> {
+        use std::time::{Duration, Instant};
+        let mut e = self.etat.lock().unwrap();
+        match e.etats.get(cle) {
+            Some(EtatLecture::EnCours) => return Err(HorsDelai),
+            Some(EtatLecture::Fini(_)) => {
+                let Some(EtatLecture::Fini(v)) = e.etats.remove(cle) else { return Err(HorsDelai) };
+                return Ok(v);
+            }
+            None => {}
+        }
+        if e.en_cours >= self.max {
+            return Err(HorsDelai);
+        }
+        e.en_cours += 1;
+        e.etats.insert(cle.to_string(), EtatLecture::EnCours);
+        let (moi, c) = (self.clone(), cle.to_string());
+        std::thread::spawn(move || {
+            let v = f();
+            let mut e = moi.etat.lock().unwrap();
+            e.en_cours -= 1;
+            if e.etats.len() > MAX_RESULTATS_GARDES {
+                e.etats.retain(|_, x| matches!(x, EtatLecture::EnCours));
+            }
+            e.etats.insert(c, EtatLecture::Fini(v));
+            moi.fini.notify_all();
+        });
+        if e.fenetre.elapsed() >= self.fenetre {
+            e.fenetre = Instant::now();
+            e.attendu = Duration::ZERO;
+        }
+        let permis = self.echeance.min(self.budget.saturating_sub(e.attendu));
+        let debut = Instant::now();
+        let (mut e, _) = self.fini.wait_timeout_while(e, permis, |x| matches!(x.etats.get(cle), Some(EtatLecture::EnCours))).unwrap();
+        e.attendu += debut.elapsed();
+        match e.etats.get(cle) {
+            Some(EtatLecture::Fini(_)) => {
+                let Some(EtatLecture::Fini(v)) = e.etats.remove(cle) else { return Err(HorsDelai) };
+                Ok(v)
+            }
+            _ => Err(HorsDelai),
+        }
+    }
+}
+
+/// Lecture d'un fichier à échéance. La clé porte la date du fichier (`metadata` ne bloque pas) : un résultat tardif ne vaut pas pour un
+/// fichier changé depuis
+pub fn lecture_fichier(quoi: &str, chemin: &str, f: impl FnOnce() -> Option<String> + Send + 'static) -> Result<Option<String>, HorsDelai> {
+    static LECTEUR: std::sync::OnceLock<std::sync::Arc<Lecteur>> = std::sync::OnceLock::new();
+    let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(crate::commun::filetime).unwrap_or(0);
+    LECTEUR.get_or_init(|| Lecteur::nouveau(8, std::time::Duration::from_secs(8), std::time::Duration::from_secs(16), std::time::Duration::from_secs(60))).lire(&format!("{quoi}|{chemin}|{date}"), f)
+}
+
+/// Signature à échéance, en distinguant le délai dépassé de l'absence de signature
+pub fn signataire_a_echeance(chemin: &str) -> Result<Option<String>, HorsDelai> {
+    let c = chemin.to_string();
+    lecture_fichier("signature", chemin, move || signataire_direct(&c))
+}
+
+pub fn catalogue_a_echeance(chemin: &str) -> Result<bool, HorsDelai> {
+    let c = chemin.to_string();
+    lecture_fichier("catalogue", chemin, move || catalogue_direct(&c).then(String::new)).map(|o| o.is_some())
+}
+
+/// Empreinte à échéance. None aussi si le fichier est illisible
+pub fn empreinte_a_echeance(chemin: &str) -> Result<Option<String>, HorsDelai> {
+    let c = std::path::PathBuf::from(chemin);
+    lecture_fichier("empreinte", chemin, move || crate::hygiene::empreinte_fichier(&c))
+}
+
+/// Signataire valide, ou None : aussi bien sans signature que hors délai, ce qui ne donne jamais confiance
 pub fn signataire_valide(chemin: &str) -> Option<String> {
+    signataire_a_echeance(chemin).ok().flatten()
+}
+
+/// Vérifie la signature Authenticode intégrée au fichier ; renvoie le nom du signataire si elle est valide
+fn signataire_direct(chemin: &str) -> Option<String> {
     let chemin_large = large(chemin);
     let mut fichier = WINTRUST_FILE_INFO {
         cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -420,7 +539,7 @@ pub fn curl_exe() -> String {
 
 /// Fichier signé par un catalogue de sécurité installé (signature de Windows et des pilotes, rangée dans
 /// System32\CatRoot et non dans le fichier lui-même) : vrai contrôle de l'empreinte, pas du dossier
-pub fn signe_par_catalogue(chemin: &str) -> bool {
+fn catalogue_direct(chemin: &str) -> bool {
     use windows::Win32::Security::Cryptography::Catalog::{
         CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2, CryptCATAdminEnumCatalogFromHash,
         CryptCATAdminReleaseCatalogContext, CryptCATAdminReleaseContext,
@@ -475,9 +594,24 @@ pub fn creation_processus(pid: u32) -> Option<u64> {
 
 /// Binaire de Windows : situé dans le dossier Windows et signé par Microsoft (dans le fichier ou par catalogue)
 pub fn binaire_windows(chemin: &str) -> bool {
+    binaire_windows_lu(chemin).unwrap_or(false)
+}
+
+/// Comme `binaire_windows`, hors délai rendu tel quel : à la garde de savoir dans quel sens échouer
+pub fn binaire_windows_lu(chemin: &str) -> Result<bool, HorsDelai> {
     let windows = dossier_windows().to_lowercase();
-    chemin.to_lowercase().starts_with(&windows)
-        && (signataire_valide(chemin).map(|s| s.starts_with("Microsoft")).unwrap_or(false) || signe_par_catalogue(chemin))
+    if !chemin.to_lowercase().starts_with(&windows) {
+        return Ok(false);
+    }
+    decision_binaire_windows(signataire_a_echeance(chemin), &|| catalogue_a_echeance(chemin))
+}
+
+/// Décision pure (testée) : une signature Microsoft valide suffit ; sinon le catalogue dit
+pub(crate) fn decision_binaire_windows(signature: Result<Option<String>, HorsDelai>, catalogue: &dyn Fn() -> Result<bool, HorsDelai>) -> Result<bool, HorsDelai> {
+    if signature?.is_some_and(|s| s.starts_with("Microsoft")) {
+        return Ok(true);
+    }
+    catalogue()
 }
 
 

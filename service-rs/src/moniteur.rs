@@ -316,6 +316,8 @@ impl Moniteur {
                     // Un relevé sans aucune entrée (aucun Windows n'en a zéro : services, pilotes) est une lecture impossible
                     if persistance.entrees.is_empty() {
                         collectes::echec(Collecte::Persistance, "relevé des démarrages automatiques vide");
+                    } else if persistance.bloque_depuis_longtemps() {
+                        collectes::echec(Collecte::Persistance, "relevé des tâches bloqué depuis plus de 30 min");
                     } else if persistance.incomplet {
                         collectes::partielle(Collecte::Persistance, "relevé des tâches incomplet : bornes atteintes ou délai dépassé");
                     } else {
@@ -739,7 +741,8 @@ impl Moniteur {
         }
         self.balises.retain(|_, (_, t)| t.last().map(|x| x.elapsed() < Duration::from_secs(3600)).unwrap_or(false));
 
-        if let Some(a) = relever_hosts(&mut self.empreinte_hosts, blocage::empreinte_hosts()) {
+        // Lecture hors délai : pas de comparaison à ce tour, sinon une empreinte vide passerait pour un changement
+        if let Some(a) = blocage::empreinte_hosts_lue().and_then(|e| relever_hosts(&mut self.empreinte_hosts, e)) {
             alertes_modifiees |= self.ajouter_alerte_brute(a, None);
         }
 
@@ -1396,6 +1399,14 @@ fn maintenant_s() -> u64 {
 
 /// `signataire_cache` à une heure donnée (secondes), un échec gardé `duree_echec` secondes, pour les tests
 pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &str, chemin: &str, maintenant: u64, duree_echec: u64) -> String {
+    signataire_cache_avec(cache, notre, chemin, maintenant, duree_echec, &natif::signataire_a_echeance, &natif::catalogue_a_echeance)
+}
+
+type LectureSignature<'a> = &'a dyn Fn(&str) -> Result<Option<String>, natif::HorsDelai>;
+type LectureCatalogue<'a> = &'a dyn Fn(&str) -> Result<bool, natif::HorsDelai>;
+
+pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: &str, chemin: &str, maintenant: u64, duree_echec: u64,
+                                    signature: LectureSignature, catalogue: LectureCatalogue) -> String {
     if chemin.is_empty() {
         return "?".into();
     }
@@ -1409,7 +1420,8 @@ pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &st
             let exe = std::env::current_exe().unwrap_or_default();
             [exe.clone(), exe.with_file_name("deR4Tizer.exe")].iter().filter_map(|p| crate::hygiene::empreinte_fichier(p)).collect()
         });
-        if crate::hygiene::empreinte_fichier(Path::new(chemin)).is_some_and(|h| nos.contains(&h)) {
+        // Le nom ne prouve rien : un programme peut le prendre et verrouiller son fichier
+        if natif::empreinte_a_echeance(chemin).ok().flatten().is_some_and(|h| nos.contains(&h)) {
             return "deR4Tizer (empreinte vérifiée)".into();
         }
     }
@@ -1424,15 +1436,32 @@ pub(crate) fn signataire_cache_a(cache: &mut HashMap<String, String>, notre: &st
     if cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant, duree_echec)) {
         return String::new();
     }
+    // Lecture bloquée (S103-07) : pas de confiance, rien en cache, une seule ligne au journal ; le résultat tardif sera pris au prochain appel
+    let cle_delai = format!("{chemin}|délai");
+    let hors_delai = |cache: &mut HashMap<String, String>| {
+        if cache.insert(cle_delai.clone(), String::new()).is_none() {
+            commun::journal(&format!("signature de {chemin} : lecture hors délai, traitée comme non signée tant qu'elle ne répond pas"));
+        }
+        String::new()
+    };
     let windows = natif::dossier_windows().to_lowercase();
-    let s = match natif::signataire_valide(chemin) {
+    let lue = match signature(chemin) {
+        Ok(l) => l,
+        Err(_) => return hors_delai(cache),
+    };
+    let s = match lue {
         Some(nom) if nom.is_empty() => "signé".to_string(),
         Some(nom) => nom,
         // Fichiers système signés par catalogue, pas dans le fichier lui-même : empreinte vérifiée dans les
         // catalogues installés (C:\Windows\Tasks ou spool\drivers\color sont inscriptibles par tous)
-        None if (chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin)) && natif::signe_par_catalogue(chemin) => "Windows (catalogue)".into(),
+        None if chemin.to_lowercase().starts_with(&windows) || dossier_microsoft(chemin) => match catalogue(chemin) {
+            Ok(true) => "Windows (catalogue)".into(),
+            Ok(false) => String::new(),
+            Err(_) => return hors_delai(cache),
+        },
         None => String::new(),
     };
+    cache.remove(&cle_delai);
     if s.is_empty() {
         cache.insert(cle_echec, format!("{date}|{maintenant}"));
     } else {

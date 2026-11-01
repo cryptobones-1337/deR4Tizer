@@ -604,6 +604,172 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
 }
 }
 
+# Audits de #103 et #104, S103-07, S104-02 : verrou opportuniste, sous lequel une ouverture attend sans délai maximal connu
+$verrouExe = Join-Path $script:Commun 'd4t-verrou.exe'
+$verrouScript = Join-Path $script:Commun 'd4t-verrou.ps1'
+Copy-Item (Join-Path $PSHOME 'powershell.exe') $verrouExe -Force
+@'
+param([string]$Cible, [string]$Marque, [switch]$Connexion)
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class D4tVerrou {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr CreateFileW(string n, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool DeviceIoControl(IntPtr h, uint c, IntPtr i, uint il, IntPtr o, uint ol, out uint r, IntPtr ov);
+  public static string Poser(string chemin) {
+    IntPtr h = CreateFileW(chemin, 0x80000000, 7, IntPtr.Zero, 3, 0x40000000, IntPtr.Zero);
+    if (h == new IntPtr(-1)) return "ouverture " + Marshal.GetLastWin32Error();
+    IntPtr ov = Marshal.AllocHGlobal(64);
+    for (int i = 0; i < 64; i++) Marshal.WriteByte(ov, i, 0);
+    uint r; bool ok = DeviceIoControl(h, 0x00090008, IntPtr.Zero, 0, IntPtr.Zero, 0, out r, ov);
+    int e = Marshal.GetLastWin32Error();
+    return (!ok && e == 997) ? "accorde" : ("refus " + e);
+  }
+}
+"@
+$r = [D4tVerrou]::Poser($Cible)
+Set-Content -LiteralPath $Marque -Value $r
+$fin = (Get-Date).AddSeconds(300)
+while ((Get-Date) -lt $fin) {
+  if ($Connexion) {
+    $c = New-Object Net.Sockets.TcpClient
+    $null = $c.BeginConnect('192.0.2.1', 443, $null, $null)
+    Start-Sleep 15
+    $c.Close()
+  } else { Start-Sleep 15 }
+}
+'@ | Set-Content -LiteralPath $verrouScript -Encoding UTF8
+icacls $verrouExe /grant "$($script:compte.Nom):RX" | Out-Null
+
+# Pose le verrou : $Compte nul, en administrateur. Rend « accorde » ou la raison de l'échec
+function Poser-Verrou([string]$Cible, $Compte, [switch]$Connexion) {
+    $marque = Join-Path $script:Commun "d4t-verrou-$([guid]::NewGuid().ToString('N')).txt"
+    $args1 = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$verrouScript`" -Cible `"$Cible`" -Marque `"$marque`"" + $(if ($Connexion) { ' -Connexion' } else { '' })
+    if ($Compte) { $null = En-TantQue $Compte "& '$verrouExe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$verrouScript' -Cible '$Cible' -Marque '$marque'$(if ($Connexion) { ' -Connexion' })" -SansAttendre }
+    else { $null = Start-Process $verrouExe -ArgumentList $args1 -WindowStyle Hidden -PassThru }
+    # Add-Type peut être lent sur une VM chargée
+    $fin = (Get-Date).AddSeconds(90)
+    while (-not (Test-Path $marque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+    if (Test-Path $marque) { (Get-Content $marque -Raw).Trim() } else { 'marque absente en 90 s' }
+}
+function Retirer-Verrou {
+    Get-Process d4t-verrou -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+# Une ouverture du fichier reste-t-elle bloquée 4 s ? Sans cela, le contrôle ne prouverait rien. Mesuré depuis la marque écrite juste avant
+# la lecture : le démarrage de powershell peut à lui seul prendre ce temps. Le témoin est rendu pour être arrêté ensuite
+function Temoin-Blocage([string]$Cible) {
+    $marque = Join-Path $script:Commun "d4t-temoin-$([guid]::NewGuid().ToString('N')).txt"
+    $p = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', "Set-Content -LiteralPath '$marque' -Value x; [IO.File]::ReadAllBytes('$Cible') | Out-Null" -WindowStyle Hidden -PassThru
+    $fin = (Get-Date).AddSeconds(60)
+    while (-not (Test-Path $marque) -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+    if (-not (Test-Path $marque)) { return @{ Bloque = $false; Processus = $p } }
+    Start-Sleep 4
+    @{ Bloque = -not $p.HasExited; Processus = $p }
+}
+function Service-Pid { (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId }
+# Remet le service en marche, borné : ni Stop-Service ni Start-Service, qui attendent sans limite
+function Service-Relance {
+    $fin = (Get-Date).AddSeconds(60)
+    while ((Get-Service deR4Tizer).Status -notin 'Running', 'Stopped' -and (Get-Date) -lt $fin) { Start-Sleep 2 }
+    if ((Get-Service deR4Tizer).Status -eq 'Stopped') { sc.exe start deR4Tizer | Out-Null }
+    Attendre-Canal 60 | Out-Null
+}
+
+$titreVerrou = 'Verrou sur un exécutable lancé, par un compte standard : canal joignable, lecture hors délai au journal, arrêt possible'
+$e = Poser-Verrou $verrouExe $script:compte -Connexion
+if ($e -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $e"
+} else {
+Verifier $titreVerrou {
+    try {
+        # Sans cette ligne, la lecture n'aurait pas été bloquée
+        $fin = (Get-Date).AddSeconds(120)
+        while ((Journal 'lecture hors délai' 2) -notmatch 'd4t-verrou' -and (Get-Date) -lt $fin) { Start-Sleep 3 }
+        $l = Journal 'lecture hors délai' 2
+        if ($l -notmatch 'd4t-verrou') { return "aucune lecture hors délai au journal en 120 s" }
+        Write-Host "  journal : $l"
+        $t = Get-Date
+        if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+        $d = ((Get-Date) - $t).TotalSeconds
+        Write-Host "  canal : $([math]::Round($d, 1)) s"
+        if ($d -gt 30) { return "canal en $d s" }
+        $t = Get-Date
+        sc.exe stop deR4Tizer | Out-Null
+        $fin = (Get-Date).AddSeconds(45)
+        while ((Get-Service deR4Tizer).Status -ne 'Stopped' -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+        if ((Get-Service deR4Tizer).Status -ne 'Stopped') { return 'service non arrêté en 45 s, verrou posé' }
+        Write-Host "  arrêt, verrou posé : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+        $true
+    } finally {
+        Retirer-Verrou
+        Service-Relance
+    }
+}
+}
+Retirer-Verrou
+
+$hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+$titreVerrou = 'Verrou sur hosts, par un compte standard, qui n''a que la lecture : surveillance et canal continuent'
+$e = Poser-Verrou $hosts $script:compte
+if ($e -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $e"
+} else {
+Verifier $titreVerrou {
+    $w = $null
+    try {
+        $w = Temoin-Blocage $hosts
+        if (-not $w.Bloque) { return 'ouverture de hosts non bloquée : contrôle sans valeur' }
+        # Deux écritures d'état de suite, le verrou posé : le passage n'est pas figé
+        $e1 = Attendre-Etat (Get-Date) 60
+        if (-not $e1) { return 'etat.json non écrit en 60 s' }
+        $e2 = Attendre-Etat (Get-Date) 60
+        if (-not $e2) { return 'etat.json écrit une seule fois en 120 s' }
+        if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+        $true
+    } finally {
+        if ($w) { Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue }
+        Retirer-Verrou
+    }
+}
+}
+Retirer-Verrou
+
+# Fichiers du service sous verrou, posé en administrateur ; le compte lecteur peut en faire autant. Constate qu'un service répond sous verrou accordé sur cette VM,
+# pas une absence de gel en général : hors du service, une ouverture en ajout sous le même verrou est restée bloquée plus de 150 s (relecture de #104). Mesuré
+# le 2026-11-01 : commande en 9 s au plus, cause non établie ; etat.json n'est plus écrit tant que le verrou tient. Ces fichiers ne sont lus ici qu'une fois le verrou retiré
+foreach ($nomVerrou in 'journal.txt', 'etat.json') {
+    $titreVerrou = "Verrou sur $nomVerrou, posé en administrateur : commande et canal répondent, pas de relance"
+    $e = Poser-Verrou (Join-Path $script:Donnees $nomVerrou) $null
+    if ($e -ne 'accorde') {
+        NonExecute $titreVerrou "verrou non obtenu : $e"
+        Retirer-Verrou
+        continue
+    }
+    Verifier $titreVerrou {
+        $pidAvant = Service-Pid
+        try {
+            $t = Get-Date
+            $r = try { Commande '{"Action":"verification"}' 2000 } catch { $null }
+            if (-not $r) { return 'pas de réponse à la commande en 60 s' }
+            Write-Host "  commande : $([math]::Round(((Get-Date) - $t).TotalSeconds, 1)) s"
+            Start-Sleep 30
+            if (-not (Attendre-Canal 30)) { return 'canal muet, verrou posé' }
+            if ((Service-Pid) -ne $pidAvant) { return "service relancé : $pidAvant, puis $(Service-Pid)" }
+            $true
+        } finally {
+            Retirer-Verrou
+            Service-Relance
+        }
+    }
+    Retirer-Verrou
+}
+
+Verifier 'Dossier Microsoft des tâches : pas d''écriture pour un compte standard (lu en premier par le relevé)' {
+    $m = Join-Path $env:SystemRoot 'System32\Tasks\Microsoft\d4t-essai'
+    $r = En-TantQue $script:compte "try { Set-Content -LiteralPath '$m' -Value 'x' -ErrorAction Stop; 'ecrit' } catch { 'refuse' }"
+    if ("$r".Trim() -ne 'refuse') { Remove-Item -LiteralPath $m -Force -ErrorAction SilentlyContinue; return "écriture acceptée ($r)" }
+    $true
+}
+
 # ---------------------------------------------------------------- arrêt du service (relecture de #61)
 # Hors du bloc du compte standard, qu'elles n'utilisent pas (relecture de #63)
 # Le fil « persistance » relève les démarrages automatiques dès le démarrage (pilotes compris, 9,4 s mesurées en

@@ -100,7 +100,8 @@ fn signataire(chemin: &str) -> Option<String> {
     if let Some(s) = cache.lock().unwrap().get(&cle) {
         return s.clone();
     }
-    let s = crate::natif::signataire_valide(chemin);
+    // Hors délai : pas de cache (relecture de #104, D2)
+    let Ok(s) = crate::natif::signataire_a_echeance(chemin) else { return None };
     let mut c = cache.lock().unwrap();
     if c.len() > 2000 {
         c.clear();

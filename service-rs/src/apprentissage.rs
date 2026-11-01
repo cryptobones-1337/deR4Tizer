@@ -77,9 +77,16 @@ fn editeur(chemin: &str) -> String {
     if let Some(e) = cache.lock().unwrap().get(&cle) {
         return e.clone();
     }
-    let e = crate::natif::signataire_valide(chemin)
-        .or_else(|| crate::natif::signe_par_catalogue(chemin).then(|| "Windows (catalogue)".to_string()))
-        .unwrap_or_else(|| "non signé".into());
+    // Hors délai : réponse du moment, pas de cache : la signature d'une alerte ne doit pas changer durablement (relecture de #104, D2)
+    let Ok(lue) = crate::natif::signataire_a_echeance(chemin) else { return "non signé".into() };
+    let e = match lue {
+        Some(s) => s,
+        None => match crate::natif::catalogue_a_echeance(chemin) {
+            Ok(true) => "Windows (catalogue)".to_string(),
+            Ok(false) => "non signé".into(),
+            Err(_) => return "non signé".into(),
+        },
+    };
     let mut c = cache.lock().unwrap();
     if c.len() > 2000 {
         c.clear();

@@ -336,23 +336,34 @@ modules expérimentaux.
   niveaux, 5 000 éléments par dossier, 100 000 au total, 1 Mo par fichier, 64 Mo au total ; pour les éléments dont le propriétaire
   n'est ni SYSTEM ni Administrateurs, 64 fichiers et 8 Mo, sur un budget à part, et leurs dossiers après les autres (mesuré
   en VM : 252 fichiers, 6 de tiers pour 2 comptes ; un seul poste mesuré). Au-delà de 5 000 éléments, les fichiers du dossier ne sont plus lus,
-  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés. Le relevé a 30 s pour finir. Chaque lien ou fichier
+  mais ses sous-dossiers restent parcourus, jusqu'à 2 millions d'éléments énumérés, 1 000 dossiers de tiers et 20 000 lectures de propriétaire de dossier ; au-delà, un
+  dossier de tâches d'éditeur n'est plus lu ; `\Microsoft`, où les comptes standard n'écrivent pas (droits lus, contrôlé en VM), est lu en premier. Le relevé a 30 s pour finir. Chaque lien ou fichier
   trop gros, et chaque borne atteinte, lève une entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à
   chaque apparition, y compris au premier relevé. Tant que le relevé est incomplet, la collecte est « partielle » et les tâches
   connues non vues restent dans la référence. Limites : un premier relevé incomplet termine quand même l'apprentissage, sinon toute la persistance se tairait : les tâches
-  qu'il n'a pas lues lèvent une fois « NOUVEAU » au relevé complet suivant ; des dossiers vides ne comptent pas dans le total
-  (175 µs chacun mesurés) : environ 170 000 feraient expirer le relevé à chaque tour, par extrapolation ; dans un dossier saturé, un fichier de
+  qu'il n'a pas lues lèvent une fois « NOUVEAU » au relevé complet suivant ; dans un dossier saturé, un fichier de
   tâche classé après la borne n'est plus vu (l'alerte le dit) ; une tâche connue reste en référence, ancienne version comprise,
   tant que le relevé reste incomplet ; 64 fichiers de tiers bien classés masquent les tâches de comptes standard suivantes ; plus
   de 64 fichiers de tiers sur un poste sain, soit une vingtaine de comptes d'après la mesure, laisserait le relevé incomplet en permanence ;
   un compte standard peut lever 64 fausses tâches par relevé, et 16 anomalies, en renommant ses éléments, soit 1 000 alertes
   en 16 min environ, qui chassent les vraies ; remplacer
   un dossier par une jonction entre le contrôle et la lecture reste possible, avec pour seul effet le texte de `<Command>` d'un
-  fichier lu ailleurs ; un verrou opportuniste sur son propre fichier fait perdre tout le relevé des tâches, qui reste « partiel » sans SAN-001 et
-  ne repart pas tant que le verrou tient. **À corriger avant la distribution** : le calcul de signature sous le verrou du
-  moniteur (S103-07, d'après le code, service non rejoué : un verrou sur un exécutable pourrait figer tout le service, SAN-001
-  compris) ; le relevé bloqué (S103-06) ; la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne
-  serait plus une tâche (S103-02, S103-03).
+  fichier lu ailleurs ; un verrou opportuniste, qu'un simple droit de lecture permet de poser, arrête le relevé des tâches au fichier
+  visé : ce qui a été lu reste, le relevé est « partiel » puis, au-delà de 30 min, la collecte est indisponible, et SAN-001 le dit après
+  son délai ; ce qui vient après ce fichier n'est plus lu. **Lecture bloquée** (signature, empreinte, `hosts`, leurres) : 8 s au plus, une
+  lecture à la fois par fichier, 16 s d'attente par minute au total ; son résultat, même tardif, est repris au tour suivant. Signature :
+  « non signé » tant qu'elle ne répond pas, une ligne au journal, rien en cache. `hosts` et leurres : pas de comparaison tant qu'ils ne répondent pas,
+  donc un leurre verrouillé ne lève pas LEU-001 (LEU-002 reste). Au plus 8 lectures bloquées à la fois : au-delà, tout fichier nouveau est
+  « non signé », ce qui fait passer de vrais programmes pour non signés et peut faire suspendre un outil de sauvegarde signé qui touche un
+  leurre ; la garde des processus critiques, elle, reste fermée hors délai. Les pilotes (`hygiene.rs`), désignés par le registre des services,
+  écrit par un administrateur, sont lus sans échéance, comme le paquet de mise à jour, dans un dossier réservé à SYSTEM. **Mesuré en VM le 2026-11-01, service en SYSTEM, verrou posé en administrateur** : une ouverture en lecture de `hosts` ou d'un fichier
+  ordinaire par un autre processus reste bloquée plus de 150 s ; un verrou tenu 5 min sur `journal.txt`, `etat.json` ou `reseau.json`, ou sur `hosts` pendant une commande
+  de blocage, ne fige pas le service : une commande prend 9 s au plus, **cause non établie**. Ce n'est pas une propriété générale : hors du service, sur un autre poste, une ouverture en ajout sous le
+  même verrou est restée bloquée plus de 150 s. Pendant le verrou, `etat.json` n'est plus écrit, sans aucun signal, et le blocage d'un domaine est refusé avec une erreur (`ecrire_bloc_hosts`).
+  **À corriger ou à vérifier avant la distribution** : S103-07 reste ouvert, faute d'explication, pour ce qui est lu ou écrit sous le verrou du moniteur (`journal.txt`, `alertes.json`, `reseau.json`, pose des leurres,
+  `ecrire_bloc_hosts`, commandes sur des fichiers d'utilisateur), par le compte lecteur réel ; le démarrage du service sous verrou (S104-07, d'après le code, non rejoué) ; `etat.json` périmé sans signal (S104-14) ; un compte standard qui fait refuser le blocage d'un domaine, sans couper son adresse, en gardant simplement `hosts` ouvert en lecture (S104-16, essai sur un fichier ordinaire ; sous verrou, mesuré) ;
+  la lecture par le Planificateur (énumération COM), où un fichier non enregistré ne serait plus une tâche (S103-02,
+  S103-03), et où un fichier bloqué ne couperait plus le relevé (S104-04).
 - **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
   PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
   - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
