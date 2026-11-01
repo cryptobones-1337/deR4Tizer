@@ -1861,11 +1861,11 @@ fn taches_examen_jonction_et_fichier_sans_tache() {
     jonction(&d.join("boucle"), &d);
     let mut b = bornes_taches();
     b.anomalies = 5;
-    let mut a = x(&d, &b, &mut |n| if n == r"\vraie" { F::Enregistre } else { F::SansTache });
+    let mut a = x(&d, &b, &mut |n, _| if n == r"\vraie" { F::Enregistre } else { F::SansTache });
     a.sort();
     assert_eq!(a, [(r"\boucle".to_string(), "lien non suivi".to_string()), (r"\fausse".to_string(), "fichier sans tâche enregistrée".to_string())], "aucun parcours par la jonction");
     // Revérification impossible : pas de conclusion, pas d'alerte sur le fichier (D7)
-    let a = x(&d, &b, &mut |_| F::Inconnu);
+    let a = x(&d, &b, &mut |_, _| F::Inconnu);
     assert!(!a.iter().any(|(_, m)| m == "fichier sans tâche enregistrée"), "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("revérifications")), "{a:?}");
     std::fs::remove_dir(d.join("boucle")).unwrap();
@@ -1880,7 +1880,7 @@ fn taches_examen_n_ouvre_aucun_fichier() {
     let f = d.join("tenu");
     std::fs::write(&f, "x").unwrap();
     let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
-    assert!(crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| crate::persistance::Fichier::Enregistre).is_empty());
+    assert!(crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_, _| crate::persistance::Fichier::Enregistre).is_empty());
     let s = include_str!("persistance.rs").replace("\r\n", "\n");
     let a = s.find("pub(crate) fn examiner_dossier_taches").unwrap();
     let corps = &s[a..a + s[a..].find("\npub(crate) fn plafonner_nouvelles_taches").unwrap()];
@@ -1898,7 +1898,7 @@ fn taches_examen_appels_bornes() {
         std::fs::write(d.join(format!("f{i}")), "x").unwrap();
     }
     let mut appels = 0;
-    let a = crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| { appels += 1; crate::persistance::Fichier::SansTache });
+    let a = crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_, _| { appels += 1; crate::persistance::Fichier::SansTache });
     assert_eq!(appels, 2, "plus aucune interrogation une fois les anomalies au plafond");
     assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
     std::fs::remove_dir_all(&d).unwrap();
@@ -1912,7 +1912,7 @@ fn taches_examen_borne() {
     std::fs::create_dir_all(d.join(r"a\b\c")).unwrap();
     std::fs::write(d.join(r"a\b\permis"), "x").unwrap();
     std::fs::write(d.join(r"a\b\c\trop-loin"), "x").unwrap();
-    let a = x(&d, &bornes_taches(), &mut |_| F::SansTache);
+    let a = x(&d, &bornes_taches(), &mut |_, _| F::SansTache);
     assert!(a.iter().any(|(n, _)| n == r"\a\b\permis"), "{a:?}");
     assert!(!a.iter().any(|(n, _)| n.contains("trop-loin")), "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("profondeur")), "{a:?}");
@@ -1921,7 +1921,7 @@ fn taches_examen_borne() {
     for i in 0..5 {
         std::fs::write(d2.join(format!("f{i}")), "x").unwrap();
     }
-    let a = x(&d2, &bornes_taches(), &mut |_| F::SansTache);
+    let a = x(&d2, &bornes_taches(), &mut |_, _| F::SansTache);
     assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
     // Trop d'éléments dans un dossier : ses fichiers suivants ne sont plus examinés, ses sous-dossiers si (S103-08)
@@ -1934,7 +1934,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.par_dossier = 3;
     b.anomalies = 100;
-    let a = x(&d3, &b, &mut |_| F::SansTache);
+    let a = x(&d3, &b, &mut |_, _| F::SansTache);
     assert!(a.iter().any(|(n, _)| n == r"\z\sans-tache"), "sous-dossier trouvé malgré la saturation : {a:?}");
     assert_eq!(a.iter().filter(|(n, _)| n.starts_with(r"\a")).count(), 3, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
@@ -1942,7 +1942,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.enumeres = 2;
     b.anomalies = 100;
-    assert!(x(&d3, &b, &mut |_| F::SansTache).iter().any(|(n, _)| n.contains("éléments")));
+    assert!(x(&d3, &b, &mut |_, _| F::SansTache).iter().any(|(n, _)| n.contains("éléments")));
     let d4 = dossier_taches("dossiers");
     for i in 0..4 {
         std::fs::create_dir_all(d4.join(format!("d{i}"))).unwrap();
@@ -1951,7 +1951,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.dossiers = 2;
     b.anomalies = 100;
-    let a = x(&d4, &b, &mut |_| F::SansTache);
+    let a = x(&d4, &b, &mut |_, _| F::SansTache);
     assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("dossiers")), "{a:?}");
     // Ces bornes ne rendent pas le relevé incomplet : les tâches sont lues ailleurs
@@ -1971,14 +1971,15 @@ fn taches_entrees_par_action() {
     assert_eq!((l[0].nom.as_str(), l[0].commande.as_str(), l[0].categorie.as_str()), (r"\a", r"c:\notepad.exe", "Tâche planifiée"));
     assert_eq!((l[1].nom.as_str(), l[1].commande.as_str()), (r"\a : action 2", r"c:\mal.exe -y"), "la seconde action a son entrée");
     assert!(l[2].commande.starts_with("COM {0358B920"));
-    assert!(l[3].anomalie, "action non reconnue signalée");
+    assert!(!l[3].anomalie, "elle vient de la tâche : dans la file, pas une anomalie du service (S106-21)");
+    assert!(crate::persistance::evaluer(&l[3]).contains("action non reconnue"), "jugée suspecte");
     assert!(!l[0].anomalie && !l[1].anomalie);
     let mut l = Vec::new();
     e(&mut l, r"\b", false, &[A::Exec("x".into(), "".into())]);
     assert_eq!(l[0].nom, r"\b : désactivée");
     let mut l = Vec::new();
     e(&mut l, r"\c", true, &[]);
-    assert!(l[0].anomalie, "tâche sans action : signalée");
+    assert!(!l[0].anomalie && crate::persistance::evaluer(&l[0]).contains("action non reconnue"), "tâche sans action : suspecte, dans la file");
 }
 
 /// R1 : une tâche ne peut pas prendre la clé d'une autre : « : » n'existe pas dans un nom de tâche
@@ -2057,6 +2058,14 @@ fn taches_nouvelles_plafonnees() {
     let mut r = vec![t(r"\a2"), t(r"\a3")];
     p(&reference2, &mut r, 1, &mut attente, 3);
     assert!(!attente.contains_key(&t(r"\a1").cle), "supprimée : oubliée");
+    // S4 : relevé incomplet : une tâche absente garde son rang
+    let mut a4: std::collections::HashMap<String, u64> = [(t(r"\cible").cle, 1)].into_iter().collect();
+    let mut r = vec![t(r"\a1"), anomalie(r"\(relevé incomplet : délai)")];
+    p(&Default::default(), &mut r, 5, &mut a4, 2);
+    assert_eq!(a4.get(&t(r"\cible").cle), Some(&1), "rang gardé");
+    let mut r = vec![t(r"\a1"), t(r"\a2"), t(r"\cible")];
+    p(&Default::default(), &mut r, 1, &mut a4, 3);
+    assert!(r.iter().any(|e| e.nom == r"\cible") && !r.iter().any(|e| e.nom == r"\a1"), "elle passe devant la rafale");
     // \Microsoft d'abord, quel que soit l'ordre
     let mut a2 = std::collections::HashMap::new();
     let mut r = vec![t(r"\AAA"), t(r"\Microsoft\Windows\x")];
@@ -2070,6 +2079,48 @@ fn taches_nouvelles_plafonnees() {
     assert!(a3.is_empty());
 }
 
+/// S1 : un nom à points ou espaces finaux, ou à surrogate seul, existe sous son nom exact, même si un chemin ordinaire le dit absent
+#[test]
+fn taches_fichier_hostile_existe_tel_quel() {
+    use std::os::windows::ffi::OsStringExt;
+    let d = dossier_taches("hostile");
+    let mut surrogate: Vec<u16> = "s".encode_utf16().collect();
+    surrogate.push(0xD800);
+    for nom in [std::ffi::OsString::from("pts..."), std::ffi::OsString::from("esp   "), std::ffi::OsString::from_wide(&surrogate), std::ffi::OsString::from("normal")] {
+        let mut exact = std::ffi::OsString::from(r"\\?\");
+        exact.push(d.as_os_str());
+        exact.push(r"\");
+        exact.push(&nom);
+        std::fs::write(std::path::PathBuf::from(&exact), "x").unwrap();
+        assert!(crate::persistance::existe_tel_quel(&d.join(&nom)), "{nom:?}");
+    }
+    assert!(!crate::persistance::existe_tel_quel(&d.join("absent")));
+    // Le chemin réel de l'entrée arrive à la fonction : chacun peut être nommé
+    let mut vus = 0;
+    let mut b = bornes_taches();
+    b.anomalies = 10;
+    crate::persistance::examiner_dossier_taches(&d, &b, &mut |_, p| { if crate::persistance::existe_tel_quel(p) { vus += 1; } crate::persistance::Fichier::Enregistre });
+    assert_eq!(vus, 4);
+    let mut exact = std::ffi::OsString::from(r"\\?\");
+    exact.push(d.as_os_str());
+    std::fs::remove_dir_all(std::path::PathBuf::from(exact)).unwrap();
+}
+
+/// S2 : deux entrées de même clé, commandes différentes : la seconde ne disparaît pas sans signal ; le relevé garde la première
+#[test]
+fn taches_doublon_signale() {
+    use crate::commun::EntreeDemarrage as E;
+    use crate::persistance::dedupliquer_releve as d;
+    let t = |c: &str| E { cle: r"Tâche planifiée|\a".into(), categorie: "Tâche planifiée".into(), nom: r"\a".into(), commande: c.into(), ..Default::default() };
+    let r = d(vec![t("un"), t("deux"), t("trois")]);
+    assert_eq!(r[0].commande, "un");
+    assert_eq!(r.iter().filter(|e| e.anomalie).count(), 1, "une seule entrée par nom, libellé stable");
+    assert!(r.iter().any(|e| e.anomalie && e.nom.contains("doublon")));
+    assert_eq!(d(vec![t("un"), t("un")]).len(), 1, "même commande : pas d'anomalie");
+    let run = |c: &str| E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: c.into(), ..Default::default() };
+    assert_eq!(d(vec![run("a"), run("b")]).len(), 1, "autres catégories : inchangé");
+}
+
 /// R7, S106-15 : seule une panne laisse sans conclusion
 #[test]
 fn taches_verdict_reverification() {
@@ -2080,10 +2131,12 @@ fn taches_verdict_reverification() {
     assert_eq!(v(0x8007_0057), F::SansTache, "nom trop long");
     assert_eq!(v(0x8007_0005), F::NonLisible, "accès refusé");
     assert_eq!(v(0x8007_06BA), F::Inconnu, "panne du Planificateur");
+    assert_eq!(v(0x8001_0108), F::Inconnu, "objet COM déconnecté");
+    assert_eq!(v(0x8004_1321), F::NonLisible, "SCHED_E : image de tâche corrompue");
     use crate::persistance::examiner_dossier_taches as x;
     let d = dossier_taches("nonlisible");
     std::fs::write(d.join("f"), "x").unwrap();
-    assert_eq!(x(&d, &bornes_taches(), &mut |_| F::NonLisible), [(r"\f".to_string(), "tâche enregistrée non lisible".to_string())]);
+    assert_eq!(x(&d, &bornes_taches(), &mut |_, _| F::NonLisible), [(r"\f".to_string(), "tâche enregistrée non lisible".to_string())]);
     std::fs::remove_dir_all(&d).unwrap();
 }
 

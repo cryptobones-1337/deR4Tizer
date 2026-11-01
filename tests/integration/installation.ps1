@@ -730,8 +730,9 @@ $verrou = if ("$v".Trim() -eq '0') { Poser-Verrou $fichierTache $script:compte }
 if ($verrou -ne 'accorde') {
     NonExecute $titreVerrou "verrou non obtenu : $verrou"
 } else {
-Verifier $titreVerrou {
-    try {
+    # Le résultat d'abord : un verrou tombé en route ne prouve rien (relecture de #106, S5)
+    $tombe = $false
+    $resultatVerrou = try {
         foreach ($n in $temoinsVerrou) { $null = En-TantQue $script:compte "schtasks /Create /TN $n /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null" }
         $f = Join-Path $script:Donnees 'demarrage.json'
         $lire = { @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' }) }
@@ -741,17 +742,22 @@ Verifier $titreVerrou {
             $e = & $lire
             $vus = @($temoinsVerrou | Where-Object { $n = $_; @($e | Where-Object { $_.Nom -match $n }).Count -gt 0 })
         } while ($vus.Count -lt 2 -and (Get-Date) -lt $fin)
-        if ($vus.Count -lt 2) { return "témoins relevés : $($vus -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
-        # Deux relevés de plus, le verrou tenu : aucun relevé incomplet ni hors délai
-        Start-Sleep 130
-        $mauvais = @(& $lire | Where-Object { $_.Nom -match 'relevé incomplet' })
-        if ($mauvais.Count) { return "relevé incomplet, verrou tenu : $(($mauvais | ForEach-Object Nom) -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
-        $true
-    } finally {
+        if ($vus.Count -lt 2) { "témoins relevés : $($vus -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
+        else {
+            # Deux relevés de plus, le verrou tenu : aucun relevé incomplet ni hors délai
+            Start-Sleep 130
+            $mauvais = @(& $lire | Where-Object { $_.Nom -match 'relevé incomplet' })
+            if ($mauvais.Count) { "relevé incomplet, verrou tenu : $(($mauvais | ForEach-Object Nom) -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" } else { $true }
+        }
+        $w = Temoin-Blocage $fichierTache
+        Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
+        $tombe = -not $w.Bloque
+    } catch { "exception : $($_.Exception.Message)" } finally {
         Retirer-Verrou
         foreach ($n in @($tacheVerrou) + $temoinsVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
     }
-}
+    if ($tombe) { NonExecute $titreVerrou 'le verrou ne tenait plus à la fin : contrôle sans valeur' }
+    else { Verifier $titreVerrou { @($resultatVerrou)[0] } }
 }
 Retirer-Verrou
 Schtasks-Code /Delete /F /TN $tacheVerrou | Out-Null

@@ -55,13 +55,7 @@ impl Persistance {
     }
 
     pub fn verifier(&mut self, signataire: &mut dyn FnMut(&str) -> String) -> Vec<Alerte> {
-        let mut releve: Vec<EntreeDemarrage> = Vec::new();
-        let mut vues = std::collections::HashSet::new();
-        for e in releve_complet() {
-            if vues.insert(e.cle.clone()) {
-                releve.push(e);
-            }
-        }
+        let mut releve = dedupliquer_releve(releve_complet());
         if !self.apprentissage {
             self.tours_taches += 1;
             plafonner_nouvelles_taches(&self.reference, &mut releve, MAX_NOUVELLES_TACHES, &mut self.attente_taches, self.tours_taches);
@@ -175,6 +169,9 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     }
     if e.anomalie {
         r.push(REMARQUE_ANOMALIE_TACHES.into());
+    }
+    if e.categorie == "Tâche planifiée" && e.commande == ACTION_NON_RECONNUE {
+        r.push("action non reconnue".into());
     }
     if e.categorie == "Tâche planifiée" && e.commande.contains(MARQUE_TRONQUEE) {
         r.push("commande tronquée".into());
@@ -519,6 +516,13 @@ pub(crate) const ANOMALIE_TACHES: &str = "Dossier des tâches : ";
 /// Remarque d'une telle entrée, signal fort de l'apprentissage ; en minuscules, comparée à des raisons mises en minuscules
 pub(crate) const REMARQUE_ANOMALIE_TACHES: &str = "élément anormal du dossier des tâches";
 
+/// Le fichier existe-t-il, sous son nom exact ? Un chemin ordinaire perd les points et espaces finaux : un nom hostile paraîtrait absent (relecture de #106, S1)
+pub(crate) fn existe_tel_quel(p: &Path) -> bool {
+    let mut exact = std::ffi::OsString::from(r"\\?\");
+    exact.push(p.as_os_str());
+    fs::symlink_metadata(std::path::PathBuf::from(exact)).is_ok()
+}
+
 /// Ce que dit le Planificateur d'un fichier du dossier
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Fichier {
@@ -528,15 +532,16 @@ pub(crate) enum Fichier {
     Inconnu,
 }
 
-/// Décision pure (testée) d'après l'erreur de `GetTask` : seule une panne du Planificateur laisse sans conclusion ; sinon un nom invalide choisi par un
-/// compte standard épuiserait les revérifications sans jamais être nommé (relecture de #106, R7)
+/// Décision pure (testée) d'après l'erreur de `GetTask` : seule une panne de transport vers le Planificateur laisse sans conclusion ; sinon un nom ou une
+/// tâche préparés par un compte standard épuiseraient les revérifications sans jamais être nommés (relecture de #106, R7, S3 ; audit S106-22)
 pub(crate) fn verdict_reverification(code: u32) -> Fichier {
     match code {
         // Fichier ou chemin introuvable ; nom ou paramètre invalide
         0x8007_0002 | 0x8007_0003 | 0x8007_007B | 0x8007_0057 => Fichier::SansTache,
-        // Accès refusé
-        0x8007_0005 => Fichier::NonLisible,
-        _ => Fichier::Inconnu,
+        // Transport : RPC (0x800706xx), COM (0x8001xxxx)
+        c if c & 0xFFFF_FF00 == 0x8007_0600 || c & 0xFFFF_0000 == 0x8001_0000 => Fichier::Inconnu,
+        // Accès refusé, image de tâche corrompue (SCHED_E_*), le reste
+        _ => Fichier::NonLisible,
     }
 }
 
@@ -544,7 +549,7 @@ pub(crate) fn verdict_reverification(code: u32) -> Fichier {
 /// (audit de #103, S103-02, S103-03). Aucun point d'analyse n'est suivi (jonction, lien), et le service n'y ouvre rien. `enregistree` dit si un nom
 /// relatif correspond à une tâche ; elle n'est plus appelée une fois les anomalies au plafond. Rend les
 /// anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait PER-002 à chaque relevé
-pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistree: &mut dyn FnMut(&str) -> Fichier) -> Vec<(String, String)> {
+pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistree: &mut dyn FnMut(&str, &Path) -> Fichier) -> Vec<(String, String)> {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     let longueur = racine.to_string_lossy().len();
@@ -589,7 +594,7 @@ pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistr
                 anomalies.push((nom, "lien non suivi".into()));
                 continue;
             }
-            match enregistree(&nom) {
+            match enregistree(&nom, &p) {
                 Fichier::Enregistre => {}
                 Fichier::SansTache => anomalies.push((nom, "fichier sans tâche enregistrée".into())),
                 // Enregistrée mais illisible pour SYSTEM : nommée, c'est l'anomalie la plus nette (audit de #106, S106-08, S106-15)
@@ -606,17 +611,46 @@ pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistr
     anomalies
 }
 
+/// Garde la première entrée de chaque clé. Deux tâches peuvent donner la même clé (noms à surrogates seuls, que la conversion en texte confond) : commandes
+/// différentes, une anomalie le dit, la seconde ne disparaît pas sans signal (pure, testée ; relecture de #106, S2)
+pub(crate) fn dedupliquer_releve(releve: Vec<EntreeDemarrage>) -> Vec<EntreeDemarrage> {
+    let mut vues: HashMap<String, String> = HashMap::new();
+    let mut gardees = Vec::new();
+    let mut doublons = Vec::new();
+    for e in releve {
+        match vues.get(&e.cle) {
+            None => {
+                vues.insert(e.cle.clone(), e.commande.clone());
+                gardees.push(e);
+            }
+            Some(c) if e.categorie == "Tâche planifiée" && *c != e.commande => doublons.push(e.nom),
+            Some(_) => {}
+        }
+    }
+    for nom in doublons {
+        if !vues.contains_key(&format!("Tâche planifiée|{nom} : doublon")) {
+            vues.insert(format!("Tâche planifiée|{nom} : doublon"), String::new());
+            ajouter_anomalie(&mut gardees, &format!("{nom} : doublon"), "deux tâches de même nom affiché, commandes différentes");
+        }
+    }
+    gardees
+}
+
 /// Nouvelles tâches au-delà du plafond : retirées de ce relevé, donc de la référence, et levées aux relevés suivants ; une entrée le dit (pure, testée).
 /// Par ancienneté, celles de `\\Microsoft` d'abord : l'ordre de lecture ne décide plus, et en créer de nouvelles ne retarde pas sans fin une tâche déjà vue
 /// (audit de #106, S106-13). Une tâche supprimée pendant son attente n'est jamais levée ; `attente` ne garde que les tâches encore présentes
 pub(crate) fn plafonner_nouvelles_taches(reference: &HashMap<String, EntreeDemarrage>, releve: &mut Vec<EntreeDemarrage>, max: usize, attente: &mut HashMap<String, u64>, tour: u64) {
+    // Relevé incomplet : une tâche absente n'est pas supprimée, elle garde son rang (relecture de #106, S4)
+    let complet = !releve.iter().any(|e| e.anomalie && e.nom.starts_with(PREFIXE_INCOMPLET));
     let est_nouvelle = |e: &EntreeDemarrage| e.categorie == "Tâche planifiée" && !e.anomalie && !reference.contains_key(&e.cle);
     let mut nouvelles: Vec<(bool, u64, String)> = releve.iter().filter(|e| est_nouvelle(e)).map(|e| {
         let vue = *attente.entry(e.cle.clone()).or_insert(tour);
         (!e.nom.to_lowercase().starts_with(r"\microsoft\"), vue, e.cle.clone())
     }).collect();
     let presentes: std::collections::HashSet<String> = nouvelles.iter().map(|n| n.2.clone()).collect();
-    attente.retain(|c, _| presentes.contains(c));
+    if complet {
+        attente.retain(|c, _| presentes.contains(c));
+    }
     if nouvelles.len() <= max {
         for n in &nouvelles {
             attente.remove(&n.2);
@@ -680,6 +714,9 @@ pub(crate) enum ActionTache {
     Autre,
 }
 
+/// Commande d'une tâche sans action exécutable reconnue, jugée suspecte
+const ACTION_NON_RECONNUE: &str = "(action non reconnue)";
+
 /// Dans une commande tronquée : l'empreinte de la commande entière la suit, pour qu'un changement au-delà de la borne se voie (relecture de #106, R2)
 const MARQUE_TRONQUEE: &str = " [tronquée, sha256 ";
 
@@ -706,14 +743,15 @@ fn ajouter_anomalie(l: &mut Vec<EntreeDemarrage>, nom: &str, motif: &str) {
 pub(crate) fn entrees_de_tache(l: &mut Vec<EntreeDemarrage>, chemin: &str, active: bool, actions: &[ActionTache]) {
     let base = if active { chemin.to_string() } else { format!("{chemin} : désactivée") };
     if actions.is_empty() {
-        ajouter_anomalie(l, &base, "tâche sans action lisible");
+        ajouter(l, "Tâche planifiée", &base, ACTION_NON_RECONNUE);
     }
     for (i, a) in actions.iter().enumerate() {
         let nom = if i == 0 { base.clone() } else { format!("{base} : action {}", i + 1) };
         match a {
             ActionTache::Exec(p, args) => ajouter(l, "Tâche planifiée", &nom, &commande_bornee(format!("{p} {args}").trim())),
             ActionTache::Com(id) => ajouter(l, "Tâche planifiée", &nom, &commande_com(id)),
-            ActionTache::Autre => ajouter_anomalie(l, &nom, "action non reconnue"),
+            // Vient de la tâche, donc dans la file des nouvelles tâches, pas une anomalie du service (audit de #106, S106-21)
+            ActionTache::Autre => ajouter(l, "Tâche planifiée", &nom, ACTION_NON_RECONNUE),
         }
     }
 }
@@ -902,7 +940,7 @@ fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
     if let Some(racine) = &lecture.racine {
         let dossier = format!(r"{}\Tasks", natif::dossier_systeme());
         let mut reverifications = 0usize;
-        let mut enregistree = |nom: &str| {
+        let mut enregistree = |nom: &str, chemin: &Path| {
             if lecture.vus.contains(&nom.to_lowercase()) {
                 return Fichier::Enregistre;
             }
@@ -915,7 +953,7 @@ fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
                 Ok(_) => Fichier::Enregistre,
                 // Supprimée depuis : plus de fichier, rien à dire
                 Err(e) => match verdict_reverification(e.code().0 as u32) {
-                    Fichier::SansTache if fs::symlink_metadata(format!("{dossier}{nom}")).is_err() => Fichier::Enregistre,
+                    Fichier::SansTache if !existe_tel_quel(chemin) => Fichier::Enregistre,
                     v => v,
                 },
             }
