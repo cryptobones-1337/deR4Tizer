@@ -136,6 +136,9 @@ pub struct Trace {
     pub t: u64,
     pub genre: Genre,
     pub cible: String,
+    /// Suspension : empreinte de l'exécutable juste après l'action (audit de #110, S110-05)
+    #[serde(default)]
+    pub empreinte: Option<String>,
 }
 
 /// Décision humaine contraire à une action automatique. Programme : avec l'empreinte de l'exécutable, pour qu'un fichier
@@ -238,7 +241,11 @@ impl Historique {
     }
 
     pub fn noter(&mut self, genre: Genre, cible: &str, t: u64) {
-        self.traces.push_back(Trace { t, genre, cible: cle(cible) });
+        self.noter_avec(genre, cible, None, t);
+    }
+
+    pub fn noter_avec(&mut self, genre: Genre, cible: &str, empreinte: Option<String>, t: u64) {
+        self.traces.push_back(Trace { t, genre, cible: cle(cible), empreinte });
         self.traces.retain(|x| x.t + if x.genre == Genre::Suspension { GARDE_SUSPENSION } else { JOUR } > t);
         while self.traces.len() > MAX_TRACES {
             self.traces.pop_front();
@@ -249,6 +256,12 @@ impl Historique {
     pub fn suspendu_automatiquement(&self, chemin: &str, t: u64) -> bool {
         let c = cle(chemin);
         self.traces.iter().any(|x| x.genre == Genre::Suspension && x.cible == c && x.t + GARDE_SUSPENSION > t)
+    }
+
+    /// Empreinte notée à la dernière suspension de ce programme
+    pub fn empreinte_suspension(&self, chemin: &str) -> Option<String> {
+        let c = cle(chemin);
+        self.traces.iter().rev().find(|x| x.genre == Genre::Suspension && x.cible == c).and_then(|x| x.empreinte.clone())
     }
 
     pub fn decision_humaine(&mut self, cible: &str, empreinte: Option<String>, t: u64) {
@@ -262,6 +275,13 @@ impl Historique {
     }
 }
 
+/// Sous l'un de ces dossiers, sans remontée. Testé d'abord : hors de Program Files, la signature n'est pas lue, et un
+/// programme qui ferait traîner sa lecture ne retarde pas sa suspension (audit de #110, S110-15)
+pub fn installe_dans(chemin: &str, program_files: &[String]) -> bool {
+    let c = chemin.to_lowercase();
+    !c.contains("..") && program_files.iter().any(|d| !d.is_empty() && c.starts_with(&format!("{}\\", d.trim_end_matches('\\').to_lowercase())))
+}
+
 /// Interpréteurs qu'une installation place dans Program Files : ils exécutent n'importe quel script, le seuil ne les couvre pas
 const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.exe", "perl.exe", "ruby.exe", "php.exe", "bash.exe", "sh.exe", "java.exe", "javaw.exe", "wscript.exe", "cscript.exe"];
 
@@ -269,7 +289,7 @@ const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.ex
 /// standard n'y écrit pas), et qui n'est pas un interpréteur
 pub fn genre_suspension(chemin: &str, signe: bool, program_files: &[String]) -> Genre {
     let c = chemin.to_lowercase();
-    let installe = !c.contains("..") && program_files.iter().any(|d| !d.is_empty() && c.starts_with(&format!("{}\\", d.trim_end_matches('\\').to_lowercase())));
+    let installe = installe_dans(chemin, program_files);
     let interprete = INTERPRETES.iter().any(|i| c.rsplit('\\').next() == Some(*i));
     if signe && installe && !interprete {
         Genre::Suspension
@@ -382,6 +402,18 @@ pub fn noter(genre: Genre, cible: &str) {
         e.h.noter(genre, cible, maintenant());
         enregistrer(e);
     })
+}
+
+/// Une suspension automatique a eu lieu : avec l'empreinte de l'exécutable
+pub fn noter_suspension(chemin: &str, empreinte: Option<String>) {
+    avec(|e| {
+        e.h.noter_avec(Genre::Suspension, chemin, empreinte, maintenant());
+        enregistrer(e);
+    })
+}
+
+pub fn empreinte_suspension(chemin: &str) -> Option<String> {
+    avec(|e| e.h.empreinte_suspension(chemin))
 }
 
 pub fn suspendu_automatiquement(chemin: &str) -> bool {

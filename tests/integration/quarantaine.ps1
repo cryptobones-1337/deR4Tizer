@@ -349,7 +349,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
     } else {
         Noter $titresGarde[0] 'RÉUSSI' ''
         Verifier $titresGarde[1] {
-            $r = Commande-Cible 'reprendre' $pB.Id
+            $r = Commande-Processus 'reprendre' $pB.Id
             if (-not $r.Ok) { return "reprise refusée : $($r.Message)" }
             if (& $suspendu $pB) { return 'toujours suspendu après la reprise' }
             & $arreter $pB
@@ -389,6 +389,37 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
         }
     }
     Remove-Item $exeA, $exeB -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------- phase 6, PR 6.3 : identité revalidée avant l'action
+# Programme bénin lancé par le scénario. Témoin écarté : la bonne identité suspend et reprend ; l'identité fausse ne fait rien
+Verifier 'Identité : bonne identité, suspendu puis repris ; heure de création fausse, non suspendu ; chemin faux, non arrêté ; sans identité, refusé' {
+    $pI = Start-Process ping.exe -ArgumentList '-n', '300', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        Start-Sleep 1
+        $etatI = { $x = Get-Process -Id $pI.Id -ErrorAction SilentlyContinue; if (-not $x) { 'mort' } elseif (@($x.Threads | Where-Object { $_.WaitReason -ne 'Suspended' }).Count -eq 0) { 'suspendu' } else { 'actif' } }
+        $r = Commande-Cible 'suspendre' $pI.Id
+        if ($r.Ok) { return 'commande sans identité acceptée' }
+        if ((& $etatI) -ne 'actif') { return "sans identité : $(& $etatI)" }
+        $r = Commande-Processus 'suspendre' $pI.Id
+        if (-not $r.Ok) { return "bonne identité refusée : $($r.Message)" }
+        if ((& $etatI) -ne 'suspendu') { return "bonne identité : $(& $etatI)" }
+        $r = Commande-Processus 'reprendre' $pI.Id
+        if (-not $r.Ok -or (& $etatI) -ne 'actif') { return "reprise : $($r.Message), $(& $etatI)" }
+        $bonne = [D4tIdentite]::Creation($pI.Id)
+        $r = Commande-Processus 'suspendre' $pI.Id $null ($bonne + 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "heure fausse : $($r.Message), $(& $etatI)" }
+        if ($r.Message -notmatch 'remplacé') { return "heure fausse, message : $($r.Message)" }
+        $r = Commande-Processus 'tuer' $pI.Id 'C:\Windows\System32\autre.exe'
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "chemin faux : $($r.Message), $(& $etatI)" }
+        $r = Commande-Processus 'tuerChaine' $pI.Id $null ($bonne + 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "chaîne, heure fausse : $($r.Message), $(& $etatI)" }
+        $r = Commande-Processus 'tuer' $pI.Id
+        if (-not $r.Ok) { return "arrêt refusé : $($r.Message)" }
+        Start-Sleep 1
+        if ((& $etatI) -ne 'mort') { return "bonne identité, toujours là : $(& $etatI)" }
+        $true
+    } finally { Stop-Process -Id $pI.Id -Force -ErrorAction SilentlyContinue }
 }
 
 # ---------------------------------------------------------------- quarantaine, redémarrage, restauration

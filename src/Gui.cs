@@ -95,6 +95,13 @@ namespace DeR4Tizer
         {
             if (EstAdmin())
             {
+                if (ActionSurProcessus(c))
+                {
+                    try { PreparerIdentite(c); }
+                    catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
+                    using (var fenetre = FenetreConfirmation(Decrire(c), L.En))
+                        if (fenetre.ShowDialog() != DialogResult.Yes) return;
+                }
                 Afficher(Envoyer(c));
                 return;
             }
@@ -137,6 +144,59 @@ namespace DeR4Tizer
             catch { return false; }
         }
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr OpenProcess(uint acces, bool heriter, int pid);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetProcessTimes(IntPtr h, out long creation, out long fin, out long noyau, out long utilisateur);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern bool QueryFullProcessImageName(IntPtr h, int drapeaux, StringBuilder chemin, ref int taille);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool CloseHandle(IntPtr h);
+
+        static bool ActionSurProcessus(Commande c)
+        {
+            return c.Action == "tuer" || c.Action == "tuerChaine" || c.Action == "suspendre" || c.Action == "reprendre";
+        }
+
+        // Lit l'identité du processus ici, avec les droits de l'administrateur, et remplace ce que portait la commande : ce qui
+        // est montré est ce que le service vérifie. Processus disparu : exception, la commande n'est pas envoyée
+        public static void PreparerIdentite(Commande c)
+        {
+            c.Chemin = null; c.Creation = null;
+            if (!ActionSurProcessus(c)) return;
+            int pid;
+            if (!int.TryParse(c.Cible, out pid)) throw new InvalidOperationException(L.En ? "Invalid process." : "Processus invalide.");
+            IntPtr h = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+            if (h == IntPtr.Zero) throw new InvalidOperationException(L.En ? "This process no longer exists, or cannot be read." : "Ce processus n'existe plus, ou ne peut pas être lu.");
+            try
+            {
+                long creation, fin, noyau, utilisateur;
+                var tampon = new StringBuilder(1024);
+                int taille = tampon.Capacity;
+                if (!GetProcessTimes(h, out creation, out fin, out noyau, out utilisateur) || !QueryFullProcessImageName(h, 0, tampon, ref taille))
+                    throw new InvalidOperationException(L.En ? "The identity of this process cannot be read." : "L'identité de ce processus ne peut pas être lue.");
+                c.Chemin = tampon.ToString();
+                c.Creation = creation;
+            }
+            finally { CloseHandle(h); }
+        }
+
+        // Nom, chemin, signature, heure de création, sur des lignes à part
+        static string IdentiteTexte(Commande c)
+        {
+            bool en = L.En;
+            if (string.IsNullOrEmpty(c.Chemin)) return en ? "\n(identity not read)" : "\n(identité non lue)";
+            string signature;
+            try { signature = Visible(new System.Security.Cryptography.X509Certificates.X509Certificate(c.Chemin).Subject); }
+            catch { signature = en ? "no embedded signature" : "aucune signature intégrée"; }
+            string heure;
+            try { heure = DateTime.FromFileTime(c.Creation ?? 0).ToString("yyyy-MM-dd HH:mm:ss"); } catch { heure = "?"; }
+            // Pas de Path.GetFileName : il lève une exception sur un caractère interdit, et la commande vient d'un fichier
+            return "\n" + Visible(c.Chemin.Substring(c.Chemin.LastIndexOf('\\') + 1)) + "\n" + Visible(c.Chemin)
+                + "\n" + (en ? "Signature (not verified here): " : "Signature (non vérifiée ici) : ") + signature
+                + "\n" + (en ? "Started: " : "Lancé le : ") + heure;
+        }
+
         // Ce que la commande va faire, en clair : l'instance administrateur l'affiche avant d'envoyer, pour qu'un
         // autre programme ne puisse pas faire accepter « Tout débloquer » derrière l'invite UAC habituelle
         public static string Decrire(Commande c)
@@ -154,10 +214,10 @@ namespace DeR4Tizer
                 case "toutDebloquer": return en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)";
                 case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + vc;
                 case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
-                case "tuer": return (en ? "Kill process " : "Tuer le processus ") + vc;
-                case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance");
-                case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc;
-                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc;
+                case "tuer": return (en ? "Kill process " : "Tuer le processus ") + vc + IdentiteTexte(c);
+                case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance") + IdentiteTexte(c);
+                case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc + IdentiteTexte(c);
+                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc + IdentiteTexte(c);
                 case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + vc;
                 case "incident":
                     return DecrireIncident(c, (Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>()).FirstOrDefault(x => x.Id == cible));
@@ -1683,7 +1743,7 @@ namespace DeR4Tizer
                 // Confirmation jamais tronquée : trop longue (plus de 4000 caractères ou 40 lignes), ou impossible à
                 // produire, la commande est refusée sans rien envoyer (relecture de #60 : une troncature cachait la suite)
                 string texte;
-                try { texte = Canal.Decrire(c); }
+                try { Canal.PreparerIdentite(c); texte = Canal.Decrire(c); }
                 catch (Exception e) { MessageBox.Show((L.En ? "Command refused: " : "Commande refusée : ") + e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
                 if (texte.Length > 4000 || texte.Split('\n').Length > 40)
                 {

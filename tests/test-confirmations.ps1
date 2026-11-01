@@ -45,7 +45,7 @@ try {
             $n++
             $nom = "$(if ($k.Nom) { $k.Nom } else { $k.A }) [$(if ($en) { 'en' } else { 'fr' })]"
             $c = [Activator]::CreateInstance($cmdT)
-            $c.Action = $k.A; $c.Cible = $piege; $c.Ip = $piege; $c.Valeur = $piege
+            $c.Action = $k.A; $c.Cible = $piege; $c.Ip = $piege; $c.Valeur = $piege; $c.Chemin = $piege; $c.Creation = [long]133000000000000000
             if ($k.ContainsKey('Cible')) { $c.Cible = $k.Cible }
             if ($k.ContainsKey('NomDns')) { $c.NomDns = $k.NomDns }
             if ($k.ContainsKey('Valeur')) { $c.Valeur = $k.Valeur }
@@ -72,6 +72,21 @@ try {
     $c = [Activator]::CreateInstance($cmdT); $c.Action = 'notifications'
     $c.Valeur = '{"Config":{"Ntfy":true},"NtfyUrl":"' + $long + '"}'
     $texte = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    # Phase 6, PR 6.3 : l'identité vient de la lecture de l'instance administrateur, jamais de la commande reçue
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'tuer'; $c.Cible = "$PID"; $c.Chemin = 'C:\faux.exe'; $c.Creation = [long]1
+    $canal.GetMethod('PreparerIdentite').Invoke($null, @($c)) | Out-Null
+    $lu = (Get-Process -Id $PID).Path
+    Verifier-Fenetre 'identité : chemin et heure lus, valeurs de la commande remplacées' { $c.Chemin -eq $lu -and $c.Creation -gt 1 }
+    $texteI = $canal.GetMethod('Decrire').Invoke($null, @($c))
+    Verifier-Fenetre 'identité : la confirmation montre le PID, le nom, le chemin, la signature et l''heure' { $texteI.Contains("$PID") -and $texteI.Contains($lu) -and $texteI.Contains((Split-Path $lu -Leaf)) -and $texteI -match 'Signature' -and $texteI -match '\d{4}-\d\d-\d\d \d\d:\d\d:\d\d' }
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'tuer'; $c.Cible = '4000000000'
+    $refus = try { $canal.GetMethod('PreparerIdentite').Invoke($null, @($c)); $false } catch { $true }
+    Verifier-Fenetre 'identité : PID invalide, exception, rien à envoyer' { $refus }
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'debloquer'; $c.Cible = 'x'; $c.Chemin = 'C:\faux.exe'
+    $canal.GetMethod('PreparerIdentite').Invoke($null, @($c)) | Out-Null
+    Verifier-Fenetre 'identité : autre action, aucun champ posé' { -not $c.Chemin -and -not $c.Creation }
+    $c = [Activator]::CreateInstance($cmdT); $c.Action = 'tuer'; $c.Cible = '1234'
+    Verifier-Fenetre 'identité : non lue, la confirmation le dit' { $canal.GetMethod('Decrire').Invoke($null, @($c)) -match 'non lue|not read' }
     Verifier-Fenetre 'notifications : fin de l''hôte à part' { if ($texte -match "`n\s+l'hôte se termine par : attaquant\.test(`n|$)") { $true } else { $texte } }
     $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @($texte, $false))
     try {

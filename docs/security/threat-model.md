@@ -90,6 +90,8 @@ prestataire).
 - Risques résiduels : un blocage automatique d'une adresse légitime coupe un service jusqu'à la mise à jour
   suivante de la liste.
 
+Réutilisation des PID : tuer, suspendre et reprendre exigent l'identité complète, comparée sur le handle qui sert à agir.
+
 ## Hors du modèle
 
 - Un programme sous le compte de l'utilisateur peut fermer ou suspendre l'interface : la tâche planifiée la relance (5 min au plus), SAN-010 et SAN-011 signalent une absence ou des arrêts répétés, une interface suspendue n'est pas vue ; la surveillance et la remontée continuent. La tâche, posée par SYSTEM après suppression de toute tâche du même nom, avec ses droits et relue ensuite, n'est pas modifiable par un compte standard. Un administrateur qui retire la valeur Run coupe SAN-010 et SAN-011 (il peut aussi arrêter le service).

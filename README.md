@@ -33,7 +33,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Vie privée** | Caméra, micro, outils de prise en main à distance, ports ouverts |
 | **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) |
 | **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
-| **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) ; les actions automatiques passent par une garde contre les boucles, sans jamais retenir l'alerte, et une adresse débloquée à la main n'est pas rebloquée pendant 7 jours |
+| **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) ; identité du processus revalidée juste avant l'action ; les actions automatiques passent par une garde contre les boucles, sans jamais retenir l'alerte, et une adresse débloquée à la main n'est pas rebloquée pendant 7 jours |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
 | **Suivi des incidents** | Alertes rattachées à des incidents : ouvert, pris en charge, clos avec un motif, jamais fermé automatiquement ; chronologie par incident (alertes, événements, actions de réponse, trous de collecte) ; page Incidents de l'interface |
 | **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée, si elle est configurée, retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
@@ -235,7 +235,7 @@ IDS/IPS are experimental.
 | **Privacy** | Camera, microphone, remote-control tools, open ports |
 | **Firewall** | Rule-change tracking (with the authoring program), Internet exposure (inbound packets from public IPs) |
 | **Hardening** | Baseline inspired by Intune and Microsoft, applied through local Group Policy, reversible |
-| **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet); automatic actions go through a loop guard that never holds back the alert, and an address unblocked by hand is not blocked again for 7 days |
+| **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet); process identity re-checked just before the action; automatic actions go through a loop guard that never holds back the alert, and an address unblocked by hand is not blocked again for 7 days |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Incident tracking** | Alerts attached to incidents: open, in progress, closed with a reason, never closed automatically; timeline per incident (alerts, events, response actions, collection gaps); Incidents page in the interface |
 | **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding, when configured, retried after a failure; interface restarted by a scheduled task; Health page and header indicator |

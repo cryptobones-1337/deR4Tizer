@@ -815,6 +815,9 @@ pub struct Commande {
     pub cible: Option<String>,
     pub raison: Option<String>,
     pub categories: Option<Vec<String>>,
+    /// Identité du processus visé, telle qu'elle a été montrée à l'administrateur (tuer, suspendre, reprendre, tuerChaine)
+    pub chemin: Option<String>,
+    pub creation: Option<u64>,
     /// SID du client du tube, posé par le canal après l'admission (jamais lu dans la commande) : auteur des
     /// transitions d'incident (phase 4, PR 4.2)
     #[serde(skip)]

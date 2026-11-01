@@ -271,7 +271,8 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             let creation = crate::natif::creation_processus(pid).unwrap_or(0);
             let maintenant = Instant::now();
             let deja = tentee && deja_suspendu(&mut suspendus, pid, creation, maintenant);
-            let (suspendu, retenue) = if deja { (true, None) } else if tentee { suspension_leurre(pid, &programme, &file) } else { (false, None) };
+            let attendu = crate::reponse::Attendu::Leurre { avant: crate::hygiene::heure_evenement(&xml), chemin: programme.clone() };
+            let (suspendu, retenue) = if deja { (true, None) } else if tentee { suspension_leurre(pid, &programme, &attendu, &file) } else { (false, None) };
             // Suspension automatique dans le SIEM, pour la chronologie (relecture de #94, D1)
             if tentee && !deja {
                 let message = match &retenue {
@@ -289,7 +290,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             // Après l'alerte : une écriture bloquée de l'historique ne la retient pas (audit de #110, S110-04)
             if suspendu && !deja {
                 suspendus.insert(pid, (creation, maintenant));
-                crate::politique::noter(crate::politique::Genre::Suspension, &programme);
+                crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten());
             }
             return;
         }
@@ -316,19 +317,28 @@ pub(crate) fn dire_retenue(alerte: &mut Alerte, raison: &str) {
 
 /// Signature illisible ou hors délai : non signé, donc toujours suspendu
 fn genre_leurre(programme: &str) -> crate::politique::Genre {
-    let signe = matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)));
     let dossiers: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"].iter().filter_map(|v| std::env::var(v).ok()).collect();
+    if !crate::politique::installe_dans(programme, &dossiers) {
+        return crate::politique::Genre::SuspensionSansSeuil;
+    }
+    let signe = matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)));
     crate::politique::genre_suspension(programme, signe, &dossiers)
 }
 
 /// La politique et la garde pour un programme qui touche un leurre : (suspendu, raison de la retenue). Hors du cycle : la
 /// suspension n'attend pas le moniteur
-fn suspension_leurre(pid: u32, programme: &str, file: &Mutex<Vec<Alerte>>) -> (bool, Option<String>) {
+fn suspension_leurre(pid: u32, programme: &str, attendu: &crate::reponse::Attendu, file: &Mutex<Vec<Alerte>>) -> (bool, Option<String>) {
     use crate::politique::{self, Action, Contexte, Decision, Declencheur, Passage, SourceAuto};
     let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), rancongiciel: true, ..Default::default() };
     match politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte) {
         Decision::Autorisee(a) => match politique::passer(genre_leurre(programme), programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
-            Passage::Passe => (crate::execution::suspendre(&a, pid, true).is_ok(), None),
+            Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {
+                Ok(()) => (true, None),
+                Err(e) => {
+                    commun::journal(&format!("suspension de {programme} (PID {pid}) : {e}"));
+                    (false, None)
+                }
+            },
             Passage::Retenue { raison, alerte } => {
                 if let Some(t) = alerte {
                     file.lock().unwrap().push(politique::alerte_garde(&t));

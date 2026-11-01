@@ -221,9 +221,10 @@ fn main() {
             politique::Decision::Autorisee(a) => a,
             d => panic!("{d:?}"),
         };
-        println!("suspendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Suspendre), pid, true));
-        println!("reprendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Reprendre), pid, false));
-        println!("tuer {pid} : {:?}", execution::tuer(&humain(politique::Action::Tuer), pid));
+        let attendu = reponse::Attendu::Exacte { creation: natif::creation_processus(pid).unwrap_or(0), chemin: natif::chemin_processus(pid) };
+        println!("suspendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Suspendre), pid, &attendu, true));
+        println!("reprendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Reprendre), pid, &attendu, false));
+        println!("tuer {pid} : {:?}", execution::tuer(&humain(politique::Action::Tuer), pid, &attendu));
         println!("terminé : {:?}", enfant.try_wait().map(|s| s.is_some()));
         // Quarantaine puis restauration
         let q = reponse::mettre_en_quarantaine(&f.to_string_lossy(), "test");

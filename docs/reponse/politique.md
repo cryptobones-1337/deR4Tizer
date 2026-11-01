@@ -40,6 +40,10 @@ Le blocage d'une adresse, la suspension, la reprise, l'arrêt d'un processus, l'
 quarantaine, la restauration et le déblocage sont manuels et n'y passent pas. Une action automatique n'est permise que
 dans les cas écrits ici.
 
+**Identité revalidée.** Tuer, suspendre et reprendre portent sur un processus identifié par son PID, son heure de création et
+son chemin. L'instance administrateur les lit, les montre, et le service les compare juste avant d'agir, sur le même handle ;
+sinon, aucune action. Une commande sans identité est refusée. Pour un leurre : même programme, créé avant l'événement.
+
 La garde ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais l'alerte : seule l'action
 est retenue. Un administrateur peut toujours agir à la main.
 
@@ -104,4 +108,3 @@ Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR
 |---|---|---|
 | L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Phase 6. |
 | Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Phase 6. |
-| Revalidation de l'identité du processus juste avant l'action : non systématique. | `reponse.rs`, `moniteur.rs` | Phase 6. |

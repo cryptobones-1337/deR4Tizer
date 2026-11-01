@@ -2228,7 +2228,7 @@ fn taches_releve_bloque_apres_30_min() {
     assert!(n.contains("signataire_a_echeance(chemin).ok().flatten()"), "lecture sans échéance");
     assert!(s.contains("blocage::empreinte_hosts_lue().and_then("), "S104-02 : hosts sans échéance");
     assert!(include_str!("hygiene.rs").contains("lecture_fichier(\"leurre\""), "S104-02 : leurres sans échéance");
-    assert!(include_str!("reponse.rs").contains("garde_critique(natif::binaire_windows_lu(&chemin))"), "S104-01 : garde sans décision testée");
+    assert!(include_str!("reponse.rs").contains("garde_critique(natif::binaire_windows_lu(chemin))"), "S104-01 : garde sans décision testée");
     let a = include_str!("apprentissage.rs");
     assert!(a.contains("let Ok(lue) = crate::natif::signataire_a_echeance(chemin) else { return \"non signé\".into() };"), "D2 : hors délai en cache");
     assert!(include_str!("vol_donnees.rs").contains("let Ok(s) = crate::natif::signataire_a_echeance(chemin) else { return None };"), "D2 : hors délai en cache");
@@ -3021,9 +3021,9 @@ fn phase1_commandes_de_l_interface_acceptees() {
         r#"{"Action":"toutDebloquer"}"#.to_string(),
         r#"{"Action":"notifications","Valeur":"{\"Config\":null}"}"#.to_string(),
         r#"{"Action":"testerNotifications","Valeur":"{}"}"#.to_string(),
-        r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x"}"#.to_string(),
-        r#"{"Action":"tuerChaine","Cible":"4242","Raison":"action manuelle sur x"}"#.to_string(),
-        r#"{"Action":"suspendre","Cible":"4242"}"#.to_string(), r#"{"Action":"reprendre","Cible":"4242"}"#.to_string(),
+        r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x","Chemin":"C:\\P.exe","Creation":133000000000000000}"#.to_string(),
+        r#"{"Action":"tuerChaine","Cible":"4242","Raison":"action manuelle sur x","Chemin":"C:\\P.exe","Creation":133000000000000000}"#.to_string(),
+        r#"{"Action":"suspendre","Cible":"4242","Chemin":"C:\\P.exe","Creation":133000000000000000}"#.to_string(), r#"{"Action":"reprendre","Cible":"4242","Chemin":"C:\\P.exe","Creation":133000000000000000}"#.to_string(),
         r#"{"Action":"quarantaine","Cible":"C:\\Users\\x\\Downloads\\outil.exe","Raison":"action manuelle sur outil"}"#.to_string(),
         r#"{"Action":"isolerProgramme","Cible":"D:\\Jeux\\jeu.exe","Raison":"action manuelle sur jeu"}"#.to_string(),
         r#"{"Action":"verification"}"#.to_string(),
@@ -3080,7 +3080,7 @@ fn phase1_champs_invalides_refuses() {
         assert!(valider(&commande_json(&j)).is_err(), "{pourquoi} : devait être refusé ({})", j.chars().take(120).collect::<String>());
     }
     // Raison : normalisée, jamais une cause de refus (un programme nommé avec une fin de ligne reste blocable)
-    let mut c = commande_json(r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x\r\nfaux"}"#);
+    let mut c = commande_json(r#"{"Action":"tuer","Cible":"4242","Raison":"action manuelle sur x\r\nfaux","Chemin":"C:\\P.exe","Creation":133000000000000000}"#);
     crate::validation::normaliser(&mut c);
     assert_eq!(c.raison.as_deref(), Some("action manuelle sur x  faux"));
     assert_eq!(valider(&c), Ok(()));
@@ -4334,7 +4334,7 @@ fn reponse_journalisee_dans_le_siem() {
     assert!(m.contains("crate::siem::reponse(\"debloquer\", &c, r.ok, &r.message, &format!(\"automatique : {pourquoi}\"))"));
     // Suspension automatique d'un programme qui touche un leurre (relecture de #94, D1) : journalisée à chaque tentative
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
-    assert!(v.contains("if tentee { suspension_leurre(pid, &programme, &file) }"));
+    assert!(v.contains("if tentee { suspension_leurre(pid, &programme, &attendu, &file) }"));
     assert!(v.contains("crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu, &message,"));
 }
 
@@ -5764,12 +5764,24 @@ fn structure_aucun_appel_direct_aux_actions() {
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
     assert!(v.contains("politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte)"), "leurre");
     assert!(v.contains("politique::passer(genre_leurre(programme), programme,"), "leurre : garde");
+    let (chemin_lu, signature_lue) = (v.find("if !crate::politique::installe_dans(programme, &dossiers)").unwrap(), v.find("crate::natif::signataire_a_echeance(programme), Ok(Some(_))").unwrap());
+    assert!(chemin_lu < signature_lue, "S110-15");
     assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
     assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
-    assert!(v.contains("crate::politique::noter(crate::politique::Genre::Suspension, &programme);"), "leurre : trace");
-    let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter(").unwrap());
+    assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten());"), "leurre : trace et empreinte");
+    let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter_suspension(").unwrap());
     assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
     assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
+    assert!(v.contains("Attendu::Leurre { avant: crate::hygiene::heure_evenement(&xml), chemin: programme.clone() }"), "6.3 : identité du leurre");
+    assert!(m.contains("reponse::Attendu::Exacte { creation: c.creation.unwrap_or(0), chemin: chemin.clone() }"), "6.3 : identité de la commande");
+    assert!(m.contains("match politique::empreinte_suspension(&chemin) {"), "S110-05");
+    assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), &natif::chemin_processus(pid)) {"), "6.3 : racine de la chaîne");
+    assert!(m.contains("filter(|(p, i)| execution::tuer(&a, *p, i).is_ok())"), "6.3 : descendants, identité relevée à la décision");
+    assert!(v.contains("Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {"), "6.3 : le leurre passe l'identité");
+    let rp = include_str!("reponse.rs").replace("\r\n", "\n");
+    assert!(rp.contains("agir(pid, attendu, PROCESS_TERMINATE, true,") && rp.contains("agir(pid, attendu, PROCESS_SUSPEND_RESUME, suspendre,"), "6.3 : action par le handle, contrôle critique pour tuer et suspendre");
+    assert!(rp.contains("if !meme_processus(attendu, p.creation(), &chemin) {\n        return Err(IDENTITE_CHANGEE.into());"), "6.3 : comparaison sur le handle, échec fermé");
+    assert!(!rp.contains("OpenProcess(PROCESS_TERMINATE") && !rp.contains("OpenProcess(PROCESS_SUSPEND_RESUME"), "6.3 : aucune seconde ouverture");
     assert!(v.contains("dire_retenue(&mut alerte, &r);"), "F6 : l'alerte dit la retenue");
     // Relecture de #110, P3 : un chemin humain de plus se voit ici
     let humains: usize = [("moniteur", m.as_str()), ("vol_donnees", v.as_str())].iter().map(|(_, s)| s.matches("Declencheur::Humain").count()).sum();
@@ -5900,4 +5912,91 @@ fn garde_empreinte_lue_seulement_si_utile() {
     assert!(u(&h, r"c:\p.exe", S0 + 1));
     assert!(!u(&h, "203.0.113.5", S0 + 1), "adresse : pas d'empreinte");
     assert!(!u(&h, r"C:\P.exe", S0 + 604_800), "échue");
+}
+
+// ------------------------------------------------------------ phase 6, PR 6.3 : identité revalidée
+
+#[test]
+fn identite_heure_de_creation_differente_refusee() {
+    use crate::reponse::{meme_processus as m, Attendu::*};
+    let a = Exacte { creation: 100, chemin: r"C:\P.exe".into() };
+    assert!(m(&a, Some(100), r"c:\p.EXE"), "sans la casse");
+    assert!(!m(&a, Some(101), r"C:\P.exe"), "PID réutilisé");
+    assert!(!m(&a, Some(99), r"C:\P.exe"));
+    assert!(!m(&a, None, r"C:\P.exe"), "heure illisible");
+}
+
+#[test]
+fn identite_chemin_different_refuse() {
+    use crate::reponse::{meme_processus as m, Attendu::*};
+    assert!(!m(&Exacte { creation: 100, chemin: r"C:\P.exe".into() }, Some(100), r"C:\Q.exe"));
+    assert!(!m(&Exacte { creation: 100, chemin: String::new() }, Some(100), ""), "chemin vide");
+}
+
+#[test]
+fn identite_leurre_processus_cree_apres_l_evenement_refuse() {
+    use crate::reponse::{meme_processus as m, Attendu::*};
+    let a = Leurre { avant: Some(100), chemin: r"C:\P.exe".into() };
+    assert!(m(&a, Some(100), r"C:\P.exe"));
+    assert!(m(&a, Some(50), r"c:\p.exe"));
+    assert!(!m(&a, Some(101), r"C:\P.exe"), "créé après l'événement");
+    assert!(!m(&a, Some(50), r"C:\Q.exe"), "un autre programme");
+    assert!(!m(&a, None, r"C:\P.exe"));
+    assert!(m(&Leurre { avant: None, chemin: r"C:\P.exe".into() }, Some(u64::MAX), r"C:\P.exe"), "heure de l'événement illisible : le chemin seul");
+    assert!(!m(&Leurre { avant: None, chemin: r"C:\P.exe".into() }, Some(1), r"C:\Q.exe"));
+}
+
+#[test]
+fn identite_heure_evenement() {
+    use crate::hygiene::heure_evenement as h;
+    let z = crate::commun::secondes_utc("2027-01-15T08:00:00Z").unwrap() as u64;
+    let exacte = (z + 1 + 11_644_473_600) * 10_000_000;
+    assert_eq!(h("<TimeCreated SystemTime='2027-01-15T08:00:00.1234567Z'/>"), Some(exacte));
+    assert_eq!(h("<TimeCreated SystemTime=\"2027-01-15T08:00:00.1234567Z\"/>"), Some(exacte), "guillemets doubles");
+    assert_eq!(h("<TimeCreated SystemTime='2027-01-15T08:00:00Z'/>"), Some(exacte));
+    assert_eq!(h("<Event/>"), None);
+    assert_eq!(h("<TimeCreated SystemTime='illisible'/>"), None);
+    assert_eq!(h("<TimeCreated SystemTime='"), None, "fin de texte");
+    torturer_texte("<TimeCreated SystemTime='2027-01-15T08:00:00.1234567Z'/>", &mut |t| { let _ = h(t); });
+}
+
+#[test]
+fn identite_exigee_par_la_validation() {
+    use crate::commun::Commande;
+    use crate::validation::valider as v;
+    for action in ["tuer", "suspendre", "reprendre", "tuerChaine"] {
+        let c = |chemin: Option<&str>, creation: Option<u64>| Commande { action: Some(action.into()), cible: Some("1234".into()), chemin: chemin.map(String::from), creation, ..Default::default() };
+        assert!(v(&c(Some(r"C:\P.exe"), Some(5))).is_ok(), "{action}");
+        assert!(v(&c(None, Some(5))).is_err(), "{action} : sans chemin");
+        assert!(v(&c(Some(r"C:\P.exe"), None)).is_err(), "{action} : sans heure");
+        assert!(v(&c(Some(r"C:\P.exe"), Some(0))).is_err(), "{action} : heure nulle");
+        assert!(v(&c(Some("a\nb"), Some(5))).is_err(), "{action} : caractère de contrôle");
+        assert!(v(&c(Some(&"x".repeat(1025)), Some(5))).is_err(), "{action} : trop long");
+        assert!(v(&c(Some(&"é".repeat(1024)), Some(5))).is_ok(), "{action} : compté en caractères");
+    }
+}
+
+#[test]
+fn identite_empreinte_notee_a_la_suspension() {
+    use crate::politique::{Genre::*, Historique};
+    let mut h = Historique::default();
+    assert_eq!(h.empreinte_suspension(r"C:\P.exe"), None);
+    h.noter_avec(Suspension, r"C:\P.exe", Some("aa".into()), S0);
+    h.noter_avec(Suspension, r"C:\P.exe", Some("bb".into()), S0 + 1);
+    h.noter_avec(BlocageListe, r"C:\P.exe", Some("cc".into()), S0 + 2);
+    assert_eq!(h.empreinte_suspension(r"c:\p.exe"), Some("bb".into()), "la dernière suspension, pas un autre genre");
+    assert_eq!(h.empreinte_suspension(r"C:\Q.exe"), None);
+    let lu: Historique = serde_json::from_str(r#"{"Traces":[{"T":1,"Genre":"Suspension","Cible":"c"}]}"#).unwrap();
+    assert_eq!(lu.traces[0].empreinte, None, "historique d'avant cette version");
+}
+
+#[test]
+fn garde_signature_lue_seulement_dans_program_files() {
+    use crate::politique::installe_dans as i;
+    let d = [r"C:\Program Files".to_string()];
+    assert!(i(r"c:\program files\a.exe", &d));
+    assert!(!i(r"C:\Users\a.exe", &d));
+    assert!(!i(r"C:\Program Files\..\a.exe", &d));
+    assert!(!i(r"C:\Program Files Evil\a.exe", &d));
+    assert!(!i(r"\\s\a.exe", &[String::new()]));
 }
