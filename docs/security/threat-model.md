@@ -96,5 +96,9 @@ prestataire).
 - Un attaquant déjà administrateur ou SYSTEM : il peut arrêter le service, modifier ses fichiers et ses droits. Depuis la phase 4 (PR 4.4b), quand la remontée est configurée, le battement quotidien cesse : le prestataire peut voir
   qu'un poste ne répond plus, sans savoir pourquoi (service arrêté, poste éteint, réseau coupé).
   deR4Tizer complète Microsoft Defender, il ne le remplace pas.
+- La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Le SIEM (`siem\`, 30 jours,
+  1 Go au plus) et les journaux restent sur la machine surveillée : un administrateur peut les effacer, et ce qui a plus
+  de 30 jours n'y est plus. Seule une copie déjà partie ailleurs y échappe. L'export syslog, s'il est configuré, en fait
+  une, mais en clair (sans TLS). Aucun export chiffré n'existe.
 - L'injection de code dans un processus légitime (le vol de données est détecté par l'identité du programme qui
   lit les fichiers).
