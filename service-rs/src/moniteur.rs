@@ -1329,7 +1329,8 @@ En-tête : Authorization: Bearer {j}"))
         let maintenant = commun::maintenant();
         let a_retirer = {
             let menaces = self.partage.menaces.read().unwrap();
-            let chargees = menaces.infos.total_ip + menaces.infos.total_reseaux > 0;
+            // Une liste du niveau 3 non lue ou rejetée ne dit rien de ses adresses : ses blocages attendent leur échéance (audit de #109, S109-02)
+            let chargees = menaces.niveau3_complet;
             blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.permet_blocage_auto(ip))
         };
         for (t, c, pourquoi) in a_retirer {
@@ -1781,13 +1782,13 @@ pub fn blocage_automatique(menace: &crate::menaces::Correspondance, actif: bool,
     menace.auto && actif && !deja_bloquee && !echec_protection
 }
 
-/// Blocages automatiques à lever : durée écoulée, ou adresse sortie des listes (si les listes sont chargées)
+/// Blocages automatiques à lever : durée écoulée, ou adresse hors des listes du niveau 3 (si elles sont toutes chargées)
 pub fn blocages_a_lever(blocages: &[Blocage], maintenant: &str, listes_chargees: bool, listee: impl Fn(&str) -> bool) -> Vec<(String, String, &'static str)> {
     blocages.iter().filter_map(|b| {
         if !b.expire.is_empty() && b.expire.as_str() < maintenant {
             Some((b.type_.clone(), b.cible.clone(), "durée écoulée"))
         } else if listes_chargees && b.raison.starts_with("blocage automatique") && !listee(&b.cible) {
-            Some((b.type_.clone(), b.cible.clone(), "adresse retirée des listes de menaces"))
+            Some((b.type_.clone(), b.cible.clone(), "adresse hors des listes du niveau 3"))
         } else {
             None
         }

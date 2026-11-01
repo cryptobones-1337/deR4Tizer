@@ -169,7 +169,7 @@ pub struct InfosMenaces {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct Config {
-    /// Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
+    /// Bloque au pare-feu, dès qu'une connexion est vue, les IP de Spamhaus DROP et de Feodo Tracker
     pub blocage_auto_menaces: bool,
     /// Suspend aussitôt le programme qui modifie un fichier leurre (rançongiciel probable)
     pub reponse_auto_rancongiciel: bool,

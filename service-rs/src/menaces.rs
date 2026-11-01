@@ -93,6 +93,8 @@ pub struct Menaces {
     reseaux6: Vec<Reseau6>,
     domaines: Vec<(String, Vec<u64>)>,
     pub infos: InfosMenaces,
+    /// Toutes les sources du niveau 3 ont chargé des entrées
+    pub niveau3_complet: bool,
 }
 
 fn dossier() -> PathBuf {
@@ -298,7 +300,7 @@ impl Menaces {
                 if couverture > 1 << 27 {
                     // Plus de 134 millions d'adresses : liste corrompue ou détournée, jamais appliquée
                     plages.truncate(debut);
-                    m.ip4.retain(|_, c| c.source != s.nom);
+                    m.retirer_source(s.nom);
                     commun::journal(&format!("liste {} rejetée : elle couvrirait {couverture} adresses", s.nom));
                     rejetee = true;
                     0
@@ -321,11 +323,19 @@ impl Menaces {
 
         infos.total_reseaux = tampons.auto.len() + tampons.hautes.len() + tampons.reputation.len() + m.reseaux6.len();
         m.appliquer(tampons);
+        m.niveau3_complet = niveau3_complet(&infos.sources);
         infos.total_ip = m.ip4.len() + m.ip6.len();
         infos.total_domaines = m.domaines.iter().map(|(_, t)| t.len()).sum();
         let _ = commun::ecrire("menaces.json", &infos);
         m.infos = infos;
         m
+    }
+
+    /// Les plages de la source sont retirées à part, par l'appelant
+    fn retirer_source(&mut self, nom: &str) {
+        self.ip4.retain(|_, c| c.source != nom);
+        self.ip6.retain(|_, c| c.source != nom);
+        self.reseaux6.retain(|r| r.source != nom);
     }
 
     fn appliquer(&mut self, t: Tampons) {
@@ -382,6 +392,11 @@ impl Menaces {
             },
         }
     }
+}
+
+/// Décision pure : chaque source du niveau 3 a chargé au moins une entrée (une liste non lue ou rejetée en a 0)
+fn niveau3_complet(sources: &[commun::SourceMenace]) -> bool {
+    SOURCES.iter().filter(|s| s.auto).all(|s| sources.iter().any(|i| i.nom == s.nom && i.entrees > 0))
 }
 
 /// Garde le rang le plus fort pour une adresse exacte présente dans plusieurs listes
@@ -502,6 +517,18 @@ pub(crate) fn menaces_sources_test(lignes: &[(&str, &str)]) -> Menaces {
     }
     m.appliquer(t);
     m
+}
+
+/// `niveau3_complet` pour des sources (nom, entrées)
+#[cfg(test)]
+pub(crate) fn niveau3_complet_test(sources: &[(&str, usize)]) -> bool {
+    let l: Vec<commun::SourceMenace> = sources.iter().map(|(n, e)| commun::SourceMenace { nom: n.to_string(), entrees: *e, ..Default::default() }).collect();
+    niveau3_complet(&l)
+}
+
+#[cfg(test)]
+pub(crate) fn retirer_source_test(m: &mut Menaces, nom: &str) {
+    m.retirer_source(nom);
 }
 
 #[cfg(test)]

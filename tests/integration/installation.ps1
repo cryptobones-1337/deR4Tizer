@@ -1056,27 +1056,35 @@ $arret = {
 }
 $alertesN3 = { Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
 $blocagesN3 = { @(Get-Content (Join-Path $script:Donnees 'blocages.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object Cible) }
+$regleN3 = { param($ip) @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match ('(?<![\d.])' + [regex]::Escape($ip) + '(?!\d)') }).Count }
+# Service arrêté. config.json reste en UTF-8 : il peut porter des accents
+$poserReglage = { param([bool]$Valeur)
+    $f = Join-Path $script:Donnees 'config.json'
+    $o = if (Test-Path $f) { Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json } else { [pscustomobject]@{} }
+    $o | Add-Member -Force -NotePropertyName ListesRestreintes -NotePropertyValue $Valeur
+    [IO.File]::WriteAllText($f, ($o | ConvertTo-Json -Depth 8 -Compress), (New-Object Text.UTF8Encoding $false))
+    icacls $f /setowner '*S-1-5-32-544' /Q | Out-Null
+}
 $prisesN3 = @()
 $mesConnexions = { param($ips) foreach ($ip in $ips) { $c = New-Object Net.Sockets.TcpClient; $null = $c.BeginConnect($ip, 443, $null, $null); $c } }
 $cibles = @{ Feodo = '203.0.113.91'; Spam = '198.51.100.5'; Hol = '203.0.113.90'; HolPlage = '203.0.113.130'; Deux = '203.0.113.92' }
 try {
     if (-not (& $arret)) { throw 'service non arrêté en 45 s' }
-    $config = Join-Path $script:Donnees 'config.json'
-    $o = if (Test-Path $config) { Get-Content $config -Raw -Encoding UTF8 | ConvertFrom-Json } else { [pscustomobject]@{} }
-    $o | Add-Member -Force -NotePropertyName ListesRestreintes -NotePropertyValue $true
-    Poser-EnAdministrateur 'config.json' ($o | ConvertTo-Json -Depth 8 -Compress)
+    & $poserReglage $true
     $null = New-Item -ItemType Directory -Force -Path $dossierListes
     # Une adresse des deux listes est écrite dans le fichier chargé le premier, puis dans l'autre : FireHOL précède Feodo dans la table des sources
     Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' "$($cibles.Feodo)`n$($cibles.Deux)`n"
     Poser-EnAdministrateur 'menaces\FireHOL_niveau_1.txt' "$($cibles.Hol)`n203.0.113.128/25`n$($cibles.Deux)`n"
     Poser-EnAdministrateur 'menaces\Spamhaus_DROP_IPv4_.txt' "{`"cidr`":`"198.51.100.0/24`",`"sblid`":`"SBL0`"}`n"
+    # Toutes les sources du niveau 3 chargées : sinon aucune levée « hors liste » (S109-02)
+    Poser-EnAdministrateur 'menaces\Spamhaus_DROP_IPv6_.txt' "{`"cidr`":`"2001:db8:ffff::/48`",`"sblid`":`"SBL1`"}`n"
     Service-Relance
     # Témoin : les listes sont bien celles du scénario
     $fin = (Get-Date).AddSeconds(60); $sources = @()
     do {
         Start-Sleep 3
         $sources = @(Get-Content (Join-Path $script:Donnees 'menaces.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object Sources)
-        $hol = @($sources | Where-Object { $_.Nom -eq 'FireHOL niveau 1' -and $_.Entrees -ge 3 }).Count
+        $hol = @($sources | Where-Object { ($_.Nom -eq 'FireHOL niveau 1' -and $_.Entrees -ge 3) -or ($_.Nom -eq 'Feodo Tracker (C2 botnets)' -and $_.Entrees -ge 2) -or ($_.Nom -like 'Spamhaus DROP*' -and $_.Entrees -ge 1) }).Count -eq 4
     } while (-not $hol -and (Get-Date) -lt $fin)
     if (-not $hol) {
         NonExecute $titreN3 "listes du scénario non chargées : $(($sources | ForEach-Object { "$($_.Nom)=$($_.Entrees)" }) -join ', ')"
@@ -1097,25 +1105,30 @@ try {
             Verifier $titreN3 {
                 if ($vues.Count -lt $cibles.Count) { return "alertes pour $($vues -join ', ') seulement, sur $($cibles.Count)" }
                 $b = & $blocagesN3
-                foreach ($n in 'Feodo', 'Spam', 'Deux') { if ($cibles[$n] -notin $b) { return "$n ($($cibles[$n])) non bloquée : $($b -join ', ')" } }
-                foreach ($n in 'Hol', 'HolPlage') { if ($cibles[$n] -in $b) { return "$n ($($cibles[$n])) bloquée alors qu'elle n'est que dans FireHOL" } }
+                foreach ($n in 'Feodo', 'Spam', 'Deux') {
+                    if ($cibles[$n] -notin $b) { return "$n ($($cibles[$n])) non bloquée : $($b -join ', ')" }
+                    if (-not (& $regleN3 $cibles[$n])) { return "$n ($($cibles[$n])) : aucune règle de pare-feu" }
+                }
                 foreach ($n in 'Hol', 'HolPlage') {
-                    $r = @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match [regex]::Escape($cibles[$n]) })
-                    if ($r.Count) { return "règle de pare-feu présente pour $n" }
+                    if ($cibles[$n] -in $b) { return "$n ($($cibles[$n])) bloquée alors qu'elle n'est que dans FireHOL" }
+                    if (& $regleN3 $cibles[$n]) { return "règle de pare-feu présente pour $n" }
                 }
                 $true
             }
             # Feodo retire l'adresse, FireHOL la porte encore : le blocage ne tient plus à rien de permis
-            if (& $arret) {
+            $departN3 = ($cibles.Feodo -in (& $blocagesN3)) -and (& $regleN3 $cibles.Feodo)
+            if (-not $departN3) {
+                NonExecute $titreLevee 'blocage de départ absent : rien à lever'
+            } elseif (& $arret) {
                 Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' "$($cibles.Deux)`n"
                 Poser-EnAdministrateur 'menaces\FireHOL_niveau_1.txt' "$($cibles.Hol)`n203.0.113.128/25`n$($cibles.Deux)`n$($cibles.Feodo)`n"
                 Service-Relance
                 Verifier $titreLevee {
-                    if ($cibles.Feodo -notin (& $blocagesN3)) { return 'blocage de départ absent : levé avant le rechargement ?' }
                     $fin = (Get-Date).AddSeconds(120)
                     do { Start-Sleep 5; $b = & $blocagesN3 } while ($cibles.Feodo -in $b -and (Get-Date) -lt $fin)
                     if ($cibles.Feodo -in $b) { return "toujours bloquée après 120 s : $($b -join ', ')" }
-                    if ($cibles.Deux -notin $b) { return "l'adresse encore dans Feodo a été levée aussi : $($b -join ', ')" }
+                    if (& $regleN3 $cibles.Feodo) { return 'blocage levé, règle de pare-feu restée' }
+                    if ($cibles.Deux -notin $b -or -not (& $regleN3 $cibles.Deux)) { return "l'adresse encore dans Feodo a été levée aussi : $($b -join ', ')" }
                     $true
                 }
             } else {
@@ -1124,17 +1137,19 @@ try {
         }
     }
 } catch {
-    Verifier $titreN3 { "exception : $($_.Exception.Message)" }
+    $messageN3 = $_.Exception.Message
+    Verifier "$titreN3 (exception)" { "exception : $messageN3" }
 } finally {
-    foreach ($c in $prisesN3) { $c.Close() }
-    if (& $arret) {
-        foreach ($n in 'Feodo_Tracker_C2_botnets_.txt', 'FireHOL_niveau_1.txt', 'Spamhaus_DROP_IPv4_.txt') { Remove-Item (Join-Path $dossierListes $n) -Force -ErrorAction SilentlyContinue }
-        $o = Get-Content (Join-Path $script:Donnees 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $o | Add-Member -Force -NotePropertyName ListesRestreintes -NotePropertyValue $false
-        Poser-EnAdministrateur 'config.json' ($o | ConvertTo-Json -Depth 8 -Compress)
-    }
-    Service-Relance
-    foreach ($ip in $cibles.Values) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
+    # Le nettoyage ne doit jamais arrêter les contrôles qui suivent
+    try {
+        foreach ($c in $prisesN3) { $c.Close() }
+        if (& $arret) {
+            foreach ($n in 'Feodo_Tracker_C2_botnets_.txt', 'FireHOL_niveau_1.txt', 'Spamhaus_DROP_IPv4_.txt', 'Spamhaus_DROP_IPv6_.txt') { Remove-Item (Join-Path $dossierListes $n) -Force -ErrorAction SilentlyContinue }
+            & $poserReglage $false
+        }
+        Service-Relance
+        foreach ($ip in $cibles.Values) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
+    } catch { Write-Host "  nettoyage du niveau 3 : $($_.Exception.Message)" }
 }
 
 # ---------------------------------------------------------------- désinstallation complète

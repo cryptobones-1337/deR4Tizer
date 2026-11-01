@@ -5500,3 +5500,42 @@ fn politique_blocage_leve_si_seule_une_autre_liste_reste() {
     assert_eq!(leve(&listes(&[("203.0.113.5", "FireHOL niveau 1")])), 1, "seule une liste restreinte la porte encore");
     assert_eq!(leve(&listes(&[("203.0.113.5", "FireHOL niveau 1"), ("203.0.113.5", "Feodo Tracker (C2 botnets)")])), 0, "dans les deux");
 }
+
+/// Audit de #109, S109-02 : une liste du niveau 3 absente ou rejetée ne fait pas lever les blocages des autres
+#[test]
+fn politique_levee_seulement_si_le_niveau_3_est_charge() {
+    use crate::menaces::niveau3_complet_test as complet;
+    const V4: &str = "Spamhaus DROP (IPv4)";
+    const V6: &str = "Spamhaus DROP (IPv6)";
+    const FEODO: &str = "Feodo Tracker (C2 botnets)";
+    assert!(complet(&[(V4, 1), (V6, 1), (FEODO, 1)]));
+    assert!(!complet(&[(V4, 1), (V6, 1), (FEODO, 0)]), "rejetée ou illisible : 0 entrée");
+    assert!(!complet(&[(V4, 0), (V6, 1), (FEODO, 1)]));
+    assert!(!complet(&[(V4, 1), (FEODO, 1)]), "absente");
+    assert!(!complet(&[(V4, 1), (V6, 1), (FEODO, 0), ("FireHOL niveau 1", 9)]), "une autre liste ne la remplace pas");
+    assert!(!complet(&[]));
+    assert!(!crate::menaces::Menaces::default().niveau3_complet, "avant tout chargement");
+    // L'appel en production, que seul le scénario de la VM exerce sinon (relecture de #109, E3)
+    let s = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let a = s.find("fn expirer_blocages").expect("expirer_blocages");
+    let corps = &s[a..a + s[a..].find("\n    }\n").expect("fin")];
+    assert!(corps.contains("menaces.niveau3_complet"), "listes chargées");
+    assert!(corps.contains("|ip| menaces.permet_blocage_auto(ip)"), "le niveau 3 seul garde un blocage");
+    assert!(!corps.contains("is_some"));
+}
+
+/// Audit de #109, S109-01 : une liste rejetée ne laisse aucune entrée, IPv6 comprise
+#[test]
+fn politique_liste_rejetee_retiree_entierement() {
+    use crate::menaces::{menaces_sources_test as listes, retirer_source_test as retirer};
+    const FEODO: &str = "Feodo Tracker (C2 botnets)";
+    const V6: &str = "Spamhaus DROP (IPv6)";
+    let mut m = listes(&[("203.0.113.5", FEODO), ("2001:db8::5", FEODO), ("2001:db8:1::/48", FEODO), ("203.0.113.6", V6), ("2001:db8::6", V6), ("2001:db8:2::/48", V6)]);
+    retirer(&mut m, FEODO);
+    for ip in ["203.0.113.5", "2001:db8::5", "2001:db8:1::7"] {
+        assert!(m.chercher_ip(ip).is_none(), "{ip} retirée avec sa source");
+    }
+    for ip in ["203.0.113.6", "2001:db8::6", "2001:db8:2::7"] {
+        assert!(m.permet_blocage_auto(ip), "{ip} : l'autre source reste");
+    }
+}

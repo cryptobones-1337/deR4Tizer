@@ -17,7 +17,7 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 
 1. **Blocage des adresses IP de Spamhaus DROP et de Feodo Tracker** au pare-feu (listes de confiance haute,
    libres d'usage), identifiées dans le binaire, quel que soit le réglage « listes restreintes » : toute autre liste
-   donne une alerte seule. Le blocage est levé quand l'adresse sort de ces listes ou à expiration (7 jours).
+   donne une alerte seule. Le blocage est levé quand l'adresse sort de ces listes, si les trois sont chargées, ou à expiration (7 jours).
 2. **Suspension du programme qui touche un leurre anti-rançongiciel.** Les processus critiques de Windows
    (`reponse::protege`) ne sont jamais suspendus ; les logiciels connus et signés de sauvegarde, de
    synchronisation ou d'antivirus déclenchent une alerte sans suspension. Le programme reste suspendu jusqu'à
