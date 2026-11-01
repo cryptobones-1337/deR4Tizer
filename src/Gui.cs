@@ -159,6 +159,8 @@ namespace DeR4Tizer
                 case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc;
                 case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc;
                 case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + vc;
+                case "incident":
+                    return DecrireIncident(c, (Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>()).FirstOrDefault(x => x.Id == cible));
                 case "restaurer":
                     {
                         var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(x => x.Id == cible);
@@ -260,9 +262,25 @@ namespace DeR4Tizer
             }
         }
 
+        // Ce que la transition va faire. L'état visé est toujours montré, même si le suivi n'est pas lisible : le service reste seul juge (audit de #105, S105-05)
+        public static string DecrireIncident(Commande c, IncidentSuivi i)
+        {
+            bool en = L.En;
+            string motif = c.Type == "Resolu" ? (en ? "resolved" : "résolu") : c.Type == "FauxPositif" ? (en ? "false positive" : "faux positif") : c.Type == "Accepte" ? (en ? "risk accepted" : "risque accepté") : Visible(c.Type);
+            string vers = VueIncidents.EtatEnTexte(c.Valeur);
+            return (en ? "Change the state of incident " : "Changer l'état de l'incident ") + Visible(c.Cible)
+                + (i == null
+                    ? (en ? " (unknown or unreadable)\n  • new state: " : " (inconnu, ou suivi illisible)\n  • nouvel état : ") + vers
+                    : "\n  • " + Visible(i.Entite)
+                        + "\n  • " + Visible(i.Niveau) + " ; " + string.Join(", ", (i.Regles ?? new List<string>()).Select(Visible)) + " ; " + i.NombreAlertes + (en ? " alert(s)" : " alerte(s)")
+                        + "\n  • " + VueIncidents.EtatEnTexte(i.Etat) + " → " + vers)
+                + (string.IsNullOrEmpty(c.Type) ? "" : (en ? "\n  • reason: " : "\n  • motif : ") + motif)
+                + (string.IsNullOrEmpty(c.Raison) ? "" : (en ? "\n  • note: " : "\n  • note : ") + Visible(c.Raison));
+        }
+
         // Texte de confirmation sans caractère de contrôle (retours à la ligne compris) ni de mise en forme invisible (sens
         // d'écriture, largeur nulle) : remplacés par « ? », pour que rien ne repousse ni n'inverse le reste (S58-02)
-        static string Visible(string s)
+        internal static string Visible(string s)
         {
             if (s == null) return "";
             // Espaces de toute sorte (insécables, idéographiques…) ramenés à une seule espace simple (S58-05, S58-06 ; le
@@ -646,6 +664,10 @@ namespace DeR4Tizer
             pages.Add(pageTrafic);
             Lien(liens, "Trafic", pageTrafic, largeurNav);
             navAlertes = Lien(liens, "Alertes", pageAlertes, largeurNav);
+            var pageIncidents = new PageIncidents();
+            contenu.Controls.Add(pageIncidents);
+            pages.Add(pageIncidents);
+            Lien(liens, "Incidents", pageIncidents, largeurNav);
             var pageSiem = new PageSiem();
             contenu.Controls.Add(pageSiem);
             pages.Add(pageSiem);
@@ -667,6 +689,10 @@ namespace DeR4Tizer
             navBlocages = Lien(liens, "Blocages", pageBlocages, largeurNav);
             navQuarantaine = Lien(liens, "Quarantaine", pageQuarantaine, largeurNav);
             navMenaces = Lien(liens, "Menaces", pageMenaces, largeurNav);
+            var pageSante = new PageSante();
+            contenu.Controls.Add(pageSante);
+            pages.Add(pageSante);
+            Lien(liens, "Santé", pageSante, largeurNav);
             var pageReglages = new PageReglages();
             contenu.Controls.Add(pageReglages);
             pages.Add(pageReglages);
@@ -844,6 +870,9 @@ namespace DeR4Tizer
 
             DateTime d0;
             var etat = Commun.Lire<Etat>("etat.json");
+            // « SERVICE EN LIGNE » seul ne dirait rien de ce qu'il surveille : les pastilles de risque ont disparu (audit de #105, S105-02)
+            if (etat == null && etatService == ServiceControllerStatus.Running)
+                pastilles.Add(new Entete.Pastille { Texte = L.T("ÉTAT ILLISIBLE : SERVICE OU DROITS DU COMPTE À VÉRIFIER"), Couleur = Theme.Jaune });
             if (etat != null)
             {
                 pastilles.Add(etat.JournalDnsActif
@@ -863,7 +892,11 @@ namespace DeR4Tizer
                         : new Entete.Pastille { Texte = L.T("CAM / MIC : COLLECTE INDISPONIBLE"), Couleur = Theme.Jaune });
                 // Collectes en panne : jaune (rien d'avéré), jamais rouge ; le détail est dans la page Alertes
                 var enPanne = Couverture.Pastille(etat);
-                if (enPanne != "") pastilles.Add(new Entete.Pastille { Texte = enPanne, Couleur = Theme.Jaune });
+                // Phase 4 : une seule pastille pour un même fait ; le rouge seulement si Defender est aveugle ; état trop vieux dit en clair (S104-14)
+                int niveauSante = VueSante.NiveauPastille(etat, DateTime.Now);
+                if (niveauSante > 0) pastilles.Add(new Entete.Pastille { Texte = VueSante.TextePastille(niveauSante) + (enPanne != "" ? " — " + enPanne : ""), Couleur = niveauSante == 2 ? Theme.Rouge : Theme.Jaune });
+                else if (enPanne != "") pastilles.Add(new Entete.Pastille { Texte = enPanne, Couleur = Theme.Jaune });
+                if (VueSante.EtatAncien(etat, DateTime.Now)) pastilles.Insert(0, new Entete.Pastille { Texte = L.T("ÉTAT ANCIEN : SERVICE À VÉRIFIER"), Couleur = Theme.Jaune });
                 if (etat.Panique) pastilles.Insert(0, new Entete.Pastille { Texte = "MODE PANIQUE : INTERNET COUPÉ", Couleur = Theme.Rouge, Clignote = true });
                 // Échec fermé côté service : configuration et secrets ignorés tant que les droits ne sont pas vérifiés
                 if (!string.IsNullOrEmpty(etat.ProtectionDonnees))
