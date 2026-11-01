@@ -345,8 +345,13 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
     $arreter = { param($p) if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
     $pB = & $toucher $exeB 1
     if (-not (& $attendreSuspension $exeB 0 $pB)) {
+        # Ce qu'il faut pour trancher : l'événement est-il arrivé, le service a-t-il agi, le processus est-il suspendu ?
+        $evenements = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'd4t-garde-b' })
+        $siemGarde = @(Get-ChildItem (Join-Path $script:Donnees 'siem') -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_ -match '"Source":"reponse"' -and $_ -match 'suspendre' } | Select-Object -Last 3)
+        $alertesGarde = @((Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ }) | Where-Object { $_.Chemin -match 'd4t-garde-b' } | ForEach-Object { "$($_.Regle) $($_.Niveau) $($_.Raisons)" } | Select-Object -Last 2)
+        $diagnostic = "traces $(& $traces $exeB) ; suspendu $(& $suspendu $pB) ; vivant $(-not $pB.HasExited) ; 4663 pour ce programme $($evenements.Count) ; SIEM : $($siemGarde -join ' // ') ; alertes : $($alertesGarde -join ' // ') ; journal : $(Journal 'suspension de' 3) ; historique : $((Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -ErrorAction SilentlyContinue))"
         & $arreter $pB
-        foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : traces $(& $traces $exeB) ; journal : $(Journal 'leurre' 3)" }
+        foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : $diagnostic" }
     } else {
         Noter $titresGarde[0] 'RÉUSSI' ''
         Verifier $titresGarde[1] {
