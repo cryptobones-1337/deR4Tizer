@@ -110,24 +110,24 @@ fn protege_chemin(chemin: &str) -> Option<String> {
         .then(|| format!("{nom} est un processus critique de Windows (le système ou le réseau se figerait)"))
 }
 
-/// Identité attendue d'un processus, fixée à la décision (D6-2)
+/// Identité attendue d'un processus, fixée à la décision. Le PID et l'heure de création désignent un seul processus. Le
+/// chemin n'est pas comparé (décision du mainteneur, audit de #113, S113-01, S113-02) : un programme qui se renomme, ou
+/// dont le chemin est très long, ne doit échapper ni à la suspension ni à l'arrêt
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attendu {
     /// Telle que l'administrateur l'a vue, ou relevée à la décision
-    Exacte { creation: u64, chemin: String },
-    /// Événement 4663 : même programme, créé avant l'événement. Heure illisible : le chemin seul
+    Exacte { creation: u64 },
+    /// Événement 4663 : processus créé avant l'événement. Heure de l'événement illisible : le chemin, seul indice restant
     Leurre { avant: Option<u64>, chemin: String },
 }
 
-/// Décision pure : le processus ouvert est-il celui de la décision ? Heure de création illisible ou chemin vide : non
+/// Décision pure : le processus ouvert est-il celui de la décision ? Heure de création illisible : non
 pub(crate) fn meme_processus(attendu: &Attendu, creation: Option<u64>, chemin: &str) -> bool {
     let Some(creation) = creation else { return false };
-    if chemin.is_empty() {
-        return false;
-    }
     match attendu {
-        Attendu::Exacte { creation: c, chemin: a } => creation == *c && chemin.to_lowercase() == a.to_lowercase(),
-        Attendu::Leurre { avant, chemin: a } => avant.is_none_or(|t| creation <= t) && chemin.to_lowercase() == a.to_lowercase(),
+        Attendu::Exacte { creation: c } => creation == *c,
+        Attendu::Leurre { avant: Some(t), .. } => creation <= *t,
+        Attendu::Leurre { avant: None, chemin: a } => !chemin.is_empty() && chemin.to_lowercase() == a.to_lowercase(),
     }
 }
 
@@ -467,7 +467,7 @@ pub fn mettre_en_quarantaine(chemin: &str, raison: &str) -> Result<String, Strin
         let lu = natif::chemin_processus(pid);
         if lu.eq_ignore_ascii_case(chemin) {
             if let Some(creation) = natif::creation_processus(pid) {
-                let _ = tuer(pid, &Attendu::Exacte { creation, chemin: lu });
+                let _ = tuer(pid, &Attendu::Exacte { creation });
             }
         }
     }

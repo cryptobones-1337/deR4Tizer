@@ -139,6 +139,9 @@ pub struct Trace {
     /// Suspension : empreinte de l'exécutable juste après l'action (audit de #110, S110-05)
     #[serde(default)]
     pub empreinte: Option<String>,
+    /// Suspension : heure de création du processus, pour retrouver celui qui est repris (audit de #113, S113-06)
+    #[serde(default)]
+    pub creation: Option<u64>,
 }
 
 /// Décision humaine contraire à une action automatique. Programme : avec l'empreinte de l'exécutable, pour qu'un fichier
@@ -241,11 +244,11 @@ impl Historique {
     }
 
     pub fn noter(&mut self, genre: Genre, cible: &str, t: u64) {
-        self.noter_avec(genre, cible, None, t);
+        self.noter_avec(genre, cible, None, None, t);
     }
 
-    pub fn noter_avec(&mut self, genre: Genre, cible: &str, empreinte: Option<String>, t: u64) {
-        self.traces.push_back(Trace { t, genre, cible: cle(cible), empreinte });
+    pub fn noter_avec(&mut self, genre: Genre, cible: &str, empreinte: Option<String>, creation: Option<u64>, t: u64) {
+        self.traces.push_back(Trace { t, genre, cible: cle(cible), empreinte, creation });
         self.traces.retain(|x| x.t + if x.genre == Genre::Suspension { GARDE_SUSPENSION } else { JOUR } > t);
         while self.traces.len() > MAX_TRACES {
             self.traces.pop_front();
@@ -258,10 +261,10 @@ impl Historique {
         self.traces.iter().any(|x| x.genre == Genre::Suspension && x.cible == c && x.t + GARDE_SUSPENSION > t)
     }
 
-    /// Empreinte notée à la dernière suspension de ce programme
-    pub fn empreinte_suspension(&self, chemin: &str) -> Option<String> {
+    /// Empreinte notée à la suspension de CE processus : un autre, au même chemin, ne donne pas d'exception
+    pub fn empreinte_suspension(&self, chemin: &str, creation: u64) -> Option<String> {
         let c = cle(chemin);
-        self.traces.iter().rev().find(|x| x.genre == Genre::Suspension && x.cible == c).and_then(|x| x.empreinte.clone())
+        self.traces.iter().rev().find(|x| x.genre == Genre::Suspension && x.cible == c && x.creation == Some(creation)).and_then(|x| x.empreinte.clone())
     }
 
     pub fn decision_humaine(&mut self, cible: &str, empreinte: Option<String>, t: u64) {
@@ -405,15 +408,15 @@ pub fn noter(genre: Genre, cible: &str) {
 }
 
 /// Une suspension automatique a eu lieu : avec l'empreinte de l'exécutable
-pub fn noter_suspension(chemin: &str, empreinte: Option<String>) {
+pub fn noter_suspension(chemin: &str, empreinte: Option<String>, creation: u64) {
     avec(|e| {
-        e.h.noter_avec(Genre::Suspension, chemin, empreinte, maintenant());
+        e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), maintenant());
         enregistrer(e);
     })
 }
 
-pub fn empreinte_suspension(chemin: &str) -> Option<String> {
-    avec(|e| e.h.empreinte_suspension(chemin))
+pub fn empreinte_suspension(chemin: &str, creation: u64) -> Option<String> {
+    avec(|e| e.h.empreinte_suspension(chemin, creation))
 }
 
 pub fn suspendu_automatiquement(chemin: &str) -> bool {

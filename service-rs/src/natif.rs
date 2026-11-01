@@ -212,7 +212,8 @@ impl ProcessusOuvert {
     }
 
     pub fn chemin(&self) -> String {
-        let mut tampon = [0u16; 1024];
+        // Longueur maximale d'un chemin Windows : un tampon plus court ferait échouer la lecture
+        let mut tampon = vec![0u16; 32_768];
         let mut taille = tampon.len() as u32;
         let r = unsafe { QueryFullProcessImageNameW(self.0, PROCESS_NAME_WIN32, PWSTR(tampon.as_mut_ptr()), &mut taille) };
         if r.is_ok() { String::from_utf16_lossy(&tampon[..taille as usize]) } else { String::new() }

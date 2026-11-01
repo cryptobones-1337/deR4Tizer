@@ -290,7 +290,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             // Après l'alerte : une écriture bloquée de l'historique ne la retient pas (audit de #110, S110-04)
             if suspendu && !deja {
                 suspendus.insert(pid, (creation, maintenant));
-                crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten());
+                crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);
             }
             return;
         }
@@ -309,10 +309,10 @@ pub(crate) fn deja_suspendu(suspendus: &mut HashMap<u32, (u64, Instant)>, pid: u
     suspendus.get(&pid).is_some_and(|(c, _)| *c == creation)
 }
 
-/// Le texte commence par la retenue : la clé de déduplication d'une alerte lit son début, et l'alerte précédente de ce
-/// programme disait « suspendu » (pur, testé)
+/// Le texte commence par la suspension non faite : la clé de déduplication d'une alerte lit son début, et l'alerte précédente
+/// de ce programme disait « suspendu » (pur, testé)
 pub(crate) fn dire_retenue(alerte: &mut Alerte, raison: &str) {
-    alerte.raisons = format!("Suspension automatique retenue ({raison}), programme toujours actif, à vérifier et à arrêter sans attendre si besoin : {}", alerte.raisons);
+    alerte.raisons = format!("Suspension automatique non faite ({raison}), programme peut-être actif, à vérifier et à arrêter sans attendre si besoin : {}", alerte.raisons);
 }
 
 /// Signature illisible ou hors délai : non signé, donc toujours suspendu
@@ -335,8 +335,9 @@ fn suspension_leurre(pid: u32, programme: &str, attendu: &crate::reponse::Attend
             Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {
                 Ok(()) => (true, None),
                 Err(e) => {
+                    // L'alerte le dit : rien ne doit laisser croire que le programme est confiné (audit de #113, S113-01)
                     commun::journal(&format!("suspension de {programme} (PID {pid}) : {e}"));
-                    (false, None)
+                    (false, Some(format!("échec : {e}")))
                 }
             },
             Passage::Retenue { raison, alerte } => {

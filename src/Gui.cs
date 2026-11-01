@@ -171,14 +171,57 @@ namespace DeR4Tizer
             try
             {
                 long creation, fin, noyau, utilisateur;
-                var tampon = new StringBuilder(1024);
+                var tampon = new StringBuilder(32768);
                 int taille = tampon.Capacity;
                 if (!GetProcessTimes(h, out creation, out fin, out noyau, out utilisateur) || !QueryFullProcessImageName(h, 0, tampon, ref taille))
                     throw new InvalidOperationException(L.En ? "The identity of this process cannot be read." : "L'identité de ce processus ne peut pas être lue.");
-                c.Chemin = tampon.ToString();
+                // Le chemin est montré, pas comparé : un chemin très long est abrégé, l'arrêt du programme reste possible
+                string chemin = tampon.ToString();
+                c.Chemin = chemin.Length <= 1000 ? chemin : chemin.Substring(0, 500) + "…" + chemin.Substring(chemin.Length - 499);
                 c.Creation = creation;
             }
             finally { CloseHandle(h); }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct WintrustFichier { public int Taille; public string Chemin; public IntPtr Fichier; public IntPtr Sujet; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct WintrustDonnees
+        {
+            public int Taille; public IntPtr Politique; public IntPtr Sip; public int Interface; public int Revocation; public int Choix;
+            public IntPtr Fichier; public int Etat; public IntPtr Donnees; public IntPtr Url; public int Fournisseur; public int Contexte;
+        }
+        [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
+        static extern int WinVerifyTrust(IntPtr fenetre, ref Guid action, ref WintrustDonnees donnees);
+
+        // Pour un administrateur, le fichier d'un autre programme : jamais sur le réseau (le compte de l'administrateur s'y
+        // authentifierait), et sur un autre fil, avec une échéance (verrou, fichier énorme). Le sujet n'est montré que si la
+        // signature est valide : un certificat maison au nom d'un éditeur connu ne doit pas se lire comme tel (audit de #113)
+        static string SignatureVerifiee(string chemin)
+        {
+            bool en = L.En;
+            string nonLue = en ? "not checked" : "non vérifiée";
+            bool local = chemin.Length > 3 && chemin[1] == ':' && chemin[2] == '\\' && chemin.IndexOf('…') < 0;
+            if (local)
+                try { local = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed; } catch { local = false; }
+            if (!local) return nonLue + (en ? " (network, removable or shortened path)" : " (chemin réseau, amovible ou abrégé)");
+            var lecture = System.Threading.Tasks.Task.Run(() =>
+            {
+                var fichier = new WintrustFichier { Taille = Marshal.SizeOf(typeof(WintrustFichier)), Chemin = chemin };
+                IntPtr p = Marshal.AllocHGlobal(fichier.Taille);
+                try
+                {
+                    Marshal.StructureToPtr(fichier, p, false);
+                    var donnees = new WintrustDonnees { Taille = Marshal.SizeOf(typeof(WintrustDonnees)), Interface = 2, Revocation = 0, Choix = 1, Fichier = p };
+                    var action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+                    if (WinVerifyTrust(new IntPtr(-1), ref action, ref donnees) != 0) return en ? "no valid embedded signature" : "aucune signature intégrée valide";
+                    string sujet = new System.Security.Cryptography.X509Certificates.X509Certificate(chemin).Subject;
+                    return sujet.Length <= 200 ? sujet : sujet.Substring(0, 200) + "…";
+                }
+                finally { Marshal.DestroyStructure(p, typeof(WintrustFichier)); Marshal.FreeHGlobal(p); }
+            });
+            try { return lecture.Wait(2000) ? Visible(lecture.Result) : nonLue + (en ? " (timed out)" : " (délai dépassé)"); }
+            catch { return nonLue; }
         }
 
         // Nom, chemin, signature, heure de création, sur des lignes à part
@@ -186,14 +229,12 @@ namespace DeR4Tizer
         {
             bool en = L.En;
             if (string.IsNullOrEmpty(c.Chemin)) return en ? "\n(identity not read)" : "\n(identité non lue)";
-            string signature;
-            try { signature = Visible(new System.Security.Cryptography.X509Certificates.X509Certificate(c.Chemin).Subject); }
-            catch { signature = en ? "no embedded signature" : "aucune signature intégrée"; }
+            string signature = SignatureVerifiee(c.Chemin);
             string heure;
             try { heure = DateTime.FromFileTime(c.Creation ?? 0).ToString("yyyy-MM-dd HH:mm:ss"); } catch { heure = "?"; }
             // Pas de Path.GetFileName : il lève une exception sur un caractère interdit, et la commande vient d'un fichier
             return "\n" + Visible(c.Chemin.Substring(c.Chemin.LastIndexOf('\\') + 1)) + "\n" + Visible(c.Chemin)
-                + "\n" + (en ? "Signature (not verified here): " : "Signature (non vérifiée ici) : ") + signature
+                + "\n" + "Signature : " + signature
                 + "\n" + (en ? "Started: " : "Lancé le : ") + heure;
         }
 

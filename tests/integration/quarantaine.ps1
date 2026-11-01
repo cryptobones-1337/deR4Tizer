@@ -312,7 +312,8 @@ Set-Content -LiteralPath '$leurreStd' -Value 'leurre pose par le compte standard
 # Le seuil de Program Files demande un programme signé qui écrit dans un leurre : tests unitaires seulement. REP-002 est contrôlée au 3a (plafond des listes)
 $titresGarde = 'Garde : programme qui touche un leurre suspendu, trace dans reponses.json',
     'Garde : programme repris à la main : décision humaine, même fichier non suspendu de nouveau',
-    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue'
+    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue',
+    'Garde : programme qui se renomme avant de toucher le leurre : suspendu quand même, et arrêtable'
 $leurreGarde = if ($compte -and (Get-Variable leurreStd -ErrorAction SilentlyContinue)) { $leurreStd } else { $null }
 if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-Tous $leurreGarde).Count)) {
     foreach ($t in $titresGarde) { NonExecute $t 'aucun leurre audité disponible' }
@@ -383,9 +384,28 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             if (-not $vue) { return 'après redémarrage : aucune retenue dans le SIEM' }
             $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
             $fin = (Get-Date).AddSeconds(30)
-            while ($a -notmatch 'Suspension automatique retenue' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
-            if ($a -notmatch 'Suspension automatique retenue') { return 'LEU-002 ne dit pas la retenue' }
+            while ($a -notmatch 'Suspension automatique non faite' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
+            if ($a -notmatch 'Suspension automatique non faite') { return 'LEU-002 ne dit pas la retenue' }
             $true
+        }
+        # Audit de #113, S113-01 : le programme change de nom pendant qu'il tourne, puis touche le leurre
+        Verifier $titresGarde[3] {
+            $exeR = Join-Path $script:Commun 'd4t-garde-r.exe'
+            $exeR2 = Join-Path $script:Commun 'd4t-garde-r2.exe'
+            Copy-Item $exeA $exeR -Force
+            $pR = Start-Process $exeR -ArgumentList '-NoProfile', '-NonInteractive', '-Command', "Start-Sleep 8; Set-Content -LiteralPath '$leurreGarde' -Value 40; Start-Sleep 300" -WindowStyle Hidden -PassThru
+            try {
+                Start-Sleep 2
+                Move-Item $exeR $exeR2 -Force
+                $fin = (Get-Date).AddSeconds(90)
+                do { Start-Sleep 2 } while (-not (& $suspendu $pR) -and -not $pR.HasExited -and (Get-Date) -lt $fin)
+                if (-not (& $suspendu $pR)) { return "non suspendu après renommage ; journal : $(Journal 'suspension de' 3)" }
+                $r = Commande-Processus 'tuer' $pR.Id
+                if (-not $r.Ok) { return "arrêt refusé : $($r.Message)" }
+                Start-Sleep 1
+                if (-not $pR.HasExited) { return 'toujours là après l''arrêt' }
+                $true
+            } finally { & $arreter $pR; Start-Sleep 1; Remove-Item $exeR, $exeR2 -Force -ErrorAction SilentlyContinue }
         }
     }
     Remove-Item $exeA, $exeB -Force -ErrorAction SilentlyContinue
@@ -393,7 +413,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
 
 # ---------------------------------------------------------------- phase 6, PR 6.3 : identité revalidée avant l'action
 # Programme bénin lancé par le scénario. Témoin écarté : la bonne identité suspend et reprend ; l'identité fausse ne fait rien
-Verifier 'Identité : bonne identité, suspendu puis repris ; heure de création fausse, non suspendu ; chemin faux, non arrêté ; sans identité, refusé' {
+Verifier 'Identité : bonne identité, suspendu puis repris ; heure de création fausse, ni suspendu ni arrêté ; sans identité, refusé' {
     $pI = Start-Process ping.exe -ArgumentList '-n', '300', '127.0.0.1' -WindowStyle Hidden -PassThru
     try {
         Start-Sleep 1
@@ -410,8 +430,8 @@ Verifier 'Identité : bonne identité, suspendu puis repris ; heure de création
         $r = Commande-Processus 'suspendre' $pI.Id $null ($bonne + 1)
         if ($r.Ok -or (& $etatI) -ne 'actif') { return "heure fausse : $($r.Message), $(& $etatI)" }
         if ($r.Message -notmatch 'remplacé') { return "heure fausse, message : $($r.Message)" }
-        $r = Commande-Processus 'tuer' $pI.Id 'C:\Windows\System32\autre.exe'
-        if ($r.Ok -or (& $etatI) -ne 'actif') { return "chemin faux : $($r.Message), $(& $etatI)" }
+        $r = Commande-Processus 'tuer' $pI.Id $null ($bonne - 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "arrêt, heure fausse : $($r.Message), $(& $etatI)" }
         $r = Commande-Processus 'tuerChaine' $pI.Id $null ($bonne + 1)
         if ($r.Ok -or (& $etatI) -ne 'actif') { return "chaîne, heure fausse : $($r.Message), $(& $etatI)" }
         $r = Commande-Processus 'tuer' $pI.Id

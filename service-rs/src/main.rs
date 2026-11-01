@@ -221,7 +221,7 @@ fn main() {
             politique::Decision::Autorisee(a) => a,
             d => panic!("{d:?}"),
         };
-        let attendu = reponse::Attendu::Exacte { creation: natif::creation_processus(pid).unwrap_or(0), chemin: natif::chemin_processus(pid) };
+        let attendu = reponse::Attendu::Exacte { creation: natif::creation_processus(pid).unwrap_or(0) };
         println!("suspendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Suspendre), pid, &attendu, true));
         println!("reprendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Reprendre), pid, &attendu, false));
         println!("tuer {pid} : {:?}", execution::tuer(&humain(politique::Action::Tuer), pid, &attendu));

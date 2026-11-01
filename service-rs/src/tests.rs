@@ -5768,14 +5768,18 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(chemin_lu < signature_lue, "S110-15");
     assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
     assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
-    assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten());"), "leurre : trace et empreinte");
+    assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);"), "leurre : trace, empreinte, heure de création");
     let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter_suspension(").unwrap());
     assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
     assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
     assert!(v.contains("Attendu::Leurre { avant: crate::hygiene::heure_evenement(&xml), chemin: programme.clone() }"), "6.3 : identité du leurre");
-    assert!(m.contains("reponse::Attendu::Exacte { creation: c.creation.unwrap_or(0), chemin: chemin.clone() }"), "6.3 : identité de la commande");
-    assert!(m.contains("match politique::empreinte_suspension(&chemin) {"), "S110-05");
-    assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), &natif::chemin_processus(pid)) {"), "6.3 : racine de la chaîne");
+    assert!(m.contains("let attendu = reponse::Attendu::Exacte { creation };"), "6.3 : identité de la commande");
+    assert!(m.contains("match politique::empreinte_suspension(&chemin, creation) {"), "S110-05, S113-06");
+    assert!(m.contains("if *p == pid { Some((pid, racine.clone())) }"), "relecture de #113, J1 : la racine garde l'identité montrée jusqu'à l'action");
+    assert!(m.contains("if n == 0 {\n                    return Reponse::erreur(reponse::IDENTITE_CHANGEE);"), "P3 : aucun arrêt, pas un succès");
+    assert!(v.contains("(false, Some(format!(\"échec : {e}\")))"), "S113-01 : l'alerte dit l'échec");
+    assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), maintenant());"), "S113-06 : la trace porte l'heure de création");
+    assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), \"\") {"), "6.3 : racine de la chaîne");
     assert!(m.contains("filter(|(p, i)| execution::tuer(&a, *p, i).is_ok())"), "6.3 : descendants, identité relevée à la décision");
     assert!(v.contains("Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {"), "6.3 : le leurre passe l'identité");
     let rp = include_str!("reponse.rs").replace("\r\n", "\n");
@@ -5897,7 +5901,7 @@ fn garde_alerte_leurre_dit_la_retenue() {
     let mut r = a(7, &long, "leurre.docx", false, false);
     assert_eq!(r.niveau, "Critique");
     dire_retenue(&mut r, "motif");
-    assert!(r.raisons.starts_with("Suspension automatique retenue (motif)"), "{}", r.raisons);
+    assert!(r.raisons.starts_with("Suspension automatique non faite (motif)"), "{}", r.raisons);
     assert!(r.raisons.contains("RANÇONGICIEL PROBABLE"), "l'alerte d'origine reste");
     assert_ne!(s.raisons.chars().take(40).collect::<String>(), r.raisons.chars().take(40).collect::<String>(), "clé de déduplication");
 }
@@ -5919,18 +5923,22 @@ fn garde_empreinte_lue_seulement_si_utile() {
 #[test]
 fn identite_heure_de_creation_differente_refusee() {
     use crate::reponse::{meme_processus as m, Attendu::*};
-    let a = Exacte { creation: 100, chemin: r"C:\P.exe".into() };
-    assert!(m(&a, Some(100), r"c:\p.EXE"), "sans la casse");
+    let a = Exacte { creation: 100 };
+    assert!(m(&a, Some(100), r"C:\P.exe"));
     assert!(!m(&a, Some(101), r"C:\P.exe"), "PID réutilisé");
     assert!(!m(&a, Some(99), r"C:\P.exe"));
     assert!(!m(&a, None, r"C:\P.exe"), "heure illisible");
 }
 
+/// Décision du mainteneur (audit de #113, S113-01, S113-02) : un programme renommé, ou à chemin illisible, reste visé
 #[test]
-fn identite_chemin_different_refuse() {
+fn identite_chemin_montre_pas_compare() {
     use crate::reponse::{meme_processus as m, Attendu::*};
-    assert!(!m(&Exacte { creation: 100, chemin: r"C:\P.exe".into() }, Some(100), r"C:\Q.exe"));
-    assert!(!m(&Exacte { creation: 100, chemin: String::new() }, Some(100), ""), "chemin vide");
+    assert!(m(&Exacte { creation: 100 }, Some(100), r"C:\Autre.exe"), "renommé");
+    assert!(m(&Exacte { creation: 100 }, Some(100), ""), "chemin illisible");
+    let l = Leurre { avant: Some(100), chemin: r"C:\P.exe".into() };
+    assert!(m(&l, Some(50), r"C:\Autre.exe"), "renommé avant de toucher le leurre");
+    assert!(m(&l, Some(50), ""), "chemin de plus de 1 024 caractères");
 }
 
 #[test]
@@ -5940,10 +5948,11 @@ fn identite_leurre_processus_cree_apres_l_evenement_refuse() {
     assert!(m(&a, Some(100), r"C:\P.exe"));
     assert!(m(&a, Some(50), r"c:\p.exe"));
     assert!(!m(&a, Some(101), r"C:\P.exe"), "créé après l'événement");
-    assert!(!m(&a, Some(50), r"C:\Q.exe"), "un autre programme");
     assert!(!m(&a, None, r"C:\P.exe"));
-    assert!(m(&Leurre { avant: None, chemin: r"C:\P.exe".into() }, Some(u64::MAX), r"C:\P.exe"), "heure de l'événement illisible : le chemin seul");
-    assert!(!m(&Leurre { avant: None, chemin: r"C:\P.exe".into() }, Some(1), r"C:\Q.exe"));
+    let sans = Leurre { avant: None, chemin: r"C:\P.exe".into() };
+    assert!(m(&sans, Some(u64::MAX), r"c:\p.EXE"), "heure de l'événement illisible : le chemin, sans la casse");
+    assert!(!m(&sans, Some(1), r"C:\Q.exe"));
+    assert!(!m(&Leurre { avant: None, chemin: String::new() }, Some(1), ""), "aucun indice");
 }
 
 #[test]
@@ -5980,12 +5989,15 @@ fn identite_exigee_par_la_validation() {
 fn identite_empreinte_notee_a_la_suspension() {
     use crate::politique::{Genre::*, Historique};
     let mut h = Historique::default();
-    assert_eq!(h.empreinte_suspension(r"C:\P.exe"), None);
-    h.noter_avec(Suspension, r"C:\P.exe", Some("aa".into()), S0);
-    h.noter_avec(Suspension, r"C:\P.exe", Some("bb".into()), S0 + 1);
-    h.noter_avec(BlocageListe, r"C:\P.exe", Some("cc".into()), S0 + 2);
-    assert_eq!(h.empreinte_suspension(r"c:\p.exe"), Some("bb".into()), "la dernière suspension, pas un autre genre");
-    assert_eq!(h.empreinte_suspension(r"C:\Q.exe"), None);
+    assert_eq!(h.empreinte_suspension(r"C:\P.exe", 10), None);
+    h.noter_avec(Suspension, r"C:\P.exe", Some("aa".into()), Some(10), S0);
+    h.noter_avec(Suspension, r"C:\P.exe", Some("bb".into()), Some(20), S0 + 1);
+    h.noter_avec(Suspension, r"C:\P.exe", Some("b2".into()), Some(20), S0 + 2);
+    h.noter_avec(BlocageListe, r"C:\P.exe", Some("cc".into()), Some(20), S0 + 3);
+    assert_eq!(h.empreinte_suspension(r"c:\p.exe", 10), Some("aa".into()), "S113-06 : celle de ce processus, pas la dernière du chemin");
+    assert_eq!(h.empreinte_suspension(r"c:\p.exe", 20), Some("b2".into()), "la plus récente, et pas un autre genre");
+    assert_eq!(h.empreinte_suspension(r"c:\p.exe", 30), None, "processus jamais suspendu à ce chemin");
+    assert_eq!(h.empreinte_suspension(r"C:\Q.exe", 10), None);
     let lu: Historique = serde_json::from_str(r#"{"Traces":[{"T":1,"Genre":"Suspension","Cible":"c"}]}"#).unwrap();
     assert_eq!(lu.traces[0].empreinte, None, "historique d'avant cette version");
 }
