@@ -49,10 +49,10 @@ tests, dans la PR qui les apporte : le test du registre exige que les fiches et 
 
 ## Décisions
 
-Accord explicite du mainteneur le 2026-11-01 sur les recommandations du dossier de conception. La question posée
-rappelait : listes restreintes en alerte seule, identité revalidée avant chaque action, au-delà de 3 suspensions
-automatiques par heure alerte « Critique » sans suspension, décision humaine prioritaire 7 jours, jamais de reprise
-automatique.
+Accord explicite du mainteneur le 2026-11-01 sur les recommandations du dossier de conception, pour les PR 6.1 à 6.7
+tant qu'elles y restent. La question posée rappelait : listes restreintes en alerte seule, identité revalidée avant
+chaque action, décision humaine prioritaire 7 jours, jamais de reprise automatique. Elle rappelait aussi un plafond de 3
+suspensions par heure, retiré ensuite par le mainteneur (voir plus bas).
 
 | # | Décision | Retenu |
 |---|---|---|
@@ -60,17 +60,21 @@ automatique.
 | D6-2 | Identité d'un processus | PID, heure de création et chemin complet, revalidés et appliqués sur un même handle. L'empreinte SHA-256 de l'exécutable n'est exigée que pour la liste « décision humaine ». |
 | D6-3 | Échéances | Voir la politique : ce sont des rendez-vous de relance, jamais une levée pour la suspension, l'isolation et le mode panique. |
 | D6-4 | Durée d'un blocage par l'IPS | 24 h, au lieu des 7 jours hérités. |
-| D6-5 | Seuils de la garde | 3 actions par cible et par 24 h ; 30 blocages et 3 suspensions par heure ; 50 adresses par heure pour l'IPS ; décision humaine prioritaire 7 jours. Aucun réglage dans l'interface. |
+| D6-5 | Seuils de la garde | 3 actions par cible et par 24 h (pour une suspension : programme signé dans Program Files seulement, décision du mainteneur, 2026-11-01) ; 30 blocages par les listes par heure ; 50 adresses par heure pour l'IPS, à part ; décision humaine prioritaire 7 jours. Aucun réglage dans l'interface. Le plafond de 3 suspensions par heure du dossier est retiré (décision du mainteneur, 2026-11-01). |
 | D6-6 | Relance sans remontée configurée | Locale seulement, et la page Santé le dit. Sans canal, personne n'est prévenu : limite écrite. |
 | D6-7 | Échec de `--nettoyer` à la désinstallation | La désinstallation n'est jamais bloquée ; un compte rendu est écrit et vérifié. |
 | D6-8 | Nouvelle dépendance | Aucune. |
 | D6-9 | Arrêt automatique d'un processus | Hors du niveau 3, comme aujourd'hui. |
 | D6-10 | Suspension sur leurre, protection du dossier en échec | Gardée, comme aujourd'hui : elle ne dépend d'aucun fichier du dossier de données. Seules les actions alimentées par ces fichiers sont refusées. |
 
-## Compromis accepté
+## Plafond des suspensions retiré
 
-Au-delà de 3 suspensions automatiques par heure, pendant une vraie attaque à plusieurs processus, l'alerte « Critique »
-part mais le programme suivant n'est pas suspendu. Le plafond évite qu'un faux positif répété rende le poste inutilisable.
+Le dossier prévoyait au plus 3 suspensions automatiques par heure. L'audit de la PR 6.2 a montré qu'un compte standard
+pouvait l'user avec 3 programmes jetables, puis lancer un rançongiciel qui ne serait pas suspendu. Le mainteneur a décidé
+de le retirer le 2026-11-01. L'audit a ensuite montré que le seuil de 3 par programme en 24 h permettait la même attaque,
+par un programme lancé quatre fois ou par trois touches via `powershell.exe`. Le mainteneur l'a limité le même jour aux
+programmes signés installés dans Program Files, hors interpréteurs. Tout le reste est toujours suspendu, et seule une
+reprise par un administrateur arrête une boucle.
 
 ## Preuve
 

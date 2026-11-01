@@ -25,15 +25,15 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
 | **Réseau** | Connexions sortantes en direct par programme, score de suspicion, détection de balises (beaconing), première connexion d'un programme à Internet |
-| **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement ; les autres listes donnent une alerte seule |
+| **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement, 30 par heure au plus ; les autres listes donnent une alerte seule |
 | **Processus** | Arbre des processus et score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK |
 | **Persistance** | Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée |
-| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche |
+| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche ; alerte seule si un administrateur l'a repris (7 jours, même fichier), ou après 3 suspensions en 24 h d'un programme signé installé dans Program Files |
 | **Vol de données** | Audit d'accès aux dossiers sensibles des navigateurs et applications |
 | **Vie privée** | Caméra, micro, outils de prise en main à distance, ports ouverts |
 | **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) |
 | **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
-| **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
+| **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) ; les actions automatiques passent par une garde contre les boucles, sans jamais retenir l'alerte, et une adresse débloquée à la main n'est pas rebloquée pendant 7 jours |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
 | **Suivi des incidents** | Alertes rattachées à des incidents : ouvert, pris en charge, clos avec un motif, jamais fermé automatiquement ; chronologie par incident (alertes, événements, actions de réponse, trous de collecte) ; page Incidents de l'interface |
 | **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée, si elle est configurée, retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
@@ -186,6 +186,9 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi sur la version distribuée, des binaires signés et
   une relecture indépendante.
 - La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
+- Un compte standard peut atteindre le plafond de 30 blocages par heure en se connectant à 31 adresses listées : les
+  blocages par les listes s'arrêtent alors une heure, les alertes restent. Une alerte de l'IPS (expérimental) dit « bloquée »
+  même si la garde retient ensuite le blocage.
 - Les traces restent sur la machine surveillée (SIEM : 30 jours et 1 Go au plus) : un administrateur peut les effacer, et
   une intrusion découverte tard peut en être sortie. Aucun export chiffré et complet n'existe (`docs/security/threat-model.md`).
 
@@ -224,15 +227,15 @@ IDS/IPS are experimental.
 | Area | What deR4Tizer does |
 |---|---|
 | **Network** | Live outbound connections per program, suspicion score, beaconing detection, first Internet connection of a program |
-| **Threat intelligence** | Open-source lists refreshed every 12 h; automatic firewall blocking, on by default and can be turned off, for Spamhaus DROP and Feodo Tracker only; other lists only raise an alert |
+| **Threat intelligence** | Open-source lists refreshed every 12 h; automatic firewall blocking, on by default and can be turned off, for Spamhaus DROP and Feodo Tracker only, at most 30 per hour; other lists only raise an alert |
 | **Processes** | Process tree with cumulative chain score, obfuscated PowerShell, MITRE ATT&CK techniques |
 | **Persistence** | Run keys, services, scheduled tasks, WMI, Startup folders: alert on any new or changed entry |
-| **Ransomware** | Canary files, automatic suspension of the program touching them |
+| **Ransomware** | Canary files, automatic suspension of the program touching them; alert only if an administrator resumed it (7 days, same file), or after 3 suspensions in 24 h of a signed program installed in Program Files |
 | **Data theft** | Access auditing on sensitive browser and application folders |
 | **Privacy** | Camera, microphone, remote-control tools, open ports |
 | **Firewall** | Rule-change tracking (with the authoring program), Internet exposure (inbound packets from public IPs) |
 | **Hardening** | Baseline inspired by Intune and Microsoft, applied through local Group Policy, reversible |
-| **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
+| **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet); automatic actions go through a loop guard that never holds back the alert, and an address unblocked by hand is not blocked again for 7 days |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Incident tracking** | Alerts attached to incidents: open, in progress, closed with a reason, never closed automatically; timeline per incident (alerts, events, response actions, collection gaps); Incidents page in the interface |
 | **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding, when configured, retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
@@ -299,6 +302,8 @@ The full list is in the French section above. In particular:
 - Batch 3d runs in a test VM with Microsoft Defender fully active: a signal, not proof on a real machine. No distribution
   before a green GitHub CI, batch 3d passed on the distributed version, signed binaries and an independent review.
 - The interface window has never been opened in real conditions; its decisions are tested separately.
+- A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
+  for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion
   found late may have aged out. No encrypted and complete export exists (`docs/security/threat-model.md`).
 

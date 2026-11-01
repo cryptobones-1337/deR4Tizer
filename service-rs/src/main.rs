@@ -24,6 +24,7 @@ mod apprentissage;
 mod commun;
 mod defender;
 mod evenements;
+mod execution;
 mod export;
 mod gpo;
 mod hygiene;
@@ -38,6 +39,7 @@ mod sante;
 mod natif;
 mod parefeu;
 mod persistance;
+mod politique;
 mod processus;
 mod protection;
 mod reponse;
@@ -215,9 +217,13 @@ fn main() {
         // Processus de test : suspendre, reprendre, tuer
         let mut enfant = std::process::Command::new("ping").args(["-n", "60", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
         let pid = enfant.id();
-        println!("suspendre {pid} : {:?}", reponse::suspendre(pid, true));
-        println!("reprendre {pid} : {:?}", reponse::suspendre(pid, false));
-        println!("tuer {pid} : {:?}", reponse::tuer(pid));
+        let humain = |action| match politique::decider(action, politique::Declencheur::Humain, &Default::default()) {
+            politique::Decision::Autorisee(a) => a,
+            d => panic!("{d:?}"),
+        };
+        println!("suspendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Suspendre), pid, true));
+        println!("reprendre {pid} : {:?}", execution::suspendre(&humain(politique::Action::Reprendre), pid, false));
+        println!("tuer {pid} : {:?}", execution::tuer(&humain(politique::Action::Tuer), pid));
         println!("terminé : {:?}", enfant.try_wait().map(|s| s.is_some()));
         // Quarantaine puis restauration
         let q = reponse::mettre_en_quarantaine(&f.to_string_lossy(), "test");

@@ -306,6 +306,91 @@ Set-Content -LiteralPath '$leurreStd' -Value 'leurre pose par le compte standard
 } else {
     NonExecute 'Leurres : leurre déjà présent dans un profil sans session, audit posé' 'profil du compte standard absent'
 }
+# ---------------------------------------------------------------- phase 6, PR 6.2 : garde contre les boucles, sur un vrai leurre
+# Copies de powershell.exe, une par programme : chaque chemin est une cible. Un seul fichier écrit à la fois. Le processus attend ensuite, pour
+# lire son état. Ordre : B est suspendu, repris à la main, retouche sans suspension ; A, hors de Program Files, est suspendu 4 fois de suite.
+# Le seuil de Program Files demande un programme signé qui écrit dans un leurre : tests unitaires seulement. REP-002 est contrôlée au 3a (plafond des listes)
+$titresGarde = 'Garde : programme qui touche un leurre suspendu, trace dans reponses.json',
+    'Garde : programme repris à la main : décision humaine, même fichier non suspendu de nouveau',
+    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue'
+$leurreGarde = if ($compte -and (Get-Variable leurreStd -ErrorAction SilentlyContinue)) { $leurreStd } else { $null }
+if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-Tous $leurreGarde).Count)) {
+    foreach ($t in $titresGarde) { NonExecute $t 'aucun leurre audité disponible' }
+} else {
+    $exeA = Join-Path $script:Commun 'd4t-garde-a.exe'
+    $exeB = Join-Path $script:Commun 'd4t-garde-b.exe'
+    Copy-Item (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $exeA -Force
+    Copy-Item $exeA $exeB -Force
+    $toucher = { param($exe, $i) Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', "Set-Content -LiteralPath '$leurreGarde' -Value $i; Start-Sleep 300" -WindowStyle Hidden -PassThru }
+    $suspendu = { param($p) $x = Get-Process -Id $p.Id -ErrorAction SilentlyContinue; $x -and @($x.Threads | Where-Object { $_.WaitReason -ne 'Suspended' }).Count -eq 0 }
+    $historique = { Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json }
+    $traces = { param($exe) @((& $historique).Traces | Where-Object { $_.Genre -eq 'Suspension' -and $_.Cible -eq $exe.ToLowerInvariant() }).Count }
+    # Attend qu'une trace de plus apparaisse pour ce programme, et le processus suspendu
+    $attendreSuspension = { param($exe, $avant, $p)
+        $fin = (Get-Date).AddSeconds(60)
+        do { Start-Sleep 2 } while (-not ((& $traces $exe) -gt $avant -and (& $suspendu $p)) -and (Get-Date) -lt $fin)
+        (& $traces $exe) -gt $avant -and (& $suspendu $p)
+    }
+    # Attend la retenue dans le SIEM pour ce PID : sans elle, un processus non suspendu ne prouverait rien
+    $attendreRetenue = { param($p)
+        $fin = (Get-Date).AddSeconds(90)
+        do {
+            Start-Sleep 2
+            $vu = @(Get-ChildItem (Join-Path $script:Donnees 'siem') -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } |
+                Where-Object { $_ -match '"Source":"reponse"' -and $_ -match 'retenue' -and $_ -match "`"$($p.Id)`"" }).Count
+        } while (-not $vu -and (Get-Date) -lt $fin)
+        $vu -gt 0
+    }
+    $arreter = { param($p) if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
+    $pB = & $toucher $exeB 1
+    if (-not (& $attendreSuspension $exeB 0 $pB)) {
+        & $arreter $pB
+        foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : traces $(& $traces $exeB) ; journal : $(Journal 'leurre' 3)" }
+    } else {
+        Noter $titresGarde[0] 'RÉUSSI' ''
+        Verifier $titresGarde[1] {
+            $r = Commande-Cible 'reprendre' $pB.Id
+            if (-not $r.Ok) { return "reprise refusée : $($r.Message)" }
+            if (& $suspendu $pB) { return 'toujours suspendu après la reprise' }
+            & $arreter $pB
+            if ($exeB.ToLowerInvariant() -notin @((& $historique).Humaines | ForEach-Object Cible)) { return 'décision humaine absente de reponses.json' }
+            $p2 = & $toucher $exeB 2
+            try {
+                if (-not (& $attendreRetenue $p2)) { return "aucune retenue dans le SIEM en 90 s pour le PID $($p2.Id)" }
+                if (& $suspendu $p2) { return 'suspendu malgré la décision humaine' }
+                if ((& $traces $exeB) -ne 1) { return "trace de plus : $(& $traces $exeB)" }
+                $true
+            } finally { & $arreter $p2 }
+        }
+        Verifier $titresGarde[2] {
+            foreach ($i in 0, 1, 2, 3) {
+                $p = & $toucher $exeA (10 + $i)
+                try {
+                    if (-not (& $attendreSuspension $exeA $i $p)) { return "suspension $($i + 1) de A non observée : traces $(& $traces $exeA)" }
+                } finally { & $arreter $p }
+            }
+            # La décision humaine sur B survit à un redémarrage. L'abonnement au journal peut mettre du temps à reprendre : le programme retouche le leurre
+            [void](Redemarrer-Service)
+            $vue = $false
+            foreach ($i in 1..4) {
+                $p4 = & $toucher $exeB (20 + $i)
+                try {
+                    $vue = & $attendreRetenue $p4
+                    if ($vue -and (& $suspendu $p4)) { return 'après redémarrage : suspendu, décision humaine perdue' }
+                } finally { & $arreter $p4 }
+                if ($vue) { break }
+            }
+            if (-not $vue) { return 'après redémarrage : aucune retenue dans le SIEM' }
+            $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            $fin = (Get-Date).AddSeconds(30)
+            while ($a -notmatch 'Suspension automatique retenue' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
+            if ($a -notmatch 'Suspension automatique retenue') { return 'LEU-002 ne dit pas la retenue' }
+            $true
+        }
+    }
+    Remove-Item $exeA, $exeB -Force -ErrorAction SilentlyContinue
+}
+
 # ---------------------------------------------------------------- quarantaine, redémarrage, restauration
 # Emplacement d'origine dont le propriétaire est le compte standard, qui n'a pas de session : restauration à
 # l'origine refusée (jamais d'écriture en SYSTEM), repli dans le dossier du service

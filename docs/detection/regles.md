@@ -707,6 +707,22 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   `sante_grace_ouverture_session`, `sante_interface_trois_disparitions`, `sante_interface_deux_disparitions`,
   `sante_interface_retour_et_session_fermee`.
 
+## REP : réponse (phase 6)
+
+| Id | Constat | Code | Niveau |
+|---|---|---|---|
+| REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé | `politique.rs` | Critique |
+
+- **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un
+  programme ou une adresse actifs, ce que le prestataire doit savoir. L'alerte d'origine part toujours : RES-001 et LEU-002
+  disent que l'action est retenue, pas l'alerte de l'IPS (`ids.rs`, gelé), écrite dès la détection.
+- **Télémétrie** : aucune collecte, l'historique des actions automatiques (`reponses.json`).
+- **Bornes** : une alerte par cible et par 24 h, une par arrêt d'une heure des listes, une par heure pour l'IPS, une par
+  démarrage pour un fichier mal formé. Une retenue pour décision humaine n'en lève pas : c'est un choix de l'administrateur.
+- **Faux positifs attendus** : un logiciel légitime qui touche les leurres à répétition ; une liste de menaces très
+  renouvelée après une longue coupure.
+- **Que faire** : vérifier le programme ou l'adresse cités. Une action manuelle reste toujours possible.
+
 ## EXP : modules expérimentaux (gelés)
 
 | Id | Module | Code |

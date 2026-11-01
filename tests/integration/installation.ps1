@@ -1131,6 +1131,58 @@ try {
                     if ($cibles.Deux -notin $b -or -not (& $regleN3 $cibles.Deux)) { return "l'adresse encore dans Feodo a été levée aussi : $($b -join ', ')" }
                     $true
                 }
+                # Phase 6, PR 6.2 : le déblocage manuel d'un blocage automatique prime, l'adresse reste listée. Témoin : l'adresse était bloquée
+                $titreHumain = 'Garde : adresse débloquée à la main, toujours listée, connexion revue : pas de reblocage'
+                if ($cibles.Spam -notin (& $blocagesN3)) {
+                    NonExecute $titreHumain 'blocage de départ absent'
+                } else {
+                    Verifier $titreHumain {
+                        $d = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $cibles.Spam } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+                        if (-not $d.Ok) { return "déblocage refusé : $($d.Message)" }
+                        $h = Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json
+                        if ($cibles.Spam -notin @($h.Humaines | ForEach-Object Cible)) { return "décision humaine absente de reponses.json : $(@($h.Humaines | ForEach-Object Cible) -join ', ')" }
+                        $fin = (Get-Date).AddSeconds(45)
+                        do {
+                            foreach ($c in $prisesN3) { $c.Close() }
+                            $prisesN3 = @(& $mesConnexions @($cibles.Spam))
+                            Start-Sleep 8
+                            if ($cibles.Spam -in (& $blocagesN3) -or (& $regleN3 $cibles.Spam)) { return 'rebloquée malgré la décision humaine' }
+                        } while ((Get-Date) -lt $fin)
+                        $siem = Join-Path $script:Donnees 'siem'
+                        $traces = @(Get-ChildItem $siem -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_ -match '"Source":"reponse"' -and $_ -match [regex]::Escape($cibles.Spam) -and $_ -match 'retenu' })
+                        if (-not $traces.Count) { return 'connexion jamais revue : le contrôle ne prouve rien (aucune retenue dans le SIEM)' }
+                        $true
+                    }
+                }
+                # Plafond des listes : adresses de documentation, service relancé pour charger la liste. 40 adresses : les blocages déjà comptés dans l'heure s'y ajoutent
+                $titrePlafond = 'Garde : 30 blocages par les listes dans l''heure, puis arrêt : alerte REP-002, RES-001 conservée, adresses suivantes sans règle'
+                $adressesPlafond = @(1..40 | ForEach-Object { "203.0.113.$_" })
+                if (& $arret) {
+                    Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' (($adressesPlafond + $cibles.Deux) -join "`n")
+                    Service-Relance
+                    Verifier $titrePlafond {
+                        $fin = (Get-Date).AddSeconds(120); $a = ''
+                        do {
+                            foreach ($c in $prisesN3) { $c.Close() }
+                            $prisesN3 = @(& $mesConnexions $adressesPlafond)
+                            Start-Sleep 8
+                            $a = & $alertesN3
+                        } while ($a -notmatch 'REP-002' -and (Get-Date) -lt $fin)
+                        if ($a -notmatch 'REP-002') { return "alerte REP-002 absente en 120 s ; bloquées : $(@(& $blocagesN3).Count)" }
+                        Start-Sleep 15
+                        $b = & $blocagesN3
+                        $libres = @($adressesPlafond | Where-Object { $_ -notin $b })
+                        if (-not $libres.Count) { return 'toutes les adresses bloquées : aucun plafond' }
+                        if (@($adressesPlafond | Where-Object { $_ -in $b }).Count -gt 30) { return 'plus de 30 blocages' }
+                        foreach ($ip in $libres) { if (& $regleN3 $ip) { return "règle de pare-feu pour $ip, absente de blocages.json" } }
+                        $a = & $alertesN3
+                        $sansAlerte = @($libres | Where-Object { $a -notmatch ('(?<![\d.])' + [regex]::Escape($_) + '(?!\d)') })
+                        if ($sansAlerte.Count) { return "RES-001 absente pour : $($sansAlerte -join ', ')" }
+                        $true
+                    }
+                } else {
+                    NonExecute $titrePlafond 'service non arrêté en 45 s'
+                }
             } else {
                 NonExecute $titreLevee 'service non arrêté en 45 s'
             }
@@ -1148,7 +1200,8 @@ try {
             & $poserReglage $false
         }
         Service-Relance
-        foreach ($ip in $cibles.Values) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
+        # Adresse par adresse : « tout débloquer » retirerait aussi les autres règles du groupe, que la désinstallation compte plus loin
+        foreach ($ip in @(& $blocagesN3)) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
     } catch { Write-Host "  nettoyage du niveau 3 : $($_.Exception.Message)" }
 }
 
