@@ -604,6 +604,34 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
 }
 }
 
+# Audit de #103, S103-02, S103-03 : les tâches viennent du Planificateur. Un faux fichier n'est pas une tâche ; une vraie tâche d'un compte standard en est une
+$fauxFichier = Join-Path $dossierTaches 'd4t-faux-fichier'
+$s = En-TantQue $script:compte "try { Set-Content -LiteralPath '$fauxFichier' -Value '<Task><Actions><Exec><Command>c:\d4t\faux.exe</Command></Exec></Actions></Task>' -ErrorAction Stop; 'cree' } catch { `$_.Exception.Message }"
+$vraieTache = 'd4t-vraie-tache-standard'
+$v = En-TantQue $script:compte "schtasks /Create /TN $vraieTache /TR 'cmd.exe /c exit 7' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+Verifier 'Relevé des tâches : faux fichier signalé sans être une tâche ; vraie tâche d''un compte standard relevée' {
+    try {
+        if ("$s".Trim() -ne 'cree') { return "précréation refusée : $s" }
+        if ("$v".Trim() -ne '0') { return "tâche du compte standard refusée : $v" }
+        $f = Join-Path $script:Donnees 'demarrage.json'
+        $fin = (Get-Date).AddSeconds(180); $e = @(); $faux = $null; $vraie = $null
+        do {
+            Start-Sleep 5
+            $e = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+            $faux = $e | Where-Object { $_.Nom -match 'd4t-faux-fichier' } | Select-Object -First 1
+            $vraie = $e | Where-Object { $_.Nom -match $vraieTache } | Select-Object -First 1
+        } while (-not ($faux -and $vraie) -and (Get-Date) -lt $fin)
+        if (-not $faux) { return 'faux fichier non signalé en 180 s' }
+        if ($faux.Commande -match 'faux\.exe' -or $faux.Commande -notmatch 'sans tâche enregistrée') { return "faux fichier traité comme une tâche : $($faux.Commande)" }
+        if (-not $vraie) { return 'tâche du compte standard non relevée en 180 s' }
+        if ($vraie.Commande -notmatch 'exit 7') { return "commande inattendue : $($vraie.Commande)" }
+        $true
+    } finally {
+        Remove-Item -LiteralPath $fauxFichier -Force -ErrorAction SilentlyContinue
+        Schtasks-Code /Delete /F /TN $vraieTache | Out-Null
+    }
+}
+
 # Audits de #103 et #104, S103-07, S104-02 : verrou opportuniste, sous lequel une ouverture attend sans délai maximal connu
 $verrouExe = Join-Path $script:Commun 'd4t-verrou.exe'
 $verrouScript = Join-Path $script:Commun 'd4t-verrou.ps1'

@@ -1840,18 +1840,6 @@ fn relance_element_precree_ecarte() {
     std::fs::remove_dir_all(&d).unwrap();
 }
 
-/// Relevé des tâches, audit de #102, S102-01 : parcours d'un dossier de test, bornes réduites
-fn taches_de_test(racine: &std::path::Path, b: &crate::persistance::BornesTaches, tiers: &dyn Fn(&std::path::Path) -> bool) -> (Vec<String>, Vec<(String, String)>) {
-    let mut lus = Vec::new();
-    let a = crate::persistance::parcourir_taches(racine, b, &|p| !tiers(p), &mut |n, _| lus.push(n.to_string()));
-    lus.sort();
-    (lus, a)
-}
-
-fn bornes_taches() -> crate::persistance::BornesTaches {
-    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, elements: 100, enumeres: 1000, taille: 1000, octets: 10_000, tiers: 2, octets_tiers: 1500, dossiers_tiers: 3, lectures_proprietaire: 4, anomalies: 2 }
-}
-
 fn dossier_taches(nom: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("d4t-taches-{nom}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -1859,164 +1847,131 @@ fn dossier_taches(nom: &str) -> std::path::PathBuf {
     d
 }
 
+fn bornes_taches() -> crate::persistance::BornesTaches {
+    crate::persistance::BornesTaches { profondeur: 3, par_dossier: 50, enumeres: 1000, dossiers: 10, anomalies: 2 }
+}
+
+/// Audits de #102 et #103 : une jonction n'est pas suivie ; un fichier sans tâche enregistrée est une anomalie, pas une tâche
 #[test]
-fn taches_jonction_non_suivie() {
+fn taches_examen_jonction_et_fichier_sans_tache() {
+    use crate::persistance::examiner_dossier_taches as x;
     let d = dossier_taches("jonction");
     std::fs::write(d.join("vraie"), "x").unwrap();
+    std::fs::write(d.join("fausse"), "x").unwrap();
     jonction(&d.join("boucle"), &d);
-    let (lus, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
-    assert_eq!(lus, [r"\vraie"], "lue une seule fois, pas de parcours par la jonction");
-    assert_eq!(a, [(r"\boucle".to_string(), "lien non suivi".to_string())]);
+    let mut a = x(&d, &bornes_taches(), &|n| n == r"\vraie");
+    a.sort();
+    assert_eq!(a, [(r"\boucle".to_string(), "lien non suivi".to_string()), (r"\fausse".to_string(), "fichier sans tâche enregistrée".to_string())], "aucun parcours par la jonction");
     std::fs::remove_dir(d.join("boucle")).unwrap();
     std::fs::remove_dir_all(&d).unwrap();
 }
 
+/// Rien n'est ouvert : un fichier tenu sans partage ne gêne pas l'examen. Le source n'ouvre rien (un verrou opportuniste ferait attendre)
 #[test]
-fn taches_profondeur_et_taille_bornees() {
-    let d = dossier_taches("bornes");
+fn taches_examen_n_ouvre_aucun_fichier() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = dossier_taches("ouvert");
+    let f = d.join("tenu");
+    std::fs::write(&f, "x").unwrap();
+    let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+    assert!(crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &|_| true).is_empty());
+    let s = include_str!("persistance.rs").replace("\r\n", "\n");
+    let a = s.find("pub(crate) fn examiner_dossier_taches").unwrap();
+    let corps = &s[a..a + s[a..].find("\nfn anomalie_incomplet").unwrap()];
+    assert!(!corps.contains("File::open") && !corps.contains("fs::read(") && !corps.contains("OpenOptions") && !corps.contains("lire_securite"), "ouverture dans l'examen");
+    drop(_tenu);
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+#[test]
+fn taches_examen_borne() {
+    use crate::persistance::examiner_dossier_taches as x;
+    // Profondeur
+    let d = dossier_taches("profondeur");
     std::fs::create_dir_all(d.join(r"a\b\c")).unwrap();
     std::fs::write(d.join(r"a\b\permis"), "x").unwrap();
     std::fs::write(d.join(r"a\b\c\trop-loin"), "x").unwrap();
-    std::fs::write(d.join("gros"), vec![0u8; 1001]).unwrap();
-    std::fs::write(d.join("limite"), vec![0u8; 1000]).unwrap();
-    let (lus, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
-    assert_eq!(lus, [r"\a\b\permis", r"\limite"]);
-    assert!(a.contains(&(r"\gros".to_string(), "fichier trop gros".to_string())), "{a:?}");
+    let a = x(&d, &bornes_taches(), &|_| false);
+    assert!(a.iter().any(|(n, _)| n == r"\a\b\permis"), "{a:?}");
+    assert!(!a.iter().any(|(n, _)| n.contains("trop-loin")), "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("profondeur")), "{a:?}");
-    std::fs::remove_dir_all(&d).unwrap();
-}
-
-#[test]
-fn taches_octets_elements_anomalies_bornes() {
-    let d = dossier_taches("totaux");
+    // Anomalies bornées
+    let d2 = dossier_taches("anomalies");
     for i in 0..5 {
-        std::fs::write(d.join(format!("f{i}")), vec![0u8; 1000]).unwrap();
+        std::fs::write(d2.join(format!("f{i}")), "x").unwrap();
     }
-    let mut b = bornes_taches();
-    b.octets = 3000;
-    let (lus, a) = taches_de_test(&d, &b, &|_| false);
-    assert_eq!(lus.len(), 3, "total d'octets borné");
-    assert!(a.iter().any(|(n, _)| n.contains("octets")), "{a:?}");
-    let mut b = bornes_taches();
-    b.elements = 2;
-    let (lus, a) = taches_de_test(&d, &b, &|_| false);
-    assert_eq!(lus.len(), 2, "nombre d'éléments borné");
-    assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
-    for i in 0..5 {
-        std::fs::write(d.join(format!("gros{i}")), vec![0u8; 1001]).unwrap();
-    }
-    let (_, a) = taches_de_test(&d, &bornes_taches(), &|_| false);
-    assert_eq!(a.iter().filter(|(_, m)| m == "fichier trop gros").count(), 2, "anomalies bornées : {a:?}");
+    let a = x(&d2, &bornes_taches(), &|_| false);
+    assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
-    std::fs::remove_dir_all(&d).unwrap();
-}
-
-/// Les faux fichiers d'un compte standard ne passent pas le plafond ; ceux de SYSTEM ou Administrateurs sont tous lus
-#[test]
-fn taches_fichiers_de_tiers_plafonnes() {
-    let d = dossier_taches("tiers");
-    for i in 0..5 {
-        std::fs::write(d.join(format!("tiers{i}")), "x").unwrap();
-    }
-    for i in 0..5 {
-        std::fs::write(d.join(format!("vraie{i}")), "x").unwrap();
-    }
-    let est_tiers = |p: &std::path::Path| p.file_name().unwrap().to_string_lossy().starts_with("tiers");
-    let (lus, a) = taches_de_test(&d, &bornes_taches(), &est_tiers);
-    assert_eq!(lus.iter().filter(|n| n.contains("tiers")).count(), 2);
-    assert_eq!(lus.iter().filter(|n| n.contains("vraie")).count(), 5);
-    assert!(a.iter().any(|(n, _)| n.contains("fichiers de tiers")), "{a:?}");
-    std::fs::remove_dir_all(&d).unwrap();
-}
-
-/// S103-02, D2 : les éléments d'un compte standard ne privent pas de lecture les vraies tâches
-#[test]
-fn taches_budgets_de_tiers_separes() {
-    let d = dossier_taches("budgets");
-    let est_tiers = |p: &std::path::Path| p.to_string_lossy().contains("tiers");
-    // Octets de tiers épuisés : les autres restent lus, et le gros fichier de tiers est écarté
-    std::fs::write(d.join("tiers1"), vec![0u8; 1000]).unwrap();
-    std::fs::write(d.join("tiers2"), vec![0u8; 1000]).unwrap();
-    std::fs::write(d.join("vraie"), vec![0u8; 1000]).unwrap();
-    let (lus, a) = taches_de_test(&d, &bornes_taches(), &est_tiers);
-    assert_eq!(lus, [r"\tiers1", r"\vraie"], "budget d'octets des tiers propre");
-    assert!(a.iter().any(|(n, _)| n.contains("fichiers de tiers")), "{a:?}");
-    // Dossier de tiers saturé : un dossier fiable passe avant, quel que soit l'ordre des noms
-    let d2 = dossier_taches("ordre");
-    std::fs::create_dir_all(d2.join("aa")).unwrap();
-    std::fs::write(d2.join(r"aa\vraie"), "x").unwrap();
-    std::fs::create_dir_all(d2.join("tiers-dossier")).unwrap();
-    for i in 0..10 {
-        std::fs::write(d2.join(format!(r"tiers-dossier\f{i}")), "x").unwrap();
-    }
-    let mut b = bornes_taches();
-    b.elements = 3;
-    let (lus, _) = taches_de_test(&d2, &b, &est_tiers);
-    assert_eq!(lus, [r"\aa\vraie"], "dossier fiable d'abord : {lus:?}");
-    // Trop d'éléments dans un dossier : ce dossier seul s'arrête, le suivant est lu
-    let d3 = dossier_taches("pardossier");
-    std::fs::create_dir_all(d3.join("a-sature")).unwrap();
-    std::fs::create_dir_all(d3.join("b-sain")).unwrap();
-    for i in 0..5 {
-        std::fs::write(d3.join(format!(r"a-sature\f{i}")), "x").unwrap();
-    }
-    std::fs::write(d3.join(r"b-sain\vraie"), "x").unwrap();
-    let mut b = bornes_taches();
-    b.par_dossier = 3;
-    let (lus, a) = taches_de_test(&d3, &b, &|_| false);
-    assert_eq!(lus.iter().filter(|n| n.contains("a-sature")).count(), 3, "{lus:?}");
-    assert!(lus.contains(&r"\b-sain\vraie".to_string()), "{lus:?}");
-    assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
-    // S103-08, D6 : racine saturée, noms classés avant : les sous-dossiers restent trouvés, et saturer ne pèse pas sur le total
-    let d4 = dossier_taches("racine");
+    // Trop d'éléments dans un dossier : ses fichiers suivants ne sont plus examinés, ses sous-dossiers si (S103-08)
+    let d3 = dossier_taches("racine");
     for i in 0..8 {
-        std::fs::write(d4.join(format!("a{i}")), "x").unwrap();
+        std::fs::write(d3.join(format!("a{i}")), "x").unwrap();
     }
-    std::fs::create_dir_all(d4.join("Microsoft")).unwrap();
-    std::fs::write(d4.join(r"Microsoft\vraie"), "x").unwrap();
+    std::fs::create_dir_all(d3.join("z")).unwrap();
+    std::fs::write(d3.join(r"z\sans-tache"), "x").unwrap();
     let mut b = bornes_taches();
     b.par_dossier = 3;
-    b.elements = 5;
-    let (lus, a) = taches_de_test(&d4, &b, &|_| false);
-    assert!(lus.contains(&r"\Microsoft\vraie".to_string()), "sous-dossier trouvé malgré la saturation : {lus:?}");
-    assert_eq!(lus.iter().filter(|n| n.starts_with(r"\a")).count(), 3, "fichiers au-delà de la borne non lus : {lus:?}");
+    b.anomalies = 100;
+    let a = x(&d3, &b, &|_| false);
+    assert!(a.iter().any(|(n, _)| n == r"\z\sans-tache"), "sous-dossier trouvé malgré la saturation : {a:?}");
+    assert_eq!(a.iter().filter(|(n, _)| n.starts_with(r"\a")).count(), 3, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
-    // La borne dure de l'énumération arrête tout, sauf \Microsoft, lu d'abord (S103-09)
-    std::fs::create_dir_all(d4.join("zz")).unwrap();
-    std::fs::write(d4.join(r"zz\apres"), "x").unwrap();
+    // Borne dure, et dossiers
     let mut b = bornes_taches();
-    b.enumeres = 6;
-    let (lus, _) = taches_de_test(&d4, &b, &|_| false);
-    assert!(lus.contains(&r"\Microsoft\vraie".to_string()), "lu en premier : {lus:?}");
-    assert!(!lus.contains(&r"\zz\apres".to_string()), "borne dure : {lus:?}");
-    let (lus, _) = taches_de_test(&d4, &bornes_taches(), &|_| false);
-    assert_eq!(lus.iter().filter(|n| n.contains("Microsoft")).count(), 1, "pas lu deux fois : {lus:?}");
-    // Dossiers de tiers plafonnés ; plus de lecture de propriétaire au-delà de sa borne, un dossier fiable passant jusque-là
-    let d5 = dossier_taches("dossiers");
-    for i in 0..6 {
-        std::fs::create_dir_all(d5.join(format!(r"tiers{i}"))).unwrap();
-    }
-    let lectures = std::cell::Cell::new(0);
-    let est_tiers = |_: &std::path::Path| { lectures.set(lectures.get() + 1); true };
-    let (_, a) = taches_de_test(&d5, &bornes_taches(), &est_tiers);
-    assert!(a.iter().any(|(n, _)| n.contains("dossiers de tiers")), "{a:?}");
-    assert_eq!(lectures.get(), 4, "plus de lecture de propriétaire au-delà de la borne");
-    // Plafond des dossiers de tiers seul : les dossiers au-delà ne sont pas parcourus
-    let d6 = dossier_taches("dossiers-parcourus");
-    for i in 0..6 {
-        std::fs::create_dir_all(d6.join(format!("tiers{i}"))).unwrap();
-        std::fs::write(d6.join(format!(r"tiers{i}\f")), "x").unwrap();
+    b.enumeres = 2;
+    b.anomalies = 100;
+    assert!(x(&d3, &b, &|_| false).iter().any(|(n, _)| n.contains("éléments")));
+    let d4 = dossier_taches("dossiers");
+    for i in 0..4 {
+        std::fs::create_dir_all(d4.join(format!("d{i}"))).unwrap();
+        std::fs::write(d4.join(format!(r"d{i}\f")), "x").unwrap();
     }
     let mut b = bornes_taches();
-    b.lectures_proprietaire = 100;
-    b.tiers = 100;
-    let (lus, a) = taches_de_test(&d6, &b, &|_| true);
-    assert_eq!(lus.len(), 3, "{lus:?}");
-    assert!(a.iter().any(|(n, _)| n.contains("dossiers de tiers")), "{a:?}");
-    std::fs::remove_dir_all(d6).unwrap();
-    for x in [d, d2, d3, d4, d5] {
+    b.dossiers = 2;
+    b.anomalies = 100;
+    let a = x(&d4, &b, &|_| false);
+    assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
+    assert!(a.iter().any(|(n, _)| n.contains("dossiers")), "{a:?}");
+    // Ces bornes ne rendent pas le relevé incomplet : les tâches sont lues ailleurs
+    assert!(a.iter().all(|(n, _)| !n.contains("relevé incomplet")), "{a:?}");
+    for x in [d, d2, d3, d4] {
         std::fs::remove_dir_all(x).unwrap();
     }
+}
+
+#[test]
+fn taches_entree_d_apres_la_definition() {
+    use crate::persistance::entree_de_tache as e;
+    let mut l = Vec::new();
+    e(&mut l, r"\a", "<Task><Actions><Exec><Command>c:\\x.exe</Command><Arguments>-y &amp; z</Arguments></Exec></Actions></Task>");
+    assert_eq!((l[0].nom.as_str(), l[0].commande.as_str(), l[0].categorie.as_str()), (r"\a", "c:\\x.exe -y & z", "Tâche planifiée"));
+    let mut l = Vec::new();
+    e(&mut l, r"\b", "<Task><Settings><Enabled>false</Enabled></Settings><Actions><Exec><Command>x</Command></Exec></Actions></Task>");
+    assert_eq!(l[0].nom, r"\b (désactivée)");
+    let mut l = Vec::new();
+    e(&mut l, r"\c", "<Task><Actions><ComHandler><ClassId>{0358B920-0AC7-461F-98F4-58E32CD89148}</ClassId></ComHandler></Actions></Task>");
+    assert!(l[0].commande.starts_with("COM {0358B920"));
+    let mut l = Vec::new();
+    e(&mut l, r"\d", "<Task></Task>");
+    assert!(l.is_empty(), "sans action : rien");
+}
+
+/// Le vrai Planificateur répond et ses tâches ont des chemins ; aucune borne sur un poste ordinaire
+#[test]
+fn taches_planificateur_repond() {
+    let mut vues = 0;
+    let r = std::thread::spawn(|| {
+        let mut n = 0usize;
+        crate::persistance::lire_taches_planificateur(&mut |c, x| {
+            assert!(c.starts_with('\\'), "{c}");
+            assert!(x.contains("<Task"), "{c}");
+            n += 1;
+        }).map(|v| (v, n))
+    }).join().unwrap().unwrap();
+    vues += r.1;
+    assert_eq!(vues, r.0.len(), "chaque tâche a sa définition, et un seul chemin");
+    assert!(r.0.iter().all(|c| *c == c.to_lowercase()), "chemins en minuscules");
 }
 
 /// D1 : relevé tronqué puis complet : aucune alerte pour une tâche connue ; une anomalie reste dite en apprentissage (S103-02)
@@ -2027,7 +1982,7 @@ fn taches_releve_incomplet_garde_la_reference() {
     let t = |nom: &str, c: &str| E { cle: format!("Tâche planifiée|{nom}"), categorie: "Tâche planifiée".into(), nom: nom.into(), commande: c.into(), ..Default::default() };
     let connue = t(r"\Microsoft\Connue", "a.exe");
     let reference: std::collections::HashMap<String, E> = [(connue.cle.clone(), connue.clone())].into_iter().collect();
-    let incomplet = t(r"\(relevé incomplet : éléments)", &format!("{ANOMALIE_TACHES}relevé incomplet, bornes atteintes"));
+    let incomplet = t(r"\(relevé incomplet : éléments)", &format!("{ANOMALIE_TACHES}relevé incomplet"));
     let mut r = vec![incomplet.clone()];
     assert!(g(&reference, &mut r), "incomplet");
     assert!(r.iter().any(|e| e.cle == connue.cle), "tâche connue gardée");
