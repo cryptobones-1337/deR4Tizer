@@ -12,6 +12,8 @@ use crate::commun::{self, Alerte, Blocage, Commande, Config, Etat, FluxInfo, Rep
 use crate::evenements;
 use crate::mesure;
 use crate::menaces::Menaces;
+use crate::execution;
+use crate::politique::{self, Action, Autorisation, Contexte, Decision, Declencheur, Genre, Passage, SourceAuto};
 use crate::natif::{self, Connexion};
 use crate::persistance::Persistance;
 use crate::processus::{self, Processus};
@@ -665,9 +667,20 @@ impl Moniteur {
             if let (Some(crate::regles::RES_001), Some(m)) = (regle, &menace) {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
-                if blocage_automatique(m, self.config.blocage_auto_menaces, bloque, commun::echec_protection().is_some()) {
-                    self.bloquer_ip_auto(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
-                    action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
+                if let (false, Decision::Autorisee(a)) = (bloque, decision_blocage_liste(m, self.config.blocage_auto_menaces, commun::echec_protection().is_some())) {
+                    match politique::passer(Genre::BlocageListe, ip, &mut || None) {
+                        Passage::Passe => {
+                            self.bloquer_ip_auto(&a, Genre::BlocageListe, ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
+                            action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
+                        }
+                        Passage::Retenue { raison, alerte } => {
+                            action = format!(" ; blocage automatique retenu ({raison})");
+                            crate::siem::reponse("bloquerIp", ip, false, &format!("retenu : {raison}"), &format!("automatique : {}", m.source));
+                            if let Some(t) = alerte {
+                                alertes_modifiees |= self.ajouter_alerte_brute(politique::alerte_garde(&t), None);
+                            }
+                        }
+                    }
                 }
                 alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_001, "Critique", &f, format!("{}{action}", f.raisons));
             } else if regle == Some(crate::regles::RES_002) {
@@ -765,11 +778,28 @@ impl Moniteur {
         let detections: Vec<Alerte> = std::mem::take(&mut *self.processus.detections.lock().unwrap());
         let dns: Vec<Alerte> = std::mem::take(&mut *self.partage.alertes_externes.lock().unwrap());
         let a_bloquer: Vec<(String, String)> = std::mem::take(&mut *self.partage.blocages_ips.lock().unwrap());
-        // Échec de la protection du dossier : aucune réponse automatique alimentée par ses fichiers (règles IDS)
-        let a_bloquer = if commun::echec_protection().is_some() { Vec::new() } else { a_bloquer };
+        // La politique s'applique ici, en aval de l'IDS (D6-1). Échec de la protection du dossier : aucune réponse
+        // automatique alimentée par ses fichiers (règles IDS)
+        let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), ips: self.config.ips, ..Default::default() };
         for (ip, raison) in a_bloquer {
-            let r = self.bloquer_ip_auto(&ip, &raison);
-            commun::journal(&format!("IPS : {}", r.message));
+            // Déjà bloquée : ni action, ni trace pour la garde
+            if self.blocages.iter().any(|b| b.type_ == "parefeu" && b.cible == ip) {
+                continue;
+            }
+            let Decision::Autorisee(a) = politique::decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Ips), &contexte) else { continue };
+            match politique::passer(Genre::BlocageIps, &ip, &mut || None) {
+                Passage::Passe => {
+                    let r = self.bloquer_ip_auto(&a, Genre::BlocageIps, &ip, &raison);
+                    commun::journal(&format!("IPS : {}", r.message));
+                }
+                Passage::Retenue { raison: motif, alerte } => {
+                    commun::journal(&format!("IPS : blocage de {ip} retenu ({motif})"));
+                    crate::siem::reponse("bloquerIp", &ip, false, &format!("retenu : {motif}"), "automatique : IPS");
+                    if let Some(t) = alerte {
+                        alertes_modifiees |= self.ajouter_alerte_brute(politique::alerte_garde(&t), None);
+                    }
+                }
+            }
         }
         if self.expiration.elapsed() > Duration::from_secs(60) {
             self.expiration = Instant::now();
@@ -991,11 +1021,34 @@ impl Moniteur {
             "verification" => Reponse::ok(format!("deR4Tizer {}", commun::VERSION)),
             "bloquer" => match c.nom_dns.as_deref().filter(|n| !n.is_empty()) {
                 Some(n) => self.bloquer_domaines(&[n.to_string()], &raison, c.ip.as_deref()),
-                None => self.bloquer_ip(c.ip.as_deref().unwrap_or(""), &raison),
+                None => match autorisation_humaine(Action::BloquerIp) {
+                    Ok(a) => self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison),
+                    Err(r) => r,
+                },
             },
-            "bloquerIp" => self.bloquer_ip(c.ip.as_deref().unwrap_or(""), &raison),
-            "debloquer" => self.debloquer(c.type_.as_deref().unwrap_or(""), c.cible.as_deref().unwrap_or("")),
-            "toutDebloquer" => self.tout_debloquer(),
+            "bloquerIp" => match autorisation_humaine(Action::BloquerIp) {
+                Ok(a) => self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison),
+                Err(r) => r,
+            },
+            "debloquer" => {
+                let (t, cible) = (c.type_.as_deref().unwrap_or(""), c.cible.as_deref().unwrap_or(""));
+                let humaine = self.blocages.iter().any(|b| b.type_ == t && b.cible == cible && blocage_pose_automatiquement(b));
+                let r = self.debloquer(t, cible);
+                if r.ok && humaine {
+                    politique::decision_humaine(cible, None);
+                }
+                r
+            }
+            "toutDebloquer" => {
+                let humaines: Vec<String> = self.blocages.iter().filter(|b| blocage_pose_automatiquement(b)).map(|b| b.cible.clone()).collect();
+                let r = self.tout_debloquer();
+                if r.ok {
+                    for cible in humaines {
+                        politique::decision_humaine(&cible, None);
+                    }
+                }
+                r
+            }
             "config" => {
                 let actif = c.valeur.as_deref() == Some("true");
                 let quoi = match c.cible.as_deref() {
@@ -1179,11 +1232,28 @@ En-tête : Authorization: Bearer {j}"))
             // ---------------- actions de réponse (Cible : PID, chemin ou identifiant)
             "tuer" | "suspendre" | "reprendre" => {
                 let Some(pid) = c.cible.as_deref().and_then(|p| p.parse::<u32>().ok()) else { return Reponse::erreur("PID invalide.") };
-                let r = match action.as_str() {
-                    "tuer" => reponse::tuer(pid),
-                    "suspendre" => reponse::suspendre(pid, true),
-                    _ => reponse::suspendre(pid, false),
+                let decidee = match action.as_str() {
+                    "tuer" => Action::Tuer,
+                    "suspendre" => Action::Suspendre,
+                    _ => Action::Reprendre,
                 };
+                let a = match autorisation_humaine(decidee) {
+                    Ok(a) => a,
+                    Err(r) => return r,
+                };
+                let chemin = natif::chemin_processus(pid);
+                let r = match decidee {
+                    Action::Tuer => execution::tuer(&a, pid),
+                    Action::Suspendre => execution::suspendre(&a, pid, true),
+                    _ => execution::suspendre(&a, pid, false),
+                };
+                if r.is_ok() && decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin) {
+                    // Sans empreinte lisible, aucune exception : le programme reste sous la réponse automatique
+                    match natif::empreinte_a_echeance(&chemin) {
+                        Ok(Some(e)) => politique::decision_humaine(&chemin, Some(e)),
+                        _ => commun::journal(&format!("reprise de {chemin} : empreinte illisible, décision humaine non retenue")),
+                    }
+                }
                 match r {
                     Ok(()) => Reponse::ok(format!("Processus {pid} : {} fait.", action)),
                     Err(e) => Reponse::erreur(format!("Processus {pid} : {e}")),
@@ -1206,7 +1276,11 @@ En-tête : Authorization: Bearer {j}"))
                         .map(|(p, _)| *p).collect::<Vec<_>>());
                     i += 1;
                 }
-                let n = a_tuer.iter().rev().filter(|p| reponse::tuer(**p).is_ok()).count();
+                let a = match autorisation_humaine(Action::TuerChaine) {
+                    Ok(a) => a,
+                    Err(r) => return r,
+                };
+                let n = a_tuer.iter().rev().filter(|p| execution::tuer(&a, **p).is_ok()).count();
                 Reponse::ok(format!("{n} processus arrêté(s)."))
             }
             "quarantaine" => match reponse::mettre_en_quarantaine(c.cible.as_deref().unwrap_or(""), &raison) {
@@ -1228,7 +1302,11 @@ En-tête : Authorization: Bearer {j}"))
                 if chemin.is_empty() || chemin.to_lowercase().starts_with(&natif::dossier_windows().to_lowercase()) {
                     return Reponse::erreur("Refusé : chemin vide ou programme du système Windows.");
                 }
-                match reponse::isoler_programme(&chemin) {
+                let a = match autorisation_humaine(Action::Isoler) {
+                    Ok(a) => a,
+                    Err(r) => return r,
+                };
+                match execution::isoler_programme(&a, &chemin) {
                     Ok(()) => {
                         self.blocages.push(Blocage { type_: "programme".into(), cible: chemin.clone(), raison, date: commun::maintenant(), expire: String::new() });
                         let _ = commun::ecrire("blocages.json", &self.blocages);
@@ -1237,12 +1315,13 @@ En-tête : Authorization: Bearer {j}"))
                     Err(e) => Reponse::erreur(format!("Pare-feu : {e}")),
                 }
             }
-            "panique" => match reponse::panique(c.valeur.as_deref() != Some("off")) {
-                Ok(m) => {
+            "panique" => match autorisation_humaine(if c.valeur.as_deref() != Some("off") { Action::Panique } else { Action::FinPanique }).map(|a| execution::panique(&a, c.valeur.as_deref() != Some("off"))) {
+                Err(r) => r,
+                Ok(Ok(m)) => {
                     commun::journal(&m);
                     Reponse::ok(m)
                 }
-                Err(e) => Reponse::erreur(format!("Pare-feu : {e}")),
+                Ok(Err(e)) => Reponse::erreur(format!("Pare-feu : {e}")),
             },
             "baseline" => {
                 // Valeur : appliquer / annuler / evaluer ; Cible : profil(s) ou identifiants de règles séparés par des virgules
@@ -1292,7 +1371,7 @@ En-tête : Authorization: Bearer {j}"))
         Reponse::ok(format!("{} domaine(s) redirigé(s) vers 127.0.0.1{}", nouveaux.len(), message_coupure(coupees)))
     }
 
-    fn bloquer_ip(&mut self, ip: &str, raison: &str) -> Reponse {
+    fn bloquer_ip(&mut self, a: &Autorisation, ip: &str, raison: &str) -> Reponse {
         if ip.parse::<IpAddr>().is_err() {
             return Reponse::erreur("Adresse IP invalide.");
         }
@@ -1300,7 +1379,7 @@ En-tête : Authorization: Bearer {j}"))
             return Reponse::erreur(format!("Refusé : {ip} n'est pas une adresse publique (réseau local, CGNAT, multicast…)."));
         }
         if !self.blocages.iter().any(|b| b.type_ == "parefeu" && b.cible == ip) {
-            if let Err(e) = blocage::ajouter_regle(ip, raison) {
+            if let Err(e) = execution::ajouter_regle(a, ip, raison) {
                 return Reponse::erreur(format!("Pare-feu : {e}"));
             }
             self.blocages.push(Blocage { type_: "parefeu".into(), cible: ip.into(), raison: raison.into(), date: commun::maintenant(), expire: String::new() });
@@ -1312,10 +1391,11 @@ En-tête : Authorization: Bearer {j}"))
 
     /// Blocage automatique (liste de menaces, IPS) : levé au bout de 7 jours, ou plus tôt si l'adresse sort des
     /// listes (adresse réattribuée, CDN…)
-    fn bloquer_ip_auto(&mut self, ip: &str, raison: &str) -> Reponse {
-        let r = self.bloquer_ip(ip, raison);
+    fn bloquer_ip_auto(&mut self, a: &Autorisation, genre: Genre, ip: &str, raison: &str) -> Reponse {
+        let r = self.bloquer_ip(a, ip, raison);
         crate::siem::reponse("bloquerIp", ip, r.ok, &r.message, &format!("automatique : {raison}"));
         if r.ok {
+            politique::noter(genre, ip);
             let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400));
             if let Some(b) = self.blocages.iter_mut().find(|b| b.type_ == "parefeu" && b.cible == ip && b.expire.is_empty() && b.raison == raison) {
                 b.expire = fin;
@@ -1764,7 +1844,9 @@ pub fn nettoyer() {
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
     if reponse::panique_active() {
-        let _ = reponse::panique(false);
+        if let Ok(a) = autorisation_humaine(Action::FinPanique) {
+            let _ = execution::panique(&a, false);
+        }
         println!("Mode panique désactivé.");
     }
     let marqueur = commun::dossier().join("journal-dns-active-par-deR4Tizer");
@@ -1774,12 +1856,27 @@ pub fn nettoyer() {
     }
 }
 
-/// Décision pure du blocage automatique d'une adresse des listes de menaces : source du niveau 3 (Spamhaus DROP,
-/// Feodo Tracker, quel que soit le réglage « listes restreintes »), réglage actif, adresse pas encore bloquée, et
-/// jamais en échec de la protection du dossier de données (les listes y sont rangées : aucune réponse automatique
-/// alimentée par des fichiers dont la protection n'est pas vérifiée)
-pub fn blocage_automatique(menace: &crate::menaces::Correspondance, actif: bool, deja_bloquee: bool, echec_protection: bool) -> bool {
-    menace.auto && actif && !deja_bloquee && !echec_protection
+/// Décision du blocage automatique d'une adresse des listes de menaces : source du niveau 3 (Spamhaus DROP, Feodo
+/// Tracker, quel que soit le réglage « listes restreintes »), réglage actif, et jamais en échec de la protection du
+/// dossier de données (les listes y sont rangées : aucune réponse automatique alimentée par des fichiers dont la
+/// protection n'est pas vérifiée)
+pub fn decision_blocage_liste(menace: &crate::menaces::Correspondance, actif: bool, echec_protection: bool) -> Decision {
+    let contexte = Contexte { echec_protection, blocage_menaces: actif, ..Default::default() };
+    politique::decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Liste { niveau3: menace.auto }), &contexte)
+}
+
+/// Commande d'un administrateur : l'action passe par la décision, comme les autres
+fn autorisation_humaine(action: Action) -> Result<Autorisation, Reponse> {
+    match politique::decider(action, Declencheur::Humain, &Contexte::default()) {
+        Decision::Autorisee(a) => Ok(a),
+        Decision::Refusee(r) | Decision::AlerteSeulement(r) => Err(Reponse::erreur(r)),
+    }
+}
+
+/// Blocage posé par le service (listes, IPS) : le lever à la main est une décision humaine contraire. Un blocage manuel
+/// n'a pas d'échéance ni ce motif
+pub fn blocage_pose_automatiquement(b: &Blocage) -> bool {
+    b.type_ == "parefeu" && (!b.expire.is_empty() || b.raison.starts_with("blocage automatique"))
 }
 
 /// Blocages automatiques à lever : durée écoulée, ou adresse hors des listes du niveau 3 (si elles sont toutes chargées)

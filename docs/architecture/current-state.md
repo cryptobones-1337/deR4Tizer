@@ -50,6 +50,7 @@ lecture. Contenu principal :
 | Élément | Rôle |
 |---|---|
 | `config.json` | Réglages (API, mise à jour, blocage automatique, IPS…). |
+| `reponses.json` | Historique de la garde contre les boucles : actions automatiques récentes, décisions humaines (`politique.rs`). |
 | `lecteurs.json` | Comptes autorisés en lecture. |
 | `etat.json`, `alertes.json`, `incidents.json`, `journal.txt` | État publié, alertes, incidents, journal du service. |
 | `siem\` | Événements normalisés, un fichier NDJSON par jour (30 jours, 1 Go au plus). |

@@ -85,7 +85,7 @@ Une source compromise ou erronée publie des adresses légitimes (DNS public, se
 prestataire).
 
 - Mesures : téléchargement en HTTPS, chargement borné ; blocage automatique limité à Spamhaus DROP et Feodo
-  Tracker ; blocages levés quand l'adresse sort de la liste ou à expiration.
+  Tracker, et à 30 par heure ; un déblocage manuel prime pendant 7 jours ; blocages levés quand l'adresse sort de la liste ou à expiration.
 - Risques résiduels : un blocage automatique d'une adresse légitime coupe un service jusqu'à la mise à jour
   suivante de la liste.
 

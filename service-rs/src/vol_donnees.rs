@@ -266,13 +266,21 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
                 let config: commun::Config = commun::lire("config.json").unwrap_or_default();
                 suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
             };
-            let suspendu = tentee && crate::reponse::suspendre(pid, true).is_ok();
+            let (suspendu, retenue) = if tentee { suspension_leurre(pid, &programme, &file) } else { (false, None) };
             // Suspension automatique dans le SIEM, pour la chronologie (relecture de #94, D1)
             if tentee {
-                crate::siem::reponse("suspendre", &pid.to_string(), suspendu, if suspendu { "programme suspendu" } else { "suspension en échec" },
-                    &format!("automatique : leurre touché par {programme}"));
+                let message = match &retenue {
+                    Some(r) => format!("retenue : {r}"),
+                    None if suspendu => "programme suspendu".to_string(),
+                    None => "suspension en échec".to_string(),
+                };
+                crate::siem::reponse("suspendre", &pid.to_string(), suspendu, &message, &format!("automatique : leurre touché par {programme}"));
             }
-            file.lock().unwrap().push(alerte_leurre_touche(pid, &programme, &objet, connu, suspendu));
+            let mut alerte = alerte_leurre_touche(pid, &programme, &objet, connu, suspendu);
+            if let Some(r) = retenue {
+                alerte.raisons.push_str(&format!(" — suspension automatique retenue ({r}), programme toujours actif : vérifiez-le et arrêtez-le sans attendre si besoin"));
+            }
+            file.lock().unwrap().push(alerte);
             return;
         }
         let Some(a) = analyser(&xml, &dossiers.lock().unwrap()) else { return };
@@ -281,6 +289,31 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             file.lock().unwrap().push(a);
         }
     });
+}
+
+/// La politique et la garde pour un programme qui touche un leurre : (suspendu, raison de la retenue). Hors du cycle : la
+/// suspension n'attend pas le moniteur
+fn suspension_leurre(pid: u32, programme: &str, file: &Mutex<Vec<Alerte>>) -> (bool, Option<String>) {
+    use crate::politique::{self, Action, Contexte, Decision, Declencheur, Genre, Passage, SourceAuto};
+    let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), rancongiciel: true, ..Default::default() };
+    match politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte) {
+        Decision::Autorisee(a) => match politique::passer(Genre::Suspension, programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
+            Passage::Passe => {
+                let suspendu = crate::execution::suspendre(&a, pid, true).is_ok();
+                if suspendu {
+                    politique::noter(Genre::Suspension, programme);
+                }
+                (suspendu, None)
+            }
+            Passage::Retenue { raison, alerte } => {
+                if let Some(t) = alerte {
+                    file.lock().unwrap().push(politique::alerte_garde(&t));
+                }
+                (false, Some(raison))
+            }
+        },
+        Decision::Refusee(r) | Decision::AlerteSeulement(r) => (false, Some(r)),
+    }
 }
 
 /// Décision pure (testée, LEU-002) : alerte d'un leurre touché. Logiciel connu et signé (sauvegarde, synchronisation,

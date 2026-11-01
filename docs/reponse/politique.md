@@ -33,6 +33,31 @@ Tout le reste, IPS compris, est au niveau 2 au plus.
   reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée
   vers le prestataire, la récupération est une action humaine (phase 6).
 
+## Point de décision et garde contre les boucles
+
+Toute action de réponse passe par `politique.rs` : aucune n'est exécutée sans une autorisation qu'il délivre
+(`execution.rs`). Une action automatique n'est permise que dans les cas écrits ici.
+
+La garde ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais l'alerte : seule l'action
+est retenue. Un administrateur peut toujours agir à la main.
+
+| Garde | Seuil | Effet |
+|---|---|---|
+| Même action automatique sur la même cible | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
+| Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
+| Suspensions automatiques, toutes cibles | 3 par heure | au-delà, arrêtées 1 h, alerte « Critique » une fois |
+| Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
+| Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
+
+- **Compromis accepté** : pendant une vraie attaque à plusieurs programmes, le quatrième de l'heure n'est pas suspendu ;
+  l'alerte « Critique » part quand même.
+- **Décision humaine sur un programme** : liée à l'empreinte de l'exécutable. Un fichier remplacé au même chemin n'en
+  hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été
+  suspendu automatiquement dans les 7 derniers jours.
+- **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Illisible :
+  aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service, rétablit
+  la réponse automatique. Protection du dossier en échec : la garde repart en mémoire, la suspension sur leurre reste.
+
 ## Prévu en phase 6 (pas encore dans le code)
 
 Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
@@ -51,17 +76,6 @@ Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR
 | Blocage manuel (hosts, IP) | aucune | rappel « Info » tous les 90 jours |
 | Tuer, tuer une chaîne | sans objet | irréversible, journalisé |
 
-**Garde contre les boucles.** Elle ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais
-l'alerte : seule l'action est retenue.
-
-| Garde | Seuil | Effet |
-|---|---|---|
-| Même action automatique sur la même cible | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée |
-| Blocages IP automatiques, toutes cibles | 30 par heure | au-delà, suspendus 1 h, alerte « Critique » une fois |
-| Suspensions automatiques, toutes cibles | 3 par heure | au-delà, suspendues 1 h, alerte « Critique » une fois |
-| Adresses distinctes par l'IPS | 50 par heure | au-delà, alerte seule |
-| Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
-
 **Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
 
 | Action | Avec le service | Service arrêté ou en panne | Après la désinstallation |
@@ -78,4 +92,4 @@ l'alerte : seule l'action est retenue.
 |---|---|---|
 | L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Phase 6. |
 | Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Phase 6. |
-| Revalidation de l'identité du processus juste avant l'action et protection contre les boucles d'actions : non systématiques. | `reponse.rs`, `moniteur.rs` | Phase 6. |
+| Revalidation de l'identité du processus juste avant l'action : non systématique. | `reponse.rs`, `moniteur.rs` | Phase 6. |

@@ -1369,7 +1369,7 @@ fn lot5_retour_a_soi_impossible_arret() {
 #[test]
 fn lot5_reponses_automatiques_jamais_en_echec_ferme() {
     use crate::ids::blocage_ips;
-    use crate::moniteur::blocage_automatique;
+    use crate::tests::blocage_automatique;
     let niveau3 = crate::menaces::Correspondance { source: "essai".into(), haute: true, auto: true };
     let autre = crate::menaces::Correspondance { source: "essai".into(), haute: true, auto: false };
     assert!(blocage_automatique(&niveau3, true, false, false));
@@ -3871,7 +3871,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-002"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -4334,8 +4334,8 @@ fn reponse_journalisee_dans_le_siem() {
     assert!(m.contains("crate::siem::reponse(\"debloquer\", &c, r.ok, &r.message, &format!(\"automatique : {pourquoi}\"))"));
     // Suspension automatique d'un programme qui touche un leurre (relecture de #94, D1) : journalisée à chaque tentative
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
-    assert!(v.contains("let suspendu = tentee && crate::reponse::suspendre(pid, true).is_ok();"));
-    assert!(v.contains("if tentee {\n                crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu,"));
+    assert!(v.contains("if tentee { suspension_leurre(pid, &programme, &file) }"));
+    assert!(v.contains("crate::siem::reponse(\"suspendre\", &pid.to_string(), suspendu, &message,"));
 }
 
 // ------------------------------------------------------------ phase 4, PR 4.2 : suivi des incidents
@@ -5415,7 +5415,7 @@ fn incident_tache_relance_sans_alerte_persistance() {
 #[test]
 fn politique_listes_restreintes_jamais_niveau_3() {
     use crate::menaces::menaces_sources_test as listes;
-    use crate::moniteur::blocage_automatique;
+    use crate::tests::blocage_automatique;
     let bloquee = |m: &crate::menaces::Menaces, ip: &str| blocage_automatique(&m.chercher_ip(ip).expect("listée"), true, false, false);
     for source in ["FireHOL niveau 1", "ThreatView C2 Cobalt Strike", "ThreatView IP", "Emerging Threats (compromises)", "CINS Army", "IPsum (niveau 3)"] {
         let m = listes(&[("203.0.113.5", source), ("198.51.100.0/24", source), ("2001:db8:1::5", source), ("2001:db8:2::/48", source)]);
@@ -5430,7 +5430,7 @@ fn politique_listes_restreintes_jamais_niveau_3() {
 #[test]
 fn politique_spamhaus_feodo_niveau_3() {
     use crate::menaces::menaces_sources_test as listes;
-    use crate::moniteur::blocage_automatique;
+    use crate::tests::blocage_automatique;
     let mut noms: Vec<_> = crate::menaces::sources_auto_test();
     noms.sort();
     assert_eq!(noms, vec![("Feodo Tracker (C2 botnets)", true, true), ("Spamhaus DROP (IPv4)", true, true), ("Spamhaus DROP (IPv6)", true, true)]);
@@ -5538,4 +5538,228 @@ fn politique_liste_rejetee_retiree_entierement() {
     for ip in ["203.0.113.6", "2001:db8::6", "2001:db8:2::7"] {
         assert!(m.permet_blocage_auto(ip), "{ip} : l'autre source reste");
     }
+}
+
+// ------------------------------------------------------------ phase 6, PR 6.2 : point de décision et garde
+
+/// La décision du cycle, avec le contrôle « pas encore bloquée » qui le précède
+pub(crate) fn blocage_automatique(m: &crate::menaces::Correspondance, actif: bool, deja_bloquee: bool, echec: bool) -> bool {
+    !deja_bloquee && matches!(crate::moniteur::decision_blocage_liste(m, actif, echec), crate::politique::Decision::Autorisee(_))
+}
+
+const S0: u64 = 1_800_000_000;
+
+fn sans_empreinte() -> Option<String> {
+    None
+}
+
+#[test]
+fn politique_echec_protection_refuse_les_actions_alimentees_par_fichiers() {
+    use crate::politique::{decider, Action::*, Contexte, Decision::*, Declencheur::*, SourceAuto::*};
+    let tout = Contexte { echec_protection: false, blocage_menaces: true, ips: true, rancongiciel: true };
+    let echec = Contexte { echec_protection: true, ..tout };
+    assert!(matches!(decider(BloquerIp, Automatique(Liste { niveau3: true }), &tout), Autorisee(_)));
+    assert!(matches!(decider(BloquerIp, Automatique(Liste { niveau3: true }), &echec), Refusee(_)));
+    assert!(matches!(decider(BloquerIp, Automatique(Ips), &tout), Autorisee(_)));
+    assert!(matches!(decider(BloquerIp, Automatique(Ips), &echec), Refusee(_)));
+    assert!(matches!(decider(Suspendre, Automatique(Leurre), &echec), Autorisee(_)), "D6-10 : alimentée par le journal Sécurité");
+    for a in [BloquerIp, Suspendre, Reprendre, Tuer, TuerChaine, Isoler, Panique, FinPanique] {
+        assert!(matches!(decider(a, Humain, &echec), Autorisee(_)), "{a:?} : un administrateur peut toujours agir");
+    }
+}
+
+#[test]
+fn politique_automatique_seulement_dans_les_cas_ecrits() {
+    use crate::politique::{decider, Action::*, Contexte, Decision::*, Declencheur::*, SourceAuto::*};
+    let tout = Contexte { echec_protection: false, blocage_menaces: true, ips: true, rancongiciel: true };
+    assert!(matches!(decider(BloquerIp, Automatique(Liste { niveau3: false }), &tout), AlerteSeulement(_)));
+    let sans = Contexte::default();
+    assert!(matches!(decider(BloquerIp, Automatique(Liste { niveau3: true }), &sans), AlerteSeulement(_)), "réglage désactivé");
+    assert!(matches!(decider(BloquerIp, Automatique(Ips), &sans), AlerteSeulement(_)), "IPS désactivé par défaut");
+    assert!(matches!(decider(Suspendre, Automatique(Leurre), &sans), AlerteSeulement(_)));
+    // D6-9 : aucune action irréversible ni nouvelle en automatique, quelle que soit la source
+    for source in [Liste { niveau3: true }, Ips, Leurre] {
+        for a in [Tuer, TuerChaine, Isoler, Panique, FinPanique, Reprendre] {
+            assert!(matches!(decider(a, Automatique(source), &tout), Refusee(_)), "{a:?}, {source:?}");
+        }
+    }
+    assert!(matches!(decider(Suspendre, Automatique(Ips), &tout), Refusee(_)));
+    assert!(matches!(decider(Suspendre, Automatique(Liste { niveau3: true }), &tout), Refusee(_)));
+    assert!(matches!(decider(BloquerIp, Automatique(Leurre), &tout), Refusee(_)));
+}
+
+#[test]
+fn garde_trois_par_cible_puis_alerte() {
+    use crate::politique::{Genre::*, Historique, Passage};
+    let mut h = Historique::default();
+    // Espacées : le plafond horaire ne joue pas
+    for i in 0..3 {
+        let t = S0 + i * 4000;
+        assert_eq!(h.examiner(Suspension, r"C:\Mal.exe", t, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(Suspension, r"C:\Mal.exe", t);
+    }
+    let t = S0 + 3 * 4000;
+    let Passage::Retenue { alerte: Some(a), .. } = h.examiner(Suspension, r"c:\mal.EXE", t, &mut sans_empreinte) else { panic!("4e : retenue et alerte, sans tenir compte de la casse") };
+    assert!(a.contains("boucle"), "{a}");
+    assert!(matches!(h.examiner(Suspension, r"C:\Mal.exe", t + 60, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }), "une seule alerte");
+    assert_eq!(h.examiner(Suspension, r"C:\Autre.exe", t, &mut sans_empreinte), Passage::Passe, "une autre cible");
+    assert_eq!(h.examiner(BlocageListe, r"C:\Mal.exe", t, &mut sans_empreinte), Passage::Passe, "un autre genre");
+    // La fenêtre glisse : 24 h après les premières, la cible repasse, et une nouvelle boucle se signale de nouveau
+    assert_eq!(h.examiner(Suspension, r"C:\Mal.exe", S0 + 86_400 + 1, &mut sans_empreinte), Passage::Passe);
+    for (i, t) in [S0 + 200_000, S0 + 204_000, S0 + 208_000].iter().enumerate() {
+        assert_eq!(h.examiner(Suspension, r"C:\Mal.exe", *t, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(Suspension, r"C:\Mal.exe", *t);
+    }
+    assert!(matches!(h.examiner(Suspension, r"C:\Mal.exe", S0 + 212_000, &mut sans_empreinte), Passage::Retenue { alerte: Some(_), .. }), "plus de 24 h après la première alerte");
+}
+
+#[test]
+fn garde_plafond_global_suspend_une_heure() {
+    use crate::politique::{Genre::*, Historique, Passage};
+    for (genre, max) in [(BlocageListe, 30usize), (Suspension, 3)] {
+        let mut h = Historique::default();
+        for i in 0..max {
+            let c = format!("c{i}");
+            assert_eq!(h.examiner(genre, &c, S0 + i as u64, &mut sans_empreinte), Passage::Passe, "{genre:?} {i}");
+            h.noter(genre, &c, S0 + i as u64);
+        }
+        let t = S0 + max as u64;
+        assert!(matches!(h.examiner(genre, "suivante", t, &mut sans_empreinte), Passage::Retenue { alerte: Some(_), .. }), "{genre:?} au plafond");
+        assert!(matches!(h.examiner(genre, "autre", t + 1, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }), "{genre:?} : une seule alerte");
+        assert!(matches!(h.examiner(genre, "autre", t + 3599, &mut sans_empreinte), Passage::Retenue { .. }), "{genre:?} : encore en pause");
+        assert_eq!(h.examiner(genre, "autre", t + 3600, &mut sans_empreinte), Passage::Passe, "{genre:?} : une heure après");
+        let autre = if genre == Suspension { BlocageListe } else { Suspension };
+        assert_eq!(h.examiner(autre, "autre", t + 1, &mut sans_empreinte), Passage::Passe, "la pause ne touche que ce genre");
+    }
+}
+
+#[test]
+fn garde_ips_cinquante_adresses_par_heure() {
+    use crate::politique::{Genre::*, Historique, Passage};
+    let mut h = Historique::default();
+    for i in 0..50u64 {
+        let c = format!("203.0.113.{i}");
+        assert_eq!(h.examiner(BlocageIps, &c, S0 + i, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(BlocageIps, &c, S0 + i);
+    }
+    assert!(matches!(h.examiner(BlocageIps, "198.51.100.1", S0 + 50, &mut sans_empreinte), Passage::Retenue { alerte: Some(_), .. }), "51e adresse");
+    assert!(matches!(h.examiner(BlocageIps, "198.51.100.2", S0 + 51, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }), "une alerte par heure");
+    assert_eq!(h.examiner(BlocageIps, "203.0.113.1", S0 + 52, &mut sans_empreinte), Passage::Passe, "adresse déjà comptée");
+    assert_eq!(h.examiner(BlocageListe, "198.51.100.1", S0 + 52, &mut sans_empreinte), Passage::Passe, "compteur à part des listes");
+    assert_eq!(h.examiner(BlocageIps, "198.51.100.3", S0 + 3700, &mut sans_empreinte), Passage::Passe, "la fenêtre glisse");
+}
+
+#[test]
+fn garde_decision_humaine_prime_sept_jours() {
+    use crate::politique::{Genre::*, Historique, Passage};
+    let mut h = Historique::default();
+    h.decision_humaine("203.0.113.5", None, S0);
+    assert!(matches!(h.examiner(BlocageListe, "203.0.113.5", S0 + 1, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }));
+    assert!(matches!(h.examiner(BlocageIps, "203.0.113.5", S0 + 604_799, &mut sans_empreinte), Passage::Retenue { .. }));
+    assert_eq!(h.examiner(BlocageListe, "203.0.113.5", S0 + 604_800, &mut sans_empreinte), Passage::Passe, "7 jours après");
+    assert_eq!(h.examiner(BlocageListe, "203.0.113.6", S0 + 1, &mut sans_empreinte), Passage::Passe);
+    // Programme : le même fichier seulement (D6-2)
+    h.decision_humaine(r"C:\Prog.exe", Some("aa".into()), S0);
+    let mut meme = || Some("aa".to_string());
+    let mut autre = || Some("bb".to_string());
+    assert!(matches!(h.examiner(Suspension, r"c:\prog.exe", S0 + 1, &mut meme), Passage::Retenue { .. }));
+    assert_eq!(h.examiner(Suspension, r"C:\Prog.exe", S0 + 1, &mut autre), Passage::Passe, "fichier remplacé");
+    assert_eq!(h.examiner(Suspension, r"C:\Prog.exe", S0 + 1, &mut sans_empreinte), Passage::Passe, "empreinte illisible : pas d'exception");
+    // L'empreinte n'est lue que si une décision porte sur ce chemin
+    let mut lue = false;
+    let _ = h.examiner(Suspension, r"C:\Sans.exe", S0 + 1, &mut || { lue = true; None });
+    assert!(!lue);
+    // Une nouvelle décision remplace l'ancienne
+    h.decision_humaine(r"C:\Prog.exe", Some("bb".into()), S0 + 2);
+    assert_eq!(h.humaines.iter().filter(|x| x.cible == r"c:\prog.exe").count(), 1);
+    assert!(matches!(h.examiner(Suspension, r"C:\Prog.exe", S0 + 3, &mut autre), Passage::Retenue { .. }));
+}
+
+#[test]
+fn garde_historique_borne() {
+    use crate::politique::{Genre::*, Historique};
+    let mut h = Historique::default();
+    for i in 0..5000u64 {
+        h.noter(BlocageListe, &format!("c{i}"), S0 + i);
+    }
+    assert!(h.traces.len() <= 2000, "{}", h.traces.len());
+    for i in 0..1000u64 {
+        h.decision_humaine(&format!("d{i}"), None, S0);
+    }
+    assert!(h.humaines.len() <= 500, "{}", h.humaines.len());
+    // Une trace de blocage part après 24 h, une trace de suspension reste 7 jours
+    let mut h = Historique::default();
+    h.noter(BlocageListe, "b", S0);
+    h.noter(Suspension, r"C:\P.exe", S0);
+    h.noter(BlocageListe, "c", S0 + 86_401);
+    assert!(!h.traces.iter().any(|x| x.cible == "b"));
+    assert!(h.suspendu_automatiquement(r"c:\p.exe", S0 + 604_799));
+    assert!(!h.suspendu_automatiquement(r"c:\p.exe", S0 + 604_800));
+    assert!(!h.suspendu_automatiquement(r"c:\autre.exe", S0 + 1));
+    // Une trace de blocage ne compte pas pour une reprise
+    let mut h = Historique::default();
+    h.noter(BlocageListe, r"c:\p.exe", S0);
+    assert!(!h.suspendu_automatiquement(r"c:\p.exe", S0 + 1));
+}
+
+/// Historique illisible : aucune action automatique. Protection en échec : la lecture refusée ne dit rien du fichier
+#[test]
+fn garde_historique_illisible_echec_ferme() {
+    use crate::politique::{etat_initial_test as e, Historique};
+    assert_eq!(e(false, None, false), (false, 0), "premier démarrage");
+    assert_eq!(e(true, None, false), (true, 0), "fichier mal formé");
+    assert_eq!(e(true, None, true), (false, 0), "protection en échec : suspension sur leurre gardée (D6-10)");
+    let mut h = Historique::default();
+    h.noter(crate::politique::Genre::Suspension, "a", S0);
+    assert_eq!(e(true, Some(h), false), (false, 1));
+    let h: Historique = serde_json::from_str(&serde_json::to_string(&{ let mut x = Historique::default(); x.noter(crate::politique::Genre::BlocageIps, "c", S0); x.decision_humaine("d", Some("e".into()), S0); x }).unwrap()).unwrap();
+    assert_eq!((h.traces.len(), h.humaines.len()), (1, 1), "aller-retour");
+    assert!(serde_json::to_string(&h).unwrap().contains("\"Traces\""), "noms du format");
+    torturer_texte(r#"{"Traces":[{"T":1,"Genre":"Suspension","Cible":"c"}],"Humaines":[{"Cible":"c","Empreinte":null,"Jusqua":2}],"PauseListes":1}"#, &mut |t| { let _ = serde_json::from_str::<Historique>(t); });
+}
+
+/// Aucun module n'appelle une action de réponse sans passer par `execution` ; la décision est appelée dans chaque chemin
+#[test]
+fn structure_aucun_appel_direct_aux_actions() {
+    let dossier = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut lus = 0;
+    for f in std::fs::read_dir(dossier).unwrap().map(|e| e.unwrap().path()) {
+        let nom = f.file_name().unwrap().to_string_lossy().to_string();
+        if !nom.ends_with(".rs") || ["execution.rs", "tests.rs", "tests_detection.rs"].contains(&nom.as_str()) {
+            continue;
+        }
+        lus += 1;
+        let s = std::fs::read_to_string(&f).unwrap();
+        for appel in ["reponse::tuer(", "reponse::suspendre(", "reponse::isoler_programme(", "reponse::panique(", "blocage::ajouter_regle("] {
+            assert!(!s.contains(appel), "{nom} appelle {appel}");
+        }
+    }
+    assert!(lus > 30, "{lus} modules lus");
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("self.bloquer_ip_auto(&a, Genre::BlocageListe, ip,"), "listes");
+    assert!(m.contains("politique::decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Ips), &contexte)"), "IPS : décision en aval de l'IDS");
+    assert!(m.contains("politique::passer(Genre::BlocageIps, &ip,"), "IPS : garde");
+    assert!(m.contains("politique::passer(Genre::BlocageListe, ip,"), "listes : garde");
+    assert!(m.contains("politique::noter(genre, ip);"), "traces");
+    assert!(m.contains("if r.ok && humaine {\n                    politique::decision_humaine(cible, None);"), "déblocage");
+    assert!(m.contains("decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin)"), "reprise");
+    let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
+    assert!(v.contains("politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte)"), "leurre");
+    assert!(v.contains("politique::passer(Genre::Suspension, programme,"), "leurre : garde");
+    assert!(v.contains("politique::noter(Genre::Suspension, programme);"), "leurre : trace");
+    assert!(!include_str!("ids.rs").contains("politique::"), "IDS gelé");
+    // Relecture de #109, P7 : le chargement calcule bien le critère de levée
+    assert!(include_str!("menaces.rs").contains("m.niveau3_complet = niveau3_complet(&infos.sources);"));
+}
+
+#[test]
+fn blocage_pose_automatiquement_seulement_par_le_service() {
+    use crate::commun::Blocage;
+    use crate::moniteur::blocage_pose_automatiquement as auto;
+    let b = |t: &str, r: &str, e: &str| Blocage { type_: t.into(), cible: "c".into(), raison: r.into(), date: String::new(), expire: e.into() };
+    assert!(auto(&b("parefeu", "blocage automatique : Feodo", "2099-01-01 00:00:00")));
+    assert!(auto(&b("parefeu", "blocage automatique : Feodo", "")), "échéance non écrite");
+    assert!(auto(&b("parefeu", "IPS : règle 9", "2099-01-01 00:00:00")), "IPS");
+    assert!(!auto(&b("parefeu", "blocage manuel", "")));
+    assert!(!auto(&b("programme", "blocage automatique", "x")), "autre type");
 }

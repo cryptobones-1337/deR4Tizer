@@ -1131,6 +1131,29 @@ try {
                     if ($cibles.Deux -notin $b -or -not (& $regleN3 $cibles.Deux)) { return "l'adresse encore dans Feodo a été levée aussi : $($b -join ', ')" }
                     $true
                 }
+                # Phase 6, PR 6.2 : le déblocage manuel d'un blocage automatique prime, l'adresse reste listée. Témoin : l'adresse était bloquée
+                $titreHumain = 'Garde : adresse débloquée à la main, toujours listée, connexion revue : pas de reblocage'
+                if ($cibles.Spam -notin (& $blocagesN3)) {
+                    NonExecute $titreHumain 'blocage de départ absent'
+                } else {
+                    Verifier $titreHumain {
+                        $d = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $cibles.Spam } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+                        if (-not $d.Ok) { return "déblocage refusé : $($d.Message)" }
+                        $h = Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json
+                        if ($cibles.Spam -notin @($h.Humaines | ForEach-Object Cible)) { return "décision humaine absente de reponses.json : $(@($h.Humaines | ForEach-Object Cible) -join ', ')" }
+                        $fin = (Get-Date).AddSeconds(45)
+                        do {
+                            foreach ($c in $prisesN3) { $c.Close() }
+                            $prisesN3 = @(& $mesConnexions @($cibles.Spam))
+                            Start-Sleep 8
+                            if ($cibles.Spam -in (& $blocagesN3) -or (& $regleN3 $cibles.Spam)) { return 'rebloquée malgré la décision humaine' }
+                        } while ((Get-Date) -lt $fin)
+                        $siem = Join-Path $script:Donnees 'siem'
+                        $traces = @(Get-ChildItem $siem -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_ -match '"Source":"reponse"' -and $_ -match [regex]::Escape($cibles.Spam) -and $_ -match 'retenu' })
+                        if (-not $traces.Count) { return 'connexion jamais revue : le contrôle ne prouve rien (aucune retenue dans le SIEM)' }
+                        $true
+                    }
+                }
             } else {
                 NonExecute $titreLevee 'service non arrêté en 45 s'
             }
