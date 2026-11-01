@@ -387,6 +387,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             [void](Redemarrer-Service)
             $vue = $false
             foreach ($i in 1..4) {
+                if ($i -gt 1) { Write-Host "  après redémarrage : touche $i" }
                 $p4 = & $toucher $exeB (20 + $i)
                 try {
                     $vue = & $attendreRetenue $p4

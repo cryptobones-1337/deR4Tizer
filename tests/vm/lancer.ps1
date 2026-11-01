@@ -155,9 +155,11 @@ try {
         $fin = (Get-Date).AddMinutes($Minutes)
         # Fin de l'attente dès que la tâche ne tourne plus (échec au lancement : pas 60 minutes d'attente pour rien)
         Start-Sleep 15
-        # Trois lectures de suite : une tâche lue juste avant qu'elle tourne a déjà fait conclure à un arrêt, en moins d'une minute
+        # Une tâche peut rester « Ready » bien plus d'une minute avant de tourner, juste après la reprise de l'instantané : vu trois fois, en
+        # moins d'une minute, avec un résultat vide. On ne conclut à un arrêt qu'après 5 minutes et trois lectures de suite
         $arretees = 0
-        while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and $arretees -lt 3) {
+        $delaiDemarrage = (Get-Date).AddMinutes(5)
+        while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and ($arretees -lt 3 -or (Get-Date) -lt $delaiDemarrage)) {
             Start-Sleep 10
             $arretees = if ((Get-ScheduledTask -TaskName $nom).State -in 'Running', 'Queued') { 0 } else { $arretees + 1 }
         }
