@@ -32,6 +32,45 @@ Tout le reste, IPS compris, est au niveau 2 au plus.
   reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée
   vers le prestataire, la récupération est une action humaine (phase 6).
 
+## Prévu en phase 6 (pas encore dans le code)
+
+Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
+
+**Échéances.** Une échéance est un rendez-vous de relance, pas une levée.
+
+| Action | Échéance | À l'échéance |
+|---|---|---|
+| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste (déjà le cas pour ces listes ; la limite aux deux sources arrive avec la PR 6.1) |
+| Blocage IP par l'IPS | 24 h | levé |
+| Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h |
+| Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h |
+| Isolation d'un programme | 7 jours | reste isolé ; relance « Alerte », puis tous les 7 jours |
+| Mode panique | 4 h | reste actif ; relance « Critique », puis toutes les 24 h |
+| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info » |
+| Blocage manuel (hosts, IP) | aucune | rappel « Info » tous les 90 jours |
+| Tuer, tuer une chaîne | sans objet | irréversible, journalisé |
+
+**Garde contre les boucles.** Elle ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais
+l'alerte : seule l'action est retenue.
+
+| Garde | Seuil | Effet |
+|---|---|---|
+| Même action automatique sur la même cible | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée |
+| Blocages IP automatiques, toutes cibles | 30 par heure | au-delà, suspendus 1 h, alerte « Critique » une fois |
+| Suspensions automatiques, toutes cibles | 3 par heure | au-delà, suspendues 1 h, alerte « Critique » une fois |
+| Adresses distinctes par l'IPS | 50 par heure | au-delà, alerte seule |
+| Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
+
+**Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
+
+| Action | Avec le service | Service arrêté ou en panne | Après la désinstallation |
+|---|---|---|---|
+| Suspension | « Reprendre » (identité revalidée) ou « Tuer » | Moniteur de ressources de Windows (`resmon`, « Reprendre le processus »), ou arrêt du processus dans le Gestionnaire des tâches | le processus reste suspendu jusqu'à son arrêt ou au redémarrage : redémarrer le poste |
+| Isolation | « Libérer » | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
+| Mode panique | « Désactiver le mode panique » | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu | `--nettoyer` |
+| Blocage IP | « Débloquer » | règles « deR4Tizer » du pare-feu | `--nettoyer` |
+| Quarantaine | « Restaurer » ou repli | aucune (copie encodée dans le dossier de données) | avec `GARDER_DONNEES=1` : réinstaller puis restaurer ; sans : perdue, à vérifier |
+
 ## Écarts du code actuel (4.3) avec cette politique
 
 | Écart | Où | À traiter |
