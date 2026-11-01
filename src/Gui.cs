@@ -459,7 +459,7 @@ namespace DeR4Tizer
         readonly Liste lvFlux = new Liste(), lvAlertes = new Liste(), lvBlocages = new Liste(), lvDemarrage = new Liste(), lvVie = new Liste(), lvMenaces = new Liste(),
                        lvChaines = new Liste(), lvBaseline = new Liste(), lvExtensions = new Liste(), lvQuarantaine = new Liste(), lvParefeu = new Liste();
         readonly CheckBox chkMasquerWindows = CaseNeon("Masquer les entrées signées Microsoft / Windows (sauf commande suspecte)", true);
-        readonly CheckBox chkBlocageAuto = CaseNeon("Bloquer automatiquement au pare-feu les IP des listes de confiance haute", false);
+        readonly CheckBox chkBlocageAuto = CaseNeon("Bloquer automatiquement au pare-feu les IP de Spamhaus DROP et de Feodo Tracker", false);
         readonly CheckBox chkListesRestreintes = CaseNeon("Utiliser aussi les listes non commerciales ou aux conditions non vérifiées (usage personnel uniquement)", false);
         readonly CheckBox chkRancongiciel = CaseNeon("Suspendre automatiquement un programme qui touche aux fichiers leurres (rançongiciel)", false);
         readonly Label lblMenaces = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, Margin = new Padding(0, 8, 0, 0) };

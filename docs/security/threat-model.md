@@ -84,11 +84,10 @@ Veut publier une version malveillante que les postes installeraient.
 Une source compromise ou erronée publie des adresses légitimes (DNS public, service de mise à jour, serveur du
 prestataire).
 
-- Mesures : téléchargement en HTTPS, chargement borné ; blocage automatique limité aux listes de confiance
-  « haute » ; blocages levés quand l'adresse sort de la liste ou à expiration.
+- Mesures : téléchargement en HTTPS, chargement borné ; blocage automatique limité à Spamhaus DROP et Feodo
+  Tracker ; blocages levés quand l'adresse sort de la liste ou à expiration.
 - Risques résiduels : un blocage automatique d'une adresse légitime coupe un service jusqu'à la mise à jour
-  suivante de la liste ; avec le réglage « listes restreintes », le blocage automatique s'étend à FireHOL
-  niveau 1 et à ThreatView, au-delà de la politique de réponse (`docs/reponse/politique.md`).
+  suivante de la liste.
 
 ## Hors du modèle
 

@@ -422,7 +422,7 @@ namespace DeR4Tizer
         public bool ListesRestreintes { get; set; }
         public ConfigNotifications Notifications { get; set; }
         public ConfigMaj Maj { get; set; }
-        // Bloque au pare-feu, dès qu'une connexion est vue, les IP des listes de confiance haute
+        // Bloque au pare-feu, dès qu'une connexion est vue, les IP de Spamhaus DROP et de Feodo Tracker
         public bool BlocageAutoMenaces { get; set; }
         // Suspend aussitôt le programme qui modifie un fichier leurre
         public bool ReponseAutoRancongiciel { get; set; }

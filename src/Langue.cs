@@ -102,7 +102,7 @@ namespace DeR4Tizer
             { "Bloquer la télémétrie…", "Block telemetry…" }, { "Bloquer", "Block" }, { "Restaurer la sélection", "Restore selection" },
             { "Mettre à jour maintenant", "Update now" },
             { "Masquer les entrées signées Microsoft / Windows", "Hide entries signed by Microsoft / Windows" },
-            { "Bloquer automatiquement au pare-feu les IP des listes de confiance haute", "Automatically block high-confidence list IPs at the firewall" },
+            { "Bloquer automatiquement au pare-feu les IP de Spamhaus DROP et de Feodo Tracker", "Automatically block Spamhaus DROP and Feodo Tracker IPs at the firewall" },
             { "Suspendre automatiquement un programme qui touche aux fichiers leurres (rançongiciel)", "Automatically suspend a program that touches canary files (ransomware)" },
             { "Bloquer (nom dans le fichier hosts, sinon IP au pare-feu)", "Block (name in hosts file, otherwise IP at the firewall)" },
             { "Bloquer l'IP au pare-feu", "Block the IP at the firewall" }, { "Bloquer cette destination", "Block this destination" },
