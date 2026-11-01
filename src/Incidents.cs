@@ -373,6 +373,7 @@ namespace DeR4Tizer
         int chargement, enCours;
         DateTime debutLecture = DateTime.MinValue;
         readonly HashSet<string> chronologiesEnCours = new HashSet<string>();
+        string idAffiche;
 
         public PageIncidents()
         {
@@ -468,6 +469,8 @@ namespace DeR4Tizer
             var i = Choisi();
             if (i == null) { detail.Text = L.T("Sélectionnez un incident."); return; }
             string id = i.Id;
+            // Autre incident : son résumé tout de suite, sans sa chronologie, qui peut rester bloquée ; jamais le détail du précédent
+            if (id != idAffiche) { idAffiche = id; detail.Text = VueIncidents.Detail(i, null); }
             // Un seul calcul en cours par incident : une chronologie verrouillée n'empile pas un fil par tour (S105-13)
             lock (chronologiesEnCours) { if (!chronologiesEnCours.Add(id)) return; }
             ThreadPool.QueueUserWorkItem(_ =>

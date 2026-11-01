@@ -205,6 +205,7 @@ try {
     Cas 'lectures hors du fil de l''interface' (([regex]::Matches($p, 'ThreadPool\.QueueUserWorkItem')).Count -eq 3)
     Cas 'une lecture à la fois par page' (([regex]::Matches($p, 'Interlocked\.CompareExchange\(ref enCours, 1, 0\)')).Count -eq 2)
     Cas 'un calcul de chronologie à la fois par incident' ($p.Contains('if (!chronologiesEnCours.Add(id)) return;'))
+    Cas 'autre incident : jamais le détail du précédent' ($p.Contains('if (id != idAffiche) { idAffiche = id; detail.Text = VueIncidents.Detail(i, null); }'))
     Cas 'lecture bloquée dite sur les deux pages' (([regex]::Matches($p, 'VueSante\.LectureBloquee\(debutLecture, DateTime\.Now\)')).Count -eq 2)
     Cas 'compilation : fichier listé' (([IO.File]::ReadAllText("$Depot\compiler.ps1")).Contains('"$src\Incidents.cs"'))
 } finally {
