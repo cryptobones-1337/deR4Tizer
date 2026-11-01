@@ -103,6 +103,8 @@ pub struct Moniteur {
     suivis: Vec<crate::incidents::IncidentSuivi>,
     suivi_modifie: bool,
     suivi_ecriture_permise: bool,
+    /// Dernière ligne au SIEM pour une action retenue, par cible et par motif (phase 6, PR 6.2)
+    retenues_siem: HashMap<String, u64>,
     /// Alertes non suivies faute de place (500 incidents non clos) depuis le démarrage (SAN-012, PR 4.4)
     pub non_suivies: u64,
     blocages: Vec<Blocage>,
@@ -196,6 +198,7 @@ impl Moniteur {
             suivis,
             suivi_modifie: false,
             suivi_ecriture_permise,
+            retenues_siem: HashMap::new(),
             non_suivies: 0,
             blocages: commun::lire("blocages.json").unwrap_or_default(),
             dernieres_connexions: Vec::new(),
@@ -667,22 +670,26 @@ impl Moniteur {
             if let (Some(crate::regles::RES_001), Some(m)) = (regle, &menace) {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
+                let mut bloquee = false;
                 if let (false, Decision::Autorisee(a)) = (bloque, decision_blocage_liste(m, self.config.blocage_auto_menaces, commun::echec_protection().is_some())) {
                     match politique::passer(Genre::BlocageListe, ip, &mut || None) {
                         Passage::Passe => {
                             self.bloquer_ip_auto(&a, Genre::BlocageListe, ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
                             action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
+                            bloquee = true;
                         }
                         Passage::Retenue { raison, alerte } => {
                             action = format!(" ; blocage automatique retenu ({raison})");
-                            crate::siem::reponse("bloquerIp", ip, false, &format!("retenu : {raison}"), &format!("automatique : {}", m.source));
+                            if politique::retenue_a_journaliser(&mut self.retenues_siem, &format!("{ip}|{raison}"), maintenant_s()) {
+                                crate::siem::reponse("bloquerIp", ip, false, &format!("retenu : {raison}"), &format!("automatique : {}", m.source));
+                            }
                             if let Some(t) = alerte {
                                 alertes_modifiees |= self.ajouter_alerte_brute(politique::alerte_garde(&t), None);
                             }
                         }
                     }
                 }
-                alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_001, "Critique", &f, format!("{}{action}", f.raisons));
+                alertes_modifiees |= self.ajouter_alerte_action(crate::regles::RES_001, "Critique", &f, format!("{}{action}", f.raisons), bloquee);
             } else if regle == Some(crate::regles::RES_002) {
                 alertes_modifiees |= self.ajouter_alerte(crate::regles::RES_002, "Alerte", &f, f.raisons.clone());
             }
@@ -793,8 +800,10 @@ impl Moniteur {
                     commun::journal(&format!("IPS : {}", r.message));
                 }
                 Passage::Retenue { raison: motif, alerte } => {
-                    commun::journal(&format!("IPS : blocage de {ip} retenu ({motif})"));
-                    crate::siem::reponse("bloquerIp", &ip, false, &format!("retenu : {motif}"), "automatique : IPS");
+                    if politique::retenue_a_journaliser(&mut self.retenues_siem, &format!("{ip}|{motif}"), maintenant_s()) {
+                        commun::journal(&format!("IPS : blocage de {ip} retenu ({motif})"));
+                        crate::siem::reponse("bloquerIp", &ip, false, &format!("retenu : {motif}"), "automatique : IPS");
+                    }
                     if let Some(t) = alerte {
                         alertes_modifiees |= self.ajouter_alerte_brute(politique::alerte_garde(&t), None);
                     }
@@ -892,7 +901,12 @@ impl Moniteur {
     }
 
     fn ajouter_alerte(&mut self, regle: &str, niveau: &str, f: &FluxInfo, raisons: String) -> bool {
-        let cle = format!("{niveau}|{}|{}|{}", f.chemin, f.processus, f.ip);
+        self.ajouter_alerte_action(regle, niveau, f, raisons, false)
+    }
+
+    /// `bloquee` : l'alerte annonce une action, jamais tue par une alerte précédente de la même connexion
+    fn ajouter_alerte_action(&mut self, regle: &str, niveau: &str, f: &FluxInfo, raisons: String, bloquee: bool) -> bool {
+        let cle = cle_flux(niveau, &f.chemin, &f.processus, &f.ip, bloquee);
         self.ajouter_alerte_brute(Alerte {
             regle: regle.into(),
             id: commun::nouvel_id(),
@@ -1558,6 +1572,12 @@ pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: 
 pub(crate) fn echec_recent(valeur: &str, date: u64, maintenant: u64, duree: u64) -> bool {
     let Some((d, t)) = valeur.split_once('|') else { return false };
     d.parse() == Ok(date) && t.parse::<u64>().is_ok_and(|t| maintenant >= t && maintenant - t < duree)
+}
+
+/// Clé de déduplication d'une alerte de flux (pure, relecture de #110, F1) : un blocage différé par la garde part avec sa
+/// propre alerte, après celle qui disait « retenu »
+pub(crate) fn cle_flux(niveau: &str, chemin: &str, processus: &str, ip: &str, bloquee: bool) -> String {
+    format!("{niveau}|{chemin}|{processus}|{ip}{}", if bloquee { "|bloquee" } else { "" })
 }
 
 fn cle_alerte(a: &Alerte) -> String {

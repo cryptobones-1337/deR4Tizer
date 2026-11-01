@@ -35,8 +35,10 @@ Tout le reste, IPS compris, est au niveau 2 au plus.
 
 ## Point de décision et garde contre les boucles
 
-Toute action de réponse passe par `politique.rs` : aucune n'est exécutée sans une autorisation qu'il délivre
-(`execution.rs`). Une action automatique n'est permise que dans les cas écrits ici.
+Le blocage d'une adresse, la suspension, la reprise, l'arrêt d'un processus, l'isolation et le mode panique passent par
+`politique.rs` : aucun n'est exécuté sans une autorisation qu'il délivre (`execution.rs`). Le blocage par domaine, la
+quarantaine, la restauration et le déblocage sont manuels et n'y passent pas. Une action automatique n'est permise que
+dans les cas écrits ici.
 
 La garde ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais l'alerte : seule l'action
 est retenue. Un administrateur peut toujours agir à la main.
@@ -45,18 +47,24 @@ est retenue. Un administrateur peut toujours agir à la main.
 |---|---|---|
 | Même action automatique sur la même cible | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
 | Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
-| Suspensions automatiques, toutes cibles | 3 par heure | au-delà, arrêtées 1 h, alerte « Critique » une fois |
 | Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
 | Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
 
-- **Compromis accepté** : pendant une vraie attaque à plusieurs programmes, le quatrième de l'heure n'est pas suspendu ;
-  l'alerte « Critique » part quand même.
+- **Pas de plafond global sur les suspensions** (décision du mainteneur, 2026-11-01) : des programmes jetables ne doivent
+  pas pouvoir retirer sa place à un rançongiciel. En contrepartie, plusieurs programmes légitimes qui toucheraient les
+  leurres seraient tous suspendus, 3 fois au plus chacun par 24 h.
+- **Limite du plafond des listes** : un compte standard peut l'atteindre en se connectant à 31 adresses listées. Les
+  blocages par les listes s'arrêtent alors une heure, renouvelable ; les alertes « Critique » restent. Le plafond protège
+  d'une liste corrompue.
+- **Limite de l'IPS** : `ids.rs`, gelé, écrit « bloquée » dans son alerte dès la détection, même si l'action est ensuite
+  retenue ; le SIEM et le journal disent la retenue.
 - **Décision humaine sur un programme** : liée à l'empreinte de l'exécutable. Un fichier remplacé au même chemin n'en
   hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été
   suspendu automatiquement dans les 7 derniers jours.
-- **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Illisible :
-  aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service, rétablit
-  la réponse automatique. Protection du dossier en échec : la garde repart en mémoire, la suspension sur leurre reste.
+- **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Contenu mal
+  formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
+  rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
+  en mémoire, sans son historique, et la réponse reste.
 
 ## Prévu en phase 6 (pas encore dans le code)
 

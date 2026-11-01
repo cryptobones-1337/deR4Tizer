@@ -1,5 +1,6 @@
-//! Point de décision unique des actions de réponse (phase 6, PR 6.2, `docs/reponse/politique.md`) : `decider` applique
-//! les niveaux de la politique, `Historique` la garde contre les boucles. Décisions pures et testées ; l'état partagé
+//! Point de décision des actions de réponse (phase 6, PR 6.2, `docs/reponse/politique.md`) : blocage d'adresse, suspension,
+//! reprise, arrêt, isolation, mode panique. Hors de lui : blocage par domaine, quarantaine, restauration, déblocage, tous
+//! manuels. `decider` applique les niveaux de la politique, `Historique` la garde contre les boucles. Décisions pures et testées ; l'état partagé
 //! entre le moniteur et le fil des leurres est en bas du fichier. Aucune action sans une `Autorisation`, que seul
 //! `decider` fabrique (`execution.rs`).
 
@@ -17,7 +18,6 @@ const HEURE: u64 = 3_600;
 const PAR_CIBLE: usize = 3;
 /// Toutes cibles confondues, par heure
 const BLOCAGES_LISTES: usize = 30;
-const SUSPENSIONS: usize = 3;
 const ADRESSES_IPS: usize = 50;
 const PRIORITE_HUMAINE: u64 = 7 * JOUR;
 /// Bornes de l'historique : le fichier reste petit, quoi qu'un attaquant provoque
@@ -157,7 +157,6 @@ pub struct Historique {
     pub traces: VecDeque<Trace>,
     pub humaines: Vec<Humaine>,
     pub pause_listes: u64,
-    pub pause_suspensions: u64,
     pub signal_ips: u64,
     /// Cibles dont la boucle a été signalée : (cible, heure)
     pub signales: VecDeque<(String, u64)>,
@@ -182,12 +181,7 @@ impl Historique {
                 return Passage::Retenue { raison: "décision humaine contraire, 7 jours".into(), alerte: None };
             }
         }
-        let pause = match genre {
-            Genre::BlocageListe => self.pause_listes,
-            Genre::Suspension => self.pause_suspensions,
-            Genre::BlocageIps => 0,
-        };
-        if pause > t {
+        if genre == Genre::BlocageListe && self.pause_listes > t {
             return Passage::Retenue { raison: "actions automatiques arrêtées pour une heure".into(), alerte: None };
         }
         let debut_jour = t.saturating_sub(JOUR);
@@ -212,13 +206,6 @@ impl Historique {
                     alerte: Some(format!("blocages automatiques arrêtés pour une heure : {BLOCAGES_LISTES} en une heure ; une liste de menaces peut être corrompue")),
                 }
             }
-            Genre::Suspension if self.nombre(genre, debut_heure) >= SUSPENSIONS => {
-                self.pause_suspensions = t + HEURE;
-                Passage::Retenue {
-                    raison: format!("plus de {SUSPENSIONS} suspensions en une heure"),
-                    alerte: Some(format!("suspensions automatiques arrêtées pour une heure : {SUSPENSIONS} en une heure ; attaque à plusieurs programmes ou faux positif répété, vérifiez le poste sans attendre")),
-                }
-            }
             Genre::BlocageIps => {
                 let mut adresses: Vec<&str> = self.traces.iter().filter(|x| x.genre == genre && x.t >= debut_heure).map(|x| x.cible.as_str()).collect();
                 adresses.sort_unstable();
@@ -237,6 +224,12 @@ impl Historique {
             }
             _ => Passage::Passe,
         }
+    }
+
+    /// Une décision humaine liée à une empreinte porte-t-elle sur ce chemin ? (l'empreinte est alors à lire)
+    fn empreinte_utile(&self, cible: &str, t: u64) -> bool {
+        let c = cle(cible);
+        self.humaines.iter().any(|h| h.cible == c && h.jusqua > t && h.empreinte.is_some())
     }
 
     pub fn noter(&mut self, genre: Genre, cible: &str, t: u64) {
@@ -288,12 +281,42 @@ struct Etat {
     signale: bool,
 }
 
-/// Décision pure. Protection en échec : la lecture est refusée, ce qui ne dit rien du fichier ; la garde repart en mémoire
-fn etat_initial(existe: bool, lu: Option<Historique>, echec_protection: bool) -> Etat {
-    match lu {
-        Some(h) => Etat { h, illisible: false, signale: false },
-        None => Etat { h: Historique::default(), illisible: existe && !echec_protection, signale: false },
+/// Décision pure. Seul un contenu mal formé coupe la réponse automatique, et seul un administrateur peut l'écrire. Une
+/// lecture refusée (fichier absent, tenu ouvert par un compte autorisé, protection en échec) ne dit rien du contenu : la
+/// garde repart en mémoire, et la réponse reste (audit de #110, S110-03)
+fn etat_initial(texte: Option<&str>) -> Etat {
+    match texte.map(serde_json::from_str::<Historique>) {
+        Some(Ok(h)) => Etat { h, illisible: false, signale: false },
+        Some(Err(_)) => Etat { h: Historique::default(), illisible: true, signale: false },
+        None => Etat { h: Historique::default(), illisible: false, signale: false },
     }
+}
+
+impl Etat {
+    fn passage(&mut self, genre: Genre, cible: &str, t: u64, empreinte: &mut dyn FnMut() -> Option<String>) -> Passage {
+        if self.illisible {
+            let alerte = (!self.signale).then(|| format!("{FICHIER} illisible : aucune action automatique, alerte seulement ; retirez ce fichier du dossier de données pour rétablir la réponse automatique, puis redémarrez le service"));
+            self.signale = true;
+            return Passage::Retenue { raison: format!("{FICHIER} illisible"), alerte };
+        }
+        self.h.examiner(genre, cible, t, empreinte)
+    }
+}
+
+/// Une ligne au SIEM par cible et par motif et par heure : une action retenue revient à chaque cycle tant que la connexion
+/// vit, et un flot de lignes chasserait les jours les plus anciens du SIEM (décision pure, relecture de #110, F2)
+pub fn retenue_a_journaliser(vues: &mut std::collections::HashMap<String, u64>, cle: &str, t: u64) -> bool {
+    if vues.get(cle).is_some_and(|h| *h + HEURE > t) {
+        return false;
+    }
+    if vues.len() >= MAX_SIGNALES {
+        vues.retain(|_, h| *h + HEURE > t);
+        if vues.len() >= MAX_SIGNALES {
+            vues.clear();
+        }
+    }
+    vues.insert(cle.to_string(), t);
+    true
 }
 
 static ETAT: Mutex<Option<Etat>> = Mutex::new(None);
@@ -301,8 +324,8 @@ static ETAT: Mutex<Option<Etat>> = Mutex::new(None);
 fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
     let mut g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
     let e = g.get_or_insert_with(|| {
-        let existe = commun::dossier().join(FICHIER).exists();
-        etat_initial(existe, commun::lire::<Historique>(FICHIER), commun::echec_protection().is_some())
+        let texte = commun::lire_fichier(&commun::dossier().join(FICHIER));
+        etat_initial(texte.as_deref())
     });
     f(e)
 }
@@ -317,15 +340,13 @@ fn maintenant() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// La garde, pour une action automatique déjà autorisée
+/// La garde, pour une action automatique déjà autorisée. L'empreinte est lue hors du verrou : le cycle n'attend pas le fil
+/// des leurres
 pub fn passer(genre: Genre, cible: &str, empreinte: &mut dyn FnMut() -> Option<String>) -> Passage {
+    let t = maintenant();
+    let lue = if avec(|e| e.h.empreinte_utile(cible, t)) { empreinte() } else { None };
     avec(|e| {
-        if e.illisible {
-            let alerte = (!e.signale).then(|| format!("{FICHIER} illisible : aucune action automatique, alerte seulement ; retirez ce fichier du dossier de données pour rétablir la réponse automatique, puis redémarrez le service"));
-            e.signale = true;
-            return Passage::Retenue { raison: format!("{FICHIER} illisible"), alerte };
-        }
-        let p = e.h.examiner(genre, cible, maintenant(), empreinte);
+        let p = e.passage(genre, cible, t, &mut || lue.clone());
         if matches!(p, Passage::Retenue { alerte: Some(_), .. }) {
             enregistrer(e);
         }
@@ -354,7 +375,20 @@ pub fn decision_humaine(cible: &str, empreinte: Option<String>) {
 }
 
 #[cfg(test)]
-pub(crate) fn etat_initial_test(existe: bool, lu: Option<Historique>, echec: bool) -> (bool, usize) {
-    let e = etat_initial(existe, lu, echec);
+pub(crate) fn etat_initial_test(texte: Option<&str>) -> (bool, usize) {
+    let e = etat_initial(texte);
     (e.illisible, e.h.traces.len())
+}
+
+/// Deux passages de suite sur un état chargé de ce texte
+#[cfg(test)]
+pub(crate) fn passages_test(texte: Option<&str>) -> (Passage, Passage) {
+    let mut e = etat_initial(texte);
+    let mut sans = || None;
+    (e.passage(Genre::Suspension, "c", 1_800_000_000, &mut sans), e.passage(Genre::Suspension, "c", 1_800_000_001, &mut sans))
+}
+
+#[cfg(test)]
+pub(crate) fn empreinte_utile_test(h: &Historique, cible: &str, t: u64) -> bool {
+    h.empreinte_utile(cible, t)
 }

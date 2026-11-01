@@ -254,6 +254,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
         });
     }
     let mut vues: HashMap<String, Instant> = HashMap::new();
+    let mut suspendus: HashMap<u32, (u64, Instant)> = HashMap::new();
     evenements::abonner("Security", "*[System[EventID=4663]]", crate::collectes::Collecte::JournalSecurite, move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
@@ -266,9 +267,13 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
                 let config: commun::Config = commun::lire("config.json").unwrap_or_default();
                 suspendre_leurre(config.reponse_auto_rancongiciel, false, crate::reponse::protege(pid).is_some())
             };
-            let (suspendu, retenue) = if tentee { suspension_leurre(pid, &programme, &file) } else { (false, None) };
+            // Plusieurs événements d'une même écriture : un programme déjà suspendu ne consomme ni garde ni trace (audit de #110, S110-02)
+            let creation = crate::natif::creation_processus(pid).unwrap_or(0);
+            let maintenant = Instant::now();
+            let deja = tentee && deja_suspendu(&mut suspendus, pid, creation, maintenant);
+            let (suspendu, retenue) = if deja { (true, None) } else if tentee { suspension_leurre(pid, &programme, &file) } else { (false, None) };
             // Suspension automatique dans le SIEM, pour la chronologie (relecture de #94, D1)
-            if tentee {
+            if tentee && !deja {
                 let message = match &retenue {
                     Some(r) => format!("retenue : {r}"),
                     None if suspendu => "programme suspendu".to_string(),
@@ -278,9 +283,14 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             }
             let mut alerte = alerte_leurre_touche(pid, &programme, &objet, connu, suspendu);
             if let Some(r) = retenue {
-                alerte.raisons.push_str(&format!(" — suspension automatique retenue ({r}), programme toujours actif : vérifiez-le et arrêtez-le sans attendre si besoin"));
+                dire_retenue(&mut alerte, &r);
             }
             file.lock().unwrap().push(alerte);
+            // Après l'alerte : une écriture bloquée de l'historique ne la retient pas (audit de #110, S110-04)
+            if suspendu && !deja {
+                suspendus.insert(pid, (creation, maintenant));
+                crate::politique::noter(crate::politique::Genre::Suspension, &programme);
+            }
             return;
         }
         let Some(a) = analyser(&xml, &dossiers.lock().unwrap()) else { return };
@@ -291,6 +301,19 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     });
 }
 
+/// Ce processus vient-il d'être suspendu pour ce leurre ? (pur, testé) Même PID et même heure de création, dans la minute :
+/// les événements en file d'une même écriture. Au-delà, il repasse par la garde, après une reprise par exemple
+pub(crate) fn deja_suspendu(suspendus: &mut HashMap<u32, (u64, Instant)>, pid: u32, creation: u64, maintenant: Instant) -> bool {
+    suspendus.retain(|_, (_, t)| maintenant.saturating_duration_since(*t) < Duration::from_secs(60));
+    suspendus.get(&pid).is_some_and(|(c, _)| *c == creation)
+}
+
+/// Le texte commence par la retenue : la clé de déduplication d'une alerte lit son début, et l'alerte précédente de ce
+/// programme disait « suspendu » (pur, testé)
+pub(crate) fn dire_retenue(alerte: &mut Alerte, raison: &str) {
+    alerte.raisons = format!("Suspension automatique retenue ({raison}), programme toujours actif, à vérifier et à arrêter sans attendre si besoin : {}", alerte.raisons);
+}
+
 /// La politique et la garde pour un programme qui touche un leurre : (suspendu, raison de la retenue). Hors du cycle : la
 /// suspension n'attend pas le moniteur
 fn suspension_leurre(pid: u32, programme: &str, file: &Mutex<Vec<Alerte>>) -> (bool, Option<String>) {
@@ -298,13 +321,7 @@ fn suspension_leurre(pid: u32, programme: &str, file: &Mutex<Vec<Alerte>>) -> (b
     let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), rancongiciel: true, ..Default::default() };
     match politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte) {
         Decision::Autorisee(a) => match politique::passer(Genre::Suspension, programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
-            Passage::Passe => {
-                let suspendu = crate::execution::suspendre(&a, pid, true).is_ok();
-                if suspendu {
-                    politique::noter(Genre::Suspension, programme);
-                }
-                (suspendu, None)
-            }
+            Passage::Passe => (crate::execution::suspendre(&a, pid, true).is_ok(), None),
             Passage::Retenue { raison, alerte } => {
                 if let Some(t) = alerte {
                     file.lock().unwrap().push(politique::alerte_garde(&t));

@@ -5616,21 +5616,34 @@ fn garde_trois_par_cible_puis_alerte() {
 #[test]
 fn garde_plafond_global_suspend_une_heure() {
     use crate::politique::{Genre::*, Historique, Passage};
-    for (genre, max) in [(BlocageListe, 30usize), (Suspension, 3)] {
-        let mut h = Historique::default();
-        for i in 0..max {
-            let c = format!("c{i}");
-            assert_eq!(h.examiner(genre, &c, S0 + i as u64, &mut sans_empreinte), Passage::Passe, "{genre:?} {i}");
-            h.noter(genre, &c, S0 + i as u64);
-        }
-        let t = S0 + max as u64;
-        assert!(matches!(h.examiner(genre, "suivante", t, &mut sans_empreinte), Passage::Retenue { alerte: Some(_), .. }), "{genre:?} au plafond");
-        assert!(matches!(h.examiner(genre, "autre", t + 1, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }), "{genre:?} : une seule alerte");
-        assert!(matches!(h.examiner(genre, "autre", t + 3599, &mut sans_empreinte), Passage::Retenue { .. }), "{genre:?} : encore en pause");
-        assert_eq!(h.examiner(genre, "autre", t + 3600, &mut sans_empreinte), Passage::Passe, "{genre:?} : une heure après");
-        let autre = if genre == Suspension { BlocageListe } else { Suspension };
-        assert_eq!(h.examiner(autre, "autre", t + 1, &mut sans_empreinte), Passage::Passe, "la pause ne touche que ce genre");
+    let genre = BlocageListe;
+    let mut h = Historique::default();
+    for i in 0..30usize {
+        let c = format!("c{i}");
+        assert_eq!(h.examiner(genre, &c, S0 + i as u64, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(genre, &c, S0 + i as u64);
     }
+    let t = S0 + 30;
+    assert!(matches!(h.examiner(genre, "suivante", t, &mut sans_empreinte), Passage::Retenue { alerte: Some(_), .. }), "au plafond");
+    assert!(matches!(h.examiner(genre, "autre", t + 1, &mut sans_empreinte), Passage::Retenue { alerte: None, .. }), "une seule alerte");
+    assert!(matches!(h.examiner(genre, "autre", t + 3599, &mut sans_empreinte), Passage::Retenue { .. }), "encore en pause");
+    assert_eq!(h.examiner(genre, "autre", t + 3600, &mut sans_empreinte), Passage::Passe, "une heure après");
+    assert_eq!(h.examiner(Suspension, "autre", t + 1, &mut sans_empreinte), Passage::Passe, "la pause ne touche pas les suspensions");
+    assert_eq!(h.examiner(BlocageIps, "autre", t + 1, &mut sans_empreinte), Passage::Passe, "ni l'IPS");
+}
+
+/// Décision du mainteneur (audit de #110, S110-01) : aucun plafond global sur les suspensions, un programme jetable ne doit
+/// pas pouvoir retirer sa place à un rançongiciel. Seul le seuil par programme demeure
+#[test]
+fn garde_suspensions_sans_plafond_global() {
+    use crate::politique::{Genre::*, Historique, Passage};
+    let mut h = Historique::default();
+    for i in 0..200u64 {
+        let c = format!(r"C:\jetable{i}.exe");
+        assert_eq!(h.examiner(Suspension, &c, S0 + i, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(Suspension, &c, S0 + i);
+    }
+    assert_eq!(h.examiner(Suspension, r"C:\rancon.exe", S0 + 200, &mut sans_empreinte), Passage::Passe);
 }
 
 #[test]
@@ -5705,13 +5718,18 @@ fn garde_historique_borne() {
 /// Historique illisible : aucune action automatique. Protection en échec : la lecture refusée ne dit rien du fichier
 #[test]
 fn garde_historique_illisible_echec_ferme() {
-    use crate::politique::{etat_initial_test as e, Historique};
-    assert_eq!(e(false, None, false), (false, 0), "premier démarrage");
-    assert_eq!(e(true, None, false), (true, 0), "fichier mal formé");
-    assert_eq!(e(true, None, true), (false, 0), "protection en échec : suspension sur leurre gardée (D6-10)");
+    use crate::politique::{etat_initial_test as e, passages_test as p, Historique, Passage};
+    assert_eq!(e(None), (false, 0), "fichier absent, tenu ouvert, ou protection en échec : la réponse reste (S110-03, D6-10)");
+    assert_eq!(e(Some("{mal forme")), (true, 0), "mal formé");
     let mut h = Historique::default();
     h.noter(crate::politique::Genre::Suspension, "a", S0);
-    assert_eq!(e(true, Some(h), false), (false, 1));
+    assert_eq!(e(Some(&serde_json::to_string(&h).unwrap())), (false, 1));
+    // À l'usage : aucune action automatique, une seule alerte (relecture de #110, F6)
+    let (a, b) = p(Some("{mal forme"));
+    assert!(matches!(a, Passage::Retenue { alerte: Some(_), .. }), "{a:?}");
+    assert!(matches!(b, Passage::Retenue { alerte: None, .. }), "{b:?}");
+    assert_eq!(p(None).0, Passage::Passe, "lecture refusée : la garde repart en mémoire");
+    assert_eq!(p(Some("{}")).0, Passage::Passe);
     let h: Historique = serde_json::from_str(&serde_json::to_string(&{ let mut x = Historique::default(); x.noter(crate::politique::Genre::BlocageIps, "c", S0); x.decision_humaine("d", Some("e".into()), S0); x }).unwrap()).unwrap();
     assert_eq!((h.traces.len(), h.humaines.len()), (1, 1), "aller-retour");
     assert!(serde_json::to_string(&h).unwrap().contains("\"Traces\""), "noms du format");
@@ -5746,8 +5764,19 @@ fn structure_aucun_appel_direct_aux_actions() {
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
     assert!(v.contains("politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte)"), "leurre");
     assert!(v.contains("politique::passer(Genre::Suspension, programme,"), "leurre : garde");
-    assert!(v.contains("politique::noter(Genre::Suspension, programme);"), "leurre : trace");
+    assert!(v.contains("crate::politique::noter(crate::politique::Genre::Suspension, &programme);"), "leurre : trace");
+    let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter(").unwrap());
+    assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
+    assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
+    // Relecture de #110, P3 : un chemin humain de plus se voit ici
+    let humains: usize = [("moniteur", m.as_str()), ("vol_donnees", v.as_str())].iter().map(|(_, s)| s.matches("Declencheur::Humain").count()).sum();
+    assert_eq!(humains, 1, "autorisation_humaine seulement");
+    assert_eq!(include_str!("main.rs").matches("Declencheur::Humain").count(), 1, "--test-reponse");
+    assert!(m.contains("self.ajouter_alerte_action(crate::regles::RES_001, \"Critique\", &f, format!(\"{}{action}\", f.raisons), bloquee);"), "F1");
+    assert!(m.contains("bloquee = true;"), "F1");
+    assert_eq!(m.matches("if politique::retenue_a_journaliser(&mut self.retenues_siem,").count(), 2, "F2 : listes et IPS");
     assert!(!include_str!("ids.rs").contains("politique::"), "IDS gelé");
+    assert!(!include_str!("politique.rs").contains("pause_suspensions"), "décision du mainteneur");
     // Relecture de #109, P7 : le chargement calcule bien le critère de levée
     assert!(include_str!("menaces.rs").contains("m.niveau3_complet = niveau3_complet(&infos.sources);"));
 }
@@ -5762,4 +5791,69 @@ fn blocage_pose_automatiquement_seulement_par_le_service() {
     assert!(auto(&b("parefeu", "IPS : règle 9", "2099-01-01 00:00:00")), "IPS");
     assert!(!auto(&b("parefeu", "blocage manuel", "")));
     assert!(!auto(&b("programme", "blocage automatique", "x")), "autre type");
+}
+
+/// Relecture de #110, F1 : un blocage différé par la garde a sa propre alerte, le reste garde sa clé
+#[test]
+fn garde_blocage_differe_a_son_alerte() {
+    use crate::moniteur::cle_flux as c;
+    assert_ne!(c("Critique", "p", "n", "1.2.3.4", true), c("Critique", "p", "n", "1.2.3.4", false));
+    assert_eq!(c("Critique", "p", "n", "1.2.3.4", false), "Critique|p|n|1.2.3.4", "clé inchangée sans action");
+}
+
+/// Relecture de #110, F2 : une ligne par cible et par motif et par heure, mémoire bornée
+#[test]
+fn garde_retenue_journalisee_une_fois_par_heure() {
+    use crate::politique::retenue_a_journaliser as j;
+    let mut v = std::collections::HashMap::new();
+    assert!(j(&mut v, "a", S0));
+    assert!(!j(&mut v, "a", S0 + 3599));
+    assert!(j(&mut v, "b", S0 + 1), "une autre cible ou un autre motif");
+    assert!(j(&mut v, "a", S0 + 3600), "une heure après");
+    for i in 0..5000 {
+        j(&mut v, &format!("x{i}"), S0 + 3600);
+    }
+    assert!(v.len() <= 500, "{}", v.len());
+}
+
+/// Audit de #110, S110-02 : un même processus ne consomme qu'une place, un PID réutilisé repasse par la garde
+#[test]
+fn garde_processus_deja_suspendu() {
+    use crate::vol_donnees::deja_suspendu as d;
+    use std::time::{Duration, Instant};
+    let mut m = std::collections::HashMap::new();
+    let t = Instant::now();
+    assert!(!d(&mut m, 7, 100, t));
+    m.insert(7, (100, t));
+    assert!(d(&mut m, 7, 100, t + Duration::from_secs(59)), "même processus, événements en file");
+    assert!(!d(&mut m, 7, 101, t + Duration::from_secs(1)), "PID réutilisé");
+    assert!(!d(&mut m, 8, 100, t + Duration::from_secs(1)), "un autre PID");
+    assert!(!d(&mut m, 7, 100, t + Duration::from_secs(60)), "une minute après, après une reprise par exemple");
+    assert!(m.is_empty(), "mémoire bornée");
+}
+
+/// Relecture de #110, F6 : l'alerte dit la retenue, et sa clé diffère de celle de l'alerte « suspendu » du même programme
+#[test]
+fn garde_alerte_leurre_dit_la_retenue() {
+    use crate::vol_donnees::{alerte_leurre_touche as a, dire_retenue};
+    let long = format!(r"C:\Users\{}\mal.exe", "x".repeat(80));
+    let s = a(7, &long, "leurre.docx", false, true);
+    let mut r = a(7, &long, "leurre.docx", false, false);
+    assert_eq!(r.niveau, "Critique");
+    dire_retenue(&mut r, "motif");
+    assert!(r.raisons.starts_with("Suspension automatique retenue (motif)"), "{}", r.raisons);
+    assert!(r.raisons.contains("RANÇONGICIEL PROBABLE"), "l'alerte d'origine reste");
+    assert_ne!(s.raisons.chars().take(40).collect::<String>(), r.raisons.chars().take(40).collect::<String>(), "clé de déduplication");
+}
+
+#[test]
+fn garde_empreinte_lue_seulement_si_utile() {
+    use crate::politique::{empreinte_utile_test as u, Historique};
+    let mut h = Historique::default();
+    assert!(!u(&h, r"C:\P.exe", S0));
+    h.decision_humaine(r"C:\P.exe", Some("aa".into()), S0);
+    h.decision_humaine("203.0.113.5", None, S0);
+    assert!(u(&h, r"c:\p.exe", S0 + 1));
+    assert!(!u(&h, "203.0.113.5", S0 + 1), "adresse : pas d'empreinte");
+    assert!(!u(&h, r"C:\P.exe", S0 + 604_800), "échue");
 }
