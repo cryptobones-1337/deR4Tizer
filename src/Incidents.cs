@@ -130,13 +130,31 @@ namespace DeR4Tizer
             return i.Etat != "Clos" && i.Niveau == "Critique" && (i.Regles ?? new List<string>()).Any(r => !r.StartsWith("SAN-"));
         }
 
-        // Jamais « 0 incident » quand rien ne le prouve : suivi illisible, ou absent (il l'est aussi tant qu'aucun incident n'a existé) ; et zéro
-        // incident ne vaut rien si une collecte est en panne (dossier, §4.6)
-        public static string ResumeListe(List<IncidentSuivi> l, int collectesEnPanne)
+        // Jamais « 0 incident » quand rien ne le prouve (dossier, §4.6). Fichier absent, dossier lisible : aucun incident n'a encore existé. Fichier
+        // non lu pour une autre raison : rien n'est conclu. Zéro incident ne vaut rien si des collectes sont en panne, ou si on ne sait pas (null)
+        public static string ResumeListe(List<IncidentSuivi> l, bool absent, int? collectesEnPanne)
         {
-            if (l == null) return L.T("Suivi absent ou illisible : aucun incident enregistré, ou fichier non lu. Rien n'est conclu.");
-            if (l.Count == 0) return collectesEnPanne > 0 ? string.Format(L.T("Aucun incident enregistré, mais {0} collecte(s) en panne : des détections ne peuvent pas se déclencher."), collectesEnPanne) : L.T("Aucun incident enregistré.");
+            if (l == null && !absent) return L.T("Suivi illisible : rien n'est conclu ; dernière liste lue affichée.");
+            if (l == null || l.Count == 0)
+            {
+                if (collectesEnPanne == null) return L.T("Aucun incident enregistré, mais état des collectes illisible : rien n'est conclu.");
+                return collectesEnPanne > 0 ? string.Format(L.T("Aucun incident enregistré, mais {0} collecte(s) en panne : des détections ne peuvent pas se déclencher."), collectesEnPanne) : L.T("Aucun incident enregistré.");
+            }
             return string.Format(L.T("{0} incident(s), {1} non clos"), l.Count, l.Count(i => i.Etat != "Clos"));
+        }
+
+        // Ce résumé appelle-t-il une vérification ?
+        public static bool ResumeAVerifier(List<IncidentSuivi> l, bool absent, int? collectesEnPanne)
+        {
+            if (l == null && !absent) return true;
+            return (l == null || l.Count == 0) && collectesEnPanne != 0;
+        }
+
+        // Un dossier lisible sans ce fichier veut dire absent ; un refus d'accès, non
+        public static bool SuiviAbsent(string dossier)
+        {
+            try { return Directory.GetFiles(dossier, "suivi-incidents.json").Length == 0; }
+            catch (Exception) { return false; }
         }
 
         public static Commande Transition(string id, string vers, string motif, string note)
@@ -254,6 +272,11 @@ namespace DeR4Tizer
             return e.Collectes.Any(c => Critiques.Contains(c.Id) && EnPanne(e, c, maintenant)) ? 1 : 0;
         }
 
+        public static bool LectureBloquee(DateTime debut, DateTime maintenant)
+        {
+            return (maintenant - debut).TotalSeconds > 30;
+        }
+
         public static string TextePastille(int niveau)
         {
             return niveau == 2 ? L.T("SANTÉ : DEFENDER NON SURVEILLÉ") : niveau == 1 ? L.T("SANTÉ : À VÉRIFIER") : "";
@@ -348,6 +371,8 @@ namespace DeR4Tizer
         readonly BoutonNeon btnPrendre = new BoutonNeon("Prendre en charge", Theme.Cyan), btnClore = new BoutonNeon("Clore…", Theme.Cyan), btnRouvrir = new BoutonNeon("Rouvrir", Theme.TexteDim);
         readonly System.Windows.Forms.Timer minuteur = new System.Windows.Forms.Timer { Interval = 15000 };
         int chargement, enCours;
+        DateTime debutLecture = DateTime.MinValue;
+        readonly HashSet<string> chronologiesEnCours = new HashSet<string>();
 
         public PageIncidents()
         {
@@ -390,30 +415,36 @@ namespace DeR4Tizer
         // Lecture hors du fil de l'interface : un fichier verrouillé ne la fige pas
         public void Charger()
         {
-            // Une lecture à la fois : un fichier verrouillé n'empile pas un fil par tour (audit de #105, S105-08)
-            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            // Une lecture à la fois : un fichier verrouillé n'empile pas un fil par tour (audit de #105, S105-08) ; une lecture bloquée se dit (S105-11)
+            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0)
+            {
+                if (VueSante.LectureBloquee(debutLecture, DateTime.Now)) { resume.Text = L.T("Lecture bloquée : affichage ancien."); resume.ForeColor = Theme.Jaune; }
+                return;
+            }
+            debutLecture = DateTime.Now;
             int numero = ++chargement;
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
                     var lu = Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json");
+                    bool absent = lu == null && VueIncidents.SuiviAbsent(Commun.Dossier);
                     var etat = Commun.Lire<Etat>("etat.json");
-                    int pannes = etat == null ? 0 : Couverture.EnPannes(etat).Count;
+                    int? pannes = etat == null ? (int?)null : Couverture.EnPannes(etat).Count;
                     if (!IsHandleCreated) return;
-                    try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(lu, pannes); })); } catch (InvalidOperationException) { }
+                    try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(lu, absent, pannes); })); } catch (InvalidOperationException) { }
                 }
                 finally { Interlocked.Exchange(ref enCours, 0); }
             });
         }
 
-        void Afficher(List<IncidentSuivi> lu, int collectesEnPanne)
+        void Afficher(List<IncidentSuivi> lu, bool absent, int? collectesEnPanne)
         {
-            resume.Text = VueIncidents.ResumeListe(lu, collectesEnPanne);
-            resume.ForeColor = lu == null || (lu.Count == 0 && collectesEnPanne > 0) ? Theme.Jaune : Theme.TexteDim;
+            resume.Text = VueIncidents.ResumeListe(lu, absent, collectesEnPanne);
+            resume.ForeColor = VueIncidents.ResumeAVerifier(lu, absent, collectesEnPanne) ? Theme.Jaune : Theme.TexteDim;
             // Illisible : la dernière liste reste affichée, plutôt qu'un vide qui rassure
-            if (lu == null) { MajBoutons(); return; }
-            var l = VueIncidents.Trier(lu);
+            if (lu == null && !absent) { MajBoutons(); return; }
+            var l = VueIncidents.Trier(lu ?? new List<IncidentSuivi>());
             var avant = Choisi();
             string idAvant = avant == null ? null : avant.Id;
             int indice = liste.TopItem == null ? 0 : liste.TopItem.Index;
@@ -437,12 +468,18 @@ namespace DeR4Tizer
             var i = Choisi();
             if (i == null) { detail.Text = L.T("Sélectionnez un incident."); return; }
             string id = i.Id;
+            // Un seul calcul en cours par incident : une chronologie verrouillée n'empile pas un fil par tour (S105-13)
+            lock (chronologiesEnCours) { if (!chronologiesEnCours.Add(id)) return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                ChronologieIncident c = VueIncidents.IdentifiantValide(id) ? Commun.Lire<ChronologieIncident>(Path.Combine("chronologies", id + ".json")) : null;
-                string texte = VueIncidents.Detail(i, c);
-                if (!IsHandleCreated) return;
-                try { BeginInvoke((Action)(() => { var ch = Choisi(); if (ch != null && ch.Id == id && detail.Text != texte) detail.Text = texte; })); } catch (InvalidOperationException) { }
+                try
+                {
+                    ChronologieIncident c = VueIncidents.IdentifiantValide(id) ? Commun.Lire<ChronologieIncident>(Path.Combine("chronologies", id + ".json")) : null;
+                    string texte = VueIncidents.Detail(i, c);
+                    if (!IsHandleCreated) return;
+                    try { BeginInvoke((Action)(() => { var ch = Choisi(); if (ch != null && ch.Id == id && detail.Text != texte) detail.Text = texte; })); } catch (InvalidOperationException) { }
+                }
+                finally { lock (chronologiesEnCours) chronologiesEnCours.Remove(id); }
             });
         }
 
@@ -486,6 +523,7 @@ namespace DeR4Tizer
         readonly TextBox detail = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Mono, BorderStyle = BorderStyle.None };
         readonly System.Windows.Forms.Timer minuteur = new System.Windows.Forms.Timer { Interval = 15000 };
         int chargement, enCours;
+        DateTime debutLecture = DateTime.MinValue;
 
         public PageSante()
         {
@@ -498,10 +536,10 @@ namespace DeR4Tizer
             Controls.Add(new Label { Text = "// " + L.T("Santé").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 4) }, 0, 0);
             Controls.Add(new Label { Text = L.T("Ce que deR4Tizer voit réellement : une collecte indisponible, c'est une détection qui ne peut pas se déclencher. Chaque ligne dit sa source et sa date."), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             Controls.Add(resume, 0, 2);
-            liste.Colonnes("Sujet", 240, "État", 130, "Vérifié", 180, "Détail", 460, "Source", 130);
+            liste.Colonnes("Sujet", 240, "État", 130, "Vérifié", 240, "Détail", 400, "Source", 130);
             Controls.Add(liste, 0, 3);
             Controls.Add(detail, 0, 4);
-            liste.SelectedIndexChanged += (s, e) => { detail.Text = liste.SelectedItems.Count == 1 ? liste.SelectedItems[0].SubItems[0].Text + " : " + liste.SelectedItems[0].ToolTipText : L.T("Sélectionnez une ligne pour lire son détail en entier."); };
+            liste.SelectedIndexChanged += (s, e) => { detail.Text = liste.SelectedItems.Count == 1 ? liste.SelectedItems[0].SubItems[0].Text + " : " + liste.SelectedItems[0].SubItems[1].Text + " ; " + liste.SelectedItems[0].SubItems[2].Text + "\r\n" + liste.SelectedItems[0].ToolTipText : L.T("Sélectionnez une ligne pour lire son détail en entier."); };
             detail.Text = L.T("Sélectionnez une ligne pour lire son détail en entier.");
             minuteur.Tick += (s, e) => Charger();
             VisibleChanged += (s, e) => { minuteur.Enabled = Visible; if (Visible) Charger(); };
@@ -509,7 +547,13 @@ namespace DeR4Tizer
 
         public void Charger()
         {
-            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0)
+            {
+                // « Rien à vérifier » ne doit pas rester affiché sur des lignes figées (S105-11)
+                if (VueSante.LectureBloquee(debutLecture, DateTime.Now)) { resume.Text = L.T("Lecture bloquée : affichage ancien."); resume.ForeColor = Theme.Jaune; }
+                return;
+            }
+            debutLecture = DateTime.Now;
             int numero = ++chargement;
             ThreadPool.QueueUserWorkItem(_ =>
             {

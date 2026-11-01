@@ -262,8 +262,6 @@ namespace DeR4Tizer
             }
         }
 
-        // Texte de confirmation sans caractère de contrôle (retours à la ligne compris) ni de mise en forme invisible (sens
-        // d'écriture, largeur nulle) : remplacés par « ? », pour que rien ne repousse ni n'inverse le reste (S58-02)
         // Ce que la transition va faire. L'état visé est toujours montré, même si le suivi n'est pas lisible : le service reste seul juge (audit de #105, S105-05)
         public static string DecrireIncident(Commande c, IncidentSuivi i)
         {
@@ -280,6 +278,8 @@ namespace DeR4Tizer
                 + (string.IsNullOrEmpty(c.Raison) ? "" : (en ? "\n  • note: " : "\n  • note : ") + Visible(c.Raison));
         }
 
+        // Texte de confirmation sans caractère de contrôle (retours à la ligne compris) ni de mise en forme invisible (sens
+        // d'écriture, largeur nulle) : remplacés par « ? », pour que rien ne repousse ni n'inverse le reste (S58-02)
         internal static string Visible(string s)
         {
             if (s == null) return "";
@@ -872,7 +872,7 @@ namespace DeR4Tizer
             var etat = Commun.Lire<Etat>("etat.json");
             // « SERVICE EN LIGNE » seul ne dirait rien de ce qu'il surveille : les pastilles de risque ont disparu (audit de #105, S105-02)
             if (etat == null && etatService == ServiceControllerStatus.Running)
-                pastilles.Add(new Entete.Pastille { Texte = L.T("ÉTAT ILLISIBLE : SERVICE À VÉRIFIER"), Couleur = Theme.Jaune });
+                pastilles.Add(new Entete.Pastille { Texte = L.T("ÉTAT ILLISIBLE : SERVICE OU DROITS DU COMPTE À VÉRIFIER"), Couleur = Theme.Jaune });
             if (etat != null)
             {
                 pastilles.Add(etat.JournalDnsActif

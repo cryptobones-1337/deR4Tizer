@@ -42,11 +42,24 @@ try {
         Cas "transition $($c[0]) vers $($c[1]) : $($c[2])" ((& $permise $c[0] $c[1]) -eq $c[2])
     }
     # Liste : jamais de « 0 incident » sans preuve
-    $resume = { param($l, $n) & $appel $vi 'ResumeListe' @($l, [int]$n) }
-    Cas 'suivi illisible : pas de zéro, rien de conclu' ((& $resume $null 0) -match 'Rien n''est conclu' -and (& $resume $null 0) -notmatch '\b0\b')
+    $resume = { param($l, $absent, $n) & $appel $vi 'ResumeListe' @($l, [bool]$absent, $n) }
+    $aVoir = { param($l, $absent, $n) [bool](& $appel $vi 'ResumeAVerifier' @($l, [bool]$absent, $n)) }
     $vide = [Activator]::CreateInstance([Collections.Generic.List`1].MakeGenericType((& $t 'IncidentSuivi')))
-    Cas 'aucun incident, collectes en panne : dit' ((& $resume $vide 2) -match '2 collecte' -and (& $resume $vide 2) -match 'ne peuvent pas')
-    Cas 'aucun incident, collectes saines' ((& $resume $vide 0) -eq 'Aucun incident enregistré.')
+    Cas 'suivi illisible : pas de zéro, rien de conclu, à vérifier' ((& $resume $null $false 0) -match 'rien n''est conclu' -and (& $resume $null $false 0) -notmatch '\b0\b' -and (& $aVoir $null $false 0))
+    Cas 'suivi absent, poste sain : calme' ((& $resume $null $true 0) -eq 'Aucun incident enregistré.' -and -not (& $aVoir $null $true 0))
+    Cas 'aucun incident, collectes en panne : dit' ((& $resume $vide $false 2) -match '2 collecte' -and (& $resume $vide $false 2) -match 'ne peuvent pas' -and (& $aVoir $vide $false 2))
+    Cas 'suivi absent, collectes en panne : dit' ((& $resume $null $true 2) -match '2 collecte' -and (& $aVoir $null $true 2))
+    Cas 'aucun incident, collectes saines' ((& $resume $vide $false 0) -eq 'Aucun incident enregistré.' -and -not (& $aVoir $vide $false 0))
+    Cas 'aucun incident, état des collectes illisible : rien de conclu' ((& $resume $vide $false $null) -match 'rien n''est conclu' -and (& $aVoir $vide $false $null))
+    [string]$dossierV = Join-Path $travail 'vide'; New-Item -ItemType Directory -Path $dossierV | Out-Null
+    Cas 'dossier lisible sans suivi : absent' ([bool](& $appel $vi 'SuiviAbsent' @($dossierV)))
+    Set-Content (Join-Path $dossierV 'suivi-incidents.json') 'x'
+    Cas 'dossier avec suivi : pas absent' (-not [bool](& $appel $vi 'SuiviAbsent' @($dossierV)))
+    Cas 'dossier introuvable : pas absent' (-not [bool](& $appel $vi 'SuiviAbsent' @([string](Join-Path $travail 'nulle-part'))))
+    $bloquee = { param($s) [bool](& $appel $vs 'LectureBloquee' @($maintenantB.AddSeconds(-$s), $maintenantB)) }
+    $maintenantB = [datetime]'2026-11-01 12:00:00'
+    Cas 'lecture en cours depuis 30 s : pas encore dite' (-not (& $bloquee 30))
+    Cas 'lecture en cours depuis plus de 30 s : dite' (& $bloquee 31)
     # Rouge réservé : un constat de santé seul reste en jaune ; un incident clos, jamais
     $ri = { param($niv, $etatI, [string[]]$regles) $x = [Activator]::CreateInstance((& $t 'IncidentSuivi')); $x.Niveau = $niv; $x.Etat = $etatI; $l = [Activator]::CreateInstance([Collections.Generic.List`1].MakeGenericType([string])); foreach ($g in $regles) { $l.Add($g) }; $x.Regles = $l; [bool](& $appel $vi 'RisqueConfirme' @($x)) }
     Cas 'rouge : critique avec règle de détection' (& $ri 'Critique' 'Ouvert' @('LEU-001'))
@@ -191,6 +204,8 @@ try {
     Cas 'transitions par le canal (assistant élevé)' ($p.Contains('Canal.Executer(VueIncidents.Transition('))
     Cas 'lectures hors du fil de l''interface' (([regex]::Matches($p, 'ThreadPool\.QueueUserWorkItem')).Count -eq 3)
     Cas 'une lecture à la fois par page' (([regex]::Matches($p, 'Interlocked\.CompareExchange\(ref enCours, 1, 0\)')).Count -eq 2)
+    Cas 'un calcul de chronologie à la fois par incident' ($p.Contains('if (!chronologiesEnCours.Add(id)) return;'))
+    Cas 'lecture bloquée dite sur les deux pages' (([regex]::Matches($p, 'VueSante\.LectureBloquee\(debutLecture, DateTime\.Now\)')).Count -eq 2)
     Cas 'compilation : fichier listé' (([IO.File]::ReadAllText("$Depot\compiler.ps1")).Contains('"$src\Incidents.cs"'))
 } finally {
     Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
