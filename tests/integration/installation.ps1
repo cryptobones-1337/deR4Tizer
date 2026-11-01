@@ -1175,7 +1175,8 @@ try {
                         if (-not $libres.Count) { return 'toutes les adresses bloquées : aucun plafond' }
                         if (@($adressesPlafond | Where-Object { $_ -in $b }).Count -gt 30) { return 'plus de 30 blocages' }
                         foreach ($ip in $libres) { if (& $regleN3 $ip) { return "règle de pare-feu pour $ip, absente de blocages.json" } }
-                        $sansAlerte = @($libres | Where-Object { $a -notmatch [regex]::Escape($_) })
+                        $a = & $alertesN3
+                        $sansAlerte = @($libres | Where-Object { $a -notmatch ('(?<![\d.])' + [regex]::Escape($_) + '(?!\d)') })
                         if ($sansAlerte.Count) { return "RES-001 absente pour : $($sansAlerte -join ', ')" }
                         $true
                     }
@@ -1199,7 +1200,8 @@ try {
             & $poserReglage $false
         }
         Service-Relance
-        $null = Commande (@{ Action = 'toutDebloquer' } | ConvertTo-Json -Compress) 60000
+        # Adresse par adresse : « tout débloquer » retirerait aussi les autres règles du groupe, que la désinstallation compte plus loin
+        foreach ($ip in @(& $blocagesN3)) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
     } catch { Write-Host "  nettoyage du niveau 3 : $($_.Exception.Message)" }
 }
 
