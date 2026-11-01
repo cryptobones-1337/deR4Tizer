@@ -895,6 +895,29 @@ Verifier 'Chronologie de l''incident témoin : alerte et transitions, dans l''or
     $true
 }
 
+# PR 4.6 : les pages Incidents et Santé lisent ces fichiers avec les droits du compte connecté : aucun droit nouveau, mais sans lecture elles seraient vides
+if ($script:lecteur) {
+    Verifier 'Pages Incidents et Santé : suivi, chronologie et remontée lisibles par un compte autorisé, sans écriture' {
+        Poser-EnAdministrateur 'lecteurs.json' ('[{"Sid":"' + $script:lecteur.Sid + '","Nom":"d4t_lecteur"}]')
+        $d = Redemarrer-Service
+        if (-not (Attendre-Etat $d)) { return 'etat.json non écrit après le redémarrage' }
+        $suivi = Join-Path $script:Donnees 'suivi-incidents.json'
+        $id = @(Get-Content $suivi -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Entite -like '*d4t-incident-temoin.exe' })[0].Id
+        if (-not $id) { return 'incident témoin absent' }
+        foreach ($f in 'suivi-incidents.json', "chronologies\$id.json", 'notifications.json', 'etat.json') {
+            $chemin = Join-Path $script:Donnees $f
+            if (-not (Test-Path $chemin)) { return "$f absent" }
+            $s = En-TantQue $script:lecteur "try { [void][IO.File]::ReadAllText('$chemin'); 'LECTURE=OK' } catch { 'LECTURE=' + `$_.Exception.GetType().Name }"
+            if ($s -notmatch 'LECTURE=OK') { return "$f : lecture refusée au compte autorisé : $s" }
+            $e = En-TantQue $script:lecteur "try { [IO.File]::AppendAllText('$chemin', ' '); 'ECRITURE=OK' } catch { 'ECRITURE=' + `$_.Exception.GetType().Name }"
+            if ($e -match 'ECRITURE=OK') { return "$f : écriture acceptée au compte autorisé" }
+        }
+        $true
+    }
+} else {
+    NonExecute 'Pages Incidents et Santé : suivi, chronologie et remontée lisibles par un compte autorisé, sans écriture' 'second compte indisponible'
+}
+
 # ---------------------------------------------------------------- phase 4, PR 4.1 : actions de réponse dans le SIEM
 # Blocage manuel d'une adresse de documentation (RFC 5737 : aucune connexion n'est ouverte vers elle), puis sa levée :
 # deux événements « reponse » dans le SIEM, avec l'heure UTC et le numéro d'ordre (ordre total, D4-4)
