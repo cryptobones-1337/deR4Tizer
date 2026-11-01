@@ -123,7 +123,11 @@ pub fn decider(action: Action, declencheur: Declencheur, c: &Contexte) -> Decisi
 pub enum Genre {
     BlocageListe,
     BlocageIps,
+    /// Programme signé installé dans Program Files : seuil par programme, un logiciel installé ne doit pas être suspendu sans fin
     Suspension,
+    /// Tout autre programme (décision du mainteneur, audit de #110, S110-11) : examiné sans seuil, noté en `Suspension`.
+    /// Sinon, un rançongiciel lancé quatre fois, ou trois touches par powershell.exe, s'exempteraient de la suspension
+    SuspensionSansSeuil,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -186,6 +190,7 @@ impl Historique {
         }
         let debut_jour = t.saturating_sub(JOUR);
         let sur_cible = self.traces.iter().filter(|x| x.genre == genre && x.cible == c && x.t >= debut_jour).count();
+        // SuspensionSansSeuil n'a jamais de trace à son nom : le seuil ne la concerne pas
         if sur_cible >= PAR_CIBLE {
             let deja = self.signales.iter().any(|(s, h)| *s == c && *h >= debut_jour);
             if !deja {
@@ -257,6 +262,22 @@ impl Historique {
     }
 }
 
+/// Interpréteurs qu'une installation place dans Program Files : ils exécutent n'importe quel script, le seuil ne les couvre pas
+const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.exe", "perl.exe", "ruby.exe", "php.exe", "bash.exe", "sh.exe", "java.exe", "javaw.exe", "wscript.exe", "cscript.exe"];
+
+/// Décision pure : le seuil par programme ne vaut que pour un programme signé, installé dans Program Files (un compte
+/// standard n'y écrit pas), et qui n'est pas un interpréteur
+pub fn genre_suspension(chemin: &str, signe: bool, program_files: &[String]) -> Genre {
+    let c = chemin.to_lowercase();
+    let installe = !c.contains("..") && program_files.iter().any(|d| !d.is_empty() && c.starts_with(&format!("{}\\", d.trim_end_matches('\\').to_lowercase())));
+    let interprete = INTERPRETES.iter().any(|i| c.rsplit('\\').next() == Some(*i));
+    if signe && installe && !interprete {
+        Genre::Suspension
+    } else {
+        Genre::SuspensionSansSeuil
+    }
+}
+
 /// Alerte de la garde : REP-002, jamais adoucie
 pub fn alerte_garde(texte: &str) -> Alerte {
     Alerte {
@@ -285,7 +306,7 @@ struct Etat {
 /// lecture refusée (fichier absent, tenu ouvert par un compte autorisé, protection en échec) ne dit rien du contenu : la
 /// garde repart en mémoire, et la réponse reste (audit de #110, S110-03)
 fn etat_initial(texte: Option<&str>) -> Etat {
-    match texte.map(serde_json::from_str::<Historique>) {
+    match texte.map(|t| serde_json::from_str::<Historique>(t.trim_start_matches('\u{feff}'))) {
         Some(Ok(h)) => Etat { h, illisible: false, signale: false },
         Some(Err(_)) => Etat { h: Historique::default(), illisible: true, signale: false },
         None => Etat { h: Historique::default(), illisible: false, signale: false },
@@ -311,8 +332,9 @@ pub fn retenue_a_journaliser(vues: &mut std::collections::HashMap<String, u64>, 
     }
     if vues.len() >= MAX_SIGNALES {
         vues.retain(|_, h| *h + HEURE > t);
+        // Table pleine de cibles récentes : pas de ligne de plus, plutôt que de tout réécrire à chaque cycle
         if vues.len() >= MAX_SIGNALES {
-            vues.clear();
+            return false;
         }
     }
     vues.insert(cle.to_string(), t);

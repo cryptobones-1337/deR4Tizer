@@ -5763,7 +5763,9 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin)"), "reprise");
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
     assert!(v.contains("politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte)"), "leurre");
-    assert!(v.contains("politique::passer(Genre::Suspension, programme,"), "leurre : garde");
+    assert!(v.contains("politique::passer(genre_leurre(programme), programme,"), "leurre : garde");
+    assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
+    assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
     assert!(v.contains("crate::politique::noter(crate::politique::Genre::Suspension, &programme);"), "leurre : trace");
     let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter(").unwrap());
     assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
@@ -5815,6 +5817,47 @@ fn garde_retenue_journalisee_une_fois_par_heure() {
         j(&mut v, &format!("x{i}"), S0 + 3600);
     }
     assert!(v.len() <= 500, "{}", v.len());
+    // Relecture de #110, H1 : table pleine de cibles récentes, aucune ligne de plus à chaque cycle
+    let mut v = std::collections::HashMap::new();
+    let lignes: usize = (0..20u64).map(|c| (0..600).filter(|i| j(&mut v, &format!("c{i}"), S0 + c * 5)).count()).sum();
+    assert!(lignes <= 500, "{lignes}");
+    assert!(j(&mut v, "nouvelle", S0 + 3600), "une heure après, la table se vide");
+}
+
+/// Décision du mainteneur (audit de #110, S110-11) : seuil pour un programme signé installé dans Program Files seulement
+#[test]
+fn garde_seuil_seulement_pour_program_files() {
+    use crate::politique::{genre_suspension as g, Genre::*, Historique, Passage};
+    let d = [r"C:\Program Files".to_string(), r"C:\Program Files (x86)\".to_string()];
+    assert_eq!(g(r"C:\Program Files\Editeur\app.exe", true, &d), Suspension);
+    assert_eq!(g(r"c:\program files (x86)\editeur\APP.EXE", true, &d), Suspension, "sans la casse, barre finale tolérée");
+    assert_eq!(g(r"C:\Program Files\Editeur\app.exe", false, &d), SuspensionSansSeuil, "non signé");
+    assert_eq!(g(r"C:\Users\x\app.exe", true, &d), SuspensionSansSeuil, "profil");
+    assert_eq!(g(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", true, &d), SuspensionSansSeuil, "binaire Windows");
+    assert_eq!(g(r"C:\Program Files\PowerShell\7\pwsh.exe", true, &d), SuspensionSansSeuil, "interpréteur installé");
+    assert_eq!(g(r"C:\Program Files\Python\PYTHON.EXE", true, &d), SuspensionSansSeuil, "sans la casse");
+    assert_eq!(g(r"C:\Program Files Evil\app.exe", true, &d), SuspensionSansSeuil, "dossier voisin");
+    assert_eq!(g(r"C:\Program Files\..\Users\x\app.exe", true, &d), SuspensionSansSeuil, "remontée");
+    assert_eq!(g(r"C:\Program Files\app.exe", true, &[String::new()]), SuspensionSansSeuil, "variable vide");
+    assert_eq!(g(r"\\serveur\partage\app.exe", true, &[String::new()]), SuspensionSansSeuil, "variable vide, chemin réseau");
+    assert_eq!(g(r"C:\Program Files\Editeur\mypython.exe", true, &d), Suspension, "le nom entier, pas une partie");
+    // Sans seuil : la 4e, la 100e passent ; la décision humaine reste, et les traces comptent pour une reprise
+    let mut h = Historique::default();
+    for i in 0..100u64 {
+        assert_eq!(h.examiner(SuspensionSansSeuil, r"C:\m.exe", S0 + i * 4000, &mut sans_empreinte), Passage::Passe, "{i}");
+        h.noter(Suspension, r"C:\m.exe", S0 + i * 4000);
+    }
+    assert!(h.suspendu_automatiquement(r"C:\m.exe", S0 + 396_000));
+    h.decision_humaine(r"C:\m.exe", Some("aa".into()), S0 + 400_000);
+    let mut meme = || Some("aa".to_string());
+    assert!(matches!(h.examiner(SuspensionSansSeuil, r"C:\m.exe", S0 + 400_001, &mut meme), Passage::Retenue { .. }), "décision humaine");
+}
+
+/// Relecture de #110, P7 : un BOM, tel qu'un éditeur en ajoute, ne coupe pas la réponse
+#[test]
+fn garde_historique_avec_bom() {
+    use crate::politique::etat_initial_test as e;
+    assert_eq!(e(Some("\u{feff}{}")), (false, 0));
 }
 
 /// Audit de #110, S110-02 : un même processus ne consomme qu'une place, un PID réutilisé repasse par la garde

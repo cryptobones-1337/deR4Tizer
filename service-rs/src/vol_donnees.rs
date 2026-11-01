@@ -314,13 +314,20 @@ pub(crate) fn dire_retenue(alerte: &mut Alerte, raison: &str) {
     alerte.raisons = format!("Suspension automatique retenue ({raison}), programme toujours actif, à vérifier et à arrêter sans attendre si besoin : {}", alerte.raisons);
 }
 
+/// Signature illisible ou hors délai : non signé, donc toujours suspendu
+fn genre_leurre(programme: &str) -> crate::politique::Genre {
+    let signe = matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)));
+    let dossiers: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"].iter().filter_map(|v| std::env::var(v).ok()).collect();
+    crate::politique::genre_suspension(programme, signe, &dossiers)
+}
+
 /// La politique et la garde pour un programme qui touche un leurre : (suspendu, raison de la retenue). Hors du cycle : la
 /// suspension n'attend pas le moniteur
 fn suspension_leurre(pid: u32, programme: &str, file: &Mutex<Vec<Alerte>>) -> (bool, Option<String>) {
-    use crate::politique::{self, Action, Contexte, Decision, Declencheur, Genre, Passage, SourceAuto};
+    use crate::politique::{self, Action, Contexte, Decision, Declencheur, Passage, SourceAuto};
     let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), rancongiciel: true, ..Default::default() };
     match politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte) {
-        Decision::Autorisee(a) => match politique::passer(Genre::Suspension, programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
+        Decision::Autorisee(a) => match politique::passer(genre_leurre(programme), programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
             Passage::Passe => (crate::execution::suspendre(&a, pid, true).is_ok(), None),
             Passage::Retenue { raison, alerte } => {
                 if let Some(t) = alerte {

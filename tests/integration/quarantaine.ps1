@@ -308,10 +308,11 @@ Set-Content -LiteralPath '$leurreStd' -Value 'leurre pose par le compte standard
 }
 # ---------------------------------------------------------------- phase 6, PR 6.2 : garde contre les boucles, sur un vrai leurre
 # Copies de powershell.exe, une par programme : chaque chemin est une cible. Un seul fichier écrit à la fois. Le processus attend ensuite, pour
-# lire son état. Ordre : B est suspendu, repris à la main, retouche sans suspension ; A est suspendu 3 fois, puis retenu
+# lire son état. Ordre : B est suspendu, repris à la main, retouche sans suspension ; A, hors de Program Files, est suspendu 4 fois de suite.
+# Le seuil de Program Files demande un programme signé qui écrit dans un leurre : tests unitaires seulement. REP-002 est contrôlée au 3a (plafond des listes)
 $titresGarde = 'Garde : programme qui touche un leurre suspendu, trace dans reponses.json',
     'Garde : programme repris à la main : décision humaine, même fichier non suspendu de nouveau',
-    'Garde : 4e suspension d''un même programme retenue, alerte REP-002 et LEU-002 qui le dit, programme actif ; retenue aussi après un redémarrage ; un autre programme reste suspendu'
+    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue'
 $leurreGarde = if ($compte -and (Get-Variable leurreStd -ErrorAction SilentlyContinue)) { $leurreStd } else { $null }
 if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-Tous $leurreGarde).Count)) {
     foreach ($t in $titresGarde) { NonExecute $t 'aucun leurre audité disponible' }
@@ -362,43 +363,28 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             } finally { & $arreter $p2 }
         }
         Verifier $titresGarde[2] {
-            foreach ($i in 0, 1, 2) {
+            foreach ($i in 0, 1, 2, 3) {
                 $p = & $toucher $exeA (10 + $i)
                 try {
                     if (-not (& $attendreSuspension $exeA $i $p)) { return "suspension $($i + 1) de A non observée : traces $(& $traces $exeA)" }
                 } finally { & $arreter $p }
             }
-            $p3 = & $toucher $exeA 13
-            try {
-                if (-not (& $attendreRetenue $p3)) { return "aucune retenue dans le SIEM en 90 s : traces $(& $traces $exeA)" }
-                if (& $suspendu $p3) { return '4e suspendue malgré le plafond' }
-                $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-                $fin = (Get-Date).AddSeconds(30)
-                while ($a -notmatch 'REP-002' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
-                if ($a -notmatch 'REP-002') { return 'alerte REP-002 absente' }
-                $fin = (Get-Date).AddSeconds(30)
-                while ($a -notmatch 'Suspension automatique retenue' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
-                if ($a -notmatch 'Suspension automatique retenue') { return 'LEU-002 ne dit pas la retenue' }
-            } finally { & $arreter $p3 }
-            # L'historique survit à un redémarrage. L'abonnement au journal peut mettre du temps à reprendre : le programme retouche le leurre
+            # La décision humaine sur B survit à un redémarrage. L'abonnement au journal peut mettre du temps à reprendre : le programme retouche le leurre
             [void](Redemarrer-Service)
             $vue = $false
             foreach ($i in 1..4) {
-                $p4 = & $toucher $exeA (20 + $i)
+                $p4 = & $toucher $exeB (20 + $i)
                 try {
                     $vue = & $attendreRetenue $p4
-                    if ($vue -and (& $suspendu $p4)) { return 'après redémarrage : suspendu, historique perdu' }
+                    if ($vue -and (& $suspendu $p4)) { return 'après redémarrage : suspendu, décision humaine perdue' }
                 } finally { & $arreter $p4 }
                 if ($vue) { break }
             }
             if (-not $vue) { return 'après redémarrage : aucune retenue dans le SIEM' }
-            # Décision du mainteneur : la 5e cible de l'heure reste suspendue, le plafond global n'existe plus
-            $exeC = Join-Path $script:Commun 'd4t-garde-c.exe'
-            Copy-Item $exeA $exeC -Force
-            $p5 = & $toucher $exeC 30
-            try {
-                if (-not (& $attendreSuspension $exeC 0 $p5)) { return 'autre programme non suspendu : un plafond global subsisterait' }
-            } finally { & $arreter $p5; Start-Sleep 1; Remove-Item $exeC -Force -ErrorAction SilentlyContinue }
+            $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            $fin = (Get-Date).AddSeconds(30)
+            while ($a -notmatch 'Suspension automatique retenue' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
+            if ($a -notmatch 'Suspension automatique retenue') { return 'LEU-002 ne dit pas la retenue' }
             $true
         }
     }

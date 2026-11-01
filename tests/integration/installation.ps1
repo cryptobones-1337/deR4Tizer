@@ -1154,6 +1154,34 @@ try {
                         $true
                     }
                 }
+                # Plafond des listes : adresses de documentation, service relancé pour charger la liste. 40 adresses : les blocages déjà comptés dans l'heure s'y ajoutent
+                $titrePlafond = 'Garde : 30 blocages par les listes dans l''heure, puis arrêt : alerte REP-002, RES-001 conservée, adresses suivantes sans règle'
+                $adressesPlafond = @(1..40 | ForEach-Object { "203.0.113.$_" })
+                if (& $arret) {
+                    Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' (($adressesPlafond + $cibles.Deux) -join "`n")
+                    Service-Relance
+                    Verifier $titrePlafond {
+                        $fin = (Get-Date).AddSeconds(120); $a = ''
+                        do {
+                            foreach ($c in $prisesN3) { $c.Close() }
+                            $prisesN3 = @(& $mesConnexions $adressesPlafond)
+                            Start-Sleep 8
+                            $a = & $alertesN3
+                        } while ($a -notmatch 'REP-002' -and (Get-Date) -lt $fin)
+                        if ($a -notmatch 'REP-002') { return "alerte REP-002 absente en 120 s ; bloquées : $(@(& $blocagesN3).Count)" }
+                        Start-Sleep 15
+                        $b = & $blocagesN3
+                        $libres = @($adressesPlafond | Where-Object { $_ -notin $b })
+                        if (-not $libres.Count) { return 'toutes les adresses bloquées : aucun plafond' }
+                        if (@($adressesPlafond | Where-Object { $_ -in $b }).Count -gt 30) { return 'plus de 30 blocages' }
+                        foreach ($ip in $libres) { if (& $regleN3 $ip) { return "règle de pare-feu pour $ip, absente de blocages.json" } }
+                        $sansAlerte = @($libres | Where-Object { $a -notmatch [regex]::Escape($_) })
+                        if ($sansAlerte.Count) { return "RES-001 absente pour : $($sansAlerte -join ', ')" }
+                        $true
+                    }
+                } else {
+                    NonExecute $titrePlafond 'service non arrêté en 45 s'
+                }
             } else {
                 NonExecute $titreLevee 'service non arrêté en 45 s'
             }
@@ -1171,7 +1199,7 @@ try {
             & $poserReglage $false
         }
         Service-Relance
-        foreach ($ip in $cibles.Values) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
+        $null = Commande (@{ Action = 'toutDebloquer' } | ConvertTo-Json -Compress) 60000
     } catch { Write-Host "  nettoyage du niveau 3 : $($_.Exception.Message)" }
 }
 

@@ -45,14 +45,18 @@ est retenue. Un administrateur peut toujours agir à la main.
 
 | Garde | Seuil | Effet |
 |---|---|---|
-| Même action automatique sur la même cible | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
+| Même blocage automatique sur la même adresse | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
+| Suspension d'un programme signé installé dans Program Files, hors interpréteurs | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
 | Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
 | Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
 | Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
 
-- **Pas de plafond global sur les suspensions** (décision du mainteneur, 2026-11-01) : des programmes jetables ne doivent
-  pas pouvoir retirer sa place à un rançongiciel. En contrepartie, plusieurs programmes légitimes qui toucheraient les
-  leurres seraient tous suspendus, 3 fois au plus chacun par 24 h.
+- **Suspension sans plafond global, et sans seuil hors de Program Files** (décisions du mainteneur, 2026-11-01) : un
+  rançongiciel ne doit pouvoir s'exempter ni avec des programmes jetables, ni en se lançant quatre fois, ni par trois touches
+  via `powershell.exe`. Seul un programme signé installé dans Program Files, hors interpréteurs, a un seuil. En contrepartie,
+  un programme légitime hors de ce cas est suspendu à chaque touche, et un programme relancé en boucle s'accumule, suspendu,
+  jusqu'à ce qu'un administrateur le reprenne ou l'arrête. Le seuil de Program Files reste utilisable par un programme signé
+  déjà installé qui toucherait les leurres trois fois : l'alerte reste.
 - **Limite du plafond des listes** : un compte standard peut l'atteindre en se connectant à 31 adresses listées. Les
   blocages par les listes s'arrêtent alors une heure, renouvelable ; les alertes « Critique » restent. Le plafond protège
   d'une liste corrompue.

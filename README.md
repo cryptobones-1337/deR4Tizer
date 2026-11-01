@@ -28,7 +28,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement, 30 par heure au plus ; les autres listes donnent une alerte seule |
 | **Processus** | Arbre des processus et score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK |
 | **Persistance** | Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée |
-| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche, 3 fois au plus par programme en 24 h ; ensuite, ou si un administrateur l'a repris (7 jours, même fichier), alerte seule |
+| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche ; alerte seule si un administrateur l'a repris (7 jours, même fichier), ou après 3 suspensions en 24 h d'un programme signé installé dans Program Files |
 | **Vol de données** | Audit d'accès aux dossiers sensibles des navigateurs et applications |
 | **Vie privée** | Caméra, micro, outils de prise en main à distance, ports ouverts |
 | **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) |
@@ -230,7 +230,7 @@ IDS/IPS are experimental.
 | **Threat intelligence** | Open-source lists refreshed every 12 h; automatic firewall blocking, on by default and can be turned off, for Spamhaus DROP and Feodo Tracker only, at most 30 per hour; other lists only raise an alert |
 | **Processes** | Process tree with cumulative chain score, obfuscated PowerShell, MITRE ATT&CK techniques |
 | **Persistence** | Run keys, services, scheduled tasks, WMI, Startup folders: alert on any new or changed entry |
-| **Ransomware** | Canary files, automatic suspension of the program touching them, at most 3 times per program in 24 h; after that, or if an administrator resumed it (7 days, same file), alert only |
+| **Ransomware** | Canary files, automatic suspension of the program touching them; alert only if an administrator resumed it (7 days, same file), or after 3 suspensions in 24 h of a signed program installed in Program Files |
 | **Data theft** | Access auditing on sensitive browser and application folders |
 | **Privacy** | Camera, microphone, remote-control tools, open ports |
 | **Firewall** | Rule-change tracking (with the authoring program), Internet exposure (inbound packets from public IPs) |
