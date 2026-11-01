@@ -25,7 +25,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | Domaine | Ce que fait deR4Tizer |
 |---|---|
 | **Réseau** | Connexions sortantes en direct par programme, score de suspicion, détection de balises (beaconing), première connexion d'un programme à Internet |
-| **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h, blocage automatique facultatif au pare-feu |
+| **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement ; les autres listes donnent une alerte seule |
 | **Processus** | Arbre des processus et score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK |
 | **Persistance** | Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée |
 | **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche |
@@ -35,6 +35,9 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
 | **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
+| **Suivi des incidents** | Alertes rattachées à des incidents : ouvert, pris en charge, clos avec un motif, jamais fermé automatiquement ; chronologie par incident (alertes, événements, actions de réponse, trous de collecte) ; page Incidents de l'interface |
+| **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
+| **Règles de détection** | Chaque règle a un identifiant et une fiche (`docs/detection/regles.md`) : justification, télémétrie, faux positifs attendus ; « rien de suspect » est distingué de « collecte indisponible » |
 | **Analyse du trafic** | Capture passive des paquets (sockets brutes de Windows, sans pilote) : débit, programmes, destinations, ports et pays (registres Internet régionaux), carte du monde en direct |
 | **NDR local** (expérimental) | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
 | **DPI** (expérimental) | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
@@ -179,7 +182,10 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 - L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
-- L'exécution avec Microsoft Defender actif n'a pas encore été vérifiée : aucune distribution avant ce scénario.
+- Les scénarios tournent dans une VM de test avec Microsoft Defender actif : c'est un signal, pas une preuve sur un poste
+  réel. Aucune distribution avant ce contrôle.
+- Les traces restent sur la machine surveillée (SIEM : 30 jours et 1 Go au plus) : un administrateur peut les effacer, et
+  une intrusion découverte tard peut en être sortie. Aucun export chiffré et complet n'existe (`docs/security/threat-model.md`).
 
 ### Feuille de route
 
@@ -188,6 +194,12 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 3. ✅ Analyse du trafic, géolocalisation par pays (données publiques des RIR), carte du monde
 4. ✅ NDR local : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS
 5. ✅ DPI et IDS/IPS : SNI, DNS, empreintes JA3, règles compatibles Suricata
+6. ✅ Règles de détection identifiées et documentées, état des collectes (phase 3)
+7. ✅ Suivi des incidents, chronologie, santé des collectes et de l'interface (phase 4)
+8. 🔄 Réponse bornée par la politique : identité revalidée, garde contre les boucles, échéances (phase 6, en cours)
+9. Filtrage par nom de domaine (phase 7, prévu)
+
+« ✅ » veut dire livré dans le code, pas validé pour la production : voir la matrice des capacités.
 
 ### Licence
 
@@ -210,7 +222,7 @@ IDS/IPS are experimental.
 | Area | What deR4Tizer does |
 |---|---|
 | **Network** | Live outbound connections per program, suspicion score, beaconing detection, first Internet connection of a program |
-| **Threat intelligence** | Open-source lists refreshed every 12 h, optional automatic firewall blocking |
+| **Threat intelligence** | Open-source lists refreshed every 12 h; automatic firewall blocking, on by default and can be turned off, for Spamhaus DROP and Feodo Tracker only; other lists only raise an alert |
 | **Processes** | Process tree with cumulative chain score, obfuscated PowerShell, MITRE ATT&CK techniques |
 | **Persistence** | Run keys, services, scheduled tasks, WMI, Startup folders: alert on any new or changed entry |
 | **Ransomware** | Canary files, automatic suspension of the program touching them |
@@ -220,6 +232,9 @@ IDS/IPS are experimental.
 | **Hardening** | Baseline inspired by Intune and Microsoft, applied through local Group Policy, reversible |
 | **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
+| **Incident tracking** | Alerts attached to incidents: open, in progress, closed with a reason, never closed automatically; timeline per incident (alerts, events, response actions, collection gaps); Incidents page in the interface |
+| **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
+| **Detection rules** | Each rule has an identifier and a sheet (`docs/detection/regles.md`, in French): rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
 | **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
 | **Local NDR** (experimental) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
 | **DPI** (experimental) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
@@ -282,6 +297,12 @@ Routes are listed in the French section above (paths are identical).
 3. ✅ Traffic analysis, per-country geolocation (public RIR data), world map
 4. ✅ Local NDR: ARP spoofing, rogue DHCP server, LLMNR/NBNS/mDNS poisoning
 5. ✅ DPI and IDS/IPS: SNI, DNS, JA3 fingerprints, Suricata-compatible rules
+6. ✅ Identified and documented detection rules, collection status (phase 3)
+7. ✅ Incident tracking, timeline, health of collections and interface (phase 4)
+8. 🔄 Response bounded by the policy: identity re-checked, loop guard, deadlines (phase 6, in progress)
+9. Domain-name filtering (phase 7, planned)
+
+"✅" means delivered in the code, not validated for production: see the capability matrix.
 
 ### License
 
