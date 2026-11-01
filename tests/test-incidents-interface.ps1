@@ -41,6 +41,19 @@ try {
     foreach ($c in @(@('Ouvert', 'PrisEnCharge', $true), @('Ouvert', 'Clos', $true), @('PrisEnCharge', 'Clos', $true), @('Clos', 'Ouvert', $true), @('Clos', 'PrisEnCharge', $false), @('PrisEnCharge', 'Ouvert', $false), @('Ouvert', 'Ouvert', $false), @('Clos', 'Clos', $false))) {
         Cas "transition $($c[0]) vers $($c[1]) : $($c[2])" ((& $permise $c[0] $c[1]) -eq $c[2])
     }
+    # Liste : jamais de « 0 incident » sans preuve
+    $resume = { param($l, $n) & $appel $vi 'ResumeListe' @($l, [int]$n) }
+    Cas 'suivi illisible : pas de zéro, rien de conclu' ((& $resume $null 0) -match 'Rien n''est conclu' -and (& $resume $null 0) -notmatch '\b0\b')
+    $vide = [Activator]::CreateInstance([Collections.Generic.List`1].MakeGenericType((& $t 'IncidentSuivi')))
+    Cas 'aucun incident, collectes en panne : dit' ((& $resume $vide 2) -match '2 collecte' -and (& $resume $vide 2) -match 'ne peuvent pas')
+    Cas 'aucun incident, collectes saines' ((& $resume $vide 0) -eq 'Aucun incident enregistré.')
+    # Rouge réservé : un constat de santé seul reste en jaune ; un incident clos, jamais
+    $ri = { param($niv, $etatI, [string[]]$regles) $x = [Activator]::CreateInstance((& $t 'IncidentSuivi')); $x.Niveau = $niv; $x.Etat = $etatI; $l = [Activator]::CreateInstance([Collections.Generic.List`1].MakeGenericType([string])); foreach ($g in $regles) { $l.Add($g) }; $x.Regles = $l; [bool](& $appel $vi 'RisqueConfirme' @($x)) }
+    Cas 'rouge : critique avec règle de détection' (& $ri 'Critique' 'Ouvert' @('LEU-001'))
+    Cas 'rouge : pas pour SAN-* seuls' (-not (& $ri 'Critique' 'Ouvert' @('SAN-010')))
+    Cas 'rouge : SAN-* et détection : oui' (& $ri 'Critique' 'Ouvert' @('SAN-010', 'LEU-001'))
+    Cas 'rouge : pas pour une alerte' (-not (& $ri 'Alerte' 'Ouvert' @('LEU-001')))
+    Cas 'rouge : pas pour un incident clos' (-not (& $ri 'Critique' 'Clos' @('LEU-001')))
     $cmd = & $appel $vi 'Transition' @('inc-1', 'Clos', 'Resolu', 'vu')
     Cas 'commande : action, cible, valeur, motif, note' ($cmd.Action -eq 'incident' -and $cmd.Cible -eq 'inc-1' -and $cmd.Valeur -eq 'Clos' -and $cmd.Type -eq 'Resolu' -and $cmd.Raison -eq 'vu')
 
@@ -95,8 +108,14 @@ try {
     Cas 'pastille : collecte critique indisponible : jaune' ((& $niveau (& $etat @(, @('Connexions', 'Indisponible', (& $ilya 1))))) -eq 1)
     Cas 'pastille : Persistance est critique' ((& $niveau (& $etat @(, @('Persistance', 'Indisponible', (& $ilya 1))))) -eq 1)
     Cas 'pastille : collecte non critique : rien' ((& $niveau (& $etat @(, @('Sysmon', 'Indisponible', (& $ilya 90))))) -eq 0)
-    Cas 'pastille : pas encore lue au démarrage : rien' ((& $niveau (& $etat @(, @('Connexions', 'Inconnue', (& $ilya 2))))) -eq 0)
-    Cas 'pastille : jamais lue depuis plus de 30 min : jaune' ((& $niveau (& $etat @(, @('Connexions', 'Inconnue', (& $ilya 31))))) -eq 1)
+    # « Inconnue » : Depuis vide, comme le publie le service (collectes.rs), mesuré depuis son démarrage
+    $demarre = { param($min, [object[]]$cols) $x = & $etat $cols; $x.Demarrage = (& $ilya $min); $x }
+    Cas 'pastille : pas encore lue au démarrage : rien' ((& $niveau (& $demarre 2 @(, @('Connexions', 'Inconnue', '')))) -eq 0)
+    Cas 'pastille : jamais lue depuis plus de 30 min : jaune' ((& $niveau (& $demarre 31 @(, @('Connexions', 'Inconnue', '')))) -eq 1)
+    Cas 'pastille : jamais lue, démarrage illisible : jaune' ((& $niveau (& { $x = & $etat @(, @('Connexions', 'Inconnue', '')); $x.Demarrage = ''; $x })) -eq 1)
+    Cas 'pastille : Defender jamais lu : rouge, comme SAN-003' ((& $niveau (& $demarre 31 @(@('JournalDefender', 'Inconnue', ''), @('EtatDefender', 'Inconnue', '')))) -eq 2)
+    Cas 'pastille : un volet jamais lu, l''autre indisponible : rouge' ((& $niveau (& $demarre 31 @(@('JournalDefender', 'Inconnue', ''), @('EtatDefender', 'Indisponible', (& $ilya 31))))) -eq 2)
+    Cas 'pastille : jamais de rouge sur un état ancien' ((& $niveau (& $etat @(@('JournalDefender', 'Indisponible', (& $ilya 31)), @('EtatDefender', 'Indisponible', (& $ilya 31))) (& $ilya 5))) -eq 1)
     Cas 'pastille : un seul volet de Defender : jaune' ((& $niveau (& $etat @(, @('JournalDefender', 'Indisponible', (& $ilya 90))))) -eq 1)
     Cas 'pastille : Defender aveugle depuis moins de 30 min : jaune' ((& $niveau (& $etat @(@('JournalDefender', 'Indisponible', (& $ilya 10)), @('EtatDefender', 'Indisponible', (& $ilya 10))))) -eq 1)
     Cas 'pastille : Defender aveugle depuis plus de 30 min : rouge' ((& $niveau (& $etat @(@('JournalDefender', 'Indisponible', (& $ilya 31)), @('EtatDefender', 'Indisponible', (& $ilya 31))))) -eq 2)
@@ -106,6 +125,13 @@ try {
     Cas 'état récent : pas ancien' (-not (& $ancien (& $ilya 1)))
     Cas 'état de plus de 2 min : ancien' (& $ancien (& $ilya 3))
     Cas 'état sans heure lisible : ancien' (& $ancien 'illisible')
+    Cas 'état daté du futur : ancien' (& $ancien ($maintenant.AddMinutes(10).ToString('yyyy-MM-dd HH:mm:ss')))
+    # Test croisé : mêmes collectes critiques que le service
+    $rs = [IO.File]::ReadAllText("$Depot\service-rs\src\sante.rs")
+    $bloc = [regex]::Match($rs, 'pub const CRITIQUES[^=]*=\s*\[(.*?)\];', 'Singleline').Groups[1].Value
+    $duService = @([regex]::Matches($bloc, 'Collecte::(\w+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+    $iciChamp = $vs.GetField('Critiques', [Reflection.BindingFlags]'NonPublic,Static').GetValue($null)
+    Cas 'collectes critiques identiques à sante.rs' ($duService.Count -gt 0 -and (($duService -join ',') -eq ((@($iciChamp) | Sort-Object) -join ','))) "service : $($duService -join ',')"
 
     # Lignes de santé : chaque ligne a sa source ; les pannes disent leur conséquence
     $remT = & $t 'EtatRemontee'
@@ -122,6 +148,10 @@ try {
     Cas 'santé : collecte désactivée : rien à vérifier, pas de séparateur vide' ($sy.Gravite -eq 0 -and $sy.Detail -eq '')
     Cas 'santé : remontée en échec' (@($lignes | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Gravite -eq 1 -and $_.Detail -match 'refus' -and $_.Detail -match '1 en attente' }).Count -eq 1)
     Cas 'santé : interface par session dite non publiée' (@($lignes | Where-Object { $_.Sujet -eq 'Interface par session' -and $_.Etat -eq 'non publié' }).Count -eq 1)
+    Cas 'santé : remontée sans dire « active »' (@($lignes | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Etat -eq 'active' }).Count -eq 0)
+    $rOk = [Activator]::CreateInstance($remT); $rOk.TeamsConfigure = $true
+    Cas 'santé : secrets enregistrés, sans échec' (@(& $appel $vs 'Lignes' @($e, $rOk, $maintenant) | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Etat -eq 'secrets enregistrés' -and $_.Gravite -eq 0 }).Count -eq 1)
+    Cas 'santé : jamais lue, Depuis vide : à vérifier' ((@(& $appel $vs 'Lignes' @((& $demarre 31 @(, @('Connexions', 'Inconnue', ''))), $r, $maintenant)) | Where-Object Sujet -eq 'Connexions').Gravite -eq 1)
     Cas 'santé : remontée illisible dite' (@(& $appel $vs 'Lignes' @($e, $null, $maintenant) | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Gravite -eq 1 }).Count -eq 1)
     Cas 'santé : état absent dit' (@(& $appel $vs 'Lignes' @($null, $null, $maintenant))[0].Gravite -eq 1)
     $vieux = @(& $appel $vs 'Lignes' @((& $etat @() (& $ilya 10)), $r, $maintenant))
@@ -132,7 +162,11 @@ try {
     $cmdT = & $t 'Commande'
     $c = [Activator]::CreateInstance($cmdT); $c.Action = 'incident'; $c.Cible = 'inconnu-1'; $c.Valeur = 'Clos'; $c.Type = 'FauxPositif'; $c.Raison = "note$([char]0x202E)`nfausse"
     $texte = $canal.GetMethod('Decrire').Invoke($null, @($c))
-    Cas 'confirmation : identifiant, inconnu dit, motif, note' ($texte.Contains('inconnu-1') -and $texte.Contains('(inconnu)') -and $texte.Contains('faux positif') -and $texte.Contains('note'))
+    Cas 'confirmation : identifiant, inconnu dit, état visé, motif, note' ($texte.Contains('inconnu-1') -and $texte.Contains('(inconnu, ou suivi illisible)') -and $texte.Contains('nouvel état : Clos') -and $texte.Contains('faux positif') -and $texte.Contains('note'))
+    $ic = & $lire 'IncidentSuivi' $texteIncident
+    $ic.Etat = 'Ouvert'
+    $t2 = $canal.GetMethod('DecrireIncident').Invoke($null, @($c, $ic))
+    Cas 'confirmation avec le suivi : entité, niveau, règles, alertes, transition' ($t2.Contains('Critique') -and $t2.Contains('LEU-001') -and $t2.Contains('3 alerte(s)') -and $t2.Contains('Ouvert → Clos') -and -not $t2.Contains([string][char]0x202E))
     Cas 'confirmation : note neutralisée' (-not $texte.Contains([string][char]0x202E) -and $texte -notmatch "(?m)^fausse")
 
     # Anglais : textes des pages présents au dictionnaire
@@ -150,11 +184,13 @@ try {
     # Branchements dans Gui.cs (la fenêtre n'est pas lancée par ce script)
     $g = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
     Cas 'navigation : Incidents et Santé' ($g.Contains('Lien(liens, "Incidents", pageIncidents, largeurNav)') -and $g.Contains('Lien(liens, "Santé", pageSante, largeurNav)'))
+    Cas 'état illisible, service en marche : dit' ($g.Contains('etat == null && etatService == ServiceControllerStatus.Running'))
     Cas 'pastille branchée, rouge seulement au niveau 2' ($g.Contains('VueSante.NiveauPastille(etat, DateTime.Now)') -and $g.Contains('niveauSante == 2 ? Theme.Rouge : Theme.Jaune'))
     Cas 'état ancien branché' ($g.Contains('VueSante.EtatAncien(etat, DateTime.Now)'))
     $p = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'transitions par le canal (assistant élevé)' ($p.Contains('Canal.Executer(VueIncidents.Transition('))
     Cas 'lectures hors du fil de l''interface' (([regex]::Matches($p, 'ThreadPool\.QueueUserWorkItem')).Count -eq 3)
+    Cas 'une lecture à la fois par page' (([regex]::Matches($p, 'Interlocked\.CompareExchange\(ref enCours, 1, 0\)')).Count -eq 2)
     Cas 'compilation : fichier listé' (([IO.File]::ReadAllText("$Depot\compiler.ps1")).Contains('"$src\Incidents.cs"'))
 } finally {
     Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue

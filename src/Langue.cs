@@ -43,6 +43,10 @@ namespace DeR4Tizer
             { "Clore l'incident", "Close the incident" }, { "Continuer", "Continue" }, { "Annuler", "Cancel" }, { "Motif", "Reason" }, { "Note (facultative, {0} caractères au plus)", "Note (optional, {0} characters at most)" },
             { "Ce que deR4Tizer voit réellement : une collecte indisponible, c'est une détection qui ne peut pas se déclencher. Chaque ligne dit sa source et sa date.", "What deR4Tizer really sees: an unavailable collection is a detection that cannot fire. Each line gives its source and date." },
             { "Sujet", "Subject" }, { "Vérifié", "Checked" }, { "Rien à vérifier.", "Nothing to check." }, { "{0} point(s) à vérifier.", "{0} item(s) to check." },
+            { "Suivi absent ou illisible : aucun incident enregistré, ou fichier non lu. Rien n'est conclu.", "Tracking file missing or unreadable: no incident recorded, or file not read. Nothing is concluded." },
+            { "Aucun incident enregistré, mais {0} collecte(s) en panne : des détections ne peuvent pas se déclencher.", "No incident recorded, but {0} collection(s) failing: some detections cannot fire." },
+            { "Aucun incident enregistré.", "No incident recorded." }, { "ÉTAT ILLISIBLE : SERVICE À VÉRIFIER", "UNREADABLE STATE: CHECK THE SERVICE" },
+            { "secrets enregistrés", "secrets recorded" }, { "sans secret enregistré", "no secret recorded" },
             // Navigation et pages
             { "Connexions", "Connections" }, { "Alertes", "Alerts" }, { "Chaînes", "Chains" }, { "Vie privée", "Privacy" },
             { "Pare-feu", "Firewall" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },

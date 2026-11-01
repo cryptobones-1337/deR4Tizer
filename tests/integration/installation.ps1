@@ -910,7 +910,8 @@ if ($script:lecteur) {
             $s = En-TantQue $script:lecteur "try { [void][IO.File]::ReadAllText('$chemin'); 'LECTURE=OK' } catch { 'LECTURE=' + `$_.Exception.GetType().Name }"
             if ($s -notmatch 'LECTURE=OK') { return "$f : lecture refusée au compte autorisé : $s" }
             $e = En-TantQue $script:lecteur "try { [IO.File]::AppendAllText('$chemin', ' '); 'ECRITURE=OK' } catch { 'ECRITURE=' + `$_.Exception.GetType().Name }"
-            if ($e -match 'ECRITURE=OK') { return "$f : écriture acceptée au compte autorisé" }
+            # Seul un refus d'accès prouve : un essai qui échoue autrement ne dit rien (audit de #105, S105-10)
+            if ($e -notmatch 'ECRITURE=UnauthorizedAccessException') { return "$f : écriture non refusée au compte autorisé : $e" }
         }
         $true
     }

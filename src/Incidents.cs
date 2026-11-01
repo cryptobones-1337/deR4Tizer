@@ -90,7 +90,7 @@ namespace DeR4Tizer
 
         static string MotifTexte(string m)
         {
-            return m == "Resolu" ? L.T("résolu") : m == "FauxPositif" ? L.T("faux positif") : m == "Accepte" ? L.T("risque accepté") : m ?? "";
+            return m == "Resolu" ? L.T("résolu") : m == "FauxPositif" ? L.T("faux positif") : m == "Accepte" ? L.T("risque accepté") : Canal.Visible(m);
         }
 
         public static string EtatEnTexte(string etat)
@@ -122,6 +122,21 @@ namespace DeR4Tizer
         public static List<IncidentSuivi> Trier(IEnumerable<IncidentSuivi> l)
         {
             return l.OrderBy(i => i.Etat == "Clos" ? 1 : 0).ThenByDescending(i => i.DerniereActiviteUtc ?? "", StringComparer.Ordinal).ToList();
+        }
+
+        // Rouge réservé aux risques confirmés : un constat de santé (SAN-*) est Critique pour partir chez le prestataire, pas par gravité
+        public static bool RisqueConfirme(IncidentSuivi i)
+        {
+            return i.Etat != "Clos" && i.Niveau == "Critique" && (i.Regles ?? new List<string>()).Any(r => !r.StartsWith("SAN-"));
+        }
+
+        // Jamais « 0 incident » quand rien ne le prouve : suivi illisible, ou absent (il l'est aussi tant qu'aucun incident n'a existé) ; et zéro
+        // incident ne vaut rien si une collecte est en panne (dossier, §4.6)
+        public static string ResumeListe(List<IncidentSuivi> l, int collectesEnPanne)
+        {
+            if (l == null) return L.T("Suivi absent ou illisible : aucun incident enregistré, ou fichier non lu. Rien n'est conclu.");
+            if (l.Count == 0) return collectesEnPanne > 0 ? string.Format(L.T("Aucun incident enregistré, mais {0} collecte(s) en panne : des détections ne peuvent pas se déclencher."), collectesEnPanne) : L.T("Aucun incident enregistré.");
+            return string.Format(L.T("{0} incident(s), {1} non clos"), l.Count, l.Count(i => i.Etat != "Clos"));
         }
 
         public static Commande Transition(string id, string vers, string motif, string note)
@@ -207,14 +222,26 @@ namespace DeR4Tizer
         public static bool EtatAncien(Etat e, DateTime maintenant)
         {
             DateTime d;
-            return e != null && (!Date(e.MisAJour, out d) || (maintenant - d).TotalMinutes > DelaiEtatAncienMinutes);
+            // En valeur absolue : une date future (heure changée) n'est pas fraîche pour autant
+            return e != null && (!Date(e.MisAJour, out d) || Math.Abs((maintenant - d).TotalMinutes) > DelaiEtatAncienMinutes);
         }
 
-        static bool CritiqueEnPanne(EtatCollecte c, DateTime maintenant)
+        // Jamais lue : le service publie Depuis vide pour « Inconnue » : mesuré depuis son démarrage, illisible valant panne
+        static bool JamaisLueTropLongtemps(Etat e, EtatCollecte c, DateTime maintenant)
         {
-            if (c == null || !Critiques.Contains(c.Id)) return false;
-            // « Inconnue » au démarrage n'est pas une panne ; jamais lue après le délai du constat, si
-            return c.Etat == "Indisponible" || (c.Etat == "Inconnue" && DepuisPlusDe(c.Depuis, DelaiConstatMinutes, maintenant));
+            DateTime d;
+            return c.Etat == "Inconnue" && (!Date(e.Demarrage, out d) || (maintenant - d).TotalMinutes > DelaiConstatMinutes);
+        }
+
+        static bool EnPanne(Etat e, EtatCollecte c, DateTime maintenant)
+        {
+            return c != null && (c.Etat == "Indisponible" || JamaisLueTropLongtemps(e, c, maintenant));
+        }
+
+        // Comme sante.rs pour SAN-003 : « Inconnue » compte comme indisponible
+        static bool VoletAveugle(Etat e, string id, DateTime maintenant)
+        {
+            return e.Collectes.Any(c => c.Id == id && ((c.Etat == "Indisponible" && DepuisPlusDe(c.Depuis, DelaiConstatMinutes, maintenant)) || JamaisLueTropLongtemps(e, c, maintenant)));
         }
 
         // Pastille d'en-tête : 0 rien ; 1 à vérifier, en jaune ; 2 rouge, seulement si Defender est aveugle (SAN-003 : journal et état
@@ -222,9 +249,9 @@ namespace DeR4Tizer
         public static int NiveauPastille(Etat e, DateTime maintenant)
         {
             if (e == null || e.Collectes == null) return 0;
-            Func<string, bool> aveugle = id => e.Collectes.Any(c => c.Id == id && c.Etat == "Indisponible" && DepuisPlusDe(c.Depuis, DelaiConstatMinutes, maintenant));
-            if (aveugle("JournalDefender") && aveugle("EtatDefender")) return 2;
-            return e.Collectes.Any(c => CritiqueEnPanne(c, maintenant)) ? 1 : 0;
+            // Jamais de rouge sur un état ancien : les 30 min auraient passé dans l'interface seule, sans constat du service
+            if (!EtatAncien(e, maintenant) && VoletAveugle(e, "JournalDefender", maintenant) && VoletAveugle(e, "EtatDefender", maintenant)) return 2;
+            return e.Collectes.Any(c => Critiques.Contains(c.Id) && EnPanne(e, c, maintenant)) ? 1 : 0;
         }
 
         public static string TextePastille(int niveau)
@@ -280,12 +307,13 @@ namespace DeR4Tizer
                 l.Add(new LigneSante { Sujet = L.T("Remontée"), Etat = L.T("état illisible"), Date = "", Detail = L.T("notifications.json absent ou illisible."), Source = "notifications.json", Gravite = 1 });
             else
             {
+                // Ce fichier dit quels secrets sont enregistrés, pas quels canaux sont activés : ne pas écrire « active »
                 bool configuree = r.NtfyConfigure || r.TeamsConfigure || r.SmtpMotDePasse;
                 bool enEchec = !string.IsNullOrEmpty(r.EchecDepuis);
                 l.Add(new LigneSante
                 {
                     Sujet = L.T("Remontée"),
-                    Etat = !configuree ? L.T("non configurée") : enEchec ? L.T("en échec") : L.T("active"),
+                    Etat = enEchec ? L.T("en échec") : configuree ? L.T("secrets enregistrés") : L.T("sans secret enregistré"),
                     Date = v(r.DernierEnvoi),
                     Detail = string.Format(L.T("{0} envoi(s), {1} en attente, {2} abandonnée(s)"), r.Envoyes, r.EnAttente, r.Abandonnees)
                         + (enEchec ? " ; " + L.T("échec depuis") + " " + v(r.EchecDepuis) + (string.IsNullOrEmpty(r.DerniereErreur) ? "" : " : " + v(r.DerniereErreur)) : ""),
@@ -295,7 +323,7 @@ namespace DeR4Tizer
             }
             foreach (var c in e.Collectes ?? new List<EtatCollecte>())
             {
-                bool panne = c.Etat == "Indisponible" || (c.Etat == "Inconnue" && DepuisPlusDe(c.Depuis, DelaiConstatMinutes, maintenant));
+                bool panne = EnPanne(e, c, maintenant);
                 bool partielle = c.Etat == "Partielle";
                 l.Add(new LigneSante
                 {
@@ -319,8 +347,7 @@ namespace DeR4Tizer
         readonly Label resume = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, Margin = new Padding(12, 8, 0, 0) };
         readonly BoutonNeon btnPrendre = new BoutonNeon("Prendre en charge", Theme.Cyan), btnClore = new BoutonNeon("Clore…", Theme.Cyan), btnRouvrir = new BoutonNeon("Rouvrir", Theme.TexteDim);
         readonly System.Windows.Forms.Timer minuteur = new System.Windows.Forms.Timer { Interval = 15000 };
-        List<IncidentSuivi> incidents = new List<IncidentSuivi>();
-        int chargement;
+        int chargement, enCours;
 
         public PageIncidents()
         {
@@ -363,31 +390,44 @@ namespace DeR4Tizer
         // Lecture hors du fil de l'interface : un fichier verrouillé ne la fige pas
         public void Charger()
         {
+            // Une lecture à la fois : un fichier verrouillé n'empile pas un fil par tour (audit de #105, S105-08)
+            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
             int numero = ++chargement;
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                var l = VueIncidents.Trier(Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>());
-                if (!IsHandleCreated) return;
-                try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(l); })); } catch (InvalidOperationException) { }
+                try
+                {
+                    var lu = Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json");
+                    var etat = Commun.Lire<Etat>("etat.json");
+                    int pannes = etat == null ? 0 : Couverture.EnPannes(etat).Count;
+                    if (!IsHandleCreated) return;
+                    try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(lu, pannes); })); } catch (InvalidOperationException) { }
+                }
+                finally { Interlocked.Exchange(ref enCours, 0); }
             });
         }
 
-        void Afficher(List<IncidentSuivi> l)
+        void Afficher(List<IncidentSuivi> lu, int collectesEnPanne)
         {
+            resume.Text = VueIncidents.ResumeListe(lu, collectesEnPanne);
+            resume.ForeColor = lu == null || (lu.Count == 0 && collectesEnPanne > 0) ? Theme.Jaune : Theme.TexteDim;
+            // Illisible : la dernière liste reste affichée, plutôt qu'un vide qui rassure
+            if (lu == null) { MajBoutons(); return; }
+            var l = VueIncidents.Trier(lu);
             var avant = Choisi();
             string idAvant = avant == null ? null : avant.Id;
-            incidents = l;
+            int indice = liste.TopItem == null ? 0 : liste.TopItem.Index;
             liste.BeginUpdate();
             liste.Items.Clear();
             foreach (var i in l)
             {
                 var it = new ListViewItem(new[] { VueIncidents.EtatComplet(i), Canal.Visible(i.Niveau), Canal.Visible(i.Entite), string.Join(", ", (i.Regles ?? new List<string>()).Select(Canal.Visible)), i.NombreAlertes.ToString(), Canal.Visible(i.DerniereActiviteUtc) }) { Tag = i };
-                it.ForeColor = i.Etat == "Clos" ? Theme.TexteDim : i.Niveau == "Critique" ? Theme.Rouge : Theme.Texte;
+                it.ForeColor = i.Etat == "Clos" ? Theme.TexteDim : VueIncidents.RisqueConfirme(i) ? Theme.Rouge : i.Niveau == "Critique" ? Theme.Jaune : Theme.Texte;
                 liste.Items.Add(it);
                 if (i.Id == idAvant) it.Selected = true;
             }
             liste.EndUpdate();
-            resume.Text = string.Format(L.T("{0} incident(s), {1} non clos"), l.Count, l.Count(i => i.Etat != "Clos"));
+            if (indice > 0 && indice < liste.Items.Count) liste.TopItem = liste.Items[indice];
             Selection();
         }
 
@@ -397,7 +437,6 @@ namespace DeR4Tizer
             var i = Choisi();
             if (i == null) { detail.Text = L.T("Sélectionnez un incident."); return; }
             string id = i.Id;
-            int numero = chargement;
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 ChronologieIncident c = VueIncidents.IdentifiantValide(id) ? Commun.Lire<ChronologieIncident>(Path.Combine("chronologies", id + ".json")) : null;
@@ -446,7 +485,7 @@ namespace DeR4Tizer
         // Le détail en entier : la colonne coupe les longues lignes
         readonly TextBox detail = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Mono, BorderStyle = BorderStyle.None };
         readonly System.Windows.Forms.Timer minuteur = new System.Windows.Forms.Timer { Interval = 15000 };
-        int chargement;
+        int chargement, enCours;
 
         public PageSante()
         {
@@ -470,12 +509,17 @@ namespace DeR4Tizer
 
         public void Charger()
         {
+            if (Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
             int numero = ++chargement;
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
-                if (!IsHandleCreated) return;
-                try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(l); })); } catch (InvalidOperationException) { }
+                try
+                {
+                    var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
+                    if (!IsHandleCreated) return;
+                    try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(l); })); } catch (InvalidOperationException) { }
+                }
+                finally { Interlocked.Exchange(ref enCours, 0); }
             });
         }
 
