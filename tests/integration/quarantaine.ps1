@@ -349,7 +349,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
     } else {
         Noter $titresGarde[0] 'RÉUSSI' ''
         Verifier $titresGarde[1] {
-            $r = Commande-Cible 'reprendre' $pB.Id | ConvertFrom-Json
+            $r = Commande-Cible 'reprendre' $pB.Id
             if (-not $r.Ok) { return "reprise refusée : $($r.Message)" }
             if (& $suspendu $pB) { return 'toujours suspendu après la reprise' }
             & $arreter $pB

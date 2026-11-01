@@ -155,7 +155,12 @@ try {
         $fin = (Get-Date).AddMinutes($Minutes)
         # Fin de l'attente dès que la tâche ne tourne plus (échec au lancement : pas 60 minutes d'attente pour rien)
         Start-Sleep 15
-        while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and (Get-ScheduledTask -TaskName $nom).State -in 'Running', 'Queued') { Start-Sleep 10 }
+        # Trois lectures de suite : une tâche lue juste avant qu'elle tourne a déjà fait conclure à un arrêt, en moins d'une minute
+        $arretees = 0
+        while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and $arretees -lt 3) {
+            Start-Sleep 10
+            $arretees = if ((Get-ScheduledTask -TaskName $nom).State -in 'Running', 'Queued') { 0 } else { $arretees + 1 }
+        }
         Start-Sleep 5
         $etat = "$((Get-ScheduledTask -TaskName $nom).State), résultat 0x$('{0:X}' -f (Get-ScheduledTaskInfo -TaskName $nom).LastTaskResult)"
         Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
