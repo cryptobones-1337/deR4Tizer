@@ -63,6 +63,17 @@ try {
         Start-Sleep 10
     }
     if ((& $ecart) -gt 120) { throw 'Horloge de la VM non resynchronisée (écart de plus de 2 minutes).' }
+    # Maintenance de Windows relevée pendant environ 3 minutes après la reprise de l'instantané. Lancer un scénario pendant ce temps a donné une
+    # tâche lente à démarrer et des appels CIM refusés. La durée est écrite : si elle grandit, l'instantané est à refaire
+    $debutRepos = Get-Date
+    $reposFin = (Get-Date).AddMinutes(10)
+    $occupee = { Invoke-Command -Session $s { @(Get-Process -Name TrustedInstaller, TiWorker, wuauclt, MoUsoCoreWorker -ErrorAction SilentlyContinue).Count } }
+    $calmes = 0
+    while ($calmes -lt 3 -and (Get-Date) -lt $reposFin) {
+        $calmes = if ((& $occupee) -eq 0) { $calmes + 1 } else { 0 }
+        if ($calmes -lt 3) { Start-Sleep 10 }
+    }
+    Write-Host "Maintenance de Windows dans la VM : $([int]((Get-Date) - $debutRepos).TotalSeconds) s d'attente$(if ($calmes -lt 3) { ', délai dépassé, scénario lancé quand même' })"
     if ($SessionStandard) {
         # Compte standard jetable, mot de passe aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte ;
         # ouverture de session automatique à la console, puis redémarrage
@@ -161,10 +172,11 @@ try {
         $delaiDemarrage = (Get-Date).AddMinutes(5)
         while (-not (Test-Path $code) -and (Get-Date) -lt $fin -and ($arretees -lt 3 -or (Get-Date) -lt $delaiDemarrage)) {
             Start-Sleep 10
-            $arretees = if ((Get-ScheduledTask -TaskName $nom).State -in 'Running', 'Queued') { 0 } else { $arretees + 1 }
+            # Une lecture refusée (WMI indisponible un instant) ne dit rien de la tâche
+            try { $arretees = if ((Get-ScheduledTask -TaskName $nom -ErrorAction Stop).State -in 'Running', 'Queued') { 0 } else { $arretees + 1 } } catch { }
         }
         Start-Sleep 5
-        $etat = "$((Get-ScheduledTask -TaskName $nom).State), résultat 0x$('{0:X}' -f (Get-ScheduledTaskInfo -TaskName $nom).LastTaskResult)"
+        $etat = try { "$((Get-ScheduledTask -TaskName $nom -ErrorAction Stop).State), résultat 0x$('{0:X}' -f (Get-ScheduledTaskInfo -TaskName $nom -ErrorAction Stop).LastTaskResult)" } catch { "illisible : $($_.Exception.Message)" }
         Stop-ScheduledTask -TaskName $nom -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
         if (Test-Path $code) { "exécuteur ($mode) terminé" } else { "exécuteur ($mode) arrêté sans résultat (tâche $etat)" }
