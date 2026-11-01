@@ -2059,9 +2059,9 @@ fn taches_nouvelles_plafonnees() {
     assert!(!attente.contains_key(&t(r"\a1").cle), "supprimée : oubliée");
     // \Microsoft d'abord, quel que soit l'ordre
     let mut a2 = std::collections::HashMap::new();
-    let mut r = vec![t(r"\aaa"), t(r"\Microsoft\Windows\x")];
+    let mut r = vec![t(r"\AAA"), t(r"\Microsoft\Windows\x")];
     p(&Default::default(), &mut r, 1, &mut a2, 1);
-    assert!(r.iter().any(|e| e.nom == r"\Microsoft\Windows\x") && !r.iter().any(|e| e.nom == r"\aaa"));
+    assert!(r.iter().any(|e| e.nom == r"\Microsoft\Windows\x") && !r.iter().any(|e| e.nom == r"\AAA"));
     // Sous le plafond : rien retiré, pas d'entrée, plus rien en attente
     let mut a3 = std::collections::HashMap::new();
     let mut r2 = vec![connue, t(r"\n1")];
