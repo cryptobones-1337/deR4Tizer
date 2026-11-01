@@ -113,7 +113,7 @@ Tableaux en commentaire des PR #43, #44, #45, #46.
 
 ## Non couvert
 
-- Exécution avec Microsoft Defender actif (lot 3d) : VM ou runner auto-hébergé nécessaire.
+- Exécution avec Microsoft Defender actif (lot 3d) sur un poste réel : le lot ne tourne que dans la VM de test, et reste exigé sur la version distribuée.
 - Scénarios demandant une session interactive (aucune en Windows Sandbox ; celle du runner hébergé est un
   administrateur) : leurres posés dans le profil de la session, restauration avec la session d'un utilisateur
   standard, lecture des données par le compte de la console.

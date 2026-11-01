@@ -14,7 +14,7 @@ contient pas son contenu.
 | testé en labo | Fonctions pures ou parseurs vérifiés par `cargo test --release` (décisions, formats, mini-fuzz) ; le comportement sur un Windows réel n'est pas prouvé. |
 | validé sur Windows | Scénarios réussis avec le service réel, installé par le MSI, sur un runner Windows jetable de la CI (jobs `integration-*`, tableaux cités). |
 | réussi en Windows Sandbox | Mêmes scénarios, réussis dans une Windows Sandbox jetable (`tests/bac-a-sable`), pendant la désactivation de GitHub Actions. Signal, pas preuve : ni poste réel, ni Defender actif ; jamais « validé sur Windows (VM) ». |
-| prêt pour la production | Aucune capacité aujourd'hui : binaires non signés, CI GitHub désactivée, aucune relecture indépendante, rien de vérifié sur un poste réel. |
+| prêt pour la production | Aucune capacité aujourd'hui : binaires non signés, CI GitHub désactivée, lot 3d à réussir sur la version distribuée, aucune relecture indépendante, rien de vérifié sur un poste réel. |
 
 L'IDS, le DPI et le NDR sont **expérimentaux**, quel que soit l'état de leurs tests.
 
@@ -87,7 +87,7 @@ commit cités pour mémoire) : 3a 41 réussis,
 | Techniques MITRE ATT&CK et conseils | implémenté non vérifié | `mitre.rs` | — | — | — |
 | Interface (C#, français et anglais) | implémenté non vérifié (compilée par la CI) | `src/*.cs` | .NET Framework 4.8 | Compilation dans le job `windows` | Rendu à 125 % et 150 % non vérifié sur un écran réel. |
 | Signature des binaires et du MSI | prévu | `.github/workflows/publication.yml` | Certificat de signature de code | — | Binaires non signés. SignPath Foundation non utilisable en l'état pour les mises à jour (certificat à son nom, peut-être commun à plusieurs projets) : seconde signature propre au projet ou nom de produit exigé, à décider ; Azure Trusted Signing (clé qui changerait souvent) à vérifier. Voir `docs/security/threat-model.md`. |
-| Exécution avec Microsoft Defender actif (lot 3d) | réussi en VM de test à chaque passage complet (preuves en commentaire des PR) | — | VM de test, Defender actif, sans exclusion | `tests/vm/lot3d.ps1` | VM de test : signal, pas preuve sur un poste réel. |
+| Exécution avec Microsoft Defender actif (lot 3d) | réussi en VM de test, 12 sur 12 aux passages complets de novembre 2026 (preuves en commentaire des PR) | — | VM de test, Defender actif, sans exclusion | `tests/vm/lot3d.ps1` | VM de test : signal, pas preuve sur un poste réel. Reste exigé sur la version distribuée (`CLAUDE.md`, section 4). |
 
 ## Scénarios non exécutés (à faire sur une VM)
 

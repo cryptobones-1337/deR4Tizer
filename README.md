@@ -18,7 +18,7 @@ deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites comm
 
 ### Fonctionnalités (v4.3)
 
-État réel de chaque capacité (validée sur Windows par la CI, testée en labo, ou implémentée sans vérification) :
+État réel de chaque capacité (validée sur Windows par la CI avant sa désactivation, contrôlée en VM de test, testée en labo, ou implémentée sans vérification) :
 [matrice des capacités](docs/roadmap/capability-matrix.md). Aucune n'est encore prête pour la production ; le NDR,
 le DPI et l'IDS/IPS sont expérimentaux.
 
@@ -36,8 +36,8 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Réponse** | Tuer, suspendre, isoler du réseau, mettre en quarantaine, bouton PANIQUE (coupe Internet) |
 | **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
 | **Suivi des incidents** | Alertes rattachées à des incidents : ouvert, pris en charge, clos avec un motif, jamais fermé automatiquement ; chronologie par incident (alertes, événements, actions de réponse, trous de collecte) ; page Incidents de l'interface |
-| **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
-| **Règles de détection** | Chaque règle a un identifiant et une fiche (`docs/detection/regles.md`) : justification, télémétrie, faux positifs attendus ; « rien de suspect » est distingué de « collecte indisponible » |
+| **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée, si elle est configurée, retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
+| **Règles de détection** | Chaque règle a un identifiant et une entrée dans `docs/detection/regles.md` ; la plupart ont une fiche : justification, télémétrie, faux positifs attendus ; « rien de suspect » est distingué de « collecte indisponible » |
 | **Analyse du trafic** | Capture passive des paquets (sockets brutes de Windows, sans pilote) : débit, programmes, destinations, ports et pays (registres Internet régionaux), carte du monde en direct |
 | **NDR local** (expérimental) | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
 | **DPI** (expérimental) | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
@@ -87,7 +87,7 @@ pare-feu et les leurres, remet les réglages de sécurité d'origine et efface l
 `GARDER_DONNEES=1` conservent respectivement les réglages et les données.
 
 La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
-relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par la CI
+relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par le scénario
 d'intégration : même processus du service avant et après).
 
 Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence MS-RL, sans redevance) ;
@@ -182,8 +182,10 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 - L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
-- Les scénarios, dont le lot 3d, tournent dans une VM de test avec Microsoft Defender actif : c'est un signal, pas une
-  preuve sur un poste réel. Aucune distribution avant une CI GitHub verte, des binaires signés et une relecture indépendante.
+- Le lot 3d tourne dans une VM de test, Microsoft Defender pleinement actif : c'est un signal, pas une preuve sur un poste
+  réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi sur la version distribuée, des binaires signés et
+  une relecture indépendante.
+- La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
 - Les traces restent sur la machine surveillée (SIEM : 30 jours et 1 Go au plus) : un administrateur peut les effacer, et
   une intrusion découverte tard peut en être sortie. Aucun export chiffré et complet n'existe (`docs/security/threat-model.md`).
 
@@ -215,7 +217,7 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 
 ### Features (v4.3)
 
-Actual state of each capability (validated on Windows by the CI, lab-tested, or implemented without verification):
+Actual state of each capability (validated on Windows by the CI before it was disabled, checked in a test VM, lab-tested, or implemented without verification):
 [capability matrix](docs/roadmap/capability-matrix.md) (in French). None is production-ready yet; NDR, DPI and
 IDS/IPS are experimental.
 
@@ -233,8 +235,8 @@ IDS/IPS are experimental.
 | **Response** | Kill, suspend, network-isolate, quarantine, PANIC button (cuts Internet) |
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Incident tracking** | Alerts attached to incidents: open, in progress, closed with a reason, never closed automatically; timeline per incident (alerts, events, response actions, collection gaps); Incidents page in the interface |
-| **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
-| **Detection rules** | Each rule has an identifier and a sheet (`docs/detection/regles.md`, in French): rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
+| **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding, when configured, retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
+| **Detection rules** | Each rule has an identifier and an entry in `docs/detection/regles.md` (in French); most have a sheet: rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
 | **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
 | **Local NDR** (experimental) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
 | **DPI** (experimental) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
@@ -276,7 +278,7 @@ Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LA
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
 Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service
-(the refusal for a standard account is checked by the integration CI: same service process before and after).
+(the refusal for a standard account is checked by the integration scenario: same service process before and after).
 
 ### SIEM integration
 
@@ -289,6 +291,16 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 ```
 
 Routes are listed in the French section above (paths are identical).
+
+### Known limits
+
+The full list is in the French section above. In particular:
+
+- Batch 3d runs in a test VM with Microsoft Defender fully active: a signal, not proof on a real machine. No distribution
+  before a green GitHub CI, batch 3d passed on the distributed version, signed binaries and an independent review.
+- The interface window has never been opened in real conditions; its decisions are tested separately.
+- Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion
+  found late may have aged out. No encrypted and complete export exists (`docs/security/threat-model.md`).
 
 ### Roadmap
 
