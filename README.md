@@ -182,8 +182,8 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 - L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
-- Les scénarios tournent dans une VM de test avec Microsoft Defender actif : c'est un signal, pas une preuve sur un poste
-  réel. Aucune distribution avant ce contrôle.
+- Les scénarios, dont le lot 3d, tournent dans une VM de test avec Microsoft Defender actif : c'est un signal, pas une
+  preuve sur un poste réel. Aucune distribution avant une CI GitHub verte, des binaires signés et une relecture indépendante.
 - Les traces restent sur la machine surveillée (SIEM : 30 jours et 1 Go au plus) : un administrateur peut les effacer, et
   une intrusion découverte tard peut en être sortie. Aucun export chiffré et complet n'existe (`docs/security/threat-model.md`).
 
