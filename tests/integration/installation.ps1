@@ -733,11 +733,11 @@ Verifier $titreVerrou {
 }
 Retirer-Verrou
 
-# Fichiers du service sous verrou, posé en administrateur ; le compte lecteur peut en faire autant. Mesuré en VM le 2026-11-01 (5 min chaque) : ni journal.txt
-# ni etat.json ni reseau.json ne figent le service, une commande prend 9 s au plus (cause de ces 9 s non établie) ; etat.json cesse d'être écrit tant
-# que le verrou tient. Ces fichiers ne sont lus ici qu'une fois le verrou retiré
+# Fichiers du service sous verrou, posé en administrateur ; le compte lecteur peut en faire autant. Constate qu'un service répond sous verrou accordé sur cette VM,
+# pas une absence de gel en général : hors du service, une ouverture en ajout sous le même verrou est restée bloquée plus de 150 s (relecture de #104). Mesuré
+# le 2026-11-01 : commande en 9 s au plus, cause non établie ; etat.json n'est plus écrit tant que le verrou tient. Ces fichiers ne sont lus ici qu'une fois le verrou retiré
 foreach ($nomVerrou in 'journal.txt', 'etat.json') {
-    $titreVerrou = "Verrou sur $nomVerrou : ni gel ni relance, canal joignable"
+    $titreVerrou = "Verrou sur $nomVerrou, posé en administrateur : commande et canal répondent, pas de relance"
     $e = Poser-Verrou (Join-Path $script:Donnees $nomVerrou) $null
     if ($e -ne 'accorde') {
         NonExecute $titreVerrou "verrou non obtenu : $e"
@@ -762,9 +762,6 @@ foreach ($nomVerrou in 'journal.txt', 'etat.json') {
     }
     Retirer-Verrou
 }
-
-# Le fil et la fin du processus n'ont jamais tourné en vrai : la décision est testée, mais aucun verrou essayé en VM n'a figé un passage
-NonExecute 'Chien de garde : relance réelle du service, événement 7031' 'aucun gel reproduit : verrous sur journal.txt, etat.json, reseau.json, 5 min chaque ; hosts et les exécutables sont à échéance'
 
 Verifier 'Dossier Microsoft des tâches : pas d''écriture pour un compte standard (lu en premier par le relevé)' {
     $m = Join-Path $env:SystemRoot 'System32\Tasks\Microsoft\d4t-essai'

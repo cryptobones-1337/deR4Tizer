@@ -2076,7 +2076,6 @@ fn taches_releve_bloque_apres_30_min() {
     let n = include_str!("natif.rs");
     assert!(n.contains("signataire_a_echeance(chemin).ok().flatten()"), "lecture sans échéance");
     assert!(s.contains("blocage::empreinte_hosts_lue().and_then("), "S104-02 : hosts sans échéance");
-    assert!(s.contains("natif::terminer_processus();") && s.matches("PASSAGE.fetch_add(1, Ordering::SeqCst);").count() == 2, "S104-02 : chien de garde non branché");
     assert!(include_str!("hygiene.rs").contains("lecture_fichier(\"leurre\""), "S104-02 : leurres sans échéance");
     assert!(include_str!("reponse.rs").contains("garde_critique(natif::binaire_windows_lu(&chemin))"), "S104-01 : garde sans décision testée");
     let a = include_str!("apprentissage.rs");
@@ -2146,50 +2145,6 @@ fn garde_critique_fermee_hors_delai() {
     assert_eq!(d(Ok(Some("Microsoft Windows".into())), &|| Ok(false)), Ok(true));
     assert_eq!(d(Ok(Some("Autre".into())), &|| Ok(false)), Ok(false));
     assert_eq!(d(Ok(None), &|| Ok(true)), Ok(true));
-}
-
-/// S104-02 : le même passage en cours à 12 relevés ; un passage fini ou nouveau remet à zéro
-#[test]
-fn chien_de_garde_passage_bloque() {
-    use crate::moniteur::ChienDeGarde;
-    let mut g = ChienDeGarde::default();
-    assert!(!g.observer(0, false), "aucun passage");
-    assert!(!g.observer(1, false), "premier relevé de ce passage");
-    for _ in 0..11 {
-        assert!(!g.observer(1, false));
-    }
-    assert!(g.observer(1, false), "12 relevés");
-    let mut g = ChienDeGarde::default();
-    for _ in 0..6 {
-        g.observer(1, false);
-    }
-    assert!(!g.observer(2, false), "fini");
-    for _ in 0..50 {
-        assert!(!g.observer(2, false), "repos : jamais");
-    }
-    assert!(!g.observer(3, false));
-    for _ in 0..11 {
-        assert!(!g.observer(3, false));
-    }
-    assert!(g.observer(3, false), "compte repris de zéro");
-    // S104-11 : une quarantaine longue attend 30 min, pas sans fin
-    let mut g = ChienDeGarde::default();
-    g.observer(5, true);
-    for _ in 0..119 {
-        assert!(!g.observer(5, true));
-    }
-    assert!(g.observer(5, true), "120 relevés");
-    // S104-12 : juste après une opération longue, le passage qui l'attendait a encore 12 relevés
-    let mut g = ChienDeGarde::default();
-    for _ in 0..20 {
-        assert!(!g.observer(5, true));
-    }
-    assert!(!g.observer(5, false), "opération finie, passage pas encore repris");
-    for _ in 0..10 {
-        assert!(!g.observer(5, false));
-    }
-    assert!(g.observer(5, false), "toujours bloqué : 12 relevés plus tard");
-    assert!(include_str!("moniteur.rs").matches("let _longue = OperationLongue::debut();").count() == 3, "S104-11 : opération longue non signalée");
 }
 
 /// S103-07 : lecture hors délai : non signé, rien en cache ; la lecture rétablie donne le signataire

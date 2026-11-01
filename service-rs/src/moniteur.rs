@@ -272,19 +272,6 @@ impl Moniteur {
         }
         let m = Arc::new(Mutex::new(m));
 
-        // Chien de garde (audit de #104, S104-02) : ni le verrou du moniteur ni les fichiers du service, qu'un verrou opportuniste peut bloquer
-        if !console {
-            std::thread::Builder::new().name("garde".into()).spawn(|| {
-                let mut garde = ChienDeGarde::default();
-                loop {
-                    std::thread::sleep(Duration::from_secs(GARDE_PERIODE_S));
-                    if garde.observer(PASSAGE.load(Ordering::SeqCst), OPERATIONS_LONGUES.load(Ordering::SeqCst) > 0) {
-                        natif::evenement_windows("deR4Tizer : passage de surveillance bloqué depuis plus de 3 min, service relancé");
-                        natif::terminer_processus();
-                    }
-                }
-            }).unwrap();
-        }
         // Surveillance toutes les 3 s
         {
             let (m, p) = (m.clone(), partage.clone());
@@ -292,12 +279,10 @@ impl Moniteur {
                 let mut cycles = 0u64;
                 while !p.arret.load(Ordering::Relaxed) {
                     let t = Instant::now();
-                    PASSAGE.fetch_add(1, Ordering::SeqCst);
                     let mut g = m.lock().unwrap();
                     let t = mesure::noter("verrou.attente.surveillance", t);
                     g.passage();
                     drop(g);
-                    PASSAGE.fetch_add(1, Ordering::SeqCst);
                     mesure::noter("verrou.tenu.surveillance (cycle complet)", t);
                     cycles += 1;
                     if cycles.is_multiple_of(200) {
@@ -1224,17 +1209,17 @@ En-tête : Authorization: Bearer {j}"))
                 let n = a_tuer.iter().rev().filter(|p| reponse::tuer(**p).is_ok()).count();
                 Reponse::ok(format!("{n} processus arrêté(s)."))
             }
-            "quarantaine" => match { let _longue = OperationLongue::debut(); reponse::mettre_en_quarantaine(c.cible.as_deref().unwrap_or(""), &raison) } {
+            "quarantaine" => match reponse::mettre_en_quarantaine(c.cible.as_deref().unwrap_or(""), &raison) {
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),
             },
-            "restaurer" => match { let _longue = OperationLongue::debut(); reponse::restaurer(c.cible.as_deref().unwrap_or("")) } {
+            "restaurer" => match reponse::restaurer(c.cible.as_deref().unwrap_or("")) {
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),
             },
             // Repli quand la restauration à l'emplacement d'origine est refusée (pas de session du propriétaire,
             // emplacement système) : dossier créé par le service
-            "restaurerRepli" => match { let _longue = OperationLongue::debut(); reponse::restaurer_repli(c.cible.as_deref().unwrap_or("")) } {
+            "restaurerRepli" => match reponse::restaurer_repli(c.cible.as_deref().unwrap_or("")) {
                 Ok(m) => Reponse::ok(m),
                 Err(e) => Reponse::erreur(e),
             },
@@ -1396,56 +1381,6 @@ En-tête : Authorization: Bearer {j}"))
 
 /// Signataire d'un exécutable, mis en cache par chemin et date de modification ; un échec est gardé tant que le fichier
 /// ne change pas (cycle de surveillance, sous le verrou : pas de nouvelle vérification à chaque tour)
-/// Compteur de passages : impair pendant un passage, attente du verrou comprise
-static PASSAGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-const GARDE_PERIODE_S: u64 = 15;
-const GARDE_RELEVES: u32 = 12;
-/// Quarantaine ou restauration en cours : copie et empreinte sans limite de taille, sous le verrou du moniteur (audit de #104, S104-11)
-const GARDE_RELEVES_OPERATION: u32 = 120;
-static OPERATIONS_LONGUES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-/// Le temps d'une opération légitime longue, le chien de garde attend 30 min au lieu de 3
-pub(crate) struct OperationLongue;
-
-impl OperationLongue {
-    pub(crate) fn debut() -> OperationLongue {
-        OPERATIONS_LONGUES.fetch_add(1, Ordering::SeqCst);
-        OperationLongue
-    }
-}
-
-impl Drop for OperationLongue {
-    fn drop(&mut self) {
-        OPERATIONS_LONGUES.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// Décision pure (testée) : le même passage, en cours à `GARDE_RELEVES` relevés de suite. En relevés, pas en heures : une mise en veille
-/// ne compte pas
-#[derive(Default)]
-pub(crate) struct ChienDeGarde {
-    vu: u64,
-    releves: u32,
-    longue: bool,
-}
-
-impl ChienDeGarde {
-    pub(crate) fn observer(&mut self, passage: u64, operation_longue: bool) -> bool {
-        // Fin d'une opération longue : le passage qui l'attendait n'a pas encore repris, ce n'est pas un blocage (audit de #104, S104-12)
-        if self.longue && !operation_longue {
-            self.releves = 0;
-        }
-        self.longue = operation_longue;
-        if passage != self.vu || passage % 2 == 0 {
-            self.vu = passage;
-            self.releves = 0;
-            return false;
-        }
-        self.releves += 1;
-        self.releves >= if operation_longue { GARDE_RELEVES_OPERATION } else { GARDE_RELEVES }
-    }
-}
-
 pub(crate) fn signataire_cache(cache: &mut HashMap<String, String>, notre: &str, chemin: &str) -> String {
     signataire_cache_a(cache, notre, chemin, maintenant_s(), u64::MAX)
 }

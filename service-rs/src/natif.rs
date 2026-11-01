@@ -614,29 +614,6 @@ pub(crate) fn decision_binaire_windows(signature: Result<Option<String>, HorsDel
     catalogue()
 }
 
-/// Écrit un événement dans le journal Application de Windows, sans passer par les fichiers du service (chien de garde)
-pub fn evenement_windows(message: &str) {
-    use windows::Win32::System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE};
-    let source = large("deR4Tizer");
-    let texte = large(message);
-    unsafe {
-        if let Ok(h) = RegisterEventSourceW(PCWSTR::null(), PCWSTR(source.as_ptr())) {
-            let chaines = [PCWSTR(texte.as_ptr())];
-            let _ = ReportEventW(h, EVENTLOG_ERROR_TYPE, 0, 1, None, 0, Some(&chaines), None);
-            let _ = DeregisterEventSource(h);
-        }
-    }
-}
-
-/// Fin immédiate du processus, sans attendre les fils bloqués : le gestionnaire de services le relance (échec, pas arrêt)
-pub fn terminer_processus() -> ! {
-    use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
-    unsafe {
-        let _ = TerminateProcess(GetCurrentProcess(), 3);
-    }
-    std::process::exit(3)
-}
-
 
 // ------------------------------------------------------------ propriétaires et droits des fichiers
 
