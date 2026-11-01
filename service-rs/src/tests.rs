@@ -1370,11 +1370,13 @@ fn lot5_retour_a_soi_impossible_arret() {
 fn lot5_reponses_automatiques_jamais_en_echec_ferme() {
     use crate::ids::blocage_ips;
     use crate::moniteur::blocage_automatique;
-    assert!(blocage_automatique(true, true, false, false));
-    assert!(!blocage_automatique(true, true, false, true), "échec fermé : pas de blocage automatique");
-    assert!(!blocage_automatique(false, true, false, false), "confiance non haute");
-    assert!(!blocage_automatique(true, false, false, false), "réglage désactivé");
-    assert!(!blocage_automatique(true, true, true, false), "déjà bloquée");
+    let niveau3 = crate::menaces::Correspondance { source: "essai".into(), haute: true, auto: true };
+    let autre = crate::menaces::Correspondance { source: "essai".into(), haute: true, auto: false };
+    assert!(blocage_automatique(&niveau3, true, false, false));
+    assert!(!blocage_automatique(&niveau3, true, false, true), "échec fermé : pas de blocage automatique");
+    assert!(!blocage_automatique(&autre, true, false, false), "confiance haute, source hors du niveau 3");
+    assert!(!blocage_automatique(&niveau3, false, false, false), "réglage désactivé");
+    assert!(!blocage_automatique(&niveau3, true, true, false), "déjà bloquée");
     assert!(blocage_ips(true, true, "drop", 3, true, false));
     assert!(blocage_ips(true, true, "alert", 1, true, false), "priorité 1");
     assert!(!blocage_ips(true, true, "drop", 3, true, true), "échec fermé : pas de blocage IPS");
@@ -5409,3 +5411,92 @@ fn incident_tache_relance_sans_alerte_persistance() {
     assert_eq!(crate::persistance::evaluer(&e), "");
 }
 
+/// Phase 6, PR 6.1, écart 1 de la politique : le niveau 3 tient à l'identité de la source, pas à la confiance ni au réglage
+#[test]
+fn politique_listes_restreintes_jamais_niveau_3() {
+    use crate::menaces::menaces_sources_test as listes;
+    use crate::moniteur::blocage_automatique;
+    let bloquee = |m: &crate::menaces::Menaces, ip: &str| blocage_automatique(&m.chercher_ip(ip).expect("listée"), true, false, false);
+    for source in ["FireHOL niveau 1", "ThreatView C2 Cobalt Strike", "ThreatView IP", "Emerging Threats (compromises)", "CINS Army", "IPsum (niveau 3)"] {
+        let m = listes(&[("203.0.113.5", source), ("198.51.100.0/24", source), ("2001:db8:1::5", source), ("2001:db8:2::/48", source)]);
+        for ip in ["203.0.113.5", "198.51.100.7", "2001:db8:1::5", "2001:db8:2::7"] {
+            assert!(!bloquee(&m, ip), "{source}, {ip} : alerte seule");
+            assert!(!m.permet_blocage_auto(ip), "{source}, {ip} : ne garde pas un blocage");
+        }
+    }
+    assert_eq!(crate::menaces::listes_haute_test("FireHOL niveau 1"), true, "la confiance haute reste pour l'affichage");
+}
+
+#[test]
+fn politique_spamhaus_feodo_niveau_3() {
+    use crate::menaces::menaces_sources_test as listes;
+    use crate::moniteur::blocage_automatique;
+    let mut noms: Vec<_> = crate::menaces::sources_auto_test();
+    noms.sort();
+    assert_eq!(noms, vec![("Feodo Tracker (C2 botnets)", true, true), ("Spamhaus DROP (IPv4)", true, true), ("Spamhaus DROP (IPv6)", true, true)]);
+    for source in ["Feodo Tracker (C2 botnets)", "Spamhaus DROP (IPv4)", "Spamhaus DROP (IPv6)"] {
+        let m = listes(&[("203.0.113.5", source), ("198.51.100.0/24", source), ("2001:db8:1::5", source), ("2001:db8:2::/48", source)]);
+        for ip in ["203.0.113.5", "198.51.100.7", "2001:db8:1::5", "2001:db8:2::7"] {
+            assert!(blocage_automatique(&m.chercher_ip(ip).expect("listée"), true, false, false), "{source}, {ip}");
+            assert!(m.permet_blocage_auto(ip), "{source}, {ip}");
+        }
+    }
+}
+
+/// Une adresse de plusieurs listes garde le niveau 3, dans les deux ordres et sous toutes les formes
+#[test]
+fn politique_niveau_3_prime_sur_les_autres_listes() {
+    use crate::menaces::menaces_sources_test as listes;
+    const AUTO: &str = "Feodo Tracker (C2 botnets)";
+    const HAUTE: &str = "FireHOL niveau 1";
+    const REP: &str = "CINS Army";
+    for autre in [HAUTE, REP] {
+        for (a, b) in [(AUTO, autre), (autre, AUTO)] {
+            let m = listes(&[("203.0.113.5", a), ("203.0.113.5", b)]);
+            let c = m.chercher_ip("203.0.113.5").unwrap();
+            assert!(c.auto && c.source == AUTO, "exacte, ordre {a} puis {b} : {}", c.source);
+            let m = listes(&[("2001:db8::5", a), ("2001:db8::5", b)]);
+            assert!(m.chercher_ip("2001:db8::5").unwrap().auto, "IPv6 exacte, ordre {a} puis {b}");
+            let m = listes(&[("2001:db8::/32", a), ("2001:db8::/48", b)]);
+            assert!(m.chercher_ip("2001:db8::5").unwrap().auto, "réseaux IPv6, ordre {a} puis {b}");
+            let m = listes(&[("198.51.100.0/24", a), ("198.51.100.0/25", b)]);
+            let c = m.chercher_ip("198.51.100.7").unwrap();
+            assert!(c.auto, "plages recouvertes, ordre {a} puis {b}");
+            assert!(!listes(&[("198.51.100.0/24", autre)]).chercher_ip("198.51.100.7").unwrap().auto, "{autre} seule");
+        }
+        // Formes croisées : exacte d'un côté, plage de l'autre
+        let m = listes(&[("198.51.100.0/24", AUTO), ("198.51.100.7", autre)]);
+        assert!(m.chercher_ip("198.51.100.7").unwrap().auto, "plage du niveau 3, exacte de {autre}");
+        let m = listes(&[("198.51.100.7", AUTO), ("198.51.100.0/24", autre)]);
+        assert!(m.chercher_ip("198.51.100.7").unwrap().auto, "exacte du niveau 3, plage de {autre}");
+        assert!(!m.chercher_ip("198.51.100.8").unwrap().auto, "voisine, couverte par {autre} seule");
+        let m = listes(&[("2001:db8::/32", AUTO), ("2001:db8::5", autre)]);
+        assert!(m.chercher_ip("2001:db8::5").unwrap().auto, "réseau IPv6 du niveau 3, exacte de {autre}");
+        let m = listes(&[("2001:db8::5", AUTO), ("2001:db8::/32", autre)]);
+        assert!(m.chercher_ip("2001:db8::5").unwrap().auto, "exacte IPv6 du niveau 3, réseau de {autre}");
+        assert!(!m.chercher_ip("2001:db8::6").unwrap().auto, "voisine IPv6, couverte par {autre} seule");
+    }
+    // Plages voisines : la fusion ne doit pas étendre le niveau 3 à une plage d'une autre liste
+    let m = listes(&[("198.51.100.0/25", AUTO), ("198.51.100.128/25", HAUTE)]);
+    assert!(m.chercher_ip("198.51.100.1").unwrap().auto);
+    assert!(!m.chercher_ip("198.51.100.200").unwrap().auto, "plage voisine, hors du niveau 3");
+    // Rangs inchangés entre les autres listes : la confiance haute passe devant la réputation
+    for (a, b) in [(HAUTE, REP), (REP, HAUTE)] {
+        let c = listes(&[("203.0.113.5", a), ("203.0.113.5", b)]).chercher_ip("203.0.113.5").unwrap();
+        assert!(c.haute && !c.auto && c.source == HAUTE, "ordre {a} puis {b} : {}", c.source);
+    }
+    let c = listes(&[("203.0.113.5", REP), ("203.0.113.0/24", HAUTE)]).chercher_ip("203.0.113.5").unwrap();
+    assert!(c.haute && !c.auto, "plage haute avant exacte de réputation");
+}
+
+/// Un blocage automatique n'est gardé que par une source du niveau 3 : une liste restreinte ne le prolonge pas
+#[test]
+fn politique_blocage_leve_si_seule_une_autre_liste_reste() {
+    use crate::menaces::menaces_sources_test as listes;
+    let b = crate::commun::Blocage { type_: "parefeu".into(), cible: "203.0.113.5".into(), raison: "blocage automatique : essai".into(), date: String::new(), expire: "2099-01-01 00:00:00".into() };
+    let l = [b];
+    let leve = |m: &crate::menaces::Menaces| crate::moniteur::blocages_a_lever(&l, "2026-11-01 10:00:00", true, |ip| m.permet_blocage_auto(ip)).len();
+    assert_eq!(leve(&listes(&[("203.0.113.5", "Feodo Tracker (C2 botnets)")])), 0, "toujours au niveau 3");
+    assert_eq!(leve(&listes(&[("203.0.113.5", "FireHOL niveau 1")])), 1, "seule une liste restreinte la porte encore");
+    assert_eq!(leve(&listes(&[("203.0.113.5", "FireHOL niveau 1"), ("203.0.113.5", "Feodo Tracker (C2 botnets)")])), 0, "dans les deux");
+}

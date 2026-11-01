@@ -665,7 +665,7 @@ impl Moniteur {
             if let (Some(crate::regles::RES_001), Some(m)) = (regle, &menace) {
                 // Une menace connue alerte même si la connexion existait au démarrage du service
                 let mut action = String::new();
-                if blocage_automatique(m.haute, self.config.blocage_auto_menaces, bloque, commun::echec_protection().is_some()) {
+                if blocage_automatique(m, self.config.blocage_auto_menaces, bloque, commun::echec_protection().is_some()) {
                     self.bloquer_ip_auto(ip, &format!("blocage automatique : {} ({nom_processus})", m.source));
                     action = " ; IP BLOQUÉE automatiquement et connexion coupée".into();
                 }
@@ -1330,7 +1330,7 @@ En-tête : Authorization: Bearer {j}"))
         let a_retirer = {
             let menaces = self.partage.menaces.read().unwrap();
             let chargees = menaces.infos.total_ip + menaces.infos.total_reseaux > 0;
-            blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.chercher_ip(ip).is_some())
+            blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.permet_blocage_auto(ip))
         };
         for (t, c, pourquoi) in a_retirer {
             let r = self.debloquer(&t, &c);
@@ -1773,11 +1773,12 @@ pub fn nettoyer() {
     }
 }
 
-/// Décision pure du blocage automatique d'une adresse des listes de menaces : liste de confiance haute, réglage
-/// actif, adresse pas encore bloquée, et jamais en échec de la protection du dossier de données (les listes y sont
-/// rangées : aucune réponse automatique alimentée par des fichiers dont la protection n'est pas vérifiée)
-pub fn blocage_automatique(haute: bool, actif: bool, deja_bloquee: bool, echec_protection: bool) -> bool {
-    haute && actif && !deja_bloquee && !echec_protection
+/// Décision pure du blocage automatique d'une adresse des listes de menaces : source du niveau 3 (Spamhaus DROP,
+/// Feodo Tracker, quel que soit le réglage « listes restreintes »), réglage actif, adresse pas encore bloquée, et
+/// jamais en échec de la protection du dossier de données (les listes y sont rangées : aucune réponse automatique
+/// alimentée par des fichiers dont la protection n'est pas vérifiée)
+pub fn blocage_automatique(menace: &crate::menaces::Correspondance, actif: bool, deja_bloquee: bool, echec_protection: bool) -> bool {
+    menace.auto && actif && !deja_bloquee && !echec_protection
 }
 
 /// Blocages automatiques à lever : durée écoulée, ou adresse sortie des listes (si les listes sont chargées)

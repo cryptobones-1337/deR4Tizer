@@ -1041,6 +1041,102 @@ Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », He
     $true
 }
 
+# ---------------------------------------------------------------- phase 6, PR 6.1 : niveau 3 limité à Spamhaus DROP et Feodo Tracker
+# Listes locales synthétiques, adresses de documentation (RFC 5737). Le réglage « listes restreintes » est posé service arrêté :
+# la commande forcerait un téléchargement, qui remplacerait ces listes si la VM a un accès. Des tentatives de connexion restent ouvertes :
+# le cycle les voit à l'état « SYN envoyé », tant que la VM a une route pour elles
+$titreN3 = 'Niveau 3 : Feodo et Spamhaus bloquent, FireHOL alerte seulement, liste restreinte active ; une adresse des deux est bloquée'
+$titreLevee = 'Niveau 3 : blocage levé quand seule une liste restreinte porte encore l''adresse'
+$dossierListes = Join-Path $script:Donnees 'menaces'
+$arret = {
+    sc.exe stop deR4Tizer | Out-Null
+    $fin = (Get-Date).AddSeconds(45)
+    while ((Get-Service deR4Tizer).Status -ne 'Stopped' -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+    (Get-Service deR4Tizer).Status -eq 'Stopped'
+}
+$alertesN3 = { Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
+$blocagesN3 = { @(Get-Content (Join-Path $script:Donnees 'blocages.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object Cible) }
+$prisesN3 = @()
+$mesConnexions = { param($ips) foreach ($ip in $ips) { $c = New-Object Net.Sockets.TcpClient; $null = $c.BeginConnect($ip, 443, $null, $null); $c } }
+$cibles = @{ Feodo = '203.0.113.91'; Spam = '198.51.100.5'; Hol = '203.0.113.90'; HolPlage = '203.0.113.130'; Deux = '203.0.113.92' }
+try {
+    if (-not (& $arret)) { throw 'service non arrêté en 45 s' }
+    $config = Join-Path $script:Donnees 'config.json'
+    $o = if (Test-Path $config) { Get-Content $config -Raw -Encoding UTF8 | ConvertFrom-Json } else { [pscustomobject]@{} }
+    $o | Add-Member -Force -NotePropertyName ListesRestreintes -NotePropertyValue $true
+    Poser-EnAdministrateur 'config.json' ($o | ConvertTo-Json -Depth 8 -Compress)
+    $null = New-Item -ItemType Directory -Force -Path $dossierListes
+    # Une adresse des deux listes est écrite dans le fichier chargé le premier, puis dans l'autre : FireHOL précède Feodo dans la table des sources
+    Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' "$($cibles.Feodo)`n$($cibles.Deux)`n"
+    Poser-EnAdministrateur 'menaces\FireHOL_niveau_1.txt' "$($cibles.Hol)`n203.0.113.128/25`n$($cibles.Deux)`n"
+    Poser-EnAdministrateur 'menaces\Spamhaus_DROP_IPv4_.txt' "{`"cidr`":`"198.51.100.0/24`",`"sblid`":`"SBL0`"}`n"
+    Service-Relance
+    # Témoin : les listes sont bien celles du scénario
+    $fin = (Get-Date).AddSeconds(60); $sources = @()
+    do {
+        Start-Sleep 3
+        $sources = @(Get-Content (Join-Path $script:Donnees 'menaces.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object Sources)
+        $hol = @($sources | Where-Object { $_.Nom -eq 'FireHOL niveau 1' -and $_.Entrees -ge 3 }).Count
+    } while (-not $hol -and (Get-Date) -lt $fin)
+    if (-not $hol) {
+        NonExecute $titreN3 "listes du scénario non chargées : $(($sources | ForEach-Object { "$($_.Nom)=$($_.Entrees)" }) -join ', ')"
+        NonExecute $titreLevee 'listes du scénario non chargées'
+    } else {
+        $fin = (Get-Date).AddSeconds(120); $vues = @()
+        do {
+            foreach ($c in $prisesN3) { $c.Close() }
+            $prisesN3 = @(& $mesConnexions $cibles.Values)
+            Start-Sleep 8
+            $texte = & $alertesN3
+            $vues = @($cibles.Values | Where-Object { $texte -match [regex]::Escape($_) })
+        } while ($vues.Count -lt $cibles.Count -and (Get-Date) -lt $fin)
+        if ($vues.Count -eq 0) {
+            NonExecute $titreN3 'aucune tentative de connexion vue par le cycle (pas de route pour ces adresses ?)'
+            NonExecute $titreLevee 'aucune tentative de connexion vue par le cycle'
+        } else {
+            Verifier $titreN3 {
+                if ($vues.Count -lt $cibles.Count) { return "alertes pour $($vues -join ', ') seulement, sur $($cibles.Count)" }
+                $b = & $blocagesN3
+                foreach ($n in 'Feodo', 'Spam', 'Deux') { if ($cibles[$n] -notin $b) { return "$n ($($cibles[$n])) non bloquée : $($b -join ', ')" } }
+                foreach ($n in 'Hol', 'HolPlage') { if ($cibles[$n] -in $b) { return "$n ($($cibles[$n])) bloquée alors qu'elle n'est que dans FireHOL" } }
+                foreach ($n in 'Hol', 'HolPlage') {
+                    $r = @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match [regex]::Escape($cibles[$n]) })
+                    if ($r.Count) { return "règle de pare-feu présente pour $n" }
+                }
+                $true
+            }
+            # Feodo retire l'adresse, FireHOL la porte encore : le blocage ne tient plus à rien de permis
+            if (& $arret) {
+                Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' "$($cibles.Deux)`n"
+                Poser-EnAdministrateur 'menaces\FireHOL_niveau_1.txt' "$($cibles.Hol)`n203.0.113.128/25`n$($cibles.Deux)`n$($cibles.Feodo)`n"
+                Service-Relance
+                Verifier $titreLevee {
+                    if ($cibles.Feodo -notin (& $blocagesN3)) { return 'blocage de départ absent : levé avant le rechargement ?' }
+                    $fin = (Get-Date).AddSeconds(120)
+                    do { Start-Sleep 5; $b = & $blocagesN3 } while ($cibles.Feodo -in $b -and (Get-Date) -lt $fin)
+                    if ($cibles.Feodo -in $b) { return "toujours bloquée après 120 s : $($b -join ', ')" }
+                    if ($cibles.Deux -notin $b) { return "l'adresse encore dans Feodo a été levée aussi : $($b -join ', ')" }
+                    $true
+                }
+            } else {
+                NonExecute $titreLevee 'service non arrêté en 45 s'
+            }
+        }
+    }
+} catch {
+    Verifier $titreN3 { "exception : $($_.Exception.Message)" }
+} finally {
+    foreach ($c in $prisesN3) { $c.Close() }
+    if (& $arret) {
+        foreach ($n in 'Feodo_Tracker_C2_botnets_.txt', 'FireHOL_niveau_1.txt', 'Spamhaus_DROP_IPv4_.txt') { Remove-Item (Join-Path $dossierListes $n) -Force -ErrorAction SilentlyContinue }
+        $o = Get-Content (Join-Path $script:Donnees 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $o | Add-Member -Force -NotePropertyName ListesRestreintes -NotePropertyValue $false
+        Poser-EnAdministrateur 'config.json' ($o | ConvertTo-Json -Depth 8 -Compress)
+    }
+    Service-Relance
+    foreach ($ip in $cibles.Values) { $null = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 }
+}
+
 # ---------------------------------------------------------------- désinstallation complète
 $regles1 = Reglesparefeu
 Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés' {

@@ -16,7 +16,8 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 ## Seules actions de niveau 3 autorisées
 
 1. **Blocage des adresses IP de Spamhaus DROP et de Feodo Tracker** au pare-feu (listes de confiance haute,
-   libres d'usage). Le blocage est levé quand l'adresse sort de la liste ou à expiration (7 jours).
+   libres d'usage), identifiées dans le binaire, quel que soit le réglage « listes restreintes » : toute autre liste
+   donne une alerte seule. Le blocage est levé quand l'adresse sort de ces listes ou à expiration (7 jours).
 2. **Suspension du programme qui touche un leurre anti-rançongiciel.** Les processus critiques de Windows
    (`reponse::protege`) ne sont jamais suspendus ; les logiciels connus et signés de sauvegarde, de
    synchronisation ou d'antivirus déclenchent une alerte sans suspension. Le programme reste suspendu jusqu'à
@@ -40,7 +41,7 @@ Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR
 
 | Action | Échéance | À l'échéance |
 |---|---|---|
-| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste (déjà le cas pour ces listes ; la limite aux deux sources arrive avec la PR 6.1) |
+| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste |
 | Blocage IP par l'IPS | 24 h | levé |
 | Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h |
 | Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h |
@@ -75,7 +76,6 @@ l'alerte : seule l'action est retenue.
 
 | Écart | Où | À traiter |
 |---|---|---|
-| Avec le réglage « listes restreintes » (désactivé par défaut), le blocage automatique s'étend aux autres listes de confiance haute : FireHOL niveau 1 et ThreatView Cobalt Strike. | `menaces.rs` (`SOURCES`, champ `confiance`), `moniteur.rs` (`blocage_auto_menaces`) | Phase 6 : limiter le blocage automatique à Spamhaus DROP et Feodo Tracker. |
 | L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Phase 6. |
 | Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Phase 6. |
 | Revalidation de l'identité du processus juste avant l'action et protection contre les boucles d'actions : non systématiques. | `reponse.rs`, `moniteur.rs` | Phase 6. |
