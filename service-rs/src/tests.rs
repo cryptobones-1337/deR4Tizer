@@ -1854,18 +1854,18 @@ fn bornes_taches() -> crate::persistance::BornesTaches {
 /// Audits de #102 et #103 : une jonction n'est pas suivie ; un fichier sans tâche enregistrée est une anomalie, pas une tâche
 #[test]
 fn taches_examen_jonction_et_fichier_sans_tache() {
-    use crate::persistance::examiner_dossier_taches as x;
+    use crate::persistance::{examiner_dossier_taches as x, Fichier as F};
     let d = dossier_taches("jonction");
     std::fs::write(d.join("vraie"), "x").unwrap();
     std::fs::write(d.join("fausse"), "x").unwrap();
     jonction(&d.join("boucle"), &d);
     let mut b = bornes_taches();
     b.anomalies = 5;
-    let mut a = x(&d, &b, &mut |n| Some(n == r"\vraie"));
+    let mut a = x(&d, &b, &mut |n| if n == r"\vraie" { F::Enregistre } else { F::SansTache });
     a.sort();
     assert_eq!(a, [(r"\boucle".to_string(), "lien non suivi".to_string()), (r"\fausse".to_string(), "fichier sans tâche enregistrée".to_string())], "aucun parcours par la jonction");
     // Revérification impossible : pas de conclusion, pas d'alerte sur le fichier (D7)
-    let a = x(&d, &b, &mut |_| None);
+    let a = x(&d, &b, &mut |_| F::Inconnu);
     assert!(!a.iter().any(|(_, m)| m == "fichier sans tâche enregistrée"), "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("revérifications")), "{a:?}");
     std::fs::remove_dir(d.join("boucle")).unwrap();
@@ -1880,7 +1880,7 @@ fn taches_examen_n_ouvre_aucun_fichier() {
     let f = d.join("tenu");
     std::fs::write(&f, "x").unwrap();
     let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
-    assert!(crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| Some(true)).is_empty());
+    assert!(crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| crate::persistance::Fichier::Enregistre).is_empty());
     let s = include_str!("persistance.rs").replace("\r\n", "\n");
     let a = s.find("pub(crate) fn examiner_dossier_taches").unwrap();
     let corps = &s[a..a + s[a..].find("\npub(crate) fn plafonner_nouvelles_taches").unwrap()];
@@ -1898,7 +1898,7 @@ fn taches_examen_appels_bornes() {
         std::fs::write(d.join(format!("f{i}")), "x").unwrap();
     }
     let mut appels = 0;
-    let a = crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| { appels += 1; Some(false) });
+    let a = crate::persistance::examiner_dossier_taches(&d, &bornes_taches(), &mut |_| { appels += 1; crate::persistance::Fichier::SansTache });
     assert_eq!(appels, 2, "plus aucune interrogation une fois les anomalies au plafond");
     assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
     std::fs::remove_dir_all(&d).unwrap();
@@ -1906,13 +1906,13 @@ fn taches_examen_appels_bornes() {
 
 #[test]
 fn taches_examen_borne() {
-    use crate::persistance::examiner_dossier_taches as x;
+    use crate::persistance::{examiner_dossier_taches as x, Fichier as F};
     // Profondeur
     let d = dossier_taches("profondeur");
     std::fs::create_dir_all(d.join(r"a\b\c")).unwrap();
     std::fs::write(d.join(r"a\b\permis"), "x").unwrap();
     std::fs::write(d.join(r"a\b\c\trop-loin"), "x").unwrap();
-    let a = x(&d, &bornes_taches(), &mut |_| Some(false));
+    let a = x(&d, &bornes_taches(), &mut |_| F::SansTache);
     assert!(a.iter().any(|(n, _)| n == r"\a\b\permis"), "{a:?}");
     assert!(!a.iter().any(|(n, _)| n.contains("trop-loin")), "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("profondeur")), "{a:?}");
@@ -1921,7 +1921,7 @@ fn taches_examen_borne() {
     for i in 0..5 {
         std::fs::write(d2.join(format!("f{i}")), "x").unwrap();
     }
-    let a = x(&d2, &bornes_taches(), &mut |_| Some(false));
+    let a = x(&d2, &bornes_taches(), &mut |_| F::SansTache);
     assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("anomalies")), "{a:?}");
     // Trop d'éléments dans un dossier : ses fichiers suivants ne sont plus examinés, ses sous-dossiers si (S103-08)
@@ -1934,7 +1934,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.par_dossier = 3;
     b.anomalies = 100;
-    let a = x(&d3, &b, &mut |_| Some(false));
+    let a = x(&d3, &b, &mut |_| F::SansTache);
     assert!(a.iter().any(|(n, _)| n == r"\z\sans-tache"), "sous-dossier trouvé malgré la saturation : {a:?}");
     assert_eq!(a.iter().filter(|(n, _)| n.starts_with(r"\a")).count(), 3, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("éléments")), "{a:?}");
@@ -1942,7 +1942,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.enumeres = 2;
     b.anomalies = 100;
-    assert!(x(&d3, &b, &mut |_| Some(false)).iter().any(|(n, _)| n.contains("éléments")));
+    assert!(x(&d3, &b, &mut |_| F::SansTache).iter().any(|(n, _)| n.contains("éléments")));
     let d4 = dossier_taches("dossiers");
     for i in 0..4 {
         std::fs::create_dir_all(d4.join(format!("d{i}"))).unwrap();
@@ -1951,7 +1951,7 @@ fn taches_examen_borne() {
     let mut b = bornes_taches();
     b.dossiers = 2;
     b.anomalies = 100;
-    let a = x(&d4, &b, &mut |_| Some(false));
+    let a = x(&d4, &b, &mut |_| F::SansTache);
     assert_eq!(a.iter().filter(|(_, m)| m == "fichier sans tâche enregistrée").count(), 2, "{a:?}");
     assert!(a.iter().any(|(n, _)| n.contains("dossiers")), "{a:?}");
     // Ces bornes ne rendent pas le relevé incomplet : les tâches sont lues ailleurs
@@ -1964,45 +1964,127 @@ fn taches_examen_borne() {
 /// S106-01 : une entrée par action, désactivée dite, commande bornée, action inconnue signalée
 #[test]
 fn taches_entrees_par_action() {
-    use crate::persistance::{entrees_de_tache as e, ActionTache as A, ANOMALIE_TACHES};
+    use crate::persistance::{entrees_de_tache as e, ActionTache as A};
     let mut l = Vec::new();
     e(&mut l, r"\a", true, &[A::Exec(r"c:\notepad.exe".into(), "".into()), A::Exec(r"c:\mal.exe".into(), "-y".into()), A::Com("{0358B920-0AC7-461F-98F4-58E32CD89148}".into()), A::Autre]);
     assert_eq!(l.len(), 4);
     assert_eq!((l[0].nom.as_str(), l[0].commande.as_str(), l[0].categorie.as_str()), (r"\a", r"c:\notepad.exe", "Tâche planifiée"));
-    assert_eq!((l[1].nom.as_str(), l[1].commande.as_str()), (r"\a (action 2)", r"c:\mal.exe -y"), "la seconde action a son entrée");
+    assert_eq!((l[1].nom.as_str(), l[1].commande.as_str()), (r"\a : action 2", r"c:\mal.exe -y"), "la seconde action a son entrée");
     assert!(l[2].commande.starts_with("COM {0358B920"));
-    assert!(l[3].commande.starts_with(ANOMALIE_TACHES), "action non reconnue signalée");
-    assert_ne!(l[0].cle, l[1].cle, "clés distinctes");
+    assert!(l[3].anomalie, "action non reconnue signalée");
+    assert!(!l[0].anomalie && !l[1].anomalie);
     let mut l = Vec::new();
     e(&mut l, r"\b", false, &[A::Exec("x".into(), "".into())]);
-    assert_eq!(l[0].nom, r"\b (désactivée)");
+    assert_eq!(l[0].nom, r"\b : désactivée");
     let mut l = Vec::new();
     e(&mut l, r"\c", true, &[]);
-    assert!(l[0].commande.starts_with(ANOMALIE_TACHES), "tâche sans action : signalée");
-    let mut l = Vec::new();
-    e(&mut l, r"\d", true, &[A::Exec("x".into(), "a".repeat(5000))]);
-    assert!(l[0].commande.ends_with("[tronquée]") && l[0].commande.chars().count() < 4200, "commande bornée");
+    assert!(l[0].anomalie, "tâche sans action : signalée");
 }
 
-/// S106-05 : au-delà du plafond, les nouvelles tâches attendent le relevé suivant ; connues et anomalies intactes
+/// R1 : une tâche ne peut pas prendre la clé d'une autre : « : » n'existe pas dans un nom de tâche
+#[test]
+fn taches_noms_sans_collision() {
+    use crate::persistance::{entrees_de_tache as e, ActionTache as A};
+    let x = || A::Exec("x".into(), "".into());
+    let mut l = Vec::new();
+    e(&mut l, r"\foo", true, &[x(), x()]);
+    e(&mut l, r"\foo (action 2)", true, &[x()]);
+    e(&mut l, r"\y", false, &[x()]);
+    e(&mut l, r"\y (désactivée)", true, &[x()]);
+    let cles: std::collections::HashSet<_> = l.iter().map(|c| c.cle.clone()).collect();
+    assert_eq!(cles.len(), l.len(), "clés distinctes");
+}
+
+/// R2 : deux commandes qui diffèrent au-delà de la borne donnent des entrées différentes, et la troncature rend l'entrée suspecte
+#[test]
+fn taches_commande_tronquee_comparable() {
+    use crate::persistance::{entrees_de_tache as e, evaluer, ActionTache as A};
+    let long = |fin: &str| A::Exec("x".into(), "a".repeat(5000) + fin);
+    let (mut l1, mut l2) = (Vec::new(), Vec::new());
+    e(&mut l1, r"\d", true, &[long("un")]);
+    e(&mut l2, r"\d", true, &[long("deux")]);
+    assert!(l1[0].commande.chars().count() < 4300, "commande bornée");
+    assert_ne!(l1[0].commande, l2[0].commande, "changement au-delà de la borne visible");
+    assert!(evaluer(&l1[0]).contains("tronquée"), "entrée suspecte");
+    let mut l3 = Vec::new();
+    e(&mut l3, r"\e", true, &[A::Exec("x".into(), "a".repeat(100))]);
+    assert!(!evaluer(&l3[0]).contains("tronquée"));
+}
+
+/// R3 : une tâche dont la commande imite une anomalie n'en est pas une : ni exemptée du plafond ni « élément anormal »
+#[test]
+fn taches_anomalie_jamais_deduite_du_texte() {
+    use crate::commun::EntreeDemarrage as E;
+    use crate::persistance::{entrees_de_tache as e, evaluer, garder_taches_non_vues, plafonner_nouvelles_taches as p, ActionTache as A, ANOMALIE_TACHES};
+    let imite = format!("{ANOMALIE_TACHES}lien non suivi");
+    let mut l = Vec::new();
+    for i in 0..40 {
+        e(&mut l, &format!(r"\t{i}"), true, &[A::Exec(imite.clone(), "".into())]);
+    }
+    assert!(l.iter().all(|x| !x.anomalie));
+    assert!(!evaluer(&l[0]).contains("élément anormal"));
+    p(&Default::default(), &mut l, 16, &mut Default::default(), 1);
+    assert_eq!(l.iter().filter(|x| !x.anomalie).count(), 16, "plafond appliqué");
+    let mut faux = vec![E { cle: "Tâche planifiée|x".into(), categorie: "Tâche planifiée".into(), nom: r"\(relevé incomplet : x)".into(), commande: imite, ..Default::default() }];
+    assert!(!garder_taches_non_vues(&Default::default(), &mut faux), "pas un relevé incomplet");
+}
+
+/// S106-05, S106-13 : au-delà du plafond, les plus anciennes d'abord, celles de \Microsoft avant ; connues et anomalies intactes ; pas de famine
 #[test]
 fn taches_nouvelles_plafonnees() {
     use crate::commun::EntreeDemarrage as E;
-    use crate::persistance::{plafonner_nouvelles_taches as p, ANOMALIE_TACHES};
-    let t = |nom: &str, c: &str| E { cle: format!("Tâche planifiée|{nom}"), categorie: "Tâche planifiée".into(), nom: nom.into(), commande: c.into(), ..Default::default() };
-    let connue = t(r"\connue", "a.exe");
+    use crate::persistance::plafonner_nouvelles_taches as p;
+    let t = |nom: &str| E { cle: format!("Tâche planifiée|{nom}"), categorie: "Tâche planifiée".into(), nom: nom.into(), commande: "x".into(), ..Default::default() };
+    let anomalie = |nom: &str| E { anomalie: true, ..t(nom) };
+    let connue = t(r"\connue");
     let reference: std::collections::HashMap<String, E> = [(connue.cle.clone(), connue.clone())].into_iter().collect();
-    let mut r = vec![connue.clone(), t(r"\n1", "x"), t(r"\n2", "x"), t(r"\n3", "x"), t(r"\lien", &format!("{ANOMALIE_TACHES}lien non suivi")),
-        E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: "p.exe".into(), ..Default::default() }];
-    p(&reference, &mut r, 2);
+    let run = E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: "p.exe".into(), ..Default::default() };
+    let mut attente = std::collections::HashMap::new();
+    let mut r = vec![connue.clone(), t(r"\n1"), t(r"\n2"), t(r"\n3"), anomalie(r"\lien"), run];
+    p(&reference, &mut r, 2, &mut attente, 1);
     let noms: Vec<&str> = r.iter().map(|e| e.nom.as_str()).collect();
     assert!(noms.contains(&r"\connue") && noms.contains(&r"\lien") && noms.contains(&"p"), "{noms:?}");
     assert!(noms.contains(&r"\n1") && noms.contains(&r"\n2") && !noms.contains(&r"\n3"), "{noms:?}");
-    assert!(r.iter().any(|e| e.nom.contains("plafonnées") && e.commande.starts_with(ANOMALIE_TACHES)), "{noms:?}");
-    let mut r2 = vec![connue, t(r"\n1", "x")];
-    let avant = r2.len();
-    p(&reference, &mut r2, 2);
-    assert_eq!(r2.len(), avant, "sous le plafond : rien, pas d'entrée");
+    assert!(r.iter().any(|e| e.nom.contains("plafonnées") && e.anomalie), "{noms:?}");
+    // Tour suivant : n1 et n2 sont connues ; une tâche vue avant passe devant une rafale de noms mieux classés
+    let reference2: std::collections::HashMap<String, E> = [t(r"\n1"), t(r"\n2")].into_iter().map(|e| (e.cle.clone(), e)).collect();
+    let mut r = vec![t(r"\a1"), t(r"\a2"), t(r"\a3"), t(r"\n3")];
+    p(&reference2, &mut r, 1, &mut attente, 2);
+    assert!(r.iter().any(|e| e.nom == r"\n3") && !r.iter().any(|e| e.nom == r"\a1"), "la plus ancienne d'abord, pas de famine");
+    assert!(!attente.contains_key(&t(r"\n3").cle), "levée : plus en attente");
+    assert!(attente.contains_key(&t(r"\a1").cle), "les autres attendent");
+    // Tâche supprimée pendant son attente : oubliée
+    let mut r = vec![t(r"\a2"), t(r"\a3")];
+    p(&reference2, &mut r, 1, &mut attente, 3);
+    assert!(!attente.contains_key(&t(r"\a1").cle), "supprimée : oubliée");
+    // \Microsoft d'abord, quel que soit l'ordre
+    let mut a2 = std::collections::HashMap::new();
+    let mut r = vec![t(r"\aaa"), t(r"\Microsoft\Windows\x")];
+    p(&Default::default(), &mut r, 1, &mut a2, 1);
+    assert!(r.iter().any(|e| e.nom == r"\Microsoft\Windows\x") && !r.iter().any(|e| e.nom == r"\aaa"));
+    // Sous le plafond : rien retiré, pas d'entrée, plus rien en attente
+    let mut a3 = std::collections::HashMap::new();
+    let mut r2 = vec![connue, t(r"\n1")];
+    p(&reference, &mut r2, 2, &mut a3, 1);
+    assert_eq!(r2.len(), 2);
+    assert!(a3.is_empty());
+}
+
+/// R7, S106-15 : seule une panne laisse sans conclusion
+#[test]
+fn taches_verdict_reverification() {
+    use crate::persistance::{verdict_reverification as v, Fichier as F};
+    assert_eq!(v(0x8007_0002), F::SansTache);
+    assert_eq!(v(0x8007_0003), F::SansTache);
+    assert_eq!(v(0x8007_007B), F::SansTache, "nom invalide");
+    assert_eq!(v(0x8007_0057), F::SansTache, "nom trop long");
+    assert_eq!(v(0x8007_0005), F::NonLisible, "accès refusé");
+    assert_eq!(v(0x8007_06BA), F::Inconnu, "panne du Planificateur");
+    use crate::persistance::examiner_dossier_taches as x;
+    let d = dossier_taches("nonlisible");
+    std::fs::write(d.join("f"), "x").unwrap();
+    assert_eq!(x(&d, &bornes_taches(), &mut |_| F::NonLisible), [(r"\f".to_string(), "tâche enregistrée non lisible".to_string())]);
+    std::fs::remove_dir_all(&d).unwrap();
 }
 
 /// Le vrai Planificateur répond ; pas d'incomplet sur un poste ordinaire ; chaque tâche a un chemin
@@ -2027,10 +2109,11 @@ fn taches_planificateur_repond() {
 fn taches_releve_incomplet_garde_la_reference() {
     use crate::commun::EntreeDemarrage as E;
     use crate::persistance::{comparer, garder_taches_non_vues as g, ANOMALIE_TACHES};
+    let incomplet_nom = |x: E| E { anomalie: true, ..x };
     let t = |nom: &str, c: &str| E { cle: format!("Tâche planifiée|{nom}"), categorie: "Tâche planifiée".into(), nom: nom.into(), commande: c.into(), ..Default::default() };
     let connue = t(r"\Microsoft\Connue", "a.exe");
     let reference: std::collections::HashMap<String, E> = [(connue.cle.clone(), connue.clone())].into_iter().collect();
-    let incomplet = t(r"\(relevé incomplet : éléments)", &format!("{ANOMALIE_TACHES}relevé incomplet"));
+    let incomplet = incomplet_nom(t(r"\(relevé incomplet : éléments)", &format!("{ANOMALIE_TACHES}relevé incomplet")));
     let mut r = vec![incomplet.clone()];
     assert!(g(&reference, &mut r), "incomplet");
     assert!(r.iter().any(|e| e.cle == connue.cle), "tâche connue gardée");
@@ -2040,7 +2123,7 @@ fn taches_releve_incomplet_garde_la_reference() {
     assert!(!g(&reference, &mut sans), "relevé complet : une tâche disparue sort");
     assert!(sans.is_empty());
     // Une anomalie autre qu'un relevé incomplet ne garde rien
-    let mut lien = vec![t(r"\boucle", &format!("{ANOMALIE_TACHES}lien non suivi"))];
+    let mut lien = vec![incomplet_nom(t(r"\boucle", &format!("{ANOMALIE_TACHES}lien non suivi")))];
     assert!(!g(&reference, &mut lien));
     let (alertes, _) = comparer(&Default::default(), &mut lien, true, &mut Default::default());
     assert_eq!(alertes.len(), 1, "anomalie dite pendant l'apprentissage");
@@ -2056,7 +2139,7 @@ fn taches_releve_incomplet_laisse_alerter_le_reste() {
     use crate::persistance::{comparer, garder_taches_non_vues, ANOMALIE_TACHES};
     assert!(include_str!("persistance.rs").contains("        self.apprentissage = false;\n") || include_str!("persistance.rs").contains("        self.apprentissage = false;\r\n"));
     let mut r = vec![
-        E { cle: "Tâche planifiée|i".into(), categorie: "Tâche planifiée".into(), nom: r"\(relevé incomplet : éléments)".into(), commande: format!("{ANOMALIE_TACHES}x"), ..Default::default() },
+        E { anomalie: true, cle: "Tâche planifiée|i".into(), categorie: "Tâche planifiée".into(), nom: r"\(relevé incomplet : éléments)".into(), commande: format!("{ANOMALIE_TACHES}x"), ..Default::default() },
         E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: "p.exe".into(), ..Default::default() },
     ];
     assert!(garder_taches_non_vues(&Default::default(), &mut r));
@@ -2205,6 +2288,7 @@ fn taches_anomalie_signal_fort() {
     let e = crate::commun::EntreeDemarrage {
         categorie: "Tâche planifiée".into(),
         nom: r"\boucle".into(),
+        anomalie: true,
         commande: format!("{}lien non suivi", crate::persistance::ANOMALIE_TACHES),
         signataire: "?".into(),
         remarque: crate::persistance::REMARQUE_ANOMALIE_TACHES.into(),
@@ -2222,6 +2306,7 @@ fn taches_anomalie_jugee_suspecte() {
     let e = crate::commun::EntreeDemarrage {
         categorie: "Tâche planifiée".into(),
         nom: r"\Microsoft\Windows\boucle".into(),
+        anomalie: true,
         commande: format!("{}lien non suivi", crate::persistance::ANOMALIE_TACHES),
         signataire: "?".into(),
         ..Default::default()

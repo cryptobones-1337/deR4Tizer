@@ -636,7 +636,7 @@ Verifier 'Relevé des tâches : faux fichier signalé sans être une tâche ; vr
             Start-Sleep 5
             $e = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
             $h = $e | Where-Object { $_.Nom -match $cachee } | Select-Object -First 1
-            $d2 = $e | Where-Object { $_.Nom -match "$deuxActions \(action 2\)" } | Select-Object -First 1
+            $d2 = $e | Where-Object { $_.Nom -match "$deuxActions : action 2" } | Select-Object -First 1
         } while (-not ($h -and $d2) -and (Get-Date) -lt $fin)
         if (-not $h) { return 'tâche cachée non relevée en 120 s' }
         if ($h.Commande -notmatch 'exit 8') { return "tâche cachée, commande inattendue : $($h.Commande)" }
@@ -718,12 +718,13 @@ function Service-Relance {
     Attendre-Canal 60 | Out-Null
 }
 
-# Relecture de #106, V1, audit S106-07 : le service n'ouvre plus le fichier, mais le Planificateur le peut-il pour lui ? Verrou d'un compte standard sur le
-# fichier de sa propre tâche : le relevé doit continuer. Constat : une tâche créée ensuite reste relevée
-$tacheVerrou = 'd4t-tache-verrouillee'
-$temoinVerrou = 'd4t-tache-apres-verrou'
+# Relecture de #106, V1, R4, audit S106-07, S106-18 : le service n'ouvre plus le fichier, mais le Planificateur le peut-il pour lui ? Verrou d'un compte standard sur le
+# fichier de sa propre tâche : le relevé doit aller au bout. Un témoin de chaque côté du nom verrouillé, l'ordre de lecture n'étant pas connu ; et aucune entrée
+# d'un relevé incomplet ou hors délai, sur plusieurs relevés
+$tacheVerrou = 'd4t-m-tache-verrouillee'
+$temoinsVerrou = 'd4t-a-apres-verrou', 'd4t-z-apres-verrou'
 $v = En-TantQue $script:compte "schtasks /Create /TN $tacheVerrou /TR 'cmd.exe /c exit 11' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
-$titreVerrou = 'Verrou d''un compte standard sur le fichier de sa tâche : le relevé continue'
+$titreVerrou = 'Verrou d''un compte standard sur le fichier de sa tâche : le relevé va au bout'
 $fichierTache = Join-Path $dossierTaches $tacheVerrou
 $verrou = if ("$v".Trim() -eq '0') { Poser-Verrou $fichierTache $script:compte } else { "tâche non créée ($v)" }
 if ($verrou -ne 'accorde') {
@@ -731,18 +732,24 @@ if ($verrou -ne 'accorde') {
 } else {
 Verifier $titreVerrou {
     try {
-        $null = En-TantQue $script:compte "schtasks /Create /TN $temoinVerrou /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null"
+        foreach ($n in $temoinsVerrou) { $null = En-TantQue $script:compte "schtasks /Create /TN $n /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null" }
         $f = Join-Path $script:Donnees 'demarrage.json'
-        $fin = (Get-Date).AddSeconds(150); $vu = $null
+        $lire = { @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' }) }
+        $fin = (Get-Date).AddSeconds(150); $vus = @()
         do {
             Start-Sleep 5
-            $vu = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Nom -match $temoinVerrou }) | Select-Object -First 1
-        } while (-not $vu -and (Get-Date) -lt $fin)
-        if (-not $vu) { return "tâche créée après le verrou non relevée en 150 s ; journal : $(Journal 'relevé des tâches' 3)" }
+            $e = & $lire
+            $vus = @($temoinsVerrou | Where-Object { $n = $_; @($e | Where-Object { $_.Nom -match $n }).Count -gt 0 })
+        } while ($vus.Count -lt 2 -and (Get-Date) -lt $fin)
+        if ($vus.Count -lt 2) { return "témoins relevés : $($vus -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
+        # Deux relevés de plus, le verrou tenu : aucun relevé incomplet ni hors délai
+        Start-Sleep 130
+        $mauvais = @(& $lire | Where-Object { $_.Nom -match 'relevé incomplet' })
+        if ($mauvais.Count) { return "relevé incomplet, verrou tenu : $(($mauvais | ForEach-Object Nom) -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
         $true
     } finally {
         Retirer-Verrou
-        foreach ($n in $tacheVerrou, $temoinVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
+        foreach ($n in @($tacheVerrou) + $temoinsVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
     }
 }
 }
