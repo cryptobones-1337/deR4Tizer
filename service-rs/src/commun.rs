@@ -89,6 +89,9 @@ pub struct Etat {
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct EntreeDemarrage {
+    /// Anomalie du relevé des tâches, posée par le service seul : jamais déduite du texte de la commande, qu'une tâche choisit (relecture de #106, R3)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub anomalie: bool,
     #[serde(deserialize_with = "nul_vide")]
     pub cle: String,
     #[serde(deserialize_with = "nul_vide")]

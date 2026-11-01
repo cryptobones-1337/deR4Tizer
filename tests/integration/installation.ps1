@@ -567,7 +567,7 @@ Verifier 'Relevé des tâches : aucune anomalie sur un Windows sain' {
     $e = @(Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ })
     $taches = @($e | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
     if (-not $taches.Count) { return 'aucune tâche relevée' }
-    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' })
+    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' -or $_.Commande -eq '(action non reconnue)' })
     if ($mauvais.Count) { return "$(($mauvais | ForEach-Object { "$($_.Nom) : $($_.Commande)" }) -join ' ; ')" }
     Write-Host "  tâches relevées : $($taches.Count)"
     $true
@@ -602,6 +602,50 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
         cmd /c rmdir "$boucle" 2>&1 | Out-Null
     }
 }
+}
+
+# Audit de #103, S103-02, S103-03 : les tâches viennent du Planificateur. Un faux fichier n'est pas une tâche ; une vraie tâche d'un compte standard en est une
+$fauxFichier = Join-Path $dossierTaches 'd4t-faux-fichier'
+$s = En-TantQue $script:compte "try { Set-Content -LiteralPath '$fauxFichier' -Value '<Task><Actions><Exec><Command>c:\d4t\faux.exe</Command></Exec></Actions></Task>' -ErrorAction Stop; 'cree' } catch { `$_.Exception.Message }"
+$vraieTache = 'd4t-vraie-tache-standard'
+$cachee = 'd4t-tache-cachee-standard'
+$deuxActions = 'd4t-tache-deux-actions'
+$v = En-TantQue $script:compte "schtasks /Create /TN $vraieTache /TR 'cmd.exe /c exit 7' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+# Relecture de #106, D5 : une tâche cachée ; audit S106-01 : deux actions, la seconde ne doit pas passer sous la première
+$x = En-TantQue $script:compte "try { Register-ScheduledTask -TaskName $cachee -Action (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 8') -Settings (New-ScheduledTaskSettingsSet -Hidden) -ErrorAction Stop | Out-Null; 'cachee' } catch { `$_.Exception.Message }; try { Register-ScheduledTask -TaskName $deuxActions -Action (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 9'), (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 10') -ErrorAction Stop | Out-Null; 'deux' } catch { `$_.Exception.Message }"
+Verifier 'Relevé des tâches : faux fichier signalé sans être une tâche ; vraie tâche d''un compte standard relevée' {
+    try {
+        if ("$s".Trim() -ne 'cree') { return "précréation refusée : $s" }
+        if ("$v".Trim() -ne '0') { return "tâche du compte standard refusée : $v" }
+        $f = Join-Path $script:Donnees 'demarrage.json'
+        $fin = (Get-Date).AddSeconds(180); $e = @(); $faux = $null; $vraie = $null
+        do {
+            Start-Sleep 5
+            $e = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+            $faux = $e | Where-Object { $_.Nom -match 'd4t-faux-fichier' } | Select-Object -First 1
+            $vraie = $e | Where-Object { $_.Nom -match $vraieTache } | Select-Object -First 1
+        } while (-not ($faux -and $vraie) -and (Get-Date) -lt $fin)
+        if (-not $faux) { return 'faux fichier non signalé en 180 s' }
+        if ($faux.Commande -match 'faux\.exe' -or $faux.Commande -notmatch 'sans tâche enregistrée') { return "faux fichier traité comme une tâche : $($faux.Commande)" }
+        if (-not $vraie) { return 'tâche du compte standard non relevée en 180 s' }
+        if ($vraie.Commande -notmatch 'exit 7') { return "commande inattendue : $($vraie.Commande)" }
+        if ("$x" -notmatch 'cachee' -or "$x" -notmatch 'deux') { return "création par le compte standard refusée : $x" }
+        # Plafond de nouvelles tâches par relevé : les trois sont bien sous le plafond
+        $fin = (Get-Date).AddSeconds(120); $h = $null; $d2 = $null
+        do {
+            Start-Sleep 5
+            $e = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+            $h = $e | Where-Object { $_.Nom -match $cachee } | Select-Object -First 1
+            $d2 = $e | Where-Object { $_.Nom -match "$deuxActions : action 2" } | Select-Object -First 1
+        } while (-not ($h -and $d2) -and (Get-Date) -lt $fin)
+        if (-not $h) { return 'tâche cachée non relevée en 120 s' }
+        if ($h.Commande -notmatch 'exit 8') { return "tâche cachée, commande inattendue : $($h.Commande)" }
+        if (-not $d2 -or $d2.Commande -notmatch 'exit 10') { return 'seconde action non relevée' }
+        $true
+    } finally {
+        Remove-Item -LiteralPath $fauxFichier -Force -ErrorAction SilentlyContinue
+        foreach ($n in $vraieTache, $cachee, $deuxActions) { Schtasks-Code /Delete /F /TN $n | Out-Null }
+    }
 }
 
 # Audits de #103 et #104, S103-07, S104-02 : verrou opportuniste, sous lequel une ouverture attend sans délai maximal connu
@@ -673,6 +717,52 @@ function Service-Relance {
     if ((Get-Service deR4Tizer).Status -eq 'Stopped') { sc.exe start deR4Tizer | Out-Null }
     Attendre-Canal 60 | Out-Null
 }
+
+# Relecture de #106, V1, R4, audit S106-07, S106-18 : le service n'ouvre plus le fichier, mais le Planificateur le peut-il pour lui ? Verrou d'un compte standard sur le
+# fichier de sa propre tâche : le relevé doit aller au bout. Un témoin de chaque côté du nom verrouillé, l'ordre de lecture n'étant pas connu ; et aucune entrée
+# d'un relevé incomplet ou hors délai, sur plusieurs relevés
+$tacheVerrou = 'd4t-m-tache-verrouillee'
+$temoinsVerrou = 'd4t-a-apres-verrou', 'd4t-z-apres-verrou'
+$v = En-TantQue $script:compte "schtasks /Create /TN $tacheVerrou /TR 'cmd.exe /c exit 11' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+$titreVerrou = 'Verrou d''un compte standard sur le fichier de sa tâche : le relevé va au bout'
+$fichierTache = Join-Path $dossierTaches $tacheVerrou
+$verrou = if ("$v".Trim() -eq '0') { Poser-Verrou $fichierTache $script:compte } else { "tâche non créée ($v)" }
+if ($verrou -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $verrou"
+} else {
+    # Le constat d'abord, puis le témoin. Un échec constaté prime toujours ; un succès n'en est un que si le verrou tenait encore (relecture de #106, S5, T3)
+    $constat = try {
+        foreach ($n in $temoinsVerrou) { $null = En-TantQue $script:compte "schtasks /Create /TN $n /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null" }
+        $f = Join-Path $script:Donnees 'demarrage.json'
+        $lire = { @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' }) }
+        $fin = (Get-Date).AddSeconds(150); $vus = @()
+        do {
+            Start-Sleep 5
+            $e = & $lire
+            $vus = @($temoinsVerrou | Where-Object { $n = $_; @($e | Where-Object { $_.Nom -match $n }).Count -gt 0 })
+        } while ($vus.Count -lt 2 -and (Get-Date) -lt $fin)
+        if ($vus.Count -lt 2) { "témoins relevés : $($vus -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" }
+        else {
+            # Deux relevés de plus, le verrou tenu : aucun relevé incomplet ni hors délai
+            Start-Sleep 130
+            $mauvais = @(& $lire | Where-Object { $_.Nom -match 'relevé incomplet' })
+            if ($mauvais.Count) { "relevé incomplet, verrou tenu : $(($mauvais | ForEach-Object Nom) -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" } else { $true }
+        }
+    } catch { "exception : $($_.Exception.Message)" }
+    $tenait = try {
+        $w = Temoin-Blocage $fichierTache
+        Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
+        [bool]$w.Bloque
+    } catch { $false }
+    Retirer-Verrou
+    foreach ($n in @($tacheVerrou) + $temoinsVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
+    $constat = @($constat)[0]
+    if ($constat -ne $true) { Verifier $titreVerrou { $constat } }
+    elseif (-not $tenait) { NonExecute $titreVerrou 'le verrou ne tenait plus à la fin, ou témoin en échec : contrôle sans valeur' }
+    else { Verifier $titreVerrou { $true } }
+}
+Retirer-Verrou
+Schtasks-Code /Delete /F /TN $tacheVerrou | Out-Null
 
 $titreVerrou = 'Verrou sur un exécutable lancé, par un compte standard : canal joignable, lecture hors délai au journal, arrêt possible'
 $e = Poser-Verrou $verrouExe $script:compte -Connexion
