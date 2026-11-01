@@ -343,8 +343,16 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
         $vu -gt 0
     }
     $arreter = { param($p) if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
-    $pB = & $toucher $exeB 1
-    if (-not (& $attendreSuspension $exeB 0 $pB)) {
+    # Le contrôle précédent redémarre le service : une touche trop tôt peut précéder l'abonnement au journal (vu une fois sur quatre
+    # passages, cause non établie). Jusqu'à trois touches, et l'essai qui a réussi est dit : une fenêtre aveugle doit se voir
+    $essaiB = 0; $vuB = $false; $debutB = Get-Date
+    do {
+        $essaiB++
+        $pB = & $toucher $exeB $essaiB
+        $vuB = & $attendreSuspension $exeB 0 $pB
+        if (-not $vuB -and $essaiB -lt 3) { & $arreter $pB }
+    } while (-not $vuB -and $essaiB -lt 3)
+    if (-not $vuB) {
         # Ce qu'il faut pour trancher : l'événement est-il arrivé, le service a-t-il agi, le processus est-il suspendu ?
         $evenements = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'd4t-garde-b' })
         $siemGarde = @(Get-ChildItem (Join-Path $script:Donnees 'siem') -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_ -match '"Source":"reponse"' -and $_ -match 'suspendre' } | Select-Object -Last 3)
@@ -353,7 +361,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
         & $arreter $pB
         foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : $diagnostic" }
     } else {
-        Noter $titresGarde[0] 'RÉUSSI' ''
+        Noter $titresGarde[0] 'RÉUSSI' $(if ($essaiB -gt 1) { "à la touche $essaiB, $([int]((Get-Date) - $debutB).TotalSeconds) s après la première" } else { '' })
         Verifier $titresGarde[1] {
             $r = Commande-Processus 'reprendre' $pB.Id
             if (-not $r.Ok) { return "reprise refusée : $($r.Message)" }
