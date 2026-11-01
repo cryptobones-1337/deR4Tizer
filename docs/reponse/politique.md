@@ -40,7 +40,7 @@ Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR
 
 | Action | Échéance | À l'échéance |
 |---|---|---|
-| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste |
+| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste (déjà le cas pour ces listes ; la limite aux deux sources arrive avec la PR 6.1) |
 | Blocage IP par l'IPS | 24 h | levé |
 | Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h |
 | Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h |
@@ -60,6 +60,16 @@ l'alerte : seule l'action est retenue.
 | Suspensions automatiques, toutes cibles | 3 par heure | au-delà, suspendues 1 h, alerte « Critique » une fois |
 | Adresses distinctes par l'IPS | 50 par heure | au-delà, alerte seule |
 | Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
+
+**Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
+
+| Action | Avec le service | Service arrêté ou en panne | Après la désinstallation |
+|---|---|---|---|
+| Suspension | « Reprendre » (identité revalidée) ou « Tuer » | Moniteur de ressources de Windows (`resmon`, « Reprendre le processus »), ou arrêt du processus dans le Gestionnaire des tâches | le processus reste suspendu jusqu'à son arrêt ou au redémarrage : redémarrer le poste |
+| Isolation | « Libérer » | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
+| Mode panique | « Désactiver le mode panique » | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu | `--nettoyer` |
+| Blocage IP | « Débloquer » | règles « deR4Tizer » du pare-feu | `--nettoyer` |
+| Quarantaine | « Restaurer » ou repli | aucune (copie encodée dans le dossier de données) | avec `GARDER_DONNEES=1` : réinstaller puis restaurer ; sans : perdue, à vérifier |
 
 ## Écarts du code actuel (4.3) avec cette politique
 

@@ -1,8 +1,8 @@
 # Phase 6 : politique de réponse appliquée dans le code
 
 Ouverte le 2026-11-01, à la fin de la phase 4, sur l'accord explicite du mainteneur (réponse « Oui, selon le dossier »,
-`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Rien de ce
-qu'il décrit n'existe encore dans le code : chaque élément passe à « testé en labo » dans la matrice
+`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Ce qu'il
+prévoit n'existe pas encore dans le code, sauf ce qui est dit « comme aujourd'hui » : chaque élément passe à « testé en labo » dans la matrice
 (`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
 
 ## Besoin
@@ -12,7 +12,7 @@ Une action de réponse coupe ou modifie quelque chose sur un poste sans informat
 1. **Le niveau 3 déborde** : avec le réglage « listes restreintes », le blocage automatique s'étend à FireHOL niveau 1 et
    à ThreatView, ce que la politique ne permet pas.
 2. **L'identité n'est pas revalidée** : entre la décision et l'action, un PID réutilisé peut désigner un autre programme.
-3. **Rien ne borne la répétition** : une adresse débloquée à la main est rebloquée au cycle suivant, et un programme
+3. **Rien ne borne la répétition** : une adresse débloquée à la main est rebloquée dès qu'une connexion vers elle reparaît, et un programme
    repris peut être suspendu de nouveau sans limite.
 4. **Rien n'a d'échéance** : un processus suspendu, un programme isolé ou le mode panique le restent sans que personne
    ne soit relancé.
@@ -41,6 +41,9 @@ fusion. Celles qui touchent le même fichier passent l'une après l'autre.
 | 6.6 | Isolation sur le chemin final, lu par handle |
 | 6.7 | Interface : page « Réponses en cours », portée et retour arrière du mode panique |
 
+Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est
+déclarée « non exécutée ». Les procédures prévues sont dans `docs/reponse/politique.md`.
+
 Les fiches `REP-*` entrent dans `docs/detection/regles.md` avec leur entrée au registre (`regles.rs`), leur code et leurs
 tests, dans la PR qui les apporte : le test du registre exige que les fiches et le registre concordent.
 
@@ -62,7 +65,7 @@ automatique.
 | D6-7 | Échec de `--nettoyer` à la désinstallation | La désinstallation n'est jamais bloquée ; un compte rendu est écrit et vérifié. |
 | D6-8 | Nouvelle dépendance | Aucune. |
 | D6-9 | Arrêt automatique d'un processus | Hors du niveau 3, comme aujourd'hui. |
-| D6-10 | Suspension sur leurre, protection du dossier en échec | Gardée : elle ne dépend d'aucun fichier du dossier de données. Seules les actions alimentées par ces fichiers sont refusées. |
+| D6-10 | Suspension sur leurre, protection du dossier en échec | Gardée, comme aujourd'hui : elle ne dépend d'aucun fichier du dossier de données. Seules les actions alimentées par ces fichiers sont refusées. |
 
 ## Compromis accepté
 
