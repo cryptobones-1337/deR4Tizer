@@ -96,5 +96,13 @@ prestataire).
 - Un attaquant déjà administrateur ou SYSTEM : il peut arrêter le service, modifier ses fichiers et ses droits. Depuis la phase 4 (PR 4.4b), quand la remontée est configurée, le battement quotidien cesse : le prestataire peut voir
   qu'un poste ne répond plus, sans savoir pourquoi (service arrêté, poste éteint, réseau coupé).
   deR4Tizer complète Microsoft Defender, il ne le remplace pas.
+- La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Le SIEM (`siem\`, 30 jours
+  et 1 Go au plus : les jours les plus anciens partent d'abord, parfois bien avant 30 jours) et le journal du service
+  (`journal.txt`, 2 Mo, puis un fichier précédent) restent sur la machine surveillée : un administrateur peut les
+  effacer, et une intrusion plus ancienne que ces limites n'y est plus. Seule une copie déjà partie ailleurs y échappe,
+  et aucune n'est complète : l'export syslog, s'il est configuré, n'envoie que les alertes, en clair (sans TLS), sans
+  garantie de réception ; la remontée (ntfy, Teams, SMTP), chiffrée en transit, n'envoie que des alertes regroupées et
+  plafonnées ; l'API d'export, si un outil tiers vient la lire, donne aussi les événements du SIEM, en clair (HTTP) sur
+  le réseau local. Aucun export chiffré et complet des traces n'existe.
 - L'injection de code dans un processus légitime (le vol de données est détecté par l'identité du programme qui
   lit les fichiers).
