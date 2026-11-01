@@ -5768,6 +5768,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter(").unwrap());
     assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
     assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
+    assert!(v.contains("dire_retenue(&mut alerte, &r);"), "F6 : l'alerte dit la retenue");
     // Relecture de #110, P3 : un chemin humain de plus se voit ici
     let humains: usize = [("moniteur", m.as_str()), ("vol_donnees", v.as_str())].iter().map(|(_, s)| s.matches("Declencheur::Humain").count()).sum();
     assert_eq!(humains, 1, "autorisation_humaine seulement");
