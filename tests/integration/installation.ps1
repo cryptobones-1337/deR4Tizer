@@ -608,7 +608,11 @@ Verifier 'Relevé des tâches : jonction en boucle posée par un compte standard
 $fauxFichier = Join-Path $dossierTaches 'd4t-faux-fichier'
 $s = En-TantQue $script:compte "try { Set-Content -LiteralPath '$fauxFichier' -Value '<Task><Actions><Exec><Command>c:\d4t\faux.exe</Command></Exec></Actions></Task>' -ErrorAction Stop; 'cree' } catch { `$_.Exception.Message }"
 $vraieTache = 'd4t-vraie-tache-standard'
+$cachee = 'd4t-tache-cachee-standard'
+$deuxActions = 'd4t-tache-deux-actions'
 $v = En-TantQue $script:compte "schtasks /Create /TN $vraieTache /TR 'cmd.exe /c exit 7' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+# Relecture de #106, D5 : une tâche cachée ; audit S106-01 : deux actions, la seconde ne doit pas passer sous la première
+$x = En-TantQue $script:compte "try { Register-ScheduledTask -TaskName $cachee -Action (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 8') -Settings (New-ScheduledTaskSettingsSet -Hidden) -ErrorAction Stop | Out-Null; 'cachee' } catch { `$_.Exception.Message }; try { Register-ScheduledTask -TaskName $deuxActions -Action (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 9'), (New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 10') -ErrorAction Stop | Out-Null; 'deux' } catch { `$_.Exception.Message }"
 Verifier 'Relevé des tâches : faux fichier signalé sans être une tâche ; vraie tâche d''un compte standard relevée' {
     try {
         if ("$s".Trim() -ne 'cree') { return "précréation refusée : $s" }
@@ -625,10 +629,22 @@ Verifier 'Relevé des tâches : faux fichier signalé sans être une tâche ; vr
         if ($faux.Commande -match 'faux\.exe' -or $faux.Commande -notmatch 'sans tâche enregistrée') { return "faux fichier traité comme une tâche : $($faux.Commande)" }
         if (-not $vraie) { return 'tâche du compte standard non relevée en 180 s' }
         if ($vraie.Commande -notmatch 'exit 7') { return "commande inattendue : $($vraie.Commande)" }
+        if ("$x" -notmatch 'cachee' -or "$x" -notmatch 'deux') { return "création par le compte standard refusée : $x" }
+        # Plafond de nouvelles tâches par relevé : les trois sont bien sous le plafond
+        $fin = (Get-Date).AddSeconds(120); $h = $null; $d2 = $null
+        do {
+            Start-Sleep 5
+            $e = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
+            $h = $e | Where-Object { $_.Nom -match $cachee } | Select-Object -First 1
+            $d2 = $e | Where-Object { $_.Nom -match "$deuxActions \(action 2\)" } | Select-Object -First 1
+        } while (-not ($h -and $d2) -and (Get-Date) -lt $fin)
+        if (-not $h) { return 'tâche cachée non relevée en 120 s' }
+        if ($h.Commande -notmatch 'exit 8') { return "tâche cachée, commande inattendue : $($h.Commande)" }
+        if (-not $d2 -or $d2.Commande -notmatch 'exit 10') { return 'seconde action non relevée' }
         $true
     } finally {
         Remove-Item -LiteralPath $fauxFichier -Force -ErrorAction SilentlyContinue
-        Schtasks-Code /Delete /F /TN $vraieTache | Out-Null
+        foreach ($n in $vraieTache, $cachee, $deuxActions) { Schtasks-Code /Delete /F /TN $n | Out-Null }
     }
 }
 
@@ -701,6 +717,37 @@ function Service-Relance {
     if ((Get-Service deR4Tizer).Status -eq 'Stopped') { sc.exe start deR4Tizer | Out-Null }
     Attendre-Canal 60 | Out-Null
 }
+
+# Relecture de #106, V1, audit S106-07 : le service n'ouvre plus le fichier, mais le Planificateur le peut-il pour lui ? Verrou d'un compte standard sur le
+# fichier de sa propre tâche : le relevé doit continuer. Constat : une tâche créée ensuite reste relevée
+$tacheVerrou = 'd4t-tache-verrouillee'
+$temoinVerrou = 'd4t-tache-apres-verrou'
+$v = En-TantQue $script:compte "schtasks /Create /TN $tacheVerrou /TR 'cmd.exe /c exit 11' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null; `$LASTEXITCODE"
+$titreVerrou = 'Verrou d''un compte standard sur le fichier de sa tâche : le relevé continue'
+$fichierTache = Join-Path $dossierTaches $tacheVerrou
+$verrou = if ("$v".Trim() -eq '0') { Poser-Verrou $fichierTache $script:compte } else { "tâche non créée ($v)" }
+if ($verrou -ne 'accorde') {
+    NonExecute $titreVerrou "verrou non obtenu : $verrou"
+} else {
+Verifier $titreVerrou {
+    try {
+        $null = En-TantQue $script:compte "schtasks /Create /TN $temoinVerrou /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null"
+        $f = Join-Path $script:Donnees 'demarrage.json'
+        $fin = (Get-Date).AddSeconds(150); $vu = $null
+        do {
+            Start-Sleep 5
+            $vu = @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Nom -match $temoinVerrou }) | Select-Object -First 1
+        } while (-not $vu -and (Get-Date) -lt $fin)
+        if (-not $vu) { return "tâche créée après le verrou non relevée en 150 s ; journal : $(Journal 'relevé des tâches' 3)" }
+        $true
+    } finally {
+        Retirer-Verrou
+        foreach ($n in $tacheVerrou, $temoinVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
+    }
+}
+}
+Retirer-Verrou
+Schtasks-Code /Delete /F /TN $tacheVerrou | Out-Null
 
 $titreVerrou = 'Verrou sur un exécutable lancé, par un compte standard : canal joignable, lecture hors délai au journal, arrêt possible'
 $e = Poser-Verrou $verrouExe $script:compte -Connexion

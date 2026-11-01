@@ -59,6 +59,9 @@ impl Persistance {
                 releve.push(e);
             }
         }
+        if !self.apprentissage {
+            plafonner_nouvelles_taches(&self.reference, &mut releve, MAX_NOUVELLES_TACHES);
+        }
         let hors_delai = releve.iter().any(|e| e.nom == anomalie_incomplet(QUOI_DELAI).0);
         self.bloque_depuis = if hors_delai { self.bloque_depuis.or(Some(std::time::Instant::now())) } else { None };
         self.incomplet = garder_taches_non_vues(&self.reference, &mut releve);
@@ -493,6 +496,13 @@ const BORNES_TACHES: BornesTaches = BornesTaches { profondeur: 8, par_dossier: 5
 /// Tâches lues auprès du Planificateur par relevé (mesuré en VM le 2026-10-31 : 252 fichiers) ; au-delà, relevé incomplet
 const MAX_TACHES: usize = 20_000;
 const MAX_NIVEAUX_TACHES: usize = 16;
+const MAX_DOSSIERS_TACHES: usize = 5000;
+/// Longueur gardée d'une commande : le Planificateur accepte de très longs arguments, et chaque entrée est gardée et écrite (audit de #106, S106-06)
+const MAX_COMMANDE_TACHE: usize = 4096;
+/// Revérifications de fichiers inconnus par relevé : chacune interroge le Planificateur (audit de #106, S106-04)
+const MAX_REVERIFICATIONS: usize = 32;
+/// Nouvelles tâches par relevé : un compte standard peut en créer sans limite, et chaque alerte en chasse une vraie (audit de #106, S106-05)
+const MAX_NOUVELLES_TACHES: usize = 16;
 
 /// Échéance du relevé des tâches : un Planificateur qui ne répond pas ne doit pas faire taire toute la persistance (S103-04)
 const ECHEANCE_TACHES: std::time::Duration = std::time::Duration::from_secs(30);
@@ -503,9 +513,10 @@ pub(crate) const ANOMALIE_TACHES: &str = "Dossier des tâches : ";
 pub(crate) const REMARQUE_ANOMALIE_TACHES: &str = "élément anormal du dossier des tâches";
 
 /// Examine le dossier des tâches, pour ses seules anomalies : les tâches viennent du Planificateur, un fichier posé là n'en est pas une
-/// (audit de #103, S103-02, S103-03). Aucun point d'analyse n'est suivi (jonction, lien). `enregistree` dit si un nom relatif
-/// correspond à une tâche. Rend les anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait PER-002 à chaque relevé
-pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistree: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+/// (audit de #103, S103-02, S103-03). Aucun point d'analyse n'est suivi (jonction, lien), et le service n'y ouvre rien. `enregistree` dit si un nom
+/// relatif correspond à une tâche, None si on ne peut pas le dire ; elle n'est plus appelée une fois les anomalies au plafond. Rend les
+/// anomalies (nom, motif), de libellés stables : un nombre dans le motif relèverait PER-002 à chaque relevé
+pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistree: &mut dyn FnMut(&str) -> Option<bool>) -> Vec<(String, String)> {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     let longueur = racine.to_string_lossy().len();
@@ -542,17 +553,43 @@ pub(crate) fn examiner_dossier_taches(racine: &Path, b: &BornesTaches, enregistr
                 bornes.insert("éléments");
                 continue;
             }
-            let motif = if lien { "lien non suivi" } else if !enregistree(&nom) { "fichier sans tâche enregistrée" } else { continue };
-            if anomalies.len() < b.anomalies {
-                anomalies.push((nom, motif.into()));
-            } else {
+            if anomalies.len() >= b.anomalies {
                 bornes.insert("anomalies");
+                continue;
+            }
+            if lien {
+                anomalies.push((nom, "lien non suivi".into()));
+                continue;
+            }
+            match enregistree(&nom) {
+                Some(true) => {}
+                Some(false) => anomalies.push((nom, "fichier sans tâche enregistrée".into())),
+                // Pas de conclusion, pas d'alerte : un Planificateur qui redémarre ne doit pas en lever (relecture de #106, D7)
+                None => {
+                    bornes.insert("revérifications");
+                }
             }
         }
     }
     // Ces bornes ne disent rien des tâches, lues ailleurs : pas un relevé incomplet
     anomalies.extend(bornes.into_iter().map(|k| (format!(r"\(dossier des tâches : {k})"), "examen du dossier arrêté, bornes atteintes".to_string())));
     anomalies
+}
+
+/// Nouvelles tâches au-delà du plafond : retirées de ce relevé, donc de la référence, et levées aux relevés suivants ; une entrée le dit (pure, testée)
+pub(crate) fn plafonner_nouvelles_taches(reference: &HashMap<String, EntreeDemarrage>, releve: &mut Vec<EntreeDemarrage>, max: usize) {
+    let mut nouvelles = 0usize;
+    let avant = releve.len();
+    releve.retain(|e| {
+        if e.categorie != "Tâche planifiée" || e.commande.starts_with(ANOMALIE_TACHES) || reference.contains_key(&e.cle) {
+            return true;
+        }
+        nouvelles += 1;
+        nouvelles <= max
+    });
+    if releve.len() < avant {
+        ajouter(releve, "Tâche planifiée", r"\(relevé des tâches : nouvelles tâches plafonnées)", &format!("{ANOMALIE_TACHES}nouvelles tâches au-delà du plafond par relevé, relevées aux suivants"));
+    }
 }
 
 fn anomalie_incomplet(quoi: &str) -> (String, String) {
@@ -596,78 +633,235 @@ fn taches_a_echeance(l: &mut Vec<EntreeDemarrage>) {
     }
 }
 
-/// Entrée d'une tâche d'après sa définition XML (pure, testée)
-pub(crate) fn entree_de_tache(l: &mut Vec<EntreeDemarrage>, chemin: &str, xml: &str) {
-    static MOTIFS: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
-    let (action, com, desactivee) = MOTIFS.get_or_init(|| (
-        Regex::new(r"(?s)<Command>(.*?)</Command>(?:\s*<Arguments>(.*?)</Arguments>)?").unwrap(),
-        Regex::new(r"(?s)<ComHandler>\s*<ClassId>(.*?)</ClassId>").unwrap(),
-        Regex::new(r"(?s)<Settings>.*?<Enabled>false</Enabled>").unwrap(),
-    ));
-    let mut nom = chemin.to_string();
-    if desactivee.is_match(xml) {
-        nom.push_str(" (désactivée)");
+/// Action d'une tâche, lue par l'API du Planificateur et non par motif dans son XML : un commentaire, un préfixe ou un second `Exec` y feraient
+/// relever une autre commande que celle qui s'exécute (audit de #106, S106-01)
+pub(crate) enum ActionTache {
+    Exec(String, String),
+    Com(String),
+    Autre,
+}
+
+fn commande_bornee(s: &str) -> String {
+    if s.chars().count() <= MAX_COMMANDE_TACHE {
+        return s.to_string();
     }
-    if let Some(m) = action.captures(xml) {
-        let cmd = format!("{} {}", &m[1], m.get(2).map(|a| a.as_str()).unwrap_or(""));
-        ajouter(l, "Tâche planifiée", &nom, &decoder_entites(cmd.trim()));
-    } else if let Some(c) = com.captures(xml) {
-        ajouter(l, "Tâche planifiée", &nom, &commande_com(&c[1]));
+    let debut: String = s.chars().take(MAX_COMMANDE_TACHE).collect();
+    format!("{debut} [tronquée]")
+}
+
+/// Entrées d'une tâche, une par action (pure, testée) : une action après la première ne doit pas passer sous la cible de la première
+pub(crate) fn entrees_de_tache(l: &mut Vec<EntreeDemarrage>, chemin: &str, active: bool, actions: &[ActionTache]) {
+    let base = if active { chemin.to_string() } else { format!("{chemin} (désactivée)") };
+    if actions.is_empty() {
+        ajouter(l, "Tâche planifiée", &base, &format!("{ANOMALIE_TACHES}tâche sans action lisible"));
+    }
+    for (i, a) in actions.iter().enumerate() {
+        let nom = if i == 0 { base.clone() } else { format!("{base} (action {})", i + 1) };
+        match a {
+            ActionTache::Exec(p, args) => ajouter(l, "Tâche planifiée", &nom, &commande_bornee(format!("{p} {args}").trim())),
+            ActionTache::Com(id) => ajouter(l, "Tâche planifiée", &nom, &commande_com(id)),
+            ActionTache::Autre => ajouter(l, "Tâche planifiée", &nom, &format!("{ANOMALIE_TACHES}action non reconnue")),
+        }
     }
 }
 
-/// Toutes les tâches enregistrées, cachées comprises, lues auprès du Planificateur : rend (chemin, définition XML) à `traiter`, et les
-/// chemins en minuscules. Rend une erreur si le Planificateur ne répond pas, ou si la borne est atteinte
-pub(crate) fn lire_taches_planificateur(traiter: &mut dyn FnMut(&str, &str)) -> Result<std::collections::HashSet<String>, String> {
+/// Le COM de ce fil, le temps d'un relevé : chaque tour crée un fil neuf (relecture de #106)
+pub(crate) struct ComFil;
+
+impl ComFil {
+    pub(crate) fn nouveau() -> ComFil {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        ComFil
+    }
+}
+
+impl Drop for ComFil {
+    fn drop(&mut self) {
+        unsafe { windows::Win32::System::Com::CoUninitialize() }
+    }
+}
+
+pub(crate) struct LectureTaches {
+    pub vus: std::collections::HashSet<String>,
+    /// Raisons d'un relevé incomplet ; vide : toutes les tâches ont été lues
+    pub incomplet: std::collections::BTreeSet<&'static str>,
+    pub premiere_erreur: Option<String>,
+    pub racine: Option<windows::Win32::System::TaskScheduler::ITaskFolder>,
+}
+
+/// Actions d'une tâche, par l'API du Planificateur
+unsafe fn actions_de(tache: &windows::Win32::System::TaskScheduler::IRegisteredTask) -> windows::core::Result<Vec<ActionTache>> {
+    use windows::core::{Interface, BSTR};
+    use windows::Win32::System::TaskScheduler::{IComHandlerAction, IExecAction, TASK_ACTION_COM_HANDLER, TASK_ACTION_EXEC, TASK_ACTION_TYPE};
+    let liste = tache.Definition()?.Actions()?;
+    let mut n = 0i32;
+    liste.Count(&mut n)?;
+    let mut actions = Vec::new();
+    for i in 1..=n {
+        let a = liste.get_Item(i)?;
+        let mut type_ = TASK_ACTION_TYPE::default();
+        a.Type(&mut type_)?;
+        actions.push(if type_ == TASK_ACTION_EXEC {
+            let e: IExecAction = a.cast()?;
+            let (mut p, mut args) = (BSTR::new(), BSTR::new());
+            e.Path(&mut p)?;
+            e.Arguments(&mut args)?;
+            ActionTache::Exec(p.to_string(), args.to_string())
+        } else if type_ == TASK_ACTION_COM_HANDLER {
+            let c: IComHandlerAction = a.cast()?;
+            let mut id = BSTR::new();
+            c.ClassId(&mut id)?;
+            ActionTache::Com(id.to_string())
+        } else {
+            ActionTache::Autre
+        });
+    }
+    Ok(actions)
+}
+
+/// Les tâches d'un dossier. Une erreur est notée, le relevé continue : un dossier ou une tâche à problème ne doit pas cacher les suivants (S106-03).
+/// Rend faux si la borne est atteinte
+unsafe fn lire_dossier_taches(dossier: &windows::Win32::System::TaskScheduler::ITaskFolder, l: &mut LectureTaches, traiter: &mut dyn FnMut(&str, bool, &[ActionTache])) -> bool {
+    use windows::core::VARIANT;
+    use windows::Win32::System::TaskScheduler::TASK_ENUM_HIDDEN;
+    let erreur = |l: &mut LectureTaches, quoi: &'static str, e: windows::core::Error| {
+        l.incomplet.insert(quoi);
+        l.premiere_erreur.get_or_insert_with(|| format!("{quoi} : {e}"));
+    };
+    let liste = match dossier.GetTasks(TASK_ENUM_HIDDEN.0) {
+        Ok(x) => x,
+        Err(e) => { erreur(l, "lecture partielle", e); return true; }
+    };
+    let n = match liste.Count() {
+        Ok(x) => x,
+        Err(e) => { erreur(l, "lecture partielle", e); return true; }
+    };
+    for i in 1..=n {
+        let tache = match liste.get_Item(&VARIANT::from(i)) {
+            Ok(x) => x,
+            Err(e) => { erreur(l, "lecture partielle", e); continue; }
+        };
+        let chemin = match tache.Path() {
+            Ok(x) => x.to_string(),
+            Err(e) => { erreur(l, "lecture partielle", e); continue; }
+        };
+        l.vus.insert(chemin.to_lowercase());
+        if l.vus.len() > MAX_TACHES {
+            l.incomplet.insert("nombre de tâches");
+            return false;
+        }
+        // Définition illisible : la tâche est connue, sa commande non : relevé incomplet, pas d'entrée qui sortirait de la référence (S106-02)
+        match actions_de(&tache) {
+            Ok(a) => traiter(&chemin, tache.Enabled().map(|b| b.as_bool()).unwrap_or(true), &a),
+            Err(e) => erreur(l, "définition illisible", e),
+        }
+    }
+    true
+}
+
+/// Toutes les tâches enregistrées, cachées comprises, lues auprès du Planificateur. La racine en dernier : un compte standard y écrit, pas dans
+/// `\Microsoft` (droits lus), et ses tâches ne doivent pas faire passer la borne avant celles de Windows (S106-10). Le COM du fil est à la charge de l'appelant
+pub(crate) fn lire_taches_planificateur(traiter: &mut dyn FnMut(&str, bool, &[ActionTache])) -> LectureTaches {
     use windows::core::{BSTR, VARIANT};
-    use windows::Win32::System::TaskScheduler::{ITaskService, TaskScheduler, TASK_ENUM_HIDDEN};
-    let mut vus = std::collections::HashSet::new();
+    use windows::Win32::System::TaskScheduler::{ITaskService, TaskScheduler};
+    let mut l = LectureTaches { vus: Default::default(), incomplet: Default::default(), premiere_erreur: None, racine: None };
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
-        let vide = VARIANT::default();
-        service.Connect(&vide, &vide, &vide, &vide).map_err(|e| e.to_string())?;
-        let racine = service.GetFolder(&BSTR::from(r"\")).map_err(|e| e.to_string())?;
-        let mut pile = vec![(racine, 0usize)];
-        while let Some((dossier, niveau)) = pile.pop() {
-            let liste = dossier.GetTasks(TASK_ENUM_HIDDEN.0).map_err(|e| e.to_string())?;
-            for i in 1..=liste.Count().map_err(|e| e.to_string())? {
-                let tache = liste.get_Item(&VARIANT::from(i)).map_err(|e| e.to_string())?;
-                let chemin = tache.Path().map_err(|e| e.to_string())?.to_string();
-                vus.insert(chemin.to_lowercase());
-                if vus.len() > MAX_TACHES {
-                    return Err(format!("plus de {MAX_TACHES} tâches"));
-                }
-                // Une définition illisible n'arrête pas le relevé : la tâche est connue, sa commande non
-                if let Ok(xml) = tache.Xml() {
-                    traiter(&chemin, &xml.to_string());
-                }
+        let connecte = (|| -> windows::core::Result<_> {
+            let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)?;
+            let vide = VARIANT::default();
+            service.Connect(&vide, &vide, &vide, &vide)?;
+            service.GetFolder(&BSTR::from(r"\"))
+        })();
+        let racine = match connecte {
+            Ok(r) => r,
+            Err(e) => {
+                l.incomplet.insert("planificateur");
+                l.premiere_erreur = Some(format!("planificateur : {e}"));
+                return l;
             }
-            if niveau + 1 < MAX_NIVEAUX_TACHES {
-                let sous = dossier.GetFolders(0).map_err(|e| e.to_string())?;
-                for i in 1..=sous.Count().map_err(|e| e.to_string())? {
-                    pile.push((sous.get_Item(&VARIANT::from(i)).map_err(|e| e.to_string())?, niveau + 1));
+        };
+        let mut pile = vec![(racine.clone(), 0usize)];
+        let mut dossiers = 0usize;
+        let mut encore = true;
+        while let Some((d, niveau)) = pile.pop() {
+            if niveau > 0 && !lire_dossier_taches(&d, &mut l, traiter) {
+                encore = false;
+                break;
+            }
+            let sous = match d.GetFolders(0) {
+                Ok(s) => s,
+                Err(e) => {
+                    l.incomplet.insert("lecture partielle");
+                    l.premiere_erreur.get_or_insert_with(|| format!("dossiers : {e}"));
+                    continue;
+                }
+            };
+            for i in 1..=sous.Count().unwrap_or(0) {
+                // Une borne ne se tait pas : une vraie tâche plus loin ne serait lue nulle part (relecture de #106, D2)
+                if niveau + 1 >= MAX_NIVEAUX_TACHES {
+                    l.incomplet.insert("profondeur");
+                    break;
+                }
+                dossiers += 1;
+                if dossiers > MAX_DOSSIERS_TACHES {
+                    l.incomplet.insert("dossiers");
+                    break;
+                }
+                match sous.get_Item(&VARIANT::from(i)) {
+                    Ok(x) => pile.push((x, niveau + 1)),
+                    Err(e) => {
+                        l.incomplet.insert("lecture partielle");
+                        l.premiere_erreur.get_or_insert_with(|| format!("dossier : {e}"));
+                    }
                 }
             }
         }
+        if encore {
+            lire_dossier_taches(&racine, &mut l, traiter);
+        }
+        l.racine = Some(racine);
     }
-    Ok(vus)
+    l
 }
 
 fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
-    let lues = lire_taches_planificateur(&mut |chemin, xml| entree_de_tache(&mut sortie.lock().unwrap(), chemin, xml));
-    let mut anomalies = Vec::new();
-    match lues {
-        Ok(vus) => {
-            let racine = format!(r"{}\Tasks", natif::dossier_systeme());
-            // Une tâche créée depuis la lecture n'est pas une anomalie : une enregistrée à ce nom se revérifie
-            let enregistree = |nom: &str| vus.contains(&nom.to_lowercase()) || tache_existe(nom);
-            anomalies = examiner_dossier_taches(Path::new(&racine), &BORNES_TACHES, &enregistree);
+    use windows::core::{BSTR, HRESULT};
+    let _com = ComFil::nouveau();
+    let lecture = lire_taches_planificateur(&mut |chemin, active, actions| entrees_de_tache(&mut sortie.lock().unwrap(), chemin, active, actions));
+    let mut anomalies: Vec<(String, String)> = lecture.incomplet.iter().map(|q| anomalie_incomplet(q)).collect();
+    // Une ligne quand la raison change, pas une par minute
+    static DERNIERE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let mut derniere = DERNIERE.lock().unwrap_or_else(|e| e.into_inner());
+    if *derniere != lecture.premiere_erreur {
+        if let Some(e) = &lecture.premiere_erreur {
+            commun::journal(&format!("relevé des tâches : {e}"));
         }
-        Err(e) => {
-            commun::journal(&format!("relevé des tâches : Planificateur : {e}"));
-            anomalies.push(anomalie_incomplet("planificateur"));
-        }
+        derniere.clone_from(&lecture.premiere_erreur);
+    }
+    drop(derniere);
+    if let Some(racine) = &lecture.racine {
+        let dossier = format!(r"{}\Tasks", natif::dossier_systeme());
+        let mut reverifications = 0usize;
+        const INTROUVABLE: [HRESULT; 2] = [HRESULT(0x8007_0002u32 as i32), HRESULT(0x8007_0003u32 as i32)];
+        let mut enregistree = |nom: &str| {
+            if lecture.vus.contains(&nom.to_lowercase()) {
+                return Some(true);
+            }
+            // Pas dans l'énumération : créée depuis ? Revérifiée, au plus quelques fois, sur la même connexion
+            if reverifications >= MAX_REVERIFICATIONS {
+                return None;
+            }
+            reverifications += 1;
+            match unsafe { racine.GetTask(&BSTR::from(nom)) } {
+                Ok(_) => Some(true),
+                // Supprimée depuis : plus de fichier, rien à dire
+                Err(e) if INTROUVABLE.contains(&e.code()) => Some(fs::symlink_metadata(format!("{dossier}{nom}")).is_err()),
+                Err(_) => None,
+            }
+        };
+        anomalies.extend(examiner_dossier_taches(Path::new(&dossier), &BORNES_TACHES, &mut enregistree));
     }
     let mut l = sortie.lock().unwrap();
     for (nom, motif) in anomalies {
@@ -675,22 +869,7 @@ fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
     }
 }
 
-fn tache_existe(chemin: &str) -> bool {
-    use windows::core::{BSTR, VARIANT};
-    use windows::Win32::System::TaskScheduler::{ITaskService, TaskScheduler};
-    unsafe {
-        let Ok(service) = CoCreateInstance::<_, ITaskService>(&TaskScheduler, None, CLSCTX_INPROC_SERVER) else { return false };
-        let vide = VARIANT::default();
-        if service.Connect(&vide, &vide, &vide, &vide).is_err() {
-            return false;
-        }
-        service.GetFolder(&BSTR::from(r"\")).and_then(|r| r.GetTask(&BSTR::from(chemin))).is_ok()
-    }
-}
 
-fn decoder_entites(s: &str) -> String {
-    s.replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'").replace("&amp;", "&")
-}
 
 fn cible_raccourci(fichier: &str) -> Option<String> {
     unsafe {
