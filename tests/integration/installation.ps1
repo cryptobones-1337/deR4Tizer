@@ -567,7 +567,7 @@ Verifier 'Relevé des tâches : aucune anomalie sur un Windows sain' {
     $e = @(Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ })
     $taches = @($e | Where-Object { $_.Categorie -eq 'Tâche planifiée' })
     if (-not $taches.Count) { return 'aucune tâche relevée' }
-    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' })
+    $mauvais = @($taches | Where-Object { $_.Commande -like 'Dossier des tâches :*' -or $_.Commande -eq '(action non reconnue)' })
     if ($mauvais.Count) { return "$(($mauvais | ForEach-Object { "$($_.Nom) : $($_.Commande)" }) -join ' ; ')" }
     Write-Host "  tâches relevées : $($taches.Count)"
     $true
@@ -730,9 +730,8 @@ $verrou = if ("$v".Trim() -eq '0') { Poser-Verrou $fichierTache $script:compte }
 if ($verrou -ne 'accorde') {
     NonExecute $titreVerrou "verrou non obtenu : $verrou"
 } else {
-    # Le résultat d'abord : un verrou tombé en route ne prouve rien (relecture de #106, S5)
-    $tombe = $false
-    $resultatVerrou = try {
+    # Le constat d'abord, puis le témoin. Un échec constaté prime toujours ; un succès n'en est un que si le verrou tenait encore (relecture de #106, S5, T3)
+    $constat = try {
         foreach ($n in $temoinsVerrou) { $null = En-TantQue $script:compte "schtasks /Create /TN $n /TR 'cmd.exe /c exit 12' /SC ONCE /ST 23:59 /F 2>&1 | Out-Null" }
         $f = Join-Path $script:Donnees 'demarrage.json'
         $lire = { @(Get-Content $f -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $_.Categorie -eq 'Tâche planifiée' }) }
@@ -749,15 +748,18 @@ if ($verrou -ne 'accorde') {
             $mauvais = @(& $lire | Where-Object { $_.Nom -match 'relevé incomplet' })
             if ($mauvais.Count) { "relevé incomplet, verrou tenu : $(($mauvais | ForEach-Object Nom) -join ', ') ; journal : $(Journal 'relevé des tâches' 3)" } else { $true }
         }
+    } catch { "exception : $($_.Exception.Message)" }
+    $tenait = try {
         $w = Temoin-Blocage $fichierTache
         Stop-Process -Id $w.Processus.Id -Force -ErrorAction SilentlyContinue
-        $tombe = -not $w.Bloque
-    } catch { "exception : $($_.Exception.Message)" } finally {
-        Retirer-Verrou
-        foreach ($n in @($tacheVerrou) + $temoinsVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
-    }
-    if ($tombe) { NonExecute $titreVerrou 'le verrou ne tenait plus à la fin : contrôle sans valeur' }
-    else { Verifier $titreVerrou { @($resultatVerrou)[0] } }
+        [bool]$w.Bloque
+    } catch { $false }
+    Retirer-Verrou
+    foreach ($n in @($tacheVerrou) + $temoinsVerrou) { Schtasks-Code /Delete /F /TN $n | Out-Null }
+    $constat = @($constat)[0]
+    if ($constat -ne $true) { Verifier $titreVerrou { $constat } }
+    elseif (-not $tenait) { NonExecute $titreVerrou 'le verrou ne tenait plus à la fin, ou témoin en échec : contrôle sans valeur' }
+    else { Verifier $titreVerrou { $true } }
 }
 Retirer-Verrou
 Schtasks-Code /Delete /F /TN $tacheVerrou | Out-Null

@@ -627,11 +627,20 @@ pub(crate) fn dedupliquer_releve(releve: Vec<EntreeDemarrage>) -> Vec<EntreeDema
             Some(_) => {}
         }
     }
+    // Au plus 16, comme les autres anomalies, puis une entrée de libellé stable (relecture de #106, T2)
+    let mut signales = 0usize;
     for nom in doublons {
-        if !vues.contains_key(&format!("Tâche planifiée|{nom} : doublon")) {
-            vues.insert(format!("Tâche planifiée|{nom} : doublon"), String::new());
-            ajouter_anomalie(&mut gardees, &format!("{nom} : doublon"), "deux tâches de même nom affiché, commandes différentes");
+        let cle = format!("Tâche planifiée|{nom} : doublon");
+        if vues.contains_key(&cle) {
+            continue;
         }
+        if signales >= BORNES_TACHES.anomalies {
+            ajouter_anomalie(&mut gardees, r"\(relevé des tâches : doublons au-delà du plafond)", "autres tâches de même nom affiché, non nommées");
+            break;
+        }
+        signales += 1;
+        vues.insert(cle, String::new());
+        ajouter_anomalie(&mut gardees, &format!("{nom} : doublon"), "deux tâches de même nom affiché, commandes différentes");
     }
     gardees
 }
@@ -648,7 +657,8 @@ pub(crate) fn plafonner_nouvelles_taches(reference: &HashMap<String, EntreeDemar
         (!e.nom.to_lowercase().starts_with(r"\microsoft\"), vue, e.cle.clone())
     }).collect();
     let presentes: std::collections::HashSet<String> = nouvelles.iter().map(|n| n.2.clone()).collect();
-    if complet {
+    // Au-delà de la borne, même sur un relevé incomplet : des noms sans cesse renouvelés ne doivent pas faire croître la mémoire du service (relecture de #106, T1)
+    if complet || attente.len() > MAX_TACHES {
         attente.retain(|c, _| presentes.contains(c));
     }
     if nouvelles.len() <= max {

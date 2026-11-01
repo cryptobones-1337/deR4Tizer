@@ -2066,6 +2066,11 @@ fn taches_nouvelles_plafonnees() {
     let mut r = vec![t(r"\a1"), t(r"\a2"), t(r"\cible")];
     p(&Default::default(), &mut r, 1, &mut a4, 3);
     assert!(r.iter().any(|e| e.nom == r"\cible") && !r.iter().any(|e| e.nom == r"\a1"), "elle passe devant la rafale");
+    // T1 : sur un relevé incomplet, l'attente reste bornée
+    let mut a5: std::collections::HashMap<String, u64> = (0..20_002).map(|i| (format!("ancien{i}"), 1)).collect();
+    let mut r = vec![t(r"\présente"), anomalie(r"\(relevé incomplet : délai)")];
+    p(&Default::default(), &mut r, 5, &mut a5, 2);
+    assert!(a5.len() <= 1, "élaguée au-delà de la borne : {}", a5.len());
     // \Microsoft d'abord, quel que soit l'ordre
     let mut a2 = std::collections::HashMap::new();
     let mut r = vec![t(r"\AAA"), t(r"\Microsoft\Windows\x")];
@@ -2117,6 +2122,11 @@ fn taches_doublon_signale() {
     assert_eq!(r.iter().filter(|e| e.anomalie).count(), 1, "une seule entrée par nom, libellé stable");
     assert!(r.iter().any(|e| e.anomalie && e.nom.contains("doublon")));
     assert_eq!(d(vec![t("un"), t("un")]).len(), 1, "même commande : pas d'anomalie");
+    // T2 : au plus 16, puis une entrée générique
+    let paires = |i: usize| { let c = format!(r"Tâche planifiée|\b{i}"); vec![E { cle: c.clone(), categorie: "Tâche planifiée".into(), nom: format!(r"\b{i}"), commande: "un".into(), ..Default::default() }, E { cle: c, categorie: "Tâche planifiée".into(), nom: format!(r"\b{i}"), commande: "deux".into(), ..Default::default() }] };
+    let r = d((0..500).flat_map(paires).collect());
+    assert_eq!(r.iter().filter(|e| e.anomalie && e.nom.ends_with(": doublon")).count(), 16, "plafond");
+    assert_eq!(r.iter().filter(|e| e.anomalie && e.nom.contains("au-delà du plafond")).count(), 1, "une entrée générique");
     let run = |c: &str| E { cle: "Run|p".into(), categorie: "Run".into(), nom: "p".into(), commande: c.into(), ..Default::default() };
     assert_eq!(d(vec![run("a"), run("b")]).len(), 1, "autres catégories : inchangé");
 }
