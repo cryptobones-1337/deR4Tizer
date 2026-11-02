@@ -1203,6 +1203,17 @@ pub fn lecture_publiable(generation_avant: u64, generation_apres: u64, commande_
     !commande_en_cours && generation_avant == generation_apres
 }
 
+/// Décision pure : état à publier avant la première lecture des règles. Drapeau présent : rien ne dit que les règles
+/// sont là, « incertaine » (l'interface offre « Rétablir Internet ») ; absent : « inactive »
+pub fn etat_provisoire(drapeau: bool) -> EtatPanique {
+    if drapeau { EtatPanique::Incertaine } else { EtatPanique::Inactive }
+}
+
+/// Au démarrage du service : aucune requête au pare-feu
+pub fn etat_provisoire_panique() {
+    ETAT_PANIQUE.store(etat_provisoire(drapeau_panique().exists()) as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn lire_etat_panique() -> EtatPanique {
     let drapeau = drapeau_panique().exists();
     match politique() {

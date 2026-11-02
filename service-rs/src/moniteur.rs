@@ -445,8 +445,10 @@ impl Moniteur {
                 }
             }).unwrap();
         }
-        // État effectif du mode panique lu une première fois avant toute publication (PR 6.5)
-        crate::reponse::rafraichir_etat_panique();
+        // Avant toute publication, un état provisoire tiré du seul drapeau, sans requête au pare-feu : le service doit se
+        // déclarer démarré en 30 s, et le pare-feu peut tarder juste après le démarrage de Windows (deux installations en
+        // échec 1920 en VM depuis la PR 6.5). Le fil « sante » lit l'état effectif dès son premier tour
+        crate::reponse::etat_provisoire_panique();
         // Santé des collectes (phase 4, PR 4.4a) et de la remontée (PR 4.4b) : historique, constats SAN-* et compteurs du
         // battement, toutes les 30 s, hors du verrou (pris seulement pour lire deux compteurs)
         {

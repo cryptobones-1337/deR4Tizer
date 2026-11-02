@@ -5796,6 +5796,11 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
     assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let generation = crate::reponse::generation_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
     assert!(m.contains("&& crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())"), "relecture de #118 : commande commencée et finie pendant la lecture");
+    // Démarrage : aucune requête au pare-feu avant que le service se déclare démarré (échecs 1920 en VM)
+    let demarrer = &m[m.find("pub fn demarrer(console: bool)").unwrap()..];
+    let demarrer = &demarrer[..demarrer.find("std::thread::Builder::new().name(\"sante\".into())").unwrap()];
+    assert!(demarrer.contains("crate::reponse::etat_provisoire_panique();"), "état provisoire au démarrage");
+    assert!(!demarrer.contains("rafraichir_etat_panique()"), "pas de lecture du pare-feu au démarrage");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
     let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
@@ -6502,4 +6507,12 @@ fn panique_lecture_recouverte_non_publiee() {
     assert!(!p(4, 4, true), "commande en cours");
     assert!(!p(4, 5, false), "commande commencée pendant la lecture");
     assert!(!p(4, 6, false), "commande commencée et finie pendant la lecture");
+}
+
+/// Démarrage du service : état provisoire tiré du drapeau seul
+#[test]
+fn panique_etat_provisoire_au_demarrage() {
+    use crate::reponse::{etat_provisoire as e, EtatPanique::*};
+    assert_eq!(e(true), Incertaine, "drapeau sans lecture des règles : jamais « active »");
+    assert_eq!(e(false), Inactive);
 }
