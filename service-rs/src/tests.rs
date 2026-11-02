@@ -5796,7 +5796,12 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
     assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let generation = crate::reponse::generation_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
     assert!(m.contains("&& crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())"), "relecture de #118 : commande commencée et finie pendant la lecture");
-    assert!(m.contains("let avant = if tours == 0 { crate::reponse::EtatPanique::Inactive } else { crate::reponse::etat_panique() };"), "audit de #118 : état incertain hérité du démarrage alerté");
+    // B1 (relecture de #119) : le premier relevé est vu par le bloc du mode panique, et n'est quitté qu'après lui
+    let f = &m[m.find("let mut premier_releve = true;").expect("premier_releve")..];
+    let (lu, alerte, fin) = (f.find("let avant = etat_avant_releve(premier_releve, crate::reponse::etat_panique());").unwrap(),
+        f.find("m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);").unwrap(), f.find("premier_releve = false;").unwrap());
+    assert!(lu < alerte && alerte < fin, "premier relevé : lu, alerté, puis seulement quitté");
+    assert_eq!(f.matches("premier_releve = false;").count(), 1);
     // Démarrage : aucune requête au pare-feu avant que le service se déclare démarré (échecs 1920 en VM)
     let demarrer = &m[m.find("pub fn demarrer(console: bool)").unwrap()..];
     let demarrer = &demarrer[..demarrer.find("std::thread::Builder::new().name(\"sante\".into())").unwrap()];
@@ -6453,7 +6458,8 @@ fn isolation_chemin_final_dans_windows_refuse() {
     std::fs::create_dir_all(&d).unwrap();
     jonction(&d.join("j"), std::path::Path::new(&crate::natif::dossier_systeme()));
     let e = crate::reponse::chemin_final_a_isoler(&d.join("j").join("cmd.exe").to_string_lossy()).unwrap_err();
-    assert!(e.contains("système Windows"), "{e}");
+    // Depuis la relecture de #119 (R1), refusé avant même d'ouvrir : un dossier du chemin est un lien
+    assert!(e.contains("lien") && e.contains("chemin réel"), "{e}");
     // La jonction elle-même, un dossier : jamais isolable (ouverte comme fichier, refusée)
     let e = crate::reponse::chemin_final_a_isoler(&d.join("j").to_string_lossy()).unwrap_err();
     assert!(e.starts_with("Refusé"), "{e}");
@@ -6489,7 +6495,8 @@ fn isolation_reverifiee_et_refus_avant_ouverture() {
     let cible = c(&r.join("d").join("cmd.exe").to_string_lossy()).unwrap();
     assert_eq!(crate::reponse::verifier_isolation(&cible), Valable);
     std::fs::remove_dir_all(r.join("d")).unwrap();
-    assert_eq!(crate::reponse::verifier_isolation(&cible), Absent);
+    // Dossier parent absent : illisible, la règle reste (relecture de #119, R3)
+    assert_eq!(crate::reponse::verifier_isolation(&cible), Illisible);
     jonction(&r.join("d"), std::path::Path::new(&crate::natif::dossier_systeme()));
     // Le dossier devenu jonction est vu sans être suivi (audit de #118, S118-03)
     assert!(matches!(crate::reponse::verifier_isolation(&cible), Detournee(v) if v.ends_with("(lien)")));
@@ -6546,8 +6553,8 @@ fn isolation_nom_critique_et_parent_lien() {
     assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&r.join("d")).to_string_lossy()), "{}", lien.display());
     assert!(matches!(verifier_isolation(&cible), Detournee(v) if v.ends_with("(lien)")));
     let _ = std::fs::remove_dir(r.join("d"));
-    // Dossier parent absent : programme absent, la règle reste
-    assert_eq!(verifier_isolation(&cible), Absent);
+    // Dossier parent absent : illisible, la règle reste (relecture de #119, R3)
+    assert_eq!(verifier_isolation(&cible), Illisible);
     // Un dossier plus haut devenu lien : vu aussi, c'est lui qui est nommé (le plus proche de la racine)
     let g = r.join("g");
     std::fs::create_dir_all(g.join("a").join("b")).unwrap();
@@ -6559,5 +6566,32 @@ fn isolation_nom_critique_et_parent_lien() {
     assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&g).to_string_lossy()), "{}", lien.display());
     assert!(matches!(verifier_isolation(&cible2), Detournee(v) if v.ends_with("(lien)")));
     let _ = std::fs::remove_dir(&g);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Relecture de #119 : B1 (premier relevé), R2 (seuls les liens comptent)
+#[test]
+fn panique_premier_releve_et_etiquettes_de_lien() {
+    use crate::moniteur::{etat_avant_releve as a, panique_devenue_incertaine as d};
+    use crate::reponse::{etiquette_lien as l, EtatPanique::*};
+    assert!(d(a(true, Incertaine), Incertaine), "incertain hérité du démarrage : alerte au premier relevé");
+    assert!(!d(a(false, Incertaine), Incertaine), "relevés suivants : une seule alerte");
+    assert!(!d(a(true, Incertaine), Active) && !d(a(true, Inactive), Inactive));
+    assert!(l(0xA000_0003) && l(0xA000_000C), "jonction, lien symbolique");
+    for e in [0x9000_001Au32, 0x8000_0013, 0x8000_0017, 0] {
+        assert!(!l(e), "{e:#x} : OneDrive, déduplication… ne sont pas des liens");
+    }
+    // Sur disque : la commande refuse un chemin dont un dossier est une jonction, sans la traverser
+    let r = std::env::temp_dir().join(format!("d4t-iso119-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&r);
+    std::fs::create_dir_all(r.join("vrai")).unwrap();
+    std::fs::write(r.join("vrai").join("x.exe"), b"x").unwrap();
+    jonction(&r.join("j"), &r.join("vrai"));
+    let e = crate::reponse::chemin_final_a_isoler(&r.join("j").join("x.exe").to_string_lossy()).unwrap_err();
+    assert!(e.contains("lien") && e.contains("chemin réel"), "{e}");
+    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("j")), Ok(Some(0xA000_0003)));
+    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("vrai")), Ok(None));
+    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("absent")), Err(()));
+    let _ = std::fs::remove_dir(r.join("j"));
     let _ = std::fs::remove_dir_all(&r);
 }

@@ -723,7 +723,7 @@ $exeIso = Join-Path $dIso 'outil-iso.exe'
 Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') $exeIso -Force
 $jIso = Join-Path $dIso 'sys'
 $reglesIso = { param($c) @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "deR4Tizer - isole $c (*" }).Count }
-Verifier 'Isolation : jonction vers System32 refusée (chemin final), nom de binaire critique refusé, aucune règle ; programme isolé sur son chemin final, deux règles ; « libérer » les retire' {
+Verifier 'Isolation : jonction vers System32 refusée (dossier du chemin qui est un lien), nom de binaire critique refusé, aucune règle ; programme isolé sur son chemin final, deux règles ; « libérer » les retire' {
     try {
         # PR 6.7a : copie d'un exécutable bénin nommée svchost.exe hors de Windows, refusée (la quarantaine convient mieux)
         $faux = Join-Path $dIso 'svchost.exe'
@@ -736,7 +736,8 @@ Verifier 'Isolation : jonction vers System32 refusée (chemin final), nom de bin
         if (-not (Nouvelle-Jonction $jIso (Join-Path $env:SystemRoot 'System32'))) { return 'jonction non créée' }
         $r = Commande-Cible 'isolerProgramme' (Join-Path $jIso 'cmd.exe')
         if ($r.Ok) { return "jonction vers System32 acceptée : $($r.Message)" }
-        if ($r.Message -notmatch 'système Windows') { return "refus inattendu : $($r.Message)" }
+        # Refusée avant toute ouverture : un dossier du chemin est un lien (PR 6.7a)
+        if ($r.Message -notmatch 'est un lien') { return "refus inattendu : $($r.Message)" }
         if (@(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer - isole *cmd.exe*' }).Count) { return 'règle posée pour cmd.exe' }
         $r = Commande-Cible 'isolerProgramme' $exeIso
         if (-not $r.Ok) { return "isolation refusée : $($r.Message)" }

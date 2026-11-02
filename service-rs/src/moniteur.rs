@@ -461,6 +461,7 @@ impl Moniteur {
                 std::thread::spawn(crate::relance::signaler_etat);
                 let mut lancement_avant = None;
                 let mut tours = 0u32;
+                let mut premier_releve = true;
                 let mut detournees_signalees: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
                     // Isolations revérifiées toutes les 5 min, hors du verrou (audit de #118, S118-01). Une isolation
@@ -490,13 +491,14 @@ impl Moniteur {
                         let generation = crate::reponse::generation_panique();
                         // Premier relevé : l'état provisoire du démarrage ne compte pas, un état incertain hérité alerte
                         // (audit de #118)
-                        let avant = if tours == 0 { crate::reponse::EtatPanique::Inactive } else { crate::reponse::etat_panique() };
+                        let avant = etat_avant_releve(premier_releve, crate::reponse::etat_panique());
                         let apres = crate::reponse::rafraichir_etat_panique();
                         if panique_devenue_incertaine(avant, apres)
                             && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
                         {
                             m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
                         }
+                        premier_releve = false;
                     }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -1631,6 +1633,12 @@ pub struct Prealable {
 
 pub fn preparer(c: &Commande) -> Prealable {
     Prealable { epargnees: (c.action.as_deref() == Some("panique") && c.valeur.as_deref() != Some("off")).then(reponse::epargnees) }
+}
+
+/// État de référence d'un relevé du mode panique : au premier, l'état provisoire du démarrage ne compte pas, et un état
+/// incertain hérité lève REP-003 (audit de #118 ; relecture de #119, B1) (pur, testé)
+pub fn etat_avant_releve(premier: bool, publie: reponse::EtatPanique) -> reponse::EtatPanique {
+    if premier { reponse::EtatPanique::Inactive } else { publie }
 }
 
 /// Passage à « incertaine » vu par le fil « sante » ; un échec de commande a déjà son alerte et rafraîchit l'état avant
