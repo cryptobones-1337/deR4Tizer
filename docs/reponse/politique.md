@@ -80,19 +80,23 @@ est retenue. Un administrateur peut toujours agir à la main.
 
 Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
 
-**Échéances.** Une échéance est un rendez-vous de relance, pas une levée.
+**Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
+(`reponses.json`) suit les suspensions, l'isolation et le mode panique ; une relance est l'alerte REP-001. Un processus
+suspendu qui n'existe plus passe à « terminé », sans alerte.
 
-| Action | Échéance | À l'échéance |
-|---|---|---|
-| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste |
-| Blocage IP par l'IPS | 24 h | levé |
-| Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h |
-| Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h |
-| Isolation d'un programme | 7 jours | reste isolé ; relance « Alerte », puis tous les 7 jours |
-| Mode panique | 4 h | reste actif ; relance « Critique », puis toutes les 24 h |
-| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info » |
-| Blocage manuel (hosts, IP) | aucune | rappel « Info » tous les 90 jours |
-| Tuer, tuer une chaîne | sans objet | irréversible, journalisé |
+| Action | Échéance | À l'échéance | État |
+|---|---|---|---|
+| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste | fait |
+| Blocage IP par l'IPS | 24 h | levé | fait (PR 6.4) |
+| Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h | fait (PR 6.4) |
+| Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h | fait (PR 6.4) |
+| Isolation d'un programme | 7 jours | reste isolé ; relance « Alerte », puis tous les 7 jours | fait (PR 6.4) |
+| Mode panique | 4 h | reste actif ; relance « Critique », puis toutes les 24 h | fait (PR 6.4) |
+| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info » | prévu, PR à part |
+| Blocage manuel (hosts, IP) | aucune | rappel « Info » tous les 90 jours | prévu, PR à part |
+| Tuer, tuer une chaîne | sans objet | irréversible, journalisé | — |
+
+Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une de 7 jours au contrôle suivant.
 
 **Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
 

@@ -3871,7 +3871,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-002"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -5769,6 +5769,16 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
     assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
     assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);"), "leurre : trace, empreinte, heure de création");
+    assert!(v.contains("crate::politique::ouvrir(crate::politique::Sorte::SuspensionAuto, &programme, Some(pid), Some(creation));"), "6.4 : registre, leurre");
+    assert!(m.contains("for a in politique::echeances(&|p, c| natif::creation_processus(p) == Some(c)) {"), "6.4 : relances dans le cycle");
+    assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
+    assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
+    assert!(m.contains("politique::ouvrir(politique::Sorte::Isolation, &chemin, None, None);"), "6.4 : isolation");
+    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);"), "6.4 : libération");
+    assert!(m.contains("politique::ouvrir(politique::Sorte::Panique, \"poste\", None, None);"), "6.4 : panique");
+    assert!(m.contains("politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);"), "6.4 : fin de panique");
+    assert!(m.contains("Duration::from_secs(duree_blocage_auto(genre))"), "D6-4 : 24 h pour l'IPS");
+    assert!(m.contains("if poser_echeances_manquantes(&mut self.blocages,"), "S109-04");
     let (poussee, notee) = (v.find("file.lock().unwrap().push(alerte);").unwrap(), v.find("crate::politique::noter_suspension(").unwrap());
     assert!(poussee < notee, "l'alerte avant l'écriture de l'historique (S110-04)");
     assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
@@ -6063,4 +6073,122 @@ fn leurre_connu_nom_editeur_et_dossier() {
     let dropbox = |e: &[&str]| e.contains(&"Dropbox, Inc");
     assert!(c(r"C:\Program Files\Dropbox\Dropbox.exe", &d, &dropbox));
     assert!(!c(r"C:\Program Files\Acronis\acronis.exe", &d, &dropbox));
+}
+
+// ------------------------------------------------------------ phase 6, PR 6.4 : registre, échéances, relances
+
+/// Le test central du dossier : une échéance ne lève jamais une suspension, une isolation ni le mode panique
+#[test]
+fn echeance_jamais_levee_pour_suspension_isolation_panique() {
+    use crate::politique::{EtatAction, Historique, Sorte::*};
+    let mut h = Historique::default();
+    for (i, s) in [SuspensionAuto, Suspension, Isolation, Panique].iter().enumerate() {
+        h.ouvrir(*s, &format!("c{i}"), Some(i as u32 + 10), Some(5), S0);
+    }
+    // Un an de relances : toujours actives
+    for jour in 0..365u64 {
+        let _ = h.relances(S0 + jour * 86_400 + 3600 * 5);
+    }
+    assert!(h.actions.iter().all(|a| a.etat == EtatAction::Active), "aucune levée");
+    assert_eq!(h.actions.len(), 4);
+}
+
+#[test]
+fn echeance_relance_periodique() {
+    use crate::politique::{calendrier, Effet, Historique, Sorte::*};
+    for (s, premiere, periode, niveau) in [(SuspensionAuto, 7_200u64, 86_400u64, "Critique"), (Suspension, 86_400, 86_400, "Alerte"), (Isolation, 604_800, 604_800, "Alerte"), (Panique, 14_400, 86_400, "Critique")] {
+        assert_eq!(calendrier(s), (premiere, periode, niveau), "{s:?} : D6-3");
+        let mut h = Historique::default();
+        h.ouvrir(s, "c", None, None, S0);
+        assert!(h.relances(S0 + premiere - 1).is_empty(), "{s:?} : avant l'échéance");
+        let r = h.relances(S0 + premiere);
+        assert_eq!(r.len(), 1, "{s:?} : à l'échéance");
+        assert_eq!(r[0].1, Effet::Relancer { niveau }, "{s:?}");
+        assert!(h.relances(S0 + premiere + 10).is_empty(), "{s:?} : pas de doublon");
+        assert!(h.relances(S0 + premiere + periode - 1).is_empty(), "{s:?} : avant la période");
+        assert_eq!(h.relances(S0 + premiere + periode).len(), 1, "{s:?} : une période après");
+        assert_eq!(h.actions[0].relances, 2);
+    }
+}
+
+#[test]
+fn registre_ouvrir_clore_terminer() {
+    use crate::politique::{EtatAction::*, Historique, Sorte::*};
+    let mut h = Historique::default();
+    h.ouvrir(SuspensionAuto, r"C:\P.exe", Some(7), Some(100), S0);
+    h.ouvrir(SuspensionAuto, r"c:\p.exe", Some(7), Some(100), S0 + 1);
+    assert_eq!(h.actions.len(), 1, "même processus : pas de doublon");
+    h.ouvrir(SuspensionAuto, r"C:\P.exe", Some(7), Some(101), S0 + 2);
+    assert_eq!(h.actions.len(), 2, "PID réutilisé : une autre action");
+    // Reprise d'un processus : seulement celui-là
+    assert_eq!(h.clore(&[Suspension, SuspensionAuto], None, Some((7, 100)), Levee), 1);
+    assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 1);
+    // Fin naturelle : identité qui ne correspond plus
+    assert_eq!(h.terminer_disparus(&|p, c| p == 7 && c == 100), 1);
+    assert!(h.actions.iter().all(|a| a.etat != Active));
+    // Isolation et panique : par cible, sans processus
+    h.ouvrir(Isolation, r"C:\Q.exe", None, None, S0);
+    h.ouvrir(Isolation, r"C:\R.exe", None, None, S0);
+    h.ouvrir(Panique, "poste", None, None, S0);
+    assert_eq!(h.clore(&[Isolation], Some(r"c:\q.EXE"), None, Levee), 1);
+    assert_eq!(h.terminer_disparus(&|_, _| false), 0, "isolation et panique ne disparaissent pas d'elles-mêmes");
+    assert_eq!(h.clore(&[Panique], None, None, Levee), 1);
+    assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 1, "R reste isolé");
+    // Une action close n'est plus relancée
+    assert!(h.relances(S0 + 10 * 604_800).iter().all(|(a, _)| a.cible == r"c:\r.exe"));
+}
+
+#[test]
+fn registre_borne() {
+    use crate::politique::{EtatAction::*, Historique, Sorte::*};
+    let mut h = Historique::default();
+    for i in 0..600u32 {
+        h.ouvrir(Isolation, &format!("c{i}"), None, None, S0 + i as u64);
+    }
+    assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 500);
+    assert!(h.actions.iter().any(|a| a.cible == "c599"), "les plus récentes restent");
+    for i in 0..200u32 {
+        h.clore(&[Isolation], Some(&format!("c{}", 100 + i)), None, Levee);
+    }
+    assert!(h.actions.iter().filter(|a| a.etat != Active).count() <= 100);
+    let lu: Historique = serde_json::from_str(r#"{"Traces":[]}"#).unwrap();
+    assert!(lu.actions.is_empty(), "historique d'avant cette version");
+    // Trop d'actives : ce sont les plus anciennes actives qui sortent, pas les closes
+    let mut h = Historique::default();
+    for i in 0..10u32 {
+        h.ouvrir(Isolation, &format!("ancienne{i}"), None, None, S0);
+        h.clore(&[Isolation], Some(&format!("ancienne{i}")), None, Levee);
+    }
+    for i in 0..510u32 {
+        h.ouvrir(Isolation, &format!("n{i}"), None, None, S0 + 1);
+    }
+    assert_eq!(h.actions.iter().filter(|a| a.etat != Active).count(), 10, "closes gardées");
+    assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 500);
+}
+
+#[test]
+fn registre_alerte_relance() {
+    use crate::politique::{alerte_relance, Historique, Sorte::*};
+    let mut h = Historique::default();
+    h.ouvrir(Panique, "poste", None, None, S0);
+    let r = h.relances(S0 + 4 * 3600 + 120);
+    let a = alerte_relance(&r[0].0, "Critique", S0 + 4 * 3600 + 120);
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-001", "Critique"));
+    assert!(a.raisons.contains("4 h 02 min") && a.raisons.contains("jamais levé automatiquement") && a.raisons.contains("PANIQUE"), "{}", a.raisons);
+}
+
+/// D6-4 et audit de #109, S109-04
+#[test]
+fn blocages_echeances_ips_et_manquantes() {
+    use crate::commun::Blocage;
+    use crate::moniteur::{duree_blocage_auto as d, poser_echeances_manquantes as p};
+    use crate::politique::Genre::*;
+    assert_eq!(d(BlocageIps), 86_400);
+    assert_eq!(d(BlocageListe), 7 * 86_400);
+    let b = |r: &str, e: &str| Blocage { type_: "parefeu".into(), cible: "c".into(), raison: r.into(), date: String::new(), expire: e.into() };
+    let mut l = vec![b("blocage automatique : Feodo", ""), b("blocage automatique : Feodo", "2099-01-01 00:00:00"), b("blocage manuel", "")];
+    assert_eq!(p(&mut l, "2026-11-09 10:00:00"), 1);
+    assert_eq!(l[0].expire, "2026-11-09 10:00:00");
+    assert_eq!(l[1].expire, "2099-01-01 00:00:00", "échéance existante gardée");
+    assert!(l[2].expire.is_empty(), "un blocage manuel reste sans échéance");
 }

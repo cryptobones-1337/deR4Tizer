@@ -422,6 +422,27 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             } finally { & $arreter $pR; Start-Sleep 1; Remove-Item $exeR, $exeR2 -Force -ErrorAction SilentlyContinue }
         }
     }
+    # Phase 6, PR 6.4 : registre des actions en cours
+    $titreRegistre = 'Registre : suspension inscrite avec son échéance de 2 h, levée à la reprise, terminée quand le processus disparaît'
+    if ($vuB) {
+        Verifier $titreRegistre {
+            $fin = (Get-Date).AddSeconds(100); $act = @()
+            do {
+                Start-Sleep 5
+                $act = @((& $historique).Actions)
+                $a = @($act | Where-Object { $_.Cible -eq $exeA.ToLowerInvariant() })
+            } while ((@($a | Where-Object { $_.Etat -eq 'Active' }).Count -or -not $a.Count) -and (Get-Date) -lt $fin)
+            $b = @($act | Where-Object { $_.Cible -eq $exeB.ToLowerInvariant() -and $_.Sorte -eq 'SuspensionAuto' })
+            if (-not $b.Count) { return "aucune suspension de B au registre : $(($act | ForEach-Object { "$($_.Sorte) $($_.Cible) $($_.Etat)" }) -join ' // ')" }
+            if (@($b | Where-Object { $_.Echeance - $_.Debut -ne 7200 }).Count) { return "échéance de B : $(($b | ForEach-Object { $_.Echeance - $_.Debut }) -join ', ')" }
+            if ($b[0].Etat -ne 'Levee') { return "première suspension de B, reprise à la main : $($b[0].Etat)" }
+            if (-not $a.Count) { return 'aucune suspension de A au registre' }
+            if (@($a | Where-Object { $_.Etat -ne 'Terminee' }).Count) { return "A, processus arrêtés : $(($a | ForEach-Object Etat) -join ', ')" }
+            $true
+        }
+    } else {
+        NonExecute $titreRegistre 'suspension automatique non observée'
+    }
     Remove-Item $exeA, $exeB -Force -ErrorAction SilentlyContinue
 }
 
