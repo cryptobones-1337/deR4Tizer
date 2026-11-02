@@ -81,8 +81,12 @@ est retenue. Un administrateur peut toujours agir à la main.
 Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
 
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
-(`reponses.json`) suit les suspensions, l'isolation et le mode panique ; une relance est l'alerte REP-001. Un processus
-suspendu qui n'existe plus passe à « terminé », sans alerte.
+(`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
+blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action à chaque contrôle. Un processus
+suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, seules les plus anciennes
+suspensions automatiques, quarantaines et blocages manuels sortent du suivi ; un mode panique, une isolation ou une
+suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit
+qu'il peut avoir été repris hors de deR4Tizer.
 
 | Action | Échéance | À l'échéance | État |
 |---|---|---|---|
@@ -92,11 +96,12 @@ suspendu qui n'existe plus passe à « terminé », sans alerte.
 | Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h | fait (PR 6.4) |
 | Isolation d'un programme | 7 jours | reste isolé ; relance « Alerte », puis tous les 7 jours | fait (PR 6.4) |
 | Mode panique | 4 h | reste actif ; relance « Critique », puis toutes les 24 h | fait (PR 6.4) |
-| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info » | prévu, PR à part |
-| Blocage manuel (hosts, IP) | aucune | rappel « Info » tous les 90 jours | prévu, PR à part |
+| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info », puis tous les 30 jours ; close par une restauration | fait (PR 6.4b) |
+| Blocage manuel (hosts, IP) | 90 jours | reste bloqué ; rappel « Info », puis tous les 90 jours ; clos par un déblocage | fait (PR 6.4b) |
 | Tuer, tuer une chaîne | sans objet | irréversible, journalisé | — |
 
-Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une de 7 jours au contrôle suivant.
+Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une au contrôle suivant : 24 h s'il vient de l'IPS,
+7 jours sinon.
 
 **Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
 

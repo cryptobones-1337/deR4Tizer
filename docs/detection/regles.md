@@ -711,7 +711,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 | Id | Constat | Code | Niveau |
 |---|---|---|---|
-| REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), puis à chaque période. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation) |
+| REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), quarantaine (30 jours), blocage manuel (90 jours), puis à chaque période. Une alerte par sorte d'action et par minute : au-delà d'une action, elle dit le nombre et nomme les 5 premières. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation), Info (quarantaine, blocage manuel) |
 | REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé | `politique.rs` | Critique |
 
 - **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un

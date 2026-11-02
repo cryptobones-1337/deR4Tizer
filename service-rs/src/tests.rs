@@ -5768,8 +5768,15 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(chemin_lu < signature_lue, "S110-15");
     assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
     assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
-    assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);"), "leurre : trace, empreinte, heure de création");
-    assert!(v.contains("crate::politique::ouvrir(crate::politique::Sorte::SuspensionAuto, &programme, Some(pid), Some(creation));"), "6.4 : registre, leurre");
+    assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), pid, creation);"), "leurre : trace, empreinte, heure de création, registre (S115-06)");
+    let p = include_str!("politique.rs").replace("\r\n", "\n");
+    assert!(p.contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), t);\n        e.h.ouvrir(Sorte::SuspensionAuto, chemin, Some(pid), Some(creation), t);\n        enregistrer(e);"), "S115-06 : une écriture");
+    assert!(m.contains("politique::ouvrir(politique::Sorte::Quarantaine, c.cible.as_deref().unwrap_or(\"\"), None, None);"), "6.4b : quarantaine");
+    assert_eq!(m.matches("politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);").count(), 2, "6.4b : restauration, et repli");
+    assert_eq!(m.matches("politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(\"\"), None, None);").count(), 2, "6.4b : blocage d'IP, par « bloquerIp » et par « bloquer » sans domaine");
+    assert!(m.contains("politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);"), "6.4b : blocage de domaine");
+    assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
+    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation, politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer");
     assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
@@ -5788,7 +5795,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("if *p == pid { Some((pid, racine.clone())) }"), "relecture de #113, J1 : la racine garde l'identité montrée jusqu'à l'action");
     assert!(m.contains("if n == 0 {\n                    return Reponse::erreur(premiere_erreur.unwrap_or_else("), "P3, P5 : aucun arrêt, pas un succès, et le premier motif");
     assert!(v.contains("(false, Some(format!(\"échec : {e}\")))"), "S113-01 : l'alerte dit l'échec");
-    assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), maintenant());"), "S113-06 : la trace porte l'heure de création");
+    assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), t);"), "S113-06 : la trace porte l'heure de création");
     assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), \"\") {"), "6.3 : racine de la chaîne");
     assert!(m.contains("filter(|(p, i)| match execution::tuer(&a, *p, i) {"), "6.3 : descendants, identité relevée à la décision");
     assert!(v.contains("leurre_connu(chemin, &dossiers_fermes(), &|e| signe_par(chemin, e))"), "S113-10 : dossier fermé en production");
@@ -6096,7 +6103,8 @@ fn echeance_jamais_levee_pour_suspension_isolation_panique() {
 #[test]
 fn echeance_relance_periodique() {
     use crate::politique::{calendrier, Effet, Historique, Sorte::*};
-    for (s, premiere, periode, niveau) in [(SuspensionAuto, 7_200u64, 86_400u64, "Critique"), (Suspension, 86_400, 86_400, "Alerte"), (Isolation, 604_800, 604_800, "Alerte"), (Panique, 14_400, 86_400, "Critique")] {
+    for (s, premiere, periode, niveau) in [(SuspensionAuto, 7_200u64, 86_400u64, "Critique"), (Suspension, 86_400, 86_400, "Alerte"), (Isolation, 604_800, 604_800, "Alerte"), (Panique, 14_400, 86_400, "Critique"),
+        (Quarantaine, 2_592_000, 2_592_000, "Info"), (BlocageManuel, 7_776_000, 7_776_000, "Info")] {
         assert_eq!(calendrier(s), (premiere, periode, niveau), "{s:?} : D6-3");
         let mut h = Historique::default();
         h.ouvrir(s, "c", None, None, S0);
@@ -6143,12 +6151,12 @@ fn registre_borne() {
     use crate::politique::{EtatAction::*, Historique, Sorte::*};
     let mut h = Historique::default();
     for i in 0..600u32 {
-        h.ouvrir(Isolation, &format!("c{i}"), None, None, S0 + i as u64);
+        h.ouvrir(Quarantaine, &format!("c{i}"), None, None, S0 + i as u64);
     }
     assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 500);
     assert!(h.actions.iter().any(|a| a.cible == "c599"), "les plus récentes restent");
     for i in 0..200u32 {
-        h.clore(&[Isolation], Some(&format!("c{}", 100 + i)), None, Levee);
+        h.clore(&[Quarantaine], Some(&format!("c{}", 100 + i)), None, Levee);
     }
     assert!(h.actions.iter().filter(|a| a.etat != Active).count() <= 100);
     let lu: Historique = serde_json::from_str(r#"{"Traces":[]}"#).unwrap();
@@ -6160,10 +6168,64 @@ fn registre_borne() {
         h.clore(&[Isolation], Some(&format!("ancienne{i}")), None, Levee);
     }
     for i in 0..510u32 {
-        h.ouvrir(Isolation, &format!("n{i}"), None, None, S0 + 1);
+        h.ouvrir(BlocageManuel, &format!("n{i}"), None, None, S0 + 1);
     }
     assert_eq!(h.actions.iter().filter(|a| a.etat != Active).count(), 10, "closes gardées");
     assert_eq!(h.actions.iter().filter(|a| a.etat == Active).count(), 500);
+    // S115-01 : panique, isolation et suspension manuelle ne sortent jamais, même les plus anciennes
+    let mut h = Historique::default();
+    h.ouvrir(Panique, "poste", None, None, S0);
+    h.ouvrir(Isolation, "iso", None, None, S0);
+    h.ouvrir(Suspension, "manuelle", Some(1), Some(1), S0);
+    for i in 0..600u32 {
+        h.ouvrir(SuspensionAuto, &format!("a{i}"), Some(i + 10), Some(1), S0 + 1 + i as u64);
+    }
+    for c in ["poste", "iso", "manuelle", "a599"] {
+        assert!(h.actions.iter().any(|a| a.cible == c && a.etat == Active), "{c} toujours suivi");
+    }
+    assert!(!h.actions.iter().any(|a| a.cible == "a0"), "la plus ancienne évinçable sort");
+    // Rien d'évinçable : la borne est dépassée plutôt que de perdre une isolation
+    let mut h = Historique::default();
+    for i in 0..510u32 {
+        h.ouvrir(Isolation, &format!("i{i}"), None, None, S0);
+    }
+    assert_eq!(h.actions.len(), 510);
+}
+
+/// Audit de #115, S115-02, S115-03, S115-06 ; relecture, P3
+#[test]
+fn registre_relances_groupees_et_texte() {
+    use crate::politique::{regrouper_relances as g, Historique, Sorte::*};
+    let mut h = Historique::default();
+    for i in 0..30u32 {
+        h.ouvrir(SuspensionAuto, &format!("p{i}.exe"), Some(i + 1), Some(1), S0);
+    }
+    h.ouvrir(Panique, "poste", None, None, S0);
+    h.ouvrir(Suspension, "m.exe", Some(99), Some(1), S0);
+    let t = S0 + 86_400;
+    let r = h.relances(t);
+    assert_eq!(r.len(), 32);
+    let a = g(&r, t);
+    assert_eq!(a.len(), 3, "une alerte par sorte");
+    let auto = a.iter().find(|x| x.raisons.contains("p0.exe")).unwrap();
+    assert!(auto.raisons.starts_with("30 actions de ce type toujours en cours, dont : p0.exe, p1.exe, p2.exe, p3.exe, p4.exe. "), "{}", auto.raisons);
+    assert!(!auto.raisons.contains("p5.exe"), "5 cibles nommées au plus");
+    assert!(auto.raisons.contains("il peut avoir été repris hors de deR4Tizer"), "S115-03");
+    let seule = a.iter().find(|x| x.raisons.contains("m.exe")).unwrap();
+    assert!(!seule.raisons.contains("actions de ce type"), "une seule : texte simple");
+    assert!(seule.raisons.contains("il peut avoir été repris hors de deR4Tizer"));
+    let panique = a.iter().find(|x| x.raisons.contains("PANIQUE")).unwrap();
+    assert!(!panique.raisons.contains("repris hors"), "pas pour la panique");
+    assert!(g(&[], t).is_empty());
+    // Clé bornée (S115-06) et déclencheur (P3)
+    let mut h = Historique::default();
+    h.ouvrir(Isolation, &"A".repeat(40_000), None, None, S0);
+    assert_eq!(h.actions[0].cible.chars().count(), 1024);
+    assert_eq!(h.actions[0].declencheur, "administrateur");
+    h.ouvrir(SuspensionAuto, "x", Some(1), Some(1), S0);
+    assert_eq!(h.actions[1].declencheur, "automatique : leurre");
+    let lu: crate::politique::ActionEnCours = serde_json::from_str(&serde_json::to_string(&h.actions[0]).unwrap().replace(",\"Declencheur\":\"administrateur\"", "")).unwrap();
+    assert_eq!(lu.declencheur, "", "action d'avant cette version");
 }
 
 #[test]
@@ -6187,10 +6249,12 @@ fn blocages_echeances_ips_et_manquantes() {
     assert_eq!(d(BlocageListe), 7 * 86_400);
     let b = |r: &str, e: &str| Blocage { type_: "parefeu".into(), cible: "c".into(), raison: r.into(), date: String::new(), expire: e.into() };
     let mut l = vec![b("blocage automatique : Feodo", ""), b("blocage automatique : Feodo", "2099-01-01 00:00:00"), b("blocage manuel", "")];
-    assert_eq!(p(&mut l, "2026-11-09 10:00:00"), 1);
+    l.push(b("IPS : scan de ports", ""));
+    assert_eq!(p(&mut l, "2026-11-09 10:00:00", "2026-11-03 10:00:00"), 2);
     assert_eq!(l[0].expire, "2026-11-09 10:00:00");
     assert_eq!(l[1].expire, "2099-01-01 00:00:00", "échéance existante gardée");
     assert!(l[2].expire.is_empty(), "un blocage manuel reste sans échéance");
+    assert_eq!(l[3].expire, "2026-11-03 10:00:00", "IPS d'avant l'échéance : 24 h (S115-05)");
 }
 
 /// Passage en VM de #115 : un processus arrêté dont un autre programme garde le handle restait « actif » au registre
