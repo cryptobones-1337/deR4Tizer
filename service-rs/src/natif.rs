@@ -1233,7 +1233,10 @@ pub fn ouvrir_sans_lien(chemin: &std::path::Path, acces: u32, partage: u32, doss
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_MODE, OPEN_EXISTING,
     };
     let nom = large(&chemin.to_string_lossy());
-    let options = FILE_FLAG_OPEN_REPARSE_POINT | if dossier { FILE_FLAG_BACKUP_SEMANTICS } else { FILE_FLAGS_AND_ATTRIBUTES(0) };
+    // SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION : un tube nommé ouvert par erreur n'emprunte pas l'identité du
+    // service (relecture de #118, R1)
+    let options = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAGS_AND_ATTRIBUTES(0x0011_0000)
+        | if dossier { FILE_FLAG_BACKUP_SEMANTICS } else { FILE_FLAGS_AND_ATTRIBUTES(0) };
     let h = unsafe { CreateFileW(PCWSTR(nom.as_ptr()), acces, FILE_SHARE_MODE(partage), None, OPEN_EXISTING, options, HANDLE::default()) }
         .map_err(|e| {
             if e.code() == ERROR_FILE_NOT_FOUND.to_hresult() || e.code() == ERROR_PATH_NOT_FOUND.to_hresult() {

@@ -445,8 +445,10 @@ impl Moniteur {
                 }
             }).unwrap();
         }
-        // État effectif du mode panique lu une première fois avant toute publication (PR 6.5)
-        crate::reponse::rafraichir_etat_panique();
+        // Avant toute publication, un état provisoire tiré du seul drapeau, sans requête au pare-feu : le service doit se
+        // déclarer démarré en 30 s, et le pare-feu peut tarder juste après le démarrage de Windows (deux installations en
+        // échec 1920 en VM depuis la PR 6.5). Le fil « sante » lit l'état effectif dès son premier tour
+        crate::reponse::etat_provisoire_panique();
         // Santé des collectes (phase 4, PR 4.4a) et de la remontée (PR 4.4b) : historique, constats SAN-* et compteurs du
         // battement, toutes les 30 s, hors du verrou (pris seulement pour lire deux compteurs)
         {
@@ -458,12 +460,41 @@ impl Moniteur {
                 // Dans son propre fil : schtasks peut mettre 60 s à répondre, le fil « sante » n'attend pas (relecture de #101, O2)
                 std::thread::spawn(crate::relance::signaler_etat);
                 let mut lancement_avant = None;
+                let mut tours = 0u32;
+                let mut detournees_signalees: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
                 while !p.arret.load(Ordering::Relaxed) {
+                    // Isolations revérifiées toutes les 5 min, hors du verrou (audit de #118, S118-01). Une isolation
+                    // détournée est signalée une fois (REP-004), jamais levée : la décision reste humaine (relecture de
+                    // #118, D2)
+                    if tours % 10 == 0 {
+                        let isoles: Vec<String> = m.lock().unwrap().blocages.iter().filter(|b| b.type_ == "programme").map(|b| b.cible.clone()).collect();
+                        detournees_signalees.retain(|(c, _)| isoles.contains(c));
+                        for cible in isoles {
+                            match reponse::verifier_isolation(&cible) {
+                                reponse::EtatIsolation::Detournee(vers) => {
+                                    if detournees_signalees.insert((cible.clone(), vers.clone())) {
+                                        commun::journal(&format!("isolation détournée : {cible} mène à {vers} ; règles gardées"));
+                                        m.lock().unwrap().ajouter_alerte_brute(alerte_isolation_detournee(&cible, &vers), None);
+                                    }
+                                }
+                                reponse::EtatIsolation::Valable => detournees_signalees.retain(|(c, _)| c != &cible),
+                                _ => {}
+                            }
+                        }
+                    }
+                    tours = tours.wrapping_add(1);
                     // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5) ; devenu incertain hors d'une
                     // commande (règle retirée par un tiers) : REP-003 (relecture de #117, P1)
-                    let avant = crate::reponse::etat_panique();
-                    if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {
-                        m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                    // Pendant une commande du mode panique, l'état est un instant incertain : rien n'est conclu (audit de #117)
+                    if !crate::reponse::commande_panique_en_cours() {
+                        let generation = crate::reponse::generation_panique();
+                        let avant = crate::reponse::etat_panique();
+                        let apres = crate::reponse::rafraichir_etat_panique();
+                        if panique_devenue_incertaine(avant, apres)
+                            && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
+                        {
+                            m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                        }
                     }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -1394,13 +1425,14 @@ En-tête : Authorization: Bearer {j}"))
                 }
             }
             "isolerProgramme" => {
-                let chemin = c.cible.clone().unwrap_or_default();
-                if chemin.is_empty() || chemin.to_lowercase().starts_with(&natif::dossier_windows().to_lowercase()) {
-                    return Reponse::erreur("Refusé : chemin vide ou programme du système Windows.");
-                }
                 let a = match autorisation_humaine(Action::Isoler) {
                     Ok(a) => a,
                     Err(r) => return r,
+                };
+                // Chemin final par handle : le refus du dossier Windows et les règles portent sur lui (PR 6.6)
+                let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or("")) {
+                    Ok(c) => c,
+                    Err(e) => return Reponse::erreur(e),
                 };
                 match execution::isoler_programme(&a, &chemin) {
                     Ok(()) => {
@@ -1603,6 +1635,24 @@ pub fn preparer(c: &Commande) -> Prealable {
 /// (pur, testé)
 pub fn panique_devenue_incertaine(avant: reponse::EtatPanique, apres: reponse::EtatPanique) -> bool {
     avant != reponse::EtatPanique::Incertaine && apres == reponse::EtatPanique::Incertaine
+}
+
+/// REP-004 (pur, testé)
+pub fn alerte_isolation_detournee(cible: &str, vers: &str) -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_004.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        processus: "deR4Tizer".into(),
+        chemin: cible.into(),
+        destination: "isolation d'un programme".into(),
+        raisons: format!("Isolation détournée : le chemin isolé ({cible}) mène maintenant à {vers} (dossier remplacé par une jonction, \
+            ou fichier par un lien). Les règles de pare-feu sont gardées, jamais levées automatiquement : elles peuvent couper le \
+            réseau de {vers}. Décision humaine : « Libérer » si ce programme ne doit pas être coupé, puis retrouver le programme \
+            isolé et l'isoler de nouveau."),
+        ..Default::default()
+    }
 }
 
 pub fn alerte_panique_incertaine() -> Alerte {

@@ -1081,7 +1081,10 @@ Verifier "Mode panique : deux règles, état « active » publié, gardé par «
         [void](Redemarrer-Service)
         $d = Get-Date
         if ((& $reglesPanique) -ne 2) { return "règles après redémarrage : $(& $reglesPanique)" }
-        if (($e = & $etatPanique $d) -ne 'active/True') { return "état publié après redémarrage : $e" }
+        # Au démarrage, état provisoire (« incertaine », sans requête au pare-feu), puis l'état effectif au premier relevé
+        $fin = (Get-Date).AddSeconds(120); $e = ''
+        do { Start-Sleep 5; $x = Etat; if ($x) { $e = "$($x.PaniqueEtat)/$($x.Panique)" } } while ($e -ne 'active/True' -and (Get-Date) -lt $fin)
+        if ($e -ne 'active/True') { return "état publié après redémarrage : $e" }
         $r = & $commandePanique 'off'
         if (-not $r.Ok) { return "désactivation refusée : $($r.Message)" }
         $d = Get-Date
