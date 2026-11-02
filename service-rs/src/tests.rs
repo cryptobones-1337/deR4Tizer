@@ -5775,7 +5775,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(m.matches("politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);").count(), 2, "6.4b : restauration, et repli");
     assert_eq!(m.matches("politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(\"\"), None, None);").count(), 2, "6.4b : blocage d'IP, par « bloquerIp » et par « bloquer » sans domaine");
     assert!(m.contains("politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);"), "6.4b : blocage de domaine");
-    assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);"), "6.4b : déblocage");
+    assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
     assert!(m.contains("politique::clore(&[politique::Sorte::Isolation, politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer");
     assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");

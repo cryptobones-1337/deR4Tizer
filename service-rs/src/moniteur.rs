@@ -1527,7 +1527,6 @@ En-tête : Authorization: Bearer {j}"))
         if type_ == "parefeu" {
             blocage::supprimer_regle(cible);
         }
-        politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
         if type_ == "programme" {
             politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
             reponse::liberer_programme(cible);
@@ -1541,6 +1540,8 @@ En-tête : Authorization: Bearer {j}"))
             self.empreinte_hosts = blocage::empreinte_hosts();
         }
         let _ = commun::ecrire("blocages.json", &self.blocages);
+        // Clos seulement une fois le déblocage fait : un fichier hosts refusé laisse le rappel en place (audit de #116, S116-03)
+        politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
         Reponse::ok(format!("{cible} débloqué."))
     }
 
