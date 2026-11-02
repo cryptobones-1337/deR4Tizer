@@ -5796,6 +5796,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
     assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let generation = crate::reponse::generation_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
     assert!(m.contains("&& crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())"), "relecture de #118 : commande commencée et finie pendant la lecture");
+    assert!(m.contains("let avant = if tours == 0 { crate::reponse::EtatPanique::Inactive } else { crate::reponse::etat_panique() };"), "audit de #118 : état incertain hérité du démarrage alerté");
     // Démarrage : aucune requête au pare-feu avant que le service se déclare démarré (échecs 1920 en VM)
     let demarrer = &m[m.find("pub fn demarrer(console: bool)").unwrap()..];
     let demarrer = &demarrer[..demarrer.find("std::thread::Builder::new().name(\"sante\".into())").unwrap()];
@@ -6490,7 +6491,8 @@ fn isolation_reverifiee_et_refus_avant_ouverture() {
     std::fs::remove_dir_all(r.join("d")).unwrap();
     assert_eq!(crate::reponse::verifier_isolation(&cible), Absent);
     jonction(&r.join("d"), std::path::Path::new(&crate::natif::dossier_systeme()));
-    assert!(matches!(crate::reponse::verifier_isolation(&cible), Detournee(v) if v.to_lowercase().contains("system32")));
+    // Le dossier devenu jonction est vu sans être suivi (audit de #118, S118-03)
+    assert!(matches!(crate::reponse::verifier_isolation(&cible), Detournee(v) if v.ends_with("(lien)")));
     let _ = std::fs::remove_dir(r.join("d"));
     let _ = std::fs::remove_dir_all(&r);
     assert!(matches!(crate::reponse::verifier_isolation(r"\\serveur\p\x.exe"), Detournee(_)), "jamais ouvert");
@@ -6515,4 +6517,47 @@ fn panique_etat_provisoire_au_demarrage() {
     use crate::reponse::{etat_provisoire as e, EtatPanique::*};
     assert_eq!(e(true), Incertaine, "drapeau sans lecture des règles : jamais « active »");
     assert_eq!(e(false), Inactive);
+}
+
+/// Audit de #118 : nom d'un binaire critique hors de Windows refusé ; dossier parent devenu lien, détourné sans l'ouvrir
+#[test]
+fn isolation_nom_critique_et_parent_lien() {
+    use crate::reponse::{isolation_permise as p, premier_parent_lien, verifier_isolation, EtatIsolation::*};
+    let w = r"C:\Windows";
+    for n in ["svchost.exe", "LSASS.EXE", "explorer.exe", "csrss.exe", "winlogon.exe"] {
+        let e = p(&format!(r"\\?\C:\Users\a\d\{n}"), w).unwrap_err();
+        assert!(e.contains("programme critique") && e.contains("quarantaine"), "{n} : {e}");
+    }
+    assert!(p(r"\\?\C:\Users\a\d\svchost2.exe", w).is_ok(), "nom voisin accepté");
+    assert!(p(r"\\?\C:\Users\a\svchost.exe\outil.exe", w).is_ok(), "seul le nom du fichier compte");
+    let r = std::env::temp_dir().join(format!("d4t-isop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&r);
+    std::fs::create_dir_all(r.join("d")).unwrap();
+    std::fs::write(r.join("d").join("x.exe"), b"x").unwrap();
+    let cible = crate::reponse::chemin_final_a_isoler(&r.join("d").join("x.exe").to_string_lossy()).unwrap();
+    assert_eq!(premier_parent_lien(std::path::Path::new(&cible)), Ok(None));
+    assert_eq!(verifier_isolation(&cible), Valable);
+    std::fs::remove_dir_all(r.join("d")).unwrap();
+    // Le dossier remplacé par une jonction vers un dossier qui contient un x.exe : détourné sur le lien, sans le suivre
+    std::fs::create_dir_all(r.join("ailleurs")).unwrap();
+    std::fs::write(r.join("ailleurs").join("x.exe"), b"y").unwrap();
+    jonction(&r.join("d"), &r.join("ailleurs"));
+    let lien = premier_parent_lien(std::path::Path::new(&cible)).unwrap().expect("lien vu");
+    assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&r.join("d")).to_string_lossy()), "{}", lien.display());
+    assert!(matches!(verifier_isolation(&cible), Detournee(v) if v.ends_with("(lien)")));
+    let _ = std::fs::remove_dir(r.join("d"));
+    // Dossier parent absent : programme absent, la règle reste
+    assert_eq!(verifier_isolation(&cible), Absent);
+    // Un dossier plus haut devenu lien : vu aussi, c'est lui qui est nommé (le plus proche de la racine)
+    let g = r.join("g");
+    std::fs::create_dir_all(g.join("a").join("b")).unwrap();
+    std::fs::write(g.join("a").join("b").join("y.exe"), b"x").unwrap();
+    let cible2 = crate::reponse::chemin_final_a_isoler(&g.join("a").join("b").join("y.exe").to_string_lossy()).unwrap();
+    std::fs::rename(&g, r.join("g-vrai")).unwrap();
+    jonction(&g, &r.join("g-vrai"));
+    let lien = premier_parent_lien(std::path::Path::new(&cible2)).unwrap().expect("lien plus haut vu");
+    assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&g).to_string_lossy()), "{}", lien.display());
+    assert!(matches!(verifier_isolation(&cible2), Detournee(v) if v.ends_with("(lien)")));
+    let _ = std::fs::remove_dir(&g);
+    let _ = std::fs::remove_dir_all(&r);
 }

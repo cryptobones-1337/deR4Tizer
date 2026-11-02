@@ -878,6 +878,12 @@ pub fn isolation_permise(chemin_final: &str, windows: &str) -> Result<String, St
     if w.is_empty() || l == w || l.starts_with(&format!("{w}\\")) {
         return Err("Refusé : programme du système Windows (chemin final).".into());
     }
+    // Un vrai binaire critique est sous Windows, déjà refusé : ailleurs, son nom ne sert qu'à faire couper le vrai par
+    // une jonction posée après coup (audit de #118). La quarantaine convient mieux
+    let nom = l.rsplit('\\').next().unwrap_or("");
+    if CRITIQUES.iter().any(|x| x.rsplit('\\').next() == Some(nom)) {
+        return Err(format!("Refusé : « {nom} » est le nom d'un programme critique de Windows, hors du dossier Windows ; la quarantaine convient mieux."));
+    }
     Ok(c)
 }
 
@@ -929,9 +935,30 @@ pub fn decision_isolation(cible_longue: &str, lu: &Result<Option<String>, String
     }
 }
 
+/// Premier dossier du chemin, en partant de la racine, qui est un point d'analyse (lien, jonction) ; lu sans le suivre,
+/// élément par élément : SYSTEM ne traverse jamais un lien qu'il n'a pas regardé (audit de #118, S118-03)
+pub fn premier_parent_lien(chemin: &Path) -> Result<Option<PathBuf>, ()> {
+    use std::os::windows::fs::MetadataExt;
+    let parents: Vec<&Path> = chemin.ancestors().skip(1).filter(|p| p.parent().is_some()).collect();
+    for p in parents.into_iter().rev() {
+        match fs::symlink_metadata(p) {
+            Ok(m) if m.file_attributes() & 0x400 != 0 => return Ok(Some(p.to_path_buf())),
+            Ok(_) => {}
+            Err(_) => return Err(()),
+        }
+    }
+    Ok(None)
+}
+
 pub fn verifier_isolation(cible: &str) -> EtatIsolation {
     if chemin_dos(cible).is_none() {
         return EtatIsolation::Detournee(cible.to_string());
+    }
+    // Un dossier du chemin devenu lien : détourné, sans l'ouvrir (il peut mener à un partage réseau)
+    match premier_parent_lien(Path::new(cible)) {
+        Ok(Some(p)) => return EtatIsolation::Detournee(format!("{} (lien)", p.display())),
+        Err(()) => return EtatIsolation::Absent,
+        Ok(None) => {}
     }
     let lu = match natif::ouvrir_sans_lien(Path::new(cible), 0x80, 0x7, false) {
         Ok(f) => natif::chemin_final(&f).map(Some),

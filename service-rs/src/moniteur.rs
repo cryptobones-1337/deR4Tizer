@@ -488,7 +488,9 @@ impl Moniteur {
                     // Pendant une commande du mode panique, l'état est un instant incertain : rien n'est conclu (audit de #117)
                     if !crate::reponse::commande_panique_en_cours() {
                         let generation = crate::reponse::generation_panique();
-                        let avant = crate::reponse::etat_panique();
+                        // Premier relevé : l'état provisoire du démarrage ne compte pas, un état incertain hérité alerte
+                        // (audit de #118)
+                        let avant = if tours == 0 { crate::reponse::EtatPanique::Inactive } else { crate::reponse::etat_panique() };
                         let apres = crate::reponse::rafraichir_etat_panique();
                         if panique_devenue_incertaine(avant, apres)
                             && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
