@@ -461,9 +461,13 @@ impl Moniteur {
                 while !p.arret.load(Ordering::Relaxed) {
                     // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5) ; devenu incertain hors d'une
                     // commande (règle retirée par un tiers) : REP-003 (relecture de #117, P1)
-                    let avant = crate::reponse::etat_panique();
-                    if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {
-                        m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                    // Pendant une commande du mode panique, l'état est un instant incertain : rien n'est conclu (audit de #117)
+                    if !crate::reponse::commande_panique_en_cours() {
+                        let avant = crate::reponse::etat_panique();
+                        let apres = crate::reponse::rafraichir_etat_panique();
+                        if panique_devenue_incertaine(avant, apres) && !crate::reponse::commande_panique_en_cours() {
+                            m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                        }
                     }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -1394,10 +1398,11 @@ En-tête : Authorization: Bearer {j}"))
                 }
             }
             "isolerProgramme" => {
-                let chemin = c.cible.clone().unwrap_or_default();
-                if chemin.is_empty() || chemin.to_lowercase().starts_with(&natif::dossier_windows().to_lowercase()) {
-                    return Reponse::erreur("Refusé : chemin vide ou programme du système Windows.");
-                }
+                // Chemin final par handle : le refus du dossier Windows et les règles portent sur lui (PR 6.6)
+                let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or("")) {
+                    Ok(c) => c,
+                    Err(e) => return Reponse::erreur(e),
+                };
                 let a = match autorisation_humaine(Action::Isoler) {
                     Ok(a) => a,
                     Err(r) => return r,

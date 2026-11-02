@@ -39,7 +39,7 @@ fusion. Celles qui touchent le même fichier passent l'une après l'autre.
 | 6.4 | Registre `reponses.json`, échéances, relances (`REP-001`) |
 | 6.4b | Quarantaine et blocage manuel au registre ; relances groupées ; corrections de la relecture et de l'audit de #115 |
 | 6.5 | Mode panique transactionnel, état effectif, PowerShell hors du verrou ; en tête, deux restes de l'audit de #116 (`tout_debloquer`, liste en mémoire) |
-| 6.6 | Isolation sur le chemin final, lu par handle |
+| 6.6 | Isolation sur le chemin final, lu par handle ; en tête, deux remarques de #117 (profil illisible, commande de panique en cours) |
 | 6.7 | Interface : page « Réponses en cours », portée et retour arrière du mode panique |
 
 Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est

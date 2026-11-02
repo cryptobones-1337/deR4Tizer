@@ -863,7 +863,41 @@ pub fn nom_regle_programme(chemin: &str, entrant: bool) -> String {
     format!("deR4Tizer - isole {} ({})", chemin, if entrant { "entrant" } else { "sortant" })
 }
 
-/// Bloque tout le trafic, entrant et sortant, d'un programme précis
+/// Chemin final rendu par Windows, sans préfixe `\\?\`, s'il est sur un lecteur local à lettre (pur, testé)
+pub fn chemin_dos(chemin_final: &str) -> Option<String> {
+    let s = chemin_final.strip_prefix(r"\\?\").unwrap_or(chemin_final);
+    let b = s.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\').then(|| s.to_string())
+}
+
+/// Décision pure : le refus du dossier Windows porte sur le chemin FINAL (noms courts, jonctions, points de montage
+/// résolus) ; un chemin réseau ou un volume sans lettre est refusé. Rend le chemin à isoler (dossier de la phase 6)
+pub fn isolation_permise(chemin_final: &str, windows: &str) -> Result<String, String> {
+    let c = chemin_dos(chemin_final).ok_or("Refusé : le programme n'est pas sur un lecteur local (réseau ou volume sans lettre).")?;
+    let (l, w) = (c.to_lowercase(), windows.trim_end_matches('\\').to_lowercase());
+    if w.is_empty() || l == w || l.starts_with(&format!("{w}\\")) {
+        return Err("Refusé : programme du système Windows (chemin final).".into());
+    }
+    Ok(c)
+}
+
+/// Ouvre le programme par handle, sans suivre de lien sur son dernier élément, et rend son chemin final s'il peut être
+/// isolé : c'est ce chemin qui est comparé au dossier Windows et qui porte les règles (PR 6.6)
+pub fn chemin_final_a_isoler(chemin: &str) -> Result<String, String> {
+    if chemin.trim().is_empty() {
+        return Err("Refusé : chemin vide.".into());
+    }
+    // FILE_READ_ATTRIBUTES, partage lecture, écriture et suppression : un programme en cours reste ouvrable
+    let f = natif::ouvrir_sans_lien(Path::new(chemin), 0x80, 0x7, false).map_err(|e| match e {
+        natif::ErreurOuverture::Absent => "Refusé : programme introuvable.".to_string(),
+        natif::ErreurOuverture::Lien => "Refusé : le chemin est un lien (jonction ou lien symbolique).".to_string(),
+        natif::ErreurOuverture::Detourne(r) | natif::ErreurOuverture::Autre(r) => format!("Refusé : programme illisible ({r})."),
+    })?;
+    let reel = natif::chemin_final(&f).map_err(|e| format!("Refusé : chemin final illisible ({e})."))?;
+    isolation_permise(&reel, &natif::dossier_windows())
+}
+
+/// Bloque tout le trafic, entrant et sortant, d'un programme précis (`chemin` : chemin final, `chemin_final_a_isoler`)
 pub fn isoler_programme(chemin: &str) -> Result<(), String> {
     unsafe {
         let p = politique().map_err(|e| e.to_string())?;
@@ -1089,6 +1123,14 @@ fn drapeau_panique() -> PathBuf {
     commun::dossier().join("panique-active")
 }
 
+/// Une commande du mode panique pose ou retire ses règles : l'état est un instant « incertain », sans que ce soit un
+/// incident (audit de #117)
+static COMMANDE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn commande_panique_en_cours() -> bool {
+    COMMANDE_PANIQUE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Dernier état effectif lu, publié dans `etat.json` sans requête au pare-feu sous le verrou du moniteur
 static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
@@ -1118,6 +1160,14 @@ pub fn etat_panique() -> EtatPanique {
 /// serveurs DNS et les serveurs de notification (`epargnees`, lues hors du verrou) restent joignables. Rien d'autre
 /// n'est modifié : la sortie du mode retire simplement les deux règles. Transactionnel depuis la PR 6.5
 pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String, String> {
+    struct EnCours;
+    impl Drop for EnCours {
+        fn drop(&mut self) {
+            COMMANDE_PANIQUE.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    COMMANDE_PANIQUE.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _en_cours = EnCours;
     let p = politique().map_err(|e| e.to_string())?;
     let pf = PareFeuWindows(p);
     let resultat = if !activer {
@@ -1133,10 +1183,14 @@ pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String
         adresses.push("2000::-3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
         // Profils désactivés avant : réactivés pour que les règles s'appliquent, rendus tels quels si l'activation échoue
         // (audit de #117, S117-01)
-        let desactives: Vec<_> = PROFILS.into_iter().filter(|p| unsafe { pf.0.get_FirewallEnabled(*p) }.map(|v| v != VARIANT_TRUE).unwrap_or(false)).collect();
+        // Un profil illisible est réactivé aussi, sans être rendu : la coupure s'applique partout (audit de #117)
+        let lus: Vec<_> = PROFILS.into_iter().map(|p| (p, unsafe { pf.0.get_FirewallEnabled(p) }.ok().map(|v| v == VARIANT_TRUE))).collect();
+        let desactives: Vec<_> = lus.iter().filter(|(_, actif)| *actif == Some(false)).map(|(p, _)| *p).collect();
         unsafe {
-            for profil in &desactives {
-                let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);
+            for (profil, actif) in &lus {
+                if *actif != Some(true) {
+                    let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);
+                }
             }
         }
         activer_panique(&pf, &adresses.join(","), &|| fs::write(drapeau_panique(), commun::maintenant()).map_err(|e| format!("drapeau du mode panique non écrit : {e}")))

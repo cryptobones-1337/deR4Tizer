@@ -714,6 +714,38 @@ if (@($eT, $eL1, $eL2 | Where-Object { $_ -and $_ -isnot [string] }).Count -eq 3
     NonExecute 'Reprise au démarrage : transactions interrompues' 'préparation échouée (voir plus haut)'
 }
 
+# ---------------------------------------------------------------- phase 6, PR 6.6 : isolation sur le chemin final
+# Programme de test (copie d'un exécutable bénin) isolé : règles posées sur son chemin final, « libérer » les retire.
+# Jonction vers System32 plus haut dans le chemin : le chemin final est sous Windows, refus, aucune règle
+$dIso = Join-Path $Origine 'isolation'
+New-Item -ItemType Directory -Force $dIso | Out-Null
+$exeIso = Join-Path $dIso 'outil-iso.exe'
+Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') $exeIso -Force
+$jIso = Join-Path $dIso 'sys'
+$reglesIso = { param($c) @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "deR4Tizer - isole $c (*" }).Count }
+Verifier 'Isolation : jonction vers System32 refusée (chemin final), aucune règle ; programme isolé sur son chemin final, deux règles ; « libérer » les retire' {
+    try {
+        if (-not (Nouvelle-Jonction $jIso (Join-Path $env:SystemRoot 'System32'))) { return 'jonction non créée' }
+        $r = Commande-Cible 'isolerProgramme' (Join-Path $jIso 'cmd.exe')
+        if ($r.Ok) { return "jonction vers System32 acceptée : $($r.Message)" }
+        if ($r.Message -notmatch 'système Windows') { return "refus inattendu : $($r.Message)" }
+        if (@(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer - isole *cmd.exe*' }).Count) { return 'règle posée pour cmd.exe' }
+        $r = Commande-Cible 'isolerProgramme' $exeIso
+        if (-not $r.Ok) { return "isolation refusée : $($r.Message)" }
+        # Le service rend le chemin final dans son message : c'est lui qui porte les règles et qui se libère
+        $final = $r.Message -replace ' est coupé du réseau.*$', ''
+        if ($final -ne $exeIso -and $final.ToLowerInvariant() -ne $exeIso.ToLowerInvariant()) { return "chemin final inattendu : $final (demandé : $exeIso)" }
+        if ((& $reglesIso $final) -ne 2) { return "règles : $(& $reglesIso $final) ; groupe : $((Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue).DisplayName -join ' // ')" }
+        $d = Commande (@{ Action = 'debloquer'; Type = 'programme'; Cible = $final } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+        if (-not $d.Ok) { return "libération refusée : $($d.Message)" }
+        if (& $reglesIso $final) { return "règles restées : $(& $reglesIso $final)" }
+        $true
+    } finally {
+        if (Test-Path $jIso) { cmd.exe /c rmdir "$jIso" | Out-Null }
+        Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer - isole *' } | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------------------------------------------------------- droits après les scénarios
 Verifier 'Droits de chaque élément après les scénarios (données, Program Files)' {
     Controle-Droits @($script:Donnees, $script:Programme) @() $Toleres

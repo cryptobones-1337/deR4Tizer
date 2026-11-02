@@ -5794,7 +5794,12 @@ fn structure_aucun_appel_direct_aux_actions() {
     let (garde, tout) = (crate::blocage::commande_suppression_groupe(true), crate::blocage::commande_suppression_groupe(false));
     assert_eq!(garde, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' } | Remove-NetFirewallRule", "Q2 : filtre");
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
-    assert!(m.contains("if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {"), "P1 : alerte au passage à incertaine");
+    assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let avant = crate::reponse::etat_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
+    assert!(m.contains("if panique_devenue_incertaine(avant, apres) && !crate::reponse::commande_panique_en_cours() {"), "audit de #117 : commande commencée entre-temps");
+    assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
+    let r = include_str!("reponse.rs").replace("\r\n", "\n");
+    assert!(r.contains("if *actif != Some(true) {\n                    let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);"), "audit de #117 : profil illisible réactivé");
+    assert!(r.contains("COMMANDE_PANIQUE.store(true, std::sync::atomic::Ordering::SeqCst);\n    let _en_cours = EnCours;\n    let p = politique()"), "drapeau posé avant toute action");
     assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
@@ -6408,4 +6413,39 @@ fn panique_devenue_incertaine_alerte() {
     let a = alerte_panique_incertaine();
     assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-003", "Critique"));
     assert!(a.raisons.contains("Rétablir Internet") && !a.raisons.contains("  "), "{}", a.raisons);
+}
+
+/// PR 6.6 : le refus du dossier Windows porte sur le chemin final
+#[test]
+fn isolation_chemin_final_dans_windows_refuse() {
+    use crate::reponse::{chemin_dos, isolation_permise as p};
+    let w = r"C:\WINDOWS";
+    assert!(p(r"\\?\C:\Windows\System32\cmd.exe", w).is_err(), "System32");
+    assert!(p(r"\\?\C:\WINDOWS", w).is_err(), "le dossier lui-même");
+    assert!(p(r"\\?\c:\windows\explorer.exe", w).is_err(), "casse");
+    assert_eq!(p(r"\\?\C:\WindowsApps\x.exe", w).unwrap(), r"C:\WindowsApps\x.exe", "préfixe du nom seulement : pas sous Windows");
+    assert_eq!(p(r"\\?\C:\Users\a\outil.exe", r"C:\Windows\").unwrap(), r"C:\Users\a\outil.exe");
+    assert!(p(r"\\?\UNC\serveur\partage\x.exe", w).is_err(), "réseau");
+    assert!(p(r"\\?\Volume{0123}\x.exe", w).is_err(), "volume sans lettre");
+    assert!(p(r"\\?\C:\Users\a\x.exe", "").is_err(), "dossier Windows inconnu : refus");
+    assert_eq!(chemin_dos(r"D:\x.exe").as_deref(), Some(r"D:\x.exe"));
+    assert!(chemin_dos("C:").is_none() && chemin_dos("").is_none());
+    // Sur disque : une jonction vers System32 plus haut dans le chemin est résolue, puis refusée ; un programme ordinaire passe
+    let d = std::env::temp_dir().join(format!("d4t-iso-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    jonction(&d.join("j"), std::path::Path::new(&crate::natif::dossier_systeme()));
+    let e = crate::reponse::chemin_final_a_isoler(&d.join("j").join("cmd.exe").to_string_lossy()).unwrap_err();
+    assert!(e.contains("système Windows"), "{e}");
+    // La jonction elle-même, un dossier : jamais isolable (ouverte comme fichier, refusée)
+    let e = crate::reponse::chemin_final_a_isoler(&d.join("j").to_string_lossy()).unwrap_err();
+    assert!(e.starts_with("Refusé"), "{e}");
+    std::fs::write(d.join("outil.exe"), b"x").unwrap();
+    let ok = crate::reponse::chemin_final_a_isoler(&d.join("outil.exe").to_string_lossy()).unwrap();
+    assert!(crate::natif::meme_chemin(&ok, &crate::natif::forme_longue(&d.join("outil.exe")).to_string_lossy()), "{ok}");
+    assert!(!ok.starts_with(r"\\?\"), "règle posée sans préfixe");
+    assert!(crate::reponse::chemin_final_a_isoler(&d.join("absent.exe").to_string_lossy()).unwrap_err().contains("introuvable"));
+    assert!(crate::reponse::chemin_final_a_isoler(" ").is_err());
+    let _ = std::fs::remove_dir(d.join("j"));
+    let _ = std::fs::remove_dir_all(&d);
 }
