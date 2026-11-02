@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use windows::core::{BSTR, PCWSTR};
-use windows::Win32::Foundation::VARIANT_TRUE;
+use windows::Win32::Foundation::{VARIANT_FALSE, VARIANT_TRUE};
 use windows::Win32::NetworkManagement::WindowsFirewall::{
     INetFwPolicy2, INetFwRule, NetFwPolicy2, NetFwRule, NET_FW_ACTION_BLOCK, NET_FW_PROFILE2_DOMAIN,
     NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC, NET_FW_RULE_DIR_IN, NET_FW_RULE_DIR_OUT,
@@ -935,8 +935,9 @@ pub fn plages_internet(epargnees: &[std::net::Ipv4Addr]) -> Vec<String> {
     plages.iter().map(|(d, f)| format!("{}-{}", std::net::Ipv4Addr::from(*d), std::net::Ipv4Addr::from(*f))).collect()
 }
 
-/// Adresses à épargner : serveurs DNS de la machine et serveurs de notification (pour que l'alerte parte)
-fn epargnees() -> Vec<std::net::Ipv4Addr> {
+/// Adresses à épargner : serveurs DNS de la machine et serveurs de notification (pour que l'alerte parte). Lance un
+/// PowerShell et des résolutions DNS : appelée hors du verrou du moniteur (`moniteur::preparer`, PR 6.5)
+pub fn epargnees() -> Vec<std::net::Ipv4Addr> {
     use std::net::ToSocketAddrs;
     let mut l = Vec::new();
     crate::mesure::powershell("reponse");
@@ -981,15 +982,26 @@ fn regle_blocage(p: &INetFwPolicy2, nom: &str, sortant: bool, adresses: &str) ->
     }
 }
 
-/// Mode panique : deux règles de BLOCAGE (qui priment sur toutes les règles d'autorisation, y compris celles
-/// qu'un programme malveillant aurait créées) vers tout Internet, IPv4 et IPv6 globales ; le réseau local, les
-/// serveurs DNS et les serveurs de notification restent joignables. Rien d'autre n'est modifié : la sortie
-/// du mode retire simplement les deux règles.
-pub fn panique(activer: bool) -> Result<String, String> {
-    let p = politique().map_err(|e| e.to_string())?;
-    unsafe {
-        if let Ok(regles) = p.Rules() {
-            for nom in [PANIQUE_SORTANT, PANIQUE_ENTRANT] {
+const PANIQUE_REGLES: [&str; 2] = [PANIQUE_SORTANT, PANIQUE_ENTRANT];
+
+/// Le pare-feu tel que le voit le mode panique : celui de Windows, ou un pare-feu simulé dans les tests (PR 6.5)
+pub trait PareFeuPanique {
+    fn ajouter(&self, nom: &str, sortant: bool, adresses: &str) -> Result<(), String>;
+    /// Retire toutes les règles de ce nom
+    fn retirer(&self, nom: &str);
+    /// Une règle de ce nom existe, activée, en blocage
+    fn presente(&self, nom: &str) -> bool;
+}
+
+struct PareFeuWindows(INetFwPolicy2);
+
+impl PareFeuPanique for PareFeuWindows {
+    fn ajouter(&self, nom: &str, sortant: bool, adresses: &str) -> Result<(), String> {
+        regle_blocage(&self.0, nom, sortant, adresses).map_err(|e| e.to_string())
+    }
+    fn retirer(&self, nom: &str) {
+        unsafe {
+            if let Ok(regles) = self.0.Rules() {
                 let b = BSTR::from(nom);
                 let mut n = 0;
                 while regles.Item(&b).is_ok() && n < 10 && regles.Remove(&b).is_ok() {
@@ -998,31 +1010,154 @@ pub fn panique(activer: bool) -> Result<String, String> {
             }
         }
     }
-    if !activer {
-        let _ = fs::remove_file(commun::dossier().join("panique-active"));
-        return Ok("Mode panique désactivé : Internet de nouveau accessible.".into());
-    }
-    let epargnees = epargnees();
-    let mut adresses = plages_internet(&epargnees);
-    adresses.push("2000::-3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
-    let liste = adresses.join(",");
-    regle_blocage(&p, PANIQUE_SORTANT, true, &liste).map_err(|e| e.to_string())?;
-    regle_blocage(&p, PANIQUE_ENTRANT, false, &liste).map_err(|e| e.to_string())?;
-    unsafe {
-        for profil in PROFILS {
-            let _ = p.put_FirewallEnabled(profil, VARIANT_TRUE);
+    fn presente(&self, nom: &str) -> bool {
+        unsafe {
+            self.0.Rules().and_then(|rs| rs.Item(&BSTR::from(nom)))
+                .map(|r| r.Enabled().map(|e| e == VARIANT_TRUE).unwrap_or(false) && r.Action().map(|a| a == NET_FW_ACTION_BLOCK).unwrap_or(false))
+                .unwrap_or(false)
         }
     }
-    // Coupe immédiatement les connexions vers Internet en cours (les règles ne s'appliquent qu'aux nouvelles)
-    let n = natif::lister_tcp().iter()
-        .filter(|c| c.etat == 5 && c.ip.parse().map(|a| crate::parefeu::publique(&a)).unwrap_or(false))
-        .filter(|c| !c.ip.parse::<std::net::Ipv4Addr>().map(|a| epargnees.contains(&a)).unwrap_or(false))
-        .filter(|c| natif::couper(c)).count();
-    fs::write(commun::dossier().join("panique-active"), commun::maintenant()).map_err(|e| e.to_string())?;
-    Ok(format!("MODE PANIQUE : Internet coupé pour tous les programmes ; réseau local, DNS et {} serveur(s) de notification conservés ; {n} connexion(s) coupée(s).",
-        epargnees.len()))
 }
 
-pub fn panique_active() -> bool {
-    commun::dossier().join("panique-active").exists()
+/// État effectif du mode panique, compté sur les règles et pas sur le drapeau seul (dossier de la phase 6, § 4.6)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum EtatPanique {
+    #[default]
+    Inactive,
+    Active,
+    /// Drapeau sans ses deux règles, ou règle sans drapeau : seule « Rétablir Internet » est sûre
+    Incertaine,
+}
+
+impl EtatPanique {
+    pub fn texte(self) -> &'static str {
+        match self {
+            EtatPanique::Inactive => "inactive",
+            EtatPanique::Active => "active",
+            EtatPanique::Incertaine => "incertaine",
+        }
+    }
+}
+
+pub fn etat_panique_de(pf: &dyn PareFeuPanique, drapeau: bool) -> EtatPanique {
+    match (drapeau, PANIQUE_REGLES.iter().filter(|n| pf.presente(n)).count()) {
+        (true, 2) => EtatPanique::Active,
+        (false, 0) => EtatPanique::Inactive,
+        _ => EtatPanique::Incertaine,
+    }
+}
+
+/// Activation transactionnelle : les deux règles posées et vérifiées, puis seulement le drapeau. Un échec à n'importe
+/// quelle étape retire ce qui a été posé : jamais d'état moitié posé (pur, testé sur un pare-feu simulé)
+pub fn activer_panique(pf: &dyn PareFeuPanique, adresses: &str, ecrire_drapeau: &dyn Fn() -> Result<(), String>) -> Result<(), String> {
+    for n in PANIQUE_REGLES {
+        pf.retirer(n);
+    }
+    let pose = pf.ajouter(PANIQUE_SORTANT, true, adresses)
+        .and_then(|_| pf.ajouter(PANIQUE_ENTRANT, false, adresses))
+        .and_then(|_| match PANIQUE_REGLES.iter().find(|n| !pf.presente(n)) {
+            Some(n) => Err(format!("règle « {n} » absente ou inactive après l'ajout")),
+            None => Ok(()),
+        })
+        .and_then(|_| ecrire_drapeau());
+    if let Err(e) = pose {
+        for n in PANIQUE_REGLES {
+            pf.retirer(n);
+        }
+        if PANIQUE_REGLES.iter().any(|n| pf.presente(n)) {
+            return Err(format!("{e} ; retrait incomplet, état incertain"));
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Désactivation : retrait, vérification qu'aucune règle ne reste, puis seulement effacement du drapeau. Une règle
+/// restée garde le drapeau : l'état publié est « incertain », pas « inactif » (pur, testé)
+pub fn desactiver_panique(pf: &dyn PareFeuPanique, effacer_drapeau: &dyn Fn() -> Result<(), String>) -> Result<(), String> {
+    for n in PANIQUE_REGLES {
+        pf.retirer(n);
+    }
+    let restes: Vec<&str> = PANIQUE_REGLES.iter().copied().filter(|n| pf.presente(n)).collect();
+    if !restes.is_empty() {
+        return Err(format!("règle(s) toujours présente(s) après le retrait : {} ; état incertain", restes.join(", ")));
+    }
+    effacer_drapeau()
+}
+
+fn drapeau_panique() -> PathBuf {
+    commun::dossier().join("panique-active")
+}
+
+/// Dernier état effectif lu, publié dans `etat.json` sans requête au pare-feu sous le verrou du moniteur
+static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Relit l'état effectif (règles et drapeau) : fil « sante » toutes les 30 s, et après chaque commande
+pub fn rafraichir_etat_panique() -> EtatPanique {
+    let drapeau = drapeau_panique().exists();
+    let e = match politique() {
+        Ok(p) => etat_panique_de(&PareFeuWindows(p), drapeau),
+        // Règles illisibles : avec le drapeau, rien ne dit qu'elles sont là
+        Err(_) if drapeau => EtatPanique::Incertaine,
+        Err(_) => EtatPanique::Inactive,
+    };
+    ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+    e
+}
+
+pub fn etat_panique() -> EtatPanique {
+    match ETAT_PANIQUE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => EtatPanique::Active,
+        2 => EtatPanique::Incertaine,
+        _ => EtatPanique::Inactive,
+    }
+}
+
+/// Mode panique : deux règles de BLOCAGE (qui priment sur toutes les règles d'autorisation, y compris celles
+/// qu'un programme malveillant aurait créées) vers tout Internet, IPv4 et IPv6 globales ; le réseau local, les
+/// serveurs DNS et les serveurs de notification (`epargnees`, lues hors du verrou) restent joignables. Rien d'autre
+/// n'est modifié : la sortie du mode retire simplement les deux règles. Transactionnel depuis la PR 6.5
+pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String, String> {
+    let p = politique().map_err(|e| e.to_string())?;
+    let pf = PareFeuWindows(p);
+    let resultat = if !activer {
+        desactiver_panique(&pf, &|| match fs::remove_file(drapeau_panique()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("drapeau du mode panique non effacé : {e}")),
+            _ => Ok(()),
+        })
+        .map(|_| "Mode panique désactivé : Internet de nouveau accessible.".to_string())
+    } else if etat_panique_de(&pf, drapeau_panique().exists()) == EtatPanique::Active {
+        Ok("Mode panique déjà actif.".to_string())
+    } else {
+        let mut adresses = plages_internet(epargnees);
+        adresses.push("2000::-3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
+        // Profils désactivés avant : réactivés pour que les règles s'appliquent, rendus tels quels si l'activation échoue
+        // (audit de #117, S117-01)
+        let desactives: Vec<_> = PROFILS.into_iter().filter(|p| unsafe { pf.0.get_FirewallEnabled(*p) }.map(|v| v != VARIANT_TRUE).unwrap_or(false)).collect();
+        unsafe {
+            for profil in &desactives {
+                let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);
+            }
+        }
+        activer_panique(&pf, &adresses.join(","), &|| fs::write(drapeau_panique(), commun::maintenant()).map_err(|e| format!("drapeau du mode panique non écrit : {e}")))
+            .map_err(|e| {
+                unsafe {
+                    for profil in &desactives {
+                        let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_FALSE);
+                    }
+                }
+                e
+            })
+            .map(|_| {
+                // Coupe immédiatement les connexions vers Internet en cours (les règles ne s'appliquent qu'aux nouvelles)
+                let n = natif::lister_tcp().iter()
+                    .filter(|c| c.etat == 5 && c.ip.parse().map(|a| crate::parefeu::publique(&a)).unwrap_or(false))
+                    .filter(|c| !c.ip.parse::<std::net::Ipv4Addr>().map(|a| epargnees.contains(&a)).unwrap_or(false))
+                    .filter(|c| natif::couper(c)).count();
+                format!("MODE PANIQUE : Internet coupé pour tous les programmes ; réseau local, DNS et {} serveur(s) de notification conservés ; {n} connexion(s) coupée(s).",
+                    epargnees.len())
+            })
+    };
+    rafraichir_etat_panique();
+    resultat
 }

@@ -257,10 +257,18 @@ pub fn supprimer_regle(ip: &str) -> usize {
 }
 
 /// Supprime toutes les règles du groupe deR4Tizer (désinstallation, ou règles orphelines)
-pub fn supprimer_groupe() -> bool {
+/// Commande PowerShell du retrait du groupe (pure, testée)
+pub fn commande_suppression_groupe(garder_panique: bool) -> String {
+    let filtre = if garder_panique { " | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' }" } else { "" };
+    format!("Get-NetFirewallRule -Group '{GROUPE}' -ErrorAction SilentlyContinue{filtre} | Remove-NetFirewallRule")
+}
+
+/// `garder_panique` : les deux règles du mode panique restent ; « tout débloquer » ne lève pas le mode panique sans le
+/// dire (relecture de #117, Q2). La désinstallation (`--nettoyer`) retire tout
+pub fn supprimer_groupe(garder_panique: bool) -> bool {
     crate::mesure::powershell("blocage");
     Command::new(crate::natif::powershell_exe())
-        .args(["-NoProfile", "-Command", &format!("Get-NetFirewallRule -Group '{GROUPE}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule")])
+        .args(["-NoProfile", "-Command", &commande_suppression_groupe(garder_panique)])
         .creation_flags(0x0800_0000)
         .output()
         .map(|s| s.status.success())

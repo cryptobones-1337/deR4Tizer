@@ -17,8 +17,8 @@ pub fn isoler_programme(_: &Autorisation, chemin: &str) -> Result<(), String> {
     reponse::isoler_programme(chemin)
 }
 
-pub fn panique(_: &Autorisation, activer: bool) -> Result<String, String> {
-    reponse::panique(activer)
+pub fn panique(_: &Autorisation, activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String, String> {
+    reponse::panique(activer, epargnees)
 }
 
 pub fn ajouter_regle(_: &Autorisation, ip: &str, raison: &str) -> windows::core::Result<()> {

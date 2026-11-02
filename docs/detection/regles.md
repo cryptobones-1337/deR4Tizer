@@ -713,6 +713,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 |---|---|---|---|
 | REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), quarantaine (30 jours), blocage manuel (90 jours), puis à chaque période. Une alerte par sorte d'action et par minute : au-delà d'une action, elle dit le nombre et nomme les 5 premières. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation), Info (quarantaine, blocage manuel) |
 | REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé | `politique.rs` | Critique |
+| REP-003 | Mode panique non posé (une règle refusée ou inactive, drapeau non écrit : tout est retiré) ou non retiré (une règle reste : drapeau gardé), ou devenu incertain hors d'une commande (règle ou drapeau retiré par un tiers, vu en 30 s au plus). Dit l'état effectif et la récupération | `moniteur.rs`, `reponse.rs` | Critique |
 
 - **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un
   programme ou une adresse actifs, ce que le prestataire doit savoir. L'alerte d'origine part toujours : RES-001 et LEU-002

@@ -445,6 +445,8 @@ impl Moniteur {
                 }
             }).unwrap();
         }
+        // État effectif du mode panique lu une première fois avant toute publication (PR 6.5)
+        crate::reponse::rafraichir_etat_panique();
         // Santé des collectes (phase 4, PR 4.4a) et de la remontée (PR 4.4b) : historique, constats SAN-* et compteurs du
         // battement, toutes les 30 s, hors du verrou (pris seulement pour lire deux compteurs)
         {
@@ -457,6 +459,12 @@ impl Moniteur {
                 std::thread::spawn(crate::relance::signaler_etat);
                 let mut lancement_avant = None;
                 while !p.arret.load(Ordering::Relaxed) {
+                    // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5) ; devenu incertain hors d'une
+                    // commande (règle retirée par un tiers) : REP-003 (relecture de #117, P1)
+                    let avant = crate::reponse::etat_panique();
+                    if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {
+                        m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                    }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
                         (g.non_suivies, g.suivis.iter().filter(|i| i.etat != crate::incidents::EtatIncident::Clos).count())
@@ -876,7 +884,8 @@ impl Moniteur {
                 ecoutes: s.ecoutes.clone(),
                 defender: self.partage.defender.lock().unwrap().clone(),
                 chaines: self.chaines.iter().take(30).cloned().collect(),
-                panique: reponse::panique_active(),
+                panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,
+                panique_etat: reponse::etat_panique().texte().into(),
                 exposition: self.exposition.clone(),
                 protection_donnees: commun::echec_protection().unwrap_or_default(),
                 collectes: etats_collectes,
@@ -1015,12 +1024,12 @@ impl Moniteur {
 
     // ------------------------------------------------------------ commandes de l'interface
 
-    pub fn executer(&mut self, c: Commande, partage: &Arc<Partage>) -> Reponse {
+    pub fn executer(&mut self, c: Commande, partage: &Arc<Partage>, prealable: Prealable) -> Reponse {
         let debut = Instant::now();
         let action = c.action.clone().unwrap_or_default();
         let cible = [c.nom_dns.as_deref(), c.ip.as_deref(), c.cible.as_deref(), c.valeur.as_deref()].into_iter().flatten()
             .find(|s| !s.is_empty()).unwrap_or("").to_string();
-        let r = self.executer_action(c, partage, &action);
+        let r = self.executer_action(c, partage, &action, prealable);
         // Actions de réponse dans le SIEM (phase 4, PR 4.1), pour la chronologie des incidents ; la logique des actions
         // n'est pas touchée
         if crate::siem::ACTIONS_DE_REPONSE.contains(&action.as_str()) {
@@ -1030,7 +1039,7 @@ impl Moniteur {
         r
     }
 
-    fn executer_action(&mut self, c: Commande, partage: &Arc<Partage>, action: &str) -> Reponse {
+    fn executer_action(&mut self, c: Commande, partage: &Arc<Partage>, action: &str, prealable: Prealable) -> Reponse {
         let action = action.to_string();
         commun::journal(&format!("commande : {action} {}", c.nom_dns.as_deref().or(c.ip.as_deref()).or(c.cible.as_deref()).unwrap_or("")));
         let raison = c.raison.clone().unwrap_or_default();
@@ -1403,19 +1412,31 @@ En-tête : Authorization: Bearer {j}"))
                     Err(e) => Reponse::erreur(format!("Pare-feu : {e}")),
                 }
             }
-            "panique" => match autorisation_humaine(if c.valeur.as_deref() != Some("off") { Action::Panique } else { Action::FinPanique }).map(|a| execution::panique(&a, c.valeur.as_deref() != Some("off"))) {
-                Err(r) => r,
-                Ok(Ok(m)) => {
-                    commun::journal(&m);
-                    if c.valeur.as_deref() != Some("off") {
-                        politique::ouvrir(politique::Sorte::Panique, "poste", None, None);
-                    } else {
-                        politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);
+            "panique" => {
+                let activer = c.valeur.as_deref() != Some("off");
+                match autorisation_humaine(if activer { Action::Panique } else { Action::FinPanique }) {
+                    Err(r) => r,
+                    Ok(a) => {
+                        let epargnees = if activer { prealable.epargnees.unwrap_or_else(reponse::epargnees) } else { Vec::new() };
+                        match execution::panique(&a, activer, &epargnees) {
+                            Ok(m) => {
+                                commun::journal(&m);
+                                if activer {
+                                    politique::ouvrir(politique::Sorte::Panique, "poste", None, None);
+                                } else {
+                                    politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);
+                                }
+                                Reponse::ok(m)
+                            }
+                            Err(e) => {
+                                commun::journal(&format!("mode panique : {e}"));
+                                self.ajouter_alerte_brute(alerte_panique(activer, &e, reponse::etat_panique()), None);
+                                Reponse::erreur(format!("Pare-feu : {e}"))
+                            }
+                        }
                     }
-                    Reponse::ok(m)
                 }
-                Ok(Err(e)) => Reponse::erreur(format!("Pare-feu : {e}")),
-            },
+            }
             "baseline" => {
                 // Valeur : appliquer / annuler / evaluer ; Cible : profil(s) ou identifiants de règles séparés par des virgules
                 if partage.baseline_occupee.swap(true, Ordering::Relaxed) {
@@ -1531,14 +1552,16 @@ En-tête : Authorization: Bearer {j}"))
             politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
             reponse::liberer_programme(cible);
         }
-        self.blocages.retain(|b| !(b.type_ == type_ && b.cible == cible));
+        // La liste en mémoire ne perd le blocage qu'une fois le fichier hosts réécrit (relecture de #116)
+        let restants: Vec<Blocage> = self.blocages.iter().filter(|b| !(b.type_ == type_ && b.cible == cible)).cloned().collect();
         if type_ == "hosts" {
-            let domaines: Vec<String> = self.blocages.iter().filter(|b| b.type_ == "hosts").map(|b| b.cible.clone()).collect();
+            let domaines: Vec<String> = restants.iter().filter(|b| b.type_ == "hosts").map(|b| b.cible.clone()).collect();
             if let Err(e) = blocage::ecrire_bloc_hosts(&domaines) {
                 return Reponse::erreur(format!("Écriture du fichier hosts refusée : {e}"));
             }
             self.empreinte_hosts = blocage::empreinte_hosts();
         }
+        self.blocages = restants;
         let _ = commun::ecrire("blocages.json", &self.blocages);
         // Clos seulement une fois le déblocage fait : un fichier hosts refusé laisse le rappel en place (audit de #116, S116-03)
         politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
@@ -1548,18 +1571,78 @@ En-tête : Authorization: Bearer {j}"))
     fn tout_debloquer(&mut self) -> Reponse {
         let ips: Vec<String> = self.blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
         let mut regles: usize = ips.iter().map(|ip| blocage::supprimer_regle(ip)).sum();
-        politique::clore(&[politique::Sorte::Isolation, politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);
+        politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);
         for b in self.blocages.iter().filter(|b| b.type_ == "programme") {
             regles += reponse::liberer_programme(&b.cible);
         }
-        blocage::supprimer_groupe(); // règles orphelines éventuelles
+        blocage::supprimer_groupe(true); // règles orphelines éventuelles, sauf celles du mode panique
         if let Err(e) = blocage::ecrire_bloc_hosts(&[]) {
             return Reponse::erreur(format!("Écriture du fichier hosts refusée : {e}"));
         }
         self.empreinte_hosts = blocage::empreinte_hosts();
         self.blocages.clear();
         let _ = commun::ecrire("blocages.json", &self.blocages);
+        // Après le fichier hosts : un refus laisse les rappels des blocages manuels (audit de #116, suite de S116-03)
+        politique::clore(&[politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);
         Reponse::ok(format!("Tous les blocages retirés ({regles} règle(s) de pare-feu)."))
+    }
+}
+
+/// Préparé hors du verrou du moniteur, avant `executer` : le PowerShell et les résolutions DNS du mode panique
+/// (dossier de la phase 6, § 4.8 ; PR 6.5)
+#[derive(Default)]
+pub struct Prealable {
+    pub epargnees: Option<Vec<std::net::Ipv4Addr>>,
+}
+
+pub fn preparer(c: &Commande) -> Prealable {
+    Prealable { epargnees: (c.action.as_deref() == Some("panique") && c.valeur.as_deref() != Some("off")).then(reponse::epargnees) }
+}
+
+/// Passage à « incertaine » vu par le fil « sante » ; un échec de commande a déjà son alerte et rafraîchit l'état avant
+/// (pur, testé)
+pub fn panique_devenue_incertaine(avant: reponse::EtatPanique, apres: reponse::EtatPanique) -> bool {
+    avant != reponse::EtatPanique::Incertaine && apres == reponse::EtatPanique::Incertaine
+}
+
+pub fn alerte_panique_incertaine() -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_003.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        processus: "deR4Tizer".into(),
+        chemin: "poste".into(),
+        destination: "mode panique".into(),
+        raisons: "Mode panique : état incertain, hors d'une commande de deR4Tizer (une règle « deR4Tizer PANIQUE » ou le drapeau manque). \
+            Internet n'est peut-être plus coupé. Récupération : « Rétablir Internet » dans deR4Tizer, puis réactiver si besoin ; service arrêté : \
+            supprimer les règles « deR4Tizer PANIQUE » du pare-feu".into(),
+        ..Default::default()
+    }
+}
+
+/// REP-003 : le mode panique n'a pas été posé, ou pas retiré ; jamais un état moitié posé passé sous silence (pur, testé)
+pub fn alerte_panique(activer: bool, erreur: &str, etat: reponse::EtatPanique) -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_003.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        processus: "deR4Tizer".into(),
+        chemin: "poste".into(),
+        pid: None,
+        destination: "mode panique".into(),
+        raisons: format!("{} ({erreur}). État effectif : {}. {}",
+            if activer { "Mode panique NON activé : Internet n'est pas coupé" } else { "Mode panique NON désactivé" },
+            etat.texte(),
+            if etat == reponse::EtatPanique::Incertaine {
+                "Récupération : « Rétablir Internet » dans deR4Tizer ; service arrêté : supprimer les règles « deR4Tizer PANIQUE » du pare-feu"
+            } else if activer {
+                "Aucune règle n'est restée : le poste est dans l'état d'avant"
+            } else {
+                ""
+            }),
+        ..Default::default()
     }
 }
 
@@ -1936,7 +2019,7 @@ pub fn nettoyer() {
     }
     let blocages: Vec<Blocage> = commun::lire("blocages.json").unwrap_or_default();
     let n: usize = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| blocage::supprimer_regle(&b.cible)).sum();
-    blocage::supprimer_groupe();
+    blocage::supprimer_groupe(false);
     println!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer).");
     match blocage::lignes_hors_bloc() {
         Ok((_, bloc)) if !bloc.is_empty() => match blocage::ecrire_bloc_hosts(&[]) {
@@ -1952,9 +2035,11 @@ pub fn nettoyer() {
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
-    if reponse::panique_active() {
+    if reponse::rafraichir_etat_panique() != reponse::EtatPanique::Inactive {
         if let Ok(a) = autorisation_humaine(Action::FinPanique) {
-            let _ = execution::panique(&a, false);
+            if let Err(e) = execution::panique(&a, false, &[]) {
+                println!("Mode panique : {e}");
+            }
         }
         println!("Mode panique désactivé.");
     }

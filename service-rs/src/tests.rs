@@ -3871,7 +3871,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002", "REP-003"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -5776,7 +5776,25 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(m.matches("politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(\"\"), None, None);").count(), 2, "6.4b : blocage d'IP, par « bloquerIp » et par « bloquer » sans domaine");
     assert!(m.contains("politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);"), "6.4b : blocage de domaine");
     assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
-    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation, politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer");
+    let (hosts_ecrit, manuels_clos) = (m.find("if let Err(e) = blocage::ecrire_bloc_hosts(&[]) {").unwrap(), m.find("politique::clore(&[politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);").unwrap());
+    assert!(hosts_ecrit < manuels_clos, "6.4b : tout débloquer, blocages manuels clos après le fichier hosts (audit de #116)");
+    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer, isolations");
+    assert!(m.contains("self.blocages = restants;"), "relecture de #116 : la liste en mémoire garde le blocage si hosts est refusé");
+    // PR 6.5 : PowerShell du mode panique hors du verrou ; reponse::panique ne le lance plus
+    let canal = include_str!("canal.rs").replace("\r\n", "\n");
+    assert!(canal.contains("let prealable = crate::moniteur::preparer(&c);\n                moniteur.lock().unwrap().executer(c, partage, prealable)"), "6.5 : préparé avant le verrou");
+    let r = include_str!("reponse.rs").replace("\r\n", "\n");
+    let corps = &r[r.find("pub fn panique(").unwrap()..];
+    let corps = &corps[..corps.find("\n}\n").unwrap()];
+    assert!(!corps.contains("epargnees()"), "6.5 : aucune résolution sous le verrou");
+    assert!(m.contains("self.ajouter_alerte_brute(alerte_panique(activer, &e, reponse::etat_panique()), None);"), "6.5 : échec du mode panique alerté");
+    assert!(m.contains("panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,"), "6.5 : état effectif publié");
+    assert!(m.contains("blocage::supprimer_groupe(true); //"), "relecture de #117, Q2 : tout débloquer garde le mode panique");
+    assert!(m.contains("    blocage::supprimer_groupe(false);"), "--nettoyer retire tout");
+    let (garde, tout) = (crate::blocage::commande_suppression_groupe(true), crate::blocage::commande_suppression_groupe(false));
+    assert_eq!(garde, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' } | Remove-NetFirewallRule", "Q2 : filtre");
+    assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
+    assert!(m.contains("if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {"), "P1 : alerte au passage à incertaine");
     assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
@@ -6268,4 +6286,126 @@ fn registre_processus_arrete_meme_avec_un_handle_ouvert() {
     assert!(!l(Ok((None, Some(259))), 100), "heure illisible");
     assert!(!l(Err(87), 100), "processus inexistant");
     assert!(l(Err(5), 100), "accès refusé : pas une preuve de fin (S115-04)");
+}
+
+/// Pare-feu simulé pour le mode panique (PR 6.5)
+#[derive(Default)]
+struct PareFeuSimule {
+    regles: std::cell::RefCell<Vec<(String, bool)>>,
+    refuse_ajout: Option<&'static str>,
+    inactive_apres_ajout: Option<&'static str>,
+    retrait_impossible: bool,
+}
+
+impl crate::reponse::PareFeuPanique for PareFeuSimule {
+    fn ajouter(&self, nom: &str, _: bool, adresses: &str) -> Result<(), String> {
+        assert!(!adresses.is_empty());
+        if self.refuse_ajout == Some(nom) {
+            return Err("refusé".into());
+        }
+        self.regles.borrow_mut().push((nom.to_string(), self.inactive_apres_ajout != Some(nom)));
+        Ok(())
+    }
+    fn retirer(&self, nom: &str) {
+        if !self.retrait_impossible {
+            self.regles.borrow_mut().retain(|(n, _)| n != nom);
+        }
+    }
+    fn presente(&self, nom: &str) -> bool {
+        self.regles.borrow().iter().any(|(n, actif)| n == nom && *actif)
+    }
+}
+
+const PS: &str = "deR4Tizer PANIQUE (sortant)";
+const PE: &str = "deR4Tizer PANIQUE (entrant)";
+
+#[test]
+fn panique_transactionnelle_echec_seconde_regle() {
+    use crate::reponse::activer_panique;
+    let drapeau = std::cell::Cell::new(false);
+    let ecrire = || { drapeau.set(true); Ok(()) };
+    // Seconde règle refusée : la première est retirée, drapeau non écrit
+    let pf = PareFeuSimule { refuse_ajout: Some(PE), ..Default::default() };
+    assert!(activer_panique(&pf, "1.0.0.0-9.255.255.255", &ecrire).is_err());
+    assert!(pf.regles.borrow().is_empty(), "aucune règle ne reste");
+    assert!(!drapeau.get(), "drapeau non écrit");
+    // Règle posée mais inactive : même chose
+    let pf = PareFeuSimule { inactive_apres_ajout: Some(PS), ..Default::default() };
+    let e = activer_panique(&pf, "a", &ecrire).unwrap_err();
+    assert!(e.contains("absente ou inactive"), "{e}");
+    assert!(pf.regles.borrow().is_empty() && !drapeau.get());
+    // Drapeau impossible à écrire : les règles sont retirées
+    let pf = PareFeuSimule::default();
+    assert!(activer_panique(&pf, "a", &|| Err("disque".into())).is_err());
+    assert!(pf.regles.borrow().is_empty(), "jamais moitié posé");
+    // Retrait impossible après un échec : l'erreur le dit
+    let pf = PareFeuSimule { refuse_ajout: Some(PE), retrait_impossible: true, ..Default::default() };
+    assert!(activer_panique(&pf, "a", &ecrire).unwrap_err().contains("état incertain"));
+    // Cas nominal : deux règles, puis le drapeau ; une règle déjà là n'est pas doublée
+    let pf = PareFeuSimule::default();
+    pf.regles.borrow_mut().push((PS.into(), true));
+    assert!(activer_panique(&pf, "a", &ecrire).is_ok());
+    assert!(drapeau.get());
+    assert_eq!(pf.regles.borrow().len(), 2);
+}
+
+#[test]
+fn panique_desactivation_verifiee() {
+    use crate::reponse::desactiver_panique;
+    let efface = std::cell::Cell::new(false);
+    let effacer = || { efface.set(true); Ok(()) };
+    let pf = PareFeuSimule { retrait_impossible: true, ..Default::default() };
+    pf.regles.borrow_mut().push((PS.into(), true));
+    let e = desactiver_panique(&pf, &effacer).unwrap_err();
+    assert!(e.contains(PS) && e.contains("état incertain"), "{e}");
+    assert!(!efface.get(), "drapeau gardé tant qu'une règle reste");
+    let pf = PareFeuSimule::default();
+    pf.regles.borrow_mut().extend([(PS.to_string(), true), (PE.to_string(), true)]);
+    assert!(desactiver_panique(&pf, &effacer).is_ok());
+    assert!(efface.get() && pf.regles.borrow().is_empty());
+    assert!(desactiver_panique(&PareFeuSimule::default(), &|| Err("x".into())).is_err(), "drapeau non effacé : erreur");
+}
+
+#[test]
+fn panique_etat_effectif_sur_les_regles() {
+    use crate::reponse::{etat_panique_de as e, EtatPanique::*};
+    let pf = PareFeuSimule::default();
+    assert_eq!(e(&pf, false), Inactive);
+    assert_eq!(e(&pf, true), Incertaine, "drapeau sans règle : pas « actif »");
+    pf.regles.borrow_mut().push((PS.into(), true));
+    assert_eq!(e(&pf, true), Incertaine, "une seule règle");
+    assert_eq!(e(&pf, false), Incertaine, "règle sans drapeau");
+    pf.regles.borrow_mut().push((PE.into(), false));
+    assert_eq!(e(&pf, true), Incertaine, "règle désactivée");
+    pf.regles.borrow_mut()[1].1 = true;
+    assert_eq!(e(&pf, true), Active);
+    assert_eq!((Active.texte(), Inactive.texte(), Incertaine.texte()), ("active", "inactive", "incertaine"));
+}
+
+#[test]
+fn panique_alerte_rep_003() {
+    use crate::moniteur::alerte_panique as a;
+    use crate::reponse::EtatPanique::*;
+    let x = a(true, "refusé", Inactive);
+    assert_eq!((x.regle.as_str(), x.niveau.as_str()), ("REP-003", "Critique"));
+    assert!(x.raisons.contains("NON activé") && x.raisons.contains("refusé") && x.raisons.contains("état d'avant"), "{}", x.raisons);
+    let x = a(false, "règle restée", Incertaine);
+    assert!(x.raisons.contains("NON désactivé") && x.raisons.contains("incertaine") && x.raisons.contains("Rétablir Internet"), "{}", x.raisons);
+    // Préparation : seulement pour l'activation
+    let c = |v: &str| crate::commun::Commande { action: Some("panique".into()), valeur: Some(v.into()), ..Default::default() };
+    assert!(crate::moniteur::preparer(&c("off")).epargnees.is_none());
+    assert!(crate::moniteur::preparer(&crate::commun::Commande { action: Some("tuer".into()), ..Default::default() }).epargnees.is_none());
+}
+
+/// Relecture de #117, P1 : REP-003 quand l'état devient incertain hors d'une commande
+#[test]
+fn panique_devenue_incertaine_alerte() {
+    use crate::moniteur::{alerte_panique_incertaine, panique_devenue_incertaine as d};
+    use crate::reponse::EtatPanique::*;
+    assert!(d(Active, Incertaine) && d(Inactive, Incertaine));
+    assert!(!d(Incertaine, Incertaine), "une seule alerte");
+    assert!(!d(Active, Active) && !d(Active, Inactive) && !d(Incertaine, Inactive));
+    let a = alerte_panique_incertaine();
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-003", "Critique"));
+    assert!(a.raisons.contains("Rétablir Internet") && !a.raisons.contains("  "), "{}", a.raisons);
 }

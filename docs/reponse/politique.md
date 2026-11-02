@@ -80,6 +80,14 @@ est retenue. Un administrateur peut toujours agir à la main.
 
 Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
 
+**Mode panique transactionnel (PR 6.5).** Les deux règles sont posées et vérifiées (présentes, activées, en blocage),
+puis seulement le drapeau est écrit ; un échec à n'importe quelle étape retire tout et lève l'alerte REP-003 « mode
+panique NON activé ». La désactivation retire, vérifie qu'aucune règle ne reste, puis efface le drapeau ; une règle
+restée garde le drapeau. L'état publié est l'état effectif, compté sur les règles : « active », « inactive » ou
+« incertaine ». Un profil du pare-feu désactivé avant est réactivé pour l'activation, et rendu désactivé si elle
+échoue. Limite : les serveurs DNS de la machine et les adresses des serveurs de notification restent joignables, tous
+ports, pour tous les programmes (un tunnel DNS reste possible).
+
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
 (`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
 blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action à chaque contrôle. Un processus
@@ -109,7 +117,7 @@ Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une au
 |---|---|---|---|
 | Suspension | « Reprendre » (identité revalidée) ou « Tuer » | Moniteur de ressources de Windows (`resmon`, « Reprendre le processus »), ou arrêt du processus dans le Gestionnaire des tâches | le processus reste suspendu jusqu'à son arrêt ou au redémarrage : redémarrer le poste |
 | Isolation | « Libérer » | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
-| Mode panique | « Désactiver le mode panique » | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu | `--nettoyer` |
+| Mode panique | « Rétablir Internet » ; aussi sûr en état « incertain » (vérifié en VM, PR 6.5) | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu, puis le fichier `panique-active` du dossier de données | `--nettoyer`, d'après les règles et pas seulement le drapeau |
 | Blocage IP | « Débloquer » | règles « deR4Tizer » du pare-feu | `--nettoyer` |
 | Quarantaine | « Restaurer » ou repli | aucune (copie encodée dans le dossier de données) | avec `GARDER_DONNEES=1` : réinstaller puis restaurer ; sans : perdue, à vérifier |
 

@@ -1053,6 +1053,68 @@ Verifier 'Registre : blocage manuel inscrit avec son échéance de 90 jours, lev
     $true
 }
 
+# ---------------------------------------------------------------- phase 6, PR 6.5 : mode panique transactionnel, état effectif
+# Activer, vérifier les deux règles et l'état publié, redémarrer le service, désactiver ; puis un état incertain provoqué
+# (une règle retirée à la main). Toujours désactivé à la fin : un passage interrompu ne laisse pas la VM sans Internet.
+# La connexion vers une adresse publique n'est contrôlée que si la VM y accède avant ; sinon règles et état seulement
+$reglesPanique = { @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer PANIQUE*' -and "$($_.Enabled)" -eq 'True' -and "$($_.Action)" -eq 'Block' }).Count }
+$etatPanique = { param($depuis) $e = Attendre-Etat $depuis 90; if ($e) { "$($e.PaniqueEtat)/$($e.Panique)" } else { 'etat.json non écrit en 90 s' } }
+$commandePanique = { param($v) Commande (@{ Action = 'panique'; Valeur = $v } | ConvertTo-Json -Compress) 60000 | ConvertFrom-Json }
+# Adresse publique qui n'est pas un serveur DNS de la VM : un serveur DNS reste joignable en mode panique (relecture de #117, P3)
+$dnsVm = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses })
+$ciblePublique = @('1.1.1.1', '9.9.9.9', '8.8.8.8') | Where-Object { $_ -notin $dnsVm } | Select-Object -First 1
+$accesPublic = { try { $t = New-Object Net.Sockets.TcpClient; $ok = $t.ConnectAsync($ciblePublique, 443).Wait(4000) -and $t.Connected; $t.Dispose(); $ok } catch { $false } }
+$accesAvantPanique = & $accesPublic
+Verifier "Mode panique : deux règles, état « active » publié, gardé par « tout débloquer » et par un redémarrage du service, puis aucune règle et état « inactive » ($(if ($accesAvantPanique) { 'connexion publique refusée puis rétablie' } else { 'VM sans accès public : règles et état seulement' }))" {
+    try {
+        $r = & $commandePanique 'on'
+        if (-not $r.Ok) { return "activation refusée : $($r.Message)" }
+        $d = Get-Date
+        if ((& $reglesPanique) -ne 2) { return "règles après activation : $(& $reglesPanique)" }
+        if (-not (Test-Path (Join-Path $script:Donnees 'panique-active'))) { return 'drapeau absent' }
+        if (($e = & $etatPanique $d) -ne 'active/True') { return "état publié : $e" }
+        if ($accesAvantPanique -and (& $accesPublic)) { return "connexion vers ${ciblePublique}:443 ouverte en mode panique" }
+        # « Tout débloquer » ne lève pas le mode panique (relecture de #117, Q2)
+        $t = Commande '{"Action":"toutDebloquer"}' 60000 | ConvertFrom-Json
+        if (-not $t.Ok) { return "tout débloquer refusé : $($t.Message)" }
+        if ((& $reglesPanique) -ne 2) { return "règles après « tout débloquer » : $(& $reglesPanique)" }
+        [void](Redemarrer-Service)
+        $d = Get-Date
+        if ((& $reglesPanique) -ne 2) { return "règles après redémarrage : $(& $reglesPanique)" }
+        if (($e = & $etatPanique $d) -ne 'active/True') { return "état publié après redémarrage : $e" }
+        $r = & $commandePanique 'off'
+        if (-not $r.Ok) { return "désactivation refusée : $($r.Message)" }
+        $d = Get-Date
+        if (& $reglesPanique) { return "règles après désactivation : $(& $reglesPanique)" }
+        if (Test-Path (Join-Path $script:Donnees 'panique-active')) { return 'drapeau resté' }
+        if (($e = & $etatPanique $d) -ne 'inactive/False') { return "état publié après désactivation : $e" }
+        if ($accesAvantPanique -and -not (& $accesPublic)) { return 'Internet toujours coupé après la désactivation' }
+        $true
+    } finally {
+        $null = & $commandePanique 'off'
+    }
+}
+Verifier 'Mode panique : une règle retirée hors de deR4Tizer, état « incertaine » publié ; « Rétablir Internet » nettoie tout' {
+    try {
+        $r = & $commandePanique 'on'
+        if (-not $r.Ok) { return "activation refusée : $($r.Message)" }
+        Get-NetFirewallRule -Group 'deR4Tizer' | Where-Object { $_.DisplayName -eq 'deR4Tizer PANIQUE (entrant)' } | Remove-NetFirewallRule
+        $d = Get-Date
+        # Relu par le fil « sante » toutes les 30 s, publié au plus 30 s après
+        $fin = (Get-Date).AddSeconds(120); $e = ''
+        do { Start-Sleep 5; $x = Etat; if ($x) { $e = "$($x.PaniqueEtat)/$($x.Panique)" } } while ($e -ne 'incertaine/True' -and (Get-Date) -lt $fin)
+        if ($e -ne 'incertaine/True') { return "état publié, une règle retirée : $e" }
+        $r = & $commandePanique 'off'
+        if (-not $r.Ok) { return "rétablissement refusé : $($r.Message)" }
+        $d = Get-Date
+        if (& $reglesPanique) { return "règles restées : $(& $reglesPanique)" }
+        if (($e = & $etatPanique $d) -ne 'inactive/False') { return "état publié après rétablissement : $e" }
+        $true
+    } finally {
+        $null = & $commandePanique 'off'
+    }
+}
+
 # ---------------------------------------------------------------- phase 6, PR 6.1 : niveau 3 limité à Spamhaus DROP et Feodo Tracker
 # Listes locales synthétiques, adresses de documentation (RFC 5737). Le réglage « listes restreintes » est posé service arrêté :
 # la commande forcerait un téléchargement, qui remplacerait ces listes si la VM a un accès. Des tentatives de connexion restent ouvertes :

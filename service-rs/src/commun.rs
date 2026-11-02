@@ -74,7 +74,10 @@ pub struct Etat {
     pub ecoutes: Vec<Ecoute>,
     pub defender: crate::defender::EtatDefender,
     pub chaines: Vec<crate::chaines::Chaine>,
+    /// Vrai dès que le mode panique n'est pas proprement inactif (actif ou incertain) : « Rétablir Internet » reste offert
     pub panique: bool,
+    /// « active », « inactive » ou « incertaine » : compté sur les règles du pare-feu, pas sur le drapeau seul (PR 6.5)
+    pub panique_etat: String,
     pub exposition: crate::parefeu::Exposition,
     /// Vide si la protection du dossier de données est vérifiée ; sinon la raison de l'échec
     pub protection_donnees: String,
