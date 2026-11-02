@@ -5789,6 +5789,12 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(!corps.contains("epargnees()"), "6.5 : aucune résolution sous le verrou");
     assert!(m.contains("self.ajouter_alerte_brute(alerte_panique(activer, &e, reponse::etat_panique()), None);"), "6.5 : échec du mode panique alerté");
     assert!(m.contains("panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,"), "6.5 : état effectif publié");
+    assert!(m.contains("blocage::supprimer_groupe(true); //"), "relecture de #117, Q2 : tout débloquer garde le mode panique");
+    assert!(m.contains("    blocage::supprimer_groupe(false);"), "--nettoyer retire tout");
+    let (garde, tout) = (crate::blocage::commande_suppression_groupe(true), crate::blocage::commande_suppression_groupe(false));
+    assert_eq!(garde, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' } | Remove-NetFirewallRule", "Q2 : filtre");
+    assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
+    assert!(m.contains("if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {"), "P1 : alerte au passage à incertaine");
     assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
@@ -6389,4 +6395,17 @@ fn panique_alerte_rep_003() {
     let c = |v: &str| crate::commun::Commande { action: Some("panique".into()), valeur: Some(v.into()), ..Default::default() };
     assert!(crate::moniteur::preparer(&c("off")).epargnees.is_none());
     assert!(crate::moniteur::preparer(&crate::commun::Commande { action: Some("tuer".into()), ..Default::default() }).epargnees.is_none());
+}
+
+/// Relecture de #117, P1 : REP-003 quand l'état devient incertain hors d'une commande
+#[test]
+fn panique_devenue_incertaine_alerte() {
+    use crate::moniteur::{alerte_panique_incertaine, panique_devenue_incertaine as d};
+    use crate::reponse::EtatPanique::*;
+    assert!(d(Active, Incertaine) && d(Inactive, Incertaine));
+    assert!(!d(Incertaine, Incertaine), "une seule alerte");
+    assert!(!d(Active, Active) && !d(Active, Inactive) && !d(Incertaine, Inactive));
+    let a = alerte_panique_incertaine();
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-003", "Critique"));
+    assert!(a.raisons.contains("Rétablir Internet") && !a.raisons.contains("  "), "{}", a.raisons);
 }

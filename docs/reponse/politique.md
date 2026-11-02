@@ -84,7 +84,9 @@ Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR
 puis seulement le drapeau est écrit ; un échec à n'importe quelle étape retire tout et lève l'alerte REP-003 « mode
 panique NON activé ». La désactivation retire, vérifie qu'aucune règle ne reste, puis efface le drapeau ; une règle
 restée garde le drapeau. L'état publié est l'état effectif, compté sur les règles : « active », « inactive » ou
-« incertaine ».
+« incertaine ». Un profil du pare-feu désactivé avant est réactivé pour l'activation, et rendu désactivé si elle
+échoue. Limite : les serveurs DNS de la machine et les adresses des serveurs de notification restent joignables, tous
+ports, pour tous les programmes (un tunnel DNS reste possible).
 
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
 (`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les

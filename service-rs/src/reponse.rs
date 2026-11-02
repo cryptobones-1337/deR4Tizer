@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use windows::core::{BSTR, PCWSTR};
-use windows::Win32::Foundation::VARIANT_TRUE;
+use windows::Win32::Foundation::{VARIANT_FALSE, VARIANT_TRUE};
 use windows::Win32::NetworkManagement::WindowsFirewall::{
     INetFwPolicy2, INetFwRule, NetFwPolicy2, NetFwRule, NET_FW_ACTION_BLOCK, NET_FW_PROFILE2_DOMAIN,
     NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC, NET_FW_RULE_DIR_IN, NET_FW_RULE_DIR_OUT,
@@ -1131,12 +1131,23 @@ pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String
     } else {
         let mut adresses = plages_internet(epargnees);
         adresses.push("2000::-3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
+        // Profils désactivés avant : réactivés pour que les règles s'appliquent, rendus tels quels si l'activation échoue
+        // (audit de #117, S117-01)
+        let desactives: Vec<_> = PROFILS.into_iter().filter(|p| unsafe { pf.0.get_FirewallEnabled(*p) }.map(|v| v != VARIANT_TRUE).unwrap_or(false)).collect();
         unsafe {
-            for profil in PROFILS {
-                let _ = pf.0.put_FirewallEnabled(profil, VARIANT_TRUE);
+            for profil in &desactives {
+                let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);
             }
         }
         activer_panique(&pf, &adresses.join(","), &|| fs::write(drapeau_panique(), commun::maintenant()).map_err(|e| format!("drapeau du mode panique non écrit : {e}")))
+            .map_err(|e| {
+                unsafe {
+                    for profil in &desactives {
+                        let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_FALSE);
+                    }
+                }
+                e
+            })
             .map(|_| {
                 // Coupe immédiatement les connexions vers Internet en cours (les règles ne s'appliquent qu'aux nouvelles)
                 let n = natif::lister_tcp().iter()

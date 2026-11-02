@@ -1060,9 +1060,12 @@ Verifier 'Registre : blocage manuel inscrit avec son échéance de 90 jours, lev
 $reglesPanique = { @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer PANIQUE*' -and "$($_.Enabled)" -eq 'True' -and "$($_.Action)" -eq 'Block' }).Count }
 $etatPanique = { param($depuis) $e = Attendre-Etat $depuis 90; if ($e) { "$($e.PaniqueEtat)/$($e.Panique)" } else { 'etat.json non écrit en 90 s' } }
 $commandePanique = { param($v) Commande (@{ Action = 'panique'; Valeur = $v } | ConvertTo-Json -Compress) 60000 | ConvertFrom-Json }
-$accesPublic = { try { $t = New-Object Net.Sockets.TcpClient; $ok = $t.ConnectAsync('1.1.1.1', 443).Wait(4000) -and $t.Connected; $t.Dispose(); $ok } catch { $false } }
+# Adresse publique qui n'est pas un serveur DNS de la VM : un serveur DNS reste joignable en mode panique (relecture de #117, P3)
+$dnsVm = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses })
+$ciblePublique = @('1.1.1.1', '9.9.9.9', '8.8.8.8') | Where-Object { $_ -notin $dnsVm } | Select-Object -First 1
+$accesPublic = { try { $t = New-Object Net.Sockets.TcpClient; $ok = $t.ConnectAsync($ciblePublique, 443).Wait(4000) -and $t.Connected; $t.Dispose(); $ok } catch { $false } }
 $accesAvantPanique = & $accesPublic
-Verifier "Mode panique : deux règles, état « active » publié, actif après un redémarrage du service, puis aucune règle et état « inactive » ($(if ($accesAvantPanique) { 'connexion publique refusée puis rétablie' } else { 'VM sans accès public : règles et état seulement' }))" {
+Verifier "Mode panique : deux règles, état « active » publié, gardé par « tout débloquer » et par un redémarrage du service, puis aucune règle et état « inactive » ($(if ($accesAvantPanique) { 'connexion publique refusée puis rétablie' } else { 'VM sans accès public : règles et état seulement' }))" {
     try {
         $r = & $commandePanique 'on'
         if (-not $r.Ok) { return "activation refusée : $($r.Message)" }
@@ -1070,7 +1073,11 @@ Verifier "Mode panique : deux règles, état « active » publié, actif après 
         if ((& $reglesPanique) -ne 2) { return "règles après activation : $(& $reglesPanique)" }
         if (-not (Test-Path (Join-Path $script:Donnees 'panique-active'))) { return 'drapeau absent' }
         if (($e = & $etatPanique $d) -ne 'active/True') { return "état publié : $e" }
-        if ($accesAvantPanique -and (& $accesPublic)) { return 'connexion vers 1.1.1.1:443 ouverte en mode panique' }
+        if ($accesAvantPanique -and (& $accesPublic)) { return "connexion vers ${ciblePublique}:443 ouverte en mode panique" }
+        # « Tout débloquer » ne lève pas le mode panique (relecture de #117, Q2)
+        $t = Commande '{"Action":"toutDebloquer"}' 60000 | ConvertFrom-Json
+        if (-not $t.Ok) { return "tout débloquer refusé : $($t.Message)" }
+        if ((& $reglesPanique) -ne 2) { return "règles après « tout débloquer » : $(& $reglesPanique)" }
         [void](Redemarrer-Service)
         $d = Get-Date
         if ((& $reglesPanique) -ne 2) { return "règles après redémarrage : $(& $reglesPanique)" }

@@ -459,8 +459,12 @@ impl Moniteur {
                 std::thread::spawn(crate::relance::signaler_etat);
                 let mut lancement_avant = None;
                 while !p.arret.load(Ordering::Relaxed) {
-                    // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5)
-                    crate::reponse::rafraichir_etat_panique();
+                    // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5) ; devenu incertain hors d'une
+                    // commande (règle retirée par un tiers) : REP-003 (relecture de #117, P1)
+                    let avant = crate::reponse::etat_panique();
+                    if panique_devenue_incertaine(avant, crate::reponse::rafraichir_etat_panique()) {
+                        m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                    }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
                         (g.non_suivies, g.suivis.iter().filter(|i| i.etat != crate::incidents::EtatIncident::Clos).count())
@@ -1571,7 +1575,7 @@ En-tête : Authorization: Bearer {j}"))
         for b in self.blocages.iter().filter(|b| b.type_ == "programme") {
             regles += reponse::liberer_programme(&b.cible);
         }
-        blocage::supprimer_groupe(); // règles orphelines éventuelles
+        blocage::supprimer_groupe(true); // règles orphelines éventuelles, sauf celles du mode panique
         if let Err(e) = blocage::ecrire_bloc_hosts(&[]) {
             return Reponse::erreur(format!("Écriture du fichier hosts refusée : {e}"));
         }
@@ -1593,6 +1597,28 @@ pub struct Prealable {
 
 pub fn preparer(c: &Commande) -> Prealable {
     Prealable { epargnees: (c.action.as_deref() == Some("panique") && c.valeur.as_deref() != Some("off")).then(reponse::epargnees) }
+}
+
+/// Passage à « incertaine » vu par le fil « sante » ; un échec de commande a déjà son alerte et rafraîchit l'état avant
+/// (pur, testé)
+pub fn panique_devenue_incertaine(avant: reponse::EtatPanique, apres: reponse::EtatPanique) -> bool {
+    avant != reponse::EtatPanique::Incertaine && apres == reponse::EtatPanique::Incertaine
+}
+
+pub fn alerte_panique_incertaine() -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_003.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        processus: "deR4Tizer".into(),
+        chemin: "poste".into(),
+        destination: "mode panique".into(),
+        raisons: "Mode panique : état incertain, hors d'une commande de deR4Tizer (une règle « deR4Tizer PANIQUE » ou le drapeau manque). \
+            Internet n'est peut-être plus coupé. Récupération : « Rétablir Internet » dans deR4Tizer, puis réactiver si besoin ; service arrêté : \
+            supprimer les règles « deR4Tizer PANIQUE » du pare-feu".into(),
+        ..Default::default()
+    }
 }
 
 /// REP-003 : le mode panique n'a pas été posé, ou pas retiré ; jamais un état moitié posé passé sous silence (pur, testé)
@@ -1993,7 +2019,7 @@ pub fn nettoyer() {
     }
     let blocages: Vec<Blocage> = commun::lire("blocages.json").unwrap_or_default();
     let n: usize = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| blocage::supprimer_regle(&b.cible)).sum();
-    blocage::supprimer_groupe();
+    blocage::supprimer_groupe(false);
     println!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer).");
     match blocage::lignes_hors_bloc() {
         Ok((_, bloc)) if !bloc.is_empty() => match blocage::ecrire_bloc_hosts(&[]) {

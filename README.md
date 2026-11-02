@@ -306,6 +306,8 @@ The full list is in the French section above. In particular:
 - Known software is not suspended when it touches a canary, and its alert is at Info level. Its folder's permissions are not checked: a Program Files folder left open by a third-party installer, a case found on one machine, lets a standard account drop a signed copy there; a hollowed process started from an allowed binary keeps this status too.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
+- Panic mode: the machine's DNS servers and the notification servers stay reachable for every program (malware could use
+  them to send data out, for example through DNS); prefer a self-hosted ntfy server to ntfy.sh.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion
   found late may have aged out. No encrypted and complete export exists (`docs/security/threat-model.md`).
 
