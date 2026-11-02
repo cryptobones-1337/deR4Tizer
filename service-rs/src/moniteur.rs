@@ -813,6 +813,10 @@ impl Moniteur {
         if self.expiration.elapsed() > Duration::from_secs(60) {
             self.expiration = Instant::now();
             self.expirer_blocages();
+            // Échéances des actions qui durent : relance, jamais levée (phase 6, PR 6.4)
+            for a in politique::echeances(&natif::processus_actif) {
+                alertes_modifiees |= self.ajouter_alerte_brute(a, None);
+            }
         }
         for a in detections.into_iter().chain(dns) {
             if let Some(pid) = a.pid {
@@ -1272,6 +1276,15 @@ En-tête : Authorization: Bearer {j}"))
                         None => commun::journal(&format!("reprise de {} : empreinte inconnue, décision humaine non retenue", crate::siem::texte_sur(&chemin, 300))),
                     }
                 }
+                // Registre des actions en cours (PR 6.4)
+                if r.is_ok() {
+                    let suspensions = [politique::Sorte::Suspension, politique::Sorte::SuspensionAuto];
+                    match decidee {
+                        Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),
+                        Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),
+                        _ => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Terminee),
+                    }
+                }
                 match r {
                     Ok(()) => Reponse::ok(format!("Processus {pid} : {} fait.", action)),
                     Err(e) => Reponse::erreur(format!("Processus {pid} : {e}")),
@@ -1345,6 +1358,7 @@ En-tête : Authorization: Bearer {j}"))
                 };
                 match execution::isoler_programme(&a, &chemin) {
                     Ok(()) => {
+                        politique::ouvrir(politique::Sorte::Isolation, &chemin, None, None);
                         self.blocages.push(Blocage { type_: "programme".into(), cible: chemin.clone(), raison, date: commun::maintenant(), expire: String::new() });
                         let _ = commun::ecrire("blocages.json", &self.blocages);
                         Reponse::ok(format!("{chemin} est coupé du réseau (entrant et sortant)."))
@@ -1356,6 +1370,11 @@ En-tête : Authorization: Bearer {j}"))
                 Err(r) => r,
                 Ok(Ok(m)) => {
                     commun::journal(&m);
+                    if c.valeur.as_deref() != Some("off") {
+                        politique::ouvrir(politique::Sorte::Panique, "poste", None, None);
+                    } else {
+                        politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);
+                    }
                     Reponse::ok(m)
                 }
                 Ok(Err(e)) => Reponse::erreur(format!("Pare-feu : {e}")),
@@ -1433,7 +1452,7 @@ En-tête : Authorization: Bearer {j}"))
         crate::siem::reponse("bloquerIp", ip, r.ok, &r.message, &format!("automatique : {raison}"));
         if r.ok {
             politique::noter(genre, ip);
-            let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400));
+            let fin = commun::heure(std::time::SystemTime::now() + Duration::from_secs(duree_blocage_auto(genre)));
             if let Some(b) = self.blocages.iter_mut().find(|b| b.type_ == "parefeu" && b.cible == ip && b.expire.is_empty() && b.raison == raison) {
                 b.expire = fin;
                 let _ = commun::ecrire("blocages.json", &self.blocages);
@@ -1444,6 +1463,11 @@ En-tête : Authorization: Bearer {j}"))
 
     fn expirer_blocages(&mut self) {
         let maintenant = commun::maintenant();
+        // Audit de #109, S109-04 : un blocage automatique dont l'échéance n'a pas été écrite (arrêt entre les deux écritures,
+        // fichier tenu ouvert, ancienne version) en reçoit une, au lieu de rester sans limite
+        if poser_echeances_manquantes(&mut self.blocages, &commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400))) > 0 {
+            let _ = commun::ecrire("blocages.json", &self.blocages);
+        }
         let a_retirer = {
             let menaces = self.partage.menaces.read().unwrap();
             // Une liste du niveau 3 non lue ou rejetée ne dit rien de ses adresses : ses blocages attendent leur échéance (audit de #109, S109-02)
@@ -1466,6 +1490,7 @@ En-tête : Authorization: Bearer {j}"))
             blocage::supprimer_regle(cible);
         }
         if type_ == "programme" {
+            politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
             reponse::liberer_programme(cible);
         }
         self.blocages.retain(|b| !(b.type_ == type_ && b.cible == cible));
@@ -1483,6 +1508,7 @@ En-tête : Authorization: Bearer {j}"))
     fn tout_debloquer(&mut self) -> Reponse {
         let ips: Vec<String> = self.blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
         let mut regles: usize = ips.iter().map(|ip| blocage::supprimer_regle(ip)).sum();
+        politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);
         for b in self.blocages.iter().filter(|b| b.type_ == "programme") {
             regles += reponse::liberer_programme(&b.cible);
         }
@@ -1906,6 +1932,21 @@ pub fn nettoyer() {
 pub fn decision_blocage_liste(menace: &crate::menaces::Correspondance, actif: bool, echec_protection: bool) -> Decision {
     let contexte = Contexte { echec_protection, blocage_menaces: actif, ..Default::default() };
     politique::decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Liste { niveau3: menace.auto }), &contexte)
+}
+
+/// Durée d'un blocage automatique : 7 jours pour les listes, 24 h pour l'IPS, plus sujet aux faux positifs (D6-4)
+pub fn duree_blocage_auto(genre: Genre) -> u64 {
+    if genre == Genre::BlocageIps { 86_400 } else { 7 * 86_400 }
+}
+
+/// Décision pure : pose `fin` sur les blocages automatiques sans échéance ; renvoie leur nombre
+pub fn poser_echeances_manquantes(blocages: &mut [Blocage], fin: &str) -> usize {
+    let mut n = 0;
+    for b in blocages.iter_mut().filter(|b| b.expire.is_empty() && blocage_pose_automatiquement(b)) {
+        b.expire = fin.to_string();
+        n += 1;
+    }
+    n
 }
 
 /// Commande d'un administrateur : l'action passe par la décision, comme les autres

@@ -334,6 +334,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             if suspendu && !deja {
                 suspendus.insert(pid, (creation, maintenant));
                 crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);
+                crate::politique::ouvrir(crate::politique::Sorte::SuspensionAuto, &programme, Some(pid), Some(creation));
             }
             return;
         }

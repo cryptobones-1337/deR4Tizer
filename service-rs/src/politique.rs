@@ -161,9 +161,72 @@ pub enum Passage {
     Retenue { raison: String, alerte: Option<String> },
 }
 
+/// Action de réponse qui dure (phase 6, PR 6.4) : une échéance est un rendez-vous de relance, jamais une levée
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Sorte {
+    SuspensionAuto,
+    Suspension,
+    Isolation,
+    Panique,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum EtatAction {
+    Active,
+    /// Levée par un administrateur
+    Levee,
+    /// Le processus n'existe plus, ou il a été arrêté
+    Terminee,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ActionEnCours {
+    pub id: String,
+    pub sorte: Sorte,
+    pub cible: String,
+    pub pid: Option<u32>,
+    pub creation: Option<u64>,
+    pub debut: u64,
+    pub echeance: u64,
+    pub relances: u32,
+    pub derniere_relance: u64,
+    pub etat: EtatAction,
+}
+
+/// (première échéance, puis période de relance) en secondes, et niveau de l'alerte REP-001 (D6-3)
+pub fn calendrier(sorte: Sorte) -> (u64, u64, &'static str) {
+    match sorte {
+        Sorte::SuspensionAuto => (2 * HEURE, JOUR, "Critique"),
+        Sorte::Suspension => (JOUR, JOUR, "Alerte"),
+        Sorte::Isolation => (7 * JOUR, 7 * JOUR, "Alerte"),
+        Sorte::Panique => (4 * HEURE, JOUR, "Critique"),
+    }
+}
+
+/// Procédure de récupération dite dans chaque relance (`docs/reponse/politique.md`)
+pub fn recuperation(sorte: Sorte) -> &'static str {
+    match sorte {
+        Sorte::SuspensionAuto | Sorte::Suspension => "« Reprendre » ou « Tuer » dans deR4Tizer ; service arrêté : Moniteur de ressources (resmon), « Reprendre le processus », ou arrêt dans le Gestionnaire des tâches",
+        Sorte::Isolation => "« Débloquer » dans deR4Tizer ; service arrêté : supprimer les règles « deR4Tizer - isole … » du pare-feu (groupe deR4Tizer)",
+        Sorte::Panique => "« Désactiver le mode panique » dans deR4Tizer ; service arrêté : supprimer les règles « deR4Tizer PANIQUE » du pare-feu",
+    }
+}
+
+/// Seul effet d'une échéance : relancer. Aucune variante ne lève une action : la récupération reste humaine
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Effet {
+    Relancer { niveau: &'static str },
+}
+
+const MAX_ACTIVES: usize = 500;
+const MAX_CLOSES: usize = 100;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct Historique {
+    /// Registre des actions en cours, et les dernières closes (page « Réponses en cours », PR 6.7)
+    pub actions: Vec<ActionEnCours>,
     pub traces: VecDeque<Trace>,
     pub humaines: Vec<Humaine>,
     pub pause_listes: u64,
@@ -267,6 +330,92 @@ impl Historique {
         self.traces.iter().rev().find(|x| x.genre == Genre::Suspension && x.cible == c && x.creation == Some(creation)).and_then(|x| x.empreinte.clone())
     }
 
+    /// Inscrit une action ; une action active de même sorte et de même cible (et même processus) n'est pas dédoublée
+    pub fn ouvrir(&mut self, sorte: Sorte, cible: &str, pid: Option<u32>, creation: Option<u64>, t: u64) {
+        let c = cle(cible);
+        if self.actions.iter().any(|a| a.etat == EtatAction::Active && a.sorte == sorte && a.cible == c && a.pid == pid && a.creation == creation) {
+            return;
+        }
+        let (premiere, _, _) = calendrier(sorte);
+        self.actions.push(ActionEnCours { id: commun::nouvel_id(), sorte, cible: c, pid, creation, debut: t, echeance: t + premiere, relances: 0, derniere_relance: 0, etat: EtatAction::Active });
+        self.borner();
+    }
+
+    /// Clôt les actions actives qui correspondent ; renvoie leur nombre
+    pub fn clore(&mut self, sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) -> usize {
+        let c = cible.map(cle);
+        let mut n = 0;
+        for a in self.actions.iter_mut().filter(|a| a.etat == EtatAction::Active && sortes.contains(&a.sorte)) {
+            let meme_cible = c.as_ref().is_none_or(|c| a.cible == *c);
+            let meme_processus = processus.is_none_or(|(p, cr)| a.pid == Some(p) && a.creation == Some(cr));
+            if meme_cible && meme_processus {
+                a.etat = etat;
+                n += 1;
+            }
+        }
+        self.borner();
+        n
+    }
+
+    /// Fin naturelle : un processus suspendu qui n'existe plus (arrêté, poste redémarré) ; noté, sans alerte
+    pub fn terminer_disparus(&mut self, vivant: &dyn Fn(u32, u64) -> bool) -> usize {
+        let mut n = 0;
+        // Seules les suspensions portent un processus : isolation et panique ne disparaissent pas d'elles-mêmes
+        for a in self.actions.iter_mut().filter(|a| a.etat == EtatAction::Active) {
+            if let (Some(p), Some(c)) = (a.pid, a.creation) {
+                if !vivant(p, c) {
+                    a.etat = EtatAction::Terminee;
+                    n += 1;
+                }
+            }
+        }
+        self.borner();
+        n
+    }
+
+    /// Relances dues : une à l'échéance, puis une par période, sans doublon. L'action reste active
+    pub fn relances(&mut self, t: u64) -> Vec<(ActionEnCours, Effet)> {
+        let mut dues = Vec::new();
+        for a in self.actions.iter_mut().filter(|a| a.etat == EtatAction::Active) {
+            let (_, periode, niveau) = calendrier(a.sorte);
+            let prochaine = if a.relances == 0 { a.echeance } else { a.derniere_relance + periode };
+            if t >= prochaine {
+                a.relances += 1;
+                a.derniere_relance = t;
+                dues.push((a.clone(), Effet::Relancer { niveau }));
+            }
+        }
+        dues
+    }
+
+    /// Bornes : 500 actives au plus (les plus anciennes sortent, l'alerte d'origine reste), 100 closes gardées
+    fn borner(&mut self) {
+        let actives = self.actions.iter().filter(|a| a.etat == EtatAction::Active).count();
+        if actives > MAX_ACTIVES {
+            let mut trop = actives - MAX_ACTIVES;
+            self.actions.retain(|a| {
+                if trop > 0 && a.etat == EtatAction::Active {
+                    trop -= 1;
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        let closes = self.actions.iter().filter(|a| a.etat != EtatAction::Active).count();
+        if closes > MAX_CLOSES {
+            let mut trop = closes - MAX_CLOSES;
+            self.actions.retain(|a| {
+                if trop > 0 && a.etat != EtatAction::Active {
+                    trop -= 1;
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
     pub fn decision_humaine(&mut self, cible: &str, empreinte: Option<String>, t: u64) {
         let c = cle(cible);
         self.humaines.retain(|h| h.cible != c && h.jusqua > t);
@@ -298,6 +447,30 @@ pub fn genre_suspension(chemin: &str, signe: bool, program_files: &[String]) -> 
         Genre::Suspension
     } else {
         Genre::SuspensionSansSeuil
+    }
+}
+
+/// Relance d'une action toujours en cours : REP-001 (jamais une levée)
+pub fn alerte_relance(a: &ActionEnCours, niveau: &str, t: u64) -> Alerte {
+    let quoi = match a.sorte {
+        Sorte::SuspensionAuto => "programme suspendu automatiquement (leurre touché)",
+        Sorte::Suspension => "programme suspendu par un administrateur",
+        Sorte::Isolation => "programme coupé du réseau",
+        Sorte::Panique => "mode panique actif : le poste n'a plus accès à Internet",
+    };
+    let duree = t.saturating_sub(a.debut);
+    Alerte {
+        regle: crate::regles::REP_001.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: niveau.into(),
+        processus: "deR4Tizer".into(),
+        chemin: a.cible.clone(),
+        pid: a.pid,
+        destination: "action de réponse toujours en cours".into(),
+        raisons: format!("{quoi} depuis {} h {:02} min ({}) — jamais levé automatiquement ; décision humaine attendue. Récupération : {}",
+            duree / HEURE, (duree % HEURE) / 60, a.cible, recuperation(a.sorte)),
+        ..Default::default()
     }
 }
 
@@ -421,6 +594,36 @@ pub fn empreinte_suspension(chemin: &str, creation: u64) -> Option<String> {
 
 pub fn suspendu_automatiquement(chemin: &str) -> bool {
     avec(|e| e.h.suspendu_automatiquement(chemin, maintenant()))
+}
+
+pub fn ouvrir(sorte: Sorte, cible: &str, pid: Option<u32>, creation: Option<u64>) {
+    avec(|e| {
+        e.h.ouvrir(sorte, cible, pid, creation, maintenant());
+        enregistrer(e);
+    })
+}
+
+pub fn clore(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
+    avec(|e| {
+        if e.h.clore(sortes, cible, processus, etat) > 0 {
+            enregistrer(e);
+        }
+    })
+}
+
+/// Fin naturelle et relances dues ; appelé par le moniteur toutes les minutes. Le contrôle de vie se fait hors du verrou
+pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
+    let suivies: Vec<(u32, u64)> = avec(|e| e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).filter_map(|a| a.pid.zip(a.creation)).collect());
+    let morts: Vec<(u32, u64)> = suivies.into_iter().filter(|(p, c)| !vivant(*p, *c)).collect();
+    avec(|e| {
+        let t = maintenant();
+        let n = e.h.terminer_disparus(&|p, c| !morts.contains(&(p, c)));
+        let dues = e.h.relances(t);
+        if n > 0 || !dues.is_empty() {
+            enregistrer(e);
+        }
+        dues.iter().map(|(a, Effet::Relancer { niveau })| alerte_relance(a, niveau, t)).collect()
+    })
 }
 
 /// Un administrateur a levé ou repris une action automatique

@@ -78,6 +78,7 @@ registre! {
     SAN_010 = "SAN-010" : "interface absente d'une session active plus de 15 min";
     SAN_011 = "SAN-011" : "interface arrêtée à répétition (3 fois en une heure)";
     SAN_012 = "SAN-012" : "alertes non suivies (plus de 500 incidents non clos)";
+    REP_001 = "REP-001" : "action de réponse toujours en cours : relance, jamais une levée";
     REP_002 = "REP-002" : "boucle d'actions arrêtée : actions automatiques retenues par la garde";
     EXP_IDS_001 = "EXP-IDS-001" : "IDS expérimental : règle au format Suricata (identifiant de la règle IDS dans les raisons)";
     EXP_DPI_001 = "EXP-DPI-001" : "DPI expérimental";
