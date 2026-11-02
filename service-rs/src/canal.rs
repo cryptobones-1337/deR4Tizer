@@ -249,7 +249,9 @@ fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>
             Ok(mut c) => {
                 // Auteur des transitions d'incident : SID lu sur le jeton du client, jamais pris dans la commande
                 c.auteur = sid;
-                moniteur.lock().unwrap().executer(c, partage)
+                // PowerShell et résolutions DNS du mode panique hors du verrou (PR 6.5)
+                let prealable = crate::moniteur::preparer(&c);
+                moniteur.lock().unwrap().executer(c, partage, prealable)
             }
             Err(r) => r,
         };
