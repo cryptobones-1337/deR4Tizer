@@ -458,6 +458,27 @@ function Liste-Quarantaine {
 function Entree-Quarantaine([string]$Origine) { @(Liste-Quarantaine | Where-Object { $_.CheminOrigine -eq $Origine }) | Select-Object -Last 1 }
 
 # Commande sur le canal avec une cible (et une raison) ; renvoie l'objet réponse
+# Identité d'un processus lue comme l'interface : heure de création exacte, pas celle de Process.StartTime, convertie
+function Commande-Processus([string]$Action, [int]$Id, [string]$Chemin = $null, [long]$Creation = 0) {
+    if (-not ('D4tIdentite' -as [type])) {
+        Add-Type @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class D4tIdentite {
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint a, bool h, int p);
+  [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr h, out long c, out long f, out long n, out long u);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, int d, StringBuilder s, ref int t);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  public static long Creation(int p) { var h = OpenProcess(0x1000, false, p); long c, f, n, u; GetProcessTimes(h, out c, out f, out n, out u); CloseHandle(h); return c; }
+  public static string Chemin(int p) { var h = OpenProcess(0x1000, false, p); var s = new StringBuilder(1024); int t = 1024; QueryFullProcessImageName(h, 0, s, ref t); CloseHandle(h); return s.ToString(); }
+}
+'@
+    }
+    if (-not $Chemin) { $Chemin = [D4tIdentite]::Chemin($Id) }
+    if (-not $Creation) { $Creation = [D4tIdentite]::Creation($Id) }
+    $j = @{ Action = $Action; Cible = "$Id"; Chemin = $Chemin; Creation = $Creation; Raison = 'test d''intégration (identité)' } | ConvertTo-Json -Compress
+    Commande $j 30000 | ConvertFrom-Json
+}
+
 function Commande-Cible([string]$Action, [string]$Cible) {
     $j = @{ Action = $Action; Cible = $Cible; Raison = 'test d''intégration (lot 3b)' } | ConvertTo-Json -Compress
     Commande $j 30000 | ConvertFrom-Json

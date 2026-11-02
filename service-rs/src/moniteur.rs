@@ -1255,17 +1255,21 @@ En-tête : Authorization: Bearer {j}"))
                     Ok(a) => a,
                     Err(r) => return r,
                 };
-                let chemin = natif::chemin_processus(pid);
+                // La validation exige l'identité : l'action porte sur le processus montré à l'administrateur
+                let chemin = c.chemin.clone().unwrap_or_default();
+                let creation = c.creation.unwrap_or(0);
+                let attendu = reponse::Attendu::Exacte { creation };
                 let r = match decidee {
-                    Action::Tuer => execution::tuer(&a, pid),
-                    Action::Suspendre => execution::suspendre(&a, pid, true),
-                    _ => execution::suspendre(&a, pid, false),
+                    Action::Tuer => execution::tuer(&a, pid, &attendu),
+                    Action::Suspendre => execution::suspendre(&a, pid, &attendu, true),
+                    _ => execution::suspendre(&a, pid, &attendu, false),
                 };
                 if r.is_ok() && decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin) {
-                    // Sans empreinte lisible, aucune exception : le programme reste sous la réponse automatique
-                    match natif::empreinte_a_echeance(&chemin) {
-                        Ok(Some(e)) => politique::decision_humaine(&chemin, Some(e)),
-                        _ => commun::journal(&format!("reprise de {chemin} : empreinte illisible, décision humaine non retenue")),
+                    // L'empreinte notée à la suspension : le fichier a pu changer au même chemin depuis (audit de #110, S110-05).
+                    // Sans empreinte, aucune exception : le programme reste sous la réponse automatique
+                    match politique::empreinte_suspension(&chemin, creation) {
+                        Some(e) => politique::decision_humaine(&chemin, Some(e)),
+                        None => commun::journal(&format!("reprise de {chemin} : empreinte inconnue, décision humaine non retenue")),
                     }
                 }
                 match r {
@@ -1276,6 +1280,11 @@ En-tête : Authorization: Bearer {j}"))
             "tuerChaine" => {
                 // Tue un processus et tous ses descendants (une chaîne d'attaque entière)
                 let Some(pid) = c.cible.as_deref().and_then(|p| p.parse::<u32>().ok()) else { return Reponse::erreur("PID invalide.") };
+                // La racine doit être le processus montré, jusqu'à l'action ; chaque descendant est relevé en une fois, à la décision
+                let racine = reponse::Attendu::Exacte { creation: c.creation.unwrap_or(0) };
+                if !reponse::meme_processus(&racine, natif::creation_processus(pid), "") {
+                    return Reponse::erreur(reponse::IDENTITE_CHANGEE);
+                }
                 let liste = natif::processus();
                 let mut a_tuer = vec![pid];
                 let mut i = 0;
@@ -1294,7 +1303,13 @@ En-tête : Authorization: Bearer {j}"))
                     Ok(a) => a,
                     Err(r) => return r,
                 };
-                let n = a_tuer.iter().rev().filter(|p| execution::tuer(&a, **p).is_ok()).count();
+                let identites: Vec<(u32, reponse::Attendu)> = a_tuer.iter().filter_map(|p| {
+                    if *p == pid { Some((pid, racine.clone())) } else { natif::creation_processus(*p).map(|creation| (*p, reponse::Attendu::Exacte { creation })) }
+                }).collect();
+                let n = identites.iter().rev().filter(|(p, i)| execution::tuer(&a, *p, i).is_ok()).count();
+                if n == 0 {
+                    return Reponse::erreur(reponse::IDENTITE_CHANGEE);
+                }
                 Reponse::ok(format!("{n} processus arrêté(s)."))
             }
             "quarantaine" => match reponse::mettre_en_quarantaine(c.cible.as_deref().unwrap_or(""), &raison) {

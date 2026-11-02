@@ -57,7 +57,7 @@ suspensions par heure, retiré ensuite par le mainteneur (voir plus bas).
 | # | Décision | Retenu |
 |---|---|---|
 | D6-1 | Politique et IPS, sans dégeler l'IDS | En aval, dans le moniteur, sur la file des blocages ; `ids.rs` intact. |
-| D6-2 | Identité d'un processus | PID, heure de création et chemin complet, revalidés et appliqués sur un même handle. L'empreinte SHA-256 de l'exécutable n'est exigée que pour la liste « décision humaine ». |
+| D6-2 | Identité d'un processus | PID et heure de création, revalidés et appliqués sur un même handle. Le chemin est montré, pas comparé (décision du mainteneur, 2026-11-01, après l'audit de la PR 6.3 : un programme qui se renomme y échappait). L'empreinte SHA-256 de l'exécutable n'est exigée que pour la liste « décision humaine ». |
 | D6-3 | Échéances | Voir la politique : ce sont des rendez-vous de relance, jamais une levée pour la suspension, l'isolation et le mode panique. |
 | D6-4 | Durée d'un blocage par l'IPS | 24 h, au lieu des 7 jours hérités. |
 | D6-5 | Seuils de la garde | 3 actions par cible et par 24 h (pour une suspension : programme signé dans Program Files seulement, décision du mainteneur, 2026-11-01) ; 30 blocages par les listes par heure ; 50 adresses par heure pour l'IPS, à part ; décision humaine prioritaire 7 jours. Aucun réglage dans l'interface. Le plafond de 3 suspensions par heure du dossier est retiré (décision du mainteneur, 2026-11-01). |

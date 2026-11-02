@@ -2,14 +2,15 @@
 //! `politique::decider` fabrique. Un test de structure vérifie qu'aucun autre module n'appelle ces actions.
 
 use crate::politique::Autorisation;
+use crate::reponse::Attendu;
 use crate::{blocage, reponse};
 
-pub fn tuer(_: &Autorisation, pid: u32) -> Result<(), String> {
-    reponse::tuer(pid)
+pub fn tuer(_: &Autorisation, pid: u32, attendu: &Attendu) -> Result<(), String> {
+    reponse::tuer(pid, attendu)
 }
 
-pub fn suspendre(_: &Autorisation, pid: u32, suspendre: bool) -> Result<(), String> {
-    reponse::suspendre(pid, suspendre)
+pub fn suspendre(_: &Autorisation, pid: u32, attendu: &Attendu, suspendre: bool) -> Result<(), String> {
+    reponse::suspendre(pid, attendu, suspendre)
 }
 
 pub fn isoler_programme(_: &Autorisation, chemin: &str) -> Result<(), String> {

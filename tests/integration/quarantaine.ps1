@@ -312,7 +312,8 @@ Set-Content -LiteralPath '$leurreStd' -Value 'leurre pose par le compte standard
 # Le seuil de Program Files demande un programme signé qui écrit dans un leurre : tests unitaires seulement. REP-002 est contrôlée au 3a (plafond des listes)
 $titresGarde = 'Garde : programme qui touche un leurre suspendu, trace dans reponses.json',
     'Garde : programme repris à la main : décision humaine, même fichier non suspendu de nouveau',
-    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue'
+    'Garde : programme hors de Program Files suspendu 4 fois de suite ; décision humaine gardée après un redémarrage, LEU-002 dit la retenue',
+    'Garde : programme qui se renomme avant de toucher le leurre : suspendu quand même, et arrêtable'
 $leurreGarde = if ($compte -and (Get-Variable leurreStd -ErrorAction SilentlyContinue)) { $leurreStd } else { $null }
 if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-Tous $leurreGarde).Count)) {
     foreach ($t in $titresGarde) { NonExecute $t 'aucun leurre audité disponible' }
@@ -342,14 +343,27 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
         $vu -gt 0
     }
     $arreter = { param($p) if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
-    $pB = & $toucher $exeB 1
-    if (-not (& $attendreSuspension $exeB 0 $pB)) {
+    # Le contrôle précédent redémarre le service : une touche trop tôt peut précéder l'abonnement au journal (vu une fois sur quatre
+    # passages, cause non établie). Jusqu'à trois touches, et l'essai qui a réussi est dit : une fenêtre aveugle doit se voir
+    $essaiB = 0; $vuB = $false; $debutB = Get-Date
+    do {
+        $essaiB++
+        $pB = & $toucher $exeB $essaiB
+        $vuB = & $attendreSuspension $exeB 0 $pB
+        if (-not $vuB -and $essaiB -lt 3) { & $arreter $pB }
+    } while (-not $vuB -and $essaiB -lt 3)
+    if (-not $vuB) {
+        # Ce qu'il faut pour trancher : l'événement est-il arrivé, le service a-t-il agi, le processus est-il suspendu ?
+        $evenements = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'd4t-garde-b' })
+        $siemGarde = @(Get-ChildItem (Join-Path $script:Donnees 'siem') -Filter 'evenements-*.ndjson' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_ -match '"Source":"reponse"' -and $_ -match 'suspendre' } | Select-Object -Last 3)
+        $alertesGarde = @((Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ }) | Where-Object { $_.Chemin -match 'd4t-garde-b' } | ForEach-Object { "$($_.Regle) $($_.Niveau) $($_.Raisons)" } | Select-Object -Last 2)
+        $diagnostic = "traces $(& $traces $exeB) ; suspendu $(& $suspendu $pB) ; vivant $(-not $pB.HasExited) ; 4663 pour ce programme $($evenements.Count) ; SIEM : $($siemGarde -join ' // ') ; alertes : $($alertesGarde -join ' // ') ; journal : $(Journal 'suspension de' 3) ; historique : $((Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -ErrorAction SilentlyContinue))"
         & $arreter $pB
-        foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : traces $(& $traces $exeB) ; journal : $(Journal 'leurre' 3)" }
+        foreach ($t in $titresGarde) { NonExecute $t "suspension automatique non observée en 60 s : $diagnostic" }
     } else {
-        Noter $titresGarde[0] 'RÉUSSI' ''
+        Noter $titresGarde[0] 'RÉUSSI' $(if ($essaiB -gt 1) { "à la touche $essaiB, $([int]((Get-Date) - $debutB).TotalSeconds) s après la première" } else { '' })
         Verifier $titresGarde[1] {
-            $r = Commande-Cible 'reprendre' $pB.Id
+            $r = Commande-Processus 'reprendre' $pB.Id
             if (-not $r.Ok) { return "reprise refusée : $($r.Message)" }
             if (& $suspendu $pB) { return 'toujours suspendu après la reprise' }
             & $arreter $pB
@@ -373,6 +387,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             [void](Redemarrer-Service)
             $vue = $false
             foreach ($i in 1..4) {
+                if ($i -gt 1) { Write-Host "  après redémarrage : touche $i" }
                 $p4 = & $toucher $exeB (20 + $i)
                 try {
                     $vue = & $attendreRetenue $p4
@@ -383,12 +398,62 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             if (-not $vue) { return 'après redémarrage : aucune retenue dans le SIEM' }
             $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
             $fin = (Get-Date).AddSeconds(30)
-            while ($a -notmatch 'Suspension automatique retenue' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
-            if ($a -notmatch 'Suspension automatique retenue') { return 'LEU-002 ne dit pas la retenue' }
+            while ($a -notmatch 'Suspension automatique non faite' -and (Get-Date) -lt $fin) { Start-Sleep 3; $a = Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
+            if ($a -notmatch 'Suspension automatique non faite') { return 'LEU-002 ne dit pas la retenue' }
             $true
+        }
+        # Audit de #113, S113-01 : le programme change de nom pendant qu'il tourne, puis touche le leurre
+        Verifier $titresGarde[3] {
+            $exeR = Join-Path $script:Commun 'd4t-garde-r.exe'
+            $exeR2 = Join-Path $script:Commun 'd4t-garde-r2.exe'
+            Copy-Item $exeA $exeR -Force
+            $pR = Start-Process $exeR -ArgumentList '-NoProfile', '-NonInteractive', '-Command', "Start-Sleep 8; Set-Content -LiteralPath '$leurreGarde' -Value 40; Start-Sleep 300" -WindowStyle Hidden -PassThru
+            try {
+                Start-Sleep 2
+                Move-Item $exeR $exeR2 -Force
+                $fin = (Get-Date).AddSeconds(90)
+                do { Start-Sleep 2 } while (-not (& $suspendu $pR) -and -not $pR.HasExited -and (Get-Date) -lt $fin)
+                if (-not (& $suspendu $pR)) { return "non suspendu après renommage ; journal : $(Journal 'suspension de' 3)" }
+                $r = Commande-Processus 'tuer' $pR.Id
+                if (-not $r.Ok) { return "arrêt refusé : $($r.Message)" }
+                Start-Sleep 1
+                if (-not $pR.HasExited) { return 'toujours là après l''arrêt' }
+                $true
+            } finally { & $arreter $pR; Start-Sleep 1; Remove-Item $exeR, $exeR2 -Force -ErrorAction SilentlyContinue }
         }
     }
     Remove-Item $exeA, $exeB -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------- phase 6, PR 6.3 : identité revalidée avant l'action
+# Programme bénin lancé par le scénario. Témoin écarté : la bonne identité suspend et reprend ; l'identité fausse ne fait rien
+Verifier 'Identité : bonne identité, suspendu puis repris ; heure de création fausse, ni suspendu ni arrêté ; sans identité, refusé' {
+    $pI = Start-Process ping.exe -ArgumentList '-n', '300', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        Start-Sleep 1
+        $etatI = { $x = Get-Process -Id $pI.Id -ErrorAction SilentlyContinue; if (-not $x) { 'mort' } elseif (@($x.Threads | Where-Object { $_.WaitReason -ne 'Suspended' }).Count -eq 0) { 'suspendu' } else { 'actif' } }
+        $r = Commande-Cible 'suspendre' $pI.Id
+        if ($r.Ok) { return 'commande sans identité acceptée' }
+        if ((& $etatI) -ne 'actif') { return "sans identité : $(& $etatI)" }
+        $r = Commande-Processus 'suspendre' $pI.Id
+        if (-not $r.Ok) { return "bonne identité refusée : $($r.Message)" }
+        if ((& $etatI) -ne 'suspendu') { return "bonne identité : $(& $etatI)" }
+        $r = Commande-Processus 'reprendre' $pI.Id
+        if (-not $r.Ok -or (& $etatI) -ne 'actif') { return "reprise : $($r.Message), $(& $etatI)" }
+        $bonne = [D4tIdentite]::Creation($pI.Id)
+        $r = Commande-Processus 'suspendre' $pI.Id $null ($bonne + 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "heure fausse : $($r.Message), $(& $etatI)" }
+        if ($r.Message -notmatch 'remplacé') { return "heure fausse, message : $($r.Message)" }
+        $r = Commande-Processus 'tuer' $pI.Id $null ($bonne - 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "arrêt, heure fausse : $($r.Message), $(& $etatI)" }
+        $r = Commande-Processus 'tuerChaine' $pI.Id $null ($bonne + 1)
+        if ($r.Ok -or (& $etatI) -ne 'actif') { return "chaîne, heure fausse : $($r.Message), $(& $etatI)" }
+        $r = Commande-Processus 'tuer' $pI.Id
+        if (-not $r.Ok) { return "arrêt refusé : $($r.Message)" }
+        Start-Sleep 1
+        if ((& $etatI) -ne 'mort') { return "bonne identité, toujours là : $(& $etatI)" }
+        $true
+    } finally { Stop-Process -Id $pI.Id -Force -ErrorAction SilentlyContinue }
 }
 
 # ---------------------------------------------------------------- quarantaine, redémarrage, restauration

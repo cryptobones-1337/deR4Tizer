@@ -189,6 +189,45 @@ pub fn couper(c: &Connexion) -> bool {
 
 // ------------------------------------------------------------ processus
 
+/// Processus ouvert une fois : l'identité lue et l'action portent sur le même objet. Tant que le handle est ouvert, le PID
+/// ne peut pas être réattribué (phase 6, PR 6.3)
+pub struct ProcessusOuvert(HANDLE);
+
+impl ProcessusOuvert {
+    /// `droits` : ceux de l'action, en plus de la lecture limitée
+    pub fn ouvrir(pid: u32, droits: windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS) -> Result<ProcessusOuvert, String> {
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | droits, false, pid).map(ProcessusOuvert).map_err(|e| e.to_string()) }
+    }
+
+    pub fn handle(&self) -> HANDLE {
+        self.0
+    }
+
+    pub fn creation(&self) -> Option<u64> {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::GetProcessTimes;
+        let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        unsafe { GetProcessTimes(self.0, &mut c, &mut e, &mut k, &mut u) }.ok()?;
+        Some(((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64)
+    }
+
+    pub fn chemin(&self) -> String {
+        // Longueur maximale d'un chemin Windows : un tampon plus court ferait échouer la lecture
+        let mut tampon = vec![0u16; 32_768];
+        let mut taille = tampon.len() as u32;
+        let r = unsafe { QueryFullProcessImageNameW(self.0, PROCESS_NAME_WIN32, PWSTR(tampon.as_mut_ptr()), &mut taille) };
+        if r.is_ok() { String::from_utf16_lossy(&tampon[..taille as usize]) } else { String::new() }
+    }
+}
+
+impl Drop for ProcessusOuvert {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
 pub fn chemin_processus(pid: u32) -> String {
     if pid <= 4 {
         return String::new();

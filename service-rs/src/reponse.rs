@@ -12,14 +12,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use windows::core::{BSTR, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, VARIANT_TRUE};
+use windows::Win32::Foundation::VARIANT_TRUE;
 use windows::Win32::NetworkManagement::WindowsFirewall::{
     INetFwPolicy2, INetFwRule, NetFwPolicy2, NetFwRule, NET_FW_ACTION_BLOCK, NET_FW_PROFILE2_DOMAIN,
     NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC, NET_FW_RULE_DIR_IN, NET_FW_RULE_DIR_OUT,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE};
+use windows::Win32::System::Threading::{TerminateProcess, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE};
 
 // ------------------------------------------------------------ origine des fichiers
 
@@ -100,43 +100,74 @@ pub fn protege(pid: u32) -> Option<String> {
     if pid <= 4 || pid == std::process::id() {
         return Some("processus du système ou de deR4Tizer".into());
     }
-    // Chemin complet canonique (QueryFullProcessImageName), comparé exactement ; signature Microsoft en plus
-    let chemin = natif::chemin_processus(pid);
-    let nom = Path::new(&chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    (chemin_critique(&chemin, &natif::dossier_windows()) && garde_critique(natif::binaire_windows_lu(&chemin)))
+    protege_chemin(&natif::chemin_processus(pid))
+}
+
+/// Chemin complet canonique (QueryFullProcessImageName), comparé exactement ; signature Microsoft en plus
+fn protege_chemin(chemin: &str) -> Option<String> {
+    let nom = Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    (chemin_critique(chemin, &natif::dossier_windows()) && garde_critique(natif::binaire_windows_lu(chemin)))
         .then(|| format!("{nom} est un processus critique de Windows (le système ou le réseau se figerait)"))
 }
 
-pub fn tuer(pid: u32) -> Result<(), String> {
-    if let Some(r) = protege(pid) {
-        return Err(format!("refusé : {r}"));
-    }
-    unsafe {
-        let h = OpenProcess(PROCESS_TERMINATE, false, pid).map_err(|e| e.to_string())?;
-        let r = TerminateProcess(h, 1).map_err(|e| e.to_string());
-        let _ = CloseHandle(h);
-        r
+/// Identité attendue d'un processus, fixée à la décision. Le PID et l'heure de création désignent un seul processus. Le
+/// chemin n'est pas comparé (décision du mainteneur, audit de #113, S113-01, S113-02) : un programme qui se renomme, ou
+/// dont le chemin est très long, ne doit échapper ni à la suspension ni à l'arrêt
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Attendu {
+    /// Telle que l'administrateur l'a vue, ou relevée à la décision
+    Exacte { creation: u64 },
+    /// Événement 4663 : processus créé avant l'événement. Heure de l'événement illisible : le chemin, seul indice restant
+    Leurre { avant: Option<u64>, chemin: String },
+}
+
+/// Décision pure : le processus ouvert est-il celui de la décision ? Heure de création illisible : non
+pub(crate) fn meme_processus(attendu: &Attendu, creation: Option<u64>, chemin: &str) -> bool {
+    let Some(creation) = creation else { return false };
+    match attendu {
+        Attendu::Exacte { creation: c } => creation == *c,
+        Attendu::Leurre { avant: Some(t), .. } => creation <= *t,
+        Attendu::Leurre { avant: None, chemin: a } => !chemin.is_empty() && chemin.to_lowercase() == a.to_lowercase(),
     }
 }
 
-/// Suspend ou reprend tous les fils d'un processus (fonctions NtSuspendProcess / NtResumeProcess de ntdll)
-pub fn suspendre(pid: u32, suspendre: bool) -> Result<(), String> {
-    if suspendre {
-        if let Some(r) = protege(pid) {
+/// Le message n'est jamais une action : échec fermé si l'identité a changé
+pub const IDENTITE_CHANGEE: &str = "processus terminé ou remplacé depuis la décision : aucune action";
+
+/// Ouvre le processus une seule fois, lit et compare son identité, refait le contrôle « critique » sur le chemin lu par le
+/// handle, puis agit sur ce même handle
+fn agir(pid: u32, attendu: &Attendu, droits: windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS, controle_critique: bool, action: impl FnOnce(&natif::ProcessusOuvert) -> Result<(), String>) -> Result<(), String> {
+    if pid <= 4 || pid == std::process::id() {
+        return Err("refusé : processus du système ou de deR4Tizer".into());
+    }
+    let p = natif::ProcessusOuvert::ouvrir(pid, droits)?;
+    let chemin = p.chemin();
+    if !meme_processus(attendu, p.creation(), &chemin) {
+        return Err(IDENTITE_CHANGEE.into());
+    }
+    if controle_critique {
+        if let Some(r) = protege_chemin(&chemin) {
             return Err(format!("refusé : {r}"));
         }
     }
-    unsafe {
+    action(&p)
+}
+
+pub fn tuer(pid: u32, attendu: &Attendu) -> Result<(), String> {
+    agir(pid, attendu, PROCESS_TERMINATE, true, |p| unsafe { TerminateProcess(p.handle(), 1).map_err(|e| e.to_string()) })
+}
+
+/// Suspend ou reprend tous les fils d'un processus (fonctions NtSuspendProcess / NtResumeProcess de ntdll)
+pub fn suspendre(pid: u32, attendu: &Attendu, suspendre: bool) -> Result<(), String> {
+    agir(pid, attendu, PROCESS_SUSPEND_RESUME, suspendre, |p| unsafe {
         let nom = large("ntdll.dll");
         let module = LoadLibraryW(PCWSTR(nom.as_ptr())).map_err(|e| e.to_string())?;
         let fonction = if suspendre { windows::core::s!("NtSuspendProcess") } else { windows::core::s!("NtResumeProcess") };
         let f = GetProcAddress(module, fonction).ok_or("fonction introuvable")?;
         let f: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 = std::mem::transmute(f);
-        let h = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid).map_err(|e| e.to_string())?;
-        let statut = f(h);
-        let _ = CloseHandle(h);
+        let statut = f(p.handle());
         if statut == 0 { Ok(()) } else { Err(format!("statut NT 0x{statut:08X}")) }
-    }
+    })
 }
 
 // ------------------------------------------------------------ quarantaine
@@ -433,8 +464,11 @@ pub fn mettre_en_quarantaine(chemin: &str, raison: &str) -> Result<String, Strin
     }
     let mut liste = charger_liste()?;
     for (pid, _) in natif::processus() {
-        if natif::chemin_processus(pid).eq_ignore_ascii_case(chemin) {
-            let _ = tuer(pid);
+        let lu = natif::chemin_processus(pid);
+        if lu.eq_ignore_ascii_case(chemin) {
+            if let Some(creation) = natif::creation_processus(pid) {
+                let _ = tuer(pid, &Attendu::Exacte { creation });
+            }
         }
     }
     std::thread::sleep(std::time::Duration::from_millis(500));

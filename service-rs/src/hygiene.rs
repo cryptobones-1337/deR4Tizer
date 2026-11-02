@@ -323,6 +323,16 @@ pub(crate) fn pid_touchant_leurre_parmi(xml: &str, noms: &[(String, String)]) ->
     Some((pid, d.get("ProcessName").cloned().unwrap_or_default(), objet.clone()))
 }
 
+/// Heure d'un événement du journal, en FILETIME, arrondie à la seconde suivante : un programme créé avant l'événement ne
+/// doit jamais être écarté par la troncature (pur, testé). `None` si l'heure est illisible
+pub(crate) fn heure_evenement(xml: &str) -> Option<u64> {
+    let a = xml.find("SystemTime=")? + "SystemTime=".len();
+    let reste = xml.get(a + 1..)?;
+    let texte = reste.get(..reste.find(['\'', '"'])?)?;
+    let secondes = commun::secondes_utc(&format!("{}Z", texte.split(['.', 'Z']).next()?))?;
+    u64::try_from(secondes + 1 + 11_644_473_600).ok()?.checked_mul(10_000_000)
+}
+
 // ------------------------------------------------------------ pilotes vulnérables (LOLDrivers)
 
 /// Télécharge la liste LOLDrivers (une fois par jour) et renvoie l'ensemble des empreintes SHA-256

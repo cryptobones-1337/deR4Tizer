@@ -193,7 +193,11 @@ pub fn valider(c: &Commande) -> Result<(), String> {
                 .then_some(()).ok_or_else(|| "identifiant de compte invalide".into())
         }
         "tuer" | "suspendre" | "reprendre" | "tuerChaine" => {
-            pid_valide(requis(&c.cible, "Cible")?).then_some(()).ok_or_else(|| "PID invalide".into())
+            pid_valide(requis(&c.cible, "Cible")?).then_some(()).ok_or("PID invalide")?;
+            // Un service à jour refuse une commande sans identité : elle ne dirait pas sur quel processus elle porte
+            let chemin = requis(&c.chemin, "Chemin")?;
+            (chemin.chars().count() <= 1024 && !chemin.chars().any(char::is_control)).then_some(()).ok_or("chemin du processus invalide")?;
+            c.creation.filter(|t| *t > 0).map(|_| ()).ok_or_else(|| "heure de création du processus manquante".into())
         }
         "quarantaine" | "isolerProgramme" => {
             chemin_local_absolu(requis(&c.cible, "Cible")?).then_some(()).ok_or_else(|| "chemin local absolu attendu".into())

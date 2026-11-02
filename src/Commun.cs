@@ -624,6 +624,9 @@ namespace DeR4Tizer
         public string Cible { get; set; }
         public string Raison { get; set; }
         public List<string> Categories { get; set; }
+        // Identité du processus visé, lue et montrée par l'instance administrateur (phase 6, PR 6.3)
+        public string Chemin { get; set; }
+        public long? Creation { get; set; }
     }
 
     public class Reponse
