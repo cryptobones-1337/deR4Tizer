@@ -186,7 +186,7 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi sur la version distribuée, des binaires signés et
   une relecture indépendante.
 - La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
-- Un logiciel « connu » n'est pas suspendu s'il touche un leurre, et les droits de son dossier ne sont pas vérifiés : un dossier de Program Files ouvert en écriture par un installateur tiers permettrait d'y poser une copie signée.
+- Un logiciel « connu » n'est pas suspendu s'il touche un leurre, et son alerte est au niveau Info. Les droits de son dossier ne sont pas vérifiés : un dossier de Program Files ouvert par un installateur tiers, cas relevé sur un poste, permet à un compte standard d'y poser une copie signée ; un processus creux lancé depuis un binaire autorisé garde aussi ce statut.
 - Un compte standard peut atteindre le plafond de 30 blocages par heure en se connectant à 31 adresses listées : les
   blocages par les listes s'arrêtent alors une heure, les alertes restent. Une alerte de l'IPS (expérimental) dit « bloquée »
   même si la garde retient ensuite le blocage.
@@ -303,7 +303,7 @@ The full list is in the French section above. In particular:
 - Batch 3d runs in a test VM with Microsoft Defender fully active: a signal, not proof on a real machine. No distribution
   before a green GitHub CI, batch 3d passed on the distributed version, signed binaries and an independent review.
 - The interface window has never been opened in real conditions; its decisions are tested separately.
-- Known software is not suspended when it touches a canary, and its folder's permissions are not checked: a Program Files folder left writable by a third-party installer would allow dropping a signed copy there.
+- Known software is not suspended when it touches a canary, and its alert is at Info level. Its folder's permissions are not checked: a Program Files folder left open by a third-party installer, a case found on one machine, lets a standard account drop a signed copy there; a hollowed process started from an allowed binary keeps this status too.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion
