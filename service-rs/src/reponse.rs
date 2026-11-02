@@ -887,6 +887,11 @@ pub fn chemin_final_a_isoler(chemin: &str) -> Result<String, String> {
     if chemin.trim().is_empty() {
         return Err("Refusé : chemin vide.".into());
     }
+    // Avant toute ouverture : le service (SYSTEM) ne contacte ni partage réseau ni tube nommé pour un chemin qui sera
+    // refusé de toute façon (relecture de #118, R1)
+    if chemin_dos(chemin).is_none() {
+        return Err("Refusé : le programme n'est pas sur un lecteur local (réseau ou volume sans lettre).".into());
+    }
     // FILE_READ_ATTRIBUTES, partage lecture, écriture et suppression : un programme en cours reste ouvrable
     let f = natif::ouvrir_sans_lien(Path::new(chemin), 0x80, 0x7, false).map_err(|e| match e {
         natif::ErreurOuverture::Absent => "Refusé : programme introuvable.".to_string(),
@@ -895,6 +900,47 @@ pub fn chemin_final_a_isoler(chemin: &str) -> Result<String, String> {
     })?;
     let reel = natif::chemin_final(&f).map_err(|e| format!("Refusé : chemin final illisible ({e})."))?;
     isolation_permise(&reel, &natif::dossier_windows())
+}
+
+/// Une isolation tient-elle toujours ? La règle de pare-feu porte un chemin : un dossier remplacé après coup par une
+/// jonction la ferait viser un autre programme, peut-être de Windows (audit de #118, S118-01)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EtatIsolation {
+    Valable,
+    /// Programme absent : la règle ne vise rien ; elle reste (copie ailleurs : limite écrite)
+    Absent,
+    /// Illisible à ce relevé : elle reste, relue au suivant
+    Illisible,
+    /// Le chemin mène ailleurs : chemin final constaté
+    Detournee(String),
+}
+
+/// Décision pure. `cible_longue` : chemin isolé, noms courts développés ; `lu` : chemin final lu par handle, `Ok(None)`
+/// si le programme est absent, `Err` s'il est illisible
+pub fn decision_isolation(cible_longue: &str, lu: &Result<Option<String>, String>, windows: &str) -> EtatIsolation {
+    match lu {
+        Ok(None) => EtatIsolation::Absent,
+        Err(_) => EtatIsolation::Illisible,
+        Ok(Some(f)) => match isolation_permise(f, windows) {
+            Err(_) => EtatIsolation::Detournee(f.clone()),
+            Ok(c) if natif::meme_chemin(&c, cible_longue) => EtatIsolation::Valable,
+            Ok(c) => EtatIsolation::Detournee(c),
+        },
+    }
+}
+
+pub fn verifier_isolation(cible: &str) -> EtatIsolation {
+    if chemin_dos(cible).is_none() {
+        return EtatIsolation::Detournee(cible.to_string());
+    }
+    let lu = match natif::ouvrir_sans_lien(Path::new(cible), 0x80, 0x7, false) {
+        Ok(f) => natif::chemin_final(&f).map(Some),
+        Err(natif::ErreurOuverture::Absent) => Ok(None),
+        // Dernier élément remplacé par un lien : détourné, sans le suivre
+        Err(natif::ErreurOuverture::Lien) => Ok(Some("(lien)".to_string())),
+        Err(e) => Err(format!("{e:?}")),
+    };
+    decision_isolation(&natif::forme_longue(Path::new(cible)).to_string_lossy(), &lu, &natif::dossier_windows())
 }
 
 /// Bloque tout le trafic, entrant et sortant, d'un programme précis (`chemin` : chemin final, `chemin_final_a_isoler`)
@@ -1126,6 +1172,8 @@ fn drapeau_panique() -> PathBuf {
 /// Une commande du mode panique pose ou retire ses règles : l'état est un instant « incertain », sans que ce soit un
 /// incident (audit de #117)
 static COMMANDE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Augmentée au début et à la fin de chaque commande du mode panique
+static GENERATION_PANIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn commande_panique_en_cours() -> bool {
     COMMANDE_PANIQUE.load(std::sync::atomic::Ordering::SeqCst)
@@ -1136,15 +1184,29 @@ static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 
 /// Relit l'état effectif (règles et drapeau) : fil « sante » toutes les 30 s, et après chaque commande
 pub fn rafraichir_etat_panique() -> EtatPanique {
+    // Une commande commencée ou finie pendant la lecture a publié son propre état : celui-ci, plus ancien, ne
+    // l'écrase pas (relecture de #118, R2)
+    let generation = GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst);
+    let e = lire_etat_panique();
+    if lecture_publiable(generation, GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst), commande_panique_en_cours()) {
+        ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+    e
+}
+
+/// Décision pure : une lecture faite hors commande, sans commande commencée ni finie pendant elle, peut être publiée
+pub fn lecture_publiable(generation_avant: u64, generation_apres: u64, commande_en_cours: bool) -> bool {
+    !commande_en_cours && generation_avant == generation_apres
+}
+
+fn lire_etat_panique() -> EtatPanique {
     let drapeau = drapeau_panique().exists();
-    let e = match politique() {
+    match politique() {
         Ok(p) => etat_panique_de(&PareFeuWindows(p), drapeau),
         // Règles illisibles : avec le drapeau, rien ne dit qu'elles sont là
         Err(_) if drapeau => EtatPanique::Incertaine,
         Err(_) => EtatPanique::Inactive,
-    };
-    ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
-    e
+    }
 }
 
 pub fn etat_panique() -> EtatPanique {
@@ -1163,9 +1225,11 @@ pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String
     struct EnCours;
     impl Drop for EnCours {
         fn drop(&mut self) {
+            GENERATION_PANIQUE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             COMMANDE_PANIQUE.store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
+    GENERATION_PANIQUE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     COMMANDE_PANIQUE.store(true, std::sync::atomic::Ordering::SeqCst);
     let _en_cours = EnCours;
     let p = politique().map_err(|e| e.to_string())?;
@@ -1212,6 +1276,7 @@ pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String
                     epargnees.len())
             })
     };
-    rafraichir_etat_panique();
+    // État final de la commande, publié par elle seule
+    ETAT_PANIQUE.store(lire_etat_panique() as u8, std::sync::atomic::Ordering::Relaxed);
     resultat
 }

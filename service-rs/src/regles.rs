@@ -81,6 +81,7 @@ registre! {
     REP_001 = "REP-001" : "action de réponse toujours en cours : relance, jamais une levée";
     REP_002 = "REP-002" : "boucle d'actions arrêtée : actions automatiques retenues par la garde";
     REP_003 = "REP-003" : "mode panique non posé ou non retiré : état effectif publié, jamais moitié posé";
+    REP_004 = "REP-004" : "isolation retirée : le chemin isolé mène à un autre programme";
     EXP_IDS_001 = "EXP-IDS-001" : "IDS expérimental : règle au format Suricata (identifiant de la règle IDS dans les raisons)";
     EXP_DPI_001 = "EXP-DPI-001" : "DPI expérimental";
     EXP_NDR_001 = "EXP-NDR-001" : "NDR expérimental";

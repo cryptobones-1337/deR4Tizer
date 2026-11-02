@@ -3871,7 +3871,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002", "REP-003"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002", "REP-003", "REP-004"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -5797,6 +5797,11 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let avant = crate::reponse::etat_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
     assert!(m.contains("if panique_devenue_incertaine(avant, apres) && !crate::reponse::commande_panique_en_cours() {"), "audit de #117 : commande commencée entre-temps");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
+    let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
+    assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
+    assert!(m.contains("if let reponse::EtatIsolation::Detournee(vers) = reponse::verifier_isolation(&cible) {\n                                m.lock().unwrap().retirer_isolation_detournee(&cible, &vers);"), "S118-01 : revérification");
+    assert!(m.contains("                    if tours % 10 == 0 {"), "S118-01 : toutes les 5 min");
+    assert!(include_str!("natif.rs").contains("let options = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAGS_AND_ATTRIBUTES(0x0011_0000)"), "R1 : SQOS");
     let r = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(r.contains("if *actif != Some(true) {\n                    let _ = pf.0.put_FirewallEnabled(*profil, VARIANT_TRUE);"), "audit de #117 : profil illisible réactivé");
     assert!(r.contains("COMMANDE_PANIQUE.store(true, std::sync::atomic::Ordering::SeqCst);\n    let _en_cours = EnCours;\n    let p = politique()"), "drapeau posé avant toute action");
@@ -6448,4 +6453,47 @@ fn isolation_chemin_final_dans_windows_refuse() {
     assert!(crate::reponse::chemin_final_a_isoler(" ").is_err());
     let _ = std::fs::remove_dir(d.join("j"));
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Relecture de #118, R1 : refus sur le texte avant toute ouverture ; audit de #118, S118-01 : isolation revérifiée
+#[test]
+fn isolation_reverifiee_et_refus_avant_ouverture() {
+    use crate::reponse::{chemin_final_a_isoler as c, decision_isolation as d, EtatIsolation::*};
+    for x in [r"\\serveur\partage\x.exe", r"\\.\pipe\x", r"\\?\UNC\serveur\p\x.exe", r"\\?\GLOBALROOT\x", "relatif.exe", "C:/x.exe"] {
+        assert!(c(x).unwrap_err().contains("lecteur local"), "{x}");
+    }
+    let w = r"C:\Windows";
+    assert_eq!(d(r"C:\Users\a\x.exe", &Ok(Some(r"\\?\C:\Users\a\X.exe".into())), w), Valable);
+    assert_eq!(d(r"C:\Users\a\x.exe", &Ok(None), w), Absent, "absent : la règle reste");
+    assert_eq!(d(r"C:\Users\a\x.exe", &Err("verrou".into()), w), Illisible);
+    assert_eq!(d(r"C:\Users\a\d\svchost.exe", &Ok(Some(r"\\?\C:\Windows\System32\svchost.exe".into())), w), Detournee(r"\\?\C:\Windows\System32\svchost.exe".into()), "jonction vers System32");
+    assert_eq!(d(r"C:\Users\a\d\x.exe", &Ok(Some(r"\\?\C:\Users\b\x.exe".into())), w), Detournee(r"C:\Users\b\x.exe".into()), "autre programme");
+    assert!(matches!(d(r"C:\Users\a\x.exe", &Ok(Some("(lien)".into())), w), Detournee(_)), "lien en dernier élément");
+    // Sur disque : isolé, puis le dossier remplacé par une jonction
+    let r = std::env::temp_dir().join(format!("d4t-isov-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&r);
+    std::fs::create_dir_all(r.join("d")).unwrap();
+    std::fs::write(r.join("d").join("cmd.exe"), b"x").unwrap();
+    let cible = c(&r.join("d").join("cmd.exe").to_string_lossy()).unwrap();
+    assert_eq!(crate::reponse::verifier_isolation(&cible), Valable);
+    std::fs::remove_dir_all(r.join("d")).unwrap();
+    assert_eq!(crate::reponse::verifier_isolation(&cible), Absent);
+    jonction(&r.join("d"), std::path::Path::new(&crate::natif::dossier_systeme()));
+    assert!(matches!(crate::reponse::verifier_isolation(&cible), Detournee(v) if v.to_lowercase().contains("system32")));
+    let _ = std::fs::remove_dir(r.join("d"));
+    let _ = std::fs::remove_dir_all(&r);
+    assert!(matches!(crate::reponse::verifier_isolation(r"\\serveur\p\x.exe"), Detournee(_)), "jamais ouvert");
+    let a = crate::moniteur::alerte_isolation_detournee(r"C:\a\x.exe", r"C:\Windows\System32\x.exe");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-004", "Critique"));
+    assert!(a.raisons.contains("System32") && !a.raisons.contains("  "), "{}", a.raisons);
+}
+
+/// Relecture de #118, R2 : une lecture recouverte par une commande du mode panique n'est pas publiée
+#[test]
+fn panique_lecture_recouverte_non_publiee() {
+    use crate::reponse::lecture_publiable as p;
+    assert!(p(4, 4, false));
+    assert!(!p(4, 4, true), "commande en cours");
+    assert!(!p(4, 5, false), "commande commencée pendant la lecture");
+    assert!(!p(4, 6, false), "commande commencée et finie pendant la lecture");
 }

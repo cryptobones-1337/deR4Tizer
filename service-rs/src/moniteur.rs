@@ -458,7 +458,18 @@ impl Moniteur {
                 // Dans son propre fil : schtasks peut mettre 60 s à répondre, le fil « sante » n'attend pas (relecture de #101, O2)
                 std::thread::spawn(crate::relance::signaler_etat);
                 let mut lancement_avant = None;
+                let mut tours = 0u32;
                 while !p.arret.load(Ordering::Relaxed) {
+                    // Isolations revérifiées toutes les 5 min, hors du verrou (audit de #118, S118-01)
+                    if tours % 10 == 0 {
+                        let isoles: Vec<String> = m.lock().unwrap().blocages.iter().filter(|b| b.type_ == "programme").map(|b| b.cible.clone()).collect();
+                        for cible in isoles {
+                            if let reponse::EtatIsolation::Detournee(vers) = reponse::verifier_isolation(&cible) {
+                                m.lock().unwrap().retirer_isolation_detournee(&cible, &vers);
+                            }
+                        }
+                    }
+                    tours = tours.wrapping_add(1);
                     // État effectif du mode panique, lu sur les règles hors du verrou (PR 6.5) ; devenu incertain hors d'une
                     // commande (règle retirée par un tiers) : REP-003 (relecture de #117, P1)
                     // Pendant une commande du mode panique, l'état est un instant incertain : rien n'est conclu (audit de #117)
@@ -1398,14 +1409,14 @@ En-tête : Authorization: Bearer {j}"))
                 }
             }
             "isolerProgramme" => {
+                let a = match autorisation_humaine(Action::Isoler) {
+                    Ok(a) => a,
+                    Err(r) => return r,
+                };
                 // Chemin final par handle : le refus du dossier Windows et les règles portent sur lui (PR 6.6)
                 let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or("")) {
                     Ok(c) => c,
                     Err(e) => return Reponse::erreur(e),
-                };
-                let a = match autorisation_humaine(Action::Isoler) {
-                    Ok(a) => a,
-                    Err(r) => return r,
                 };
                 match execution::isoler_programme(&a, &chemin) {
                     Ok(()) => {
@@ -1573,6 +1584,17 @@ En-tête : Authorization: Bearer {j}"))
         Reponse::ok(format!("{cible} débloqué."))
     }
 
+    /// Isolation dont le chemin mène ailleurs : ses règles sont retirées, avant qu'elles ne frappent un autre programme,
+    /// et REP-004 le dit (audit de #118, S118-01)
+    fn retirer_isolation_detournee(&mut self, cible: &str, vers: &str) {
+        let n = reponse::liberer_programme(cible);
+        self.blocages.retain(|b| !(b.type_ == "programme" && b.cible == cible));
+        let _ = commun::ecrire("blocages.json", &self.blocages);
+        politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Terminee);
+        commun::journal(&format!("isolation retirée, chemin détourné : {cible} mène à {vers} ({n} règle(s))"));
+        self.ajouter_alerte_brute(alerte_isolation_detournee(cible, vers), None);
+    }
+
     fn tout_debloquer(&mut self) -> Reponse {
         let ips: Vec<String> = self.blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
         let mut regles: usize = ips.iter().map(|ip| blocage::supprimer_regle(ip)).sum();
@@ -1608,6 +1630,23 @@ pub fn preparer(c: &Commande) -> Prealable {
 /// (pur, testé)
 pub fn panique_devenue_incertaine(avant: reponse::EtatPanique, apres: reponse::EtatPanique) -> bool {
     avant != reponse::EtatPanique::Incertaine && apres == reponse::EtatPanique::Incertaine
+}
+
+/// REP-004 (pur, testé)
+pub fn alerte_isolation_detournee(cible: &str, vers: &str) -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_004.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        processus: "deR4Tizer".into(),
+        chemin: cible.into(),
+        destination: "isolation d'un programme".into(),
+        raisons: format!("Isolation retirée : le chemin isolé ({cible}) mène maintenant à {vers} (dossier remplacé par une jonction, \
+            ou fichier par un lien). Ses règles de pare-feu auraient frappé un autre programme. Le programme isolé n'est plus coupé \
+            du réseau : le retrouver et l'isoler de nouveau si besoin."),
+        ..Default::default()
+    }
 }
 
 pub fn alerte_panique_incertaine() -> Alerte {
