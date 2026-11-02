@@ -131,10 +131,46 @@ fn legitime(exe: &str, chemin: &str, proprietaires: &[&str]) -> bool {
     TOUJOURS_AUTORISES.contains(&exe) && signe_par(chemin, MICROSOFT)
 }
 
-/// Logiciel connu (couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
-pub fn leurre_autorise(chemin: &str) -> bool {
+/// Dossiers où un compte standard n'écrit pas (décision du mainteneur, audit de #113, S113-10)
+pub(crate) struct DossiersFermes {
+    /// Le programme peut être dans un sous-dossier : Program Files, plateforme de Defender
+    pub arbres: Vec<String>,
+    /// Le programme doit être directement dedans : System32 et SysWOW64 ont des sous-dossiers ouverts (Tasks, spool\drivers\color)
+    pub directs: Vec<String>,
+}
+
+fn dossiers_fermes() -> DossiersFermes {
+    let v = |n: &str| std::env::var(n).unwrap_or_default();
+    let systeme = crate::natif::dossier_windows();
+    DossiersFermes {
+        arbres: vec![v("ProgramFiles"), v("ProgramFiles(x86)"), v("ProgramW6432"), format!(r"{}\Microsoft\Windows Defender\Platform", v("ProgramData"))],
+        directs: vec![format!(r"{systeme}\System32"), format!(r"{systeme}\SysWOW64")],
+    }
+}
+
+/// Décision pure. Un programme du profil, de Temp ou d'un autre dossier ouvert n'est jamais « connu » : un attaquant peut y
+/// déposer un binaire signé, avec une DLL à côté. Les applications du Store (WindowsApps) en sont aussi écartées
+pub(crate) fn dossier_ferme(chemin: &str, d: &DossiersFermes) -> bool {
+    let c = chemin.to_lowercase();
+    if c.contains("..") || c.contains(r"\windowsapps\") {
+        return false;
+    }
+    let sous = |dossier: &String| !dossier.is_empty() && c.starts_with(&format!("{}\\", dossier.trim_end_matches('\\').to_lowercase()));
+    d.arbres.iter().any(sous) || d.directs.iter().any(|dossier| sous(dossier) && !c[dossier.trim_end_matches('\\').len() + 1..].contains('\\'))
+}
+
+/// Décision pure : dossier fermé d'abord, sans lecture de signature sinon ; puis le couple nom et éditeur
+pub(crate) fn leurre_connu(chemin: &str, dossiers: &DossiersFermes, signe: &dyn Fn(&[&str]) -> bool) -> bool {
+    if !dossier_ferme(chemin, dossiers) {
+        return false;
+    }
     let exe = Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    LEURRES_AUTORISES.iter().any(|(n, e)| exe.starts_with(n) && signe_par(chemin, e))
+    LEURRES_AUTORISES.iter().any(|(n, e)| exe.starts_with(n) && signe(e))
+}
+
+/// Logiciel connu (dossier fermé, couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
+pub fn leurre_autorise(chemin: &str) -> bool {
+    leurre_connu(chemin, &dossiers_fermes(), &|e| signe_par(chemin, e))
 }
 
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)
@@ -276,6 +312,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             // Suspension automatique dans le SIEM, pour la chronologie (relecture de #94, D1)
             if tentee && !deja {
                 let message = match &retenue {
+                    Some(r) if r.starts_with("échec") => r.clone(),
                     Some(r) => format!("retenue : {r}"),
                     None if suspendu => "programme suspendu".to_string(),
                     None => "suspension en échec".to_string(),

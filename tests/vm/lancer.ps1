@@ -73,7 +73,8 @@ try {
         $calmes = if ((& $occupee) -eq 0) { $calmes + 1 } else { 0 }
         if ($calmes -lt 3) { Start-Sleep 10 }
     }
-    Write-Host "Maintenance de Windows dans la VM : $([int]((Get-Date) - $debutRepos).TotalSeconds) s d'attente$(if ($calmes -lt 3) { ', délai dépassé, scénario lancé quand même' })"
+    $maintenance = "Maintenance de Windows dans la VM : $([int]((Get-Date) - $debutRepos).TotalSeconds) s d'attente$(if ($calmes -lt 3) { ', délai dépassé, scénario lancé quand même' })"
+    Write-Host $maintenance
     if ($SessionStandard) {
         # Compte standard jetable, mot de passe aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte ;
         # ouverture de session automatique à la console, puis redémarrage
@@ -184,6 +185,7 @@ try {
     Write-Host $resultat
     Invoke-Command -Session $s { "Windows de la VM : $((Get-CimInstance Win32_OperatingSystem).Version).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR)" } |
         Set-Content (Join-Path $sortie "$Scenario-vm.txt")
+    Add-Content (Join-Path $sortie "$Scenario-vm.txt") $maintenance
 } finally {
     # Sortie rapportée même si le scénario ou la session a échoué, avant la remise à l'instantané qui l'effacerait
     try {

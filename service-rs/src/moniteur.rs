@@ -1269,7 +1269,7 @@ En-tête : Authorization: Bearer {j}"))
                     // Sans empreinte, aucune exception : le programme reste sous la réponse automatique
                     match politique::empreinte_suspension(&chemin, creation) {
                         Some(e) => politique::decision_humaine(&chemin, Some(e)),
-                        None => commun::journal(&format!("reprise de {chemin} : empreinte inconnue, décision humaine non retenue")),
+                        None => commun::journal(&format!("reprise de {} : empreinte inconnue, décision humaine non retenue", crate::siem::texte_sur(&chemin, 300))),
                     }
                 }
                 match r {
@@ -1306,9 +1306,17 @@ En-tête : Authorization: Bearer {j}"))
                 let identites: Vec<(u32, reponse::Attendu)> = a_tuer.iter().filter_map(|p| {
                     if *p == pid { Some((pid, racine.clone())) } else { natif::creation_processus(*p).map(|creation| (*p, reponse::Attendu::Exacte { creation })) }
                 }).collect();
-                let n = identites.iter().rev().filter(|(p, i)| execution::tuer(&a, *p, i).is_ok()).count();
+                // Le motif du premier refus : critique, droits, identité (relecture de #113, P5)
+                let mut premiere_erreur = None;
+                let n = identites.iter().rev().filter(|(p, i)| match execution::tuer(&a, *p, i) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        premiere_erreur.get_or_insert(e);
+                        false
+                    }
+                }).count();
                 if n == 0 {
-                    return Reponse::erreur(reponse::IDENTITE_CHANGEE);
+                    return Reponse::erreur(premiere_erreur.unwrap_or_else(|| reponse::IDENTITE_CHANGEE.into()));
                 }
                 Reponse::ok(format!("{n} processus arrêté(s)."))
             }

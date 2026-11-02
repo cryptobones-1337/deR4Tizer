@@ -196,7 +196,8 @@ pub fn valider(c: &Commande) -> Result<(), String> {
             pid_valide(requis(&c.cible, "Cible")?).then_some(()).ok_or("PID invalide")?;
             // Un service à jour refuse une commande sans identité : elle ne dirait pas sur quel processus elle porte
             let chemin = requis(&c.chemin, "Chemin")?;
-            (chemin.chars().count() <= 1024 && !chemin.chars().any(char::is_control)).then_some(()).ok_or("chemin du processus invalide")?;
+            // Montré, pas comparé : un nom piégé (U+0085…) ne doit pas empêcher d'arrêter le programme (audit de #113, S113-08)
+            (chemin.chars().count() <= 1024).then_some(()).ok_or("chemin du processus invalide")?;
             c.creation.filter(|t| *t > 0).map(|_| ()).ok_or_else(|| "heure de création du processus manquante".into())
         }
         "quarantaine" | "isolerProgramme" => {

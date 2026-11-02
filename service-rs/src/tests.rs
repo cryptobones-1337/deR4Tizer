@@ -5776,11 +5776,12 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("let attendu = reponse::Attendu::Exacte { creation };"), "6.3 : identité de la commande");
     assert!(m.contains("match politique::empreinte_suspension(&chemin, creation) {"), "S110-05, S113-06");
     assert!(m.contains("if *p == pid { Some((pid, racine.clone())) }"), "relecture de #113, J1 : la racine garde l'identité montrée jusqu'à l'action");
-    assert!(m.contains("if n == 0 {\n                    return Reponse::erreur(reponse::IDENTITE_CHANGEE);"), "P3 : aucun arrêt, pas un succès");
+    assert!(m.contains("if n == 0 {\n                    return Reponse::erreur(premiere_erreur.unwrap_or_else("), "P3, P5 : aucun arrêt, pas un succès, et le premier motif");
     assert!(v.contains("(false, Some(format!(\"échec : {e}\")))"), "S113-01 : l'alerte dit l'échec");
     assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), maintenant());"), "S113-06 : la trace porte l'heure de création");
     assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), \"\") {"), "6.3 : racine de la chaîne");
-    assert!(m.contains("filter(|(p, i)| execution::tuer(&a, *p, i).is_ok())"), "6.3 : descendants, identité relevée à la décision");
+    assert!(m.contains("filter(|(p, i)| match execution::tuer(&a, *p, i) {"), "6.3 : descendants, identité relevée à la décision");
+    assert!(v.contains("leurre_connu(chemin, &dossiers_fermes(), &|e| signe_par(chemin, e))"), "S113-10 : dossier fermé en production");
     assert!(v.contains("Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {"), "6.3 : le leurre passe l'identité");
     let rp = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(rp.contains("agir(pid, attendu, PROCESS_TERMINATE, true,") && rp.contains("agir(pid, attendu, PROCESS_SUSPEND_RESUME, suspendre,"), "6.3 : action par le handle, contrôle critique pour tuer et suspendre");
@@ -5979,7 +5980,7 @@ fn identite_exigee_par_la_validation() {
         assert!(v(&c(None, Some(5))).is_err(), "{action} : sans chemin");
         assert!(v(&c(Some(r"C:\P.exe"), None)).is_err(), "{action} : sans heure");
         assert!(v(&c(Some(r"C:\P.exe"), Some(0))).is_err(), "{action} : heure nulle");
-        assert!(v(&c(Some("a\nb"), Some(5))).is_err(), "{action} : caractère de contrôle");
+        assert!(v(&c(Some("a\u{85}b"), Some(5))).is_ok(), "{action} : nom piégé, le programme doit rester arrêtable (S113-08)");
         assert!(v(&c(Some(&"x".repeat(1025)), Some(5))).is_err(), "{action} : trop long");
         assert!(v(&c(Some(&"é".repeat(1024)), Some(5))).is_ok(), "{action} : compté en caractères");
     }
@@ -6011,4 +6012,49 @@ fn garde_signature_lue_seulement_dans_program_files() {
     assert!(!i(r"C:\Program Files\..\a.exe", &d));
     assert!(!i(r"C:\Program Files Evil\a.exe", &d));
     assert!(!i(r"\\s\a.exe", &[String::new()]));
+}
+
+// ------------------------------------------------------------ audit de #113, S113-10 : logiciel connu usurpé
+
+fn dossiers_de_test() -> crate::vol_donnees::DossiersFermes {
+    crate::vol_donnees::DossiersFermes {
+        arbres: vec![r"C:\Program Files".into(), r"C:\Program Files (x86)\".into(), r"C:\ProgramData\Microsoft\Windows Defender\Platform".into(), String::new()],
+        directs: vec![r"C:\Windows\System32".into(), r"C:\Windows\SysWOW64".into()],
+    }
+}
+
+/// Décision du mainteneur : hors d'un dossier fermé aux comptes standard, jamais « connu »
+#[test]
+fn leurre_connu_seulement_dans_un_dossier_ferme() {
+    use crate::vol_donnees::dossier_ferme as f;
+    let d = dossiers_de_test();
+    for ok in [r"C:\Program Files\Dropbox\Client\Dropbox.exe", r"c:\program files (x86)\x\y.exe", r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18\MsMpEng.exe",
+               r"C:\Windows\System32\SearchIndexer.exe", r"c:\windows\syswow64\vssvc.EXE"] {
+        assert!(f(ok, &d), "{ok}");
+    }
+    for ko in [r"C:\Users\x\AppData\Local\Microsoft\OneDrive\OneDrive.exe", r"C:\Users\x\AppData\Local\Temp\onedrive.exe", r"C:\Windows\Temp\onedrive.exe",
+               r"C:\Windows\onedrive.exe", r"C:\Windows\System32\Tasks\onedrive.exe", r"C:\Windows\System32\spool\drivers\color\vssvc.exe",
+               r"C:\Program Files Evil\onedrive.exe", r"C:\Program Files\..\Users\x\onedrive.exe", r"C:\Program Files\WindowsApps\Editeur_1\onedrive.exe",
+               r"C:\ProgramData\onedrive.exe", r"C:\ProgramData\Microsoft\Windows Defender\Platform2\MsMpEng.exe", r"\\serveur\partage\onedrive.exe", ""] {
+        assert!(!f(ko, &d), "{ko}");
+    }
+}
+
+#[test]
+fn leurre_connu_nom_editeur_et_dossier() {
+    use crate::vol_donnees::leurre_connu as c;
+    let d = dossiers_de_test();
+    let lue = std::cell::Cell::new(false);
+    let oui = |_: &[&str]| { lue.set(true); true };
+    let non = |_: &[&str]| false;
+    assert!(c(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", &d, &oui));
+    assert!(!c(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", &d, &non), "non signé par l'éditeur attendu");
+    assert!(!c(r"C:\Program Files\Editeur\autre.exe", &d, &oui), "nom hors de la liste");
+    lue.set(false);
+    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui), "copie signée dans un dossier ouvert");
+    assert!(!lue.get(), "signature non lue hors d'un dossier fermé");
+    // Le couple : l'éditeur attendu est bien celui du nom
+    let dropbox = |e: &[&str]| e.contains(&"Dropbox, Inc");
+    assert!(c(r"C:\Program Files\Dropbox\Dropbox.exe", &d, &dropbox));
+    assert!(!c(r"C:\Program Files\Acronis\acronis.exe", &d, &dropbox));
 }
