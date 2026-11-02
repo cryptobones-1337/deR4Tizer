@@ -437,7 +437,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             if (@($b | Where-Object { $_.Echeance - $_.Debut -ne 7200 }).Count) { return "échéance de B : $(($b | ForEach-Object { $_.Echeance - $_.Debut }) -join ', ')" }
             if ($b[0].Etat -ne 'Levee') { return "première suspension de B, reprise à la main : $($b[0].Etat)" }
             if (-not $a.Count) { return 'aucune suspension de A au registre' }
-            if (@($a | Where-Object { $_.Etat -ne 'Terminee' }).Count) { return "A, processus arrêtés : $(($a | ForEach-Object Etat) -join ', ')" }
+            if (@($a | Where-Object { $_.Etat -ne 'Terminee' }).Count) { return "A, processus arrêtés : $(($a | ForEach-Object { "$($_.Etat) pid $($_.Pid) vivant $([bool](Get-Process -Id $_.Pid -ErrorAction SilentlyContinue))" }) -join ', ')" }
             $true
         }
     } else {

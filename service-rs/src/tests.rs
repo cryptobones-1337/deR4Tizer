@@ -5770,7 +5770,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(v.contains("[\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramW6432\"]"), "dossiers");
     assert!(v.contains("crate::politique::noter_suspension(&programme, crate::natif::empreinte_a_echeance(&programme).ok().flatten(), creation);"), "leurre : trace, empreinte, heure de création");
     assert!(v.contains("crate::politique::ouvrir(crate::politique::Sorte::SuspensionAuto, &programme, Some(pid), Some(creation));"), "6.4 : registre, leurre");
-    assert!(m.contains("for a in politique::echeances(&|p, c| natif::creation_processus(p) == Some(c)) {"), "6.4 : relances dans le cycle");
+    assert!(m.contains("for a in politique::echeances(&natif::processus_actif) {"), "6.4 : relances dans le cycle, processus arrêté vu comme tel");
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
     assert!(m.contains("politique::ouvrir(politique::Sorte::Isolation, &chemin, None, None);"), "6.4 : isolation");
@@ -6191,4 +6191,17 @@ fn blocages_echeances_ips_et_manquantes() {
     assert_eq!(l[0].expire, "2026-11-09 10:00:00");
     assert_eq!(l[1].expire, "2099-01-01 00:00:00", "échéance existante gardée");
     assert!(l[2].expire.is_empty(), "un blocage manuel reste sans échéance");
+}
+
+/// Passage en VM de #115 : un processus arrêté dont un autre programme garde le handle restait « actif » au registre
+#[test]
+fn registre_processus_arrete_meme_avec_un_handle_ouvert() {
+    use crate::natif::processus_encore_la as l;
+    assert!(l(Ok((Some(100), Some(259))), 100), "en cours");
+    assert!(!l(Ok((Some(100), Some(1))), 100), "arrêté, objet encore ouvert par un autre programme");
+    assert!(!l(Ok((Some(100), None)), 100), "code de sortie illisible : pas une preuve de vie");
+    assert!(!l(Ok((Some(101), Some(259))), 100), "PID réutilisé");
+    assert!(!l(Ok((None, Some(259))), 100), "heure illisible");
+    assert!(!l(Err(87), 100), "processus inexistant");
+    assert!(l(Err(5), 100), "accès refusé : pas une preuve de fin (S115-04)");
 }

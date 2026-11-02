@@ -228,6 +228,31 @@ impl Drop for ProcessusOuvert {
     }
 }
 
+/// Décision pure : un processus est-il encore là, et toujours celui-là ? `ouverture` : (heure de création, code de sortie) lus
+/// sur un handle, ou l'erreur Windows de l'ouverture. Un processus arrêté reste lisible tant qu'un autre programme garde un
+/// handle sur lui : seul le code de sortie STILL_ACTIVE (259) dit qu'il tourne. Une ouverture refusée pour une autre raison
+/// que « processus inexistant » (87) ne prouve pas sa fin : il est gardé (audit de #115, S115-04)
+pub(crate) fn processus_encore_la(ouverture: Result<(Option<u64>, Option<u32>), u32>, creation_attendue: u64) -> bool {
+    match ouverture {
+        Err(87) => false,
+        Err(_) => true,
+        Ok((creation, code)) => creation == Some(creation_attendue) && code == Some(259),
+    }
+}
+
+pub fn processus_actif(pid: u32, creation_attendue: u64) -> bool {
+    use windows::Win32::System::Threading::GetExitCodeProcess;
+    let ouverture = match ProcessusOuvert::ouvrir(pid, windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS(0)) {
+        Ok(p) => {
+            let mut code = 0u32;
+            let lu = unsafe { GetExitCodeProcess(p.handle(), &mut code) }.is_ok().then_some(code);
+            Ok((p.creation(), lu))
+        }
+        Err(_) => Err(unsafe { windows::Win32::Foundation::GetLastError() }.0),
+    };
+    processus_encore_la(ouverture, creation_attendue)
+}
+
 pub fn chemin_processus(pid: u32) -> String {
     if pid <= 4 {
         return String::new();

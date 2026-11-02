@@ -814,7 +814,7 @@ impl Moniteur {
             self.expiration = Instant::now();
             self.expirer_blocages();
             // Échéances des actions qui durent : relance, jamais levée (phase 6, PR 6.4)
-            for a in politique::echeances(&|p, c| natif::creation_processus(p) == Some(c)) {
+            for a in politique::echeances(&natif::processus_actif) {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, None);
             }
         }
