@@ -90,7 +90,9 @@ prestataire).
 - Risques résiduels : un blocage automatique d'une adresse légitime coupe un service jusqu'à la mise à jour
   suivante de la liste.
 
-Réutilisation des PID : tuer, suspendre et reprendre exigent l'identité complète, comparée sur le handle qui sert à agir.
+Réutilisation des PID : tuer, suspendre et reprendre exigent le PID et l'heure de création, comparés sur le handle qui sert à agir.
+
+Compte standard contre la suspension sur leurre : un programme nommé comme un logiciel connu, signé par son éditeur, échappe à la suspension s'il se trouve dans un dossier de Program Files ouvert par un installateur tiers, ou s'il est un processus creux lancé depuis un binaire autorisé. L'alerte reste, au niveau Info. À fermer avant toute distribution.
 
 ## Hors du modèle
 

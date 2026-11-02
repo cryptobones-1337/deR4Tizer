@@ -73,7 +73,8 @@ try {
         $calmes = if ((& $occupee) -eq 0) { $calmes + 1 } else { 0 }
         if ($calmes -lt 3) { Start-Sleep 10 }
     }
-    Write-Host "Maintenance de Windows dans la VM : $([int]((Get-Date) - $debutRepos).TotalSeconds) s d'attente$(if ($calmes -lt 3) { ', délai dépassé, scénario lancé quand même' })"
+    $maintenance = "Maintenance de Windows dans la VM : $([int]((Get-Date) - $debutRepos).TotalSeconds) s d'attente$(if ($calmes -lt 3) { ', délai dépassé, scénario lancé quand même' })"
+    Write-Host $maintenance
     if ($SessionStandard) {
         # Compte standard jetable, mot de passe aléatoire tiré dans la VM, jamais affiché ni rapporté à l'hôte ;
         # ouverture de session automatique à la console, puis redémarrage
@@ -184,6 +185,7 @@ try {
     Write-Host $resultat
     Invoke-Command -Session $s { "Windows de la VM : $((Get-CimInstance Win32_OperatingSystem).Version).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR)" } |
         Set-Content (Join-Path $sortie "$Scenario-vm.txt")
+    Add-Content (Join-Path $sortie "$Scenario-vm.txt") $maintenance
 } finally {
     # Sortie rapportée même si le scénario ou la session a échoué, avant la remise à l'instantané qui l'effacerait
     try {
@@ -206,6 +208,8 @@ $fichierCode = Join-Path $sortie "$Scenario-code.txt"
 if (-not (Test-Path $fichierCode)) { throw "Pas de résultat (voir $sortie)." }
 $code = (Get-Content $fichierCode -Raw).Trim()
 $tableau = Join-Path $sortie "$Scenario-tableau.md"
+# Dans le tableau, donc dans la preuve : si cette durée grandit, l'instantané est à refaire
+if ((Test-Path $tableau) -and $maintenance) { [IO.File]::AppendAllText($tableau, "`n> $maintenance`n", (New-Object Text.UTF8Encoding $false)) }
 if (Test-Path $tableau) { Get-Content $tableau -Encoding UTF8 }
 $detections = Join-Path $sortie "$Scenario-defender-detections.txt"
 Write-Host "Code de sortie : $code ; détections Defender : $(if ((Test-Path $detections) -and (Get-Content $detections -Raw).Trim()) { 'OUI, voir ' + $detections } else { 'aucune' })"
