@@ -5794,12 +5794,18 @@ fn structure_aucun_appel_direct_aux_actions() {
     let (garde, tout) = (crate::blocage::commande_suppression_groupe(true), crate::blocage::commande_suppression_groupe(false));
     assert_eq!(garde, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' } | Remove-NetFirewallRule", "Q2 : filtre");
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
-    assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let avant = crate::reponse::etat_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
-    assert!(m.contains("if panique_devenue_incertaine(avant, apres) && !crate::reponse::commande_panique_en_cours() {"), "audit de #117 : commande commencée entre-temps");
+    assert!(m.contains("if !crate::reponse::commande_panique_en_cours() {\n                        let generation = crate::reponse::generation_panique();"), "P1 : alerte au passage à incertaine, hors d'une commande (audit de #117)");
+    assert!(m.contains("&& crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())"), "relecture de #118 : commande commencée et finie pendant la lecture");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
     let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
-    assert!(m.contains("if let reponse::EtatIsolation::Detournee(vers) = reponse::verifier_isolation(&cible) {\n                                m.lock().unwrap().retirer_isolation_detournee(&cible, &vers);"), "S118-01 : revérification");
+    assert!(m.contains("if detournees_signalees.insert((cible.clone(), vers.clone())) {"), "S118-01 : revérification, une alerte par détournement");
+    assert!(!m.contains("retirer_isolation_detournee"), "relecture de #118, D2 : une isolation n'est jamais levée automatiquement");
+    let bloc = &m[m.find("match reponse::verifier_isolation(&cible) {").unwrap()..];
+    let bloc = &bloc[..bloc.find("tours = tours.wrapping_add(1);").unwrap()];
+    for interdit in ["liberer_programme", "politique::clore", "blocages.retain", "debloquer"] {
+        assert!(!bloc.contains(interdit), "D2 : {interdit} dans la revérification");
+    }
     assert!(m.contains("                    if tours % 10 == 0 {"), "S118-01 : toutes les 5 min");
     assert!(include_str!("natif.rs").contains("let options = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAGS_AND_ATTRIBUTES(0x0011_0000)"), "R1 : SQOS");
     let r = include_str!("reponse.rs").replace("\r\n", "\n");
@@ -6485,7 +6491,7 @@ fn isolation_reverifiee_et_refus_avant_ouverture() {
     assert!(matches!(crate::reponse::verifier_isolation(r"\\serveur\p\x.exe"), Detournee(_)), "jamais ouvert");
     let a = crate::moniteur::alerte_isolation_detournee(r"C:\a\x.exe", r"C:\Windows\System32\x.exe");
     assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("REP-004", "Critique"));
-    assert!(a.raisons.contains("System32") && !a.raisons.contains("  "), "{}", a.raisons);
+    assert!(a.raisons.contains("System32") && a.raisons.contains("jamais levées automatiquement") && !a.raisons.contains("  "), "{}", a.raisons);
 }
 
 /// Relecture de #118, R2 : une lecture recouverte par une commande du mode panique n'est pas publiée

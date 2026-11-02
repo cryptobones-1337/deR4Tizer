@@ -92,7 +92,8 @@ ports, pour tous les programmes (un tunnel DNS reste possible).
 élément ; son chemin final (noms courts, jonctions et points de montage résolus) est comparé au dossier Windows, et
 c'est lui qui porte les règles de pare-feu. Un chemin réseau, un tube ou un volume sans lettre est refusé sur le texte,
 avant toute ouverture. Toutes les 5 minutes, chaque isolation est revérifiée : si son chemin mène ailleurs (dossier
-remplacé par une jonction), ses règles sont retirées et l'alerte REP-004 le dit. Limite : un programme isolé copié
+remplacé par une jonction), l'alerte REP-004 le dit, une fois ; les règles sont gardées, jamais levées
+automatiquement, et peuvent alors couper le réseau du programme visé : la décision reste humaine. Limite : un programme isolé copié
 ailleurs n'est plus coupé du réseau (la règle vise un chemin, pas un fichier).
 
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions

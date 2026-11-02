@@ -1194,6 +1194,10 @@ pub fn rafraichir_etat_panique() -> EtatPanique {
     e
 }
 
+pub fn generation_panique() -> u64 {
+    GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Décision pure : une lecture faite hors commande, sans commande commencée ni finie pendant elle, peut être publiée
 pub fn lecture_publiable(generation_avant: u64, generation_apres: u64, commande_en_cours: bool) -> bool {
     !commande_en_cours && generation_avant == generation_apres
