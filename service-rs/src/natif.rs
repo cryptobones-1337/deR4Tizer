@@ -242,13 +242,15 @@ pub(crate) fn processus_encore_la(ouverture: Result<(Option<u64>, Option<u32>), 
 
 pub fn processus_actif(pid: u32, creation_attendue: u64) -> bool {
     use windows::Win32::System::Threading::GetExitCodeProcess;
-    let ouverture = match ProcessusOuvert::ouvrir(pid, windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS(0)) {
-        Ok(p) => {
+    // Le code vient de l'erreur elle-même, pas d'un GetLastError relu plus tard (relecture de #115)
+    let ouverture = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Ok(h) => {
+            let p = ProcessusOuvert(h);
             let mut code = 0u32;
             let lu = unsafe { GetExitCodeProcess(p.handle(), &mut code) }.is_ok().then_some(code);
             Ok((p.creation(), lu))
         }
-        Err(_) => Err(unsafe { windows::Win32::Foundation::GetLastError() }.0),
+        Err(e) => Err((e.code().0 as u32) & 0xFFFF),
     };
     processus_encore_la(ouverture, creation_attendue)
 }

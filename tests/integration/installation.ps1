@@ -1014,10 +1014,15 @@ if ($script:lecteur) {
 # deux événements « reponse » dans le SIEM, avec l'heure UTC et le numéro d'ordre (ordre total, D4-4)
 Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », HeureUtc, Seq)' {
     $ip = '203.0.113.77'
+    $registre = { @(@((Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json).Actions) |
+        Where-Object { $_.Sorte -eq 'BlocageManuel' -and $_.Cible -eq $ip }) | Select-Object -Last 1 }
     $b = Commande (@{ Action = 'bloquerIp'; Ip = $ip; Raison = 'témoin 4.1' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
     if (-not $b.Ok) { return "blocage refusé : $($b.Message)" }
+    # Phase 6, PR 6.4b : relevé ici, jugé par la vérification suivante
+    $script:registreBlocage = @(& $registre)
     $d = Commande (@{ Action = 'debloquer'; Type = 'parefeu'; Cible = $ip } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
     if (-not $d.Ok) { return "levée refusée : $($d.Message)" }
+    $script:registreBlocage += @(& $registre)
     $siem = Join-Path $script:Donnees 'siem'
     $fin = (Get-Date).AddSeconds(90)
     $vus = @()
@@ -1038,6 +1043,13 @@ Verifier 'SIEM : blocage manuel et levée journalisés (Source « reponse », He
     if ($bloc.Niveau -ne 'Info' -or $bloc.Message -notmatch 'commande d''administrateur') { return "événement de blocage inattendu : $($bloc.Niveau) / $($bloc.Message)" }
     if ($bloc.HeureBrute -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$' -or -not ($bloc.Seq -gt 0)) { return "horodatage absent : HeureUtc « $($bloc.HeureBrute) », Seq « $($bloc.Seq) »" }
     if (-not ($levee.Seq -gt $bloc.Seq)) { return "ordre : Seq de la levée ($($levee.Seq)) pas après celui du blocage ($($bloc.Seq))" }
+    $true
+}
+Verifier 'Registre : blocage manuel inscrit avec son échéance de 90 jours, levé par le déblocage' {
+    $r = @($script:registreBlocage)
+    if ($r.Count -ne 2 -or -not $r[0] -or -not $r[1]) { return "relevés : $($r.Count) ; blocage refusé ou registre illisible" }
+    if ($r[0].Etat -ne 'Active' -or $r[0].Echeance - $r[0].Debut -ne 7776000) { return "après le blocage : $($r[0].Etat), échéance $($r[0].Echeance - $r[0].Debut)" }
+    if ($r[1].Etat -ne 'Levee' -or $r[1].Id -ne $r[0].Id) { return "après le déblocage : $($r[1].Etat)" }
     $true
 }
 

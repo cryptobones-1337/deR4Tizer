@@ -168,6 +168,8 @@ pub enum Sorte {
     Suspension,
     Isolation,
     Panique,
+    Quarantaine,
+    BlocageManuel,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -192,6 +194,9 @@ pub struct ActionEnCours {
     pub relances: u32,
     pub derniere_relance: u64,
     pub etat: EtatAction,
+    /// Qui l'a déclenchée (relecture de #115, P3)
+    #[serde(default)]
+    pub declencheur: String,
 }
 
 /// (première échéance, puis période de relance) en secondes, et niveau de l'alerte REP-001 (D6-3)
@@ -201,6 +206,8 @@ pub fn calendrier(sorte: Sorte) -> (u64, u64, &'static str) {
         Sorte::Suspension => (JOUR, JOUR, "Alerte"),
         Sorte::Isolation => (7 * JOUR, 7 * JOUR, "Alerte"),
         Sorte::Panique => (4 * HEURE, JOUR, "Critique"),
+        Sorte::Quarantaine => (30 * JOUR, 30 * JOUR, "Info"),
+        Sorte::BlocageManuel => (90 * JOUR, 90 * JOUR, "Info"),
     }
 }
 
@@ -210,6 +217,8 @@ pub fn recuperation(sorte: Sorte) -> &'static str {
         Sorte::SuspensionAuto | Sorte::Suspension => "« Reprendre » ou « Tuer » dans deR4Tizer ; service arrêté : Moniteur de ressources (resmon), « Reprendre le processus », ou arrêt dans le Gestionnaire des tâches",
         Sorte::Isolation => "« Débloquer » dans deR4Tizer ; service arrêté : supprimer les règles « deR4Tizer - isole … » du pare-feu (groupe deR4Tizer)",
         Sorte::Panique => "« Désactiver le mode panique » dans deR4Tizer ; service arrêté : supprimer les règles « deR4Tizer PANIQUE » du pare-feu",
+        Sorte::Quarantaine => "« Restaurer » dans deR4Tizer si le fichier est sûr ; sinon le laisser : il n'est jamais supprimé",
+        Sorte::BlocageManuel => "« Débloquer » dans deR4Tizer si le blocage n'est plus utile",
     }
 }
 
@@ -235,8 +244,9 @@ pub struct Historique {
     pub signales: VecDeque<(String, u64)>,
 }
 
+/// Clé bornée : un chemin de 32 000 caractères ne doit pas gonfler `reponses.json` (audit de #110, S110-10 ; #115, S115-06)
 fn cle(cible: &str) -> String {
-    cible.to_lowercase()
+    cible.chars().take(1024).collect::<String>().to_lowercase()
 }
 
 impl Historique {
@@ -337,7 +347,8 @@ impl Historique {
             return;
         }
         let (premiere, _, _) = calendrier(sorte);
-        self.actions.push(ActionEnCours { id: commun::nouvel_id(), sorte, cible: c, pid, creation, debut: t, echeance: t + premiere, relances: 0, derniere_relance: 0, etat: EtatAction::Active });
+        let declencheur = if sorte == Sorte::SuspensionAuto { "automatique : leurre" } else { "administrateur" }.to_string();
+        self.actions.push(ActionEnCours { id: commun::nouvel_id(), sorte, cible: c, pid, creation, debut: t, echeance: t + premiere, relances: 0, derniere_relance: 0, etat: EtatAction::Active, declencheur });
         self.borner();
     }
 
@@ -388,13 +399,16 @@ impl Historique {
         dues
     }
 
-    /// Bornes : 500 actives au plus (les plus anciennes sortent, l'alerte d'origine reste), 100 closes gardées
+    /// Bornes : 500 actives au plus, 100 closes gardées. Seules les suspensions automatiques, quarantaines et blocages manuels
+    /// les plus anciens peuvent sortir : un mode panique, une isolation ou une suspension manuelle restent toujours suivis,
+    /// même au-delà de la borne (audit de #115, S115-01). L'alerte d'origine de ce qui sort reste
     fn borner(&mut self) {
+        let evincable = |a: &ActionEnCours| a.etat == EtatAction::Active && matches!(a.sorte, Sorte::SuspensionAuto | Sorte::Quarantaine | Sorte::BlocageManuel);
         let actives = self.actions.iter().filter(|a| a.etat == EtatAction::Active).count();
         if actives > MAX_ACTIVES {
             let mut trop = actives - MAX_ACTIVES;
             self.actions.retain(|a| {
-                if trop > 0 && a.etat == EtatAction::Active {
+                if trop > 0 && evincable(a) {
                     trop -= 1;
                     false
                 } else {
@@ -457,6 +471,8 @@ pub fn alerte_relance(a: &ActionEnCours, niveau: &str, t: u64) -> Alerte {
         Sorte::Suspension => "programme suspendu par un administrateur",
         Sorte::Isolation => "programme coupé du réseau",
         Sorte::Panique => "mode panique actif : le poste n'a plus accès à Internet",
+        Sorte::Quarantaine => "fichier toujours en quarantaine",
+        Sorte::BlocageManuel => "blocage manuel toujours en place",
     };
     let duree = t.saturating_sub(a.debut);
     Alerte {
@@ -468,8 +484,11 @@ pub fn alerte_relance(a: &ActionEnCours, niveau: &str, t: u64) -> Alerte {
         chemin: a.cible.clone(),
         pid: a.pid,
         destination: "action de réponse toujours en cours".into(),
-        raisons: format!("{quoi} depuis {} h {:02} min ({}) — jamais levé automatiquement ; décision humaine attendue. Récupération : {}",
-            duree / HEURE, (duree % HEURE) / 60, a.cible, recuperation(a.sorte)),
+        raisons: format!("{quoi} depuis {} h {:02} min ({}){} — jamais levé automatiquement ; décision humaine attendue. Récupération : {}",
+            duree / HEURE, (duree % HEURE) / 60, a.cible,
+            // L'état réel des fils n'est pas lu : un autre processus du même compte peut l'avoir repris (audit de #115, S115-03)
+            if matches!(a.sorte, Sorte::SuspensionAuto | Sorte::Suspension) { " ; il peut avoir été repris hors de deR4Tizer" } else { "" },
+            recuperation(a.sorte)),
         ..Default::default()
     }
 }
@@ -580,10 +599,13 @@ pub fn noter(genre: Genre, cible: &str) {
     })
 }
 
-/// Une suspension automatique a eu lieu : avec l'empreinte de l'exécutable
-pub fn noter_suspension(chemin: &str, empreinte: Option<String>, creation: u64) {
+/// Une suspension automatique a eu lieu : trace avec l'empreinte de l'exécutable, et action inscrite au registre, en une
+/// seule écriture (audit de #115, S115-06)
+pub fn noter_suspension(chemin: &str, empreinte: Option<String>, pid: u32, creation: u64) {
     avec(|e| {
-        e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), maintenant());
+        let t = maintenant();
+        e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), t);
+        e.h.ouvrir(Sorte::SuspensionAuto, chemin, Some(pid), Some(creation), t);
         enregistrer(e);
     })
 }
@@ -622,8 +644,26 @@ pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
         if n > 0 || !dues.is_empty() {
             enregistrer(e);
         }
-        dues.iter().map(|(a, Effet::Relancer { niveau })| alerte_relance(a, niveau, t)).collect()
+        regrouper_relances(&dues, t)
     })
+}
+
+/// Une alerte par sorte et par tour : 500 suspensions de même heure ne donnent pas 500 alertes Critique (audit de #115,
+/// S115-02). Au-delà d'une, l'alerte dit le nombre et nomme les 5 premières cibles (pur, testé)
+pub fn regrouper_relances(dues: &[(ActionEnCours, Effet)], t: u64) -> Vec<Alerte> {
+    let mut sortes: Vec<Sorte> = dues.iter().map(|(a, _)| a.sorte).collect();
+    sortes.sort_by_key(|s| *s as u8);
+    sortes.dedup();
+    sortes.into_iter().map(|s| {
+        let groupe: Vec<&(ActionEnCours, Effet)> = dues.iter().filter(|(a, _)| a.sorte == s).collect();
+        let (a, Effet::Relancer { niveau }) = groupe[0];
+        let mut alerte = alerte_relance(a, niveau, t);
+        if groupe.len() > 1 {
+            let noms: Vec<&str> = groupe.iter().take(5).map(|(a, _)| a.cible.as_str()).collect();
+            alerte.raisons = format!("{} actions de ce type toujours en cours, dont : {}. {}", groupe.len(), noms.join(", "), alerte.raisons);
+        }
+        alerte
+    }).collect()
 }
 
 /// Un administrateur a levé ou repris une action automatique

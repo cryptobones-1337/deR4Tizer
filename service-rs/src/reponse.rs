@@ -578,6 +578,11 @@ fn proprietaire_emplacement(cible: &Path) -> Option<String> {
 
 const REPLI: &str = "REPLI";
 
+/// Emplacement d'origine d'un élément de quarantaine (registre des actions, PR 6.4b)
+pub fn origine_quarantaine(id: &str) -> Option<String> {
+    charger_liste().ok()?.into_iter().find(|e| e.id == id).map(|e| e.chemin_origine)
+}
+
 pub fn restaurer(id: &str) -> Result<String, String> {
     let mut liste = charger_liste()?;
     let e = liste.iter().find(|e| e.id == id).cloned().ok_or("élément introuvable")?;

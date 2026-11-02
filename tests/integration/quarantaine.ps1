@@ -533,6 +533,16 @@ if ($compte) {
         if (Test-Path $fB) { return 'fichier écrit à l''emplacement d''origine' }
         $true
     }
+    # Phase 6, PR 6.4b : la quarantaine est inscrite au registre des actions en cours, et close par la restauration
+    Verifier 'Registre : quarantaine inscrite avec son échéance de 30 jours, levée par la restauration de repli' {
+        $act = @((Get-Content (Join-Path $script:Donnees 'reponses.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json).Actions)
+        $q = @($act | Where-Object { $_.Sorte -eq 'Quarantaine' -and $_.Cible -eq $fB.ToLowerInvariant() })
+        if (-not $q.Count) { return "aucune quarantaine de $fB au registre : $(($act | ForEach-Object { "$($_.Sorte) $($_.Cible) $($_.Etat)" }) -join ' // ')" }
+        if ($q[-1].Echeance - $q[-1].Debut -ne 2592000) { return "échéance : $($q[-1].Echeance - $q[-1].Debut)" }
+        if ($q[-1].Etat -ne 'Levee') { return "après restauration : $($q[-1].Etat)" }
+        if ($q[-1].Declencheur -ne 'administrateur') { return "déclencheur : $($q[-1].Declencheur)" }
+        $true
+    }
     Verifier 'Restauration de repli : dossier à SYSTEM, protégé, lecture seule pour le propriétaire de l''origine' {
         $dossier = Split-Path $fRepli
         $d = Droits $dossier

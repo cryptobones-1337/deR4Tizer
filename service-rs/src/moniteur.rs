@@ -1038,14 +1038,32 @@ impl Moniteur {
             // Contrôle de bon fonctionnement après une mise à jour (maj.rs) : le service répond et dit sa version
             "verification" => Reponse::ok(format!("deR4Tizer {}", commun::VERSION)),
             "bloquer" => match c.nom_dns.as_deref().filter(|n| !n.is_empty()) {
-                Some(n) => self.bloquer_domaines(&[n.to_string()], &raison, c.ip.as_deref()),
+                Some(n) => {
+                    let r = self.bloquer_domaines(&[n.to_string()], &raison, c.ip.as_deref());
+                    if r.ok {
+                        politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);
+                    }
+                    r
+                }
                 None => match autorisation_humaine(Action::BloquerIp) {
-                    Ok(a) => self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison),
+                    Ok(a) => {
+                        let r = self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison);
+                        if r.ok {
+                            politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(""), None, None);
+                        }
+                        r
+                    }
                     Err(r) => r,
                 },
             },
             "bloquerIp" => match autorisation_humaine(Action::BloquerIp) {
-                Ok(a) => self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison),
+                Ok(a) => {
+                    let r = self.bloquer_ip(&a, c.ip.as_deref().unwrap_or(""), &raison);
+                    if r.ok {
+                        politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(""), None, None);
+                    }
+                    r
+                }
                 Err(r) => r,
             },
             "debloquer" => {
@@ -1334,19 +1352,38 @@ En-tête : Authorization: Bearer {j}"))
                 Reponse::ok(format!("{n} processus arrêté(s)."))
             }
             "quarantaine" => match reponse::mettre_en_quarantaine(c.cible.as_deref().unwrap_or(""), &raison) {
-                Ok(m) => Reponse::ok(m),
+                Ok(m) => {
+                    politique::ouvrir(politique::Sorte::Quarantaine, c.cible.as_deref().unwrap_or(""), None, None);
+                    Reponse::ok(m)
+                }
                 Err(e) => Reponse::erreur(e),
             },
-            "restaurer" => match reponse::restaurer(c.cible.as_deref().unwrap_or("")) {
-                Ok(m) => Reponse::ok(m),
-                Err(e) => Reponse::erreur(e),
-            },
+            "restaurer" => {
+                let origine = reponse::origine_quarantaine(c.cible.as_deref().unwrap_or(""));
+                match reponse::restaurer(c.cible.as_deref().unwrap_or("")) {
+                    Ok(m) => {
+                        if let Some(o) = origine {
+                            politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);
+                        }
+                        Reponse::ok(m)
+                    }
+                    Err(e) => Reponse::erreur(e),
+                }
+            }
             // Repli quand la restauration à l'emplacement d'origine est refusée (pas de session du propriétaire,
             // emplacement système) : dossier créé par le service
-            "restaurerRepli" => match reponse::restaurer_repli(c.cible.as_deref().unwrap_or("")) {
-                Ok(m) => Reponse::ok(m),
-                Err(e) => Reponse::erreur(e),
-            },
+            "restaurerRepli" => {
+                let origine = reponse::origine_quarantaine(c.cible.as_deref().unwrap_or(""));
+                match reponse::restaurer_repli(c.cible.as_deref().unwrap_or("")) {
+                    Ok(m) => {
+                        if let Some(o) = origine {
+                            politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);
+                        }
+                        Reponse::ok(m)
+                    }
+                    Err(e) => Reponse::erreur(e),
+                }
+            }
             "isolerProgramme" => {
                 let chemin = c.cible.clone().unwrap_or_default();
                 if chemin.is_empty() || chemin.to_lowercase().starts_with(&natif::dossier_windows().to_lowercase()) {
@@ -1465,7 +1502,8 @@ En-tête : Authorization: Bearer {j}"))
         let maintenant = commun::maintenant();
         // Audit de #109, S109-04 : un blocage automatique dont l'échéance n'a pas été écrite (arrêt entre les deux écritures,
         // fichier tenu ouvert, ancienne version) en reçoit une, au lieu de rester sans limite
-        if poser_echeances_manquantes(&mut self.blocages, &commun::heure(std::time::SystemTime::now() + Duration::from_secs(7 * 86_400))) > 0 {
+        let echeance = |g| commun::heure(std::time::SystemTime::now() + Duration::from_secs(duree_blocage_auto(g)));
+        if poser_echeances_manquantes(&mut self.blocages, &echeance(Genre::BlocageListe), &echeance(Genre::BlocageIps)) > 0 {
             let _ = commun::ecrire("blocages.json", &self.blocages);
         }
         let a_retirer = {
@@ -1489,6 +1527,7 @@ En-tête : Authorization: Bearer {j}"))
         if type_ == "parefeu" {
             blocage::supprimer_regle(cible);
         }
+        politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
         if type_ == "programme" {
             politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
             reponse::liberer_programme(cible);
@@ -1508,7 +1547,7 @@ En-tête : Authorization: Bearer {j}"))
     fn tout_debloquer(&mut self) -> Reponse {
         let ips: Vec<String> = self.blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
         let mut regles: usize = ips.iter().map(|ip| blocage::supprimer_regle(ip)).sum();
-        politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);
+        politique::clore(&[politique::Sorte::Isolation, politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);
         for b in self.blocages.iter().filter(|b| b.type_ == "programme") {
             regles += reponse::liberer_programme(&b.cible);
         }
@@ -1940,10 +1979,11 @@ pub fn duree_blocage_auto(genre: Genre) -> u64 {
 }
 
 /// Décision pure : pose `fin` sur les blocages automatiques sans échéance ; renvoie leur nombre
-pub fn poser_echeances_manquantes(blocages: &mut [Blocage], fin: &str) -> usize {
+/// `fin` : 7 jours ; `fin_ips` : 24 h, pour un blocage de l'IPS (audit de #115, S115-05)
+pub fn poser_echeances_manquantes(blocages: &mut [Blocage], fin: &str, fin_ips: &str) -> usize {
     let mut n = 0;
     for b in blocages.iter_mut().filter(|b| b.expire.is_empty() && blocage_pose_automatiquement(b)) {
-        b.expire = fin.to_string();
+        b.expire = if b.raison.starts_with("IPS : ") { fin_ips } else { fin }.to_string();
         n += 1;
     }
     n
@@ -1960,7 +2000,7 @@ fn autorisation_humaine(action: Action) -> Result<Autorisation, Reponse> {
 /// Blocage posé par le service (listes, IPS) : le lever à la main est une décision humaine contraire. Un blocage manuel
 /// n'a pas d'échéance ni ce motif
 pub fn blocage_pose_automatiquement(b: &Blocage) -> bool {
-    b.type_ == "parefeu" && (!b.expire.is_empty() || b.raison.starts_with("blocage automatique"))
+    b.type_ == "parefeu" && (!b.expire.is_empty() || b.raison.starts_with("blocage automatique") || b.raison.starts_with("IPS : "))
 }
 
 /// Blocages automatiques à lever : durée écoulée, ou adresse hors des listes du niveau 3 (si elles sont toutes chargées)
