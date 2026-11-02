@@ -449,7 +449,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   au rançongiciel, niveau 3).
 - **Télémétrie** : journal Sécurité 4663 et audit (SACL) posé sur les leurres.
 - **Si elle manque** : audit des objets désactivé : la règle se tait.
-- **Niveau** : Critique ; Info si le programme est un logiciel connu et signé (sauvegarde, synchronisation, antivirus), installé dans un dossier fermé aux comptes standard : Program Files hors WindowsApps, directement dans System32 ou SysWOW64, plateforme de Defender. Dans le profil ou Temp, il n'est jamais connu (décision du mainteneur, 2026-11-02),
+- **Niveau** : Critique ; Info si le programme est un logiciel connu et signé (sauvegarde, synchronisation, antivirus), au nom exact, installé dans un dossier normalement fermé aux comptes standard : Program Files hors WindowsApps, directement dans System32 ou SysWOW64, plateforme de Defender. Dans le profil ou Temp, il n'est jamais connu : un logiciel installé sans droits d'administrateur ou depuis le Store est suspendu (décision du mainteneur, 2026-11-02). **Limite :** les droits du dossier ne sont pas vérifiés, et un installateur tiers peut ouvrir un dossier de Program Files en écriture (audit de #114, S114-01, à fermer avant distribution). Le nom est sur le chemin : un processus creux lancé depuis un binaire autorisé garde ce statut (S114-02),
   qui n'est pas suspendu.
 - **Faux positifs attendus** : logiciel de sauvegarde ou d'indexation non encore reconnu.
   Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :

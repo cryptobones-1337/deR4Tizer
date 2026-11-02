@@ -387,7 +387,7 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             [void](Redemarrer-Service)
             $vue = $false
             foreach ($i in 1..4) {
-                if ($i -gt 1) { Add-Content $env:GITHUB_STEP_SUMMARY "`n> Après redémarrage : le leurre a dû être touché $i fois (touche perdue : défaut possible du service)." }
+                if ($i -gt 1) { [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "`n> Après redémarrage : le leurre a dû être touché $i fois (touche perdue : défaut possible du service).`n", (New-Object Text.UTF8Encoding $false)) }
                 $p4 = & $toucher $exeB (20 + $i)
                 try {
                     $vue = & $attendreRetenue $p4

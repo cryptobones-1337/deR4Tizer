@@ -208,6 +208,8 @@ $fichierCode = Join-Path $sortie "$Scenario-code.txt"
 if (-not (Test-Path $fichierCode)) { throw "Pas de résultat (voir $sortie)." }
 $code = (Get-Content $fichierCode -Raw).Trim()
 $tableau = Join-Path $sortie "$Scenario-tableau.md"
+# Dans le tableau, donc dans la preuve : si cette durée grandit, l'instantané est à refaire
+if ((Test-Path $tableau) -and $maintenance) { [IO.File]::AppendAllText($tableau, "`n> $maintenance`n", (New-Object Text.UTF8Encoding $false)) }
 if (Test-Path $tableau) { Get-Content $tableau -Encoding UTF8 }
 $detections = Join-Path $sortie "$Scenario-defender-detections.txt"
 Write-Host "Code de sortie : $code ; détections Defender : $(if ((Test-Path $detections) -and (Get-Content $detections -Raw).Trim()) { 'OUI, voir ' + $detections } else { 'aucune' })"

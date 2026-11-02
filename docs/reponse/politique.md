@@ -19,7 +19,7 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
    libres d'usage), identifiées dans le binaire, quel que soit le réglage « listes restreintes » : toute autre liste
    donne une alerte seule. Le blocage est levé quand l'adresse sort de ces listes, si les trois sont chargées, ou à expiration (7 jours).
 2. **Suspension du programme qui touche un leurre anti-rançongiciel.** Les processus critiques de Windows
-   (`reponse::protege`) ne sont jamais suspendus ; les logiciels connus et signés, installés hors du profil de l'utilisateur, de sauvegarde, de
+   (`reponse::protege`) ne sont jamais suspendus ; les logiciels connus et signés, au nom exact, installés hors du profil de l'utilisateur (droits du dossier non vérifiés), de sauvegarde, de
    synchronisation ou d'antivirus déclenchent une alerte sans suspension. Le programme reste suspendu jusqu'à
    une décision humaine.
 

@@ -28,7 +28,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement, 30 par heure au plus ; les autres listes donnent une alerte seule |
 | **Processus** | Arbre des processus et score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK |
 | **Persistance** | Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée |
-| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche ; alerte seule si c'est un logiciel connu et signé installé hors du profil, si un administrateur l'a repris (7 jours, même fichier), ou après 3 suspensions en 24 h d'un programme signé installé dans Program Files |
+| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche ; alerte seule si c'est un logiciel connu et signé, au nom exact, installé hors du profil, si un administrateur l'a repris (7 jours, même fichier), ou après 3 suspensions en 24 h d'un programme signé installé dans Program Files |
 | **Vol de données** | Audit d'accès aux dossiers sensibles des navigateurs et applications |
 | **Vie privée** | Caméra, micro, outils de prise en main à distance, ports ouverts |
 | **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) |
@@ -186,6 +186,7 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi sur la version distribuée, des binaires signés et
   une relecture indépendante.
 - La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
+- Un logiciel « connu » n'est pas suspendu s'il touche un leurre, et les droits de son dossier ne sont pas vérifiés : un dossier de Program Files ouvert en écriture par un installateur tiers permettrait d'y poser une copie signée.
 - Un compte standard peut atteindre le plafond de 30 blocages par heure en se connectant à 31 adresses listées : les
   blocages par les listes s'arrêtent alors une heure, les alertes restent. Une alerte de l'IPS (expérimental) dit « bloquée »
   même si la garde retient ensuite le blocage.
@@ -230,7 +231,7 @@ IDS/IPS are experimental.
 | **Threat intelligence** | Open-source lists refreshed every 12 h; automatic firewall blocking, on by default and can be turned off, for Spamhaus DROP and Feodo Tracker only, at most 30 per hour; other lists only raise an alert |
 | **Processes** | Process tree with cumulative chain score, obfuscated PowerShell, MITRE ATT&CK techniques |
 | **Persistence** | Run keys, services, scheduled tasks, WMI, Startup folders: alert on any new or changed entry |
-| **Ransomware** | Canary files, automatic suspension of the program touching them; alert only if it is known, signed software installed outside the user profile, if an administrator resumed it (7 days, same file), or after 3 suspensions in 24 h of a signed program installed in Program Files |
+| **Ransomware** | Canary files, automatic suspension of the program touching them; alert only if it is known, signed software with its exact name, installed outside the user profile, if an administrator resumed it (7 days, same file), or after 3 suspensions in 24 h of a signed program installed in Program Files |
 | **Data theft** | Access auditing on sensitive browser and application folders |
 | **Privacy** | Camera, microphone, remote-control tools, open ports |
 | **Firewall** | Rule-change tracking (with the authoring program), Internet exposure (inbound packets from public IPs) |
@@ -302,6 +303,7 @@ The full list is in the French section above. In particular:
 - Batch 3d runs in a test VM with Microsoft Defender fully active: a signal, not proof on a real machine. No distribution
   before a green GitHub CI, batch 3d passed on the distributed version, signed binaries and an independent review.
 - The interface window has never been opened in real conditions; its decisions are tested separately.
+- Known software is not suspended when it touches a canary, and its folder's permissions are not checked: a Program Files folder left writable by a third-party installer would allow dropping a signed copy there.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion

@@ -6053,6 +6053,12 @@ fn leurre_connu_nom_editeur_et_dossier() {
     lue.set(false);
     assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui), "copie signée dans un dossier ouvert");
     assert!(!lue.get(), "signature non lue hors d'un dossier fermé");
+    // Nom exact (décision du mainteneur) : ni plus long, ni extension différente de sens
+    assert!(!c(r"C:\Program Files\Editeur\boxanything.exe", &d, &oui), "début de nom");
+    assert!(!c(r"C:\Program Files\Editeur\onedrive-x.exe", &d, &oui), "début de nom");
+    assert!(!c(r"C:\Program Files\Editeur\xonedrive.exe", &d, &oui), "fin de nom");
+    assert!(c(r"C:\Program Files\Box\BOX.EXE", &d, &oui), "sans la casse");
+    assert!(c(r"C:\Program Files\Veeam\Veeam.EndPoint.Service.exe", &d, &oui), "nom avec des points");
     // Le couple : l'éditeur attendu est bien celui du nom
     let dropbox = |e: &[&str]| e.contains(&"Dropbox, Inc");
     assert!(c(r"C:\Program Files\Dropbox\Dropbox.exe", &d, &dropbox));

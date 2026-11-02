@@ -59,7 +59,9 @@ const TOUJOURS_AUTORISES: &[&str] = &[
 ];
 
 /// Logiciels qui lisent, copient ou synchronisent tous les fichiers et peuvent toucher un leurre sans être un
-/// rançongiciel : (début du nom de l'exécutable, signataires exacts acceptés). Le couple est vérifié.
+/// rançongiciel : (nom exact de l'exécutable, sans extension, signataires exacts acceptés). Le couple est vérifié. Décision du
+/// mainteneur, 2026-11-02 : nom exact, pas de début de nom. Noms relevés de mémoire, non vérifiés sur de vraies installations :
+/// un exécutable oublié est suspendu s'il touche un leurre, jusqu'à une reprise par un administrateur
 const LEURRES_AUTORISES: &[(&str, &[&str])] = &[
     // antivirus, indexation et sauvegarde de Windows
     ("msmpeng", MICROSOFT), ("mpdefendercoreservice", MICROSOFT), ("mssense", MICROSOFT), ("searchindexer", MICROSOFT),
@@ -67,15 +69,17 @@ const LEURRES_AUTORISES: &[(&str, &[&str])] = &[
     ("vssvc", MICROSOFT), ("filehistory", MICROSOFT), ("onedrive", MICROSOFT), ("filecoauth", MICROSOFT),
     // synchronisation
     ("dropbox", &["Dropbox, Inc"]), ("googledrivefs", GOOGLE), ("nextcloud", &["Nextcloud GmbH"]), ("owncloud", &["ownCloud GmbH"]),
-    ("synologydrive", &["Synology Inc."]), ("icloud", &["Apple Inc."]), ("megasync", &["Mega Limited"]), ("boxsync", &["Box, Inc."]),
-    ("box", &["Box, Inc."]),
+    ("synologydriveclient", &["Synology Inc."]), ("icloud", &["Apple Inc."]), ("iclouddrive", &["Apple Inc."]), ("icloudservices", &["Apple Inc."]),
+    ("megasync", &["Mega Limited"]), ("boxsync", &["Box, Inc."]), ("box", &["Box, Inc."]),
     // sauvegarde
-    ("veeam", &["Veeam Software Group GmbH"]), ("acronis", &["Acronis International GmbH"]), ("trueimage", &["Acronis International GmbH"]),
-    ("anti_ransomware_service", &["Acronis International GmbH"]), ("mmscmd", &["Acronis International GmbH"]),
-    ("reflect", &["Paramount Software UK Ltd"]), ("macrium", &["Paramount Software UK Ltd"]), ("bztransmit", &["Backblaze, Inc."]),
-    ("bzfilelist", &["Backblaze, Inc."]), ("idrive", &["IDrive Inc."]), ("carbonite", &["Carbonite, Inc.", "Open Text Corporation"]),
-    ("urbackup", &["Infscape UG (haftungsbeschränkt)"]), ("arq", &["Haystack Software LLC"]), ("crashplan", &["Code42 Software, Inc."]),
-    ("code42", &["Code42 Software, Inc."]),
+    ("veeamagent", &["Veeam Software Group GmbH"]), ("veeam.endpoint.service", &["Veeam Software Group GmbH"]),
+    ("trueimage", &["Acronis International GmbH"]), ("trueimagehomeservice", &["Acronis International GmbH"]),
+    ("anti_ransomware_service", &["Acronis International GmbH"]), ("mmscmd", &["Acronis International GmbH"]), ("mms", &["Acronis International GmbH"]),
+    ("reflect", &["Paramount Software UK Ltd"]), ("reflectbin", &["Paramount Software UK Ltd"]), ("reflectservice", &["Paramount Software UK Ltd"]),
+    ("bztransmit", &["Backblaze, Inc."]), ("bztransmit64", &["Backblaze, Inc."]), ("bzfilelist", &["Backblaze, Inc."]), ("idriveservice", &["IDrive Inc."]),
+    ("carboniteservice", &["Carbonite, Inc.", "Open Text Corporation"]),
+    ("urbackupclientbackend", &["Infscape UG (haftungsbeschränkt)"]), ("arqagent", &["Haystack Software LLC"]), ("arq", &["Haystack Software LLC"]),
+    ("crashplanservice", &["Code42 Software, Inc."]), ("code42service", &["Code42 Software, Inc."]),
 ];
 
 /// Nom de signataire normalisé : sans casse, sans ponctuation, espaces simples
@@ -131,7 +135,8 @@ fn legitime(exe: &str, chemin: &str, proprietaires: &[&str]) -> bool {
     TOUJOURS_AUTORISES.contains(&exe) && signe_par(chemin, MICROSOFT)
 }
 
-/// Dossiers où un compte standard n'écrit pas (décision du mainteneur, audit de #113, S113-10)
+/// Dossiers où un compte standard n'écrit pas par défaut (décision du mainteneur, audit de #113, S113-10). Supposé, pas vérifié :
+/// un installateur tiers peut ouvrir un dossier de Program Files en écriture (audit de #114, S114-01, préalable de distribution)
 pub(crate) struct DossiersFermes {
     /// Le programme peut être dans un sous-dossier : Program Files, plateforme de Defender
     pub arbres: Vec<String>,
@@ -156,7 +161,8 @@ pub(crate) fn dossier_ferme(chemin: &str, d: &DossiersFermes) -> bool {
         return false;
     }
     let sous = |dossier: &String| !dossier.is_empty() && c.starts_with(&format!("{}\\", dossier.trim_end_matches('\\').to_lowercase()));
-    d.arbres.iter().any(sous) || d.directs.iter().any(|dossier| sous(dossier) && !c[dossier.trim_end_matches('\\').len() + 1..].contains('\\'))
+    // Longueur du dossier en minuscules, et lecture bornée : aucune panique, quel que soit le nom du dossier de Windows
+    d.arbres.iter().any(sous) || d.directs.iter().any(|dossier| sous(dossier) && c.get(dossier.trim_end_matches('\\').to_lowercase().len() + 1..).is_some_and(|fin| !fin.contains('\\')))
 }
 
 /// Décision pure : dossier fermé d'abord, sans lecture de signature sinon ; puis le couple nom et éditeur
@@ -165,7 +171,7 @@ pub(crate) fn leurre_connu(chemin: &str, dossiers: &DossiersFermes, signe: &dyn 
         return false;
     }
     let exe = Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-    LEURRES_AUTORISES.iter().any(|(n, e)| exe.starts_with(n) && signe(e))
+    LEURRES_AUTORISES.iter().any(|(n, e)| exe == *n && signe(e))
 }
 
 /// Logiciel connu (dossier fermé, couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
