@@ -308,7 +308,9 @@ namespace DeR4Tizer
             try { heure = DateTime.FromFileTime(c.Creation ?? 0).ToString("yyyy-MM-dd HH:mm:ss"); } catch { heure = "?"; }
             // Pas de Path.GetFileName : il lève une exception sur un caractère interdit, et la commande vient d'un fichier
             return "\n" + Visible(c.Chemin.Substring(c.Chemin.LastIndexOf('\\') + 1)) + "\n" + Visible(c.Chemin)
-                + "\n" + "Signature : " + signature
+                // La signature lue est celle du fichier à ce chemin : un dossier renommé après le lancement peut en montrer un
+                // autre (audit de #113, S113-09)
+                + "\n" + (en ? "Signature of the file at this path (not necessarily the process's): " : "Signature du fichier à ce chemin (pas forcément celle du processus) : ") + signature
                 + "\n" + (en ? "Started: " : "Lancé le : ") + heure;
         }
 
@@ -325,14 +327,19 @@ namespace DeR4Tizer
             {
                 case "bloquer": return (en ? "Block " : "Bloquer ") + (string.IsNullOrEmpty(c.NomDns) ? ip : nomDns);
                 case "bloquerIp": return (en ? "Block the address " : "Bloquer l'adresse ") + ip + (en ? " at the firewall" : " au pare-feu");
-                case "debloquer": return (en ? "REMOVE the block on " : "RETIRER le blocage de ") + vc;
-                case "toutDebloquer": return en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)";
+                // L'effet de 7 jours est dit avant d'agir (audit de #110, S110-08)
+                case "debloquer": return (en ? "REMOVE the block on " : "RETIRER le blocage de ") + vc
+                    + (en ? "\nIf it was set automatically, it will not be set again automatically for 7 days." : "\nS'il a été posé automatiquement, il ne sera pas reposé automatiquement pendant 7 jours.");
+                case "toutDebloquer": return (en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)")
+                    + (en ? "\nThose set automatically will not be set again automatically for 7 days." : "\nCeux posés automatiquement ne seront pas reposés automatiquement pendant 7 jours.");
                 case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + vc;
                 case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
                 case "tuer": return (en ? "Kill process " : "Tuer le processus ") + vc + IdentiteTexte(c);
                 case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance") + IdentiteTexte(c);
                 case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc + IdentiteTexte(c);
-                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc + IdentiteTexte(c);
+                case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc + IdentiteTexte(c)
+                    + (en ? "\nIf it was suspended automatically, this program will not be suspended automatically for 7 days (except an interpreter recognised by its name, or a Windows program)."
+                          : "\nS'il a été suspendu automatiquement, ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur reconnu par son nom, ou programme de Windows).");
                 case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + vc;
                 case "incident":
                     return DecrireIncident(c, (Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>()).FirstOrDefault(x => x.Id == cible));

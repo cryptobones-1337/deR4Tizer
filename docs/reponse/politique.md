@@ -70,7 +70,11 @@ est retenue. Un administrateur peut toujours agir à la main.
   retenue ; le SIEM et le journal disent la retenue.
 - **Décision humaine sur un programme** : liée à l'empreinte de l'exécutable. Un fichier remplacé au même chemin n'en
   hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été
-  suspendu automatiquement dans les 7 derniers jours.
+  suspendu automatiquement dans les 7 derniers jours, et jamais pour un interpréteur (PowerShell, cmd, rundll32, python…)
+  ni un programme du dossier Windows : l'exception couvrirait tous les scripts qu'il lance ; l'administrateur le lit dans
+  la réponse à la reprise (PR 6.14). Limite : l'interpréteur est reconnu par le nom de son fichier ; une copie renommée
+  (powershell.exe copié en maj.exe) garde l'exception. La confirmation d'une reprise ou d'un déblocage dit l'effet de 7 jours avant d'agir,
+  et la signature montrée est celle du fichier à ce chemin, pas forcément celle du processus (PR 6.14).
 - **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Contenu mal
   formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
   rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
@@ -123,9 +127,13 @@ disque local fixe et lisible en 2 s.
 (`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
 blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action et par heure au plus (24 h pour la
 quarantaine et le blocage manuel ; les relances retenues partent, comptées, avec la suivante). Un processus
-suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, seules les plus anciennes
-suspensions automatiques, quarantaines et blocages manuels sortent du suivi ; un mode panique, une isolation ou une
-suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit
+suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, sortent du suivi d'abord
+les quarantaines et blocages manuels les plus anciens, puis les suspensions automatiques les plus récentes : la première,
+souvent le vrai programme suivi de jetables, reste suivie ; le nombre de ce qui sort est dit une fois par REP-002
+« registre plein », jusqu'au retour sous la borne (PR 6.14). Limite : un attaquant qui garde 500 programmes jetables
+suspendus avant de lancer sa vraie charge la fait sortir du suivi dès son entrée ; son alerte LEU-002 Critique part
+quand même, mais ni relance ni ligne sur la page « Réponses en cours ». Ce qui sort reste suspendu, et son alerte d'origine reste. Un mode panique, une
+isolation ou une suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit
 qu'il peut avoir été repris hors de deR4Tizer.
 
 | Action | Échéance | À l'échéance | État |

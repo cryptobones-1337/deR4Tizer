@@ -1352,11 +1352,21 @@ En-tête : Authorization: Bearer {j}"))
                     Action::Suspendre => execution::suspendre(&a, pid, &attendu, true),
                     _ => execution::suspendre(&a, pid, &attendu, false),
                 };
+                let mut sans_exception = false;
                 if r.is_ok() && decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin) {
                     // L'empreinte notée à la suspension : le fichier a pu changer au même chemin depuis (audit de #110, S110-05).
-                    // Sans empreinte, aucune exception : le programme reste sous la réponse automatique
-                    match politique::empreinte_suspension(&chemin, creation) {
+                    // Sans empreinte, aucune exception : le programme reste sous la réponse automatique. Un interpréteur ou
+                    // un programme de Windows n'en a jamais (audit de #110, S110-06)
+                    let empreinte = if politique::exception_permise(&chemin, &crate::natif::dossier_windows()) {
+                        politique::empreinte_suspension(&chemin, creation)
+                    } else {
+                        sans_exception = true;
+                        commun::journal(&format!("reprise de {} : interpréteur ou programme de Windows, pas d'exception de 7 jours", crate::siem::texte_sur(&chemin, 300)));
+                        None
+                    };
+                    match empreinte {
                         Some(e) => politique::decision_humaine(&chemin, Some(e)),
+                        None if sans_exception => {}
                         None => commun::journal(&format!("reprise de {} : empreinte inconnue, décision humaine non retenue", crate::siem::texte_sur(&chemin, 300))),
                     }
                 }
@@ -1370,6 +1380,7 @@ En-tête : Authorization: Bearer {j}"))
                     }
                 }
                 match r {
+                    Ok(()) if sans_exception => Reponse::ok(format!("Processus {pid} : {action} fait. Interpréteur ou programme de Windows : il reste sous la suspension automatique.")),
                     Ok(()) => Reponse::ok(format!("Processus {pid} : {} fait.", action)),
                     Err(e) => Reponse::erreur(format!("Processus {pid} : {e}")),
                 }
