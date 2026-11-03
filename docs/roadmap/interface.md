@@ -2,7 +2,9 @@
 
 Décidée par le mainteneur le 2026-11-03, par ces mots : « fais la refonte avant la phase 7 », en réponse au dossier de
 conception de l'interface du 2026-11-03 (revue UI/UX après la phase 6, conservé hors dépôt). Elle commence une fois les
-corrections de la phase 6 fusionnées, et la phase 7 commence une fois celle-ci validée. Ce document fixe le périmètre,
+corrections de la phase 6 fusionnées **et la phase inscrite dans `CLAUDE.md` par le mainteneur** (section 2, règle 1 :
+sans cette inscription, aucune PR de la phase, U0 compris, ne touche l'interface). La phase 7 commence une fois
+celle-ci validée. Ce document fixe le périmètre,
 le découpage et les décisions de la phase. Rien de ce qu'il prévoit n'existe encore dans le code : chaque élément passe
 à « testé en labo » dans la matrice (`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
 
@@ -22,8 +24,14 @@ n'explique les premiers réglages.
 | Palette | Neutre, à un seul accent ; le cyan reste la couleur du logo |
 | Polices et icônes | Segoe UI (Variable) et icônes Segoe Fluent ou MDL2, livrées avec Windows ; rien d'ajouté |
 | Assistant d'installation | MSI WiX sobre (images et textes revus) ; l'assistant de premier lancement est dans l'interface |
-| Diagnostic « PC exposé » | Dans cette phase, en U5 (il touche le service) |
 | Ordre | Avant la phase 7 |
+
+## Points non tranchés (défaut retenu, à confirmer par le mainteneur)
+
+| Point | Défaut retenu |
+|---|---|
+| Diagnostic « PC exposé » (il touche le service) | Dans cette phase, en U5, comme le proposait le dossier ; le mainteneur n'a pas répondu à cette question |
+| Étape « Réponses automatiques » de l'assistant | Le réglage d'aujourd'hui est gardé : blocage automatique du niveau 3 activé par défaut. Le dossier proposait « désactivées par défaut » ; ce changement de défaut n'a pas été décidé |
 
 ## Direction visuelle
 
@@ -63,8 +71,8 @@ Contrastes calculés selon WCAG (4,5:1 au moins pour le texte) :
 
 **Assistant de premier lancement (U7)** : non élevé, rejouable depuis les réglages ; chaque choix privilégié passe par la
 commande existante et sa confirmation élevée. Étapes : Bienvenue ; Vérification (lecture seule, une collecte
-indisponible est dite) ; Apprentissage (7 jours) ; Qui prévenir ; Réponses automatiques (niveau 3 seulement, comme
-aujourd'hui) ; Résumé avec « Plus tard ». Fermer l'assistant ne change rien ; il ne dit jamais « vous êtes protégé ».
+indisponible est dite) ; Apprentissage (7 jours) ; Qui prévenir ; Réponses automatiques (niveau 3 seulement, défaut
+d'aujourd'hui : voir les points non tranchés) ; Résumé avec « Plus tard ». Fermer l'assistant ne change rien ; il ne dit jamais « vous êtes protégé ».
 
 ## Garde-fous
 
@@ -107,7 +115,7 @@ L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé :
   9 (section 5), … » (l'assistant de premier lancement est une capacité nouvelle).
 - Section 5, nouveau point avant la phase 7 : « Phase « Interface et assistant d'installation », avant la phase 7.
   Ouverte par le mainteneur le 2026-11-03, par ces mots : « fais la refonte avant la phase 7 ». Commence une fois les
-  corrections de la phase 6 fusionnées ; la phase 7 commence une fois celle-ci validée par la relecture et par
+  corrections de la phase 6 fusionnées et ce point inscrit ; la phase 7 commence une fois celle-ci validée par la relecture et par
   cryptobones-1337. Décisions, découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6,
   la preuve locale en VM tient lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. »
 - Section 5, phase 7 : ajouter « et après la phase « Interface et assistant d'installation » » à sa condition de
