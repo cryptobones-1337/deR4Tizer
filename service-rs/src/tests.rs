@@ -6204,6 +6204,26 @@ fn registre_ouvrir_clore_terminer() {
     assert!(h.relances(S0 + 10 * 604_800).iter().all(|(a, _)| a.cible == r"c:\r.exe"));
 }
 
+/// Audit de #110, S110-06 : la reprise d'un interpréteur ou d'un programme de Windows ne donne pas d'exception de 7 jours
+#[test]
+fn reprise_sans_exception_pour_interpreteur() {
+    use crate::politique::exception_permise as e;
+    let w = r"C:\Windows";
+    assert!(e(r"C:\Users\a\outil.exe", w));
+    assert!(e(r"C:\Program Files\Editeur\app.exe", w));
+    for x in [r"C:\Users\a\powershell.exe", r"C:\Users\a\PWSH.EXE", r"C:\Program Files\Python312\python.exe", r"D:\outils\node.exe",
+              r"C:\Users\a\cmd.exe", r"C:\Users\a\rundll32.exe", r"C:\Users\a\mshta.exe", r"C:\Program Files\Java\bin\javaw.exe"] {
+        assert!(!e(x, w), "interpréteur : {x}");
+    }
+    for x in [r"C:\Windows\notepad.exe", r"c:\windows\System32\dllhost.exe", r"C:\Windows\Temp\x.exe"] {
+        assert!(!e(x, w), "dossier Windows : {x}");
+    }
+    assert!(e(r"C:\WindowsApps\x.exe", w), "préfixe du nom seulement : pas sous Windows");
+    assert!(e(r"C:\Users\a\powershell-outil.exe", w), "nom voisin");
+    assert!(!e(r"C:\Users\a\outil.exe", ""), "dossier Windows inconnu : non");
+    assert!(!e("", w));
+}
+
 #[test]
 fn registre_borne() {
     use crate::politique::{EtatAction::*, Historique, Sorte::*};
