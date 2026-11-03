@@ -60,8 +60,18 @@ try {
     $listeQ = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType((& $t 'ElementQuarantaine')))
     $q = [Activator]::CreateInstance((& $t 'ElementQuarantaine')); $q.Id = 'q-7'; $q.CheminOrigine = 'C:\Users\A\Z.bin'; $listeQ.Add($q)
     $rec = { param($sorte, $cible, $numero) $a = [Activator]::CreateInstance((& $t 'ActionEnCours')); $a.Sorte = $sorte; $a.Cible = $cible; if ($numero) { $a.Pid = $numero }; & $appel $vr 'Recuperer' @($a, $listeB, $listeQ) }
-    $c = & $rec 'SuspensionAuto' 'x' 4242
-    Cas 'suspension : reprendre par PID (identité relue par l''assistant)' ($c.Action -eq 'reprendre' -and $c.Cible -eq '4242')
+    $a0 = [Activator]::CreateInstance((& $t 'ActionEnCours')); $a0.Sorte = 'SuspensionAuto'; $a0.Cible = 'x'; $a0.Pid = 4242; $a0.Creation = 133000000000000000
+    $c = & $appel $vr 'Recuperer' @($a0, $listeB, $listeQ)
+    Cas 'suspension : reprendre par PID, heure de création du registre jointe (D1)' ($c.Action -eq 'reprendre' -and $c.Cible -eq '4242' -and $c.Creation -eq 133000000000000000)
+    # L'assistant refuse un PID réutilisé : heure fausse sur ce processus PowerShell, puis la bonne
+    $canal0 = & $t 'Canal'
+    $cmd = [Activator]::CreateInstance((& $t 'Commande')); $cmd.Action = 'reprendre'; $cmd.Cible = [string]$PID; $cmd.Creation = 1
+    $refus = $false; try { $canal0.GetMethod('PreparerIdentite').Invoke($null, @($cmd)) } catch { $refus = $_.Exception.InnerException.Message -match 'PID' }
+    $cmd2 = [Activator]::CreateInstance((& $t 'Commande')); $cmd2.Action = 'reprendre'; $cmd2.Cible = [string]$PID
+    $canal0.GetMethod('PreparerIdentite').Invoke($null, @($cmd2))
+    $cmd3 = [Activator]::CreateInstance((& $t 'Commande')); $cmd3.Action = 'reprendre'; $cmd3.Cible = [string]$PID; $cmd3.Creation = $cmd2.Creation
+    $accepte = $true; try { $canal0.GetMethod('PreparerIdentite').Invoke($null, @($cmd3)) } catch { $accepte = $false }
+    Cas 'assistant : PID réutilisé refusé, bonne heure acceptée (D1)' ($refus -and $accepte -and $cmd3.Creation -eq $cmd2.Creation)
     Cas 'suspension sans PID : rien' ($null -eq (& $rec 'Suspension' 'x' $null))
     $c = & $rec 'Isolation' 'c:\outils\y.exe' $null
     Cas 'isolation : libérer, forme exacte' ($c.Action -eq 'debloquer' -and $c.Type -eq 'programme' -and $c.Cible -eq 'C:\Outils\Y.exe')
@@ -69,11 +79,26 @@ try {
     Cas 'blocage manuel de domaine : débloquer hosts' ($c.Action -eq 'debloquer' -and $c.Type -eq 'hosts')
     $c = & $rec 'BlocageManuel' '203.0.113.9' $null
     Cas 'blocage manuel d''adresse : débloquer pare-feu' ($c.Type -eq 'parefeu' -and $c.Cible -eq '203.0.113.9')
+    $q2 = [Activator]::CreateInstance((& $t 'ElementQuarantaine')); $q2.Id = 'q-9'; $q2.CheminOrigine = 'c:\users\a\z.bin'; $q2.Date = '2026-11-03 01:00:00'; $listeQ.Add($q2)
+    $q.Date = '2026-11-01 08:00:00'
     $c = & $rec 'Quarantaine' 'c:\users\a\z.bin' $null
-    Cas 'quarantaine : restaurer par identifiant' ($c.Action -eq 'restaurer' -and $c.Cible -eq 'q-7')
+    Cas 'quarantaine : restaurer par identifiant, la plus récente (R2)' ($c.Action -eq 'restaurer' -and $c.Cible -eq 'q-9')
     $c = & $rec 'Panique' 'poste' $null
     Cas 'panique : rétablir' ($c.Action -eq 'panique' -and $c.Valeur -eq 'off')
     Cas 'objet disparu : rien' ($null -eq (& $rec 'Isolation' 'c:\autre.exe' $null) -and $null -eq (& $rec 'Quarantaine' 'c:\autre' $null))
+
+    # Audit de #120 : PID réutilisé (S120-02), dossier parent qui est un lien (S120-01)
+    Cas 'même processus : heure de création comparée' ((& $appel $vr 'MemeProcessus' @([long]5, [long]5)) -and -not (& $appel $vr 'MemeProcessus' @([long]5, [long]6)) -and -not (& $appel $vr 'MemeProcessus' @([long]5, $null)) -and (& $appel $vr 'MemeProcessus' @($null, $null)))
+    $canal = & $t 'Canal'
+    $d = Join-Path $travail 'vrai'; New-Item -ItemType Directory -Path (Join-Path $d 'sous') -Force | Out-Null
+    Set-Content (Join-Path $d 'sous\x.exe') 'x'
+    $j = Join-Path $travail 'j'; cmd.exe /c mklink /J "$j" "$d" | Out-Null
+    Cas 'parent lien vu, sans le suivre' ([bool]$canal.GetMethod('ParentPointAnalyse').Invoke($null, @([string](Join-Path $j 'sous\x.exe'))) -and -not [bool]$canal.GetMethod('ParentPointAnalyse').Invoke($null, @([string](Join-Path $d 'sous\x.exe'))))
+    cmd.exe /c rmdir "$j" | Out-Null
+    $r = [IO.File]::ReadAllText("$src\Reponses.cs")
+    Cas 'reprise : processus vérifié avant l''envoi' ($r.Contains('if (c.Action == "reprendre" && !VueReponses.MemeProcessus(x.Action.Creation, Canal.CreationProcessus(x.Action.Pid ?? 0)))'))
+    $g0 = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'chemin réel : échéance et parents lus avant l''ouverture' ($g0.Contains('lecture.Wait(2000) ? lecture.Result') -and $g0.IndexOf('if (ParentPointAnalyse(chemin))') -lt $g0.IndexOf('IntPtr h = CreateFileW(chemin, 0x80'))
 
     # Mode panique : portée, IPv6, relance, retour arrière ; état effectif
     $p = & $appel $vr 'ConfirmationPanique' @($true)
@@ -106,6 +131,8 @@ try {
     Cas 'une seule pastille du mode panique (dossier UI de la 6.7)' (-not $g.Contains('MODE PANIQUE : INTERNET COUPÉ') -and ([regex]::Matches($g, 'VueReponses\.PastillePanique\(etat\)')).Count -eq 1)
     Cas 'confirmation du mode panique : portée' ($g.Contains('string question = VueReponses.ConfirmationPanique(!paniqueActive);') -and $g.Contains('case "panique": return VueReponses.ConfirmationPanique(v != "off");'))
     Cas 'isolation : chemin réel dans la confirmation (S118-02)' ($g.Contains('+ CheminReelTexte(cible);') -and $g.Contains('CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)'))
+    Cas 'isolation : confirmation détaillée aussi pour un administrateur (D2)' ($g.Contains('if (ActionSurProcessus(c) || c.Action == "isolerProgramme")'))
+    Cas 'chemin réel : disque fixe seulement (R1)' ($g.Contains('fixe = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed;'))
     $r = [IO.File]::ReadAllText("$src\Reponses.cs")
     Cas 'récupération par le canal (assistant élevé)' ($r.Contains('Canal.Executer(c);'))
     Cas 'lecture hors du fil de l''interface, une à la fois' ($r.Contains('ThreadPool.QueueUserWorkItem') -and $r.Contains('Interlocked.CompareExchange(ref enCours, 1, 0)'))

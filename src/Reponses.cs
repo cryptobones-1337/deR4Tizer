@@ -151,7 +151,8 @@ namespace DeR4Tizer
             {
                 case "SuspensionAuto":
                 case "Suspension":
-                    return a.Pid.HasValue ? new Commande { Action = "reprendre", Cible = a.Pid.Value.ToString(CultureInfo.InvariantCulture) } : null;
+                    // L'heure de création du registre voyage avec la commande : l'assistant refuse un PID réutilisé
+                    return a.Pid.HasValue ? new Commande { Action = "reprendre", Cible = a.Pid.Value.ToString(CultureInfo.InvariantCulture), Creation = a.Creation } : null;
                 case "Isolation":
                     {
                         var b = blocages.FirstOrDefault(x => x.Type == "programme" && egal(x.Cible, a.Cible));
@@ -165,11 +166,19 @@ namespace DeR4Tizer
                 case "Panique": return new Commande { Action = "panique", Valeur = "off" };
                 case "Quarantaine":
                     {
-                        var q = quarantaine.FirstOrDefault(x => egal(x.CheminOrigine, a.Cible));
+                        // Même fichier mis deux fois en quarantaine : la plus récente (relecture de #120, R2)
+                        var q = quarantaine.Where(x => egal(x.CheminOrigine, a.Cible)).OrderByDescending(x => x.Date ?? "", StringComparer.Ordinal).FirstOrDefault();
                         return q == null ? null : new Commande { Action = "restaurer", Cible = q.Id };
                     }
                 default: return null;
             }
+        }
+
+        // Le processus du registre est-il encore celui-là ? Heure de création comparée : un PID réutilisé désigne un autre
+        // programme (audit de #120, S120-02). Sans heure au registre : rien à comparer
+        public static bool MemeProcessus(long? attendue, long? lue)
+        {
+            return !attendue.HasValue || (lue.HasValue && lue.Value == attendue.Value);
         }
 
         // Portée du mode panique, dite avant de l'activer (conseil UX externe, P0 ; dossier de la phase 6, § 4.7)
@@ -304,7 +313,19 @@ namespace DeR4Tizer
                     "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            if (c.Action == "reprendre" && !VueReponses.MemeProcessus(x.Action.Creation, Canal.CreationProcessus(x.Action.Pid ?? 0)))
+            {
+                MessageBox.Show(en ? "The suspended process no longer exists (its PID may now belong to another program). Nothing is sent."
+                                   : "Le processus suspendu n'existe plus (son PID peut désigner un autre programme). Rien n'est envoyé.",
+                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             string question = c.Action == "panique" ? VueReponses.ConfirmationPanique(false) : x.Bouton + " : " + x.Quoi + "\n\n" + x.Cible + " ?";
+            if (c.Action == "restaurer")
+            {
+                var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(e => e.Id == c.Cible);
+                if (q != null) question += "\n\n" + (en ? "Quarantined on " : "Mis en quarantaine le ") + Canal.Visible(q.Date ?? "?") + " (" + Canal.Visible(q.Id) + ")";
+            }
             if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(c);
             Charger();

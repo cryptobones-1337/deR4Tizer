@@ -95,7 +95,8 @@ namespace DeR4Tizer
         {
             if (EstAdmin())
             {
-                if (ActionSurProcessus(c))
+                // Isolation : la confirmation détaillée montre le chemin réel, aussi à un administrateur (relecture de #120, D2)
+                if (ActionSurProcessus(c) || c.Action == "isolerProgramme")
                 {
                     try { PreparerIdentite(c); }
                     catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
@@ -158,10 +159,22 @@ namespace DeR4Tizer
             return c.Action == "tuer" || c.Action == "tuerChaine" || c.Action == "suspendre" || c.Action == "reprendre";
         }
 
+        // Heure de création d'un processus (FILETIME, comme le service), ou null s'il n'est plus lisible
+        public static long? CreationProcessus(int pid)
+        {
+            IntPtr h = OpenProcess(0x1000, false, pid);
+            if (h == IntPtr.Zero) return null;
+            try { long c, f, n, u; return GetProcessTimes(h, out c, out f, out n, out u) ? (long?)c : null; }
+            finally { CloseHandle(h); }
+        }
+
         // Lit l'identité du processus ici, avec les droits de l'administrateur, et remplace ce que portait la commande : ce qui
         // est montré est ce que le service vérifie. Processus disparu : exception, la commande n'est pas envoyée
         public static void PreparerIdentite(Commande c)
         {
+            // Une heure de création fournie (page « Réponses en cours », tirée du registre) doit être celle du processus qui
+            // porte ce PID aujourd'hui : sinon le PID a été réutilisé par un autre programme (relecture de #120, D1)
+            long? attendue = c.Creation;
             c.Chemin = null; c.Creation = null;
             if (!ActionSurProcessus(c)) return;
             int pid;
@@ -178,6 +191,8 @@ namespace DeR4Tizer
                 // Le chemin est montré, pas comparé : un chemin très long est abrégé, l'arrêt du programme reste possible
                 string chemin = tampon.ToString();
                 c.Chemin = chemin.Length <= 1000 ? chemin : chemin.Substring(0, 500) + "…" + chemin.Substring(chemin.Length - 499);
+                if (attendue.HasValue && attendue.Value != creation)
+                    throw new InvalidOperationException(L.En ? "This process is no longer the one recorded: its PID now belongs to another program. Nothing is sent." : "Ce processus n'est plus celui enregistré : son PID désigne maintenant un autre programme. Rien n'est envoyé.");
                 c.Creation = creation;
             }
             finally { CloseHandle(h); }
@@ -230,13 +245,42 @@ namespace DeR4Tizer
         static extern int GetFinalPathNameByHandleW(IntPtr h, StringBuilder chemin, int taille, int drapeaux);
 
         // Chemin réel du programme à isoler, celui que le service isolera (relecture de #118, S118-02). Seulement sur un
-        // lecteur local : jamais de connexion réseau au nom de l'administrateur. Ouvert sans suivre de lien sur son
-        // dernier élément (FILE_FLAG_OPEN_REPARSE_POINT), en lecture d'attributs seulement
+        // disque local fixe, dossiers parents lus sans être suivis, élément ouvert sans suivre de lien
+        // (FILE_FLAG_OPEN_REPARSE_POINT), en lecture d'attributs seulement : pas de connexion réseau voulue au nom de
+        // l'administrateur ; une course (dossier remplacé entre la lecture et l'ouverture) reste possible
         static string CheminReelTexte(string chemin)
         {
             bool en = L.En;
-            if (chemin == null || chemin.Length < 4 || chemin[1] != ':' || chemin[2] != '\\' || chemin.StartsWith("\\\\"))
-                return en ? "\nReal path: not read (not a local drive path)" : "\nChemin réel : non lu (pas un chemin sur un lecteur local)";
+            bool fixe = chemin != null && chemin.Length >= 4 && chemin[1] == ':' && chemin[2] == '\\' && !chemin.StartsWith("\\\\");
+            if (fixe)
+                try { fixe = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed; } catch { fixe = false; }
+            if (!fixe) return en ? "\nReal path: not read (not a path on a fixed local disk)" : "\nChemin réel : non lu (pas un chemin sur un disque local fixe)";
+            // Sur un autre fil, avec une échéance : un dossier qui ne répond pas ne fige pas la confirmation (audit de #120)
+            var lecture = System.Threading.Tasks.Task.Run(() => LireCheminReel(chemin, en));
+            try { return lecture.Wait(2000) ? lecture.Result : (en ? "\nReal path: not read (timed out)" : "\nChemin réel : non lu (délai dépassé)"); }
+            catch { return en ? "\nReal path: not read" : "\nChemin réel : non lu"; }
+        }
+
+        // Dossiers du chemin lus de la racine vers le fichier, sans être suivis (attributs de l'élément lui-même) : un
+        // dossier qui est un point d'analyse n'est pas traversé avec le jeton de l'administrateur, qui s'authentifierait
+        // auprès d'un partage (audit de #120, S120-01)
+        public static bool ParentPointAnalyse(string chemin)
+        {
+            var parents = new List<string>();
+            for (var d = Path.GetDirectoryName(chemin); !string.IsNullOrEmpty(d) && Path.GetDirectoryName(d) != null; d = Path.GetDirectoryName(d)) parents.Add(d);
+            parents.Reverse();
+            foreach (var p in parents)
+            {
+                var a = File.GetAttributes(p);
+                if ((a & FileAttributes.ReparsePoint) != 0) return true;
+            }
+            return false;
+        }
+
+        static string LireCheminReel(string chemin, bool en)
+        {
+            try { if (ParentPointAnalyse(chemin)) return en ? "\nReal path: not read (a folder of the path is a link; the service refuses it)" : "\nChemin réel : non lu (un dossier du chemin est un lien ; le service le refuse)"; }
+            catch { return en ? "\nReal path: not read (missing or unreadable)" : "\nChemin réel : non lu (absent ou illisible)"; }
             IntPtr h = CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
             if (h == new IntPtr(-1)) return en ? "\nReal path: not read (missing or unreadable)" : "\nChemin réel : non lu (absent ou illisible)";
             try
