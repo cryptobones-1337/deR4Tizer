@@ -6653,6 +6653,8 @@ fn isolation_descente_par_handles_et_noms_de_windows() {
     assert_eq!(el(0x10, 0, true), Dossier);
     assert_eq!(el(0x10, 0, false), Suivre);
     assert_eq!(el(0, 0xA000_0003, true), Suivre, "étiquette sans l'attribut : ignorée");
+    assert_eq!(el(0x400, 0x8000_001B, true), Lien, "alias d'exécution d'application en dernier élément");
+    assert_eq!(el(0, 0x8000_001B, true), Suivre);
     // S119-03 : un nom présent dans Windows, System32 ou SysWOW64 est refusé, où que soit le programme
     use crate::reponse::nom_programme_windows as n;
     let w = crate::natif::dossier_windows();

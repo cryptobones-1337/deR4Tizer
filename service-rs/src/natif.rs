@@ -1266,9 +1266,12 @@ pub enum ElementDescente {
 
 /// Décision pure : seule une étiquette qui redirige (bit 29) est un lien, pour un dossier comme pour le fichier lui-même.
 /// Un fichier ou un dossier OneDrive à la demande, ou dédupliqué, est suivi (audit de #126, S126-02). En dernier
-/// élément, un dossier n'est pas un programme
+/// élément, un dossier n'est pas un programme. Un alias d'exécution d'application (IO_REPARSE_TAG_APPEXECLINK, sans le
+/// bit 29) en dernier élément est un lien aussi : le programme réel tourne depuis le dossier de son paquet, une règle
+/// posée sur l'alias ne couperait rien (audit de #126)
 pub fn element_descente(attributs: u32, etiquette: u32, dernier: bool) -> ElementDescente {
-    if attributs & 0x400 != 0 && crate::reponse::etiquette_lien(etiquette) {
+    let point = attributs & 0x400 != 0;
+    if point && (crate::reponse::etiquette_lien(etiquette) || (dernier && etiquette == 0x8000_001B)) {
         ElementDescente::Lien
     } else if dernier && attributs & 0x10 != 0 {
         ElementDescente::Dossier
