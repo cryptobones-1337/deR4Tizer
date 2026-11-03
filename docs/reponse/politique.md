@@ -72,7 +72,8 @@ est retenue. Un administrateur peut toujours agir à la main.
   hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été
   suspendu automatiquement dans les 7 derniers jours, et jamais pour un interpréteur (PowerShell, cmd, rundll32, python…)
   ni un programme du dossier Windows : l'exception couvrirait tous les scripts qu'il lance ; l'administrateur le lit dans
-  la réponse à la reprise (PR 6.14). La confirmation d'une reprise ou d'un déblocage dit l'effet de 7 jours avant d'agir,
+  la réponse à la reprise (PR 6.14). Limite : l'interpréteur est reconnu par le nom de son fichier ; une copie renommée
+  (powershell.exe copié en maj.exe) garde l'exception. La confirmation d'une reprise ou d'un déblocage dit l'effet de 7 jours avant d'agir,
   et la signature montrée est celle du fichier à ce chemin, pas forcément celle du processus (PR 6.14).
 - **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Contenu mal
   formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
@@ -128,8 +129,10 @@ blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'actio
 quarantaine et le blocage manuel ; les relances retenues partent, comptées, avec la suivante). Un processus
 suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, sortent du suivi d'abord
 les quarantaines et blocages manuels les plus anciens, puis les suspensions automatiques les plus récentes : la première,
-souvent le vrai programme suivi de jetables, reste suivie ; leur nombre est dit une fois par REP-002 « registre plein »,
-jusqu'au retour sous la borne (PR 6.14). Ce qui sort reste suspendu, et son alerte d'origine reste. Un mode panique, une
+souvent le vrai programme suivi de jetables, reste suivie ; le nombre de ce qui sort est dit une fois par REP-002
+« registre plein », jusqu'au retour sous la borne (PR 6.14). Limite : un attaquant qui garde 500 programmes jetables
+suspendus avant de lancer sa vraie charge la fait sortir du suivi dès son entrée ; son alerte LEU-002 Critique part
+quand même, mais ni relance ni ligne sur la page « Réponses en cours ». Ce qui sort reste suspendu, et son alerte d'origine reste. Un mode panique, une
 isolation ou une suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit
 qu'il peut avoir été repris hors de deR4Tizer.
 

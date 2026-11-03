@@ -338,8 +338,8 @@ namespace DeR4Tizer
                 case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance") + IdentiteTexte(c);
                 case "suspendre": return (en ? "Suspend process " : "Suspendre le processus ") + vc + IdentiteTexte(c);
                 case "reprendre": return (en ? "RESUME process " : "REPRENDRE le processus ") + vc + IdentiteTexte(c)
-                    + (en ? "\nIf it was suspended automatically, this program will not be suspended automatically for 7 days (except an interpreter or a Windows program)."
-                          : "\nS'il a été suspendu automatiquement, ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur ou programme de Windows).");
+                    + (en ? "\nIf it was suspended automatically, this program will not be suspended automatically for 7 days (except an interpreter recognised by its name, or a Windows program)."
+                          : "\nS'il a été suspendu automatiquement, ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur reconnu par son nom, ou programme de Windows).");
                 case "quarantaine": return (en ? "Quarantine " : "Mettre en quarantaine ") + vc;
                 case "incident":
                     return DecrireIncident(c, (Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>()).FirstOrDefault(x => x.Id == cible));

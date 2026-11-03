@@ -6221,6 +6221,13 @@ fn reprise_sans_exception_pour_interpreteur() {
     assert!(e(r"C:\WindowsApps\x.exe", w), "préfixe du nom seulement : pas sous Windows");
     assert!(e(r"C:\Users\a\powershell-outil.exe", w), "nom voisin");
     assert!(!e(r"C:\Users\a\outil.exe", ""), "dossier Windows inconnu : non");
+    // S127-01 : liste complétée, versions de Python
+    for x in ["py.exe", "pyw.exe", "python3.exe", "python3.12.exe", "pythonw3.11.exe", "dotnet.exe", "deno.exe", "bun.exe", "AutoHotkey64.exe", "AutoIt3.exe", "powershell_ise.exe"] {
+        assert!(!e(&format!(r"C:\Users\a\{x}"), w), "{x}");
+    }
+    assert!(e(r"C:\Users\a\python-outil.exe", w) && e(r"C:\Users\a\pythonista.exe", w), "noms voisins de python");
+    // Limite écrite : une copie renommée garde l'exception
+    assert!(e(r"C:\Users\a\maj.exe", w));
     assert!(!e("", w));
 }
 
@@ -6265,7 +6272,7 @@ fn registre_borne() {
     assert!(!h.actions.iter().any(|a| a.cible == "a599"), "la plus récente sort");
     assert_eq!(h.evincees, 103, "600 + 3 - 500 suspensions automatiques sorties, comptées");
     let texte = h.signal_registre_plein().expect("dit une fois");
-    assert!(texte.contains("103 suspension") && texte.contains("restent suspendues") && texte.contains("premières"), "{texte}");
+    assert!(texte.contains("103 suspension") && texte.contains("toujours suspendues") && texte.contains("premières") && texte.contains("0 quarantaine"), "{texte}");
     assert_eq!(h.signal_registre_plein(), None, "pas deux fois dans le même épisode");
     h.ouvrir(SuspensionAuto, "b0", Some(9999), Some(1), S0 + 700);
     assert_eq!(h.signal_registre_plein(), None, "toujours le même épisode");
@@ -6286,7 +6293,10 @@ fn registre_borne() {
     }
     h.ouvrir(Quarantaine, "q", None, None, S0 + 2);
     assert!(!h.actions.iter().any(|a| a.cible == "q") && h.actions.iter().any(|a| a.cible == "j498"), "la quarantaine sort d'abord");
-    assert_eq!(h.evincees, 0);
+    assert_eq!((h.evincees, h.evincees_info), (0, 1));
+    // Relecture de #127, R2 : une sortie d'Info seule est dite aussi
+    let texte = h.signal_registre_plein().expect("Info sortie : dite");
+    assert!(texte.contains("1 quarantaine(s) ou blocage(s) manuel(s), toujours en place") && texte.contains("0 suspension"), "{texte}");
     // Rien d'évinçable : la borne est dépassée plutôt que de perdre une isolation
     let mut h = Historique::default();
     for i in 0..510u32 {

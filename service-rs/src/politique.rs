@@ -244,6 +244,8 @@ pub struct Historique {
     pub signales: VecDeque<(String, u64)>,
     /// Suspensions automatiques sorties du registre plein, pas encore dites (audit de #116, S116-02)
     pub evincees: u64,
+    /// Quarantaines et blocages manuels sortis du registre plein, pas encore dits (relecture de #127, R2 ; audit, S127-03)
+    pub evincees_info: u64,
     /// Registre plein déjà signalé : une REP-002 par épisode, jusqu'au retour sous la borne
     pub plein_signale: bool,
 }
@@ -362,14 +364,16 @@ impl Historique {
         if actives < MAX_ACTIVES {
             self.plein_signale = false;
             self.evincees = 0;
+            self.evincees_info = 0;
             return None;
         }
-        if self.evincees == 0 || self.plein_signale {
+        if self.evincees + self.evincees_info == 0 || self.plein_signale {
             return None;
         }
         self.plein_signale = true;
-        Some(format!("registre des actions en cours plein ({MAX_ACTIVES}) : {} suspension(s) automatique(s) récente(s) ne sont plus suivies \
-            (plus de relance) ; elles restent suspendues et leurs alertes LEU-002 restent ; les premières suspensions restent suivies", self.evincees))
+        Some(format!("registre des actions en cours plein ({MAX_ACTIVES}) : ne sont plus suivies (plus de relance) {} quarantaine(s) ou \
+            blocage(s) manuel(s), toujours en place, et {} suspension(s) automatique(s) récente(s), toujours suspendues, dont les \
+            alertes LEU-002 restent ; les premières suspensions restent suivies", self.evincees_info, self.evincees))
     }
 
     /// Clôt les actions actives qui correspondent ; renvoie leur nombre
@@ -429,14 +433,17 @@ impl Historique {
         if actives > MAX_ACTIVES {
             let mut trop = actives - MAX_ACTIVES;
             let info = |a: &ActionEnCours| a.etat == EtatAction::Active && matches!(a.sorte, Sorte::Quarantaine | Sorte::BlocageManuel);
+            let mut sorties_info = 0;
             self.actions.retain(|a| {
                 if trop > 0 && info(a) {
                     trop -= 1;
+                    sorties_info += 1;
                     false
                 } else {
                     true
                 }
             });
+            self.evincees_info += sorties_info;
             if trop > 0 {
                 let recentes: Vec<String> = self.actions.iter().rev()
                     .filter(|a| a.etat == EtatAction::Active && a.sorte == Sorte::SuspensionAuto).take(trop).map(|a| a.id.clone()).collect();
@@ -474,6 +481,8 @@ impl Historique {
 const SANS_EXCEPTION: &[&str] = &[
     "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "certutil", "bitsadmin", "msbuild",
     "installutil", "wmic", "schtasks", "curl", "bash", "sh", "python", "pythonw", "node", "perl", "ruby", "php", "java", "javaw",
+    "powershell_ise", "py", "pyw", "dotnet", "deno", "bun", "autohotkey", "autohotkey32", "autohotkey64", "autohotkeyu64", "autoit3",
+    "autoit3_x64",
 ];
 
 /// Décision pure : une reprise par un administrateur peut-elle exempter ce programme de la suspension automatique
@@ -484,7 +493,10 @@ pub fn exception_permise(chemin: &str, windows: &str) -> bool {
     let w = windows.trim_end_matches('\\').to_lowercase();
     let nom = c.rsplit('\\').next().unwrap_or("");
     let base = nom.strip_suffix(".exe").unwrap_or(nom);
-    !w.is_empty() && !nom.is_empty() && !c.starts_with(&format!("{w}\\")) && !SANS_EXCEPTION.contains(&base)
+    // python3.exe, python3.12.exe (version du Store) : la version suit le nom (audit de #127, S127-01). Limite écrite :
+    // une copie renommée d'un interpréteur garde l'exception, la décision ne lit que le nom
+    let python = base.strip_prefix("python").is_some_and(|v| !v.is_empty() && v.chars().all(|x| x.is_ascii_digit() || x == '.' || x == 'w'));
+    !w.is_empty() && !nom.is_empty() && !c.starts_with(&format!("{w}\\")) && !SANS_EXCEPTION.contains(&base) && !python
 }
 
 /// Sous l'un de ces dossiers, sans remontée. Testé d'abord : hors de Program Files, la signature n'est pas lue, et un
@@ -687,9 +699,9 @@ pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
         let t = maintenant();
         let n = e.h.terminer_disparus(&|p, c| !morts.contains(&(p, c)));
         let dues = e.h.relances(t);
-        let (evincees, signale) = (e.h.evincees, e.h.plein_signale);
+        let avant = (e.h.evincees, e.h.evincees_info, e.h.plein_signale);
         let plein = e.h.signal_registre_plein();
-        if n > 0 || !dues.is_empty() || (e.h.evincees, e.h.plein_signale) != (evincees, signale) {
+        if n > 0 || !dues.is_empty() || (e.h.evincees, e.h.evincees_info, e.h.plein_signale) != avant {
             enregistrer(e);
         }
         let actives: Vec<ActionEnCours> = e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).cloned().collect();
