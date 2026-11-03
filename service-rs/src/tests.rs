@@ -6757,6 +6757,12 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     assert!(principal.contains("wait_hint: Duration::from_secs(30), ..statut(ServiceState::StopPending"), "R2 : délai annoncé");
     let b = include_str!("blocage.rs").replace("\r\n", "\n");
     assert!(b.contains("PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);"), "R1 : seuls les PowerShell de règles, par PID");
+    // S125-02 : le PID sort du suivi avant que le handle soit lâché, et l'arrêt tient le verrou jusqu'au bout
+    let retrait = b.find(".retain(|p| *p != pid);").unwrap();
+    assert!(retrait < b.find("drop(enfant);").unwrap() && !b.contains("wait_with_output"), "S125-02 : handle tenu jusqu'au retrait");
+    let arret = &b[b.find("pub fn terminer_powershell_regles").unwrap()..];
+    let arret = &arret[..arret.find("\n}\n").unwrap()];
+    assert!(arret.contains("let pids = PIDS_REGLES.lock()") && !arret.contains(".clone()"), "S125-02 : verrou tenu pendant l'arrêt");
     assert!(principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-desinstallation\", &texte);"), "R2 : --supprimer-donnees aussi");
 }
 

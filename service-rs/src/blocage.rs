@@ -353,9 +353,11 @@ pub fn pids_regles_suivis() -> Vec<u32> {
 pub fn terminer_powershell_regles() -> usize {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-    let pids = PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    pids.into_iter().filter(|pid| unsafe {
-        match OpenProcess(PROCESS_TERMINATE, false, *pid) {
+    // Verrou tenu pendant tout l'arrêt : un PowerShell fini doit le prendre pour sortir du suivi avant de lâcher son
+    // handle, donc chaque PID lu ici désigne encore lui (audit de #125, S125-02)
+    let pids = PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner());
+    pids.iter().filter(|pid| unsafe {
+        match OpenProcess(PROCESS_TERMINATE, false, **pid) {
             Ok(h) => {
                 let ok = TerminateProcess(h, 1).is_ok();
                 let _ = CloseHandle(h);
