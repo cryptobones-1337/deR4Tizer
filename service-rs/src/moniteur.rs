@@ -463,6 +463,7 @@ impl Moniteur {
                 let mut tours = 0u32;
                 let mut premier_releve = true;
                 let mut detournees_signalees: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+                let mut illisibles: HashMap<String, u32> = HashMap::new();
                 while !p.arret.load(Ordering::Relaxed) {
                     // Isolations revérifiées toutes les 5 min, hors du verrou (audit de #118, S118-01). Une isolation
                     // détournée est signalée une fois (REP-004), jamais levée : la décision reste humaine (relecture de
@@ -470,8 +471,18 @@ impl Moniteur {
                     if tours % 10 == 0 {
                         let isoles: Vec<String> = m.lock().unwrap().blocages.iter().filter(|b| b.type_ == "programme").map(|b| b.cible.clone()).collect();
                         detournees_signalees.retain(|(c, _)| isoles.contains(c));
+                        illisibles.retain(|c, _| isoles.contains(c));
                         for cible in isoles {
-                            match reponse::verifier_isolation(&cible) {
+                            let etat = reponse::verifier_isolation(&cible);
+                            // Illisible plusieurs relevés de suite : un dossier fermé à SYSTEM peut cacher un détournement
+                            // (audit de #119). Dit une fois, la règle reste
+                            let (n, alerter) = compter_illisible(illisibles.get(&cible).copied().unwrap_or(0), etat == reponse::EtatIsolation::Illisible);
+                            if n == 0 { illisibles.remove(&cible); } else { illisibles.insert(cible.clone(), n); }
+                            if alerter {
+                                commun::journal(&format!("isolation non vérifiable : {cible} illisible à {n} relevés de suite ; règles gardées"));
+                                m.lock().unwrap().ajouter_alerte_brute(alerte_isolation_non_verifiable(&cible), None);
+                            }
+                            match etat {
                                 reponse::EtatIsolation::Detournee(vers) => {
                                     if detournees_signalees.insert((cible.clone(), vers.clone())) {
                                         commun::journal(&format!("isolation détournée : {cible} mène à {vers} ; règles gardées"));
@@ -1645,6 +1656,35 @@ pub fn etat_avant_releve(premier: bool, publie: reponse::EtatPanique) -> reponse
 /// (pur, testé)
 pub fn panique_devenue_incertaine(avant: reponse::EtatPanique, apres: reponse::EtatPanique) -> bool {
     avant != reponse::EtatPanique::Incertaine && apres == reponse::EtatPanique::Incertaine
+}
+
+/// Relevés « illisible » de suite avant de le dire (5 min chacun)
+pub const RELEVES_ILLISIBLES: u32 = 3;
+
+/// Compteur de relevés illisibles d'une isolation, et s'il faut alerter maintenant : une fois, au 3e de suite (pur, testé)
+pub fn compter_illisible(avant: u32, illisible: bool) -> (u32, bool) {
+    if !illisible {
+        return (0, false);
+    }
+    let n = avant.saturating_add(1);
+    (n, n == RELEVES_ILLISIBLES)
+}
+
+/// REP-004, isolation qui ne peut plus être vérifiée (pur, testé)
+pub fn alerte_isolation_non_verifiable(cible: &str) -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_004.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Alerte".into(),
+        processus: "deR4Tizer".into(),
+        chemin: cible.into(),
+        destination: "isolation d'un programme".into(),
+        raisons: format!("Isolation non vérifiable : le chemin isolé ({cible}) est illisible depuis {} relevés de 5 min (un dossier peut avoir été fermé au \
+            service). Un détournement ne peut pas être exclu. Les règles de pare-feu sont gardées. Décision humaine : vérifier les droits du dossier \
+            et le programme, puis « Libérer » ou garder l'isolation.", RELEVES_ILLISIBLES),
+        ..Default::default()
+    }
 }
 
 /// REP-004 (pur, testé)

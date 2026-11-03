@@ -95,7 +95,8 @@ avant toute ouverture ; un fichier qui porte le nom d'un programme critique de W
 du dossier Windows aussi (la quarantaine convient mieux ; limite : un maliciel nommé svchost.exe dans un dossier de
 l'utilisateur ne peut donc pas être isolé, seulement mis en quarantaine), ainsi qu'un chemin dont un dossier est un
 lien (l'administrateur donne le chemin réel). Toutes les 5 minutes, chaque isolation est revérifiée, dossier par dossier sans suivre de
-lien (seuls les jonctions et liens symboliques comptent, pas les fichiers OneDrive à la demande ; un dossier
+lien (seules comptent les étiquettes qui redirigent le chemin, bit « substitut de nom » : jonctions, liens
+symboliques…, pas les fichiers OneDrive à la demande ; un chemin illisible 3 relevés de suite est dit par REP-004 ; un dossier
 remplacé par un lien juste entre cette lecture et l'ouverture du fichier est encore traversé) : si son chemin mène ailleurs (dossier remplacé par une jonction ou un lien), l'alerte REP-004 le dit, une fois ; les règles sont gardées, jamais levées
 automatiquement, et peuvent alors couper le réseau du programme visé : la décision reste humaine. Limite : un programme isolé copié
 ailleurs n'est plus coupé du réseau (la règle vise un chemin, pas un fichier).
