@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::os::windows::io::AsRawSocket;
-use std::os::windows::process::CommandExt;
 use std::time::{Duration, Instant};
 use windows::Win32::Networking::WinSock::{WSAIoctl, RCVALL_ON, SIO_RCVALL, SOCKET};
 
@@ -139,11 +138,8 @@ fn autoriser_capture() {
          New-NetFirewallRule -Name 'deR4Tizer-capture' -DisplayName 'deR4Tizer capture' -Group '{}' -Direction Inbound \
          -Program '{}' -Action Allow -Protocol Any | Out-Null }}",
         crate::blocage::GROUPE, exe.to_string_lossy().replace('\'', "''"));
-    crate::mesure::powershell("capture");
-    let _ = std::process::Command::new(crate::natif::powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(0x0800_0000)
-        .output();
+    // Suivi : l'arrêt du service attend ce PowerShell (PR 6.12)
+    crate::blocage::powershell_regles("capture", &script);
 }
 
 fn ouvrir(ip: Ipv4Addr) -> Result<Socket, String> {

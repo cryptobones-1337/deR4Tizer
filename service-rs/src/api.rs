@@ -14,8 +14,6 @@ use crate::commun::{self, Alerte, ConfigApi};
 use crate::export;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::os::windows::process::CommandExt;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
@@ -169,11 +167,8 @@ fn regle_parefeu(config: &ConfigApi) {
     } else {
         format!("Remove-NetFirewallRule -Name '{NOM_REGLE}' -ErrorAction SilentlyContinue; Remove-NetFirewallRule -Name '{NOM_REGLE}-public' -ErrorAction SilentlyContinue")
     };
-    crate::mesure::powershell("api");
-    let _ = Command::new(crate::natif::powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(0x0800_0000)
-        .output();
+    // Suivi : l'arrêt du service attend ce PowerShell, qui ne recrée donc pas ses règles après la désinstallation (PR 6.12)
+    crate::blocage::powershell_regles("api", &script);
 }
 
 /// Une adresse autorisée : IPv4 exacte, ou réseau IPv4 de /8 à /32 (l'API n'écoute qu'en IPv4). Tout le reste est

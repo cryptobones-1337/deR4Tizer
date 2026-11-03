@@ -276,3 +276,115 @@ pub fn supprimer_groupe(garder_panique: bool) -> bool {
         .map(|s| s.status.success())
         .unwrap_or(false)
 }
+
+/// PowerShell qui posent des règles du groupe deR4Tizer (API, capture) : suivis, pour que l'arrêt du service les attende.
+/// Sinon, un PowerShell lancé juste avant l'arrêt survit au service et recrée ses règles après la désinstallation
+/// (premier passage VM de #124 : 3 règles restées ; piste de l'audit, PR 6.12)
+pub struct SuiviRegles {
+    arret: std::sync::atomic::AtomicBool,
+    en_cours: std::sync::atomic::AtomicUsize,
+}
+
+impl SuiviRegles {
+    pub const fn new() -> Self {
+        SuiviRegles { arret: std::sync::atomic::AtomicBool::new(false), en_cours: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    /// Exécute `f` si l'arrêt n'est pas demandé, en le comptant ; `None` après l'arrêt (rien de nouveau ne démarre)
+    pub fn executer<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.en_cours.fetch_add(1, SeqCst);
+        // Compté avant de lire le drapeau : l'arrêt, qui pose le drapeau puis attend le compte, voit ce PowerShell
+        let r = if self.arret.load(SeqCst) { None } else { Some(f()) };
+        self.en_cours.fetch_sub(1, SeqCst);
+        r
+    }
+
+    /// Arrêt : plus rien ne démarre, et ceux en cours sont attendus `delai` au plus. Vrai s'ils ont tous fini
+    pub fn arreter(&self, delai: std::time::Duration) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.arret.store(true, SeqCst);
+        let fin = std::time::Instant::now() + delai;
+        while self.en_cours.load(SeqCst) > 0 {
+            if std::time::Instant::now() >= fin {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        true
+    }
+}
+
+pub static REGLES_SERVICE: SuiviRegles = SuiviRegles::new();
+
+/// PID des PowerShell de règles en cours : seuls eux sont arrêtés si l'attente de l'arrêt est dépassée
+static PIDS_REGLES: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// PowerShell qui pose ou retire des règles du groupe, suivi par `REGLES_SERVICE`
+pub fn powershell_regles(contexte: &str, script: &str) {
+    REGLES_SERVICE.executer(|| {
+        crate::mesure::powershell(contexte);
+        let Ok(mut enfant) = Command::new(crate::natif::powershell_exe())
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .current_dir(crate::natif::dossier_systeme())
+            .creation_flags(0x0800_0000)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        let pid = enfant.id();
+        PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);
+        let _ = enfant.wait();
+        // Retiré du suivi avant de lâcher le handle : tant qu'il est tenu, Windows ne redonne pas ce PID
+        PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).retain(|p| *p != pid);
+        drop(enfant);
+    });
+}
+
+/// PID suivis : un PID terminé doit en sortir, Windows peut le redonner à un autre processus
+#[cfg(test)]
+pub fn pids_regles_suivis() -> Vec<u32> {
+    PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// Arrête les PowerShell de règles encore en cours, par leur PID (relecture de #125, R1)
+pub fn terminer_powershell_regles() -> usize {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // Verrou tenu pendant tout l'arrêt : un PowerShell fini doit le prendre pour sortir du suivi avant de lâcher son
+    // handle, donc chaque PID lu ici désigne encore lui (audit de #125, S125-02)
+    let pids = PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner());
+    pids.iter().filter(|pid| unsafe {
+        match OpenProcess(PROCESS_TERMINATE, false, **pid) {
+            Ok(h) => {
+                let ok = TerminateProcess(h, 1).is_ok();
+                let _ = CloseHandle(h);
+                ok
+            }
+            Err(_) => false,
+        }
+    }).count()
+}
+
+/// Retrait du groupe pour `--nettoyer`, avec ce qu'il faut pour le compte rendu : code de sortie, erreur, règles du groupe
+/// restées après le retrait (relecture de #124, R1 ; audit, relecture du groupe)
+pub fn supprimer_groupe_detail() -> (Option<i32>, String, Option<u32>) {
+    crate::mesure::powershell("blocage");
+    let script = format!("{}; (Get-NetFirewallRule -Group '{GROUPE}' -ErrorAction SilentlyContinue | Measure-Object).Count", commande_suppression_groupe(false));
+    match Command::new(crate::natif::powershell_exe())
+        .args(["-NoProfile", "-Command", &script])
+        .current_dir(crate::natif::dossier_systeme())
+        .creation_flags(0x0800_0000)
+        .output()
+    {
+        Ok(s) => (s.status.code(), String::from_utf8_lossy(&s.stderr).chars().take(500).collect(), restantes(&String::from_utf8_lossy(&s.stdout))),
+        Err(e) => (None, e.to_string(), None),
+    }
+}
+
+/// Nombre de règles restées, lu sur la dernière ligne non vide de la sortie (pur, testé)
+pub fn restantes(sortie: &str) -> Option<u32> {
+    sortie.lines().map(str::trim).filter(|l| !l.is_empty()).last()?.parse().ok()
+}

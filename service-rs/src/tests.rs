@@ -5796,7 +5796,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("self.ajouter_alerte_brute(alerte_panique(activer, &e, reponse::etat_panique()), None);"), "6.5 : échec du mode panique alerté");
     assert!(m.contains("panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,"), "6.5 : état effectif publié");
     assert!(m.contains("blocage::supprimer_groupe(true); //"), "relecture de #117, Q2 : tout débloquer garde le mode panique");
-    assert!(m.contains("(n, blocage::supprimer_groupe(false))"), "--nettoyer retire tout");
+    assert!(m.contains("(n, blocage::supprimer_groupe_detail())"), "--nettoyer retire tout");
     let (garde, tout) = (crate::blocage::commande_suppression_groupe(true), crate::blocage::commande_suppression_groupe(false));
     assert_eq!(garde, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -notlike 'deR4Tizer PANIQUE (*' } | Remove-NetFirewallRule", "Q2 : filtre");
     assert_eq!(tout, "Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Remove-NetFirewallRule", "--nettoyer");
@@ -6740,11 +6740,88 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     let net = &m[m.find("pub fn nettoyer() {").unwrap()..];
     let net = &net[..net.find("\n}\n").unwrap()];
     assert!(net.contains("match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {"), "règles à échéance");
-    for appel in ["blocage::supprimer_regle(", "blocage::supprimer_groupe(", "execution::panique("] {
+    for appel in ["blocage::supprimer_regle(", "blocage::supprimer_groupe_detail(", "execution::panique("] {
         let i = net.find(appel).unwrap_or_else(|| panic!("{appel}"));
         assert!(net[..i].rfind("avec_echeance(").is_some(), "{appel} sous une échéance");
     }
     assert_eq!(net.matches("avec_echeance(").count(), 2);
     assert!(net.contains("compte_rendu_nettoyage(&texte);"), "audit de #124, S124-02 : compte rendu lisible");
     assert!(include_str!("blocage.rs").contains(".current_dir(crate::natif::dossier_systeme())"), "S124-01 : dossier courant");
+    // PR 6.12 : les PowerShell de règles du service sont suivis et attendus à l'arrêt
+    assert!(include_str!("api.rs").contains("crate::blocage::powershell_regles(\"api\", &script);"), "API suivie");
+    assert!(include_str!("capture.rs").contains("crate::blocage::powershell_regles(\"capture\", &script);"), "capture suivie");
+    let principal = include_str!("main.rs").replace("\r\n", "\n");
+    let (attente, arrete) = (principal.find("crate::blocage::REGLES_SERVICE.arreter(Duration::from_secs(15))").unwrap(), principal.find("statut(ServiceState::Stopped").unwrap());
+    assert!(attente < arrete, "attendus avant de se dire arrêté");
+    assert!(principal.contains("let n = crate::blocage::terminer_powershell_regles();") && principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-arret\", &texte);"), "R1 : dépassement, arrêtés et dit");
+    assert!(principal.contains("wait_hint: Duration::from_secs(30), ..statut(ServiceState::StopPending"), "R2 : délai annoncé");
+    let b = include_str!("blocage.rs").replace("\r\n", "\n");
+    assert!(b.contains("PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);"), "R1 : seuls les PowerShell de règles, par PID");
+    // S125-02 : le PID sort du suivi avant que le handle soit lâché, et l'arrêt tient le verrou jusqu'au bout
+    let retrait = b.find(".retain(|p| *p != pid);").unwrap();
+    assert!(retrait < b.find("drop(enfant);").unwrap() && !b.contains("wait_with_output"), "S125-02 : handle tenu jusqu'au retrait");
+    let arret = &b[b.find("pub fn terminer_powershell_regles").unwrap()..];
+    let arret = &arret[..arret.find("\n}\n").unwrap()];
+    assert!(arret.contains("let pids = PIDS_REGLES.lock()") && !arret.contains(".clone()"), "S125-02 : verrou tenu pendant l'arrêt");
+    assert!(principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-desinstallation\", &texte);"), "R2 : --supprimer-donnees aussi");
+}
+
+/// Relecture de #125, R1 : un PowerShell de règles en cours est arrêté par son PID, et lui seul est compté
+#[test]
+fn powershell_regles_arretes_par_pid() {
+    use std::time::{Duration, Instant};
+    let debut = Instant::now();
+    let fil = std::thread::spawn(|| crate::blocage::powershell_regles("essai", "Start-Sleep -Seconds 60"));
+    let mut n = 0;
+    while n == 0 && debut.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(100));
+        n = crate::blocage::terminer_powershell_regles();
+    }
+    assert_eq!(n, 1, "le PowerShell suivi est arrêté");
+    fil.join().unwrap();
+    assert!(debut.elapsed() < Duration::from_secs(40), "arrêté, pas attendu jusqu'au bout");
+    assert!(crate::blocage::pids_regles_suivis().is_empty(), "plus suivi une fois terminé : son PID peut être redonné");
+    assert_eq!(crate::blocage::terminer_powershell_regles(), 0);
+}
+
+/// PR 6.12 : suivi des PowerShell de règles, texte du retrait, compte rendu à nom unique
+#[test]
+fn regles_service_suivies_et_compte_rendu() {
+    use crate::blocage::{restantes, SuiviRegles};
+    use std::time::Duration;
+    static S: SuiviRegles = SuiviRegles::new();
+    assert_eq!(S.executer(|| 4), Some(4));
+    // Un PowerShell en cours retarde l'arrêt ; ensuite plus rien ne démarre
+    let fil = std::thread::spawn(|| S.executer(|| std::thread::sleep(Duration::from_millis(600))));
+    std::thread::sleep(Duration::from_millis(100));
+    let debut = std::time::Instant::now();
+    assert!(S.arreter(Duration::from_secs(5)));
+    assert!(debut.elapsed() >= Duration::from_millis(300), "attendu");
+    assert!(fil.join().unwrap().is_some());
+    assert_eq!(S.executer(|| 1), None, "après l'arrêt, rien ne démarre");
+    static L: SuiviRegles = SuiviRegles::new();
+    let _f = std::thread::spawn(|| L.executer(|| std::thread::sleep(Duration::from_millis(1_500))));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!L.arreter(Duration::from_millis(200)), "échéance dépassée : dit");
+    assert_eq!(restantes("\r\n3\r\n"), Some(3));
+    assert_eq!(restantes("0"), Some(0));
+    assert_eq!(restantes("erreur"), None);
+    assert_eq!(restantes(""), None);
+    use crate::moniteur::texte_retrait_regles as t;
+    assert!(t(2, &(Some(0), String::new(), Some(0))).starts_with("Règles de pare-feu supprimées : 2 (et"));
+    let x = t(1, &(Some(1), "Accès refusé\r\n".into(), Some(3)));
+    assert!(x.contains("code 1") && x.contains("3 règle(s) restée(s)") && x.contains("erreur : Accès refusé") && x.contains("à la main"), "{x}");
+    assert!(t(0, &(None, String::new(), None)).contains("code inconnu, ? règle(s)"));
+    // Compte rendu : un nouveau nom à chaque fois, avec une partie aléatoire (S125-01)
+    let (p1, p2) = (crate::natif::compte_rendu_systeme("d4t-essai-cr", "contenu"), crate::natif::compte_rendu_systeme("d4t-essai-cr", "contenu"));
+    if let (Some(a), Some(b)) = (&p1, &p2) {
+        assert_ne!(a, b, "deux noms différents dans la même seconde");
+        assert_eq!(std::fs::read_to_string(a).unwrap(), "contenu");
+        let nom = a.file_name().unwrap().to_string_lossy().to_string();
+        let alea = nom.trim_end_matches(".txt").rsplit('-').nth(1).unwrap();
+        assert!(alea.len() == 16 && alea.chars().all(|c| c.is_ascii_hexdigit()), "{nom}");
+    }
+    for p in [p1, p2].into_iter().flatten() {
+        let _ = std::fs::remove_file(p);
+    }
 }

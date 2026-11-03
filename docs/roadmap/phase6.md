@@ -46,6 +46,7 @@ fusion. Celles qui touchent le même fichier passent l'une après l'autre.
 | 6.9 | Préalables de #116 et #117 : relances plafonnées par sorte et par durée (S116-01), lecture du pare-feu avec échéance sur le fil « sante » (S117-02) |
 | 6.10 | Pare-feu muet dit après 5 min (REP-003, Alerte) ; retrait du mode panique à échéance pendant la désinstallation (D6-7 ; les autres appels au pare-feu de la désinstallation restent sans échéance) |
 | 6.11 | Désinstallation : retrait des règles de pare-feu à échéance (relecture de #123, D1) ; matrice : état « incertaine » affiché depuis la 6.7b |
+| 6.12 | PowerShell de règles du service (API, capture) suivis et attendus à l'arrêt ; compte rendu de la désinstallation à nom unique, sans écraser ni suivre de lien, avec le code et les règles restées |
 
 Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est
 déclarée « non exécutée ». Les procédures prévues sont dans `docs/reponse/politique.md`.

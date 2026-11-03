@@ -1691,10 +1691,23 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Compte rendu de la désinstallation dans %SystemRoot%\Temp, comme `--supprimer-donnees` (audit de #124, S124-02)
+/// Compte rendu de la désinstallation dans %SystemRoot%\Temp, nom unique, sans écraser ni suivre de lien (audit de #124,
+/// S124-02 ; relecture, R2)
 fn compte_rendu_nettoyage(texte: &str) {
-    let f = std::path::PathBuf::from(natif::dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows")).join(r"Temp\deR4Tizer-nettoyage.txt");
-    let _ = fs::write(f, format!("{} {texte}\r\n", commun::maintenant()));
+    natif::compte_rendu_systeme("deR4Tizer-nettoyage", &format!("{} {texte}\r\n", commun::maintenant()));
+}
+
+/// Texte du retrait des règles : nombre retiré, code de PowerShell, règles restées, erreur (pur, testé)
+pub fn texte_retrait_regles(n: usize, detail: &(Option<i32>, String, Option<u32>)) -> String {
+    let (code, erreur, restantes) = detail;
+    let erreur = erreur.trim();
+    match (code, restantes) {
+        (Some(0), Some(0)) => format!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer)."),
+        _ => format!("Règles de pare-feu supprimées : {n} ; retrait du groupe deR4Tizer : code {}, {} règle(s) restée(s){}. À retirer à la main (Pare-feu Windows avancé).",
+            code.map_or("inconnu".into(), |c| c.to_string()),
+            restantes.map_or("?".into(), |r| r.to_string()),
+            if erreur.is_empty() { String::new() } else { format!(", erreur : {erreur}") }),
+    }
 }
 
 /// Retrait des règles de pare-feu pendant la désinstallation, à échéance
@@ -2168,10 +2181,9 @@ pub fn nettoyer() {
     // Retrait des règles à échéance : un pare-feu figé ne bloque pas la désinstallation (relecture de #123, D1)
     let texte = match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {
         let n: usize = cibles.iter().map(|c| blocage::supprimer_regle(c)).sum();
-        (n, blocage::supprimer_groupe(false))
+        (n, blocage::supprimer_groupe_detail())
     }) {
-        Some((n, true)) => format!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer)."),
-        Some((n, false)) => format!("Règles de pare-feu supprimées : {n} ; retrait du groupe deR4Tizer par PowerShell en échec : règles à retirer à la main (Pare-feu Windows avancé)."),
+        Some((n, detail)) => texte_retrait_regles(n, &detail),
         None => "Règles de pare-feu : le pare-feu ne répond pas en 60 s ; les règles du groupe deR4Tizer sont à retirer à la main (Pare-feu Windows avancé).".into(),
     };
     println!("{texte}");
