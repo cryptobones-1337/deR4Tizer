@@ -84,7 +84,9 @@ Veut publier une version malveillante que les postes installeraient.
 Une source compromise ou erronée publie des adresses légitimes (DNS public, service de mise à jour, serveur du
 prestataire).
 
-- Mesures : téléchargement en HTTPS, chargement borné ; blocage automatique limité à Spamhaus DROP et Feodo
+- Mesures : téléchargement en HTTPS, chargement borné ; une liste qui couvrirait plus de 2^27 adresses IPv4 ou
+  2^48 réseaux IPv6 /64 ou plus (un /16) est rejetée en entier (borne IPv6 : PR 6.15) ; Feodo Tracker n'admet
+  que des adresses seules, pas de réseau (PR 6.15) ; blocage automatique limité à Spamhaus DROP et Feodo
   Tracker, et à 30 par heure (un compte standard peut l'atteindre exprès : arrêt d'une heure, alertes conservées) ; un
   déblocage manuel prime pendant 7 jours ; blocages levés quand l'adresse sort de la liste ou à expiration.
 - Risques résiduels : un blocage automatique d'une adresse légitime coupe un service jusqu'à la mise à jour
