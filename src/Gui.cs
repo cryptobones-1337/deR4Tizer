@@ -566,16 +566,29 @@ namespace DeR4Tizer
         public List<Pastille> Pastilles = new List<Pastille>();
         public bool Phase;
 
-        // Nombre de pastilles affichées, dans l'ordre, dans `dispo` pixels (8 entre deux) ; s'il en manque, la place d'une
-        // pastille « +N » de `largeurReste` est gardée (décision pure, testée)
-        public static int PastillesVisibles(int[] largeurs, int dispo, int largeurReste)
+        // Indices des pastilles affichées dans `dispo` pixels (8 entre deux), dans leur ordre d'origine. S'il en manque, la
+        // place d'une pastille « +N » de `largeurReste` est gardée, et elles sont prises par gravité décroissante (rouge,
+        // jaune, autre), puis dans l'ordre : une pastille rouge ajoutée en fin de liste n'est jamais cachée derrière une
+        // moins grave (relecture de #132, D2). Décision pure, testée
+        public static List<int> PastillesVisibles(int[] largeurs, int[] gravites, int dispo, int largeurReste)
         {
+            var tous = Enumerable.Range(0, largeurs.Length).ToList();
             int total = largeurs.Sum() + 8 * Math.Max(0, largeurs.Length - 1);
-            if (total <= dispo) return largeurs.Length;
-            int n = 0, pris = largeurReste;
-            while (n < largeurs.Length && pris + largeurs[n] + 8 <= dispo) { pris += largeurs[n] + 8; n++; }
-            return n;
+            if (total <= dispo) return tous;
+            var pris = new List<int>();
+            int place = largeurReste;
+            foreach (int i in tous.OrderByDescending(i => gravites[i]))
+            {
+                if (place + largeurs[i] + 8 > dispo) break;
+                place += largeurs[i] + 8;
+                pris.Add(i);
+            }
+            pris.Sort();
+            return pris;
         }
+
+        // Gravité d'une pastille, d'après sa couleur : 2 rouge, 1 jaune, 0 autre
+        public static int Gravite(Color c) { return c == Theme.Rouge ? 2 : c == Theme.Jaune ? 1 : 0; }
 
         public Entete()
         {
@@ -604,13 +617,19 @@ namespace DeR4Tizer
             TextRenderer.DrawText(g, L.T("Surveillance des menaces réseau") + "  ·  v" + Commun.Version + "  ·  " + L.T("service système"), Theme.PetitGras,
                 new Point(77, 47), Theme.TexteDim);
 
-            // Pastilles alignées à droite, jamais sous le titre : les premières (les plus graves, insérées en tête) restent,
-            // les suivantes sont comptées dans une pastille « +N » (U0, captures : elles recouvraient le titre)
+            // Pastilles alignées à droite, jamais sous le titre (U0, captures : elles le recouvraient). Celles qui ne tiennent
+            // pas sont comptées dans une pastille « +N », de la couleur de la plus grave qu'elle cache
             int finTitre = 74 + TextRenderer.MeasureText(titre, Theme.Titre).Width + 12;
             var largeurs = Pastilles.Select(p => TextRenderer.MeasureText(p.Texte, Theme.PetitGras).Width + 30).ToArray();
-            var visibles = Pastilles.Take(PastillesVisibles(largeurs, Width - 16 - finTitre, TextRenderer.MeasureText("+99", Theme.PetitGras).Width + 30)).ToList();
-            if (visibles.Count < Pastilles.Count)
-                visibles.Add(new Pastille { Texte = "+" + (Pastilles.Count - visibles.Count), Couleur = Theme.TexteDim });
+            var indices = PastillesVisibles(largeurs, Pastilles.Select(p => Gravite(p.Couleur)).ToArray(), Width - 16 - finTitre,
+                TextRenderer.MeasureText("+99", Theme.PetitGras).Width + 30);
+            var visibles = indices.Select(i => Pastilles[i]).ToList();
+            var cachees = Pastilles.Where((p, i) => !indices.Contains(i)).ToList();
+            if (cachees.Count > 0)
+            {
+                int pire = cachees.Max(p => Gravite(p.Couleur));
+                visibles.Add(new Pastille { Texte = "+" + cachees.Count, Couleur = pire == 2 ? Theme.Rouge : pire == 1 ? Theme.Jaune : Theme.TexteDim, Clignote = pire == 2 });
+            }
             float x = Width - 16;
             foreach (var p in Enumerable.Reverse(visibles))
             {

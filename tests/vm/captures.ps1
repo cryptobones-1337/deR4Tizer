@@ -38,11 +38,22 @@ public static class D4tCapture
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetUserObjectInformation(IntPtr h, int index, System.Text.StringBuilder info, int len, out int needed);
     public static void Pixels() { SetProcessDPIAware(); }
     // Bureau de ce fil : « Default » dans une session interactive ; autre chose (ou rien) sans bureau visible
-    public static string Bureau()
+    [DllImport("user32.dll")] static extern IntPtr GetProcessWindowStation();
+    [DllImport("kernel32.dll")] static extern bool ProcessIdToSessionId(uint pid, out uint session);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentProcessId();
+    [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
+    static string Nom(IntPtr objet)
     {
         var sb = new System.Text.StringBuilder(256); int n;
-        return GetUserObjectInformation(GetThreadDesktop(GetCurrentThreadId()), 2, sb, 512, out n) ? sb.ToString() : "";
+        return GetUserObjectInformation(objet, 2, sb, 512, out n) ? sb.ToString() : "";
     }
+    public static string Bureau() { return Nom(GetThreadDesktop(GetCurrentThreadId())); }
+    public static string Station() { return Nom(GetProcessWindowStation()); }
+    public static uint Session() { uint s; return ProcessIdToSessionId(GetCurrentProcessId(), out s) ? s : uint.MaxValue; }
+    public static uint SessionConsole() { return WTSGetActiveConsoleSessionId(); }
+    // Bureau visible : station interactive WinSta0, bureau Default, et session du processus = session de la console.
+    // Toute station non interactive a aussi un bureau « Default » (relecture de #132, D1)
+    public static bool Interactif() { return Station() == "WinSta0" && Bureau() == "Default" && Session() == SessionConsole(); }
     public static int Dpi(IntPtr h) { try { return GetDpiForWindow(h); } catch { return 0; } }
     // PrintWindow avec PW_RENDERFULLCONTENT (2) : la fenêtre est rendue même si une autre la recouvre
     public static Bitmap Fenetre(IntPtr h)
@@ -99,12 +110,12 @@ Verifier 'Installation' {
     $true
 }
 
-$bureau = [D4tCapture]::Bureau()
-"Bureau du scénario : '$bureau' ; compte : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)" | Set-Content (Join-Path $dossierCaptures 'session.txt') -Encoding UTF8
+$poste = "station « $([D4tCapture]::Station()) », bureau « $([D4tCapture]::Bureau()) », session $([D4tCapture]::Session()), session de la console $([D4tCapture]::SessionConsole())"
+"$poste ; compte : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)" | Set-Content (Join-Path $dossierCaptures 'session.txt') -Encoding UTF8
 if (-not $installe) {
     NonExecute 'Captures' 'installation en échec'
-} elseif ($bureau -ne 'Default') {
-    NonExecute 'Captures' "pas de bureau interactif (bureau « $bureau ») : il faut une session ouverte à la console"
+} elseif (-not [D4tCapture]::Interactif()) {
+    NonExecute 'Captures' "pas de bureau visible à la console ($poste) : il faut une session ouverte à la console"
 } else {
     # Quelques cycles de surveillance : les pages montrent l'état réel d'une première ouverture
     Start-Sleep ($Minutes * 60)

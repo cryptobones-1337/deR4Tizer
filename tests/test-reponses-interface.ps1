@@ -157,11 +157,16 @@ try {
     $langue.GetField('En').SetValue($null, $false)
     Cas 'en-tête et barre d''état : traductions anglaises' (($en -join '|') -eq 'SERVICE ONLINE|PROCESSES|updated|service started on|REMOTE DESKTOP ON|stopped') ($en -join '|')
     $entete = & $t 'Entete'
-    $vis = { param([int[]]$l, [int]$d, [int]$r) $entete.GetMethod('PastillesVisibles').Invoke($null, @(, $l) + @($d, $r)) }
-    Cas 'pastilles : toutes si elles tiennent' ((& $vis @(100, 100, 100) 316 40) -eq 3)
-    Cas 'pastilles : les premières gardées, place du « +N » réservée' ((& $vis @(100, 100, 100) 315 40) -eq 2) "$(& $vis @(100, 100, 100) 315 40)"
-    Cas 'pastilles : aucune si même la première ne tient pas avec le « +N »' ((& $vis @(300, 10) 200 40) -eq 0)
-    Cas 'pastilles : liste vide' ((& $vis @() 100 40) -eq 0)
+    $vis = { param([int[]]$l, [int[]]$gr, [int]$d, [int]$r) (@($entete.GetMethod('PastillesVisibles').Invoke($null, [object[]]@($l, $gr, $d, $r))) -join ',') }
+    Cas 'pastilles : toutes si elles tiennent' ((& $vis @(100, 100, 100) @(0, 0, 0) 316 40) -eq '0,1,2')
+    Cas 'pastilles : les premières gardées à gravité égale, place du « +N » réservée' ((& $vis @(100, 100, 100) @(0, 0, 0) 315 40) -eq '0,1') "$(& $vis @(100, 100, 100) @(0, 0, 0) 315 40)"
+    Cas 'pastilles : une rouge en fin de liste reste visible (relecture de #132, D2)' ((& $vis @(100, 100, 100) @(0, 0, 2) 315 40) -eq '0,2') "$(& $vis @(100, 100, 100) @(0, 0, 2) 315 40)"
+    Cas 'pastilles : la rouge avant la jaune, ordre d''origine gardé à l''affichage' ((& $vis @(100, 100, 100) @(1, 0, 2) 200 40) -eq '2') "$(& $vis @(100, 100, 100) @(1, 0, 2) 200 40)"
+    Cas 'pastilles : aucune si même la plus grave ne tient pas avec le « +N »' ((& $vis @(300, 10) @(2, 0) 200 40) -eq '')
+    Cas 'pastilles : liste vide' ((& $vis @() @() 100 40) -eq '')
+    $gravite = { param($nom) $entete.GetMethod('Gravite').Invoke($null, @($theme.GetField($nom).GetValue($null))) }
+    Cas 'pastilles : gravité lue sur la couleur (rouge 2, jaune 1, autre 0)' ((& $gravite 'Rouge') -eq 2 -and (& $gravite 'Jaune') -eq 1 -and (& $gravite 'Cyan') -eq 0)
+    Cas 'pastilles : le « +N » prend la couleur de la plus grave cachée' ($g.Contains('Couleur = pire == 2 ? Theme.Rouge : pire == 1 ? Theme.Jaune : Theme.TexteDim'))
     # PR 6.14 : confirmations qui disent l'effet de 7 jours (S110-08) et la portée de la signature (S113-09)
     Cas 'reprise : effet de 7 jours dit, sauf interpréteur (S110-08)' ($g.Contains('ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur reconnu par son nom, ou programme de Windows)'))
     Cas 'déblocage, tout débloquer : effet de 7 jours dit (S110-08)' ($g.Contains('il ne sera pas reposé automatiquement pendant 7 jours') -and $g.Contains('ne seront pas reposés automatiquement pendant 7 jours'))
