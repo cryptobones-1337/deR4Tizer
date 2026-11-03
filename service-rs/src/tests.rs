@@ -6708,9 +6708,31 @@ fn panique_pare_feu_muet() {
     assert_eq!(t(true, true), None, "une ligne par panne");
     assert_eq!(t(false, false), None);
     let m = include_str!("moniteur.rs").replace("\r\n", "\n");
-    assert!(m.contains("if let Some(apres) = crate::reponse::rafraichir_etat_panique() {"), "S122-03 : seule une lecture réelle conclut");
-    let bloc = &m[m.find("if let Some(apres) = crate::reponse::rafraichir_etat_panique() {").unwrap()..];
+    assert!(m.contains("let lu = crate::reponse::rafraichir_etat_panique();") && m.contains("if let Some(apres) = lu {"), "S122-03 : seule une lecture réelle conclut");
+    let bloc = &m[m.find("if let Some(apres) = lu {").unwrap()..];
     let fin = bloc.find("premier_releve = false;").unwrap();
     assert!(fin < bloc.find("let (non_suivies, non_clos)").unwrap(), "premier relevé quitté dans le bloc d'une lecture réelle");
     assert!(m.contains("if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {"), "--nettoyer : muet, retrait tenté");
+}
+
+/// Audit de #122 : pare-feu muet dit après 5 min ; retrait du mode panique à échéance pendant la désinstallation
+#[test]
+fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
+    use crate::moniteur::{alerte_pare_feu_muet as a, compter_suite as c, RELEVES_PARE_FEU_MUET as n};
+    let mut k = 0;
+    let mut alertes = 0;
+    for _ in 0..25 {
+        let (x, dire) = c(k, true, n);
+        k = x;
+        alertes += dire as u32;
+    }
+    assert_eq!(alertes, 1, "une fois par panne");
+    assert_eq!(c(k, false, n), (0, false), "réponse : remis à zéro");
+    assert_eq!(c(n - 1, true, n), (n, true));
+    let x = a();
+    assert_eq!((x.regle.as_str(), x.niveau.as_str()), ("REP-003", "Alerte"));
+    assert!(x.raisons.contains("5 min") && x.raisons.contains("MpsSvc") && !x.raisons.contains("  "), "{}", x.raisons);
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("let (n, alerter) = compter_suite(pare_feu_muet, lu.is_none(), RELEVES_PARE_FEU_MUET);\n                        pare_feu_muet = n;\n                        if alerter {\n                            m.lock().unwrap().ajouter_alerte_brute(alerte_pare_feu_muet(), None);"), "branché : compté, puis alerté");
+    assert!(m.contains("match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {"), "D6-7 : désinstallation jamais bloquée");
 }
