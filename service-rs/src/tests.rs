@@ -6736,4 +6736,13 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     assert!(m.contains("let (n, alerter) = compter_suite(pare_feu_muet, lu.is_none(), RELEVES_PARE_FEU_MUET);\n                        pare_feu_muet = n;\n                        if alerter {\n                            m.lock().unwrap().ajouter_alerte_brute(alerte_pare_feu_muet(), None);"), "branché : compté, puis alerté");
     assert!(m.contains("match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {"), "D6-7 : ce retrait ne bloque plus la désinstallation");
     assert!(m.contains("Some(Ok(_)) => println!(\"Mode panique désactivé.\"),"), "relecture de #123, R1 : succès seulement");
+    // Relecture de #123, D1 : tous les appels au pare-feu de --nettoyer sont à échéance
+    let net = &m[m.find("pub fn nettoyer() {").unwrap()..];
+    let net = &net[..net.find("\n}\n").unwrap()];
+    assert!(net.contains("match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {"), "règles à échéance");
+    for appel in ["blocage::supprimer_regle(", "blocage::supprimer_groupe(", "execution::panique("] {
+        let i = net.find(appel).unwrap_or_else(|| panic!("{appel}"));
+        assert!(net[..i].rfind("avec_echeance(").is_some(), "{appel} sous une échéance");
+    }
+    assert_eq!(net.matches("avec_echeance(").count(), 2);
 }

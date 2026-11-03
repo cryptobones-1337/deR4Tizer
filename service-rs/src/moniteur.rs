@@ -1691,6 +1691,8 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Retrait des règles de pare-feu pendant la désinstallation, à échéance
+static NETTOYAGE_REGLES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// REP-003, pare-feu muet : l'état du mode panique publié peut être ancien (audit de #122) (pur, testé)
 pub fn alerte_pare_feu_muet() -> Alerte {
@@ -2156,9 +2158,16 @@ pub fn nettoyer() {
         Err(e) => println!("Dossier de mise à jour : {e}"),
     }
     let blocages: Vec<Blocage> = commun::lire("blocages.json").unwrap_or_default();
-    let n: usize = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| blocage::supprimer_regle(&b.cible)).sum();
-    blocage::supprimer_groupe(false);
-    println!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer).");
+    let cibles: Vec<String> = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
+    // Retrait des règles à échéance : un pare-feu figé ne bloque pas la désinstallation (relecture de #123, D1)
+    match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {
+        let n: usize = cibles.iter().map(|c| blocage::supprimer_regle(c)).sum();
+        blocage::supprimer_groupe(false);
+        n
+    }) {
+        Some(n) => println!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer)."),
+        None => println!("Règles de pare-feu : le pare-feu ne répond pas en 60 s ; les règles du groupe deR4Tizer sont à retirer à la main (Pare-feu Windows avancé)."),
+    }
     match blocage::lignes_hors_bloc() {
         Ok((_, bloc)) if !bloc.is_empty() => match blocage::ecrire_bloc_hosts(&[]) {
             Ok(()) => println!("Bloc deR4Tizer retiré du fichier hosts."),
@@ -2173,9 +2182,8 @@ pub fn nettoyer() {
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
-    // Pare-feu muet : le retrait est tenté quand même, avec une échéance : ce retrait ne bloque plus la désinstallation
-    // (D6-7 ; audit de #122). Les règles du groupe sont déjà retirées par PowerShell plus haut. Limite : ce retrait du
-    // groupe et `supprimer_regle` n'ont pas encore d'échéance (relecture de #123, D1, préalable)
+    // Pare-feu muet : le retrait est tenté quand même, avec une échéance (D6-7 ; audit de #122). Avec le retrait des
+    // règles plus haut, à échéance lui aussi, aucun appel au pare-feu ne bloque la désinstallation : 100 s au pire
     if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {
         if let Ok(a) = autorisation_humaine(Action::FinPanique) {
             match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {
