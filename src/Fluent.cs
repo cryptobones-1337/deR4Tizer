@@ -139,7 +139,8 @@ namespace DeR4Tizer
             dock.Children.Add(marque);
 
             var groupes = NavigationFluent.Groupes();
-            var bas = new StackPanel();
+            var bas = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+            bas.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(8, 0, 8, 8) });
             foreach (var e in groupes.Last().Entrees) bas.Children.Add(Bouton(e));
             DockPanel.SetDock(bas, Dock.Bottom);
             dock.Children.Add(bas);
@@ -163,7 +164,8 @@ namespace DeR4Tizer
             var contenu = new StackPanel { Orientation = Orientation.Horizontal };
             contenu.Children.Add(new TextBlock { Text = e.Icone, FontFamily = Jetons.Icones, FontSize = 16, Width = 28, VerticalAlignment = VerticalAlignment.Center });
             contenu.Children.Add(new TextBlock { Text = L.T(e.Cle), VerticalAlignment = VerticalAlignment.Center });
-            var b = new Button { Content = contenu, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
+            // Couleur donnée au bouton : sans elle, WPF écrit le libellé et l'icône en noir (vu sur le rendu : noir sur gris)
+            var b = new Button { Content = contenu, Foreground = Jetons.Pinceau(Jetons.Texte), HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
             b.Template = Modele();
             b.Click += (s, a) => Ouvrir(e.Cle);
             boutons.Add(b);
@@ -228,6 +230,13 @@ namespace DeR4Tizer
 
         // Entrées ouvertes (une seule attendue), pour les tests
         internal int Ouvertes() { return boutons.Count(b => (string)b.Tag == "ouverte"); }
+
+        // Plus faible contraste entre la couleur réellement donnée à un bouton de navigation et le fond du panneau, pour
+        // les tests : le jeton seul ne prouve rien si le bouton ne le reçoit pas
+        internal double ContrasteNavigation()
+        {
+            return boutons.Min(b => { var p = b.Foreground as SolidColorBrush; return p == null ? 0 : Jetons.Contraste(p.Color, Jetons.Carte); });
+        }
 
         // Vue d'ensemble : U2 ; ici, ce qui la remplira, sans rien affirmer
         UIElement VueEnsemble()
