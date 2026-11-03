@@ -44,6 +44,8 @@ namespace DeR4Tizer
         public EtatDefender Defender { get; set; }
         public List<Chaine> Chaines { get; set; }
         public bool Panique { get; set; }
+        // « active », « inactive » ou « incertaine » : compté sur les règles du pare-feu par le service (PR 6.5)
+        public string PaniqueEtat { get; set; }
         public Exposition Exposition { get; set; }
         public string ProtectionDonnees { get; set; }   // vide : droits du dossier de données vérifiés
         // État des collectes (phase 3.3) : null pour un service plus ancien

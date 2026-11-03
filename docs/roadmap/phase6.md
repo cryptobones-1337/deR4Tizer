@@ -41,7 +41,7 @@ fusion. Celles qui touchent le même fichier passent l'une après l'autre.
 | 6.5 | Mode panique transactionnel, état effectif, PowerShell hors du verrou ; en tête, deux restes de l'audit de #116 (`tout_debloquer`, liste en mémoire) |
 | 6.6 | Isolation sur le chemin final, lu par handle ; en tête, deux remarques de #117 (profil illisible, commande de panique en cours) |
 | 6.7a | Préalables de #118 côté service : nom de binaire critique refusé, dossiers parents lus sans suivre de lien, REP-003 au premier relevé |
-| 6.7b | Interface : page « Réponses en cours », portée et retour arrière du mode panique, chemin final dans la confirmation |
+| 6.7b | Interface : page « Réponses en cours », portée et retour arrière du mode panique, état effectif dans l'en-tête, chemin réel dans la confirmation d'isolation (S118-02) |
 
 Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est
 déclarée « non exécutée ». Les procédures prévues sont dans `docs/reponse/politique.md`.

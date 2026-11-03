@@ -95,7 +95,8 @@ namespace DeR4Tizer
         {
             if (EstAdmin())
             {
-                if (ActionSurProcessus(c))
+                // Isolation : la confirmation détaillée montre le chemin réel, aussi à un administrateur (relecture de #120, D2)
+                if (ActionSurProcessus(c) || c.Action == "isolerProgramme")
                 {
                     try { PreparerIdentite(c); }
                     catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
@@ -158,10 +159,22 @@ namespace DeR4Tizer
             return c.Action == "tuer" || c.Action == "tuerChaine" || c.Action == "suspendre" || c.Action == "reprendre";
         }
 
+        // Heure de création d'un processus (FILETIME, comme le service), ou null s'il n'est plus lisible
+        public static long? CreationProcessus(int pid)
+        {
+            IntPtr h = OpenProcess(0x1000, false, pid);
+            if (h == IntPtr.Zero) return null;
+            try { long c, f, n, u; return GetProcessTimes(h, out c, out f, out n, out u) ? (long?)c : null; }
+            finally { CloseHandle(h); }
+        }
+
         // Lit l'identité du processus ici, avec les droits de l'administrateur, et remplace ce que portait la commande : ce qui
         // est montré est ce que le service vérifie. Processus disparu : exception, la commande n'est pas envoyée
         public static void PreparerIdentite(Commande c)
         {
+            // Une heure de création fournie (page « Réponses en cours », tirée du registre) doit être celle du processus qui
+            // porte ce PID aujourd'hui : sinon le PID a été réutilisé par un autre programme (relecture de #120, D1)
+            long? attendue = c.Creation;
             c.Chemin = null; c.Creation = null;
             if (!ActionSurProcessus(c)) return;
             int pid;
@@ -178,6 +191,8 @@ namespace DeR4Tizer
                 // Le chemin est montré, pas comparé : un chemin très long est abrégé, l'arrêt du programme reste possible
                 string chemin = tampon.ToString();
                 c.Chemin = chemin.Length <= 1000 ? chemin : chemin.Substring(0, 500) + "…" + chemin.Substring(chemin.Length - 499);
+                if (attendue.HasValue && attendue.Value != creation)
+                    throw new InvalidOperationException(L.En ? "This process is no longer the one recorded: its PID now belongs to another program. Nothing is sent." : "Ce processus n'est plus celui enregistré : son PID désigne maintenant un autre programme. Rien n'est envoyé.");
                 c.Creation = creation;
             }
             finally { CloseHandle(h); }
@@ -222,6 +237,65 @@ namespace DeR4Tizer
             });
             try { return lecture.Wait(2000) ? Visible(lecture.Result) : nonLue + (en ? " (timed out)" : " (délai dépassé)"); }
             catch { return nonLue; }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateFileW(string nom, uint acces, uint partage, IntPtr securite, uint creation, uint drapeaux, IntPtr modele);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern int GetFinalPathNameByHandleW(IntPtr h, StringBuilder chemin, int taille, int drapeaux);
+
+        // Chemin réel du programme à isoler, celui que le service isolera (relecture de #118, S118-02). Seulement sur un
+        // disque local fixe, dossiers parents lus sans être suivis, élément ouvert sans suivre de lien
+        // (FILE_FLAG_OPEN_REPARSE_POINT), en lecture d'attributs seulement : pas de connexion réseau voulue au nom de
+        // l'administrateur ; une course (dossier remplacé entre la lecture et l'ouverture) reste possible
+        static string CheminReelTexte(string chemin)
+        {
+            bool en = L.En;
+            bool fixe = chemin != null && chemin.Length >= 4 && chemin[1] == ':' && chemin[2] == '\\' && !chemin.StartsWith("\\\\");
+            if (fixe)
+                try { fixe = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed; } catch { fixe = false; }
+            if (!fixe) return en ? "\nReal path: not read (not a path on a fixed local disk)" : "\nChemin réel : non lu (pas un chemin sur un disque local fixe)";
+            // Sur un autre fil, avec une échéance : un dossier qui ne répond pas ne fige pas la confirmation (audit de #120)
+            var lecture = System.Threading.Tasks.Task.Run(() => LireCheminReel(chemin, en));
+            try { return lecture.Wait(2000) ? lecture.Result : (en ? "\nReal path: not read (timed out)" : "\nChemin réel : non lu (délai dépassé)"); }
+            catch { return en ? "\nReal path: not read" : "\nChemin réel : non lu"; }
+        }
+
+        // Dossiers du chemin lus de la racine vers le fichier, sans être suivis (attributs de l'élément lui-même) : un
+        // dossier qui est un point d'analyse n'est pas traversé avec le jeton de l'administrateur, qui s'authentifierait
+        // auprès d'un partage (audit de #120, S120-01)
+        public static bool ParentPointAnalyse(string chemin)
+        {
+            var parents = new List<string>();
+            for (var d = Path.GetDirectoryName(chemin); !string.IsNullOrEmpty(d) && Path.GetDirectoryName(d) != null; d = Path.GetDirectoryName(d)) parents.Add(d);
+            parents.Reverse();
+            foreach (var p in parents)
+            {
+                var a = File.GetAttributes(p);
+                if ((a & FileAttributes.ReparsePoint) != 0) return true;
+            }
+            return false;
+        }
+
+        static string LireCheminReel(string chemin, bool en)
+        {
+            try { if (ParentPointAnalyse(chemin)) return en ? "\nReal path: not read (a folder of the path is a link; the service refuses it)" : "\nChemin réel : non lu (un dossier du chemin est un lien ; le service le refuse)"; }
+            catch { return en ? "\nReal path: not read (missing or unreadable)" : "\nChemin réel : non lu (absent ou illisible)"; }
+            IntPtr h = CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return en ? "\nReal path: not read (missing or unreadable)" : "\nChemin réel : non lu (absent ou illisible)";
+            try
+            {
+                var tampon = new StringBuilder(32768);
+                int n = GetFinalPathNameByHandleW(h, tampon, tampon.Capacity, 0);
+                if (n <= 0 || n >= tampon.Capacity) return en ? "\nReal path: not read" : "\nChemin réel : non lu";
+                string reel = tampon.ToString();
+                if (reel.StartsWith("\\\\?\\") && !reel.StartsWith("\\\\?\\UNC\\")) reel = reel.Substring(4);
+                bool different = !string.Equals(reel, chemin, StringComparison.OrdinalIgnoreCase);
+                return (en ? "\nReal path: " : "\nChemin réel : ") + Visible(reel)
+                    + (different ? (en ? "\n⚠ It differs from the path shown above: the service checks and isolates the real one, or refuses a path that goes through a link."
+                                       : "\n⚠ Il diffère du chemin affiché : le service vérifie et isole le chemin réel, ou refuse un chemin qui passe par un lien.") : "");
+            }
+            finally { CloseHandle(h); }
         }
 
         // Nom, chemin, signature, heure de création, sur des lignes à part
@@ -274,8 +348,8 @@ namespace DeR4Tizer
                         return (en ? "RESTORE from quarantine into the deR4Tizer folder (ProgramData\\deR4Tizer\\restaurations): " : "SORTIR de la quarantaine dans le dossier de deR4Tizer (ProgramData\\deR4Tizer\\restaurations) : ")
                             + (q == null ? (en ? "unknown item " : "élément inconnu ") + vc : Visible(q.CheminOrigine));
                     }
-                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + vc;
-                case "panique": return v != "off" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
+                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + vc + CheminReelTexte(cible);
+                case "panique": return VueReponses.ConfirmationPanique(v != "off");
                 case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + vc;
                 case "reglages":
                     {
@@ -789,6 +863,11 @@ namespace DeR4Tizer
             navExtensions = Lien(liens, "Extensions", pageExtensions, largeurNav);
             navBlocages = Lien(liens, "Blocages", pageBlocages, largeurNav);
             navQuarantaine = Lien(liens, "Quarantaine", pageQuarantaine, largeurNav);
+            // Actions de réponse qui durent, leurs relances et leur récupération (PR 6.7b)
+            var pageReponses = new PageReponses();
+            contenu.Controls.Add(pageReponses);
+            pages.Add(pageReponses);
+            Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);
             navMenaces = Lien(liens, "Menaces", pageMenaces, largeurNav);
             var pageSante = new PageSante();
             contenu.Controls.Add(pageSante);
@@ -998,7 +1077,6 @@ namespace DeR4Tizer
                 if (niveauSante > 0) pastilles.Add(new Entete.Pastille { Texte = VueSante.TextePastille(niveauSante) + (enPanne != "" ? " — " + enPanne : ""), Couleur = niveauSante == 2 ? Theme.Rouge : Theme.Jaune });
                 else if (enPanne != "") pastilles.Add(new Entete.Pastille { Texte = enPanne, Couleur = Theme.Jaune });
                 if (VueSante.EtatAncien(etat, DateTime.Now)) pastilles.Insert(0, new Entete.Pastille { Texte = L.T("ÉTAT ANCIEN : SERVICE À VÉRIFIER"), Couleur = Theme.Jaune });
-                if (etat.Panique) pastilles.Insert(0, new Entete.Pastille { Texte = "MODE PANIQUE : INTERNET COUPÉ", Couleur = Theme.Rouge, Clignote = true });
                 // Échec fermé côté service : configuration et secrets ignorés tant que les droits ne sont pas vérifiés
                 if (!string.IsNullOrEmpty(etat.ProtectionDonnees))
                     pastilles.Insert(0, new Entete.Pastille { Texte = L.T("DONNÉES NON PROTÉGÉES : RÉGLAGES IGNORÉS"), Couleur = Theme.Rouge, Clignote = true });
@@ -1015,8 +1093,13 @@ namespace DeR4Tizer
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
                 if (etat.Exposition != null && etat.Exposition.Exposee)
                     pastilles.Insert(1, new Entete.Pastille { Texte = "PC EXPOSÉ À INTERNET", Couleur = Theme.Rouge, Clignote = true });
+                // État effectif publié par le service, compté sur les règles du pare-feu (PR 6.7b) : « incertain » se dit,
+                // et « Rétablir Internet » reste offert
                 paniqueActive = etat.Panique;
-                btnPanique.Text = paniqueActive ? "◉ RÉTABLIR INTERNET" : "◉ PANIQUE : COUPER INTERNET";
+                btnPanique.Text = VueReponses.TexteBoutonPanique(etat);
+                string pastillePanique = VueReponses.PastillePanique(etat);
+                if (pastillePanique != null)
+                    pastilles.Insert(0, new Entete.Pastille { Texte = pastillePanique, Couleur = etat.PaniqueEtat == "incertaine" ? Theme.Jaune : Theme.Rouge, Clignote = etat.PaniqueEtat != "incertaine" });
                 if (etat.BureauADistance) pastilles.Add(new Entete.Pastille { Texte = "BUREAU À DISTANCE ACTIF", Couleur = Theme.Rouge, Clignote = true });
                 if (etat.OutilsDistants != null && etat.OutilsDistants.Count > 0)
                     pastilles.Add(new Entete.Pastille { Texte = "PRISE EN MAIN : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
@@ -1593,9 +1676,8 @@ namespace DeR4Tizer
 
         void Panique()
         {
-            string question = paniqueActive
-                ? "Rétablir l'accès à Internet pour tous les programmes ?"
-                : L.T("Couper Internet pour tous les programmes et fermer les connexions en cours ?\n\nÀ utiliser si vous pensez qu'un attaquant ou un rançongiciel est actif. Le réseau local reste accessible.\n\nLimite : les serveurs DNS et les serveurs de notification (ntfy, Teams, e-mail) restent joignables pour tous les programmes, pas seulement pour deR4Tizer ; un malware pourrait s'en servir pour faire sortir des données. Préférez un serveur ntfy auto-hébergé à ntfy.sh.");
+            // Portée, limite IPv6, échéance de relance et retour arrière, dits avant d'agir (PR 6.7b)
+            string question = VueReponses.ConfirmationPanique(!paniqueActive);
             if (MessageBox.Show(question, "deR4Tizer : PANIQUE", MessageBoxButtons.YesNo, paniqueActive ? MessageBoxIcon.Question : MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(new Commande { Action = "panique", Valeur = paniqueActive ? "off" : "on" });
             etatVu = "";
