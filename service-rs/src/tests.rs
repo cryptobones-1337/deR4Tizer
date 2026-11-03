@@ -5844,7 +5844,12 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(v.contains("if deja { (true, None) } else if tentee { suspension_leurre("), "S110-02");
     assert!(v.contains("Attendu::Leurre { avant: crate::hygiene::heure_evenement(&xml), chemin: programme.clone() }"), "6.3 : identité du leurre");
     assert!(m.contains("let attendu = reponse::Attendu::Exacte { creation };"), "6.3 : identité de la commande");
-    assert!(m.contains("match politique::empreinte_suspension(&chemin, creation) {"), "S110-05, S113-06");
+    assert!(m.contains("politique::empreinte_suspension(&chemin, creation)\n"), "S110-05, S113-06");
+    // S110-06 : l'exception de 7 jours passe par `exception_permise`, avant de lire l'empreinte
+    let (filtre, empreinte) = (m.find("if politique::exception_permise(&chemin, &crate::natif::dossier_windows()) {").expect("S110-06"),
+        m.find("politique::empreinte_suspension(&chemin, creation)\n").unwrap());
+    assert!(filtre < empreinte, "S110-06 : filtre avant l'empreinte");
+    assert!(m.contains("Ok(()) if sans_exception => Reponse::ok("), "S110-06 : dit à l'administrateur");
     assert!(m.contains("if *p == pid { Some((pid, racine.clone())) }"), "relecture de #113, J1 : la racine garde l'identité montrée jusqu'à l'action");
     assert!(m.contains("if n == 0 {\n                    return Reponse::erreur(premiere_erreur.unwrap_or_else("), "P3, P5 : aucun arrêt, pas un succès, et le premier motif");
     assert!(v.contains("(false, Some(format!(\"échec : {e}\")))"), "S113-01 : l'alerte dit l'échec");
@@ -6233,10 +6238,35 @@ fn registre_borne() {
     for i in 0..600u32 {
         h.ouvrir(SuspensionAuto, &format!("a{i}"), Some(i + 10), Some(1), S0 + 1 + i as u64);
     }
-    for c in ["poste", "iso", "manuelle", "a599"] {
+    // S116-02 : parmi les suspensions automatiques, les plus récentes sortent ; la première reste suivie
+    for c in ["poste", "iso", "manuelle", "a0", "a1"] {
         assert!(h.actions.iter().any(|a| a.cible == c && a.etat == Active), "{c} toujours suivi");
     }
-    assert!(!h.actions.iter().any(|a| a.cible == "a0"), "la plus ancienne évinçable sort");
+    assert!(!h.actions.iter().any(|a| a.cible == "a599"), "la plus récente sort");
+    assert_eq!(h.evincees, 103, "600 + 3 - 500 suspensions automatiques sorties, comptées");
+    let texte = h.signal_registre_plein().expect("dit une fois");
+    assert!(texte.contains("103 suspension") && texte.contains("restent suspendues") && texte.contains("premières"), "{texte}");
+    assert_eq!(h.signal_registre_plein(), None, "pas deux fois dans le même épisode");
+    h.ouvrir(SuspensionAuto, "b0", Some(9999), Some(1), S0 + 700);
+    assert_eq!(h.signal_registre_plein(), None, "toujours le même épisode");
+    for i in 0..10u32 {
+        h.clore(&[SuspensionAuto], Some(&format!("a{i}")), None, Levee);
+    }
+    assert_eq!(h.signal_registre_plein(), None, "sous la borne : épisode fini");
+    assert_eq!((h.evincees, h.plein_signale), (0, false));
+    for i in 0..20u32 {
+        h.ouvrir(SuspensionAuto, &format!("c{i}"), Some(20_000 + i), Some(1), S0 + 800 + i as u64);
+    }
+    assert!(h.signal_registre_plein().is_some(), "nouvel épisode : dit de nouveau");
+    // Les quarantaines et blocages manuels (Info) sortent avant toute suspension automatique
+    let mut h = Historique::default();
+    h.ouvrir(SuspensionAuto, "vraie", Some(1), Some(1), S0);
+    for i in 0..499u32 {
+        h.ouvrir(SuspensionAuto, &format!("j{i}"), Some(i + 10), Some(1), S0 + 1);
+    }
+    h.ouvrir(Quarantaine, "q", None, None, S0 + 2);
+    assert!(!h.actions.iter().any(|a| a.cible == "q") && h.actions.iter().any(|a| a.cible == "j498"), "la quarantaine sort d'abord");
+    assert_eq!(h.evincees, 0);
     // Rien d'évinçable : la borne est dépassée plutôt que de perdre une isolation
     let mut h = Historique::default();
     for i in 0..510u32 {
@@ -6750,7 +6780,8 @@ fn relances_plafonnees_par_sorte_et_par_heure() {
 #[test]
 fn panique_lecture_avec_echeance() {
     let p = include_str!("politique.rs").replace("\r\n", "\n");
-    assert!(p.contains("let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, &actives, t);\n        regrouper_relances(&a_emettre, t)"), "S116-01 : plafond branché");
+    assert!(p.contains("let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, &actives, t);\n        let mut alertes = regrouper_relances(&a_emettre, t);"), "S116-01 : plafond branché");
+    assert!(p.contains("alertes.extend(plein.map(|texte| alerte_garde(&texte)));"), "S116-02 : registre plein dit");
     assert!(p.contains("let actives: Vec<ActionEnCours> = e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).cloned().collect();"), "D1 : registre à jour");
     let r = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(r.contains("let lu = avec_echeance(&LECTURE_PANIQUE, std::time::Duration::from_secs(DELAI_LECTURE_PANIQUE), move || {"), "S117-02 : lecture à échéance");

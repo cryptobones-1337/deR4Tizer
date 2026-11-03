@@ -242,6 +242,10 @@ pub struct Historique {
     pub signal_ips: u64,
     /// Cibles dont la boucle a été signalée : (cible, heure)
     pub signales: VecDeque<(String, u64)>,
+    /// Suspensions automatiques sorties du registre plein, pas encore dites (audit de #116, S116-02)
+    pub evincees: u64,
+    /// Registre plein déjà signalé : une REP-002 par épisode, jusqu'au retour sous la borne
+    pub plein_signale: bool,
 }
 
 /// Clé bornée : un chemin de 32 000 caractères ne doit pas gonfler `reponses.json` (audit de #110, S110-10 ; #115, S115-06)
@@ -352,6 +356,22 @@ impl Historique {
         self.borner();
     }
 
+    /// Texte de la REP-002 « registre plein », une fois par épisode ; l'épisode finit au retour sous la borne (pur, testé)
+    pub fn signal_registre_plein(&mut self) -> Option<String> {
+        let actives = self.actions.iter().filter(|a| a.etat == EtatAction::Active).count();
+        if actives < MAX_ACTIVES {
+            self.plein_signale = false;
+            self.evincees = 0;
+            return None;
+        }
+        if self.evincees == 0 || self.plein_signale {
+            return None;
+        }
+        self.plein_signale = true;
+        Some(format!("registre des actions en cours plein ({MAX_ACTIVES}) : {} suspension(s) automatique(s) récente(s) ne sont plus suivies \
+            (plus de relance) ; elles restent suspendues et leurs alertes LEU-002 restent ; les premières suspensions restent suivies", self.evincees))
+    }
+
     /// Clôt les actions actives qui correspondent ; renvoie leur nombre
     pub fn clore(&mut self, sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) -> usize {
         let c = cible.map(cle);
@@ -399,22 +419,30 @@ impl Historique {
         dues
     }
 
-    /// Bornes : 500 actives au plus, 100 closes gardées. Seules les suspensions automatiques, quarantaines et blocages manuels
-    /// les plus anciens peuvent sortir : un mode panique, une isolation ou une suspension manuelle restent toujours suivis,
-    /// même au-delà de la borne (audit de #115, S115-01). L'alerte d'origine de ce qui sort reste
+    /// Bornes : 500 actives au plus, 100 closes gardées. Un mode panique, une isolation ou une suspension manuelle restent
+    /// toujours suivis, même au-delà de la borne (audit de #115, S115-01). Sortent d'abord les quarantaines et blocages
+    /// manuels (Info) les plus anciens, puis les suspensions automatiques les plus RÉCENTES : la première, souvent le vrai
+    /// programme suivi de jetables, reste suivie ; leur nombre est dit une fois par `signal_registre_plein` (audit de
+    /// #116, S116-02). L'alerte d'origine de ce qui sort reste
     fn borner(&mut self) {
-        let evincable = |a: &ActionEnCours| a.etat == EtatAction::Active && matches!(a.sorte, Sorte::SuspensionAuto | Sorte::Quarantaine | Sorte::BlocageManuel);
         let actives = self.actions.iter().filter(|a| a.etat == EtatAction::Active).count();
         if actives > MAX_ACTIVES {
             let mut trop = actives - MAX_ACTIVES;
+            let info = |a: &ActionEnCours| a.etat == EtatAction::Active && matches!(a.sorte, Sorte::Quarantaine | Sorte::BlocageManuel);
             self.actions.retain(|a| {
-                if trop > 0 && evincable(a) {
+                if trop > 0 && info(a) {
                     trop -= 1;
                     false
                 } else {
                     true
                 }
             });
+            if trop > 0 {
+                let recentes: Vec<String> = self.actions.iter().rev()
+                    .filter(|a| a.etat == EtatAction::Active && a.sorte == Sorte::SuspensionAuto).take(trop).map(|a| a.id.clone()).collect();
+                self.evincees += recentes.len() as u64;
+                self.actions.retain(|a| !recentes.contains(&a.id));
+            }
         }
         let closes = self.actions.iter().filter(|a| a.etat != EtatAction::Active).count();
         if closes > MAX_CLOSES {
@@ -439,6 +467,24 @@ impl Historique {
             self.humaines.drain(..trop);
         }
     }
+}
+
+/// Interpréteurs et outils de Windows qui exécutent un contenu fourni (noms de persistance.rs, processus.rs et
+/// `INTERPRETES`) : leur empreinte est celle de tous leurs usages
+const SANS_EXCEPTION: &[&str] = &[
+    "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "certutil", "bitsadmin", "msbuild",
+    "installutil", "wmic", "schtasks", "curl", "bash", "sh", "python", "pythonw", "node", "perl", "ruby", "php", "java", "javaw",
+];
+
+/// Décision pure : une reprise par un administrateur peut-elle exempter ce programme de la suspension automatique
+/// pendant 7 jours ? Ni un interpréteur, où qu'il soit, ni un programme du dossier Windows : l'exception couvrirait
+/// tous les scripts qu'il lance (audit de #110, S110-06). Dossier Windows inconnu : non
+pub fn exception_permise(chemin: &str, windows: &str) -> bool {
+    let c = chemin.to_lowercase();
+    let w = windows.trim_end_matches('\\').to_lowercase();
+    let nom = c.rsplit('\\').next().unwrap_or("");
+    let base = nom.strip_suffix(".exe").unwrap_or(nom);
+    !w.is_empty() && !nom.is_empty() && !c.starts_with(&format!("{w}\\")) && !SANS_EXCEPTION.contains(&base)
 }
 
 /// Sous l'un de ces dossiers, sans remontée. Testé d'abord : hors de Program Files, la signature n'est pas lue, et un
@@ -641,12 +687,16 @@ pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
         let t = maintenant();
         let n = e.h.terminer_disparus(&|p, c| !morts.contains(&(p, c)));
         let dues = e.h.relances(t);
-        if n > 0 || !dues.is_empty() {
+        let (evincees, signale) = (e.h.evincees, e.h.plein_signale);
+        let plein = e.h.signal_registre_plein();
+        if n > 0 || !dues.is_empty() || (e.h.evincees, e.h.plein_signale) != (evincees, signale) {
             enregistrer(e);
         }
         let actives: Vec<ActionEnCours> = e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).cloned().collect();
         let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, &actives, t);
-        regrouper_relances(&a_emettre, t)
+        let mut alertes = regrouper_relances(&a_emettre, t);
+        alertes.extend(plein.map(|texte| alerte_garde(&texte)));
+        alertes
     })
 }
 
