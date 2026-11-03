@@ -403,9 +403,11 @@ impl Menaces {
 /// qu'une adresse seule ; un réseau, même petit, y est écarté : `8.0.0.0/8` glissé dans Feodo ne bloque plus 8.8.8.8
 /// automatiquement (audit de #109)
 pub fn jeton_admis(format: &str, jeton: &str) -> bool {
+    // Sur la famille lue, pas sur le texte : `2001:db8::1.2.3.4/32` est une adresse IPv6 (un /32), pas une IPv4 (audit de
+    // #128, S128-01)
     format != "ip-exacte" || match jeton.split_once('/') {
         None => true,
-        Some((a, l)) => (l == "32" && a.contains('.')) || (l == "128" && a.contains(':')),
+        Some((a, l)) => matches!((a.parse::<IpAddr>(), l), (Ok(IpAddr::V4(_)), "32") | (Ok(IpAddr::V6(_)), "128")),
     }
 }
 
@@ -414,10 +416,11 @@ pub fn couverture6(longueurs: impl Iterator<Item = u32>) -> u128 {
     longueurs.map(|l| if l < 64 { 1u128 << (64 - l) } else { 1 }).sum()
 }
 
-/// Décision pure : plus de 2^27 adresses IPv4 (134 millions), ou plus de 2^48 réseaux IPv6 /64 (l'équivalent d'un /16) :
-/// liste corrompue ou détournée, rejetée en entier. Avant, la couverture IPv6 n'avait pas de borne (audit de #109, S109-01)
+/// Décision pure : plus de 2^27 adresses IPv4 (134 millions), ou 2^48 réseaux IPv6 /64 ou plus (un seul /16 suffit, audit
+/// de #128, S128-02) : liste corrompue ou détournée, rejetée en entier. Avant, la couverture IPv6 n'avait pas de borne
+/// (audit de #109, S109-01)
 pub fn couverture_aberrante(ipv4: u64, reseaux6: u128) -> bool {
-    ipv4 > 1 << 27 || reseaux6 > 1 << 48
+    ipv4 > 1 << 27 || reseaux6 >= 1 << 48
 }
 
 /// Décision pure : chaque source du niveau 3 a chargé au moins une entrée (une liste non lue ou rejetée en a 0)
@@ -467,7 +470,10 @@ fn compter(s: &Source, chemin: &std::path::Path) -> usize {
     match s.format {
         "domaine" => t.lines().filter_map(domaine_de_ligne).count(),
         "spamhaus" => t.matches("\"cidr\"").count(),
-        _ => t.lines().filter_map(premier_jeton).filter(|j| j.split('/').next().unwrap_or("").parse::<IpAddr>().is_ok()).count(),
+        // Le même filtre qu'au chargement : un Feodo fait de réseaux compte 0 et ne remplace pas la copie précédente
+        // (relecture de #128, R1)
+        _ => t.lines().filter_map(premier_jeton).filter(|j| jeton_admis(s.format, j))
+            .filter(|j| j.split('/').next().unwrap_or("").parse::<IpAddr>().is_ok()).count(),
     }
 }
 

@@ -5553,21 +5553,24 @@ fn listes_feodo_exactes_et_couverture_ipv6() {
     for x in ["203.0.113.5", "203.0.113.5/32", "2001:db8::5", "2001:db8::5/128"] {
         assert!(j("ip-exacte", x), "{x}");
     }
-    for x in ["8.0.0.0/8", "203.0.113.0/24", "203.0.113.4/31", "2001:db8::/48", "2001:db8::/127", "203.0.113.5/128", "2001:db8::5/32"] {
-        assert!(!j("ip-exacte", x), "{x} : réseau écarté");
-        assert!(j("ip", x), "{x} : admis ailleurs");
+    for x in ["8.0.0.0/8", "203.0.113.0/24", "203.0.113.4/31", "2001:db8::/48", "2001:db8::/127", "203.0.113.5/128", "2001:db8::5/32",
+              "2001:db8::1.2.3.4/32", "::ffff:8.8.8.8/32", "pas-une-ip/32"] {
+        assert!(!j("ip-exacte", x), "{x} : réseau écarté (S128-01 : famille lue)");
+        assert!(j("ip", x) && j("spamhaus", x), "{x} : admis ailleurs");
     }
     assert_eq!(c6([64u32, 128, 100].into_iter()), 3);
     assert_eq!(c6([48u32].into_iter()), 1 << 16);
     assert_eq!(c6([16u32, 16].into_iter()), 1 << 49);
-    assert!(!ab(1 << 27, 1 << 48), "aux bornes : admis");
-    assert!(ab((1 << 27) + 1, 0) && ab(0, (1 << 48) + 1));
+    assert!(!ab(1 << 27, (1 << 48) - 1), "aux bornes : admis");
+    assert!(ab((1 << 27) + 1, 0) && ab(0, 1 << 48), "S128-02 : un seul /16 suffit");
+    assert!(ab(0, c6([16u32].into_iter())));
     // Spamhaus DROP v6 réel : quelques dizaines de /29 à /48, loin de la borne ; deux /16 la dépassent
     assert!(!ab(0, c6(std::iter::repeat(29u32).take(200))));
     assert!(ab(0, c6([16u32, 17].into_iter())));
     let src = include_str!("menaces.rs").replace("\r\n", "\n");
     assert!(src.contains("format: \"ip-exacte\", url: \"https://feodotracker.abuse.ch/downloads/ipblocklist.txt\""), "Feodo en adresses exactes");
     assert!(src.contains("if !jeton_admis(s.format, &j) {") && src.contains("if couverture_aberrante(couverture, couverture6) {"), "branchés au chargement");
+    assert!(src.contains("filter(|j| jeton_admis(s.format, j))"), "R1 : même filtre au contrôle avant remplacement");
 }
 
 // ------------------------------------------------------------ phase 6, PR 6.2 : point de décision et garde

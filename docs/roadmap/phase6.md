@@ -49,7 +49,7 @@ fusion. Celles qui touchent le même fichier passent l'une après l'autre.
 | 6.12 | PowerShell de règles du service (API, capture) suivis et attendus à l'arrêt ; compte rendu de la désinstallation à nom unique, sans écraser ni suivre de lien, avec le code et les règles restées |
 | 6.13 | Isolation : chemin descendu élément par élément par handles, sans course ni lien traversé ; nom d'un programme livré avec Windows refusé hors du dossier Windows |
 | 6.14 | Reprise d'un interpréteur ou d'un programme de Windows : pas d'exception de 7 jours ; confirmations qui disent l'effet de 7 jours et la portée de la signature ; registre plein : suspensions automatiques récentes sorties d'abord, dit par REP-002 |
-| 6.15 | Listes de menaces : Feodo Tracker en adresses exactes ; couverture IPv6 bornée (2^48 réseaux /64), liste rejetée en entier au-delà |
+| 6.15 | Listes de menaces : Feodo Tracker en adresses exactes ; couverture IPv6 bornée (2^48 réseaux /64, un /16), liste rejetée en entier à partir de là |
 
 Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est
 déclarée « non exécutée ». Les procédures prévues sont dans `docs/reponse/politique.md`.
