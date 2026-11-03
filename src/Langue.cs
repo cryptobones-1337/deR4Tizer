@@ -19,7 +19,12 @@ namespace DeR4Tizer
             // Phase 4 : pages Incidents et Santé
             { "Incidents", "Incidents" }, { "Santé", "Health" },
             { "Surveillance des menaces réseau", "Network threat monitoring" }, { "service système", "system service" },
-            { "Listes de menaces", "Threat lists" }, { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
+            { "Listes de menaces", "Threat lists" },
+            { "Vue d'ensemble", "Overview" }, { "Surveillance", "Monitoring" }, { "Protection", "Protection" },
+            { "Système et confidentialité", "System and privacy" }, { "Page introuvable.", "Page not found." },
+            { "Vue d'ensemble : prévue avec U2", "Overview: planned with U2" },
+            { "Cette page dira d'un coup d'œil ce qui va, ce qui ne va pas et ce que vous pouvez faire. En attendant, les pages de gauche sont celles d'aujourd'hui.",
+              "This page will show at a glance what is fine, what is not and what you can do. Until then, the pages on the left are today's." }, { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
             { "SERVICE EN LIGNE", "SERVICE ONLINE" }, { "SERVICE NON INSTALLÉ", "SERVICE NOT INSTALLED" }, { "SERVICE", "SERVICE" },
             { "arrêté", "stopped" }, { "démarrage…", "starting…" }, { "arrêt…", "stopping…" },
             { "PROCESSUS", "PROCESSES" }, { "DEFENDER (FALSIFICATION OFF)", "DEFENDER (TAMPER PROTECTION OFF)" },
