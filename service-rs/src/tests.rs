@@ -6753,7 +6753,29 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     let principal = include_str!("main.rs").replace("\r\n", "\n");
     let (attente, arrete) = (principal.find("crate::blocage::REGLES_SERVICE.arreter(Duration::from_secs(15))").unwrap(), principal.find("statut(ServiceState::Stopped").unwrap());
     assert!(attente < arrete, "attendus avant de se dire arrêté");
+    assert!(principal.contains("let n = crate::blocage::terminer_powershell_regles();") && principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-arret\", &texte);"), "R1 : dépassement, arrêtés et dit");
+    assert!(principal.contains("wait_hint: Duration::from_secs(30), ..statut(ServiceState::StopPending"), "R2 : délai annoncé");
+    let b = include_str!("blocage.rs").replace("\r\n", "\n");
+    assert!(b.contains("PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);"), "R1 : seuls les PowerShell de règles, par PID");
     assert!(principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-desinstallation\", &texte);"), "R2 : --supprimer-donnees aussi");
+}
+
+/// Relecture de #125, R1 : un PowerShell de règles en cours est arrêté par son PID, et lui seul est compté
+#[test]
+fn powershell_regles_arretes_par_pid() {
+    use std::time::{Duration, Instant};
+    let debut = Instant::now();
+    let fil = std::thread::spawn(|| crate::blocage::powershell_regles("essai", "Start-Sleep -Seconds 60"));
+    let mut n = 0;
+    while n == 0 && debut.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(100));
+        n = crate::blocage::terminer_powershell_regles();
+    }
+    assert_eq!(n, 1, "le PowerShell suivi est arrêté");
+    fil.join().unwrap();
+    assert!(debut.elapsed() < Duration::from_secs(40), "arrêté, pas attendu jusqu'au bout");
+    assert!(crate::blocage::pids_regles_suivis().is_empty(), "plus suivi une fois terminé : son PID peut être redonné");
+    assert_eq!(crate::blocage::terminer_powershell_regles(), 0);
 }
 
 /// PR 6.12 : suivi des PowerShell de règles, texte du retrait, compte rendu à nom unique
@@ -6784,10 +6806,16 @@ fn regles_service_suivies_et_compte_rendu() {
     let x = t(1, &(Some(1), "Accès refusé\r\n".into(), Some(3)));
     assert!(x.contains("code 1") && x.contains("3 règle(s) restée(s)") && x.contains("erreur : Accès refusé") && x.contains("à la main"), "{x}");
     assert!(t(0, &(None, String::new(), None)).contains("code inconnu, ? règle(s)"));
-    // Compte rendu : un nom posé d'avance n'est jamais écrit ; un nouveau nom l'est
-    let p = crate::natif::compte_rendu_systeme("d4t-essai-cr", "contenu");
-    if let Some(p) = p {
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "contenu");
-        let _ = std::fs::remove_file(&p);
+    // Compte rendu : un nouveau nom à chaque fois, avec une partie aléatoire (S125-01)
+    let (p1, p2) = (crate::natif::compte_rendu_systeme("d4t-essai-cr", "contenu"), crate::natif::compte_rendu_systeme("d4t-essai-cr", "contenu"));
+    if let (Some(a), Some(b)) = (&p1, &p2) {
+        assert_ne!(a, b, "deux noms différents dans la même seconde");
+        assert_eq!(std::fs::read_to_string(a).unwrap(), "contenu");
+        let nom = a.file_name().unwrap().to_string_lossy().to_string();
+        let alea = nom.trim_end_matches(".txt").rsplit('-').nth(1).unwrap();
+        assert!(alea.len() == 16 && alea.chars().all(|c| c.is_ascii_hexdigit()), "{nom}");
+    }
+    for p in [p1, p2].into_iter().flatten() {
+        let _ = std::fs::remove_file(p);
     }
 }

@@ -1794,8 +1794,15 @@ pub fn compte_rendu_systeme(prefixe: &str, texte: &str) -> Option<std::path::Pat
     use std::io::Write;
     let temp = std::path::PathBuf::from(dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows")).join("Temp");
     let heure: String = crate::commun::maintenant().chars().filter(|c| c.is_ascii_digit()).collect();
+    // Partie aléatoire : un compte standard ne peut pas poser d'avance tous les noms possibles (audit de #125, S125-01)
+    let alea = || {
+        use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+        let mut o = [0u8; 8];
+        let _ = unsafe { BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut o, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+        o.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
     for essai in 0..5 {
-        let p = temp.join(format!("{prefixe}-{heure}-{}-{essai}.txt", std::process::id()));
+        let p = temp.join(format!("{prefixe}-{heure}-{}-{}-{essai}.txt", std::process::id(), alea()));
         if let Ok(mut f) = creer_verifie(&p) {
             let _ = f.write_all(texte.as_bytes());
             return Some(p);

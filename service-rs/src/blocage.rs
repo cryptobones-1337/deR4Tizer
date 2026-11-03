@@ -317,15 +317,51 @@ impl SuiviRegles {
 
 pub static REGLES_SERVICE: SuiviRegles = SuiviRegles::new();
 
+/// PID des PowerShell de règles en cours : seuls eux sont arrêtés si l'attente de l'arrêt est dépassée
+static PIDS_REGLES: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
 /// PowerShell qui pose ou retire des règles du groupe, suivi par `REGLES_SERVICE`
 pub fn powershell_regles(contexte: &str, script: &str) {
     REGLES_SERVICE.executer(|| {
         crate::mesure::powershell(contexte);
-        let _ = Command::new(crate::natif::powershell_exe())
+        let Ok(enfant) = Command::new(crate::natif::powershell_exe())
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .current_dir(crate::natif::dossier_systeme())
             .creation_flags(0x0800_0000)
-            .output();
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        let pid = enfant.id();
+        PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);
+        let _ = enfant.wait_with_output();
+        PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).retain(|p| *p != pid);
     });
+}
+
+/// PID suivis : un PID terminé doit en sortir, Windows peut le redonner à un autre processus
+#[cfg(test)]
+pub fn pids_regles_suivis() -> Vec<u32> {
+    PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// Arrête les PowerShell de règles encore en cours, par leur PID (relecture de #125, R1)
+pub fn terminer_powershell_regles() -> usize {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    let pids = PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    pids.into_iter().filter(|pid| unsafe {
+        match OpenProcess(PROCESS_TERMINATE, false, *pid) {
+            Ok(h) => {
+                let ok = TerminateProcess(h, 1).is_ok();
+                let _ = CloseHandle(h);
+                ok
+            }
+            Err(_) => false,
+        }
+    }).count()
 }
 
 /// Retrait du groupe pour `--nettoyer`, avec ce qu'il faut pour le compte rendu : code de sortie, erreur, règles du groupe
