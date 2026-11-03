@@ -1256,6 +1256,27 @@ pub fn ouvrir_sans_lien(chemin: &std::path::Path, acces: u32, partage: u32, doss
     Ok(f)
 }
 
+/// Ce que la descente fait d'un élément, d'après les attributs et l'étiquette lus sur son handle
+#[derive(Debug, PartialEq, Eq)]
+pub enum ElementDescente {
+    Suivre,
+    Lien,
+    Dossier,
+}
+
+/// Décision pure : seule une étiquette qui redirige (bit 29) est un lien, pour un dossier comme pour le fichier lui-même.
+/// Un fichier ou un dossier OneDrive à la demande, ou dédupliqué, est suivi (audit de #126, S126-02). En dernier
+/// élément, un dossier n'est pas un programme
+pub fn element_descente(attributs: u32, etiquette: u32, dernier: bool) -> ElementDescente {
+    if attributs & 0x400 != 0 && crate::reponse::etiquette_lien(etiquette) {
+        ElementDescente::Lien
+    } else if dernier && attributs & 0x10 != 0 {
+        ElementDescente::Dossier
+    } else {
+        ElementDescente::Suivre
+    }
+}
+
 /// Ouvre un fichier en descendant son chemin élément par élément : chaque dossier est ouvert par rapport au handle de son
 /// parent, sans suivre de point d'analyse (FILE_OPEN_REPARSE_POINT), puis son étiquette est lue sur ce handle. Le chemin
 /// n'est jamais repassé à Windows en entier : un dossier remplacé par un lien après coup n'est ni traversé ni lu à sa
@@ -1274,6 +1295,11 @@ pub fn ouvrir_sans_traverser_lien(chemin: &std::path::Path, acces: u32) -> Resul
     use windows::Win32::System::IO::IO_STATUS_BLOCK;
     let absolu = std::path::absolute(chemin).map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
     let texte = absolu.to_string_lossy().to_string();
+    // Préfixe `\\?\` d'un chemin local à lettre : retiré ; `\\?\UNC\…` reste refusé (relecture de #126, R2)
+    let texte = match texte.strip_prefix(r"\\?\") {
+        Some(r) if r.as_bytes().get(1) == Some(&b':') => r.to_string(),
+        _ => texte,
+    };
     let b = texte.as_bytes();
     if !(b.len() >= 4 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\') {
         return Err(ErreurOuverture::Autre("pas un lecteur local à lettre".into()));
@@ -1332,18 +1358,11 @@ pub fn ouvrir_sans_traverser_lien(chemin: &std::path::Path, acces: u32) -> Resul
         }
         let f = unsafe { std::fs::File::from_raw_handle(h.0 as _) };
         let (attributs_f, tag) = etiquette(&f)?;
-        if attributs_f & 0x400 != 0 {
-            if dernier {
-                return Err(ErreurOuverture::Lien);
-            }
-            // Un dossier OneDrive ou dédupliqué n'est pas un lien : on descend dedans par son handle
-            if crate::reponse::etiquette_lien(tag) {
-                return Err(ErreurOuverture::Detourne(vu.to_string_lossy().to_string()));
-            }
-        }
-        // FILE_ATTRIBUTE_DIRECTORY : un dossier n'est pas un programme
-        if dernier && attributs_f & 0x10 != 0 {
-            return Err(ErreurOuverture::Autre(format!("dossier : {}", vu.display())));
+        match element_descente(attributs_f, tag, dernier) {
+            ElementDescente::Lien if dernier => return Err(ErreurOuverture::Lien),
+            ElementDescente::Lien => return Err(ErreurOuverture::Detourne(vu.to_string_lossy().to_string())),
+            ElementDescente::Dossier => return Err(ErreurOuverture::Autre(format!("dossier : {}", vu.display()))),
+            ElementDescente::Suivre => {}
         }
         parent = f;
     }

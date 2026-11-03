@@ -975,7 +975,9 @@ pub fn verifier_isolation(cible: &str) -> EtatIsolation {
         Err(natif::ErreurOuverture::Lien) => Ok(Some("(lien)".to_string())),
         Err(e) => Err(format!("{e:?}")),
     };
-    decision_isolation(&natif::forme_longue(Path::new(cible)).to_string_lossy(), &lu, &natif::dossier_windows())
+    // `cible` est déjà un chemin final (`chemin_final_a_isoler`) : aucune autre lecture du chemin entier, qui suivrait
+    // un dossier remplacé par un lien après la descente (relecture de #126, D1)
+    decision_isolation(cible, &lu, &natif::dossier_windows())
 }
 
 /// Bloque tout le trafic, entrant et sortant, d'un programme précis (`chemin` : chemin final, `chemin_final_a_isoler`)

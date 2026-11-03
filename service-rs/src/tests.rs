@@ -6634,6 +6634,25 @@ fn isolation_descente_par_handles_et_noms_de_windows() {
     let _ = std::fs::remove_dir(r.join("a").join("b").join("y.exe"));
     let _ = std::fs::remove_dir(r.join("j"));
     let _ = std::fs::remove_dir_all(&r);
+    // Relecture de #126, R2 : préfixe `\\?\` d'un chemin local accepté ; D1 : la revérification ne relit pas le chemin entier
+    std::fs::create_dir_all(r.join("p")).unwrap();
+    std::fs::write(r.join("p").join("x.exe"), b"x").unwrap();
+    assert!(o(std::path::Path::new(&format!(r"\\?\{}", r.join("p").join("x.exe").display())), 0x80).is_ok(), "préfixe d'un chemin local");
+    let _ = std::fs::remove_dir_all(&r);
+    let src = include_str!("reponse.rs").replace("\r\n", "\n");
+    let corps = &src[src.find("pub fn verifier_isolation").unwrap()..];
+    let corps = &corps[..corps.find("\n}\n").unwrap()];
+    assert!(!corps.contains("forme_longue(") && !corps.contains("ouvrir_sans_lien(") && corps.contains("ouvrir_sans_traverser_lien("), "D1");
+    // S126-02 : seule une étiquette qui redirige est un lien, en dernier élément aussi
+    use crate::natif::{element_descente as el, ElementDescente::*};
+    assert_eq!(el(0x400, 0xA000_0003, true), Lien, "jonction");
+    assert_eq!(el(0x400, 0xA000_000C, false), Lien, "lien symbolique");
+    assert_eq!(el(0x400 | 0x20, 0x9000_601A, true), Suivre, "fichier OneDrive à la demande");
+    assert_eq!(el(0x400 | 0x10, 0x9000_601A, false), Suivre, "dossier OneDrive");
+    assert_eq!(el(0x400, 0x8000_0013, true), Suivre, "déduplication");
+    assert_eq!(el(0x10, 0, true), Dossier);
+    assert_eq!(el(0x10, 0, false), Suivre);
+    assert_eq!(el(0, 0xA000_0003, true), Suivre, "étiquette sans l'attribut : ignorée");
     // S119-03 : un nom présent dans Windows, System32 ou SysWOW64 est refusé, où que soit le programme
     use crate::reponse::nom_programme_windows as n;
     let w = crate::natif::dossier_windows();
