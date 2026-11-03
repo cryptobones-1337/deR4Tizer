@@ -1298,7 +1298,13 @@ Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données 
 }
 if ($regles1) {
     Verifier "Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées ($regles1 avant)" {
-        $n = Reglesparefeu; if ($n) { return "$n règle(s) restante(s)" }; $true
+        $n = Reglesparefeu
+        if ($n) {
+            $noms = @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | ForEach-Object DisplayName) -join ' // '
+            $cr = Get-Content (Join-Path $env:SystemRoot 'Temp\deR4Tizer-nettoyage.txt') -Raw -ErrorAction SilentlyContinue
+            return "$n règle(s) restante(s) : $noms ; compte rendu : $cr"
+        }
+        $true
     }
 } else {
     NonExecute 'Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées' 'aucune règle du groupe deR4Tizer avant la désinstallation (rien à prouver)'

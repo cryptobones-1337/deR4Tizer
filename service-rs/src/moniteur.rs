@@ -1691,6 +1691,12 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Compte rendu de la désinstallation dans %SystemRoot%\Temp, comme `--supprimer-donnees` (audit de #124, S124-02)
+fn compte_rendu_nettoyage(texte: &str) {
+    let f = std::path::PathBuf::from(natif::dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows")).join(r"Temp\deR4Tizer-nettoyage.txt");
+    let _ = fs::write(f, format!("{} {texte}\r\n", commun::maintenant()));
+}
+
 /// Retrait des règles de pare-feu pendant la désinstallation, à échéance
 static NETTOYAGE_REGLES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -2160,14 +2166,18 @@ pub fn nettoyer() {
     let blocages: Vec<Blocage> = commun::lire("blocages.json").unwrap_or_default();
     let cibles: Vec<String> = blocages.iter().filter(|b| b.type_ == "parefeu").map(|b| b.cible.clone()).collect();
     // Retrait des règles à échéance : un pare-feu figé ne bloque pas la désinstallation (relecture de #123, D1)
-    match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {
+    let texte = match reponse::avec_echeance(&NETTOYAGE_REGLES, Duration::from_secs(60), move || {
         let n: usize = cibles.iter().map(|c| blocage::supprimer_regle(c)).sum();
-        blocage::supprimer_groupe(false);
-        n
+        (n, blocage::supprimer_groupe(false))
     }) {
-        Some(n) => println!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer)."),
-        None => println!("Règles de pare-feu : le pare-feu ne répond pas en 60 s ; les règles du groupe deR4Tizer sont à retirer à la main (Pare-feu Windows avancé)."),
-    }
+        Some((n, true)) => format!("Règles de pare-feu supprimées : {n} (et règles orphelines du groupe deR4Tizer)."),
+        Some((n, false)) => format!("Règles de pare-feu supprimées : {n} ; retrait du groupe deR4Tizer par PowerShell en échec : règles à retirer à la main (Pare-feu Windows avancé)."),
+        None => "Règles de pare-feu : le pare-feu ne répond pas en 60 s ; les règles du groupe deR4Tizer sont à retirer à la main (Pare-feu Windows avancé).".into(),
+    };
+    println!("{texte}");
+    // L'action du MSI ignore la sortie : une règle restée, peut-être celle du mode panique, est écrite là où elle se lit
+    // (audit de #124, S124-02)
+    compte_rendu_nettoyage(&texte);
     match blocage::lignes_hors_bloc() {
         Ok((_, bloc)) if !bloc.is_empty() => match blocage::ecrire_bloc_hosts(&[]) {
             Ok(()) => println!("Bloc deR4Tizer retiré du fichier hosts."),

@@ -267,8 +267,10 @@ pub fn commande_suppression_groupe(garder_panique: bool) -> String {
 /// dire (relecture de #117, Q2). La désinstallation (`--nettoyer`) retire tout
 pub fn supprimer_groupe(garder_panique: bool) -> bool {
     crate::mesure::powershell("blocage");
+    // Dossier courant : System32, jamais le dossier d'installation (un PowerShell figé le garderait ; audit de #124, S124-01)
     Command::new(crate::natif::powershell_exe())
         .args(["-NoProfile", "-Command", &commande_suppression_groupe(garder_panique)])
+        .current_dir(crate::natif::dossier_systeme())
         .creation_flags(0x0800_0000)
         .output()
         .map(|s| s.status.success())
