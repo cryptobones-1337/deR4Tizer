@@ -114,7 +114,8 @@ disque local fixe et lisible en 2 s.
 
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
 (`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
-blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action à chaque contrôle. Un processus
+blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action et par heure au plus (24 h pour la
+quarantaine et le blocage manuel ; les relances retenues partent, comptées, avec la suivante). Un processus
 suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, seules les plus anciennes
 suspensions automatiques, quarantaines et blocages manuels sortent du suivi ; un mode panique, une isolation ou une
 suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit

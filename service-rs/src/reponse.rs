@@ -1226,13 +1226,43 @@ static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 /// Relit l'état effectif (règles et drapeau) : fil « sante » toutes les 30 s, et après chaque commande
 pub fn rafraichir_etat_panique() -> EtatPanique {
     // Une commande commencée ou finie pendant la lecture a publié son propre état : celui-ci, plus ancien, ne
-    // l'écrase pas (relecture de #118, R2)
+    // l'écrase pas (relecture de #118, R2). Lecture sur un fil à part, avec une échéance : un pare-feu figé ne fige pas
+    // le fil « sante » (audit de #117, S117-02) ; l'état publié reste alors le précédent
     let generation = GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst);
-    let e = lire_etat_panique();
-    if lecture_publiable(generation, GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst), commande_panique_en_cours()) {
-        ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+    let lu = avec_echeance(&LECTURE_PANIQUE, std::time::Duration::from_secs(DELAI_LECTURE_PANIQUE), move || {
+        let e = lire_etat_panique();
+        if lecture_publiable(generation, GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst), commande_panique_en_cours()) {
+            ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+        }
+        e
+    });
+    match lu {
+        Some(e) => e,
+        None => {
+            commun::journal("mode panique : le pare-feu ne répond pas, état publié inchangé");
+            etat_panique()
+        }
     }
-    e
+}
+
+/// Échéance d'une lecture de l'état du pare-feu
+const DELAI_LECTURE_PANIQUE: u64 = 10;
+static LECTURE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Exécute `f` sur un fil à part et attend `delai` au plus. Une lecture précédente encore figée : `None` tout de suite,
+/// sans nouveau fil (un pare-feu muet n'accumule pas de fils). `occupe` est relâché par le fil à la fin de `f` (testé)
+pub fn avec_echeance<T: Send + 'static>(occupe: &'static std::sync::atomic::AtomicBool, delai: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    use std::sync::atomic::Ordering::SeqCst;
+    if occupe.swap(true, SeqCst) {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let r = f();
+        occupe.store(false, SeqCst);
+        let _ = tx.send(r);
+    });
+    rx.recv_timeout(delai).ok()
 }
 
 pub fn generation_panique() -> u64 {

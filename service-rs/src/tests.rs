@@ -6618,3 +6618,67 @@ fn isolation_non_verifiable_alerte_une_fois() {
     assert_eq!((x.regle.as_str(), x.niveau.as_str()), ("REP-004", "Alerte"));
     assert!(x.raisons.contains("non vérifiable") && x.raisons.contains("3 relevés de 5 min") && x.raisons.contains("gardées") && !x.raisons.contains("  "), "{}", x.raisons);
 }
+
+/// Audit de #116, S116-01 : au plus une relance par sorte et par heure, les retenues partent avec la suivante
+#[test]
+fn relances_plafonnees_par_sorte_et_par_heure() {
+    use crate::politique::{intervalle_relances, Historique, Plafond, Sorte::*};
+    let mut h = Historique::default();
+    for i in 0..3u32 {
+        h.ouvrir(SuspensionAuto, &format!("p{i}.exe"), Some(i + 1), Some(1), S0 + i as u64 * 60);
+    }
+    h.ouvrir(Panique, "poste", None, None, S0);
+    let mut p = Plafond::default();
+    // Échéances étalées d'une minute : la première part, les deux suivantes attendent l'heure
+    let t1 = S0 + 7_200;
+    let r = h.relances(t1);
+    let e = p.plafonner(r, t1);
+    assert_eq!(e.iter().filter(|(a, _)| a.sorte == SuspensionAuto).count(), 1);
+    let e = p.plafonner(h.relances(t1 + 60), t1 + 60);
+    assert!(e.iter().all(|(a, _)| a.sorte != SuspensionAuto), "retenue pendant l'heure");
+    let e = p.plafonner(h.relances(t1 + 120), t1 + 120);
+    assert!(e.is_empty());
+    // Une heure après la première : les deux retenues partent ensemble
+    let e = p.plafonner(h.relances(t1 + 3_600), t1 + 3_600);
+    assert_eq!(e.iter().filter(|(a, _)| a.sorte == SuspensionAuto).count(), 2, "retenues comptées, pas perdues");
+    // Une autre sorte a sa propre fenêtre ; la panique (4 h) part à son heure
+    let tp = S0 + 4 * 3_600;
+    let e = p.plafonner(h.relances(tp), tp);
+    assert!(e.iter().any(|(a, _)| a.sorte == Panique));
+    assert_eq!(intervalle_relances(Quarantaine), 86_400);
+    assert_eq!(intervalle_relances(BlocageManuel), 86_400);
+    assert_eq!(intervalle_relances(SuspensionAuto), 3_600);
+    // Une même action retenue deux fois n'est comptée qu'une fois
+    let mut p = Plafond::default();
+    let mut h = Historique::default();
+    h.ouvrir(Isolation, "a", None, None, S0);
+    h.ouvrir(Isolation, "b", None, None, S0);
+    let premiere = h.relances(S0 + 604_800);
+    assert_eq!(p.plafonner(premiere, S0 + 604_800).len(), 2, "même tour : groupées");
+    let mut x = h.actions[0].clone();
+    x.relances = 9;
+    let d = vec![(x.clone(), crate::politique::Effet::Relancer { niveau: "Alerte" }), (x, crate::politique::Effet::Relancer { niveau: "Alerte" })];
+    assert!(p.plafonner(d, S0 + 604_860).is_empty());
+    assert_eq!(p.plafonner(Vec::new(), S0 + 604_800 + 3_600).len(), 1, "dédoublonnée");
+}
+
+/// Audit de #117, S117-02 : lecture du pare-feu avec échéance, un seul fil en attente
+#[test]
+fn panique_lecture_avec_echeance() {
+    let p = include_str!("politique.rs").replace("\r\n", "\n");
+    assert!(p.contains("let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, t);\n        regrouper_relances(&a_emettre, t)"), "S116-01 : plafond branché");
+    let r = include_str!("reponse.rs").replace("\r\n", "\n");
+    assert!(r.contains("let lu = avec_echeance(&LECTURE_PANIQUE, std::time::Duration::from_secs(DELAI_LECTURE_PANIQUE), move || {"), "S117-02 : lecture à échéance");
+    use crate::reponse::avec_echeance as e;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    static OCCUPE: AtomicBool = AtomicBool::new(false);
+    assert_eq!(e(&OCCUPE, Duration::from_secs(5), || 7), Some(7));
+    assert!(!OCCUPE.load(Ordering::SeqCst), "relâché après une lecture");
+    let debut = std::time::Instant::now();
+    assert_eq!(e(&OCCUPE, Duration::from_millis(100), || { std::thread::sleep(Duration::from_millis(800)); 1 }), None, "échéance");
+    assert!(debut.elapsed() < Duration::from_millis(600), "l'appelant n'attend pas la fin");
+    assert_eq!(e(&OCCUPE, Duration::from_secs(1), || 2), None, "lecture figée en cours : aucun nouveau fil");
+    std::thread::sleep(Duration::from_millis(1_000));
+    assert_eq!(e(&OCCUPE, Duration::from_secs(5), || 3), Some(3), "relâché à la fin de la lecture figée");
+}

@@ -644,9 +644,58 @@ pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
         if n > 0 || !dues.is_empty() {
             enregistrer(e);
         }
-        regrouper_relances(&dues, t)
+        let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, t);
+        regrouper_relances(&a_emettre, t)
     })
 }
+
+/// Au plus une relance par sorte et par heure (24 h pour les sortes « Info ») : des suspensions étalées d'une minute
+/// ne donnent plus une REP-001 Critique par minute (audit de #116, S116-01). Les relances retenues ne sont pas perdues :
+/// elles partent, comptées, avec la suivante. En mémoire seulement : un redémarrage du service rouvre la fenêtre
+#[derive(Default)]
+pub struct Plafond {
+    derniere: std::collections::BTreeMap<u8, u64>,
+    attente: std::collections::BTreeMap<u8, Vec<(ActionEnCours, Effet)>>,
+}
+
+/// Retenues gardées au plus par sorte (les relances suivantes de ces actions reviendront)
+const MAX_ATTENTE: usize = 500;
+
+pub fn intervalle_relances(sorte: Sorte) -> u64 {
+    match sorte {
+        Sorte::Quarantaine | Sorte::BlocageManuel => JOUR,
+        _ => HEURE,
+    }
+}
+
+impl Plafond {
+    /// Relances à émettre maintenant ; les autres attendent la fin de la fenêtre de leur sorte (pur, testé)
+    pub fn plafonner(&mut self, dues: Vec<(ActionEnCours, Effet)>, t: u64) -> Vec<(ActionEnCours, Effet)> {
+        for d in dues {
+            let attente = self.attente.entry(d.0.sorte as u8).or_default();
+            if let Some(i) = attente.iter().position(|(a, _)| a.id == d.0.id) {
+                attente[i] = d;
+            } else if attente.len() < MAX_ATTENTE {
+                attente.push(d);
+            }
+        }
+        let mut sortie = Vec::new();
+        for (cle, liste) in self.attente.iter_mut() {
+            if liste.is_empty() {
+                continue;
+            }
+            let fenetre = intervalle_relances(liste[0].0.sorte);
+            let libre = self.derniere.get(cle).is_none_or(|d| t >= d.saturating_add(fenetre));
+            if libre {
+                self.derniere.insert(*cle, t);
+                sortie.append(liste);
+            }
+        }
+        sortie
+    }
+}
+
+static PLAFOND: Mutex<Plafond> = Mutex::new(Plafond { derniere: std::collections::BTreeMap::new(), attente: std::collections::BTreeMap::new() });
 
 /// Une alerte par sorte et par tour : 500 suspensions de même heure ne donnent pas 500 alertes Critique (audit de #115,
 /// S115-02). Au-delà d'une, l'alerte dit le nombre et nomme les 5 premières cibles (pur, testé)
