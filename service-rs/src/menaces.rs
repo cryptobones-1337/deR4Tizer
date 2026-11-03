@@ -23,7 +23,7 @@ struct Source {
     nom: &'static str,
     type_: &'static str,
     confiance: &'static str,
-    /// "ip" (une IP ou un réseau par ligne), "spamhaus" (JSON par ligne), "domaine"
+    /// "ip" (une IP ou un réseau par ligne), "ip-exacte" (une IP par ligne, réseaux écartés), "spamhaus" (JSON par ligne), "domaine"
     format: &'static str,
     url: &'static str,
     /// Conditions d'utilisation : seules les listes « libres » sont utilisées par défaut ; les autres
@@ -38,7 +38,7 @@ const SOURCES: &[Source] = &[
     Source { nom: "Spamhaus DROP (IPv4)", type_: "IP", confiance: "haute", format: "spamhaus", url: "https://www.spamhaus.org/drop/drop_v4.json", licence: "libre, citation de Spamhaus, un téléchargement par jour", libre: true, auto: true },
     Source { nom: "Spamhaus DROP (IPv6)", type_: "IP", confiance: "haute", format: "spamhaus", url: "https://www.spamhaus.org/drop/drop_v6.json", licence: "libre, citation de Spamhaus, un téléchargement par jour", libre: true, auto: true },
     Source { nom: "FireHOL niveau 1", type_: "IP", confiance: "haute", format: "ip", url: "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset", licence: "à vérifier : agrège DShield, dont les données sont non commerciales", libre: false, auto: false },
-    Source { nom: "Feodo Tracker (C2 botnets)", type_: "IP", confiance: "haute", format: "ip", url: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", licence: "libre, usage équitable (conditions d'abuse.ch)", libre: true, auto: true },
+    Source { nom: "Feodo Tracker (C2 botnets)", type_: "IP", confiance: "haute", format: "ip-exacte", url: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", licence: "libre, usage équitable (conditions d'abuse.ch)", libre: true, auto: true },
     Source { nom: "ThreatView C2 Cobalt Strike", type_: "IP", confiance: "haute", format: "ip", url: "https://threatview.io/Downloads/High-Confidence-CobaltStrike-C2%20-Feeds.txt", licence: "à vérifier", libre: false, auto: false },
     Source { nom: "ThreatView IP", type_: "IP", confiance: "réputation", format: "ip", url: "https://threatview.io/Downloads/IP-High-Confidence-Feed.txt", licence: "à vérifier", libre: false, auto: false },
     Source { nom: "Emerging Threats (compromises)", type_: "IP", confiance: "réputation", format: "ip", url: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt", licence: "à vérifier", libre: false, auto: false },
@@ -285,6 +285,7 @@ impl Menaces {
                 let mut n = 0;
                 let plages = tampons.de(s);
                 let debut = plages.len();
+                let debut6 = m.reseaux6.len();
                 for l in lignes {
                     let jeton = if s.format == "spamhaus" {
                         motif_spamhaus.captures(&l).map(|c| c[1].to_string())
@@ -292,16 +293,20 @@ impl Menaces {
                         premier_jeton(&l)
                     };
                     let Some(j) = jeton else { continue };
+                    if !jeton_admis(s.format, &j) {
+                        continue;
+                    }
                     if m.ajouter(&j, s.nom, haute, s.auto, plages) {
                         n += 1;
                     }
                 }
                 let couverture: u64 = plages[debut..].iter().map(|p| (p.fin - p.debut) as u64 + 1).sum();
-                if couverture > 1 << 27 {
-                    // Plus de 134 millions d'adresses : liste corrompue ou détournée, jamais appliquée
+                let couverture6 = couverture6(m.reseaux6[debut6..].iter().map(|r| r.longueur));
+                if couverture_aberrante(couverture, couverture6) {
+                    // Liste corrompue ou détournée, jamais appliquée
                     plages.truncate(debut);
                     m.retirer_source(s.nom);
-                    commun::journal(&format!("liste {} rejetée : elle couvrirait {couverture} adresses", s.nom));
+                    commun::journal(&format!("liste {} rejetée : elle couvrirait {couverture} adresses IPv4 et {couverture6} réseaux IPv6 /64", s.nom));
                     rejetee = true;
                     0
                 } else {
@@ -392,6 +397,27 @@ impl Menaces {
             },
         }
     }
+}
+
+/// Décision pure : une liste « ip-exacte » (Feodo Tracker publie des adresses de serveurs, pas des réseaux) n'admet
+/// qu'une adresse seule ; un réseau, même petit, y est écarté : `8.0.0.0/8` glissé dans Feodo ne bloque plus 8.8.8.8
+/// automatiquement (audit de #109)
+pub fn jeton_admis(format: &str, jeton: &str) -> bool {
+    format != "ip-exacte" || match jeton.split_once('/') {
+        None => true,
+        Some((a, l)) => (l == "32" && a.contains('.')) || (l == "128" && a.contains(':')),
+    }
+}
+
+/// Réseaux IPv6 /64 couverts par ces préfixes (un préfixe plus long que /64 compte pour un)
+pub fn couverture6(longueurs: impl Iterator<Item = u32>) -> u128 {
+    longueurs.map(|l| if l < 64 { 1u128 << (64 - l) } else { 1 }).sum()
+}
+
+/// Décision pure : plus de 2^27 adresses IPv4 (134 millions), ou plus de 2^48 réseaux IPv6 /64 (l'équivalent d'un /16) :
+/// liste corrompue ou détournée, rejetée en entier. Avant, la couverture IPv6 n'avait pas de borne (audit de #109, S109-01)
+pub fn couverture_aberrante(ipv4: u64, reseaux6: u128) -> bool {
+    ipv4 > 1 << 27 || reseaux6 > 1 << 48
 }
 
 /// Décision pure : chaque source du niveau 3 a chargé au moins une entrée (une liste non lue ou rejetée en a 0)
