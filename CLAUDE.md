@@ -10,7 +10,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : les phases 7, 8 et 9 (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : la phase « Interface et assistant d'installation » et les phases 7, 8 et 9 (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -254,10 +254,16 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
-5. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
+5. Phase « Interface et assistant d'installation », avant la phase 7. Ouverte par le mainteneur le 2026-11-03, par ces
+   mots : « fais la refonte avant la phase 7 ». Commence une fois les corrections de la phase 6 fusionnées et ce point
+   inscrit ; la phase 7 commence une fois celle-ci validée par la relecture et par cryptobones-1337. Décisions,
+   découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6, la preuve locale en VM tient
+   lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. Inscrit le 2026-11-03 sur l'autorisation du
+   mainteneur (« Ok pour modifier Claude. Md je t'autorise »).
+6. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
    mots : « Open a phase for the feature > do it like your example », l'exemple proposé étant « Phase 7: domain-name
    filtering (DNS, ads, tracking) ». Commence une fois les phases 1, 3, 4 et 6 validées par la relecture et par
-   cryptobones-1337 ; c'est l'une des exceptions au gel (section 2, règle 1), avec les phases 8 et 9.
+   cryptobones-1337, et après la phase « Interface et assistant d'installation » ; c'est l'une des exceptions au gel (section 2, règle 1), avec les phases 8 et 9.
    - Contenu : navigation sécurisée par le DNS (domaines malveillants des listes de menaces, changement de serveur DNS
      détecté, DNS chiffré si le dossier de conception le justifie) et blocage des domaines de publicité et de pistage,
      par un même mécanisme.
@@ -287,13 +293,13 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
        Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
        mainteneur lance lui-même les scénarios.
-6. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
+7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
    montre, jamais les droits ni la validation du service ; mode standard par défaut ; bascule visible et réversible ;
    aucune option du mode avancé n'affaiblit la protection. Mêmes garde-fous que la phase 7 (dossier de
    conception d'abord, une PR par étape, aucune dépendance nouvelle sans accord).
-7. Phase 9 : surveillance des fuites de données. Ouverte par le mainteneur le 2026-10-25 (« Add the phases », en réponse
+8. Phase 9 : surveillance des fuites de données. Ouverte par le mainteneur le 2026-10-25 (« Add the phases », en réponse
    à la proposition « Phase 9: breach monitoring »), avec cette condition : « Breach monitoring > ok to rely on third
    party as long as it's free ». Commence une fois la phase 8 validée par la relecture et par cryptobones-1337. Pour des
    adresses de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (sans service gratuit qui
