@@ -1775,3 +1775,14 @@ pub fn proprietes_msi(chemin: &std::path::Path) -> Result<(String, String), Stri
         r
     }
 }
+
+/// Étiquette de point d'analyse d'un élément, lue sur l'entrée de son dossier (FindFirstFileW) : l'élément n'est ni
+/// ouvert ni traversé. `Ok(None)` : pas un point d'analyse ; `Err` : illisible ou absent
+pub fn etiquette_point_analyse(chemin: &std::path::Path) -> Result<Option<u32>, ()> {
+    use windows::Win32::Storage::FileSystem::{FindClose, FindFirstFileW, WIN32_FIND_DATAW};
+    let nom = large(&chemin.to_string_lossy());
+    let mut d = WIN32_FIND_DATAW::default();
+    let h = unsafe { FindFirstFileW(PCWSTR(nom.as_ptr()), &mut d) }.map_err(|_| ())?;
+    let _ = unsafe { FindClose(h) };
+    Ok((d.dwFileAttributes & 0x400 != 0).then_some(d.dwReserved0))
+}

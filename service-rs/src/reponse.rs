@@ -878,6 +878,12 @@ pub fn isolation_permise(chemin_final: &str, windows: &str) -> Result<String, St
     if w.is_empty() || l == w || l.starts_with(&format!("{w}\\")) {
         return Err("Refusé : programme du système Windows (chemin final).".into());
     }
+    // Un vrai binaire critique est sous Windows, déjà refusé : ailleurs, son nom ne sert qu'à faire couper le vrai par
+    // une jonction posée après coup (audit de #118). La quarantaine convient mieux
+    let nom = l.rsplit('\\').next().unwrap_or("");
+    if CRITIQUES.iter().any(|x| x.rsplit('\\').next() == Some(nom)) {
+        return Err(format!("Refusé : « {nom} » est le nom d'un programme critique de Windows, hors du dossier Windows ; la quarantaine convient mieux."));
+    }
     Ok(c)
 }
 
@@ -891,6 +897,13 @@ pub fn chemin_final_a_isoler(chemin: &str) -> Result<String, String> {
     // refusé de toute façon (relecture de #118, R1)
     if chemin_dos(chemin).is_none() {
         return Err("Refusé : le programme n'est pas sur un lecteur local (réseau ou volume sans lettre).".into());
+    }
+    // Un dossier du chemin qui est un lien n'est pas traversé par SYSTEM : l'administrateur donne le chemin réel
+    // (relecture de #119, R1)
+    match premier_parent_lien(Path::new(chemin)) {
+        Ok(Some(p)) => return Err(format!("Refusé : un dossier du chemin est un lien ({}) ; donnez le chemin réel du programme.", p.display())),
+        Err(()) => return Err("Refusé : programme introuvable.".into()),
+        Ok(None) => {}
     }
     // FILE_READ_ATTRIBUTES, partage lecture, écriture et suppression : un programme en cours reste ouvrable
     let f = natif::ouvrir_sans_lien(Path::new(chemin), 0x80, 0x7, false).map_err(|e| match e {
@@ -929,9 +942,36 @@ pub fn decision_isolation(cible_longue: &str, lu: &Result<Option<String>, String
     }
 }
 
+/// Décision pure : une étiquette de point d'analyse est-elle un lien (jonction ou point de montage, lien symbolique) ?
+/// Les autres (fichiers OneDrive à la demande, déduplication…) ne redirigent pas le chemin (relecture de #119, R2)
+pub fn etiquette_lien(etiquette: u32) -> bool {
+    matches!(etiquette, 0xA000_0003 | 0xA000_000C)
+}
+
+/// Premier dossier du chemin, en partant de la racine, qui est un lien ; chaque dossier est lu sur l'entrée de son
+/// parent, sans être ouvert ni suivi (audit de #118, S118-03). Limite : un dossier remplacé par un lien entre cette
+/// lecture et l'ouverture du fichier est encore traversé (relecture de #119, R1)
+pub fn premier_parent_lien(chemin: &Path) -> Result<Option<PathBuf>, ()> {
+    let parents: Vec<&Path> = chemin.ancestors().skip(1).filter(|p| p.parent().is_some()).collect();
+    for p in parents.into_iter().rev() {
+        match natif::etiquette_point_analyse(p)? {
+            Some(e) if etiquette_lien(e) => return Ok(Some(p.to_path_buf())),
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
 pub fn verifier_isolation(cible: &str) -> EtatIsolation {
     if chemin_dos(cible).is_none() {
         return EtatIsolation::Detournee(cible.to_string());
+    }
+    // Un dossier du chemin devenu lien : détourné, sans l'ouvrir (il peut mener à un partage réseau)
+    match premier_parent_lien(Path::new(cible)) {
+        Ok(Some(p)) => return EtatIsolation::Detournee(format!("{} (lien)", p.display())),
+        // Dossier parent absent ou illisible : la règle reste, relue au relevé suivant (relecture de #119, R3)
+        Err(()) => return EtatIsolation::Illisible,
+        Ok(None) => {}
     }
     let lu = match natif::ouvrir_sans_lien(Path::new(cible), 0x80, 0x7, false) {
         Ok(f) => natif::chemin_final(&f).map(Some),
