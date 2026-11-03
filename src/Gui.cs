@@ -911,7 +911,8 @@ namespace DeR4Tizer
             var pageReponses = new PageReponses();
             contenu.Controls.Add(pageReponses);
             pages.Add(pageReponses);
-            Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);
+            // Clé française, traduite par BoutonNav : « --page Réponses en cours » ouvre aussi cette page en anglais (U0, captures)
+            Lien(liens, "Réponses en cours", pageReponses, largeurNav);
             navMenaces = Lien(liens, "Menaces", pageMenaces, largeurNav);
             var pageSante = new PageSante();
             contenu.Controls.Add(pageSante);

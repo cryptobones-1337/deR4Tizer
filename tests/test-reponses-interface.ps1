@@ -129,7 +129,7 @@ try {
 
     # Branchements dans Gui.cs
     $g = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
-    Cas 'navigation : Réponses en cours' ($g.Contains('var pageReponses = new PageReponses();') -and $g.Contains('Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);'))
+    Cas 'navigation : Réponses en cours' ($g.Contains('var pageReponses = new PageReponses();') -and $g.Contains('Lien(liens, "Réponses en cours", pageReponses, largeurNav);') -and (& $appel $langue 'T' @('Réponses en cours')) -eq 'Réponses en cours')
     Cas 'bouton et pastille sur l''état effectif' ($g.Contains('btnPanique.Text = VueReponses.TexteBoutonPanique(etat);') -and $g.Contains('VueReponses.PastillePanique(etat)'))
     Cas 'une seule pastille du mode panique (dossier UI de la 6.7)' (-not $g.Contains('MODE PANIQUE : INTERNET COUPÉ') -and ([regex]::Matches($g, 'VueReponses\.PastillePanique\(etat\)')).Count -eq 1)
     Cas 'confirmation du mode panique : portée' ($g.Contains('string question = VueReponses.ConfirmationPanique(!paniqueActive);') -and $g.Contains('case "panique": return VueReponses.ConfirmationPanique(v != "off");'))

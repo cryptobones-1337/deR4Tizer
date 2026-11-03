@@ -19,7 +19,7 @@ namespace DeR4Tizer
             // Phase 4 : pages Incidents et Santé
             { "Incidents", "Incidents" }, { "Santé", "Health" },
             { "Surveillance des menaces réseau", "Network threat monitoring" }, { "service système", "system service" },
-            { "Listes de menaces", "Threat lists" }, { "domaines", "domains" },
+            { "Listes de menaces", "Threat lists" }, { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
             { "SERVICE EN LIGNE", "SERVICE ONLINE" }, { "SERVICE NON INSTALLÉ", "SERVICE NOT INSTALLED" }, { "SERVICE", "SERVICE" },
             { "arrêté", "stopped" }, { "démarrage…", "starting…" }, { "arrêt…", "stopping…" },
             { "PROCESSUS", "PROCESSES" }, { "DEFENDER (FALSIFICATION OFF)", "DEFENDER (TAMPER PROTECTION OFF)" },
