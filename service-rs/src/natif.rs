@@ -1256,6 +1256,122 @@ pub fn ouvrir_sans_lien(chemin: &std::path::Path, acces: u32, partage: u32, doss
     Ok(f)
 }
 
+/// Ce que la descente fait d'un élément, d'après les attributs et l'étiquette lus sur son handle
+#[derive(Debug, PartialEq, Eq)]
+pub enum ElementDescente {
+    Suivre,
+    Lien,
+    Dossier,
+}
+
+/// Décision pure : seule une étiquette qui redirige (bit 29) est un lien, pour un dossier comme pour le fichier lui-même.
+/// Un fichier ou un dossier OneDrive à la demande, ou dédupliqué, est suivi (audit de #126, S126-02). En dernier
+/// élément, un dossier n'est pas un programme. Un alias d'exécution d'application (IO_REPARSE_TAG_APPEXECLINK, sans le
+/// bit 29) en dernier élément est un lien aussi : le programme réel tourne depuis le dossier de son paquet, une règle
+/// posée sur l'alias ne couperait rien (audit de #126)
+pub fn element_descente(attributs: u32, etiquette: u32, dernier: bool) -> ElementDescente {
+    let point = attributs & 0x400 != 0;
+    if point && (crate::reponse::etiquette_lien(etiquette) || (dernier && etiquette == 0x8000_001B)) {
+        ElementDescente::Lien
+    } else if dernier && attributs & 0x10 != 0 {
+        ElementDescente::Dossier
+    } else {
+        ElementDescente::Suivre
+    }
+}
+
+/// Ouvre un fichier en descendant son chemin élément par élément : chaque dossier est ouvert par rapport au handle de son
+/// parent, sans suivre de point d'analyse (FILE_OPEN_REPARSE_POINT), puis son étiquette est lue sur ce handle. Le chemin
+/// n'est jamais repassé à Windows en entier : un dossier remplacé par un lien après coup n'est ni traversé ni lu à sa
+/// place (audit de #119, S119-01, course entre la lecture des dossiers et l'ouverture). `Detourne` : premier dossier
+/// qui est un lien (bit 29) ; `Lien` : le fichier lui-même est un point d'analyse ; `Absent` : le fichier seul manque ;
+/// un dossier absent est `Autre`. Lecteur local à lettre seulement (pas de partage contacté)
+pub fn ouvrir_sans_traverser_lien(chemin: &std::path::Path, acces: u32) -> Result<std::fs::File, ErreurOuverture> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows::Wdk::Storage::FileSystem::{NtCreateFile, NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS};
+    use windows::Win32::Foundation::UNICODE_STRING;
+    use windows::Win32::Storage::FileSystem::{
+        FileAttributeTagInfo, GetDriveTypeW, GetFileInformationByHandleEx, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_TAG_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    use windows::Win32::System::IO::IO_STATUS_BLOCK;
+    let absolu = std::path::absolute(chemin).map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    let texte = absolu.to_string_lossy().to_string();
+    // Préfixe `\\?\` d'un chemin local à lettre : retiré ; `\\?\UNC\…` reste refusé (relecture de #126, R2)
+    let texte = match texte.strip_prefix(r"\\?\") {
+        Some(r) if r.as_bytes().get(1) == Some(&b':') => r.to_string(),
+        _ => texte,
+    };
+    let b = texte.as_bytes();
+    if !(b.len() >= 4 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\') {
+        return Err(ErreurOuverture::Autre("pas un lecteur local à lettre".into()));
+    }
+    let racine = &texte[..3];
+    // DRIVE_REMOTE (4) : une lettre de lecteur réseau n'est pas ouverte
+    if unsafe { GetDriveTypeW(PCWSTR(large(racine).as_ptr())) } == 4 {
+        return Err(ErreurOuverture::Autre("lecteur réseau".into()));
+    }
+    let noms: Vec<&str> = texte[3..].split('\\').filter(|n| !n.is_empty()).collect();
+    if noms.is_empty() {
+        return Err(ErreurOuverture::Autre("racine".into()));
+    }
+    // Racine du volume : jamais un point d'analyse ; même ouverture que `ouvrir_sans_lien` pour un dossier
+    let mut parent = ouvrir_sans_lien(std::path::Path::new(racine), 0x0010_0020 | 0x80, 0x7, true)?;
+    let etiquette = |f: &std::fs::File| -> Result<(u32, u32), ErreurOuverture> {
+        let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+        unsafe {
+            GetFileInformationByHandleEx(HANDLE(f.as_raw_handle()), FileAttributeTagInfo, &mut info as *mut _ as *mut c_void,
+                std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32)
+        }.map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+        Ok((info.FileAttributes, info.ReparseTag))
+    };
+    let mut vu = std::path::PathBuf::from(racine);
+    for (i, nom) in noms.iter().enumerate() {
+        let dernier = i + 1 == noms.len();
+        vu.push(nom);
+        let mut n: Vec<u16> = nom.encode_utf16().collect();
+        let chaine = UNICODE_STRING { Length: (n.len() * 2) as u16, MaximumLength: (n.len() * 2) as u16, Buffer: PWSTR(n.as_mut_ptr()) };
+        // Par rapport au handle du parent : un volume local, où un tube nommé ne peut pas se trouver
+        let attributs = OBJECT_ATTRIBUTES {
+            Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: HANDLE(parent.as_raw_handle()),
+            ObjectName: &chaine,
+            Attributes: 0x40, // OBJ_CASE_INSENSITIVE
+            SecurityDescriptor: std::ptr::null(),
+            SecurityQualityOfService: std::ptr::null(),
+        };
+        // Dossier : FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE ; fichier : l'accès demandé | FILE_READ_ATTRIBUTES |
+        // SYNCHRONIZE. FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT ; FILE_DIRECTORY_FILE pour un dossier. Le
+        // dernier élément s'ouvre quel que soit son genre : son étiquette est lue, puis un dossier est refusé
+        let (droits, options) = if dernier { (acces | 0x0010_0080, 0x20 | 0x0020_0000) } else { (0x0010_00A0, 0x20 | 0x0020_0000 | 0x1) };
+        let mut h = HANDLE::default();
+        let mut io = IO_STATUS_BLOCK::default();
+        let statut = unsafe {
+            NtCreateFile(&mut h, FILE_ACCESS_RIGHTS(droits), &attributs, &mut io, None, FILE_ATTRIBUTE_NORMAL,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NTCREATEFILE_CREATE_DISPOSITION(1), NTCREATEFILE_CREATE_OPTIONS(options), None, 0)
+        };
+        let s = statut.0 as u32;
+        // STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND
+        if s == 0xC000_0034 || s == 0xC000_003A {
+            return Err(if dernier { ErreurOuverture::Absent } else { ErreurOuverture::Autre(format!("dossier absent : {}", vu.display())) });
+        }
+        if statut.0 < 0 {
+            return Err(ErreurOuverture::Autre(format!("{} : NTSTATUS {s:#x}", vu.display())));
+        }
+        let f = unsafe { std::fs::File::from_raw_handle(h.0 as _) };
+        let (attributs_f, tag) = etiquette(&f)?;
+        match element_descente(attributs_f, tag, dernier) {
+            ElementDescente::Lien if dernier => return Err(ErreurOuverture::Lien),
+            ElementDescente::Lien => return Err(ErreurOuverture::Detourne(vu.to_string_lossy().to_string())),
+            ElementDescente::Dossier => return Err(ErreurOuverture::Autre(format!("dossier : {}", vu.display()))),
+            ElementDescente::Suivre => {}
+        }
+        parent = f;
+    }
+    Ok(parent)
+}
+
 /// Forme longue d'un chemin (noms courts 8.3 comme « RUNNER~1 » développés), pour le comparer au chemin final
 /// que rend Windows. Ne suit pas les jonctions : elle traduit des noms, elle ne résout pas de lien. Pour un
 /// élément qui n'existe pas encore, son dossier parent est développé.
@@ -1774,17 +1890,6 @@ pub fn proprietes_msi(chemin: &std::path::Path) -> Result<(String, String), Stri
         MsiCloseHandle(base);
         r
     }
-}
-
-/// Étiquette de point d'analyse d'un élément, lue sur l'entrée de son dossier (FindFirstFileW) : l'élément n'est ni
-/// ouvert ni traversé. `Ok(None)` : pas un point d'analyse ; `Err` : illisible ou absent
-pub fn etiquette_point_analyse(chemin: &std::path::Path) -> Result<Option<u32>, ()> {
-    use windows::Win32::Storage::FileSystem::{FindClose, FindFirstFileW, WIN32_FIND_DATAW};
-    let nom = large(&chemin.to_string_lossy());
-    let mut d = WIN32_FIND_DATAW::default();
-    let h = unsafe { FindFirstFileW(PCWSTR(nom.as_ptr()), &mut d) }.map_err(|_| ())?;
-    let _ = unsafe { FindClose(h) };
-    Ok((d.dwFileAttributes & 0x400 != 0).then_some(d.dwReserved0))
 }
 
 /// Compte rendu d'une action du MSI dans %SystemRoot%\Temp, où un compte standard peut créer des fichiers : nom unique

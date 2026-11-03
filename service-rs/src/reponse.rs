@@ -899,20 +899,31 @@ pub fn chemin_final_a_isoler(chemin: &str) -> Result<String, String> {
         return Err("Refusé : le programme n'est pas sur un lecteur local (réseau ou volume sans lettre).".into());
     }
     // Un dossier du chemin qui est un lien n'est pas traversé par SYSTEM : l'administrateur donne le chemin réel
-    // (relecture de #119, R1)
-    match premier_parent_lien(Path::new(chemin)) {
-        Ok(Some(p)) => return Err(format!("Refusé : un dossier du chemin est un lien ({}) ; donnez le chemin réel du programme.", p.display())),
-        Err(()) => return Err("Refusé : programme introuvable.".into()),
-        Ok(None) => {}
-    }
-    // FILE_READ_ATTRIBUTES, partage lecture, écriture et suppression : un programme en cours reste ouvrable
-    let f = natif::ouvrir_sans_lien(Path::new(chemin), 0x80, 0x7, false).map_err(|e| match e {
+    // (relecture de #119, R1). Une seule descente par handles : pas de course entre la vérification et l'ouverture
+    // (audit de #119, S119-01). FILE_READ_ATTRIBUTES : un programme en cours reste ouvrable
+    let f = natif::ouvrir_sans_traverser_lien(Path::new(chemin), 0x80).map_err(|e| match e {
         natif::ErreurOuverture::Absent => "Refusé : programme introuvable.".to_string(),
         natif::ErreurOuverture::Lien => "Refusé : le chemin est un lien (jonction ou lien symbolique).".to_string(),
-        natif::ErreurOuverture::Detourne(r) | natif::ErreurOuverture::Autre(r) => format!("Refusé : programme illisible ({r})."),
+        natif::ErreurOuverture::Detourne(p) => format!("Refusé : un dossier du chemin est un lien ({p}) ; donnez le chemin réel du programme."),
+        natif::ErreurOuverture::Autre(r) if r.starts_with("dossier absent") => "Refusé : programme introuvable.".to_string(),
+        natif::ErreurOuverture::Autre(r) => format!("Refusé : programme illisible ({r})."),
     })?;
     let reel = natif::chemin_final(&f).map_err(|e| format!("Refusé : chemin final illisible ({e})."))?;
-    isolation_permise(&reel, &natif::dossier_windows())
+    let c = isolation_permise(&reel, &natif::dossier_windows())?;
+    // Nom d'un programme livré avec Windows (dllhost.exe, RuntimeBroker.exe…) : une jonction posée après coup ferait
+    // couper le vrai (audit de #119, S119-03)
+    let nom = c.rsplit('\\').next().unwrap_or("");
+    if nom_programme_windows(nom, &natif::dossier_windows(), |p| p.is_file()) {
+        return Err(format!("Refusé : « {nom} » est le nom d'un programme livré avec Windows ; hors du dossier Windows, la quarantaine convient mieux."));
+    }
+    Ok(c)
+}
+
+/// Décision pure : un programme de ce nom existe-t-il dans le dossier Windows, System32 ou SysWOW64 ?
+pub fn nom_programme_windows(nom: &str, windows: &str, existe: impl Fn(&Path) -> bool) -> bool {
+    let w = windows.trim_end_matches('\\');
+    !nom.is_empty() && !w.is_empty() && !nom.contains(['\\', '/', ':'])
+        && ["", "System32", "SysWOW64"].iter().any(|d| existe(&Path::new(w).join(d).join(nom)))
 }
 
 /// Une isolation tient-elle toujours ? La règle de pare-feu porte un chemin : un dossier remplacé après coup par une
@@ -949,39 +960,24 @@ pub fn etiquette_lien(etiquette: u32) -> bool {
     etiquette & 0x2000_0000 != 0
 }
 
-/// Premier dossier du chemin, en partant de la racine, qui est un lien ; chaque dossier est lu sur l'entrée de son
-/// parent, sans être ouvert ni suivi (audit de #118, S118-03). Limite : un dossier remplacé par un lien entre cette
-/// lecture et l'ouverture du fichier est encore traversé (relecture de #119, R1)
-pub fn premier_parent_lien(chemin: &Path) -> Result<Option<PathBuf>, ()> {
-    let parents: Vec<&Path> = chemin.ancestors().skip(1).filter(|p| p.parent().is_some()).collect();
-    for p in parents.into_iter().rev() {
-        match natif::etiquette_point_analyse(p)? {
-            Some(e) if etiquette_lien(e) => return Ok(Some(p.to_path_buf())),
-            _ => {}
-        }
-    }
-    Ok(None)
-}
-
 pub fn verifier_isolation(cible: &str) -> EtatIsolation {
     if chemin_dos(cible).is_none() {
         return EtatIsolation::Detournee(cible.to_string());
     }
-    // Un dossier du chemin devenu lien : détourné, sans l'ouvrir (il peut mener à un partage réseau)
-    match premier_parent_lien(Path::new(cible)) {
-        Ok(Some(p)) => return EtatIsolation::Detournee(format!("{} (lien)", p.display())),
-        // Dossier parent absent ou illisible : la règle reste, relue au relevé suivant (relecture de #119, R3)
-        Err(()) => return EtatIsolation::Illisible,
-        Ok(None) => {}
-    }
-    let lu = match natif::ouvrir_sans_lien(Path::new(cible), 0x80, 0x7, false) {
+    // Une seule descente par handles (audit de #119, S119-01). Un dossier du chemin devenu lien : détourné, sans le
+    // traverser (il peut mener à un partage réseau) ; dossier absent ou illisible : la règle reste, relue au relevé
+    // suivant (relecture de #119, R3)
+    let lu = match natif::ouvrir_sans_traverser_lien(Path::new(cible), 0x80) {
         Ok(f) => natif::chemin_final(&f).map(Some),
+        Err(natif::ErreurOuverture::Detourne(p)) => return EtatIsolation::Detournee(format!("{p} (lien)")),
         Err(natif::ErreurOuverture::Absent) => Ok(None),
         // Dernier élément remplacé par un lien : détourné, sans le suivre
         Err(natif::ErreurOuverture::Lien) => Ok(Some("(lien)".to_string())),
         Err(e) => Err(format!("{e:?}")),
     };
-    decision_isolation(&natif::forme_longue(Path::new(cible)).to_string_lossy(), &lu, &natif::dossier_windows())
+    // `cible` est déjà un chemin final (`chemin_final_a_isoler`) : aucune autre lecture du chemin entier, qui suivrait
+    // un dossier remplacé par un lien après la descente (relecture de #126, D1)
+    decision_isolation(cible, &lu, &natif::dossier_windows())
 }
 
 /// Bloque tout le trafic, entrant et sortant, d'un programme précis (`chemin` : chemin final, `chemin_final_a_isoler`)
