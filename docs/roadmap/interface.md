@@ -2,8 +2,8 @@
 
 Décidée par le mainteneur le 2026-11-03, par ces mots : « fais la refonte avant la phase 7 », en réponse au dossier de
 conception de l'interface du 2026-11-03 (revue UI/UX après la phase 6, conservé hors dépôt). Elle commence une fois les
-corrections de la phase 6 fusionnées **et la phase inscrite dans `CLAUDE.md` par le mainteneur** (section 2, règle 1 :
-sans cette inscription, aucune PR de la phase, U0 compris, ne touche l'interface). La phase 7 commence une fois
+corrections de la phase 6 fusionnées **et la phase inscrite dans `CLAUDE.md`** (section 2, règle 1 ; inscrite le
+2026-11-03 sur l'autorisation du mainteneur). La phase 7 commence une fois
 celle-ci validée. Ce document fixe le périmètre,
 le découpage et les décisions de la phase. Rien de ce qu'il prévoit n'existe encore dans le code : chaque élément passe
 à « testé en labo » dans la matrice (`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
@@ -107,9 +107,10 @@ Coût du pilote inconnu tant que la compilation n'est pas essayée ; mémoire de
 pendant la transition ; un écran plus beau peut promettre plus que le service ne fait ; même modèle pour l'auteur et le
 prérelecteur.
 
-## À inscrire dans `CLAUDE.md` par le mainteneur
+## Inscription dans `CLAUDE.md`
 
-L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé :
+Inscrite le 2026-11-03, sur l'autorisation du mainteneur (« Ok pour modifier Claude. Md je t'autorise ») ; texte
+proposé alors, repris dans `CLAUDE.md` :
 
 - Section 2, règle 1 : « Seules exceptions : la phase « Interface et assistant d'installation » et les phases 7, 8 et
   9 (section 5), … » (l'assistant de premier lancement est une capacité nouvelle).
