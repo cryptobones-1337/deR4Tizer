@@ -462,6 +462,7 @@ impl Moniteur {
                 let mut lancement_avant = None;
                 let mut tours = 0u32;
                 let mut premier_releve = true;
+                let mut pare_feu_muet = 0u32;
                 let mut detournees_signalees: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
                 let mut illisibles: HashMap<String, u32> = HashMap::new();
                 while !p.arret.load(Ordering::Relaxed) {
@@ -505,7 +506,14 @@ impl Moniteur {
                         let avant = etat_avant_releve(premier_releve, crate::reponse::etat_panique());
                         // Seule une lecture réelle conclut : un pare-feu muet ne fait ni alerte ni fin du premier relevé
                         // (audit de #122, S122-03)
-                        if let Some(apres) = crate::reponse::rafraichir_etat_panique() {
+                        let lu = crate::reponse::rafraichir_etat_panique();
+                        // Pare-feu muet 5 min de suite : dit une fois par panne (audit de #122)
+                        let (n, alerter) = compter_suite(pare_feu_muet, lu.is_none(), RELEVES_PARE_FEU_MUET);
+                        pare_feu_muet = n;
+                        if alerter {
+                            m.lock().unwrap().ajouter_alerte_brute(alerte_pare_feu_muet(), None);
+                        }
+                        if let Some(apres) = lu {
                             if panique_devenue_incertaine(avant, apres)
                                 && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
                             {
@@ -1666,11 +1674,38 @@ pub const RELEVES_ILLISIBLES: u32 = 3;
 
 /// Compteur de relevés illisibles d'une isolation, et s'il faut alerter maintenant : une fois, au 3e de suite (pur, testé)
 pub fn compter_illisible(avant: u32, illisible: bool) -> (u32, bool) {
-    if !illisible {
+    compter_suite(avant, illisible, RELEVES_ILLISIBLES)
+}
+
+/// Compteur d'un fait vu à des relevés successifs, et s'il faut le dire maintenant : une fois, au `seuil` (pur, testé)
+pub fn compter_suite(avant: u32, vu: bool, seuil: u32) -> (u32, bool) {
+    if !vu {
         return (0, false);
     }
     let n = avant.saturating_add(1);
-    (n, n == RELEVES_ILLISIBLES)
+    (n, n == seuil)
+}
+
+/// Relevés de suite sans réponse du pare-feu avant de le dire (30 s chacun : 5 min)
+pub const RELEVES_PARE_FEU_MUET: u32 = 10;
+
+/// Retrait du mode panique pendant la désinstallation, à échéance
+static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// REP-003, pare-feu muet : l'état du mode panique publié peut être ancien (audit de #122) (pur, testé)
+pub fn alerte_pare_feu_muet() -> Alerte {
+    Alerte {
+        regle: crate::regles::REP_003.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Alerte".into(),
+        processus: "deR4Tizer".into(),
+        chemin: "poste".into(),
+        destination: "mode panique".into(),
+        raisons: format!("Le pare-feu de Windows ne répond plus depuis {} min : l'état du mode panique affiché peut être ancien, et une \
+            règle retirée ou ajoutée ne serait pas vue. Vérifier le service « Pare-feu Windows Defender » (MpsSvc).", RELEVES_PARE_FEU_MUET / 2),
+        ..Default::default()
+    }
 }
 
 /// REP-004, isolation qui ne peut plus être vérifiée (pur, testé)
@@ -2138,14 +2173,18 @@ pub fn nettoyer() {
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
-    // Pare-feu muet : le retrait est tenté quand même
+    // Pare-feu muet : le retrait est tenté quand même, avec une échéance : ce retrait ne bloque plus la désinstallation
+    // (D6-7 ; audit de #122). Les règles du groupe sont déjà retirées par PowerShell plus haut. Limite : ce retrait du
+    // groupe et `supprimer_regle` n'ont pas encore d'échéance (relecture de #123, D1, préalable)
     if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {
         if let Ok(a) = autorisation_humaine(Action::FinPanique) {
-            if let Err(e) = execution::panique(&a, false, &[]) {
-                println!("Mode panique : {e}");
+            match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {
+                Some(Ok(_)) => println!("Mode panique désactivé."),
+                Some(Err(e)) => println!("Mode panique : {e}"),
+                None => println!("Mode panique : le pare-feu ne répond pas en 30 s ; le drapeau reste. Il part avec le dossier de données ; \
+                    avec GARDER_DONNEES=1, il est gardé : après une réinstallation, l'état est « incertain » et l'interface offre « Rétablir Internet »"),
             }
         }
-        println!("Mode panique désactivé.");
     }
     let marqueur = commun::dossier().join("journal-dns-active-par-deR4Tizer");
     if marqueur.exists() && evenements::activer_journal(JOURNAL_DNS, false) {
