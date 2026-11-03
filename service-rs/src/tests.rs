@@ -6632,18 +6632,18 @@ fn relances_plafonnees_par_sorte_et_par_heure() {
     // Échéances étalées d'une minute : la première part, les deux suivantes attendent l'heure
     let t1 = S0 + 7_200;
     let r = h.relances(t1);
-    let e = p.plafonner(r, t1);
+    let e = p.plafonner(r, &h.actions.clone(), t1);
     assert_eq!(e.iter().filter(|(a, _)| a.sorte == SuspensionAuto).count(), 1);
-    let e = p.plafonner(h.relances(t1 + 60), t1 + 60);
+    let e = { let r = h.relances(t1 + 60); p.plafonner(r, &h.actions.clone(), t1 + 60) };
     assert!(e.iter().all(|(a, _)| a.sorte != SuspensionAuto), "retenue pendant l'heure");
-    let e = p.plafonner(h.relances(t1 + 120), t1 + 120);
+    let e = { let r = h.relances(t1 + 120); p.plafonner(r, &h.actions.clone(), t1 + 120) };
     assert!(e.is_empty());
     // Une heure après la première : les deux retenues partent ensemble
-    let e = p.plafonner(h.relances(t1 + 3_600), t1 + 3_600);
+    let e = { let r = h.relances(t1 + 3_600); p.plafonner(r, &h.actions.clone(), t1 + 3_600) };
     assert_eq!(e.iter().filter(|(a, _)| a.sorte == SuspensionAuto).count(), 2, "retenues comptées, pas perdues");
     // Une autre sorte a sa propre fenêtre ; la panique (4 h) part à son heure
     let tp = S0 + 4 * 3_600;
-    let e = p.plafonner(h.relances(tp), tp);
+    let e = { let r = h.relances(tp); p.plafonner(r, &h.actions.clone(), tp) };
     assert!(e.iter().any(|(a, _)| a.sorte == Panique));
     assert_eq!(intervalle_relances(Quarantaine), 86_400);
     assert_eq!(intervalle_relances(BlocageManuel), 86_400);
@@ -6654,19 +6654,35 @@ fn relances_plafonnees_par_sorte_et_par_heure() {
     h.ouvrir(Isolation, "a", None, None, S0);
     h.ouvrir(Isolation, "b", None, None, S0);
     let premiere = h.relances(S0 + 604_800);
-    assert_eq!(p.plafonner(premiere, S0 + 604_800).len(), 2, "même tour : groupées");
+    assert_eq!(p.plafonner(premiere, &h.actions.clone(), S0 + 604_800).len(), 2, "même tour : groupées");
     let mut x = h.actions[0].clone();
     x.relances = 9;
     let d = vec![(x.clone(), crate::politique::Effet::Relancer { niveau: "Alerte" }), (x, crate::politique::Effet::Relancer { niveau: "Alerte" })];
-    assert!(p.plafonner(d, S0 + 604_860).is_empty());
-    assert_eq!(p.plafonner(Vec::new(), S0 + 604_800 + 3_600).len(), 1, "dédoublonnée");
+    assert!(p.plafonner(d, &h.actions.clone(), S0 + 604_860).is_empty());
+    let e = p.plafonner(Vec::new(), &h.actions.clone(), S0 + 604_800 + 3_600);
+    assert_eq!(e.len(), 1, "dédoublonnée");
+    assert_eq!(e[0].0.relances, h.actions[0].relances, "version à jour du registre, pas la copie retenue");
+    // D1 (relecture de #122) : retenue, puis close, puis fenêtre suivante : rien n'est émis
+    let mut p = Plafond::default();
+    let mut h = Historique::default();
+    for i in 0..2u32 {
+        h.ouvrir(SuspensionAuto, &format!("q{i}.exe"), Some(i + 1), Some(1), S0 + i as u64 * 60);
+    }
+    let r = h.relances(S0 + 7_200);
+    assert_eq!(p.plafonner(r, &h.actions.clone(), S0 + 7_200).len(), 1);
+    let r = h.relances(S0 + 7_260);
+    assert!(p.plafonner(r, &h.actions.clone(), S0 + 7_260).is_empty(), "retenue");
+    h.clore(&[SuspensionAuto], None, Some((2, 1)), crate::politique::EtatAction::Levee);
+    let actives: Vec<_> = h.actions.iter().filter(|a| a.etat == crate::politique::EtatAction::Active).cloned().collect();
+    assert!(p.plafonner(Vec::new(), &actives, S0 + 7_200 + 3_600).is_empty(), "action levée pendant l'attente : oubliée");
 }
 
 /// Audit de #117, S117-02 : lecture du pare-feu avec échéance, un seul fil en attente
 #[test]
 fn panique_lecture_avec_echeance() {
     let p = include_str!("politique.rs").replace("\r\n", "\n");
-    assert!(p.contains("let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, t);\n        regrouper_relances(&a_emettre, t)"), "S116-01 : plafond branché");
+    assert!(p.contains("let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, &actives, t);\n        regrouper_relances(&a_emettre, t)"), "S116-01 : plafond branché");
+    assert!(p.contains("let actives: Vec<ActionEnCours> = e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).cloned().collect();"), "D1 : registre à jour");
     let r = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(r.contains("let lu = avec_echeance(&LECTURE_PANIQUE, std::time::Duration::from_secs(DELAI_LECTURE_PANIQUE), move || {"), "S117-02 : lecture à échéance");
     use crate::reponse::avec_echeance as e;
@@ -6676,9 +6692,25 @@ fn panique_lecture_avec_echeance() {
     assert_eq!(e(&OCCUPE, Duration::from_secs(5), || 7), Some(7));
     assert!(!OCCUPE.load(Ordering::SeqCst), "relâché après une lecture");
     let debut = std::time::Instant::now();
-    assert_eq!(e(&OCCUPE, Duration::from_millis(100), || { std::thread::sleep(Duration::from_millis(800)); 1 }), None, "échéance");
-    assert!(debut.elapsed() < Duration::from_millis(600), "l'appelant n'attend pas la fin");
+    assert_eq!(e(&OCCUPE, Duration::from_millis(100), || { std::thread::sleep(Duration::from_millis(3_000)); 1 }), None, "échéance");
+    assert!(debut.elapsed() < Duration::from_millis(2_000), "l'appelant n'attend pas la fin");
     assert_eq!(e(&OCCUPE, Duration::from_secs(1), || 2), None, "lecture figée en cours : aucun nouveau fil");
-    std::thread::sleep(Duration::from_millis(1_000));
+    std::thread::sleep(Duration::from_millis(4_000));
     assert_eq!(e(&OCCUPE, Duration::from_secs(5), || 3), Some(3), "relâché à la fin de la lecture figée");
+}
+
+/// Audit de #122, S122-02 et S122-03 : pare-feu muet, une ligne par panne, rien conclu
+#[test]
+fn panique_pare_feu_muet() {
+    use crate::reponse::transition_pare_feu as t;
+    assert!(t(false, true).is_some_and(|l| l.contains("ne répond pas")));
+    assert!(t(true, false).is_some_and(|l| l.contains("répond de nouveau")));
+    assert_eq!(t(true, true), None, "une ligne par panne");
+    assert_eq!(t(false, false), None);
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("if let Some(apres) = crate::reponse::rafraichir_etat_panique() {"), "S122-03 : seule une lecture réelle conclut");
+    let bloc = &m[m.find("if let Some(apres) = crate::reponse::rafraichir_etat_panique() {").unwrap()..];
+    let fin = bloc.find("premier_releve = false;").unwrap();
+    assert!(fin < bloc.find("let (non_suivies, non_clos)").unwrap(), "premier relevé quitté dans le bloc d'une lecture réelle");
+    assert!(m.contains("if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {"), "--nettoyer : muet, retrait tenté");
 }

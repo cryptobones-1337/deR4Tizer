@@ -644,7 +644,8 @@ pub fn echeances(vivant: &dyn Fn(u32, u64) -> bool) -> Vec<Alerte> {
         if n > 0 || !dues.is_empty() {
             enregistrer(e);
         }
-        let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, t);
+        let actives: Vec<ActionEnCours> = e.h.actions.iter().filter(|a| a.etat == EtatAction::Active).cloned().collect();
+        let a_emettre = PLAFOND.lock().unwrap_or_else(|p| p.into_inner()).plafonner(dues, &actives, t);
         regrouper_relances(&a_emettre, t)
     })
 }
@@ -669,8 +670,19 @@ pub fn intervalle_relances(sorte: Sorte) -> u64 {
 }
 
 impl Plafond {
-    /// Relances à émettre maintenant ; les autres attendent la fin de la fenêtre de leur sorte (pur, testé)
-    pub fn plafonner(&mut self, dues: Vec<(ActionEnCours, Effet)>, t: u64) -> Vec<(ActionEnCours, Effet)> {
+    /// Relances à émettre maintenant ; les autres attendent la fin de la fenêtre de leur sorte. `actives` : le registre.
+    /// Une retenue dont l'action a été close entre-temps est oubliée, les autres prennent leur version à jour : jamais
+    /// de « toujours en cours » pour une action levée ou terminée (relecture de #122, D1) (pur, testé)
+    pub fn plafonner(&mut self, dues: Vec<(ActionEnCours, Effet)>, actives: &[ActionEnCours], t: u64) -> Vec<(ActionEnCours, Effet)> {
+        for liste in self.attente.values_mut() {
+            liste.retain_mut(|(a, _)| match actives.iter().find(|x| x.id == a.id) {
+                Some(x) => {
+                    *a = x.clone();
+                    true
+                }
+                None => false,
+            });
+        }
         for d in dues {
             let attente = self.attente.entry(d.0.sorte as u8).or_default();
             if let Some(i) = attente.iter().position(|(a, _)| a.id == d.0.id) {

@@ -1224,7 +1224,9 @@ pub fn commande_panique_en_cours() -> bool {
 static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Relit l'état effectif (règles et drapeau) : fil « sante » toutes les 30 s, et après chaque commande
-pub fn rafraichir_etat_panique() -> EtatPanique {
+/// `None` : le pare-feu n'a pas répondu à temps ; l'état publié reste le précédent, et rien ne doit en être conclu
+/// (audit de #122, S122-03)
+pub fn rafraichir_etat_panique() -> Option<EtatPanique> {
     // Une commande commencée ou finie pendant la lecture a publié son propre état : celui-ci, plus ancien, ne
     // l'écrase pas (relecture de #118, R2). Lecture sur un fil à part, avec une échéance : un pare-feu figé ne fige pas
     // le fil « sante » (audit de #117, S117-02) ; l'état publié reste alors le précédent
@@ -1236,12 +1238,21 @@ pub fn rafraichir_etat_panique() -> EtatPanique {
         }
         e
     });
-    match lu {
-        Some(e) => e,
-        None => {
-            commun::journal("mode panique : le pare-feu ne répond pas, état publié inchangé");
-            etat_panique()
-        }
+    // Une ligne au début et à la fin d'une panne, pas une par relevé (audit de #122, S122-02)
+    if let Some(ligne) = transition_pare_feu(PARE_FEU_MUET.swap(lu.is_none(), std::sync::atomic::Ordering::SeqCst), lu.is_none()) {
+        commun::journal(ligne);
+    }
+    lu
+}
+
+static PARE_FEU_MUET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ligne de journal à écrire quand le pare-feu devient muet ou répond de nouveau ; rien sinon (pur, testé)
+pub fn transition_pare_feu(muet_avant: bool, muet: bool) -> Option<&'static str> {
+    match (muet_avant, muet) {
+        (false, true) => Some("mode panique : le pare-feu ne répond pas, état publié inchangé jusqu'à sa réponse"),
+        (true, false) => Some("mode panique : le pare-feu répond de nouveau"),
+        _ => None,
     }
 }
 
