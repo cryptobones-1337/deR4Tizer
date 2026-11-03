@@ -278,7 +278,10 @@ namespace DeR4Tizer
             {
                 try
                 {
-                    bool present = System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, "reponses.json"));
+                    // Accès au dossier refusé : File.Exists rend faux ; présent par prudence, donc « illisible » (relecture de #121, R1)
+                    bool present;
+                    try { present = System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, "reponses.json")) || (System.IO.Directory.Exists(Commun.Dossier) && !DossierLisible()); }
+                    catch { present = true; }
                     var h = Commun.Lire<HistoriqueReponses>("reponses.json");
                     var l = VueReponses.Lignes(h, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     // Illisible n'est pas « aucune réponse en cours » : le dernier affichage est gardé, et c'est dit
@@ -309,6 +312,13 @@ namespace DeR4Tizer
                 : string.Format(en ? "{0} ongoing response(s), {1} awaiting a decision." : "{0} réponse(s) en cours, dont {1} en attente de décision.", l.Count, dues);
             resume.ForeColor = l.Any(x => x.Gravite == 2) ? Theme.Rouge : dues > 0 ? Theme.Jaune : Theme.TexteDim;
             Detailler();
+        }
+
+        // Le dossier de données se liste-t-il ? Sinon File.Exists ne peut pas répondre
+        static bool DossierLisible()
+        {
+            try { System.IO.Directory.EnumerateFiles(Commun.Dossier, "reponses.json").Any(); return true; }
+            catch { return false; }
         }
 
         void Illisible()

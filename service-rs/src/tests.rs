@@ -1029,6 +1029,12 @@ fn n3_apprentissage_par_chemin_editeur_et_destination() {
     let mut ids = alerte("Alerte", "IDS : Bureau à distance (RDP) sollicité depuis Internet", "règle 9000041", 6);
     ids.mitre = String::new();
     assert!(signal_fort(&ids));
+    // Audit de #121, S121-01 : les actions de réponse ne s'apprennent pas
+    for r in ["REP-001", "REP-002", "REP-003", "REP-004"] {
+        let mut x = alerte("Alerte", "deR4Tizer", "isolation non vérifiable", 5);
+        x.regle = r.into();
+        assert!(signal_fort(&x), "{r}");
+    }
     let vide = BTreeSet::new();
     assert_eq!(decider("Critique", "x", true, &vide, &[]), None);
     assert!(decider("Alerte", "x", true, &vide, &[]).is_some_and(|d| d.2));
