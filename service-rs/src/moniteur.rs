@@ -503,13 +503,16 @@ impl Moniteur {
                         // Premier relevé : l'état provisoire du démarrage ne compte pas, un état incertain hérité alerte
                         // (audit de #118)
                         let avant = etat_avant_releve(premier_releve, crate::reponse::etat_panique());
-                        let apres = crate::reponse::rafraichir_etat_panique();
-                        if panique_devenue_incertaine(avant, apres)
-                            && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
-                        {
-                            m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                        // Seule une lecture réelle conclut : un pare-feu muet ne fait ni alerte ni fin du premier relevé
+                        // (audit de #122, S122-03)
+                        if let Some(apres) = crate::reponse::rafraichir_etat_panique() {
+                            if panique_devenue_incertaine(avant, apres)
+                                && crate::reponse::lecture_publiable(generation, crate::reponse::generation_panique(), crate::reponse::commande_panique_en_cours())
+                            {
+                                m.lock().unwrap().ajouter_alerte_brute(alerte_panique_incertaine(), None);
+                            }
+                            premier_releve = false;
                         }
-                        premier_releve = false;
                     }
                     let (non_suivies, non_clos) = {
                         let g = m.lock().unwrap();
@@ -2135,7 +2138,8 @@ pub fn nettoyer() {
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
-    if reponse::rafraichir_etat_panique() != reponse::EtatPanique::Inactive {
+    // Pare-feu muet : le retrait est tenté quand même
+    if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {
         if let Ok(a) = autorisation_humaine(Action::FinPanique) {
             if let Err(e) = execution::panique(&a, false, &[]) {
                 println!("Mode panique : {e}");

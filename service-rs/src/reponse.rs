@@ -1224,15 +1224,56 @@ pub fn commande_panique_en_cours() -> bool {
 static ETAT_PANIQUE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Relit l'état effectif (règles et drapeau) : fil « sante » toutes les 30 s, et après chaque commande
-pub fn rafraichir_etat_panique() -> EtatPanique {
+/// `None` : le pare-feu n'a pas répondu à temps ; l'état publié reste le précédent, et rien ne doit en être conclu
+/// (audit de #122, S122-03)
+pub fn rafraichir_etat_panique() -> Option<EtatPanique> {
     // Une commande commencée ou finie pendant la lecture a publié son propre état : celui-ci, plus ancien, ne
-    // l'écrase pas (relecture de #118, R2)
+    // l'écrase pas (relecture de #118, R2). Lecture sur un fil à part, avec une échéance : un pare-feu figé ne fige pas
+    // le fil « sante » (audit de #117, S117-02) ; l'état publié reste alors le précédent
     let generation = GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst);
-    let e = lire_etat_panique();
-    if lecture_publiable(generation, GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst), commande_panique_en_cours()) {
-        ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+    let lu = avec_echeance(&LECTURE_PANIQUE, std::time::Duration::from_secs(DELAI_LECTURE_PANIQUE), move || {
+        let e = lire_etat_panique();
+        if lecture_publiable(generation, GENERATION_PANIQUE.load(std::sync::atomic::Ordering::SeqCst), commande_panique_en_cours()) {
+            ETAT_PANIQUE.store(e as u8, std::sync::atomic::Ordering::Relaxed);
+        }
+        e
+    });
+    // Une ligne au début et à la fin d'une panne, pas une par relevé (audit de #122, S122-02)
+    if let Some(ligne) = transition_pare_feu(PARE_FEU_MUET.swap(lu.is_none(), std::sync::atomic::Ordering::SeqCst), lu.is_none()) {
+        commun::journal(ligne);
     }
-    e
+    lu
+}
+
+static PARE_FEU_MUET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ligne de journal à écrire quand le pare-feu devient muet ou répond de nouveau ; rien sinon (pur, testé)
+pub fn transition_pare_feu(muet_avant: bool, muet: bool) -> Option<&'static str> {
+    match (muet_avant, muet) {
+        (false, true) => Some("mode panique : le pare-feu ne répond pas, état publié inchangé jusqu'à sa réponse"),
+        (true, false) => Some("mode panique : le pare-feu répond de nouveau"),
+        _ => None,
+    }
+}
+
+/// Échéance d'une lecture de l'état du pare-feu
+const DELAI_LECTURE_PANIQUE: u64 = 10;
+static LECTURE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Exécute `f` sur un fil à part et attend `delai` au plus. Une lecture précédente encore figée : `None` tout de suite,
+/// sans nouveau fil (un pare-feu muet n'accumule pas de fils). `occupe` est relâché par le fil à la fin de `f` (testé)
+pub fn avec_echeance<T: Send + 'static>(occupe: &'static std::sync::atomic::AtomicBool, delai: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    use std::sync::atomic::Ordering::SeqCst;
+    if occupe.swap(true, SeqCst) {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let r = f();
+        occupe.store(false, SeqCst);
+        let _ = tx.send(r);
+    });
+    rx.recv_timeout(delai).ok()
 }
 
 pub fn generation_panique() -> u64 {
