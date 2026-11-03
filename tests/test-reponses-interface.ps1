@@ -136,6 +136,32 @@ try {
     Cas 'isolation : chemin réel dans la confirmation (S118-02)' ($g.Contains('+ CheminReelTexte(cible);') -and $g.Contains('CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)'))
     Cas 'isolation : confirmation détaillée aussi pour un administrateur (D2)' ($g.Contains('if (ActionSurProcessus(c) || c.Action == "isolerProgramme")'))
     Cas 'chemin réel : disque fixe seulement (R1)' ($g.Contains('fixe = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed;'))
+    # U0 (docs/roadmap/interface.md) : texte secondaire lisible (WCAG, 4,5:1 au moins sur chaque fond), en-tête traduit
+    $theme = & $t 'Theme'
+    $lum = { param($c) $v = foreach ($x in $c.R, $c.G, $c.B) { $s = $x / 255; if ($s -le 0.03928) { $s / 12.92 } else { [math]::Pow(($s + 0.055) / 1.055, 2.4) } }; 0.2126 * $v[0] + 0.7152 * $v[1] + 0.0722 * $v[2] }
+    $contraste = { param($a, $b) $la = & $lum $a; $lb = & $lum $b; ([math]::Max($la, $lb) + 0.05) / ([math]::Min($la, $lb) + 0.05) }
+    $dim = $theme.GetField('TexteDim').GetValue($null)
+    foreach ($fond in 'Fond', 'Panneau', 'Panneau2') {
+        $k = & $contraste $dim ($theme.GetField($fond).GetValue($null))
+        Cas "contraste du texte secondaire sur $fond : $([math]::Round($k, 2)):1 (4,5 au moins)" ($k -ge 4.5)
+    }
+    Cas 'en-tête : sous-titre et pastille des listes traduits, sans capitales forcées' (-not $g.Contains('NETWORK THREAT MONITOR') -and -not $g.Contains('"INTEL "') -and $g.Contains('L.T("Surveillance des menaces réseau")') -and $g.Contains('L.T("Listes de menaces")'))
+    $langue.GetField('En').SetValue($null, $true)
+    $traduits = foreach ($fr in 'Surveillance des menaces réseau', 'service système', 'Listes de menaces', 'domaines') { & $appel $langue 'T' @($fr) }
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'en-tête : traductions anglaises' (($traduits -join '|') -eq 'Network threat monitoring|system service|Threat lists|domains') ($traduits -join '|')
+    # U0, captures : pastilles en dur traduites ; pastilles jamais sous le titre, « +N » pour celles qui ne tiennent pas
+    Cas 'en-tête et barre d''état : plus de texte en dur' (-not $g.Contains('Texte = "SERVICE EN LIGNE"') -and -not $g.Contains('"PROCESSUS : WMI"') -and -not $g.Contains('"▸ mis à jour "') -and -not $g.Contains('Texte = "BUREAU À DISTANCE ACTIF"') -and -not $g.Contains('Texte = "DEFENDER DÉSACTIVÉ"'))
+    $langue.GetField('En').SetValue($null, $true)
+    $en = foreach ($fr in 'SERVICE EN LIGNE', 'PROCESSUS', 'mis à jour', 'service démarré le', 'BUREAU À DISTANCE ACTIF', 'arrêté') { & $appel $langue 'T' @($fr) }
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'en-tête et barre d''état : traductions anglaises' (($en -join '|') -eq 'SERVICE ONLINE|PROCESSES|updated|service started on|REMOTE DESKTOP ON|stopped') ($en -join '|')
+    $entete = & $t 'Entete'
+    $vis = { param([int[]]$l, [int]$d, [int]$r) $entete.GetMethod('PastillesVisibles').Invoke($null, @(, $l) + @($d, $r)) }
+    Cas 'pastilles : toutes si elles tiennent' ((& $vis @(100, 100, 100) 316 40) -eq 3)
+    Cas 'pastilles : les premières gardées, place du « +N » réservée' ((& $vis @(100, 100, 100) 315 40) -eq 2) "$(& $vis @(100, 100, 100) 315 40)"
+    Cas 'pastilles : aucune si même la première ne tient pas avec le « +N »' ((& $vis @(300, 10) 200 40) -eq 0)
+    Cas 'pastilles : liste vide' ((& $vis @() 100 40) -eq 0)
     # PR 6.14 : confirmations qui disent l'effet de 7 jours (S110-08) et la portée de la signature (S113-09)
     Cas 'reprise : effet de 7 jours dit, sauf interpréteur (S110-08)' ($g.Contains('ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur reconnu par son nom, ou programme de Windows)'))
     Cas 'déblocage, tout débloquer : effet de 7 jours dit (S110-08)' ($g.Contains('il ne sera pas reposé automatiquement pendant 7 jours') -and $g.Contains('ne seront pas reposés automatiquement pendant 7 jours'))

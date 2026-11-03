@@ -13,7 +13,7 @@ namespace DeR4Tizer
     static class Theme
     {
         public static readonly Color Fond = C("#0A0E14"), Panneau = C("#0F1520"), Panneau2 = C("#151D2C"), Bordure = C("#1E2A3D"),
-            Texte = C("#C8D3E0"), TexteDim = C("#6B7A90"), Cyan = C("#00E5FF"), Magenta = C("#FF2BD6"), Jaune = C("#FFD60A"),
+            Texte = C("#C8D3E0"), TexteDim = C("#9AA3AF"), Cyan = C("#00E5FF"), Magenta = C("#FF2BD6"), Jaune = C("#FFD60A"),
             Rouge = C("#FF3B5C"), Vert = C("#2BFF88"), Selection = C("#0E3442"),
             FondCritique = C("#40101F"), FondAlerte = C("#2E1322"), FondAttention = C("#29230F"), FondActif = C("#3A0F1A");
 

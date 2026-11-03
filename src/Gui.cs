@@ -566,6 +566,17 @@ namespace DeR4Tizer
         public List<Pastille> Pastilles = new List<Pastille>();
         public bool Phase;
 
+        // Nombre de pastilles affichées, dans l'ordre, dans `dispo` pixels (8 entre deux) ; s'il en manque, la place d'une
+        // pastille « +N » de `largeurReste` est gardée (décision pure, testée)
+        public static int PastillesVisibles(int[] largeurs, int dispo, int largeurReste)
+        {
+            int total = largeurs.Sum() + 8 * Math.Max(0, largeurs.Length - 1);
+            if (total <= dispo) return largeurs.Length;
+            int n = 0, pris = largeurReste;
+            while (n < largeurs.Length && pris + largeurs[n] + 8 <= dispo) { pris += largeurs[n] + 8; n++; }
+            return n;
+        }
+
         public Entete()
         {
             Dock = DockStyle.Top;
@@ -589,12 +600,19 @@ namespace DeR4Tizer
             const string titre = "deR4Tizer";
             TextRenderer.DrawText(g, titre, Theme.Titre, new Point(76, 9), Color.FromArgb(200, Theme.Magenta));
             TextRenderer.DrawText(g, titre, Theme.Titre, new Point(74, 8), Theme.Cyan);
-            TextRenderer.DrawText(g, "NETWORK THREAT MONITOR  //  v" + Commun.Version + "  //  SERVICE SYSTEM", Theme.PetitGras,
+            // Sous-titre traduit, sans capitales forcées (U0, docs/roadmap/interface.md)
+            TextRenderer.DrawText(g, L.T("Surveillance des menaces réseau") + "  ·  v" + Commun.Version + "  ·  " + L.T("service système"), Theme.PetitGras,
                 new Point(77, 47), Theme.TexteDim);
 
-            // Pastilles alignées à droite
+            // Pastilles alignées à droite, jamais sous le titre : les premières (les plus graves, insérées en tête) restent,
+            // les suivantes sont comptées dans une pastille « +N » (U0, captures : elles recouvraient le titre)
+            int finTitre = 74 + TextRenderer.MeasureText(titre, Theme.Titre).Width + 12;
+            var largeurs = Pastilles.Select(p => TextRenderer.MeasureText(p.Texte, Theme.PetitGras).Width + 30).ToArray();
+            var visibles = Pastilles.Take(PastillesVisibles(largeurs, Width - 16 - finTitre, TextRenderer.MeasureText("+99", Theme.PetitGras).Width + 30)).ToList();
+            if (visibles.Count < Pastilles.Count)
+                visibles.Add(new Pastille { Texte = "+" + (Pastilles.Count - visibles.Count), Couleur = Theme.TexteDim });
             float x = Width - 16;
-            foreach (var p in Enumerable.Reverse(Pastilles))
+            foreach (var p in Enumerable.Reverse(visibles))
             {
                 var taille = TextRenderer.MeasureText(p.Texte, Theme.PetitGras);
                 float l = taille.Width + 30;
@@ -1052,8 +1070,8 @@ namespace DeR4Tizer
             btnService.Visible = etatService != null && etatService != ServiceControllerStatus.Running;
             var pastilles = new List<Entete.Pastille>();
             pastilles.Add(etatService == ServiceControllerStatus.Running
-                ? new Entete.Pastille { Texte = "SERVICE EN LIGNE", Couleur = Theme.Vert }
-                : new Entete.Pastille { Texte = etatService == null ? "SERVICE NON INSTALLÉ" : "SERVICE " + Traduire(etatService.Value).ToUpperInvariant(), Couleur = Theme.Rouge, Clignote = true });
+                ? new Entete.Pastille { Texte = L.T("SERVICE EN LIGNE"), Couleur = Theme.Vert }
+                : new Entete.Pastille { Texte = etatService == null ? L.T("SERVICE NON INSTALLÉ") : L.T("SERVICE") + " " + L.T(Traduire(etatService.Value)).ToUpperInvariant(), Couleur = Theme.Rouge, Clignote = true });
 
             DateTime d0;
             var etat = Commun.Lire<Etat>("etat.json");
@@ -1067,7 +1085,7 @@ namespace DeR4Tizer
                     : new Entete.Pastille { Texte = L.T("NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)"), Couleur = Theme.Jaune });
                 pastilles.Add(new Entete.Pastille
                 {
-                    Texte = etat.SourceProcessus == "Sysmon" ? "PROCESSUS : SYSMON" : etat.SourceProcessus == "WMI" ? "PROCESSUS : WMI" : "PROCESSUS : —",
+                    Texte = L.T("PROCESSUS") + " : " + (etat.SourceProcessus == "Sysmon" ? "SYSMON" : etat.SourceProcessus == "WMI" ? "WMI" : "—"),
                     Couleur = etat.SourceProcessus == "aucune" ? Theme.Jaune : Theme.Cyan
                 });
                 var actifs = (etat.Peripheriques ?? new List<UsagePeripherique>()).Where(u => u.EnCours).ToList();
@@ -1090,8 +1108,8 @@ namespace DeR4Tizer
                 var def = etat.Defender;
                 if (def != null && def.Disponible)
                     pastilles.Add(def.TempsReel && def.Antivirus
-                        ? new Entete.Pastille { Texte = def.ProtectionFalsification ? "DEFENDER OK" : "DEFENDER (FALSIFICATION OFF)", Couleur = def.ProtectionFalsification ? Theme.Vert : Theme.Jaune }
-                        : new Entete.Pastille { Texte = "DEFENDER DÉSACTIVÉ", Couleur = Theme.Rouge, Clignote = true });
+                        ? new Entete.Pastille { Texte = def.ProtectionFalsification ? "DEFENDER OK" : L.T("DEFENDER (FALSIFICATION OFF)"), Couleur = def.ProtectionFalsification ? Theme.Vert : Theme.Jaune }
+                        : new Entete.Pastille { Texte = L.T("DEFENDER DÉSACTIVÉ"), Couleur = Theme.Rouge, Clignote = true });
                 else if (Couverture.DefenderPasEncoreLu(etat))
                     // Premier relevé au démarrage du PC : pas encore lu, ce n'est pas une panne
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : LECTURE EN COURS"), Couleur = Theme.TexteDim });
@@ -1099,7 +1117,7 @@ namespace DeR4Tizer
                     // État illisible : ni « OK » ni « désactivé », c'est dit (phase 3.4)
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
                 if (etat.Exposition != null && etat.Exposition.Exposee)
-                    pastilles.Insert(1, new Entete.Pastille { Texte = "PC EXPOSÉ À INTERNET", Couleur = Theme.Rouge, Clignote = true });
+                    pastilles.Insert(1, new Entete.Pastille { Texte = L.T("PC EXPOSÉ À INTERNET"), Couleur = Theme.Rouge, Clignote = true });
                 // État effectif publié par le service, compté sur les règles du pare-feu (PR 6.7b) : « incertain » se dit,
                 // et « Rétablir Internet » reste offert
                 paniqueActive = etat.Panique;
@@ -1107,14 +1125,14 @@ namespace DeR4Tizer
                 string pastillePanique = VueReponses.PastillePanique(etat);
                 if (pastillePanique != null)
                     pastilles.Insert(0, new Entete.Pastille { Texte = pastillePanique, Couleur = etat.PaniqueEtat == "incertaine" ? Theme.Jaune : Theme.Rouge, Clignote = etat.PaniqueEtat != "incertaine" });
-                if (etat.BureauADistance) pastilles.Add(new Entete.Pastille { Texte = "BUREAU À DISTANCE ACTIF", Couleur = Theme.Rouge, Clignote = true });
+                if (etat.BureauADistance) pastilles.Add(new Entete.Pastille { Texte = L.T("BUREAU À DISTANCE ACTIF"), Couleur = Theme.Rouge, Clignote = true });
                 if (etat.OutilsDistants != null && etat.OutilsDistants.Count > 0)
-                    pastilles.Add(new Entete.Pastille { Texte = "PRISE EN MAIN : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
+                    pastilles.Add(new Entete.Pastille { Texte = L.T("PRISE EN MAIN") + " : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
 
                 // Seules les détections muettes par panne : celles coupées par un réglage voulu ne sont pas une alarme
                 int muettes = Couverture.ReglesEnPanne(etat).Count;
-                statut.Text = "▸ mis à jour " + etat.MisAJour + "   ▸ service démarré le " + etat.Demarrage + "   ▸ v" + (etat.Version ?? "?")
-                    + (etat.JournalDnsActif ? "" : "   ▸ journal DNS inactif : impossible de repérer les IP contactées directement")
+                statut.Text = "▸ " + L.T("mis à jour") + " " + etat.MisAJour + "   ▸ " + L.T("service démarré le") + " " + etat.Demarrage + "   ▸ v" + (etat.Version ?? "?")
+                    + (etat.JournalDnsActif ? "" : "   ▸ " + L.T("journal DNS inactif : impossible de repérer les IP contactées directement"))
                     + (muettes == 0 ? "" : "   ▸ " + string.Format(L.T("{0} détection(s) sans collecte (détail : page Alertes)"), muettes));
                 navVie.Badge = actifs.Count + (etat.OutilsDistants ?? new List<OutilDistant>()).Count + (etat.BureauADistance ? 1 : 0);
                 navVie.CouleurBadge = Theme.Rouge;
@@ -1168,7 +1186,7 @@ namespace DeR4Tizer
                 pastilles.Add(new Entete.Pastille { Texte = L.T("VOL DE DONNÉES NON SURVEILLÉ (AUDIT INACTIF)"), Couleur = Theme.Jaune, Clignote = true });
             var infos = Commun.Lire<InfosMenaces>("menaces.json");
             if (infos != null)
-                pastilles.Add(new Entete.Pastille { Texte = "INTEL " + (infos.TotalIp + infos.TotalReseaux).ToString("N0") + " IP · " + infos.TotalDomaines.ToString("N0") + " DOM.", Couleur = Theme.Magenta });
+                pastilles.Add(new Entete.Pastille { Texte = L.T("Listes de menaces") + " : " + (infos.TotalIp + infos.TotalReseaux).ToString("N0") + " IP · " + infos.TotalDomaines.ToString("N0") + " " + L.T("domaines"), Couleur = Theme.Magenta });
             entete.Pastilles = pastilles;
             entete.Invalidate();
 
