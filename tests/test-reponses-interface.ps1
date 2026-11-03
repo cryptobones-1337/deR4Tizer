@@ -129,13 +129,44 @@ try {
 
     # Branchements dans Gui.cs
     $g = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
-    Cas 'navigation : Réponses en cours' ($g.Contains('var pageReponses = new PageReponses();') -and $g.Contains('Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);'))
+    Cas 'navigation : Réponses en cours' ($g.Contains('var pageReponses = new PageReponses();') -and $g.Contains('Lien(liens, "Réponses en cours", pageReponses, largeurNav);') -and (& $appel $langue 'T' @('Réponses en cours')) -eq 'Réponses en cours')
     Cas 'bouton et pastille sur l''état effectif' ($g.Contains('btnPanique.Text = VueReponses.TexteBoutonPanique(etat);') -and $g.Contains('VueReponses.PastillePanique(etat)'))
     Cas 'une seule pastille du mode panique (dossier UI de la 6.7)' (-not $g.Contains('MODE PANIQUE : INTERNET COUPÉ') -and ([regex]::Matches($g, 'VueReponses\.PastillePanique\(etat\)')).Count -eq 1)
     Cas 'confirmation du mode panique : portée' ($g.Contains('string question = VueReponses.ConfirmationPanique(!paniqueActive);') -and $g.Contains('case "panique": return VueReponses.ConfirmationPanique(v != "off");'))
     Cas 'isolation : chemin réel dans la confirmation (S118-02)' ($g.Contains('+ CheminReelTexte(cible);') -and $g.Contains('CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)'))
     Cas 'isolation : confirmation détaillée aussi pour un administrateur (D2)' ($g.Contains('if (ActionSurProcessus(c) || c.Action == "isolerProgramme")'))
     Cas 'chemin réel : disque fixe seulement (R1)' ($g.Contains('fixe = new DriveInfo(chemin.Substring(0, 2)).DriveType == DriveType.Fixed;'))
+    # U0 (docs/roadmap/interface.md) : texte secondaire lisible (WCAG, 4,5:1 au moins sur chaque fond), en-tête traduit
+    $theme = & $t 'Theme'
+    $lum = { param($c) $v = foreach ($x in $c.R, $c.G, $c.B) { $s = $x / 255; if ($s -le 0.03928) { $s / 12.92 } else { [math]::Pow(($s + 0.055) / 1.055, 2.4) } }; 0.2126 * $v[0] + 0.7152 * $v[1] + 0.0722 * $v[2] }
+    $contraste = { param($a, $b) $la = & $lum $a; $lb = & $lum $b; ([math]::Max($la, $lb) + 0.05) / ([math]::Min($la, $lb) + 0.05) }
+    $dim = $theme.GetField('TexteDim').GetValue($null)
+    foreach ($fond in 'Fond', 'Panneau', 'Panneau2') {
+        $k = & $contraste $dim ($theme.GetField($fond).GetValue($null))
+        Cas "contraste du texte secondaire sur $fond : $([math]::Round($k, 2)):1 (4,5 au moins)" ($k -ge 4.5)
+    }
+    Cas 'en-tête : sous-titre et pastille des listes traduits, sans capitales forcées' (-not $g.Contains('NETWORK THREAT MONITOR') -and -not $g.Contains('"INTEL "') -and $g.Contains('L.T("Surveillance des menaces réseau")') -and $g.Contains('L.T("Listes de menaces")'))
+    $langue.GetField('En').SetValue($null, $true)
+    $traduits = foreach ($fr in 'Surveillance des menaces réseau', 'service système', 'Listes de menaces', 'domaines') { & $appel $langue 'T' @($fr) }
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'en-tête : traductions anglaises' (($traduits -join '|') -eq 'Network threat monitoring|system service|Threat lists|domains') ($traduits -join '|')
+    # U0, captures : pastilles en dur traduites ; pastilles jamais sous le titre, « +N » pour celles qui ne tiennent pas
+    Cas 'en-tête et barre d''état : plus de texte en dur' (-not $g.Contains('Texte = "SERVICE EN LIGNE"') -and -not $g.Contains('"PROCESSUS : WMI"') -and -not $g.Contains('"▸ mis à jour "') -and -not $g.Contains('Texte = "BUREAU À DISTANCE ACTIF"') -and -not $g.Contains('Texte = "DEFENDER DÉSACTIVÉ"'))
+    $langue.GetField('En').SetValue($null, $true)
+    $en = foreach ($fr in 'SERVICE EN LIGNE', 'PROCESSUS', 'mis à jour', 'service démarré le', 'BUREAU À DISTANCE ACTIF', 'arrêté') { & $appel $langue 'T' @($fr) }
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'en-tête et barre d''état : traductions anglaises' (($en -join '|') -eq 'SERVICE ONLINE|PROCESSES|updated|service started on|REMOTE DESKTOP ON|stopped') ($en -join '|')
+    $entete = & $t 'Entete'
+    $vis = { param([int[]]$l, [int[]]$gr, [int]$d, [int]$r) (@($entete.GetMethod('PastillesVisibles').Invoke($null, [object[]]@($l, $gr, $d, $r))) -join ',') }
+    Cas 'pastilles : toutes si elles tiennent' ((& $vis @(100, 100, 100) @(0, 0, 0) 316 40) -eq '0,1,2')
+    Cas 'pastilles : les premières gardées à gravité égale, place du « +N » réservée' ((& $vis @(100, 100, 100) @(0, 0, 0) 315 40) -eq '0,1') "$(& $vis @(100, 100, 100) @(0, 0, 0) 315 40)"
+    Cas 'pastilles : une rouge en fin de liste reste visible (relecture de #132, D2)' ((& $vis @(100, 100, 100) @(0, 0, 2) 315 40) -eq '0,2') "$(& $vis @(100, 100, 100) @(0, 0, 2) 315 40)"
+    Cas 'pastilles : la rouge avant la jaune, ordre d''origine gardé à l''affichage' ((& $vis @(100, 100, 100) @(1, 0, 2) 200 40) -eq '2') "$(& $vis @(100, 100, 100) @(1, 0, 2) 200 40)"
+    Cas 'pastilles : aucune si même la plus grave ne tient pas avec le « +N »' ((& $vis @(300, 10) @(2, 0) 200 40) -eq '')
+    Cas 'pastilles : liste vide' ((& $vis @() @() 100 40) -eq '')
+    $gravite = { param($nom) $entete.GetMethod('Gravite').Invoke($null, @($theme.GetField($nom).GetValue($null))) }
+    Cas 'pastilles : gravité lue sur la couleur (rouge 2, jaune 1, autre 0)' ((& $gravite 'Rouge') -eq 2 -and (& $gravite 'Jaune') -eq 1 -and (& $gravite 'Cyan') -eq 0)
+    Cas 'pastilles : le « +N » prend la couleur de la plus grave cachée' ($g.Contains('Couleur = pire == 2 ? Theme.Rouge : pire == 1 ? Theme.Jaune : Theme.TexteDim'))
     # PR 6.14 : confirmations qui disent l'effet de 7 jours (S110-08) et la portée de la signature (S113-09)
     Cas 'reprise : effet de 7 jours dit, sauf interpréteur (S110-08)' ($g.Contains('ce programme ne sera plus suspendu automatiquement pendant 7 jours (sauf interpréteur reconnu par son nom, ou programme de Windows)'))
     Cas 'déblocage, tout débloquer : effet de 7 jours dit (S110-08)' ($g.Contains('il ne sera pas reposé automatiquement pendant 7 jours') -and $g.Contains('ne seront pas reposés automatiquement pendant 7 jours'))

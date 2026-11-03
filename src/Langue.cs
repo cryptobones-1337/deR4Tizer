@@ -17,7 +17,15 @@ namespace DeR4Tizer
         static readonly Dictionary<string, string> Anglais = new Dictionary<string, string>
         {
             // Phase 4 : pages Incidents et Santé
-            { "Incidents", "Incidents" }, { "Santé", "Health" }, { "Ouvert", "Open" }, { "Pris en charge", "In progress" }, { "Clos", "Closed" },
+            { "Incidents", "Incidents" }, { "Santé", "Health" },
+            { "Surveillance des menaces réseau", "Network threat monitoring" }, { "service système", "system service" },
+            { "Listes de menaces", "Threat lists" }, { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
+            { "SERVICE EN LIGNE", "SERVICE ONLINE" }, { "SERVICE NON INSTALLÉ", "SERVICE NOT INSTALLED" }, { "SERVICE", "SERVICE" },
+            { "arrêté", "stopped" }, { "démarrage…", "starting…" }, { "arrêt…", "stopping…" },
+            { "PROCESSUS", "PROCESSES" }, { "DEFENDER (FALSIFICATION OFF)", "DEFENDER (TAMPER PROTECTION OFF)" },
+            { "DEFENDER DÉSACTIVÉ", "DEFENDER DISABLED" }, { "BUREAU À DISTANCE ACTIF", "REMOTE DESKTOP ON" },
+            { "PRISE EN MAIN", "REMOTE CONTROL" }, { "mis à jour", "updated" }, { "service démarré le", "service started on" },
+            { "journal DNS inactif : impossible de repérer les IP contactées directement", "DNS log off: addresses contacted directly cannot be identified" }, { "Ouvert", "Open" }, { "Pris en charge", "In progress" }, { "Clos", "Closed" },
             { "résolu", "resolved" }, { "faux positif", "false positive" }, { "risque accepté", "risk accepted" },
             { "Résolu", "Resolved" }, { "Faux positif", "False positive" }, { "Risque accepté", "Risk accepted" },
             { "Note de {0} caractères au plus.", "Note of {0} characters at most." },
