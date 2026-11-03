@@ -108,6 +108,11 @@ fn service_principal(_arguments: Vec<OsString>) {
     let _ = arret_rx.recv();
     let _ = etat.set_service_status(statut(ServiceState::StopPending, ServiceControlAccept::empty()));
     moniteur.lock().unwrap().arreter();
+    // PowerShell qui posent des règles (API, capture) : plus aucun ne démarre, ceux en cours sont attendus. Sinon l'un
+    // d'eux, resté vivant, recrée ses règles après la désinstallation (PR 6.12)
+    if !crate::blocage::REGLES_SERVICE.arreter(Duration::from_secs(15)) {
+        commun::journal("arrêt : un PowerShell de règles de pare-feu ne s'est pas terminé en 15 s");
+    }
     // Téléchargements en cours (curl.exe) : terminés avec le service, sinon ils gardent ouverts des fichiers du
     // dossier de données (désinstallation incomplète)
     let n = natif::terminer_enfants(&["curl"]);
@@ -342,8 +347,7 @@ fn main() {
             Some(e) => {
                 let texte = format!("deR4Tizer : suppression de {} incomplète ({e})", d.display());
                 println!("{texte}");
-                let _ = std::fs::write(std::path::PathBuf::from(natif::dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows"))
-                    .join(r"Temp\deR4Tizer-desinstallation.txt"), &texte);
+                natif::compte_rendu_systeme("deR4Tizer-desinstallation", &texte);
             }
         }
         return;

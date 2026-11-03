@@ -578,6 +578,6 @@ function Restes-Donnees([int]$Nombre = 40) {
     }
     $p = @(Get-Process deR4Tizer* -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name)($($_.Id))" })
     "$($e.Count) élément(s) : $($l -join ' ; ') ; processus : $(if ($p.Count) { $p -join ', ' } else { 'aucun' })"
-    $cr = Join-Path $env:SystemRoot 'Temp\deR4Tizer-desinstallation.txt'
-    if (Test-Path $cr) { "compte rendu de la désinstallation : $(Get-Content $cr -Raw)" }
+    $cr = Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-desinstallation-*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($cr) { "compte rendu de la désinstallation : $(Get-Content $cr.FullName -Raw)" }
 }

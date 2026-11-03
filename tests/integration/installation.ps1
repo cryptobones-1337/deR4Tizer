@@ -1301,7 +1301,7 @@ if ($regles1) {
         $n = Reglesparefeu
         if ($n) {
             $noms = @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | ForEach-Object DisplayName) -join ' // '
-            $cr = Get-Content (Join-Path $env:SystemRoot 'Temp\deR4Tizer-nettoyage.txt') -Raw -ErrorAction SilentlyContinue
+            $cr = Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-nettoyage-*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Raw -ErrorAction SilentlyContinue
             return "$n règle(s) restante(s) : $noms ; compte rendu : $cr"
         }
         $true

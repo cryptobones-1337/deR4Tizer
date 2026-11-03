@@ -1786,3 +1786,20 @@ pub fn etiquette_point_analyse(chemin: &std::path::Path) -> Result<Option<u32>, 
     let _ = unsafe { FindClose(h) };
     Ok((d.dwFileAttributes & 0x400 != 0).then_some(d.dwReserved0))
 }
+
+/// Compte rendu d'une action du MSI dans %SystemRoot%\Temp, où un compte standard peut créer des fichiers : nom unique
+/// (heure et PID), créé sans écraser et sans suivre de lien (`creer_verifie`). Un nom posé d'avance ou un lien n'est
+/// jamais écrit par SYSTEM (relecture de #124, R2 ; audit, pré-création)
+pub fn compte_rendu_systeme(prefixe: &str, texte: &str) -> Option<std::path::PathBuf> {
+    use std::io::Write;
+    let temp = std::path::PathBuf::from(dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows")).join("Temp");
+    let heure: String = crate::commun::maintenant().chars().filter(|c| c.is_ascii_digit()).collect();
+    for essai in 0..5 {
+        let p = temp.join(format!("{prefixe}-{heure}-{}-{essai}.txt", std::process::id()));
+        if let Ok(mut f) = creer_verifie(&p) {
+            let _ = f.write_all(texte.as_bytes());
+            return Some(p);
+        }
+    }
+    None
+}
