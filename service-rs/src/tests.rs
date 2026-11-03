@@ -6499,8 +6499,9 @@ fn isolation_reverifiee_et_refus_avant_ouverture() {
     let r = std::env::temp_dir().join(format!("d4t-isov-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&r);
     std::fs::create_dir_all(r.join("d")).unwrap();
-    std::fs::write(r.join("d").join("cmd.exe"), b"x").unwrap();
-    let cible = c(&r.join("d").join("cmd.exe").to_string_lossy()).unwrap();
+    // Nom absent de Windows : un nom de Windows est refusé dès l'isolation (audit de #119, S119-03)
+    std::fs::write(r.join("d").join("outil-d4t.exe"), b"x").unwrap();
+    let cible = c(&r.join("d").join("outil-d4t.exe").to_string_lossy()).unwrap();
     assert_eq!(crate::reponse::verifier_isolation(&cible), Valable);
     std::fs::remove_dir_all(r.join("d")).unwrap();
     // Dossier parent absent : illisible, la règle reste (relecture de #119, R3)
@@ -6537,7 +6538,7 @@ fn panique_etat_provisoire_au_demarrage() {
 /// Audit de #118 : nom d'un binaire critique hors de Windows refusé ; dossier parent devenu lien, détourné sans l'ouvrir
 #[test]
 fn isolation_nom_critique_et_parent_lien() {
-    use crate::reponse::{isolation_permise as p, premier_parent_lien, verifier_isolation, EtatIsolation::*};
+    use crate::reponse::{isolation_permise as p, verifier_isolation, EtatIsolation::*};
     let w = r"C:\Windows";
     for n in ["svchost.exe", "LSASS.EXE", "explorer.exe", "csrss.exe", "winlogon.exe"] {
         let e = p(&format!(r"\\?\C:\Users\a\d\{n}"), w).unwrap_err();
@@ -6550,16 +6551,16 @@ fn isolation_nom_critique_et_parent_lien() {
     std::fs::create_dir_all(r.join("d")).unwrap();
     std::fs::write(r.join("d").join("x.exe"), b"x").unwrap();
     let cible = crate::reponse::chemin_final_a_isoler(&r.join("d").join("x.exe").to_string_lossy()).unwrap();
-    assert_eq!(premier_parent_lien(std::path::Path::new(&cible)), Ok(None));
     assert_eq!(verifier_isolation(&cible), Valable);
     std::fs::remove_dir_all(r.join("d")).unwrap();
     // Le dossier remplacé par une jonction vers un dossier qui contient un x.exe : détourné sur le lien, sans le suivre
     std::fs::create_dir_all(r.join("ailleurs")).unwrap();
     std::fs::write(r.join("ailleurs").join("x.exe"), b"y").unwrap();
     jonction(&r.join("d"), &r.join("ailleurs"));
-    let lien = premier_parent_lien(std::path::Path::new(&cible)).unwrap().expect("lien vu");
-    assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&r.join("d")).to_string_lossy()), "{}", lien.display());
-    assert!(matches!(verifier_isolation(&cible), Detournee(v) if v.ends_with("(lien)")));
+    match verifier_isolation(&cible) {
+        Detournee(v) => assert!(crate::natif::meme_chemin(v.trim_end_matches(" (lien)"), &crate::natif::forme_longue(&r.join("d")).to_string_lossy()), "{v}"),
+        e => panic!("{e:?}"),
+    }
     let _ = std::fs::remove_dir(r.join("d"));
     // Dossier parent absent : illisible, la règle reste (relecture de #119, R3)
     assert_eq!(verifier_isolation(&cible), Illisible);
@@ -6570,9 +6571,10 @@ fn isolation_nom_critique_et_parent_lien() {
     let cible2 = crate::reponse::chemin_final_a_isoler(&g.join("a").join("b").join("y.exe").to_string_lossy()).unwrap();
     std::fs::rename(&g, r.join("g-vrai")).unwrap();
     jonction(&g, &r.join("g-vrai"));
-    let lien = premier_parent_lien(std::path::Path::new(&cible2)).unwrap().expect("lien plus haut vu");
-    assert!(crate::natif::meme_chemin(&lien.to_string_lossy(), &crate::natif::forme_longue(&g).to_string_lossy()), "{}", lien.display());
-    assert!(matches!(verifier_isolation(&cible2), Detournee(v) if v.ends_with("(lien)")));
+    match verifier_isolation(&cible2) {
+        Detournee(v) => assert!(crate::natif::meme_chemin(v.trim_end_matches(" (lien)"), &crate::natif::forme_longue(&g).to_string_lossy()), "{v}"),
+        e => panic!("{e:?}"),
+    }
     let _ = std::fs::remove_dir(&g);
     let _ = std::fs::remove_dir_all(&r);
 }
@@ -6598,11 +6600,57 @@ fn panique_premier_releve_et_etiquettes_de_lien() {
     jonction(&r.join("j"), &r.join("vrai"));
     let e = crate::reponse::chemin_final_a_isoler(&r.join("j").join("x.exe").to_string_lossy()).unwrap_err();
     assert!(e.contains("lien") && e.contains("chemin réel"), "{e}");
-    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("j")), Ok(Some(0xA000_0003)));
-    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("vrai")), Ok(None));
-    assert_eq!(crate::natif::etiquette_point_analyse(&r.join("absent")), Err(()));
     let _ = std::fs::remove_dir(r.join("j"));
     let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Audit de #119 : S119-01 (une seule descente par handles, aucun lien traversé) et S119-03 (noms de programmes de Windows)
+#[test]
+fn isolation_descente_par_handles_et_noms_de_windows() {
+    use crate::natif::{ouvrir_sans_traverser_lien as o, ErreurOuverture as E};
+    let r = std::env::temp_dir().join(format!("d4t-iso613-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&r);
+    std::fs::create_dir_all(r.join("a").join("b")).unwrap();
+    std::fs::write(r.join("a").join("b").join("x.exe"), b"x").unwrap();
+    let f = o(&r.join("a").join("b").join("x.exe"), 0x80).unwrap();
+    assert!(crate::natif::meme_chemin(&crate::natif::chemin_final(&f).unwrap(), &crate::natif::forme_longue(&r.join("a").join("b").join("x.exe")).to_string_lossy()));
+    drop(f);
+    // Chemin relatif et « .. » : rendus absolus avant la descente
+    assert!(o(&r.join("a").join("..").join("a").join("b").join("x.exe"), 0x80).is_ok());
+    assert!(matches!(o(&r.join("a").join("b").join("absent.exe"), 0x80), Err(E::Absent)), "fichier seul absent");
+    assert!(matches!(o(&r.join("absent").join("x.exe"), 0x80), Err(E::Autre(m)) if m.starts_with("dossier absent")), "dossier absent : pas « absent »");
+    assert!(matches!(o(&r.join("a").join("b"), 0x80), Err(E::Autre(m)) if m.starts_with("dossier :")), "un dossier n'est pas un programme");
+    // Jonction plus haut : nommée, jamais traversée ; jonction en dernier élément : refusée
+    jonction(&r.join("j"), &r.join("a"));
+    match o(&r.join("j").join("b").join("x.exe"), 0x80) {
+        Err(E::Detourne(p)) => assert!(crate::natif::meme_chemin(&p, &crate::natif::forme_longue(&r.join("j")).to_string_lossy()), "{p}"),
+        e => panic!("{:?}", e.map(|_| ())),
+    }
+    jonction(&r.join("a").join("b").join("y.exe"), &r.join("a"));
+    assert!(matches!(o(&r.join("a").join("b").join("y.exe"), 0x80), Err(E::Lien)), "jonction en dernier élément : lue, pas suivie");
+    for x in [r"\\serveur\p\x.exe", r"\\.\pipe\x", r"\\?\UNC\serveur\p\x.exe"] {
+        assert!(matches!(o(std::path::Path::new(x), 0x80), Err(E::Autre(m)) if m == "pas un lecteur local à lettre"), "{x} : jamais ouvert");
+    }
+    let _ = std::fs::remove_dir(r.join("a").join("b").join("y.exe"));
+    let _ = std::fs::remove_dir(r.join("j"));
+    let _ = std::fs::remove_dir_all(&r);
+    // S119-03 : un nom présent dans Windows, System32 ou SysWOW64 est refusé, où que soit le programme
+    use crate::reponse::nom_programme_windows as n;
+    let w = crate::natif::dossier_windows();
+    for nom in ["dllhost.exe", "RuntimeBroker.exe", "notepad.exe", "cmd.exe", "DLLHOST.EXE"] {
+        assert!(n(nom, &w, |p| p.is_file()), "{nom}");
+    }
+    assert!(!n("outil-maison-d4t.exe", &w, |p| p.is_file()));
+    assert!(!n("", &w, |_| true) && !n("x.exe", "", |_| true) && !n(r"..\x.exe", &w, |_| true), "entrées vides ou composées");
+    let vus = std::cell::RefCell::new(Vec::new());
+    n("x.exe", r"C:\Windows\", |p| { vus.borrow_mut().push(p.to_string_lossy().to_string()); false });
+    assert_eq!(*vus.borrow(), [r"C:\Windows\x.exe", r"C:\Windows\System32\x.exe", r"C:\Windows\SysWOW64\x.exe"]);
+    let d = std::env::temp_dir().join(format!("d4t-iso613n-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("dllhost.exe"), b"x").unwrap();
+    let e = crate::reponse::chemin_final_a_isoler(&d.join("dllhost.exe").to_string_lossy()).unwrap_err();
+    assert!(e.contains("livré avec Windows") && e.contains("quarantaine"), "{e}");
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 /// Audit de #119 : isolation illisible plusieurs relevés de suite, dite une fois

@@ -88,16 +88,18 @@ restée garde le drapeau. L'état publié est l'état effectif, compté sur les 
 échoue. Limite : les serveurs DNS de la machine et les adresses des serveurs de notification restent joignables, tous
 ports, pour tous les programmes (un tunnel DNS reste possible).
 
-**Isolation sur le chemin final (PR 6.6).** Le programme est ouvert par handle sans suivre de lien sur son dernier
-élément ; son chemin final (noms courts, jonctions et points de montage résolus) est comparé au dossier Windows, et
+**Isolation sur le chemin final (PR 6.6).** Le programme est ouvert en descendant son chemin élément par élément, chaque
+dossier ouvert par rapport au handle de son parent, sans suivre de point d'analyse (PR 6.13) ; son chemin final (noms courts, jonctions et points de montage résolus) est comparé au dossier Windows, et
 c'est lui qui porte les règles de pare-feu. Un chemin réseau, un tube ou un volume sans lettre est refusé sur le texte,
-avant toute ouverture ; un fichier qui porte le nom d'un programme critique de Windows (svchost.exe, lsass.exe…) hors
-du dossier Windows aussi (la quarantaine convient mieux ; limite : un maliciel nommé svchost.exe dans un dossier de
+avant toute ouverture ; un fichier qui porte le nom d'un programme critique de Windows (svchost.exe, lsass.exe…) ou
+d'un programme livré avec Windows (présent dans le dossier Windows, System32 ou SysWOW64 : dllhost.exe,
+RuntimeBroker.exe…, PR 6.13) hors du dossier Windows aussi (la quarantaine convient mieux ; limite : un maliciel nommé svchost.exe dans un dossier de
 l'utilisateur ne peut donc pas être isolé, seulement mis en quarantaine), ainsi qu'un chemin dont un dossier est un
-lien (l'administrateur donne le chemin réel). Toutes les 5 minutes, chaque isolation est revérifiée, dossier par dossier sans suivre de
-lien (seules comptent les étiquettes qui redirigent le chemin, bit « substitut de nom » : jonctions, liens
-symboliques…, pas les fichiers OneDrive à la demande ; un chemin illisible 3 relevés de suite est dit par REP-004 ; un dossier
-remplacé par un lien juste entre cette lecture et l'ouverture du fichier est encore traversé) : si son chemin mène ailleurs (dossier remplacé par une jonction ou un lien), l'alerte REP-004 le dit, une fois ; les règles sont gardées, jamais levées
+lien (l'administrateur donne le chemin réel). Toutes les 5 minutes, chaque isolation est revérifiée par la même descente, dossier par dossier
+sans suivre de lien (seules comptent les étiquettes qui redirigent le chemin, bit « substitut de nom » : jonctions, liens
+symboliques…, pas les fichiers OneDrive à la demande ; un chemin illisible 3 relevés de suite est dit par REP-004). Le
+chemin n'est jamais repassé à Windows en entier : un dossier remplacé par un lien pendant la lecture n'est pas traversé
+(PR 6.13 ; avant, il pouvait l'être entre la lecture des dossiers et l'ouverture du fichier) : si son chemin mène ailleurs (dossier remplacé par une jonction ou un lien), l'alerte REP-004 le dit, une fois ; les règles sont gardées, jamais levées
 automatiquement, et peuvent alors couper le réseau du programme visé : la décision reste humaine. Limite : un programme isolé copié
 ailleurs n'est plus coupé du réseau (la règle vise un chemin, pas un fichier).
 

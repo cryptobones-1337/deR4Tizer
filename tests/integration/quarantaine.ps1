@@ -723,7 +723,7 @@ $exeIso = Join-Path $dIso 'outil-iso.exe'
 Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') $exeIso -Force
 $jIso = Join-Path $dIso 'sys'
 $reglesIso = { param($c) @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "deR4Tizer - isole $c (*" }).Count }
-Verifier 'Isolation : jonction vers System32 refusée (dossier du chemin qui est un lien), nom de binaire critique refusé, aucune règle ; programme isolé sur son chemin final, deux règles ; « libérer » les retire' {
+Verifier 'Isolation : jonction vers System32 refusée (dossier du chemin qui est un lien), nom de binaire critique ou de Windows refusé, aucune règle ; programme isolé sur son chemin final, deux règles ; « libérer » les retire' {
     try {
         # PR 6.7a : copie d'un exécutable bénin nommée svchost.exe hors de Windows, refusée (la quarantaine convient mieux)
         $faux = Join-Path $dIso 'svchost.exe'
@@ -733,6 +733,13 @@ Verifier 'Isolation : jonction vers System32 refusée (dossier du chemin qui est
         if ($r.Ok) { return "svchost.exe hors de Windows accepté : $($r.Message)" }
         if ($r.Message -notmatch 'programme critique') { return "refus inattendu pour svchost.exe : $($r.Message)" }
         if (@(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer - isole *svchost.exe*' }).Count) { return 'règle posée pour svchost.exe' }
+        # PR 6.13 : nom d'un programme livré avec Windows (System32), hors de la liste des critiques, refusé aussi
+        $fauxW = Join-Path $dIso 'dllhost.exe'
+        Copy-Item $exeIso $fauxW -Force
+        $r = Commande-Cible 'isolerProgramme' $fauxW
+        Remove-Item $fauxW -Force -ErrorAction SilentlyContinue
+        if ($r.Ok) { return "dllhost.exe hors de Windows accepté : $($r.Message)" }
+        if ($r.Message -notmatch 'livré avec Windows') { return "refus inattendu pour dllhost.exe : $($r.Message)" }
         if (-not (Nouvelle-Jonction $jIso (Join-Path $env:SystemRoot 'System32'))) { return 'jonction non créée' }
         $r = Commande-Cible 'isolerProgramme' (Join-Path $jIso 'cmd.exe')
         if ($r.Ok) { return "jonction vers System32 acceptée : $($r.Message)" }
