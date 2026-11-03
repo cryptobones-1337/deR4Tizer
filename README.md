@@ -47,7 +47,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 | **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés et vérifiés à chaque démarrage, fichiers d'un autre propriétaire ignorés ; si la vérification échoue, configuration et secrets sont ignorés et l'interface l'affiche |
 | **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
 | **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée quand la liste de révocation répond (une liste injoignable est aujourd'hui tolérée : correctif en relecture), fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus (validation sur Windows en cours) |
-| **Interface** | Français / anglais |
+| **Interface** | Français / anglais ; page « Réponses en cours » : chaque action qui dure (suspension, isolation, mode panique, quarantaine, blocage manuel), son échéance de relance et sa récupération ; le mode panique dit sa portée avant d'agir et son état réel ensuite |
 
 ### Architecture
 
@@ -250,7 +250,7 @@ IDS/IPS are experimental.
 | **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced and checked at every start, files owned by anyone else ignored; if the check fails, settings and secrets are ignored and the interface shows it |
 | **Less noise** | 7-day learning mode (behaviours remembered), "no longer alert for this behaviour" exceptions, "direct IP" criterion neutralised for known VPNs, messengers and games; critical alerts are never softened |
 | **Updates** | Daily check; installation (off by default) only with a correct SHA-256 hash and a signature by one of the keys pinned in the binary, revocation checked when the revocation list answers (an unreachable list is currently tolerated: fix under review), files kept in a SYSTEM-only folder, with rollback if the service stops answering (Windows validation in progress) |
-| **Interface** | French / English |
+| **Interface** | French / English; "Ongoing responses" page: every lasting action (suspension, isolation, panic mode, quarantine, manual block), its reminder deadline and how to recover it; panic mode states its scope before acting and its real state afterwards |
 
 ### Architecture
 

@@ -1,0 +1,118 @@
+﻿# Compile l'interface et vérifie la page « Réponses en cours » et le mode panique (PR 6.7b) : décisions pures (lignes,
+# relance due, récupération par sorte, portée du mode panique, état effectif), lecture de reponses.json tel que le
+# service l'écrit, neutralisation des textes, construction de la page ; puis contrôle du source de Gui.cs. La fenêtre
+# n'est pas lancée.
+# Usage (Windows PowerShell 5.1) : powershell -File tests\test-reponses-interface.ps1 [-Depot <racine du dépôt>]
+param([string]$Depot = (Split-Path $PSScriptRoot))
+$ErrorActionPreference = 'Stop'
+$src = Join-Path $Depot 'src'
+$travail = Join-Path $env:TEMP ("d4t-reponses-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $travail | Out-Null
+$ko = 0
+function Cas([string]$Nom, [bool]$Ok, [string]$Detail = '') {
+    if ($Ok) { "RÉUSSI  $Nom" } else { "ÉCHOUÉ  $Nom $Detail"; $script:ko++ }
+}
+try {
+    $out = Join-Path $travail 'interface.exe'
+    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    & $csc /nologo /platform:anycpu /codepage:65001 /target:winexe /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/out:$out" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
+    if ($LASTEXITCODE) { throw 'compilation' }
+    Add-Type -AssemblyName System.Windows.Forms, System.Web.Extensions
+    $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($out))
+    $t = { param($n) $asm.GetType("DeR4Tizer.$n") }
+    $vr = & $t 'VueReponses'; $langue = & $t 'L'
+    $appel = { param($type, $m, [object[]]$a) $type.GetMethod($m).Invoke($null, $a) }
+    $json = New-Object Web.Script.Serialization.JavaScriptSerializer
+    $lire = { param($nomType, $texte) $json.GetType().GetMethods() | Where-Object { $_.Name -eq 'Deserialize' -and $_.IsGenericMethod } | ForEach-Object { $_.MakeGenericMethod((& $t $nomType)).Invoke($json, @($texte)) } }
+    $ok = $true; try { $langue.GetField('En').SetValue($null, $false) } catch { $ok = $false }
+    Cas 'dictionnaire de langue : initialisé' $ok
+    if (-not $ok) { throw 'dictionnaire de langue' }
+
+    # reponses.json tel que politique.rs l'écrit (PascalCase), une action close, une cible piégée (inversion du sens)
+    $texte = @'
+{"Traces":[],"Actions":[
+ {"Id":"a1","Sorte":"SuspensionAuto","Cible":"c:\\users\\a\\x\u202e.exe","Pid":4242,"Creation":133000000000000000,"Debut":1800000000,"Echeance":1800007200,"Relances":0,"DerniereRelance":0,"Etat":"Active","Declencheur":"automatique : leurre"},
+ {"Id":"a2","Sorte":"Panique","Cible":"poste","Pid":null,"Creation":null,"Debut":1800000100,"Echeance":1800014500,"Relances":0,"DerniereRelance":0,"Etat":"Active","Declencheur":"administrateur"},
+ {"Id":"a3","Sorte":"Isolation","Cible":"c:\\outils\\y.exe","Pid":null,"Creation":null,"Debut":1700000000,"Echeance":1900000000,"Relances":2,"DerniereRelance":1800000000,"Etat":"Active","Declencheur":"administrateur"},
+ {"Id":"a4","Sorte":"Quarantaine","Cible":"c:\\users\\a\\z.bin","Pid":null,"Creation":null,"Debut":1800000000,"Echeance":1802592000,"Relances":0,"DerniereRelance":0,"Etat":"Levee","Declencheur":"administrateur"},
+ {"Id":"a5","Sorte":"BlocageManuel","Cible":"203.0.113.9","Pid":null,"Creation":null,"Debut":1800000000,"Echeance":1807776000,"Relances":0,"DerniereRelance":0,"Etat":"Active"}
+]}
+'@
+    $h = & $lire 'HistoriqueReponses' $texte
+    Cas 'fichier du service lu : 5 actions, champs' ($h.Actions.Count -eq 5 -and $h.Actions[0].Pid -eq 4242 -and $h.Actions[1].Pid -eq $null -and $h.Actions[4].Declencheur -eq $null)
+    $l = & $appel $vr 'Lignes' @($h, [long]1800010000)
+    Cas 'seules les actions actives' ($l.Count -eq 4 -and -not ($l | Where-Object { $_.Action.Id -eq 'a4' }))
+    Cas 'panique d''abord, en rouge' ($l[0].Action.Id -eq 'a2' -and $l[0].Gravite -eq 2)
+    $a1 = $l | Where-Object { $_.Action.Id -eq 'a1' }
+    Cas 'relance due : jaune, décision attendue, dite en texte' ($a1.Gravite -eq 1 -and $a1.Etat -match 'relance en attente')
+    $a3 = $l | Where-Object { $_.Action.Id -eq 'a3' }
+    Cas 'pas encore due : relances comptées' ($a3.Gravite -eq 0 -and $a3.Etat -eq 'en cours, relancé 2 fois')
+    Cas 'cible neutralisée, PID montré' (-not $a1.Cible.Contains([string][char]0x202E) -and $a1.Cible.Contains('(PID 4242)'))
+    Cas 'déclencheur absent : « ? »' (($l | Where-Object { $_.Action.Id -eq 'a5' }).Declencheur -eq '?')
+    Cas 'récupération écrite, service arrêté compris' ($a3.Recuperation.Contains('deR4Tizer - isole') -and $a1.Recuperation.Contains('resmon'))
+    Cas 'fichier absent ou vide : aucune ligne' ((& $appel $vr 'Lignes' @($null, [long]0)).Count -eq 0)
+
+    # Récupération : la forme exacte vient de blocages.json et quarantaine.json (le registre garde des minuscules)
+    $listeB = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType((& $t 'Blocage')))
+    foreach ($b in @(@('programme', 'C:\Outils\Y.exe'), @('parefeu', '203.0.113.9'), @('hosts', 'exemple.test'))) {
+        $o = [Activator]::CreateInstance((& $t 'Blocage')); $o.Type = $b[0]; $o.Cible = $b[1]; $listeB.Add($o)
+    }
+    $listeQ = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType((& $t 'ElementQuarantaine')))
+    $q = [Activator]::CreateInstance((& $t 'ElementQuarantaine')); $q.Id = 'q-7'; $q.CheminOrigine = 'C:\Users\A\Z.bin'; $listeQ.Add($q)
+    $rec = { param($sorte, $cible, $numero) $a = [Activator]::CreateInstance((& $t 'ActionEnCours')); $a.Sorte = $sorte; $a.Cible = $cible; if ($numero) { $a.Pid = $numero }; & $appel $vr 'Recuperer' @($a, $listeB, $listeQ) }
+    $c = & $rec 'SuspensionAuto' 'x' 4242
+    Cas 'suspension : reprendre par PID (identité relue par l''assistant)' ($c.Action -eq 'reprendre' -and $c.Cible -eq '4242')
+    Cas 'suspension sans PID : rien' ($null -eq (& $rec 'Suspension' 'x' $null))
+    $c = & $rec 'Isolation' 'c:\outils\y.exe' $null
+    Cas 'isolation : libérer, forme exacte' ($c.Action -eq 'debloquer' -and $c.Type -eq 'programme' -and $c.Cible -eq 'C:\Outils\Y.exe')
+    $c = & $rec 'BlocageManuel' 'exemple.test' $null
+    Cas 'blocage manuel de domaine : débloquer hosts' ($c.Action -eq 'debloquer' -and $c.Type -eq 'hosts')
+    $c = & $rec 'BlocageManuel' '203.0.113.9' $null
+    Cas 'blocage manuel d''adresse : débloquer pare-feu' ($c.Type -eq 'parefeu' -and $c.Cible -eq '203.0.113.9')
+    $c = & $rec 'Quarantaine' 'c:\users\a\z.bin' $null
+    Cas 'quarantaine : restaurer par identifiant' ($c.Action -eq 'restaurer' -and $c.Cible -eq 'q-7')
+    $c = & $rec 'Panique' 'poste' $null
+    Cas 'panique : rétablir' ($c.Action -eq 'panique' -and $c.Valeur -eq 'off')
+    Cas 'objet disparu : rien' ($null -eq (& $rec 'Isolation' 'c:\autre.exe' $null) -and $null -eq (& $rec 'Quarantaine' 'c:\autre' $null))
+
+    # Mode panique : portée, IPv6, relance, retour arrière ; état effectif
+    $p = & $appel $vr 'ConfirmationPanique' @($true)
+    Cas 'portée dite avant d''activer' ($p.Contains('IPv4 et IPv6') -and $p.Contains('IPv6 ouvertes ne le sont PAS') -and $p.Contains('réseau local') -and $p.Contains('4 h') -and $p.Contains('Rétablir Internet'))
+    Cas 'désactivation : vérification dite' ((& $appel $vr 'ConfirmationPanique' @($false)).Contains('incertain'))
+    $etat = { param($e, $p) $x = [Activator]::CreateInstance((& $t 'Etat')); $x.PaniqueEtat = $e; $x.Panique = $p; $x }
+    Cas 'bouton : actif' ((& $appel $vr 'TexteBoutonPanique' @((& $etat 'active' $true))) -eq '◉ RÉTABLIR INTERNET')
+    Cas 'bouton : incertain dit' ((& $appel $vr 'TexteBoutonPanique' @((& $etat 'incertaine' $true))).Contains('INCERTAINE'))
+    Cas 'bouton : inactif' ((& $appel $vr 'TexteBoutonPanique' @((& $etat 'inactive' $false))).Contains('COUPER'))
+    Cas 'service d''avant 6.5 : drapeau seul' ((& $appel $vr 'TexteBoutonPanique' @((& $etat $null $true))) -eq '◉ RÉTABLIR INTERNET')
+    Cas 'pastille : rien si inactif, dite sinon' ($null -eq (& $appel $vr 'PastillePanique' @((& $etat 'inactive' $false))) -and (& $appel $vr 'PastillePanique' @((& $etat 'incertaine' $true))).Contains('INCERTAIN') -and $null -eq (& $appel $vr 'PastillePanique' @($null)))
+
+    # Anglais
+    $langue.GetField('En').SetValue($null, $true)
+    Cas 'anglais : portée et bouton' ((& $appel $vr 'ConfirmationPanique' @($true)).Contains('IPv6 connections are NOT closed') -and (& $appel $vr 'Bouton' @('Isolation')) -eq 'Release')
+    $langue.GetField('En').SetValue($null, $false)
+    foreach ($s in 'SuspensionAuto', 'Suspension', 'Isolation', 'Panique', 'Quarantaine', 'BlocageManuel') {
+        Cas "sorte $s : libellé, bouton, récupération" ((& $appel $vr 'Libelle' @($s)) -ne $s -and (& $appel $vr 'Bouton' @($s)) -ne '' -and (& $appel $vr 'Recuperation' @($s)) -ne '')
+    }
+
+    # Construction de la page (jamais affichée)
+    $ok = $true; $m = ''
+    try { $pg = [Activator]::CreateInstance((& $t 'PageReponses'), $true); $pg.Dispose() } catch { $ok = $false; $m = $_.Exception.InnerException.Message }
+    Cas 'PageReponses construite' $ok $m
+
+    # Branchements dans Gui.cs
+    $g = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
+    Cas 'navigation : Réponses en cours' ($g.Contains('var pageReponses = new PageReponses();') -and $g.Contains('Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);'))
+    Cas 'bouton et pastille sur l''état effectif' ($g.Contains('btnPanique.Text = VueReponses.TexteBoutonPanique(etat);') -and $g.Contains('VueReponses.PastillePanique(etat)'))
+    Cas 'une seule pastille du mode panique (dossier UI de la 6.7)' (-not $g.Contains('MODE PANIQUE : INTERNET COUPÉ') -and ([regex]::Matches($g, 'VueReponses\.PastillePanique\(etat\)')).Count -eq 1)
+    Cas 'confirmation du mode panique : portée' ($g.Contains('string question = VueReponses.ConfirmationPanique(!paniqueActive);') -and $g.Contains('case "panique": return VueReponses.ConfirmationPanique(v != "off");'))
+    Cas 'isolation : chemin réel dans la confirmation (S118-02)' ($g.Contains('+ CheminReelTexte(cible);') -and $g.Contains('CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)'))
+    $r = [IO.File]::ReadAllText("$src\Reponses.cs")
+    Cas 'récupération par le canal (assistant élevé)' ($r.Contains('Canal.Executer(c);'))
+    Cas 'lecture hors du fil de l''interface, une à la fois' ($r.Contains('ThreadPool.QueueUserWorkItem') -and $r.Contains('Interlocked.CompareExchange(ref enCours, 1, 0)'))
+    foreach ($f in "$Depot\compiler.ps1", "$Depot\tests\test-confirmations.ps1", "$Depot\tests\test-incidents-interface.ps1", "$Depot\tests\test-collectes-interface.ps1") {
+        Cas "compilation : Reponses.cs listé ($(Split-Path $f -Leaf))" (([IO.File]::ReadAllText($f)).Contains('"$src\Reponses.cs"'))
+    }
+} finally {
+    Remove-Item $travail -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($ko) { "$ko cas en échec"; exit 1 }

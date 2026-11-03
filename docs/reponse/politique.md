@@ -100,6 +100,14 @@ remplacé par un lien juste entre cette lecture et l'ouverture du fichier est en
 automatiquement, et peuvent alors couper le réseau du programme visé : la décision reste humaine. Limite : un programme isolé copié
 ailleurs n'est plus coupé du réseau (la règle vise un chemin, pas un fichier).
 
+**Interface (PR 6.7b).** La page « Réponses en cours » montre chaque action active : quoi, sur quoi, déclencheur,
+depuis quand, échéance de relance, état (« relance en attente » en jaune, mode panique en rouge, toujours écrit en
+toutes lettres), procédure de récupération, service arrêté compris. Son bouton (« Reprendre », « Libérer »,
+« Débloquer », « Rétablir Internet », « Restaurer ») passe par l'assistant élevé. La confirmation du mode panique dit
+sa portée (tout Internet, IPv4 et IPv6 ; connexions IPv6 ouvertes non coupées ; réseau local, DNS et serveurs de
+notification joignables), la relance à 4 h et le retour arrière ; l'en-tête montre l'état effectif publié par le
+service. La confirmation d'une isolation montre le chemin réel qui sera isolé.
+
 **Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
 (`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
 blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action à chaque contrôle. Un processus

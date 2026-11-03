@@ -224,6 +224,36 @@ namespace DeR4Tizer
             catch { return nonLue; }
         }
 
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateFileW(string nom, uint acces, uint partage, IntPtr securite, uint creation, uint drapeaux, IntPtr modele);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern int GetFinalPathNameByHandleW(IntPtr h, StringBuilder chemin, int taille, int drapeaux);
+
+        // Chemin réel du programme à isoler, celui que le service isolera (relecture de #118, S118-02). Seulement sur un
+        // lecteur local : jamais de connexion réseau au nom de l'administrateur. Ouvert sans suivre de lien sur son
+        // dernier élément (FILE_FLAG_OPEN_REPARSE_POINT), en lecture d'attributs seulement
+        static string CheminReelTexte(string chemin)
+        {
+            bool en = L.En;
+            if (chemin == null || chemin.Length < 4 || chemin[1] != ':' || chemin[2] != '\\' || chemin.StartsWith("\\\\"))
+                return en ? "\nReal path: not read (not a local drive path)" : "\nChemin réel : non lu (pas un chemin sur un lecteur local)";
+            IntPtr h = CreateFileW(chemin, 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return en ? "\nReal path: not read (missing or unreadable)" : "\nChemin réel : non lu (absent ou illisible)";
+            try
+            {
+                var tampon = new StringBuilder(32768);
+                int n = GetFinalPathNameByHandleW(h, tampon, tampon.Capacity, 0);
+                if (n <= 0 || n >= tampon.Capacity) return en ? "\nReal path: not read" : "\nChemin réel : non lu";
+                string reel = tampon.ToString();
+                if (reel.StartsWith("\\\\?\\") && !reel.StartsWith("\\\\?\\UNC\\")) reel = reel.Substring(4);
+                bool different = !string.Equals(reel, chemin, StringComparison.OrdinalIgnoreCase);
+                return (en ? "\nReal path: " : "\nChemin réel : ") + Visible(reel)
+                    + (different ? (en ? "\n⚠ It differs from the path shown above: the service checks and isolates the real one, or refuses a path that goes through a link."
+                                       : "\n⚠ Il diffère du chemin affiché : le service vérifie et isole le chemin réel, ou refuse un chemin qui passe par un lien.") : "");
+            }
+            finally { CloseHandle(h); }
+        }
+
         // Nom, chemin, signature, heure de création, sur des lignes à part
         static string IdentiteTexte(Commande c)
         {
@@ -274,8 +304,8 @@ namespace DeR4Tizer
                         return (en ? "RESTORE from quarantine into the deR4Tizer folder (ProgramData\\deR4Tizer\\restaurations): " : "SORTIR de la quarantaine dans le dossier de deR4Tizer (ProgramData\\deR4Tizer\\restaurations) : ")
                             + (q == null ? (en ? "unknown item " : "élément inconnu ") + vc : Visible(q.CheminOrigine));
                     }
-                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + vc;
-                case "panique": return v != "off" ? (en ? "PANIC: cut the Internet" : "PANIQUE : couper Internet") : (en ? "End panic mode: restore Internet" : "Fin du mode panique : rétablir Internet");
+                case "isolerProgramme": return (en ? "Isolate from the network: " : "Isoler du réseau : ") + vc + CheminReelTexte(cible);
+                case "panique": return VueReponses.ConfirmationPanique(v != "off");
                 case "baseline": return (v == "annuler" ? (en ? "REVERT security settings: " : "ANNULER des réglages de sécurité : ") : v == "appliquer" ? (en ? "Apply security settings: " : "Appliquer des réglages de sécurité : ") : (en ? "Re-evaluate the baseline " : "Réévaluer la baseline ")) + vc;
                 case "reglages":
                     {
@@ -789,6 +819,11 @@ namespace DeR4Tizer
             navExtensions = Lien(liens, "Extensions", pageExtensions, largeurNav);
             navBlocages = Lien(liens, "Blocages", pageBlocages, largeurNav);
             navQuarantaine = Lien(liens, "Quarantaine", pageQuarantaine, largeurNav);
+            // Actions de réponse qui durent, leurs relances et leur récupération (PR 6.7b)
+            var pageReponses = new PageReponses();
+            contenu.Controls.Add(pageReponses);
+            pages.Add(pageReponses);
+            Lien(liens, L.En ? "Ongoing responses" : "Réponses en cours", pageReponses, largeurNav);
             navMenaces = Lien(liens, "Menaces", pageMenaces, largeurNav);
             var pageSante = new PageSante();
             contenu.Controls.Add(pageSante);
@@ -998,7 +1033,6 @@ namespace DeR4Tizer
                 if (niveauSante > 0) pastilles.Add(new Entete.Pastille { Texte = VueSante.TextePastille(niveauSante) + (enPanne != "" ? " — " + enPanne : ""), Couleur = niveauSante == 2 ? Theme.Rouge : Theme.Jaune });
                 else if (enPanne != "") pastilles.Add(new Entete.Pastille { Texte = enPanne, Couleur = Theme.Jaune });
                 if (VueSante.EtatAncien(etat, DateTime.Now)) pastilles.Insert(0, new Entete.Pastille { Texte = L.T("ÉTAT ANCIEN : SERVICE À VÉRIFIER"), Couleur = Theme.Jaune });
-                if (etat.Panique) pastilles.Insert(0, new Entete.Pastille { Texte = "MODE PANIQUE : INTERNET COUPÉ", Couleur = Theme.Rouge, Clignote = true });
                 // Échec fermé côté service : configuration et secrets ignorés tant que les droits ne sont pas vérifiés
                 if (!string.IsNullOrEmpty(etat.ProtectionDonnees))
                     pastilles.Insert(0, new Entete.Pastille { Texte = L.T("DONNÉES NON PROTÉGÉES : RÉGLAGES IGNORÉS"), Couleur = Theme.Rouge, Clignote = true });
@@ -1015,8 +1049,13 @@ namespace DeR4Tizer
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
                 if (etat.Exposition != null && etat.Exposition.Exposee)
                     pastilles.Insert(1, new Entete.Pastille { Texte = "PC EXPOSÉ À INTERNET", Couleur = Theme.Rouge, Clignote = true });
+                // État effectif publié par le service, compté sur les règles du pare-feu (PR 6.7b) : « incertain » se dit,
+                // et « Rétablir Internet » reste offert
                 paniqueActive = etat.Panique;
-                btnPanique.Text = paniqueActive ? "◉ RÉTABLIR INTERNET" : "◉ PANIQUE : COUPER INTERNET";
+                btnPanique.Text = VueReponses.TexteBoutonPanique(etat);
+                string pastillePanique = VueReponses.PastillePanique(etat);
+                if (pastillePanique != null)
+                    pastilles.Insert(0, new Entete.Pastille { Texte = pastillePanique, Couleur = etat.PaniqueEtat == "incertaine" ? Theme.Jaune : Theme.Rouge, Clignote = etat.PaniqueEtat != "incertaine" });
                 if (etat.BureauADistance) pastilles.Add(new Entete.Pastille { Texte = "BUREAU À DISTANCE ACTIF", Couleur = Theme.Rouge, Clignote = true });
                 if (etat.OutilsDistants != null && etat.OutilsDistants.Count > 0)
                     pastilles.Add(new Entete.Pastille { Texte = "PRISE EN MAIN : " + string.Join(", ", etat.OutilsDistants.Select(o => o.Nom).Distinct()), Couleur = Theme.Rouge, Clignote = true });
@@ -1593,9 +1632,8 @@ namespace DeR4Tizer
 
         void Panique()
         {
-            string question = paniqueActive
-                ? "Rétablir l'accès à Internet pour tous les programmes ?"
-                : L.T("Couper Internet pour tous les programmes et fermer les connexions en cours ?\n\nÀ utiliser si vous pensez qu'un attaquant ou un rançongiciel est actif. Le réseau local reste accessible.\n\nLimite : les serveurs DNS et les serveurs de notification (ntfy, Teams, e-mail) restent joignables pour tous les programmes, pas seulement pour deR4Tizer ; un malware pourrait s'en servir pour faire sortir des données. Préférez un serveur ntfy auto-hébergé à ntfy.sh.");
+            // Portée, limite IPv6, échéance de relance et retour arrière, dits avant d'agir (PR 6.7b)
+            string question = VueReponses.ConfirmationPanique(!paniqueActive);
             if (MessageBox.Show(question, "deR4Tizer : PANIQUE", MessageBoxButtons.YesNo, paniqueActive ? MessageBoxIcon.Question : MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(new Commande { Action = "panique", Valeur = paniqueActive ? "off" : "on" });
             etatVu = "";
