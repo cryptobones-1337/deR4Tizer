@@ -254,6 +254,10 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
+   Validée par le mainteneur le 2026-11-03, par ces mots : « Je valide », en réponse à la question « Valides-tu la phase 6,
+   pour que la refonte de l'interface (U0) puisse commencer ? », une fois ses PR fusionnées (#108 à #128, corrections comprises ;
+   chacune relue ; celles qui touchent le code, avec un passage complet en VM). Le reste de l'inventaire des constats
+   d'audit de la phase 6 est gardé pour l'étape d'avant distribution.
 5. Phase « Interface et assistant d'installation », avant la phase 7. Ouverte par le mainteneur le 2026-11-03, par ces
    mots : « fais la refonte avant la phase 7 ». Commence une fois les corrections de la phase 6 fusionnées et ce point
    inscrit ; la phase 7 commence une fois celle-ci validée par la relecture et par cryptobones-1337. Décisions,
