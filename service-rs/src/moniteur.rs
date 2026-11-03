@@ -2173,17 +2173,18 @@ pub fn nettoyer() {
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
     let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
     println!("Fichiers leurres supprimés : {n}.");
-    // Pare-feu muet : le retrait est tenté quand même, avec une échéance : la désinstallation n'est jamais bloquée (D6-7 ;
-    // audit de #122). Les règles du groupe sont déjà retirées par PowerShell plus haut
+    // Pare-feu muet : le retrait est tenté quand même, avec une échéance : ce retrait ne bloque plus la désinstallation
+    // (D6-7 ; audit de #122). Les règles du groupe sont déjà retirées par PowerShell plus haut. Limite : ce retrait du
+    // groupe et `supprimer_regle` n'ont pas encore d'échéance (relecture de #123, D1, préalable)
     if reponse::rafraichir_etat_panique() != Some(reponse::EtatPanique::Inactive) {
         if let Ok(a) = autorisation_humaine(Action::FinPanique) {
             match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {
+                Some(Ok(_)) => println!("Mode panique désactivé."),
                 Some(Err(e)) => println!("Mode panique : {e}"),
-                None => println!("Mode panique : le pare-feu ne répond pas en 30 s ; retrait du drapeau laissé à la désinstallation"),
-                Some(Ok(_)) => {}
+                None => println!("Mode panique : le pare-feu ne répond pas en 30 s ; le drapeau reste. Il part avec le dossier de données ; \
+                    avec GARDER_DONNEES=1, il est gardé : après une réinstallation, l'état est « incertain » et l'interface offre « Rétablir Internet »"),
             }
         }
-        println!("Mode panique désactivé.");
     }
     let marqueur = commun::dossier().join("journal-dns-active-par-deR4Tizer");
     if marqueur.exists() && evenements::activer_journal(JOURNAL_DNS, false) {

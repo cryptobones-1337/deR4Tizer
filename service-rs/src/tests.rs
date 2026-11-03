@@ -6734,5 +6734,6 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     assert!(x.raisons.contains("5 min") && x.raisons.contains("MpsSvc") && !x.raisons.contains("  "), "{}", x.raisons);
     let m = include_str!("moniteur.rs").replace("\r\n", "\n");
     assert!(m.contains("let (n, alerter) = compter_suite(pare_feu_muet, lu.is_none(), RELEVES_PARE_FEU_MUET);\n                        pare_feu_muet = n;\n                        if alerter {\n                            m.lock().unwrap().ajouter_alerte_brute(alerte_pare_feu_muet(), None);"), "branché : compté, puis alerté");
-    assert!(m.contains("match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {"), "D6-7 : désinstallation jamais bloquée");
+    assert!(m.contains("match reponse::avec_echeance(&NETTOYAGE_PANIQUE, Duration::from_secs(30), move || execution::panique(&a, false, &[])) {"), "D6-7 : ce retrait ne bloque plus la désinstallation");
+    assert!(m.contains("Some(Ok(_)) => println!(\"Mode panique désactivé.\"),"), "relecture de #123, R1 : succès seulement");
 }
