@@ -324,7 +324,7 @@ static PIDS_REGLES: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new(
 pub fn powershell_regles(contexte: &str, script: &str) {
     REGLES_SERVICE.executer(|| {
         crate::mesure::powershell(contexte);
-        let Ok(enfant) = Command::new(crate::natif::powershell_exe())
+        let Ok(mut enfant) = Command::new(crate::natif::powershell_exe())
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .current_dir(crate::natif::dossier_systeme())
             .creation_flags(0x0800_0000)
@@ -336,8 +336,10 @@ pub fn powershell_regles(contexte: &str, script: &str) {
         };
         let pid = enfant.id();
         PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).push(pid);
-        let _ = enfant.wait_with_output();
+        let _ = enfant.wait();
+        // Retiré du suivi avant de lâcher le handle : tant qu'il est tenu, Windows ne redonne pas ce PID
         PIDS_REGLES.lock().unwrap_or_else(|p| p.into_inner()).retain(|p| *p != pid);
+        drop(enfant);
     });
 }
 
