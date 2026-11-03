@@ -120,8 +120,10 @@ pub fn editeur_pour_test(chemin: &str) -> String {
 pub fn signal_fort(a: &Alerte) -> bool {
     let r = a.raisons.to_lowercase();
     // Constats de santé (SAN-*, phase 4) : jamais appris, sinon une collecte muette pendant l'apprentissage ne serait
-    // plus jamais signalée
+    // plus jamais signalée. Actions de réponse (REP-*, phase 6) : une relance ou une isolation invérifiable ne tombe
+    // jamais en « Info » (audit de #121, S121-01)
     a.regle.starts_with("SAN-")
+        || a.regle.starts_with("REP-")
         || a.destination.starts_with("IDS :")
         || ["télécharge du code", "lolbin", "débogage à distance", "suppression des sauvegardes", "macro ou exploit", crate::persistance::REMARQUE_ANOMALIE_TACHES].iter().any(|m| r.contains(m))
 }

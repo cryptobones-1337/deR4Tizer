@@ -1029,6 +1029,12 @@ fn n3_apprentissage_par_chemin_editeur_et_destination() {
     let mut ids = alerte("Alerte", "IDS : Bureau à distance (RDP) sollicité depuis Internet", "règle 9000041", 6);
     ids.mitre = String::new();
     assert!(signal_fort(&ids));
+    // Audit de #121, S121-01 : les actions de réponse ne s'apprennent pas
+    for r in ["REP-001", "REP-002", "REP-003", "REP-004"] {
+        let mut x = alerte("Alerte", "deR4Tizer", "isolation non vérifiable", 5);
+        x.regle = r.into();
+        assert!(signal_fort(&x), "{r}");
+    }
     let vide = BTreeSet::new();
     assert_eq!(decider("Critique", "x", true, &vide, &[]), None);
     assert!(decider("Alerte", "x", true, &vide, &[]).is_some_and(|d| d.2));
@@ -5812,7 +5818,9 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
     assert!(m.contains("if detournees_signalees.insert((cible.clone(), vers.clone())) {"), "S118-01 : revérification, une alerte par détournement");
     assert!(!m.contains("retirer_isolation_detournee"), "relecture de #118, D2 : une isolation n'est jamais levée automatiquement");
-    let bloc = &m[m.find("match reponse::verifier_isolation(&cible) {").unwrap()..];
+    assert!(m.contains("let (n, alerter) = compter_illisible(illisibles.get(&cible).copied().unwrap_or(0), etat == reponse::EtatIsolation::Illisible);")
+        && m.contains("m.lock().unwrap().ajouter_alerte_brute(alerte_isolation_non_verifiable(&cible), None);"), "audit de #119 : illisible répété, dit");
+    let bloc = &m[m.find("let etat = reponse::verifier_isolation(&cible);").unwrap()..];
     let bloc = &bloc[..bloc.find("tours = tours.wrapping_add(1);").unwrap()];
     for interdit in ["liberer_programme", "politique::clore", "blocages.retain", "debloquer"] {
         assert!(!bloc.contains(interdit), "D2 : {interdit} dans la revérification");
@@ -6578,6 +6586,7 @@ fn panique_premier_releve_et_etiquettes_de_lien() {
     assert!(!d(a(false, Incertaine), Incertaine), "relevés suivants : une seule alerte");
     assert!(!d(a(true, Incertaine), Active) && !d(a(true, Inactive), Inactive));
     assert!(l(0xA000_0003) && l(0xA000_000C), "jonction, lien symbolique");
+    assert!(l(0xA000_0027), "autre substitut de nom (bit 29)");
     for e in [0x9000_001Au32, 0x8000_0013, 0x8000_0017, 0] {
         assert!(!l(e), "{e:#x} : OneDrive, déduplication… ne sont pas des liens");
     }
@@ -6594,4 +6603,18 @@ fn panique_premier_releve_et_etiquettes_de_lien() {
     assert_eq!(crate::natif::etiquette_point_analyse(&r.join("absent")), Err(()));
     let _ = std::fs::remove_dir(r.join("j"));
     let _ = std::fs::remove_dir_all(&r);
+}
+
+/// Audit de #119 : isolation illisible plusieurs relevés de suite, dite une fois
+#[test]
+fn isolation_non_verifiable_alerte_une_fois() {
+    use crate::moniteur::{alerte_isolation_non_verifiable as a, compter_illisible as c, RELEVES_ILLISIBLES as n};
+    assert_eq!(c(0, true), (1, false));
+    assert_eq!(c(n - 1, true), (n, true), "au 3e relevé illisible");
+    assert_eq!(c(n, true), (n + 1, false), "une seule fois");
+    assert_eq!(c(7, false), (0, false), "relu : remis à zéro");
+    assert_eq!(c(u32::MAX, true).0, u32::MAX);
+    let x = a(r"C:\a\x.exe");
+    assert_eq!((x.regle.as_str(), x.niveau.as_str()), ("REP-004", "Alerte"));
+    assert!(x.raisons.contains("non vérifiable") && x.raisons.contains("3 relevés de 5 min") && x.raisons.contains("gardées") && !x.raisons.contains("  "), "{}", x.raisons);
 }

@@ -174,11 +174,18 @@ namespace DeR4Tizer
             }
         }
 
-        // Le processus du registre est-il encore celui-là ? Heure de création comparée : un PID réutilisé désigne un autre
-        // programme (audit de #120, S120-02). Sans heure au registre : rien à comparer
+        // La page peut-elle envoyer « Reprendre » ? Refus seulement si l'heure de création est lue ET différente (PID
+        // réutilisé, audit de #120, S120-02). Illisible avec les droits de l'utilisateur (processus d'un autre compte) :
+        // l'assistant élevé, qui fait autorité, tranche (relecture de #120, R4)
         public static bool MemeProcessus(long? attendue, long? lue)
         {
-            return !attendue.HasValue || (lue.HasValue && lue.Value == attendue.Value);
+            return !attendue.HasValue || !lue.HasValue || lue.Value == attendue.Value;
+        }
+
+        // reponses.json : absent (aucune action enregistrée), illisible (verrou, fichier abîmé) ou lu (audit de #120, S120-04)
+        public static string EtatLecture(bool present, bool lu)
+        {
+            return lu ? "lu" : present ? "illisible" : "absent";
         }
 
         // Portée du mode panique, dite avant de l'activer (conseil UX externe, P0 ; dossier de la phase 6, § 4.7)
@@ -271,9 +278,16 @@ namespace DeR4Tizer
             {
                 try
                 {
-                    var l = VueReponses.Lignes(Commun.Lire<HistoriqueReponses>("reponses.json"), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    // Accès au dossier refusé : File.Exists rend faux ; présent par prudence, donc « illisible » (relecture de #121, R1)
+                    bool present;
+                    try { present = System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, "reponses.json")) || (System.IO.Directory.Exists(Commun.Dossier) && !DossierLisible()); }
+                    catch { present = true; }
+                    var h = Commun.Lire<HistoriqueReponses>("reponses.json");
+                    var l = VueReponses.Lignes(h, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    // Illisible n'est pas « aucune réponse en cours » : le dernier affichage est gardé, et c'est dit
+                    bool illisible = VueReponses.EtatLecture(present, h != null) == "illisible";
                     if (!IsHandleCreated) return;
-                    try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(l); })); } catch (InvalidOperationException) { }
+                    try { BeginInvoke((Action)(() => { if (numero == chargement) { if (illisible) Illisible(); else Afficher(l); } })); } catch (InvalidOperationException) { }
                 }
                 finally { Interlocked.Exchange(ref enCours, 0); }
             });
@@ -298,6 +312,20 @@ namespace DeR4Tizer
                 : string.Format(en ? "{0} ongoing response(s), {1} awaiting a decision." : "{0} réponse(s) en cours, dont {1} en attente de décision.", l.Count, dues);
             resume.ForeColor = l.Any(x => x.Gravite == 2) ? Theme.Rouge : dues > 0 ? Theme.Jaune : Theme.TexteDim;
             Detailler();
+        }
+
+        // Le dossier de données se liste-t-il ? Sinon File.Exists ne peut pas répondre
+        static bool DossierLisible()
+        {
+            try { System.IO.Directory.EnumerateFiles(Commun.Dossier, "reponses.json").Any(); return true; }
+            catch { return false; }
+        }
+
+        void Illisible()
+        {
+            bool en = L.En;
+            resume.Text = en ? "Response register unreadable (reponses.json): the last display is kept; it may be out of date." : "Registre des réponses illisible (reponses.json) : dernier affichage gardé, peut-être dépassé.";
+            resume.ForeColor = Theme.Jaune;
         }
 
         void Recuperer()

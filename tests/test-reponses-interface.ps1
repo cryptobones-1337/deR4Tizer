@@ -88,7 +88,10 @@ try {
     Cas 'objet disparu : rien' ($null -eq (& $rec 'Isolation' 'c:\autre.exe' $null) -and $null -eq (& $rec 'Quarantaine' 'c:\autre' $null))
 
     # Audit de #120 : PID réutilisé (S120-02), dossier parent qui est un lien (S120-01)
-    Cas 'même processus : heure de création comparée' ((& $appel $vr 'MemeProcessus' @([long]5, [long]5)) -and -not (& $appel $vr 'MemeProcessus' @([long]5, [long]6)) -and -not (& $appel $vr 'MemeProcessus' @([long]5, $null)) -and (& $appel $vr 'MemeProcessus' @($null, $null)))
+    Cas 'même processus : refus seulement si lue et différente (R4)' ((& $appel $vr 'MemeProcessus' @([long]5, [long]5)) -and -not (& $appel $vr 'MemeProcessus' @([long]5, [long]6)) -and (& $appel $vr 'MemeProcessus' @([long]5, $null)) -and (& $appel $vr 'MemeProcessus' @($null, $null)))
+    Cas 'registre : absent, illisible, lu (S120-04)' ((& $appel $vr 'EtatLecture' @($false, $false)) -eq 'absent' -and (& $appel $vr 'EtatLecture' @($true, $false)) -eq 'illisible' -and (& $appel $vr 'EtatLecture' @($true, $true)) -eq 'lu')
+    $r0 = [IO.File]::ReadAllText("$src\Reponses.cs")
+    Cas 'registre illisible : dernier affichage gardé' ($r0.Contains('if (illisible) Illisible(); else Afficher(l);'))
     $canal = & $t 'Canal'
     $d = Join-Path $travail 'vrai'; New-Item -ItemType Directory -Path (Join-Path $d 'sous') -Force | Out-Null
     Set-Content (Join-Path $d 'sous\x.exe') 'x'

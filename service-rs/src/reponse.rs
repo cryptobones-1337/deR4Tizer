@@ -942,10 +942,11 @@ pub fn decision_isolation(cible_longue: &str, lu: &Result<Option<String>, String
     }
 }
 
-/// Décision pure : une étiquette de point d'analyse est-elle un lien (jonction ou point de montage, lien symbolique) ?
-/// Les autres (fichiers OneDrive à la demande, déduplication…) ne redirigent pas le chemin (relecture de #119, R2)
+/// Décision pure : une étiquette de point d'analyse redirige-t-elle le chemin ? Bit 29, « substitut de nom »
+/// (IsReparseTagNameSurrogate) : jonctions, points de montage, liens symboliques, et toute autre étiquette qui redirige ;
+/// pas les fichiers OneDrive à la demande ni la déduplication (relecture de #119, R2 ; audit, liste fermée remplacée)
 pub fn etiquette_lien(etiquette: u32) -> bool {
-    matches!(etiquette, 0xA000_0003 | 0xA000_000C)
+    etiquette & 0x2000_0000 != 0
 }
 
 /// Premier dossier du chemin, en partant de la racine, qui est un lien ; chaque dossier est lu sur l'entrée de son
