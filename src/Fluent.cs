@@ -427,7 +427,9 @@ namespace DeR4Tizer
                 pile.Children.Add(panique);
                 pile.Children.Add(new TextBlock
                 {
-                    Text = L.T("Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir."),
+                    // Phrase selon l'état (audit de #134, S134-01) : quand la panique est active, le bouton sert à la retirer
+                    Text = L.T(active ? "Rétablit Internet sur ce poste ; ce qui sera fait est dit avant d'agir."
+                                      : "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir."),
                     FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 6, 0, 16), TextWrapping = TextWrapping.Wrap
                 });
                 string statut = (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');

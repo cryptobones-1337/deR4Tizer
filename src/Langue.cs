@@ -29,6 +29,7 @@ namespace DeR4Tizer
             { "Aucun problème relevé", "No issue found" }, { "À traiter", "To act on" }, { "À surveiller", "To watch" },
             { "En ordre et informations", "In order and information" },
             { "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir.", "Cuts this computer off the Internet; the scope and how to undo it are stated before acting." },
+            { "Rétablit Internet sur ce poste ; ce qui sera fait est dit avant d'agir.", "Restores Internet access on this computer; what will be done is stated before acting." },
             { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
             { "SERVICE EN LIGNE", "SERVICE ONLINE" }, { "SERVICE NON INSTALLÉ", "SERVICE NOT INSTALLED" }, { "SERVICE", "SERVICE" },
             { "arrêté", "stopped" }, { "démarrage…", "starting…" }, { "arrêt…", "stopping…" },
