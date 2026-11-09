@@ -114,6 +114,23 @@ function Arreter-Interface {
     Start-Sleep 1
 }
 
+# Lance l'interface et attend sa fenêtre. Une sortie immédiate en code 0 veut dire qu'une autre instance tient le verrou
+# d'instance unique : la tâche de relance (toutes les 5 min) peut relancer l'interface juste après Arreter-Interface (vu
+# une fois sur 80 captures). Jusqu'à 3 essais, chacun précédé d'un arrêt ; temps mesuré sur l'essai retenu
+function Ouvrir-Interface([string[]]$Arguments) {
+    for ($essai = 1; $essai -le 3; $essai++) {
+        Arreter-Interface
+        $chrono = [Diagnostics.Stopwatch]::StartNew()
+        $p = Start-Process $script:exe -ArgumentList $Arguments -PassThru
+        while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and $chrono.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50; $p.Refresh() }
+        $ms = [int]$chrono.Elapsed.TotalMilliseconds
+        if ($p.HasExited -and $p.ExitCode -eq 0 -and $essai -lt 3) { continue }
+        if ($p.HasExited) { return @{ Erreur = "l'interface s'est fermée (code $($p.ExitCode), essai $essai)" } }
+        if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return @{ Erreur = "aucune fenêtre en 30 s (essai $essai)" } }
+        return @{ P = $p; Ms = $ms; Essai = $essai }
+    }
+}
+
 # Langue de l'interface : réglages envoyés au service (config.json, que l'interface lit au démarrage)
 function Langue([string]$Code) {
     # Juste après l'installation, config.json n'existe pas encore : réglages partiels, les autres champs gardent leur
@@ -150,12 +167,9 @@ if (-not $installe) {
         if (-not $okLangue) { continue }
         foreach ($page in $pages) {
             Verifier "Capture $code : $page" {
-                Arreter-Interface
-                $p = Start-Process $exe -ArgumentList '--page', "`"$page`"" -PassThru
-                $fin = (Get-Date).AddSeconds(30)
-                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 300; $p.Refresh() }
-                if ($p.HasExited) { return "l'interface s'est fermée (code $($p.ExitCode))" }
-                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                $o = Ouvrir-Interface @('--page', "`"$page`"")
+                if ($o.Erreur) { return $o.Erreur }
+                $p = $o.P
                 # Rendu et premier rafraîchissement
                 Start-Sleep 5
                 $b = [D4tCapture]::Fenetre($p.MainWindowHandle)
@@ -178,12 +192,9 @@ if (-not $installe) {
         if (-not $okLangue) { continue }
         foreach ($page in @("Vue d'ensemble") + $pages) {
             Verifier "Capture du pilote $code : $page" {
-                Arreter-Interface
-                $p = Start-Process $exe -ArgumentList '--fluent', '--page', "`"$page`"" -PassThru
-                $fin = (Get-Date).AddSeconds(30)
-                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 300; $p.Refresh() }
-                if ($p.HasExited) { return "le pilote s'est fermé (code $($p.ExitCode))" }
-                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                $o = Ouvrir-Interface @('--fluent', '--page', "`"$page`"")
+                if ($o.Erreur) { return $o.Erreur }
+                $p = $o.P
                 Start-Sleep 5
                 $b = [D4tCapture]::Ecran($p.MainWindowHandle)
                 if (-not $b) { return 'fenêtre illisible' }
@@ -208,14 +219,9 @@ if (-not $installe) {
     foreach ($mode in 'actuelle', 'pilote') {
         foreach ($essai in 1..3) {
             Verifier "Mesure $mode, essai $essai" {
-                Arreter-Interface
-                $arguments = @('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @() })
-                $chrono = [Diagnostics.Stopwatch]::StartNew()
-                $p = Start-Process $exe -ArgumentList $arguments -PassThru
-                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and $chrono.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50; $p.Refresh() }
-                $ms = [int]$chrono.Elapsed.TotalMilliseconds
-                if ($p.HasExited) { return "l'interface s'est fermée (code $($p.ExitCode))" }
-                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                $o = Ouvrir-Interface (@('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @() }))
+                if ($o.Erreur) { return $o.Erreur }
+                $p = $o.P; $ms = $o.Ms
                 Start-Sleep 60
                 $p.Refresh()
                 $script:mesures.Add("$mode | $essai | $ms | $([math]::Round($p.PrivateMemorySize64 / 1MB, 1)) | $([math]::Round($p.WorkingSet64 / 1MB, 1))")

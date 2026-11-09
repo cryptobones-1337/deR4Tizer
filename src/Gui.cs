@@ -1295,9 +1295,9 @@ namespace DeR4Tizer
         // ------------------------------------------------------------ source de la page Alertes de la coquille (U2b)
 
         public List<Alerte> Alertes() { return alertesAffichees; }
-        public string AucuneAlerte() { return Canal.Visible(Couverture.AucuneAlerte(dernierEtat)); }
+        public string AucuneAlerte() { return VueEnsembleFluent.Lignes(Couverture.AucuneAlerte(dernierEtat)); }
         public bool CollectesEnAlarme() { return Couverture.Alarme(dernierEtat); }
-        public string Collectes() { return Canal.Visible(Couverture.Detail(dernierEtat)); }
+        public string Collectes() { return VueEnsembleFluent.Lignes(Couverture.Detail(dernierEtat)); }
         public string DerniereLue() { return derniereLue; }
         public void MarquerAlertesLues() { MarquerLues(true); }
         // Mêmes méthodes, mêmes questions que le menu de la liste d'aujourd'hui

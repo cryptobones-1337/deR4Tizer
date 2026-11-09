@@ -221,6 +221,14 @@ namespace DeR4Tizer
         // neutralisés par Canal.Visible, garde-fou de la phase (relecture de #134, D1)
         public static string Affichable(string t) { return Canal.Visible(Phrase(t)); }
 
+        // Texte de plusieurs lignes (bandeau des collectes) : chaque ligne neutralisée à part, les retours à la ligne de la
+        // mise en page gardés (sinon « non vues?○ ListesDomaines » : capture U2b)
+        public static string Lignes(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return "";
+            return string.Join("\n", t.Replace("\r\n", "\n").Split('\n').Select(Canal.Visible));
+        }
+
         // Faits de l'en-tête, plus les compteurs colorés de la navigation (baseline peu conforme, démarrage à revoir…) :
         // « à surveiller » au plus, ce ne sont pas des menaces avérées ; sans eux, la tête disait « aucun problème » à côté
         // d'un compteur rouge (capture en VM d'U2)

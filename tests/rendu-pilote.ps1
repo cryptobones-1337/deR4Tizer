@@ -66,6 +66,8 @@ try {
     $piege = "WEBCAM : evil" + [char]0x202E + "gpj.exe" + [char]0x200B + "`r`nDEFENDER OK" + [char]7
     $neutre = & $affichable $piege
     Cas "Vue d'ensemble : texte du service neutralisé (U+202E, largeur nulle, retours à la ligne, contrôle)" (-not ($neutre -match "[‮​\r\n\u0007]") -and $neutre.StartsWith('WEBCAM : evil')) "obtenu « $neutre »"
+    $lignes2 = $vue.GetMethod('Lignes').Invoke($null, @([string]("○ a" + [char]0x202E + "b`r`n○ c`nd")))
+    Cas "Vue d'ensemble : texte de plusieurs lignes neutralisé ligne par ligne, retours à la ligne gardés" ($lignes2 -eq "○ a?b`n○ c`nd") "obtenu « $lignes2 »"
     $statutSrc = [IO.File]::ReadAllText("$src\Gui.cs")
     Cas "Vue d'ensemble : faits, ligne d'état et bouton passent par Visible côté source" ($statutSrc.Contains('Texte = VueEnsembleFluent.Affichable(p.Texte)') -and $statutSrc.Contains('public string Statut() { return Canal.Visible(statut.Text); }') -and $statutSrc.Contains('return VueEnsembleFluent.Affichable(btnPanique.Text)') -and $statutSrc.Contains('foreach (var p in pastilles) p.Texte = Canal.Visible(p.Texte);'))
     $points = { param([int[]]$g) $l = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($pointT)); foreach ($x in $g) { $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Gravite').SetValue($p, $x); $pointT.GetField('Texte').SetValue($p, 't'); $l.Add($p) }; , $l }
