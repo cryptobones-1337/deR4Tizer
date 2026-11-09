@@ -99,6 +99,8 @@ namespace DeR4Tizer
         bool PaniqueActive();
         void DemanderPanique();
         Dictionary<string, PointEtat> Badges();
+        // La zone de notification montre la coquille (page demandée, ou celle ouverte si null)
+        void Rattacher(Action<string> montrer);
     }
 
     // Décisions pures de la Vue d'ensemble (testées)
@@ -198,7 +200,14 @@ namespace DeR4Tizer
             {
                 Action suivre = () => { MettreAJourPastillesNav(); if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble(); };
                 source.Change += suivre;
-                Closed += (s, a) => source.Change -= suivre;
+                source.Rattacher(cle =>
+                {
+                    Show();
+                    if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                    Activate();
+                    if (cle != null) Ouvrir(cle);
+                });
+                Closed += (s, a) => { source.Change -= suivre; source.Rattacher(null); };
                 MettreAJourPastillesNav();
             }
         }

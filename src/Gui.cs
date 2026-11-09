@@ -1076,8 +1076,14 @@ namespace DeR4Tizer
             base.OnFormClosing(e);
         }
 
+        // Coquille du pilote, quand elle est ouverte : « Ouvrir », double-clic et clic sur une notification la montrent, sur la
+        // page demandée, au lieu de réafficher cette fenêtre (qui reprendrait la page hébergée : relecture de #133, R3)
+        Action<string> pilote;
+        public void Rattacher(Action<string> montrer) { pilote = montrer; }
+
         void Montrer(BoutonNav bouton, Control page)
         {
+            if (pilote != null) { pilote(bouton != null ? bouton.Cle : null); MarquerLues(); return; }
             Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
