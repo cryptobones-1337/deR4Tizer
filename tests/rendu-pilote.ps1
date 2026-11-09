@@ -60,6 +60,14 @@ try {
         $r = & $phrase $c[0]
         Cas "Vue d'ensemble : « $($c[0]) » devient « $($c[1]) »" ($r -ceq $c[1]) "obtenu « $r »"
     }
+    # Textes venus du service neutralisés avant affichage (relecture de #134, D1) : inversion du sens d'écriture, largeur
+    # nulle, retour à la ligne, contrôle
+    $affichable = { param($x) $vue.GetMethod('Affichable').Invoke($null, @([string]$x)) }
+    $piege = "WEBCAM : evil" + [char]0x202E + "gpj.exe" + [char]0x200B + "`r`nDEFENDER OK" + [char]7
+    $neutre = & $affichable $piege
+    Cas "Vue d'ensemble : texte du service neutralisé (U+202E, largeur nulle, retours à la ligne, contrôle)" (-not ($neutre -match "[‮​\r\n\u0007]") -and $neutre.StartsWith('WEBCAM : evil')) "obtenu « $neutre »"
+    $statutSrc = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas "Vue d'ensemble : faits, ligne d'état et bouton passent par Visible côté source" ($statutSrc.Contains('Texte = VueEnsembleFluent.Affichable(p.Texte)') -and $statutSrc.Contains('public string Statut() { return Canal.Visible(statut.Text); }') -and $statutSrc.Contains('return VueEnsembleFluent.Affichable(btnPanique.Text)') -and $statutSrc.Contains('foreach (var p in pastilles) p.Texte = Canal.Visible(p.Texte);'))
     $points = { param([int[]]$g) $l = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($pointT)); foreach ($x in $g) { $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Gravite').SetValue($p, $x); $pointT.GetField('Texte').SetValue($p, 't'); $l.Add($p) }; , $l }
     $resume = { param($l) $args2 = [object[]]@($l, 0); $s = $vue.GetMethod('Resume').Invoke($null, $args2); "$s|$($args2[1])" }
     Cas "Vue d'ensemble : rien de publié, état inconnu en orange (jamais « en ordre »)" ((& $resume (& $points @())) -eq "État inconnu : rien n'est publié par le service pour l'instant.|1") (& $resume (& $points @()))

@@ -1217,6 +1217,8 @@ namespace DeR4Tizer
             var infos = Commun.Lire<InfosMenaces>("menaces.json");
             if (infos != null)
                 pastilles.Add(new Entete.Pastille { Texte = L.T("Listes de menaces") + " : " + (infos.TotalIp + infos.TotalReseaux).ToString("N0") + " IP · " + infos.TotalDomaines.ToString("N0") + " " + L.T("domaines"), Couleur = Theme.Magenta });
+            // Noms de programmes et d'outils venus du service : neutralisés aussi dans l'en-tête d'aujourd'hui (relecture de #134)
+            foreach (var p in pastilles) p.Texte = Canal.Visible(p.Texte);
             entete.Pastilles = pastilles;
             entete.Invalidate();
 
@@ -1274,7 +1276,8 @@ namespace DeR4Tizer
                 RemplirBlocages(blocages);
             }
             // Coquille du pilote (U2) : mêmes faits que l'en-tête, publiés après chaque rafraîchissement
-            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Phrase(p.Texte), Gravite = Entete.Gravite(p.Couleur) }).ToList();
+            // Textes neutralisés (Canal.Visible) : noms de programmes et d'outils venus du service (relecture de #134, D1)
+            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Affichable(p.Texte), Gravite = Entete.Gravite(p.Couleur) }).ToList();
             var change = Change;
             if (change != null) change();
         }
@@ -1284,8 +1287,8 @@ namespace DeR4Tizer
         List<PointEtat> pointsCourants = new List<PointEtat>();
         public event Action Change;
         public List<PointEtat> Points() { return pointsCourants; }
-        public string Statut() { return statut.Text; }
-        public string TextePanique() { return VueEnsembleFluent.Phrase(btnPanique.Text); }
+        public string Statut() { return Canal.Visible(statut.Text); }
+        public string TextePanique() { return VueEnsembleFluent.Affichable(btnPanique.Text); }
         public bool PaniqueActive() { return paniqueActive; }
         // Même chemin que le bouton d'aujourd'hui : portée dite avant d'agir, confirmation, commande au service
         public void DemanderPanique() { Panique(); }

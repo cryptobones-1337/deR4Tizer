@@ -127,6 +127,11 @@ namespace DeR4Tizer
             return i < r.Length && char.IsLower(r[i]) ? r.Substring(0, i) + char.ToUpperInvariant(r[i]) + r.Substring(i + 1) : r;
         }
 
+        // Texte venu du service (noms de programmes, d'outils de prise en main, version) prêt à afficher : casse de phrase,
+        // puis caractères de contrôle et de mise en forme invisibles (sens d'écriture, largeur nulle, retours à la ligne)
+        // neutralisés par Canal.Visible, garde-fou de la phase (relecture de #134, D1)
+        public static string Affichable(string t) { return Canal.Visible(Phrase(t)); }
+
         // Faits de l'en-tête, plus les compteurs colorés de la navigation (baseline peu conforme, démarrage à revoir…) :
         // « à surveiller » au plus, ce ne sont pas des menaces avérées ; sans eux, la tête disait « aucun problème » à côté
         // d'un compteur rouge (capture en VM d'U2)
@@ -401,7 +406,7 @@ namespace DeR4Tizer
                     var puce = new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Background = Jetons.Pinceau(couleur), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
                     DockPanel.SetDock(puce, Dock.Left);
                     ligne.Children.Add(puce);
-                    // Texte des faits : chaînes de l'état du service (noms de programmes compris), affichées en texte brut
+                    // Texte des faits : déjà neutralisé par la source (VueEnsembleFluent.Affichable, Canal.Visible), affiché en texte brut
                     ligne.Children.Add(new TextBlock { Text = f.Texte, TextWrapping = TextWrapping.Wrap });
                     contenu.Children.Add(ligne);
                 }
