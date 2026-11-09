@@ -83,6 +83,32 @@ try {
     $lu = @($avec | ForEach-Object { "$($pointT.GetField('Texte').GetValue($_))=$($pointT.GetField('Gravite').GetValue($_))" }) -join '|'
     Cas "Vue d'ensemble : compteurs colorés de la navigation à surveiller, jamais à traiter" ($lu -eq 't=0|Baseline : 12%=1|Démarrage auto : 2=1') $lu
     Cas "Vue d'ensemble : avec un compteur rouge, la tête n'est plus « aucun problème »" ((& $resume $avec) -eq "Rien d'avéré, 2 points à surveiller|1") (& $resume $avec)
+    $langue.GetField('En').SetValue($null, $true)
+    $deux = $vue.GetProperty('DeuxPoints').GetValue($null)
+    $langue.GetField('En').SetValue($null, $false)
+    Cas "Vue d'ensemble : deux-points sans espace avant en anglais, avec en français" ($deux -eq ': ' -and $vue.GetProperty('DeuxPoints').GetValue($null) -eq ' : ')
+
+    # Page Alertes (U2b) : actions offertes selon l'alerte, ordre et plafond de la liste, détail neutralisé
+    $alertes = & $t 'VueAlertesFluent'; $alerteT = & $t 'Alerte'
+    $nouvelle = { param([hashtable]$h) $a = [Activator]::CreateInstance($alerteT); foreach ($k in $h.Keys) { $alerteT.GetProperty($k).SetValue($a, $h[$k]) }; $a }
+    $actions = { param($a) @($alertes.GetMethod('Actions').Invoke($null, @($a))) -join ',' }
+    $complete = & $nouvelle @{ Id = '1'; Heure = '2026-11-09 10:00:00'; Niveau = 'Alerte'; Processus = 'x.exe'; Chemin = 'C:\x.exe'; Pid = [Nullable[int]]1234; Ip = '1.2.3.4' }
+    Cas 'Alertes : toutes les actions pour une alerte complète, dans l''ordre' ((& $actions $complete) -eq 'bloquer,exception,isolerProgramme,suspendre,tuerChaine,quarantaine,emplacement') (& $actions $complete)
+    $critique = & $nouvelle @{ Id = '2'; Heure = '2026-11-09 10:00:01'; Niveau = 'Critique'; Processus = 'y.exe'; Chemin = 'C:\y.exe'; Pid = [Nullable[int]]4 }
+    Cas 'Alertes : critique sans exception, PID système (4) sans suspendre ni tuer, sans destination sans blocage' ((& $actions $critique) -eq 'isolerProgramme,quarantaine,emplacement') (& $actions $critique)
+    $nue = & $nouvelle @{ Id = '3'; Heure = '2026-11-09 10:00:02'; Niveau = 'Info'; Processus = 'z' }
+    Cas 'Alertes : sans chemin ni PID ni destination, seule l''exception' ((& $actions $nue) -eq 'exception') (& $actions $nue)
+    $liste = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($alerteT)); foreach ($a in $complete, $critique, $nue) { $liste.Add($a) }
+    $ids = { param($n) @($alertes.GetMethod('Filtrer').Invoke($null, @($liste, $n)) | ForEach-Object { $_.Id }) -join ',' }
+    Cas 'Alertes : plus récentes d''abord, filtre par niveau' ((& $ids $null) -eq '3,2,1' -and (& $ids 'Critique') -eq '2' -and (& $ids 'Alerte') -eq '1') "$(& $ids $null) / $(& $ids 'Critique')"
+    for ($i = 0; $i -lt 520; $i++) { $liste.Add((& $nouvelle @{ Id = "n$i"; Heure = '2026-11-09 11:00:00'; Niveau = 'Info' })) }
+    $plafond = @($alertes.GetMethod('Filtrer').Invoke($null, @($liste, $null)))
+    Cas 'Alertes : au plus 500 affichées, les plus récentes' ($plafond.Count -eq 500 -and $plafond[0].Id -eq 'n519') "$($plafond.Count) ; première $($plafond[0].Id)"
+    Cas 'Alertes : non lue après la dernière lecture seulement' ($alertes.GetMethod('NonLue').Invoke($null, @($complete, '2026-11-09 09:59:59')) -and -not $alertes.GetMethod('NonLue').Invoke($null, @($complete, '2026-11-09 10:00:00')))
+    $piegee = & $nouvelle @{ Id = '4'; Heure = 'h'; Niveau = 'Alerte'; Processus = 'p'; Raisons = 'ok' + [char]0x202E + "exe.txt`r`nfaux"; Chemin = 'C:\a' + [char]0x200B + 'b.exe'; Conseil = '' }
+    $lignes = @($alertes.GetMethod('Detail').Invoke($null, @($piegee)))
+    $textes = ($lignes | ForEach-Object { $_.Texte }) -join '|'
+    Cas 'Alertes : détail neutralisé (U+202E, largeur nulle, retours à la ligne), lignes vides omises, chemin en chasse fixe' (-not ($textes -match "[\u202E\u200B\r\n]") -and -not ($lignes | Where-Object { $_.Titre -eq 'Que faire' }) -and ($lignes | Where-Object { $_.Titre -eq 'Chemin' }).Chasse) $textes
     $fluentSrc = [IO.File]::ReadAllText("$src\Fluent.cs")
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
     $chainesProtege = @([regex]::Matches($fluentSrc, '"[^"\r\n]*(prot[eé]g[eé]|protected)[^"\r\n]*"') | ForEach-Object Value)
