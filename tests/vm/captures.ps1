@@ -66,6 +66,19 @@ public static class D4tCapture
         using (var g = Graphics.FromImage(b)) { IntPtr dc = g.GetHdc(); try { PrintWindow(h, dc, 2); } finally { g.ReleaseHdc(dc); } }
         return b;
     }
+    // Pilote WPF (U1) : PrintWindow ne rend pas la composition WPF + WindowsFormsHost. La fenêtre est mise au premier plan
+    // et sa zone est copiée depuis l'écran de la VM (jamais un poste réel : ce script ne tourne que dans la VM de test)
+    public static Bitmap Ecran(IntPtr h)
+    {
+        ShowWindow(h, 9); SetForegroundWindow(h);
+        System.Threading.Thread.Sleep(800);
+        RECT r; if (!GetWindowRect(h, out r)) return null;
+        int l = r.D - r.G, ht = r.B - r.H;
+        if (l <= 0 || ht <= 0) return null;
+        var b = new Bitmap(l, ht);
+        using (var g = Graphics.FromImage(b)) g.CopyFromScreen(r.G, r.H, 0, 0, new Size(l, ht));
+        return b;
+    }
     // Part des pixels d'une seule couleur : une capture sans bureau est uniforme (noire)
     public static double Uniforme(Bitmap b)
     {
@@ -142,6 +155,33 @@ if (-not $installe) {
                     $f = Join-Path $dossierCaptures ("$code-" + (Nom-Fichier $page) + '.png')
                     $b.Save($f, [Drawing.Imaging.ImageFormat]::Png)
                     $script:index.Add("$code | $page | $([IO.Path]::GetFileName($f)) | $($b.Width) x $($b.Height) | $([D4tCapture]::Dpi($p.MainWindowHandle)) ppp")
+                } finally { $b.Dispose() }
+                $true
+            }
+        }
+    }
+    # Pilote de la refonte (U1) : même service, mêmes langues, coquille WPF ouverte par --fluent, Vue d'ensemble comprise
+    foreach ($code in 'fr', 'en') {
+        $okLangue = $true
+        Verifier "Pilote, langue $code envoyée au service" { try { Langue $code; $true } catch { $script:okLangue = $false; $_.Exception.Message } }
+        if (-not $okLangue) { continue }
+        foreach ($page in @("Vue d'ensemble") + $pages) {
+            Verifier "Capture du pilote $code : $page" {
+                Arreter-Interface
+                $p = Start-Process $exe -ArgumentList '--fluent', '--page', "`"$page`"" -PassThru
+                $fin = (Get-Date).AddSeconds(30)
+                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 300; $p.Refresh() }
+                if ($p.HasExited) { return "le pilote s'est fermé (code $($p.ExitCode))" }
+                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                Start-Sleep 5
+                $b = [D4tCapture]::Ecran($p.MainWindowHandle)
+                if (-not $b) { return 'fenêtre illisible' }
+                try {
+                    $u = [D4tCapture]::Uniforme($b)
+                    if ($u -gt 0.98) { return "capture uniforme ($([math]::Round($u * 100)) % d'une seule couleur) : bureau non rendu" }
+                    $f = Join-Path $dossierCaptures ("pilote-$code-" + (Nom-Fichier $page) + '.png')
+                    $b.Save($f, [Drawing.Imaging.ImageFormat]::Png)
+                    $script:index.Add("pilote $code | $page | $([IO.Path]::GetFileName($f)) | $($b.Width) x $($b.Height) | $([D4tCapture]::Dpi($p.MainWindowHandle)) ppp")
                 } finally { $b.Dispose() }
                 $true
             }

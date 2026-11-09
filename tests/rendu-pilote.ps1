@@ -57,6 +57,11 @@ try {
     $programme = $asm.GetType('DeR4Tizer.Programme')
     $lp = $programme.GetMethod('LancerPilote', [Reflection.BindingFlags]'Static,NonPublic')
     Cas 'assistant élevé : pilote dans une méthode jamais intégrée (NoInlining)' ($lp -ne $null -and ($lp.MethodImplementationFlags -band [Reflection.MethodImplAttributes]::NoInlining))
+    # Rendu logiciel demandé avant la création de l'application (VM de test : le rendu matériel laissait la fenêtre blanche)
+    $pilote = $g.Substring($g.IndexOf('static int LancerPilote()'))
+    $pilote = $pilote.Substring(0, $pilote.IndexOf("`n        }`n"))
+    $iRendu = $pilote.IndexOf('RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly')
+    Cas 'pilote : rendu logiciel demandé avant l''application WPF' ($iRendu -ge 0 -and $iRendu -lt $pilote.IndexOf('new System.Windows.Application'))
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
@@ -66,6 +71,8 @@ try {
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
             $ouvertes = $coquille.GetMethod('Ouvertes', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @())
             Cas "navigation $code : une seule entrée ouverte après « $page »" ($ouvertes -eq 1) "$ouvertes"
+            $zt = [Windows.SystemParameters]::WorkArea
+            Cas "fenêtre $code : tient dans la zone de travail ($([int]$fen.Width) x $([int]$fen.Height) pour $([int]$zt.Width) x $([int]$zt.Height))" ($fen.Width -le $zt.Width -and $fen.Height -le $zt.Height -and $fen.Width -ge $fen.MinWidth)
             $kNav = $coquille.GetMethod('ContrasteNavigation', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @())
             Cas "navigation $code : couleur réellement donnée aux libellés, $([math]::Round($kNav, 2)):1 sur le panneau (4,5 au moins)" ($kNav -ge 4.5)
             $contenu = $fen.Content; $fen.Content = $null

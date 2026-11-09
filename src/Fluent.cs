@@ -96,7 +96,12 @@ namespace DeR4Tizer
         {
             this.pages = pages;
             Title = "deR4Tizer";
-            Width = 1200; Height = 780; MinWidth = 900; MinHeight = 560;
+            // Taille voulue 1200 x 780, ramenée à la zone de travail de l'écran (1024 x 768 sur la VM de test : la fenêtre
+            // débordait sous la barre des tâches), centrée
+            var travail = SystemParameters.WorkArea;
+            MinWidth = Math.Min(900, travail.Width); MinHeight = Math.Min(560, travail.Height);
+            Width = Math.Max(MinWidth, Math.Min(1200, travail.Width)); Height = Math.Max(MinHeight, Math.Min(780, travail.Height));
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = Jetons.Pinceau(Jetons.Fond);
             FontFamily = Jetons.Police;
             FontSize = 14;

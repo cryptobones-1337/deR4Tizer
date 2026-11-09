@@ -1893,6 +1893,11 @@ namespace DeR4Tizer
         {
             var ancienne = new Fenetre(true);
             var poignee = ancienne.Handle;
+            // Rendu logiciel : sur la VM de test (Hyper-V, carte sans pilote 3D), le rendu matériel de WPF n'affichait rien
+            // (fenêtre blanche, seules les pages WinForms hébergées visibles), alors que le rendu logiciel est juste. Postes
+            // virtuels, bureau à distance et pilotes graphiques douteux sont courants chez les petites structures ; une
+            // interface de cette taille n'a pas besoin du GPU
+            System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
             var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
             app.Run(new Coquille(ancienne.PageDe));
             ancienne.Dispose();
