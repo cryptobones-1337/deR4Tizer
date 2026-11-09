@@ -66,6 +66,15 @@ try {
     Cas "Vue d'ensemble : un rouge l'emporte" ((& $resume (& $points @(0, 1, 2, 2))) -eq '2 points à traiter|2') (& $resume (& $points @(0, 1, 2, 2)))
     Cas "Vue d'ensemble : orange seul, « rien d'avéré »" ((& $resume (& $points @(0, 1))) -eq "Rien d'avéré, 1 point à surveiller|1") (& $resume (& $points @(0, 1)))
     Cas "Vue d'ensemble : tout en ordre, sans promesse" ((& $resume (& $points @(0, 0))) -eq 'Aucun problème relevé|0') (& $resume (& $points @(0, 0)))
+    # Compteurs colorés de la navigation : ajoutés « à surveiller » (jamais « à traiter »), compteurs neutres ignorés
+    $badges = [Activator]::CreateInstance([Collections.Generic.Dictionary``2].MakeGenericType([string], $pointT))
+    foreach ($b in @(@('Baseline', '12%', 2), @('Démarrage auto', '2', 1), @('Alertes', '1', 0))) {
+        $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Texte').SetValue($p, $b[1]); $pointT.GetField('Gravite').SetValue($p, [int]$b[2]); $badges.Add($b[0], $p)
+    }
+    $avec = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badges))
+    $lu = @($avec | ForEach-Object { "$($pointT.GetField('Texte').GetValue($_))=$($pointT.GetField('Gravite').GetValue($_))" }) -join '|'
+    Cas "Vue d'ensemble : compteurs colorés de la navigation à surveiller, jamais à traiter" ($lu -eq 't=0|Baseline : 12%=1|Démarrage auto : 2=1') $lu
+    Cas "Vue d'ensemble : avec un compteur rouge, la tête n'est plus « aucun problème »" ((& $resume $avec) -eq "Rien d'avéré, 2 points à surveiller|1") (& $resume $avec)
     $fluentSrc = [IO.File]::ReadAllText("$src\Fluent.cs")
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
     $chainesProtege = @([regex]::Matches($fluentSrc, '"[^"\r\n]*(prot[eé]g[eé]|protected)[^"\r\n]*"') | ForEach-Object Value)

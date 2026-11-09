@@ -127,6 +127,23 @@ namespace DeR4Tizer
             return i < r.Length && char.IsLower(r[i]) ? r.Substring(0, i) + char.ToUpperInvariant(r[i]) + r.Substring(i + 1) : r;
         }
 
+        // Faits de l'en-tête, plus les compteurs colorés de la navigation (baseline peu conforme, démarrage à revoir…) :
+        // « à surveiller » au plus, ce ne sont pas des menaces avérées ; sans eux, la tête disait « aucun problème » à côté
+        // d'un compteur rouge (capture en VM d'U2)
+        public static List<PointEtat> AvecCompteurs(IList<PointEtat> points, IDictionary<string, PointEtat> badges)
+        {
+            var r = new List<PointEtat>(points ?? new List<PointEtat>());
+            if (badges == null) return r;
+            foreach (var g in NavigationFluent.Groupes())
+                foreach (var e in g.Entrees)
+                {
+                    PointEtat b;
+                    if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
+                        r.Add(new PointEtat { Texte = L.T(e.Cle) + " : " + b.Texte, Gravite = 1 });
+                }
+            return r;
+        }
+
         // Phrase de tête : jamais « vous êtes protégé » ; un état inconnu n'est pas un état sain
         public static string Resume(IList<PointEtat> points, out int gravite)
         {
@@ -362,7 +379,7 @@ namespace DeR4Tizer
         UIElement VueEnsemble()
         {
             var pile = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
-            var points = source == null ? new List<PointEtat>() : source.Points();
+            var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
             var couleurTete = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.Succes;
