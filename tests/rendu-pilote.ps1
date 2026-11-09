@@ -48,6 +48,29 @@ try {
     $langue.GetField('En').SetValue($null, $false)
     Cas 'navigation : traductions anglaises' (($titresEn -join '|') -eq 'Monitoring|Protection|System and privacy|Overview') ($titresEn -join '|')
 
+    # Vue d'ensemble (U2) : textes de l'en-tête remis en casse de phrase, sigles et noms gardés ; phrase de tête
+    $vue = & $t 'VueEnsembleFluent'; $pointT = & $t 'PointEtat'
+    $phrase = { param($x) $vue.GetMethod('Phrase').Invoke($null, @([string]$x)) }
+    foreach ($c in @(
+            @('SERVICE EN LIGNE', 'Service en ligne'), @('DEFENDER OK', 'Defender OK'), @('CAM / MIC OFF', 'CAM / MIC OFF'),
+            @('NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)', 'Noms des sites inconnus (journal DNS inactif)'),
+            @('PC EXPOSÉ À INTERNET', 'PC exposé à Internet'), @('◉ PANIQUE : COUPER INTERNET', 'Panique : couper Internet'),
+            @('PROCESSUS : WMI', 'Processus : WMI'), @('Listes de menaces : 1 234 IP', 'Listes de menaces : 1 234 IP'),
+            @('WEBCAM : chrome.exe', 'WEBCAM : chrome.exe'), @('', ''))) {
+        $r = & $phrase $c[0]
+        Cas "Vue d'ensemble : « $($c[0]) » devient « $($c[1]) »" ($r -ceq $c[1]) "obtenu « $r »"
+    }
+    $points = { param([int[]]$g) $l = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($pointT)); foreach ($x in $g) { $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Gravite').SetValue($p, $x); $pointT.GetField('Texte').SetValue($p, 't'); $l.Add($p) }; , $l }
+    $resume = { param($l) $args2 = [object[]]@($l, 0); $s = $vue.GetMethod('Resume').Invoke($null, $args2); "$s|$($args2[1])" }
+    Cas "Vue d'ensemble : rien de publié, état inconnu en orange (jamais « en ordre »)" ((& $resume (& $points @())) -eq "État inconnu : rien n'est publié par le service pour l'instant.|1") (& $resume (& $points @()))
+    Cas "Vue d'ensemble : un rouge l'emporte" ((& $resume (& $points @(0, 1, 2, 2))) -eq '2 points à traiter|2') (& $resume (& $points @(0, 1, 2, 2)))
+    Cas "Vue d'ensemble : orange seul, « rien d'avéré »" ((& $resume (& $points @(0, 1))) -eq "Rien d'avéré, 1 point à surveiller|1") (& $resume (& $points @(0, 1)))
+    Cas "Vue d'ensemble : tout en ordre, sans promesse" ((& $resume (& $points @(0, 0))) -eq 'Aucun problème relevé|0') (& $resume (& $points @(0, 0)))
+    $fluentSrc = [IO.File]::ReadAllText("$src\Fluent.cs")
+    # Chaînes du code seulement (les commentaires peuvent citer la règle)
+    $chainesProtege = @([regex]::Matches($fluentSrc, '"[^"\r\n]*(prot[eé]g[eé]|protected)[^"\r\n]*"') | ForEach-Object Value)
+    Cas "Vue d'ensemble : jamais « protégé » dans les textes du pilote" ($chainesProtege.Count -eq 0) ($chainesProtege -join ' ; ')
+
     # L'assistant élevé ne charge pas WPF : Main ne nomme aucun type WPF, le pilote est dans une méthode jamais intégrée
     $g = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
     $main = $g.Substring($g.IndexOf('static int Main(string[] args)'))

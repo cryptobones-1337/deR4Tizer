@@ -81,10 +81,70 @@ namespace DeR4Tizer
         }
     }
 
+    // Un fait de l'état du poste, tel que l'en-tête d'aujourd'hui le montre : texte et gravité (2 à traiter, 1 à
+    // surveiller, 0 en ordre ou information)
+    public class PointEtat
+    {
+        public string Texte;
+        public int Gravite;
+    }
+
+    // Ce que la coquille lit de la fenêtre d'aujourd'hui (U2) : mêmes faits, même chemin pour la panique
+    public interface ISourceEtat
+    {
+        event Action Change;
+        List<PointEtat> Points();
+        string Statut();
+        string TextePanique();
+        bool PaniqueActive();
+        void DemanderPanique();
+        Dictionary<string, PointEtat> Badges();
+    }
+
+    // Décisions pures de la Vue d'ensemble (testées)
+    public static class VueEnsembleFluent
+    {
+        // Sigles et noms propres gardés tels quels quand un texte en capitales est remis en casse de phrase
+        static readonly string[] Sigles = { "DNS", "IP", "PC", "WMI", "OK", "OFF", "CAM", "MIC", "LIVE", "IPv6", "SIEM", "API", "URL", "USB", "UAC" };
+        static readonly string[] Noms = { "Defender", "Sysmon", "Internet", "Windows", "Microsoft", "deR4Tizer", "Spamhaus", "Feodo", "Tracker" };
+
+        // Texte en capitales (style néon) remis en casse de phrase ; un texte qui n'est pas tout en capitales est rendu tel
+        // quel (noms de programmes, chiffres)
+        public static string Phrase(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return t ?? "";
+            var lettres = t.Where(char.IsLetter).ToList();
+            if (lettres.Count == 0 || lettres.Any(char.IsLower)) return t.TrimStart('◉', ' ');
+            string r = t.TrimStart('◉', ' ').ToLowerInvariant();
+            foreach (var s in Sigles)
+                r = System.Text.RegularExpressions.Regex.Replace(r, @"(?<![\p{L}])" + System.Text.RegularExpressions.Regex.Escape(s.ToLowerInvariant()) + @"(?![\p{L}])", s);
+            foreach (var n in Noms)
+                r = System.Text.RegularExpressions.Regex.Replace(r, @"(?<![\p{L}])" + System.Text.RegularExpressions.Regex.Escape(n.ToLowerInvariant()) + @"(?![\p{L}])", n);
+            int i = 0;
+            while (i < r.Length && !char.IsLetter(r[i])) i++;
+            return i < r.Length && char.IsLower(r[i]) ? r.Substring(0, i) + char.ToUpperInvariant(r[i]) + r.Substring(i + 1) : r;
+        }
+
+        // Phrase de tête : jamais « vous êtes protégé » ; un état inconnu n'est pas un état sain
+        public static string Resume(IList<PointEtat> points, out int gravite)
+        {
+            if (points == null || points.Count == 0) { gravite = 1; return L.T("État inconnu : rien n'est publié par le service pour l'instant."); }
+            int rouges = points.Count(p => p.Gravite == 2), jaunes = points.Count(p => p.Gravite == 1);
+            if (rouges > 0) { gravite = 2; return string.Format(L.T(rouges == 1 ? "{0} point à traiter" : "{0} points à traiter"), rouges); }
+            if (jaunes > 0) { gravite = 1; return string.Format(L.T(jaunes == 1 ? "Rien d'avéré, {0} point à surveiller" : "Rien d'avéré, {0} points à surveiller"), jaunes); }
+            gravite = 0;
+            return L.T("Aucun problème relevé");
+        }
+    }
+
     // Coquille du pilote : la fenêtre WinForms d'aujourd'hui reste cachée (zone de notification, rafraîchissement,
     // commandes) ; ses pages sont prêtées une à une à la coquille
     class Coquille : Window
     {
+        // État du poste lu de la fenêtre d'aujourd'hui (absent pour un rendu de test)
+        readonly ISourceEtat source;
+        string ouverte;
+        readonly Dictionary<string, TextBlock> pastillesNav = new Dictionary<string, TextBlock>();
         // Pages WinForms prêtées par clé : celles de la fenêtre d'aujourd'hui (Fenetre.PageDe), ou rien pour un rendu de test
         readonly Func<string, WinForms.Control> pages;
         readonly ContentControl zone = new ContentControl();
@@ -92,9 +152,12 @@ namespace DeR4Tizer
         readonly List<Button> boutons = new List<Button>();
         WindowsFormsHost hote;
 
-        public Coquille(Func<string, WinForms.Control> pages)
+        public Coquille(Func<string, WinForms.Control> pages) : this(pages, null) { }
+
+        public Coquille(Func<string, WinForms.Control> pages, ISourceEtat source)
         {
             this.pages = pages;
+            this.source = source;
             Title = "deR4Tizer";
             // Taille voulue 1200 x 780, ramenée à la zone de travail de l'écran (1024 x 768 sur la VM de test : la fenêtre
             // débordait sous la barre des tâches), centrée
@@ -131,6 +194,30 @@ namespace DeR4Tizer
             int iPage = Array.IndexOf(Environment.GetCommandLineArgs(), "--page");
             string demandee = iPage > 0 && iPage + 1 < Environment.GetCommandLineArgs().Length ? Environment.GetCommandLineArgs()[iPage + 1] : null;
             Ouvrir(demandee != null && NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee) ? demandee : NavigationFluent.VueEnsemble);
+            if (source != null)
+            {
+                Action suivre = () => { MettreAJourPastillesNav(); if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble(); };
+                source.Change += suivre;
+                Closed += (s, a) => source.Change -= suivre;
+                MettreAJourPastillesNav();
+            }
+        }
+
+        // Compteurs de la navigation, repris de la fenêtre d'aujourd'hui (alertes non lues, démarrage, vie privée…)
+        void MettreAJourPastillesNav()
+        {
+            var badges = source.Badges();
+            foreach (var kv in pastillesNav)
+            {
+                PointEtat b;
+                if (badges.TryGetValue(kv.Key, out b))
+                {
+                    kv.Value.Text = b.Texte;
+                    kv.Value.Foreground = Jetons.Pinceau(b.Gravite == 2 ? Jetons.Danger : b.Gravite == 1 ? Jetons.Attention : Jetons.TexteSecondaire);
+                    kv.Value.Visibility = Visibility.Visible;
+                }
+                else kv.Value.Visibility = Visibility.Collapsed;
+            }
         }
 
         UIElement Navigation()
@@ -166,11 +253,18 @@ namespace DeR4Tizer
         // Bouton de navigation : icône et libellé, fond arrondi, barre d'accent pour la page ouverte
         Button Bouton(EntreeNav e)
         {
-            var contenu = new StackPanel { Orientation = Orientation.Horizontal };
-            contenu.Children.Add(new TextBlock { Text = e.Icone, FontFamily = Jetons.Icones, FontSize = 16, Width = 28, VerticalAlignment = VerticalAlignment.Center });
-            contenu.Children.Add(new TextBlock { Text = L.T(e.Cle), VerticalAlignment = VerticalAlignment.Center });
+            var contenu = new DockPanel { LastChildFill = true };
+            var icone = new TextBlock { Text = e.Icone, FontFamily = Jetons.Icones, FontSize = 16, Width = 28, VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(icone, Dock.Left);
+            contenu.Children.Add(icone);
+            // Compteur à droite (texte coloré, pas une pastille pleine : la couleur seule ne porte pas le sens, le nombre oui)
+            var compteur = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), Visibility = Visibility.Collapsed };
+            DockPanel.SetDock(compteur, Dock.Right);
+            contenu.Children.Add(compteur);
+            pastillesNav[e.Cle] = compteur;
+            contenu.Children.Add(new TextBlock { Text = L.T(e.Cle), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
             // Couleur donnée au bouton : sans elle, WPF écrit le libellé et l'icône en noir (vu sur le rendu : noir sur gris)
-            var b = new Button { Content = contenu, Foreground = Jetons.Pinceau(Jetons.Texte), HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
+            var b = new Button { Content = contenu, Foreground = Jetons.Pinceau(Jetons.Texte), HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
             b.Template = Modele();
             b.Click += (s, a) => Ouvrir(e.Cle);
             boutons.Add(b);
@@ -219,6 +313,7 @@ namespace DeR4Tizer
         {
             // Une seule entrée ouverte : l'état est dans Tag, la clé reste dans `cles`
             foreach (var b in boutons) b.Tag = cles[b] == cle ? "ouverte" : null;
+            ouverte = cle;
             titrePage.Text = L.T(cle);
             if (hote != null) { hote.Child = null; hote.Dispose(); hote = null; }
             if (cle == NavigationFluent.VueEnsemble) { zone.Content = VueEnsemble(); return; }
@@ -243,23 +338,89 @@ namespace DeR4Tizer
             return boutons.Min(b => { var p = b.Foreground as SolidColorBrush; return p == null ? 0 : Jetons.Contraste(p.Color, Jetons.Carte); });
         }
 
-        // Vue d'ensemble : U2 ; ici, ce qui la remplira, sans rien affirmer
+        // Vue d'ensemble (U2) : les faits de l'en-tête d'aujourd'hui, rangés par gravité, une phrase de tête qui ne promet
+        // rien, le bouton panique (même chemin et même confirmation qu'aujourd'hui) et la ligne d'état du service
         UIElement VueEnsemble()
         {
-            var carte = new Border
+            var pile = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
+            var points = source == null ? new List<PointEtat>() : source.Points();
+            int gravite;
+            string resume = VueEnsembleFluent.Resume(points, out gravite);
+            var couleurTete = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.Succes;
+            var tete = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 20) };
+            tete.Children.Add(new TextBlock { Text = gravite == 2 ? "" : gravite == 1 ? "" : "", FontFamily = Jetons.Icones, FontSize = 22, Foreground = Jetons.Pinceau(couleurTete), VerticalAlignment = VerticalAlignment.Center });
+            tete.Children.Add(new TextBlock { Text = resume, FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(tete);
+
+            Action<string, int, Color> section = (titre, g, couleur) =>
             {
-                Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(24),
-                HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 640, VerticalAlignment = VerticalAlignment.Top
+                var faits = points.Where(p => p.Gravite == g).ToList();
+                if (faits.Count == 0) return;
+                var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 0, 12) };
+                var contenu = new StackPanel();
+                contenu.Children.Add(new TextBlock { Text = L.T(titre), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(0, 0, 0, 8) });
+                foreach (var f in faits)
+                {
+                    var ligne = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+                    var puce = new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Background = Jetons.Pinceau(couleur), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+                    DockPanel.SetDock(puce, Dock.Left);
+                    ligne.Children.Add(puce);
+                    // Texte des faits : chaînes de l'état du service (noms de programmes compris), affichées en texte brut
+                    ligne.Children.Add(new TextBlock { Text = f.Texte, TextWrapping = TextWrapping.Wrap });
+                    contenu.Children.Add(ligne);
+                }
+                carte.Child = contenu;
+                pile.Children.Add(carte);
             };
-            var pile = new StackPanel();
-            pile.Children.Add(new TextBlock { Text = L.T("Vue d'ensemble : prévue avec U2"), FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
-            pile.Children.Add(new TextBlock
+            section("À traiter", 2, Jetons.Danger);
+            section("À surveiller", 1, Jetons.Attention);
+            section("En ordre et informations", 0, Jetons.TexteSecondaire);
+
+            if (source != null)
             {
-                Text = L.T("Cette page dira d'un coup d'œil ce qui va, ce qui ne va pas et ce que vous pouvez faire. En attendant, les pages de gauche sont celles d'aujourd'hui."),
-                TextWrapping = TextWrapping.Wrap, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire)
-            });
-            carte.Child = pile;
-            return carte;
+                bool active = source.PaniqueActive();
+                var panique = new Button
+                {
+                    Content = source.TextePanique(), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(16, 8, 16, 8),
+                    Margin = new Thickness(0, 8, 0, 0), Cursor = Cursors.Hand, FontWeight = FontWeights.SemiBold,
+                    Foreground = Jetons.Pinceau(active ? Jetons.TexteSurAccent : Jetons.Danger),
+                    Background = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Carte), BorderBrush = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Danger), BorderThickness = new Thickness(1)
+                };
+                panique.Template = ModeleSimple();
+                panique.Click += (s, a) => source.DemanderPanique();
+                pile.Children.Add(panique);
+                pile.Children.Add(new TextBlock
+                {
+                    Text = L.T("Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir."),
+                    FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 6, 0, 16), TextWrapping = TextWrapping.Wrap
+                });
+                string statut = (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
+                if (statut != "")
+                    pile.Children.Add(new TextBlock { Text = statut, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            }
+            return new ScrollViewer { Content = pile, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        }
+
+        static ControlTemplate modeleSimple;
+        // Bouton d'action : fond, bordure et coins arrondis donnés par le bouton, sans le chrome de Windows
+        static ControlTemplate ModeleSimple()
+        {
+            if (modeleSimple != null) return modeleSimple;
+            var t = new ControlTemplate(typeof(Button));
+            var bord = new FrameworkElementFactory(typeof(Border), "fond");
+            bord.SetValue(Border.CornerRadiusProperty, new CornerRadius(Jetons.Rayon));
+            bord.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+            bord.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+            bord.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+            bord.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+            var presentation = new FrameworkElementFactory(typeof(ContentPresenter));
+            bord.AppendChild(presentation);
+            t.VisualTree = bord;
+            var survol = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            survol.Setters.Add(new Setter(UIElement.OpacityProperty, 0.85, "fond"));
+            t.Triggers.Add(survol);
+            modeleSimple = t;
+            return t;
         }
     }
 }

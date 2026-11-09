@@ -656,7 +656,7 @@ namespace DeR4Tizer
         }
     }
 
-    class Fenetre : Form
+    class Fenetre : Form, ISourceEtat
     {
         readonly string fichierLecture = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "derniere-alerte-lue.txt");
@@ -1267,6 +1267,31 @@ namespace DeR4Tizer
                 blocagesVus = cleBlocages;
                 RemplirBlocages(blocages);
             }
+            // Coquille du pilote (U2) : mêmes faits que l'en-tête, publiés après chaque rafraîchissement
+            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Phrase(p.Texte), Gravite = Entete.Gravite(p.Couleur) }).ToList();
+            var change = Change;
+            if (change != null) change();
+        }
+
+        // ------------------------------------------------------------ source d'état de la coquille du pilote (U2)
+
+        List<PointEtat> pointsCourants = new List<PointEtat>();
+        public event Action Change;
+        public List<PointEtat> Points() { return pointsCourants; }
+        public string Statut() { return statut.Text; }
+        public string TextePanique() { return VueEnsembleFluent.Phrase(btnPanique.Text); }
+        public bool PaniqueActive() { return paniqueActive; }
+        // Même chemin que le bouton d'aujourd'hui : portée dite avant d'agir, confirmation, commande au service
+        public void DemanderPanique() { Panique(); }
+        public Dictionary<string, PointEtat> Badges()
+        {
+            var r = new Dictionary<string, PointEtat>();
+            foreach (var b in navigation)
+            {
+                string t = b.TexteBadge ?? (b.Badge > 0 ? (b.Badge > 999 ? "999+" : b.Badge.ToString()) : null);
+                if (t != null) r[b.Cle] = new PointEtat { Texte = t, Gravite = Entete.Gravite(b.CouleurBadge) };
+            }
+            return r;
         }
 
         static string Traduire(ServiceControllerStatus s)
@@ -1901,7 +1926,7 @@ namespace DeR4Tizer
             var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
             // « Quitter » depuis l'icône de notification ferme la fenêtre cachée : le pilote se ferme avec elle (audit de #133)
             ancienne.FormClosed += (s, e) => app.Shutdown();
-            app.Run(new Coquille(ancienne.PageDe));
+            app.Run(new Coquille(ancienne.PageDe, ancienne));
             ancienne.Dispose();
             return 0;
         }
