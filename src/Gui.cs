@@ -656,7 +656,7 @@ namespace DeR4Tizer
         }
     }
 
-    class Fenetre : Form
+    class Fenetre : Form, ISourceEtat
     {
         readonly string fichierLecture = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "derniere-alerte-lue.txt");
@@ -1076,8 +1076,14 @@ namespace DeR4Tizer
             base.OnFormClosing(e);
         }
 
+        // Coquille du pilote, quand elle est ouverte : « Ouvrir », double-clic et clic sur une notification la montrent, sur la
+        // page demandée, au lieu de réafficher cette fenêtre (qui reprendrait la page hébergée : relecture de #133, R3)
+        Action<string> pilote;
+        public void Rattacher(Action<string> montrer) { pilote = montrer; }
+
         void Montrer(BoutonNav bouton, Control page)
         {
+            if (pilote != null) { pilote(bouton != null ? bouton.Cle : null); MarquerLues(); return; }
             Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
@@ -1211,6 +1217,8 @@ namespace DeR4Tizer
             var infos = Commun.Lire<InfosMenaces>("menaces.json");
             if (infos != null)
                 pastilles.Add(new Entete.Pastille { Texte = L.T("Listes de menaces") + " : " + (infos.TotalIp + infos.TotalReseaux).ToString("N0") + " IP · " + infos.TotalDomaines.ToString("N0") + " " + L.T("domaines"), Couleur = Theme.Magenta });
+            // Noms de programmes et d'outils venus du service : neutralisés aussi dans l'en-tête d'aujourd'hui (relecture de #134)
+            foreach (var p in pastilles) p.Texte = Canal.Visible(p.Texte);
             entete.Pastilles = pastilles;
             entete.Invalidate();
 
@@ -1267,6 +1275,32 @@ namespace DeR4Tizer
                 blocagesVus = cleBlocages;
                 RemplirBlocages(blocages);
             }
+            // Coquille du pilote (U2) : mêmes faits que l'en-tête, publiés après chaque rafraîchissement
+            // Textes neutralisés (Canal.Visible) : noms de programmes et d'outils venus du service (relecture de #134, D1)
+            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Affichable(p.Texte), Gravite = Entete.Gravite(p.Couleur) }).ToList();
+            var change = Change;
+            if (change != null) change();
+        }
+
+        // ------------------------------------------------------------ source d'état de la coquille du pilote (U2)
+
+        List<PointEtat> pointsCourants = new List<PointEtat>();
+        public event Action Change;
+        public List<PointEtat> Points() { return pointsCourants; }
+        public string Statut() { return Canal.Visible(statut.Text); }
+        public string TextePanique() { return VueEnsembleFluent.Affichable(btnPanique.Text); }
+        public bool PaniqueActive() { return paniqueActive; }
+        // Même chemin que le bouton d'aujourd'hui : portée dite avant d'agir, confirmation, commande au service
+        public void DemanderPanique() { Panique(); }
+        public Dictionary<string, PointEtat> Badges()
+        {
+            var r = new Dictionary<string, PointEtat>();
+            foreach (var b in navigation)
+            {
+                string t = b.TexteBadge ?? (b.Badge > 0 ? (b.Badge > 999 ? "999+" : b.Badge.ToString()) : null);
+                if (t != null) r[b.Cle] = new PointEtat { Texte = t, Gravite = Entete.Gravite(b.CouleurBadge) };
+            }
+            return r;
         }
 
         static string Traduire(ServiceControllerStatus s)
@@ -1898,10 +1932,12 @@ namespace DeR4Tizer
             // virtuels, bureau à distance et pilotes graphiques douteux sont courants chez les petites structures ; une
             // interface de cette taille n'a pas besoin du GPU
             System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
-            var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
-            // « Quitter » depuis l'icône de notification ferme la fenêtre cachée : le pilote se ferme avec elle (audit de #133)
-            ancienne.FormClosed += (s, e) => app.Shutdown();
-            app.Run(new Coquille(ancienne.PageDe));
+            // Fermer la coquille la cache dans la zone de notification, comme l'interface d'aujourd'hui ; seul « Quitter » (icône
+            // de notification : la fenêtre cachée se ferme) arrête le pilote (audit de #133)
+            var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+            var coquille = new Coquille(ancienne.PageDe, ancienne);
+            ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };
+            app.Run(coquille);
             ancienne.Dispose();
             return 0;
         }
