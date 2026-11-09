@@ -203,7 +203,7 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 6. ✅ Règles de détection identifiées et documentées, état des collectes (phase 3)
 7. ✅ Suivi des incidents, chronologie, santé des collectes et de l'interface (phase 4)
 8. ✅ Réponse bornée par la politique : identité revalidée, garde contre les boucles, échéances (phase 6)
-9. 🔄 Refonte de l'interface (WPF) et assistant de premier lancement (en cours, avant la phase 7)
+9. 🔄 Refonte de l'interface (WPF) et assistant de premier lancement (en cours, avant la phase 7) ; pilote de la nouvelle interface : `deR4Tizer.exe --fluent` (l'interface par défaut ne change pas encore)
 10. Filtrage par nom de domaine (phase 7, prévu)
 
 « ✅ » veut dire livré dans le code, pas validé pour la production : voir la matrice des capacités.
@@ -322,7 +322,7 @@ The full list is in the French section above. In particular:
 6. ✅ Identified and documented detection rules, collection status (phase 3)
 7. ✅ Incident tracking, timeline, health of collections and interface (phase 4)
 8. ✅ Response bounded by the policy: identity re-checked, loop guard, deadlines (phase 6)
-9. 🔄 Interface redesign (WPF) and first-run assistant (in progress, before phase 7)
+9. 🔄 Interface redesign (WPF) and first-run assistant (in progress, before phase 7); preview of the new interface: `deR4Tizer.exe --fluent` (the default interface does not change yet)
 10. Domain-name filtering (phase 7, planned)
 
 "✅" means delivered in the code, not validated for production: see the capability matrix.
