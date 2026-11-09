@@ -49,7 +49,10 @@ Contrastes calculés selon WCAG (4,5:1 au moins pour le texte) :
 | Attention | `#F2A93B` | à surveiller |
 | Succès | `#2FBF71` | avec parcimonie |
 
-- Segoe UI partout ; chasse fixe réservée aux chemins et aux empreintes ; fin des capitales forcées.
+- Segoe UI partout ; chasse fixe réservée aux chemins et aux empreintes ; fin des capitales forcées. Écart provisoire
+  (relecture de #133, R2) : dans le pilote, les pages d'aujourd'hui hébergées sont entièrement en Segoe UI, chemins et
+  empreintes compris (leur police unique `Theme.Mono` sert aussi aux tableaux) ; la chasse fixe revient avec leur
+  réécriture (U3 à U6).
 - Coins de 6 à 8 px ; transitions de 100 à 200 ms, coupées si Windows désactive les animations ; plus de balayage ni
   d'effet « glitch » ; un seul clignotement à la fois.
 - Navigation : « Vue d'ensemble », puis Surveillance, Protection, Système et confidentialité ; Réponses en cours, Santé

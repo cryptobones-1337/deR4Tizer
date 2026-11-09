@@ -1899,6 +1899,8 @@ namespace DeR4Tizer
             // interface de cette taille n'a pas besoin du GPU
             System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
             var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
+            // « Quitter » depuis l'icône de notification ferme la fenêtre cachée : le pilote se ferme avec elle (audit de #133)
+            ancienne.FormClosed += (s, e) => app.Shutdown();
             app.Run(new Coquille(ancienne.PageDe));
             ancienne.Dispose();
             return 0;

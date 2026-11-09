@@ -14,6 +14,10 @@ param(
     [int]$Minutes = 3,
     [string]$Journaux = (Join-Path $env:RUNNER_TEMP 'journaux-msi')
 )
+# VM seulement (audit de #133, S133-01) : la capture du pilote copie l'écran ; sur un poste réel elle prendrait ce qui
+# recouvre la fenêtre. Refus avant toute installation si la machine n'est pas une VM Hyper-V
+$modele = (Get-CimInstance Win32_ComputerSystem).Model
+if ($modele -ne 'Virtual Machine') { throw "Captures refusées : machine « $modele », pas la VM de test (Hyper-V « Virtual Machine »)." }
 . (Join-Path $PSScriptRoot '..\integration\commun.ps1')
 New-Item -ItemType Directory -Force -Path $Journaux | Out-Null
 $dossierCaptures = Join-Path $Sortie 'captures'
