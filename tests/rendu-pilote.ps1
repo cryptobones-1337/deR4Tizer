@@ -62,6 +62,26 @@ try {
     $pilote = $pilote.Substring(0, $pilote.IndexOf("`n        }`n"))
     $iRendu = $pilote.IndexOf('RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly')
     Cas 'pilote : rendu logiciel demandé avant l''application WPF' ($iRendu -ge 0 -and $iRendu -lt $pilote.IndexOf('new System.Windows.Application'))
+    # Pages d'aujourd'hui : palette de la coquille avec --fluent, palette néon sans (processus séparés : la palette est fixée
+    # au chargement, d'après la ligne de commande du processus)
+    $sonde = Join-Path $travail 'sonde-theme.ps1'
+    Set-Content $sonde -Encoding UTF8 -Value @'
+param([string]$Exe)
+$a = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($Exe))
+$t = $a.GetType('DeR4Tizer.Theme')
+$f = { param($n) $t.GetField($n, [Reflection.BindingFlags]'Static,Public').GetValue($null) }
+$fond = & $f 'Fond'; $cyan = & $f 'Cyan'; $mag = & $f 'Magenta'
+$casse = $t.GetMethod('Casse').Invoke($null, @('Alertes'))
+$titre = $t.GetMethod('TitreDePage').Invoke($null, [object[]]@('Alertes', [Windows.Forms.Padding]::Empty))
+# Visibilité demandée (état interne) : Visible rend faux pour tout contrôle sans parent affiché
+$visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlags]'NonPublic,Instance').Invoke($titre, @(2))
+"$(& $f 'Fluent')|{0:X2}{1:X2}{2:X2}|{3:X2}{4:X2}{5:X2}|{6:X2}{7:X2}{8:X2}|$casse|$visible|$((& $f 'TitrePage').Name)" -f $fond.R, $fond.G, $fond.B, $cyan.R, $cyan.G, $cyan.B, $mag.R, $mag.G, $mag.B
+'@
+    Add-Type -AssemblyName System.Windows.Forms
+    $avec = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" --fluent | Select-Object -Last 1)
+    $sans = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" | Select-Object -Last 1)
+    Cas 'pages d''aujourd''hui avec --fluent : palette neutre, un seul accent, pas de capitales, titre « // » caché, Segoe UI' ($avec -eq 'True|141518|3BA7F0|3BA7F0|Alertes|False|Segoe UI Semibold') $avec
+    Cas 'pages d''aujourd''hui sans --fluent : palette néon inchangée' ($sans -like 'False|0A0E14|00E5FF|FF2BD6|ALERTES|True|*') $sans
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {

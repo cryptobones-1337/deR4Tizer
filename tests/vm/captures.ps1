@@ -101,7 +101,14 @@ function Nom-Fichier([string]$Texte) {
     ($t -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLowerInvariant()
 }
 
-function Arreter-Interface { Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 1 }
+# Attend la fin réelle de l'interface : une instance encore vivante tient le verrou d'instance unique, et la suivante se
+# ferme aussitôt (code 0). Vu une fois sur 40 captures du pilote avec une simple pause d'une seconde
+function Arreter-Interface {
+    Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $fin = (Get-Date).AddSeconds(15)
+    while ((Get-Process deR4Tizer -ErrorAction SilentlyContinue) -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 250 }
+    Start-Sleep 1
+}
 
 # Langue de l'interface : réglages envoyés au service (config.json, que l'interface lit au démarrage)
 function Langue([string]$Code) {

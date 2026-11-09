@@ -47,7 +47,7 @@ namespace DeR4Tizer
                 FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Location = new Point(0, 0),
                 Padding = new Padding(22, 14, 22, 16), BackColor = Theme.Fond
             };
-            pile.Controls.Add(new Label { Text = "// " + L.T("Réglages").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
+            pile.Controls.Add(Theme.TitreDePage(L.T("Réglages"), new Padding(0, 0, 0, 2)));
             pile.Controls.Add(Note("Langue, envoi des alertes à un SIEM (syslog), API d'export et export des journaux."));
 
             // ---------------- Langue

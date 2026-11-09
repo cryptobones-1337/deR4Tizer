@@ -23,7 +23,7 @@ namespace DeR4Tizer
             Dock = DockStyle.Fill; ColumnCount = 1; RowCount = 5; BackColor = Theme.Fond; Padding = new Padding(22, 14, 22, 16); Visible = false;
             for (int i = 0; i < 4; i++) RowStyles.Add(new RowStyle(SizeType.AutoSize));
             RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            Controls.Add(new Label { Text = "// " + L.T(titre).ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) }, 0, 0);
+            Controls.Add(Theme.TitreDePage(L.T(titre), new Padding(0, 0, 0, 2)), 0, 0);
             Controls.Add(new Label { Text = L.T(description), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 8), MaximumSize = new Size(1400, 0) }, 0, 1);
             Controls.Add(Info, 0, 2);
             Controls.Add(Outils, 0, 3);

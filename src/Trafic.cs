@@ -246,7 +246,7 @@ namespace DeR4Tizer
             RowStyles.Add(new RowStyle(SizeType.AutoSize));
             RowStyles.Add(new RowStyle(SizeType.Percent, 55));
             RowStyles.Add(new RowStyle(SizeType.Percent, 45));
-            Controls.Add(new Label { Text = "// " + L.T("Trafic").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) }, 0, 0);
+            Controls.Add(Theme.TitreDePage(L.T("Trafic"), new Padding(0, 0, 0, 2)), 0, 0);
             Controls.Add(new Label
             {
                 Text = L.T("Analyse passive des paquets de ce PC depuis minuit. Pays d'enregistrement des adresses (registres Internet régionaux) ; les arcs montrent les échanges des 10 dernières secondes."),

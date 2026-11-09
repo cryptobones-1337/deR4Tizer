@@ -20,7 +20,7 @@ n'explique les premiers réglages.
 
 | Question du dossier | Réponse |
 |---|---|
-| Technologie | WPF sur .NET Framework 4.8, sans bibliothèque de style (aucune dépendance nouvelle). WebView2 en repli, seulement sur décision du mainteneur après les captures de U1 (dépendance nouvelle) |
+| Technologie | WPF sur .NET Framework 4.8, sans bibliothèque de style (aucune dépendance nouvelle). **Confirmé par le mainteneur le 2026-11-09** sur les captures réelles du pilote en VM (« Continuer en WPF ») : le repli WebView2 est abandonné |
 | Palette | Neutre, à un seul accent ; le cyan reste la couleur du logo |
 | Polices et icônes | Segoe UI (Variable) et icônes Segoe Fluent ou MDL2, livrées avec Windows ; rien d'ajouté |
 | Assistant d'installation | MSI WiX sobre (images et textes revus) ; l'assistant de premier lancement est dans l'interface |
@@ -60,7 +60,7 @@ Contrastes calculés selon WCAG (4,5:1 au moins pour le texte) :
 | PR | Contenu |
 |---|---|
 | U0 | Script de captures réelles en VM ; captures de référence ; corrections WinForms bon marché (textes par `L.T`, contraste) — **fait** : `tests/vm/captures.ps1` (`tests\vm\lancer.ps1 -Scenario captures`), 19 pages en français et en anglais à 96 ppp, capturées en VM avant les corrections qui suivent (les captures après correction attendent la levée de la détection de Defender) ; texte secondaire `#9AA3AF` ; en-tête et barre d'état traduits ; pastilles jamais sous le titre, coupées par gravité (« +N » de la couleur de la plus grave cachée) |
-| U1 | **En cours (pilote, ouvert par `--fluent`)** : `src/Fluent.cs`, C# pur compilé par `csc` (aucun XAML compilé, aucune dépendance : assemblys WPF de .NET Framework 4.8) ; jetons, navigation regroupée, pages d'aujourd'hui hébergées par `WindowsFormsHost` ; `tests/rendu-pilote.ps1` (contrastes, navigation, rendu hors écran à 100, 125 et 150 %, assistant élevé sans WPF). Prévu : pilote WPF : jetons, coquille, anciennes pages hébergées ; mode de compilation (`csc` en C# pur, XAML embarqué, ou MSBuild de .NET Framework) ; mesures (mémoire en zone de notification, démarrage par la tâche de relance, netteté à 100, 125 et 150 %). **Décision du mainteneur sur captures : WPF confirmé, ou repli sur WebView2** |
+| U1 | **En cours (pilote, ouvert par `--fluent`)** : `src/Fluent.cs`, C# pur compilé par `csc` (aucun XAML compilé, aucune dépendance : assemblys WPF de .NET Framework 4.8) ; jetons, navigation regroupée, pages d'aujourd'hui hébergées par `WindowsFormsHost` ; `tests/rendu-pilote.ps1` (contrastes, navigation, rendu hors écran à 100, 125 et 150 %, assistant élevé sans WPF). Captures réelles du pilote en VM (`tests/vm/captures.ps1`, 20 pages, français et anglais). Rendu logiciel imposé (le rendu matériel laissait la coquille blanche dans la VM Hyper-V) ; fenêtre ramenée à la zone de travail ; en mode pilote, les pages d'aujourd'hui prennent la palette et la police de la coquille (`Theme.cs`), sans titre « // » en double. **WPF confirmé par le mainteneur (2026-11-09).** Reste à mesurer : mémoire en zone de notification, démarrage par la tâche de relance, netteté à 125 et 150 % en VM |
 | U2 | Vue d'ensemble, panneau de détails ; Alertes, Incidents, Réponses en cours |
 | U3 | Santé, Détection, Événements |
 | U4 | Connexions, Trafic, Chaînes |
@@ -96,7 +96,7 @@ d'aujourd'hui : voir les points non tranchés) ; Résumé avec « Plus tard ». 
 ## Modèle de menaces
 
 Option WPF : plus d'endroits qui affichent des chaînes non fiables (`Visible` partout), XAML seulement depuis la
-ressource de l'exécutable. Repli WebView2, s'il est décidé : surface XSS et pont entre l'hôte et la page, frontière
+ressource de l'exécutable. Repli WebView2 (abandonné le 2026-11-09, gardé pour mémoire) : surface XSS et pont entre l'hôte et la page, frontière
 nouvelle à décrire dans `docs/security/threat-model.md` avant tout code (contenu des seules ressources de l'exécutable,
 CSP stricte et Trusted Types, ni framework JS ni npm, `textContent`, pont fermé, assistant élevé natif, données sous
 `%LOCALAPPDATA%`, runtime absent dit et jamais installé en silence).

@@ -1002,7 +1002,7 @@ namespace DeR4Tizer
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            t.Controls.Add(new Label { Text = "// " + L.T(titre).ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) }, 0, 0);
+            t.Controls.Add(Theme.TitreDePage(L.T(titre), new Padding(0, 0, 0, 2)), 0, 0);
             t.Controls.Add(new Label { Text = L.T(description), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             var barre = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 6), WrapContents = true };
             barre.Controls.AddRange(outils);

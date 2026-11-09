@@ -43,7 +43,7 @@ namespace DeR4Tizer
             RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
             RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            Controls.Add(new Label { Text = "// " + L.T("Événements").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) }, 0, 0);
+            Controls.Add(Theme.TitreDePage(L.T("Événements"), new Padding(0, 0, 0, 2)), 0, 0);
             Controls.Add(new Label
             {
                 Text = L.T("Mini-SIEM local : sessions, comptes, processus, services, connexions, pare-feu et alertes, conservés 30 jours. Les règles de corrélation lèvent des incidents."),

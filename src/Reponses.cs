@@ -240,7 +240,7 @@ namespace DeR4Tizer
             RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
             RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            Controls.Add(new Label { Text = "// " + (en ? "ONGOING RESPONSES" : "RÉPONSES EN COURS"), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 4) }, 0, 0);
+            Controls.Add(Theme.TitreDePage((en ? "Ongoing responses" : "Réponses en cours"), new Padding(0, 0, 0, 4)), 0, 0);
             Controls.Add(new Label { Text = en ? "Response actions that last. None is ever lifted automatically: at its deadline, a reminder is sent and a human decision is awaited." : "Actions de réponse qui durent. Aucune n'est jamais levée automatiquement : à son échéance, une relance part et une décision humaine est attendue.", Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             Controls.Add(resume, 0, 2);
             liste.Colonnes(en ? "Action" : "Action", 230, en ? "Target" : "Cible", 360, en ? "Triggered by" : "Déclencheur", 170, en ? "Since" : "Depuis", 130, en ? "Reminder" : "Relance", 130, en ? "State" : "État", 300);

@@ -12,15 +12,37 @@ namespace DeR4Tizer
 {
     static class Theme
     {
-        public static readonly Color Fond = C("#0A0E14"), Panneau = C("#0F1520"), Panneau2 = C("#151D2C"), Bordure = C("#1E2A3D"),
-            Texte = C("#C8D3E0"), TexteDim = C("#9AA3AF"), Cyan = C("#00E5FF"), Magenta = C("#FF2BD6"), Jaune = C("#FFD60A"),
-            Rouge = C("#FF3B5C"), Vert = C("#2BFF88"), Selection = C("#0E3442"),
-            FondCritique = C("#40101F"), FondAlerte = C("#2E1322"), FondAttention = C("#29230F"), FondActif = C("#3A0F1A");
+        // Pilote de la refonte (U1, --fluent) : les pages d'aujourd'hui, hébergées dans la coquille WPF, prennent la palette
+        // neutre de la coquille (jetons de Fluent.cs) et ses polices, sans capitales forcées ni titre « // » en double ; le
+        // mélange néon et neutre dans une même fenêtre choquait (retour du mainteneur sur les captures). Interface par
+        // défaut inchangée.
+        public static readonly bool Fluent = Array.IndexOf(Environment.GetCommandLineArgs(), "--fluent") >= 0;
+
+        public static readonly Color Fond = Fluent ? C("#141518") : C("#0A0E14"), Panneau = Fluent ? C("#1E2024") : C("#0F1520"),
+            Panneau2 = Fluent ? C("#262A30") : C("#151D2C"), Bordure = Fluent ? C("#2E3238") : C("#1E2A3D"),
+            Texte = Fluent ? C("#E6E8EB") : C("#C8D3E0"), TexteDim = C("#9AA3AF"),
+            // Un seul accent en mode pilote : bleu, là où l'interface néon mettait cyan et magenta
+            Cyan = Fluent ? C("#3BA7F0") : C("#00E5FF"), Magenta = Fluent ? C("#3BA7F0") : C("#FF2BD6"),
+            Jaune = Fluent ? C("#F2A93B") : C("#FFD60A"), Rouge = Fluent ? C("#F0605A") : C("#FF3B5C"), Vert = Fluent ? C("#2FBF71") : C("#2BFF88"),
+            Selection = Fluent ? C("#1F3A52") : C("#0E3442"),
+            FondCritique = Fluent ? C("#3A1E1F") : C("#40101F"), FondAlerte = Fluent ? C("#2F2622") : C("#2E1322"),
+            FondAttention = Fluent ? C("#2E2818") : C("#29230F"), FondActif = Fluent ? C("#3A1E1F") : C("#3A0F1A");
 
         public static readonly Font Mono, MonoGras, Titre, TitrePage, Nav, Petit, PetitGras;
 
         static Theme()
         {
+            if (Fluent)
+            {
+                Mono = Police(9f, FontStyle.Regular, "Segoe UI");
+                MonoGras = Police(9f, FontStyle.Regular, "Segoe UI Semibold", "Segoe UI");
+                Titre = Police(18f, FontStyle.Regular, "Segoe UI Semibold", "Segoe UI");
+                TitrePage = Police(13f, FontStyle.Regular, "Segoe UI Semibold", "Segoe UI");
+                Nav = Police(10f, FontStyle.Regular, "Segoe UI");
+                Petit = Police(9f, FontStyle.Regular, "Segoe UI");
+                PetitGras = Police(9f, FontStyle.Regular, "Segoe UI Semibold", "Segoe UI");
+                return;
+            }
             Mono = Police(9f, FontStyle.Regular, "Cascadia Mono", "Consolas");
             MonoGras = new Font(Mono, FontStyle.Bold);
             Titre = Police(21f, FontStyle.Regular, "Bahnschrift SemiBold", "Bahnschrift", "Segoe UI Semibold");
@@ -28,6 +50,15 @@ namespace DeR4Tizer
             Nav = Police(10.5f, FontStyle.Regular, "Bahnschrift SemiBold", "Bahnschrift", "Segoe UI Semibold");
             Petit = Police(9f, FontStyle.Regular, "Segoe UI");
             PetitGras = Police(8.5f, FontStyle.Regular, "Bahnschrift SemiBold", "Segoe UI Semibold");
+        }
+
+        // Capitales du style néon ; texte tel quel en mode pilote
+        public static string Casse(string t) { return Fluent ? t : t.ToUpperInvariant(); }
+
+        // Titre « // PAGE » des pages d'aujourd'hui ; caché en mode pilote, où la coquille titre déjà la page
+        public static Label TitreDePage(string texte, Padding marge)
+        {
+            return new Label { Text = "// " + texte.ToUpperInvariant(), Font = TitrePage, ForeColor = Cyan, AutoSize = true, Margin = marge, Visible = !Fluent };
         }
 
         static Color C(string hex) { return ColorTranslator.FromHtml(hex); }
@@ -246,7 +277,7 @@ namespace DeR4Tizer
         {
             using (var fond = new SolidBrush(Theme.Fond)) e.Graphics.FillRectangle(fond, e.Bounds);
             var r = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 10, e.Bounds.Height);
-            TextRenderer.DrawText(e.Graphics, e.Header.Text.ToUpperInvariant(), Theme.PetitGras, r, Theme.Cyan,
+            TextRenderer.DrawText(e.Graphics, Theme.Casse(e.Header.Text), Theme.PetitGras, r, Theme.Fluent ? Theme.TexteDim : Theme.Cyan,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
             using (var trait = new Pen(Theme.Bordure))
             {
@@ -261,7 +292,7 @@ namespace DeR4Tizer
             // Ligne de section : texte magenta sur toute la largeur
             using (var fond = new SolidBrush(Theme.Fond)) e.Graphics.FillRectangle(fond, e.Bounds);
             var r = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
-            TextRenderer.DrawText(e.Graphics, "▌ " + e.Item.Text.ToUpperInvariant(), Theme.PetitGras, r, Theme.Magenta,
+            TextRenderer.DrawText(e.Graphics, (Theme.Fluent ? "" : "▌ ") + Theme.Casse(e.Item.Text), Theme.PetitGras, r, Theme.Magenta,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
 
@@ -344,7 +375,7 @@ namespace DeR4Tizer
     {
         public BoutonNeon(string texte, Color couleur)
         {
-            Text = L.T(texte).ToUpperInvariant();
+            Text = Theme.Casse(L.T(texte));
             FlatStyle = FlatStyle.Flat;
             FlatAppearance.BorderColor = couleur;
             FlatAppearance.BorderSize = 1;
