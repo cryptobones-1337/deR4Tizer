@@ -212,6 +212,16 @@ namespace DeR4Tizer
             }
         }
 
+        // Fermeture : avec une source (application réelle), la coquille se cache dans la zone de notification ; elle ne se
+        // ferme vraiment que sur « Quitter » (Quitter appelé avant l'arrêt de l'application)
+        bool quitter;
+        internal void Quitter() { quitter = true; Close(); }
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            if (source != null && !quitter) { e.Cancel = true; Hide(); return; }
+            base.OnClosing(e);
+        }
+
         // Compteurs de la navigation, repris de la fenêtre d'aujourd'hui (alertes non lues, démarrage, vie privée…)
         void MettreAJourPastillesNav()
         {

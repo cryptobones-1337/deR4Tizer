@@ -1929,10 +1929,12 @@ namespace DeR4Tizer
             // virtuels, bureau à distance et pilotes graphiques douteux sont courants chez les petites structures ; une
             // interface de cette taille n'a pas besoin du GPU
             System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
-            var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
-            // « Quitter » depuis l'icône de notification ferme la fenêtre cachée : le pilote se ferme avec elle (audit de #133)
-            ancienne.FormClosed += (s, e) => app.Shutdown();
-            app.Run(new Coquille(ancienne.PageDe, ancienne));
+            // Fermer la coquille la cache dans la zone de notification, comme l'interface d'aujourd'hui ; seul « Quitter » (icône
+            // de notification : la fenêtre cachée se ferme) arrête le pilote (audit de #133)
+            var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+            var coquille = new Coquille(ancienne.PageDe, ancienne);
+            ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };
+            app.Run(coquille);
             ancienne.Dispose();
             return 0;
         }

@@ -85,7 +85,7 @@ try {
     $pilote = $pilote.Substring(0, $pilote.IndexOf("`n        }`n"))
     $iRendu = $pilote.IndexOf('RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly')
     Cas 'pilote : rendu logiciel demandé avant l''application WPF' ($iRendu -ge 0 -and $iRendu -lt $pilote.IndexOf('new System.Windows.Application'))
-    Cas 'pilote : « Quitter » de la zone de notification ferme aussi la coquille' ($pilote.Contains('ancienne.FormClosed += (s, e) => app.Shutdown();') -and $pilote.IndexOf('FormClosed') -lt $pilote.IndexOf('app.Run('))
+    Cas 'pilote : « Quitter » de la zone de notification ferme aussi la coquille' ($pilote.Contains('ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };') -and $pilote.IndexOf('FormClosed') -lt $pilote.IndexOf('app.Run(') -and $pilote.Contains('ShutdownMode.OnExplicitShutdown'))
     # Pages d'aujourd'hui : palette de la coquille avec --fluent, palette néon sans (processus séparés : la palette est fixée
     # au chargement, d'après la ligne de commande du processus)
     $sonde = Join-Path $travail 'sonde-theme.ps1'
