@@ -103,21 +103,38 @@ try {
         Verifier-Fenetre 'fenêtre : « Continuer » seul renvoie Oui' { $continuer.DialogResult -eq 'Yes' }
         Verifier-Fenetre 'fenêtre : « Continuer » désarmé à l''ouverture (armé 1 s après l''affichage)' { -not $continuer.Enabled }
     } finally { $f.Dispose() }
-    # Armement réel (fenêtre montrée hors de l'écran, jamais à l'emplacement visible) : inactif à l'affichage, actif après
-    # 1 s, désarmé quand une autre fenêtre prend le premier plan, réarmé 1 s après le retour (S69-02, S69-03)
+    # Armement (fenêtre montrée hors de l'écran, jamais à l'emplacement visible) : inactif à l'affichage, actif 1 s après
+    # l'activation, désarmé quand la fenêtre perd le premier plan, réarmé 1 s après le retour (S69-02, S69-03).
+    # Déterministe (relecture de #134, R1) : avant, le test confiait le premier plan au vrai Windows (Show, Activate), qui ne
+    # l'accorde pas à un processus qui ne l'a pas (échecs au hasard, environ 1 sur 20) et attendait des durées fixes trop
+    # justes. Les événements d'activation sont levés directement (OnActivated, OnDeactivate, ceux qu'écoute la fenêtre) ;
+    # l'armement est attendu jusqu'à 5 s, et jamais accepté avant 0,9 s (le minuteur ne part pas en avance).
     $f = $canal.GetMethod('FenetreConfirmation').Invoke($null, @('essai', $false))
-    $autre = New-Object Windows.Forms.Form
     try {
         $f.StartPosition = 'Manual'; $f.Location = New-Object Drawing.Point(-4000, -4000); $f.ShowInTaskbar = $false
-        $autre.StartPosition = 'Manual'; $autre.Location = New-Object Drawing.Point(-4000, -3000); $autre.ShowInTaskbar = $false
         $k = $f.Controls.Find('Continuer', $true)[0]
+        $drapeaux = [Reflection.BindingFlags]'NonPublic,Instance'
+        $activer = { [Windows.Forms.Form].GetMethod('OnActivated', $drapeaux).Invoke($f, @([EventArgs]::Empty)) }
+        $desactiver = { [Windows.Forms.Form].GetMethod('OnDeactivate', $drapeaux).Invoke($f, @([EventArgs]::Empty)) }
         function Attendre([int]$ms) { $fin = [DateTime]::UtcNow.AddMilliseconds($ms); while ([DateTime]::UtcNow -lt $fin) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 20 } }
-        $f.Show(); Attendre 150; $a0 = $k.Enabled; Attendre 1400; $a1 = $k.Enabled
-        $autre.Show(); $autre.Activate(); Attendre 300; $a2 = $k.Enabled; Attendre 1300; $a3 = $k.Enabled
-        $f.Activate(); Attendre 200; $a4 = $k.Enabled; Attendre 1400; $a5 = $k.Enabled
-        Verifier-Fenetre 'armement : inactif à l''affichage, actif après 1 s' { if (-not $a0 -and $a1) { $true } else { "0,15 s : $a0 ; 1,55 s : $a1" } }
-        Verifier-Fenetre 'armement : désarmé hors du premier plan, réarmé 1 s après le retour' { if (-not $a2 -and -not $a3 -and -not $a4 -and $a5) { $true } else { "perte : $a2/$a3 ; retour : $a4/$a5" } }
-    } finally { $autre.Dispose(); $f.Dispose() }
+        # Délai jusqu'à l'armement en ms, ou -1 s'il n'arrive pas avant $max
+        function Attendre-Arme([int]$max) {
+            $chrono = [Diagnostics.Stopwatch]::StartNew()
+            while (-not $k.Enabled -and $chrono.ElapsedMilliseconds -lt $max) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10 }
+            if ($k.Enabled) { [int]$chrono.ElapsedMilliseconds } else { -1 }
+        }
+        # Fenêtre jamais montrée : Windows ne lui envoie aucune activation réelle, qui arrêtait le minuteur au hasard
+        # (vu 3 fois sur 25 avec Show) ; le minuteur et les événements fonctionnent sans affichage
+        $a0 = $k.Enabled
+        & $activer; $a1 = $k.Enabled; $t1 = Attendre-Arme 5000
+        & $desactiver; $a2 = $k.Enabled; Attendre 1300; $a3 = $k.Enabled
+        & $activer; $a4 = $k.Enabled; $t5 = Attendre-Arme 5000
+        # Nouvelle activation alors qu'il est armé (fenêtre reprise au premier plan sans perte vue) : désarmé de nouveau
+        & $activer; $a6 = $k.Enabled; $t7 = Attendre-Arme 5000
+        Verifier-Fenetre 'armement : inactif à l''affichage, actif après 1 s' { if (-not $a0 -and -not $a1 -and $t1 -ge 900) { $true } else { "départ : $a0 ; à l'activation : $a1 ; armé après $t1 ms" } }
+        Verifier-Fenetre 'armement : désarmé hors du premier plan, réarmé 1 s après le retour' { if (-not $a2 -and -not $a3 -and -not $a4 -and $t5 -ge 900) { $true } else { "perte : $a2/$a3 ; retour : $a4, armé après $t5 ms" } }
+        Verifier-Fenetre 'armement : toute activation désarme, même armé, puis réarme après 1 s' { if (-not $a6 -and $t7 -ge 900) { $true } else { "à l'activation : $a6 ; armé après $t7 ms" } }
+    } finally { $f.Dispose() }
     $c = [Activator]::CreateInstance($cmdT); $c.Action = 'majConfig'; $c.Valeur = '{"Auto":false,"Url":""}'
     $t = $canal.GetMethod('Decrire').Invoke($null, @($c))
     Verifier-Fenetre 'majConfig : adresse vide = adresse par défaut, affichée' { $t -match 'adresse par défaut https://github\.com/' }
