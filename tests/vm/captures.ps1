@@ -196,6 +196,31 @@ if (-not $installe) {
     }
     Arreter-Interface
     (@('langue | page | fichier | taille | résolution') + $index) | Set-Content (Join-Path $dossierCaptures 'index.txt') -Encoding UTF8
+
+    # Mesures du pilote (U1) : temps jusqu'à la fenêtre et mémoire après une minute, interface actuelle et pilote, trois
+    # essais chacun, sur la page Connexions. Relevé, sans seuil : la décision reste au mainteneur
+    $mesures = New-Object System.Collections.Generic.List[string]
+    $mesures.Add('interface | essai | fenêtre (ms) | mémoire privée (Mo) | ensemble de travail (Mo)')
+    foreach ($mode in 'actuelle', 'pilote') {
+        foreach ($essai in 1..3) {
+            Verifier "Mesure $mode, essai $essai" {
+                Arreter-Interface
+                $arguments = @('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @() })
+                $chrono = [Diagnostics.Stopwatch]::StartNew()
+                $p = Start-Process $exe -ArgumentList $arguments -PassThru
+                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and $chrono.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50; $p.Refresh() }
+                $ms = [int]$chrono.Elapsed.TotalMilliseconds
+                if ($p.HasExited) { return "l'interface s'est fermée (code $($p.ExitCode))" }
+                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                Start-Sleep 60
+                $p.Refresh()
+                $script:mesures.Add("$mode | $essai | $ms | $([math]::Round($p.PrivateMemorySize64 / 1MB, 1)) | $([math]::Round($p.WorkingSet64 / 1MB, 1))")
+                $true
+            }
+        }
+    }
+    Arreter-Interface
+    $mesures | Set-Content (Join-Path $dossierCaptures 'mesures.txt') -Encoding UTF8
 }
 
 if ($installe) {
