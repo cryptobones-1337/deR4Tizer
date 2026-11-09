@@ -670,6 +670,9 @@ namespace DeR4Tizer
         };
         readonly List<BoutonNav> navigation = new List<BoutonNav>();
         readonly List<Control> pages = new List<Control>();
+        // Pages par clé de navigation (texte français) : prêtées à la coquille du pilote WPF (U1, Fluent.cs)
+        readonly Dictionary<string, Control> pagesParCle = new Dictionary<string, Control>();
+        public Control PageDe(string cle) { Control p; return pagesParCle.TryGetValue(cle, out p) ? p : null; }
         BoutonNav navFlux, navAlertes, navChaines, navVie, navParefeu, navDemarrage, navBaseline, navExtensions, navBlocages, navQuarantaine, navMenaces;
         Control pageAlertes;
         readonly BoutonNeon btnService = new BoutonNeon("Démarrer le service", Theme.Vert);
@@ -999,7 +1002,7 @@ namespace DeR4Tizer
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            t.Controls.Add(new Label { Text = "// " + L.T(titre).ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 2) }, 0, 0);
+            t.Controls.Add(Theme.TitreDePage(L.T(titre), new Padding(0, 0, 0, 2)), 0, 0);
             t.Controls.Add(new Label { Text = L.T(description), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             var barre = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 6), WrapContents = true };
             barre.Controls.AddRange(outils);
@@ -1016,6 +1019,7 @@ namespace DeR4Tizer
         {
             var b = new BoutonNav(texte, largeur - 1);
             b.Click += (s, e) => Afficher(b, page);
+            pagesParCle[b.Cle] = page;
             liens.Controls.Add(b);
             navigation.Add(b);
             return b;
@@ -1882,6 +1886,26 @@ namespace DeR4Tizer
 
     static class Programme
     {
+        // Pilote WPF (U1) dans une méthode à part, jamais intégrée à Main : les assemblys WPF ne sont chargées que si
+        // « --fluent » est demandé, jamais pour l'assistant élevé (--commande-fichier) (docs/roadmap/interface.md)
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static int LancerPilote()
+        {
+            var ancienne = new Fenetre(true);
+            var poignee = ancienne.Handle;
+            // Rendu logiciel : sur la VM de test (Hyper-V, carte sans pilote 3D), le rendu matériel de WPF n'affichait rien
+            // (fenêtre blanche, seules les pages WinForms hébergées visibles), alors que le rendu logiciel est juste. Postes
+            // virtuels, bureau à distance et pilotes graphiques douteux sont courants chez les petites structures ; une
+            // interface de cette taille n'a pas besoin du GPU
+            System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+            var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
+            // « Quitter » depuis l'icône de notification ferme la fenêtre cachée : le pilote se ferme avec elle (audit de #133)
+            ancienne.FormClosed += (s, e) => app.Shutdown();
+            app.Run(new Coquille(ancienne.PageDe));
+            ancienne.Dispose();
+            return 0;
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
@@ -1943,6 +1967,9 @@ namespace DeR4Tizer
             using (new Mutex(true, i >= 0 ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier))
             {
                 if (!premier) return 0;
+                // Pilote de la refonte (U1) : coquille WPF, ouverte seulement sur demande ; la fenêtre d'aujourd'hui reste
+                // cachée (zone de notification, rafraîchissement, commandes) et prête ses pages
+                if (args.Contains("--fluent")) return LancerPilote();
                 Application.Run(new Fenetre(args.Contains("--cache")));
             }
             return 0;

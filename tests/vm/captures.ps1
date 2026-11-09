@@ -14,6 +14,10 @@ param(
     [int]$Minutes = 3,
     [string]$Journaux = (Join-Path $env:RUNNER_TEMP 'journaux-msi')
 )
+# VM seulement (audit de #133, S133-01) : la capture du pilote copie l'écran ; sur un poste réel elle prendrait ce qui
+# recouvre la fenêtre. Refus avant toute installation si la machine n'est pas une VM Hyper-V
+$modele = (Get-CimInstance Win32_ComputerSystem).Model
+if ($modele -ne 'Virtual Machine') { throw "Captures refusées : machine « $modele », pas la VM de test (Hyper-V « Virtual Machine »)." }
 . (Join-Path $PSScriptRoot '..\integration\commun.ps1')
 New-Item -ItemType Directory -Force -Path $Journaux | Out-Null
 $dossierCaptures = Join-Path $Sortie 'captures'
@@ -66,6 +70,19 @@ public static class D4tCapture
         using (var g = Graphics.FromImage(b)) { IntPtr dc = g.GetHdc(); try { PrintWindow(h, dc, 2); } finally { g.ReleaseHdc(dc); } }
         return b;
     }
+    // Pilote WPF (U1) : PrintWindow ne rend pas la composition WPF + WindowsFormsHost. La fenêtre est mise au premier plan
+    // et sa zone est copiée depuis l'écran de la VM (jamais un poste réel : ce script ne tourne que dans la VM de test)
+    public static Bitmap Ecran(IntPtr h)
+    {
+        ShowWindow(h, 9); SetForegroundWindow(h);
+        System.Threading.Thread.Sleep(800);
+        RECT r; if (!GetWindowRect(h, out r)) return null;
+        int l = r.D - r.G, ht = r.B - r.H;
+        if (l <= 0 || ht <= 0) return null;
+        var b = new Bitmap(l, ht);
+        using (var g = Graphics.FromImage(b)) g.CopyFromScreen(r.G, r.H, 0, 0, new Size(l, ht));
+        return b;
+    }
     // Part des pixels d'une seule couleur : une capture sans bureau est uniforme (noire)
     public static double Uniforme(Bitmap b)
     {
@@ -88,7 +105,14 @@ function Nom-Fichier([string]$Texte) {
     ($t -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLowerInvariant()
 }
 
-function Arreter-Interface { Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 1 }
+# Attend la fin réelle de l'interface : une instance encore vivante tient le verrou d'instance unique, et la suivante se
+# ferme aussitôt (code 0). Vu une fois sur 40 captures du pilote avec une simple pause d'une seconde
+function Arreter-Interface {
+    Get-Process deR4Tizer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $fin = (Get-Date).AddSeconds(15)
+    while ((Get-Process deR4Tizer -ErrorAction SilentlyContinue) -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 250 }
+    Start-Sleep 1
+}
 
 # Langue de l'interface : réglages envoyés au service (config.json, que l'interface lit au démarrage)
 function Langue([string]$Code) {
@@ -147,8 +171,60 @@ if (-not $installe) {
             }
         }
     }
+    # Pilote de la refonte (U1) : même service, mêmes langues, coquille WPF ouverte par --fluent, Vue d'ensemble comprise
+    foreach ($code in 'fr', 'en') {
+        $okLangue = $true
+        Verifier "Pilote, langue $code envoyée au service" { try { Langue $code; $true } catch { $script:okLangue = $false; $_.Exception.Message } }
+        if (-not $okLangue) { continue }
+        foreach ($page in @("Vue d'ensemble") + $pages) {
+            Verifier "Capture du pilote $code : $page" {
+                Arreter-Interface
+                $p = Start-Process $exe -ArgumentList '--fluent', '--page', "`"$page`"" -PassThru
+                $fin = (Get-Date).AddSeconds(30)
+                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and (Get-Date) -lt $fin) { Start-Sleep -Milliseconds 300; $p.Refresh() }
+                if ($p.HasExited) { return "le pilote s'est fermé (code $($p.ExitCode))" }
+                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                Start-Sleep 5
+                $b = [D4tCapture]::Ecran($p.MainWindowHandle)
+                if (-not $b) { return 'fenêtre illisible' }
+                try {
+                    $u = [D4tCapture]::Uniforme($b)
+                    if ($u -gt 0.98) { return "capture uniforme ($([math]::Round($u * 100)) % d'une seule couleur) : bureau non rendu" }
+                    $f = Join-Path $dossierCaptures ("pilote-$code-" + (Nom-Fichier $page) + '.png')
+                    $b.Save($f, [Drawing.Imaging.ImageFormat]::Png)
+                    $script:index.Add("pilote $code | $page | $([IO.Path]::GetFileName($f)) | $($b.Width) x $($b.Height) | $([D4tCapture]::Dpi($p.MainWindowHandle)) ppp")
+                } finally { $b.Dispose() }
+                $true
+            }
+        }
+    }
     Arreter-Interface
     (@('langue | page | fichier | taille | résolution') + $index) | Set-Content (Join-Path $dossierCaptures 'index.txt') -Encoding UTF8
+
+    # Mesures du pilote (U1) : temps jusqu'à la fenêtre et mémoire après une minute, interface actuelle et pilote, trois
+    # essais chacun, sur la page Connexions. Relevé, sans seuil : la décision reste au mainteneur
+    $mesures = New-Object System.Collections.Generic.List[string]
+    $mesures.Add('interface | essai | fenêtre (ms) | mémoire privée (Mo) | ensemble de travail (Mo)')
+    foreach ($mode in 'actuelle', 'pilote') {
+        foreach ($essai in 1..3) {
+            Verifier "Mesure $mode, essai $essai" {
+                Arreter-Interface
+                $arguments = @('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @() })
+                $chrono = [Diagnostics.Stopwatch]::StartNew()
+                $p = Start-Process $exe -ArgumentList $arguments -PassThru
+                while ($p.MainWindowHandle -eq [IntPtr]::Zero -and -not $p.HasExited -and $chrono.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50; $p.Refresh() }
+                $ms = [int]$chrono.Elapsed.TotalMilliseconds
+                if ($p.HasExited) { return "l'interface s'est fermée (code $($p.ExitCode))" }
+                if ($p.MainWindowHandle -eq [IntPtr]::Zero) { return 'aucune fenêtre en 30 s' }
+                Start-Sleep 60
+                $p.Refresh()
+                $script:mesures.Add("$mode | $essai | $ms | $([math]::Round($p.PrivateMemorySize64 / 1MB, 1)) | $([math]::Round($p.WorkingSet64 / 1MB, 1))")
+                $true
+            }
+        }
+    }
+    Arreter-Interface
+    $mesures | Set-Content (Join-Path $dossierCaptures 'mesures.txt') -Encoding UTF8
 }
 
 if ($installe) {

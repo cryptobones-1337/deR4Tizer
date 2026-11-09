@@ -383,7 +383,7 @@ namespace DeR4Tizer
             RowStyles.Add(new RowStyle(SizeType.AutoSize));
             RowStyles.Add(new RowStyle(SizeType.Percent, 45));
             RowStyles.Add(new RowStyle(SizeType.Percent, 55));
-            Controls.Add(new Label { Text = "// " + L.T("Incidents").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 4) }, 0, 0);
+            Controls.Add(Theme.TitreDePage(L.T("Incidents"), new Padding(0, 0, 0, 4)), 0, 0);
             Controls.Add(new Label { Text = L.T("Alertes regroupées par programme ou destination, à suivre jusqu'à leur clôture. Sélectionnez un incident pour voir ses alertes, sa chronologie et ses transitions."), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             var barre = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 6), BackColor = Theme.Fond };
             barre.Controls.AddRange(new Control[] { btnPrendre, btnClore, btnRouvrir, resume });
@@ -536,7 +536,7 @@ namespace DeR4Tizer
             RowStyles.Add(new RowStyle(SizeType.AutoSize));
             RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
-            Controls.Add(new Label { Text = "// " + L.T("Santé").ToUpperInvariant(), Font = Theme.TitrePage, ForeColor = Theme.Cyan, AutoSize = true, Margin = new Padding(0, 0, 0, 4) }, 0, 0);
+            Controls.Add(Theme.TitreDePage(L.T("Santé"), new Padding(0, 0, 0, 4)), 0, 0);
             Controls.Add(new Label { Text = L.T("Ce que deR4Tizer voit réellement : une collecte indisponible, c'est une détection qui ne peut pas se déclencher. Chaque ligne dit sa source et sa date."), Font = Theme.Petit, ForeColor = Theme.TexteDim, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, 1);
             Controls.Add(resume, 0, 2);
             liste.Colonnes("Sujet", 240, "État", 130, "Vérifié", 240, "Détail", 400, "Source", 130);
