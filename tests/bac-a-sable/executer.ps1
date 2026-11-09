@@ -2,7 +2,7 @@
 # de la CI, écrit le tableau et les journaux dans le dossier de sortie monté, relève l'état de Microsoft Defender
 # avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé. Aussi exécuté dans la VM de test
 # (tests\vm\lancer.ps1, PowerShell Direct) avec -SansArret : la VM est remise à son instantané par le lanceur.
-param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d', 'mesure')] [string]$Scenario, [switch]$SansArret)
+param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d', 'mesure', 'captures')] [string]$Scenario, [switch]$SansArret)
 $sortie = 'C:\sortie'
 $entree = 'C:\entree'
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
@@ -29,6 +29,8 @@ try {
         }
         # VM seulement : mesure du cycle (environ 25 min), hors de la preuve de CLAUDE.md sauf demande
         'mesure' { & "$entree\vm\mesure.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
+        # VM seulement : captures réelles de l'interface (U0, docs/roadmap/interface.md), hors de la preuve des PR
+        'captures' { & "$entree\vm\captures.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         'maj' {
             # Python embarquable (lecture seule) pour le serveur local ; versions préparées par preparer.ps1 -Maj
             $env:PATH = "$entree\python;$env:PATH"
@@ -44,6 +46,12 @@ try {
 } finally {
     # Détections de ce scénario seulement (un historique présent dans l'instantané de la VM n'est pas compté)
     try { Get-MpThreatDetection | Where-Object { $_.InitialDetectionTime -ge $debut } | Format-List | Out-String | Set-Content (Join-Path $sortie "$Scenario-defender-detections.txt") } catch { }
+    # Nom, catégorie et gravité de chaque menace détectée pendant le scénario : l'identifiant seul ne dit pas ce que
+    # Defender a vu (U0 : service mis en quarantaine une fois, nom inconnu). Relevé seulement : Defender n'est jamais touché
+    try {
+        $ids = @(Get-MpThreatDetection | Where-Object { $_.InitialDetectionTime -ge $debut } | ForEach-Object ThreatID | Sort-Object -Unique)
+        if ($ids.Count) { Get-MpThreat | Where-Object { $_.ThreatID -in $ids } | Format-List ThreatID, ThreatName, CategoryID, SeverityID, IsActive, Resources | Out-String | Add-Content (Join-Path $sortie "$Scenario-defender-detections.txt") }
+    } catch { }
     Copy-Item (Join-Path $env:RUNNER_TEMP 'journaux-msi') (Join-Path $sortie "$Scenario-journaux") -Recurse -Force -ErrorAction SilentlyContinue
     Stop-Transcript | Out-Null
     # Écrit en dernier : lancer.ps1 attend ce fichier

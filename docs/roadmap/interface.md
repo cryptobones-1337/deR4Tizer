@@ -59,7 +59,7 @@ Contrastes calculés selon WCAG (4,5:1 au moins pour le texte) :
 
 | PR | Contenu |
 |---|---|
-| U0 | Script de captures réelles en VM ; captures de référence ; corrections WinForms bon marché (textes par `L.T`, contraste) |
+| U0 | Script de captures réelles en VM ; captures de référence ; corrections WinForms bon marché (textes par `L.T`, contraste) — **fait** : `tests/vm/captures.ps1` (`tests\vm\lancer.ps1 -Scenario captures`), 19 pages en français et en anglais à 96 ppp, capturées en VM avant les corrections qui suivent (les captures après correction attendent la levée de la détection de Defender) ; texte secondaire `#9AA3AF` ; en-tête et barre d'état traduits ; pastilles jamais sous le titre, coupées par gravité (« +N » de la couleur de la plus grave cachée) |
 | U1 | Pilote WPF : jetons, coquille, anciennes pages hébergées ; mode de compilation (`csc` en C# pur, XAML embarqué, ou MSBuild de .NET Framework) ; mesures (mémoire en zone de notification, démarrage par la tâche de relance, netteté à 100, 125 et 150 %). **Décision du mainteneur sur captures : WPF confirmé, ou repli sur WebView2** |
 | U2 | Vue d'ensemble, panneau de détails ; Alertes, Incidents, Réponses en cours |
 | U3 | Santé, Détection, Événements |
