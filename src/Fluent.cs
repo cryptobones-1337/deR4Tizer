@@ -103,9 +103,98 @@ namespace DeR4Tizer
         void Rattacher(Action<string> montrer);
     }
 
+    // Ce que la page Alertes de la coquille lit de la fenêtre d'aujourd'hui (U2b) ; les actions passent par les mêmes
+    // méthodes et les mêmes questions que le menu de la liste d'aujourd'hui
+    public interface ISourceAlertes
+    {
+        List<Alerte> Alertes();
+        string AucuneAlerte();
+        bool CollectesEnAlarme();
+        string Collectes();
+        string DerniereLue();
+        void MarquerAlertesLues();
+        void AgirAlerte(Alerte a, string action);
+    }
+
+    // Ligne du panneau de détails : titre, texte neutralisé, chasse fixe pour les chemins
+    public class LigneDetail
+    {
+        public string Titre;
+        public string Texte;
+        public bool Chasse;
+    }
+
+    // Décisions pures de la page Alertes (testées)
+    public static class VueAlertesFluent
+    {
+        public const int Maximum = 500;
+        public static readonly string[] Reponses = { "isolerProgramme", "suspendre", "tuerChaine", "quarantaine" };
+
+        public static int Gravite(string niveau) { return niveau == "Critique" ? 2 : niveau == "Alerte" ? 1 : 0; }
+
+        // Plus récentes d'abord ; niveau null : toutes ; au plus Maximum (les plus récentes)
+        public static List<Alerte> Filtrer(IList<Alerte> alertes, string niveau)
+        {
+            return (alertes ?? new List<Alerte>()).Where(a => a != null && (niveau == null || a.Niveau == niveau))
+                .Reverse().Take(Maximum).ToList();
+        }
+
+        public static bool NonLue(Alerte a, string derniereLue) { return string.CompareOrdinal(a.Heure, derniereLue ?? "") > 0; }
+
+        // Actions offertes, dans l'ordre des boutons, selon ce que l'alerte permet (mêmes conditions que les méthodes
+        // d'aujourd'hui : destination connue pour bloquer, jamais d'exception pour une critique, PID pour suspendre et
+        // tuer, chemin pour isoler, mettre en quarantaine et ouvrir l'emplacement)
+        public static List<string> Actions(Alerte a)
+        {
+            var r = new List<string>();
+            if (a == null) return r;
+            bool chemin = !string.IsNullOrEmpty(a.Chemin), pid = a.Pid != null && a.Pid > 4;
+            if (!string.IsNullOrEmpty(a.Ip) || !string.IsNullOrEmpty(a.NomDns)) r.Add("bloquer");
+            if (a.Niveau != "Critique") r.Add("exception");
+            if (chemin) r.Add("isolerProgramme");
+            if (pid) { r.Add("suspendre"); r.Add("tuerChaine"); }
+            if (chemin) { r.Add("quarantaine"); r.Add("emplacement"); }
+            return r;
+        }
+
+        public static string Libelle(string action)
+        {
+            switch (action)
+            {
+                case "bloquer": return L.T("Bloquer cette destination");
+                case "exception": return L.T("Ne plus alerter pour ce comportement");
+                case "isolerProgramme": return L.T("Isoler ce programme du réseau");
+                case "suspendre": return L.T("Suspendre le processus");
+                case "tuerChaine": return L.T("Tuer le processus et ses enfants");
+                case "quarantaine": return L.T("Mettre le programme en quarantaine");
+                case "emplacement": return L.T("Ouvrir l'emplacement du programme");
+                default: return action;
+            }
+        }
+
+        // Détails, chaque texte venu du service neutralisé (Canal.Visible) ; lignes vides omises
+        public static List<LigneDetail> Detail(Alerte a)
+        {
+            var r = new List<LigneDetail>();
+            if (a == null) return r;
+            Action<string, string, bool> ajouter = (titre, texte, chasse) => { if (!string.IsNullOrEmpty(texte)) r.Add(new LigneDetail { Titre = L.T(titre), Texte = Canal.Visible(texte), Chasse = chasse }); };
+            ajouter("Heure", a.Heure, false);
+            ajouter("Destination", string.IsNullOrEmpty(a.Destination) ? null : a.Destination + (a.Port > 0 ? ", port " + a.Port : ""), false);
+            ajouter("Règle", string.IsNullOrEmpty(a.Regle) ? null : a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : " (" + L.T("collecte présumée") + VueEnsembleFluent.DeuxPoints + a.Collecte + ")"), false);
+            ajouter("Technique", a.Mitre, false);
+            ajouter("Que faire", a.Conseil, false);
+            ajouter("Raisons", a.Raisons, false);
+            ajouter("Chemin", a.Chemin, true);
+            return r;
+        }
+    }
+
     // Décisions pures de la Vue d'ensemble (testées)
     public static class VueEnsembleFluent
     {
+        // Deux-points selon la langue : espace avant en français, pas en anglais (capture U2a : « Baseline : 12% » en anglais)
+        public static string DeuxPoints { get { return L.En ? ": " : " : "; } }
+
         // Sigles et noms propres gardés tels quels quand un texte en capitales est remis en casse de phrase
         static readonly string[] Sigles = { "DNS", "IP", "PC", "WMI", "OK", "OFF", "CAM", "MIC", "LIVE", "IPv6", "SIEM", "API", "URL", "USB", "UAC" };
         static readonly string[] Noms = { "Defender", "Sysmon", "Internet", "Windows", "Microsoft", "deR4Tizer", "Spamhaus", "Feodo", "Tracker" };
@@ -132,6 +221,14 @@ namespace DeR4Tizer
         // neutralisés par Canal.Visible, garde-fou de la phase (relecture de #134, D1)
         public static string Affichable(string t) { return Canal.Visible(Phrase(t)); }
 
+        // Texte de plusieurs lignes (bandeau des collectes) : chaque ligne neutralisée à part, les retours à la ligne de la
+        // mise en page gardés (sinon « non vues?○ ListesDomaines » : capture U2b)
+        public static string Lignes(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return "";
+            return string.Join("\n", t.Replace("\r\n", "\n").Split('\n').Select(Canal.Visible));
+        }
+
         // Faits de l'en-tête, plus les compteurs colorés de la navigation (baseline peu conforme, démarrage à revoir…) :
         // « à surveiller » au plus, ce ne sont pas des menaces avérées ; sans eux, la tête disait « aucun problème » à côté
         // d'un compteur rouge (capture en VM d'U2)
@@ -144,7 +241,7 @@ namespace DeR4Tizer
                 {
                     PointEtat b;
                     if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
-                        r.Add(new PointEtat { Texte = L.T(e.Cle) + " : " + b.Texte, Gravite = 1 });
+                        r.Add(new PointEtat { Texte = L.T(e.Cle) + DeuxPoints + b.Texte, Gravite = 1 });
                 }
             return r;
         }
@@ -168,6 +265,7 @@ namespace DeR4Tizer
         // État du poste lu de la fenêtre d'aujourd'hui (absent pour un rendu de test)
         readonly ISourceEtat source;
         string ouverte;
+        PageAlertes pageAlertes;
         readonly Dictionary<string, TextBlock> pastillesNav = new Dictionary<string, TextBlock>();
         // Pages WinForms prêtées par clé : celles de la fenêtre d'aujourd'hui (Fenetre.PageDe), ou rien pour un rendu de test
         readonly Func<string, WinForms.Control> pages;
@@ -220,7 +318,12 @@ namespace DeR4Tizer
             Ouvrir(demandee != null && NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee) ? demandee : NavigationFluent.VueEnsemble);
             if (source != null)
             {
-                Action suivre = () => { MettreAJourPastillesNav(); if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble(); };
+                Action suivre = () =>
+                {
+                    MettreAJourPastillesNav();
+                    if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble();
+                    else if (ouverte == "Alertes" && pageAlertes != null) { pageAlertes.Rafraichir(); if (IsVisible) ((ISourceAlertes)source).MarquerAlertesLues(); }
+                };
                 source.Change += suivre;
                 source.Rattacher(cle =>
                 {
@@ -357,7 +460,17 @@ namespace DeR4Tizer
             ouverte = cle;
             titrePage.Text = L.T(cle);
             if (hote != null) { hote.Child = null; hote.Dispose(); hote = null; }
+            pageAlertes = null;
             if (cle == NavigationFluent.VueEnsemble) { zone.Content = VueEnsemble(); return; }
+            // Page Alertes en WPF (U2b) quand la fenêtre d'aujourd'hui la fournit ; sinon la page hébergée
+            var alertes = source as ISourceAlertes;
+            if (cle == "Alertes" && alertes != null)
+            {
+                pageAlertes = new PageAlertes(alertes);
+                zone.Content = pageAlertes;
+                alertes.MarquerAlertesLues();
+                return;
+            }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -457,6 +570,7 @@ namespace DeR4Tizer
             bord.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
             bord.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
             var presentation = new FrameworkElementFactory(typeof(ContentPresenter));
+            presentation.SetValue(ContentPresenter.HorizontalAlignmentProperty, new TemplateBindingExtension(Control.HorizontalContentAlignmentProperty));
             bord.AppendChild(presentation);
             t.VisualTree = bord;
             var survol = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
@@ -464,6 +578,147 @@ namespace DeR4Tizer
             t.Triggers.Add(survol);
             modeleSimple = t;
             return t;
+        }
+
+        internal static ControlTemplate ModeleBouton() { return ModeleSimple(); }
+    }
+
+    // Page Alertes en WPF (U2b) : filtres par niveau, liste, panneau de détails à droite avec des boutons explicites.
+    // Les actions passent par la fenêtre d'aujourd'hui (mêmes méthodes, mêmes questions) ; chaque texte venu du service
+    // est neutralisé (Canal.Visible) avant affichage
+    class PageAlertes : Grid
+    {
+        readonly ISourceAlertes source;
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly TextBlock bandeau = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 0, 0, 12) };
+        readonly StackPanel filtres = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
+        string niveau;          // null : toutes
+        string choisie;         // identifiant de l'alerte affichée dans le panneau
+        static readonly FontFamily Chasse = new FontFamily("Cascadia Mono, Consolas");
+
+        public PageAlertes(ISourceAlertes source)
+        {
+            this.source = source;
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition());
+            ColumnDefinitions.Add(new ColumnDefinition());
+            ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(340) });
+            Grid.SetColumnSpan(filtres, 2); Children.Add(filtres);
+            Grid.SetRow(bandeau, 1); Grid.SetColumnSpan(bandeau, 2); Children.Add(bandeau);
+            var defile = new ScrollViewer { Content = liste, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 0, 16, 0) };
+            Grid.SetRow(defile, 2); Children.Add(defile);
+            var panneau = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20) };
+            panneau.Child = new ScrollViewer { Content = detail, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(panneau, 2); Grid.SetColumn(panneau, 1); Children.Add(panneau);
+            Rafraichir();
+        }
+
+        string vu;              // signature du dernier affichage : rien n'est reconstruit si rien n'a changé
+
+        // Reconstruit filtres, liste et panneau ; filtre et alerte choisie sont gardés. Appelé à chaque rafraîchissement de
+        // la fenêtre d'aujourd'hui (2 s) : seulement si les alertes, la lecture ou les collectes ont changé (défilement gardé)
+        internal void Rafraichir()
+        {
+            var toutes = source.Alertes() ?? new List<Alerte>();
+            string signature = toutes.Count + "|" + (toutes.Count > 0 ? toutes[toutes.Count - 1].Id : "") + "|" + source.DerniereLue() + "|" + source.Collectes() + "|" + niveau + "|" + choisie;
+            if (signature == vu) return;
+            vu = signature;
+            filtres.Children.Clear();
+            foreach (var f in new[] { new { Cle = (string)null, Texte = "Toutes" }, new { Cle = "Critique", Texte = "Critiques" }, new { Cle = "Alerte", Texte = "Alertes" }, new { Cle = "Info", Texte = "Infos" } })
+            {
+                int n = f.Cle == null ? toutes.Count : toutes.Count(a => a.Niveau == f.Cle);
+                bool actif = niveau == f.Cle;
+                var b = new Button
+                {
+                    Content = L.T(f.Texte) + " (" + n + ")", Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur),
+                    BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                string cle = f.Cle;
+                b.Click += (s, e) => { niveau = cle; Rafraichir(); };
+                filtres.Children.Add(b);
+            }
+            string collectes = source.Collectes();
+            bandeau.Text = collectes ?? "";
+            bandeau.Visibility = string.IsNullOrEmpty(collectes) ? Visibility.Collapsed : Visibility.Visible;
+            bandeau.Foreground = Jetons.Pinceau(source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire);
+
+            liste.Children.Clear();
+            var visibles = VueAlertesFluent.Filtrer(toutes, niveau);
+            if (visibles.Count == 0)
+                liste.Children.Add(new TextBlock
+                {
+                    Text = niveau == null ? source.AucuneAlerte() : L.T("Aucune alerte de ce niveau."), TextWrapping = TextWrapping.Wrap,
+                    Foreground = Jetons.Pinceau(niveau == null && source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire)
+                });
+            string lue = source.DerniereLue();
+            foreach (var a in visibles) liste.Children.Add(Ligne(a, VueAlertesFluent.NonLue(a, lue)));
+            if (toutes.Count(a => niveau == null || a.Niveau == niveau) > VueAlertesFluent.Maximum)
+                liste.Children.Add(new TextBlock { Text = string.Format(L.T("Les {0} plus récentes sont affichées."), VueAlertesFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 8, 0, 0) });
+            Afficher(visibles.FirstOrDefault(a => a.Id == choisie) ?? visibles.FirstOrDefault());
+        }
+
+        UIElement Ligne(Alerte a, bool nonLue)
+        {
+            int g = VueAlertesFluent.Gravite(a.Niveau);
+            var couleur = g == 2 ? Jetons.Danger : g == 1 ? Jetons.Attention : Jetons.TexteSecondaire;
+            bool ouverte = a.Id == choisie;
+            var cadre = new Border
+            {
+                Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 8, 14, 8),
+                Margin = new Thickness(0, 0, 0, 6), BorderThickness = new Thickness(3, 0, 0, 0), BorderBrush = Jetons.Pinceau(couleur), Cursor = Cursors.Hand
+            };
+            var pile = new StackPanel();
+            var haut = new DockPanel();
+            var niveauTexte = new TextBlock { Text = L.T(a.Niveau ?? ""), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(8, 0, 0, 0) };
+            DockPanel.SetDock(niveauTexte, Dock.Right);
+            haut.Children.Add(niveauTexte);
+            haut.Children.Add(new TextBlock { Text = (nonLue ? "• " : "") + Canal.Visible(a.Processus), FontWeight = nonLue ? FontWeights.SemiBold : FontWeights.Normal, TextTrimming = TextTrimming.CharacterEllipsis });
+            pile.Children.Add(haut);
+            string sous = Canal.Visible(a.Heure) + (string.IsNullOrEmpty(a.Destination) ? "" : "  ·  " + Canal.Visible(a.Destination));
+            pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis });
+            cadre.Child = pile;
+            cadre.MouseLeftButtonUp += (s, e) => { choisie = a.Id; Rafraichir(); };
+            return cadre;
+        }
+
+        void Afficher(Alerte a)
+        {
+            if (a == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez une alerte pour voir la technique d'attaque et quoi faire."), TextWrapping = TextWrapping.Wrap, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
+            choisie = a.Id;
+            int g = VueAlertesFluent.Gravite(a.Niveau);
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(a.Processus), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = L.T(a.Niveau ?? ""), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(g == 2 ? Jetons.Danger : g == 1 ? Jetons.Attention : Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 12) });
+            foreach (var l in VueAlertesFluent.Detail(a))
+            {
+                pile.Children.Add(new TextBlock { Text = l.Titre, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 6, 0, 2) });
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
+            }
+            var actions = VueAlertesFluent.Actions(a);
+            if (actions.Count > 0)
+                pile.Children.Add(new TextBlock { Text = L.T("Agir"), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 18, 0, 6) });
+            foreach (var act in actions)
+            {
+                bool reponse = VueAlertesFluent.Reponses.Contains(act);
+                var b = new Button
+                {
+                    Content = VueAlertesFluent.Libelle(act), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 0, 6), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Carte),
+                    BorderBrush = Jetons.Pinceau(reponse ? Jetons.Danger : Jetons.Separateur), BorderThickness = new Thickness(1),
+                    Foreground = Jetons.Pinceau(reponse ? Jetons.Danger : Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                string action = act;
+                b.Click += (s, e) => source.AgirAlerte(a, action);
+                pile.Children.Add(b);
+            }
+            detail.Content = pile;
         }
     }
 }

@@ -656,7 +656,7 @@ namespace DeR4Tizer
         }
     }
 
-    class Fenetre : Form, ISourceEtat
+    class Fenetre : Form, ISourceEtat, ISourceAlertes
     {
         readonly string fichierLecture = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "derniere-alerte-lue.txt");
@@ -1292,6 +1292,27 @@ namespace DeR4Tizer
         public bool PaniqueActive() { return paniqueActive; }
         // Même chemin que le bouton d'aujourd'hui : portée dite avant d'agir, confirmation, commande au service
         public void DemanderPanique() { Panique(); }
+        // ------------------------------------------------------------ source de la page Alertes de la coquille (U2b)
+
+        public List<Alerte> Alertes() { return alertesAffichees; }
+        public string AucuneAlerte() { return VueEnsembleFluent.Lignes(Couverture.AucuneAlerte(dernierEtat)); }
+        public bool CollectesEnAlarme() { return Couverture.Alarme(dernierEtat); }
+        public string Collectes() { return VueEnsembleFluent.Lignes(Couverture.Detail(dernierEtat)); }
+        public string DerniereLue() { return derniereLue; }
+        public void MarquerAlertesLues() { MarquerLues(true); }
+        // Mêmes méthodes, mêmes questions que le menu de la liste d'aujourd'hui
+        public void AgirAlerte(Alerte a, string action)
+        {
+            if (a == null) return;
+            switch (action)
+            {
+                case "bloquer": BloquerSur(a); break;
+                case "exception": ExceptionSur(a); break;
+                case "emplacement": EmplacementDe(a.Chemin); break;
+                case "isolerProgramme": case "suspendre": case "tuerChaine": case "quarantaine": AgirSur(a, action); break;
+            }
+        }
+
         public Dictionary<string, PointEtat> Badges()
         {
             var r = new Dictionary<string, PointEtat>();
@@ -1452,9 +1473,10 @@ namespace DeR4Tizer
             icone.ShowBalloonTip(8000, titre, texte, repli);
         }
 
-        void MarquerLues()
+        // depuisPilote : la page Alertes de la coquille est ouverte (cette fenêtre reste cachée en mode pilote)
+        void MarquerLues(bool depuisPilote = false)
         {
-            if (!Visible || !pageAlertes.Visible) return;
+            if (!depuisPilote && (!Visible || !pageAlertes.Visible)) return;
             var alertes = Commun.Lire<List<Alerte>>("alertes.json");
             if (alertes == null || alertes.Count == 0) return;
             string max = alertes.Max(a => a.Heure);
@@ -1771,7 +1793,12 @@ namespace DeR4Tizer
         void Agir(ListView lv, string action)
         {
             if (lv.SelectedItems.Count == 0) return;
-            var tag = lv.SelectedItems[0].Tag;
+            AgirSur(lv.SelectedItems[0].Tag, action);
+        }
+
+        // Même action, sur un élément donné (liste d'aujourd'hui ou page de la coquille) : mêmes contrôles, même question
+        void AgirSur(object tag, string action)
+        {
             int? pid = null;
             string chemin = null, nom = null;
             var f = tag as FluxInfo;
@@ -1835,7 +1862,11 @@ namespace DeR4Tizer
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
             // Ligne « Aucune alerte… » : pas d'alerte derrière
-            var a = lvAlertes.SelectedItems[0].Tag as Alerte;
+            ExceptionSur(lvAlertes.SelectedItems[0].Tag as Alerte);
+        }
+
+        void ExceptionSur(Alerte a)
+        {
             if (a == null) return;
             if (a.Niveau == "Critique")
             {
@@ -1848,7 +1879,11 @@ namespace DeR4Tizer
         void BloquerAlerte()
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
-            var a = lvAlertes.SelectedItems[0].Tag as Alerte;
+            BloquerSur(lvAlertes.SelectedItems[0].Tag as Alerte);
+        }
+
+        void BloquerSur(Alerte a)
+        {
             if (a == null || (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns))) return;
             Bloquer(a.Processus, a.Ip, a.NomDns);
         }
@@ -1901,7 +1936,11 @@ namespace DeR4Tizer
             var a = tag as Alerte;
             var d = tag as EntreeDemarrage;
             var n = tag as NoeudChaine;
-            string chemin = f != null ? f.Chemin : a != null ? a.Chemin : d != null ? d.Cible : n != null ? n.Chemin : null;
+            EmplacementDe(f != null ? f.Chemin : a != null ? a.Chemin : d != null ? d.Cible : n != null ? n.Chemin : null);
+        }
+
+        static void EmplacementDe(string chemin)
+        {
             if (!string.IsNullOrEmpty(chemin) && File.Exists(chemin)) Process.Start("explorer.exe", "/select,\"" + chemin + "\"");
         }
 
