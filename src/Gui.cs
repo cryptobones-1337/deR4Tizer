@@ -1306,8 +1306,8 @@ namespace DeR4Tizer
             if (a == null) return;
             switch (action)
             {
-                case "bloquer": BloquerAlerte(a); break;
-                case "exception": ExceptionAlerte(a); break;
+                case "bloquer": BloquerSur(a); break;
+                case "exception": ExceptionSur(a); break;
                 case "emplacement": EmplacementDe(a.Chemin); break;
                 case "isolerProgramme": case "suspendre": case "tuerChaine": case "quarantaine": AgirSur(a, action); break;
             }
@@ -1862,10 +1862,10 @@ namespace DeR4Tizer
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
             // Ligne « Aucune alerte… » : pas d'alerte derrière
-            ExceptionAlerte(lvAlertes.SelectedItems[0].Tag as Alerte);
+            ExceptionSur(lvAlertes.SelectedItems[0].Tag as Alerte);
         }
 
-        void ExceptionAlerte(Alerte a)
+        void ExceptionSur(Alerte a)
         {
             if (a == null) return;
             if (a.Niveau == "Critique")
@@ -1879,10 +1879,10 @@ namespace DeR4Tizer
         void BloquerAlerte()
         {
             if (lvAlertes.SelectedItems.Count == 0) return;
-            BloquerAlerte(lvAlertes.SelectedItems[0].Tag as Alerte);
+            BloquerSur(lvAlertes.SelectedItems[0].Tag as Alerte);
         }
 
-        void BloquerAlerte(Alerte a)
+        void BloquerSur(Alerte a)
         {
             if (a == null || (string.IsNullOrEmpty(a.Ip) && string.IsNullOrEmpty(a.NomDns))) return;
             Bloquer(a.Processus, a.Ip, a.NomDns);
