@@ -471,6 +471,9 @@ namespace DeR4Tizer
                 alertes.MarquerAlertesLues();
                 return;
             }
+            // Incidents et Réponses en cours en WPF (U2c) : elles lisent leurs fichiers elles-mêmes, sans droit nouveau
+            if (cle == "Incidents") { zone.Content = new PageIncidentsFluent(); return; }
+            if (cle == "Réponses en cours") { zone.Content = new PageReponsesFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -673,7 +676,7 @@ namespace DeR4Tizer
             };
             var pile = new StackPanel();
             var haut = new DockPanel();
-            var niveauTexte = new TextBlock { Text = L.T(a.Niveau ?? ""), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(8, 0, 0, 0) };
+            var niveauTexte = new TextBlock { Text = Canal.Visible(L.T(a.Niveau ?? "")), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(8, 0, 0, 0) };
             DockPanel.SetDock(niveauTexte, Dock.Right);
             haut.Children.Add(niveauTexte);
             haut.Children.Add(new TextBlock { Text = (nonLue ? "• " : "") + Canal.Visible(a.Processus), FontWeight = nonLue ? FontWeights.SemiBold : FontWeights.Normal, TextTrimming = TextTrimming.CharacterEllipsis });
@@ -692,7 +695,7 @@ namespace DeR4Tizer
             int g = VueAlertesFluent.Gravite(a.Niveau);
             var pile = new StackPanel();
             pile.Children.Add(new TextBlock { Text = Canal.Visible(a.Processus), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            pile.Children.Add(new TextBlock { Text = L.T(a.Niveau ?? ""), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(g == 2 ? Jetons.Danger : g == 1 ? Jetons.Attention : Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 12) });
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(L.T(a.Niveau ?? "")), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(g == 2 ? Jetons.Danger : g == 1 ? Jetons.Attention : Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 12) });
             foreach (var l in VueAlertesFluent.Detail(a))
             {
                 pile.Children.Add(new TextBlock { Text = l.Titre, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 6, 0, 2) });
@@ -717,6 +720,371 @@ namespace DeR4Tizer
                 string action = act;
                 b.Click += (s, e) => source.AgirAlerte(a, action);
                 pile.Children.Add(b);
+            }
+            detail.Content = pile;
+        }
+    }
+
+    // Décisions pures de la page Incidents de la coquille (U2c), testées par tests\rendu-pilote.ps1. Le texte vient de
+    // VueIncidents.Detail, déjà neutralisé (Canal.Visible) ; il est seulement découpé en sections
+    public static class VueIncidentsFluent
+    {
+        // Transitions offertes, dans l'ordre des boutons : les mêmes que la page d'aujourd'hui (VueIncidents.Permise)
+        public static List<string> Actions(IncidentSuivi i)
+        {
+            var l = new List<string>();
+            if (i == null) return l;
+            foreach (var vers in new[] { "PrisEnCharge", "Clos", "Ouvert" }) if (VueIncidents.Permise(i.Etat, vers)) l.Add(vers);
+            return l;
+        }
+
+        public static string Libelle(string vers)
+        {
+            return vers == "PrisEnCharge" ? L.T("Prendre en charge") : vers == "Clos" ? L.T("Clore…") : L.T("Rouvrir");
+        }
+
+        // 2 : risque confirmé (rouge) ; 1 : critique non clos (à surveiller) ; 0 : le reste. L'état est toujours écrit
+        public static int Gravite(IncidentSuivi i)
+        {
+            if (i == null || i.Etat == "Clos") return 0;
+            return VueIncidents.RisqueConfirme(i) ? 2 : i.Niveau == "Critique" ? 1 : 0;
+        }
+
+        // Sections du panneau : la première (résumé) sans titre, puis une par ligne « -- Titre » de VueIncidents.Detail.
+        // Les lignes gardent leur ordre ; aucune n'est perdue
+        public static List<LigneDetail> Sections(string detail)
+        {
+            var l = new List<LigneDetail>();
+            var courante = new LigneDetail { Titre = "", Texte = "" };
+            var lignes = new List<string>();
+            foreach (var brute in (detail ?? "").Replace("\r\n", "\n").Split('\n'))
+            {
+                if (brute.StartsWith("-- "))
+                {
+                    courante.Texte = string.Join("\n", lignes).Trim('\n');
+                    if (courante.Titre != "" || courante.Texte != "") l.Add(courante);
+                    courante = new LigneDetail { Titre = brute.Substring(3), Texte = "" };
+                    lignes = new List<string>();
+                }
+                else lignes.Add(brute);
+            }
+            courante.Texte = string.Join("\n", lignes).Trim('\n');
+            if (courante.Titre != "" || courante.Texte != "") l.Add(courante);
+            return l;
+        }
+    }
+
+    // Décisions pures de la page Réponses en cours de la coquille (U2c). Les textes viennent de VueReponses.Lignes (cible
+    // et déclencheur déjà neutralisés)
+    public static class VueReponsesFluent
+    {
+        public static List<LigneDetail> Detail(LigneReponse x)
+        {
+            bool en = L.En;
+            var l = new List<LigneDetail>();
+            if (x == null) return l;
+            Action<string, string, bool> ajout = (t, v, chasse) => { if (!string.IsNullOrEmpty(v)) l.Add(new LigneDetail { Titre = t, Texte = v, Chasse = chasse }); };
+            ajout(en ? "Target" : "Cible", x.Cible, true);
+            ajout(en ? "Triggered by" : "Déclencheur", x.Declencheur, false);
+            ajout(en ? "Since" : "Depuis", x.Depuis, false);
+            ajout(en ? "Reminder" : "Relance", x.Echeance, false);
+            ajout(en ? "State" : "État", x.Etat, false);
+            ajout(en ? "Recovery" : "Récupération", x.Recuperation, false);
+            return l;
+        }
+    }
+
+    // Briques communes aux pages natives de la coquille : ligne de liste, titre de section, bouton d'action, disposition
+    static class Briques
+    {
+        public static readonly FontFamily Chasse = new FontFamily("Cascadia Mono, Consolas");
+
+        public static Color Couleur(int gravite) { return gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.TexteSecondaire; }
+
+        // Carte de liste : barre de couleur à gauche, titre et étiquette d'état à droite, sous-ligne secondaire
+        public static Border Ligne(string titre, string etiquette, string sous, int gravite, bool ouverte, bool estompee, Action choisir)
+        {
+            var couleur = Couleur(gravite);
+            var cadre = new Border
+            {
+                Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 8, 14, 8),
+                Margin = new Thickness(0, 0, 0, 6), BorderThickness = new Thickness(3, 0, 0, 0), BorderBrush = Jetons.Pinceau(couleur), Cursor = Cursors.Hand
+            };
+            var pile = new StackPanel();
+            var haut = new DockPanel();
+            var et = new TextBlock { Text = etiquette, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : couleur), Margin = new Thickness(8, 0, 0, 0) };
+            DockPanel.SetDock(et, Dock.Right);
+            haut.Children.Add(et);
+            haut.Children.Add(new TextBlock { Text = titre, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : Jetons.Texte), TextTrimming = TextTrimming.CharacterEllipsis });
+            pile.Children.Add(haut);
+            if (!string.IsNullOrEmpty(sous)) pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis });
+            cadre.Child = pile;
+            cadre.MouseLeftButtonUp += (s, e) => choisir();
+            return cadre;
+        }
+
+        public static TextBlock Titre(string texte, double haut)
+        {
+            return new TextBlock { Text = texte, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, haut, 0, 4) };
+        }
+
+        public static Button Action(string texte, bool fort, RoutedEventHandler clic)
+        {
+            var b = new Button
+            {
+                Content = texte, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 0, 6), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Carte),
+                BorderBrush = Jetons.Pinceau(fort ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+            };
+            b.Template = Coquille.ModeleBouton();
+            b.Click += clic;
+            return b;
+        }
+
+        // Grille commune : résumé en haut, liste à gauche, panneau de détails à droite
+        public static void Disposer(Grid g, TextBlock resume, StackPanel liste, ContentControl detail)
+        {
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
+            resume.TextWrapping = TextWrapping.Wrap; resume.FontSize = 12; resume.Margin = new Thickness(0, 0, 0, 12);
+            Grid.SetColumnSpan(resume, 2); g.Children.Add(resume);
+            var defile = new ScrollViewer { Content = liste, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 0, 16, 0) };
+            Grid.SetRow(defile, 1); g.Children.Add(defile);
+            var panneau = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20) };
+            panneau.Child = new ScrollViewer { Content = detail, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(panneau, 1); Grid.SetColumn(panneau, 1); g.Children.Add(panneau);
+        }
+    }
+
+    // Page Incidents en WPF (U2c) : mêmes fichiers, mêmes règles et mêmes commandes que la page d'aujourd'hui
+    // (VueIncidents, ActionsIncidents) ; lectures hors du fil de l'interface, une à la fois ; dernière liste gardée si le
+    // suivi devient illisible
+    class PageIncidentsFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        List<IncidentSuivi> incidents = new List<IncidentSuivi>();
+        bool lu;                // rien n'est dit « vide » avant la première lecture
+        string choisi, vu;
+        int enCours, chargement;
+        DateTime debutLecture = DateTime.MinValue;
+        readonly Dictionary<string, ChronologieIncident> chronologies = new Dictionary<string, ChronologieIncident>();
+        readonly HashSet<string> chronologiesEnCours = new HashSet<string>();
+
+        public PageIncidentsFluent()
+        {
+            Briques.Disposer(this, resume, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+            Afficher();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0)
+            {
+                if (VueSante.LectureBloquee(debutLecture, DateTime.Now)) { resume.Text = L.T("Lecture bloquée : affichage ancien."); resume.Foreground = Jetons.Pinceau(Jetons.Attention); }
+                return;
+            }
+            debutLecture = DateTime.Now;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var lu = Commun.Lire<List<IncidentSuivi>>("suivi-incidents.json");
+                    bool absent = lu == null && VueIncidents.SuiviAbsent(Commun.Dossier);
+                    var etat = Commun.Lire<Etat>("etat.json");
+                    int? pannes = etat == null ? (int?)null : Couverture.EnPannes(etat).Count;
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Recevoir(lu, absent, pannes); }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Recevoir(List<IncidentSuivi> lu, bool absent, int? pannes)
+        {
+            resume.Text = VueIncidents.ResumeListe(lu, absent, pannes);
+            resume.Foreground = Jetons.Pinceau(VueIncidents.ResumeAVerifier(lu, absent, pannes) ? Jetons.Attention : Jetons.TexteSecondaire);
+            // Illisible : la dernière liste reste affichée, plutôt qu'un vide qui rassure
+            if (lu == null && !absent) return;
+            this.lu = true;
+            incidents = VueIncidents.Trier(lu ?? new List<IncidentSuivi>());
+            Afficher();
+        }
+
+        void Afficher()
+        {
+            var i = incidents.FirstOrDefault(x => x.Id == choisi) ?? incidents.FirstOrDefault();
+            choisi = i == null ? null : i.Id;
+            ChronologieIncident c = null;
+            if (choisi != null) chronologies.TryGetValue(choisi, out c);
+            string signature = string.Join(";", incidents.Select(x => x.Id + "|" + x.Etat + "|" + x.DerniereActiviteUtc + "|" + x.NombreAlertes)) + "#" + choisi + "#" + (c == null ? "" : c.CalculeeUtc) + "#" + lu + resume.Text;
+            if (signature == vu) return;
+            vu = signature;
+            liste.Children.Clear();
+            // Liste vide : le résumé dit pourquoi (collectes en panne, suivi illisible) ; avant la première lecture, rien n'est conclu
+            if (incidents.Count == 0) liste.Children.Add(new TextBlock { Text = lu ? resume.Text : L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            foreach (var x in incidents)
+            {
+                string id = x.Id;
+                string sous = Canal.Visible(x.Niveau) + "  ·  " + string.Join(", ", (x.Regles ?? new List<string>()).Select(Canal.Visible)) + "  ·  " + x.NombreAlertes + " " + L.T("alertes") + "  ·  " + Canal.Visible(x.DerniereActiviteUtc);
+                liste.Children.Add(Briques.Ligne(Canal.Visible(x.Entite), VueIncidents.EtatComplet(x), sous, VueIncidentsFluent.Gravite(x), id == choisi, x.Etat == "Clos", () => { choisi = id; Afficher(); }));
+            }
+            Detailler(i, c);
+        }
+
+        void Detailler(IncidentSuivi i, ChronologieIncident c)
+        {
+            if (i == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez un incident."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(i.Entite), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = VueIncidents.EtatComplet(i), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(VueIncidentsFluent.Gravite(i))), Margin = new Thickness(0, 2, 0, 8) });
+            foreach (var vers in VueIncidentsFluent.Actions(i))
+            {
+                string v = vers;
+                pile.Children.Add(Briques.Action(VueIncidentsFluent.Libelle(v), v == "PrisEnCharge", (s, e) => Agir(i, v)));
+            }
+            foreach (var sct in VueIncidentsFluent.Sections(VueIncidents.Detail(i, c)))
+            {
+                if (sct.Titre != "") pile.Children.Add(Briques.Titre(sct.Titre, 14));
+                pile.Children.Add(new TextBlock { Text = sct.Texte, TextWrapping = TextWrapping.Wrap, FontSize = sct.Titre == "" ? 14 : 12, FontFamily = sct.Titre == "" ? Jetons.Police : Briques.Chasse });
+            }
+            detail.Content = pile;
+            if (c == null) ChargerChronologie(i.Id);
+        }
+
+        // Une chronologie par incident à la fois ; verrouillée, elle ne bloque ni n'empile rien (S105-13)
+        void ChargerChronologie(string id)
+        {
+            if (!VueIncidents.IdentifiantValide(id)) return;
+            lock (chronologiesEnCours) { if (!chronologiesEnCours.Add(id)) return; }
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var c = Commun.Lire<ChronologieIncident>(System.IO.Path.Combine("chronologies", id + ".json"));
+                    if (c != null) Dispatcher.BeginInvoke((Action)(() => { chronologies[id] = c; if (choisi == id) Afficher(); }));
+                }
+                finally { lock (chronologiesEnCours) chronologiesEnCours.Remove(id); }
+            });
+        }
+
+        // Mêmes actions que la page d'aujourd'hui : même commande, même dialogue de clôture, même confirmation élevée
+        void Agir(IncidentSuivi i, string vers)
+        {
+            if (vers == "Clos")
+            {
+                string motif, note;
+                if (!ActionsIncidents.DemanderCloture(null, out motif, out note)) return;
+                ActionsIncidents.Passer(i, vers, motif, note);
+            }
+            else ActionsIncidents.Passer(i, vers, "", "");
+            chronologies.Remove(i.Id);
+            Charger();
+        }
+    }
+
+    // Page Réponses en cours en WPF (U2c) : même registre, mêmes contrôles et même récupération que la page d'aujourd'hui
+    // (VueReponses, ActionsReponses). Une échéance n'est jamais une levée : chaque action attend une décision humaine
+    class PageReponsesFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        List<LigneReponse> lignes = new List<LigneReponse>();
+        bool lu;                // rien n'est dit « aucune réponse » avant la première lecture
+        string choisie, vu;
+        int enCours, chargement;
+
+        public PageReponsesFluent()
+        {
+            Briques.Disposer(this, resume, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+            Afficher();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    bool illisible;
+                    var l = ActionsReponses.Lire(out illisible);
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Recevoir(l, illisible); }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Recevoir(List<LigneReponse> l, bool illisible)
+        {
+            bool en = L.En;
+            if (illisible)
+            {
+                // Illisible n'est pas « aucune réponse en cours » : le dernier affichage est gardé, et c'est dit
+                resume.Text = en ? "Response register unreadable (reponses.json): the last display is kept; it may be out of date." : "Registre des réponses illisible (reponses.json) : dernier affichage gardé, peut-être dépassé.";
+                resume.Foreground = Jetons.Pinceau(Jetons.Attention);
+                return;
+            }
+            lignes = l;
+            lu = true;
+            Afficher();
+        }
+
+        void Afficher()
+        {
+            bool en = L.En;
+            int dues = lignes.Count(x => x.Gravite == 1);
+            resume.Text = !lu ? L.T("Lecture en cours…") : (lignes.Count == 0 ? (en ? "No ongoing response." : "Aucune réponse en cours.")
+                : string.Format(en ? "{0} ongoing response(s), {1} awaiting a decision." : "{0} réponse(s) en cours, dont {1} en attente de décision.", lignes.Count, dues))
+                + " " + (en ? "None is ever lifted automatically: at its deadline, a reminder is sent and a human decision is awaited."
+                            : "Aucune n'est jamais levée automatiquement : à son échéance, une relance part et une décision humaine est attendue.");
+            resume.Foreground = Jetons.Pinceau(lignes.Any(x => x.Gravite == 2) ? Jetons.Danger : dues > 0 ? Jetons.Attention : Jetons.TexteSecondaire);
+            var x0 = lignes.FirstOrDefault(x => x.Action.Id == choisie) ?? lignes.FirstOrDefault();
+            choisie = x0 == null ? null : x0.Action.Id;
+            string signature = string.Join(";", lignes.Select(x => x.Action.Id + "|" + x.Etat + "|" + x.Gravite)) + "#" + choisie + "#" + lu;
+            if (signature == vu) return;
+            vu = signature;
+            liste.Children.Clear();
+            if (lignes.Count == 0) liste.Children.Add(new TextBlock { Text = !lu ? L.T("Lecture en cours…") : en ? "No ongoing response." : "Aucune réponse en cours.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            foreach (var x in lignes)
+            {
+                string id = x.Action.Id;
+                liste.Children.Add(Briques.Ligne(x.Quoi, x.Etat, x.Cible + "  ·  " + (en ? "since " : "depuis ") + x.Depuis, x.Gravite, id == choisie, false, () => { choisie = id; Afficher(); }));
+            }
+            Detailler(x0);
+        }
+
+        void Detailler(LigneReponse x)
+        {
+            bool en = L.En;
+            if (x == null) { detail.Content = new TextBlock { Text = en ? "Select a line to read how to recover it." : "Sélectionnez une ligne pour lire comment la récupérer.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Quoi, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Foreground = Jetons.Pinceau(x.Gravite == 2 ? Jetons.Danger : Jetons.Texte) });
+            foreach (var l in VueReponsesFluent.Detail(x))
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
+            }
+            if (!string.IsNullOrEmpty(x.Bouton))
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 18));
+                // Même récupération que la page d'aujourd'hui : objet retrouvé, PID vérifié, question, confirmation élevée
+                pile.Children.Add(Briques.Action(x.Bouton, true, (s, e) => { ActionsReponses.Recuperer(x); Charger(); }));
             }
             detail.Content = pile;
         }

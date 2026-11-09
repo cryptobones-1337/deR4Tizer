@@ -363,6 +363,44 @@ namespace DeR4Tizer
         }
     }
 
+    // Actions sur un incident, communes à la page d'aujourd'hui et à celle de la coquille (U2c) : même commande, même
+    // dialogue, même confirmation élevée (Canal.Executer)
+    public static class ActionsIncidents
+    {
+        public static void Passer(IncidentSuivi i, string vers, string motif, string note)
+        {
+            if (i == null || !VueIncidents.Permise(i.Etat, vers)) return;
+            Canal.Executer(VueIncidents.Transition(i.Id, vers, motif, note));
+        }
+
+        // Motif et note de clôture ; faux si l'utilisateur annule. La note est vérifiée comme le service le fera
+        public static bool DemanderCloture(IWin32Window proprietaire, out string motif, out string note)
+        {
+            motif = null; note = null;
+            using (var f = new Form { Text = L.T("Clore l'incident"), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(460, 190), BackColor = Theme.Fond, ForeColor = Theme.Texte })
+            {
+                var motifs = new[] { "Resolu", "FauxPositif", "Accepte" };
+                var cb = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 14, Top = 34, Width = 430 };
+                cb.Items.AddRange(new object[] { L.T("Résolu"), L.T("Faux positif"), L.T("Risque accepté") });
+                cb.SelectedIndex = 0;
+                var texte = new TextBox { Left = 14, Top = 88, Width = 430, MaxLength = VueIncidents.MaxNote };
+                var ok = new Button { Text = L.T("Continuer"), Left = 268, Top = 146, Width = 84 };
+                var annuler = new Button { Text = L.T("Annuler"), Left = 360, Top = 146, Width = 84, DialogResult = DialogResult.Cancel };
+                ok.Click += (s, e) =>
+                {
+                    string refus = VueIncidents.NoteRefusee(texte.Text);
+                    if (refus != "") MessageBox.Show(f, refus, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    else f.DialogResult = DialogResult.OK;
+                };
+                f.Controls.AddRange(new Control[] { new Label { Text = L.T("Motif"), Left = 14, Top = 12, AutoSize = true }, cb, new Label { Text = string.Format(L.T("Note (facultative, {0} caractères au plus)"), VueIncidents.MaxNote), Left = 14, Top = 66, AutoSize = true }, texte, ok, annuler });
+                f.AcceptButton = ok; f.CancelButton = annuler;
+                if (f.ShowDialog(proprietaire) != DialogResult.OK) return false;
+                motif = motifs[cb.SelectedIndex]; note = texte.Text;
+                return true;
+            }
+        }
+    }
+
     class PageIncidents : TableLayoutPanel
     {
         readonly Liste liste = new Liste();
@@ -488,33 +526,14 @@ namespace DeR4Tizer
 
         void Passer(string vers, string motif, string note)
         {
-            var i = Choisi();
-            if (i == null) return;
-            Canal.Executer(VueIncidents.Transition(i.Id, vers, motif, note));
+            ActionsIncidents.Passer(Choisi(), vers, motif, note);
             Charger();
         }
 
         void Clore()
         {
-            using (var f = new Form { Text = L.T("Clore l'incident"), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(460, 190), BackColor = Theme.Fond, ForeColor = Theme.Texte })
-            {
-                var motifs = new[] { "Resolu", "FauxPositif", "Accepte" };
-                var cb = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 14, Top = 34, Width = 430 };
-                cb.Items.AddRange(new object[] { L.T("Résolu"), L.T("Faux positif"), L.T("Risque accepté") });
-                cb.SelectedIndex = 0;
-                var note = new TextBox { Left = 14, Top = 88, Width = 430, MaxLength = VueIncidents.MaxNote };
-                var ok = new Button { Text = L.T("Continuer"), Left = 268, Top = 146, Width = 84 };
-                var annuler = new Button { Text = L.T("Annuler"), Left = 360, Top = 146, Width = 84, DialogResult = DialogResult.Cancel };
-                ok.Click += (s, e) =>
-                {
-                    string refus = VueIncidents.NoteRefusee(note.Text);
-                    if (refus != "") MessageBox.Show(f, refus, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    else f.DialogResult = DialogResult.OK;
-                };
-                f.Controls.AddRange(new Control[] { new Label { Text = L.T("Motif"), Left = 14, Top = 12, AutoSize = true }, cb, new Label { Text = string.Format(L.T("Note (facultative, {0} caractères au plus)"), VueIncidents.MaxNote), Left = 14, Top = 66, AutoSize = true }, note, ok, annuler });
-                f.AcceptButton = ok; f.CancelButton = annuler;
-                if (f.ShowDialog(this) == DialogResult.OK) Passer("Clos", motifs[cb.SelectedIndex], note.Text);
-            }
+            string motif, note;
+            if (ActionsIncidents.DemanderCloture(this, out motif, out note)) Passer("Clos", motif, note);
         }
     }
 

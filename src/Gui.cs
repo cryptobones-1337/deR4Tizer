@@ -23,6 +23,38 @@ using System.Windows.Forms;
 
 namespace DeR4Tizer
 {
+    // Une alerte ne porte que le PID et son heure (yyyy-MM-dd HH:mm:ss, heure locale du service), pas l'heure de création
+    // du processus : suspendre ou tuer depuis une alerte ancienne viserait le programme qui porte ce PID aujourd'hui
+    // (relecture de #136, remarque 5). Décisions pures, testées par tests\rendu-pilote.ps1
+    public static class PidAlerte
+    {
+        public static DateTime? Lancement(long? filetime)
+        {
+            if (!filetime.HasValue || filetime.Value <= 0) return null;
+            try { return DateTime.FromFileTime(filetime.Value); } catch (ArgumentOutOfRangeException) { return null; }
+        }
+
+        // Vrai seulement si les deux heures sont lues et que le processus a démarré après l'alerte (marge de 2 s : l'heure
+        // de l'alerte est à la seconde). Une heure illisible ne refuse rien : la confirmation élevée montre l'identité
+        public static bool Posterieur(string heureAlerte, DateTime? lancement)
+        {
+            DateTime h;
+            if (!lancement.HasValue || !DateTime.TryParseExact(heureAlerte ?? "", "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out h)) return false;
+            return lancement.Value > h.AddSeconds(2);
+        }
+
+        public static string Ligne(string heureAlerte, DateTime? lancement)
+        {
+            return L.T("Alerte levée le") + " " + Canal.Visible(string.IsNullOrEmpty(heureAlerte) ? "?" : heureAlerte) + "\n"
+                + L.T("Processus qui porte ce PID lancé le") + " " + (lancement.HasValue ? lancement.Value.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : L.T("illisible"));
+        }
+
+        public static string Refus()
+        {
+            return L.T("Le processus qui porte ce PID a été lancé après l'alerte : ce n'est pas le programme de l'alerte. Rien n'est envoyé.");
+        }
+    }
+
     static class Canal
     {
         public static bool EstAdmin()
@@ -1812,12 +1844,24 @@ namespace DeR4Tizer
             bool besoinPid = action == "tuer" || action == "tuerChaine" || action == "suspendre" || action == "reprendre";
             if (besoinPid && (pid == null || pid <= 4)) { MessageBox.Show("Processus inconnu pour cet élément.", "deR4Tizer"); return; }
             if (!besoinPid && string.IsNullOrEmpty(chemin)) { MessageBox.Show("Chemin du programme inconnu pour cet élément.", "deR4Tizer"); return; }
+            // Alerte : elle ne garde pas l'heure de création du processus, son PID peut désigner aujourd'hui un autre
+            // programme (relecture de #136, remarque 5). Lancé après l'alerte : sûrement un autre, rien n'est envoyé ; sinon
+            // les deux heures sont dites dans la question
+            string heures = "";
+            if (a != null && besoinPid)
+            {
+                var lancement = PidAlerte.Lancement(Canal.CreationProcessus(pid.Value));
+                if (PidAlerte.Posterieur(a.Heure, lancement)) { MessageBox.Show(PidAlerte.Refus(), "deR4Tizer"); return; }
+                heures = "\n\n" + PidAlerte.Ligne(a.Heure, lancement);
+            }
+            // Nom affiché neutralisé (audit de #136) ; la commande garde le nom lu
+            string vu = Canal.Visible(nom);
             var libelles = new Dictionary<string, string>
             {
-                { "tuer", "Tuer le processus " + nom + " (PID " + pid + ") ?" },
-                { "tuerChaine", "Tuer " + nom + " (PID " + pid + ") et tous les processus qu'il a lancés ?" },
-                { "suspendre", "Suspendre " + nom + " (PID " + pid + ") ? Il restera figé jusqu'à ce que vous le repreniez ou le tuiez." },
-                { "reprendre", "Reprendre " + nom + " (PID " + pid + ") ?" },
+                { "tuer", "Tuer le processus " + vu + " (PID " + pid + ") ?" + heures },
+                { "tuerChaine", "Tuer " + vu + " (PID " + pid + ") et tous les processus qu'il a lancés ?" + heures },
+                { "suspendre", "Suspendre " + vu + " (PID " + pid + ") ? Il restera figé jusqu'à ce que vous le repreniez ou le tuiez." + heures },
+                { "reprendre", "Reprendre " + vu + " (PID " + pid + ") ?" + heures },
                 { "quarantaine", "Arrêter le programme et déplacer le fichier en quarantaine ?\n\n" + chemin },
                 { "isolerProgramme", "Couper ce programme du réseau (entrant et sortant) ?\n\n" + chemin }
             };
