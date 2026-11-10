@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Forms.Integration;
 using System.Windows.Input;
 using System.Windows.Media;
 using WinForms = System.Windows.Forms;
@@ -272,7 +271,6 @@ namespace DeR4Tizer
         readonly ContentControl zone = new ContentControl();
         readonly TextBlock titrePage = new TextBlock();
         readonly List<Button> boutons = new List<Button>();
-        WindowsFormsHost hote;
 
         public Coquille(Func<string, WinForms.Control> pages) : this(pages, null) { }
 
@@ -459,7 +457,6 @@ namespace DeR4Tizer
             foreach (var b in boutons) b.Tag = cles[b] == cle ? "ouverte" : null;
             ouverte = cle;
             titrePage.Text = L.T(cle);
-            if (hote != null) { hote.Child = null; hote.Dispose(); hote = null; }
             pageAlertes = null;
             if (cle == NavigationFluent.VueEnsemble) { zone.Content = VueEnsemble(); return; }
             // Page Alertes en WPF (U2b) quand la fenêtre d'aujourd'hui la fournit ; sinon la page hébergée
@@ -497,13 +494,9 @@ namespace DeR4Tizer
             if (cle == "Vie privée") { zone.Content = new PageVieFluent(source as ISourceReponses); return; }
             // Réseau local en WPF (U6b), lecture seule
             if (cle == "Réseau local") { zone.Content = new PageReseauLocalFluent(); return; }
-            WinForms.Control page = pages(cle);
-            if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
-            if (page.Parent != null) page.Parent.Controls.Remove(page);
-            page.Visible = true;
-            page.Dock = WinForms.DockStyle.Fill;
-            hote = new WindowsFormsHost { Child = page, Background = Jetons.Pinceau(Jetons.Fond) };
-            zone.Content = hote;
+            // Réglages en WPF (U6c) : la dernière page hébergée ; plus aucune page WinForms dans la coquille
+            if (cle == "Réglages") { zone.Content = new PageReglagesFluent(); return; }
+            zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) };
         }
 
         readonly Dictionary<Button, string> cles = new Dictionary<Button, string>();
@@ -3608,6 +3601,270 @@ namespace DeR4Tizer
                 string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette, x0.Sous }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
                 pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(copie)));
             }
+        }
+    }
+    // Choix parmi quelques valeurs fixes (protocole, format, niveau…) : boutons, sans liste déroulante claire dans le thème sombre
+    class ChoixFluent : WrapPanel
+    {
+        readonly string[] valeurs;
+        public string Valeur { get; private set; }
+
+        public ChoixFluent(string[] valeurs, string[] libelles)
+        {
+            this.valeurs = valeurs;
+            Margin = new Thickness(0, 0, 12, 0);
+            for (int k = 0; k < valeurs.Length; k++)
+            {
+                string v = valeurs[k];
+                var b = new Button { Content = libelles == null ? L.T(v) : libelles[k], Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 4, 0), Cursor = Cursors.Hand, BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte), Tag = v };
+                b.Template = Coquille.ModeleBouton();
+                b.Click += (s, e) => Definir(v);
+                Children.Add(b);
+            }
+            Definir(valeurs[0]);
+        }
+
+        public void Definir(string v)
+        {
+            Valeur = Array.IndexOf(valeurs, v) >= 0 ? v : valeurs[0];
+            foreach (Button b in Children)
+            {
+                bool actif = (string)b.Tag == Valeur;
+                b.Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond);
+                b.BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur);
+            }
+        }
+    }
+
+    // Page Réglages en WPF (U6c) : mêmes réglages, mêmes contrôles et mêmes commandes que la page d'aujourd'hui
+    // (ActionsReglages) ; lue à l'ouverture et après chaque action, jamais pendant la saisie ; config.json illisible : dit, et
+    // rien n'est enregistré
+    class PageReglagesFluent : ScrollViewer
+    {
+        readonly StackPanel pile = new StackPanel { MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left };
+        readonly TextBlock config = Texte(true), apprentissage = Texte(false), notifEtat = Texte(true), maj = Texte(false), lecteurs = Texte(true);
+        readonly ChoixFluent langue = new ChoixFluent(new[] { "fr", "en" }, new[] { "Français", "English" });
+        readonly CheckBox syslog = Case("Envoyer les alertes à un serveur syslog / SIEM"), api = Case("Activer l'API d'export"), reseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)"),
+            majAuto = Case("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)"),
+            ntfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)"), teams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)"), smtp = Case("E-mail (SMTP chiffré)");
+        readonly TextBox hote = Saisie(220), portSyslog = Saisie(70), portApi = Saisie(70), adresses = Saisie(300), majUrl = Saisie(520), maxHeure = Saisie(60),
+            ntfyUrl = Saisie(360), smtpServeur = Saisie(220), smtpPort = Saisie(60), smtpUtilisateur = Saisie(220), expediteur = Saisie(220), destinataires = Saisie(360), compte = Saisie(300);
+        readonly PasswordBox ntfyJeton = Secret(220), teamsUrl = Secret(520), smtpMdp = Secret(160);
+        readonly ChoixFluent protocole = new ChoixFluent(ActionsReglages.Protocoles, null), format = new ChoixFluent(ActionsReglages.Formats, null), niveau = new ChoixFluent(ActionsReglages.Niveaux, null),
+            niveauNotif = new ChoixFluent(ActionsReglages.Niveaux, null), securite = new ChoixFluent(ActionsReglages.Securites, null);
+        int enCours, chargement;
+        bool rempli;            // aucune action avant la première lecture : des champs vides ne partent jamais comme réglages
+
+        public PageReglagesFluent()
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            Content = pile;
+            pile.Children.Add(Note("Langue, envoi des alertes à un SIEM (syslog), API d'export et export des journaux."));
+            pile.Children.Add(config);
+            Section("LANGUE");
+            pile.Children.Add(Ligne(Etiquette("Langue de l'interface"), langue));
+            pile.Children.Add(Note("La langue s'applique au prochain lancement de l'interface."));
+
+            Section("MODE APPRENTISSAGE ET EXCEPTIONS");
+            pile.Children.Add(Note("Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement »."));
+            pile.Children.Add(apprentissage);
+            pile.Children.Add(Ligne(Bouton("Terminer l'apprentissage", false, () => ActionsReglages.Apprentissage("terminer")),
+                Bouton("Recommencer (7 jours)", false, () => ActionsReglages.Apprentissage("recommencer")), Bouton("Supprimer les exceptions", false, () => ActionsReglages.Apprentissage("oublier"))));
+
+            Section("REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)");
+            pile.Children.Add(Note("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation."));
+            pile.Children.Add(Ligne(Etiquette("Niveau minimal"), niveauNotif, Etiquette("Messages par heure au plus"), maxHeure));
+            pile.Children.Add(ntfy);
+            pile.Children.Add(Note("Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique)."));
+            pile.Children.Add(Ligne(Etiquette("Adresse du sujet"), ntfyUrl, Etiquette("Jeton (facultatif)"), ntfyJeton));
+            pile.Children.Add(teams);
+            pile.Children.Add(Ligne(Etiquette("Adresse du webhook"), teamsUrl));
+            pile.Children.Add(smtp);
+            pile.Children.Add(Ligne(Etiquette("Serveur"), smtpServeur, Etiquette("Port"), smtpPort, Etiquette("Sécurité"), securite));
+            pile.Children.Add(Ligne(Etiquette("Utilisateur"), smtpUtilisateur, Etiquette("Mot de passe"), smtpMdp));
+            pile.Children.Add(Ligne(Etiquette("Expéditeur"), expediteur, Etiquette("Destinataires"), destinataires));
+            pile.Children.Add(Note("Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer."));
+            pile.Children.Add(notifEtat);
+            pile.Children.Add(Ligne(Bouton("Enregistrer les notifications", true, () => Notifications("notifications")), Bouton("Envoyer un message de test", false, () => Notifications("testerNotifications"))));
+
+            Section("ENVOI DES ALERTES (SYSLOG)");
+            pile.Children.Add(syslog);
+            pile.Children.Add(Ligne(Etiquette("Serveur"), hote, Etiquette("Port"), portSyslog, Etiquette("Protocole"), protocole));
+            pile.Children.Add(Ligne(Etiquette("Format"), format, Etiquette("Niveau minimal"), niveau));
+            pile.Children.Add(Note("JSON : en-tête RFC 5424 et détail en JSON. CEF : reconnu par la plupart des SIEM (Splunk, QRadar, Sentinel, Wazuh, Graylog…)."));
+            pile.Children.Add(Ligne(Bouton("Tester l'envoi", false, () => { var x = Saisis(); if (x != null) ActionsReglages.TesterSyslog(x.Item1); })));
+
+            Section("API D'EXPORT (HTTP, LECTURE SEULE)");
+            pile.Children.Add(api);
+            pile.Children.Add(Ligne(Etiquette("Port"), portApi));
+            pile.Children.Add(reseau);
+            pile.Children.Add(Ligne(Etiquette("Adresses autorisées (SIEM)"), adresses));
+            pile.Children.Add(Note("Chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ». Routes : /api/v1/alertes, /connexions, /exposition, /baseline, /regles-parefeu, /blocages, /journal."));
+            pile.Children.Add(Ligne(Bouton("Afficher le jeton", false, ActionsReglages.AfficherJeton), Bouton("Nouveau jeton", false, () => ActionsReglages.NouveauJeton())));
+            pile.Children.Add(Ligne(Bouton("Enregistrer", true, Enregistrer)));
+
+            Section("MISE À JOUR");
+            pile.Children.Add(maj);
+            pile.Children.Add(majAuto);
+            pile.Children.Add(Ligne(Etiquette("Manifeste"), majUrl));
+            pile.Children.Add(Ligne(Bouton("Enregistrer", true, () => ActionsReglages.MajConfig(majAuto.IsChecked == true, majUrl.Text)), Bouton("Rechercher maintenant", false, ActionsReglages.MajVerifier)));
+
+            Section("ACCÈS AUX DONNÉES");
+            pile.Children.Add(lecteurs);
+            pile.Children.Add(Ligne(Etiquette("Nom du compte (par exemple : PC-ACCUEIL\\marie)"), compte, Bouton("Autoriser", false, Autoriser)));
+
+            Section("EXPORT DES JOURNAUX");
+            pile.Children.Add(Ligne(Bouton("Exporter les alertes…", true, ExporterAlertes), Bouton("Exporter le journal du service…", false, ExporterJournal)));
+            Loaded += (s, e) => Charger();
+        }
+
+        // Lecture hors du fil de l'interface ; les champs ne sont remplis qu'à l'ouverture et après une action
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    bool illisible;
+                    var c = ActionsProtection.LireConfig(out illisible);
+                    var app = Commun.Lire<EtatApprentissage>("apprentissage.json");
+                    var em = Commun.Lire<EtatMaj>("maj.json");
+                    var en = Commun.Lire<EtatNotifications>("notifications.json");
+                    var lect = Commun.Lire<List<Lecteur>>("lecteurs.json");
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Remplir(c, illisible, app, em, en, lect); }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Remplir(Config c, bool illisible, EtatApprentissage app, EtatMaj em, EtatNotifications en, List<Lecteur> lect)
+        {
+            config.Text = illisible ? ActionsReglages.ConfigIllisible() : "";
+            config.Visibility = illisible ? Visibility.Visible : Visibility.Collapsed;
+            var x = c ?? new Config();
+            var sl = x.Syslog ?? new ConfigSyslog(); var a = x.Api ?? new ConfigApi(); var n = x.Notifications ?? new ConfigNotifications(); var m = x.Maj ?? new ConfigMaj();
+            langue.Definir(x.Langue == "en" ? "en" : "fr");
+            syslog.IsChecked = sl.Actif; hote.Text = sl.Hote ?? ""; portSyslog.Text = sl.Port.ToString(); protocole.Definir(sl.Protocole); format.Definir(sl.Format); niveau.Definir(sl.NiveauMin);
+            api.IsChecked = a.Actif; portApi.Text = a.Port.ToString(); reseau.IsChecked = a.Reseau; adresses.Text = a.Adresses ?? "";
+            majAuto.IsChecked = m.Auto; majUrl.Text = m.Url ?? "";
+            niveauNotif.Definir(n.NiveauMin); maxHeure.Text = n.MaxParHeure.ToString(); ntfy.IsChecked = n.Ntfy; teams.IsChecked = n.Teams; smtp.IsChecked = n.Smtp;
+            smtpServeur.Text = n.SmtpServeur ?? ""; smtpPort.Text = n.SmtpPort.ToString(); securite.Definir(n.SmtpSecurite); smtpUtilisateur.Text = n.SmtpUtilisateur ?? ""; expediteur.Text = n.Expediteur ?? ""; destinataires.Text = n.Destinataires ?? "";
+            // Secrets jamais relus ni réaffichés : vide garde la valeur enregistrée
+            ntfyUrl.Text = ""; ntfyJeton.Password = ""; teamsUrl.Password = ""; smtpMdp.Password = "";
+            apprentissage.Text = ActionsReglages.TexteApprentissage(app);
+            maj.Text = ActionsReglages.TexteMaj(em);
+            notifEtat.Text = ActionsReglages.TexteNotifications(en);
+            lecteurs.Text = ActionsReglages.TexteLecteurs(lect);
+            rempli = true;
+        }
+
+        Tuple<ConfigSyslog, ConfigApi> Saisis()
+        {
+            int ps, pa;
+            string erreur = ActionsReglages.PortsInvalides(portSyslog.Text, portApi.Text, out ps, out pa);
+            if (erreur != null) { WinForms.MessageBox.Show(erreur, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return null; }
+            return Tuple.Create(new ConfigSyslog { Actif = syslog.IsChecked == true, Hote = hote.Text.Trim(), Port = ps, Protocole = protocole.Valeur, Format = format.Valeur, NiveauMin = niveau.Valeur },
+                new ConfigApi { Actif = api.IsChecked == true, Port = pa, Reseau = reseau.IsChecked == true, Adresses = adresses.Text.Trim() });
+        }
+
+        // config.json relu au moment d'enregistrer : illisible, rien n'est écrit (S139-02 étendu)
+        void Enregistrer()
+        {
+            var s = Saisis();
+            if (s == null) return;
+            bool illisible;
+            var lue = ActionsProtection.LireConfig(out illisible);
+            ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, langue.Valeur == "en", s.Item1, s.Item2));
+        }
+
+        void Notifications(string action)
+        {
+            int max, port;
+            string erreur = ActionsReglages.NotificationsInvalides(maxHeure.Text, smtpPort.Text, out max, out port);
+            if (erreur != null) { WinForms.MessageBox.Show(erreur, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return; }
+            ActionsReglages.Notifications(action, new ConfigNotifications
+            {
+                NiveauMin = niveauNotif.Valeur, MaxParHeure = max, Ntfy = ntfy.IsChecked == true, Teams = teams.IsChecked == true, Smtp = smtp.IsChecked == true,
+                SmtpServeur = smtpServeur.Text.Trim(), SmtpPort = port, SmtpSecurite = securite.Valeur, SmtpUtilisateur = smtpUtilisateur.Text.Trim(), Expediteur = expediteur.Text.Trim(), Destinataires = destinataires.Text.Trim()
+            }, ntfyUrl.Text, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
+        }
+
+        void Autoriser()
+        {
+            if (string.IsNullOrWhiteSpace(compte.Text)) return;
+            string sid = ActionsReglages.Sid(compte.Text);
+            if (sid == null) { WinForms.MessageBox.Show(L.T("Compte introuvable."), "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return; }
+            ActionsReglages.AutoriserLecteur(sid);
+            compte.Text = "";
+        }
+
+        void ExporterAlertes()
+        {
+            var d = new Microsoft.Win32.SaveFileDialog { Filter = "JSON (*.json)|*.json|CSV (*.csv)|*.csv", FileName = ActionsReglages.NomExport("alertes") };
+            if (d.ShowDialog() != true) return;
+            try { ActionsReglages.ExporterAlertes(d.FileName, d.FilterIndex == 2); }
+            catch (Exception e) { WinForms.MessageBox.Show(e.Message, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error); }
+        }
+
+        void ExporterJournal()
+        {
+            var d = new Microsoft.Win32.SaveFileDialog { Filter = "Texte (*.txt)|*.txt", FileName = ActionsReglages.NomExport("journal") };
+            if (d.ShowDialog() != true) return;
+            string erreur = ActionsReglages.ExporterJournal(d.FileName);
+            if (erreur != null) WinForms.MessageBox.Show(erreur, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+        }
+
+        // ------------------------------------------------------------ construction
+
+        void Section(string titre)
+        {
+            pile.Children.Add(new TextBlock { Text = L.T(titre), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Accent), Margin = new Thickness(0, 20, 0, 6) });
+        }
+
+        static TextBlock Texte(bool secondaire)
+        {
+            return new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Jetons.Pinceau(secondaire ? Jetons.TexteSecondaire : Jetons.Texte), Margin = new Thickness(0, 2, 0, 6) };
+        }
+
+        static TextBlock Note(string texte)
+        {
+            var t = Texte(true); t.Text = L.T(texte); return t;
+        }
+
+        static TextBlock Etiquette(string texte)
+        {
+            return new TextBlock { Text = L.T(texte), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+        }
+
+        static CheckBox Case(string texte)
+        {
+            return new CheckBox { Content = new TextBlock { Text = L.T(texte), TextWrapping = TextWrapping.Wrap }, Foreground = Jetons.Pinceau(Jetons.Texte), Margin = new Thickness(0, 6, 0, 4), Cursor = Cursors.Hand };
+        }
+
+        static TextBox Saisie(double largeur)
+        {
+            return new TextBox { Width = largeur, Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(6, 3, 6, 3), FontFamily = Briques.Chasse, FontSize = 12, Margin = new Thickness(0, 0, 12, 0), VerticalContentAlignment = VerticalAlignment.Center };
+        }
+
+        static PasswordBox Secret(double largeur)
+        {
+            return new PasswordBox { Width = largeur, Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(6, 3, 6, 3), FontSize = 12, Margin = new Thickness(0, 0, 12, 0), VerticalContentAlignment = VerticalAlignment.Center };
+        }
+
+        static WrapPanel Ligne(params UIElement[] elements)
+        {
+            var l = new WrapPanel { Margin = new Thickness(0, 4, 0, 4) };
+            foreach (var e in elements) l.Children.Add(e);
+            return l;
+        }
+
+        Button Bouton(string texte, bool fort, Action action)
+        {
+            var b = Briques.Action(L.T(texte), fort, (s, e) => { if (!rempli) return; action(); Charger(); });
+            b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
+            return b;
         }
     }
 }
