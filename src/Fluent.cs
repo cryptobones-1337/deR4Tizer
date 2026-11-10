@@ -2957,10 +2957,40 @@ namespace DeR4Tizer
             else if (x.Exposee)
                 s = (en ? "COMPUTER EXPOSED TO THE INTERNET: " : "PC EXPOSÉ À INTERNET : ") + string.Join(" ; ", (x.Raisons ?? new List<string>()).Select(Canal.Visible));
             else
-                s = en ? "No exposure detected: no packet from the Internet in the last 24 h, no public address, no UPnP redirection from the router to this computer."
-                       : "Aucune exposition détectée : ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC.";
-            if (x != null && !x.JournalPaquets) s += "\n" + (en ? "Firewall packet log off: incoming packets are not seen." : "Journal des paquets du pare-feu inactif : les paquets entrants ne sont pas vus.");
+                s = Constat(x);
+            if (x != null && x.Exposee && !x.JournalPaquets) s += "\n" + (en ? "Firewall packet log off: incoming packets are not seen." : "Journal des paquets du pare-feu inactif : les paquets entrants ne sont pas vus.");
+            // Ce sur quoi repose le verdict, tel que le service le publie (Base, neutralisée)
+            if (x != null && !string.IsNullOrEmpty(x.Base)) s += "\n" + (en ? "Based on: " : "Repose sur : ") + Canal.Visible(x.Base);
             return s + "\n" + string.Format(en ? "{0} firewall rule change(s) recorded." : "{0} changement(s) de règle du pare-feu enregistré(s).", changements);
+        }
+
+        // UPnP vérifié seulement si le service a publié le résultat d'une vérification (« N redirection(s) sur la box, dont M
+        // vers ce PC ») ; « pas encore vérifiées » ou un message d'erreur : non vérifié (dossier U5c, constat C1)
+        public static bool UpnpVerifie(string base_)
+        {
+            return base_ != null && System.Text.RegularExpressions.Regex.IsMatch(base_, @"\(UPnP\) : \d+ redirection\(s\) sur la box");
+        }
+
+        // Contrôles complets : journal des paquets actif et UPnP vérifié. Sinon, rien n'est relevé mais tout n'a pas été vu
+        public static bool Complet(Exposition x) { return x != null && x.JournalPaquets && UpnpVerifie(x.Base); }
+
+        // Constat quand le service ne dit pas « exposé » : chaque contrôle est dit vu ou non vérifié ; jamais « aucune
+        // exposition » si un contrôle manque, jamais « protégé » (dossier U5c, constat C1)
+        public static string Constat(Exposition x)
+        {
+            bool en = L.En;
+            var vus = new List<string>();
+            var nonVus = new List<string>();
+            if (x.JournalPaquets) vus.Add(en ? "no packet from the Internet in the last 24 h" : "aucun paquet venu d'Internet ces dernières 24 h");
+            else nonVus.Add(en ? "packets from the Internet (firewall packet log off)" : "paquets venus d'Internet (journal des paquets du pare-feu inactif)");
+            vus.Add(en ? "no public address on this computer" : "aucune adresse publique sur ce PC");
+            if (UpnpVerifie(x.Base)) vus.Add(en ? "no UPnP redirection from the router to this computer" : "aucune redirection UPnP de la box vers ce PC");
+            else nonVus.Add(en ? "UPnP redirections of the router (not checked)" : "redirections UPnP de la box (non vérifiées)");
+            string s = nonVus.Count == 0
+                ? (en ? "Nothing found by the available checks: " : "Rien relevé par les contrôles disponibles : ") + string.Join(", ", vus) + "."
+                : (en ? "Nothing found, checks incomplete: " : "Rien relevé, contrôles incomplets : ") + string.Join(", ", vus) + ". "
+                  + (en ? "Not checked: " : "Non vérifié : ") + string.Join(" ; ", nonVus) + ".";
+            return s + " " + (en ? "A router in DMZ or a manual redirection is not visible from this computer." : "Une box en DMZ ou une redirection manuelle ne se voit pas depuis le PC.");
         }
 
         public static LigneEtatFluent Ligne(EntreeExposee e)
@@ -3101,7 +3131,7 @@ namespace DeR4Tizer
             bool en = L.En;
             resume.Text = VueParefeuFluent.Resume(exposition, lu, etatIllisible && exposition == null, regles.Count)
                 + (lu && reglesIllisible ? "\n" + (en ? "parefeu.json unreadable: the last list is kept; it may be out of date." : "parefeu.json illisible : dernière liste gardée, peut-être dépassée.") : "");
-            resume.Foreground = Jetons.Pinceau(exposition != null && exposition.Exposee ? Jetons.Danger : lu && (etatIllisible || reglesIllisible) ? Jetons.Attention : Jetons.TexteSecondaire);
+            resume.Foreground = Jetons.Pinceau(exposition != null && exposition.Exposee ? Jetons.Danger : lu && (etatIllisible || reglesIllisible || (exposition != null && !VueParefeuFluent.Complet(exposition))) ? Jetons.Attention : Jetons.TexteSecondaire);
             var lignes = vue == 0
                 ? (exposition == null ? new List<LigneEtatFluent>() : (exposition.Entrees ?? new List<EntreeExposee>()).Where(y => y != null).Select(VueParefeuFluent.Ligne).ToList())
                 : Enumerable.Reverse(regles).Take(VueParefeuFluent.Maximum).Select(VueParefeuFluent.Ligne).ToList();

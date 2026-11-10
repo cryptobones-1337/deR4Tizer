@@ -1745,12 +1745,12 @@ namespace DeR4Tizer
             {
                 var bilan = new ListViewItem(new[]
                 {
-                    exp.Exposee ? L.T("PC EXPOSÉ À INTERNET") : L.T("Aucune exposition détectée"),
-                    exp.Exposee ? string.Join(" ; ", (exp.Raisons ?? new List<string>()).Select(Canal.Visible))
-                        : L.T("ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC"),
+                    // Jamais « aucune exposition » quand un contrôle n'a pas été fait (dossier U5c, constat C1)
+                    exp.Exposee ? L.T("PC EXPOSÉ À INTERNET") : VueParefeuFluent.Complet(exp) ? L.T("Rien relevé par les contrôles disponibles") : L.T("Rien relevé, contrôles incomplets"),
+                    exp.Exposee ? string.Join(" ; ", (exp.Raisons ?? new List<string>()).Select(Canal.Visible)) : VueParefeuFluent.Constat(exp),
                     "", Canal.Visible(exp.Base)
                 });
-                if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = Theme.Vert;
+                if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = VueParefeuFluent.Complet(exp) ? Theme.TexteDim : Theme.Jaune;
                 lvParefeu.Items.Add(bilan);
                 foreach (var e in exp.Entrees ?? new List<EntreeExposee>())
                 {
