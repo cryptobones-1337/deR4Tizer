@@ -1989,8 +1989,10 @@ namespace DeR4Tizer
                 { "tuerChaine", "Tuer " + vu + " (PID " + pid + ") et tous les processus qu'il a lancés ?" + heures },
                 { "suspendre", "Suspendre " + vu + " (PID " + pid + ") ? Il restera figé jusqu'à ce que vous le repreniez ou le tuiez." + heures },
                 { "reprendre", "Reprendre " + vu + " (PID " + pid + ") ?" + heures },
-                { "quarantaine", "Arrêter le programme et déplacer le fichier en quarantaine ?\n\n" + chemin },
-                { "isolerProgramme", "Couper ce programme du réseau (entrant et sortant) ?\n\n" + chemin }
+                // Chemin affiché neutralisé (audit de #145, S145-01 : une cible de démarrage est choisie par le programme
+                // qui s'inscrit) ; la commande garde le chemin lu
+                { "quarantaine", "Arrêter le programme et déplacer le fichier en quarantaine ?\n\n" + Canal.Visible(chemin) },
+                { "isolerProgramme", "Couper ce programme du réseau (entrant et sortant) ?\n\n" + Canal.Visible(chemin) }
             };
             if (MessageBox.Show(libelles[action], "deR4Tizer : réponse", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(new Commande
