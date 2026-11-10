@@ -281,7 +281,7 @@ try {
     Cas 'Trafic : illisible après une lecture, dernier affichage gardé et dit' ($r3.StartsWith('trafic.json illisible : dernier affichage gardé') -and $r3.Contains('2 Ko/s')) $r3
     $traficSrc = [IO.File]::ReadAllText("$src\Trafic.cs")
     Cas 'Trafic : courbe sans maximum avant deux mesures (« pas encore de mesure »)' ($fluentSrc.Contains('points.Count < 2 ? (en ? "no measurement yet" : "pas encore de mesure")'))
-    Cas 'Trafic d''aujourd''hui : programmes, destinations, interface et bulle neutralisés' ($traficSrc.Contains('Canal.Visible(a.Nom)') -and $traficSrc.Contains('Canal.Visible(t.Interface)') -and ([regex]::Matches($traficSrc, '\.Select\(Canal\.Visible\)')).Count -eq 2 -and $traficSrc.Contains('Canal.Visible(x.Programme)'))
+    Cas 'Trafic d''aujourd''hui : programmes, destinations, interface et bulle neutralisés' ($traficSrc.Contains('Canal.Visible(a.Nom)') -and $traficSrc.Contains('Canal.Visible(t.Interface)') -and ([regex]::Matches($traficSrc, '\.Select\(Canal\.Visible\)')).Count -eq 2 -and $traficSrc.Contains('Canal.Visible(x.Programme)') -and $traficSrc.Contains('Canal.Visible((t.Depuis ?? "").Length >= 16') -and $traficSrc.Contains('Select(p => new[] { VueTraficFluent.NomPays(p.Code),'))
     $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
     Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")

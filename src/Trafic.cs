@@ -296,12 +296,13 @@ namespace DeR4Tizer
             lblStats.Text = string.Format(L.En
                 ? "Now: ↓ {0}  ↑ {1}      Since {2}: ↓ {3}  ↑ {4} · {5:N0} packets · interface {6} · {7:N0} address ranges"
                 : "En ce moment : ↓ {0}  ↑ {1}      Depuis {2} : ↓ {3}  ↑ {4} · {5:N0} paquets · interface {6} · {7:N0} plages d'adresses",
-                Format.Debit(t.DebitEntrant), Format.Debit(t.DebitSortant), (t.Depuis ?? "").Length >= 16 ? t.Depuis.Substring(11, 5) : t.Depuis,
+                Format.Debit(t.DebitEntrant), Format.Debit(t.DebitSortant), // Heure et code pays neutralisés comme dans la coquille (audit de #141, S141-01)
+                Canal.Visible((t.Depuis ?? "").Length >= 16 ? t.Depuis.Substring(11, 5) : t.Depuis),
                 Format.Octets(t.TotalEntrant), Format.Octets(t.TotalSortant), t.Paquets, Canal.Visible(t.Interface), t.PlagesGeoip);
             carte.Definir(t.Pays);
             courbe.Definir(t.Serie);
             Remplir(lvApplications, (t.Applications ?? new List<TraficApplication>()).Select(a => new[] { Canal.Visible(a.Nom), Format.Octets(a.Entrant), Format.Octets(a.Sortant), a.Destinations.ToString() }), null);
-            Remplir(lvPays, (t.Pays ?? new List<TraficPays>()).Select(p => new[] { PaysCarte.NomDe(p.Code) + " (" + p.Code + ")", Format.Octets(p.Entrant + p.Sortant), p.Destinations.ToString(), string.Join(", ", (p.Programmes ?? new List<string>()).Select(Canal.Visible)) }),
+            Remplir(lvPays, (t.Pays ?? new List<TraficPays>()).Select(p => new[] { VueTraficFluent.NomPays(p.Code), Format.Octets(p.Entrant + p.Sortant), p.Destinations.ToString(), string.Join(", ", (p.Programmes ?? new List<string>()).Select(Canal.Visible)) }),
                 (t.Pays ?? new List<TraficPays>()).Select(p => p.Active).ToList());
             Remplir(lvDestinations, (t.Destinations ?? new List<TraficDestination>()).Select(x => new[] { Canal.Visible(string.IsNullOrEmpty(x.Nom) ? x.Ip : x.Nom + " (" + x.Ip + ")"), Canal.Visible(x.Pays), Canal.Visible(x.Programme), x.Port.ToString(), Format.Octets(x.Entrant), Format.Octets(x.Sortant) }),
                 (t.Destinations ?? new List<TraficDestination>()).Select(x => x.Active).ToList());
