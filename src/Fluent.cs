@@ -482,6 +482,8 @@ namespace DeR4Tizer
             // Connexions et Chaînes en WPF (U4a) : actions par la fenêtre d'aujourd'hui (mêmes questions)
             if (cle == "Connexions") { zone.Content = new PageConnexionsFluent(source as ISourceReponses); return; }
             if (cle == "Chaînes") { zone.Content = new PageChainesFluent(source as ISourceReponses); return; }
+            // Trafic en WPF (U4b) : lecture seule, aucune action
+            if (cle == "Trafic") { zone.Content = new PageTraficFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -2079,6 +2081,387 @@ namespace DeR4Tizer
             if (action == "emplacement") source.OuvrirEmplacement(n.Chemin);
             else source.AgirElement(n, action);
             Charger();
+        }
+    }
+    // Décisions pures de la page Trafic de la coquille (U4b), testées par tests\rendu-pilote.ps1. Noms de programmes, noms
+    // de destinations et nom d'interface : un programme choisit son nom, un serveur DNS le nom qu'il renvoie ; neutralisés
+    public static class VueTraficFluent
+    {
+        public static readonly string[] Vues = { "Programmes", "Pays", "Destinations" };
+        public const int Maximum = 500;
+
+        // Intensité d'un pays sur la carte (0 à 1) : échelle logarithmique, quelques Ko restent visibles à côté de plusieurs Go
+        public static double Intensite(long v, long max)
+        {
+            if (v <= 0) return 0;
+            return Math.Log(1 + (double)v) / Math.Log(1 + (double)Math.Max(v, Math.Max(1, max)));
+        }
+
+        internal static Color Melange(Color a, Color b, double t)
+        {
+            t = Math.Max(0, Math.Min(1, t));
+            return Color.FromRgb((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+        }
+
+        public static string Resume(EtatTrafic t, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            if (t == null)
+                return en ? "No traffic data (trafic.json missing or unreadable): nothing is concluded. The service captures packets once it has started."
+                          : "Aucune donnée de trafic (trafic.json absent ou illisible) : rien n'est conclu. Le service capture les paquets dès son démarrage.";
+            string depuis = (t.Depuis ?? "").Length >= 16 ? t.Depuis.Substring(11, 5) : t.Depuis;
+            string s = string.Format(en ? "Now: ↓ {0}  ↑ {1}   ·   since {2}: ↓ {3}  ↑ {4}   ·   {5:N0} packets   ·   interface {6}"
+                                        : "En ce moment : ↓ {0}  ↑ {1}   ·   depuis {2} : ↓ {3}  ↑ {4}   ·   {5:N0} paquets   ·   interface {6}",
+                Format.Debit(t.DebitEntrant), Format.Debit(t.DebitSortant), Canal.Visible(depuis), Format.Octets(t.TotalEntrant), Format.Octets(t.TotalSortant), t.Paquets, Canal.Visible(t.Interface));
+            if (!string.IsNullOrEmpty(t.MisAJour)) s += (en ? "   ·   state of " : "   ·   état du ") + Canal.Visible(t.MisAJour);
+            if (illisible) s = (en ? "trafic.json unreadable: the last display is kept; it may be out of date." : "trafic.json illisible : dernier affichage gardé, peut-être dépassé.") + "\n" + s;
+            return s;
+        }
+
+        static string Programmes(List<string> l) { return string.Join(", ", (l ?? new List<string>()).Select(Canal.Visible)); }
+
+        public static string NomPays(string code) { return Canal.Visible(PaysCarte.NomDe(code)) + " (" + Canal.Visible(code) + ")"; }
+
+        // Bulle d'un pays de la carte (null : pays sans échange)
+        public static string Bulle(string code, TraficPays p)
+        {
+            if (code == null) return null;
+            string nom = NomPays(code);
+            if (p == null) return nom;
+            return nom + "\n" + Format.Octets(p.Entrant + p.Sortant) + " · " + p.Destinations + " destination(s)" + (p.Programmes != null && p.Programmes.Count > 0 ? "\n" + Programmes(p.Programmes) : "");
+        }
+
+        // Lignes de la vue choisie, plus gros volume d'abord ; « en ce moment » pour un échange des 10 dernières secondes
+        public static List<LigneEtatFluent> Lignes(EtatTrafic t, int vue)
+        {
+            bool en = L.En;
+            var l = new List<LigneEtatFluent>();
+            if (t == null) return l;
+            string maintenant = en ? "  ·  now" : "  ·  en ce moment";
+            Func<string, string, LigneDetail> d = (titre, texte) => new LigneDetail { Titre = titre, Texte = texte };
+            if (vue == 0)
+                foreach (var a in (t.Applications ?? new List<TraficApplication>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Nom ?? "", StringComparer.OrdinalIgnoreCase))
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = Canal.Visible(a.Nom), Etiquette = Format.Octets(a.Entrant + a.Sortant),
+                        Sous = "↓ " + Format.Octets(a.Entrant) + "  ↑ " + Format.Octets(a.Sortant) + "  ·  " + a.Destinations + " destination(s)",
+                        Detail = new List<LigneDetail> { d(en ? "Received" : "Reçu", Format.Octets(a.Entrant)), d(en ? "Sent" : "Envoyé", Format.Octets(a.Sortant)), d("Destinations", a.Destinations.ToString()) }
+                    });
+            else if (vue == 1)
+                foreach (var p in (t.Pays ?? new List<TraficPays>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Code ?? "", StringComparer.Ordinal))
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = NomPays(p.Code), Etiquette = Format.Octets(p.Entrant + p.Sortant),
+                        Sous = p.Destinations + " destination(s)  ·  " + Programmes(p.Programmes) + (p.Active ? maintenant : ""),
+                        Detail = new List<LigneDetail> { d(en ? "Received" : "Reçu", Format.Octets(p.Entrant)), d(en ? "Sent" : "Envoyé", Format.Octets(p.Sortant)), d("Destinations", p.Destinations.ToString()),
+                                                         d(en ? "Programs" : "Programmes", string.Join("\n", (p.Programmes ?? new List<string>()).Select(Canal.Visible))) }
+                    });
+            else
+                foreach (var x in (t.Destinations ?? new List<TraficDestination>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Ip ?? "", StringComparer.Ordinal))
+                {
+                    var det = new List<LigneDetail> { new LigneDetail { Titre = en ? "IP address" : "Adresse IP", Texte = Canal.Visible(x.Ip), Chasse = true } };
+                    if (!string.IsNullOrEmpty(x.Nom)) det.Add(new LigneDetail { Titre = en ? "Name" : "Nom", Texte = Canal.Visible(x.Nom), Chasse = true });
+                    det.Add(d(en ? "Country" : "Pays", NomPays(x.Pays)));
+                    det.Add(d(en ? "Program" : "Programme", Canal.Visible(x.Programme)));
+                    det.Add(d("Port", x.Port.ToString()));
+                    det.Add(d(en ? "Received" : "Reçu", Format.Octets(x.Entrant)));
+                    det.Add(d(en ? "Sent" : "Envoyé", Format.Octets(x.Sortant)));
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = Canal.Visible(string.IsNullOrEmpty(x.Nom) ? x.Ip : x.Nom + " (" + x.Ip + ")"), Etiquette = Format.Octets(x.Entrant + x.Sortant),
+                        Sous = Canal.Visible(x.Pays) + "  ·  " + Canal.Visible(x.Programme) + "  ·  port " + x.Port + (x.Active ? maintenant : ""), Detail = det
+                    });
+                }
+            foreach (var x in l) foreach (var y in x.Detail) if (string.IsNullOrEmpty(y.Texte)) y.Texte = "—";
+            return l;
+        }
+    }
+
+    // Carte du monde de la page Trafic (U4b) : contours Natural Earth intégrés à l'exécutable (aucun fond chargé d'Internet),
+    // pays colorés selon le volume depuis minuit, arcs fixes vers les pays des 10 dernières secondes ; aucune animation
+    // continue (la page reste légère quand elle est ouverte longtemps)
+    class CarteFluent : FrameworkElement
+    {
+        List<TraficPays> pays = new List<TraficPays>();
+        List<KeyValuePair<string, Geometry>> formes;
+        Size tailleFormes;
+        string survol;
+        readonly string origine;
+
+        public CarteFluent()
+        {
+            ClipToBounds = true;
+            try { origine = System.Globalization.RegionInfo.CurrentRegion.TwoLetterISORegionName; } catch { origine = null; }
+            ToolTipService.SetInitialShowDelay(this, 150);
+        }
+
+        public void Definir(List<TraficPays> p) { pays = p ?? new List<TraficPays>(); InvalidateVisual(); }
+
+        internal const double Haut = 22;
+
+        Rect Zone()
+        {
+            // Longitude -180..180, latitude -58..84 (sans l'Antarctique), proportions conservées
+            double l = Math.Max(1, ActualWidth - 16), h = Math.Max(1, ActualHeight - Haut - 8);
+            double echelle = Math.Min(l / 360, h / 142);
+            double lw = 360 * echelle, lh = 142 * echelle;
+            return new Rect((ActualWidth - lw) / 2, Haut + (h - lh) / 2, lw, lh);
+        }
+
+        static Point Projeter(System.Drawing.PointF ll, Rect z) { return new Point(z.X + (ll.X + 180) / 360 * z.Width, z.Y + (84 - ll.Y) / 142 * z.Height); }
+
+        // Contours projetés, reconstruits seulement quand la taille change
+        List<KeyValuePair<string, Geometry>> Formes()
+        {
+            var taille = new Size(ActualWidth, ActualHeight);
+            if (formes != null && taille == tailleFormes) return formes;
+            tailleFormes = taille;
+            var z = Zone();
+            formes = new List<KeyValuePair<string, Geometry>>();
+            foreach (var p in PaysCarte.Tous.Values)
+            {
+                var g = new StreamGeometry();
+                using (var c = g.Open())
+                    foreach (var a in p.Anneaux)
+                    {
+                        if (a.Length < 3) continue;
+                        c.BeginFigure(Projeter(a[0], z), true, true);
+                        c.PolyLineTo(a.Skip(1).Select(q => Projeter(q, z)).ToList(), true, false);
+                    }
+                g.Freeze();
+                formes.Add(new KeyValuePair<string, Geometry>(p.Code, g));
+            }
+            return formes;
+        }
+
+        FormattedText Texte(string t)
+        {
+            return new FormattedText(t, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface(Jetons.Police, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+                11, Jetons.Pinceau(Jetons.TexteSecondaire), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        }
+
+        protected override void OnRender(DrawingContext g)
+        {
+            g.DrawRoundedRectangle(Jetons.Pinceau(Jetons.Carte), null, new Rect(0, 0, ActualWidth, ActualHeight), 8, 8);
+            if (ActualWidth < 40 || ActualHeight < 40) return;
+            g.DrawText(Texte(L.En ? "Volume exchanged since midnight (log scale) · arcs: exchanges of the last 10 seconds" : "Volume échangé depuis minuit (échelle logarithmique) · arcs : échanges des 10 dernières secondes"), new Point(12, 4));
+            var volumes = new Dictionary<string, long>();
+            foreach (var p in pays) if (p != null && p.Code != null) volumes[p.Code] = p.Entrant + p.Sortant;
+            long max = volumes.Count == 0 ? 1 : volumes.Values.Max();
+            var trait = new Pen(Jetons.Pinceau(Jetons.Separateur), 0.6); trait.Freeze();
+            foreach (var f in Formes())
+            {
+                long v;
+                var fond = Jetons.Surface;
+                if (volumes.TryGetValue(f.Key, out v) && v > 0) fond = VueTraficFluent.Melange(Jetons.Surface, Jetons.Accent, 0.25 + 0.75 * VueTraficFluent.Intensite(v, max));
+                if (f.Key == survol) fond = VueTraficFluent.Melange(fond, Colors.White, 0.2);
+                g.DrawGeometry(Jetons.Pinceau(fond), trait, f.Value);
+            }
+            PaysCarte depart;
+            if (origine == null || !PaysCarte.Tous.TryGetValue(origine, out depart)) return;
+            var z = Zone();
+            var a0 = Projeter(depart.Centre, z);
+            var arc = new Pen(new SolidColorBrush(Color.FromArgb(170, Jetons.Accent.R, Jetons.Accent.G, Jetons.Accent.B)), 1.4); arc.Freeze();
+            foreach (var p in pays.Where(x => x != null && x.Active))
+            {
+                PaysCarte arrivee;
+                if (p.Code == null || !PaysCarte.Tous.TryGetValue(p.Code, out arrivee) || arrivee == depart) continue;
+                var a1 = Projeter(arrivee.Centre, z);
+                double dx = a1.X - a0.X, dy = a1.Y - a0.Y;
+                var milieu = new Point((a0.X + a1.X) / 2 - dy * 0.25, (a0.Y + a1.Y) / 2 - Math.Abs(dx) * 0.25 - 10);
+                var courbe = new StreamGeometry();
+                using (var c = courbe.Open()) { c.BeginFigure(a0, false, false); c.QuadraticBezierTo(milieu, a1, true, false); }
+                courbe.Freeze();
+                g.DrawGeometry(null, arc, courbe);
+                g.DrawEllipse(Jetons.Pinceau(Jetons.Accent), null, a1, 3.5, 3.5);
+            }
+            g.DrawEllipse(Jetons.Pinceau(Jetons.Texte), null, a0, 3.5, 3.5);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            var pt = e.GetPosition(this);
+            string trouve = null;
+            foreach (var f in Formes()) if (f.Value.FillContains(pt)) { trouve = f.Key; break; }
+            if (trouve == survol) return;
+            survol = trouve;
+            ToolTip = VueTraficFluent.Bulle(trouve, pays.FirstOrDefault(x => x != null && x.Code == trouve));
+            InvalidateVisual();
+        }
+
+        protected override void OnMouseLeave(MouseEventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (survol == null) return;
+            survol = null; ToolTip = null; InvalidateVisual();
+        }
+    }
+
+    // Courbe du débit (entrant et sortant) sur les 10 dernières minutes, maximum et légende écrits
+    class CourbeFluent : FrameworkElement
+    {
+        List<PointTrafic> serie = new List<PointTrafic>();
+
+        public void Definir(List<PointTrafic> s) { serie = s ?? new List<PointTrafic>(); InvalidateVisual(); }
+
+        FormattedText Texte(string t, Color c)
+        {
+            return new FormattedText(t, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface(Jetons.Police, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+                11, Jetons.Pinceau(c), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        }
+
+        protected override void OnRender(DrawingContext g)
+        {
+            bool en = L.En;
+            g.DrawRoundedRectangle(Jetons.Pinceau(Jetons.Carte), null, new Rect(0, 0, ActualWidth, ActualHeight), 8, 8);
+            if (ActualWidth < 60 || ActualHeight < 60) return;
+            var points = serie.Where(p => p != null).ToList();
+            long max = Math.Max(1024, points.Select(p => Math.Max(p.Entrant, p.Sortant)).DefaultIfEmpty(0).Max());
+            // Sans deux mesures, aucun maximum : « max 1 Ko/s » laisserait croire à un débit mesuré
+            g.DrawText(Texte(points.Count < 2 ? (en ? "no measurement yet" : "pas encore de mesure") : "max " + Format.Debit(max), Jetons.TexteSecondaire), new Point(12, 4));
+            var sortant = Texte(en ? "▬ out" : "▬ sortant", Jetons.Succes);
+            var entrant = Texte(en ? "▬ in" : "▬ entrant", Jetons.Accent);
+            g.DrawText(sortant, new Point(ActualWidth - 12 - sortant.Width, 4));
+            g.DrawText(entrant, new Point(ActualWidth - 24 - sortant.Width - entrant.Width, 4));
+            g.DrawText(Texte(en ? "last 10 minutes" : "10 dernières minutes", Jetons.TexteSecondaire), new Point(12, ActualHeight - 18));
+            if (points.Count < 2) return;
+            var z = new Rect(12, 24, ActualWidth - 24, Math.Max(1, ActualHeight - 46));
+            int n = Math.Max(points.Count, 120);
+            Func<int, long, Point> pt = (i, v) => new Point(z.Left + i * z.Width / (n - 1), z.Bottom - v / (double)max * z.Height);
+            foreach (var s in new[] { new { Couleur = Jetons.Accent, Entrant = true }, new { Couleur = Jetons.Succes, Entrant = false } })
+            {
+                var geo = new StreamGeometry();
+                bool entr = s.Entrant;
+                using (var c = geo.Open())
+                {
+                    c.BeginFigure(pt(0, entr ? points[0].Entrant : points[0].Sortant), false, false);
+                    c.PolyLineTo(points.Skip(1).Select((p, i) => pt(i + 1, entr ? p.Entrant : p.Sortant)).ToList(), true, true);
+                }
+                geo.Freeze();
+                var stylo = new Pen(Jetons.Pinceau(s.Couleur), 1.6); stylo.Freeze();
+                g.DrawGeometry(null, stylo, geo);
+            }
+        }
+    }
+
+    // Page Trafic en WPF (U4b) : même fichier que la page d'aujourd'hui (trafic.json, lecture seule hors du fil de
+    // l'interface, relu seulement quand il change), carte, courbe, puis programmes, pays ou destinations avec leur détail
+    class PageTraficFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel outils = new StackPanel();
+        readonly WrapPanel vues = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly CarteFluent carte = new CarteFluent();
+        readonly CourbeFluent courbe = new CourbeFluent();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        EtatTrafic t;
+        bool lu, illisible;
+        long vuFichier;         // date du fichier lu (ticks) : rien n'est relu tant qu'il ne change pas
+        int vue, choisie, enCours, chargement;
+        string vu;
+
+        public PageTraficFluent()
+        {
+            var haut = new Grid { Height = 250, Margin = new Thickness(0, 0, 0, 12) };
+            haut.ColumnDefinitions.Add(new ColumnDefinition());
+            haut.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+            courbe.Margin = new Thickness(12, 0, 0, 0);
+            Grid.SetColumn(courbe, 1);
+            haut.Children.Add(carte); haut.Children.Add(courbe);
+            outils.Children.Add(haut);
+            outils.Children.Add(vues);
+            Briques.Disposer(this, resume, outils, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+            Afficher();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            long deja = lu && !illisible ? vuFichier : -1;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    long date;
+                    try { date = System.IO.File.GetLastWriteTimeUtc(System.IO.Path.Combine(Commun.Dossier, "trafic.json")).Ticks; } catch { date = 0; }
+                    if (date == deja) return;
+                    var x = Commun.Lire<EtatTrafic>("trafic.json");
+                    Dispatcher.BeginInvoke((Action)(() =>
+                    {
+                        if (numero != chargement) return;
+                        lu = true;
+                        // Illisible après une lecture : la dernière carte et les dernières listes restent, et c'est dit
+                        if (x == null) illisible = t != null;
+                        else { t = x; illisible = false; vuFichier = date; }
+                        Afficher();
+                    }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Afficher()
+        {
+            resume.Text = VueTraficFluent.Resume(t, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(lu && (t == null || illisible) ? Jetons.Attention : Jetons.TexteSecondaire);
+            carte.Definir(t == null ? null : t.Pays);
+            courbe.Definir(t == null ? null : t.Serie);
+            var lignes = VueTraficFluent.Lignes(t, vue);
+            if (choisie >= lignes.Count) choisie = 0;
+            string signature = vue + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", lignes.Take(VueTraficFluent.Maximum).Select(x => x.Titre + "|" + x.Etiquette + "|" + x.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            vues.Children.Clear();
+            for (int k = 0; k < VueTraficFluent.Vues.Length; k++)
+            {
+                int n = k;
+                bool actif = n == vue;
+                var b = new Button
+                {
+                    Content = L.T(VueTraficFluent.Vues[k]), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur),
+                    BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                b.Click += (s, e) => { vue = n; choisie = 0; Afficher(); };
+                vues.Children.Add(b);
+            }
+            liste.Children.Clear();
+            // Avant la première lecture, ou sans données, le résumé le dit ; rien n'est conclu ici
+            if (lu && t != null && lignes.Count == 0)
+                liste.Children.Add(new TextBlock { Text = L.T("Rien d'enregistré pour cette vue."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            for (int k = 0; k < Math.Min(lignes.Count, VueTraficFluent.Maximum); k++)
+            {
+                int n = k; var x = lignes[k];
+                liste.Children.Add(Briques.Ligne(x.Titre, x.Etiquette, x.Sous, 0, n == choisie, false, () => { choisie = n; Afficher(); }));
+            }
+            if (lignes.Count > VueTraficFluent.Maximum)
+                liste.Children.Add(new TextBlock { Text = string.Format(L.En ? "The {0} largest are shown." : "Les {0} plus gros volumes sont affichés.", VueTraficFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            Detailler(lignes.Count > 0 ? lignes[choisie] : null);
+        }
+
+        void Detailler(LigneEtatFluent x)
+        {
+            if (x == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez une ligne pour lire son détail en entier."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = x.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 4) });
+            foreach (var l in x.Detail)
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var tb = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { tb.FontFamily = Briques.Chasse; tb.FontSize = 12; }
+                pile.Children.Add(tb);
+            }
+            detail.Content = pile;
         }
     }
 }

@@ -259,6 +259,31 @@ try {
     Cas 'Connexions : aucun compteur de filtre avant la première lecture (« 0 » ferait croire à une liste vide)' ($fluentSrc.Contains('(lu ? "  " + VueConnexionsFluent.Filtrer(flux, n).Count : "")'))
     Cas 'Connexions et Chaînes : seules les réponses que la question d''AgirSur sait dire partent de la coquille' ($guiSrc.Contains('var permises = new[] { "tuer", "tuerChaine", "suspendre", "reprendre", "quarantaine", "isolerProgramme" };') -and $guiSrc.Contains('permises.Contains(action)) AgirSur(element, action);'))
     Cas 'Connexions et Chaînes d''aujourd''hui : cellules et info-bulles neutralisées, copie échappée' ($guiSrc.Contains('var item = new ListViewItem(brutes.Select(v => Canal.Visible(v ?? "")).ToArray())') -and $guiSrc.Contains('retrait + Canal.Visible(n.Nom)') -and ([regex]::Matches($guiSrc, 'item\.SubItems\[k\]\.Tag = Canal\.Echappe\(brutes\[k\]\);')).Count -eq 2 -and $guiSrc.Contains('s.Tag as string ?? Canal.Echappe(s.Text)'))
+    # Trafic (U4b) : échelle logarithmique, résumé honnête, lignes triées et neutralisées, bulle de la carte neutralisée
+    $vt = & $t 'VueTraficFluent'; $etT = & $t 'EtatTrafic'; $apT = & $t 'TraficApplication'; $paT = & $t 'TraficPays'; $deT = & $t 'TraficDestination'
+    $int = { param($v, $m) [double]$vt.GetMethod('Intensite').Invoke($null, [object[]]@([long]$v, [long]$m)) }
+    Cas 'Trafic : échelle logarithmique, 0 sans échange, 1 au maximum, 1 Ko visible à côté de 1 Go' ((& $int 0 100) -eq 0 -and [math]::Abs((& $int 1GB 1GB) - 1) -lt 1e-9 -and (& $int 1KB 1GB) -gt 0.3) "$(& $int 1KB 1GB)"
+    $resT = { param($e, $lu, $ill) [string]$vt.GetMethod('Resume').Invoke($null, [object[]]@($e, [bool]$lu, [bool]$ill)) }
+    Cas 'Trafic : avant lecture « Lecture en cours… », sans fichier « rien n''est conclu », jamais 0 o rassurant' ((& $resT $null $false $false) -eq 'Lecture en cours…' -and (& $resT $null $true $false).Contains('rien n''est conclu') -and -not (& $resT $null $true $false).Contains(' 0 o'))
+    $la = New-Object "Collections.Generic.List[$($apT.FullName)]"
+    $la.Add((& $nouv $apT @{ Nom = 'petit'; Entrant = [long]10; Sortant = [long]5; Destinations = 1 }))
+    $la.Add((& $nouv $apT @{ Nom = 'gros' + [char]0x202E + 'exe'; Entrant = [long]5000; Sortant = [long]100; Destinations = 3 }))
+    $progs = New-Object 'Collections.Generic.List[string]'; $progs.Add('a' + [char]0x200B + "`r`nb")
+    $lp = New-Object "Collections.Generic.List[$($paT.FullName)]"; $lp.Add((& $nouv $paT @{ Code = 'FR'; Entrant = [long]100; Sortant = [long]0; Destinations = 2; Programmes = $progs; Active = $true }))
+    $ld = New-Object "Collections.Generic.List[$($deT.FullName)]"; $ld.Add((& $nouv $deT @{ Ip = '1.2.3.4'; Nom = 'evil' + [char]0x202E + '.test'; Pays = 'FR'; Programme = "x`r`ny"; Port = 443; Entrant = [long]1; Sortant = [long]1; Active = $false }))
+    $etatTr = & $nouv $etT @{ Interface = 'eth' + [char]0x202E; Depuis = '2026-11-10 00:00:00'; MisAJour = '2026-11-10 10:00:00'; Applications = $la; Pays = $lp; Destinations = $ld; DebitEntrant = [long]2048; Paquets = [long]10 }
+    $lig = { param($v) @($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etatTr, [int]$v))) }
+    $l0 = & $lig 0; $l1 = & $lig 1; $l2 = & $lig 2
+    $txtT = (@($l0 + $l1 + $l2 | ForEach-Object { $_.Titre; $_.Sous; $_.Detail | ForEach-Object { $_.Texte } }) + @((& $resT $etatTr $true $false), [string]$vt.GetMethod('Bulle').Invoke($null, [object[]]@('FR', $lp[0])))) -join '|'
+    Cas 'Trafic : programmes, pays, destinations, résumé et bulle neutralisés (U+202E, largeur nulle, retours à la ligne)' (-not ($txtT -match "[\u202E\u200B\r]") -and -not (($l1[0].Sous + $l2[0].Sous) -match "\n")) $txtT
+    Cas 'Trafic : plus gros volume d''abord, échange récent dit, IP en chasse fixe' ($l0[0].Titre.StartsWith('gros') -and $l1[0].Sous.Contains('en ce moment') -and -not $l2[0].Sous.Contains('en ce moment') -and ($l2[0].Detail | Where-Object { $_.Titre -eq 'Adresse IP' }).Chasse) "$($l0[0].Titre) ; $($l1[0].Sous)"
+    $r3 = & $resT $etatTr $true $true
+    Cas 'Trafic : illisible après une lecture, dernier affichage gardé et dit' ($r3.StartsWith('trafic.json illisible : dernier affichage gardé') -and $r3.Contains('2 Ko/s')) $r3
+    $traficSrc = [IO.File]::ReadAllText("$src\Trafic.cs")
+    Cas 'Trafic : courbe sans maximum avant deux mesures (« pas encore de mesure »)' ($fluentSrc.Contains('points.Count < 2 ? (en ? "no measurement yet" : "pas encore de mesure")'))
+    Cas 'Trafic d''aujourd''hui : programmes, destinations, interface et bulle neutralisés' ($traficSrc.Contains('Canal.Visible(a.Nom)') -and $traficSrc.Contains('Canal.Visible(t.Interface)') -and ([regex]::Matches($traficSrc, '\.Select\(Canal\.Visible\)')).Count -eq 2 -and $traficSrc.Contains('Canal.Visible(x.Programme)'))
+    $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
+    Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -304,10 +329,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
