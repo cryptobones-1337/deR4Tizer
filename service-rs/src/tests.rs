@@ -7107,3 +7107,14 @@ fn structure_diagnostic_lecture_seule() {
         assert!(!code.contains(interdit), "{interdit}");
     }
 }
+
+#[test]
+fn structure_lecture_parefeu_bornee() {
+    // Le moniteur ne lit le pare-feu que par la lecture bornée (audit de #148, S148-01)
+    let moniteur = include_str!("moniteur.rs");
+    assert!(!moniteur.contains("etat_parefeu_windows()"));
+    assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 2);
+    let parefeu = include_str!("parefeu.rs");
+    assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
+    assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");
+}

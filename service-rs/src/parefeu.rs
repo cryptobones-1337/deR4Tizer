@@ -181,9 +181,19 @@ pub fn diagnostiquer(e: &EntreesDiagnostic) -> Diagnostic {
     Diagnostic { verdict: verdict.into(), constats: c }
 }
 
+static LECTURE_PAREFEU: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lecture bornée (audit de #148, S148-01) : les lectures passent par RPC vers le service Pare-feu Windows ; s'il se
+/// figeait, le moniteur resterait bloqué sous son verrou. Fil à part, 5 s au plus, une lecture à la fois ; délai
+/// dépassé ou lecture précédente encore bloquée : None, donc « non vérifié »
+pub fn etat_parefeu_windows_borne() -> Option<EtatParefeuWindows> {
+    commun::avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows).flatten()
+}
+
 /// Profils actifs du pare-feu de Windows, état et action entrante par défaut ; None si la lecture échoue (alors « non
-/// vérifié », jamais « aucun problème »). Lecture COM seule : aucun Set, Add ni Remove
-pub fn etat_parefeu_windows() -> Option<EtatParefeuWindows> {
+/// vérifié », jamais « aucun problème »). Lecture COM seule : aucun Set, Add ni Remove. Toujours appelée par
+/// etat_parefeu_windows_borne
+fn etat_parefeu_windows() -> Option<EtatParefeuWindows> {
     use windows::Win32::NetworkManagement::WindowsFirewall::{INetFwPolicy2, NetFwPolicy2, NET_FW_ACTION_ALLOW, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
     unsafe {

@@ -226,7 +226,7 @@ impl Moniteur {
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
             udp_dynamique: parefeu::plage_dynamique_udp(),
             adresses_publiques: parefeu::adresses_publiques(),
-            etat_parefeu: parefeu::etat_parefeu_windows(),
+            etat_parefeu: parefeu::etat_parefeu_windows_borne(),
             exposition: parefeu::Exposition::default(),
             surveillances: Surveillances::nouvelles(),
             processus,
@@ -798,8 +798,8 @@ impl Moniteur {
             let apres = parefeu::adresses_publiques();
             let alerte = alerte_adresses_publiques(&self.adresses_publiques, &apres);
             self.adresses_publiques = apres;
-            // Lecture COM seule, rapide (trois propriétés par profil actif) ; relue au même rythme que les adresses
-            self.etat_parefeu = parefeu::etat_parefeu_windows();
+            // Lecture COM seule, bornée à 5 s sur un fil à part (S148-01) ; relue au même rythme que les adresses
+            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();
             if let Some(a) = alerte {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, Some("adresse-publique".into()));
             }
