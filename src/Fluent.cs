@@ -495,6 +495,8 @@ namespace DeR4Tizer
             if (cle == "Démarrage auto") { zone.Content = new PageDemarrageFluent(source as ISourceReponses); return; }
             if (cle == "Extensions") { zone.Content = new PageExtensionsFluent(); return; }
             if (cle == "Vie privée") { zone.Content = new PageVieFluent(source as ISourceReponses); return; }
+            // Réseau local en WPF (U6b), lecture seule
+            if (cle == "Réseau local") { zone.Content = new PageReseauLocalFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -3470,6 +3472,142 @@ namespace DeR4Tizer
             string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette, x0.Sous }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
             Actions(pile, actions, a => { if (a == "copier") VueReseauFluent.Copier(copie); else if (source != null) source.OuvrirEmplacement(chemin); });
             detail.Content = pile;
+        }
+    }
+    // Décisions pures de la page Réseau local de la coquille (U6b) : reseau.json, écrit par le service à partir de ce qu'il
+    // voit sur le réseau (noms annoncés, descriptions UPnP, adresses) ; tout est neutralisé
+    public static class VueReseauLocalFluent
+    {
+        public static readonly string[] Vues = { "Appareils", "Serveurs DHCP", "Redirections UPnP", "Répondeurs" };
+
+        public static bool LeurreRepondu(EtatReseau r) { return r != null && (r.ResultatLeurre ?? "").StartsWith("RÉPONSE"); }
+
+        public static long Ordre(string ip)
+        {
+            long v = 0;
+            foreach (var o in (ip ?? "").Split('.')) { int n; int.TryParse(o, out n); v = v * 256 + n; }
+            return v;
+        }
+
+        public static string Resume(EtatReseau r, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            if (r == null)
+                return illisible ? (en ? "reseau.json unreadable: nothing is concluded." : "reseau.json illisible : rien n'est conclu.")
+                                 : (en ? "No data yet (the service analyses the network when it starts)." : "Pas encore de données (le service analyse le réseau au démarrage).");
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "?" : Canal.Visible(x);
+            string s = string.Format(en ? "Interface {0} / {1} · gateway {2} ({3}) · DHCP server {4}\nDecoy ({5}): {6}" : "Interface {0} / {1} · passerelle {2} ({3}) · serveur DHCP {4}\nLeurre ({5}) : {6}",
+                v(r.Interface), v(r.Masque), v(r.Passerelle), v(r.MacPasserelle), string.IsNullOrEmpty(r.DhcpInterface) ? (en ? "none (static address)" : "aucun (adresse fixe)") : Canal.Visible(r.DhcpInterface), v(r.DernierLeurre), v(r.ResultatLeurre));
+            int pirates = (r.ServeursDhcp ?? new List<ServeurDhcp>()).Count(d => d != null && !d.Legitime);
+            if (pirates > 0) s += "\n" + string.Format(en ? "{0} rogue DHCP server(s) seen." : "{0} serveur(s) DHCP pirate(s) vu(s).", pirates);
+            if (!string.IsNullOrEmpty(r.MisAJour)) s += "\n" + (en ? "State of " : "État du ") + Canal.Visible(r.MisAJour) + ".";
+            if (illisible) s = (en ? "reseau.json unreadable: the last display is kept; it may be out of date.\n" : "reseau.json illisible : dernier affichage gardé, peut-être dépassé.\n") + s;
+            return s;
+        }
+
+        public static int Gravite(EtatReseau r) { return r == null ? 0 : LeurreRepondu(r) || (r.ServeursDhcp ?? new List<ServeurDhcp>()).Any(d => d != null && !d.Legitime) ? 2 : 0; }
+
+        public static List<LigneEtatFluent> Lignes(EtatReseau r, int vue)
+        {
+            bool en = L.En;
+            var l = new List<LigneEtatFluent>();
+            if (r == null) return l;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            if (vue == 0)
+                foreach (var a in (r.Appareils ?? new List<Appareil>()).Where(x => x != null).OrderByDescending(x => x.Passerelle).ThenBy(x => Ordre(x.Ip)))
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = v(a.Ip), Etiquette = a.Passerelle ? (en ? "gateway (router)" : "passerelle (box)") : (en ? "device" : "appareil"), Sous = "MAC " + v(a.Mac) + "  ·  " + (en ? "last seen " : "vu le ") + v(a.DerniereVue),
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = "MAC", Texte = v(a.Mac), Chasse = true }, new LigneDetail { Titre = en ? "First seen" : "Première vue", Texte = v(a.PremiereVue) }, new LigneDetail { Titre = en ? "Last seen" : "Dernière vue", Texte = v(a.DerniereVue) } }
+                    });
+            else if (vue == 1)
+                foreach (var d in (r.ServeursDhcp ?? new List<ServeurDhcp>()).Where(x => x != null))
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = v(d.Ip), Etiquette = d.Legitime ? (en ? "DHCP server" : "serveur DHCP") : (en ? "ROGUE DHCP server" : "serveur DHCP PIRATE"), Gravite = d.Legitime ? 0 : 2,
+                        Sous = d.Legitime ? (en ? "server of this interface" : "serveur de cette interface") : (en ? "not the server of this interface" : "n'est pas le serveur de cette interface"),
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Seen" : "Vu", Texte = v(d.Vu) } }
+                    });
+            else if (vue == 2)
+                foreach (var x in (r.Redirections ?? new List<RedirectionUpnp>()).Where(y => y != null))
+                {
+                    bool versPc = x.Client == r.Interface;
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = (versPc ? (en ? "TO THIS COMPUTER " : "VERS CE PC ") : "") + x.PortExterne + "/" + v(x.Protocole), Etiquette = x.Active ? (en ? "active" : "active") : (en ? "inactive" : "inactive"),
+                        Sous = v(x.Client) + "  ·  " + (en ? "internal port " : "port interne ") + x.PortInterne, Gravite = versPc && x.Active ? 1 : 0,
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Client" : "Client", Texte = v(x.Client), Chasse = true }, new LigneDetail { Titre = "Description", Texte = v(x.Description) } }
+                    });
+                }
+            else
+                foreach (var x in (r.Repondeurs ?? new List<Repondeur>()).Where(y => y != null))
+                {
+                    var noms = x.Noms ?? new List<string>();
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = v(x.Ip), Etiquette = v(x.Protocole), Sous = noms.Count + (en ? " name(s) answered" : " nom(s) répondu(s)") + "  ·  " + v(x.Derniere),
+                        Gravite = noms.Count >= (x.Protocole == "mDNS" ? 15 : 3) ? 1 : 0,
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Names" : "Noms", Texte = noms.Count == 0 ? "—" : string.Join("\n", noms.Select(Canal.Visible)) }, new LigneDetail { Titre = en ? "Last" : "Dernière", Texte = v(x.Derniere) } }
+                    });
+                }
+            return l;
+        }
+    }
+
+    // Page Réseau local en WPF (U6b) : reseau.json, lecture seule ; copie de la ligne
+    class PageReseauLocalFluent : PageProtectionFluent
+    {
+        EtatReseau reseau;
+        bool illisible;
+        int vue;
+
+        public PageReseauLocalFluent() { Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var r = LectureFluent.Lire<EtatReseau>("reseau.json", out absent); return new object[] { r, !absent && r == null }; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var x = (object[])lecture;
+            illisible = (bool)x[1];
+            if (x[0] != null || !illisible) reseau = x[0] as EtatReseau;
+        }
+
+        protected override void Afficher()
+        {
+            bool en = L.En;
+            resume.Text = VueReseauLocalFluent.Resume(reseau, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(VueReseauLocalFluent.Gravite(reseau) == 2 ? Jetons.Danger : lu && (illisible || reseau == null) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = VueReseauLocalFluent.Lignes(reseau, vue);
+            string signature = vue + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", lignes.Select(x => x.Titre + "|" + x.Etiquette + "|" + x.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var vues = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            for (int k = 0; k < VueReseauLocalFluent.Vues.Length; k++)
+            {
+                int n = k; bool ouverte = n == vue;
+                var bt = new Button
+                {
+                    Content = L.T(VueReseauLocalFluent.Vues[k]), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(ouverte ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                bt.Template = Coquille.ModeleBouton();
+                bt.Click += (s, e) => { vue = n; choisie = 0; Afficher(); };
+                vues.Children.Add(bt);
+            }
+            outils.Children.Add(vues);
+            Liste(lignes);
+            if (lu && reseau != null && lignes.Count == 0)
+                liste.Children.Add(new TextBlock { Text = vue == 2 && reseau != null ? (en ? "No redirection read. UPnP: " : "Aucune redirection lue. UPnP : ") + (string.IsNullOrEmpty(reseau.Upnp) ? (en ? "not checked yet" : "pas encore vérifié") : Canal.Visible(reseau.Upnp)) : L.T("Rien d'enregistré pour cette vue."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            var x0 = lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null;
+            var pile = Panneau(x0, en ? "Select a line to read its detail." : "Sélectionnez une ligne pour lire son détail.");
+            if (pile != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette, x0.Sous }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
+                pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(copie)));
+            }
         }
     }
 }

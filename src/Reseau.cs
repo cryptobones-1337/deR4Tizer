@@ -91,8 +91,9 @@ namespace DeR4Tizer
             Info.Text = string.Format(L.En
                 ? "Interface {0} / {1} · gateway {2} ({3}) · DHCP server {4}\nDecoy ({5}): {6}"
                 : "Interface {0} / {1} · passerelle {2} ({3}) · serveur DHCP {4}\nLeurre ({5}) : {6}",
-                r.Interface, r.Masque, r.Passerelle, r.MacPasserelle, string.IsNullOrEmpty(r.DhcpInterface) ? (L.En ? "none (static address)" : "aucun (adresse fixe)") : r.DhcpInterface,
-                r.DernierLeurre, r.ResultatLeurre);
+                // Valeurs lues sur le réseau (adresses, résultat du leurre) : neutralisées (U6b)
+                Canal.Visible(r.Interface), Canal.Visible(r.Masque), Canal.Visible(r.Passerelle), Canal.Visible(r.MacPasserelle), string.IsNullOrEmpty(r.DhcpInterface) ? (L.En ? "none (static address)" : "aucun (adresse fixe)") : Canal.Visible(r.DhcpInterface),
+                Canal.Visible(r.DernierLeurre), Canal.Visible(r.ResultatLeurre));
             int haut = Lv.Items.Count > 0 ? Lv.TopItem.Index : 0;
             Vider();
             Lv.AjouterSection(L.T("Appareils du réseau local"));
@@ -101,7 +102,7 @@ namespace DeR4Tizer
             Lv.AjouterSection(L.T("Serveurs DHCP vus"));
             foreach (var d in r.ServeursDhcp ?? new List<ServeurDhcp>())
                 Ligne(new[] { d.Legitime ? L.T("Serveur DHCP") : L.T("Serveur DHCP PIRATE"), d.Ip, d.Legitime ? L.T("serveur de cette interface") : L.T("n'est pas le serveur de cette interface"), "", d.Vu }, d.Legitime ? "" : "Critique");
-            Lv.AjouterSection(L.T("Redirections de ports de la box (UPnP)") + " — " + (r.Upnp ?? ""));
+            Lv.AjouterSection(L.T("Redirections de ports de la box (UPnP)") + " — " + Canal.Visible(r.Upnp));
             foreach (var x in r.Redirections ?? new List<RedirectionUpnp>())
             {
                 bool versPc = x.Client == r.Interface;

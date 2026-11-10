@@ -35,7 +35,7 @@ namespace DeR4Tizer
 
         public static bool ToutDebloquer()
         {
-            if (MessageBox.Show("Retirer tous les blocages deR4Tizer (fichier hosts et pare-feu) ?", "deR4Tizer",
+            if (MessageBox.Show(L.T("Retirer tous les blocages deR4Tizer (fichier hosts et pare-feu) ?"), "deR4Tizer",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
             Canal.Executer(new Commande { Action = "toutDebloquer" });
             return true;
@@ -47,8 +47,8 @@ namespace DeR4Tizer
         {
             if (q == null) return false;
             string question = repli
-                ? "Restaurer ce fichier dans le dossier de deR4Tizer (C:\\ProgramData\\deR4Tizer\\restaurations) plutôt qu'à son emplacement d'origine ?\n\n" + Canal.Visible(q.CheminOrigine)
-                : "Remettre ce fichier à son emplacement d'origine ?\n\n" + Canal.Visible(q.CheminOrigine);
+                ? L.T("Restaurer ce fichier dans le dossier de deR4Tizer (C:\\ProgramData\\deR4Tizer\\restaurations) plutôt qu'à son emplacement d'origine ?") + "\n\n" + Canal.Visible(q.CheminOrigine)
+                : L.T("Remettre ce fichier à son emplacement d'origine ?") + "\n\n" + Canal.Visible(q.CheminOrigine);
             if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return false;
             Canal.Executer(new Commande { Action = repli ? "restaurerRepli" : "restaurer", Cible = q.Id });
             return true;
@@ -82,10 +82,11 @@ namespace DeR4Tizer
             if (operation != "appliquer" && operation != "annuler" && operation != "evaluer") return false;
             if (operation != "evaluer" && string.IsNullOrEmpty(cible))
             {
-                MessageBox.Show("Sélectionnez d'abord une ou plusieurs règles (Ctrl+clic).", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(L.T("Sélectionnez d'abord une ou plusieurs règles (Ctrl+clic)."), "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return false;
             }
-            if (question != null && MessageBox.Show(question, "deR4Tizer : baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            // Les questions sont des constantes françaises, traduites ici (relecture de #143, constat 5)
+            if (question != null && MessageBox.Show(L.T(question), "deR4Tizer : baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
             Canal.Executer(new Commande { Action = "baseline", Valeur = operation, Cible = cible });
             return true;
         }
@@ -1969,8 +1970,8 @@ namespace DeR4Tizer
             else if (n != null) { pid = n.Pid; chemin = n.Chemin; nom = n.Nom; }
             else if (d != null) { chemin = d.Cible; nom = d.Nom; }
             bool besoinPid = action == "tuer" || action == "tuerChaine" || action == "suspendre" || action == "reprendre";
-            if (besoinPid && (pid == null || pid <= 4)) { MessageBox.Show("Processus inconnu pour cet élément.", "deR4Tizer"); return; }
-            if (!besoinPid && string.IsNullOrEmpty(chemin)) { MessageBox.Show("Chemin du programme inconnu pour cet élément.", "deR4Tizer"); return; }
+            if (besoinPid && (pid == null || pid <= 4)) { MessageBox.Show(L.T("Processus inconnu pour cet élément."), "deR4Tizer"); return; }
+            if (!besoinPid && string.IsNullOrEmpty(chemin)) { MessageBox.Show(L.T("Chemin du programme inconnu pour cet élément."), "deR4Tizer"); return; }
             // Alerte : elle ne garde pas l'heure de création du processus, son PID peut désigner aujourd'hui un autre
             // programme (relecture de #136, remarque 5). Lancé après l'alerte : sûrement un autre, rien n'est envoyé ; sinon
             // les deux heures sont dites dans la question
@@ -1985,16 +1986,17 @@ namespace DeR4Tizer
             string vu = Canal.Visible(nom);
             var libelles = new Dictionary<string, string>
             {
-                { "tuer", "Tuer le processus " + vu + " (PID " + pid + ") ?" + heures },
-                { "tuerChaine", "Tuer " + vu + " (PID " + pid + ") et tous les processus qu'il a lancés ?" + heures },
-                { "suspendre", "Suspendre " + vu + " (PID " + pid + ") ? Il restera figé jusqu'à ce que vous le repreniez ou le tuiez." + heures },
-                { "reprendre", "Reprendre " + vu + " (PID " + pid + ") ?" + heures },
+                // Questions traduites (relecture de #143, constat 5)
+                { "tuer", string.Format(L.T("Tuer le processus {0} (PID {1}) ?"), vu, pid) + heures },
+                { "tuerChaine", string.Format(L.T("Tuer {0} (PID {1}) et tous les processus qu'il a lancés ?"), vu, pid) + heures },
+                { "suspendre", string.Format(L.T("Suspendre {0} (PID {1}) ? Il restera figé jusqu'à ce que vous le repreniez ou le tuiez."), vu, pid) + heures },
+                { "reprendre", string.Format(L.T("Reprendre {0} (PID {1}) ?"), vu, pid) + heures },
                 // Chemin affiché neutralisé (audit de #145, S145-01 : une cible de démarrage est choisie par le programme
                 // qui s'inscrit) ; la commande garde le chemin lu
-                { "quarantaine", "Arrêter le programme et déplacer le fichier en quarantaine ?\n\n" + Canal.Visible(chemin) },
-                { "isolerProgramme", "Couper ce programme du réseau (entrant et sortant) ?\n\n" + Canal.Visible(chemin) }
+                { "quarantaine", L.T("Arrêter le programme et déplacer le fichier en quarantaine ?") + "\n\n" + Canal.Visible(chemin) },
+                { "isolerProgramme", L.T("Couper ce programme du réseau (entrant et sortant) ?") + "\n\n" + Canal.Visible(chemin) }
             };
-            if (MessageBox.Show(libelles[action], "deR4Tizer : réponse", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            if (MessageBox.Show(libelles[action], "deR4Tizer : " + L.T("réponse"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(new Commande
             {
                 Action = action, Cible = besoinPid ? pid.ToString() : chemin, Raison = "action manuelle sur " + nom
@@ -2075,10 +2077,12 @@ namespace DeR4Tizer
 
         void Bloquer(string processus, string ip, string nomDns)
         {
+            // Nom DNS vu sur le réseau, nom de programme choisi par le programme : affichés neutralisés ; la commande garde les
+            // valeurs lues. Questions traduites (relecture de #143, constat 5)
             string question = !string.IsNullOrEmpty(nomDns)
-                ? "Rediriger " + nomDns + " vers 127.0.0.1 dans le fichier hosts ?" + (ip != null ? "\nLes connexions en cours vers " + ip + " seront coupées." : "")
-                : "Bloquer au pare-feu toutes les connexions sortantes vers " + ip + " ?\n\nAttention : une même IP peut servir à plusieurs sites (Cloudflare, Google…). La bloquer peut casser d'autres services.";
-            if (MessageBox.Show(question, "deR4Tizer : " + processus, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                ? string.Format(L.T("Rediriger {0} vers 127.0.0.1 dans le fichier hosts ?"), Canal.Visible(nomDns)) + (ip != null ? "\n" + string.Format(L.T("Les connexions en cours vers {0} seront coupées."), Canal.Visible(ip)) : "")
+                : string.Format(L.T("Bloquer au pare-feu toutes les connexions sortantes vers {0} ?"), Canal.Visible(ip)) + "\n\n" + L.T("Attention : une même IP peut servir à plusieurs sites (Cloudflare, Google…). La bloquer peut casser d'autres services.");
+            if (MessageBox.Show(question, "deR4Tizer : " + Canal.Visible(processus), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             Canal.Executer(new Commande { Action = "bloquer", Ip = ip, NomDns = string.IsNullOrEmpty(nomDns) ? null : nomDns, Raison = "flux de " + processus });
             Rafraichir();
         }
