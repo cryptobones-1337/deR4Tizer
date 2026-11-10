@@ -491,6 +491,10 @@ namespace DeR4Tizer
             // Baseline et Pare-feu en WPF (U5b)
             if (cle == "Baseline") { zone.Content = new PageBaselineFluent(); return; }
             if (cle == "Pare-feu") { zone.Content = new PageParefeuFluent(); return; }
+            // Démarrage auto, Extensions et Vie privée en WPF (U6a)
+            if (cle == "Démarrage auto") { zone.Content = new PageDemarrageFluent(source as ISourceReponses); return; }
+            if (cle == "Extensions") { zone.Content = new PageExtensionsFluent(); return; }
+            if (cle == "Vie privée") { zone.Content = new PageVieFluent(source as ISourceReponses); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -1117,6 +1121,7 @@ namespace DeR4Tizer
     public class LigneEtatFluent
     {
         public string Titre, Etiquette, Sous;
+        public string Chemin;   // programme de la ligne, pour « Ouvrir l'emplacement » (U6a) ; jamais affiché tel quel
         public int Gravite;
         public List<LigneDetail> Detail = new List<LigneDetail>();
     }
@@ -3164,6 +3169,307 @@ namespace DeR4Tizer
                 string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
                 pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(copie)));
             }
+        }
+    }
+    // Décisions pures de la page Démarrage auto de la coquille (U6a). Nom, commande et cible sont choisis par le programme
+    // qui s'inscrit au démarrage : neutralisés
+    public static class VueDemarrageFluent
+    {
+        public static bool Microsoft(EntreeDemarrage e) { return e.Signataire == "Windows (catalogue)" || (e.Signataire ?? "").StartsWith("Microsoft"); }
+
+        // Même filtre que la case d'aujourd'hui : une entrée Microsoft ou Windows reste visible si elle porte une remarque
+        public static List<EntreeDemarrage> Filtrer(IList<EntreeDemarrage> l, bool masquerWindows)
+        {
+            return (l ?? new List<EntreeDemarrage>()).Where(e => e != null && (!masquerWindows || !string.IsNullOrEmpty(e.Remarque) || !Microsoft(e)))
+                .OrderByDescending(e => !string.IsNullOrEmpty(e.Remarque)).ThenBy(e => e.Categorie ?? "", StringComparer.CurrentCulture).ThenBy(e => e.Nom ?? "", StringComparer.CurrentCulture).ToList();
+        }
+
+        public static int Gravite(EntreeDemarrage e) { return string.IsNullOrEmpty(e.Remarque) ? 0 : 1; }
+
+        public static string Signataire(EntreeDemarrage e) { return string.IsNullOrEmpty(e.Signataire) ? (L.En ? "unsigned" : "non signé") : Canal.Visible(e.Signataire); }
+
+        public static string Resume(IList<EntreeDemarrage> toutes, int affichees, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            bool garde = toutes != null && toutes.Count > 0;
+            if (illisible && !garde) return en ? "demarrage.json unreadable: nothing is concluded." : "demarrage.json illisible : rien n'est conclu.";
+            var l = toutes ?? new List<EntreeDemarrage>();
+            string s = l.Count == 0 ? (en ? "No autostart entry recorded yet." : "Aucune entrée de démarrage enregistrée pour l'instant.")
+                : string.Format(en ? "{0} autostart entr(ies), {1} new or changed (alert raised), {2} shown." : "{0} entrée(s) de démarrage, dont {1} nouvelle(s) ou modifiée(s) (alerte levée) ; {2} affichée(s).", l.Count, l.Count(x => x != null && !string.IsNullOrEmpty(x.Remarque)), affichees);
+            if (illisible) s = (en ? "demarrage.json unreadable: the last display is kept; it may be out of date.\n" : "demarrage.json illisible : dernier affichage gardé, peut-être dépassé.\n") + s;
+            return s;
+        }
+
+        public static List<LigneDetail> Detail(EntreeDemarrage e)
+        {
+            bool en = L.En;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            return new List<LigneDetail>
+            {
+                new LigneDetail { Titre = en ? "Category" : "Catégorie", Texte = v(e.Categorie) },
+                new LigneDetail { Titre = en ? "Command" : "Commande", Texte = v(e.Commande), Chasse = true },
+                new LigneDetail { Titre = en ? "Target" : "Cible", Texte = v(e.Cible), Chasse = true },
+                new LigneDetail { Titre = en ? "Signer" : "Signataire", Texte = Signataire(e) },
+                new LigneDetail { Titre = en ? "Note" : "Remarque", Texte = v(e.Remarque) },
+                new LigneDetail { Titre = en ? "Seen since" : "Vu depuis", Texte = v(e.Depuis) }
+            };
+        }
+
+        public static string Copie(EntreeDemarrage e) { return VueReseauFluent.Copie(e.Categorie, e.Nom, e.Commande, string.IsNullOrEmpty(e.Signataire) ? "NON SIGNÉ" : e.Signataire, e.Remarque, e.Depuis); }
+    }
+
+    // Décisions pures de la page Extensions de la coquille (U6a) : nom, version et permissions écrits par l'auteur de
+    // l'extension, neutralisés
+    public static class VueExtensionsFluent
+    {
+        public static string Resume(IList<Extension> l, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            bool garde = l != null && l.Count > 0;
+            if (illisible && !garde) return en ? "extensions.json unreadable: nothing is concluded." : "extensions.json illisible : rien n'est conclu.";
+            var x = l ?? new List<Extension>();
+            string s = x.Count == 0 ? (en ? "No browser extension recorded yet." : "Aucune extension de navigateur enregistrée pour l'instant.")
+                : string.Format(en ? "{0} extension(s), {1} with sensitive permissions (pages, cookies or typing). A new extension raises an alert." : "{0} extension(s), dont {1} avec des permissions sensibles (pages, cookies ou saisies). Une nouvelle extension déclenche une alerte.", x.Count, x.Count(e => e != null && e.Dangereuse));
+            if (illisible) s = (en ? "extensions.json unreadable: the last display is kept; it may be out of date.\n" : "extensions.json illisible : dernier affichage gardé, peut-être dépassé.\n") + s;
+            return s;
+        }
+
+        public static List<Extension> Trier(IList<Extension> l)
+        {
+            return (l ?? new List<Extension>()).Where(e => e != null).OrderByDescending(e => e.Dangereuse).ThenBy(e => e.Navigateur ?? "", StringComparer.CurrentCulture).ThenBy(e => e.Nom ?? "", StringComparer.CurrentCulture).ToList();
+        }
+
+        public static List<LigneDetail> Detail(Extension e)
+        {
+            bool en = L.En;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            return new List<LigneDetail>
+            {
+                new LigneDetail { Titre = en ? "Browser" : "Navigateur", Texte = v(e.Navigateur) },
+                new LigneDetail { Titre = "Id", Texte = v(e.Id), Chasse = true },
+                new LigneDetail { Titre = "Version", Texte = v(e.Version) },
+                new LigneDetail { Titre = "Permissions", Texte = v(e.Permissions) },
+                new LigneDetail { Titre = en ? "Seen since" : "Vue depuis", Texte = v(e.Depuis) }
+            };
+        }
+
+        public static string Copie(Extension e) { return VueReseauFluent.Copie(e.Navigateur, e.Nom, e.Version, e.Permissions, e.Depuis, e.Id); }
+    }
+
+    // Décisions pures de la page Vie privée de la coquille (U6a) : caméra et micro, prise en main à distance, ports ouverts
+    public static class VueVieFluent
+    {
+        public static readonly string[] Vues = { "Caméra et micro", "Prise en main à distance", "Ports ouverts" };
+
+        // Une ligne par programme et par périphérique : l'utilisation en cours, sinon la plus récente (comme aujourd'hui)
+        public static List<UsagePeripherique> Usages(Etat e)
+        {
+            return (e == null || e.Peripheriques == null ? new List<UsagePeripherique>() : e.Peripheriques).Where(u => u != null)
+                .GroupBy(u => (u.Peripherique ?? "") + "|" + (u.Programme ?? "").ToLowerInvariant())
+                .Select(g => g.OrderByDescending(u => u.EnCours).ThenByDescending(u => u.DernierDebut).First())
+                .OrderByDescending(u => u.EnCours).ThenByDescending(u => u.DernierDebut).ToList();
+        }
+
+        public static string Resume(Etat e, bool lu, bool illisible, string panne)
+        {
+            bool en = L.En;
+            string lecture = VueReseauFluent.Lecture(lu, illisible, e != null);
+            if (lecture != null && (!lu || e == null)) return lecture;
+            var usages = Usages(e);
+            int outils = (e.OutilsDistants ?? new List<OutilDistant>()).Count, ports = (e.Ecoutes ?? new List<Ecoute>()).Count;
+            string s = string.Format(en ? "Camera or microphone in use now: {0}. Remote Desktop: {1}. Remote control tools running: {2}. Open ports waiting for incoming connections: {3}."
+                                        : "Caméra ou micro utilisés en ce moment : {0}. Bureau à distance : {1}. Outils de prise en main en cours : {2}. Ports ouverts en attente de connexions entrantes : {3}.",
+                usages.Count(u => u.EnCours), e.BureauADistance ? (en ? "ON" : "ACTIVÉ") : (en ? "off" : "désactivé"), outils, ports);
+            if (!string.IsNullOrEmpty(e.MisAJour)) s += " " + (en ? "State of " : "État du ") + Canal.Visible(e.MisAJour) + ".";
+            if (panne != null) s += "\n" + (en ? "Incomplete: " : "Incomplet : ") + panne;
+            return lecture != null ? lecture + "\n" + s : s;
+        }
+
+        public static List<LigneEtatFluent> Lignes(Etat e, int vue)
+        {
+            bool en = L.En;
+            var l = new List<LigneEtatFluent>();
+            if (e == null) return l;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            if (vue == 0)
+                foreach (var u in Usages(e))
+                    l.Add(new LigneEtatFluent
+                    {
+                        Titre = v(u.Programme), Etiquette = Canal.Visible(u.Peripherique) + (u.EnCours ? (en ? " · IN USE" : " · EN COURS") : ""),
+                        Sous = u.EnCours ? (en ? "since " : "depuis ") + v(u.DernierDebut) : v(u.DernierDebut) + " → " + v(u.DerniereFin), Gravite = u.EnCours ? 2 : 0,
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Path" : "Chemin", Texte = v(u.Chemin), Chasse = true }, new LigneDetail { Titre = en ? "Last use" : "Dernière utilisation", Texte = v(u.DernierDebut) + " → " + v(u.DerniereFin) } },
+                        Chemin = u.Chemin
+                    });
+            else if (vue == 1)
+            {
+                l.Add(new LigneEtatFluent
+                {
+                    Titre = en ? "Remote Desktop (RDP)" : "Bureau à distance (RDP)", Etiquette = e.BureauADistance ? (en ? "ON" : "ACTIVÉ") : (en ? "off" : "désactivé"),
+                    Sous = e.BureauADistance ? (en ? "this computer accepts Remote Desktop connections" : "ce PC accepte les connexions Bureau à distance") : "", Gravite = e.BureauADistance ? 2 : 0,
+                    Detail = new List<LigneDetail> { new LigneDetail { Titre = "Windows", Texte = e.BureauADistance ? (en ? "Remote Desktop is on." : "Le Bureau à distance est activé.") : (en ? "Remote Desktop is off." : "Le Bureau à distance est désactivé.") } }
+                });
+                foreach (var o in e.OutilsDistants ?? new List<OutilDistant>())
+                    if (o != null) l.Add(new LigneEtatFluent
+                    {
+                        Titre = v(o.Nom), Etiquette = en ? "RUNNING" : "EN COURS", Sous = (en ? "since " : "depuis ") + v(o.Depuis) + "  ·  PID " + o.Pid, Gravite = 2,
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Path" : "Chemin", Texte = v(o.Chemin), Chasse = true }, new LigneDetail { Titre = en ? "Signer" : "Signataire", Texte = v(o.Signataire) } },
+                        Chemin = o.Chemin
+                    });
+            }
+            else
+                foreach (var c in e.Ecoutes ?? new List<Ecoute>())
+                    if (c != null) l.Add(new LigneEtatFluent
+                    {
+                        Titre = "Port " + c.Port + "  ·  " + v(c.Programme), Etiquette = c.Signataire == "-" ? (en ? "unsigned" : "non signé") : v(c.Signataire),
+                        Sous = v(c.Adresse) + ":" + c.Port + "  ·  " + (en ? "since " : "depuis ") + v(c.Depuis), Gravite = c.Signataire == "-" ? 1 : 0,
+                        Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Address" : "Adresse", Texte = v(c.Adresse) + ":" + c.Port, Chasse = true }, new LigneDetail { Titre = en ? "Path" : "Chemin", Texte = v(c.Chemin), Chasse = true }, new LigneDetail { Titre = "PID", Texte = c.Pid.ToString() } },
+                        Chemin = c.Chemin
+                    });
+            return l;
+        }
+    }
+
+    // Page Démarrage auto en WPF (U6a) : demarrage.json, même filtre et même quarantaine que la page d'aujourd'hui
+    class PageDemarrageFluent : PageProtectionFluent
+    {
+        readonly ISourceReponses source;
+        List<EntreeDemarrage> entrees = new List<EntreeDemarrage>();
+        bool illisible, masquer = true;
+
+        public PageDemarrageFluent(ISourceReponses source) { this.source = source; Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var l = LectureFluent.Lire<List<EntreeDemarrage>>("demarrage.json", out absent); return absent ? new List<EntreeDemarrage>() : l; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var l = lecture as List<EntreeDemarrage>;
+            illisible = l == null;
+            if (l != null) entrees = l;
+        }
+
+        protected override void Afficher()
+        {
+            var vues = VueDemarrageFluent.Filtrer(entrees, masquer);
+            resume.Text = VueDemarrageFluent.Resume(entrees, vues.Count, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(illisible ? Jetons.Attention : vues.Any(x => VueDemarrageFluent.Gravite(x) == 1) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = vues.Select(x => new LigneEtatFluent { Titre = Canal.Visible(x.Nom), Etiquette = VueDemarrageFluent.Signataire(x), Sous = Canal.Visible(x.Categorie) + "  ·  " + Canal.Visible(x.Commande), Gravite = VueDemarrageFluent.Gravite(x), Detail = VueDemarrageFluent.Detail(x) }).ToList();
+            string signature = masquer + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", vues.Select(x => x.Cle + "|" + x.Remarque + "|" + x.Commande));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var barre = new WrapPanel();
+            barre.Children.Add(Outil((masquer ? "✓  " : "○  ") + L.T("Masquer les entrées signées Microsoft / Windows (sauf commande suspecte)"), masquer, (s, e) => { masquer = !masquer; choisie = 0; vu = null; Afficher(); }));
+            outils.Children.Add(barre);
+            Liste(lignes);
+            var choix = vues.Count > 0 ? vues[Math.Min(choisie, vues.Count - 1)] : null;
+            var pile = Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select an entry to read it and act on it." : "Sélectionnez une entrée pour la lire et agir.");
+            if (pile != null && choix != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                if (source != null && !string.IsNullOrEmpty(choix.Cible))
+                {
+                    pile.Children.Add(Briques.Action(L.T("Mettre la cible en quarantaine"), true, (s, e) => { source.AgirElement(choix, "quarantaine"); Charger(); }));
+                    pile.Children.Add(Briques.Action(L.T("Ouvrir l'emplacement du fichier"), false, (s, e) => source.OuvrirEmplacement(choix.Cible)));
+                }
+                pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(VueDemarrageFluent.Copie(choix))));
+            }
+        }
+    }
+
+    // Page Extensions en WPF (U6a) : extensions.json, lecture seule
+    class PageExtensionsFluent : PageProtectionFluent
+    {
+        List<Extension> extensions = new List<Extension>();
+        bool illisible;
+
+        public PageExtensionsFluent() { Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var l = LectureFluent.Lire<List<Extension>>("extensions.json", out absent); return absent ? new List<Extension>() : l; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var l = lecture as List<Extension>;
+            illisible = l == null;
+            if (l != null) extensions = VueExtensionsFluent.Trier(l);
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueExtensionsFluent.Resume(extensions, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(illisible ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = extensions.Select(x => new LigneEtatFluent { Titre = Canal.Visible(x.Nom), Etiquette = Canal.Visible(x.Navigateur), Sous = (string.IsNullOrEmpty(x.Version) ? "" : "v" + Canal.Visible(x.Version) + "  ·  ") + (x.Dangereuse ? (L.En ? "sensitive permissions" : "permissions sensibles") : Canal.Visible(x.Depuis)), Gravite = x.Dangereuse ? 1 : 0, Detail = VueExtensionsFluent.Detail(x) }).ToList();
+            string signature = choisie + "#" + resume.Text + "#" + string.Join(";", extensions.Select(x => x.Navigateur + "|" + x.Id + "|" + x.Version));
+            if (signature == vu) return;
+            vu = signature;
+            Liste(lignes);
+            var choix = extensions.Count > 0 ? extensions[Math.Min(choisie, extensions.Count - 1)] : null;
+            var pile = Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select an extension to read its permissions." : "Sélectionnez une extension pour lire ses permissions.");
+            if (pile != null && choix != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(VueExtensionsFluent.Copie(choix))));
+            }
+        }
+    }
+
+    // Page Vie privée en WPF (U6a) : etat.json comme la page d'aujourd'hui ; ouvrir l'emplacement et copier
+    class PageVieFluent : PageEtatServiceFluent
+    {
+        Etat etat;
+        int vue, choisie;
+
+        public PageVieFluent(ISourceReponses source) : base(source, "Peripheriques", true) { Afficher(); }
+
+        protected override void Recevoir(Etat e) { etat = e; }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueVieFluent.Resume(etat, lu, illisible, panne);
+            bool actif = etat != null && (etat.BureauADistance || (etat.OutilsDistants ?? new List<OutilDistant>()).Count > 0 || VueVieFluent.Usages(etat).Any(u => u.EnCours));
+            resume.Foreground = Jetons.Pinceau(actif ? Jetons.Danger : illisible || panne != null ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = VueVieFluent.Lignes(etat, vue);
+            if (choisie >= lignes.Count) choisie = 0;
+            string signature = vue + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", lignes.Select(x => x.Titre + "|" + x.Etiquette + "|" + x.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var vues = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            for (int k = 0; k < VueVieFluent.Vues.Length; k++)
+            {
+                int n = k; bool ouverte = n == vue;
+                var bt = new Button
+                {
+                    Content = L.T(VueVieFluent.Vues[k]), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(ouverte ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                bt.Template = Coquille.ModeleBouton();
+                bt.Click += (s, e) => { vue = n; choisie = 0; Afficher(); };
+                vues.Children.Add(bt);
+            }
+            outils.Children.Add(vues);
+            liste.Children.Clear();
+            if (lu && etat != null && lignes.Count == 0)
+                Vide(vue == 0 ? (L.En ? "No camera or microphone use recorded by Windows." : "Aucune utilisation de la caméra ou du micro enregistrée par Windows.") : (L.En ? "No open port outside the local loopback." : "Aucun port ouvert hors de la boucle locale."));
+            for (int k = 0; k < lignes.Count; k++)
+            {
+                int n = k; var x = lignes[k];
+                liste.Children.Add(Briques.Ligne(x.Titre, x.Etiquette, x.Sous, x.Gravite, n == choisie, false, () => { choisie = n; Afficher(); }));
+            }
+            var x0 = lignes.Count > 0 ? lignes[choisie] : null;
+            if (x0 == null) { detail.Content = new TextBlock { Text = L.En ? "Select a line to read its detail." : "Sélectionnez une ligne pour lire son détail.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x0.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = x0.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x0.Gravite)), Margin = new Thickness(0, 2, 0, 4), TextWrapping = TextWrapping.Wrap });
+            Lignes(pile, x0.Detail);
+            var actions = new List<string>();
+            if (!string.IsNullOrEmpty(x0.Chemin)) actions.Add("emplacement");
+            actions.Add("copier");
+            string chemin = x0.Chemin;
+            string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette, x0.Sous }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
+            Actions(pile, actions, a => { if (a == "copier") VueReseauFluent.Copier(copie); else if (source != null) source.OuvrirEmplacement(chemin); });
+            detail.Content = pile;
         }
     }
 }

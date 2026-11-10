@@ -127,7 +127,7 @@ namespace DeR4Tizer
             { "Journal du service", "Service log" }, { "Dossier des données", "Data folder" },
             { "Appliquer le profil recommandé", "Apply recommended profile" }, { "Appliquer le profil renforcé…", "Apply hardened profile…" },
             { "Appliquer la sélection", "Apply selection" }, { "Annuler la sélection", "Revert selection" }, { "Tout annuler", "Revert all" },
-            { "Réévaluer", "Re-evaluate" }, { "Débloquer la sélection", "Unblock selection" }, { "Tout débloquer", "Unblock all" }, { "Exposition à Internet", "Internet exposure" }, { "Changements de règles", "Rule changes" }, { "Restaurer dans le dossier de deR4Tizer", "Restore to the deR4Tizer folder" },
+            { "Réévaluer", "Re-evaluate" }, { "Débloquer la sélection", "Unblock selection" }, { "Tout débloquer", "Unblock all" }, { "Caméra et micro", "Camera and microphone" }, { "Prise en main à distance", "Remote control" }, { "Ports ouverts", "Open ports" }, { "Exposition à Internet", "Internet exposure" }, { "Changements de règles", "Rule changes" }, { "Restaurer dans le dossier de deR4Tizer", "Restore to the deR4Tizer folder" },
             { "Bloquer la télémétrie…", "Block telemetry…" }, { "Bloquer", "Block" }, { "Restaurer la sélection", "Restore selection" },
             { "Mettre à jour maintenant", "Update now" },
             { "Masquer les entrées signées Microsoft / Windows", "Hide entries signed by Microsoft / Windows" },
