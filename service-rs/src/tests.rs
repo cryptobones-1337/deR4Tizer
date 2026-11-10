@@ -7138,3 +7138,17 @@ fn exposee_selon_verdict_ipv6_et_bloque_seuls_pas_exposes() {
     assert!(crate::parefeu::exposee_selon(&crate::parefeu::diagnostiquer(&e)));
     assert!(include_str!("moniteur.rs").contains("self.exposition.exposee = parefeu::exposee_selon(&self.exposition.diagnostic);"));
 }
+
+#[test]
+fn diagnostic_upnp_ancien_cite_la_derniere_liste() {
+    // Audit de #149, S149-02 : une redirection vue par une vérification ancienne est dite, sans mettre « exposé »
+    let mut e = entrees_diag();
+    e.reseau_frais = false;
+    e.upnp_texte = "3 redirection(s) sur la box, dont 1 vers ce PC".into();
+    e.redirections_vers_pc = 1;
+    let d = crate::parefeu::diagnostiquer(&e);
+    let c = d.constats.iter().find(|c| c.piste == "upnp").unwrap();
+    assert_eq!(c.etat, "non_verifie");
+    assert!(c.texte.contains("dernière liste connue : 1 redirection(s) vers ce PC"), "{}", c.texte);
+    assert_ne!(d.verdict, "expose");
+}

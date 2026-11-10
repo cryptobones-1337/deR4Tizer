@@ -2984,8 +2984,15 @@ namespace DeR4Tizer
             return x.JournalPaquets && UpnpVerifie(x.Base);
         }
 
-        // Verdict du diagnostic du service ; vide avec un service plus ancien (alors l'ancien constat, U5c-0)
-        public static string Verdict(Exposition x) { return x == null || x.Diagnostic == null || x.Diagnostic.Verdict == null ? "" : x.Diagnostic.Verdict; }
+        static readonly string[] Verdicts = { "expose", "a_surveiller", "rien_releve", "rien_releve_incomplet" };
+
+        // Verdict du diagnostic du service ; vide avec un service plus ancien, et pour toute valeur inconnue (service plus
+        // récent, état abîmé) : alors l'ancien constat de U5c-0, jamais la phrase la plus rassurante (audit de #149, S149-01)
+        public static string Verdict(Exposition x)
+        {
+            string v = x == null || x.Diagnostic == null ? null : x.Diagnostic.Verdict;
+            return v != null && Array.IndexOf(Verdicts, v) >= 0 ? v : "";
+        }
 
         public static bool ASurveiller(Exposition x) { return Verdict(x) == "a_surveiller"; }
 

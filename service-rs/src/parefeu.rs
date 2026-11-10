@@ -156,7 +156,9 @@ pub fn diagnostiquer(e: &EntreesDiagnostic) -> Diagnostic {
     let upnp_ok = upnp_verifie(&e.upnp_texte, e.reseau_frais);
     if !upnp_ok {
         let raison = if e.upnp_texte.is_empty() { "pas encore vérifiées".to_string() } else if !e.reseau_frais { "dernière vérification trop ancienne".to_string() } else { e.upnp_texte.clone() };
-        ajout("upnp", "non_verifie", format!("redirections UPnP de la box non vérifiées : {raison}"));
+        // Une redirection vers ce PC vue par une vérification ancienne est citée, sans compter comme exposition (S149-02)
+        let connue = if e.redirections_vers_pc > 0 { format!(" ; dernière liste connue : {} redirection(s) vers ce PC", e.redirections_vers_pc) } else { String::new() };
+        ajout("upnp", "non_verifie", format!("redirections UPnP de la box non vérifiées : {raison}{connue}"));
     } else if e.redirections_vers_pc > 0 {
         ajout("upnp", "constate", format!("{} redirection(s) UPnP active(s) de la box vers ce PC", e.redirections_vers_pc));
     } else {
