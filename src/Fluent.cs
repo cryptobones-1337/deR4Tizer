@@ -2476,9 +2476,9 @@ namespace DeR4Tizer
     {
         public static T Lire<T>(string nom, out bool absent) where T : class
         {
-            absent = false;
-            try { if (!System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, nom))) { absent = true; return null; } } catch { }
-            return Commun.Lire<T>(nom);
+            // Accès refusé n'est pas absent (audit de #142, S142-01) : même règle que config.json
+            absent = ActionsProtection.Absent(nom);
+            return absent ? null : Commun.Lire<T>(nom);
         }
     }
 

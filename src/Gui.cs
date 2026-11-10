@@ -23,9 +23,6 @@ using System.Windows.Forms;
 
 namespace DeR4Tizer
 {
-    // Une alerte ne porte que le PID et son heure (yyyy-MM-dd HH:mm:ss, heure locale du service), pas l'heure de création
-    // du processus : suspendre ou tuer depuis une alerte ancienne viserait le programme qui porte ce PID aujourd'hui
-    // (relecture de #136, remarque 5). Décisions pures, testées par tests\rendu-pilote.ps1
     // Actions des pages Blocages, Quarantaine et Menaces (U5a) : mêmes commandes et mêmes questions dans les deux
     // interfaces. Ce qu'une question montre est neutralisé ; la commande garde la valeur lue
     public static class ActionsProtection
@@ -57,6 +54,20 @@ namespace DeR4Tizer
             return true;
         }
 
+        // Un fichier du service est-il vraiment absent ? File.Exists rend faux aussi quand l'accès est refusé : absent
+        // seulement si le dossier se liste sans lui, sinon « illisible » (même règle qu'ActionsReponses.Lire, relecture de
+        // #121 ; audit de #142, S142-01). Dossier de données inexistant : absent (rien n'est encore enregistré)
+        public static bool Absent(string nom)
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(Commun.Dossier, nom))) return false;
+                return !Directory.EnumerateFiles(Commun.Dossier, nom).Any();
+            }
+            catch (DirectoryNotFoundException) { return true; }
+            catch { return false; }
+        }
+
         public static void MajMenaces() { Canal.Executer(new Commande { Action = "majMenaces" }); }
 
         public static readonly string[] Reglages = { "BlocageAutoMenaces", "ReponseAutoRancongiciel", "ListesRestreintes" };
@@ -72,13 +83,16 @@ namespace DeR4Tizer
         public static Config LireConfig(out bool illisible)
         {
             illisible = false;
-            if (!File.Exists(Path.Combine(Commun.Dossier, "config.json"))) return new Config();
+            if (Absent("config.json")) return new Config();
             var c = Commun.Lire<Config>("config.json");
             illisible = c == null;
             return c;
         }
     }
 
+    // Une alerte ne porte que le PID et son heure (yyyy-MM-dd HH:mm:ss, heure locale du service), pas l'heure de création
+    // du processus : suspendre ou tuer depuis une alerte ancienne viserait le programme qui porte ce PID aujourd'hui
+    // (relecture de #136, remarque 5). Décisions pures, testées par tests\rendu-pilote.ps1
     public static class PidAlerte
     {
         public static DateTime? Lancement(long? filetime)
