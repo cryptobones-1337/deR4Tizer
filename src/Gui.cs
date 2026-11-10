@@ -1458,6 +1458,8 @@ namespace DeR4Tizer
             // Seules les réponses que la question d'AgirSur sait dire ; aucune autre commande ne part d'ici
             var permises = new[] { "tuer", "tuerChaine", "suspendre", "reprendre", "quarantaine", "isolerProgramme" };
             if ((element is FluxInfo || element is NoeudChaine) && permises.Contains(action)) AgirSur(element, action);
+            // Entrée de démarrage (U6a) : la seule action du menu d'aujourd'hui, la quarantaine de la cible
+            else if (element is EntreeDemarrage && action == "quarantaine") AgirSur(element, action);
         }
         public void BloquerConnexion(FluxInfo f, bool ipSeulement) { if (f != null) Bloquer(f.Processus, f.Ip, ipSeulement ? null : f.NomDns); }
         public void OuvrirEmplacement(string chemin) { EmplacementDe(chemin); }
@@ -1664,10 +1666,11 @@ namespace DeR4Tizer
             lvDemarrage.Items.Clear();
             foreach (var e in liste.OrderByDescending(x => x.Remarque != "").ThenBy(x => x.Categorie).ThenBy(x => x.Nom))
             {
+                // Nom, commande et cible : choisis par le programme qui s'inscrit au démarrage ; neutralisés (U6a)
                 var item = new ListViewItem(new[]
                 {
-                    e.Categorie, e.Nom, e.Commande, e.Signataire == "" ? "NON SIGNÉ" : e.Signataire, e.Remarque, e.Depuis
-                }) { Tag = e, ToolTipText = e.Cible };
+                    Canal.Visible(e.Categorie), Canal.Visible(e.Nom), Canal.Visible(e.Commande), e.Signataire == "" ? "NON SIGNÉ" : Canal.Visible(e.Signataire), Canal.Visible(e.Remarque), Canal.Visible(e.Depuis)
+                }) { Tag = e, ToolTipText = Canal.Visible(e.Cible) };
                 if (e.Remarque != "") Colorer(item, e.Signataire == "" ? Theme.FondAlerte : Theme.FondAttention, Theme.Texte, false);
                 lvDemarrage.Items.Add(item);
             }
@@ -1691,8 +1694,8 @@ namespace DeR4Tizer
             {
                 var item = new ListViewItem(new[]
                 {
-                    u.Peripherique + (u.EnCours ? "  ● EN COURS" : ""), u.Programme, u.Chemin,
-                    u.EnCours ? "depuis " + u.DernierDebut : u.DernierDebut + " → " + u.DerniereFin, ""
+                    Canal.Visible(u.Peripherique) + (u.EnCours ? "  ● EN COURS" : ""), Canal.Visible(u.Programme), Canal.Visible(u.Chemin),
+                    u.EnCours ? "depuis " + Canal.Visible(u.DernierDebut) : Canal.Visible(u.DernierDebut) + " → " + Canal.Visible(u.DerniereFin), ""
                 }) { Tag = new FluxInfo { Chemin = u.Chemin } };
                 if (u.EnCours) Colorer(item, Theme.FondActif, Theme.Rouge, true);
                 lvVie.Items.Add(item);
@@ -1708,7 +1711,7 @@ namespace DeR4Tizer
             var outils = etat.OutilsDistants ?? new List<OutilDistant>();
             foreach (var o in outils)
             {
-                var item = new ListViewItem(new[] { o.Nom + "  ● EN COURS", Path.GetFileName(o.Chemin), o.Chemin, "depuis " + o.Depuis, o.Signataire })
+                var item = new ListViewItem(new[] { Canal.Visible(o.Nom) + "  ● EN COURS", Canal.Visible(Path.GetFileName(o.Chemin ?? "")), Canal.Visible(o.Chemin), "depuis " + Canal.Visible(o.Depuis), Canal.Visible(o.Signataire) })
                     { Tag = new FluxInfo { Chemin = o.Chemin } };
                 Colorer(item, Theme.FondActif, Theme.Rouge, true);
                 lvVie.Items.Add(item);
@@ -1722,7 +1725,7 @@ namespace DeR4Tizer
             {
                 var item = new ListViewItem(new[]
                 {
-                    "Port " + e.Port, e.Programme, e.Adresse + ":" + e.Port + "   " + e.Chemin, "depuis " + e.Depuis, e.Signataire
+                    "Port " + e.Port, Canal.Visible(e.Programme), Canal.Visible(e.Adresse) + ":" + e.Port + "   " + Canal.Visible(e.Chemin), "depuis " + Canal.Visible(e.Depuis), Canal.Visible(e.Signataire)
                 }) { Tag = new FluxInfo { Chemin = e.Chemin } };
                 if (e.Signataire == "-") Colorer(item, Theme.FondAlerte, Theme.Texte, false);
                 lvVie.Items.Add(item);
@@ -1866,7 +1869,8 @@ namespace DeR4Tizer
             lvExtensions.Items.Clear();
             foreach (var e in extensions)
             {
-                var item = new ListViewItem(new[] { e.Navigateur, e.Nom, e.Version, e.Permissions, e.Depuis }) { Tag = e, ToolTipText = e.Id + "\n" + e.Permissions };
+                // Nom, version et permissions : écrits par l'auteur de l'extension ; neutralisés (U6a)
+                var item = new ListViewItem(new[] { Canal.Visible(e.Navigateur), Canal.Visible(e.Nom), Canal.Visible(e.Version), Canal.Visible(e.Permissions), Canal.Visible(e.Depuis) }) { Tag = e, ToolTipText = Canal.Visible(e.Id) + "\n" + Canal.Visible(e.Permissions) };
                 if (e.Dangereuse) Colorer(item, Theme.FondAttention, Theme.Texte, false);
                 lvExtensions.Items.Add(item);
             }

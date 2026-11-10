@@ -366,6 +366,44 @@ try {
     Cas 'Pare-feu : ce sur quoi repose le verdict (Base) affiché et neutralisé' ($rBase.Contains('Repose sur : journal des paquets') -and -not ($rBase -match "\u202E")) $rBase
     Cas 'Baseline : mêmes questions et même commande dans les deux interfaces, trois opérations seulement' ($guiSrc3.Contains('if (operation != "appliquer" && operation != "annuler" && operation != "evaluer") return false;') -and $guiSrc3.Contains('if (ActionsProtection.Baseline(operation, cible, question)) detailBaseline.Text') -and $fluentSrc.Contains('ActionsProtection.Baseline("appliquer", "renforcé", ActionsProtection.QuestionRenforce)') -and ([regex]::Matches($guiSrc3, 'Action = "baseline"')).Count -eq 1)
     Cas 'Baseline et Pare-feu d''aujourd''hui : cellules neutralisées' ($guiSrc3.Contains('Canal.Visible(r.Actuel), Canal.Visible(r.Attendu)') -and $guiSrc3.Contains('"Règle " + Canal.Visible(r.Operation) + " : " + Canal.Visible(r.Regle)') -and $guiSrc3.Contains('Canal.Visible(e.Programme)') -and $guiSrc3.Contains('(exp.Raisons ?? new List<string>()).Select(Canal.Visible)'))
+    # Démarrage auto, Extensions, Vie privée (U6a) : filtres d'aujourd'hui, résumés honnêtes, textes neutralisés
+    $vdm = & $t 'VueDemarrageFluent'; $edT = & $t 'EntreeDemarrage'
+    $lde = New-Object "Collections.Generic.List[$($edT.FullName)]"
+    $lde.Add((& $nouv $edT @{ Cle = 'a'; Categorie = 'Run'; Nom = 'zz'; Commande = 'c'; Cible = 'C:\a.exe'; Signataire = 'Microsoft Windows'; Remarque = ''; Depuis = 'x' }))
+    $lde.Add((& $nouv $edT @{ Cle = 'b'; Categorie = 'Run'; Nom = 'piège' + [char]0x202E; Commande = "cmd /c`r`ncalc"; Cible = 'C:\b.exe'; Signataire = ''; Remarque = 'nouvelle'; Depuis = 'x' }))
+    $lde.Add((& $nouv $edT @{ Cle = 'c'; Categorie = 'Tâche'; Nom = 'aa'; Commande = 'c'; Cible = 'C:\c.exe'; Signataire = 'Windows (catalogue)'; Remarque = 'modifiée'; Depuis = 'x' }))
+    $flt = { param($m) (@($vdm.GetMethod('Filtrer').Invoke($null, [object[]]@($lde.PSObject.BaseObject, [bool]$m)) | ForEach-Object { $_.Cle }) -join ',') }
+    Cas 'Démarrage : Microsoft masqué sauf remarque (filtre d''aujourd''hui), remarques d''abord' ((& $flt $true) -eq 'b,c' -and (& $flt $false) -eq 'b,c,a') "$(& $flt $true) / $(& $flt $false)"
+    $txtD = (@($vdm.GetMethod('Detail').Invoke($null, @($lde[1])) | ForEach-Object { $_.Texte }) + @([string]$vdm.GetMethod('Signataire').Invoke($null, @($lde[1])))) -join '|'
+    Cas 'Démarrage : nom et commande neutralisés, commande en chasse fixe, non signé dit' (-not ($txtD -match "[\u202E\r\n]") -and $txtD.Contains('non signé') -and (@($vdm.GetMethod('Detail').Invoke($null, @($lde[1])))[1]).Chasse) $txtD
+    $copieD = [string]$vdm.GetMethod('Copie').Invoke($null, @($lde[1]))
+    Cas 'Démarrage : copie des colonnes d''aujourd''hui, valeur d''origine échappée' ($copieD -ceq ("Run`tpiège\u202E`tcmd /c\r\ncalc`tNON SIGNÉ`tnouvelle`tx")) $copieD
+    Cas 'Démarrage : avant lecture « Lecture en cours… », illisible sans liste rien de conclu, décompte des remarques' (([string]$vdm.GetMethod('Resume').Invoke($null, [object[]]@($lde.PSObject.BaseObject, 2, $false, $false))) -eq 'Lecture en cours…' -and ([string]$vdm.GetMethod('Resume').Invoke($null, [object[]]@($lde.PSObject.BaseObject, 2, $true, $false))).Contains('3 entrée(s) de démarrage, dont 2 nouvelle(s)'))
+    $vex = & $t 'VueExtensionsFluent'; $xT = & $t 'Extension'
+    $lx = New-Object "Collections.Generic.List[$($xT.FullName)]"
+    $lx.Add((& $nouv $xT @{ Navigateur = 'Edge'; Id = 'i1'; Nom = 'ok'; Version = '1'; Permissions = 'storage'; Dangereuse = $false; Depuis = 'x' }))
+    $lx.Add((& $nouv $xT @{ Navigateur = 'Chrome'; Id = 'i2'; Nom = 'espion' + [char]0x200B; Version = "2`r`n"; Permissions = '<all_urls>, cookies'; Dangereuse = $true; Depuis = 'x' }))
+    $trx = @($vex.GetMethod('Trier').Invoke($null, [object[]](, $lx.PSObject.BaseObject)))
+    $txtX = (@($vex.GetMethod('Detail').Invoke($null, @($lx[1])) | ForEach-Object { $_.Texte })) -join '|'
+    Cas 'Extensions : permissions sensibles d''abord, détail neutralisé, décompte dit' ($trx[0].Id -eq 'i2' -and -not ($txtX -match "[\u200B\r\n]") -and ([string]$vex.GetMethod('Resume').Invoke($null, [object[]]@($lx.PSObject.BaseObject, $true, $false))).Contains('2 extension(s), dont 1 avec des permissions sensibles')) $txtX
+    $vv = & $t 'VueVieFluent'; $upT = & $t 'UsagePeripherique'; $odT = & $t 'OutilDistant'; $ecT = & $t 'Ecoute'
+    $lu2 = New-Object "Collections.Generic.List[$($upT.FullName)]"
+    $lu2.Add((& $nouv $upT @{ Peripherique = 'Caméra'; Programme = 'Zoom'; Chemin = 'C:\z.exe'; DernierDebut = '2026-11-10 09:00'; DerniereFin = '2026-11-10 09:30'; EnCours = $false }))
+    $lu2.Add((& $nouv $upT @{ Peripherique = 'Caméra'; Programme = 'zoom'; Chemin = 'C:\z.exe'; DernierDebut = '2026-11-10 10:00'; DerniereFin = ''; EnCours = $true }))
+    $lu2.Add((& $nouv $upT @{ Peripherique = 'Micro'; Programme = 'esp' + [char]0x202E; Chemin = 'C:\e.exe'; DernierDebut = '2026-11-09'; DerniereFin = '2026-11-09'; EnCours = $false }))
+    $lo = New-Object "Collections.Generic.List[$($odT.FullName)]"; $lo.Add((& $nouv $odT @{ Nom = 'AnyDesk'; Pid = 77; Chemin = 'C:\ad.exe'; Signataire = 's'; Depuis = '10:00' }))
+    $le = New-Object "Collections.Generic.List[$($ecT.FullName)]"; $le.Add((& $nouv $ecT @{ Programme = 'srv' + [char]0x202E; Chemin = 'C:\s.exe'; Pid = 9; Adresse = '0.0.0.0'; Port = 8080; Signataire = '-'; Depuis = '09:00' }))
+    $etV = & $nouv (& $t 'Etat') @{ Peripheriques = $lu2; OutilsDistants = $lo; Ecoutes = $le; BureauADistance = $true; MisAJour = '2026-11-10 10:05' }
+    $us = @($vv.GetMethod('Usages').Invoke($null, @($etV)))
+    Cas 'Vie privée : une ligne par programme et périphérique, l''usage en cours d''abord (comme aujourd''hui)' ($us.Count -eq 2 -and $us[0].EnCours) "$($us.Count)"
+    $l0v = @($vv.GetMethod('Lignes').Invoke($null, [object[]]@($etV, 0))); $l1v = @($vv.GetMethod('Lignes').Invoke($null, [object[]]@($etV, 1))); $l2v = @($vv.GetMethod('Lignes').Invoke($null, [object[]]@($etV, 2)))
+    $txtV = (@($l0v + $l1v + $l2v | ForEach-Object { $_.Titre; $_.Sous; $_.Detail | ForEach-Object { $_.Texte } })) -join '|'
+    Cas 'Vie privée : caméra en cours et RDP et outil distant critiques, port non signé à surveiller, textes neutralisés' ($l0v[0].Gravite -eq 2 -and $l1v[0].Gravite -eq 2 -and $l1v[1].Gravite -eq 2 -and $l2v[0].Gravite -eq 1 -and -not ($txtV -match "\u202E") -and $l2v[0].Chemin -eq 'C:\s.exe') $txtV
+    $rv = [string]$vv.GetMethod('Resume').Invoke($null, [object[]]@($etV, $true, $false, $null))
+    Cas 'Vie privée : résumé en chiffres, avant lecture rien de conclu' ($rv.StartsWith('Caméra ou micro utilisés en ce moment : 1. Bureau à distance : ACTIVÉ. Outils de prise en main en cours : 1. Ports ouverts en attente de connexions entrantes : 1.') -and ([string]$vv.GetMethod('Resume').Invoke($null, [object[]]@($null, $false, $false, $null))) -eq 'Lecture en cours…') $rv
+    $guiSrc4 = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'Démarrage : seule la quarantaine part de la coquille pour une entrée de démarrage' ($guiSrc4.Contains('else if (element is EntreeDemarrage && action == "quarantaine") AgirSur(element, action);'))
+    Cas 'Démarrage, Vie privée et Extensions d''aujourd''hui : cellules et info-bulles neutralisées' ($guiSrc4.Contains('Canal.Visible(e.Nom), Canal.Visible(e.Commande)') -and $guiSrc4.Contains('ToolTipText = Canal.Visible(e.Cible)') -and $guiSrc4.Contains('Canal.Visible(u.Programme), Canal.Visible(u.Chemin)') -and $guiSrc4.Contains('Canal.Visible(o.Nom) + "  ● EN COURS"') -and $guiSrc4.Contains('Canal.Visible(e.Programme), Canal.Visible(e.Adresse)') -and $guiSrc4.Contains('Canal.Visible(e.Navigateur), Canal.Visible(e.Nom), Canal.Visible(e.Version), Canal.Visible(e.Permissions)'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -411,10 +449,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
