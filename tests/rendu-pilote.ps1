@@ -432,6 +432,35 @@ try {
     $langue.GetField('En').SetValue($null, $false)
     Cas 'Questions des boutons d''aujourd''hui : chaque texte a sa traduction anglaise (AgirSur, Bloquer, protection, baseline)' ($cles.Count -ge 15 -and $manquantes.Count -eq 0 -and @($qBaseline).Count -eq 0) "$($cles.Count) clés ; manquantes : $($manquantes -join ' | ') $(@($qBaseline) -join ' | ')"
     Cas 'Bloquer : nom DNS, adresse et programme neutralisés dans la question et le titre' ($guiSrc5.Contains('Canal.Visible(nomDns))') -and $guiSrc5.Contains('"deR4Tizer : " + Canal.Visible(processus)'))
+    # Réglages (U6c) : actions partagées, CSV sans formule, saisies bornées, configuration illisible jamais écrasée
+    $ar = & $t 'ActionsReglages'
+    $csvF = { param($v) [string]$ar.GetMethod('ChampCsv').Invoke($null, @($v)) }
+    Cas 'Réglages : export CSV, une valeur qui commence par = + - @ ou tabulation est préfixée d''une apostrophe ; guillemets doublés' ((& $csvF '=cmd|calc') -ceq '"''=cmd|calc"' -and (& $csvF '+1') -ceq '"''+1"' -and (& $csvF '-x') -ceq '"''-x"' -and (& $csvF '@a') -ceq '"''@a"' -and (& $csvF "`tx") -ceq ('"''' + "`tx" + '"') -and (& $csvF 'a"b') -ceq '"a""b"' -and (& $csvF 'normal') -ceq '"normal"' -and (& $csvF $null) -ceq '""') (& $csvF '=cmd|calc')
+    Cas 'Réglages : formule précédée d''espaces ou d''un caractère invisible protégée aussi (S147-01)' ((& $csvF '  =1+1') -ceq '"''  =1+1"' -and (& $csvF ([string][char]0x200B + '=x')) -ceq ('"''' + [char]0x200B + '=x"') -and (& $csvF ' a') -ceq '" a"')
+    Cas 'Réglages : adresse ntfy masquée dans les deux interfaces (S147-02)' ($fluentSrc.Contains('readonly PasswordBox ntfyUrl = Secret(360)') -and ([IO.File]::ReadAllText("$src\Reglages.cs")).Contains('readonly TextBox txtNtfyUrl = Secret(360)'))
+    $alT = & $t 'Alerte'; $lal = New-Object "Collections.Generic.List[$($alT.FullName)]"; $lal.Add((& $nouv $alT @{ Heure = 'h'; Niveau = 'Critique'; Processus = '=HYPERLINK("x")'; Chemin = 'C:\x' }))
+    $csvT = [string]$ar.GetMethod('Csv').Invoke($null, [object[]](, $lal.PSObject.BaseObject))
+    Cas 'Réglages : fichier CSV des alertes, en-tête d''aujourd''hui, nom de programme piégé neutralisé pour le tableur' ($csvT.StartsWith('Heure;Niveau;Score;Programme;Destination;Port;Raisons;MITRE;Chemin;PID') -and $csvT.Contains('"''=HYPERLINK(""x"")"')) $csvT
+    $pi = { param($a, $b) $x = 0; $y = 0; $args2 = [object[]]@([string]$a, [string]$b, $x, $y); [string]$ar.GetMethod('PortsInvalides').Invoke($null, $args2) }
+    Cas 'Réglages : ports bornés comme aujourd''hui (syslog 1 à 65535, API 1024 à 65535)' ([string]::IsNullOrEmpty((& $pi '514' '8642')) -and (& $pi '0' '8642') -ne '' -and (& $pi '514' '80') -ne '' -and (& $pi 'abc' '8642') -ne '' -and [string]::IsNullOrEmpty((& $pi '65535' '1024')))
+    $ni = { param($a, $b) [string]$ar.GetMethod('NotificationsInvalides').Invoke($null, [object[]]@([string]$a, [string]$b, 0, 0)) }
+    Cas 'Réglages : messages par heure 1 à 1000, port SMTP 1 à 65535' ([string]::IsNullOrEmpty((& $ni '10' '465')) -and (& $ni '0' '465') -ne '' -and (& $ni '1001' '465') -ne '' -and (& $ni '10' '70000') -ne '')
+    $cfgT = & $t 'Config'; $csT = & $t 'ConfigSyslog'; $caT = & $t 'ConfigApi'
+    $compose = $ar.GetMethod('Composer')
+    $cz = $compose.Invoke($null, [object[]]@((& $nouv $cfgT @{ Ips = $true }), $true, [Activator]::CreateInstance($csT), [Activator]::CreateInstance($caT)))
+    Cas 'Réglages : config.json illisible, rien à enregistrer ; lue, les autres réglages sont gardés (S139-02 étendu)' ($null -eq $compose.Invoke($null, [object[]]@($null, $false, [Activator]::CreateInstance($csT), [Activator]::CreateInstance($caT))) -and $cz.Langue -eq 'en' -and $cz.Ips)
+    $emT = & $t 'EtatMaj'; $enT2 = & $t 'EtatNotifications'; $lcT = & $t 'Lecteur'
+    $llc = New-Object "Collections.Generic.List[$($lcT.FullName)]"; $llc.Add((& $nouv $lcT @{ Sid = 'S-1'; Nom = 'PC\eve' + [char]0x202E }))
+    $txtRg = ([string]$ar.GetMethod('TexteMaj').Invoke($null, @((& $nouv $emT @{ VerifieLe = 'h'; Statut = "ok`r`n" + [char]0x202E; CleEpinglee = $true })))) + '|' + ([string]$ar.GetMethod('TexteNotifications').Invoke($null, @((& $nouv $enT2 @{ DerniereErreur = '550 ' + [char]0x202E + "`r`nX"; Envoyes = [long]1 })))) + '|' + ([string]$ar.GetMethod('TexteLecteurs').Invoke($null, [object[]](, $llc.PSObject.BaseObject)))
+    Cas 'Réglages : statut de mise à jour, erreur d''envoi (réponse d''un serveur) et noms de comptes neutralisés' (-not ($txtRg -match "[\u202E\r\n]") -and $txtRg.Contains('dernière erreur : 550')) $txtRg
+    $reglagesSrc = [IO.File]::ReadAllText("$src\Reglages.cs")
+    Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
+    Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; action(); Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
+    Cas 'Coquille : plus aucune page WinForms hébergée (WindowsFormsHost retiré)' (-not $fluentSrc.Contains('WindowsFormsHost') -and -not $fluentSrc.Contains('Forms.Integration') -and -not $fluentSrc.Contains('pages(cle)'))
+    # Table des traductions (relecture de #146, remarque 4) : mêmes emplacements {0} {1}… en français et en anglais
+    $table = $langue.GetField('Anglais', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null)
+    $ecarts = @(foreach ($k in $table.Keys) { $fr = (@([regex]::Matches($k, '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); $en = (@([regex]::Matches($table[$k], '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); if ($fr -ne $en) { "$k => $($table[$k])" } })
+    Cas "Traductions : mêmes emplacements {0} {1} en français et en anglais sur les $($table.Count) entrées" ($table.Count -gt 300 -and $ecarts.Count -eq 0) ($ecarts -join ' | ')
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -477,10 +506,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
