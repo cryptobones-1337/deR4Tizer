@@ -2032,8 +2032,9 @@ namespace DeR4Tizer
         {
             if (lv.SelectedItems.Count == 0) return;
             var item = lv.SelectedItems[0];
-            // Valeur d'origine échappée quand la cellule la garde (Connexions, Chaînes : U4a), sinon le texte affiché
-            Clipboard.SetText(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Tag as string ?? s.Text)));
+            // Valeur d'origine échappée quand la cellule la garde (Connexions, Chaînes : U4a), sinon le texte affiché, échappé
+            // lui aussi : aucune liste ne colle de retour à la ligne dans une console (audit de #140, S140-01)
+            Clipboard.SetText(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Tag as string ?? Canal.Echappe(s.Text))));
         }
 
         static void Ouvrir(string chemin)
