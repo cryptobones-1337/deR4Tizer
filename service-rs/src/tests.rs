@@ -7120,7 +7120,7 @@ fn structure_lecture_parefeu_hors_verrou() {
     let moniteur = include_str!("moniteur.rs").replace("\r\n", "\n");
     assert!(!moniteur.contains("etat_parefeu_windows"));
     assert_eq!(moniteur.matches("parefeu::relancer_lecture_parefeu();").count(), 1);
-    assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            parefeu::relancer_lecture_parefeu();"), "au premier passage puis tous les 100");
+    assert!(moniteur.contains("if parefeu::lecture_a_relancer() {\n            parefeu::relancer_lecture_parefeu();"), "au premier passage puis selon l'âge de la dernière lecture (S150-01)");
     assert!(moniteur.contains("parefeu: parefeu::etat_parefeu_courant(),"));
     let parefeu = include_str!("parefeu.rs").replace("\r\n", "\n");
     assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture COM reste privée");
@@ -7132,6 +7132,10 @@ fn lecture_parefeu_trop_ancienne_non_verifiee() {
     assert!(crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(60)));
     assert!(crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(900)));
     assert!(!crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(901)));
+    // Relance selon l'âge (S150-01) : jamais lue, ou plus de 5 min ; une lecture de 5 min reste fraîche 10 min encore
+    assert!(crate::parefeu::lecture_a_relancer_selon(None));
+    assert!(!crate::parefeu::lecture_a_relancer_selon(Some(std::time::Duration::from_secs(299))));
+    assert!(crate::parefeu::lecture_a_relancer_selon(Some(std::time::Duration::from_secs(300))));
 }
 
 #[test]

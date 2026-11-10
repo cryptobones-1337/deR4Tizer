@@ -800,9 +800,9 @@ impl Moniteur {
             }
         }
         // État du pare-feu de Windows : lecture COM lancée sur un fil, jamais attendue sous le verrou du moniteur (préalable
-        // de la relecture de #148), au premier passage puis tous les 100 ; jamais au démarrage (D1, échecs 1920) ; le
-        // diagnostic prend le dernier état terminé s'il est frais, sinon « non vérifié »
-        if self.numero_passage % 100 == 1 {
+        // de la relecture de #148), au premier passage puis dès que la dernière a plus de 5 min (S150-01) ; jamais au
+        // démarrage (D1, échecs 1920) ; le diagnostic prend le dernier état terminé s'il est frais, sinon « non vérifié »
+        if parefeu::lecture_a_relancer() {
             parefeu::relancer_lecture_parefeu();
         }
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();

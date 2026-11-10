@@ -204,9 +204,23 @@ pub fn relancer_lecture_parefeu() {
     });
 }
 
+/// Une lecture est relancée quand la dernière terminée a plus de 5 min (ou n'a jamais eu lieu) : le rythme ne dépend
+/// plus de la durée des passages, et l'état reste frais (15 min) même sur un poste chargé (audit de #150, S150-01)
+const RELANCE_PAREFEU: Duration = Duration::from_secs(300);
+
 /// Un état lu il y a `age` peut-il encore servir ? Trop ancien (fil figé, service arrêté) : « non vérifié »
 pub fn lecture_fraiche(age: Duration) -> bool {
     age <= FRAICHEUR_PAREFEU
+}
+
+/// Faut-il relancer une lecture ? `age` : âge de la dernière lecture terminée, None si aucune
+pub fn lecture_a_relancer_selon(age: Option<Duration>) -> bool {
+    age.is_none_or(|a| a >= RELANCE_PAREFEU)
+}
+
+pub fn lecture_a_relancer() -> bool {
+    let age = ETAT_PAREFEU_LU.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|(quand, _)| quand.elapsed());
+    lecture_a_relancer_selon(age)
 }
 
 /// Dernier état terminé et encore frais ; None : jamais lu, lecture en échec, ou trop ancien (« non vérifié »)
