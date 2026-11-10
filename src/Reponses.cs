@@ -221,6 +221,60 @@ namespace DeR4Tizer
         }
     }
 
+    // Lecture du registre et récupération d'une action, communes à la page d'aujourd'hui et à celle de la coquille (U2c) :
+    // mêmes contrôles (PID réutilisé, objet disparu), même question, même confirmation élevée (Canal.Executer)
+    public static class ActionsReponses
+    {
+        // Lignes actives ; illisible vaut vrai si reponses.json existe (ou ne peut pas être cherché) sans pouvoir être lu.
+        // Illisible n'est pas « aucune réponse en cours » : l'appelant garde le dernier affichage, et le dit
+        public static List<LigneReponse> Lire(out bool illisible)
+        {
+            // Accès au dossier refusé : File.Exists rend faux ; présent par prudence, donc « illisible » (relecture de #121, R1)
+            bool present;
+            try { present = System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, "reponses.json")) || (System.IO.Directory.Exists(Commun.Dossier) && !DossierLisible()); }
+            catch { present = true; }
+            var h = Commun.Lire<HistoriqueReponses>("reponses.json");
+            illisible = VueReponses.EtatLecture(present, h != null) == "illisible";
+            return VueReponses.Lignes(h, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        }
+
+        // Le dossier de données se liste-t-il ? Sinon File.Exists ne peut pas répondre
+        static bool DossierLisible()
+        {
+            try { System.IO.Directory.EnumerateFiles(Commun.Dossier, "reponses.json").Any(); return true; }
+            catch { return false; }
+        }
+
+        public static void Recuperer(LigneReponse x)
+        {
+            bool en = L.En;
+            if (x == null) return;
+            var c = VueReponses.Recuperer(x.Action, Commun.Lire<List<Blocage>>("blocages.json"), Commun.Lire<List<ElementQuarantaine>>("quarantaine.json"));
+            if (c == null)
+            {
+                MessageBox.Show(en ? "The object of this action is no longer found (already lifted or restored?). Recovery: " + x.Recuperation
+                                   : "L'objet de cette action n'est plus retrouvé (déjà levé ou restauré ?). Récupération : " + x.Recuperation,
+                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (c.Action == "reprendre" && !VueReponses.MemeProcessus(x.Action.Creation, Canal.CreationProcessus(x.Action.Pid ?? 0)))
+            {
+                MessageBox.Show(en ? "The suspended process no longer exists (its PID may now belong to another program). Nothing is sent."
+                                   : "Le processus suspendu n'existe plus (son PID peut désigner un autre programme). Rien n'est envoyé.",
+                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string question = c.Action == "panique" ? VueReponses.ConfirmationPanique(false) : x.Bouton + " : " + x.Quoi + "\n\n" + x.Cible + " ?";
+            if (c.Action == "restaurer")
+            {
+                var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(e => e.Id == c.Cible);
+                if (q != null) question += "\n\n" + (en ? "Quarantined on " : "Mis en quarantaine le ") + Canal.Visible(q.Date ?? "?") + " (" + Canal.Visible(q.Id) + ")";
+            }
+            if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            Canal.Executer(c);
+        }
+    }
+
     class PageReponses : TableLayoutPanel
     {
         readonly Liste liste = new Liste();
@@ -278,14 +332,8 @@ namespace DeR4Tizer
             {
                 try
                 {
-                    // Accès au dossier refusé : File.Exists rend faux ; présent par prudence, donc « illisible » (relecture de #121, R1)
-                    bool present;
-                    try { present = System.IO.File.Exists(System.IO.Path.Combine(Commun.Dossier, "reponses.json")) || (System.IO.Directory.Exists(Commun.Dossier) && !DossierLisible()); }
-                    catch { present = true; }
-                    var h = Commun.Lire<HistoriqueReponses>("reponses.json");
-                    var l = VueReponses.Lignes(h, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    // Illisible n'est pas « aucune réponse en cours » : le dernier affichage est gardé, et c'est dit
-                    bool illisible = VueReponses.EtatLecture(present, h != null) == "illisible";
+                    bool illisible;
+                    var l = ActionsReponses.Lire(out illisible);
                     if (!IsHandleCreated) return;
                     try { BeginInvoke((Action)(() => { if (numero == chargement) { if (illisible) Illisible(); else Afficher(l); } })); } catch (InvalidOperationException) { }
                 }
@@ -314,13 +362,6 @@ namespace DeR4Tizer
             Detailler();
         }
 
-        // Le dossier de données se liste-t-il ? Sinon File.Exists ne peut pas répondre
-        static bool DossierLisible()
-        {
-            try { System.IO.Directory.EnumerateFiles(Commun.Dossier, "reponses.json").Any(); return true; }
-            catch { return false; }
-        }
-
         void Illisible()
         {
             bool en = L.En;
@@ -330,32 +371,7 @@ namespace DeR4Tizer
 
         void Recuperer()
         {
-            bool en = L.En;
-            var x = Choisie();
-            if (x == null) return;
-            var c = VueReponses.Recuperer(x.Action, Commun.Lire<List<Blocage>>("blocages.json"), Commun.Lire<List<ElementQuarantaine>>("quarantaine.json"));
-            if (c == null)
-            {
-                MessageBox.Show(en ? "The object of this action is no longer found (already lifted or restored?). Recovery: " + x.Recuperation
-                                   : "L'objet de cette action n'est plus retrouvé (déjà levé ou restauré ?). Récupération : " + x.Recuperation,
-                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            if (c.Action == "reprendre" && !VueReponses.MemeProcessus(x.Action.Creation, Canal.CreationProcessus(x.Action.Pid ?? 0)))
-            {
-                MessageBox.Show(en ? "The suspended process no longer exists (its PID may now belong to another program). Nothing is sent."
-                                   : "Le processus suspendu n'existe plus (son PID peut désigner un autre programme). Rien n'est envoyé.",
-                    "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            string question = c.Action == "panique" ? VueReponses.ConfirmationPanique(false) : x.Bouton + " : " + x.Quoi + "\n\n" + x.Cible + " ?";
-            if (c.Action == "restaurer")
-            {
-                var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(e => e.Id == c.Cible);
-                if (q != null) question += "\n\n" + (en ? "Quarantined on " : "Mis en quarantaine le ") + Canal.Visible(q.Date ?? "?") + " (" + Canal.Visible(q.Id) + ")";
-            }
-            if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-            Canal.Executer(c);
+            ActionsReponses.Recuperer(Choisie());
             Charger();
         }
     }

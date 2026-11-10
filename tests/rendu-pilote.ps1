@@ -112,6 +112,47 @@ try {
     $textes = ($lignes | ForEach-Object { $_.Texte }) -join '|'
     Cas 'Alertes : détail neutralisé (U+202E, largeur nulle, retours à la ligne), lignes vides omises, chemin en chasse fixe' (-not ($textes -match "[\u202E\u200B\r\n]") -and -not ($lignes | Where-Object { $_.Titre -eq 'Que faire' }) -and ($lignes | Where-Object { $_.Titre -eq 'Chemin' }).Chasse) $textes
     $fluentSrc = [IO.File]::ReadAllText("$src\Fluent.cs")
+    Cas 'Alertes : niveau affiché par Visible (audit de #136, S136-01)' (-not $fluentSrc.Contains('Text = L.T(a.Niveau') -and ([regex]::Matches($fluentSrc, 'Canal\.Visible\(L\.T\(a\.Niveau')).Count -eq 2)
+
+    # PID d'une alerte ancienne (relecture de #136, remarque 5) : refus si le processus est lancé après l'alerte, heures dites sinon
+    $pidA = & $t 'PidAlerte'
+    $apres = { param($h, [DateTime]$d) [bool]$pidA.GetMethod('Posterieur').Invoke($null, @($h, [Nullable[DateTime]]$d)) }
+    $base = [DateTime]::ParseExact('2026-11-09 10:00:00', 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    Cas 'PID d''alerte : lancé 5 s après l''alerte, refusé' (& $apres '2026-11-09 10:00:00' $base.AddSeconds(5))
+    Cas 'PID d''alerte : lancé dans la seconde de l''alerte ou avant, accepté' (-not (& $apres '2026-11-09 10:00:00' $base.AddSeconds(2)) -and -not (& $apres '2026-11-09 10:00:00' $base.AddHours(-3)))
+    Cas 'PID d''alerte : heure illisible ou lancement inconnu, rien de refusé (la confirmation élevée tranche)' (-not (& $apres 'h' $base.AddDays(1)) -and -not [bool]$pidA.GetMethod('Posterieur').Invoke($null, @('2026-11-09 10:00:00', $null)))
+    Cas 'PID d''alerte : heure de création absente ou nulle, lancement inconnu' ($null -eq $pidA.GetMethod('Lancement').Invoke($null, @($null)) -and $null -eq $pidA.GetMethod('Lancement').Invoke($null, @([Nullable[long]]0)))
+    $ligneP = [string]$pidA.GetMethod('Ligne').Invoke($null, @(('2026-11-09 10:00:00' + [char]0x202E), $null))
+    Cas 'PID d''alerte : les deux heures dites, heure de l''alerte neutralisée, lancement « illisible »' ($ligneP.Contains('Alerte levée le 2026-11-09 10:00:00') -and -not ($ligneP -match "\u202E") -and $ligneP.EndsWith('lancé le illisible')) $ligneP
+    $agir = $g0 = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
+    $agir = $agir.Substring($agir.IndexOf('void AgirSur(object tag, string action)')); $agir = $agir.Substring(0, $agir.IndexOf("`n        }`n"))
+    Cas 'PID d''alerte : AgirSur vérifie avant la question, et nom affiché neutralisé' ($agir.IndexOf('PidAlerte.Posterieur(a.Heure, lancement)') -gt 0 -and $agir.IndexOf('PidAlerte.Posterieur') -lt $agir.IndexOf('MessageBox.Show(libelles[action]') -and $agir.Contains('string vu = Canal.Visible(nom);') -and $agir.Contains('Raison = "action manuelle sur " + nom'))
+
+    # Incidents (U2c) : transitions offertes, gravité, sections du panneau sans perte ni texte brut
+    $vi = & $t 'VueIncidentsFluent'; $incT = & $t 'IncidentSuivi'
+    $inc = { param([hashtable]$h) $x = [Activator]::CreateInstance($incT); foreach ($k in $h.Keys) { $incT.GetProperty($k).SetValue($x, $h[$k]) }; $x }
+    $regles = { param([string[]]$r) $l = New-Object 'Collections.Generic.List[string]'; foreach ($x in $r) { $l.Add($x) }; , $l }
+    $actI = { param($etat) @($vi.GetMethod('Actions').Invoke($null, @((& $inc @{ Id = 'i'; Etat = $etat })))) -join ',' }
+    Cas 'Incidents : transitions offertes comme la page d''aujourd''hui' ((& $actI 'Ouvert') -eq 'PrisEnCharge,Clos' -and (& $actI 'PrisEnCharge') -eq 'Clos' -and (& $actI 'Clos') -eq 'Ouvert') "$(& $actI 'Ouvert') / $(& $actI 'PrisEnCharge') / $(& $actI 'Clos')"
+    $grav = { param($x) [int]$vi.GetMethod('Gravite').Invoke($null, @($x)) }
+    $risque = & $inc @{ Id = 'a'; Etat = 'Ouvert'; Niveau = 'Critique'; Regles = (& $regles 'LEU-001') }
+    $sante = & $inc @{ Id = 'b'; Etat = 'Ouvert'; Niveau = 'Critique'; Regles = (& $regles 'SAN-001') }
+    $clos = & $inc @{ Id = 'c'; Etat = 'Clos'; Niveau = 'Critique'; Regles = (& $regles 'LEU-001') }
+    Cas 'Incidents : rouge pour un risque confirmé seulement, constat de santé à surveiller, clos estompé' ((& $grav $risque) -eq 2 -and (& $grav $sante) -eq 1 -and (& $grav $clos) -eq 0)
+    $piege = & $inc @{ Id = 'p'; Etat = 'Ouvert'; Niveau = 'Alerte'; Entite = 'programme:c:\x' + [char]0x202E + 'exe.txt'; Ouverture = '2026-11-09 10:00:00'; Regles = (& $regles 'RES-002'); NombreAlertes = 0 }
+    $detailI = [string]((& $t 'VueIncidents').GetMethod('Detail').Invoke($null, @($piege, $null)))
+    $sections = @($vi.GetMethod('Sections').Invoke($null, @($detailI)))
+    $avant = @(($detailI -replace "`r", '').Split("`n") | Where-Object { $_ -ne '' -and -not $_.StartsWith('-- ') }).Count
+    $apresL = @($sections | ForEach-Object { $_.Texte.Split("`n") } | Where-Object { $_ -ne '' }).Count
+    Cas 'Incidents : panneau en sections (résumé, Alertes, Chronologie, Transitions), aucune ligne perdue, texte neutralisé' ((@($sections | ForEach-Object { $_.Titre }) -join '|') -eq '|Alertes|Chronologie|Transitions' -and $avant -eq $apresL -and -not ((@($sections | ForEach-Object { $_.Texte }) -join '') -match "\u202E")) "$((@($sections | ForEach-Object { $_.Titre }) -join '|')) ; $avant / $apresL"
+
+    # Réponses en cours (U2c) : détail de la ligne, récupération toujours écrite, cible en chasse fixe
+    $lrT = & $t 'LigneReponse'; $lr = [Activator]::CreateInstance($lrT)
+    foreach ($kv in @{ Quoi = 'q'; Cible = 'c:\a.exe (PID 9)'; Declencheur = 'LEU-001'; Depuis = '2026-11-09 10:00'; Echeance = '2026-11-09 14:00'; Etat = 'en cours'; Recuperation = 'r'; Bouton = 'Reprendre' }.GetEnumerator()) { $lrT.GetField($kv.Key).SetValue($lr, $kv.Value) }
+    $dr = @((& $t 'VueReponsesFluent').GetMethod('Detail').Invoke($null, @($lr)))
+    Cas 'Réponses : détail complet, récupération dite, cible en chasse fixe' ((@($dr | ForEach-Object { $_.Titre }) -join '|') -eq 'Cible|Déclencheur|Depuis|Relance|État|Récupération' -and ($dr | Where-Object { $_.Titre -eq 'Cible' }).Chasse) ((@($dr | ForEach-Object { $_.Titre }) -join '|'))
+    $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
+    Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
     $chainesProtege = @([regex]::Matches($fluentSrc, '"[^"\r\n]*(prot[eé]g[eé]|protected)[^"\r\n]*"') | ForEach-Object Value)
     Cas "Vue d'ensemble : jamais « protégé » dans les textes du pilote" ($chainesProtege.Count -eq 0) ($chainesProtege -join ' ; ')
@@ -155,9 +196,14 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent' }[$page]
+            if ($natif) {
+                $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
+                Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
+            }
             $ouvertes = $coquille.GetMethod('Ouvertes', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @())
             Cas "navigation $code : une seule entrée ouverte après « $page »" ($ouvertes -eq 1) "$ouvertes"
             $zt = [Windows.SystemParameters]::WorkArea
