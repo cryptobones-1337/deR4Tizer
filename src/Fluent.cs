@@ -928,8 +928,8 @@ namespace DeR4Tizer
             if (signature == vu) return;
             vu = signature;
             liste.Children.Clear();
-            // Liste vide : le résumé dit pourquoi (collectes en panne, suivi illisible) ; avant la première lecture, rien n'est conclu
-            if (incidents.Count == 0) liste.Children.Add(new TextBlock { Text = lu ? resume.Text : L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            // Liste vide : le résumé, au-dessus, dit pourquoi (collectes en panne, suivi illisible) ; avant la première lecture, rien n'est conclu
+            if (incidents.Count == 0 && !lu) liste.Children.Add(new TextBlock { Text = L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
             foreach (var x in incidents)
             {
                 string id = x.Id;
@@ -1058,7 +1058,8 @@ namespace DeR4Tizer
             if (signature == vu) return;
             vu = signature;
             liste.Children.Clear();
-            if (lignes.Count == 0) liste.Children.Add(new TextBlock { Text = !lu ? L.T("Lecture en cours…") : en ? "No ongoing response." : "Aucune réponse en cours.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            // Liste vide après lecture : le résumé, au-dessus, le dit déjà
+            if (lignes.Count == 0 && !lu) liste.Children.Add(new TextBlock { Text = L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
             foreach (var x in lignes)
             {
                 string id = x.Action.Id;
