@@ -3648,8 +3648,9 @@ namespace DeR4Tizer
             majAuto = Case("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)"),
             ntfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)"), teams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)"), smtp = Case("E-mail (SMTP chiffré)");
         readonly TextBox hote = Saisie(220), portSyslog = Saisie(70), portApi = Saisie(70), adresses = Saisie(300), majUrl = Saisie(520), maxHeure = Saisie(60),
-            ntfyUrl = Saisie(360), smtpServeur = Saisie(220), smtpPort = Saisie(60), smtpUtilisateur = Saisie(220), expediteur = Saisie(220), destinataires = Saisie(360), compte = Saisie(300);
-        readonly PasswordBox ntfyJeton = Secret(220), teamsUrl = Secret(520), smtpMdp = Secret(160);
+            smtpServeur = Saisie(220), smtpPort = Saisie(60), smtpUtilisateur = Saisie(220), expediteur = Saisie(220), destinataires = Saisie(360), compte = Saisie(300);
+        // Adresse ntfy masquée comme les autres secrets (audit de #147, S147-02)
+        readonly PasswordBox ntfyUrl = Secret(360), ntfyJeton = Secret(220), teamsUrl = Secret(520), smtpMdp = Secret(160);
         readonly ChoixFluent protocole = new ChoixFluent(ActionsReglages.Protocoles, null), format = new ChoixFluent(ActionsReglages.Formats, null), niveau = new ChoixFluent(ActionsReglages.Niveaux, null),
             niveauNotif = new ChoixFluent(ActionsReglages.Niveaux, null), securite = new ChoixFluent(ActionsReglages.Securites, null);
         int enCours, chargement;
@@ -3752,7 +3753,7 @@ namespace DeR4Tizer
             niveauNotif.Definir(n.NiveauMin); maxHeure.Text = n.MaxParHeure.ToString(); ntfy.IsChecked = n.Ntfy; teams.IsChecked = n.Teams; smtp.IsChecked = n.Smtp;
             smtpServeur.Text = n.SmtpServeur ?? ""; smtpPort.Text = n.SmtpPort.ToString(); securite.Definir(n.SmtpSecurite); smtpUtilisateur.Text = n.SmtpUtilisateur ?? ""; expediteur.Text = n.Expediteur ?? ""; destinataires.Text = n.Destinataires ?? "";
             // Secrets jamais relus ni réaffichés : vide garde la valeur enregistrée
-            ntfyUrl.Text = ""; ntfyJeton.Password = ""; teamsUrl.Password = ""; smtpMdp.Password = "";
+            ntfyUrl.Password = ""; ntfyJeton.Password = ""; teamsUrl.Password = ""; smtpMdp.Password = "";
             apprentissage.Text = ActionsReglages.TexteApprentissage(app);
             maj.Text = ActionsReglages.TexteMaj(em);
             notifEtat.Text = ActionsReglages.TexteNotifications(en);
@@ -3788,7 +3789,7 @@ namespace DeR4Tizer
             {
                 NiveauMin = niveauNotif.Valeur, MaxParHeure = max, Ntfy = ntfy.IsChecked == true, Teams = teams.IsChecked == true, Smtp = smtp.IsChecked == true,
                 SmtpServeur = smtpServeur.Text.Trim(), SmtpPort = port, SmtpSecurite = securite.Valeur, SmtpUtilisateur = smtpUtilisateur.Text.Trim(), Expediteur = expediteur.Text.Trim(), Destinataires = destinataires.Text.Trim()
-            }, ntfyUrl.Text, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
+            }, ntfyUrl.Password, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
         }
 
         void Autoriser()

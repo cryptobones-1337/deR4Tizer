@@ -436,6 +436,8 @@ try {
     $ar = & $t 'ActionsReglages'
     $csvF = { param($v) [string]$ar.GetMethod('ChampCsv').Invoke($null, @($v)) }
     Cas 'Réglages : export CSV, une valeur qui commence par = + - @ ou tabulation est préfixée d''une apostrophe ; guillemets doublés' ((& $csvF '=cmd|calc') -ceq '"''=cmd|calc"' -and (& $csvF '+1') -ceq '"''+1"' -and (& $csvF '-x') -ceq '"''-x"' -and (& $csvF '@a') -ceq '"''@a"' -and (& $csvF "`tx") -ceq ('"''' + "`tx" + '"') -and (& $csvF 'a"b') -ceq '"a""b"' -and (& $csvF 'normal') -ceq '"normal"' -and (& $csvF $null) -ceq '""') (& $csvF '=cmd|calc')
+    Cas 'Réglages : formule précédée d''espaces ou d''un caractère invisible protégée aussi (S147-01)' ((& $csvF '  =1+1') -ceq '"''  =1+1"' -and (& $csvF ([string][char]0x200B + '=x')) -ceq ('"''' + [char]0x200B + '=x"') -and (& $csvF ' a') -ceq '" a"')
+    Cas 'Réglages : adresse ntfy masquée dans les deux interfaces (S147-02)' ($fluentSrc.Contains('readonly PasswordBox ntfyUrl = Secret(360)') -and ([IO.File]::ReadAllText("$src\Reglages.cs")).Contains('readonly TextBox txtNtfyUrl = Secret(360)'))
     $alT = & $t 'Alerte'; $lal = New-Object "Collections.Generic.List[$($alT.FullName)]"; $lal.Add((& $nouv $alT @{ Heure = 'h'; Niveau = 'Critique'; Processus = '=HYPERLINK("x")'; Chemin = 'C:\x' }))
     $csvT = [string]$ar.GetMethod('Csv').Invoke($null, [object[]](, $lal.PSObject.BaseObject))
     Cas 'Réglages : fichier CSV des alertes, en-tête d''aujourd''hui, nom de programme piégé neutralisé pour le tableur' ($csvT.StartsWith('Heure;Niveau;Score;Programme;Destination;Port;Raisons;MITRE;Chemin;PID') -and $csvT.Contains('"''=HYPERLINK(""x"")"')) $csvT

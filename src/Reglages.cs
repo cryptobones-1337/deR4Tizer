@@ -105,11 +105,15 @@ namespace DeR4Tizer
         public static void AutoriserLecteur(string sid) { if (!string.IsNullOrEmpty(sid)) Canal.Executer(new Commande { Action = "autoriserLecteur", Valeur = sid }); }
 
         // Champ CSV : une valeur qui commence par =, +, -, @, une tabulation ou un retour chariot serait prise pour une formule
-        // par un tableur (un nom de programme ou un chemin vient d'un programme) : préfixée d'une apostrophe (U6c)
+        // par un tableur (un nom de programme ou un chemin vient d'un programme) : préfixée d'une apostrophe (U6c). Le premier
+        // caractère compte après les espaces et les caractères invisibles de tête, qu'un tableur ou un import peut rogner
+        // (audit de #147, S147-01)
         public static string ChampCsv(object v)
         {
             string s = v == null ? "" : v.ToString();
-            if (s.Length > 0 && "=+-@\t\r".IndexOf(s[0]) >= 0) s = "'" + s;
+            int i = 0;
+            while (i < s.Length && s[i] != '\t' && s[i] != '\r' && (char.IsWhiteSpace(s[i]) || char.GetUnicodeCategory(s[i]) == System.Globalization.UnicodeCategory.Format)) i++;
+            if (i < s.Length && "=+-@\t\r".IndexOf(s[i]) >= 0) s = "'" + s;
             return "\"" + s.Replace("\"", "\"\"") + "\"";
         }
 
@@ -192,7 +196,8 @@ namespace DeR4Tizer
         readonly TextBox txtMajUrl = Saisie(520);
         readonly TextBox txtMaxHeure = Saisie(50);
         readonly CheckBox chkNtfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)");
-        readonly TextBox txtNtfyUrl = Saisie(360), txtNtfyJeton = Secret(220);
+        // Adresse ntfy masquée comme les autres secrets : le nom du sujet sert souvent de secret (audit de #147, S147-02)
+        readonly TextBox txtNtfyUrl = Secret(360), txtNtfyJeton = Secret(220);
         readonly CheckBox chkTeams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)");
         readonly TextBox txtTeamsUrl = Secret(520);
         readonly CheckBox chkSmtp = Case("E-mail (SMTP chiffré)");
