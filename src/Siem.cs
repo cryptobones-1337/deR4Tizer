@@ -234,11 +234,11 @@ namespace DeR4Tizer
         }
 
         // Ligne de liste : chaque cellule affichée passe par Visible (les événements décrivent le poste, un programme peut y
-        // avoir mis ce qu'il veut, U3b) ; la valeur d'origine reste dans la cellule (Tag) pour « Copier »
+        // avoir mis ce qu'il veut, U3b) ; la valeur d'origine, échappée (Canal.Echappe), reste dans la cellule (Tag) pour « Copier »
         internal static ListViewItem Item(string[] valeurs, object tag)
         {
             var item = new ListViewItem(valeurs.Select(v => Canal.Visible(v ?? "")).ToArray()) { Tag = tag };
-            for (int k = 0; k < valeurs.Length; k++) item.SubItems[k].Tag = valeurs[k] ?? "";
+            for (int k = 0; k < valeurs.Length; k++) item.SubItems[k].Tag = Canal.Echappe(valeurs[k]);
             return item;
         }
 

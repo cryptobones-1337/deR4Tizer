@@ -172,7 +172,11 @@ try {
     Cas 'Détection : config.json illisible, IPS dit « inconnu », jamais « inactif » (audit de #138, S138-01)' ($infoInconnu.Contains('IPS inconnu') -and -not $infoInconnu.Contains('inactif')) $infoInconnu
     Cas 'Détection : sans état lu, ni case active (aujourd''hui) ni bouton IPS (coquille)' ($reseauSrc.Contains('chkIps.Enabled = configLue != null;') -and $fluentSrc.Contains('bIps.Visibility = lu && ips.HasValue ? Visibility.Visible : Visibility.Collapsed;'))
     $siemSrc = [IO.File]::ReadAllText("$src\Siem.cs")
-    Cas 'Copier : valeur d''origine (Détection, Réseau, Événements), affichage neutralisé (relecture de #138, constat 5)' ($reseauSrc.Contains('item.SubItems[k].Tag = brutes[k] ?? "";') -and $reseauSrc.Contains('x.Tag as string ?? x.Text') -and $siemSrc.Contains('item.SubItems[k].Tag = valeurs[k] ?? "";') -and $siemSrc.Contains('s.Tag as string ?? s.Text'))
+    Cas 'Copier : valeur d''origine (Détection, Réseau, Événements), affichage neutralisé (relecture de #138, constat 5)' ($reseauSrc.Contains('item.SubItems[k].Tag = Canal.Echappe(brutes[k]);') -and $reseauSrc.Contains('x.Tag as string ?? x.Text') -and $siemSrc.Contains('item.SubItems[k].Tag = Canal.Echappe(valeurs[k]);') -and $siemSrc.Contains('s.Tag as string ?? s.Text'))
+    # Valeur copiée : exacte et lisible, mais sans retour à la ligne ni caractère invisible qui s'exécuterait au collage (audit de #139, S139-01)
+    $canalT = $asm.GetType('DeR4Tizer.Canal'); $ech = $canalT.GetMethod('Echappe', [Reflection.BindingFlags]'Static,NonPublic')
+    $copie = [string]$ech.Invoke($null, @(("x.exe`r`nStart-Process calc`t" + [char]0x202E + [char]0x2028 + [char]7 + 'é C:\a')))
+    Cas 'Copier : retours à la ligne, tabulation, U+202E, U+2028 et contrôles échappés ; accents et chemins gardés' ($copie -ceq 'x.exe\r\nStart-Process calc\t\u202E\u2028\u0007é C:\a' -and -not ($copie -match "[\r\n\t\u202E\u2028\u0007]")) $copie
 
     # Événements (U3b) : textes des événements et des incidents de corrélation neutralisés, page d'aujourd'hui aussi
     $ve = & $t 'VueEvenementsFluent'; $evT = & $t 'Evenement'; $icT = & $t 'Incident'

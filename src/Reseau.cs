@@ -51,9 +51,10 @@ namespace DeR4Tizer
             var brutes = valeurs;
             valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();
             var item = new ListViewItem(valeurs) { Tag = tag, ToolTipText = string.Join("  ", valeurs) };
-            // « Copier » rend la valeur d'origine (enquête : un nom piégé copié avec des « ? » ne sert à rien ; relecture de
-            // #138, constat 5) ; seul l'affichage est neutralisé
-            for (int k = 0; k < brutes.Length; k++) item.SubItems[k].Tag = brutes[k] ?? "";
+            // « Copier » rend la valeur d'origine, échappée (enquête : un nom piégé copié avec des « ? » ne sert à rien,
+            // relecture de #138, constat 5 ; mais un retour à la ligne collé dans une console s'exécuterait, audit de #139,
+            // S139-01) ; l'affichage reste neutralisé
+            for (int k = 0; k < brutes.Length; k++) item.SubItems[k].Tag = Canal.Echappe(brutes[k]);
             if (niveau == "Critique") { item.BackColor = Theme.FondCritique; item.ForeColor = Color.White; }
             else if (niveau == "Alerte") { item.BackColor = Theme.FondAlerte; item.ForeColor = Theme.Texte; }
             else { item.BackColor = Theme.Panneau; item.ForeColor = niveau == "Actif" ? Theme.Cyan : Theme.Texte; }
