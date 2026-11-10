@@ -248,6 +248,21 @@ namespace DeR4Tizer
         public bool JournalPaquets { get; set; }
         public List<EntreeExposee> Entrees { get; set; }
         public string Base { get; set; }
+        // Diagnostic par contrôle publié par le service (U5c-1) ; null avec un service plus ancien
+        public DiagnosticExposition Diagnostic { get; set; }
+    }
+
+    public class DiagnosticExposition
+    {
+        public string Verdict { get; set; }     // expose, a_surveiller, rien_releve, rien_releve_incomplet
+        public List<ConstatExposition> Constats { get; set; }
+    }
+
+    public class ConstatExposition
+    {
+        public string Piste { get; set; }
+        public string Etat { get; set; }        // constate, pas_constate, non_verifie
+        public string Texte { get; set; }
     }
 
     public class EntreeExposee

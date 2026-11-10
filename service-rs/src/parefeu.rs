@@ -156,7 +156,9 @@ pub fn diagnostiquer(e: &EntreesDiagnostic) -> Diagnostic {
     let upnp_ok = upnp_verifie(&e.upnp_texte, e.reseau_frais);
     if !upnp_ok {
         let raison = if e.upnp_texte.is_empty() { "pas encore vérifiées".to_string() } else if !e.reseau_frais { "dernière vérification trop ancienne".to_string() } else { e.upnp_texte.clone() };
-        ajout("upnp", "non_verifie", format!("redirections UPnP de la box non vérifiées : {raison}"));
+        // Une redirection vers ce PC vue par une vérification ancienne est citée, sans compter comme exposition (S149-02)
+        let connue = if e.redirections_vers_pc > 0 { format!(" ; dernière liste connue : {} redirection(s) vers ce PC", e.redirections_vers_pc) } else { String::new() };
+        ajout("upnp", "non_verifie", format!("redirections UPnP de la box non vérifiées : {raison}{connue}"));
     } else if e.redirections_vers_pc > 0 {
         ajout("upnp", "constate", format!("{} redirection(s) UPnP active(s) de la box vers ce PC", e.redirections_vers_pc));
     } else {
@@ -188,6 +190,13 @@ static LECTURE_PAREFEU: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// dépassé ou lecture précédente encore bloquée : None, donc « non vérifié »
 pub fn etat_parefeu_windows_borne() -> Option<EtatParefeuWindows> {
     commun::avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows).flatten()
+}
+
+/// « PC exposé » (pastille rouge) seulement pour une exposition prouvée : IPv4 publique, connexion acceptée, redirection
+/// UPnP vérifiée vers ce PC. IPv6 globale seule et sources bloquées seules restent « à surveiller » (orange) : décision
+/// du mainteneur du 2026-11-10 (Q2 du dossier U5c). Les alertes RES-004 à RES-007 ne changent pas
+pub fn exposee_selon(d: &Diagnostic) -> bool {
+    d.verdict == "expose"
 }
 
 /// Profils actifs du pare-feu de Windows, état et action entrante par défaut ; None si la lecture échoue (alors « non
