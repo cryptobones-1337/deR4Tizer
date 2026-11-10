@@ -7116,11 +7116,12 @@ fn structure_diagnostic_lecture_seule() {
 #[test]
 fn structure_lecture_parefeu_bornee() {
     // Le moniteur ne lit le pare-feu que par la lecture bornée (audit de #148, S148-01)
-    let moniteur = include_str!("moniteur.rs");
+    // Fins de ligne normalisées : une copie Windows ordinaire est extraite en CRLF (relecture de #148, D2)
+    let moniteur = include_str!("moniteur.rs").replace("\r\n", "\n");
     assert!(!moniteur.contains("etat_parefeu_windows()"));
     assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 1);
     assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();"), "lue dans le cycle, au premier passage puis tous les 100");
-    let parefeu = include_str!("parefeu.rs");
+    let parefeu = include_str!("parefeu.rs").replace("\r\n", "\n");
     assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
     assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");
 }
