@@ -5840,6 +5840,11 @@ fn structure_aucun_appel_direct_aux_actions() {
     let demarrer = &demarrer[..demarrer.find("std::thread::Builder::new().name(\"sante\".into())").unwrap()];
     assert!(demarrer.contains("crate::reponse::etat_provisoire_panique();"), "état provisoire au démarrage");
     assert!(!demarrer.contains("rafraichir_etat_panique()"), "pas de lecture du pare-feu au démarrage");
+    // Ni l'état du pare-feu du diagnostic d'exposition (relecture de #148, D1) : None jusqu'au premier passage
+    for lecture in ["etat_parefeu_windows", "INetFwPolicy2", "politique()"] {
+        assert!(!demarrer.contains(lecture), "pas de lecture du pare-feu au démarrage : {lecture}");
+    }
+    assert!(m.contains("etat_parefeu: None,"), "diagnostic : pare-feu non vérifié jusqu'au premier passage");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
     let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
@@ -7113,7 +7118,8 @@ fn structure_lecture_parefeu_bornee() {
     // Le moniteur ne lit le pare-feu que par la lecture bornée (audit de #148, S148-01)
     let moniteur = include_str!("moniteur.rs");
     assert!(!moniteur.contains("etat_parefeu_windows()"));
-    assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 2);
+    assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 1);
+    assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();"), "lue dans le cycle, au premier passage puis tous les 100");
     let parefeu = include_str!("parefeu.rs");
     assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
     assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");

@@ -226,7 +226,9 @@ impl Moniteur {
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
             udp_dynamique: parefeu::plage_dynamique_udp(),
             adresses_publiques: parefeu::adresses_publiques(),
-            etat_parefeu: parefeu::etat_parefeu_windows_borne(),
+            // Aucune lecture du pare-feu au démarrage, avant que le service se déclare démarré (échecs 1920 ; relecture
+            // de #148, D1) : « non vérifié » jusqu'au premier passage
+            etat_parefeu: None,
             exposition: parefeu::Exposition::default(),
             surveillances: Surveillances::nouvelles(),
             processus,
@@ -798,11 +800,14 @@ impl Moniteur {
             let apres = parefeu::adresses_publiques();
             let alerte = alerte_adresses_publiques(&self.adresses_publiques, &apres);
             self.adresses_publiques = apres;
-            // Lecture COM seule, bornée à 5 s sur un fil à part (S148-01) ; relue au même rythme que les adresses
-            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();
             if let Some(a) = alerte {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, Some("adresse-publique".into()));
             }
+        }
+        // État du pare-feu de Windows : lecture COM seule, bornée à 5 s sur un fil à part (S148-01), au premier passage
+        // puis tous les 100 passages ; jamais au démarrage (D1)
+        if self.numero_passage % 100 == 1 {
+            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();
         }
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
         self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
