@@ -132,6 +132,8 @@ pub struct Moniteur {
     /// Plage dynamique UDP du poste, lue au démarrage (exposition à Internet)
     udp_dynamique: (u16, u16),
     adresses_publiques: Vec<String>,
+    /// État du pare-feu de Windows (profils actifs), relu avec les adresses publiques ; None : illisible (U5c-1)
+    etat_parefeu: Option<parefeu::EtatParefeuWindows>,
     exposition: parefeu::Exposition,
 }
 
@@ -224,6 +226,9 @@ impl Moniteur {
             journal_parefeu: parefeu::LecteurJournal::nouveau(),
             udp_dynamique: parefeu::plage_dynamique_udp(),
             adresses_publiques: parefeu::adresses_publiques(),
+            // Aucune lecture du pare-feu au démarrage, avant que le service se déclare démarré (échecs 1920 ; relecture
+            // de #148, D1) : « non vérifié » jusqu'au premier passage
+            etat_parefeu: None,
             exposition: parefeu::Exposition::default(),
             surveillances: Surveillances::nouvelles(),
             processus,
@@ -799,8 +804,26 @@ impl Moniteur {
                 alertes_modifiees |= self.ajouter_alerte_brute(a, Some("adresse-publique".into()));
             }
         }
+        // État du pare-feu de Windows : lecture COM seule, bornée à 5 s sur un fil à part (S148-01), au premier passage
+        // puis tous les 100 passages ; jamais au démarrage (D1)
+        if self.numero_passage % 100 == 1 {
+            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();
+        }
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
         self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
+        // Diagnostic par contrôle (U5c-1) : le booléen Exposee et la pastille ne changent pas dans cette étape
+        let (acceptees, bloquees) = self.journal_parefeu.recentes_24h();
+        let il_y_a_30_min = commun::heure(std::time::SystemTime::now() - Duration::from_secs(1800));
+        self.exposition.diagnostic = parefeu::diagnostiquer(&parefeu::EntreesDiagnostic {
+            adresses: self.adresses_publiques.clone(),
+            journal_actif: self.exposition.journal_paquets,
+            acceptees,
+            bloquees,
+            upnp_texte: reseau.upnp.clone(),
+            reseau_frais: !reseau.mis_a_jour.is_empty() && reseau.mis_a_jour >= il_y_a_30_min,
+            redirections_vers_pc: reseau.redirections.iter().filter(|r| r.active && r.client == reseau.interface).count(),
+            parefeu: self.etat_parefeu.clone(),
+        });
 
         let t = mesure::noter("cycle.exposition", t);
         // Leurres anti-rançongiciel : pose reprise toutes les 15 min (nouvelles sessions), leurres déjà suivis gardés

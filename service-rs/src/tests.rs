@@ -5840,6 +5840,11 @@ fn structure_aucun_appel_direct_aux_actions() {
     let demarrer = &demarrer[..demarrer.find("std::thread::Builder::new().name(\"sante\".into())").unwrap()];
     assert!(demarrer.contains("crate::reponse::etat_provisoire_panique();"), "état provisoire au démarrage");
     assert!(!demarrer.contains("rafraichir_etat_panique()"), "pas de lecture du pare-feu au démarrage");
+    // Ni l'état du pare-feu du diagnostic d'exposition (relecture de #148, D1) : None jusqu'au premier passage
+    for lecture in ["etat_parefeu_windows", "INetFwPolicy2", "politique()"] {
+        assert!(!demarrer.contains(lecture), "pas de lecture du pare-feu au démarrage : {lecture}");
+    }
+    assert!(m.contains("etat_parefeu: None,"), "diagnostic : pare-feu non vérifié jusqu'au premier passage");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
     let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
@@ -6981,4 +6986,142 @@ fn regles_service_suivies_et_compte_rendu() {
     for p in [p1, p2].into_iter().flatten() {
         let _ = std::fs::remove_file(p);
     }
+}
+
+
+// ------------------------------------------------------------ diagnostic d'exposition (U5c-1)
+
+fn entrees_diag() -> crate::parefeu::EntreesDiagnostic {
+    crate::parefeu::EntreesDiagnostic {
+        adresses: vec![],
+        journal_actif: true,
+        acceptees: 0,
+        bloquees: 0,
+        upnp_texte: "3 redirection(s) sur la box, dont 0 vers ce PC".into(),
+        reseau_frais: true,
+        redirections_vers_pc: 0,
+        parefeu: Some(crate::parefeu::EtatParefeuWindows { profils: vec!["privé".into()], desactive: vec![], entrant_autorise: vec![] }),
+    }
+}
+
+fn etat_de(d: &crate::parefeu::Diagnostic, piste: &str) -> String {
+    d.constats.iter().find(|c| c.piste == piste).map(|c| c.etat.clone()).unwrap_or_default()
+}
+
+#[test]
+fn diagnostic_tout_verifie_rien_releve_jamais_protege() {
+    let d = crate::parefeu::diagnostiquer(&entrees_diag());
+    assert_eq!(d.verdict, "rien_releve");
+    assert!(d.constats.iter().all(|c| c.etat == "pas_constate"), "{:?}", d.constats);
+    assert!(d.constats.iter().all(|c| !c.texte.contains("protégé") && !c.texte.contains("non exposé")));
+}
+
+#[test]
+fn diagnostic_ipv6_globale_seule_a_surveiller_pas_exposee() {
+    let mut e = entrees_diag();
+    e.adresses = vec!["2001:db8::5 (Ethernet)".into()];
+    let d = crate::parefeu::diagnostiquer(&e);
+    assert_eq!(d.verdict, "a_surveiller");
+    assert_eq!(etat_de(&d, "adresse_ipv6"), "constate");
+    assert_eq!(etat_de(&d, "adresse_ipv4"), "pas_constate");
+}
+
+#[test]
+fn diagnostic_ipv4_publique_ou_paquet_accepte_expose() {
+    let mut e = entrees_diag();
+    e.adresses = vec!["203.0.113.7 (Ethernet)".into()];
+    assert_eq!(crate::parefeu::diagnostiquer(&e).verdict, "expose");
+    let mut e = entrees_diag();
+    e.acceptees = 2;
+    assert_eq!(crate::parefeu::diagnostiquer(&e).verdict, "expose");
+}
+
+#[test]
+fn diagnostic_bloque_seul_a_surveiller() {
+    let mut e = entrees_diag();
+    e.bloquees = 4;
+    let d = crate::parefeu::diagnostiquer(&e);
+    assert_eq!(d.verdict, "a_surveiller");
+    assert_eq!(etat_de(&d, "paquets_bloques"), "constate");
+}
+
+#[test]
+fn diagnostic_journal_inactif_jamais_rien_releve() {
+    let mut e = entrees_diag();
+    e.journal_actif = false;
+    e.acceptees = 3; // ignorées : le journal ne les voit pas
+    let d = crate::parefeu::diagnostiquer(&e);
+    assert_eq!(d.verdict, "rien_releve_incomplet");
+    assert_eq!(etat_de(&d, "paquets_acceptes"), "non_verifie");
+}
+
+#[test]
+fn diagnostic_upnp_non_verifie_ancien_ou_en_echec() {
+    for (texte, frais) in [("", true), ("3 redirection(s) sur la box, dont 1 vers ce PC", false), ("aucune box UPnP ne répond (UPnP désactivé ou absent)", true)] {
+        let mut e = entrees_diag();
+        e.upnp_texte = texte.into();
+        e.reseau_frais = frais;
+        e.redirections_vers_pc = 1; // une ancienne liste ne compte pas
+        let d = crate::parefeu::diagnostiquer(&e);
+        assert_eq!(etat_de(&d, "upnp"), "non_verifie", "{texte}");
+        assert_eq!(d.verdict, "rien_releve_incomplet", "{texte}");
+    }
+    let mut e = entrees_diag();
+    e.upnp_texte = "3 redirection(s) sur la box, dont 1 vers ce PC".into();
+    e.redirections_vers_pc = 1;
+    assert_eq!(crate::parefeu::diagnostiquer(&e).verdict, "expose");
+}
+
+#[test]
+fn diagnostic_parefeu_illisible_desactive_ou_ouvert() {
+    let mut e = entrees_diag();
+    e.parefeu = None;
+    let d = crate::parefeu::diagnostiquer(&e);
+    assert_eq!((d.verdict.as_str(), etat_de(&d, "parefeu").as_str()), ("rien_releve_incomplet", "non_verifie"));
+    let mut e = entrees_diag();
+    e.parefeu = Some(crate::parefeu::EtatParefeuWindows { profils: vec!["public".into()], desactive: vec!["public".into()], entrant_autorise: vec![] });
+    assert_eq!(crate::parefeu::diagnostiquer(&e).verdict, "a_surveiller");
+    let mut e = entrees_diag();
+    e.parefeu = Some(crate::parefeu::EtatParefeuWindows { profils: vec!["privé".into()], desactive: vec![], entrant_autorise: vec!["privé".into()] });
+    assert_eq!(crate::parefeu::diagnostiquer(&e).verdict, "a_surveiller");
+}
+
+#[test]
+fn diagnostic_textes_bornes_sans_controle() {
+    let mut e = entrees_diag();
+    e.upnp_texte = format!("erreur\r\n\u{1b}[31m{}", "x".repeat(10_000));
+    let d = crate::parefeu::diagnostiquer(&e);
+    assert!(d.constats.iter().all(|c| c.texte.chars().count() <= 200 && !c.texte.chars().any(|x| x.is_control())));
+}
+
+#[test]
+fn diagnostic_etat_ancien_relu() {
+    // Un etat.json écrit avant U5c-1 (sans Diagnostic) se relit avec un diagnostic vide
+    let x: crate::parefeu::Exposition = serde_json::from_str(r#"{"Exposee":false,"Raisons":[],"Base":"b"}"#).unwrap();
+    assert_eq!(x.diagnostic, crate::parefeu::Diagnostic::default());
+}
+
+#[test]
+fn structure_diagnostic_lecture_seule() {
+    // Le diagnostic ne parle ni au réseau ni à la box, et n'écrit rien dans le pare-feu
+    let src = include_str!("parefeu.rs");
+    let debut = src.find("// ------------------------------------------------------------ diagnostic d'exposition").unwrap();
+    let fin = src.find("// ------------------------------------------------------------ adresses").unwrap();
+    let code = &src[debut..fin];
+    for interdit in ["TcpStream", "UdpSocket", "upnp::", ".put_", ".Add(", ".Remove(", "set_FirewallEnabled", "put_DefaultInboundAction"] {
+        assert!(!code.contains(interdit), "{interdit}");
+    }
+}
+
+#[test]
+fn structure_lecture_parefeu_bornee() {
+    // Le moniteur ne lit le pare-feu que par la lecture bornée (audit de #148, S148-01)
+    // Fins de ligne normalisées : une copie Windows ordinaire est extraite en CRLF (relecture de #148, D2)
+    let moniteur = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(!moniteur.contains("etat_parefeu_windows()"));
+    assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 1);
+    assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();"), "lue dans le cycle, au premier passage puis tous les 100");
+    let parefeu = include_str!("parefeu.rs").replace("\r\n", "\n");
+    assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
+    assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");
 }
