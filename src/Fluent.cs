@@ -1422,40 +1422,72 @@ namespace DeR4Tizer
         DateTime? choixDebut;
         public event Action<DateTime?, DateTime?> TrancheChoisie;
 
-        public ChronologieFluent() { Height = 84; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12); }
+        public ChronologieFluent() { Height = 104; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12); }
 
         public void Definir(ResultatSiem resultat, DateTime? debut) { r = resultat; choixDebut = debut; InvalidateVisual(); }
 
         int Tranches { get { return r == null || r.Compteurs == null ? 0 : r.Compteurs.GetLength(0); } }
+
+        // Repères (relecture de #139, constat 6) : sur une échelle en racine carrée, une barre à mi-hauteur vaut le quart du
+        // maximum ; le maximum par tranche et les heures de début, de milieu et de fin sont donc écrits
+        FormattedText Texte(string t)
+        {
+            return new FormattedText(t, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface(Jetons.Police, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+                11, Jetons.Pinceau(Jetons.TexteSecondaire), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        }
+
+        internal const double Gauche = 12, Haut = 20, Bas = 18;
 
         protected override void OnRender(DrawingContext g)
         {
             g.DrawRoundedRectangle(Jetons.Pinceau(Jetons.Carte), null, new Rect(0, 0, ActualWidth, ActualHeight), 8, 8);
             int n = Tranches;
             if (n == 0) return;
-            double l = ActualWidth - 24, h = ActualHeight - 20, pas = l / n;
+            double l = ActualWidth - 2 * Gauche, h = Math.Max(1, ActualHeight - Haut - Bas), pas = l / n;
             int max = 1;
             for (int t = 0; t < n; t++) max = Math.Max(max, r.Compteurs[t, 0] + r.Compteurs[t, 1] + r.Compteurs[t, 2]);
+            g.DrawText(Texte(string.Format(L.T("max {0} par tranche, hauteur en racine carrée"), max)), new Point(Gauche, 3));
+            string format = (r.Fin - r.Debut).TotalHours > 24 ? "dd/MM HH:mm" : "HH:mm";
+            var debut = Texte(r.Debut.ToString(format)); var milieu = Texte(r.Debut.AddTicks((r.Fin - r.Debut).Ticks / 2).ToString(format)); var fin = Texte(r.Fin.ToString(format));
+            double yt = ActualHeight - Bas + 2;
+            g.DrawText(debut, new Point(Gauche, yt));
+            g.DrawText(milieu, new Point(Gauche + l / 2 - milieu.Width / 2, yt));
+            g.DrawText(fin, new Point(Gauche + l - fin.Width, yt));
             var couleurs = new[] { Jetons.Accent, Jetons.Attention, Jetons.Danger };
-            DateTime cd = DateTime.MinValue, cf;
             for (int t = 0; t < n; t++)
             {
-                DateTime d;
-                RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out cf);
+                DateTime d, f;
+                RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out f);
                 bool choisie = choixDebut.HasValue && Math.Abs((choixDebut.Value - d).TotalSeconds) < 1;
-                if (choisie) g.DrawRectangle(Jetons.Pinceau(Jetons.Surface), null, new Rect(12 + t * pas, 6, pas, h + 4));
-                double y = 10 + h;
+                if (choisie) g.DrawRectangle(Jetons.Pinceau(Jetons.Surface), null, new Rect(Gauche + t * pas, Haut - 2, pas, h + 4));
+                int total = r.Compteurs[t, 0] + r.Compteurs[t, 1] + r.Compteurs[t, 2];
+                if (total <= 0) continue;
+                double hauteur = Math.Max(2, Math.Sqrt(total) / Math.Sqrt(max) * h);
+                // Alerte et Critique jamais sous 2 px : quelques critiques restent visibles parmi des milliers d'infos (constat 6b)
+                double[] segments = new double[3];
+                for (int niv = 1; niv < 3; niv++) if (r.Compteurs[t, niv] > 0) segments[niv] = Math.Max(2, hauteur * r.Compteurs[t, niv] / total);
+                segments[0] = r.Compteurs[t, 0] > 0 ? Math.Max(1, hauteur - segments[1] - segments[2]) : 0;
+                double y = Haut + h;
                 for (int niv = 0; niv < 3; niv++)
                 {
-                    int c = r.Compteurs[t, niv];
-                    if (c <= 0) continue;
-                    // Hauteur proportionnelle à la racine du nombre de la tranche, partagée entre les niveaux
-                    int total = r.Compteurs[t, 0] + r.Compteurs[t, 1] + r.Compteurs[t, 2];
-                    double ht = Math.Max(2, Math.Sqrt(total) / Math.Sqrt(max) * h) * c / total;
-                    y -= ht;
-                    g.DrawRectangle(Jetons.Pinceau(couleurs[niv]), null, new Rect(12 + t * pas + 1, y, Math.Max(1, pas - 2), ht));
+                    if (segments[niv] <= 0) continue;
+                    y -= segments[niv];
+                    g.DrawRectangle(Jetons.Pinceau(couleurs[niv]), null, new Rect(Gauche + t * pas + 1, y, Math.Max(1, pas - 2), segments[niv]));
                 }
             }
+        }
+
+        // Hauteurs des segments d'une tranche (Info, Alerte, Critique), pour les tests : même calcul que le rendu
+        internal static double[] Segments(int info, int alerte, int critique, int max, double h)
+        {
+            int total = info + alerte + critique;
+            var seg = new double[3];
+            if (total <= 0) return seg;
+            double hauteur = Math.Max(2, Math.Sqrt(total) / Math.Sqrt(Math.Max(1, max)) * h);
+            int[] c = { info, alerte, critique };
+            for (int niv = 1; niv < 3; niv++) if (c[niv] > 0) seg[niv] = Math.Max(2, hauteur * c[niv] / total);
+            seg[0] = info > 0 ? Math.Max(1, hauteur - seg[1] - seg[2]) : 0;
+            return seg;
         }
 
         protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
@@ -1463,7 +1495,7 @@ namespace DeR4Tizer
             base.OnMouseLeftButtonUp(e);
             int n = Tranches;
             if (n == 0 || TrancheChoisie == null) return;
-            double x = e.GetPosition(this).X - 12, l = ActualWidth - 24;
+            double x = e.GetPosition(this).X - Gauche, l = ActualWidth - 2 * Gauche;
             if (x < 0 || x >= l) return;
             int t = Math.Min(n - 1, (int)(x / (l / n)));
             DateTime d, f;

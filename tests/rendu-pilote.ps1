@@ -195,6 +195,12 @@ try {
     $deb = [DateTime]'2026-11-10 00:00:00'; $fin = $deb.AddHours(24)
     $a = @($deb, $fin, 48, 0, [DateTime]::MinValue, [DateTime]::MinValue); $tr.Invoke($null, $a) | Out-Null
     $b = @($deb, $fin, 48, 47, [DateTime]::MinValue, [DateTime]::MinValue); $tr.Invoke($null, $b) | Out-Null
+    $segm = { param($i, $a, $c, $m) @((& $t 'ChronologieFluent').GetMethod('Segments', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @([int]$i, [int]$a, [int]$c, [int]$m, [double]66))) }
+    $s1 = & $segm 5000 0 3 5003
+    Cas 'Événements : 3 critiques parmi 5000 infos, segment critique de 2 px au moins (relecture de #139, constat 6b)' ($s1[2] -ge 2 -and $s1[1] -eq 0 -and $s1[0] -gt 0) ($s1 -join ' / ')
+    $s2 = & $segm 0 0 0 10
+    Cas 'Événements : tranche vide, aucun segment' (($s2 | Measure-Object -Sum).Sum -eq 0)
+    Cas 'Événements : chronologie avec maximum et heures écrits (constat 6a)' ($fluentSrc.Contains('L.T("max {0} par tranche, hauteur en racine carrée")') -and $fluentSrc.Contains('g.DrawText(milieu,'))
     Cas 'Événements : chronologie en 48 tranches, de début à fin' ($a[4] -eq $deb -and $b[5] -eq $fin -and ($a[5] - $a[4]).TotalMinutes -eq 30)
     Cas 'Événements : page d''aujourd''hui neutralisée (cellules, info-bulle, détail), même recherche que la coquille' ($siemSrc.Contains('new ListViewItem(valeurs.Select(v => Canal.Visible(v ?? "")).ToArray())') -and $siemSrc.Contains('item.ToolTipText = Canal.Visible(e.Message ?? "");') -and $siemSrc.Contains('"\n" + v(e.Message);') -and $siemSrc.Contains('RechercheSiem.ChercherSur(texte, source, niveauMin') -and $fluentSrc.Contains('RechercheSiem.ChercherSur(texte, src, niv'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")

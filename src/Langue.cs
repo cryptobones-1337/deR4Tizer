@@ -30,7 +30,7 @@ namespace DeR4Tizer
             { "Toutes", "All" }, { "Critiques", "Critical" }, { "Infos", "Info" }, { "Critique", "Critical" }, { "Alerte", "Alert" }, { "Info", "Info" },
             { "Aucune alerte de ce niveau.", "No alert at this level." }, { "Les {0} plus récentes sont affichées.", "The {0} most recent are shown." },
             { "Agir", "Act" }, { "Technique", "Technique" }, { "Que faire", "What to do" },
-            { "Lecture en cours…", "Reading…" }, { "MITRE", "MITRE" }, { "Incidents de corrélation", "Correlation incidents" },
+            { "Lecture en cours…", "Reading…" }, { "MITRE", "MITRE" }, { "max {0} par tranche, hauteur en racine carrée", "max {0} per slice, square-root height" }, { "Incidents de corrélation", "Correlation incidents" },
             { "Aucun événement pour cette recherche.", "No event for this search." },
             { "Texte cherché dans les événements (utilisateur, IP, programme, message…)", "Text searched in the events (user, IP, program, message…)" }, { "bloqué", "blocked" }, { "non", "no" }, { "sessions", "sessions" }, { "Désactiver l'IPS", "Turn off the IPS" },
             { "Activer l'IPS : bloquer au pare-feu l'adresse distante des règles « drop » ou de priorité 1", "Turn on the IPS: block at the firewall the remote address of \"drop\" or priority 1 rules" },
