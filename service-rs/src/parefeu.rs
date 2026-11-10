@@ -54,6 +54,157 @@ pub struct Exposition {
     pub entrees: Vec<EntreeExposee>,
     /// Ce sur quoi repose le verdict (journal des paquets, UPnP), pour ne pas affirmer plus qu'on ne sait
     pub base: String,
+    /// Diagnostic par contrôle (U5c-1) : ce qui a été vu, pas vu, ou n'a pas pu l'être ; absent d'un ancien état
+    pub diagnostic: Diagnostic,
+}
+
+// ------------------------------------------------------------ diagnostic d'exposition (U5c-1, dossier de conception U5c)
+//
+// Lecture seule : aucune requête vers un tiers ni vers la box, aucune modification du pare-feu, aucune alerte nouvelle.
+// Chaque contrôle est dit « constaté », « pas constaté » ou « non vérifié » ; le verdict ne descend jamais à « rien
+// relevé » si un contrôle manque, et ne dit jamais « protégé ».
+
+/// Un contrôle du diagnostic
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Constat {
+    /// "adresse_ipv4", "adresse_ipv6", "paquets_acceptes", "paquets_bloques", "upnp", "parefeu"
+    pub piste: String,
+    /// "constate", "pas_constate" ou "non_verifie"
+    pub etat: String,
+    /// Phrase bornée (200 caractères, sans caractère de contrôle)
+    pub texte: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Diagnostic {
+    /// "expose", "a_surveiller", "rien_releve" ou "rien_releve_incomplet" ; vide : pas encore établi
+    pub verdict: String,
+    pub constats: Vec<Constat>,
+}
+
+/// État du pare-feu de Windows sur les profils actifs, lu par INetFwPolicy2 (lecture seule)
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct EtatParefeuWindows {
+    pub profils: Vec<String>,
+    pub desactive: Vec<String>,
+    pub entrant_autorise: Vec<String>,
+}
+
+/// Ce que le diagnostic consulte, déjà relevé par le service
+pub struct EntreesDiagnostic {
+    /// Format d'adresses_publiques() : « ip (carte) »
+    pub adresses: Vec<String>,
+    pub journal_actif: bool,
+    pub acceptees: usize,
+    pub bloquees: usize,
+    /// Résultat de la dernière vérification UPnP publié par le NDR (reseau.json, champ Upnp)
+    pub upnp_texte: String,
+    /// reseau.json écrit depuis moins de 30 min (le NDR tourne) ; sinon la vérification est trop ancienne
+    pub reseau_frais: bool,
+    pub redirections_vers_pc: usize,
+    pub parefeu: Option<EtatParefeuWindows>,
+}
+
+fn borne(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(200).collect()
+}
+
+/// UPnP vérifié seulement si le NDR a publié le résultat d'une vérification (« N redirection(s) sur la box, dont M vers
+/// ce PC ») et l'a écrit récemment. Le NDR est gelé : la date exacte de la vérification et une liste incomplète
+/// (lecture arrêtée à l'échéance) n'y sont pas publiées (audit de #144, S144-01) ; limite écrite dans la matrice
+pub fn upnp_verifie(texte: &str, reseau_frais: bool) -> bool {
+    reseau_frais && texte.contains(" redirection(s) sur la box, dont ") && texte.ends_with(" vers ce PC")
+}
+
+fn adresse(a: &str) -> Option<IpAddr> {
+    a.split(" (").next().and_then(|x| x.trim().parse().ok())
+}
+
+pub fn diagnostiquer(e: &EntreesDiagnostic) -> Diagnostic {
+    let mut c = Vec::new();
+    let mut ajout = |piste: &str, etat: &str, texte: String| c.push(Constat { piste: piste.into(), etat: etat.into(), texte: borne(&texte) });
+    let ipv4: Vec<&String> = e.adresses.iter().filter(|a| matches!(adresse(a), Some(IpAddr::V4(_)))).collect();
+    let ipv6: Vec<&String> = e.adresses.iter().filter(|a| matches!(adresse(a), Some(IpAddr::V6(_)))).collect();
+    let join = |l: &[&String]| l.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+    if ipv4.is_empty() {
+        ajout("adresse_ipv4", "pas_constate", "aucune adresse IPv4 publique sur ce PC".into());
+    } else {
+        ajout("adresse_ipv4", "constate", format!("adresse IPv4 publique sur ce PC, sans box ni NAT devant : {}", join(&ipv4)));
+    }
+    if ipv6.is_empty() {
+        ajout("adresse_ipv6", "pas_constate", "aucune adresse IPv6 globale sur ce PC".into());
+    } else {
+        ajout("adresse_ipv6", "constate", format!("adresse IPv6 globale : {} ; joignable ou non selon le pare-feu IPv6 de la box, que le PC ne peut pas vérifier", join(&ipv6)));
+    }
+    if !e.journal_actif {
+        ajout("paquets_acceptes", "non_verifie", "journal des paquets du pare-feu inactif : connexions entrantes non vues".into());
+        ajout("paquets_bloques", "non_verifie", "journal des paquets du pare-feu inactif : connexions entrantes non vues".into());
+    } else {
+        if e.acceptees > 0 {
+            ajout("paquets_acceptes", "constate", format!("{} connexion(s) entrante(s) venues d'Internet acceptées en 24 h", e.acceptees));
+        } else {
+            ajout("paquets_acceptes", "pas_constate", "aucune connexion entrante venue d'Internet acceptée en 24 h".into());
+        }
+        if e.bloquees > 0 {
+            ajout("paquets_bloques", "constate", format!("{} source(s) d'Internet ont atteint le PC en 24 h, bloquées par le pare-feu", e.bloquees));
+        } else {
+            ajout("paquets_bloques", "pas_constate", "aucune source d'Internet bloquée en 24 h".into());
+        }
+    }
+    let upnp_ok = upnp_verifie(&e.upnp_texte, e.reseau_frais);
+    if !upnp_ok {
+        let raison = if e.upnp_texte.is_empty() { "pas encore vérifiées".to_string() } else if !e.reseau_frais { "dernière vérification trop ancienne".to_string() } else { e.upnp_texte.clone() };
+        ajout("upnp", "non_verifie", format!("redirections UPnP de la box non vérifiées : {raison}"));
+    } else if e.redirections_vers_pc > 0 {
+        ajout("upnp", "constate", format!("{} redirection(s) UPnP active(s) de la box vers ce PC", e.redirections_vers_pc));
+    } else {
+        ajout("upnp", "pas_constate", "aucune redirection UPnP de la box vers ce PC".into());
+    }
+    match &e.parefeu {
+        None => ajout("parefeu", "non_verifie", "état du pare-feu de Windows illisible".into()),
+        Some(p) if !p.desactive.is_empty() => ajout("parefeu", "constate", format!("pare-feu de Windows désactivé sur le profil actif : {}", p.desactive.join(", "))),
+        Some(p) if !p.entrant_autorise.is_empty() => ajout("parefeu", "constate", format!("connexions entrantes autorisées par défaut sur le profil actif : {}", p.entrant_autorise.join(", "))),
+        Some(p) => ajout("parefeu", "pas_constate", format!("pare-feu de Windows actif, connexions entrantes bloquées par défaut (profil : {})", if p.profils.is_empty() { "?".to_string() } else { p.profils.join(", ") })),
+    }
+    let parefeu_ouvert = e.parefeu.as_ref().is_some_and(|p| !p.desactive.is_empty() || !p.entrant_autorise.is_empty());
+    let verdict = if !ipv4.is_empty() || (e.journal_actif && e.acceptees > 0) || (upnp_ok && e.redirections_vers_pc > 0) {
+        "expose"
+    } else if !ipv6.is_empty() || (e.journal_actif && e.bloquees > 0) || parefeu_ouvert {
+        "a_surveiller"
+    } else if c.iter().any(|x| x.etat == "non_verifie") {
+        "rien_releve_incomplet"
+    } else {
+        "rien_releve"
+    };
+    Diagnostic { verdict: verdict.into(), constats: c }
+}
+
+/// Profils actifs du pare-feu de Windows, état et action entrante par défaut ; None si la lecture échoue (alors « non
+/// vérifié », jamais « aucun problème »). Lecture COM seule : aucun Set, Add ni Remove
+pub fn etat_parefeu_windows() -> Option<EtatParefeuWindows> {
+    use windows::Win32::NetworkManagement::WindowsFirewall::{INetFwPolicy2, NetFwPolicy2, NET_FW_ACTION_ALLOW, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let p: INetFwPolicy2 = CoCreateInstance(&NetFwPolicy2, None, CLSCTX_INPROC_SERVER).ok()?;
+        let courants = p.CurrentProfileTypes().ok()?;
+        let mut e = EtatParefeuWindows::default();
+        for (profil, nom) in [(NET_FW_PROFILE2_DOMAIN, "domaine"), (NET_FW_PROFILE2_PRIVATE, "privé"), (NET_FW_PROFILE2_PUBLIC, "public")] {
+            if courants & profil.0 == 0 {
+                continue;
+            }
+            e.profils.push(nom.into());
+            if !p.get_FirewallEnabled(profil).ok()?.as_bool() {
+                e.desactive.push(nom.into());
+            }
+            if p.get_DefaultInboundAction(profil).ok()? == NET_FW_ACTION_ALLOW {
+                e.entrant_autorise.push(nom.into());
+            }
+        }
+        Some(e)
+    }
 }
 
 // ------------------------------------------------------------ adresses
@@ -513,6 +664,14 @@ impl LecteurJournal {
         alertes
     }
 
+    /// Connexions entrantes venues d'Internet en 24 h : (acceptées, sources bloquées), comme le bilan
+    pub fn recentes_24h(&self) -> (usize, usize) {
+        let hier = commun::heure(std::time::SystemTime::now() - Duration::from_secs(86400));
+        let recentes: Vec<&EntreeExposee> = self.entrees.values().filter(|e| e.derniere > hier).collect();
+        let acceptees = recentes.iter().filter(|e| e.action == "ACCEPTÉ").count();
+        (acceptees, recentes.len() - acceptees)
+    }
+
     /// Bilan d'exposition pour l'interface
     pub fn bilan(&self, adresses: &[String], reseau: &crate::ndr::EtatReseau) -> Exposition {
         let mut entrees: Vec<EntreeExposee> = self.entrees.values().cloned().collect();
@@ -545,6 +704,7 @@ impl LecteurJournal {
             journal_paquets: self.actif(),
             entrees: entrees.into_iter().take(50).collect(),
             base,
+            diagnostic: Diagnostic::default(),
         }
     }
 }

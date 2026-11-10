@@ -107,7 +107,7 @@ curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?ni
 |---|---|
 | `/api/v1/sante` | Disponibilité (sans jeton) |
 | `/api/v1/alertes?depuis=&niveau=&limite=&format=json\|ndjson\|cef` | Alertes |
-| `/api/v1/connexions`, `/exposition`, `/baseline`, `/regles-parefeu`, `/blocages` | État |
+| `/api/v1/connexions`, `/exposition` (avec le diagnostic par contrôle : constaté, pas constaté, non vérifié), `/baseline`, `/regles-parefeu`, `/blocages` | État |
 | `/api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json\|ndjson` | Recherche dans les événements (mini-SIEM) |
 | `/api/v1/incidents` | Incidents de corrélation |
 | `/api/v1/journal?lignes=200` | Journal du service (texte) |
@@ -295,7 +295,7 @@ Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": i
 curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?niveau=Alerte&format=ndjson"
 ```
 
-Routes are listed in the French section above (paths are identical).
+Routes are listed in the French section above (paths are identical). `/exposition` also carries the per-check diagnostic (found, not found, not checked).
 
 ### Known limits
 
