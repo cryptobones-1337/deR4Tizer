@@ -203,6 +203,62 @@ try {
     Cas 'Événements : chronologie avec maximum et heures écrits (constat 6a)' ($fluentSrc.Contains('L.T("max {0} par tranche, hauteur en racine carrée")') -and $fluentSrc.Contains('g.DrawText(milieu,'))
     Cas 'Événements : chronologie en 48 tranches, de début à fin' ($a[4] -eq $deb -and $b[5] -eq $fin -and ($a[5] - $a[4]).TotalMinutes -eq 30)
     Cas 'Événements : page d''aujourd''hui neutralisée (cellules, info-bulle, détail), même recherche que la coquille' ($siemSrc.Contains('new ListViewItem(valeurs.Select(v => Canal.Visible(v ?? "")).ToArray())') -and $siemSrc.Contains('item.ToolTipText = Canal.Visible(e.Message ?? "");') -and $siemSrc.Contains('"\n" + v(e.Message);') -and $siemSrc.Contains('RechercheSiem.ChercherSur(texte, source, niveauMin') -and $fluentSrc.Contains('RechercheSiem.ChercherSur(texte, src, niv'))
+    # Connexions (U4a) : actions selon la ligne, tri par gravité puis score, détail et copie neutralisés ou échappés
+    $vc = & $t 'VueConnexionsFluent'; $fluxT = & $t 'FluxInfo'
+    $fx = { param([hashtable]$h) & $nouv $fluxT $h }
+    $complet = & $fx @{ Cle = 'a'; Score = 2; Processus = 'x' + [char]0x202E + 'exe'; Pid = 42; Chemin = 'C:\x.exe'; Ip = '1.2.3.4'; NomDns = 'evil.test'; Port = 443; Raisons = 'nouveau'; Signataire = 'S'; PremiereVue = '2026-11-10 09:00:00'; LigneCommande = "x.exe`r`n-c calc"; Origine = 'Internet' }
+    $actionsC = { param($f) (@($vc.GetMethod('Actions').Invoke($null, @($f))) -join ',') }
+    Cas 'Connexions : toutes les actions pour une ligne complète, dans l''ordre du menu d''aujourd''hui' ((& $actionsC $complet) -eq 'bloquer,bloquerIp,isolerProgramme,suspendre,reprendre,tuer,quarantaine,emplacement,copier') (& $actionsC $complet)
+    $systeme = & $fx @{ Cle = 'b'; Score = 0; Processus = 'System'; Pid = 4; Ip = '5.6.7.8'; Port = 80; Raisons = '' }
+    Cas 'Connexions : PID système (4) sans suspendre ni tuer, sans chemin ni isoler ni quarantaine, sans nom un seul blocage' ((& $actionsC $systeme) -eq 'bloquer,copier') (& $actionsC $systeme)
+    $menace = & $fx @{ Cle = 'c'; Score = 1; Processus = 'm'; Pid = 50; Ip = '9.9.9.9'; Port = 80; Raisons = 'MENACE liste' }
+    $alerteF = & $fx @{ Cle = 'd'; Score = 5; Processus = 'n'; Pid = 51; Ip = '8.8.8.8'; Port = 80; Raisons = 'x' }
+    $calme = & $fx @{ Cle = 'e'; Score = 0; Processus = 'a'; Pid = 52; Ip = '7.7.7.7'; Port = 80; Raisons = 'BLOQUÉ' }
+    $lf = New-Object "Collections.Generic.List[$($fluxT.FullName)]"; foreach ($x in $calme, $complet, $menace, $alerteF) { $lf.Add($x) }
+    $cles = { param($n) (@($vc.GetMethod('Filtrer').Invoke($null, [object[]]@($lf.PSObject.BaseObject, [int]$n)) | ForEach-Object { $_.Cle }) -join ',') }
+    Cas 'Connexions : menace d''abord, puis score ; filtres suspectes et menaces' ((& $cles 0) -eq 'c,d,a,e' -and (& $cles 1) -eq 'c,d,a' -and (& $cles 2) -eq 'c') "$(& $cles 0) / $(& $cles 1) / $(& $cles 2)"
+    Cas 'Connexions : gravité (menace 2, score de 3 au moins 1), ligne bloquée estompée' ($vc.GetMethod('Gravite').Invoke($null, @($menace)) -eq 2 -and $vc.GetMethod('Gravite').Invoke($null, @($alerteF)) -eq 1 -and $vc.GetMethod('Gravite').Invoke($null, @($complet)) -eq 0 -and $vc.GetMethod('Bloquee').Invoke($null, @($calme)))
+    $dc = @($vc.GetMethod('Detail').Invoke($null, @($complet)))
+    $txtC = (@($dc | ForEach-Object { $_.Texte }) + @($vc.GetMethod('Sous').Invoke($null, @($complet)), $vc.GetMethod('Destination').Invoke($null, @($complet)))) -join '|'
+    Cas 'Connexions : détail neutralisé (U+202E, retours à la ligne), chemin et ligne de commande en chasse fixe' (-not ($txtC -match "[\u202E\r\n]") -and ($dc | Where-Object { $_.Titre -eq 'Chemin' }).Chasse -and ($dc | Where-Object { $_.Titre -eq 'Ligne de commande' }).Chasse) $txtC
+    $copieC = [string]$vc.GetMethod('Copie').Invoke($null, @($complet))
+    Cas 'Connexions : copie des colonnes d''aujourd''hui, valeur d''origine échappée (S139-01)' ($copieC -ceq ("2`tx\u202Eexe`t`t42`tevil.test (1.2.3.4)`t443`tS`t2026-11-10 09:00:00`tnouveau")) $copieC
+    $res = { param($l, $lu, $ill, $p) [string]$vc.GetMethod('Resume').Invoke($null, [object[]]@($l.PSObject.BaseObject, [bool]$lu, [bool]$ill, '2026-11-10 10:00:00', $p)) }
+    $vide = New-Object "Collections.Generic.List[$($fluxT.FullName)]"
+    Cas 'Connexions : avant lecture « Lecture en cours… », illisible sans liste « rien n''est conclu », jamais « 0 connexion »' ((& $res $vide $false $false $null) -eq 'Lecture en cours…' -and (& $res $vide $true $true $null).Contains('rien n''est conclu') -and -not (& $res $vide $true $true $null).Contains('0 connexion'))
+    $r2 = & $res $lf $true $true 'Connexions indisponible (x) : connexions réseau non vues'
+    Cas 'Connexions : illisible après une lecture, dernier affichage gardé et dit ; collecte en panne dite' ($r2.Contains('dernier affichage gardé') -and $r2.Contains('4 connexion(s)') -and $r2.Contains('Liste incomplète')) $r2
+    $etatT = & $t 'Etat'; $collT = & $t 'EtatCollecte'
+    $lc = New-Object "Collections.Generic.List[$($collT.FullName)]"; $lc.Add((& $nouv $collT @{ Id = 'Connexions'; Etat = 'Indisponible'; Raison = 'r' + [char]0x202E }))
+    $etatP = & $nouv $etatT @{ Collectes = $lc }
+    $panne = [string](& $t 'VueReseauFluent').GetMethod('Panne').Invoke($null, @($etatP, 'Connexions'))
+    Cas 'Connexions : collecte en panne trouvée et neutralisée, aucune pour une autre collecte' ($panne.Contains('Connexions') -and -not ($panne -match "\u202E") -and $null -eq (& $t 'VueReseauFluent').GetMethod('Panne').Invoke($null, @($etatP, 'Processus'))) $panne
+
+    # Chaînes (U4a) : chaînes au score positif, plus lourdes d'abord ; seuil 12 ; arbre, détail et copie
+    $vch = & $t 'VueChainesFluent'; $chT = & $t 'Chaine'; $noT = & $t 'NoeudChaine'
+    $nds = New-Object "Collections.Generic.List[$($noT.FullName)]"
+    $nds.Add((& $nouv $noT @{ Profondeur = 0; Pid = 100; Nom = 'explorer.exe'; Score = 0; Chemin = 'C:\Windows\explorer.exe' }))
+    $nds.Add((& $nouv $noT @{ Profondeur = 1; Pid = 101; Nom = 'cmd' + [char]0x202E + '.exe'; Score = 8; Raisons = 'r'; Chemin = 'C:\cmd.exe'; LigneCommande = "cmd /c`r`nwhoami" }))
+    $nds.Add((& $nouv $noT @{ Profondeur = 2; Pid = 4; Nom = 'System'; Score = 6 }))
+    $forte = & $nouv $chT @{ Racine = 'r1'; Score = 14; Resume = 'chaîne' + [char]0x200B; Depuis = '10:00'; Noeuds = $nds }
+    $faible = & $nouv $chT @{ Racine = 'r2'; Score = 3; Resume = 'b'; Depuis = '09:00' }
+    $nulle = & $nouv $chT @{ Racine = 'r3'; Score = 0; Resume = 'c'; Depuis = '08:00' }
+    $lch = New-Object "Collections.Generic.List[$($chT.FullName)]"; foreach ($x in $faible, $nulle, $forte) { $lch.Add($x) }
+    $susL = $vch.GetMethod('Suspectes').Invoke($null, [object[]](, $lch.PSObject.BaseObject)); $sus = @($susL)
+    Cas 'Chaînes : score nul écarté (comme aujourd''hui), plus lourdes d''abord' ((@($sus | ForEach-Object { $_.Racine }) -join ',') -eq 'r1,r2') (@($sus | ForEach-Object { $_.Racine }) -join ',')
+    Cas 'Chaînes : au-delà de 12 critique, nœud qui compte en rouge, nœud à 0 neutre' ($vch.GetMethod('Gravite').Invoke($null, @($forte)) -eq 2 -and $vch.GetMethod('Gravite').Invoke($null, @($faible)) -eq 1 -and $vch.GetMethod('GraviteNoeud').Invoke($null, @($forte, $nds[1])) -eq 2 -and $vch.GetMethod('GraviteNoeud').Invoke($null, @($forte, $nds[0])) -eq 0)
+    $actionsN = { param($n) (@($vch.GetMethod('Actions').Invoke($null, @($n))) -join ',') }
+    Cas 'Chaînes : actions du menu d''aujourd''hui, PID système sans tuer ni suspendre' ((& $actionsN $nds[1]) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier' -and (& $actionsN $nds[2]) -eq 'copier') "$(& $actionsN $nds[1]) / $(& $actionsN $nds[2])"
+    $txtN = (@($vch.GetMethod('Detail').Invoke($null, @($nds[1])) | ForEach-Object { $_.Texte }) + @([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($susL, $true, $false, '2026-11-10 10:00:00', $null)), [string]$vch.GetMethod('Sous').Invoke($null, @($forte)))) -join '|'
+    Cas 'Chaînes : détail et résumé neutralisés' (-not ($txtN -match "[\u202E\u200B\r\n]") -and $txtN.Contains('2 chaîne(s) suspecte(s), dont 1 au-delà')) $txtN
+    $copieN = [string]$vch.GetMethod('Copie').Invoke($null, @($nds[1]))
+    Cas 'Chaînes : copie sans retrait, valeur d''origine échappée' ($copieN -ceq ("cmd\u202E.exe`t101`t8`tr`tcmd /c\r\nwhoami")) $copieN
+    $vchVide = New-Object "Collections.Generic.List[$($chT.FullName)]"
+    Cas 'Chaînes : avant lecture « Lecture en cours… », lue et vide « aucune chaîne suspecte »' (([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($vchVide.PSObject.BaseObject, $false, $false, $null, $null))) -eq 'Lecture en cours…' -and ([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($vchVide.PSObject.BaseObject, $true, $false, $null, $null))).StartsWith('Aucune chaîne suspecte'))
+    $guiSrc = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'Connexions : aucun compteur de filtre avant la première lecture (« 0 » ferait croire à une liste vide)' ($fluentSrc.Contains('(lu ? "  " + VueConnexionsFluent.Filtrer(flux, n).Count : "")'))
+    Cas 'Connexions et Chaînes : seules les réponses que la question d''AgirSur sait dire partent de la coquille' ($guiSrc.Contains('var permises = new[] { "tuer", "tuerChaine", "suspendre", "reprendre", "quarantaine", "isolerProgramme" };') -and $guiSrc.Contains('permises.Contains(action)) AgirSur(element, action);'))
+    Cas 'Connexions et Chaînes d''aujourd''hui : cellules et info-bulles neutralisées, copie échappée' ($guiSrc.Contains('var item = new ListViewItem(brutes.Select(v => Canal.Visible(v ?? "")).ToArray())') -and $guiSrc.Contains('retrait + Canal.Visible(n.Nom)') -and ([regex]::Matches($guiSrc, 'item\.SubItems\[k\]\.Tag = Canal\.Echappe\(brutes\[k\]\);')).Count -eq 2 -and $guiSrc.Contains('s.Tag as string ?? s.Text'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -248,10 +304,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name

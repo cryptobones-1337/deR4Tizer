@@ -479,6 +479,9 @@ namespace DeR4Tizer
             if (cle == "Détection") { zone.Content = new PageDetectionFluent(); return; }
             // Événements en WPF (U3b)
             if (cle == "Événements") { zone.Content = new PageEvenementsFluent(); return; }
+            // Connexions et Chaînes en WPF (U4a) : actions par la fenêtre d'aujourd'hui (mêmes questions)
+            if (cle == "Connexions") { zone.Content = new PageConnexionsFluent(source as ISourceReponses); return; }
+            if (cle == "Chaînes") { zone.Content = new PageChainesFluent(source as ISourceReponses); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -1621,6 +1624,461 @@ namespace DeR4Tizer
                 pile.Children.Add(t);
             }
             detail.Content = pile;
+        }
+    }
+    // Actions de réponse que les pages Connexions et Chaînes de la coquille (U4a) demandent à la fenêtre d'aujourd'hui :
+    // mêmes méthodes, mêmes contrôles et mêmes questions que les menus de ses listes
+    public interface ISourceReponses
+    {
+        void AgirElement(object element, string action);
+        void BloquerConnexion(FluxInfo f, bool ipSeulement);
+        void OuvrirEmplacement(string chemin);
+    }
+
+    // Décisions pures communes aux pages Connexions et Chaînes de la coquille (U4a), testées par tests\rendu-pilote.ps1
+    public static class VueReseauFluent
+    {
+        public static string Libelle(string action)
+        {
+            switch (action)
+            {
+                case "bloquer": return L.T("Bloquer (nom dans le fichier hosts, sinon IP au pare-feu)");
+                case "bloquerIp": return L.T("Bloquer l'IP au pare-feu");
+                case "isolerProgramme": return L.T("Isoler ce programme du réseau");
+                case "suspendre": return L.T("Suspendre le processus");
+                case "reprendre": return L.T("Reprendre le processus");
+                case "tuer": return L.T("Tuer le processus");
+                case "tuerChaine": return L.T("Tuer ce processus et toute sa descendance");
+                case "quarantaine": return L.T("Mettre le programme en quarantaine");
+                case "emplacement": return L.T("Ouvrir l'emplacement du programme");
+                case "copier": return L.T("Copier");
+            }
+            return action;
+        }
+
+        // Collecte en panne qui rend la liste incomplète : dite, jamais une liste vide qui rassure (null si elle tourne)
+        public static string Panne(Etat e, string collecte)
+        {
+            var c = Couverture.EnPannes(e).FirstOrDefault(x => x.Id == collecte);
+            return c == null ? null : Canal.Visible(Couverture.Decrire(c));
+        }
+
+        // Début du résumé selon la lecture d'etat.json : null quand l'état est lu et à jour
+        public static string Lecture(bool lu, bool illisible, bool dejaAffiche)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            if (!illisible) return null;
+            return dejaAffiche
+                ? (en ? "Service state unreadable or missing (etat.json): the last display is kept; it may be out of date." : "État du service illisible ou absent (etat.json) : dernier affichage gardé, peut-être dépassé.")
+                : (en ? "Service state unreadable or missing (etat.json): nothing is concluded." : "État du service illisible ou absent (etat.json) : rien n'est conclu.");
+        }
+
+        // Valeurs copiées, séparées par des tabulations : d'origine, échappées (audit de #139, S139-01)
+        public static string Copie(params string[] valeurs)
+        {
+            return string.Join("\t", valeurs.Select(Canal.Echappe));
+        }
+
+        internal static void Copier(string texte)
+        {
+            try { Clipboard.SetText(texte); } catch { }
+        }
+    }
+
+    // Décisions pures de la page Connexions de la coquille (U4a). Tout ce qui vient d'etat.json (noms de programmes,
+    // destinations, signataires, lignes de commande, raisons) peut avoir été choisi par un programme : neutralisé
+    public static class VueConnexionsFluent
+    {
+        public const int Maximum = 500;
+        public static readonly string[] Filtres = { "Toutes", "Suspectes", "Menaces" };
+
+        // 2 : menace connue ; 1 : score au seuil d'alerte (3) ; 0 : le reste. Le score est toujours écrit
+        public static int Gravite(FluxInfo f)
+        {
+            if (f == null) return 0;
+            if ((f.Raisons ?? "").Contains("MENACE")) return 2;
+            return f.Score >= Commun.SeuilAlerte ? 1 : 0;
+        }
+
+        public static bool Bloquee(FluxInfo f) { return f != null && (f.Raisons ?? "").Contains("BLOQUÉ"); }
+
+        public static string Cle(FluxInfo f) { return f.Cle ?? (f.Pid + "|" + f.Ip + "|" + f.Port); }
+
+        // Filtre 0 : toutes ; 1 : suspectes (score de 1 au moins, ou menace) ; 2 : menaces. Plus graves d'abord, puis score
+        public static List<FluxInfo> Filtrer(IList<FluxInfo> flux, int filtre)
+        {
+            return (flux ?? new List<FluxInfo>()).Where(f => f != null && (filtre == 0 || (filtre == 1 && (f.Score >= 1 || Gravite(f) == 2)) || (filtre == 2 && Gravite(f) == 2)))
+                .OrderByDescending(Gravite).ThenByDescending(f => f.Score).ThenBy(f => f.Processus ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(Cle, StringComparer.Ordinal).ToList();
+        }
+
+        static string DestinationBrute(FluxInfo f) { return string.IsNullOrEmpty(f.NomDns) ? f.Ip : f.NomDns + " (" + f.Ip + ")"; }
+
+        public static string Destination(FluxInfo f) { return Canal.Visible(DestinationBrute(f)); }
+
+        // Actions offertes, dans l'ordre des boutons : celles du menu d'aujourd'hui, selon ce que la ligne permet
+        public static List<string> Actions(FluxInfo f)
+        {
+            var l = new List<string>();
+            if (f == null) return l;
+            bool ip = !string.IsNullOrEmpty(f.Ip), nom = !string.IsNullOrEmpty(f.NomDns), chemin = !string.IsNullOrEmpty(f.Chemin), pid = f.Pid > 4;
+            if (ip || nom) l.Add("bloquer");
+            if (ip && nom) l.Add("bloquerIp");
+            if (chemin) l.Add("isolerProgramme");
+            if (pid) { l.Add("suspendre"); l.Add("reprendre"); l.Add("tuer"); }
+            if (chemin) { l.Add("quarantaine"); l.Add("emplacement"); }
+            l.Add("copier");
+            return l;
+        }
+
+        public static string Sous(FluxInfo f)
+        {
+            bool en = L.En;
+            return "PID " + f.Pid + "  ·  port " + f.Port + "  ·  " + Canal.Visible(string.IsNullOrEmpty(f.Signataire) ? (en ? "unsigned" : "non signé") : f.Signataire)
+                + (string.IsNullOrEmpty(f.PremiereVue) ? "" : "  ·  " + (en ? "seen since " : "vu depuis ") + Canal.Visible(f.PremiereVue));
+        }
+
+        public static List<LigneDetail> Detail(FluxInfo f)
+        {
+            bool en = L.En;
+            var l = new List<LigneDetail>();
+            if (f == null) return l;
+            Action<string, string, bool> ajout = (t, v, chasse) => { if (!string.IsNullOrEmpty(v)) l.Add(new LigneDetail { Titre = t, Texte = Canal.Visible(v), Chasse = chasse }); };
+            ajout(en ? "Destination" : "Destination", DestinationBrute(f), true);
+            ajout(en ? "Port" : "Port", f.Port.ToString(), false);
+            ajout("PID", f.Pid.ToString(), false);
+            ajout(en ? "Launched by" : "Lancé par", f.Parent, false);
+            ajout(en ? "Connections" : "Connexions", f.Connexions > 0 ? f.Connexions.ToString() : null, false);
+            ajout(en ? "Program signer" : "Signataire du programme", string.IsNullOrEmpty(f.Signataire) ? (en ? "unsigned" : "non signé") : f.Signataire, false);
+            ajout(en ? "Seen since" : "Vu depuis", f.PremiereVue, false);
+            ajout(en ? "Reasons" : "Raisons", f.Raisons, false);
+            ajout(en ? "Path" : "Chemin", f.Chemin, true);
+            ajout(en ? "Command line" : "Ligne de commande", f.LigneCommande, true);
+            ajout(en ? "File origin" : "Origine du fichier", f.Origine, false);
+            return l;
+        }
+
+        // Mêmes colonnes que la liste d'aujourd'hui
+        public static string Copie(FluxInfo f)
+        {
+            return VueReseauFluent.Copie(f.Score.ToString(), f.Processus, f.Parent ?? "", f.Pid.ToString(), DestinationBrute(f), f.Port.ToString(), f.Signataire, f.PremiereVue, f.Raisons);
+        }
+
+        public static string Resume(IList<FluxInfo> flux, bool lu, bool illisible, string misAJour, string panne)
+        {
+            bool en = L.En;
+            string lecture = VueReseauFluent.Lecture(lu, illisible, flux != null && flux.Count > 0);
+            if (lecture != null && (!lu || flux == null || flux.Count == 0)) return lecture;
+            var l = flux ?? new List<FluxInfo>();
+            int suspectes = l.Count(f => f.Score >= 1 || Gravite(f) == 2), menaces = l.Count(f => Gravite(f) == 2);
+            string texte = string.Format(en ? "{0} live outbound connection(s), {1} suspicious, {2} to a known threat." : "{0} connexion(s) sortante(s) en direct, dont {1} suspecte(s) et {2} vers une menace connue.", l.Count, suspectes, menaces);
+            if (!string.IsNullOrEmpty(misAJour)) texte += " " + (en ? "State of " : "État du ") + Canal.Visible(misAJour) + ".";
+            if (panne != null) texte += "\n" + (en ? "Incomplete list: " : "Liste incomplète : ") + panne;
+            return lecture != null ? lecture + "\n" + texte : texte;
+        }
+    }
+
+    // Décisions pures de la page Chaînes de la coquille (U4a) : mêmes seuils que la page d'aujourd'hui (alerte au-delà de
+    // 12 sur toute la chaîne) ; noms et lignes de commande neutralisés
+    public static class VueChainesFluent
+    {
+        public const int SeuilChaine = 12;
+
+        public static int Gravite(Chaine c) { return c == null ? 0 : c.Score >= SeuilChaine ? 2 : c.Score >= Commun.SeuilAlerte ? 1 : 0; }
+
+        // Même couleur que la liste d'aujourd'hui : un nœud qui compte dans une chaîne au-delà du seuil est critique
+        public static int GraviteNoeud(Chaine c, NoeudChaine n)
+        {
+            if (n == null || n.Score <= 0) return 0;
+            return c != null && c.Score >= SeuilChaine ? 2 : n.Score >= Commun.SeuilAlerte ? 1 : 0;
+        }
+
+        public static string Cle(Chaine c) { return (c.Racine ?? "") + "|" + (c.Depuis ?? ""); }
+
+        // Chaînes au score positif, comme la page d'aujourd'hui ; les plus lourdes d'abord
+        public static List<Chaine> Suspectes(IList<Chaine> chaines)
+        {
+            return (chaines ?? new List<Chaine>()).Where(c => c != null && c.Score > 0).OrderByDescending(c => c.Score).ThenBy(Cle, StringComparer.Ordinal).ToList();
+        }
+
+        public static List<string> Actions(NoeudChaine n)
+        {
+            var l = new List<string>();
+            if (n == null) return l;
+            if (n.Pid > 4) { l.Add("tuerChaine"); l.Add("suspendre"); }
+            if (!string.IsNullOrEmpty(n.Chemin)) { l.Add("quarantaine"); l.Add("isolerProgramme"); l.Add("emplacement"); }
+            l.Add("copier");
+            return l;
+        }
+
+        public static List<LigneDetail> Detail(NoeudChaine n)
+        {
+            bool en = L.En;
+            var l = new List<LigneDetail>();
+            if (n == null) return l;
+            Action<string, string, bool> ajout = (t, v, chasse) => { if (!string.IsNullOrEmpty(v)) l.Add(new LigneDetail { Titre = t, Texte = Canal.Visible(v), Chasse = chasse }); };
+            ajout("PID", n.Pid.ToString(), false);
+            ajout("Score", n.Score > 0 ? n.Score.ToString() : null, false);
+            ajout(en ? "Reasons" : "Raisons", n.Raisons, false);
+            ajout(en ? "Path" : "Chemin", n.Chemin, true);
+            ajout(en ? "Command line" : "Ligne de commande", n.LigneCommande, true);
+            return l;
+        }
+
+        // Mêmes colonnes que la liste d'aujourd'hui, sans le retrait de l'arbre
+        public static string Copie(NoeudChaine n)
+        {
+            return VueReseauFluent.Copie(n.Nom, n.Pid.ToString(), n.Score > 0 ? n.Score.ToString() : "", n.Raisons, n.LigneCommande);
+        }
+
+        public static string Sous(Chaine c)
+        {
+            bool en = L.En;
+            int n = (c.Noeuds ?? new List<NoeudChaine>()).Count;
+            return (en ? "since " : "depuis ") + Canal.Visible(c.Depuis) + "  ·  " + n + " " + (en ? "process(es)" : "processus");
+        }
+
+        public static string Resume(IList<Chaine> suspectes, bool lu, bool illisible, string misAJour, string panne)
+        {
+            bool en = L.En;
+            string lecture = VueReseauFluent.Lecture(lu, illisible, suspectes != null && suspectes.Count > 0);
+            if (lecture != null && (!lu || suspectes == null || suspectes.Count == 0)) return lecture;
+            var l = suspectes ?? new List<Chaine>();
+            string texte = l.Count == 0 ? (en ? "No suspicious chain right now." : "Aucune chaîne suspecte en ce moment.")
+                : string.Format(en ? "{0} suspicious chain(s), {1} above the alert threshold (12)." : "{0} chaîne(s) suspecte(s), dont {1} au-delà du seuil d'alerte (12).", l.Count, l.Count(c => c.Score >= SeuilChaine));
+            texte += " " + (en ? "The score adds up over the whole chain: a series of actions that are harmless one by one becomes visible." : "Le score s'additionne sur toute la chaîne : une suite d'actions banales une à une devient visible.");
+            if (!string.IsNullOrEmpty(misAJour)) texte += " " + (en ? "State of " : "État du ") + Canal.Visible(misAJour) + ".";
+            if (panne != null) texte += "\n" + (en ? "Incomplete list: " : "Liste incomplète : ") + panne;
+            return lecture != null ? lecture + "\n" + texte : texte;
+        }
+    }
+
+    // Lecture d'etat.json hors du fil de l'interface, une à la fois, commune aux pages Connexions et Chaînes (U4a)
+    abstract class PageEtatServiceFluent : Grid
+    {
+        protected readonly ISourceReponses source;
+        protected readonly TextBlock resume = new TextBlock();
+        protected readonly StackPanel outils = new StackPanel();
+        protected readonly StackPanel liste = new StackPanel();
+        protected readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        protected bool lu, illisible;   // rien n'est dit « vide » avant la première lecture
+        protected string misAJour, panne;
+        protected string vu;
+        int enCours, chargement;
+        readonly string collecte;
+
+        protected PageEtatServiceFluent(ISourceReponses source, string collecte, bool avecOutils)
+        {
+            this.source = source;
+            this.collecte = collecte;
+            Briques.Disposer(this, resume, avecOutils ? outils : null, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var e = Commun.Lire<Etat>("etat.json");
+                    string p = e == null ? null : VueReseauFluent.Panne(e, collecte);
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } Afficher(); } }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        // Illisible : la dernière liste reste, plutôt qu'un vide qui rassure
+        protected abstract void Recevoir(Etat e);
+        protected abstract void Afficher();
+
+        protected void Actions(StackPanel pile, List<string> actions, Action<string> agir)
+        {
+            pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+            foreach (var a in actions)
+            {
+                string act = a;
+                // Sans la fenêtre d'aujourd'hui (rendu hors écran), seule la copie reste : rien d'autre ne serait demandé
+                if (source == null && act != "copier") continue;
+                pile.Children.Add(Briques.Action(VueReseauFluent.Libelle(act), act == "bloquer" || act == "tuerChaine", (s, e) => agir(act)));
+            }
+        }
+
+        protected static void Lignes(StackPanel pile, List<LigneDetail> lignes)
+        {
+            foreach (var l in lignes)
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
+            }
+        }
+
+        protected void Vide(string texte)
+        {
+            liste.Children.Add(new TextBlock { Text = texte, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+        }
+    }
+
+    // Page Connexions en WPF (U4a) : flux sortants en direct lus dans etat.json, filtres, panneau de détails ; mêmes
+    // actions et mêmes questions que le menu de la liste d'aujourd'hui (ISourceReponses)
+    class PageConnexionsFluent : PageEtatServiceFluent
+    {
+        List<FluxInfo> flux = new List<FluxInfo>();
+        int filtre;
+        string choisie;
+
+        public PageConnexionsFluent(ISourceReponses source) : base(source, "Connexions", true) { Afficher(); }
+
+        protected override void Recevoir(Etat e) { flux = e.Flux ?? new List<FluxInfo>(); }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueConnexionsFluent.Resume(flux, lu, illisible, misAJour, panne);
+            resume.Foreground = Jetons.Pinceau(illisible || panne != null ? Jetons.Attention : flux.Any(f => VueConnexionsFluent.Gravite(f) == 2) ? Jetons.Danger : Jetons.TexteSecondaire);
+            var lignes = VueConnexionsFluent.Filtrer(flux, filtre);
+            var x0 = lignes.FirstOrDefault(f => VueConnexionsFluent.Cle(f) == choisie) ?? lignes.FirstOrDefault();
+            choisie = x0 == null ? null : VueConnexionsFluent.Cle(x0);
+            string signature = filtre + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", flux.Select(f => VueConnexionsFluent.Cle(f) + "|" + f.Score + "|" + f.Raisons + "|" + f.Connexions));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var filtres = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            for (int k = 0; k < VueConnexionsFluent.Filtres.Length; k++)
+            {
+                int n = k;
+                bool actif = n == filtre;
+                var b = new Button
+                {
+                    // Avant la première lecture, aucun compteur : « 0 » ferait croire à une liste vide
+                    Content = L.T(VueConnexionsFluent.Filtres[k]) + (lu ? "  " + VueConnexionsFluent.Filtrer(flux, n).Count : ""), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur),
+                    BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                b.Click += (s, e) => { filtre = n; choisie = null; Afficher(); };
+                filtres.Children.Add(b);
+            }
+            outils.Children.Add(filtres);
+            liste.Children.Clear();
+            // Avant la première lecture, le résumé dit « Lecture en cours… » ; liste vide après lecture : le résumé dit pourquoi
+            if (lu && lignes.Count == 0 && flux.Count > 0) Vide(L.En ? "Nothing for this filter." : "Rien pour ce filtre.");
+            foreach (var f in lignes.Take(VueConnexionsFluent.Maximum))
+            {
+                string cle = VueConnexionsFluent.Cle(f);
+                liste.Children.Add(Briques.Ligne(Canal.Visible(f.Processus) + "  →  " + VueConnexionsFluent.Destination(f), "score " + f.Score, VueConnexionsFluent.Sous(f),
+                    VueConnexionsFluent.Gravite(f), cle == choisie, VueConnexionsFluent.Bloquee(f), () => { choisie = cle; Afficher(); }));
+            }
+            if (lignes.Count > VueConnexionsFluent.Maximum)
+                liste.Children.Add(new TextBlock { Text = string.Format(L.En ? "The {0} most suspicious are shown." : "Les {0} plus suspectes sont affichées.", VueConnexionsFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            Detailler(x0);
+        }
+
+        void Detailler(FluxInfo f)
+        {
+            if (f == null) { detail.Content = new TextBlock { Text = L.En ? "Select a connection to read its detail and act on it." : "Sélectionnez une connexion pour lire son détail et agir.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            int g = VueConnexionsFluent.Gravite(f);
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(f.Processus), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = "score " + f.Score + (VueConnexionsFluent.Bloquee(f) ? (L.En ? "  ·  blocked" : "  ·  bloquée") : ""), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(g)), Margin = new Thickness(0, 2, 0, 4) });
+            Lignes(pile, VueConnexionsFluent.Detail(f));
+            Actions(pile, VueConnexionsFluent.Actions(f), a => Agir(f, a));
+            detail.Content = pile;
+        }
+
+        void Agir(FluxInfo f, string action)
+        {
+            if (action == "copier") { VueReseauFluent.Copier(VueConnexionsFluent.Copie(f)); return; }
+            if (source == null) return;
+            if (action == "bloquer") source.BloquerConnexion(f, false);
+            else if (action == "bloquerIp") source.BloquerConnexion(f, true);
+            else if (action == "emplacement") source.OuvrirEmplacement(f.Chemin);
+            else source.AgirElement(f, action);
+            Charger();
+        }
+    }
+
+    // Page Chaînes en WPF (U4a) : chaînes de processus lues dans etat.json, arbre dans le panneau de détails ; mêmes
+    // actions et mêmes questions que le menu de la liste d'aujourd'hui (ISourceReponses)
+    class PageChainesFluent : PageEtatServiceFluent
+    {
+        List<Chaine> chaines = new List<Chaine>();
+        string choisie;
+        int? noeud;             // PID du processus choisi dans l'arbre
+
+        public PageChainesFluent(ISourceReponses source) : base(source, "Processus", false) { Afficher(); }
+
+        protected override void Recevoir(Etat e) { chaines = VueChainesFluent.Suspectes(e.Chaines); }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueChainesFluent.Resume(chaines, lu, illisible, misAJour, panne);
+            resume.Foreground = Jetons.Pinceau(illisible || panne != null ? Jetons.Attention : chaines.Any(c => c.Score >= VueChainesFluent.SeuilChaine) ? Jetons.Danger : Jetons.TexteSecondaire);
+            var c0 = chaines.FirstOrDefault(c => VueChainesFluent.Cle(c) == choisie) ?? chaines.FirstOrDefault();
+            choisie = c0 == null ? null : VueChainesFluent.Cle(c0);
+            var noeuds = c0 == null ? new List<NoeudChaine>() : (c0.Noeuds ?? new List<NoeudChaine>());
+            var n0 = noeuds.FirstOrDefault(n => n.Pid == noeud) ?? noeuds.OrderByDescending(n => n.Score).FirstOrDefault();
+            noeud = n0 == null ? (int?)null : n0.Pid;
+            string signature = choisie + "#" + noeud + "#" + resume.Text + "#" + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Select(n => n.Pid + ":" + n.Score))));
+            if (signature == vu) return;
+            vu = signature;
+            liste.Children.Clear();
+            // Avant la première lecture, le résumé dit « Lecture en cours… » ; liste vide après lecture : le résumé le dit
+            foreach (var c in chaines)
+            {
+                string cle = VueChainesFluent.Cle(c);
+                liste.Children.Add(Briques.Ligne(Canal.Visible(c.Resume), "score " + c.Score, VueChainesFluent.Sous(c), VueChainesFluent.Gravite(c), cle == choisie, false, () => { choisie = cle; noeud = null; Afficher(); }));
+            }
+            Detailler(c0, n0);
+        }
+
+        void Detailler(Chaine c, NoeudChaine n0)
+        {
+            bool en = L.En;
+            if (c == null) { detail.Content = new TextBlock { Text = en ? "Select a chain to read who launched what." : "Sélectionnez une chaîne pour lire qui a lancé quoi.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(c.Resume), FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = "score " + c.Score + "  ·  " + (en ? "alert above 12" : "alerte au-delà de 12"), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(VueChainesFluent.Gravite(c))), Margin = new Thickness(0, 2, 0, 4) });
+            pile.Children.Add(Briques.Titre(en ? "Who launched what" : "Qui a lancé quoi", 10));
+            foreach (var n in c.Noeuds ?? new List<NoeudChaine>())
+            {
+                int pid = n.Pid;
+                int g = VueChainesFluent.GraviteNoeud(c, n);
+                var ligne = new Border
+                {
+                    Background = Jetons.Pinceau(n == n0 ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(4), Padding = new Thickness(8, 3, 8, 3),
+                    Margin = new Thickness(Math.Min(Math.Max(n.Profondeur, 0), 8) * 14, 0, 0, 2), Cursor = Cursors.Hand
+                };
+                var texte = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis };
+                texte.Inlines.Add(new System.Windows.Documents.Run((n.Profondeur > 0 ? "└ " : "") + Canal.Visible(n.Nom)) { Foreground = Jetons.Pinceau(n.Score > 0 ? Jetons.Texte : Jetons.TexteSecondaire) });
+                texte.Inlines.Add(new System.Windows.Documents.Run("  " + pid + (n.Score > 0 ? "  ·  +" + n.Score : "")) { Foreground = Jetons.Pinceau(n.Score > 0 ? Briques.Couleur(g) : Jetons.TexteSecondaire), FontSize = 12 });
+                ligne.Child = texte;
+                ligne.MouseLeftButtonUp += (s, e) => { noeud = pid; Afficher(); };
+                pile.Children.Add(ligne);
+            }
+            if (n0 != null)
+            {
+                pile.Children.Add(new TextBlock { Text = Canal.Visible(n0.Nom), FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 14, 0, 0), TextWrapping = TextWrapping.Wrap });
+                Lignes(pile, VueChainesFluent.Detail(n0));
+                Actions(pile, VueChainesFluent.Actions(n0), a => Agir(n0, a));
+            }
+            detail.Content = pile;
+        }
+
+        void Agir(NoeudChaine n, string action)
+        {
+            if (action == "copier") { VueReseauFluent.Copier(VueChainesFluent.Copie(n)); return; }
+            if (source == null) return;
+            if (action == "emplacement") source.OuvrirEmplacement(n.Chemin);
+            else source.AgirElement(n, action);
+            Charger();
         }
     }
 }

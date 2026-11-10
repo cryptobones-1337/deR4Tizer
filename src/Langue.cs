@@ -27,7 +27,7 @@ namespace DeR4Tizer
             { "Rien d'avéré, {0} point à surveiller", "Nothing confirmed, {0} point to watch" },
             { "Rien d'avéré, {0} points à surveiller", "Nothing confirmed, {0} points to watch" },
             { "Aucun problème relevé", "No issue found" }, { "À traiter", "To act on" }, { "À surveiller", "To watch" },
-            { "Toutes", "All" }, { "Critiques", "Critical" }, { "Infos", "Info" }, { "Critique", "Critical" }, { "Alerte", "Alert" }, { "Info", "Info" },
+            { "Toutes", "All" }, { "Suspectes", "Suspicious" }, { "Critiques", "Critical" }, { "Infos", "Info" }, { "Critique", "Critical" }, { "Alerte", "Alert" }, { "Info", "Info" },
             { "Aucune alerte de ce niveau.", "No alert at this level." }, { "Les {0} plus récentes sont affichées.", "The {0} most recent are shown." },
             { "Agir", "Act" }, { "Technique", "Technique" }, { "Que faire", "What to do" },
             { "Lecture en cours…", "Reading…" }, { "MITRE", "MITRE" }, { "max {0} par tranche, hauteur en racine carrée", "max {0} per slice, square-root height" }, { "Incidents de corrélation", "Correlation incidents" },
