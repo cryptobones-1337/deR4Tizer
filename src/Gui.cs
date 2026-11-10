@@ -70,6 +70,26 @@ namespace DeR4Tizer
 
         public static void MajMenaces() { Canal.Executer(new Commande { Action = "majMenaces" }); }
 
+        // Baseline (U5b) : mêmes questions et même commande que les boutons d'aujourd'hui, pour les deux interfaces
+        public const string QuestionRecommande = "Appliquer les règles du profil « recommandé » par la stratégie de groupe locale ?\n\nToutes sont réversibles (bouton Annuler).";
+        public const string QuestionRenforce = "Le profil « renforcé » peut gêner certains logiciels (voir la colonne Compatibilité).\n\nAppliquer quand même ?";
+        public const string QuestionAnnulerRegles = "Revenir aux valeurs d'origine pour les règles sélectionnées ?";
+        public const string QuestionToutAnnuler = "Revenir aux valeurs d'origine pour toutes les règles « recommandé » et « renforcé » ?\n(La journalisation reste active.)";
+
+        // Seules les trois opérations d'aujourd'hui ; une règle à appliquer ou à annuler doit être désignée
+        public static bool Baseline(string operation, string cible, string question)
+        {
+            if (operation != "appliquer" && operation != "annuler" && operation != "evaluer") return false;
+            if (operation != "evaluer" && string.IsNullOrEmpty(cible))
+            {
+                MessageBox.Show("Sélectionnez d'abord une ou plusieurs règles (Ctrl+clic).", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+            if (question != null && MessageBox.Show(question, "deR4Tizer : baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            Canal.Executer(new Commande { Action = "baseline", Valeur = operation, Cible = cible });
+            return true;
+        }
+
         public static readonly string[] Reglages = { "BlocageAutoMenaces", "ReponseAutoRancongiciel", "ListesRestreintes" };
 
         public static void ChangerReglage(string reglage, bool valeur)
@@ -926,18 +946,15 @@ namespace DeR4Tizer
             lvBaseline.Colonnes("Règle", 420, "État", 120, "Actuel", 170, "Attendu", 170, "Compatibilité", 420);
             lvBaseline.SelectedIndexChanged += (s, e) => DetaillerRegle();
             var btnRecommande = new BoutonNeon("Appliquer le profil recommandé", Theme.Cyan);
-            btnRecommande.Click += (s, e) => OperationBaseline("appliquer", "recommandé",
-                "Appliquer les règles du profil « recommandé » par la stratégie de groupe locale ?\n\nToutes sont réversibles (bouton Annuler).");
+            btnRecommande.Click += (s, e) => OperationBaseline("appliquer", "recommandé", ActionsProtection.QuestionRecommande);
             var btnRenforce = new BoutonNeon("Appliquer le profil renforcé…", Theme.Magenta);
-            btnRenforce.Click += (s, e) => OperationBaseline("appliquer", "renforcé",
-                "Le profil « renforcé » peut gêner certains logiciels (voir la colonne Compatibilité).\n\nAppliquer quand même ?");
+            btnRenforce.Click += (s, e) => OperationBaseline("appliquer", "renforcé", ActionsProtection.QuestionRenforce);
             var btnSelection = new BoutonNeon("Appliquer la sélection", Theme.Cyan);
             btnSelection.Click += (s, e) => OperationBaseline("appliquer", ReglesSelectionnees(), null);
             var btnAnnulerSel = new BoutonNeon("Annuler la sélection", Theme.TexteDim);
-            btnAnnulerSel.Click += (s, e) => OperationBaseline("annuler", ReglesSelectionnees(), "Revenir aux valeurs d'origine pour les règles sélectionnées ?");
+            btnAnnulerSel.Click += (s, e) => OperationBaseline("annuler", ReglesSelectionnees(), ActionsProtection.QuestionAnnulerRegles);
             var btnToutAnnuler = new BoutonNeon("Tout annuler", Theme.TexteDim);
-            btnToutAnnuler.Click += (s, e) => OperationBaseline("annuler", "recommandé,renforcé",
-                "Revenir aux valeurs d'origine pour toutes les règles « recommandé » et « renforcé » ?\n(La journalisation reste active.)");
+            btnToutAnnuler.Click += (s, e) => OperationBaseline("annuler", "recommandé,renforcé", ActionsProtection.QuestionToutAnnuler);
             var btnReevaluer = new BoutonNeon("Réévaluer", Theme.TexteDim);
             btnReevaluer.Click += (s, e) => OperationBaseline("evaluer", "", null);
             var pageBaseline = Page("Baseline de sécurité", "Inspirée des baselines Intune et Microsoft, appliquée par la stratégie de groupe locale. La journalisation est appliquée automatiquement ; le reste à votre demande.",
@@ -1729,9 +1746,9 @@ namespace DeR4Tizer
                 var bilan = new ListViewItem(new[]
                 {
                     exp.Exposee ? L.T("PC EXPOSÉ À INTERNET") : L.T("Aucune exposition détectée"),
-                    exp.Exposee ? string.Join(" ; ", exp.Raisons ?? new List<string>())
+                    exp.Exposee ? string.Join(" ; ", (exp.Raisons ?? new List<string>()).Select(Canal.Visible))
                         : L.T("ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC"),
-                    "", exp.Base ?? ""
+                    "", Canal.Visible(exp.Base)
                 });
                 if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = Theme.Vert;
                 lvParefeu.Items.Add(bilan);
@@ -1739,8 +1756,9 @@ namespace DeR4Tizer
                 {
                     var item = new ListViewItem(new[]
                     {
-                        "Entrant " + e.Action + " : port " + e.PortLocal + " (" + e.Protocole + ")",
-                        "depuis " + e.Source + "  ·  " + e.Nombre + " paquet(s)", e.Programme ?? "", e.Premiere + " → " + e.Derniere
+                        // Programme et adresse source : neutralisés (U5b)
+                        "Entrant " + Canal.Visible(e.Action) + " : port " + e.PortLocal + " (" + Canal.Visible(e.Protocole) + ")",
+                        "depuis " + Canal.Visible(e.Source) + "  ·  " + e.Nombre + " paquet(s)", Canal.Visible(e.Programme), Canal.Visible(e.Premiere) + " → " + Canal.Visible(e.Derniere)
                     });
                     Colorer(item, e.Action == "ACCEPTÉ" ? Theme.FondCritique : Theme.FondAlerte, e.Action == "ACCEPTÉ" ? Theme.Rouge : Theme.Texte, e.Action == "ACCEPTÉ");
                     lvParefeu.Items.Add(item);
@@ -1753,10 +1771,11 @@ namespace DeR4Tizer
                 bool entrantAutorise = r.Sens == "entrant" && (r.Action ?? "").StartsWith("autoriser") && r.Operation != "supprimée";
                 var item = new ListViewItem(new[]
                 {
-                    "Règle " + r.Operation + " : " + r.Regle,
-                    r.Sens + ", " + r.Action + (string.IsNullOrEmpty(r.Ports) ? "" : ", ports " + r.Ports) + (string.IsNullOrEmpty(r.ProgrammeCible) ? "" : ", pour " + r.ProgrammeCible),
-                    Path.GetFileName(r.Auteur ?? ""), r.Heure
-                }) { ToolTipText = r.Auteur };
+                    // Nom de règle, programme visé et auteur : tout programme qui crée une règle les choisit ; neutralisés (U5b)
+                    "Règle " + Canal.Visible(r.Operation) + " : " + Canal.Visible(r.Regle),
+                    VueParefeuFluent.Description(r),
+                    Canal.Visible(VueParefeuFluent.Fichier(r.Auteur)), Canal.Visible(r.Heure)
+                }) { ToolTipText = Canal.Visible(r.Auteur) };
                 if (r.Operation == "toutes supprimées") Colorer(item, Theme.FondCritique, Theme.Rouge, true);
                 else if (entrantAutorise) Colorer(item, Theme.FondAttention, Theme.Texte, false);
                 else item.ForeColor = Theme.TexteDim;
@@ -1821,8 +1840,9 @@ namespace DeR4Tizer
                 lvBaseline.AjouterSection(noms[profil] + "  ·  " + score + " % conforme");
                 foreach (var r in b.Regles.Where(x => x.Profil == profil).OrderBy(x => x.Categorie))
                 {
-                    var item = new ListViewItem(new[] { r.Categorie + " : " + r.Titre, r.Etat + (r.Appliquee ? " ✓" : ""), r.Actuel, r.Attendu, r.Compat })
-                        { Tag = r, ToolTipText = r.Pourquoi };
+                    // Valeur actuelle lue dans le registre : neutralisée comme le reste (U5b)
+                    var item = new ListViewItem(new[] { Canal.Visible(r.Categorie + " : " + r.Titre), Canal.Visible(r.Etat) + (r.Appliquee ? " ✓" : ""), Canal.Visible(r.Actuel), Canal.Visible(r.Attendu), Canal.Visible(r.Compat) })
+                        { Tag = r, ToolTipText = Canal.Visible(r.Pourquoi) };
                     if (r.Etat == "conforme") item.ForeColor = Theme.Vert;
                     else if (r.Etat == "non conforme") Colorer(item, profil == "renforcé" ? Theme.Panneau : Theme.FondAttention, Theme.Texte, false);
                     else item.ForeColor = Theme.TexteDim;
@@ -1837,7 +1857,7 @@ namespace DeR4Tizer
             navBaseline.TexteBadge = rec + "%";
             navBaseline.CouleurBadge = rec >= 90 ? Theme.Vert : rec >= 50 ? Theme.Jaune : Theme.Rouge;
             navBaseline.Invalidate();
-            if (!string.IsNullOrEmpty(b.Message)) detailBaseline.Text = "Dernière opération : " + b.Message;
+            if (!string.IsNullOrEmpty(b.Message)) detailBaseline.Text = "Dernière opération : " + Canal.Visible(b.Message);
         }
 
         void RemplirExtensions(List<Extension> extensions)
@@ -1892,7 +1912,7 @@ namespace DeR4Tizer
             if (lvBaseline.SelectedItems.Count == 0) return;
             var r = lvBaseline.SelectedItems[0].Tag as EtatRegle;
             if (r == null) return;
-            detailBaseline.Text = r.Titre + " : " + r.Pourquoi + (string.IsNullOrEmpty(r.Compat) ? "" : "\nCompatibilité : " + r.Compat)
+            detailBaseline.Text = Canal.Visible(r.Titre) + " : " + Canal.Visible(r.Pourquoi) + (string.IsNullOrEmpty(r.Compat) ? "" : "\nCompatibilité : " + Canal.Visible(r.Compat))
                 + (r.Appliquee ? "\nAppliquée par deR4Tizer (réversible)." : "");
         }
 
@@ -1903,14 +1923,7 @@ namespace DeR4Tizer
 
         void OperationBaseline(string operation, string cible, string question)
         {
-            if (operation != "evaluer" && string.IsNullOrEmpty(cible))
-            {
-                MessageBox.Show("Sélectionnez d'abord une ou plusieurs règles (Ctrl+clic).", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            if (question != null && MessageBox.Show(question, "deR4Tizer : baseline", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            detailBaseline.Text = "Opération en cours…";
-            Canal.Executer(new Commande { Action = "baseline", Valeur = operation, Cible = cible });
+            if (ActionsProtection.Baseline(operation, cible, question)) detailBaseline.Text = "Opération en cours…";
         }
 
         void ChangerReglage(CheckBox c, string reglage)
