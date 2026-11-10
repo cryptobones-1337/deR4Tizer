@@ -46,6 +46,9 @@ namespace DeR4Tizer
 
         protected void Ligne(string[] valeurs, string niveau, object tag = null)
         {
+            // Noms TLS, chemins HTTP, noms DNS, messages des règles : écrits par le réseau ou par des fichiers, donc non fiables
+            // (U3a ; règle « toute chaîne non fiable passe par Visible »)
+            valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();
             var item = new ListViewItem(valeurs) { Tag = tag, ToolTipText = string.Join("  ", valeurs) };
             if (niveau == "Critique") { item.BackColor = Theme.FondCritique; item.ForeColor = Color.White; }
             else if (niveau == "Alerte") { item.BackColor = Theme.FondAlerte; item.ForeColor = Theme.Texte; }
@@ -115,6 +118,32 @@ namespace DeR4Tizer
         }
     }
 
+    // Ce que la page Détection d'aujourd'hui et celle de la coquille (U3a) ont en commun : résumé, réglage de l'IPS (par
+    // l'assistant élevé, avec sa confirmation), dossier des règles
+    public static class VueDetection
+    {
+        public static string Info(EtatIds ids, EtatDpi dpi, bool ips)
+        {
+            ids = ids ?? new EtatIds(); dpi = dpi ?? new EtatDpi();
+            return string.Format(L.En
+                ? "{0} rule(s) loaded, {1} ignored (unsupported options) · {2:N0} packets analysed · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} known malicious JA3 fingerprints"
+                : "{0} règle(s) chargée(s), {1} ignorée(s) (options non prises en charge) · {2:N0} paquets analysés · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} empreintes JA3 malveillantes connues",
+                ids.Regles, ids.Ignorees, ids.PaquetsAnalyses, ips ? (L.En ? "ON" : "ACTIF") : (L.En ? "off" : "inactif"),
+                dpi.SessionsTls, dpi.RequetesHttp, dpi.RequetesDns, dpi.EmpreintesJa3Connues);
+        }
+
+        public static void ChangerIps(bool actif)
+        {
+            Canal.Executer(new Commande { Action = "config", Cible = "Ips", Valeur = actif ? "true" : "false" });
+        }
+
+        public static void OuvrirDossierRegles()
+        {
+            string d = Path.Combine(Commun.Dossier, "regles");
+            try { Process.Start("explorer.exe", "\"" + d + "\""); } catch { }
+        }
+    }
+
     class PageDetection : PageEtat
     {
         readonly ComboBox cbVue = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Width = 220, Margin = new Padding(0, 3, 10, 3) };
@@ -132,14 +161,10 @@ namespace DeR4Tizer
             chkIps.CheckedChanged += (s, e) =>
             {
                 if (majCase) return;
-                Canal.Executer(new Commande { Action = "config", Cible = "Ips", Valeur = chkIps.Checked ? "true" : "false" });
+                VueDetection.ChangerIps(chkIps.Checked);
             };
             var btnRegles = new BoutonNeon("Dossier des règles", Theme.TexteDim);
-            btnRegles.Click += (s, e) =>
-            {
-                string d = Path.Combine(Commun.Dossier, "regles");
-                try { Process.Start("explorer.exe", "\"" + d + "\""); } catch { }
-            };
+            btnRegles.Click += (s, e) => VueDetection.OuvrirDossierRegles();
             Outils.Controls.AddRange(new Control[] { cbVue, chkIps, btnRegles });
         }
 
@@ -151,11 +176,7 @@ namespace DeR4Tizer
             majCase = true;
             chkIps.Checked = config.Ips;
             majCase = false;
-            Info.Text = string.Format(L.En
-                ? "{0} rule(s) loaded, {1} ignored (unsupported options) · {2:N0} packets analysed · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} known malicious JA3 fingerprints"
-                : "{0} règle(s) chargée(s), {1} ignorée(s) (options non prises en charge) · {2:N0} paquets analysés · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} empreintes JA3 malveillantes connues",
-                ids.Regles, ids.Ignorees, ids.PaquetsAnalyses, config.Ips ? (L.En ? "ON" : "ACTIF") : (L.En ? "off" : "inactif"),
-                dpi.SessionsTls, dpi.RequetesHttp, dpi.RequetesDns, dpi.EmpreintesJa3Connues);
+            Info.Text = VueDetection.Info(ids, dpi, config.Ips);
             int vue = cbVue.SelectedIndex;
             int haut = vue == vueAffichee && Lv.Items.Count > 0 ? Lv.TopItem.Index : 0;
             vueAffichee = vue;

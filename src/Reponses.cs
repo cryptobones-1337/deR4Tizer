@@ -56,7 +56,8 @@ namespace DeR4Tizer
                 case "Panique": return en ? "PANIC mode: Internet cut" : "Mode PANIQUE : Internet coupé";
                 case "Quarantaine": return en ? "File in quarantine" : "Fichier en quarantaine";
                 case "BlocageManuel": return en ? "Manual block" : "Blocage manuel";
-                default: return sorte ?? "?";
+                // Sorte inconnue (fichier écrit par le service, mais lu tel quel) : neutralisée (relecture de #137, constat 5)
+                default: return Canal.Visible(sorte ?? "?");
             }
         }
 

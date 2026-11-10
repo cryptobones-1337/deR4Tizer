@@ -151,6 +151,22 @@ try {
     foreach ($kv in @{ Quoi = 'q'; Cible = 'c:\a.exe (PID 9)'; Declencheur = 'LEU-001'; Depuis = '2026-11-09 10:00'; Echeance = '2026-11-09 14:00'; Etat = 'en cours'; Recuperation = 'r'; Bouton = 'Reprendre' }.GetEnumerator()) { $lrT.GetField($kv.Key).SetValue($lr, $kv.Value) }
     $dr = @((& $t 'VueReponsesFluent').GetMethod('Detail').Invoke($null, @($lr)))
     Cas 'Réponses : détail complet, récupération dite, cible en chasse fixe' ((@($dr | ForEach-Object { $_.Titre }) -join '|') -eq 'Cible|Déclencheur|Depuis|Relance|État|Récupération' -and ($dr | Where-Object { $_.Titre -eq 'Cible' }).Chasse) ((@($dr | ForEach-Object { $_.Titre }) -join '|'))
+    Cas 'Réponses : sorte inconnue neutralisée (relecture de #137, constat 5)' (-not ([string]((& $t 'VueReponses').GetMethod('Libelle').Invoke($null, @(('Autre' + [char]0x202E + 'x')))) -match "\u202E"))
+
+    # Détection (U3a) : noms TLS, chemins HTTP, noms DNS et messages des règles neutralisés ; gravité ; chasse fixe
+    $vd = & $t 'VueDetectionFluent'; $idsT = & $t 'EtatIds'; $dpiT = & $t 'EtatDpi'; $detT = & $t 'DetectionIds'; $sesT = & $t 'SessionDpi'
+    $nouv = { param($type, [hashtable]$h) $x = [Activator]::CreateInstance($type); foreach ($k in $h.Keys) { $type.GetProperty($k).SetValue($x, $h[$k]) }; $x }
+    $listeDe = { param($type, $elements) $l = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($type)); foreach ($e in $elements) { $l.Add($e) }; , $l }
+    $piegeR = 'evil' + [char]0x202E + 'moc.exe' + "`r`nfaux"
+    $ids = & $nouv $idsT @{ Detections = (& $listeDe $detT @((& $nouv $detT @{ Heure = '2026-11-10 10:00:00'; Sid = [long]2000001; Message = $piegeR; Niveau = 'Critique'; Source = '10.0.0.2:5000'; Destination = '1.2.3.4:443'; Bloque = $true }))) }
+    $dpi = & $nouv $dpiT @{ Tls = (& $listeDe $sesT @((& $nouv $sesT @{ Heure = 'h'; Programme = 'p.exe'; Ip = '1.2.3.4'; Port = 443; Nom = $piegeR; Ja3 = 'abc'; Remarque = 'JA3 malveillant' }))); Dns = (& $listeDe $sesT @((& $nouv $sesT @{ Heure = 'h'; Programme = 'p.exe'; Ip = '9.9.9.9'; Nom = $piegeR }))) }
+    $tout = foreach ($v in 0..4) { foreach ($x in @($vd.GetMethod('Lignes').Invoke($null, @($ids, $dpi, $v)))) { $x.Titre; $x.Etiquette; $x.Sous; foreach ($d in $x.Detail) { $d.Texte } } }
+    Cas 'Détection : textes du réseau et des règles neutralisés dans les cinq vues (U+202E, retours à la ligne)' (-not ((@($tout) -join '|') -match "[\u202E\r\n]") -and @($tout).Count -gt 10) "$(@($tout).Count) textes"
+    $ids0 = @($vd.GetMethod('Lignes').Invoke($null, @($ids, $dpi, 0)))[0]; $tls0 = @($vd.GetMethod('Lignes').Invoke($null, @($ids, $dpi, 1)))[0]
+    Cas 'Détection : critique en rouge et bloqué dit, session TLS signalée en rouge, destination en chasse fixe' ($ids0.Gravite -eq 2 -and $ids0.Etiquette.Contains('bloqué') -and $tls0.Gravite -eq 2 -and ($ids0.Detail | Where-Object { $_.Titre -eq 'Destination' }).Chasse)
+    Cas 'Détection : fichiers absents, aucune ligne et aucune exception' (@($vd.GetMethod('Lignes').Invoke($null, @($null, $null, 0))).Count -eq 0)
+    $reseauSrc = [IO.File]::ReadAllText("$src\Reseau.cs")
+    Cas 'Détection : page d''aujourd''hui neutralisée aussi, IPS et dossier des règles par les mêmes méthodes' ($reseauSrc.Contains('valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();') -and $reseauSrc.Contains('VueDetection.ChangerIps(chkIps.Checked);') -and $fluentSrc.Contains('VueDetection.ChangerIps(!ips)') -and ([regex]::Matches($reseauSrc, 'Action = "config", Cible = "Ips"')).Count -eq 1)
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -196,10 +212,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
