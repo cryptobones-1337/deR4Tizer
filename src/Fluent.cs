@@ -474,6 +474,9 @@ namespace DeR4Tizer
             // Incidents et Réponses en cours en WPF (U2c) : elles lisent leurs fichiers elles-mêmes, sans droit nouveau
             if (cle == "Incidents") { zone.Content = new PageIncidentsFluent(); return; }
             if (cle == "Réponses en cours") { zone.Content = new PageReponsesFluent(); return; }
+            // Santé et Détection en WPF (U3a)
+            if (cle == "Santé") { zone.Content = new PageSanteFluent(); return; }
+            if (cle == "Détection") { zone.Content = new PageDetectionFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -842,19 +845,24 @@ namespace DeR4Tizer
         }
 
         // Grille commune : résumé en haut, liste à gauche, panneau de détails à droite
-        public static void Disposer(Grid g, TextBlock resume, StackPanel liste, ContentControl detail)
+        public static void Disposer(Grid g, TextBlock resume, StackPanel liste, ContentControl detail) { Disposer(g, resume, null, liste, detail); }
+
+        // Barre d'outils facultative (vues, réglages) entre le résumé et la liste
+        public static void Disposer(Grid g, TextBlock resume, UIElement outils, StackPanel liste, ContentControl detail)
         {
             g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             g.RowDefinitions.Add(new RowDefinition());
+            if (outils != null) { Grid.SetRow(outils, 1); Grid.SetColumnSpan(outils, 2); g.Children.Add(outils); }
             g.ColumnDefinitions.Add(new ColumnDefinition());
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
             resume.TextWrapping = TextWrapping.Wrap; resume.FontSize = 12; resume.Margin = new Thickness(0, 0, 0, 12);
             Grid.SetColumnSpan(resume, 2); g.Children.Add(resume);
             var defile = new ScrollViewer { Content = liste, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 0, 16, 0) };
-            Grid.SetRow(defile, 1); g.Children.Add(defile);
+            Grid.SetRow(defile, 2); g.Children.Add(defile);
             var panneau = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20) };
             panneau.Child = new ScrollViewer { Content = detail, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetRow(panneau, 1); Grid.SetColumn(panneau, 1); g.Children.Add(panneau);
+            Grid.SetRow(panneau, 2); Grid.SetColumn(panneau, 1); g.Children.Add(panneau);
         }
     }
 
@@ -1086,6 +1094,265 @@ namespace DeR4Tizer
                 pile.Children.Add(Briques.Titre(L.T("Agir"), 18));
                 // Même récupération que la page d'aujourd'hui : objet retrouvé, PID vérifié, question, confirmation élevée
                 pile.Children.Add(Briques.Action(x.Bouton, true, (s, e) => { ActionsReponses.Recuperer(x); Charger(); }));
+            }
+            detail.Content = pile;
+        }
+    }
+
+    // Ligne d'une page d'état de la coquille (U3a) : textes déjà neutralisés, détail en sections
+    public class LigneEtatFluent
+    {
+        public string Titre, Etiquette, Sous;
+        public int Gravite;
+        public List<LigneDetail> Detail = new List<LigneDetail>();
+    }
+
+    // Décisions pures de la page Détection de la coquille (U3a), testées par tests\rendu-pilote.ps1. Tout ce qui vient de
+    // ids.json et dpi.json (noms TLS, chemins HTTP, noms DNS, messages des règles) est écrit par le réseau ou par des
+    // fichiers de règles : neutralisé par Canal.Visible
+    public static class VueDetectionFluent
+    {
+        public const int Maximum = 500;
+        public static readonly string[] Vues = { "Détections IDS", "Sessions TLS (SNI, JA3)", "Requêtes HTTP en clair", "Requêtes DNS", "Empreintes JA3" };
+
+        static LigneDetail D(string titre, string texte, bool chasse = false) { return new LigneDetail { Titre = L.T(titre), Texte = Canal.Visible(texte ?? ""), Chasse = chasse }; }
+
+        static List<LigneDetail> Sans(params LigneDetail[] l) { return l.Where(x => x.Texte != "").ToList(); }
+
+        public static List<LigneEtatFluent> Lignes(EtatIds ids, EtatDpi dpi, int vue)
+        {
+            Func<string, string> v = x => Canal.Visible(x ?? "");
+            ids = ids ?? new EtatIds(); dpi = dpi ?? new EtatDpi();
+            var l = new List<LigneEtatFluent>();
+            switch (vue)
+            {
+                case 0:
+                    foreach (var d in ids.Detections ?? new List<DetectionIds>())
+                        l.Add(new LigneEtatFluent
+                        {
+                            Titre = v(d.Message), Etiquette = v(L.T(d.Niveau ?? "")) + (d.Bloque ? " · " + L.T("bloqué") : ""),
+                            Sous = v(d.Heure) + "  ·  " + v(d.Source) + " → " + v(d.Destination) + (string.IsNullOrEmpty(d.Programme) ? "" : "  ·  " + v(d.Programme)),
+                            Gravite = d.Niveau == "Critique" ? 2 : d.Niveau == "Alerte" ? 1 : 0,
+                            Detail = Sans(D("Heure", d.Heure), D("Règle", "SID " + d.Sid + (string.IsNullOrEmpty(d.Classe) ? "" : " · " + d.Classe)), D("Source", d.Source, true), D("Destination", d.Destination, true), D("Programme", d.Programme), D("Bloqué", d.Bloque ? L.T("oui") : L.T("non")))
+                        });
+                    break;
+                case 1:
+                    foreach (var x in dpi.Tls ?? new List<SessionDpi>())
+                        l.Add(Session(x, "Site (SNI)", string.IsNullOrEmpty(x.Remarque) ? 0 : 2, true));
+                    break;
+                case 2:
+                    foreach (var x in dpi.Http ?? new List<SessionDpi>())
+                        l.Add(Session(x, "Hôte et chemin", string.IsNullOrEmpty(x.Remarque) ? 0 : 1, false));
+                    break;
+                case 3:
+                    foreach (var x in dpi.Dns ?? new List<SessionDpi>())
+                        l.Add(new LigneEtatFluent
+                        {
+                            Titre = v(x.Nom), Etiquette = "", Sous = v(x.Heure) + "  ·  " + v(x.Programme) + "  ·  " + L.T("Serveur DNS") + " " + v(x.Ip),
+                            Detail = Sans(D("Heure", x.Heure), D("Nom demandé", x.Nom, true), D("Programme", x.Programme), D("Serveur DNS", x.Ip, true))
+                        });
+                    break;
+                default:
+                    foreach (var x in dpi.Empreintes ?? new List<EmpreinteJa3>())
+                        l.Add(new LigneEtatFluent
+                        {
+                            Titre = v(x.Ja3), Etiquette = x.Nombre + " " + L.T("sessions"), Sous = string.Join(", ", (x.Programmes ?? new List<string>()).Select(v)),
+                            Detail = Sans(D("Empreinte JA3", x.Ja3, true), D("Sessions", x.Nombre.ToString()), D("Programmes", string.Join(", ", x.Programmes ?? new List<string>())))
+                        });
+                    break;
+            }
+            return l;
+        }
+
+        static LigneEtatFluent Session(SessionDpi x, string titreNom, int gravite, bool tls)
+        {
+            Func<string, string> v = y => Canal.Visible(y ?? "");
+            return new LigneEtatFluent
+            {
+                Titre = v(x.Nom), Etiquette = v(x.Remarque), Gravite = gravite,
+                Sous = v(x.Heure) + "  ·  " + v(x.Programme) + "  ·  " + v(x.Ip) + ":" + x.Port,
+                Detail = Sans(D("Heure", x.Heure), D(titreNom, x.Nom, true), D("Programme", x.Programme), D("Destination", x.Ip + ":" + x.Port, true), tls ? D("JA3", x.Ja3, true) : D("JA3", ""), D("Remarque", x.Remarque))
+            };
+        }
+    }
+
+    // Page Santé en WPF (U3a) : les mêmes lignes que la page d'aujourd'hui (VueSante.Lignes, déjà neutralisées), chacune
+    // avec sa source et sa date ; jamais « rien à vérifier » avant la première lecture ni sur une lecture bloquée
+    class PageSanteFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        List<LigneSante> lignes = new List<LigneSante>();
+        bool lu;
+        string choisi, vu;
+        int enCours, chargement;
+        DateTime debutLecture = DateTime.MinValue;
+
+        public PageSanteFluent()
+        {
+            Briques.Disposer(this, resume, null, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+            Afficher();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0)
+            {
+                // « Rien à vérifier » ne doit pas rester affiché sur des lignes figées (S105-11)
+                if (VueSante.LectureBloquee(debutLecture, DateTime.Now)) { resume.Text = L.T("Lecture bloquée : affichage ancien."); resume.Foreground = Jetons.Pinceau(Jetons.Attention); }
+                return;
+            }
+            debutLecture = DateTime.Now;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lignes = l; lu = true; vu = null; Afficher(); } }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Afficher()
+        {
+            int n = lignes.Count(x => x.Gravite > 0);
+            resume.Text = !lu ? L.T("Lecture en cours…") : n == 0 ? L.T("Rien à vérifier.") : string.Format(L.T("{0} point(s) à vérifier."), n);
+            resume.Foreground = Jetons.Pinceau(lu && n > 0 ? Jetons.Attention : Jetons.TexteSecondaire);
+            var x0 = lignes.FirstOrDefault(x => x.Sujet == choisi) ?? lignes.FirstOrDefault(x => x.Gravite > 0) ?? lignes.FirstOrDefault();
+            choisi = x0 == null ? null : x0.Sujet;
+            string signature = string.Join(";", lignes.Select(x => x.Sujet + "|" + x.Etat + "|" + x.Date + "|" + x.Detail)) + "#" + choisi + "#" + lu;
+            if (signature == vu) return;
+            vu = signature;
+            liste.Children.Clear();
+            if (!lu) liste.Children.Add(new TextBlock { Text = L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            foreach (var x in lignes)
+            {
+                string sujet = x.Sujet;
+                liste.Children.Add(Briques.Ligne(x.Sujet, x.Etat, string.Join("  ·  ", new[] { x.Date, x.Source }.Where(y => !string.IsNullOrEmpty(y))), x.Gravite, sujet == choisi, false, () => { choisi = sujet; Afficher(); }));
+            }
+            Detailler(x0);
+        }
+
+        void Detailler(LigneSante x)
+        {
+            if (x == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez une ligne pour lire son détail en entier."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Sujet, FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            pile.Children.Add(new TextBlock { Text = x.Etat, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x.Gravite)), Margin = new Thickness(0, 2, 0, 8) });
+            foreach (var l in new[] { new LigneDetail { Titre = L.T("Vérifié"), Texte = x.Date }, new LigneDetail { Titre = L.T("Détail"), Texte = x.Detail }, new LigneDetail { Titre = L.T("Source"), Texte = x.Source } })
+            {
+                if (string.IsNullOrEmpty(l.Texte)) continue;
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                pile.Children.Add(new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap });
+            }
+            detail.Content = pile;
+        }
+    }
+
+    // Page Détection en WPF (U3a) : mêmes fichiers (ids.json, dpi.json, config.json) que la page d'aujourd'hui ; vues en
+    // boutons ; l'IPS se règle par la même commande et la même confirmation élevée (VueDetection.ChangerIps)
+    class PageDetectionFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel outils = new StackPanel();
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        EtatIds ids; EtatDpi dpi; bool ips, lu;
+        int vue, choisie, enCours, chargement;
+        string vu;
+
+        public PageDetectionFluent()
+        {
+            Briques.Disposer(this, resume, outils, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+            Afficher();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var i = Commun.Lire<EtatIds>("ids.json"); var d = Commun.Lire<EtatDpi>("dpi.json"); var c = Commun.Lire<Config>("config.json");
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { ids = i; dpi = d; ips = c != null && c.Ips; lu = true; Afficher(); } }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        void Afficher()
+        {
+            resume.Text = !lu ? L.T("Lecture en cours…") : VueDetection.Info(ids, dpi, ips) + (ids == null ? "\n" + L.T("ids.json absent ou illisible : rien n'est conclu.") : "");
+            resume.Foreground = Jetons.Pinceau(lu && ids == null ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = VueDetectionFluent.Lignes(ids, dpi, vue);
+            if (choisie >= lignes.Count) choisie = 0;
+            string signature = vue + "#" + choisie + "#" + lu + "#" + ips + "#" + string.Join(";", lignes.Take(VueDetectionFluent.Maximum).Select(x => x.Titre + "|" + x.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var vues = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            for (int k = 0; k < VueDetectionFluent.Vues.Length; k++)
+            {
+                int n = k;
+                bool actif = n == vue;
+                var b = new Button
+                {
+                    Content = L.T(VueDetectionFluent.Vues[k]), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 6), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur),
+                    BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                b.Click += (s, e) => { vue = n; choisie = 0; Afficher(); };
+                vues.Children.Add(b);
+            }
+            outils.Children.Add(vues);
+            var bas = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            var bIps = Briques.Action(ips ? L.T("Désactiver l'IPS") : L.T("Activer l'IPS : bloquer au pare-feu l'adresse distante des règles « drop » ou de priorité 1"), !ips, (s, e) => { VueDetection.ChangerIps(!ips); Charger(); });
+            bIps.HorizontalAlignment = HorizontalAlignment.Left; bIps.Margin = new Thickness(0, 0, 8, 0);
+            // État de l'IPS inconnu avant la première lecture : aucun bouton qui prétendrait le connaître
+            bIps.Visibility = lu ? Visibility.Visible : Visibility.Collapsed;
+            var bRegles = Briques.Action(L.T("Dossier des règles"), false, (s, e) => VueDetection.OuvrirDossierRegles());
+            bRegles.HorizontalAlignment = HorizontalAlignment.Left;
+            bas.Children.Add(bIps); bas.Children.Add(bRegles);
+            outils.Children.Add(bas);
+            liste.Children.Clear();
+            if (!lu) liste.Children.Add(new TextBlock { Text = L.T("Lecture en cours…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            else if (lignes.Count == 0) liste.Children.Add(new TextBlock { Text = L.T("Rien d'enregistré pour cette vue."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            for (int k = 0; k < Math.Min(lignes.Count, VueDetectionFluent.Maximum); k++)
+            {
+                int n = k; var x = lignes[k];
+                liste.Children.Add(Briques.Ligne(x.Titre, x.Etiquette, x.Sous, x.Gravite, n == choisie, false, () => { choisie = n; Afficher(); }));
+            }
+            if (lignes.Count > VueDetectionFluent.Maximum)
+                liste.Children.Add(new TextBlock { Text = string.Format(L.T("Les {0} plus récentes sont affichées."), VueDetectionFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            Detailler(lignes.Count > 0 ? lignes[choisie] : null);
+        }
+
+        void Detailler(LigneEtatFluent x)
+        {
+            if (x == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez une ligne pour lire son détail en entier."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            if (!string.IsNullOrEmpty(x.Etiquette)) pile.Children.Add(new TextBlock { Text = x.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x.Gravite)), Margin = new Thickness(0, 2, 0, 4), TextWrapping = TextWrapping.Wrap });
+            foreach (var l in x.Detail)
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
             }
             detail.Content = pile;
         }
