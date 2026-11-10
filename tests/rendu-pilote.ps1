@@ -284,6 +284,45 @@ try {
     Cas 'Trafic d''aujourd''hui : programmes, destinations, interface et bulle neutralisés' ($traficSrc.Contains('Canal.Visible(a.Nom)') -and $traficSrc.Contains('Canal.Visible(t.Interface)') -and ([regex]::Matches($traficSrc, '\.Select\(Canal\.Visible\)')).Count -eq 2 -and $traficSrc.Contains('Canal.Visible(x.Programme)') -and $traficSrc.Contains('Canal.Visible((t.Depuis ?? "").Length >= 16') -and $traficSrc.Contains('Select(p => new[] { VueTraficFluent.NomPays(p.Code),'))
     $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
     Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
+    # Blocages, Quarantaine, Menaces (U5a) : résumés honnêtes, textes neutralisés, mêmes commandes, S139-02
+    $vb = & $t 'VueBlocagesFluent'; $blT = & $t 'Blocage'
+    $lb = New-Object "Collections.Generic.List[$($blT.FullName)]"
+    $lb.Add((& $nouv $blT @{ Type = 'hosts'; Cible = 'evil' + [char]0x202E + '.test'; Raison = "flux de x`r`ny"; Date = '2026-11-10' }))
+    $lb.Add((& $nouv $blT @{ Type = 'parefeu'; Cible = '1.2.3.4'; Raison = ''; Date = '2026-11-10' }))
+    $lb.Add((& $nouv $blT @{ Type = 'programme'; Cible = 'C:\x.exe'; Raison = 'r'; Date = '2026-11-10' }))
+    $lbVide = New-Object "Collections.Generic.List[$($blT.FullName)]"
+    $resB = { param($l, $lu, $ill) [string]$vb.GetMethod('Resume').Invoke($null, [object[]]@($l.PSObject.BaseObject, [bool]$lu, [bool]$ill)) }
+    Cas 'Blocages : avant lecture « Lecture en cours… », absent « Aucun blocage », illisible sans liste « rien n''est conclu »' ((& $resB $lbVide $false $false) -eq 'Lecture en cours…' -and (& $resB $lbVide $true $false) -eq 'Aucun blocage.' -and (& $resB $lbVide $true $true).Contains('rien n''est conclu'))
+    $rb = & $resB $lb $true $true
+    Cas 'Blocages : décompte par type, illisible après lecture dit' ($rb.Contains('3 blocage(s) : 1 nom(s)') -and $rb.Contains('1 IP bloquée(s)') -and $rb.Contains('1 programme(s) isolé(s)') -and $rb.StartsWith('blocages.json illisible : dernier affichage gardé')) $rb
+    $txtB = @($vb.GetMethod('Detail').Invoke($null, @($lb[0])) | ForEach-Object { $_.Texte }) -join '|'
+    Cas 'Blocages : détail neutralisé, type en clair' (-not ($txtB -match "[\u202E\r\n]") -and $txtB.StartsWith('fichier hosts')) $txtB
+    $vq = & $t 'VueQuarantaineFluent'; $qT = & $t 'ElementQuarantaine'
+    $lq = New-Object "Collections.Generic.List[$($qT.FullName)]"
+    $lq.Add((& $nouv $qT @{ Id = 'q1'; CheminOrigine = 'C:\Users\x\facture' + [char]0x202E + 'fdp.exe'; Date = '2026-11-09'; Raison = 'r'; Taille = [long]4096 }))
+    $lq.Add((& $nouv $qT @{ Id = 'q2'; CheminOrigine = 'C:\b.exe'; Date = '2026-11-10'; Raison = ''; Taille = [long]1024 }))
+    $tri = @($vq.GetMethod('Trier').Invoke($null, [object[]](, $lq.PSObject.BaseObject)))
+    $nomQ = [string]$vq.GetMethod('Nom').Invoke($null, @($lq[0]))
+    Cas 'Quarantaine : plus récents d''abord, nom du fichier neutralisé' ((@($tri | ForEach-Object { $_.Id }) -join ',') -eq 'q2,q1' -and -not ($nomQ -match "\u202E") -and $nomQ.StartsWith('facture')) "$((@($tri | ForEach-Object { $_.Id }) -join ',')) ; $nomQ"
+    $dq = @($vq.GetMethod('Detail').Invoke($null, @($lq[0])))
+    Cas 'Quarantaine : emplacement d''origine neutralisé et en chasse fixe, taille en Ko' (-not ((@($dq | ForEach-Object { $_.Texte }) -join '|') -match "\u202E") -and $dq[0].Chasse -and $dq[3].Texte -eq '4 Ko')
+    $lqVide = New-Object "Collections.Generic.List[$($qT.FullName)]"
+    Cas 'Quarantaine : vide après lecture « Aucun fichier en quarantaine », illisible sans liste rien de conclu' (([string]$vq.GetMethod('Resume').Invoke($null, [object[]]@($lqVide.PSObject.BaseObject, $true, $false))) -eq 'Aucun fichier en quarantaine.' -and ([string]$vq.GetMethod('Resume').Invoke($null, [object[]]@($lqVide.PSObject.BaseObject, $true, $true))).Contains('rien n''est conclu'))
+    $vm = & $t 'VueMenacesFluent'; $smT = & $t 'SourceMenace'; $imT = & $t 'InfosMenaces'
+    $ls = New-Object "Collections.Generic.List[$($smT.FullName)]"
+    $ls.Add((& $nouv $smT @{ Nom = 'Feodo'; Type = 'IP'; Confiance = 'haute'; Entrees = 10; Statut = 'ok' }))
+    $ls.Add((& $nouv $smT @{ Nom = 'X'; Type = 'IP'; Confiance = 'réputation'; Entrees = 0; Statut = "échec : HTTP 500`r`n" + [char]0x202E }))
+    $ls.Add((& $nouv $smT @{ Nom = 'Y'; Type = 'Domaines'; Confiance = 'réputation'; Entrees = 0; Statut = 'désactivée (licence)' }))
+    $im = & $nouv $imT @{ TotalIp = 10; TotalReseaux = 2; TotalDomaines = 3; MisAJour = '2026-11-10 06:00'; Sources = $ls }
+    $rm = [string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($im, $true, $false))
+    Cas 'Menaces : liste en échec signalée, désactivée par choix non comptée' ($rm.Contains('1 liste(s) en échec') -and $vm.GetMethod('Gravite').Invoke($null, @($ls[2])) -eq 0 -and $vm.GetMethod('Gravite').Invoke($null, @($ls[1])) -eq 1) $rm
+    Cas 'Menaces : statut neutralisé dans le détail' (-not ((@($vm.GetMethod('Detail').Invoke($null, @($ls[1])) | ForEach-Object { $_.Texte }) -join '|') -match "[\u202E\r\n]"))
+    Cas 'Menaces : avant lecture « Lecture en cours… », sans fichier « pas encore chargées », illisible rien de conclu' (([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $false, $false))) -eq 'Lecture en cours…' -and ([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $false))) -eq 'Listes pas encore chargées.' -and ([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $true))).Contains('rien n''est conclu'))
+    $guiSrc2 = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'Menaces : config.json illisible, cases grisées et aucun réglage envoyé, dans les deux interfaces (audit de #139, S139-02)' ($guiSrc2.Contains('chkBlocageAuto.Enabled = chkRancongiciel.Enabled = chkListesRestreintes.Enabled = !illisible;') -and $guiSrc2.Contains('if (majCase || configIllisible) return;') -and $fluentSrc.Contains('if (lu && config != null && !configIllisible)') -and -not $guiSrc2.Contains('Commun.Lire<Config>("config.json") ?? new Config()'))
+    Cas 'Protection : mêmes commandes dans les deux interfaces, seuls les trois réglages connus, chemin neutralisé dans la question' ($guiSrc2.Contains('if (Array.IndexOf(Reglages, reglage) < 0) return;') -and ([regex]::Matches($guiSrc2, 'Canal\.Visible\(q\.CheminOrigine\)')).Count -eq 3 -and $guiSrc2.Contains('ActionsProtection.Restaurer(lvQuarantaine.SelectedItems[0].Tag as ElementQuarantaine, false)') -and $fluentSrc.Contains('ActionsProtection.Restaurer(choix, true)') -and $fluentSrc.Contains('ActionsProtection.Debloquer(choix)'))
+    Cas 'Blocages, Quarantaine et Menaces d''aujourd''hui : cellules neutralisées' ($guiSrc2.Contains('Canal.Visible(b.Cible), Canal.Visible(b.Raison)') -and $guiSrc2.Contains('Canal.Visible(q.CheminOrigine), Canal.Visible(q.Raison)') -and $guiSrc2.Contains('Canal.Visible(s.Statut) });'))
+    Cas 'Trafic : légende de la carte coupée proprement quand elle est étroite (captures de #141)' ($fluentSrc.Contains('legende.MaxLineCount = 1; legende.Trimming = TextTrimming.CharacterEllipsis;'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -329,10 +368,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
