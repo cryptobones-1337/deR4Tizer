@@ -12,11 +12,105 @@ using System.Windows.Forms;
 
 namespace DeR4Tizer
 {
+    public class ResultatSiem
+    {
+        public List<Evenement> Evenements = new List<Evenement>();
+        public int Total;
+        public DateTime Debut, Fin;
+        public int[,] Compteurs;     // [tranche, niveau 0 Info / 1 Alerte / 2 Critique]
+        public List<Incident> Incidents = new List<Incident>();
+    }
+
+    // Recherche dans les événements du mini-SIEM (siem\evenements-*.ndjson) et les incidents de corrélation, commune à la
+    // page d'aujourd'hui et à celle de la coquille (U3b), extraite sans changement de logique. Lecture seule
+    public static class RechercheSiem
+    {
+        public const int MaxAffiches = 2000;
+        public static readonly string[] Sources = { "", "alerte", "connexion", "processus", "securite", "parefeu", "systeme" };
+        public static readonly TimeSpan[] Periodes = { TimeSpan.FromHours(1), TimeSpan.FromHours(24), TimeSpan.FromDays(7), TimeSpan.FromDays(30) };
+
+        // Ne lève jamais : une erreur de lecture rend un résultat vide (comme avant, dans la page)
+        public static ResultatSiem ChercherSur(string texte, string source, int niveauMin, DateTime debut, DateTime fin, DateTime? fDebut, DateTime? fFin)
+        {
+            try { return Chercher(texte, source, niveauMin, debut, fin, fDebut, fFin); }
+            catch (Exception e) { Console.WriteLine(e); return new ResultatSiem { Compteurs = new int[1, 3], Debut = debut, Fin = fin }; }
+        }
+
+        // Tranche n de la chronologie (même découpage que le comptage)
+        public static void Tranche(DateTime debut, DateTime fin, int tranches, int n, out DateTime d, out DateTime f)
+        {
+            double pas = (fin - debut).TotalSeconds / tranches;
+            d = debut.AddSeconds(pas * n); f = debut.AddSeconds(pas * (n + 1));
+        }
+
+        static string Champ(string ligne, string nom)
+        {
+            string motif = "\"" + nom + "\":\"";
+            int i = ligne.IndexOf(motif, StringComparison.Ordinal);
+            if (i < 0) return "";
+            i += motif.Length;
+            int j = ligne.IndexOf('"', i);
+            return j < 0 ? "" : ligne.Substring(i, j - i);
+        }
+
+        static int Rang(string niveau) { return niveau == "Critique" ? 2 : niveau == "Alerte" ? 1 : 0; }
+
+        public static ResultatSiem Chercher(string texte, string source, int niveauMin, DateTime debut, DateTime fin, DateTime? fDebut, DateTime? fFin)
+        {
+            const int tranches = 48;
+            var r = new ResultatSiem { Debut = debut, Fin = fin, Compteurs = new int[tranches, 3] };
+            string sDebut = (fDebut ?? debut).ToString("yyyy-MM-dd HH:mm:ss"), sFin = (fFin ?? fin).ToString("yyyy-MM-dd HH:mm:ss");
+            string bDebut = debut.ToString("yyyy-MM-dd HH:mm:ss");
+            double duree = (fin - debut).TotalSeconds;
+            var json = Commun.Json();
+            string dossier = Path.Combine(Commun.Dossier, "siem");
+            var fichiers = Directory.Exists(dossier) ? Directory.GetFiles(dossier, "evenements-*.ndjson") : new string[0];
+            foreach (var f in fichiers.OrderByDescending(x => x))
+            {
+                string jour = Path.GetFileNameWithoutExtension(f).Substring(11);
+                if (string.CompareOrdinal(jour, debut.ToString("yyyyMMdd")) < 0) continue;
+                string[] lignes;
+                try
+                {
+                    using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var lecteur = new StreamReader(fs, Encoding.UTF8))
+                        lignes = lecteur.ReadToEnd().Split('\n');
+                }
+                catch { continue; }
+                for (int k = lignes.Length - 1; k >= 0; k--)
+                {
+                    string ligne = lignes[k];
+                    if (ligne.Length < 10) continue;
+                    if (texte.Length > 0 && ligne.IndexOf(texte, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    string heure = Champ(ligne, "Heure");
+                    if (string.CompareOrdinal(heure, bDebut) < 0) continue;
+                    if (source.Length > 0 && Champ(ligne, "Source") != source) continue;
+                    int rang = Rang(Champ(ligne, "Niveau"));
+                    if (rang < niveauMin) continue;
+                    // Chronologie : toute la période (sans la tranche choisie)
+                    DateTime h;
+                    if (DateTime.TryParseExact(heure, "yyyy-MM-dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out h))
+                    {
+                        int t = (int)((h - debut).TotalSeconds / duree * tranches);
+                        if (t >= 0 && t < tranches) r.Compteurs[t, rang]++;
+                    }
+                    if (string.CompareOrdinal(heure, sDebut) < 0 || string.CompareOrdinal(heure, sFin) > 0) continue;
+                    r.Total++;
+                    if (r.Evenements.Count < MaxAffiches)
+                        try { r.Evenements.Add(json.Deserialize<Evenement>(ligne)); } catch { }
+                }
+            }
+            var incidents = Commun.Lire<List<Incident>>("incidents.json") ?? new List<Incident>();
+            r.Incidents = incidents.Where(i => string.CompareOrdinal(i.Heure ?? "", bDebut) >= 0).OrderByDescending(i => i.Heure).ToList();
+            return r;
+        }
+    }
+
     class PageSiem : TableLayoutPanel
     {
-        const int MaxAffiches = 2000;
-        static readonly string[] Sources = { "", "alerte", "connexion", "processus", "securite", "parefeu", "systeme" };
-        static readonly TimeSpan[] Periodes = { TimeSpan.FromHours(1), TimeSpan.FromHours(24), TimeSpan.FromDays(7), TimeSpan.FromDays(30) };
+        const int MaxAffiches = RechercheSiem.MaxAffiches;
+        static readonly string[] Sources = RechercheSiem.Sources;
+        static readonly TimeSpan[] Periodes = RechercheSiem.Periodes;
 
         readonly TextBox txtRecherche = new TextBox { Width = 300, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, BorderStyle = BorderStyle.FixedSingle, Font = Theme.Mono, Margin = new Padding(0, 3, 10, 3) };
         readonly ComboBox cbSource = Choix(130, "Toutes les sources", "alerte", "connexion", "processus", "securite", "parefeu", "systeme");
@@ -96,15 +190,6 @@ namespace DeR4Tizer
 
         // ------------------------------------------------------------ recherche (fil de fond)
 
-        class Resultat
-        {
-            public List<Evenement> Evenements = new List<Evenement>();
-            public int Total;
-            public DateTime Debut, Fin;
-            public int[,] Compteurs;     // [tranche, niveau 0 Info / 1 Alerte / 2 Critique]
-            public List<Incident> Incidents = new List<Incident>();
-        }
-
         public void Charger()
         {
             string texte = txtRecherche.Text.Trim();
@@ -116,83 +201,19 @@ namespace DeR4Tizer
             lblResultat.Text = L.T("Recherche…");
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                Resultat r;
-                try { r = Chercher(texte, source, niveauMin, debut, fin, fDebut, fFin); }
-                catch (Exception e) { r = new Resultat(); r.Compteurs = new int[1, 3]; r.Debut = debut; r.Fin = fin; Console.WriteLine(e); }
+                var r = RechercheSiem.ChercherSur(texte, source, niveauMin, debut, fin, fDebut, fFin);
                 try { BeginInvoke(new Action(() => { if (numero == recherche) Afficher(r, fDebut, fFin); })); } catch { }
             });
         }
 
-        static string Champ(string ligne, string nom)
-        {
-            string motif = "\"" + nom + "\":\"";
-            int i = ligne.IndexOf(motif, StringComparison.Ordinal);
-            if (i < 0) return "";
-            i += motif.Length;
-            int j = ligne.IndexOf('"', i);
-            return j < 0 ? "" : ligne.Substring(i, j - i);
-        }
-
-        static int Rang(string niveau) { return niveau == "Critique" ? 2 : niveau == "Alerte" ? 1 : 0; }
-
-        static Resultat Chercher(string texte, string source, int niveauMin, DateTime debut, DateTime fin, DateTime? fDebut, DateTime? fFin)
-        {
-            const int tranches = 48;
-            var r = new Resultat { Debut = debut, Fin = fin, Compteurs = new int[tranches, 3] };
-            string sDebut = (fDebut ?? debut).ToString("yyyy-MM-dd HH:mm:ss"), sFin = (fFin ?? fin).ToString("yyyy-MM-dd HH:mm:ss");
-            string bDebut = debut.ToString("yyyy-MM-dd HH:mm:ss");
-            double duree = (fin - debut).TotalSeconds;
-            var json = Commun.Json();
-            string dossier = Path.Combine(Commun.Dossier, "siem");
-            var fichiers = Directory.Exists(dossier) ? Directory.GetFiles(dossier, "evenements-*.ndjson") : new string[0];
-            foreach (var f in fichiers.OrderByDescending(x => x))
-            {
-                string jour = Path.GetFileNameWithoutExtension(f).Substring(11);
-                if (string.CompareOrdinal(jour, debut.ToString("yyyyMMdd")) < 0) continue;
-                string[] lignes;
-                try
-                {
-                    using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                    using (var lecteur = new StreamReader(fs, Encoding.UTF8))
-                        lignes = lecteur.ReadToEnd().Split('\n');
-                }
-                catch { continue; }
-                for (int k = lignes.Length - 1; k >= 0; k--)
-                {
-                    string ligne = lignes[k];
-                    if (ligne.Length < 10) continue;
-                    if (texte.Length > 0 && ligne.IndexOf(texte, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    string heure = Champ(ligne, "Heure");
-                    if (string.CompareOrdinal(heure, bDebut) < 0) continue;
-                    if (source.Length > 0 && Champ(ligne, "Source") != source) continue;
-                    int rang = Rang(Champ(ligne, "Niveau"));
-                    if (rang < niveauMin) continue;
-                    // Chronologie : toute la période (sans la tranche choisie)
-                    DateTime h;
-                    if (DateTime.TryParseExact(heure, "yyyy-MM-dd HH:mm:ss", null, System.Globalization.DateTimeStyles.None, out h))
-                    {
-                        int t = (int)((h - debut).TotalSeconds / duree * tranches);
-                        if (t >= 0 && t < tranches) r.Compteurs[t, rang]++;
-                    }
-                    if (string.CompareOrdinal(heure, sDebut) < 0 || string.CompareOrdinal(heure, sFin) > 0) continue;
-                    r.Total++;
-                    if (r.Evenements.Count < MaxAffiches)
-                        try { r.Evenements.Add(json.Deserialize<Evenement>(ligne)); } catch { }
-                }
-            }
-            var incidents = Commun.Lire<List<Incident>>("incidents.json") ?? new List<Incident>();
-            r.Incidents = incidents.Where(i => string.CompareOrdinal(i.Heure ?? "", bDebut) >= 0).OrderByDescending(i => i.Heure).ToList();
-            return r;
-        }
-
-        void Afficher(Resultat r, DateTime? fDebut, DateTime? fFin)
+        void Afficher(ResultatSiem r, DateTime? fDebut, DateTime? fFin)
         {
             chrono.Definir(r.Debut, r.Fin, r.Compteurs, fDebut, fFin);
             lvIncidents.BeginUpdate();
             lvIncidents.Items.Clear();
             foreach (var i in r.Incidents)
             {
-                var item = new ListViewItem(new[] { i.Heure, i.Niveau, i.Regle, i.Titre, i.Mitre, i.Resume }) { Tag = i };
+                var item = PageSiem.Item(new[] { i.Heure, i.Niveau, i.Regle, i.Titre, i.Mitre, i.Resume }, i);
                 Colorer(item, i.Niveau);
                 lvIncidents.Items.Add(item);
             }
@@ -201,7 +222,8 @@ namespace DeR4Tizer
             lvEvenements.Items.Clear();
             foreach (var e in r.Evenements)
             {
-                var item = new ListViewItem(new[] { e.Heure, e.Niveau, e.Source, e.Type, e.Utilisateur, e.Processus, e.Ip, e.Message }) { Tag = e, ToolTipText = e.Message };
+                var item = PageSiem.Item(new[] { e.Heure, e.Niveau, e.Source, e.Type, e.Utilisateur, e.Processus, e.Ip, e.Message }, e);
+                item.ToolTipText = Canal.Visible(e.Message ?? "");
                 Colorer(item, e.Niveau);
                 lvEvenements.Items.Add(item);
             }
@@ -209,6 +231,15 @@ namespace DeR4Tizer
             string tranche = fDebut.HasValue ? string.Format(L.En ? " · slice {0:HH:mm}–{1:HH:mm} (click the timeline again to clear)" : " · tranche {0:HH:mm}–{1:HH:mm} (recliquer la chronologie pour l'enlever)", fDebut, fFin) : "";
             lblResultat.Text = string.Format(L.En ? "{0} event(s){1}, {2} incident(s){3}" : "{0} événement(s){1}, {2} incident(s){3}",
                 r.Total, r.Total > MaxAffiches ? (L.En ? " (latest " + MaxAffiches + " shown)" : " (les " + MaxAffiches + " plus récents affichés)") : "", r.Incidents.Count, tranche);
+        }
+
+        // Ligne de liste : chaque cellule affichée passe par Visible (les événements décrivent le poste, un programme peut y
+        // avoir mis ce qu'il veut, U3b) ; la valeur d'origine, échappée (Canal.Echappe), reste dans la cellule (Tag) pour « Copier »
+        internal static ListViewItem Item(string[] valeurs, object tag)
+        {
+            var item = new ListViewItem(valeurs.Select(v => Canal.Visible(v ?? "")).ToArray()) { Tag = tag };
+            for (int k = 0; k < valeurs.Length; k++) item.SubItems[k].Tag = Canal.Echappe(valeurs[k]);
+            return item;
         }
 
         static void Colorer(ListViewItem item, string niveau)
@@ -222,27 +253,28 @@ namespace DeR4Tizer
         {
             if (lv.SelectedItems.Count == 0) return;
             var i = lv.SelectedItems[0].Tag as Incident;
+            Func<string, string> v = x => Canal.Visible(x ?? "");
             if (i != null)
             {
-                detail.Text = i.Titre + " (" + i.Regle + (string.IsNullOrEmpty(i.Mitre) ? "" : ", " + i.Mitre) + ")\n" + i.Resume + "\n\n"
-                    + string.Join("\n", (i.Evenements ?? new List<string>()).Take(5));
+                detail.Text = v(i.Titre) + " (" + v(i.Regle) + (string.IsNullOrEmpty(i.Mitre) ? "" : ", " + v(i.Mitre)) + ")\n" + v(i.Resume) + "\n\n"
+                    + string.Join("\n", (i.Evenements ?? new List<string>()).Take(5).Select(v));
                 return;
             }
             var e = lv.SelectedItems[0].Tag as Evenement;
             if (e != null)
-                detail.Text = e.Heure + "  [" + e.Source + " / " + e.Type + "]  " + e.Niveau + (string.IsNullOrEmpty(e.Mitre) ? "" : "  " + e.Mitre) + "\n"
-                    + (string.IsNullOrEmpty(e.Utilisateur) ? "" : L.T("Utilisateur") + " : " + e.Utilisateur + "   ")
-                    + (string.IsNullOrEmpty(e.Processus) ? "" : L.T("Programme") + " : " + e.Processus + (e.Pid.HasValue ? " (PID " + e.Pid + ")" : "") + "   ")
-                    + (string.IsNullOrEmpty(e.Ip) ? "" : "IP : " + e.Ip + (e.Port > 0 ? ":" + e.Port : "") + "   ")
-                    + (string.IsNullOrEmpty(e.Destination) ? "" : L.T("Destination") + " : " + e.Destination)
-                    + "\n" + e.Message;
+                detail.Text = v(e.Heure) + "  [" + v(e.Source) + " / " + v(e.Type) + "]  " + v(e.Niveau) + (string.IsNullOrEmpty(e.Mitre) ? "" : "  " + v(e.Mitre)) + "\n"
+                    + (string.IsNullOrEmpty(e.Utilisateur) ? "" : L.T("Utilisateur") + " : " + v(e.Utilisateur) + "   ")
+                    + (string.IsNullOrEmpty(e.Processus) ? "" : L.T("Programme") + " : " + v(e.Processus) + (e.Pid.HasValue ? " (PID " + e.Pid + ")" : "") + "   ")
+                    + (string.IsNullOrEmpty(e.Ip) ? "" : "IP : " + v(e.Ip) + (e.Port > 0 ? ":" + e.Port : "") + "   ")
+                    + (string.IsNullOrEmpty(e.Destination) ? "" : L.T("Destination") + " : " + v(e.Destination))
+                    + "\n" + v(e.Message);
         }
 
         void Copier()
         {
             var sb = new StringBuilder();
             foreach (ListViewItem item in lvEvenements.SelectedItems)
-                sb.AppendLine(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Text)));
+                sb.AppendLine(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Tag as string ?? s.Text)));
             if (sb.Length > 0) Clipboard.SetText(sb.ToString());
         }
 

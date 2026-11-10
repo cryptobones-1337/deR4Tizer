@@ -166,7 +166,43 @@ try {
     Cas 'Détection : critique en rouge et bloqué dit, session TLS signalée en rouge, destination en chasse fixe' ($ids0.Gravite -eq 2 -and $ids0.Etiquette.Contains('bloqué') -and $tls0.Gravite -eq 2 -and ($ids0.Detail | Where-Object { $_.Titre -eq 'Destination' }).Chasse)
     Cas 'Détection : fichiers absents, aucune ligne et aucune exception' (@($vd.GetMethod('Lignes').Invoke($null, @($null, $null, 0))).Count -eq 0)
     $reseauSrc = [IO.File]::ReadAllText("$src\Reseau.cs")
-    Cas 'Détection : page d''aujourd''hui neutralisée aussi, IPS et dossier des règles par les mêmes méthodes' ($reseauSrc.Contains('valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();') -and $reseauSrc.Contains('VueDetection.ChangerIps(chkIps.Checked);') -and $fluentSrc.Contains('VueDetection.ChangerIps(!ips)') -and ([regex]::Matches($reseauSrc, 'Action = "config", Cible = "Ips"')).Count -eq 1)
+    Cas 'Détection : page d''aujourd''hui neutralisée aussi, IPS et dossier des règles par les mêmes méthodes' ($reseauSrc.Contains('valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();') -and $reseauSrc.Contains('VueDetection.ChangerIps(chkIps.Checked);') -and $fluentSrc.Contains('VueDetection.ChangerIps(!ipsActif)') -and ([regex]::Matches($reseauSrc, 'Action = "config", Cible = "Ips"')).Count -eq 1)
+    # Préalables de #138 : état de l'IPS inconnu si config.json est illisible ; « Copier » rend la valeur d'origine
+    $infoInconnu = [string]((& $t 'VueDetection').GetMethod('Info').Invoke($null, @($null, $null, $null)))
+    Cas 'Détection : config.json illisible, IPS dit « inconnu », jamais « inactif » (audit de #138, S138-01)' ($infoInconnu.Contains('IPS inconnu') -and -not $infoInconnu.Contains('inactif')) $infoInconnu
+    Cas 'Détection : sans état lu, ni case active (aujourd''hui) ni bouton IPS (coquille)' ($reseauSrc.Contains('chkIps.Enabled = configLue != null;') -and $fluentSrc.Contains('bIps.Visibility = lu && ips.HasValue ? Visibility.Visible : Visibility.Collapsed;'))
+    $siemSrc = [IO.File]::ReadAllText("$src\Siem.cs")
+    Cas 'Copier : valeur d''origine (Détection, Réseau, Événements), affichage neutralisé (relecture de #138, constat 5)' ($reseauSrc.Contains('item.SubItems[k].Tag = Canal.Echappe(brutes[k]);') -and $reseauSrc.Contains('x.Tag as string ?? x.Text') -and $siemSrc.Contains('item.SubItems[k].Tag = Canal.Echappe(valeurs[k]);') -and $siemSrc.Contains('s.Tag as string ?? s.Text'))
+    # Valeur copiée : exacte et lisible, mais sans retour à la ligne ni caractère invisible qui s'exécuterait au collage (audit de #139, S139-01)
+    $canalT = $asm.GetType('DeR4Tizer.Canal'); $ech = $canalT.GetMethod('Echappe', [Reflection.BindingFlags]'Static,NonPublic')
+    $copie = [string]$ech.Invoke($null, @(("x.exe`r`nStart-Process calc`t" + [char]0x202E + [char]0x2028 + [char]7 + 'é C:\a')))
+    Cas 'Copier : retours à la ligne, tabulation, U+202E, U+2028 et contrôles échappés ; accents et chemins gardés' ($copie -ceq 'x.exe\r\nStart-Process calc\t\u202E\u2028\u0007é C:\a' -and -not ($copie -match "[\r\n\t\u202E\u2028\u0007]")) $copie
+
+    # Événements (U3b) : textes des événements et des incidents de corrélation neutralisés, page d'aujourd'hui aussi
+    $ve = & $t 'VueEvenementsFluent'; $evT = & $t 'Evenement'; $icT = & $t 'Incident'
+    $ev = & $nouv $evT @{ Heure = '2026-11-10 10:00:00'; Source = 'securite'; Type = '4625'; Niveau = 'Alerte'; Utilisateur = 'adm' + [char]0x202E; Processus = 'x.exe'; Pid = [Nullable[int]]42; Ip = '1.2.3.4'; Port = 445; Message = $piegeR; Mitre = 'T1110' }
+    $lev = $ve.GetMethod('Ligne', [type[]]@($evT)).Invoke($null, @($ev))
+    $txt = (@($lev.Titre, $lev.Etiquette, $lev.Sous) + @($lev.Detail | ForEach-Object { $_.Texte })) -join '|'
+    Cas 'Événements : événement neutralisé (message, utilisateur), alerte à surveiller, IP en chasse fixe' (-not ($txt -match "[\u202E\r\n]") -and $lev.Gravite -eq 1 -and ($lev.Detail | Where-Object { $_.Titre -eq 'IP' }).Chasse -and $txt.Contains('x.exe (PID 42)')) $txt
+    $evs = New-Object 'Collections.Generic.List[string]'; $evs.Add('ligne 1' + [char]0x202E); $evs.Add("ligne`r`n2")
+    $ic = & $nouv $icT @{ Heure = '2026-11-10 10:00:00'; Regle = 'COR-001'; Titre = 'Force brute' + [char]0x200B; Niveau = 'Critique'; Resume = 'r'; Evenements = $evs }
+    $lic = $ve.GetMethod('Ligne', [type[]]@($icT)).Invoke($null, @($ic))
+    $txtI = (@($lic.Titre, $lic.Etiquette, $lic.Sous) + @($lic.Detail | ForEach-Object { $_.Texte })) -join '|'
+    $evDetail = ($lic.Detail | Where-Object { $_.Titre -eq 'Événements' }).Texte
+    Cas 'Événements : incident de corrélation neutralisé, critique en rouge, une ligne par événement lié' (-not ($txtI -match "[\u202E\u200B\r]") -and $lic.Gravite -eq 2 -and @($evDetail.Split("`n")).Count -eq 2) $txtI
+    Cas 'Événements : avant la première recherche, « Recherche… », jamais « aucun événement »' (([string]$ve.GetMethod('Resume').Invoke($null, @($null, $null, $null))) -eq 'Recherche…')
+    $tr = (& $t 'RechercheSiem').GetMethod('Tranche')
+    $deb = [DateTime]'2026-11-10 00:00:00'; $fin = $deb.AddHours(24)
+    $a = @($deb, $fin, 48, 0, [DateTime]::MinValue, [DateTime]::MinValue); $tr.Invoke($null, $a) | Out-Null
+    $b = @($deb, $fin, 48, 47, [DateTime]::MinValue, [DateTime]::MinValue); $tr.Invoke($null, $b) | Out-Null
+    $segm = { param($i, $a, $c, $m) @((& $t 'ChronologieFluent').GetMethod('Segments', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @([int]$i, [int]$a, [int]$c, [int]$m, [double]66))) }
+    $s1 = & $segm 5000 0 3 5003
+    Cas 'Événements : 3 critiques parmi 5000 infos, segment critique de 2 px au moins (relecture de #139, constat 6b)' ($s1[2] -ge 2 -and $s1[1] -eq 0 -and $s1[0] -gt 0) ($s1 -join ' / ')
+    $s2 = & $segm 0 0 0 10
+    Cas 'Événements : tranche vide, aucun segment' (($s2 | Measure-Object -Sum).Sum -eq 0)
+    Cas 'Événements : chronologie avec maximum et heures écrits (constat 6a)' ($fluentSrc.Contains('L.T("max {0} par tranche, hauteur en racine carrée")') -and $fluentSrc.Contains('g.DrawText(milieu,'))
+    Cas 'Événements : chronologie en 48 tranches, de début à fin' ($a[4] -eq $deb -and $b[5] -eq $fin -and ($a[5] - $a[4]).TotalMinutes -eq 30)
+    Cas 'Événements : page d''aujourd''hui neutralisée (cellules, info-bulle, détail), même recherche que la coquille' ($siemSrc.Contains('new ListViewItem(valeurs.Select(v => Canal.Visible(v ?? "")).ToArray())') -and $siemSrc.Contains('item.ToolTipText = Canal.Visible(e.Message ?? "");') -and $siemSrc.Contains('"\n" + v(e.Message);') -and $siemSrc.Contains('RechercheSiem.ChercherSur(texte, source, niveauMin') -and $fluentSrc.Contains('RechercheSiem.ChercherSur(texte, src, niv'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -212,10 +248,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name

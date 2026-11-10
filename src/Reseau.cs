@@ -33,7 +33,7 @@ namespace DeR4Tizer
             var menu = new ContextMenuStrip { Renderer = new RenduSombre(), Font = Theme.Petit };
             menu.Items.Add(L.T("Copier"), null, (s, e) =>
             {
-                var lignes = Lv.SelectedItems.Cast<ListViewItem>().Select(i => string.Join("\t", i.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(x => x.Text)));
+                var lignes = Lv.SelectedItems.Cast<ListViewItem>().Select(i => string.Join("\t", i.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(x => x.Tag as string ?? x.Text)));
                 var texte = string.Join(Environment.NewLine, lignes);
                 if (texte.Length > 0) Clipboard.SetText(texte);
             });
@@ -48,8 +48,13 @@ namespace DeR4Tizer
         {
             // Noms TLS, chemins HTTP, noms DNS, messages des règles : écrits par le réseau ou par des fichiers, donc non fiables
             // (U3a ; règle « toute chaîne non fiable passe par Visible »)
+            var brutes = valeurs;
             valeurs = valeurs.Select(v => Canal.Visible(v ?? "")).ToArray();
             var item = new ListViewItem(valeurs) { Tag = tag, ToolTipText = string.Join("  ", valeurs) };
+            // « Copier » rend la valeur d'origine, échappée (enquête : un nom piégé copié avec des « ? » ne sert à rien,
+            // relecture de #138, constat 5 ; mais un retour à la ligne collé dans une console s'exécuterait, audit de #139,
+            // S139-01) ; l'affichage reste neutralisé
+            for (int k = 0; k < brutes.Length; k++) item.SubItems[k].Tag = Canal.Echappe(brutes[k]);
             if (niveau == "Critique") { item.BackColor = Theme.FondCritique; item.ForeColor = Color.White; }
             else if (niveau == "Alerte") { item.BackColor = Theme.FondAlerte; item.ForeColor = Theme.Texte; }
             else { item.BackColor = Theme.Panneau; item.ForeColor = niveau == "Actif" ? Theme.Cyan : Theme.Texte; }
@@ -122,13 +127,14 @@ namespace DeR4Tizer
     // l'assistant élevé, avec sa confirmation), dossier des règles
     public static class VueDetection
     {
-        public static string Info(EtatIds ids, EtatDpi dpi, bool ips)
+        // ips : null si config.json est illisible, état alors dit « inconnu » (audit de #138, S138-01)
+        public static string Info(EtatIds ids, EtatDpi dpi, bool? ips)
         {
             ids = ids ?? new EtatIds(); dpi = dpi ?? new EtatDpi();
             return string.Format(L.En
                 ? "{0} rule(s) loaded, {1} ignored (unsupported options) · {2:N0} packets analysed · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} known malicious JA3 fingerprints"
                 : "{0} règle(s) chargée(s), {1} ignorée(s) (options non prises en charge) · {2:N0} paquets analysés · IPS {3}\nTLS {4:N0} · HTTP {5:N0} · DNS {6:N0} · {7:N0} empreintes JA3 malveillantes connues",
-                ids.Regles, ids.Ignorees, ids.PaquetsAnalyses, ips ? (L.En ? "ON" : "ACTIF") : (L.En ? "off" : "inactif"),
+                ids.Regles, ids.Ignorees, ids.PaquetsAnalyses, ips == null ? (L.En ? "unknown (config.json unreadable)" : "inconnu (config.json illisible)") : ips.Value ? (L.En ? "ON" : "ACTIF") : (L.En ? "off" : "inactif"),
                 dpi.SessionsTls, dpi.RequetesHttp, dpi.RequetesDns, dpi.EmpreintesJa3Connues);
         }
 
@@ -172,11 +178,14 @@ namespace DeR4Tizer
         {
             var ids = Commun.Lire<EtatIds>("ids.json") ?? new EtatIds();
             var dpi = Commun.Lire<EtatDpi>("dpi.json") ?? new EtatDpi();
-            var config = Commun.Lire<Config>("config.json") ?? new Config();
+            var configLue = Commun.Lire<Config>("config.json");
+            var config = configLue ?? new Config();
             majCase = true;
             chkIps.Checked = config.Ips;
+            // État inconnu : la case ne prétend rien et ne s'actionne pas (audit de #138, S138-01)
+            chkIps.Enabled = configLue != null;
             majCase = false;
-            Info.Text = VueDetection.Info(ids, dpi, config.Ips);
+            Info.Text = VueDetection.Info(ids, dpi, configLue == null ? (bool?)null : config.Ips);
             int vue = cbVue.SelectedIndex;
             int haut = vue == vueAffichee && Lv.Items.Count > 0 ? Lv.TopItem.Index : 0;
             vueAffichee = vue;

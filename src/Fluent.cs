@@ -477,6 +477,8 @@ namespace DeR4Tizer
             // Santé et Détection en WPF (U3a)
             if (cle == "Santé") { zone.Content = new PageSanteFluent(); return; }
             if (cle == "Détection") { zone.Content = new PageDetectionFluent(); return; }
+            // Événements en WPF (U3b)
+            if (cle == "Événements") { zone.Content = new PageEvenementsFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -1265,7 +1267,7 @@ namespace DeR4Tizer
         readonly StackPanel liste = new StackPanel();
         readonly ContentControl detail = new ContentControl();
         readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        EtatIds ids; EtatDpi dpi; bool ips, lu;
+        EtatIds ids; EtatDpi dpi; bool? ips; bool lu;
         int vue, choisie, enCours, chargement;
         string vu;
 
@@ -1287,7 +1289,7 @@ namespace DeR4Tizer
                 try
                 {
                     var i = Commun.Lire<EtatIds>("ids.json"); var d = Commun.Lire<EtatDpi>("dpi.json"); var c = Commun.Lire<Config>("config.json");
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { ids = i; dpi = d; ips = c != null && c.Ips; lu = true; Afficher(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { ids = i; dpi = d; ips = c == null ? (bool?)null : c.Ips; lu = true; Afficher(); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -1296,7 +1298,7 @@ namespace DeR4Tizer
         void Afficher()
         {
             resume.Text = !lu ? L.T("Lecture en cours…") : VueDetection.Info(ids, dpi, ips) + (ids == null ? "\n" + L.T("ids.json absent ou illisible : rien n'est conclu.") : "");
-            resume.Foreground = Jetons.Pinceau(lu && ids == null ? Jetons.Attention : Jetons.TexteSecondaire);
+            resume.Foreground = Jetons.Pinceau(lu && (ids == null || !ips.HasValue) ? Jetons.Attention : Jetons.TexteSecondaire);
             var lignes = VueDetectionFluent.Lignes(ids, dpi, vue);
             if (choisie >= lignes.Count) choisie = 0;
             string signature = vue + "#" + choisie + "#" + lu + "#" + ips + "#" + string.Join(";", lignes.Take(VueDetectionFluent.Maximum).Select(x => x.Titre + "|" + x.Sous));
@@ -1320,10 +1322,12 @@ namespace DeR4Tizer
             }
             outils.Children.Add(vues);
             var bas = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-            var bIps = Briques.Action(ips ? L.T("Désactiver l'IPS") : L.T("Activer l'IPS : bloquer au pare-feu l'adresse distante des règles « drop » ou de priorité 1"), !ips, (s, e) => { VueDetection.ChangerIps(!ips); Charger(); });
+            bool ipsActif = ips == true;
+            var bIps = Briques.Action(ipsActif ? L.T("Désactiver l'IPS") : L.T("Activer l'IPS : bloquer au pare-feu l'adresse distante des règles « drop » ou de priorité 1"), !ipsActif, (s, e) => { VueDetection.ChangerIps(!ipsActif); Charger(); });
             bIps.HorizontalAlignment = HorizontalAlignment.Left; bIps.Margin = new Thickness(0, 0, 8, 0);
             // État de l'IPS inconnu avant la première lecture : aucun bouton qui prétendrait le connaître
-            bIps.Visibility = lu ? Visibility.Visible : Visibility.Collapsed;
+            // config.json illisible : état inconnu, aucun bouton (audit de #138, S138-01)
+            bIps.Visibility = lu && ips.HasValue ? Visibility.Visible : Visibility.Collapsed;
             var bRegles = Briques.Action(L.T("Dossier des règles"), false, (s, e) => VueDetection.OuvrirDossierRegles());
             bRegles.HorizontalAlignment = HorizontalAlignment.Left;
             bas.Children.Add(bIps); bas.Children.Add(bRegles);
@@ -1347,6 +1351,268 @@ namespace DeR4Tizer
             var pile = new StackPanel();
             pile.Children.Add(new TextBlock { Text = x.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             if (!string.IsNullOrEmpty(x.Etiquette)) pile.Children.Add(new TextBlock { Text = x.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x.Gravite)), Margin = new Thickness(0, 2, 0, 4), TextWrapping = TextWrapping.Wrap });
+            foreach (var l in x.Detail)
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
+            }
+            detail.Content = pile;
+        }
+    }
+
+    // Décisions pures de la page Événements de la coquille (U3b), testées par tests\rendu-pilote.ps1. Les événements et les
+    // incidents de corrélation décrivent le poste : un programme peut y avoir mis ce qu'il veut, tout passe par Visible
+    public static class VueEvenementsFluent
+    {
+        public const int Maximum = 500;
+        public static readonly string[] Sources = { "Toutes les sources", "alerte", "connexion", "processus", "securite", "parefeu", "systeme" };
+        public static readonly string[] Niveaux = { "Tous niveaux", "Alerte", "Critique" };
+        public static readonly string[] Periodes = { "1 heure", "24 heures", "7 jours", "30 jours" };
+
+        static int Gravite(string niveau) { return niveau == "Critique" ? 2 : niveau == "Alerte" ? 1 : 0; }
+
+        static LigneDetail D(string titre, string texte, bool chasse = false) { return new LigneDetail { Titre = L.T(titre), Texte = Canal.Visible(texte ?? ""), Chasse = chasse }; }
+
+        public static LigneEtatFluent Ligne(Evenement e)
+        {
+            Func<string, string> v = x => Canal.Visible(x ?? "");
+            string qui = string.Join("  ·  ", new[] { v(e.Utilisateur), v(e.Processus), v(e.Ip) }.Where(x => x != ""));
+            return new LigneEtatFluent
+            {
+                Titre = v(e.Message), Etiquette = v(e.Source) + (string.IsNullOrEmpty(e.Type) ? "" : " / " + v(e.Type)),
+                Sous = v(e.Heure) + (qui == "" ? "" : "  ·  " + qui), Gravite = Gravite(e.Niveau),
+                Detail = new[]
+                {
+                    D("Heure", e.Heure), D("Niveau", L.T(e.Niveau ?? "")), D("Source", e.Source), D("Type", e.Type), D("MITRE", e.Mitre),
+                    D("Utilisateur", e.Utilisateur), D("Programme", e.Processus + (e.Pid.HasValue ? " (PID " + e.Pid + ")" : "")),
+                    D("IP", string.IsNullOrEmpty(e.Ip) ? "" : e.Ip + (e.Port > 0 ? ":" + e.Port : ""), true), D("Destination", e.Destination, true), D("Message", e.Message)
+                }.Where(x => x.Texte != "").ToList()
+            };
+        }
+
+        public static LigneEtatFluent Ligne(Incident i)
+        {
+            Func<string, string> v = x => Canal.Visible(x ?? "");
+            var d = new List<LigneDetail> { D("Heure", i.Heure), D("Règle", i.Regle + (string.IsNullOrEmpty(i.Mitre) ? "" : " · " + i.Mitre)), D("Résumé", i.Resume) };
+            var evts = (i.Evenements ?? new List<string>()).Take(5).Select(v).ToList();
+            if (evts.Count > 0) d.Add(new LigneDetail { Titre = L.T("Événements"), Texte = string.Join("\n", evts), Chasse = true });
+            return new LigneEtatFluent
+            {
+                Titre = v(i.Titre), Etiquette = v(L.T(i.Niveau ?? "")), Sous = v(i.Heure) + "  ·  " + v(i.Regle) + (string.IsNullOrEmpty(i.Mitre) ? "" : "  ·  " + v(i.Mitre)),
+                Gravite = Gravite(i.Niveau), Detail = d.Where(x => x.Texte != "").ToList()
+            };
+        }
+
+        public static string Resume(ResultatSiem r, DateTime? fDebut, DateTime? fFin)
+        {
+            if (r == null) return L.T("Recherche…");
+            string tranche = fDebut.HasValue ? string.Format(L.En ? " · slice {0:HH:mm}–{1:HH:mm} (click it again to clear)" : " · tranche {0:HH:mm}–{1:HH:mm} (recliquer pour l'enlever)", fDebut, fFin) : "";
+            return string.Format(L.En ? "{0} event(s){1}, {2} correlation incident(s){3}" : "{0} événement(s){1}, {2} incident(s) de corrélation{3}",
+                r.Total, r.Total > Maximum ? (L.En ? " (latest " + Maximum + " shown)" : " (les " + Maximum + " plus récents affichés)") : "", r.Incidents.Count, tranche);
+        }
+    }
+
+    // Chronologie de la page Événements : barres empilées par niveau (racine carrée, comme aujourd'hui), clic pour garder
+    // une tranche, nouveau clic pour l'enlever
+    class ChronologieFluent : FrameworkElement
+    {
+        ResultatSiem r;
+        DateTime? choixDebut;
+        public event Action<DateTime?, DateTime?> TrancheChoisie;
+
+        public ChronologieFluent() { Height = 104; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12); }
+
+        public void Definir(ResultatSiem resultat, DateTime? debut) { r = resultat; choixDebut = debut; InvalidateVisual(); }
+
+        int Tranches { get { return r == null || r.Compteurs == null ? 0 : r.Compteurs.GetLength(0); } }
+
+        // Repères (relecture de #139, constat 6) : sur une échelle en racine carrée, une barre à mi-hauteur vaut le quart du
+        // maximum ; le maximum par tranche et les heures de début, de milieu et de fin sont donc écrits
+        FormattedText Texte(string t)
+        {
+            return new FormattedText(t, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface(Jetons.Police, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+                11, Jetons.Pinceau(Jetons.TexteSecondaire), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        }
+
+        internal const double Gauche = 12, Haut = 20, Bas = 18;
+
+        protected override void OnRender(DrawingContext g)
+        {
+            g.DrawRoundedRectangle(Jetons.Pinceau(Jetons.Carte), null, new Rect(0, 0, ActualWidth, ActualHeight), 8, 8);
+            int n = Tranches;
+            if (n == 0) return;
+            double l = ActualWidth - 2 * Gauche, h = Math.Max(1, ActualHeight - Haut - Bas), pas = l / n;
+            int max = 1;
+            for (int t = 0; t < n; t++) max = Math.Max(max, r.Compteurs[t, 0] + r.Compteurs[t, 1] + r.Compteurs[t, 2]);
+            g.DrawText(Texte(string.Format(L.T("max {0} par tranche, hauteur en racine carrée"), max)), new Point(Gauche, 3));
+            string format = (r.Fin - r.Debut).TotalHours > 24 ? "dd/MM HH:mm" : "HH:mm";
+            var debut = Texte(r.Debut.ToString(format)); var milieu = Texte(r.Debut.AddTicks((r.Fin - r.Debut).Ticks / 2).ToString(format)); var fin = Texte(r.Fin.ToString(format));
+            double yt = ActualHeight - Bas + 2;
+            g.DrawText(debut, new Point(Gauche, yt));
+            g.DrawText(milieu, new Point(Gauche + l / 2 - milieu.Width / 2, yt));
+            g.DrawText(fin, new Point(Gauche + l - fin.Width, yt));
+            var couleurs = new[] { Jetons.Accent, Jetons.Attention, Jetons.Danger };
+            for (int t = 0; t < n; t++)
+            {
+                DateTime d, f;
+                RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out f);
+                bool choisie = choixDebut.HasValue && Math.Abs((choixDebut.Value - d).TotalSeconds) < 1;
+                if (choisie) g.DrawRectangle(Jetons.Pinceau(Jetons.Surface), null, new Rect(Gauche + t * pas, Haut - 2, pas, h + 4));
+                int total = r.Compteurs[t, 0] + r.Compteurs[t, 1] + r.Compteurs[t, 2];
+                if (total <= 0) continue;
+                double hauteur = Math.Max(2, Math.Sqrt(total) / Math.Sqrt(max) * h);
+                // Alerte et Critique jamais sous 2 px : quelques critiques restent visibles parmi des milliers d'infos (constat 6b)
+                double[] segments = new double[3];
+                for (int niv = 1; niv < 3; niv++) if (r.Compteurs[t, niv] > 0) segments[niv] = Math.Max(2, hauteur * r.Compteurs[t, niv] / total);
+                segments[0] = r.Compteurs[t, 0] > 0 ? Math.Max(1, hauteur - segments[1] - segments[2]) : 0;
+                double y = Haut + h;
+                for (int niv = 0; niv < 3; niv++)
+                {
+                    if (segments[niv] <= 0) continue;
+                    y -= segments[niv];
+                    g.DrawRectangle(Jetons.Pinceau(couleurs[niv]), null, new Rect(Gauche + t * pas + 1, y, Math.Max(1, pas - 2), segments[niv]));
+                }
+            }
+        }
+
+        // Hauteurs des segments d'une tranche (Info, Alerte, Critique), pour les tests : même calcul que le rendu
+        internal static double[] Segments(int info, int alerte, int critique, int max, double h)
+        {
+            int total = info + alerte + critique;
+            var seg = new double[3];
+            if (total <= 0) return seg;
+            double hauteur = Math.Max(2, Math.Sqrt(total) / Math.Sqrt(Math.Max(1, max)) * h);
+            int[] c = { info, alerte, critique };
+            for (int niv = 1; niv < 3; niv++) if (c[niv] > 0) seg[niv] = Math.Max(2, hauteur * c[niv] / total);
+            seg[0] = info > 0 ? Math.Max(1, hauteur - seg[1] - seg[2]) : 0;
+            return seg;
+        }
+
+        protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+        {
+            base.OnMouseLeftButtonUp(e);
+            int n = Tranches;
+            if (n == 0 || TrancheChoisie == null) return;
+            double x = e.GetPosition(this).X - Gauche, l = ActualWidth - 2 * Gauche;
+            if (x < 0 || x >= l) return;
+            int t = Math.Min(n - 1, (int)(x / (l / n)));
+            DateTime d, f;
+            RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out f);
+            if (choixDebut.HasValue && Math.Abs((choixDebut.Value - d).TotalSeconds) < 1) TrancheChoisie(null, null);
+            else TrancheChoisie(d, f);
+        }
+    }
+
+    // Page Événements en WPF (U3b) : même recherche que la page d'aujourd'hui (RechercheSiem, lecture seule, hors du fil de
+    // l'interface), mêmes filtres et même chronologie ; incidents de corrélation puis événements, panneau de détails
+    class PageEvenementsFluent : Grid
+    {
+        readonly TextBlock resume = new TextBlock();
+        readonly StackPanel outils = new StackPanel();
+        readonly StackPanel liste = new StackPanel();
+        readonly ContentControl detail = new ContentControl();
+        readonly TextBox recherche = new TextBox();
+        readonly ChronologieFluent chrono = new ChronologieFluent();
+        readonly WrapPanel filtres = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+        int source, niveau, periode = 1, numero, choisie;
+        DateTime? trancheDebut, trancheFin;
+        ResultatSiem resultat;
+        List<LigneEtatFluent> lignes = new List<LigneEtatFluent>();
+
+        public PageEvenementsFluent()
+        {
+            Briques.Disposer(this, resume, outils, liste, detail);
+            var ligneRecherche = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var bouton = Briques.Action(L.T("Rechercher"), true, (s, e) => { trancheDebut = trancheFin = null; Charger(); });
+            bouton.HorizontalAlignment = HorizontalAlignment.Left; bouton.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(bouton, Dock.Right);
+            ligneRecherche.Children.Add(bouton);
+            recherche.Background = Jetons.Pinceau(Jetons.Surface); recherche.Foreground = Jetons.Pinceau(Jetons.Texte); recherche.CaretBrush = Jetons.Pinceau(Jetons.Texte);
+            recherche.BorderBrush = Jetons.Pinceau(Jetons.Separateur); recherche.Padding = new Thickness(8, 5, 8, 5); recherche.VerticalContentAlignment = VerticalAlignment.Center;
+            recherche.ToolTip = L.T("Texte cherché dans les événements (utilisateur, IP, programme, message…)");
+            recherche.KeyDown += (s, e) => { if (e.Key == Key.Enter) { trancheDebut = trancheFin = null; Charger(); } };
+            ligneRecherche.Children.Add(recherche);
+            outils.Children.Add(ligneRecherche);
+            outils.Children.Add(filtres);
+            outils.Children.Add(chrono);
+            chrono.TrancheChoisie += (d, f) => { trancheDebut = d; trancheFin = f; Charger(); };
+            Loaded += (s, e) => Charger();
+            Filtres();
+            Afficher();
+        }
+
+        void Filtres()
+        {
+            filtres.Children.Clear();
+            Action<string[], int, Action<int>> groupe = (valeurs, actif, choisir) =>
+            {
+                for (int k = 0; k < valeurs.Length; k++)
+                {
+                    int n = k;
+                    var b = new Button
+                    {
+                        Content = L.T(valeurs[k]), Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 6, 6), Cursor = Cursors.Hand, FontSize = 12,
+                        Background = Jetons.Pinceau(n == actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(n == actif ? Jetons.Accent : Jetons.Separateur),
+                        BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                    };
+                    b.Template = Coquille.ModeleBouton();
+                    b.Click += (s, e) => { choisir(n); trancheDebut = trancheFin = null; Filtres(); Charger(); };
+                    filtres.Children.Add(b);
+                }
+                filtres.Children.Add(new Border { Width = 12 });
+            };
+            groupe(VueEvenementsFluent.Periodes, periode, n => periode = n);
+            groupe(VueEvenementsFluent.Niveaux, niveau, n => niveau = n);
+            groupe(VueEvenementsFluent.Sources, source, n => source = n);
+        }
+
+        internal void Charger()
+        {
+            string texte = recherche.Text.Trim(), src = RechercheSiem.Sources[source];
+            int niv = niveau;
+            DateTime fin = DateTime.Now, debut = fin - RechercheSiem.Periodes[periode];
+            DateTime? fd = trancheDebut, ff = trancheFin;
+            int n = ++numero;
+            resume.Text = L.T("Recherche…");
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var r = RechercheSiem.ChercherSur(texte, src, niv, debut, fin, fd, ff);
+                Dispatcher.BeginInvoke((Action)(() => { if (n == numero) { resultat = r; choisie = 0; Afficher(); } }));
+            });
+        }
+
+        void Afficher()
+        {
+            resume.Text = VueEvenementsFluent.Resume(resultat, trancheDebut, trancheFin);
+            resume.Foreground = Jetons.Pinceau(Jetons.TexteSecondaire);
+            chrono.Definir(resultat, trancheDebut);
+            liste.Children.Clear();
+            lignes = new List<LigneEtatFluent>();
+            if (resultat == null) { liste.Children.Add(new TextBlock { Text = L.T("Recherche…"), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }); Detailler(null); return; }
+            if (resultat.Incidents.Count > 0) liste.Children.Add(Briques.Titre(L.T("Incidents de corrélation"), 0));
+            foreach (var i in resultat.Incidents.Take(VueEvenementsFluent.Maximum)) Ajouter(VueEvenementsFluent.Ligne(i));
+            if (resultat.Evenements.Count > 0) liste.Children.Add(Briques.Titre(L.T("Événements"), 8));
+            foreach (var e in resultat.Evenements.Take(VueEvenementsFluent.Maximum)) Ajouter(VueEvenementsFluent.Ligne(e));
+            if (lignes.Count == 0) liste.Children.Add(new TextBlock { Text = L.T("Aucun événement pour cette recherche."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            Detailler(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null);
+        }
+
+        void Ajouter(LigneEtatFluent x)
+        {
+            int n = lignes.Count;
+            lignes.Add(x);
+            var b = Briques.Ligne(x.Titre, x.Etiquette, x.Sous, x.Gravite, n == choisie, false, () => { choisie = n; Afficher(); });
+            liste.Children.Add(b);
+        }
+
+        void Detailler(LigneEtatFluent x)
+        {
+            if (x == null) { detail.Content = new TextBlock { Text = L.T("Sélectionnez un incident ou un événement pour voir le détail."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            if (!string.IsNullOrEmpty(x.Etiquette)) pile.Children.Add(new TextBlock { Text = x.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x.Gravite)), Margin = new Thickness(0, 2, 0, 4) });
             foreach (var l in x.Detail)
             {
                 pile.Children.Add(Briques.Titre(l.Titre, 10));

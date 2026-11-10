@@ -514,6 +514,27 @@ namespace DeR4Tizer
             return b.ToString();
         }
 
+        // Valeur copiée vers le presse-papiers (« Copier » des pages d'aujourd'hui ; audit de #139, S139-01) : la valeur
+        // exacte reste lisible (pas de « ? »), mais aucun caractère de contrôle, de mise en forme ni séparateur de ligne
+        // ne passe tel quel : un retour à la ligne collé dans une console exécuterait la suite. Écrits \r, \n, \t, \uXXXX
+        internal static string Echappe(string s)
+        {
+            if (s == null) return "";
+            var b = new System.Text.StringBuilder(s.Length);
+            foreach (char ch in s)
+            {
+                var cat = char.GetUnicodeCategory(ch);
+                if (ch == '\r') b.Append("\\r");
+                else if (ch == '\n') b.Append("\\n");
+                else if (ch == '\t') b.Append("\\t");
+                else if (char.IsControl(ch) || cat == System.Globalization.UnicodeCategory.Format || cat == System.Globalization.UnicodeCategory.LineSeparator
+                    || cat == System.Globalization.UnicodeCategory.ParagraphSeparator)
+                    b.Append("\\u").Append(((int)ch).ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+                else b.Append(ch);
+            }
+            return b.ToString();
+        }
+
         // Liste (destinataires, adresses autorisées) : un élément par ligne, avec leur nombre, découpée comme le service
         // la découpe (« , », « ; », espace) : rien ne se cache au bout d'une ligne trop large (S60-01, S60-03)
         static string Lignes(string brut)
