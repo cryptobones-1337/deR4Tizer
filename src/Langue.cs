@@ -220,7 +220,7 @@ namespace DeR4Tizer
             { "Terminer l'apprentissage", "End learning" }, { "Recommencer (7 jours)", "Restart (7 days)" }, { "Supprimer les exceptions", "Delete exceptions" },
             { "MISE À JOUR", "UPDATES" }, { "Manifeste", "Manifest" }, { "Rechercher maintenant", "Check now" },
             { "Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)", "Automatically install a version signed with the key pinned in deR4Tizer (revocation checked)" },
-            { "Aucune exposition détectée", "No exposure detected" }, { "PC EXPOSÉ À INTERNET", "PC EXPOSED TO THE INTERNET" },
+            { "Aucune exposition détectée", "No exposure detected" }, { "Rien relevé par les contrôles disponibles", "Nothing found by the available checks" }, { "Rien relevé, contrôles incomplets", "Nothing found, checks incomplete" }, { "PC EXPOSÉ À INTERNET", "PC EXPOSED TO THE INTERNET" },
             { "ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC", "no packet from the Internet in the last 24 h, no public address, no UPnP redirection from the router to this PC" },
             { "Redirections de ports de la box (UPnP)", "Router port forwards (UPnP)" }, { "VERS CE PC", "TO THIS PC" }, { "Redirection", "Forward" },
             { "port interne", "internal port" }, { "active", "active" }, { "inactive", "inactive" },
