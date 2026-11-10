@@ -484,6 +484,10 @@ namespace DeR4Tizer
             if (cle == "Chaînes") { zone.Content = new PageChainesFluent(source as ISourceReponses); return; }
             // Trafic en WPF (U4b) : lecture seule, aucune action
             if (cle == "Trafic") { zone.Content = new PageTraficFluent(); return; }
+            // Blocages, Quarantaine et Menaces en WPF (U5a) : mêmes commandes et mêmes questions (ActionsProtection)
+            if (cle == "Blocages") { zone.Content = new PageBlocagesFluent(); return; }
+            if (cle == "Quarantaine") { zone.Content = new PageQuarantaineFluent(); return; }
+            if (cle == "Menaces") { zone.Content = new PageMenacesFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -2245,7 +2249,10 @@ namespace DeR4Tizer
         {
             g.DrawRoundedRectangle(Jetons.Pinceau(Jetons.Carte), null, new Rect(0, 0, ActualWidth, ActualHeight), 8, 8);
             if (ActualWidth < 40 || ActualHeight < 40) return;
-            g.DrawText(Texte(L.En ? "Volume exchanged since midnight (log scale) · arcs: exchanges of the last 10 seconds" : "Volume échangé depuis minuit (échelle logarithmique) · arcs : échanges des 10 dernières secondes"), new Point(12, 4));
+            // Légende coupée par des points de suspension quand la carte est étroite, jamais tronquée en plein mot (captures de #141)
+            var legende = Texte(L.En ? "Volume since midnight (log scale) · arcs: last 10 seconds" : "Volume depuis minuit (échelle log.) · arcs : 10 dernières secondes");
+            legende.MaxTextWidth = Math.Max(1, ActualWidth - 24); legende.MaxLineCount = 1; legende.Trimming = TextTrimming.CharacterEllipsis;
+            g.DrawText(legende, new Point(12, 4));
             var volumes = new Dictionary<string, long>();
             foreach (var p in pays) if (p != null && p.Code != null) volumes[p.Code] = p.Entrant + p.Sortant;
             long max = volumes.Count == 0 ? 1 : volumes.Values.Max();
@@ -2462,6 +2469,396 @@ namespace DeR4Tizer
                 pile.Children.Add(tb);
             }
             detail.Content = pile;
+        }
+    }
+    // Lecture d'un fichier du service : absent n'est pas illisible (absent : rien d'enregistré ; illisible : rien de conclu)
+    static class LectureFluent
+    {
+        public static T Lire<T>(string nom, out bool absent) where T : class
+        {
+            // Accès refusé n'est pas absent (audit de #142, S142-01) : même règle que config.json
+            absent = ActionsProtection.Absent(nom);
+            return absent ? null : Commun.Lire<T>(nom);
+        }
+    }
+
+    // Décisions pures de la page Blocages de la coquille (U5a), testées par tests\rendu-pilote.ps1. Cible et raison
+    // reprennent un nom de domaine ou de programme vu sur le réseau : neutralisés
+    public static class VueBlocagesFluent
+    {
+        public static string Type(Blocage b)
+        {
+            bool en = L.En;
+            return b.Type == "hosts" ? (en ? "hosts file" : "fichier hosts") : b.Type == "programme" ? (en ? "isolated program" : "programme isolé") : (en ? "firewall" : "pare-feu");
+        }
+
+        public static string Resume(IList<Blocage> l, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            bool garde = l != null && l.Count > 0;
+            string avant = !illisible ? "" : garde
+                ? (en ? "blocages.json unreadable: the last display is kept; it may be out of date.\n" : "blocages.json illisible : dernier affichage gardé, peut-être dépassé.\n")
+                : (en ? "blocages.json unreadable: nothing is concluded." : "blocages.json illisible : rien n'est conclu.");
+            if (illisible && !garde) return avant;
+            var x = l ?? new List<Blocage>();
+            if (x.Count == 0) return en ? "No block." : "Aucun blocage.";
+            return avant + string.Format(en ? "{0} block(s): {1} name(s) redirected to 127.0.0.1 in the hosts file, {2} IP address(es) blocked at the firewall, {3} program(s) isolated from the network."
+                                            : "{0} blocage(s) : {1} nom(s) redirigé(s) vers 127.0.0.1 dans le fichier hosts, {2} IP bloquée(s) au pare-feu, {3} programme(s) isolé(s) du réseau.",
+                x.Count, x.Count(b => b.Type == "hosts"), x.Count(b => b.Type != "hosts" && b.Type != "programme"), x.Count(b => b.Type == "programme"));
+        }
+
+        public static List<LigneDetail> Detail(Blocage b)
+        {
+            bool en = L.En;
+            return new List<LigneDetail>
+            {
+                new LigneDetail { Titre = "Type", Texte = Type(b) },
+                new LigneDetail { Titre = en ? "Target" : "Cible", Texte = Canal.Visible(b.Cible), Chasse = true },
+                new LigneDetail { Titre = en ? "Reason" : "Raison", Texte = string.IsNullOrEmpty(b.Raison) ? "—" : Canal.Visible(b.Raison) },
+                new LigneDetail { Titre = "Date", Texte = string.IsNullOrEmpty(b.Date) ? "—" : Canal.Visible(b.Date) }
+            };
+        }
+    }
+
+    // Décisions pures de la page Quarantaine de la coquille (U5a). Le chemin d'origine est un nom de fichier choisi par un
+    // programme : neutralisé, à l'écran comme dans la question de restauration
+    public static class VueQuarantaineFluent
+    {
+        // Plus récents d'abord, comme la page d'aujourd'hui
+        public static List<ElementQuarantaine> Trier(IList<ElementQuarantaine> l) { return Enumerable.Reverse(l ?? new List<ElementQuarantaine>()).Where(q => q != null).ToList(); }
+
+        public static string Nom(ElementQuarantaine q)
+        {
+            string c = q.CheminOrigine ?? "";
+            int k = Math.Max(c.LastIndexOf('\\'), c.LastIndexOf('/'));
+            return Canal.Visible(k >= 0 && k < c.Length - 1 ? c.Substring(k + 1) : c);
+        }
+
+        public static string Taille(long octets) { return (octets / 1024).ToString("N0") + (L.En ? " KB" : " Ko"); }
+
+        public static string Resume(IList<ElementQuarantaine> l, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            bool garde = l != null && l.Count > 0;
+            if (illisible && !garde) return en ? "quarantaine.json unreadable: nothing is concluded." : "quarantaine.json illisible : rien n'est conclu.";
+            string avant = illisible ? (en ? "quarantaine.json unreadable: the last display is kept; it may be out of date.\n" : "quarantaine.json illisible : dernier affichage gardé, peut-être dépassé.\n") : "";
+            var x = l ?? new List<ElementQuarantaine>();
+            if (x.Count == 0) return en ? "No file in quarantine." : "Aucun fichier en quarantaine.";
+            return avant + string.Format(en ? "{0} file(s) removed from their location and made non-executable; they can be restored." : "{0} fichier(s) retiré(s) de leur emplacement et rendu(s) inexécutable(s) ; ils peuvent être restaurés.", x.Count);
+        }
+
+        public static List<LigneDetail> Detail(ElementQuarantaine q)
+        {
+            bool en = L.En;
+            return new List<LigneDetail>
+            {
+                new LigneDetail { Titre = en ? "Original location" : "Emplacement d'origine", Texte = Canal.Visible(q.CheminOrigine), Chasse = true },
+                new LigneDetail { Titre = "Date", Texte = string.IsNullOrEmpty(q.Date) ? "—" : Canal.Visible(q.Date) },
+                new LigneDetail { Titre = en ? "Reason" : "Raison", Texte = string.IsNullOrEmpty(q.Raison) ? "—" : Canal.Visible(q.Raison) },
+                new LigneDetail { Titre = en ? "Size" : "Taille", Texte = Taille(q.Taille) }
+            };
+        }
+    }
+
+    // Décisions pures de la page Menaces de la coquille (U5a)
+    public static class VueMenacesFluent
+    {
+        public static string ConfigIllisible()
+        {
+            return L.En ? "config.json unreadable: the automatic responses' settings are unknown; none is offered until it can be read."
+                        : "config.json illisible : réglages des réponses automatiques inconnus ; aucun n'est proposé tant qu'il n'est pas lu.";
+        }
+
+        // 1 : liste en échec (des menaces connues ne sont pas reconnues) ; 0 : à jour ou désactivée par choix
+        public static int Gravite(SourceMenace s) { string st = s.Statut ?? ""; return st == "ok" || st.StartsWith("désactivée") ? 0 : 1; }
+
+        // Étiquette courte de la liste : un long statut écrasait le nom de la source (captures de #142) ; le statut entier est
+        // dans le détail
+        public static string Etiquette(SourceMenace s)
+        {
+            bool en = L.En;
+            string st = s.Statut ?? "";
+            return st == "ok" ? "ok" : st.StartsWith("désactivée") ? (en ? "disabled" : "désactivée") : (en ? "failed" : "en échec");
+        }
+
+        // Texte d'un réglage : l'état d'abord, pour qu'il reste lisible quelle que soit la largeur (captures de #142)
+        public static string TexteReglage(string reglage, bool actif)
+        {
+            bool en = L.En;
+            return (en ? (actif ? "On" : "Off") : (actif ? "Activé" : "Désactivé")) + "  ·  " + Libelle(reglage) + "  " + (en ? (actif ? "(click to turn off)" : "(click to turn on)") : (actif ? "(cliquer pour désactiver)" : "(cliquer pour activer)"));
+        }
+
+        public static string Resume(InfosMenaces m, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            if (m == null) return illisible ? (en ? "menaces.json unreadable: nothing is concluded." : "menaces.json illisible : rien n'est conclu.") : (en ? "Lists not loaded yet." : "Listes pas encore chargées.");
+            string s = string.Format(en ? "{0:N0} IP addresses, {1:N0} networks and {2:N0} malicious domains known · reloaded on {3} · downloaded every 12 h by the service."
+                                        : "{0:N0} IP, {1:N0} réseaux et {2:N0} domaines malveillants connus · rechargées le {3} · téléchargées toutes les 12 h par le service.",
+                m.TotalIp, m.TotalReseaux, m.TotalDomaines, Canal.Visible(m.MisAJour));
+            int ko = (m.Sources ?? new List<SourceMenace>()).Count(x => x != null && Gravite(x) == 1);
+            if (ko > 0) s += "\n" + string.Format(en ? "{0} list(s) failed: the threats they contain are not recognised." : "{0} liste(s) en échec : les menaces qu'elles contiennent ne sont pas reconnues.", ko);
+            if (illisible) s = (en ? "menaces.json unreadable: the last display is kept; it may be out of date.\n" : "menaces.json illisible : dernier affichage gardé, peut-être dépassé.\n") + s;
+            return s;
+        }
+
+        public static string Libelle(string reglage)
+        {
+            switch (reglage)
+            {
+                case "BlocageAutoMenaces": return L.T("Bloquer automatiquement au pare-feu les IP de Spamhaus DROP et de Feodo Tracker");
+                case "ReponseAutoRancongiciel": return L.T("Suspendre automatiquement un programme qui touche aux fichiers leurres (rançongiciel)");
+                case "ListesRestreintes": return L.T("Utiliser aussi les listes non commerciales ou aux conditions non vérifiées (usage personnel uniquement)");
+            }
+            return reglage;
+        }
+
+        public static bool Valeur(Config c, string reglage)
+        {
+            return reglage == "BlocageAutoMenaces" ? c.BlocageAutoMenaces : reglage == "ReponseAutoRancongiciel" ? c.ReponseAutoRancongiciel : c.ListesRestreintes;
+        }
+
+        public static List<LigneDetail> Detail(SourceMenace s)
+        {
+            bool en = L.En;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            return new List<LigneDetail>
+            {
+                new LigneDetail { Titre = "Type", Texte = v(s.Type) },
+                new LigneDetail { Titre = en ? "Confidence" : "Confiance", Texte = v(s.Confiance) },
+                new LigneDetail { Titre = en ? "Entries" : "Entrées", Texte = s.Entrees.ToString("N0") },
+                new LigneDetail { Titre = en ? "Updated" : "Mise à jour", Texte = v(s.MisAJour) },
+                new LigneDetail { Titre = en ? "Licence" : "Licence", Texte = v(s.Licence) },
+                new LigneDetail { Titre = en ? "Status" : "Statut", Texte = v(s.Statut) }
+            };
+        }
+    }
+
+    // Base des pages de protection (U5a) : un fichier lu hors du fil de l'interface, une lecture à la fois ; résumé,
+    // outils, liste et panneau de détails
+    abstract class PageProtectionFluent : Grid
+    {
+        protected readonly TextBlock resume = new TextBlock();
+        protected readonly StackPanel outils = new StackPanel();
+        protected readonly StackPanel liste = new StackPanel();
+        protected readonly ContentControl detail = new ContentControl();
+        readonly System.Windows.Threading.DispatcherTimer minuteur = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        protected bool lu;
+        protected string vu;
+        protected int choisie;
+        int enCours, chargement;
+
+        protected PageProtectionFluent()
+        {
+            Briques.Disposer(this, resume, outils, liste, detail);
+            minuteur.Tick += (s, e) => Charger();
+            Loaded += (s, e) => { minuteur.Start(); Charger(); };
+            Unloaded += (s, e) => minuteur.Stop();
+        }
+
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var r = LireFichiers();
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; Recevoir(r); Afficher(); } }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        // Sur le fil de fond : lecture seule des fichiers ; sur le fil de l'interface : réception puis affichage
+        protected abstract object LireFichiers();
+        protected abstract void Recevoir(object lecture);
+        protected abstract void Afficher();
+
+        protected void Liste(List<LigneEtatFluent> lignes)
+        {
+            liste.Children.Clear();
+            if (choisie >= lignes.Count) choisie = 0;
+            for (int k = 0; k < lignes.Count; k++)
+            {
+                int n = k; var x = lignes[k];
+                liste.Children.Add(Briques.Ligne(x.Titre, x.Etiquette, x.Sous, x.Gravite, n == choisie, false, () => { choisie = n; vu = null; Afficher(); }));
+            }
+        }
+
+        protected StackPanel Panneau(LigneEtatFluent x, string vide)
+        {
+            if (x == null) { detail.Content = new TextBlock { Text = vide, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return null; }
+            var pile = new StackPanel();
+            pile.Children.Add(new TextBlock { Text = x.Titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            if (!string.IsNullOrEmpty(x.Etiquette)) pile.Children.Add(new TextBlock { Text = x.Etiquette, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(x.Gravite)), Margin = new Thickness(0, 2, 0, 4), TextWrapping = TextWrapping.Wrap });
+            foreach (var l in x.Detail)
+            {
+                pile.Children.Add(Briques.Titre(l.Titre, 10));
+                var t = new TextBlock { Text = l.Texte, TextWrapping = TextWrapping.Wrap };
+                if (l.Chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+                pile.Children.Add(t);
+            }
+            detail.Content = pile;
+            return pile;
+        }
+
+        protected static Button Outil(string texte, bool fort, RoutedEventHandler clic)
+        {
+            var b = Briques.Action(texte, fort, clic);
+            b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 0, 8, 8);
+            return b;
+        }
+    }
+
+    // Page Blocages en WPF (U5a) : blocages.json, mêmes commandes que la page d'aujourd'hui (ActionsProtection)
+    class PageBlocagesFluent : PageProtectionFluent
+    {
+        List<Blocage> blocages = new List<Blocage>();
+        bool illisible;
+
+        public PageBlocagesFluent() { Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var l = LectureFluent.Lire<List<Blocage>>("blocages.json", out absent); return absent ? new List<Blocage>() : l; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var l = lecture as List<Blocage>;
+            illisible = l == null;
+            if (l != null) blocages = l.Where(b => b != null).ToList();
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueBlocagesFluent.Resume(blocages, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(illisible ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = blocages.Select(b => new LigneEtatFluent { Titre = Canal.Visible(b.Cible), Etiquette = VueBlocagesFluent.Type(b), Sous = (string.IsNullOrEmpty(b.Raison) ? "" : Canal.Visible(b.Raison) + "  ·  ") + Canal.Visible(b.Date), Detail = VueBlocagesFluent.Detail(b) }).ToList();
+            string signature = choisie + "#" + resume.Text + "#" + string.Join(";", blocages.Select(b => b.Type + "|" + b.Cible + "|" + b.Date));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            if (lu && blocages.Count > 0)
+            {
+                var barre = new WrapPanel();
+                barre.Children.Add(Outil(L.T("Tout débloquer"), false, (s, e) => { if (ActionsProtection.ToutDebloquer()) Charger(); }));
+                outils.Children.Add(barre);
+            }
+            Liste(lignes);
+            var choix = lignes.Count > 0 ? blocages[Math.Min(choisie, blocages.Count - 1)] : null;
+            var pile = Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a block to read it and lift it." : "Sélectionnez un blocage pour le lire et le lever.");
+            if (pile != null && choix != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                pile.Children.Add(Briques.Action(L.En ? "Unblock" : "Débloquer", true, (s, e) => { ActionsProtection.Debloquer(choix); Charger(); }));
+            }
+        }
+    }
+
+    // Page Quarantaine en WPF (U5a) : quarantaine.json, mêmes restaurations et mêmes questions que la page d'aujourd'hui
+    class PageQuarantaineFluent : PageProtectionFluent
+    {
+        List<ElementQuarantaine> elements = new List<ElementQuarantaine>();
+        bool illisible;
+
+        public PageQuarantaineFluent() { Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var l = LectureFluent.Lire<List<ElementQuarantaine>>("quarantaine.json", out absent); return absent ? new List<ElementQuarantaine>() : l; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var l = lecture as List<ElementQuarantaine>;
+            illisible = l == null;
+            if (l != null) elements = VueQuarantaineFluent.Trier(l);
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueQuarantaineFluent.Resume(elements, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(illisible ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = elements.Select(q => new LigneEtatFluent { Titre = VueQuarantaineFluent.Nom(q), Etiquette = VueQuarantaineFluent.Taille(q.Taille), Sous = Canal.Visible(q.Date) + (string.IsNullOrEmpty(q.Raison) ? "" : "  ·  " + Canal.Visible(q.Raison)), Detail = VueQuarantaineFluent.Detail(q) }).ToList();
+            string signature = choisie + "#" + resume.Text + "#" + string.Join(";", elements.Select(q => q.Id));
+            if (signature == vu) return;
+            vu = signature;
+            Liste(lignes);
+            var choix = elements.Count > 0 ? elements[Math.Min(choisie, elements.Count - 1)] : null;
+            var pile = Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a file to read it and restore it." : "Sélectionnez un fichier pour le lire et le restaurer.");
+            if (pile != null && choix != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                pile.Children.Add(Briques.Action(L.En ? "Restore to its original location" : "Restaurer à son emplacement d'origine", true, (s, e) => { if (ActionsProtection.Restaurer(choix, false)) Charger(); }));
+                pile.Children.Add(Briques.Action(L.T("Restaurer dans le dossier de deR4Tizer"), false, (s, e) => { if (ActionsProtection.Restaurer(choix, true)) Charger(); }));
+            }
+        }
+    }
+
+    // Page Menaces en WPF (U5a) : menaces.json et config.json ; réglages des réponses automatiques par la même commande
+    // que la page d'aujourd'hui, cachés quand config.json est illisible (S139-02)
+    class PageMenacesFluent : PageProtectionFluent
+    {
+        InfosMenaces menaces;
+        Config config;
+        bool menacesIllisible, configIllisible;
+
+        public PageMenacesFluent() { Afficher(); }
+
+        protected override object LireFichiers()
+        {
+            bool absent, ci;
+            var m = LectureFluent.Lire<InfosMenaces>("menaces.json", out absent);
+            var c = ActionsProtection.LireConfig(out ci);
+            return new object[] { m, !absent && m == null, c, ci };
+        }
+
+        protected override void Recevoir(object lecture)
+        {
+            var r = (object[])lecture;
+            menacesIllisible = (bool)r[1];
+            if (r[0] != null || !menacesIllisible) menaces = r[0] as InfosMenaces;
+            configIllisible = (bool)r[3];
+            config = r[2] as Config;
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueMenacesFluent.Resume(menaces, lu, menacesIllisible) + (lu && configIllisible ? "\n" + VueMenacesFluent.ConfigIllisible() : "");
+            var sources = menaces == null ? new List<SourceMenace>() : (menaces.Sources ?? new List<SourceMenace>()).Where(x => x != null).ToList();
+            resume.Foreground = Jetons.Pinceau(lu && (menacesIllisible || configIllisible || sources.Any(x => VueMenacesFluent.Gravite(x) == 1)) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = sources.Select(x => new LigneEtatFluent
+            {
+                Titre = Canal.Visible(x.Nom), Etiquette = VueMenacesFluent.Etiquette(x),
+                Sous = Canal.Visible(x.Type) + "  ·  " + Canal.Visible(x.Confiance) + "  ·  " + x.Entrees.ToString("N0") + (L.En ? " entries" : " entrées") + (string.IsNullOrEmpty(x.MisAJour) ? "" : "  ·  " + Canal.Visible(x.MisAJour)),
+                Gravite = VueMenacesFluent.Gravite(x), Detail = VueMenacesFluent.Detail(x)
+            }).ToList();
+            string reglages = config == null ? "?" : string.Join(",", ActionsProtection.Reglages.Select(g => VueMenacesFluent.Valeur(config, g)));
+            string signature = choisie + "#" + resume.Text + "#" + lu + "#" + configIllisible + "#" + reglages + "#" + string.Join(";", lignes.Select(x => x.Titre + "|" + x.Etiquette + "|" + x.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var barre = new WrapPanel();
+            barre.Children.Add(Outil(L.T("Mettre à jour maintenant"), false, (s, e) => { ActionsProtection.MajMenaces(); Charger(); }));
+            outils.Children.Add(barre);
+            // Réglages : seulement quand leur état est lu ; illisible, le résumé le dit et rien n'est proposé
+            if (lu && config != null && !configIllisible)
+            {
+                outils.Children.Add(Briques.Titre(L.En ? "Automatic responses" : "Réponses automatiques", 0));
+                foreach (var g in ActionsProtection.Reglages)
+                {
+                    string nom = g;
+                    bool actif = VueMenacesFluent.Valeur(config, nom);
+                    var b = Outil("", actif, (s, e) => { ActionsProtection.ChangerReglage(nom, !actif); Charger(); });
+                    // Texte renvoyé à la ligne : l'état n'est jamais coupé
+                    b.Content = new TextBlock { Text = VueMenacesFluent.TexteReglage(nom, actif), TextWrapping = TextWrapping.Wrap };
+                    b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    b.Margin = new Thickness(0, 0, 0, 6);
+                    outils.Children.Add(b);
+                }
+                outils.Children.Add(new Border { Height = 6 });
+            }
+            Liste(lignes);
+            Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a list to read its detail." : "Sélectionnez une liste pour lire son détail.");
         }
     }
 }

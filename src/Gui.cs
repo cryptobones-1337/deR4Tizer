@@ -23,6 +23,73 @@ using System.Windows.Forms;
 
 namespace DeR4Tizer
 {
+    // Actions des pages Blocages, Quarantaine et Menaces (U5a) : mêmes commandes et mêmes questions dans les deux
+    // interfaces. Ce qu'une question montre est neutralisé ; la commande garde la valeur lue
+    public static class ActionsProtection
+    {
+        public static void Debloquer(Blocage b)
+        {
+            if (b == null) return;
+            Canal.Executer(new Commande { Action = "debloquer", Type = b.Type, Cible = b.Cible });
+        }
+
+        public static bool ToutDebloquer()
+        {
+            if (MessageBox.Show("Retirer tous les blocages deR4Tizer (fichier hosts et pare-feu) ?", "deR4Tizer",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            Canal.Executer(new Commande { Action = "toutDebloquer" });
+            return true;
+        }
+
+        // Repli : si la restauration à l'emplacement d'origine est refusée (le propriétaire n'a pas de session ouverte,
+        // emplacement du système), le service restaure dans son propre dossier
+        public static bool Restaurer(ElementQuarantaine q, bool repli)
+        {
+            if (q == null) return false;
+            string question = repli
+                ? "Restaurer ce fichier dans le dossier de deR4Tizer (C:\\ProgramData\\deR4Tizer\\restaurations) plutôt qu'à son emplacement d'origine ?\n\n" + Canal.Visible(q.CheminOrigine)
+                : "Remettre ce fichier à son emplacement d'origine ?\n\n" + Canal.Visible(q.CheminOrigine);
+            if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return false;
+            Canal.Executer(new Commande { Action = repli ? "restaurerRepli" : "restaurer", Cible = q.Id });
+            return true;
+        }
+
+        // Un fichier du service est-il vraiment absent ? File.Exists rend faux aussi quand l'accès est refusé : absent
+        // seulement si le dossier se liste sans lui, sinon « illisible » (même règle qu'ActionsReponses.Lire, relecture de
+        // #121 ; audit de #142, S142-01). Dossier de données inexistant : absent (rien n'est encore enregistré)
+        public static bool Absent(string nom)
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(Commun.Dossier, nom))) return false;
+                return !Directory.EnumerateFiles(Commun.Dossier, nom).Any();
+            }
+            catch (DirectoryNotFoundException) { return true; }
+            catch { return false; }
+        }
+
+        public static void MajMenaces() { Canal.Executer(new Commande { Action = "majMenaces" }); }
+
+        public static readonly string[] Reglages = { "BlocageAutoMenaces", "ReponseAutoRancongiciel", "ListesRestreintes" };
+
+        public static void ChangerReglage(string reglage, bool valeur)
+        {
+            if (Array.IndexOf(Reglages, reglage) < 0) return;
+            Canal.Executer(new Commande { Action = "config", Cible = reglage, Valeur = valeur ? "true" : "false" });
+        }
+
+        // config.json : absent, ce sont les valeurs par défaut (celles du service) ; présent mais illisible, l'état est
+        // inconnu et aucun réglage n'est offert (audit de #139, S139-02 : on ne montre pas un défaut comme s'il était lu)
+        public static Config LireConfig(out bool illisible)
+        {
+            illisible = false;
+            if (Absent("config.json")) return new Config();
+            var c = Commun.Lire<Config>("config.json");
+            illisible = c == null;
+            return c;
+        }
+    }
+
     // Une alerte ne porte que le PID et son heure (yyyy-MM-dd HH:mm:ss, heure locale du service), pas l'heure de création
     // du processus : suspendre ou tuer depuis une alerte ancienne viserait le programme qui porte ce PID aujourd'hui
     // (relecture de #136, remarque 5). Décisions pures, testées par tests\rendu-pilote.ps1
@@ -897,10 +964,7 @@ namespace DeR4Tizer
             btnRestaurer.Click += (s, e) =>
             {
                 if (lvQuarantaine.SelectedItems.Count == 0) return;
-                var q = (ElementQuarantaine)lvQuarantaine.SelectedItems[0].Tag;
-                if (MessageBox.Show("Remettre ce fichier à son emplacement d'origine ?\n\n" + q.CheminOrigine, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                Canal.Executer(new Commande { Action = "restaurer", Cible = q.Id });
-                quarantaineVu = DateTime.MinValue;
+                if (ActionsProtection.Restaurer(lvQuarantaine.SelectedItems[0].Tag as ElementQuarantaine, false)) quarantaineVu = DateTime.MinValue;
             };
             // Repli : si la restauration à l'emplacement d'origine est refusée (le propriétaire n'a pas de session
             // ouverte, emplacement du système), le service restaure dans son propre dossier
@@ -908,18 +972,14 @@ namespace DeR4Tizer
             btnRestaurerRepli.Click += (s, e) =>
             {
                 if (lvQuarantaine.SelectedItems.Count == 0) return;
-                var q = (ElementQuarantaine)lvQuarantaine.SelectedItems[0].Tag;
-                if (MessageBox.Show("Restaurer ce fichier dans le dossier de deR4Tizer (C:\\ProgramData\\deR4Tizer\\restaurations) plutôt qu'à son emplacement d'origine ?\n\n" + q.CheminOrigine,
-                    "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                Canal.Executer(new Commande { Action = "restaurerRepli", Cible = q.Id });
-                quarantaineVu = DateTime.MinValue;
+                if (ActionsProtection.Restaurer(lvQuarantaine.SelectedItems[0].Tag as ElementQuarantaine, true)) quarantaineVu = DateTime.MinValue;
             };
             var pageQuarantaine = Page("Quarantaine", "Fichiers retirés de leur emplacement et rendus inexécutables. Ils peuvent être restaurés.", lvQuarantaine, btnRestaurer, btnRestaurerRepli);
 
             // ---------------- Listes de menaces et réponses automatiques
             lvMenaces.Colonnes("Source", 260, "Type", 90, "Confiance", 100, "Entrées", 90, "Mise à jour", 140, "Licence", 330, "Statut", 380);
             var btnMaj = new BoutonNeon("Mettre à jour maintenant", Theme.Cyan);
-            btnMaj.Click += (s, e) => Canal.Executer(new Commande { Action = "majMenaces" });
+            btnMaj.Click += (s, e) => ActionsProtection.MajMenaces();
             chkBlocageAuto.CheckedChanged += (s, e) => ChangerReglage(chkBlocageAuto, "BlocageAutoMenaces");
             chkRancongiciel.CheckedChanged += (s, e) => ChangerReglage(chkRancongiciel, "ReponseAutoRancongiciel");
             chkListesRestreintes.CheckedChanged += (s, e) => ChangerReglage(chkListesRestreintes, "ListesRestreintes");
@@ -1286,12 +1346,20 @@ namespace DeR4Tizer
             if (d != configVu)
             {
                 configVu = d;
-                var config = Commun.Lire<Config>("config.json") ?? new Config();
+                bool illisible;
+                var config = ActionsProtection.LireConfig(out illisible);
                 majCase = true;
-                chkBlocageAuto.Checked = config.BlocageAutoMenaces;
-                chkRancongiciel.Checked = config.ReponseAutoRancongiciel;
-                chkListesRestreintes.Checked = config.ListesRestreintes;
+                // Illisible : cases grisées, état inconnu dit ; jamais un défaut montré comme s'il était lu (S139-02)
+                chkBlocageAuto.Enabled = chkRancongiciel.Enabled = chkListesRestreintes.Enabled = !illisible;
+                if (!illisible)
+                {
+                    chkBlocageAuto.Checked = config.BlocageAutoMenaces;
+                    chkRancongiciel.Checked = config.ReponseAutoRancongiciel;
+                    chkListesRestreintes.Checked = config.ListesRestreintes;
+                }
+                configIllisible = illisible;
                 majCase = false;
+                LibelleMenaces();
             }
 
             var alertes = Commun.Lire<List<Alerte>>("alertes.json") ?? new List<Alerte>();
@@ -1565,7 +1633,8 @@ namespace DeR4Tizer
             lvBlocages.BeginUpdate();
             lvBlocages.Items.Clear();
             foreach (var b in blocages)
-                lvBlocages.Items.Add(new ListViewItem(new[] { b.Type == "hosts" ? "hosts" : b.Type == "programme" ? "programme isolé" : "pare-feu", b.Cible, b.Raison, b.Date }) { Tag = b });
+                // Cible et raison : un nom de domaine ou de programme vu sur le réseau ; neutralisés (U5a)
+                lvBlocages.Items.Add(new ListViewItem(new[] { b.Type == "hosts" ? "hosts" : b.Type == "programme" ? "programme isolé" : "pare-feu", Canal.Visible(b.Cible), Canal.Visible(b.Raison), Canal.Visible(b.Date) }) { Tag = b });
             lvBlocages.EndUpdate();
             navBlocages.Badge = blocages.Count;
         }
@@ -1791,7 +1860,8 @@ namespace DeR4Tizer
             lvQuarantaine.BeginUpdate();
             lvQuarantaine.Items.Clear();
             foreach (var q in Enumerable.Reverse(liste))
-                lvQuarantaine.Items.Add(new ListViewItem(new[] { q.Date, q.CheminOrigine, q.Raison, (q.Taille / 1024).ToString("N0") + " Ko" }) { Tag = q });
+                // Chemin d'origine : un programme choisit le nom de son fichier ; neutralisé (U5a)
+                lvQuarantaine.Items.Add(new ListViewItem(new[] { Canal.Visible(q.Date), Canal.Visible(q.CheminOrigine), Canal.Visible(q.Raison), (q.Taille / 1024).ToString("N0") + " Ko" }) { Tag = q });
             lvQuarantaine.EndUpdate();
             navQuarantaine.Badge = liste.Count;
         }
@@ -1845,8 +1915,8 @@ namespace DeR4Tizer
 
         void ChangerReglage(CheckBox c, string reglage)
         {
-            if (majCase) return;
-            Canal.Executer(new Commande { Action = "config", Cible = reglage, Valeur = c.Checked ? "true" : "false" });
+            if (majCase || configIllisible) return;
+            ActionsProtection.ChangerReglage(reglage, c.Checked);
             configVu = DateTime.MinValue;
             Rafraichir();
         }
@@ -1921,16 +1991,28 @@ namespace DeR4Tizer
             if (infos != null)
                 foreach (var s in infos.Sources ?? new List<SourceMenace>())
                 {
-                    var item = new ListViewItem(new[] { s.Nom, s.Type, s.Confiance, s.Entrees.ToString("N0"), s.MisAJour ?? "", s.Licence ?? "", s.Statut ?? "" });
+                    // Statut : message d'erreur d'un téléchargement, il peut reprendre ce qu'un serveur a répondu ; neutralisé (U5a)
+                    var item = new ListViewItem(new[] { Canal.Visible(s.Nom), Canal.Visible(s.Type), Canal.Visible(s.Confiance), s.Entrees.ToString("N0"), Canal.Visible(s.MisAJour), Canal.Visible(s.Licence), Canal.Visible(s.Statut) });
                     if ((s.Statut ?? "").StartsWith("désactivée")) item.ForeColor = Theme.TexteDim;
                     else if (s.Statut != "ok") item.ForeColor = Theme.Rouge;
                     else if (s.Confiance == "haute") item.ForeColor = Theme.Cyan;
                     lvMenaces.Items.Add(item);
                 }
             lvMenaces.EndUpdate();
-            lblMenaces.Text = infos == null ? "Listes pas encore chargées."
+            menacesLues = infos;
+            LibelleMenaces();
+        }
+
+        InfosMenaces menacesLues;
+        bool configIllisible;
+
+        void LibelleMenaces()
+        {
+            var infos = menacesLues;
+            lblMenaces.Text = (infos == null ? "Listes pas encore chargées."
                 : string.Format("{0:N0} IP, {1:N0} réseaux et {2:N0} domaines malveillants connus · rechargées le {3}",
-                    infos.TotalIp, infos.TotalReseaux, infos.TotalDomaines, infos.MisAJour);
+                    infos.TotalIp, infos.TotalReseaux, infos.TotalDomaines, Canal.Visible(infos.MisAJour)))
+                + (configIllisible ? "\n" + VueMenacesFluent.ConfigIllisible() : "");
         }
 
         // ------------------------------------------------------------ actions
@@ -1985,17 +2067,13 @@ namespace DeR4Tizer
         void DebloquerSelection()
         {
             if (lvBlocages.SelectedItems.Count == 0) return;
-            var b = (Blocage)lvBlocages.SelectedItems[0].Tag;
-            Canal.Executer(new Commande { Action = "debloquer", Type = b.Type, Cible = b.Cible });
+            ActionsProtection.Debloquer(lvBlocages.SelectedItems[0].Tag as Blocage);
             Rafraichir();
         }
 
         void ToutDebloquer()
         {
-            if (MessageBox.Show("Retirer tous les blocages deR4Tizer (fichier hosts et pare-feu) ?", "deR4Tizer",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            Canal.Executer(new Commande { Action = "toutDebloquer" });
-            Rafraichir();
+            if (ActionsProtection.ToutDebloquer()) Rafraichir();
         }
 
         void DemarrerService()
