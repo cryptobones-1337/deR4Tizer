@@ -2574,6 +2574,22 @@ namespace DeR4Tizer
         // 1 : liste en échec (des menaces connues ne sont pas reconnues) ; 0 : à jour ou désactivée par choix
         public static int Gravite(SourceMenace s) { string st = s.Statut ?? ""; return st == "ok" || st.StartsWith("désactivée") ? 0 : 1; }
 
+        // Étiquette courte de la liste : un long statut écrasait le nom de la source (captures de #142) ; le statut entier est
+        // dans le détail
+        public static string Etiquette(SourceMenace s)
+        {
+            bool en = L.En;
+            string st = s.Statut ?? "";
+            return st == "ok" ? "ok" : st.StartsWith("désactivée") ? (en ? "disabled" : "désactivée") : (en ? "failed" : "en échec");
+        }
+
+        // Texte d'un réglage : l'état d'abord, pour qu'il reste lisible quelle que soit la largeur (captures de #142)
+        public static string TexteReglage(string reglage, bool actif)
+        {
+            bool en = L.En;
+            return (en ? (actif ? "On" : "Off") : (actif ? "Activé" : "Désactivé")) + "  ·  " + Libelle(reglage) + "  " + (en ? (actif ? "(click to turn off)" : "(click to turn on)") : (actif ? "(cliquer pour désactiver)" : "(cliquer pour activer)"));
+        }
+
         public static string Resume(InfosMenaces m, bool lu, bool illisible)
         {
             bool en = L.En;
@@ -2812,7 +2828,7 @@ namespace DeR4Tizer
             resume.Foreground = Jetons.Pinceau(lu && (menacesIllisible || configIllisible || sources.Any(x => VueMenacesFluent.Gravite(x) == 1)) ? Jetons.Attention : Jetons.TexteSecondaire);
             var lignes = sources.Select(x => new LigneEtatFluent
             {
-                Titre = Canal.Visible(x.Nom), Etiquette = VueMenacesFluent.Gravite(x) == 1 ? (L.En ? "failed" : "en échec") : Canal.Visible(x.Statut),
+                Titre = Canal.Visible(x.Nom), Etiquette = VueMenacesFluent.Etiquette(x),
                 Sous = Canal.Visible(x.Type) + "  ·  " + Canal.Visible(x.Confiance) + "  ·  " + x.Entrees.ToString("N0") + (L.En ? " entries" : " entrées") + (string.IsNullOrEmpty(x.MisAJour) ? "" : "  ·  " + Canal.Visible(x.MisAJour)),
                 Gravite = VueMenacesFluent.Gravite(x), Detail = VueMenacesFluent.Detail(x)
             }).ToList();
@@ -2832,7 +2848,10 @@ namespace DeR4Tizer
                 {
                     string nom = g;
                     bool actif = VueMenacesFluent.Valeur(config, nom);
-                    var b = Outil((actif ? "✓  " : "○  ") + VueMenacesFluent.Libelle(nom) + (L.En ? (actif ? " (on: click to turn off)" : " (off: click to turn on)") : (actif ? " (activé : cliquer pour désactiver)" : " (désactivé : cliquer pour activer)")), actif, (s, e) => { ActionsProtection.ChangerReglage(nom, !actif); Charger(); });
+                    var b = Outil("", actif, (s, e) => { ActionsProtection.ChangerReglage(nom, !actif); Charger(); });
+                    // Texte renvoyé à la ligne : l'état n'est jamais coupé
+                    b.Content = new TextBlock { Text = VueMenacesFluent.TexteReglage(nom, actif), TextWrapping = TextWrapping.Wrap };
+                    b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     b.Margin = new Thickness(0, 0, 0, 6);
                     outils.Children.Add(b);
                 }
