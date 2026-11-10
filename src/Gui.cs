@@ -709,7 +709,7 @@ namespace DeR4Tizer
         }
     }
 
-    class Fenetre : Form, ISourceEtat, ISourceAlertes
+    class Fenetre : Form, ISourceEtat, ISourceAlertes, ISourceReponses
     {
         readonly string fichierLecture = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "derniere-alerte-lue.txt");
@@ -1366,6 +1366,17 @@ namespace DeR4Tizer
             }
         }
 
+        // ------------------------------------------------------------ actions des pages Connexions et Chaînes de la coquille (U4a)
+        // Mêmes méthodes, mêmes contrôles, mêmes questions que les menus des listes d'aujourd'hui
+        public void AgirElement(object element, string action)
+        {
+            // Seules les réponses que la question d'AgirSur sait dire ; aucune autre commande ne part d'ici
+            var permises = new[] { "tuer", "tuerChaine", "suspendre", "reprendre", "quarantaine", "isolerProgramme" };
+            if ((element is FluxInfo || element is NoeudChaine) && permises.Contains(action)) AgirSur(element, action);
+        }
+        public void BloquerConnexion(FluxInfo f, bool ipSeulement) { if (f != null) Bloquer(f.Processus, f.Ip, ipSeulement ? null : f.NomDns); }
+        public void OuvrirEmplacement(string chemin) { EmplacementDe(chemin); }
+
         public Dictionary<string, PointEtat> Badges()
         {
             var r = new Dictionary<string, PointEtat>();
@@ -1409,12 +1420,17 @@ namespace DeR4Tizer
             lvFlux.Items.Clear();
             foreach (var f in flux)
             {
-                var item = new ListViewItem(new[]
+                // Noms, destinations, signataires et lignes de commande : un programme peut y avoir mis ce qu'il veut. Affichage
+                // neutralisé (U4a, comme Détection et Événements) ; « Copier » rend la valeur d'origine échappée (S139-01)
+                var brutes = new[]
                 {
                     f.Score.ToString(), f.Processus, f.Parent ?? "", f.Pid.ToString(), f.NomDns != null ? f.NomDns + "  (" + f.Ip + ")" : f.Ip,
                     f.Port.ToString(), f.Signataire, f.PremiereVue, f.Raisons
-                }) { Tag = f, ToolTipText = f.Chemin + (string.IsNullOrEmpty(f.LigneCommande) ? "" : "\n" + f.LigneCommande)
-                                            + (string.IsNullOrEmpty(f.Origine) ? "" : "\n" + f.Origine) };
+                };
+                var item = new ListViewItem(brutes.Select(v => Canal.Visible(v ?? "")).ToArray())
+                    { Tag = f, ToolTipText = Canal.Visible(f.Chemin) + (string.IsNullOrEmpty(f.LigneCommande) ? "" : "\n" + Canal.Visible(f.LigneCommande))
+                                            + (string.IsNullOrEmpty(f.Origine) ? "" : "\n" + Canal.Visible(f.Origine)) };
+                for (int k = 0; k < brutes.Length; k++) item.SubItems[k].Tag = Canal.Echappe(brutes[k]);
                 if (f.Raisons.Contains("MENACE")) Colorer(item, Theme.FondCritique, Theme.Rouge, true);
                 else if (f.Raisons.Contains("BLOQUÉ")) item.ForeColor = Theme.TexteDim;
                 else if (f.Score >= Commun.SeuilAlerte) Colorer(item, Theme.FondAlerte, Theme.Texte, false);
@@ -1693,12 +1709,15 @@ namespace DeR4Tizer
             lvChaines.Items.Clear();
             foreach (var c in chaines.Where(x => x.Score > 0))
             {
-                lvChaines.AjouterSection("score " + c.Score + "  ·  " + c.Resume + "  ·  depuis " + c.Depuis);
+                lvChaines.AjouterSection("score " + c.Score + "  ·  " + Canal.Visible(c.Resume) + "  ·  depuis " + Canal.Visible(c.Depuis));
                 foreach (var n in c.Noeuds ?? new List<NoeudChaine>())
                 {
-                    string retrait = new string(' ', n.Profondeur * 3) + (n.Profondeur > 0 ? "└─ " : "");
-                    var item = new ListViewItem(new[] { retrait + n.Nom, n.Pid.ToString(), n.Score > 0 ? n.Score.ToString() : "", n.Raisons, n.LigneCommande })
-                        { Tag = n, ToolTipText = n.Chemin + (string.IsNullOrEmpty(n.LigneCommande) ? "" : "\n" + n.LigneCommande) };
+                    string retrait = new string(' ', Math.Max(0, n.Profondeur) * 3) + (n.Profondeur > 0 ? "└─ " : "");
+                    // Affichage neutralisé (U4a) ; « Copier » rend la valeur d'origine échappée, sans le retrait de l'arbre
+                    var brutes = new[] { n.Nom, n.Pid.ToString(), n.Score > 0 ? n.Score.ToString() : "", n.Raisons, n.LigneCommande };
+                    var item = new ListViewItem(new[] { retrait + Canal.Visible(n.Nom), brutes[1], brutes[2], Canal.Visible(n.Raisons), Canal.Visible(n.LigneCommande) })
+                        { Tag = n, ToolTipText = Canal.Visible(n.Chemin) + (string.IsNullOrEmpty(n.LigneCommande) ? "" : "\n" + Canal.Visible(n.LigneCommande)) };
+                    for (int k = 0; k < brutes.Length; k++) item.SubItems[k].Tag = Canal.Echappe(brutes[k]);
                     if (c.Score >= 12 && n.Score > 0) Colorer(item, Theme.FondCritique, Theme.Rouge, true);
                     else if (n.Score >= 3) Colorer(item, Theme.FondAlerte, Theme.Texte, false);
                     else if (n.Score > 0) Colorer(item, Theme.FondAttention, Theme.Texte, false);
@@ -2013,7 +2032,9 @@ namespace DeR4Tizer
         {
             if (lv.SelectedItems.Count == 0) return;
             var item = lv.SelectedItems[0];
-            Clipboard.SetText(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Text)));
+            // Valeur d'origine échappée quand la cellule la garde (Connexions, Chaînes : U4a), sinon le texte affiché, échappé
+            // lui aussi : aucune liste ne colle de retour à la ligne dans une console (audit de #140, S140-01)
+            Clipboard.SetText(string.Join("\t", item.SubItems.Cast<ListViewItem.ListViewSubItem>().Select(s => s.Tag as string ?? Canal.Echappe(s.Text))));
         }
 
         static void Ouvrir(string chemin)
