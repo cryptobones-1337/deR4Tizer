@@ -7125,3 +7125,16 @@ fn structure_lecture_parefeu_bornee() {
     assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
     assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");
 }
+
+#[test]
+fn exposee_selon_verdict_ipv6_et_bloque_seuls_pas_exposes() {
+    // Q2 (mainteneur, 2026-11-10) : IPv6 globale seule et sources bloquées seules ne donnent plus « PC exposé »
+    let mut e = entrees_diag();
+    e.adresses = vec!["2001:db8::5 (Ethernet)".into()];
+    e.bloquees = 3;
+    assert!(!crate::parefeu::exposee_selon(&crate::parefeu::diagnostiquer(&e)));
+    let mut e = entrees_diag();
+    e.acceptees = 1;
+    assert!(crate::parefeu::exposee_selon(&crate::parefeu::diagnostiquer(&e)));
+    assert!(include_str!("moniteur.rs").contains("self.exposition.exposee = parefeu::exposee_selon(&self.exposition.diagnostic);"));
+}

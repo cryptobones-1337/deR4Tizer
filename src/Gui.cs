@@ -1279,6 +1279,10 @@ namespace DeR4Tizer
                     pastilles.Add(new Entete.Pastille { Texte = L.T("DEFENDER : ÉTAT ILLISIBLE"), Couleur = Theme.Jaune });
                 if (etat.Exposition != null && etat.Exposition.Exposee)
                     pastilles.Insert(1, new Entete.Pastille { Texte = L.T("PC EXPOSÉ À INTERNET"), Couleur = Theme.Rouge, Clignote = true });
+                // IPv6 globale seule, sources bloquées seules, pare-feu désactivé ou ouvert : orange, sans clignoter (U5c-2,
+                // décision du mainteneur, Q2)
+                else if (VueParefeuFluent.ASurveiller(etat.Exposition))
+                    pastilles.Insert(1, new Entete.Pastille { Texte = L.T("EXPOSITION À SURVEILLER"), Couleur = Theme.Jaune });
                 // État effectif publié par le service, compté sur les règles du pare-feu (PR 6.7b) : « incertain » se dit,
                 // et « Rétablir Internet » reste offert
                 paniqueActive = etat.Panique;
@@ -1750,11 +1754,12 @@ namespace DeR4Tizer
                 var bilan = new ListViewItem(new[]
                 {
                     // Jamais « aucune exposition » quand un contrôle n'a pas été fait (dossier U5c, constat C1)
-                    exp.Exposee ? L.T("PC EXPOSÉ À INTERNET") : VueParefeuFluent.Complet(exp) ? L.T("Rien relevé par les contrôles disponibles") : L.T("Rien relevé, contrôles incomplets"),
-                    exp.Exposee ? string.Join(" ; ", (exp.Raisons ?? new List<string>()).Select(Canal.Visible)) : VueParefeuFluent.Constat(exp),
+                    // Titre et détail selon le verdict du diagnostic (U5c-2) ; ancien service : constat de U5c-0
+                    VueParefeuFluent.TitreVerdict(exp),
+                    VueParefeuFluent.DetailVerdict(exp),
                     "", Canal.Visible(exp.Base)
                 });
-                if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = VueParefeuFluent.Complet(exp) ? Theme.TexteDim : Theme.Jaune;
+                if (exp.Exposee) Colorer(bilan, Theme.FondActif, Theme.Rouge, true); else bilan.ForeColor = VueParefeuFluent.ASurveiller(exp) || !VueParefeuFluent.Complet(exp) ? Theme.Jaune : Theme.TexteDim;
                 lvParefeu.Items.Add(bilan);
                 foreach (var e in exp.Entrees ?? new List<EntreeExposee>())
                 {

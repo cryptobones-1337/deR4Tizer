@@ -811,7 +811,7 @@ impl Moniteur {
         }
         let reseau: crate::ndr::EtatReseau = commun::lire("reseau.json").unwrap_or_default();
         self.exposition = self.journal_parefeu.bilan(&self.adresses_publiques, &reseau);
-        // Diagnostic par contrôle (U5c-1) : le booléen Exposee et la pastille ne changent pas dans cette étape
+        // Diagnostic par contrôle (U5c-1) ; Exposee suit son verdict (U5c-2, décision du mainteneur, Q2)
         let (acceptees, bloquees) = self.journal_parefeu.recentes_24h();
         let il_y_a_30_min = commun::heure(std::time::SystemTime::now() - Duration::from_secs(1800));
         self.exposition.diagnostic = parefeu::diagnostiquer(&parefeu::EntreesDiagnostic {
@@ -824,6 +824,7 @@ impl Moniteur {
             redirections_vers_pc: reseau.redirections.iter().filter(|r| r.active && r.client == reseau.interface).count(),
             parefeu: self.etat_parefeu.clone(),
         });
+        self.exposition.exposee = parefeu::exposee_selon(&self.exposition.diagnostic);
 
         let t = mesure::noter("cycle.exposition", t);
         // Leurres anti-rançongiciel : pose reprise toutes les 15 min (nouvelles sessions), leurres déjà suivis gardés

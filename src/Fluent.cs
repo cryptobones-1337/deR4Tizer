@@ -2954,6 +2954,9 @@ namespace DeR4Tizer
             if (x == null)
                 s = etatIllisible ? (en ? "Service state unreadable (etat.json): exposure unknown, nothing is concluded." : "État du service illisible (etat.json) : exposition inconnue, rien n'est conclu.")
                                   : (en ? "Exposure not published by the service yet." : "Exposition pas encore publiée par le service.");
+            else if (Verdict(x) != "")
+                // Verdict du diagnostic du service (U5c-2)
+                s = TitreVerdict(x) + " : " + DetailVerdict(x);
             else if (x.Exposee)
                 s = (en ? "COMPUTER EXPOSED TO THE INTERNET: " : "PC EXPOSÉ À INTERNET : ") + string.Join(" ; ", (x.Raisons ?? new List<string>()).Select(Canal.Visible));
             else
@@ -2971,8 +2974,113 @@ namespace DeR4Tizer
             return base_ != null && System.Text.RegularExpressions.Regex.IsMatch(base_, @"\(UPnP\) : \d+ redirection\(s\) sur la box");
         }
 
-        // Contrôles complets : journal des paquets actif et UPnP vérifié. Sinon, rien n'est relevé mais tout n'a pas été vu
-        public static bool Complet(Exposition x) { return x != null && x.JournalPaquets && UpnpVerifie(x.Base); }
+        // Contrôles complets : avec le diagnostic du service (U5c-1), « rien relevé » ou un verdict établi ; avec un service
+        // plus ancien, journal des paquets actif et UPnP vérifié
+        public static bool Complet(Exposition x)
+        {
+            if (x == null) return false;
+            string v = Verdict(x);
+            if (v != "") return v != "rien_releve_incomplet";
+            return x.JournalPaquets && UpnpVerifie(x.Base);
+        }
+
+        // Verdict du diagnostic du service ; vide avec un service plus ancien (alors l'ancien constat, U5c-0)
+        public static string Verdict(Exposition x) { return x == null || x.Diagnostic == null || x.Diagnostic.Verdict == null ? "" : x.Diagnostic.Verdict; }
+
+        public static bool ASurveiller(Exposition x) { return Verdict(x) == "a_surveiller"; }
+
+        static IEnumerable<ConstatExposition> Constats(Exposition x, string etat)
+        {
+            return (x.Diagnostic == null || x.Diagnostic.Constats == null ? new List<ConstatExposition>() : x.Diagnostic.Constats).Where(c => c != null && c.Etat == etat);
+        }
+
+        // Titre du bilan selon le verdict (U5c-2)
+        public static string TitreVerdict(Exposition x)
+        {
+            switch (Verdict(x))
+            {
+                case "expose": return L.T("PC EXPOSÉ À INTERNET");
+                case "a_surveiller": return L.T("EXPOSITION À SURVEILLER");
+                case "rien_releve": return L.T("Rien relevé par les contrôles disponibles");
+                case "rien_releve_incomplet": return L.T("Rien relevé, contrôles incomplets");
+            }
+            return x != null && x.Exposee ? L.T("PC EXPOSÉ À INTERNET") : Complet(x) ? L.T("Rien relevé par les contrôles disponibles") : L.T("Rien relevé, contrôles incomplets");
+        }
+
+        // Détail du bilan selon le verdict : ce qui a été constaté, ou ce qui n'a pas pu être vérifié ; jamais « protégé »
+        public static string DetailVerdict(Exposition x)
+        {
+            bool en = L.En;
+            string v = Verdict(x);
+            if (v == "") return x.Exposee ? string.Join(" ; ", (x.Raisons ?? new List<string>()).Select(Canal.Visible)) : Constat(x);
+            string limite = en ? "A router in DMZ or a manual redirection is not visible from this computer." : "Une box en DMZ ou une redirection manuelle ne se voit pas depuis le PC.";
+            string vus = string.Join(" ; ", Constats(x, "constate").Select(c => Canal.Visible(c.Texte)));
+            string nonVus = string.Join(" ; ", Constats(x, "non_verifie").Select(c => Canal.Visible(c.Texte)));
+            if (v == "expose" || v == "a_surveiller") return vus + (nonVus == "" ? "" : "\n" + (en ? "Not checked: " : "Non vérifié : ") + nonVus);
+            if (v == "rien_releve_incomplet") return (en ? "Not checked: " : "Non vérifié : ") + nonVus + ". " + limite;
+            return (en ? "Every available check ran and found nothing. " : "Tous les contrôles disponibles ont été faits, sans rien relever. ") + limite;
+        }
+
+        public static string NomPiste(string piste)
+        {
+            bool en = L.En;
+            switch (piste)
+            {
+                case "adresse_ipv4": return en ? "Public IPv4 address" : "Adresse IPv4 publique";
+                case "adresse_ipv6": return en ? "Global IPv6 address" : "Adresse IPv6 globale";
+                case "paquets_acceptes": return en ? "Incoming connections accepted" : "Connexions entrantes acceptées";
+                case "paquets_bloques": return en ? "Incoming sources blocked" : "Sources entrantes bloquées";
+                case "upnp": return en ? "Router UPnP redirections" : "Redirections UPnP de la box";
+                case "parefeu": return en ? "Windows Firewall" : "Pare-feu de Windows";
+            }
+            return Canal.Visible(piste);
+        }
+
+        // Que faire, phrase fixe par piste ; jamais un bouton qui modifie le pare-feu ou la box
+        public static string QueFaire(ConstatExposition c)
+        {
+            bool en = L.En;
+            if (c.Etat == "non_verifie") return en ? "This check could not run: nothing is concluded." : "Ce contrôle n'a pas pu être fait : rien n'est conclu.";
+            if (c.Etat != "constate") return en ? "Nothing to do for this check." : "Rien à faire pour ce contrôle.";
+            switch (c.Piste)
+            {
+                case "adresse_ipv4": return en ? "Check the router: this computer should not get a public address directly (bridge mode, DMZ)." : "Vérifiez la box : le PC ne doit pas recevoir directement une adresse publique (mode pont, DMZ).";
+                case "adresse_ipv6": return en ? "Check that the router's IPv6 firewall blocks incoming connections." : "Vérifiez que le pare-feu IPv6 de la box bloque les connexions entrantes.";
+                case "paquets_acceptes": return en ? "Open the « Internet exposure » view: which port, which program; close the rule or redirection that allows it." : "Ouvrez la vue « Exposition à Internet » : quel port, quel programme ; fermez la règle ou la redirection qui le permet.";
+                case "paquets_bloques": return en ? "The computer's firewall blocked them; check that no router redirection points to this computer." : "Le pare-feu du PC les a bloquées ; vérifiez qu'aucune redirection de la box ne pointe vers ce PC.";
+                case "upnp": return en ? "Turn UPnP off on the router, or remove the redirection if nobody wanted it." : "Désactivez UPnP sur la box, ou supprimez la redirection si personne ne l'a voulue.";
+                case "parefeu": return en ? "Turn the Windows Firewall back on and block incoming connections by default on this profile." : "Réactivez le pare-feu de Windows et bloquez les connexions entrantes par défaut sur ce profil.";
+            }
+            return "";
+        }
+
+        // 2 : exposition prouvée ; 1 : à surveiller ou non vérifié ; 0 : rien constaté
+        public static int Gravite(ConstatExposition c)
+        {
+            if (c.Etat == "non_verifie") return 1;
+            if (c.Etat != "constate") return 0;
+            return c.Piste == "adresse_ipv4" || c.Piste == "paquets_acceptes" || c.Piste == "upnp" ? 2 : 1;
+        }
+
+        public static string Etat(ConstatExposition c)
+        {
+            bool en = L.En;
+            return c.Etat == "constate" ? (en ? "found" : "constaté") : c.Etat == "non_verifie" ? (en ? "not checked" : "non vérifié") : (en ? "not found" : "pas constaté");
+        }
+
+        public static List<LigneEtatFluent> LignesPourquoi(Exposition x)
+        {
+            bool en = L.En;
+            var l = new List<LigneEtatFluent>();
+            if (x == null || x.Diagnostic == null || x.Diagnostic.Constats == null) return l;
+            foreach (var c in x.Diagnostic.Constats.Where(y => y != null))
+                l.Add(new LigneEtatFluent
+                {
+                    Titre = NomPiste(c.Piste), Etiquette = Etat(c), Sous = Canal.Visible(c.Texte), Gravite = Gravite(c),
+                    Detail = new List<LigneDetail> { new LigneDetail { Titre = en ? "Finding" : "Constat", Texte = Canal.Visible(c.Texte) }, new LigneDetail { Titre = en ? "What to do" : "Que faire", Texte = QueFaire(c) } }
+                });
+            return l;
+        }
 
         // Constat quand le service ne dit pas « exposé » : chaque contrôle est dit vu ou non vérifié ; jamais « aucune
         // exposition » si un contrôle manque, jamais « protégé » (dossier U5c, constat C1)
@@ -3103,7 +3211,7 @@ namespace DeR4Tizer
         List<EvenementRegle> regles = new List<EvenementRegle>();
         bool etatIllisible, reglesIllisible;
         int vue;
-        static readonly string[] Vues = { "Exposition à Internet", "Changements de règles" };
+        static readonly string[] Vues = { "Pourquoi", "Exposition à Internet", "Changements de règles" };
 
         public PageParefeuFluent() { Afficher(); }
 
@@ -3131,9 +3239,9 @@ namespace DeR4Tizer
             bool en = L.En;
             resume.Text = VueParefeuFluent.Resume(exposition, lu, etatIllisible && exposition == null, regles.Count)
                 + (lu && reglesIllisible ? "\n" + (en ? "parefeu.json unreadable: the last list is kept; it may be out of date." : "parefeu.json illisible : dernière liste gardée, peut-être dépassée.") : "");
-            resume.Foreground = Jetons.Pinceau(exposition != null && exposition.Exposee ? Jetons.Danger : lu && (etatIllisible || reglesIllisible || (exposition != null && !VueParefeuFluent.Complet(exposition))) ? Jetons.Attention : Jetons.TexteSecondaire);
-            var lignes = vue == 0
-                ? (exposition == null ? new List<LigneEtatFluent>() : (exposition.Entrees ?? new List<EntreeExposee>()).Where(y => y != null).Select(VueParefeuFluent.Ligne).ToList())
+            resume.Foreground = Jetons.Pinceau(exposition != null && exposition.Exposee ? Jetons.Danger : lu && (etatIllisible || reglesIllisible || VueParefeuFluent.ASurveiller(exposition) || (exposition != null && !VueParefeuFluent.Complet(exposition))) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = vue == 0 ? VueParefeuFluent.LignesPourquoi(exposition)
+                : vue == 1 ? (exposition == null ? new List<LigneEtatFluent>() : (exposition.Entrees ?? new List<EntreeExposee>()).Where(y => y != null).Select(VueParefeuFluent.Ligne).ToList())
                 : Enumerable.Reverse(regles).Take(VueParefeuFluent.Maximum).Select(VueParefeuFluent.Ligne).ToList();
             string signature = vue + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", lignes.Select(y => y.Titre + "|" + y.Etiquette + "|" + y.Sous));
             if (signature == vu) return;
@@ -3155,7 +3263,7 @@ namespace DeR4Tizer
             outils.Children.Add(vues);
             Liste(lignes);
             if (lu && lignes.Count == 0)
-                liste.Children.Add(new TextBlock { Text = vue == 0 ? (en ? "No incoming packet from the Internet recorded." : "Aucun paquet entrant venu d'Internet enregistré.") : (en ? "No rule change since this version was installed." : "Aucun changement de règle depuis l'installation de cette version."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+                liste.Children.Add(new TextBlock { Text = vue == 0 ? (en ? "Diagnostic not published by the service yet: nothing is concluded." : "Diagnostic pas encore publié par le service : rien n'est conclu.") : vue == 1 ? (en ? "No incoming packet from the Internet recorded." : "Aucun paquet entrant venu d'Internet enregistré.") : (en ? "No rule change since this version was installed." : "Aucun changement de règle depuis l'installation de cette version."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
             var x0 = lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null;
             var pile = Panneau(x0, en ? "Select a line to read its detail." : "Sélectionnez une ligne pour lire son détail.");
             if (pile != null)

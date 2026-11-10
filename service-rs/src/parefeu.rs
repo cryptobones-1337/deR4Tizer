@@ -190,6 +190,13 @@ pub fn etat_parefeu_windows_borne() -> Option<EtatParefeuWindows> {
     commun::avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows).flatten()
 }
 
+/// « PC exposé » (pastille rouge) seulement pour une exposition prouvée : IPv4 publique, connexion acceptée, redirection
+/// UPnP vérifiée vers ce PC. IPv6 globale seule et sources bloquées seules restent « à surveiller » (orange) : décision
+/// du mainteneur du 2026-11-10 (Q2 du dossier U5c). Les alertes RES-004 à RES-007 ne changent pas
+pub fn exposee_selon(d: &Diagnostic) -> bool {
+    d.verdict == "expose"
+}
+
 /// Profils actifs du pare-feu de Windows, état et action entrante par défaut ; None si la lecture échoue (alors « non
 /// vérifié », jamais « aucun problème »). Lecture COM seule : aucun Set, Add ni Remove. Toujours appelée par
 /// etat_parefeu_windows_borne

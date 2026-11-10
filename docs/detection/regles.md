@@ -176,6 +176,8 @@ modules expérimentaux.
   avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en remplaçait une autre passait
   inaperçue (faux négatif, corrigé). Non exercée en VM.
 
+Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface change : une IPv6 globale seule donne « exposition à surveiller » (orange), plus « PC exposé » (rouge) ; une IPv4 publique reste « PC exposé ».
+
 ### RES-005 : paquet entrant venu d'Internet
 - **Code** : `parefeu.rs` (journal du pare-feu, « PC EXPOSÉ À INTERNET : paquet entrant … »).
 - **Justification** : un paquet entrant depuis une adresse publique, surtout accepté, montre un PC exposé.
