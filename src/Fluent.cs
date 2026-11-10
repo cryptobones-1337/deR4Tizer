@@ -488,6 +488,9 @@ namespace DeR4Tizer
             if (cle == "Blocages") { zone.Content = new PageBlocagesFluent(); return; }
             if (cle == "Quarantaine") { zone.Content = new PageQuarantaineFluent(); return; }
             if (cle == "Menaces") { zone.Content = new PageMenacesFluent(); return; }
+            // Baseline et Pare-feu en WPF (U5b)
+            if (cle == "Baseline") { zone.Content = new PageBaselineFluent(); return; }
+            if (cle == "Pare-feu") { zone.Content = new PageParefeuFluent(); return; }
             WinForms.Control page = pages(cle);
             if (page == null) { zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) }; return; }
             if (page.Parent != null) page.Parent.Controls.Remove(page);
@@ -2859,6 +2862,278 @@ namespace DeR4Tizer
             }
             Liste(lignes);
             Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a list to read its detail." : "Sélectionnez une liste pour lire son détail.");
+        }
+    }
+    // Décisions pures de la page Baseline de la coquille (U5b), testées par tests\rendu-pilote.ps1
+    public static class VueBaselineFluent
+    {
+        public static readonly string[] Profils = { "journalisation", "recommandé", "renforcé" };
+
+        public static string NomProfil(string p)
+        {
+            bool en = L.En;
+            return p == "journalisation" ? (en ? "Logging (applied automatically)" : "Journalisation (appliquée automatiquement)")
+                 : p == "recommandé" ? (en ? "Recommended" : "Recommandé") : (en ? "Hardened (may hinder some software)" : "Renforcé (peut gêner certains logiciels)");
+        }
+
+        public static int Score(EtatBaseline b, string profil) { int s = 0; if (b != null && b.Scores != null) b.Scores.TryGetValue(profil, out s); return s; }
+
+        // 1 : règle non conforme d'un profil attendu (journalisation, recommandé) ; le renforcé reste un choix, pas un défaut
+        public static int Gravite(EtatRegle r) { return r.Etat == "non conforme" && r.Profil != "renforcé" ? 1 : 0; }
+
+        public static List<EtatRegle> Regles(EtatBaseline b, string profil)
+        {
+            if (b == null || b.Regles == null) return new List<EtatRegle>();
+            return b.Regles.Where(x => x != null && x.Profil == profil).OrderBy(x => x.Categorie ?? "", StringComparer.CurrentCulture).ThenBy(x => x.Titre ?? "", StringComparer.CurrentCulture).ToList();
+        }
+
+        public static string Resume(EtatBaseline b, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return L.T("Lecture en cours…");
+            if (b == null || b.Regles == null)
+                return illisible ? (en ? "baseline.json unreadable: nothing is concluded." : "baseline.json illisible : rien n'est conclu.")
+                                 : (en ? "The service has not evaluated the baseline yet (every 10 minutes)." : "Le service n'a pas encore évalué la baseline (toutes les 10 minutes).");
+            string s = string.Format(en ? "Recommended: {0} % compliant · logging {1} % · hardened {2} %. Applied through local group policy; every rule can be reverted."
+                                        : "Recommandé : {0} % conforme · journalisation {1} % · renforcé {2} %. Appliquée par la stratégie de groupe locale ; chaque règle est réversible.",
+                Score(b, "recommandé"), Score(b, "journalisation"), Score(b, "renforcé"));
+            if (!string.IsNullOrEmpty(b.Message)) s += "\n" + (en ? "Last operation: " : "Dernière opération : ") + Canal.Visible(b.Message);
+            if (illisible) s = (en ? "baseline.json unreadable: the last display is kept; it may be out of date.\n" : "baseline.json illisible : dernier affichage gardé, peut-être dépassé.\n") + s;
+            return s;
+        }
+
+        public static List<LigneDetail> Detail(EtatRegle r)
+        {
+            bool en = L.En;
+            Func<string, string> v = x => string.IsNullOrEmpty(x) ? "—" : Canal.Visible(x);
+            var l = new List<LigneDetail>
+            {
+                new LigneDetail { Titre = en ? "Why" : "Pourquoi", Texte = v(r.Pourquoi) },
+                new LigneDetail { Titre = en ? "Current" : "Actuel", Texte = v(r.Actuel), Chasse = true },
+                new LigneDetail { Titre = en ? "Expected" : "Attendu", Texte = v(r.Attendu), Chasse = true },
+                new LigneDetail { Titre = en ? "Compatibility" : "Compatibilité", Texte = v(r.Compat) }
+            };
+            if (r.Appliquee) l.Add(new LigneDetail { Titre = "deR4Tizer", Texte = en ? "Applied by deR4Tizer (reversible)." : "Appliquée par deR4Tizer (réversible)." });
+            return l;
+        }
+    }
+
+    // Décisions pures de la page Pare-feu de la coquille (U5b). Noms de règles, programmes visés et auteurs sont choisis par
+    // le programme qui crée la règle ; adresses et programmes des paquets entrants viennent du réseau : neutralisés
+    public static class VueParefeuFluent
+    {
+        public const int Maximum = 200;
+
+        public static string Fichier(string chemin)
+        {
+            string c = chemin ?? "";
+            int k = Math.Max(c.LastIndexOf('\\'), c.LastIndexOf('/'));
+            return k >= 0 && k < c.Length - 1 ? c.Substring(k + 1) : c;
+        }
+
+        public static string Description(EvenementRegle r)
+        {
+            return Canal.Visible(r.Sens) + ", " + Canal.Visible(r.Action) + (string.IsNullOrEmpty(r.Ports) ? "" : ", ports " + Canal.Visible(r.Ports))
+                + (string.IsNullOrEmpty(r.ProgrammeCible) ? "" : (L.En ? ", for " : ", pour ") + Canal.Visible(r.ProgrammeCible));
+        }
+
+        // 2 : toutes les règles supprimées ; 1 : entrée autorisée ajoutée ou modifiée ; 0 : le reste
+        public static int Gravite(EvenementRegle r)
+        {
+            if (r.Operation == "toutes supprimées") return 2;
+            return r.Sens == "entrant" && (r.Action ?? "").StartsWith("autoriser") && r.Operation != "supprimée" ? 1 : 0;
+        }
+
+        public static int Gravite(EntreeExposee e) { return e.Action == "ACCEPTÉ" ? 2 : 1; }
+
+        public static string Resume(Exposition x, bool etatLu, bool etatIllisible, int changements)
+        {
+            bool en = L.En;
+            if (!etatLu) return L.T("Lecture en cours…");
+            string s;
+            if (x == null)
+                s = etatIllisible ? (en ? "Service state unreadable (etat.json): exposure unknown, nothing is concluded." : "État du service illisible (etat.json) : exposition inconnue, rien n'est conclu.")
+                                  : (en ? "Exposure not published by the service yet." : "Exposition pas encore publiée par le service.");
+            else if (x.Exposee)
+                s = (en ? "COMPUTER EXPOSED TO THE INTERNET: " : "PC EXPOSÉ À INTERNET : ") + string.Join(" ; ", (x.Raisons ?? new List<string>()).Select(Canal.Visible));
+            else
+                s = en ? "No exposure detected: no packet from the Internet in the last 24 h, no public address, no UPnP redirection from the router to this computer."
+                       : "Aucune exposition détectée : ni paquet venu d'Internet ces dernières 24 h, ni adresse publique, ni redirection UPnP de la box vers ce PC.";
+            if (x != null && !x.JournalPaquets) s += "\n" + (en ? "Firewall packet log off: incoming packets are not seen." : "Journal des paquets du pare-feu inactif : les paquets entrants ne sont pas vus.");
+            return s + "\n" + string.Format(en ? "{0} firewall rule change(s) recorded." : "{0} changement(s) de règle du pare-feu enregistré(s).", changements);
+        }
+
+        public static LigneEtatFluent Ligne(EntreeExposee e)
+        {
+            bool en = L.En;
+            return new LigneEtatFluent
+            {
+                Titre = (en ? "Incoming " : "Entrant ") + Canal.Visible(e.Action) + (en ? ": port " : " : port ") + e.PortLocal + " (" + Canal.Visible(e.Protocole) + ")",
+                Etiquette = e.Nombre + (en ? " packet(s)" : " paquet(s)"), Sous = (en ? "from " : "depuis ") + Canal.Visible(e.Source) + (string.IsNullOrEmpty(e.Programme) ? "" : "  ·  " + Canal.Visible(e.Programme)),
+                Gravite = Gravite(e),
+                Detail = new List<LigneDetail>
+                {
+                    new LigneDetail { Titre = en ? "Source" : "Source", Texte = Canal.Visible(e.Source), Chasse = true },
+                    new LigneDetail { Titre = en ? "Program" : "Programme", Texte = string.IsNullOrEmpty(e.Programme) ? "—" : Canal.Visible(e.Programme), Chasse = true },
+                    new LigneDetail { Titre = en ? "First" : "Premier", Texte = Canal.Visible(e.Premiere) },
+                    new LigneDetail { Titre = en ? "Last" : "Dernier", Texte = Canal.Visible(e.Derniere) }
+                }
+            };
+        }
+
+        public static LigneEtatFluent Ligne(EvenementRegle r)
+        {
+            bool en = L.En;
+            return new LigneEtatFluent
+            {
+                Titre = Canal.Visible(r.Regle), Etiquette = Canal.Visible(r.Operation), Sous = Description(r) + "  ·  " + Canal.Visible(r.Heure), Gravite = Gravite(r),
+                Detail = new List<LigneDetail>
+                {
+                    new LigneDetail { Titre = en ? "Rule" : "Règle", Texte = Canal.Visible(r.Regle) },
+                    new LigneDetail { Titre = en ? "Change" : "Changement", Texte = Description(r) },
+                    new LigneDetail { Titre = en ? "Made by" : "Fait par", Texte = string.IsNullOrEmpty(r.Auteur) ? "—" : Canal.Visible(r.Auteur), Chasse = true },
+                    new LigneDetail { Titre = en ? "Time" : "Heure", Texte = Canal.Visible(r.Heure) }
+                }
+            };
+        }
+    }
+
+    // Page Baseline en WPF (U5b) : baseline.json ; mêmes opérations et mêmes questions que la page d'aujourd'hui
+    class PageBaselineFluent : PageProtectionFluent
+    {
+        EtatBaseline b;
+        bool illisible;
+        int profil = 1;         // recommandé par défaut
+
+        public PageBaselineFluent() { Afficher(); }
+
+        protected override object LireFichiers() { bool absent; var x = LectureFluent.Lire<EtatBaseline>("baseline.json", out absent); return new object[] { x, !absent && x == null }; }
+
+        protected override void Recevoir(object lecture)
+        {
+            var r = (object[])lecture;
+            illisible = (bool)r[1];
+            if (r[0] != null || !illisible) b = r[0] as EtatBaseline;
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueBaselineFluent.Resume(b, lu, illisible);
+            int rec = VueBaselineFluent.Score(b, "recommandé");
+            resume.Foreground = Jetons.Pinceau(lu && (illisible || b == null) ? Jetons.Attention : b != null && b.Regles != null && rec < 50 ? Jetons.Danger : b != null && b.Regles != null && rec < 90 ? Jetons.Attention : Jetons.TexteSecondaire);
+            string nomProfil = VueBaselineFluent.Profils[profil];
+            var regles = VueBaselineFluent.Regles(b, nomProfil);
+            var lignes = regles.Select(x => new LigneEtatFluent
+            {
+                Titre = Canal.Visible((x.Categorie ?? "") + " : " + (x.Titre ?? "")), Etiquette = Canal.Visible(x.Etat) + (x.Appliquee ? " ✓" : ""),
+                Sous = Canal.Visible(x.Actuel) + "  →  " + Canal.Visible(x.Attendu), Gravite = VueBaselineFluent.Gravite(x), Detail = VueBaselineFluent.Detail(x)
+            }).ToList();
+            string signature = profil + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", regles.Select(x => x.Id + "|" + x.Etat + "|" + x.Appliquee + "|" + x.Actuel));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var profils = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            for (int k = 0; k < VueBaselineFluent.Profils.Length; k++)
+            {
+                int n = k; bool actif = n == profil;
+                var bt = new Button
+                {
+                    Content = VueBaselineFluent.NomProfil(VueBaselineFluent.Profils[k]) + (b != null && b.Regles != null ? "  " + VueBaselineFluent.Score(b, VueBaselineFluent.Profils[k]) + " %" : ""),
+                    Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                bt.Template = Coquille.ModeleBouton();
+                bt.Click += (s, e) => { profil = n; choisie = 0; Afficher(); };
+                profils.Children.Add(bt);
+            }
+            outils.Children.Add(profils);
+            var barre = new WrapPanel();
+            barre.Children.Add(Outil(L.T("Appliquer le profil recommandé"), true, (s, e) => { if (ActionsProtection.Baseline("appliquer", "recommandé", ActionsProtection.QuestionRecommande)) Charger(); }));
+            barre.Children.Add(Outil(L.T("Appliquer le profil renforcé…"), false, (s, e) => { if (ActionsProtection.Baseline("appliquer", "renforcé", ActionsProtection.QuestionRenforce)) Charger(); }));
+            barre.Children.Add(Outil(L.T("Tout annuler"), false, (s, e) => { if (ActionsProtection.Baseline("annuler", "recommandé,renforcé", ActionsProtection.QuestionToutAnnuler)) Charger(); }));
+            barre.Children.Add(Outil(L.T("Réévaluer"), false, (s, e) => { if (ActionsProtection.Baseline("evaluer", "", null)) Charger(); }));
+            outils.Children.Add(barre);
+            Liste(lignes);
+            var choix = regles.Count > 0 ? regles[Math.Min(choisie, regles.Count - 1)] : null;
+            var pile = Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a rule to read why it matters." : "Sélectionnez une règle pour lire pourquoi elle compte.");
+            if (pile != null && choix != null && !string.IsNullOrEmpty(choix.Id))
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                string id = choix.Id;
+                if (choix.Etat != "conforme") pile.Children.Add(Briques.Action(L.En ? "Apply this rule" : "Appliquer cette règle", true, (s, e) => { if (ActionsProtection.Baseline("appliquer", id, null)) Charger(); }));
+                if (choix.Appliquee) pile.Children.Add(Briques.Action(L.En ? "Revert this rule" : "Annuler cette règle", false, (s, e) => { if (ActionsProtection.Baseline("annuler", id, ActionsProtection.QuestionAnnulerRegles)) Charger(); }));
+            }
+        }
+    }
+
+    // Page Pare-feu en WPF (U5b) : exposition (etat.json) et changements de règles (parefeu.json), lecture seule
+    class PageParefeuFluent : PageProtectionFluent
+    {
+        Exposition exposition;
+        List<EvenementRegle> regles = new List<EvenementRegle>();
+        bool etatIllisible, reglesIllisible;
+        int vue;
+        static readonly string[] Vues = { "Exposition à Internet", "Changements de règles" };
+
+        public PageParefeuFluent() { Afficher(); }
+
+        protected override object LireFichiers()
+        {
+            bool absentEtat, absentRegles;
+            var e = LectureFluent.Lire<Etat>("etat.json", out absentEtat);
+            var r = LectureFluent.Lire<List<EvenementRegle>>("parefeu.json", out absentRegles);
+            return new object[] { e, !absentEtat && e == null, absentRegles ? new List<EvenementRegle>() : r, !absentRegles && r == null };
+        }
+
+        protected override void Recevoir(object lecture)
+        {
+            var x = (object[])lecture;
+            etatIllisible = (bool)x[1];
+            var e = x[0] as Etat;
+            if (e != null) exposition = e.Exposition;
+            reglesIllisible = (bool)x[3];
+            var r = x[2] as List<EvenementRegle>;
+            if (r != null) regles = r.Where(y => y != null).ToList();
+        }
+
+        protected override void Afficher()
+        {
+            bool en = L.En;
+            resume.Text = VueParefeuFluent.Resume(exposition, lu, etatIllisible && exposition == null, regles.Count)
+                + (lu && reglesIllisible ? "\n" + (en ? "parefeu.json unreadable: the last list is kept; it may be out of date." : "parefeu.json illisible : dernière liste gardée, peut-être dépassée.") : "");
+            resume.Foreground = Jetons.Pinceau(exposition != null && exposition.Exposee ? Jetons.Danger : lu && (etatIllisible || reglesIllisible) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var lignes = vue == 0
+                ? (exposition == null ? new List<LigneEtatFluent>() : (exposition.Entrees ?? new List<EntreeExposee>()).Where(y => y != null).Select(VueParefeuFluent.Ligne).ToList())
+                : Enumerable.Reverse(regles).Take(VueParefeuFluent.Maximum).Select(VueParefeuFluent.Ligne).ToList();
+            string signature = vue + "#" + choisie + "#" + resume.Text + "#" + string.Join(";", lignes.Select(y => y.Titre + "|" + y.Etiquette + "|" + y.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            var vues = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+            for (int k = 0; k < Vues.Length; k++)
+            {
+                int n = k; bool actif = n == vue;
+                var bt = new Button
+                {
+                    Content = L.T(Vues[k]), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                bt.Template = Coquille.ModeleBouton();
+                bt.Click += (s, e) => { vue = n; choisie = 0; Afficher(); };
+                vues.Children.Add(bt);
+            }
+            outils.Children.Add(vues);
+            Liste(lignes);
+            if (lu && lignes.Count == 0)
+                liste.Children.Add(new TextBlock { Text = vue == 0 ? (en ? "No incoming packet from the Internet recorded." : "Aucun paquet entrant venu d'Internet enregistré.") : (en ? "No rule change since this version was installed." : "Aucun changement de règle depuis l'installation de cette version."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+            var x0 = lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null;
+            var pile = Panneau(x0, en ? "Select a line to read its detail." : "Sélectionnez une ligne pour lire son détail.");
+            if (pile != null)
+            {
+                pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                string copie = VueReseauFluent.Copie(new[] { x0.Titre, x0.Etiquette }.Concat(x0.Detail.Select(d => d.Texte)).ToArray());
+                pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(copie)));
+            }
         }
     }
 }

@@ -325,6 +325,37 @@ try {
     Cas 'Blocages, Quarantaine et Menaces d''aujourd''hui : cellules neutralisées' ($guiSrc2.Contains('Canal.Visible(b.Cible), Canal.Visible(b.Raison)') -and $guiSrc2.Contains('Canal.Visible(q.CheminOrigine), Canal.Visible(q.Raison)') -and $guiSrc2.Contains('Canal.Visible(s.Statut) });'))
     Cas 'Protection : accès refusé pris pour illisible, jamais pour absent (audit de #142, S142-01)' ($guiSrc2.Contains('return !Directory.EnumerateFiles(Commun.Dossier, nom).Any();') -and $guiSrc2.Contains('catch { return false; }') -and $guiSrc2.Contains('if (Absent("config.json")) return new Config();') -and $fluentSrc.Contains('absent = ActionsProtection.Absent(nom);'))
     Cas 'Trafic : légende de la carte coupée proprement quand elle est étroite (captures de #141)' ($fluentSrc.Contains('legende.MaxLineCount = 1; legende.Trimming = TextTrimming.CharacterEllipsis;'))
+    # Baseline et Pare-feu (U5b) : résumés honnêtes, gravités d'aujourd'hui, textes neutralisés, mêmes opérations
+    $vbl = & $t 'VueBaselineFluent'; $ebT = & $t 'EtatBaseline'; $erT = & $t 'EtatRegle'
+    $lr = New-Object "Collections.Generic.List[$($erT.FullName)]"
+    $lr.Add((& $nouv $erT @{ Id = 'a'; Profil = 'recommandé'; Categorie = 'Réseau'; Titre = 'SMBv1'; Etat = 'non conforme'; Actuel = 'activé' + [char]0x202E; Attendu = 'désactivé'; Pourquoi = 'p'; Appliquee = $false }))
+    $lr.Add((& $nouv $erT @{ Id = 'b'; Profil = 'renforcé'; Categorie = 'Comptes'; Titre = 'x'; Etat = 'non conforme'; Actuel = '1'; Attendu = '0'; Appliquee = $false }))
+    $lr.Add((& $nouv $erT @{ Id = 'c'; Profil = 'recommandé'; Categorie = 'Audit'; Titre = 'y'; Etat = 'conforme'; Actuel = '1'; Attendu = '1'; Appliquee = $true }))
+    $sc = New-Object 'Collections.Generic.Dictionary[string,int]'; $sc['recommandé'] = 50; $sc['journalisation'] = 100; $sc['renforcé'] = 0
+    $eb = & $nouv $ebT @{ Regles = $lr; Scores = $sc; Message = "ok`r`n" + [char]0x202E }
+    $rbl = [string]$vbl.GetMethod('Resume').Invoke($null, [object[]]@($eb, $true, $false))
+    Cas 'Baseline : scores des trois profils, dernière opération neutralisée' ($rbl.StartsWith('Recommandé : 50 % conforme · journalisation 100 % · renforcé 0 %') -and -not ($rbl.Substring($rbl.IndexOf('Dernière')) -match "[\u202E\r]")) $rbl
+    Cas 'Baseline : avant lecture « Lecture en cours… », pas encore évaluée dit, illisible rien de conclu' (([string]$vbl.GetMethod('Resume').Invoke($null, [object[]]@($null, $false, $false))) -eq 'Lecture en cours…' -and ([string]$vbl.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $false))).Contains('pas encore évalué') -and ([string]$vbl.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $true))).Contains('rien n''est conclu'))
+    $rec = @($vbl.GetMethod('Regles').Invoke($null, [object[]]@($eb, 'recommandé')))
+    Cas 'Baseline : règles du profil triées par catégorie ; non conforme du recommandé à surveiller, renforcé jamais' ((@($rec | ForEach-Object { $_.Id }) -join ',') -eq 'c,a' -and $vbl.GetMethod('Gravite').Invoke($null, @($lr[0])) -eq 1 -and $vbl.GetMethod('Gravite').Invoke($null, @($lr[1])) -eq 0) (@($rec | ForEach-Object { $_.Id }) -join ',')
+    $dbl = @($vbl.GetMethod('Detail').Invoke($null, @($lr[0])))
+    Cas 'Baseline : valeur actuelle neutralisée et en chasse fixe' (-not ((@($dbl | ForEach-Object { $_.Texte }) -join '|') -match "\u202E") -and ($dbl | Where-Object { $_.Titre -eq 'Actuel' }).Chasse)
+    $vpf = & $t 'VueParefeuFluent'; $evrT = & $t 'EvenementRegle'; $exT = & $t 'Exposition'; $enT = & $t 'EntreeExposee'
+    $piegeRegle = & $nouv $evrT @{ Heure = '10:00'; Operation = 'ajoutée'; Regle = 'Autoriser' + [char]0x202E + "`r`nmoi"; Sens = 'entrant'; Action = 'autoriser'; Ports = '445'; ProgrammeCible = 'C:\x' + [char]0x200B + '.exe'; Auteur = 'C:\Windows\evil.exe' }
+    $toutes = & $nouv $evrT @{ Heure = '10:01'; Operation = 'toutes supprimées'; Regle = '*'; Sens = 'entrant'; Action = '' }
+    $lpf = $vpf.GetMethod('Ligne', [type[]]@($evrT)).Invoke($null, @($piegeRegle))
+    $txtPf = (@($lpf.Titre, $lpf.Sous) + @($lpf.Detail | ForEach-Object { $_.Texte })) -join '|'
+    Cas 'Pare-feu : nom de règle, programme visé et auteur neutralisés ; entrée autorisée à surveiller, toutes supprimées critique' (-not ($txtPf -match "[\u202E\u200B\r\n]") -and $lpf.Gravite -eq 1 -and $vpf.GetMethod('Gravite', [type[]]@($evrT)).Invoke($null, @($toutes)) -eq 2) $txtPf
+    $entree = & $nouv $enT @{ Source = '203.0.113.5'; PortLocal = 3389; Protocole = 'TCP'; Action = 'ACCEPTÉ'; Nombre = 4; Programme = 'svc' + [char]0x202E; Premiere = 'a'; Derniere = 'b' }
+    $lent = $vpf.GetMethod('Ligne', [type[]]@($enT)).Invoke($null, @($entree))
+    Cas 'Pare-feu : paquet entrant accepté critique, programme neutralisé' ($lent.Gravite -eq 2 -and -not ((@($lent.Sous) + @($lent.Detail | ForEach-Object { $_.Texte })) -join '|' -match "\u202E"))
+    $rs = New-Object 'Collections.Generic.List[string]'; $rs.Add('port 3389 ouvert' + [char]0x202E)
+    $expo = & $nouv $exT @{ Exposee = $true; Raisons = $rs; JournalPaquets = $false }
+    $rpf = [string]$vpf.GetMethod('Resume').Invoke($null, [object[]]@($expo, $true, $false, 3))
+    Cas 'Pare-feu : exposition dite et neutralisée, journal des paquets inactif dit, avant lecture rien de conclu' ($rpf.StartsWith('PC EXPOSÉ À INTERNET : port 3389 ouvert') -and -not ($rpf -match "\u202E") -and $rpf.Contains('Journal des paquets du pare-feu inactif') -and ([string]$vpf.GetMethod('Resume').Invoke($null, [object[]]@($null, $false, $false, 0))) -eq 'Lecture en cours…' -and ([string]$vpf.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $true, 0))).Contains('rien n''est conclu')) $rpf
+    $guiSrc3 = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'Baseline : mêmes questions et même commande dans les deux interfaces, trois opérations seulement' ($guiSrc3.Contains('if (operation != "appliquer" && operation != "annuler" && operation != "evaluer") return false;') -and $guiSrc3.Contains('if (ActionsProtection.Baseline(operation, cible, question)) detailBaseline.Text') -and $fluentSrc.Contains('ActionsProtection.Baseline("appliquer", "renforcé", ActionsProtection.QuestionRenforce)') -and ([regex]::Matches($guiSrc3, 'Action = "baseline"')).Count -eq 1)
+    Cas 'Baseline et Pare-feu d''aujourd''hui : cellules neutralisées' ($guiSrc3.Contains('Canal.Visible(r.Actuel), Canal.Visible(r.Attendu)') -and $guiSrc3.Contains('"Règle " + Canal.Visible(r.Operation) + " : " + Canal.Visible(r.Regle)') -and $guiSrc3.Contains('Canal.Visible(e.Programme)') -and $guiSrc3.Contains('(exp.Raisons ?? new List<string>()).Select(Canal.Visible)'))
     $reponsesSrc = [IO.File]::ReadAllText("$src\Reponses.cs"); $incidentsSrc = [IO.File]::ReadAllText("$src\Incidents.cs")
     Cas 'Incidents et Réponses : la coquille et la page d''aujourd''hui passent par les mêmes actions' ($fluentSrc.Contains('ActionsIncidents.Passer(i, vers, motif, note)') -and $fluentSrc.Contains('ActionsReponses.Recuperer(x)') -and $incidentsSrc.Contains('ActionsIncidents.Passer(Choisi(), vers, motif, note)') -and $reponsesSrc.Contains('ActionsReponses.Recuperer(Choisie())') -and ([regex]::Matches($fluentSrc + $incidentsSrc + $reponsesSrc, 'Canal\.Executer\(')).Count -eq 2)
     # Chaînes du code seulement (les commentaires peuvent citer la règle)
@@ -370,10 +401,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
