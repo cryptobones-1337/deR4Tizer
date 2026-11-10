@@ -5844,7 +5844,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     for lecture in ["etat_parefeu_windows", "INetFwPolicy2", "politique()"] {
         assert!(!demarrer.contains(lecture), "pas de lecture du pare-feu au démarrage : {lecture}");
     }
-    assert!(m.contains("etat_parefeu: None,"), "diagnostic : pare-feu non vérifié jusqu'au premier passage");
+    assert!(!demarrer.contains("relancer_lecture_parefeu"), "pas de lecture du pare-feu lancée au démarrage");
     assert!(m.contains("let chemin = match reponse::chemin_final_a_isoler(c.cible.as_deref().unwrap_or(\"\")) {"), "6.6 : isolation sur le chemin final");
     let (autorisee, ouverte) = (m.find("let a = match autorisation_humaine(Action::Isoler) {").unwrap(), m.find("let chemin = match reponse::chemin_final_a_isoler(").unwrap());
     assert!(autorisee < ouverte, "relecture de #118, R1 : autorisation avant toute ouverture");
@@ -7114,16 +7114,24 @@ fn structure_diagnostic_lecture_seule() {
 }
 
 #[test]
-fn structure_lecture_parefeu_bornee() {
-    // Le moniteur ne lit le pare-feu que par la lecture bornée (audit de #148, S148-01)
+fn structure_lecture_parefeu_hors_verrou() {
+    // La lecture du pare-feu part sur un fil et n'est jamais attendue par le moniteur (S148-01, préalable de #148)
     // Fins de ligne normalisées : une copie Windows ordinaire est extraite en CRLF (relecture de #148, D2)
     let moniteur = include_str!("moniteur.rs").replace("\r\n", "\n");
-    assert!(!moniteur.contains("etat_parefeu_windows()"));
-    assert_eq!(moniteur.matches("etat_parefeu_windows_borne()").count(), 1);
-    assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            self.etat_parefeu = parefeu::etat_parefeu_windows_borne();"), "lue dans le cycle, au premier passage puis tous les 100");
+    assert!(!moniteur.contains("etat_parefeu_windows"));
+    assert_eq!(moniteur.matches("parefeu::relancer_lecture_parefeu();").count(), 1);
+    assert!(moniteur.contains("if self.numero_passage % 100 == 1 {\n            parefeu::relancer_lecture_parefeu();"), "au premier passage puis tous les 100");
+    assert!(moniteur.contains("parefeu: parefeu::etat_parefeu_courant(),"));
     let parefeu = include_str!("parefeu.rs").replace("\r\n", "\n");
-    assert!(parefeu.contains("avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows)"));
-    assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture non bornée reste privée");
+    assert!(parefeu.contains("\nfn etat_parefeu_windows() -> Option<EtatParefeuWindows>"), "la lecture COM reste privée");
+    assert!(parefeu.contains("if LECTURE_PAREFEU.swap(true, SeqCst) {\n        return;\n    }\n    std::thread::spawn("), "une lecture à la fois, sur un fil");
+}
+
+#[test]
+fn lecture_parefeu_trop_ancienne_non_verifiee() {
+    assert!(crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(60)));
+    assert!(crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(900)));
+    assert!(!crate::parefeu::lecture_fraiche(std::time::Duration::from_secs(901)));
 }
 
 #[test]

@@ -19,7 +19,7 @@ try {
     $out = Join-Path $travail 'interface.exe'
     $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     $wpf = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\WPF'
-    & $csc /nologo /platform:anycpu /codepage:65001 /target:winexe /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" "/r:$wpf\WindowsFormsIntegration.dll" /r:System.Xaml.dll "/out:$out" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "$src\Fluent.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
+    & $csc /nologo /platform:anycpu /codepage:65001 /target:winexe /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" /r:System.Xaml.dll "/out:$out" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "$src\Fluent.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
     if ($LASTEXITCODE) { throw 'compilation' }
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
     $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($out))
@@ -456,7 +456,7 @@ try {
     $reglagesSrc = [IO.File]::ReadAllText("$src\Reglages.cs")
     Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
     Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; action(); Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
-    Cas 'Coquille : plus aucune page WinForms hébergée (WindowsFormsHost retiré)' (-not $fluentSrc.Contains('WindowsFormsHost') -and -not $fluentSrc.Contains('Forms.Integration') -and -not $fluentSrc.Contains('pages(cle)'))
+    Cas 'Coquille : plus aucune page WinForms hébergée ni prêtée (WindowsFormsHost, PageDe et la référence de compilation retirés, relecture de #147)' (-not $fluentSrc.Contains('WindowsFormsHost') -and -not $fluentSrc.Contains('Forms.Integration') -and -not $fluentSrc.Contains('pages(cle)') -and -not ([IO.File]::ReadAllText("$src\Gui.cs")).Contains('PageDe') -and -not ([IO.File]::ReadAllText((Join-Path $src '..\compiler.ps1'))).Contains('WindowsFormsIntegration'))
     # Table des traductions (relecture de #146, remarque 4) : mêmes emplacements {0} {1}… en français et en anglais
     $table = $langue.GetField('Anglais', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null)
     $ecarts = @(foreach ($k in $table.Keys) { $fr = (@([regex]::Matches($k, '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); $en = (@([regex]::Matches($table[$k], '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); if ($fr -ne $en) { "$k => $($table[$k])" } })
@@ -520,11 +520,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     Cas 'pages d''aujourd''hui avec --fluent : palette neutre, un seul accent, pas de capitales, titre « // » caché, Segoe UI' ($avec -eq 'True|141518|3BA7F0|3BA7F0|Alertes|False|Segoe UI Semibold') $avec
     Cas 'pages d''aujourd''hui sans --fluent : palette néon inchangée' ($sans -like 'False|0A0E14|00E5FF|FF2BD6|ALERTES|True|*') $sans
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
-    $sansPage = [Func[string, Windows.Forms.Control]] { param($cle) $null }
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
         foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages') {
-            $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, @(, $sansPage), $null)
+            $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, [object[]]@(), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
             $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent' }[$page]
             if ($natif) {
