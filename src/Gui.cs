@@ -291,9 +291,10 @@ namespace DeR4Tizer
         // Commandes confirmées aussi dans une interface déjà élevée : réglages des réponses automatiques, de l'IPS et des
         // listes (config), apprentissage (audit de #152, S152-02) ; levée d'un blocage (non reposé 7 jours), syslog et API
         // (reglages), destinations et secrets des alertes (notifications), mise à jour (majConfig), droit de lecture d'un
-        // compte (autoriserLecteur) (audit de #153, S153-01). Les autres ont déjà leur question dans les pages, ou protègent,
+        // compte (autoriserLecteur) (audit de #153, S153-01) ; exception durable sur un comportement (S153-02). Les autres ont
+        // déjà leur question dans les pages, ou protègent,
         // ou ne font que tester : pas de seconde fenêtre
-        static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "majConfig", "autoriserLecteur" };
+        static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "majConfig", "autoriserLecteur", "exception" };
 
         public static bool ConfirmeEnAdministrateur(Commande c)
         {
