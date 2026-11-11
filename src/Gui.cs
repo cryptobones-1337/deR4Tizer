@@ -811,9 +811,6 @@ namespace DeR4Tizer
         };
         readonly List<BoutonNav> navigation = new List<BoutonNav>();
         readonly List<Control> pages = new List<Control>();
-        // Pages par clé de navigation (texte français) : prêtées à la coquille du pilote WPF (U1, Fluent.cs)
-        readonly Dictionary<string, Control> pagesParCle = new Dictionary<string, Control>();
-        public Control PageDe(string cle) { Control p; return pagesParCle.TryGetValue(cle, out p) ? p : null; }
         BoutonNav navFlux, navAlertes, navChaines, navVie, navParefeu, navDemarrage, navBaseline, navExtensions, navBlocages, navQuarantaine, navMenaces;
         Control pageAlertes;
         readonly BoutonNeon btnService = new BoutonNeon("Démarrer le service", Theme.Vert);
@@ -1150,7 +1147,6 @@ namespace DeR4Tizer
         {
             var b = new BoutonNav(texte, largeur - 1);
             b.Click += (s, e) => Afficher(b, page);
-            pagesParCle[b.Cle] = page;
             liens.Controls.Add(b);
             navigation.Add(b);
             return b;
@@ -2166,7 +2162,7 @@ namespace DeR4Tizer
             // Fermer la coquille la cache dans la zone de notification, comme l'interface d'aujourd'hui ; seul « Quitter » (icône
             // de notification : la fenêtre cachée se ferme) arrête le pilote (audit de #133)
             var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-            var coquille = new Coquille(ancienne.PageDe, ancienne);
+            var coquille = new Coquille(ancienne);
             ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };
             app.Run(coquille);
             ancienne.Dispose();

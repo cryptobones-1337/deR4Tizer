@@ -13,7 +13,7 @@ $icone = "$src\deR4Tizer.ico"
 if (-not (Test-Path $icone)) { & (Join-Path $PSScriptRoot 'icone.ps1') | Out-Null }
 
 & $csc /nologo /optimize+ /platform:anycpu /codepage:65001 /target:winexe `
-    /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" "/r:$wpf\WindowsFormsIntegration.dll" /r:System.Xaml.dll `
+    /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" /r:System.Xaml.dll `
     "/win32icon:$icone" "/resource:$icone,deR4Tizer.ico" "/out:$sortie\deR4Tizer.exe" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "$src\Fluent.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
 if ($LASTEXITCODE) { throw 'Échec de la compilation de l''interface.' }
 

@@ -184,12 +184,52 @@ pub fn diagnostiquer(e: &EntreesDiagnostic) -> Diagnostic {
 }
 
 static LECTURE_PAREFEU: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Dernière lecture terminée : quand, et ce qu'elle a rendu (None : lecture en échec)
+static ETAT_PAREFEU_LU: Mutex<Option<(Instant, Option<EtatParefeuWindows>)>> = Mutex::new(None);
+/// Au-delà, le dernier état lu est trop ancien pour conclure (lecture relancée tous les 100 passages, quelques minutes)
+const FRAICHEUR_PAREFEU: Duration = Duration::from_secs(900);
 
-/// Lecture bornée (audit de #148, S148-01) : les lectures passent par RPC vers le service Pare-feu Windows ; s'il se
-/// figeait, le moniteur resterait bloqué sous son verrou. Fil à part, 5 s au plus, une lecture à la fois ; délai
-/// dépassé ou lecture précédente encore bloquée : None, donc « non vérifié »
-pub fn etat_parefeu_windows_borne() -> Option<EtatParefeuWindows> {
-    commun::avec_echeance_unique(&LECTURE_PAREFEU, Duration::from_secs(5), etat_parefeu_windows).flatten()
+/// Lecture hors du verrou du moniteur (S148-01, puis préalable de la relecture de #148) : les lectures passent par RPC
+/// vers le service Pare-feu Windows, qui peut se figer. Le moniteur ne fait que lancer un fil, une lecture à la fois, et
+/// ne l'attend jamais ; il lit ensuite le dernier état terminé
+pub fn relancer_lecture_parefeu() {
+    use std::sync::atomic::Ordering::SeqCst;
+    if LECTURE_PAREFEU.swap(true, SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        let lu = etat_parefeu_windows();
+        *ETAT_PAREFEU_LU.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), lu));
+        LECTURE_PAREFEU.store(false, SeqCst);
+    });
+}
+
+/// Une lecture est relancée quand la dernière terminée a plus de 5 min (ou n'a jamais eu lieu) : le rythme ne dépend
+/// plus de la durée des passages, et l'état reste frais (15 min) même sur un poste chargé (audit de #150, S150-01)
+const RELANCE_PAREFEU: Duration = Duration::from_secs(300);
+
+/// Un état lu il y a `age` peut-il encore servir ? Trop ancien (fil figé, service arrêté) : « non vérifié »
+pub fn lecture_fraiche(age: Duration) -> bool {
+    age <= FRAICHEUR_PAREFEU
+}
+
+/// Faut-il relancer une lecture ? `age` : âge de la dernière lecture terminée, None si aucune
+pub fn lecture_a_relancer_selon(age: Option<Duration>) -> bool {
+    age.is_none_or(|a| a >= RELANCE_PAREFEU)
+}
+
+pub fn lecture_a_relancer() -> bool {
+    let age = ETAT_PAREFEU_LU.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|(quand, _)| quand.elapsed());
+    lecture_a_relancer_selon(age)
+}
+
+/// Dernier état terminé et encore frais ; None : jamais lu, lecture en échec, ou trop ancien (« non vérifié »)
+pub fn etat_parefeu_courant() -> Option<EtatParefeuWindows> {
+    let g = ETAT_PAREFEU_LU.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((quand, lu)) if lecture_fraiche(quand.elapsed()) => lu.clone(),
+        _ => None,
+    }
 }
 
 /// « PC exposé » (pastille rouge) seulement pour une exposition prouvée : IPv4 publique, connexion acceptée, redirection
@@ -201,7 +241,7 @@ pub fn exposee_selon(d: &Diagnostic) -> bool {
 
 /// Profils actifs du pare-feu de Windows, état et action entrante par défaut ; None si la lecture échoue (alors « non
 /// vérifié », jamais « aucun problème »). Lecture COM seule : aucun Set, Add ni Remove. Toujours appelée par
-/// etat_parefeu_windows_borne
+/// relancer_lecture_parefeu, sur son fil
 fn etat_parefeu_windows() -> Option<EtatParefeuWindows> {
     use windows::Win32::NetworkManagement::WindowsFirewall::{INetFwPolicy2, NetFwPolicy2, NET_FW_ACTION_ALLOW, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};

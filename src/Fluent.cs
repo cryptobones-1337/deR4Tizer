@@ -266,17 +266,15 @@ namespace DeR4Tizer
         string ouverte;
         PageAlertes pageAlertes;
         readonly Dictionary<string, TextBlock> pastillesNav = new Dictionary<string, TextBlock>();
-        // Pages WinForms prêtées par clé : celles de la fenêtre d'aujourd'hui (Fenetre.PageDe), ou rien pour un rendu de test
-        readonly Func<string, WinForms.Control> pages;
         readonly ContentControl zone = new ContentControl();
         readonly TextBlock titrePage = new TextBlock();
         readonly List<Button> boutons = new List<Button>();
 
-        public Coquille(Func<string, WinForms.Control> pages) : this(pages, null) { }
+        // Toutes les pages sont natives (U6c) : plus de pages WinForms prêtées par la fenêtre d'aujourd'hui (relecture de #147)
+        public Coquille() : this(null) { }
 
-        public Coquille(Func<string, WinForms.Control> pages, ISourceEtat source)
+        public Coquille(ISourceEtat source)
         {
-            this.pages = pages;
             this.source = source;
             Title = "deR4Tizer";
             // Taille voulue 1200 x 780, ramenée à la zone de travail de l'écran (1024 x 768 sur la VM de test : la fenêtre
