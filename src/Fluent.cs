@@ -4341,17 +4341,14 @@ namespace DeR4Tizer
             if (ouvrir != null) ouvrir(NavigationFluent.VueEnsemble);
         }
 
-        // Bouton d'action (U7b) : interface élevée, l'assistant montre lui-même la confirmation détaillée, que l'envoi direct au
-        // canal ne montre pas pour ces commandes ; non élevée, la confirmation passe par la copie élevée (UAC) comme partout. Le résultat
-        // est dit « demandé » et l'état relu
+        // Bouton d'action (U7b) : la confirmation détaillée passe par Canal, élevé ou non (copie élevée pour un compte standard,
+        // confirmation en administrateur pour config et apprentissage depuis S152-02) : l'assistant n'en montre pas une seconde.
+        // Le résultat est dit « demandé » et l'état relu
         Button Agir(string texte, Commande commande, Action action, string quoi)
         {
             var b = Briques.Action(texte, true, (s, e) =>
             {
                 if (commande == null) return;
-                if (Canal.EstAdmin())
-                    using (var fenetre = Canal.FenetreConfirmation(Canal.Decrire(commande), L.En))
-                        if (fenetre.ShowDialog() != System.Windows.Forms.DialogResult.Yes) return;
                 action();
                 demande = VueAssistantFluent.Demande(quoi); demandeEtape = etape;
                 Afficher(); Charger();
