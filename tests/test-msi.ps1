@@ -38,8 +38,11 @@ $descriptions = (@([regex]::Matches($sansCommentaires, 'Description="([^"]*)"') 
 $tout = $licence + ' ' + $descriptions + ' ' + (($textes | ForEach-Object Texte) -join ' ')
 $promesses = @([regex]::Matches($tout, '(?i)prot[eé]g[eé]|protected|protection|en s[eé]curit[eé]|s[eé]curis[eé]|\bsafe\b|garantit|guarantees|bloque toutes|blocks all|remplace l.antivirus|replaces? (the |your )?antivirus|v[eé]rifi[eé] par Microsoft|verified by Microsoft') | ForEach-Object Value)
 Cas 'Installeur : ni « protégé », ni « protection », ni promesse dans les descriptions, la licence et la dernière page' ($promesses.Count -eq 0) ($promesses -join ', ')
-$faits = @('Licence : EUPL-1.2', 'License: EUPL-1.2', 'sans garantie', 'without warranty', 'leurres', 'decoy files', 'LANCEMENT_SESSION=0', 'GARDER_DONNEES=1', 'GARDER_BASELINE=1', 'ne le désactive ni ne l''affaiblit', 'neither turns it off nor weakens it', 'L''installeur ne la lance pas.', 'The installer does not start it.', '7 jours', '7 days', 'jamais reprise automatiquement', 'never resumed automatically', 'éditeur inconnu', 'unknown publisher')
+$faits = @('Aucune donnée du poste n''est envoyée à un tiers', 'No data from this computer is sent to a third party', 'Licence : EUPL-1.2', 'License: EUPL-1.2', 'sans garantie', 'without warranty', 'leurres', 'decoy files', 'LANCEMENT_SESSION=0', 'GARDER_DONNEES=1', 'GARDER_BASELINE=1', 'ne le désactive ni ne l''affaiblit', 'neither turns it off nor weakens it', 'L''installeur ne la lance pas.', 'The installer does not start it.', '7 jours', '7 days', 'jamais reprise automatiquement', 'never resumed automatically', 'éditeur inconnu', 'unknown publisher')
 $manquants = @($faits | Where-Object { -not $licence.Contains($_) })
+# Vraies apostrophes françaises suivies de lettres hexadécimales, liste blanche explicite : d'administrateur, l'affaiblit
+$casses = @([regex]::Matches($rtf, "(?<!\\)'[89a-f][0-9a-f](?!ministr|faibli)") | ForEach-Object { $rtf.Substring([Math]::Max(0, $_.Index - 12), 18) })
+Cas 'Licence : aucun échappement RTF cassé (apostrophe suivie de deux chiffres hexadécimaux sans barre oblique inverse, audit de #155, S155-02)' ($casses.Count -eq 0) ($casses -join ' | ')
 Cas 'Licence : français et anglais, avec les faits attendus (leurres, réponses automatiques et durées, lancement, options de désinstallation, Defender, binaires non signés)' ($manquants.Count -eq 0 -and $rtf.StartsWith('{\rtf1\ansi\ansicpg1252') -and -not ($rtf -match '[^\x00-\x7F]')) ($manquants -join ' | ')
 
 # ---------------- niveau 2 : paquet construit
