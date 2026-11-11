@@ -4146,27 +4146,36 @@ namespace DeR4Tizer
             return l;
         }
 
-        // Action offerte à l'étape Apprentissage (U7b) : terminer s'il est en cours, recommencer s'il est terminé ; rien quand le
-        // service l'a écarté (début égal à la fin : le poste avait déjà des alertes, recommencer les tairait), ni sans état lu
+        // Action offerte à l'étape Apprentissage (U7b) : terminer, seulement s'il est en cours ; jamais recommencer, qui note en
+        // information pendant 7 jours toute alerte non critique sans signal fort et apprendrait un programme malveillant actif à
+        // ce moment (relecture de #152, constat 1) : il reste dans Réglages, avec l'avertissement ci-dessous ; rien quand le
+        // service l'a écarté (début égal à la fin), ni sans état lu
         public static string OperationApprentissage(EtatApprentissage app, bool illisible, DateTime maintenant)
         {
             if (app == null || illisible || string.IsNullOrEmpty(app.Fin) || app.Debut == app.Fin) return null;
             bool enCours = string.CompareOrdinal(maintenant.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), app.Fin) < 0;
-            return enCours ? "terminer" : "recommencer";
+            return enCours ? "terminer" : null;
+        }
+
+        public static string AvertissementRecommencer()
+        {
+            return L.En ? "Restarting learning (Settings) forgets learned behaviours and, for 7 days, records every non-critical alert without a strong signal as information and learns it, including a malicious program active at that time: only do it on a computer known to be clean."
+                        : "Recommencer l'apprentissage (Réglages) oublie les comportements appris et, pendant 7 jours, note en information et mémorise toute alerte non critique sans signal fort, y compris celle d'un programme malveillant actif à ce moment : à faire seulement sur un poste que l'on sait sain.";
         }
 
         // Réglages des réponses automatiques que l'assistant peut changer : les deux de niveau 3, par la commande de la page
         // Menaces ; l'IPS reste dans la page Détection
         public static readonly string[] ReglagesReponses = { "BlocageAutoMenaces", "ReponseAutoRancongiciel" };
 
-        // Commandes que l'assistant envoie, identiques à celles des pages Réglages et Menaces (montrées dans la confirmation)
-        public static Commande CommandeApprentissage(string operation) { return new Commande { Action = "apprentissage", Valeur = operation }; }
-        public static Commande CommandeReglage(string reglage, bool valeur) { return new Commande { Action = "config", Cible = reglage, Valeur = valeur ? "true" : "false" }; }
+        // Commandes que l'assistant montre dans la confirmation : construites par les fonctions mêmes qui les envoient (pages
+        // Réglages et Menaces, listes fermées), elles ne peuvent pas diverger (audit de #152, S152-01)
+        public static Commande CommandeApprentissage(string operation) { return ActionsReglages.CommandeApprentissage(operation); }
+        public static Commande CommandeReglage(string reglage, bool valeur) { return ActionsProtection.CommandeReglage(reglage, valeur); }
 
         // Après un bouton : « demandé », jamais « fait » ; l'état affiché est relu dans les fichiers du service
         public static string Demande(string quoi)
         {
-            return string.Format(L.En ? "Requested: {0}. The state shown is read again from the service files and may take a few seconds to change." : "Demandé : {0}. L'état affiché est relu dans les fichiers du service et peut mettre quelques secondes à changer.", quoi);
+            return string.Format(L.En ? "Requested, if you confirmed it: {0}. The state shown is read again from the service files and may take a few seconds to change." : "Demandé, si vous l'avez confirmé : {0}. L'état affiché est relu dans les fichiers du service et peut mettre quelques secondes à changer.", quoi);
         }
 
         public static string Avertissement()
@@ -4284,9 +4293,7 @@ namespace DeR4Tizer
                     if (op == "terminer")
                         contenu.Children.Add(Agir(en ? "End learning now" : "Terminer l'apprentissage maintenant", VueAssistantFluent.CommandeApprentissage(op),
                             () => ActionsReglages.Apprentissage(op), en ? "end of learning" : "fin de l'apprentissage"));
-                    else if (op == "recommencer")
-                        contenu.Children.Add(Agir(en ? "Restart learning (7 days)" : "Recommencer l'apprentissage (7 jours)", VueAssistantFluent.CommandeApprentissage(op),
-                            () => ActionsReglages.Apprentissage(op), en ? "learning restarted for 7 days" : "apprentissage recommencé pour 7 jours"));
+                    contenu.Children.Add(Texte(VueAssistantFluent.AvertissementRecommencer(), true));
                     contenu.Children.Add(Texte(en ? "Learned exceptions are managed in Settings." : "Les exceptions apprises se gèrent dans Réglages.", true));
                     contenu.Children.Add(Lien(en ? "Open Settings" : "Ouvrir Réglages", "Réglages"));
                     break;
@@ -4341,6 +4348,7 @@ namespace DeR4Tizer
         {
             var b = Briques.Action(texte, true, (s, e) =>
             {
+                if (commande == null) return;
                 if (Canal.EstAdmin())
                     using (var fenetre = Canal.FenetreConfirmation(Canal.Decrire(commande), L.En))
                         if (fenetre.ShowDialog() != System.Windows.Forms.DialogResult.Yes) return;

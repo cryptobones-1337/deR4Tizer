@@ -93,10 +93,17 @@ namespace DeR4Tizer
 
         public static readonly string[] Reglages = { "BlocageAutoMenaces", "ReponseAutoRancongiciel", "ListesRestreintes" };
 
+        // Commande de réglage, liste fermée ; la même sert à la confirmation de l'assistant (audit de #152, S152-01)
+        public static Commande CommandeReglage(string reglage, bool valeur)
+        {
+            if (Array.IndexOf(Reglages, reglage) < 0) return null;
+            return new Commande { Action = "config", Cible = reglage, Valeur = valeur ? "true" : "false" };
+        }
+
         public static void ChangerReglage(string reglage, bool valeur)
         {
-            if (Array.IndexOf(Reglages, reglage) < 0) return;
-            Canal.Executer(new Commande { Action = "config", Cible = reglage, Valeur = valeur ? "true" : "false" });
+            var c = CommandeReglage(reglage, valeur);
+            if (c != null) Canal.Executer(c);
         }
 
         // config.json : absent, ce sont les valeurs par défaut (celles du service) ; présent mais illisible, l'état est
