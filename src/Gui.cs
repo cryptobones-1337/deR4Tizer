@@ -288,11 +288,16 @@ namespace DeR4Tizer
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool CloseHandle(IntPtr h);
 
-        // Commandes confirmées aussi dans une interface déjà élevée (audit de #152, S152-02) : réglages des réponses
-        // automatiques, de l'IPS et des listes (config), apprentissage
+        // Commandes confirmées aussi dans une interface déjà élevée : réglages des réponses automatiques, de l'IPS et des
+        // listes (config), apprentissage (audit de #152, S152-02) ; levée d'un blocage (non reposé 7 jours), syslog et API
+        // (reglages), destinations et secrets des alertes (notifications), mise à jour (majConfig), droit de lecture d'un
+        // compte (autoriserLecteur) (audit de #153, S153-01). Les autres ont déjà leur question dans les pages, ou protègent,
+        // ou ne font que tester : pas de seconde fenêtre
+        static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "majConfig", "autoriserLecteur" };
+
         public static bool ConfirmeEnAdministrateur(Commande c)
         {
-            return c != null && (c.Action == "config" || c.Action == "apprentissage");
+            return c != null && Array.IndexOf(ConfirmeesEnAdministrateur, c.Action) >= 0;
         }
 
         // Nom lisible d'un réglage de la commande « config » (relecture de #152, remarque R8) ; inconnu : nom neutralisé
