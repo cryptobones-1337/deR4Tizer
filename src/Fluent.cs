@@ -4078,6 +4078,15 @@ namespace DeR4Tizer
 
         public static bool PersonnePrevenu(Config c, bool illisible) { return !illisible && c != null && Canaux(c).Count == 0; }
 
+        // Message de test (U7c) : seulement si config.json est lu et qu'un canal est activé ; mêmes réglages, secrets vides
+        // (le service garde les siens) : rien d'autre ne change. Commande construite par la fonction de la page Réglages
+        public static bool PeutTester(Config c, bool illisible) { return !illisible && c != null && c.Notifications != null && Canaux(c).Count > 0; }
+
+        public static Commande CommandeTest(Config c, bool illisible)
+        {
+            return PeutTester(c, illisible) ? ActionsReglages.CommandeNotifications("testerNotifications", c.Notifications, "", "", "", "") : null;
+        }
+
         // Jamais « le prestataire sera prévenu » : ce qui est activé et ce que le service a réellement envoyé
         public static string TexteQuiPrevenir(Config c, bool illisible, EtatNotifications e, bool envoisIllisibles)
         {
@@ -4093,7 +4102,7 @@ namespace DeR4Tizer
             if (e == null && envoisIllisibles)
                 return s + " " + (en ? "notifications.json unreadable: whether a message was sent is unknown." : "notifications.json illisible : on ne sait pas si un message est parti.");
             if (e == null || e.Envoyes == 0)
-                return s + " " + (en ? "No message sent yet: send a test message from Settings." : "Aucun message envoyé pour l'instant : envoyez un message de test depuis Réglages.");
+                return s + " " + (en ? "No message sent yet: send a test message to check that it arrives." : "Aucun message envoyé pour l'instant : envoyez un message de test pour vérifier qu'il arrive.");
             return s + " " + ActionsReglages.TexteNotifications(e);
         }
 
@@ -4299,6 +4308,14 @@ namespace DeR4Tizer
                     break;
                 case 3:
                     contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteQuiPrevenir(config, configIllisible, notifications, notificationsIllisibles)));
+                    // Qui prévenir (U7c, option B du dossier) : test des canaux déjà réglés ; destinataires et secrets restent dans Réglages
+                    if (lu && VueAssistantFluent.PeutTester(config, configIllisible))
+                    {
+                        var cfg = config;
+                        contenu.Children.Add(Agir(en ? "Send a test message" : "Envoyer un message de test", VueAssistantFluent.CommandeTest(cfg, false),
+                            () => ActionsReglages.Notifications("testerNotifications", cfg.Notifications, "", "", "", ""), en ? "test message" : "message de test"));
+                    }
+                    contenu.Children.Add(Texte(en ? "Recipients, channels and their secrets are set in Settings; secrets are never shown again." : "Destinataires, canaux et secrets se règlent dans Réglages ; les secrets n'y sont jamais réaffichés.", true));
                     contenu.Children.Add(Lien(en ? "Set up alert forwarding in Settings" : "Configurer la remontée dans Réglages", "Réglages"));
                     break;
                 case 4:

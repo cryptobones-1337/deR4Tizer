@@ -90,15 +90,23 @@ namespace DeR4Tizer
         public static void MajVerifier() { Canal.Executer(new Commande { Action = "majVerifier" }); }
 
         // Notifications : « notifications » enregistre, « testerNotifications » envoie un message de test ; rien d'autre
-        public static void Notifications(string action, ConfigNotifications c, string ntfyUrl, string ntfyJeton, string teamsUrl, string smtpMotDePasse)
+        // Commande des notifications, deux actions seulement ; secrets vides : le service garde ceux qu'il a. La même sert au
+        // message de test de « Premiers réglages » (U7c), comme CommandeApprentissage (audit de #152, S152-01)
+        public static Commande CommandeNotifications(string action, ConfigNotifications c, string ntfyUrl, string ntfyJeton, string teamsUrl, string smtpMotDePasse)
         {
-            if ((action != "notifications" && action != "testerNotifications") || c == null) return;
+            if ((action != "notifications" && action != "testerNotifications") || c == null) return null;
             var demande = new Dictionary<string, object>
             {
                 { "Config", c }, { "NtfyUrl", (ntfyUrl ?? "").Trim() }, { "NtfyJeton", (ntfyJeton ?? "").Trim() },
                 { "TeamsUrl", (teamsUrl ?? "").Trim() }, { "SmtpMotDePasse", smtpMotDePasse ?? "" }
             };
-            Canal.Executer(new Commande { Action = action, Valeur = Commun.Json().Serialize(demande) });
+            return new Commande { Action = action, Valeur = Commun.Json().Serialize(demande) };
+        }
+
+        public static void Notifications(string action, ConfigNotifications c, string ntfyUrl, string ntfyJeton, string teamsUrl, string smtpMotDePasse)
+        {
+            var commande = CommandeNotifications(action, c, ntfyUrl, ntfyJeton, teamsUrl, smtpMotDePasse);
+            if (commande != null) Canal.Executer(commande);
         }
 
         // Identifiant de sécurité d'un compte local saisi, ou null s'il est introuvable
