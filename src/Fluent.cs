@@ -311,7 +311,11 @@ namespace DeR4Tizer
 
             int iPage = Array.IndexOf(Environment.GetCommandLineArgs(), "--page");
             string demandee = iPage > 0 && iPage + 1 < Environment.GetCommandLineArgs().Length ? Environment.GetCommandLineArgs()[iPage + 1] : null;
-            Ouvrir(demandee != null && NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee) ? demandee : NavigationFluent.VueEnsemble);
+            bool connue = demandee != null && (demandee == VueAssistantFluent.Cle || NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee));
+            // Premiers réglages (U7a) : proposés au premier lancement, jamais en administrateur, sans source, avec --page ou caché
+            bool proposer = VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,
+                Environment.GetCommandLineArgs().Contains("--cache"));
+            Ouvrir(connue ? demandee : proposer ? VueAssistantFluent.Cle : NavigationFluent.VueEnsemble);
             if (source != null)
             {
                 Action suivre = () =>
@@ -493,7 +497,9 @@ namespace DeR4Tizer
             // Réseau local en WPF (U6b), lecture seule
             if (cle == "Réseau local") { zone.Content = new PageReseauLocalFluent(); return; }
             // Réglages en WPF (U6c) : la dernière page hébergée ; plus aucune page WinForms dans la coquille
-            if (cle == "Réglages") { zone.Content = new PageReglagesFluent(); return; }
+            if (cle == "Réglages") { var pr = new PageReglagesFluent(); pr.Revoir = () => Ouvrir(VueAssistantFluent.Cle); zone.Content = pr; return; }
+            // Premiers réglages (U7a), hors de la navigation : lecture seule, renvois vers les pages
+            if (cle == VueAssistantFluent.Cle) { zone.Content = new PageAssistantFluent(source, Ouvrir, VueAssistantFluent.CheminRepere()); return; }
             zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) };
         }
 
@@ -546,6 +552,20 @@ namespace DeR4Tizer
             section("À traiter", 2, Jetons.Danger);
             section("À surveiller", 1, Jetons.Attention);
             section("En ordre et informations", 0, Jetons.TexteSecondaire);
+
+            if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))
+            {
+                bool en = L.En;
+                var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 0, 12) };
+                var c = new StackPanel();
+                c.Children.Add(new TextBlock { Text = en ? "First-run setup: not seen yet" : "Premiers réglages : pas encore vus", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+                c.Children.Add(new TextBlock { Text = en ? "Six steps that show what deR4Tizer sees and the settings that matter; nothing changes without you." : "Six étapes qui montrent ce que deR4Tizer voit et les réglages qui comptent ; rien ne change sans vous.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 0, 8) });
+                var ouvre = Briques.Action(en ? "Open the first-run setup" : "Ouvrir les premiers réglages", true, (s, a) => Ouvrir(VueAssistantFluent.Cle));
+                ouvre.HorizontalAlignment = HorizontalAlignment.Left;
+                c.Children.Add(ouvre);
+                carte.Child = c;
+                pile.Children.Add(carte);
+            }
 
             if (source != null)
             {
@@ -3768,6 +3788,7 @@ namespace DeR4Tizer
             niveauNotif = new ChoixFluent(ActionsReglages.Niveaux, null), securite = new ChoixFluent(ActionsReglages.Securites, null);
         int enCours, chargement;
         bool rempli;            // aucune action avant la première lecture : des champs vides ne partent jamais comme réglages
+        public Action Revoir;   // ouvre « Premiers réglages » (donné par la coquille)
 
         public PageReglagesFluent()
         {
@@ -3829,6 +3850,12 @@ namespace DeR4Tizer
 
             Section("EXPORT DES JOURNAUX");
             pile.Children.Add(Ligne(Bouton("Exporter les alertes…", true, ExporterAlertes), Bouton("Exporter le journal du service…", false, ExporterJournal)));
+
+            // Premiers réglages (U7a) : rejouables à tout moment, sans commande
+            Section("PREMIERS RÉGLAGES");
+            var revoir = Briques.Action(L.En ? "See the first-run setup again" : "Revoir les premiers réglages", false, (s, e) => { if (Revoir != null) Revoir(); });
+            revoir.HorizontalAlignment = HorizontalAlignment.Left;
+            pile.Children.Add(revoir);
             Loaded += (s, e) => Charger();
         }
 
@@ -3980,5 +4007,291 @@ namespace DeR4Tizer
             b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
             return b;
         }
+    }
+    // Décisions pures de « Premiers réglages » (U7a, dossier de conception U7), testées par tests\rendu-pilote.ps1. L'assistant
+    // n'est jamais élevé ; dans cette étape il ne fait que lire et renvoyer vers les pages ; fermer ne change rien
+    public static class VueAssistantFluent
+    {
+        public const string Cle = "Premiers réglages";
+        public static readonly string[] Etapes = { "Bienvenue", "Vérification", "Apprentissage", "Qui prévenir", "Réponses automatiques", "Résumé" };
+
+        // Repère par utilisateur, écrit par l'interface non élevée : « assistant déjà proposé », jamais une donnée de sécurité
+        public static string CheminRepere()
+        {
+            return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "premiers-reglages.txt");
+        }
+
+        public static bool RepereExiste(string chemin) { try { return System.IO.File.Exists(chemin); } catch { return false; } }
+
+        // « termine » ou « plus_tard » seulement ; échec d'écriture : l'assistant sera reproposé, sans autre effet. Jamais en
+        // administrateur : ce dossier est contrôlé par les programmes non élevés du compte (jonction, lien), et l'assistant ne
+        // s'y ouvre jamais d'office (relecture et audit de #151, constat 4, S151-01)
+        public static bool EcrireRepere(string chemin, string sortie, bool administrateur)
+        {
+            if (administrateur || (sortie != "termine" && sortie != "plus_tard")) return false;
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(chemin));
+                System.IO.File.WriteAllText(chemin, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + " " + sortie);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Ouverture automatique : pas si déjà proposé, si l'interface tourne en administrateur, sans source (rendu de test),
+        // si une page est demandée, ou au démarrage caché
+        public static bool DoitProposer(bool repere, bool administrateur, bool source, bool pageDemandee, bool cache)
+        {
+            return !repere && !administrateur && source && !pageDemandee && !cache;
+        }
+
+        // Trois cas : en cours, terminé, et « pas d'apprentissage automatique » (début égal à la fin : le poste avait déjà des
+        // alertes), que l'écran d'aujourd'hui affichait « terminé » (dossier U7, constat). Textes fidèles à apprentissage.rs
+        // (decider, filtrer) : pendant l'apprentissage, toute alerte non critique sans signal fort est notée en information et
+        // mémorisée, comportement nouveau compris (relecture de #151, constat 1)
+        public static string TexteApprentissage(EtatApprentissage app, bool illisible, DateTime maintenant)
+        {
+            bool en = L.En;
+            if (app == null && illisible) return en ? "apprentissage.json unreadable: the learning state is unknown." : "apprentissage.json illisible : l'état de l'apprentissage est inconnu.";
+            if (app == null) return en ? "Learning state not published by the service yet: nothing is concluded." : "État de l'apprentissage pas encore publié par le service : rien n'est conclu.";
+            int appris = (app.Appris ?? new List<string>()).Count;
+            if (!string.IsNullOrEmpty(app.Fin) && app.Debut == app.Fin)
+                return en ? "No automatic learning: this computer already had alerts when deR4Tizer was installed; every non-critical alert is reported as is."
+                          : "Pas d'apprentissage automatique : ce poste avait déjà des alertes à l'installation ; toute alerte non critique est dite telle quelle.";
+            if (string.CompareOrdinal(maintenant.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), app.Fin ?? "") < 0)
+                return string.Format(en ? "Learning until {0}: {1} behaviour(s) learned. Until then, every non-critical alert is recorded as information and its behaviour learned, new behaviours included, except strong signals (downloaded code, LOLBin, backup deletion…); critical alerts are never softened."
+                                        : "Apprentissage en cours jusqu'au {0} : {1} comportement(s) appris. D'ici là, toute alerte non critique est notée en information et son comportement mémorisé, comportement nouveau compris, sauf les signaux forts (code téléchargé, LOLBin, suppression des sauvegardes…) ; les alertes critiques ne sont jamais adoucies.", Canal.Visible(app.Fin), appris);
+            return string.Format(en ? "Learning finished on {0}: {1} behaviour(s) learned. A non-critical alert for a learned behaviour is recorded as information; any other alert, and every critical alert, is raised."
+                                    : "Apprentissage terminé le {0} : {1} comportement(s) appris. Une alerte non critique d'un comportement appris est notée en information ; toute autre alerte, et toute alerte critique, est remontée.", Canal.Visible(app.Fin), appris);
+        }
+
+        static List<string> Canaux(Config c)
+        {
+            var n = c == null ? null : c.Notifications;
+            var l = new List<string>();
+            if (n == null) return l;
+            if (n.Ntfy) l.Add("ntfy");
+            if (n.Teams) l.Add("Teams");
+            if (n.Smtp) l.Add(L.En ? "e-mail" : "e-mail");
+            return l;
+        }
+
+        public static bool PersonnePrevenu(Config c, bool illisible) { return !illisible && c != null && Canaux(c).Count == 0; }
+
+        // Jamais « le prestataire sera prévenu » : ce qui est activé et ce que le service a réellement envoyé
+        public static string TexteQuiPrevenir(Config c, bool illisible, EtatNotifications e, bool envoisIllisibles)
+        {
+            bool en = L.En;
+            if (illisible || c == null) return en ? "config.json unreadable: who is notified is unknown." : "config.json illisible : on ne sait pas qui est prévenu.";
+            var canaux = Canaux(c);
+            // Syslog n'est pas une personne prévenue, mais il est dit (relecture de #151, remarque R1)
+            string siem = c.Syslog != null && c.Syslog.Actif ? " " + (en ? "Alerts are forwarded to a SIEM (syslog): someone must be watching it." : "Les alertes partent vers un SIEM (syslog) : quelqu'un doit le surveiller.") : "";
+            if (canaux.Count == 0) return (en ? "Nobody is notified of alerts: no channel is turned on (ntfy, Teams or e-mail)." : "Personne n'est prévenu des alertes : aucun canal n'est activé (ntfy, Teams ou e-mail).") + siem;
+            string niveau = c.Notifications.NiveauMin ?? "Critique";
+            string s = string.Format(en ? "Channels turned on: {0}, from level {1}." : "Canaux activés : {0}, à partir du niveau {1}.", string.Join(", ", canaux), Canal.Visible(L.T(niveau))) + siem;
+            // notifications.json illisible : jamais « aucun message envoyé » (relecture de #151, constat 3)
+            if (e == null && envoisIllisibles)
+                return s + " " + (en ? "notifications.json unreadable: whether a message was sent is unknown." : "notifications.json illisible : on ne sait pas si un message est parti.");
+            if (e == null || e.Envoyes == 0)
+                return s + " " + (en ? "No message sent yet: send a test message from Settings." : "Aucun message envoyé pour l'instant : envoyez un message de test depuis Réglages.");
+            return s + " " + ActionsReglages.TexteNotifications(e);
+        }
+
+        // Réponses qui agissent seules : les deux de niveau 3 et l'IPS (niveau 2, désactivé par défaut, bloque 24 h sans
+        // confirmation), état lu et durées de docs/reponse/politique.md ; illisible : inconnu (relecture de #151, constat 2)
+        public static List<string> TexteReponses(Config c, bool illisible)
+        {
+            bool en = L.En;
+            if (illisible || c == null) return new List<string> { ActionsReglages.ConfigIllisible() };
+            Func<bool, string> etat = b => b ? (en ? "on" : "activé") : (en ? "off" : "désactivé");
+            return new List<string>
+            {
+                string.Format(en ? "Automatic firewall block of Spamhaus DROP and Feodo Tracker addresses: {0} (lifted after 7 days, or earlier if the address leaves the list)."
+                                 : "Blocage automatique au pare-feu des adresses Spamhaus DROP et Feodo Tracker : {0} (levé après 7 jours, ou plus tôt si l'adresse sort de la liste).", etat(c.BlocageAutoMenaces)),
+                string.Format(en ? "Automatic suspension of a program that touches the decoy files: {0} (never resumed automatically; the critical alert is repeated after 2 h, then every 24 h)."
+                                 : "Suspension automatique d'un programme qui touche aux fichiers leurres : {0} (jamais reprise automatiquement ; l'alerte critique est relancée au bout de 2 h, puis toutes les 24 h).", etat(c.ReponseAutoRancongiciel)),
+                string.Format(en ? "Intrusion prevention (IPS), blocking at the firewall without confirmation: {0} (block lifted after 24 h; off by default, set on the Detection page)."
+                                 : "Prévention d'intrusion (IPS), blocage au pare-feu sans confirmation : {0} (blocage levé après 24 h ; désactivée par défaut, se règle dans la page Détection).", etat(c.Ips))
+            };
+        }
+
+        // Vérification : collectes en panne dites avec leur conséquence ; état illisible : rien ne prouve que la surveillance tourne
+        public static List<string> Verification(Etat e, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            var l = new List<string>();
+            if (!lu) { l.Add(L.T("Lecture en cours…")); return l; }
+            if (e == null)
+            {
+                l.Add(illisible ? (en ? "Service state unreadable: nothing proves that monitoring is running." : "État du service illisible : rien ne prouve que la surveillance fonctionne.")
+                                : (en ? "Service state not published yet: is the service running? (Health page)" : "État du service pas encore publié : le service tourne-t-il ? (page Santé)"));
+                return l;
+            }
+            var pannes = Couverture.EnPannes(e);
+            if (pannes.Count == 0) l.Add(en ? "No data collection reported as unavailable." : "Aucune collecte signalée indisponible.");
+            foreach (var p in pannes) l.Add(Canal.Visible(Couverture.Decrire(p)));
+            return l;
+        }
+
+        // Ce qui reste à faire ; jamais « tout est en ordre »
+        public static List<string> ResteAFaire(Etat e, bool etatLu, bool etatIllisible, Config c, bool configIllisible)
+        {
+            bool en = L.En;
+            var l = new List<string>();
+            if (etatLu && e == null) l.Add(en ? "The service state cannot be read: check that the service is running (Health page)." : "L'état du service ne se lit pas : vérifiez que le service tourne (page Santé).");
+            int pannes = e == null ? 0 : Couverture.EnPannes(e).Count;
+            if (pannes > 0) l.Add(string.Format(en ? "{0} data collection(s) unavailable: some detections cannot fire (Health page)." : "{0} collecte(s) indisponible(s) : des détections ne peuvent pas se déclencher (page Santé).", pannes));
+            if (PersonnePrevenu(c, configIllisible)) l.Add(en ? "Nobody is notified of alerts: set up alert forwarding (Settings)." : "Personne n'est prévenu des alertes : configurez la remontée des alertes (Réglages).");
+            if (configIllisible) l.Add(ActionsReglages.ConfigIllisible());
+            return l;
+        }
+
+        public static string Avertissement()
+        {
+            return L.En ? "These steps say what deR4Tizer sees, not that the computer is healthy: the Overview and the alerts remain the reference."
+                        : "Ces étapes disent ce que deR4Tizer voit, pas que le poste est sain : la Vue d'ensemble et les alertes restent la référence.";
+        }
+    }
+
+    // Page « Premiers réglages » (U7a) : six étapes en lecture seule ; « Suivant » et « Retour » n'envoient rien ; « Plus tard »
+    // et « Terminer » n'écrivent que le repère ; fermer ou cliquer ailleurs ne change rien (l'assistant reste proposé)
+    class PageAssistantFluent : Grid
+    {
+        readonly ISourceEtat source;
+        readonly Action<string> ouvrir;
+        readonly string repere;
+        readonly TextBlock entete = new TextBlock { FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 0, 4) };
+        readonly TextBlock titre = new TextBlock { FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 12) };
+        readonly StackPanel contenu = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
+        readonly WrapPanel boutons = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+        int etape, enCours, chargement;
+        bool lu, etatIllisible, configIllisible, apprentissageIllisible, notificationsIllisibles;
+        Etat etat; Config config; EtatApprentissage apprentissage; EtatNotifications notifications;
+
+        public PageAssistantFluent(ISourceEtat source, Action<string> ouvrir, string repere)
+        {
+            this.source = source; this.ouvrir = ouvrir; this.repere = repere;
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            RowDefinitions.Add(new RowDefinition());
+            RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Children.Add(entete);
+            Grid.SetRow(titre, 1); Children.Add(titre);
+            var defile = new ScrollViewer { Content = contenu, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(defile, 2); Children.Add(defile);
+            Grid.SetRow(boutons, 3); Children.Add(boutons);
+            Loaded += (s, e) => Charger();
+            Afficher();
+        }
+
+        // Lecture des fichiers du service hors du fil de l'interface ; aucune écriture
+        internal void Charger()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref enCours, 1, 0) != 0) return;
+            int numero = ++chargement;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    bool absentEtat, ci;
+                    var e = LectureFluent.Lire<Etat>("etat.json", out absentEtat);
+                    var c = ActionsProtection.LireConfig(out ci);
+                    // Accès refusé ou contenu illisible n'est pas absent (S142-01, relecture de #151, constat 3)
+                    bool absentApp, absentNotif;
+                    var a = LectureFluent.Lire<EtatApprentissage>("apprentissage.json", out absentApp);
+                    var n = LectureFluent.Lire<EtatNotifications>("notifications.json", out absentNotif);
+                    Dispatcher.BeginInvoke((Action)(() =>
+                    {
+                        if (numero != chargement) return;
+                        lu = true; etat = e; etatIllisible = !absentEtat && e == null; config = c; configIllisible = ci; apprentissage = a; notifications = n;
+                        apprentissageIllisible = !absentApp && a == null; notificationsIllisibles = !absentNotif && n == null;
+                        Afficher();
+                    }));
+                }
+                finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
+            });
+        }
+
+        TextBlock Texte(string t, bool secondaire = false)
+        {
+            return new TextBlock { Text = t, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8), Foreground = Jetons.Pinceau(secondaire ? Jetons.TexteSecondaire : Jetons.Texte) };
+        }
+
+        Button Lien(string texte, string page)
+        {
+            var b = Briques.Action(texte, false, (s, e) => { if (ouvrir != null) ouvrir(page); });
+            b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
+            return b;
+        }
+
+        internal void Afficher()
+        {
+            bool en = L.En;
+            entete.Text = string.Format(en ? "Step {0} of {1} · nothing changes without you" : "Étape {0} sur {1} · rien ne change sans vous", etape + 1, VueAssistantFluent.Etapes.Length);
+            titre.Text = L.T(VueAssistantFluent.Etapes[etape]);
+            contenu.Children.Clear();
+            switch (etape)
+            {
+                case 0:
+                    contenu.Children.Add(Texte(en ? "deR4Tizer watches this computer alongside Microsoft Defender: connections, programs, autostart, firewall, local network. It is neither an antivirus nor a replacement for Defender."
+                                                  : "deR4Tizer surveille ce poste aux côtés de Microsoft Defender : connexions, programmes, démarrage automatique, pare-feu, réseau local. Ce n'est ni un antivirus ni un remplaçant de Defender."));
+                    contenu.Children.Add(Texte(en ? "These six steps show what deR4Tizer sees and the settings that matter. Here they only read: changes are made from the pages they point to, each one confirmed by an administrator."
+                                                  : "Ces six étapes montrent ce que deR4Tizer voit et les réglages qui comptent. Ici, elles ne font que lire : les changements se font depuis les pages vers lesquelles elles renvoient, chacun confirmé par un administrateur."));
+                    contenu.Children.Add(Texte(en ? "« Later » closes them; they can be opened again from Settings." : "« Plus tard » les referme ; elles se rouvrent depuis Réglages.", true));
+                    break;
+                case 1:
+                    if (source != null)
+                    {
+                        int g;
+                        var points = VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
+                        contenu.Children.Add(Texte(VueEnsembleFluent.Resume(points, out g)));
+                        foreach (var p in points.Where(x => x.Gravite > 0)) contenu.Children.Add(Texte("· " + p.Texte));
+                    }
+                    contenu.Children.Add(Briques.Titre(en ? "Data collections" : "Collectes", 8));
+                    foreach (var l in VueAssistantFluent.Verification(etat, lu, etatIllisible)) contenu.Children.Add(Texte(l));
+                    contenu.Children.Add(Texte(VueAssistantFluent.Avertissement(), true));
+                    contenu.Children.Add(Lien(en ? "Open the Health page" : "Ouvrir la page Santé", "Santé"));
+                    break;
+                case 2:
+                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteApprentissage(apprentissage, apprentissageIllisible, DateTime.Now)));
+                    contenu.Children.Add(Texte(en ? "Ending or restarting learning is done in Settings." : "Terminer ou recommencer l'apprentissage se fait dans Réglages.", true));
+                    contenu.Children.Add(Lien(en ? "Open Settings" : "Ouvrir Réglages", "Réglages"));
+                    break;
+                case 3:
+                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteQuiPrevenir(config, configIllisible, notifications, notificationsIllisibles)));
+                    contenu.Children.Add(Lien(en ? "Set up alert forwarding in Settings" : "Configurer la remontée dans Réglages", "Réglages"));
+                    break;
+                case 4:
+                    if (!lu) contenu.Children.Add(Texte(L.T("Lecture en cours…")));
+                    else foreach (var l in VueAssistantFluent.TexteReponses(config, configIllisible)) contenu.Children.Add(Texte(l));
+                    contenu.Children.Add(Texte(en ? "Only these three responses act on their own; every other response waits for a human decision." : "Seules ces trois réponses agissent seules ; toute autre réponse attend une décision humaine.", true));
+                    contenu.Children.Add(Lien(en ? "Change the first two on the Threats page" : "Changer les deux premières dans la page Menaces", "Menaces"));
+                    contenu.Children.Add(Lien(en ? "Change the IPS on the Detection page" : "Changer l'IPS dans la page Détection", "Détection"));
+                    break;
+                default:
+                    if (!lu) { contenu.Children.Add(Texte(L.T("Lecture en cours…"))); break; }
+                    var reste = VueAssistantFluent.ResteAFaire(etat, lu, etatIllisible, config, configIllisible);
+                    contenu.Children.Add(Briques.Titre(en ? "Still to do" : "Reste à faire", 0));
+                    if (reste.Count == 0) contenu.Children.Add(Texte(en ? "Nothing reported by these steps." : "Rien de signalé par ces étapes."));
+                    foreach (var l in reste) contenu.Children.Add(Texte("· " + l));
+                    contenu.Children.Add(Texte(VueAssistantFluent.Avertissement(), true));
+                    break;
+            }
+            boutons.Children.Clear();
+            Func<string, bool, Action, Button> bouton = (t, fort, a) => { var b = Briques.Action(t, fort, (s, e) => a()); b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 0, 8, 0); return b; };
+            if (etape > 0) boutons.Children.Add(bouton(en ? "Back" : "Retour", false, () => { etape--; Afficher(); }));
+            if (etape < VueAssistantFluent.Etapes.Length - 1) boutons.Children.Add(bouton(en ? "Next" : "Suivant", true, () => { etape++; Afficher(); }));
+            else boutons.Children.Add(bouton(en ? "Finish" : "Terminer", true, () => Sortir("termine")));
+            boutons.Children.Add(bouton(en ? "Later" : "Plus tard", false, () => Sortir("plus_tard")));
+        }
+
+        // Seul effet : le repère par utilisateur ; aucune commande au service
+        void Sortir(string sortie)
+        {
+            VueAssistantFluent.EcrireRepere(repere, sortie, Canal.EstAdmin());
+            if (ouvrir != null) ouvrir(NavigationFluent.VueEnsemble);
+        }
+
+        internal int Etape { get { return etape; } }
     }
 }

@@ -457,6 +457,49 @@ try {
     Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
     Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; action(); Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
     Cas 'Coquille : plus aucune page WinForms hébergée ni prêtée (WindowsFormsHost, PageDe et la référence de compilation retirés, relecture de #147)' (-not $fluentSrc.Contains('WindowsFormsHost') -and -not $fluentSrc.Contains('Forms.Integration') -and -not $fluentSrc.Contains('pages(cle)') -and -not ([IO.File]::ReadAllText("$src\Gui.cs")).Contains('PageDe(') -and -not ([IO.File]::ReadAllText((Join-Path $src '..\compiler.ps1'))).Contains('WindowsFormsIntegration'))
+    # Premiers réglages (U7a) : décisions pures, lecture seule, repère par utilisateur
+    $va = & $t 'VueAssistantFluent'; $eaT = & $t 'EtatApprentissage'; $cnT = & $t 'ConfigNotifications'
+    $dp = { param($r, $a, $s, $p, $c) [bool]$va.GetMethod('DoitProposer').Invoke($null, [object[]]@([bool]$r, [bool]$a, [bool]$s, [bool]$p, [bool]$c)) }
+    Cas 'Premiers réglages : proposés au premier lancement seulement (pas de repère, pas administrateur, source, sans --page ni --cache)' ((& $dp $false $false $true $false $false) -and -not (& $dp $true $false $true $false $false) -and -not (& $dp $false $true $true $false $false) -and -not (& $dp $false $false $false $false $false) -and -not (& $dp $false $false $true $true $false) -and -not (& $dp $false $false $true $false $true))
+    $ta = { param($a, $ill = $false) [string]$va.GetMethod('TexteApprentissage').Invoke($null, [object[]]@($a, [bool]$ill, [datetime]'2026-11-11 12:00:00')) }
+    $lAp = New-Object 'Collections.Generic.List[string]'; $lAp.Add('a'); $lAp.Add('b')
+    $tSans = & $ta (& $nouv $eaT @{ Debut = '2026-11-11 10:00:00'; Fin = '2026-11-11 10:00:00'; Appris = $lAp })
+    $tEnCours = & $ta (& $nouv $eaT @{ Debut = '2026-11-11 10:00:00'; Fin = '2026-11-18 10:00:00' + [char]0x202E; Appris = $lAp })
+    $tFini = & $ta (& $nouv $eaT @{ Debut = '2026-11-01 10:00:00'; Fin = '2026-11-08 10:00:00'; Appris = $lAp })
+    $tNul = & $ta $null
+    $tIll = & $ta $null $true
+    Cas 'Premiers réglages : apprentissage en trois cas, début égal à la fin dit « pas d''apprentissage automatique » et non « terminé » (dossier U7)' ($tSans.StartsWith('Pas d''apprentissage automatique') -and -not $tSans.Contains('terminé') -and $tEnCours.StartsWith('Apprentissage en cours jusqu''au 2026-11-18') -and $tEnCours.Contains('2 comportement(s)') -and $tFini.StartsWith('Apprentissage terminé le 2026-11-08') -and $tNul.Contains('rien n''est conclu') -and $tIll.StartsWith('apprentissage.json illisible')) "$tSans | $tEnCours | $tFini"
+    Cas 'Premiers réglages : apprentissage dit comme le service le fait, comportement nouveau mémorisé pendant l''apprentissage sauf signal fort, alerte critique toujours remontée (relecture de #151, constat 1)' ($tEnCours.Contains('comportement nouveau compris, sauf les signaux forts') -and $tFini.Contains('toute alerte critique, est remontée') -and -not (($tEnCours + $tFini) -match 'seul un comportement nouveau|d''un comportement connu')) "$tEnCours | $tFini"
+    Cas 'Premiers réglages : date d''apprentissage neutralisée' (-not $tEnCours.Contains([string][char]0x202E))
+    $tq = { param($c, $i, $e, $ni = $false) [string]$va.GetMethod('TexteQuiPrevenir').Invoke($null, [object[]]@($c, [bool]$i, $e, [bool]$ni)) }
+    $cAucun = & $nouv $cfgT @{ Notifications = (& $nouv $cnT @{ NiveauMin = 'Critique' }) }
+    $cNtfy = & $nouv $cfgT @{ Notifications = (& $nouv $cnT @{ NiveauMin = 'Alerte'; Ntfy = $true }) }
+    $qAucun = & $tq $cAucun $false $null; $qIll = & $tq $null $true $null; $qNtfy = & $tq $cNtfy $false $null
+    $qEnvIll = & $tq $cNtfy $false $null $true
+    $cSiem = & $nouv $cfgT @{ Notifications = (& $nouv $cnT @{ NiveauMin = 'Critique' }); Syslog = (& $nouv $csT @{ Actif = $true }) }
+    $qSiem = & $tq $cSiem $false $null
+    Cas 'Premiers réglages : « Personne n''est prévenu » dit tel quel ; config illisible : inconnu ; canal activé sans envoi : test proposé, jamais « sera prévenu »' ($qAucun.StartsWith('Personne n''est prévenu') -and $qIll.StartsWith('config.json illisible') -and $qNtfy.StartsWith('Canaux activés : ntfy, à partir du niveau Alerte.') -and $qNtfy.Contains('Aucun message envoyé') -and -not (($qAucun + $qNtfy) -match 'sera prévenu')) "$qAucun | $qNtfy"
+    Cas 'Premiers réglages : notifications.json illisible, jamais « aucun message envoyé » (relecture de #151, constat 3) ; syslog actif cité sans compter comme personne prévenue (R1)' ($qEnvIll.Contains('notifications.json illisible') -and -not $qEnvIll.Contains('Aucun message envoyé') -and $qSiem.StartsWith('Personne n''est prévenu') -and $qSiem.Contains('SIEM (syslog)') -and -not $qAucun.Contains('SIEM')) "$qEnvIll | $qSiem"
+    $rp = @($va.GetMethod('TexteReponses').Invoke($null, [object[]]@((& $nouv $cfgT @{ BlocageAutoMenaces = $true; ReponseAutoRancongiciel = $false; Ips = $true }), $false)))
+    $rpI = @($va.GetMethod('TexteReponses').Invoke($null, [object[]]@($null, $true)))
+    Cas 'Premiers réglages : réponses qui agissent seules avec leurs durées (7 jours ; jamais reprise, relance à 2 h puis 24 h ; IPS 24 h, relecture de #151, constat 2) ; illisible : rien d''affirmé' ($rp.Count -eq 3 -and $rp[2].StartsWith('Prévention d''intrusion (IPS), blocage au pare-feu sans confirmation : activé (blocage levé après 24 h') -and $fluentSrc.Contains('"Seules ces trois réponses agissent seules ; toute autre réponse attend une décision humaine."') -and $rp[0].Contains(': activé (levé après 7 jours') -and $rp[1].Contains(': désactivé (jamais reprise automatiquement') -and $rp[1].Contains('2 h, puis toutes les 24 h') -and $rpI.Count -eq 1 -and -not ($rpI[0] -match 'activé')) ($rp -join ' | ')
+    $raf = { param($e, $lu, $ei, $c, $ci) @($va.GetMethod('ResteAFaire').Invoke($null, [object[]]@($e, [bool]$lu, [bool]$ei, $c, [bool]$ci))) }
+    $r1 = & $raf $null $true $true $cAucun $false; $r2 = & $raf $null $true $false $cNtfy $false
+    Cas 'Premiers réglages : reste à faire, service illisible et personne prévenu signalés ; rien de signalé n''est jamais « tout va bien »' ($r1.Count -eq 2 -and $r1[0].Contains('ne se lit pas') -and $r1[1].StartsWith('Personne n''est prévenu') -and $r2.Count -eq 1 -and ([string]$va.GetMethod('Avertissement').Invoke($null, @())).Contains('pas que le poste est sain')) ($r1 -join ' | ')
+    $fl = $fluentSrc -replace "`r`n", "`n"
+    $rep = [string](Join-Path $travail 'repere\premiers-reglages.txt')
+    $ok1 = [bool]$va.GetMethod('EcrireRepere').Invoke($null, @($rep, 'autre', $false)); $ex1 = [bool]$va.GetMethod('RepereExiste').Invoke($null, @($rep))
+    $ok0 = [bool]$va.GetMethod('EcrireRepere').Invoke($null, @($rep, 'termine', $true)); $ex0 = [bool]$va.GetMethod('RepereExiste').Invoke($null, @($rep))
+    $ok2 = [bool]$va.GetMethod('EcrireRepere').Invoke($null, @($rep, 'plus_tard', $false)); $ex2 = [bool]$va.GetMethod('RepereExiste').Invoke($null, @($rep))
+    Cas 'Premiers réglages : repère « termine » ou « plus_tard » seulement, dans %LOCALAPPDATA%\deR4Tizer, jamais écrit par une interface élevée (S151-01, constat 4)' (-not $ok1 -and -not $ex1 -and -not $ok0 -and -not $ex0 -and $ok2 -and $ex2 -and $fl.Contains('VueAssistantFluent.EcrireRepere(repere, sortie, Canal.EstAdmin());') -and ([string]$va.GetMethod('CheminRepere').Invoke($null, @())).EndsWith('\deR4Tizer\premiers-reglages.txt'))
+    $pa = $fl.Substring($fl.IndexOf('    class PageAssistantFluent : Grid'))
+    $vaSrc = $fl.Substring($fl.IndexOf('    public static class VueAssistantFluent'), $fl.IndexOf('    class PageAssistantFluent : Grid') - $fl.IndexOf('    public static class VueAssistantFluent'))
+    Cas 'Premiers réglages : aucune commande ni écriture de réglage (lecture seule), seul effet le repère sur « Plus tard » et « Terminer »' (-not (($pa + $vaSrc) -match 'Canal\.Executer|ActionsReglages\.(Enregistrer|Apprentissage|Notifications)\(|ActionsProtection\.(ChangerReglage|Debloquer|Restaurer|Baseline|MajMenaces)\(|WriteAllText\(Commun') -and ([regex]::Matches($pa, 'EcrireRepere\(')).Count -eq 1 -and $pa.Contains('() => Sortir("termine")') -and $pa.Contains('() => Sortir("plus_tard")'))
+    Cas 'Premiers réglages : jamais ouverts d''office en administrateur, avec --page ou --cache ; carte dans la Vue d''ensemble ; « Revoir » dans Réglages' ($fl.Contains('VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,') -and $fl.Contains('Environment.GetCommandLineArgs().Contains("--cache"));') -and $fl.Contains('if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))') -and $fl.Contains('pr.Revoir = () => Ouvrir(VueAssistantFluent.Cle);'))
+    $langue.GetField('En').SetValue($null, $true)
+    $etEn = @($va.GetField('Etapes').GetValue($null) | ForEach-Object { [string]$langue.GetMethod('T').Invoke($null, @([string]$_)) })
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'Premiers réglages : six étapes, titres traduits' ($etEn.Count -eq 6 -and ($etEn -join '|') -eq 'Welcome|Check|Learning|Who to notify|Automatic responses|Summary') ($etEn -join '|')
     # Table des traductions (relecture de #146, remarque 4) : mêmes emplacements {0} {1}… en français et en anglais
     $table = $langue.GetField('Anglais', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null)
     $ecarts = @(foreach ($k in $table.Keys) { $fr = (@([regex]::Matches($k, '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); $en = (@([regex]::Matches($table[$k], '\{\d+\}') | ForEach-Object Value | Sort-Object -Unique) -join ','); if ($fr -ne $en) { "$k => $($table[$k])" } })
@@ -522,16 +565,18 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages', 'Premiers réglages') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, [object[]]@(), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent'; 'Premiers réglages' = 'PageAssistantFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name
             }
             $ouvertes = $coquille.GetMethod('Ouvertes', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @())
-            Cas "navigation $code : une seule entrée ouverte après « $page »" ($ouvertes -eq 1) "$ouvertes"
+            # Premiers réglages : hors de la navigation, aucune entrée ouverte
+            if ($page -eq 'Premiers réglages') { Cas "navigation $code : aucune entrée ouverte pour « $page » (hors navigation)" ($ouvertes -eq 0) "$ouvertes" }
+            else { Cas "navigation $code : une seule entrée ouverte après « $page »" ($ouvertes -eq 1) "$ouvertes" }
             $zt = [Windows.SystemParameters]::WorkArea
             Cas "fenêtre $code : tient dans la zone de travail ($([int]$fen.Width) x $([int]$fen.Height) pour $([int]$zt.Width) x $([int]$zt.Height))" ($fen.Width -le $zt.Width -and $fen.Height -le $zt.Height -and $fen.Width -ge $fen.MinWidth)
             $kNav = $coquille.GetMethod('ContrasteNavigation', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @())
