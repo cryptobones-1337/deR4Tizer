@@ -4061,8 +4061,8 @@ namespace DeR4Tizer
             if (string.CompareOrdinal(maintenant.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), app.Fin ?? "") < 0)
                 return string.Format(en ? "Learning until {0}: {1} behaviour(s) learned. Until then, every non-critical alert is recorded as information and its behaviour learned, new behaviours included, except strong signals (downloaded code, LOLBin, backup deletion…); critical alerts are never softened."
                                         : "Apprentissage en cours jusqu'au {0} : {1} comportement(s) appris. D'ici là, toute alerte non critique est notée en information et son comportement mémorisé, comportement nouveau compris, sauf les signaux forts (code téléchargé, LOLBin, suppression des sauvegardes…) ; les alertes critiques ne sont jamais adoucies.", Canal.Visible(app.Fin), appris);
-            return string.Format(en ? "Learning finished on {0}: {1} behaviour(s) learned. A non-critical alert for a learned behaviour is recorded as information; any other alert, and every critical alert, is raised."
-                                    : "Apprentissage terminé le {0} : {1} comportement(s) appris. Une alerte non critique d'un comportement appris est notée en information ; toute autre alerte, et toute alerte critique, est remontée.", Canal.Visible(app.Fin), appris);
+            return string.Format(en ? "Learning finished on {0}: {1} behaviour(s) learned. A non-critical alert for a learned behaviour is recorded as information, unless it is a strong signal; any other alert, and every critical alert, remains an alert."
+                                    : "Apprentissage terminé le {0} : {1} comportement(s) appris. Une alerte non critique d'un comportement appris est notée en information, sauf signal fort ; toute autre alerte, et toute alerte critique, reste une alerte.", Canal.Visible(app.Fin), appris);
         }
 
         static List<string> Canaux(Config c)
@@ -4146,6 +4146,29 @@ namespace DeR4Tizer
             return l;
         }
 
+        // Action offerte à l'étape Apprentissage (U7b) : terminer s'il est en cours, recommencer s'il est terminé ; rien quand le
+        // service l'a écarté (début égal à la fin : le poste avait déjà des alertes, recommencer les tairait), ni sans état lu
+        public static string OperationApprentissage(EtatApprentissage app, bool illisible, DateTime maintenant)
+        {
+            if (app == null || illisible || string.IsNullOrEmpty(app.Fin) || app.Debut == app.Fin) return null;
+            bool enCours = string.CompareOrdinal(maintenant.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), app.Fin) < 0;
+            return enCours ? "terminer" : "recommencer";
+        }
+
+        // Réglages des réponses automatiques que l'assistant peut changer : les deux de niveau 3, par la commande de la page
+        // Menaces ; l'IPS reste dans la page Détection
+        public static readonly string[] ReglagesReponses = { "BlocageAutoMenaces", "ReponseAutoRancongiciel" };
+
+        // Commandes que l'assistant envoie, identiques à celles des pages Réglages et Menaces (montrées dans la confirmation)
+        public static Commande CommandeApprentissage(string operation) { return new Commande { Action = "apprentissage", Valeur = operation }; }
+        public static Commande CommandeReglage(string reglage, bool valeur) { return new Commande { Action = "config", Cible = reglage, Valeur = valeur ? "true" : "false" }; }
+
+        // Après un bouton : « demandé », jamais « fait » ; l'état affiché est relu dans les fichiers du service
+        public static string Demande(string quoi)
+        {
+            return string.Format(L.En ? "Requested: {0}. The state shown is read again from the service files and may take a few seconds to change." : "Demandé : {0}. L'état affiché est relu dans les fichiers du service et peut mettre quelques secondes à changer.", quoi);
+        }
+
         public static string Avertissement()
         {
             return L.En ? "These steps say what deR4Tizer sees, not that the computer is healthy: the Overview and the alerts remain the reference."
@@ -4153,8 +4176,10 @@ namespace DeR4Tizer
         }
     }
 
-    // Page « Premiers réglages » (U7a) : six étapes en lecture seule ; « Suivant » et « Retour » n'envoient rien ; « Plus tard »
-    // et « Terminer » n'écrivent que le repère ; fermer ou cliquer ailleurs ne change rien (l'assistant reste proposé)
+    // Page « Premiers réglages » (U7a, U7b) : six étapes ; « Suivant » et « Retour » n'envoient rien ; « Plus tard » et
+    // « Terminer » n'écrivent que le repère ; fermer ou cliquer ailleurs ne change rien (l'assistant reste proposé). Seuls
+    // boutons d'action (U7b) : terminer ou recommencer l'apprentissage, activer ou désactiver les deux réponses automatiques
+    // de niveau 3, par les commandes des pages Réglages et Menaces, chacune confirmée
     class PageAssistantFluent : Grid
     {
         readonly ISourceEtat source;
@@ -4230,13 +4255,14 @@ namespace DeR4Tizer
             entete.Text = string.Format(en ? "Step {0} of {1} · nothing changes without you" : "Étape {0} sur {1} · rien ne change sans vous", etape + 1, VueAssistantFluent.Etapes.Length);
             titre.Text = L.T(VueAssistantFluent.Etapes[etape]);
             contenu.Children.Clear();
+            if (!string.IsNullOrEmpty(demande) && demandeEtape == etape) contenu.Children.Add(Texte(demande, true));
             switch (etape)
             {
                 case 0:
                     contenu.Children.Add(Texte(en ? "deR4Tizer watches this computer alongside Microsoft Defender: connections, programs, autostart, firewall, local network. It is neither an antivirus nor a replacement for Defender."
                                                   : "deR4Tizer surveille ce poste aux côtés de Microsoft Defender : connexions, programmes, démarrage automatique, pare-feu, réseau local. Ce n'est ni un antivirus ni un remplaçant de Defender."));
-                    contenu.Children.Add(Texte(en ? "These six steps show what deR4Tizer sees and the settings that matter. Here they only read: changes are made from the pages they point to, each one confirmed by an administrator."
-                                                  : "Ces six étapes montrent ce que deR4Tizer voit et les réglages qui comptent. Ici, elles ne font que lire : les changements se font depuis les pages vers lesquelles elles renvoient, chacun confirmé par un administrateur."));
+                    contenu.Children.Add(Texte(en ? "These six steps show what deR4Tizer sees and the settings that matter. The Learning and Automatic responses steps also have their buttons; every change asks for an administrator's confirmation (Windows UAC, or deR4Tizer's own confirmation when the interface already runs as administrator)."
+                                                  : "Ces six étapes montrent ce que deR4Tizer voit et les réglages qui comptent. Les étapes Apprentissage et Réponses automatiques ont aussi leurs boutons ; chaque changement demande la confirmation d'un administrateur (contrôle de compte de Windows, ou confirmation de deR4Tizer quand l'interface tourne déjà en administrateur)."));
                     contenu.Children.Add(Texte(en ? "« Later » closes them; they can be opened again from Settings." : "« Plus tard » les referme ; elles se rouvrent depuis Réglages.", true));
                     break;
                 case 1:
@@ -4254,7 +4280,14 @@ namespace DeR4Tizer
                     break;
                 case 2:
                     contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteApprentissage(apprentissage, apprentissageIllisible, DateTime.Now)));
-                    contenu.Children.Add(Texte(en ? "Ending or restarting learning is done in Settings." : "Terminer ou recommencer l'apprentissage se fait dans Réglages.", true));
+                    string op = lu ? VueAssistantFluent.OperationApprentissage(apprentissage, apprentissageIllisible, DateTime.Now) : null;
+                    if (op == "terminer")
+                        contenu.Children.Add(Agir(en ? "End learning now" : "Terminer l'apprentissage maintenant", VueAssistantFluent.CommandeApprentissage(op),
+                            () => ActionsReglages.Apprentissage(op), en ? "end of learning" : "fin de l'apprentissage"));
+                    else if (op == "recommencer")
+                        contenu.Children.Add(Agir(en ? "Restart learning (7 days)" : "Recommencer l'apprentissage (7 jours)", VueAssistantFluent.CommandeApprentissage(op),
+                            () => ActionsReglages.Apprentissage(op), en ? "learning restarted for 7 days" : "apprentissage recommencé pour 7 jours"));
+                    contenu.Children.Add(Texte(en ? "Learned exceptions are managed in Settings." : "Les exceptions apprises se gèrent dans Réglages.", true));
                     contenu.Children.Add(Lien(en ? "Open Settings" : "Ouvrir Réglages", "Réglages"));
                     break;
                 case 3:
@@ -4265,7 +4298,16 @@ namespace DeR4Tizer
                     if (!lu) contenu.Children.Add(Texte(L.T("Lecture en cours…")));
                     else foreach (var l in VueAssistantFluent.TexteReponses(config, configIllisible)) contenu.Children.Add(Texte(l));
                     contenu.Children.Add(Texte(en ? "Only these three responses act on their own; every other response waits for a human decision." : "Seules ces trois réponses agissent seules ; toute autre réponse attend une décision humaine.", true));
-                    contenu.Children.Add(Lien(en ? "Change the first two on the Threats page" : "Changer les deux premières dans la page Menaces", "Menaces"));
+                    if (lu && !configIllisible && config != null)
+                        foreach (var r in VueAssistantFluent.ReglagesReponses)
+                        {
+                            bool actif = r == "BlocageAutoMenaces" ? config.BlocageAutoMenaces : config.ReponseAutoRancongiciel;
+                            string nom = r == "BlocageAutoMenaces" ? (en ? "automatic block of listed addresses" : "blocage automatique des adresses listées") : (en ? "automatic suspension by decoy files" : "suspension automatique par les leurres");
+                            string reglage = r;
+                            contenu.Children.Add(Agir((actif ? (en ? "Turn off: " : "Désactiver : ") : (en ? "Turn on: " : "Activer : ")) + nom, VueAssistantFluent.CommandeReglage(reglage, !actif),
+                                () => ActionsProtection.ChangerReglage(reglage, !actif), (actif ? (en ? "turn off " : "désactiver ") : (en ? "turn on " : "activer ")) + nom));
+                        }
+                    contenu.Children.Add(Lien(en ? "See them on the Threats page" : "Les voir dans la page Menaces", "Menaces"));
                     contenu.Children.Add(Lien(en ? "Change the IPS on the Detection page" : "Changer l'IPS dans la page Détection", "Détection"));
                     break;
                 default:
@@ -4291,6 +4333,26 @@ namespace DeR4Tizer
             VueAssistantFluent.EcrireRepere(repere, sortie, Canal.EstAdmin());
             if (ouvrir != null) ouvrir(NavigationFluent.VueEnsemble);
         }
+
+        // Bouton d'action (U7b) : interface élevée, l'assistant montre lui-même la confirmation détaillée, que l'envoi direct au
+        // canal ne montre pas pour ces commandes ; non élevée, la confirmation passe par la copie élevée (UAC) comme partout. Le résultat
+        // est dit « demandé » et l'état relu
+        Button Agir(string texte, Commande commande, Action action, string quoi)
+        {
+            var b = Briques.Action(texte, true, (s, e) =>
+            {
+                if (Canal.EstAdmin())
+                    using (var fenetre = Canal.FenetreConfirmation(Canal.Decrire(commande), L.En))
+                        if (fenetre.ShowDialog() != System.Windows.Forms.DialogResult.Yes) return;
+                action();
+                demande = VueAssistantFluent.Demande(quoi); demandeEtape = etape;
+                Afficher(); Charger();
+            });
+            b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
+            return b;
+        }
+
+        string demande; int demandeEtape = -1;
 
         internal int Etape { get { return etape; } }
     }
