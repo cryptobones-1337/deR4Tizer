@@ -63,10 +63,17 @@ namespace DeR4Tizer
 
         public static void TesterSyslog(ConfigSyslog s) { if (s != null) Canal.Executer(new Commande { Action = "testerSyslog", Valeur = Commun.Json().Serialize(s) }); }
 
+        // Commande d'apprentissage, liste fermée ; la même sert à la confirmation de l'assistant (audit de #152, S152-01)
+        public static Commande CommandeApprentissage(string operation)
+        {
+            if (Array.IndexOf(OperationsApprentissage, operation) < 0) return null;
+            return new Commande { Action = "apprentissage", Valeur = operation };
+        }
+
         public static void Apprentissage(string operation)
         {
-            if (Array.IndexOf(OperationsApprentissage, operation) < 0) return;
-            Canal.Executer(new Commande { Action = "apprentissage", Valeur = operation });
+            var c = CommandeApprentissage(operation);
+            if (c != null) Canal.Executer(c);
         }
 
         public static void AfficherJeton() { Canal.Executer(new Commande { Action = "jetonApi" }); }
