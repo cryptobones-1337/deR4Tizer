@@ -15,7 +15,7 @@
   <Product Id="*" Name="deR4Tizer" Language="1036" Codepage="1252" Version="$(var.Version)" Manufacturer="deR4Tizer (projet open source)"
            UpgradeCode="6F1E2B47-9C3A-4D58-8E21-4B7D0C9A3F15">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64"
-             Description="deR4Tizer : protection locale pour Windows (détection, mini-SIEM, durcissement)" Comments="Licence EUPL-1.2" />
+             Description="deR4Tizer : surveillance, alertes et durcissement locaux pour Windows" Comments="Licence EUPL-1.2" />
 
     <!-- Retour arrière de la mise à jour automatique : le service réinstalle le paquet de la version précédente
          (le contrôle « version plus récente » est fait par le service avant d'installer) -->
@@ -29,6 +29,16 @@
       <RegistrySearch Id="ChercherLancement" Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="deR4Tizer" Type="raw" Win64="yes" />
     </Property>
     <SetProperty Id="LANCEMENT_SESSION" Value="0" Before="CostInitialize" Sequence="execute"><![CDATA[(WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE]]></SetProperty>
+    <!-- Dernière page (U8a, dossier de conception U8) : un texte, jamais de case « Lancer deR4Tizer » ni d'action qui lance un
+         programme. L'interface est démarrée par la tâche de relance, sans élévation ; lancée d'ici, elle pourrait tourner
+         élevée et garder le mutex de la session. Affectations de propriété côté client (type 51) : aucun code exécuté.
+         Langue d'après UserLanguageID (français pour les identifiants français, anglais sinon) ; lancement effectif : miroir
+         exact de la condition de la séquence d'exécution (SetProperty LANCEMENT_SESSION ci-dessus), qui ne revient pas à
+         l'interface du MSI -->
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="TexteFinFrLance" After="AppSearch" Sequence="ui" Value="Le service deR4Tizer est démarré. L'interface démarrera d'elle-même sous votre compte dans les minutes qui suivent, avec son icône près de l'horloge, puis à chaque ouverture de session. Cette page ne la lance pas."><![CDATA[(UserLanguageID=1036 OR UserLanguageID=2060 OR UserLanguageID=3084 OR UserLanguageID=4108 OR UserLanguageID=5132 OR UserLanguageID=6156) AND LANCEMENT_SESSION="1" AND NOT ((WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE)]]></SetProperty>
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="TexteFinFrSans" After="TexteFinFrLance" Sequence="ui" Value="Le service deR4Tizer est démarré. Sur ce poste, l'interface ne démarre pas d'elle-même (option LANCEMENT_SESSION=0) : ouvrez-la depuis le menu Démarrer."><![CDATA[(UserLanguageID=1036 OR UserLanguageID=2060 OR UserLanguageID=3084 OR UserLanguageID=4108 OR UserLanguageID=5132 OR UserLanguageID=6156) AND NOT (LANCEMENT_SESSION="1" AND NOT ((WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE))]]></SetProperty>
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="TexteFinEnLance" After="TexteFinFrSans" Sequence="ui" Value="The deR4Tizer service is running. The interface will start on its own under your account within the next few minutes, with its icon near the clock, then at every sign-in. This page does not start it."><![CDATA[NOT (UserLanguageID=1036 OR UserLanguageID=2060 OR UserLanguageID=3084 OR UserLanguageID=4108 OR UserLanguageID=5132 OR UserLanguageID=6156) AND LANCEMENT_SESSION="1" AND NOT ((WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE)]]></SetProperty>
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="TexteFinEnSans" After="TexteFinEnLance" Sequence="ui" Value="The deR4Tizer service is running. On this computer the interface does not start on its own (LANCEMENT_SESSION=0 option): open it from the Start menu."><![CDATA[NOT (UserLanguageID=1036 OR UserLanguageID=2060 OR UserLanguageID=3084 OR UserLanguageID=4108 OR UserLanguageID=5132 OR UserLanguageID=6156) AND NOT (LANCEMENT_SESSION="1" AND NOT ((WIX_UPGRADE_DETECTED OR Installed) AND NOT LANCEMENT_INSTALLE))]]></SetProperty>
     <Property Id="GARDER_DONNEES" Secure="yes" />
     <Property Id="GARDER_BASELINE" Secure="yes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/cryptobones-1337/deR4Tizer" />
@@ -69,7 +79,7 @@
       <Component Id="Interface" Guid="A4F07C19-2B6D-4E83-8D5A-91C3E6B2F048" Win64="yes">
         <File Id="InterfaceExe" Name="deR4Tizer.exe" Source="$(var.Bin)\deR4Tizer.exe" KeyPath="yes">
           <Shortcut Id="RaccourciMenu" Directory="ProgramMenuFolder" Name="deR4Tizer" Advertise="yes" WorkingDirectory="INSTALLFOLDER"
-                    Icon="icone.exe" Description="Protection locale : connexions, alertes, réseau local" />
+                    Icon="icone.exe" Description="Surveillance locale : connexions, alertes, réseau local" />
         </File>
       </Component>
       <Component Id="LancementSession" Guid="E2B96D40-5A71-4C1F-B3E8-7D0A4F2C6E19" Win64="yes">
