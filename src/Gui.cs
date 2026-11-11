@@ -230,6 +230,13 @@ namespace DeR4Tizer
                     using (var fenetre = FenetreConfirmation(Decrire(c), L.En))
                         if (fenetre.ShowDialog() != DialogResult.Yes) return;
                 }
+                // Réglages qui changent la détection ou la réponse automatique : confirmés aussi par un administrateur, comme
+                // le fait la copie élevée pour un compte standard (audit de #152, S152-02)
+                else if (ConfirmeEnAdministrateur(c))
+                {
+                    using (var fenetre = FenetreConfirmation(Decrire(c), L.En))
+                        if (fenetre.ShowDialog() != DialogResult.Yes) return;
+                }
                 Afficher(Envoyer(c));
                 return;
             }
@@ -280,6 +287,27 @@ namespace DeR4Tizer
         static extern bool QueryFullProcessImageName(IntPtr h, int drapeaux, StringBuilder chemin, ref int taille);
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool CloseHandle(IntPtr h);
+
+        // Commandes confirmées aussi dans une interface déjà élevée (audit de #152, S152-02) : réglages des réponses
+        // automatiques, de l'IPS et des listes (config), apprentissage
+        public static bool ConfirmeEnAdministrateur(Commande c)
+        {
+            return c != null && (c.Action == "config" || c.Action == "apprentissage");
+        }
+
+        // Nom lisible d'un réglage de la commande « config » (relecture de #152, remarque R8) ; inconnu : nom neutralisé
+        public static string NomReglage(string cible)
+        {
+            bool en = L.En;
+            switch (cible ?? "")
+            {
+                case "BlocageAutoMenaces": return en ? "automatic firewall block of Spamhaus DROP and Feodo Tracker addresses" : "blocage automatique au pare-feu des adresses Spamhaus DROP et Feodo Tracker";
+                case "ReponseAutoRancongiciel": return en ? "automatic suspension of a program that touches the decoy files" : "suspension automatique d'un programme qui touche aux fichiers leurres";
+                case "ListesRestreintes": return en ? "non-commercial threat lists or lists with unverified terms (personal use only)" : "listes de menaces non commerciales ou aux conditions non vérifiées (usage personnel uniquement)";
+                case "Ips": return en ? "intrusion prevention (IPS): firewall block without confirmation, lifted after 24 h" : "prévention d'intrusion (IPS) : blocage au pare-feu sans confirmation, levé après 24 h";
+                default: return Visible(cible);
+            }
+        }
 
         static bool ActionSurProcessus(Commande c)
         {
@@ -459,7 +487,7 @@ namespace DeR4Tizer
                     + (en ? "\nIf it was set automatically, it will not be set again automatically for 7 days." : "\nS'il a été posé automatiquement, il ne sera pas reposé automatiquement pendant 7 jours.");
                 case "toutDebloquer": return (en ? "REMOVE ALL blocks (hosts file and firewall)" : "RETIRER TOUS les blocages (fichier hosts et pare-feu)")
                     + (en ? "\nThose set automatically will not be set again automatically for 7 days." : "\nCeux posés automatiquement ne seront pas reposés automatiquement pendant 7 jours.");
-                case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + vc;
+                case "config": return (v == "true" ? (en ? "TURN ON: " : "ACTIVER : ") : (en ? "TURN OFF: " : "DÉSACTIVER : ")) + NomReglage(cible);
                 case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
                 case "tuer": return (en ? "Kill process " : "Tuer le processus ") + vc + IdentiteTexte(c);
                 case "tuerChaine": return (en ? "Kill process " : "Tuer le processus ") + vc + (en ? " and all its descendants" : " et toute sa descendance") + IdentiteTexte(c);
@@ -550,7 +578,8 @@ namespace DeR4Tizer
                     }
                 case "apprentissage":
                     return v == "terminer" ? (en ? "End learning mode now" : "Terminer le mode apprentissage maintenant")
-                        : v == "recommencer" ? (en ? "Restart learning mode for 7 days (forget learned behaviours)" : "Relancer le mode apprentissage pour 7 jours (oublier les comportements appris)")
+                        : v == "recommencer" ? (en ? "Restart learning mode for 7 days (forget learned behaviours)\nFor 7 days, every non-critical alert without a strong signal is recorded as information and learned, including a malicious program active at that time: only on a computer known to be clean."
+                                                     : "Relancer le mode apprentissage pour 7 jours (oublier les comportements appris)\nPendant 7 jours, toute alerte non critique sans signal fort est notée en information et mémorisée, y compris celle d'un programme malveillant actif à ce moment : seulement sur un poste que l'on sait sain.")
                         : (en ? "DELETE all alert exceptions" : "SUPPRIMER toutes les exceptions d'alerte");
                 case "majVerifier": return en ? "Check for an update now (and install it if it is verified)" : "Rechercher une mise à jour maintenant (et l'installer si elle est vérifiée)";
                 case "majConfig":
@@ -1646,12 +1675,15 @@ namespace DeR4Tizer
             string max = alertes.Max(a => a.Heure);
             if (string.CompareOrdinal(max, derniereLue) <= 0) return;
             derniereLue = max;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(fichierLecture));
-                File.WriteAllText(fichierLecture, derniereLue);
-            }
-            catch { }
+            // Jamais écrit par une interface élevée : ce dossier est contrôlé par les programmes non élevés du compte
+            // (jonction, lien) ; en administrateur, la dernière alerte lue reste en mémoire (audit de #151, S151-01)
+            if (!Canal.EstAdmin())
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(fichierLecture));
+                    File.WriteAllText(fichierLecture, derniereLue);
+                }
+                catch { }
             RemplirAlertes(alertes);
         }
 
