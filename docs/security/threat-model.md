@@ -19,6 +19,21 @@ conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 | Remontée des alertes | Service | ntfy, Teams, serveur SMTP | Secrets réservés aux administrateurs, gardés en mémoire du service entre deux envois (fichier retiré : ntfy et Teams coupés au tour suivant, un serveur SMTP sans compte reste joignable ; modifié à la main : pas adopté avant le prochain réglage ou redémarrage) ; envois par `curl.exe` de Windows (HTTPS, SMTP avec TLS). | `notifications_*` |
 | Export syslog | Service | Réseau | **En clair** (UDP ou TCP, sans TLS). | — |
 
+### Prévu : résolveur DNS local (phase 7, mécanisme proposé, D7-1 ouverte)
+
+Rien dans le code. Si le mécanisme proposé est retenu, ce sera la première écoute réseau permanente du service et le
+premier analyseur de réponses DNS non fiables en SYSTEM (avec `panic = "abort"`). Exigences écrites avant tout code
+(audit de #157, S157-01 ; dossier de la phase 7, section 6) :
+- écoute sur `127.0.0.1` et `::1` seulement, jamais sur une carte réseau (preuve prévue : `Get-NetUDPEndpoint` en VM) ;
+- requêtes et réponses bornées (une question, tailles bornées, réponses construites, jamais recopiées au-delà de la
+  question), sans panique possible (preuve prévue : mini-fuzz de l'analyseur) ;
+- débit borné (16 requêtes en cours, file de 256), aucune résolution pour un autre hôte ;
+- réponses de l'amont acceptées seulement si l'amont, l'identifiant et la question correspondent (identifiant et port
+  source aléatoires) ;
+- ce qu'un compte standard local peut en faire : viser l'analyseur par des paquets forgés, saturer le résolveur (déni
+  de service local qu'il peut déjà provoquer autrement), contourner le filtrage (possible : ce n'est pas une barrière ;
+  changer le DNS des cartes demande d'être administrateur, et DNS-002 le signale).
+
 ## Attaquants considérés
 
 ### Compte standard local

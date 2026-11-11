@@ -6,14 +6,14 @@ télécharger, et pourquoi. Il reprend le dossier de conception de la phase 7 (s
 
 ## Principe
 
-- Le poste télécharge chaque liste **directement chez sa source**, comme les listes de menaces d'aujourd'hui
+- Le poste téléchargera chaque liste **directement chez sa source**, comme les listes de menaces d'aujourd'hui
   (`menaces.rs` : HTTPS seulement, taille et délai bornés, copie précédente gardée si la nouvelle s'effondre).
   deR4Tizer ne **redistribue** aucune liste.
 - Les obligations de partage des licences GPL et CC BY-SA portent sur la redistribution, pas sur l'usage. Une licence
   « non commerciale » restreint en revanche l'**usage**, ce qui exclut les TPE et les communes.
 - Ce qui suit est une **lecture technique** des pages des projets, **pas un avis juridique**. Les choix restent au
   mainteneur (décisions D7-2, D7-3 et D7-8 du dossier, ouvertes).
-- Sources compilées dans le binaire : aucune adresse de liste n'est lue d'un fichier.
+- Les sources seront compilées dans le binaire : aucune adresse de liste ne sera lue d'un fichier.
 
 ## Listes examinées
 

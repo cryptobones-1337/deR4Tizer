@@ -250,8 +250,10 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   - changement qui accompagne un changement de réseau (nouvelle passerelle, nouveau serveur DHCP) : événement du
     mini-SIEM seulement (portable qui change de Wi-Fi) ;
   - cartes virtuelles et VPN : événement seulement ;
-  - filtrage actif et carte qui ne pointe plus vers le résolveur local : alerte « filtrage contourné ». Rien n'est remis
-    en place automatiquement (boucle avec un client VPN) : l'utilisateur réactive.
+  - filtrage actif et carte qui ne pointe plus vers le mécanisme de blocage : alerte « filtrage contourné ». Le
+    mécanisme (résolveur local, proposition du dossier) est la décision D7-1, ouverte ; la proposition du dossier de ne
+    rien remettre en place automatiquement (boucle avec un client VPN, l'utilisateur réactive) est la décision D7-10,
+    ouverte.
 - **Si elle manque** : `GetAdaptersAddresses` en échec ou registre illisible : collecte `ConfigDns` indisponible, jamais
   « aucun changement ».
 - **Niveau prévu** : Alerte.
