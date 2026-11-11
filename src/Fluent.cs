@@ -553,7 +553,7 @@ namespace DeR4Tizer
             section("À surveiller", 1, Jetons.Attention);
             section("En ordre et informations", 0, Jetons.TexteSecondaire);
 
-            if (source != null && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))
+            if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))
             {
                 bool en = L.En;
                 var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 0, 12) };
@@ -4023,10 +4023,12 @@ namespace DeR4Tizer
 
         public static bool RepereExiste(string chemin) { try { return System.IO.File.Exists(chemin); } catch { return false; } }
 
-        // « termine » ou « plus_tard » seulement ; échec d'écriture : l'assistant sera reproposé, sans autre effet
-        public static bool EcrireRepere(string chemin, string sortie)
+        // « termine » ou « plus_tard » seulement ; échec d'écriture : l'assistant sera reproposé, sans autre effet. Jamais en
+        // administrateur : ce dossier est contrôlé par les programmes non élevés du compte (jonction, lien), et l'assistant ne
+        // s'y ouvre jamais d'office (relecture et audit de #151, constat 4, S151-01)
+        public static bool EcrireRepere(string chemin, string sortie, bool administrateur)
         {
-            if (sortie != "termine" && sortie != "plus_tard") return false;
+            if (administrateur || (sortie != "termine" && sortie != "plus_tard")) return false;
             try
             {
                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(chemin));
@@ -4044,19 +4046,23 @@ namespace DeR4Tizer
         }
 
         // Trois cas : en cours, terminé, et « pas d'apprentissage automatique » (début égal à la fin : le poste avait déjà des
-        // alertes), que l'écran d'aujourd'hui affichait « terminé » (dossier U7, constat)
-        public static string TexteApprentissage(EtatApprentissage app, DateTime maintenant)
+        // alertes), que l'écran d'aujourd'hui affichait « terminé » (dossier U7, constat). Textes fidèles à apprentissage.rs
+        // (decider, filtrer) : pendant l'apprentissage, toute alerte non critique sans signal fort est notée en information et
+        // mémorisée, comportement nouveau compris (relecture de #151, constat 1)
+        public static string TexteApprentissage(EtatApprentissage app, bool illisible, DateTime maintenant)
         {
             bool en = L.En;
+            if (app == null && illisible) return en ? "apprentissage.json unreadable: the learning state is unknown." : "apprentissage.json illisible : l'état de l'apprentissage est inconnu.";
             if (app == null) return en ? "Learning state not published by the service yet: nothing is concluded." : "État de l'apprentissage pas encore publié par le service : rien n'est conclu.";
             int appris = (app.Appris ?? new List<string>()).Count;
             if (!string.IsNullOrEmpty(app.Fin) && app.Debut == app.Fin)
                 return en ? "No automatic learning: this computer already had alerts when deR4Tizer was installed; every non-critical alert is reported as is."
                           : "Pas d'apprentissage automatique : ce poste avait déjà des alertes à l'installation ; toute alerte non critique est dite telle quelle.";
             if (string.CompareOrdinal(maintenant.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), app.Fin ?? "") < 0)
-                return string.Format(en ? "Learning until {0}: {1} behaviour(s) learned. Non-critical alerts for a known behaviour are recorded as information; critical alerts are never softened."
-                                        : "Apprentissage en cours jusqu'au {0} : {1} comportement(s) appris. Les alertes non critiques d'un comportement connu sont notées en information ; les alertes critiques ne sont jamais adoucies.", Canal.Visible(app.Fin), appris);
-            return string.Format(en ? "Learning finished on {0}: {1} behaviour(s) learned; only a new behaviour raises an alert." : "Apprentissage terminé le {0} : {1} comportement(s) appris ; seul un comportement nouveau alerte.", Canal.Visible(app.Fin), appris);
+                return string.Format(en ? "Learning until {0}: {1} behaviour(s) learned. Until then, every non-critical alert is recorded as information and its behaviour learned, new behaviours included, except strong signals (downloaded code, LOLBin, backup deletion…); critical alerts are never softened."
+                                        : "Apprentissage en cours jusqu'au {0} : {1} comportement(s) appris. D'ici là, toute alerte non critique est notée en information et son comportement mémorisé, comportement nouveau compris, sauf les signaux forts (code téléchargé, LOLBin, suppression des sauvegardes…) ; les alertes critiques ne sont jamais adoucies.", Canal.Visible(app.Fin), appris);
+            return string.Format(en ? "Learning finished on {0}: {1} behaviour(s) learned. A non-critical alert for a learned behaviour is recorded as information; any other alert, and every critical alert, is raised."
+                                    : "Apprentissage terminé le {0} : {1} comportement(s) appris. Une alerte non critique d'un comportement appris est notée en information ; toute autre alerte, et toute alerte critique, est remontée.", Canal.Visible(app.Fin), appris);
         }
 
         static List<string> Canaux(Config c)
@@ -4073,20 +4079,26 @@ namespace DeR4Tizer
         public static bool PersonnePrevenu(Config c, bool illisible) { return !illisible && c != null && Canaux(c).Count == 0; }
 
         // Jamais « le prestataire sera prévenu » : ce qui est activé et ce que le service a réellement envoyé
-        public static string TexteQuiPrevenir(Config c, bool illisible, EtatNotifications e)
+        public static string TexteQuiPrevenir(Config c, bool illisible, EtatNotifications e, bool envoisIllisibles)
         {
             bool en = L.En;
             if (illisible || c == null) return en ? "config.json unreadable: who is notified is unknown." : "config.json illisible : on ne sait pas qui est prévenu.";
             var canaux = Canaux(c);
-            if (canaux.Count == 0) return en ? "Nobody is notified of alerts: no channel is turned on (ntfy, Teams or e-mail)." : "Personne n'est prévenu des alertes : aucun canal n'est activé (ntfy, Teams ou e-mail).";
+            // Syslog n'est pas une personne prévenue, mais il est dit (relecture de #151, remarque R1)
+            string siem = c.Syslog != null && c.Syslog.Actif ? " " + (en ? "Alerts are forwarded to a SIEM (syslog): someone must be watching it." : "Les alertes partent vers un SIEM (syslog) : quelqu'un doit le surveiller.") : "";
+            if (canaux.Count == 0) return (en ? "Nobody is notified of alerts: no channel is turned on (ntfy, Teams or e-mail)." : "Personne n'est prévenu des alertes : aucun canal n'est activé (ntfy, Teams ou e-mail).") + siem;
             string niveau = c.Notifications.NiveauMin ?? "Critique";
-            string s = string.Format(en ? "Channels turned on: {0}, from level {1}." : "Canaux activés : {0}, à partir du niveau {1}.", string.Join(", ", canaux), Canal.Visible(L.T(niveau)));
+            string s = string.Format(en ? "Channels turned on: {0}, from level {1}." : "Canaux activés : {0}, à partir du niveau {1}.", string.Join(", ", canaux), Canal.Visible(L.T(niveau))) + siem;
+            // notifications.json illisible : jamais « aucun message envoyé » (relecture de #151, constat 3)
+            if (e == null && envoisIllisibles)
+                return s + " " + (en ? "notifications.json unreadable: whether a message was sent is unknown." : "notifications.json illisible : on ne sait pas si un message est parti.");
             if (e == null || e.Envoyes == 0)
                 return s + " " + (en ? "No message sent yet: send a test message from Settings." : "Aucun message envoyé pour l'instant : envoyez un message de test depuis Réglages.");
             return s + " " + ActionsReglages.TexteNotifications(e);
         }
 
-        // Réponses automatiques de niveau 3 : état lu, et leurs durées (docs/reponse/politique.md) ; illisible : inconnu
+        // Réponses qui agissent seules : les deux de niveau 3 et l'IPS (niveau 2, désactivé par défaut, bloque 24 h sans
+        // confirmation), état lu et durées de docs/reponse/politique.md ; illisible : inconnu (relecture de #151, constat 2)
         public static List<string> TexteReponses(Config c, bool illisible)
         {
             bool en = L.En;
@@ -4097,7 +4109,9 @@ namespace DeR4Tizer
                 string.Format(en ? "Automatic firewall block of Spamhaus DROP and Feodo Tracker addresses: {0} (lifted after 7 days, or earlier if the address leaves the list)."
                                  : "Blocage automatique au pare-feu des adresses Spamhaus DROP et Feodo Tracker : {0} (levé après 7 jours, ou plus tôt si l'adresse sort de la liste).", etat(c.BlocageAutoMenaces)),
                 string.Format(en ? "Automatic suspension of a program that touches the decoy files: {0} (never resumed automatically; the critical alert is repeated after 2 h, then every 24 h)."
-                                 : "Suspension automatique d'un programme qui touche aux fichiers leurres : {0} (jamais reprise automatiquement ; l'alerte critique est relancée au bout de 2 h, puis toutes les 24 h).", etat(c.ReponseAutoRancongiciel))
+                                 : "Suspension automatique d'un programme qui touche aux fichiers leurres : {0} (jamais reprise automatiquement ; l'alerte critique est relancée au bout de 2 h, puis toutes les 24 h).", etat(c.ReponseAutoRancongiciel)),
+                string.Format(en ? "Intrusion prevention (IPS), blocking at the firewall without confirmation: {0} (block lifted after 24 h; off by default, set on the Detection page)."
+                                 : "Prévention d'intrusion (IPS), blocage au pare-feu sans confirmation : {0} (blocage levé après 24 h ; désactivée par défaut, se règle dans la page Détection).", etat(c.Ips))
             };
         }
 
@@ -4151,7 +4165,7 @@ namespace DeR4Tizer
         readonly StackPanel contenu = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
         readonly WrapPanel boutons = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
         int etape, enCours, chargement;
-        bool lu, etatIllisible, configIllisible;
+        bool lu, etatIllisible, configIllisible, apprentissageIllisible, notificationsIllisibles;
         Etat etat; Config config; EtatApprentissage apprentissage; EtatNotifications notifications;
 
         public PageAssistantFluent(ISourceEtat source, Action<string> ouvrir, string repere)
@@ -4182,12 +4196,15 @@ namespace DeR4Tizer
                     bool absentEtat, ci;
                     var e = LectureFluent.Lire<Etat>("etat.json", out absentEtat);
                     var c = ActionsProtection.LireConfig(out ci);
-                    var a = Commun.Lire<EtatApprentissage>("apprentissage.json");
-                    var n = Commun.Lire<EtatNotifications>("notifications.json");
+                    // Accès refusé ou contenu illisible n'est pas absent (S142-01, relecture de #151, constat 3)
+                    bool absentApp, absentNotif;
+                    var a = LectureFluent.Lire<EtatApprentissage>("apprentissage.json", out absentApp);
+                    var n = LectureFluent.Lire<EtatNotifications>("notifications.json", out absentNotif);
                     Dispatcher.BeginInvoke((Action)(() =>
                     {
                         if (numero != chargement) return;
                         lu = true; etat = e; etatIllisible = !absentEtat && e == null; config = c; configIllisible = ci; apprentissage = a; notifications = n;
+                        apprentissageIllisible = !absentApp && a == null; notificationsIllisibles = !absentNotif && n == null;
                         Afficher();
                     }));
                 }
@@ -4236,19 +4253,20 @@ namespace DeR4Tizer
                     contenu.Children.Add(Lien(en ? "Open the Health page" : "Ouvrir la page Santé", "Santé"));
                     break;
                 case 2:
-                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteApprentissage(apprentissage, DateTime.Now)));
+                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteApprentissage(apprentissage, apprentissageIllisible, DateTime.Now)));
                     contenu.Children.Add(Texte(en ? "Ending or restarting learning is done in Settings." : "Terminer ou recommencer l'apprentissage se fait dans Réglages.", true));
                     contenu.Children.Add(Lien(en ? "Open Settings" : "Ouvrir Réglages", "Réglages"));
                     break;
                 case 3:
-                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteQuiPrevenir(config, configIllisible, notifications)));
+                    contenu.Children.Add(Texte(!lu ? L.T("Lecture en cours…") : VueAssistantFluent.TexteQuiPrevenir(config, configIllisible, notifications, notificationsIllisibles)));
                     contenu.Children.Add(Lien(en ? "Set up alert forwarding in Settings" : "Configurer la remontée dans Réglages", "Réglages"));
                     break;
                 case 4:
                     if (!lu) contenu.Children.Add(Texte(L.T("Lecture en cours…")));
                     else foreach (var l in VueAssistantFluent.TexteReponses(config, configIllisible)) contenu.Children.Add(Texte(l));
-                    contenu.Children.Add(Texte(en ? "Only these two level-3 responses act on their own; every other response waits for a human decision." : "Seules ces deux réponses de niveau 3 agissent seules ; toute autre réponse attend une décision humaine.", true));
-                    contenu.Children.Add(Lien(en ? "Change them on the Threats page" : "Les changer dans la page Menaces", "Menaces"));
+                    contenu.Children.Add(Texte(en ? "Only these three responses act on their own; every other response waits for a human decision." : "Seules ces trois réponses agissent seules ; toute autre réponse attend une décision humaine.", true));
+                    contenu.Children.Add(Lien(en ? "Change the first two on the Threats page" : "Changer les deux premières dans la page Menaces", "Menaces"));
+                    contenu.Children.Add(Lien(en ? "Change the IPS on the Detection page" : "Changer l'IPS dans la page Détection", "Détection"));
                     break;
                 default:
                     if (!lu) { contenu.Children.Add(Texte(L.T("Lecture en cours…"))); break; }
@@ -4270,7 +4288,7 @@ namespace DeR4Tizer
         // Seul effet : le repère par utilisateur ; aucune commande au service
         void Sortir(string sortie)
         {
-            VueAssistantFluent.EcrireRepere(repere, sortie);
+            VueAssistantFluent.EcrireRepere(repere, sortie, Canal.EstAdmin());
             if (ouvrir != null) ouvrir(NavigationFluent.VueEnsemble);
         }
 
