@@ -523,7 +523,7 @@ try {
     Cas 'Premiers réglages : message de test seulement si un canal est activé et config.json lu ; mêmes réglages, secrets vides (le service garde les siens), commande de la page Réglages (U7c)' ($null -eq (& $ct $cAucun $false) -and $null -eq (& $ct $null $true) -and $null -eq (& $ct $cNtfy $true) -and $testNtfy.Action -eq 'testerNotifications' -and $dT['NtfyUrl'] -eq '' -and $dT['NtfyJeton'] -eq '' -and $dT['TeamsUrl'] -eq '' -and $dT['SmtpMotDePasse'] -eq '' -and $dT['Config']['Ntfy'] -eq $true -and $dT['Config']['NiveauMin'] -eq 'Alerte' -and $vaSrc.Contains('ActionsReglages.CommandeNotifications("testerNotifications", c.Notifications, "", "", "", "")') -and ([IO.File]::ReadAllText("$src\Reglages.cs")).Contains('var commande = CommandeNotifications(action, c, ntfyUrl, ntfyJeton, teamsUrl, smtpMotDePasse);')) "$($testNtfy.Valeur)"
     $dm = [string]$va.GetMethod('Demande').Invoke($null, @('fin de l''apprentissage'))
     Cas 'Premiers réglages : après un bouton, « demandé » et état relu, jamais « fait »' ($dm.StartsWith('Demandé, si vous l''avez confirmé : fin de l''apprentissage.') -and $dm.Contains('relu dans les fichiers du service') -and -not ($dm -match '\bfait\b|effectué|terminé')) $dm
-    Cas 'Premiers réglages : jamais ouverts d''office en administrateur, avec --page ou --cache ; carte dans la Vue d''ensemble ; « Revoir » dans Réglages' ($fl.Contains('VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,') -and $fl.Contains('Environment.GetCommandLineArgs().Contains("--cache"));') -and $fl.Contains('if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))') -and $fl.Contains('pr.Revoir = () => Ouvrir(VueAssistantFluent.Cle);'))
+    Cas 'Premiers réglages : jamais ouverts d''office en administrateur, avec --page ou --cache ; carte dans la Vue d''ensemble ; « Revoir » dans Réglages' ($fl.Contains('VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,') -and $fl.Contains('Environment.GetCommandLineArgs().Contains("--cache") && !OuvertureDifferee);') -and $fl.Contains('if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))') -and $fl.Contains('pr.Revoir = () => Ouvrir(VueAssistantFluent.Cle);'))
     $langue.GetField('En').SetValue($null, $true)
     $etEn = @($va.GetField('Etapes').GetValue($null) | ForEach-Object { [string]$langue.GetMethod('T').Invoke($null, @([string]$_)) })
     $langue.GetField('En').SetValue($null, $false)
@@ -560,18 +560,26 @@ try {
     $main = $g.Substring($g.IndexOf('static int Main(string[] args)'))
     $main = $main.Substring(0, $main.IndexOf("`n        }`n"))
     $nommes = @([regex]::Matches($main, 'System\.Windows\.(Application|Window|Controls|Media)|Coquille|Jetons') | ForEach-Object Value)
-    Cas 'assistant élevé : Main ne nomme aucun type WPF' ($nommes.Count -eq 0 -and $main.Contains('if (args.Contains("--fluent")) return LancerPilote();')) "types nommés : $($nommes -join ', ') ; appel du pilote : $($main.Contains('return LancerPilote();'))"
+    Cas 'assistant élevé : Main ne nomme aucun type WPF' ($nommes.Count -eq 0 -and $main.Contains('try { return LancerPilote(args.Contains("--cache")); }')) "types nommés : $($nommes -join ', ')"
+    # Bascule (B1) : mode décidé par une fonction pure ; l'assistant élevé sort avant le mutex et avant toute coquille
+    $prog = $asm.GetType('DeR4Tizer.Programme'); $modeM = $prog.GetMethod('Mode', [Reflection.BindingFlags]'Static,NonPublic')
+    $mode = { param([string[]]$a) [string]$modeM.Invoke($null, [object[]](, $a)) }
+    Cas 'Bascule : coquille par défaut (aussi avec --cache, --relance, --page, --fluent), --classique pour l''interface d''avant, assistant élevé jamais en coquille' ((& $mode @()) -eq 'coquille' -and (& $mode @('--cache')) -eq 'coquille' -and (& $mode @('--cache', '--relance')) -eq 'coquille' -and (& $mode @('--page', 'Alertes')) -eq 'coquille' -and (& $mode @('--fluent')) -eq 'coquille' -and (& $mode @('--classique')) -eq 'classique' -and (& $mode @('--cache', '--classique')) -eq 'classique' -and (& $mode @('--commande-fichier', 'x.json')) -eq 'commande')
+    $iCmd = $main.IndexOf('if (args.Length == 2 && args[0] == "--commande-fichier")'); $iMutex = $main.IndexOf('new Mutex('); $iPilote = $main.IndexOf('LancerPilote(')
+    Cas 'Bascule : l''assistant élevé sort avant le mutex et avant la coquille ; repli sur l''interface classique seulement si la coquille n''a pas démarré' ($iCmd -ge 0 -and $iCmd -lt $iMutex -and $iMutex -lt $iPilote -and $main.Contains('if (piloteDemarre) throw;') -and $main.Contains('repli.Signaler('))
     $programme = $asm.GetType('DeR4Tizer.Programme')
     $lp = $programme.GetMethod('LancerPilote', [Reflection.BindingFlags]'Static,NonPublic')
     Cas 'assistant élevé : pilote dans une méthode jamais intégrée (NoInlining)' ($lp -ne $null -and ($lp.MethodImplementationFlags -band [Reflection.MethodImplAttributes]::NoInlining))
     # Rendu logiciel demandé avant la création de l'application (VM de test : le rendu matériel laissait la fenêtre blanche)
-    $pilote = $g.Substring($g.IndexOf('static int LancerPilote()'))
+    $pilote = $g.Substring($g.IndexOf('static int LancerPilote(bool cache)'))
     $pilote = $pilote.Substring(0, $pilote.IndexOf("`n        }`n"))
     $iRendu = $pilote.IndexOf('RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly')
     Cas 'pilote : rendu logiciel demandé avant l''application WPF' ($iRendu -ge 0 -and $iRendu -lt $pilote.IndexOf('new System.Windows.Application'))
-    Cas 'pilote : « Quitter » de la zone de notification ferme aussi la coquille' ($pilote.Contains('ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };') -and $pilote.IndexOf('FormClosed') -lt $pilote.IndexOf('app.Run(') -and $pilote.Contains('ShutdownMode.OnExplicitShutdown'))
-    # Pages d'aujourd'hui : palette de la coquille avec --fluent, palette néon sans (processus séparés : la palette est fixée
-    # au chargement, d'après la ligne de commande du processus)
+    Cas 'pilote : « Quitter » de la zone de notification ferme aussi la coquille' ($pilote.Contains('ancienne.FormClosed += (s, e) => { if (coquille != null) coquille.Quitter(); app.Shutdown(); };') -and $pilote.IndexOf('FormClosed') -lt $pilote.IndexOf('app.Run(') -and $pilote.Contains('ShutdownMode.OnExplicitShutdown'))
+    Cas 'Bascule : démarrage caché sans fenêtre, coquille construite au premier geste et montrée sur la page demandée, « Premiers réglages » alors possibles' ($pilote.Contains('if (!cache) obtenir().Show();') -and $pilote.Contains('ancienne.Rattacher(cle => { obtenir(); ancienne.RejouerPilote(cle); });') -and $pilote.Contains('Coquille.OuvertureDifferee = cache;') -and $pilote.IndexOf('piloteDemarre = true;') -lt $pilote.IndexOf('app.Run();') -and $fluentSrc.Contains('Environment.GetCommandLineArgs().Contains("--cache") && !OuvertureDifferee);'))
+    Cas 'Bascule : coquille cachée, page déchargée et Vue d''ensemble plus reconstruite ; remontrée, page reconstruite' ($fluentSrc.Contains('if (!IsVisible) return;') -and $fluentSrc.Contains('if (!IsVisible) zone.Content = null;') -and $fluentSrc.Contains('else if (zone.Content == null) Ouvrir(ouverte ?? NavigationFluent.VueEnsemble);'))
+    # Pages d'aujourd'hui : palette de la coquille par défaut, palette néon avec --classique (processus séparés : la palette
+    # est fixée au chargement, d'après la ligne de commande du processus)
     $sonde = Join-Path $travail 'sonde-theme.ps1'
     Set-Content $sonde -Encoding UTF8 -Value @'
 param([string]$Exe)
@@ -587,9 +595,11 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
 '@
     Add-Type -AssemblyName System.Windows.Forms
     $avec = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" --fluent | Select-Object -Last 1)
-    $sans = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" | Select-Object -Last 1)
+    $sans = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" --classique | Select-Object -Last 1)
+    $defaut = (powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; & '$sonde' -Exe '$out'" | Select-Object -Last 1)
     Cas 'pages d''aujourd''hui avec --fluent : palette neutre, un seul accent, pas de capitales, titre « // » caché, Segoe UI' ($avec -eq 'True|141518|3BA7F0|3BA7F0|Alertes|False|Segoe UI Semibold') $avec
-    Cas 'pages d''aujourd''hui sans --fluent : palette néon inchangée' ($sans -like 'False|0A0E14|00E5FF|FF2BD6|ALERTES|True|*') $sans
+    Cas 'pages d''aujourd''hui avec --classique : palette néon d''avant la refonte' ($sans -like 'False|0A0E14|00E5FF|FF2BD6|ALERTES|True|*') $sans
+    Cas 'Bascule : palette neutre par défaut, sans --fluent (menu de la zone de notification, dialogues, assistant élevé)' ($defaut -eq 'True|141518|3BA7F0|3BA7F0|Alertes|False|Segoe UI Semibold') $defaut
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')

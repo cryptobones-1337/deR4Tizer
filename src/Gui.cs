@@ -1255,6 +1255,10 @@ namespace DeR4Tizer
         // page demandée, au lieu de réafficher cette fenêtre (qui reprendrait la page hébergée : relecture de #133, R3)
         Action<string> pilote;
         public void Rattacher(Action<string> montrer) { pilote = montrer; }
+        // Bascule (B1) : la coquille construite au premier geste se rattache elle-même ; on lui repasse ce geste
+        public void RejouerPilote(string cle) { if (pilote != null) pilote(cle); }
+        // Repli (B1) : la nouvelle interface n'a pas pu démarrer, l'interface classique le dit dans la zone de notification
+        public void Signaler(string texte) { icone.ShowBalloonTip(8000, "deR4Tizer", texte, ToolTipIcon.Warning); }
 
         void Montrer(BoutonNav bouton, Control page)
         {
@@ -2198,10 +2202,24 @@ namespace DeR4Tizer
 
     static class Programme
     {
-        // Pilote WPF (U1) dans une méthode à part, jamais intégrée à Main : les assemblys WPF ne sont chargées que si
-        // « --fluent » est demandé, jamais pour l'assistant élevé (--commande-fichier) (docs/roadmap/interface.md)
+        // Mode de l'interface (bascule B1, dossier de la bascule) : décision pure, testée par tests\rendu-pilote.ps1.
+        // « commande » : assistant élevé, jamais WPF ; « classique » : interface d'avant la refonte (repli gardé jusqu'après
+        // la campagne Kali) ; « coquille » : coquille WPF, l'interface par défaut (--fluent reste accepté, sans effet)
+        internal static string Mode(string[] args)
+        {
+            if (args.Length == 2 && args[0] == "--commande-fichier") return "commande";
+            if (Array.IndexOf(args, "--classique") >= 0) return "classique";
+            return "coquille";
+        }
+
+        // Vrai dès que l'application WPF tourne : un plantage après ce point n'est pas rattrapé (pas d'attrape-tout, question 6
+        // du dossier) ; avant, l'interface classique prend le relais
+        static bool piloteDemarre;
+
+        // Pilote WPF (U1) dans une méthode à part, jamais intégrée à Main : les assemblys WPF ne sont chargées que si la
+        // coquille est lancée, jamais pour l'assistant élevé (--commande-fichier) ni pour --classique (docs/roadmap/interface.md)
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        static int LancerPilote()
+        static int LancerPilote(bool cache)
         {
             var ancienne = new Fenetre(true);
             var poignee = ancienne.Handle;
@@ -2213,9 +2231,17 @@ namespace DeR4Tizer
             // Fermer la coquille la cache dans la zone de notification, comme l'interface d'aujourd'hui ; seul « Quitter » (icône
             // de notification : la fenêtre cachée se ferme) arrête le pilote (audit de #133)
             var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-            var coquille = new Coquille(ancienne);
-            ancienne.FormClosed += (s, e) => { coquille.Quitter(); app.Shutdown(); };
-            app.Run(coquille);
+            // Démarrage caché (--cache : clé Run, tâche de relance) : aucune fenêtre ; la coquille n'est construite qu'au premier
+            // geste (« Ouvrir », double-clic, clic sur une notification), qui la montre sur la page demandée (dossier de la
+            // bascule, constat 2). Sinon elle s'ouvre tout de suite
+            Coquille coquille = null;
+            Coquille.OuvertureDifferee = cache;
+            Func<Coquille> obtenir = () => coquille ?? (coquille = new Coquille(ancienne));
+            ancienne.Rattacher(cle => { obtenir(); ancienne.RejouerPilote(cle); });
+            ancienne.FormClosed += (s, e) => { if (coquille != null) coquille.Quitter(); app.Shutdown(); };
+            if (!cache) obtenir().Show();
+            piloteDemarre = true;
+            app.Run();
             ancienne.Dispose();
             return 0;
         }
@@ -2283,10 +2309,18 @@ namespace DeR4Tizer
             using (new Mutex(true, i >= 0 ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier))
             {
                 if (!premier) return 0;
-                // Pilote de la refonte (U1) : coquille WPF, ouverte seulement sur demande ; la fenêtre d'aujourd'hui reste
-                // cachée (zone de notification, rafraîchissement, commandes) et prête ses pages
-                if (args.Contains("--fluent")) return LancerPilote();
-                Application.Run(new Fenetre(args.Contains("--cache")));
+                // Bascule (B1) : la coquille WPF est l'interface par défaut ; la fenêtre d'aujourd'hui reste cachée (zone de
+                // notification, rafraîchissement, commandes). --classique : l'interface d'avant la refonte
+                if (Mode(args) == "classique") { Application.Run(new Fenetre(args.Contains("--cache"))); return 0; }
+                try { return LancerPilote(args.Contains("--cache")); }
+                catch (Exception e)
+                {
+                    if (piloteDemarre) throw;
+                    // WPF ou la coquille n'a pas pu démarrer : l'interface classique prend le relais et le dit
+                    var repli = new Fenetre(args.Contains("--cache"));
+                    repli.Signaler((L.En ? "The new interface could not start; the classic interface is shown instead. " : "La nouvelle interface n'a pas pu démarrer ; l'interface classique la remplace. ") + Canal.Visible(e.GetType().Name));
+                    Application.Run(repli);
+                }
             }
             return 0;
         }

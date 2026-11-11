@@ -12,11 +12,10 @@ namespace DeR4Tizer
 {
     static class Theme
     {
-        // Pilote de la refonte (U1, --fluent) : les pages d'aujourd'hui, hébergées dans la coquille WPF, prennent la palette
-        // neutre de la coquille (jetons de Fluent.cs) et ses polices, sans capitales forcées ni titre « // » en double ; le
-        // mélange néon et neutre dans une même fenêtre choquait (retour du mainteneur sur les captures). Interface par
-        // défaut inchangée.
-        public static readonly bool Fluent = Array.IndexOf(Environment.GetCommandLineArgs(), "--fluent") >= 0;
+        // Palette neutre de la coquille (jetons de Fluent.cs) pour tout ce qui reste en WinForms (menu de la zone de
+        // notification, dialogues, assistant élevé), sans capitales forcées ni titre « // » ; depuis la bascule (B1), partout
+        // sauf avec --classique, qui garde la palette néon d'avant la refonte
+        public static readonly bool Fluent = Array.IndexOf(Environment.GetCommandLineArgs(), "--classique") < 0;
 
         public static readonly Color Fond = Fluent ? C("#141518") : C("#0A0E14"), Panneau = Fluent ? C("#1E2024") : C("#0F1520"),
             Panneau2 = Fluent ? C("#262A30") : C("#151D2C"), Bordure = Fluent ? C("#2E3238") : C("#1E2A3D"),

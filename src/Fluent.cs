@@ -273,6 +273,10 @@ namespace DeR4Tizer
         // Toutes les pages sont natives (U6c) : plus de pages WinForms prêtées par la fenêtre d'aujourd'hui (relecture de #147)
         public Coquille() : this(null) { }
 
+        // Bascule (B1) : vrai quand la coquille est construite au premier geste après un démarrage caché ; ce geste est celui
+        // de l'utilisateur, donc « Premiers réglages » peuvent se proposer (dossier de la bascule, constat 4)
+        internal static bool OuvertureDifferee;
+
         public Coquille(ISourceEtat source)
         {
             this.source = source;
@@ -314,13 +318,15 @@ namespace DeR4Tizer
             bool connue = demandee != null && (demandee == VueAssistantFluent.Cle || NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee));
             // Premiers réglages (U7a) : proposés au premier lancement, jamais en administrateur, sans source, avec --page ou caché
             bool proposer = VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,
-                Environment.GetCommandLineArgs().Contains("--cache"));
+                Environment.GetCommandLineArgs().Contains("--cache") && !OuvertureDifferee);
             Ouvrir(connue ? demandee : proposer ? VueAssistantFluent.Cle : NavigationFluent.VueEnsemble);
             if (source != null)
             {
                 Action suivre = () =>
                 {
                     MettreAJourPastillesNav();
+                    // Cachée (zone de notification) : rien n'est reconstruit (dossier de la bascule, constat 5)
+                    if (!IsVisible) return;
                     if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble();
                     else if (ouverte == "Alertes" && pageAlertes != null) { pageAlertes.Rafraichir(); if (IsVisible) ((ISourceAlertes)source).MarquerAlertesLues(); }
                 };
@@ -333,6 +339,12 @@ namespace DeR4Tizer
                     if (cle != null) Ouvrir(cle);
                 });
                 Closed += (s, a) => { source.Change -= suivre; source.Rattacher(null); };
+                // Cachée : la page est déchargée (ses minuteurs ne tournent plus) ; remontrée, elle est reconstruite
+                IsVisibleChanged += (s, a) =>
+                {
+                    if (!IsVisible) zone.Content = null;
+                    else if (zone.Content == null) Ouvrir(ouverte ?? NavigationFluent.VueEnsemble);
+                };
                 MettreAJourPastillesNav();
             }
         }
