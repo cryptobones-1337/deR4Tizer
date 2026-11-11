@@ -1257,8 +1257,18 @@ namespace DeR4Tizer
         public void Rattacher(Action<string> montrer) { pilote = montrer; }
         // Bascule (B1) : la coquille construite au premier geste se rattache elle-même ; on lui repasse ce geste
         public void RejouerPilote(string cle) { if (pilote != null) pilote(cle); }
+        // Repli au premier geste (B1, relecture de #156, constat 2) : cette fenêtre se montre comme interface classique
+        public void MontrerClassique() { Montrer(null, null); }
         // Repli (B1) : la nouvelle interface n'a pas pu démarrer, l'interface classique le dit dans la zone de notification
         public void Signaler(string texte) { icone.ShowBalloonTip(8000, "deR4Tizer", texte, ToolTipIcon.Warning); }
+        // Repli (B1) : la fenêtre cachée du pilote, créée avant l'échec, est libérée (icône, minuteurs) avant d'ouvrir
+        // l'interface classique ; sinon deux icônes et deux rafraîchissements (audit de #156, S156-01)
+        public void Liberer()
+        {
+            minuteur.Stop(); clignotement.Stop();
+            icone.Visible = false; icone.Dispose();
+            Dispose();
+        }
 
         void Montrer(BoutonNav bouton, Control page)
         {
@@ -2222,6 +2232,13 @@ namespace DeR4Tizer
         static int LancerPilote(bool cache)
         {
             var ancienne = new Fenetre(true);
+            try { return LancerCoquille(ancienne, cache); }
+            catch { if (!piloteDemarre) ancienne.Liberer(); throw; }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static int LancerCoquille(Fenetre ancienne, bool cache)
+        {
             var poignee = ancienne.Handle;
             // Rendu logiciel : sur la VM de test (Hyper-V, carte sans pilote 3D), le rendu matériel de WPF n'affichait rien
             // (fenêtre blanche, seules les pages WinForms hébergées visibles), alors que le rendu logiciel est juste. Postes
@@ -2237,7 +2254,20 @@ namespace DeR4Tizer
             Coquille coquille = null;
             Coquille.OuvertureDifferee = cache;
             Func<Coquille> obtenir = () => coquille ?? (coquille = new Coquille(ancienne));
-            ancienne.Rattacher(cle => { obtenir(); ancienne.RejouerPilote(cle); });
+            // Premier geste après un démarrage caché : si la coquille ne se construit pas, l'interface classique (la fenêtre
+            // cachée, déjà là) prend le relais pour toute la suite de la session et le signale (relecture de #156, constat 2)
+            ancienne.Rattacher(cle =>
+            {
+                try { obtenir(); }
+                catch (Exception e)
+                {
+                    ancienne.Rattacher(null);
+                    ancienne.MontrerClassique();
+                    ancienne.Signaler((L.En ? "The new interface could not start; the classic interface is shown instead. " : "La nouvelle interface n'a pas pu démarrer ; l'interface classique la remplace. ") + Canal.Visible(e.GetType().Name));
+                    return;
+                }
+                ancienne.RejouerPilote(cle);
+            });
             ancienne.FormClosed += (s, e) => { if (coquille != null) coquille.Quitter(); app.Shutdown(); };
             if (!cache) obtenir().Show();
             piloteDemarre = true;
