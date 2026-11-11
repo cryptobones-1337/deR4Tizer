@@ -4079,7 +4079,8 @@ namespace DeR4Tizer
         public static bool PersonnePrevenu(Config c, bool illisible) { return !illisible && c != null && Canaux(c).Count == 0; }
 
         // Message de test (U7c) : seulement si config.json est lu et qu'un canal est activé ; mêmes réglages, secrets vides
-        // (le service garde les siens) : rien d'autre ne change. Commande construite par la fonction de la page Réglages
+        // (le service garde les siens). Le service applique ces réglages avant le test : ils sont relus au clic (S154-01).
+        // Commande construite par la fonction de la page Réglages
         public static bool PeutTester(Config c, bool illisible) { return !illisible && c != null && c.Notifications != null && Canaux(c).Count > 0; }
 
         public static Commande CommandeTest(Config c, bool illisible)
@@ -4180,6 +4181,11 @@ namespace DeR4Tizer
         // Réglages et Menaces, listes fermées), elles ne peuvent pas diverger (audit de #152, S152-01)
         public static Commande CommandeApprentissage(string operation) { return ActionsReglages.CommandeApprentissage(operation); }
         public static Commande CommandeReglage(string reglage, bool valeur) { return ActionsProtection.CommandeReglage(reglage, valeur); }
+
+        public static string RienEnvoye()
+        {
+            return L.En ? "Nothing was sent: the settings read again are unreadable or no longer have a channel turned on." : "Rien n'a été envoyé : les réglages relus sont illisibles ou n'ont plus de canal activé.";
+        }
 
         // Après un bouton : « demandé », jamais « fait » ; l'état affiché est relu dans les fichiers du service
         public static string Demande(string quoi)
@@ -4301,7 +4307,7 @@ namespace DeR4Tizer
                     string op = lu ? VueAssistantFluent.OperationApprentissage(apprentissage, apprentissageIllisible, DateTime.Now) : null;
                     if (op == "terminer")
                         contenu.Children.Add(Agir(en ? "End learning now" : "Terminer l'apprentissage maintenant", VueAssistantFluent.CommandeApprentissage(op),
-                            () => ActionsReglages.Apprentissage(op), en ? "end of learning" : "fin de l'apprentissage"));
+                            () => { ActionsReglages.Apprentissage(op); return true; }, en ? "end of learning" : "fin de l'apprentissage"));
                     contenu.Children.Add(Texte(VueAssistantFluent.AvertissementRecommencer(), true));
                     contenu.Children.Add(Texte(en ? "Learned exceptions are managed in Settings." : "Les exceptions apprises se gèrent dans Réglages.", true));
                     contenu.Children.Add(Lien(en ? "Open Settings" : "Ouvrir Réglages", "Réglages"));
@@ -4311,9 +4317,17 @@ namespace DeR4Tizer
                     // Qui prévenir (U7c, option B du dossier) : test des canaux déjà réglés ; destinataires et secrets restent dans Réglages
                     if (lu && VueAssistantFluent.PeutTester(config, configIllisible))
                     {
-                        var cfg = config;
-                        contenu.Children.Add(Agir(en ? "Send a test message" : "Envoyer un message de test", VueAssistantFluent.CommandeTest(cfg, false),
-                            () => ActionsReglages.Notifications("testerNotifications", cfg.Notifications, "", "", "", ""), en ? "test message" : "message de test"));
+                        // Le service applique les réglages envoyés avant le test : ils sont relus au clic, jamais ceux du chargement
+                        // de l'étape (audit de #154, S154-01 ; relecture, R15)
+                        contenu.Children.Add(Agir(en ? "Send a test message" : "Envoyer un message de test", VueAssistantFluent.CommandeTest(config, false),
+                            () =>
+                            {
+                                bool illisibleAuClic;
+                                var cfg = ActionsProtection.LireConfig(out illisibleAuClic);
+                                if (VueAssistantFluent.CommandeTest(cfg, illisibleAuClic) == null) return false;
+                                ActionsReglages.Notifications("testerNotifications", cfg.Notifications, "", "", "", "");
+                                return true;
+                            }, en ? "test message" : "message de test"));
                     }
                     contenu.Children.Add(Texte(en ? "Recipients, channels and their secrets are set in Settings; secrets are never shown again." : "Destinataires, canaux et secrets se règlent dans Réglages ; les secrets n'y sont jamais réaffichés.", true));
                     contenu.Children.Add(Lien(en ? "Set up alert forwarding in Settings" : "Configurer la remontée dans Réglages", "Réglages"));
@@ -4329,7 +4343,7 @@ namespace DeR4Tizer
                             string nom = r == "BlocageAutoMenaces" ? (en ? "automatic block of listed addresses" : "blocage automatique des adresses listées") : (en ? "automatic suspension by decoy files" : "suspension automatique par les leurres");
                             string reglage = r;
                             contenu.Children.Add(Agir((actif ? (en ? "Turn off: " : "Désactiver : ") : (en ? "Turn on: " : "Activer : ")) + nom, VueAssistantFluent.CommandeReglage(reglage, !actif),
-                                () => ActionsProtection.ChangerReglage(reglage, !actif), (actif ? (en ? "turn off " : "désactiver ") : (en ? "turn on " : "activer ")) + nom));
+                                () => { ActionsProtection.ChangerReglage(reglage, !actif); return true; }, (actif ? (en ? "turn off " : "désactiver ") : (en ? "turn on " : "activer ")) + nom));
                         }
                     contenu.Children.Add(Lien(en ? "See them on the Threats page" : "Les voir dans la page Menaces", "Menaces"));
                     contenu.Children.Add(Lien(en ? "Change the IPS on the Detection page" : "Changer l'IPS dans la page Détection", "Détection"));
@@ -4361,13 +4375,13 @@ namespace DeR4Tizer
         // Bouton d'action (U7b) : la confirmation détaillée passe par Canal, élevé ou non (copie élevée pour un compte standard,
         // confirmation en administrateur pour config et apprentissage depuis S152-02) : l'assistant n'en montre pas une seconde.
         // Le résultat est dit « demandé » et l'état relu
-        Button Agir(string texte, Commande commande, Action action, string quoi)
+        Button Agir(string texte, Commande commande, Func<bool> action, string quoi)
         {
             var b = Briques.Action(texte, true, (s, e) =>
             {
                 if (commande == null) return;
-                action();
-                demande = VueAssistantFluent.Demande(quoi); demandeEtape = etape;
+                // false : rien n'est parti (réglages relus au clic devenus illisibles ou sans canal)
+                demande = action() ? VueAssistantFluent.Demande(quoi) : VueAssistantFluent.RienEnvoye(); demandeEtape = etape;
                 Afficher(); Charger();
             });
             b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
