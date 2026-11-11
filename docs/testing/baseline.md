@@ -25,6 +25,7 @@ cargo test --release
 | Commande | Résultat constaté |
 |---|---|
 | `./compiler.ps1 -InterfaceSeulement` | 2026-10-22, local : code 0, `bin\deR4Tizer.exe` (404 992 octets). |
+| `powershell -File tests\test-msi.ps1 [-Msi bin\deR4Tizer.msi [-Reference <MSI de main>]]` | 2026-11-11, local (U8a) : sources et paquet, tables d'exécution identiques au MSI de main ; les sources de main y échouent (5 cas). |
 | `cargo build --release` (MSVC) puis `./construire-msi.ps1` | Job `windows` de chaque exécution de la CI : `deR4Tizer.msi`, `deR4TizerSvc.exe`, `deR4Tizer.exe` en artefacts. |
 
 ## Intégration (CI, runner Windows jetable, service réel installé par le MSI)

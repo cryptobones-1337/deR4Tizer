@@ -1,8 +1,37 @@
 {\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Segoe UI;}}\fs18
 {\b deR4Tizer}\par
-Protection locale pour Windows : d\'e9tection, mini-SIEM et durcissement, sans cloud.\par\par
-{\b Licence : EUPL-1.2} (licence publique de l'Union europ\'e9enne). Texte complet : https://eupl.eu/1.2/fr/ et dans le d\'e9p\'f4t https://github.com/cryptobones-1337/deR4Tizer\par\par
-Le logiciel est fourni \'ab en l'\'e9tat \'bb, sans garantie. Il compl\'e8te Microsoft Defender et ne le remplace pas.\par\par
-{\b Ce que l'installation fait :} le service deR4Tizer (compte SYSTEM) surveille les connexions, la persistance et le r\'e9seau local ; il active la journalisation de s\'e9curit\'e9 de Windows (strat\'e9gie de groupe locale) et peut bloquer des adresses au pare-feu. La d\'e9sinstallation retire ses blocages et remet les r\'e9glages d'origine.\par\par
-Listes de menaces utilis\'e9es par d\'e9faut : Spamhaus DROP, abuse.ch Feodo Tracker et SSLBL. Carte : Natural Earth (domaine public).\par
+Surveillance, alertes et durcissement locaux pour Windows, sans cloud. English below.\par
+\par
+{\b Licence : EUPL-1.2}\par
+Licence publique de l'Union europ\'e9enne. Texte complet : https://eupl.eu/1.2/fr/ et dans le d\'e9p\'f4t https://github.com/cryptobones-1337/deR4Tizer\par
+Le logiciel est fourni \'ab en l'\'e9tat \'bb, sans garantie. C'est une preuve de concept, non audit\'e9e. Les binaires ne sont pas encore sign\'e9s : Windows affiche \'ab \'e9diteur inconnu \'bb.\par
+\par
+{\b Ce que l'installation fait}\par
+\'b7 Le service deR4Tizer (compte SYSTEM, d\'e9marrage automatique) surveille les connexions, la persistance et le r\'e9seau local, et alerte.\par
+\'b7 Il applique d'office la journalisation de s\'e9curit\'e9 de Windows (strat\'e9gie de groupe locale).\par
+\'b7 Il pose des fichiers leurres cach\'e9s dans Documents, Images et le Bureau, pour rep\'e9rer un ran\'e7ongiciel.\par
+\'b7 Deux r\'e9ponses automatiques sont actives par d\'e9faut, r\'e9glables dans l'interface : le blocage au pare-feu des adresses des listes Spamhaus DROP et Feodo Tracker (lev\'e9 apr\'e8s 7 jours), et la suspension d'un programme qui touche aux leurres (jamais reprise automatiquement).\par
+\'b7 L'interface d\'e9marre d'elle-m\'eame sous le compte de chaque utilisateur connect\'e9, sans droits d'administrateur (t\'e2che planifi\'e9e et ouverture de session), sauf avec l'option LANCEMENT_SESSION=0. L'installeur ne la lance pas.\par
+\'b7 T\'e9l\'e9chargements : listes de menaces, empreintes JA3, base GeoIP, liste LOLDrivers, et une v\'e9rification quotidienne des versions. Aucune mise \'e0 jour n'est install\'e9e automatiquement par d\'e9faut.\par
+\'b7 Aucune donn\'e9e du poste n'est envoy\'e9e \'e0 un tiers, sauf les alertes que vous choisissez de faire remonter (ntfy, Teams, e-mail, syslog) ; les t\'e9l\'e9chargements contactent les serveurs qui publient ces listes et ces versions.\par
+\'b7 deR4Tizer compl\'e8te Microsoft Defender : il ne le d\'e9sactive ni ne l'affaiblit, et ne le remplace pas. La baseline, si vous l'appliquez, peut renforcer certains de ses r\'e9glages.\par
+\'b7 La d\'e9sinstallation retire les blocages, la t\'e2che et les r\'e9glages pos\'e9s. Options : GARDER_DONNEES=1 garde les donn\'e9es, GARDER_BASELINE=1 garde la baseline appliqu\'e9e.\par
+Listes utilis\'e9es par d\'e9faut : Spamhaus DROP, abuse.ch Feodo Tracker et SSLBL. Carte : Natural Earth (domaine public).\par
+\par
+{\b English}\par
+{\b License: EUPL-1.2}\par
+European Union Public Licence. Full text: https://eupl.eu/1.2/en/ and in the repository https://github.com/cryptobones-1337/deR4Tizer\par
+The software is provided "as is", without warranty. It is a proof of concept, not audited. The binaries are not signed yet: Windows shows "unknown publisher".\par
+\par
+{\b What the installation does}\par
+\'b7 The deR4Tizer service (SYSTEM account, automatic start) monitors connections, persistence and the local network, and raises alerts.\par
+\'b7 It turns on Windows security logging (local group policy).\par
+\'b7 It places hidden decoy files in Documents, Pictures and the Desktop, to spot ransomware.\par
+\'b7 Two automatic responses are on by default, adjustable in the interface: firewall block of Spamhaus DROP and Feodo Tracker addresses (lifted after 7 days), and suspension of a program that touches the decoy files (never resumed automatically).\par
+\'b7 The interface starts on its own under the account of each signed-in user, without administrator rights (scheduled task and sign-in), unless the LANCEMENT_SESSION=0 option is used. The installer does not start it.\par
+\'b7 Downloads: threat lists, JA3 fingerprints, GeoIP database, LOLDrivers list, and a daily version check. No update is installed automatically by default.\par
+\'b7 No data from this computer is sent to a third party, except the alerts you choose to forward (ntfy, Teams, e-mail, syslog); the downloads contact the servers that publish these lists and versions.\par
+\'b7 deR4Tizer works alongside Microsoft Defender: it neither turns it off nor weakens it, and does not replace it. The baseline, if you apply it, can strengthen some of its settings.\par
+\'b7 Uninstalling removes the blocks, the task and the settings it set. Options: GARDER_DONNEES=1 keeps the data, GARDER_BASELINE=1 keeps the applied baseline.\par
+Lists used by default: Spamhaus DROP, abuse.ch Feodo Tracker and SSLBL. Map: Natural Earth (public domain).\par
 }

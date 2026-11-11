@@ -72,8 +72,8 @@ rustup toolchain install stable-x86_64-pc-windows-msvc
 ### Installer
 
 Aucune version n'est publiée à ce jour (voir « Premier déploiement » plus bas). Une fois publiée : télécharger
-`deR4Tizer.msi` depuis la [page des versions](https://github.com/cryptobones-1337/deR4Tizer/releases) et l'ouvrir. Le service démarre aussitôt ; l'interface se trouve dans le menu Démarrer et se lance à l'ouverture de
-session. Les nouvelles versions sont signalées ; leur installation automatique s'active dans les réglages (versions signées).
+`deR4Tizer.msi` depuis la [page des versions](https://github.com/cryptobones-1337/deR4Tizer/releases) et l'ouvrir. Le service démarre aussitôt ; l'interface démarre d'elle-même, sans droits d'administrateur, dans les minutes qui suivent l'installation (tâche de relance), puis à chaque ouverture de
+session ; l'installeur ne la lance pas. Elle se trouve aussi dans le menu Démarrer. Licence et textes de l'installeur en français et en anglais. Les nouvelles versions sont signalées ; leur installation automatique s'active dans les réglages (versions signées).
 
 Déploiement sur un parc (GPO, Intune, prestataire) :
 
@@ -276,7 +276,7 @@ rustup toolchain install stable-x86_64-pc-windows-msvc
 ### Install
 
 No version has been released yet. Once released: download `deR4Tizer.msi` from the
-[releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) and open it. The service starts immediately; the interface is in the Start menu and starts at logon. New versions are reported;
+[releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) and open it. The service starts immediately; the interface starts on its own, without administrator rights, within the next few minutes (restart task), then at every sign-in; the installer does not start it. It is also in the Start menu. Installer license and texts in French and English. New versions are reported;
 automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon

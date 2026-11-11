@@ -512,6 +512,32 @@ function Interfaces-EnSession {
     $chemin = Join-Path $script:Programme 'deR4Tizer.exe'
     @(Get-CimInstance Win32_Process -Filter "Name='deR4Tizer.exe'" | Where-Object { $_.ExecutablePath -eq $chemin -and $_.SessionId -gt 0 })
 }
+# Élévation du jeton d'un processus (TokenElevation) : 1 élevé, 0 non élevé, -1 illisible (U8 : l'interface ne doit
+# jamais tourner élevée dans une session, elle vient de la tâche de relance)
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class D4tJeton
+{
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint acces, bool heriter, int pid);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr processus, uint acces, out IntPtr jeton);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr jeton, int classe, out int valeur, int longueur, out int requis);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    public static int Eleve(int pid)
+    {
+        IntPtr p = OpenProcess(0x1000, false, pid);
+        if (p == IntPtr.Zero) return -1;
+        try
+        {
+            IntPtr t;
+            if (!OpenProcessToken(p, 0x0008, out t)) return -1;
+            try { int v, r; return GetTokenInformation(t, 20, out v, 4, out r) ? (v != 0 ? 1 : 0) : -1; }
+            finally { CloseHandle(t); }
+        }
+        finally { CloseHandle(p); }
+    }
+}
+'@
 function Attendre-Interface([int]$Secondes = 360) {
     $fin = (Get-Date).AddSeconds($Secondes)
     do {
@@ -528,6 +554,16 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
         $proprietaire = (Invoke-CimMethod -InputObject $i[0] -MethodName GetOwner).User
         Write-Host "  interface : pid $($i[0].ProcessId), session $($i[0].SessionId), compte $proprietaire"
         if ($proprietaire -eq 'SYSTEM') { return 'interface lancée en SYSTEM' }
+        $true
+    }
+    Verifier 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' {
+        $i = @(Interfaces-EnSession)
+        if (-not $i.Count) { return 'aucune interface en session' }
+        $etats = @($i | ForEach-Object { "pid $($_.ProcessId) : $($_.CommandLine) ; élevée $([D4tJeton]::Eleve([int]$_.ProcessId))" })
+        Write-Host "  $($etats -join ' | ')"
+        # Tâche de relance : --cache --relance ; clé Run à l'ouverture de session : --cache seul (relecture de #155, R18)
+        if (@($i | Where-Object { $_.CommandLine -notmatch '--cache' }).Count) { return "interface hors de la tâche de relance et de la clé Run : $($etats -join ' | ')" }
+        if (@($i | Where-Object { [D4tJeton]::Eleve([int]$_.ProcessId) -ne 0 }).Count) { return "interface élevée ou jeton illisible : $($etats -join ' | ')" }
         $true
     }
     Verifier 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' {
@@ -549,6 +585,7 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
     }
 } else {
     NonExecute 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' 'aucun compte connecté à la console'
+    NonExecute 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' 'aucun compte connecté à la console'
     NonExecute 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' 'aucun compte connecté à la console'
 }
 Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
