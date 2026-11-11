@@ -190,7 +190,8 @@ if (-not $installe) {
         $okLangue = $true
         Verifier "Pilote, langue $code envoyée au service" { try { Langue $code; $true } catch { $script:okLangue = $false; $_.Exception.Message } }
         if (-not $okLangue) { continue }
-        foreach ($page in @("Vue d'ensemble") + $pages) {
+        # Premiers réglages (U7a) : page hors de la navigation, ouverte par --page comme les autres
+        foreach ($page in @("Vue d'ensemble") + $pages + @('Premiers réglages')) {
             Verifier "Capture du pilote $code : $page" {
                 $o = Ouvrir-Interface @('--fluent', '--page', "`"$page`"")
                 if ($o.Erreur) { return $o.Erreur }
