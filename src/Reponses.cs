@@ -271,7 +271,9 @@ namespace DeR4Tizer
                 var q = (Commun.Lire<List<ElementQuarantaine>>("quarantaine.json") ?? new List<ElementQuarantaine>()).FirstOrDefault(e => e.Id == c.Cible);
                 if (q != null) question += "\n\n" + (en ? "Quarantined on " : "Mis en quarantaine le ") + Canal.Visible(q.Date ?? "?") + " (" + Canal.Visible(q.Id) + ")";
             }
-            if (MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            // Interface élevée et « debloquer » (Libérer, Débloquer) : Canal montre la confirmation détaillée, une seule fenêtre
+            // (relecture de #153, constat 1) ; sinon la question de la page, puis la copie élevée confirme comme partout
+            if (!Canal.ConfirmeraLui(c) && MessageBox.Show(question, "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             Canal.Executer(c);
         }
     }

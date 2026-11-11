@@ -291,8 +291,9 @@ namespace DeR4Tizer
         // Commandes confirmées aussi dans une interface déjà élevée : réglages des réponses automatiques, de l'IPS et des
         // listes (config), apprentissage (audit de #152, S152-02) ; levée d'un blocage (non reposé 7 jours), syslog et API
         // (reglages), destinations et secrets des alertes (notifications), mise à jour (majConfig), droit de lecture d'un
-        // compte (autoriserLecteur) (audit de #153, S153-01) ; exception durable sur un comportement (S153-02). Les autres ont
-        // déjà leur question dans les pages, ou protègent,
+        // compte (autoriserLecteur) (audit de #153, S153-01) ; exception durable sur un comportement (S153-02). Une page qui
+        // pose sa propre question avant l'une d'elles la saute quand Canal la confirmera (ConfirmeraLui : une seule fenêtre,
+        // relecture de #153, constat 1). Les autres ont déjà leur question dans les pages, ou protègent,
         // ou ne font que tester : pas de seconde fenêtre
         static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "majConfig", "autoriserLecteur", "exception" };
 
@@ -300,6 +301,9 @@ namespace DeR4Tizer
         {
             return c != null && Array.IndexOf(ConfirmeesEnAdministrateur, c.Action) >= 0;
         }
+
+        // Canal montrera lui-même la confirmation détaillée de cette commande (interface élevée) : la page saute sa question
+        public static bool ConfirmeraLui(Commande c) { return EstAdmin() && ConfirmeEnAdministrateur(c); }
 
         // Nom lisible d'un réglage de la commande « config » (relecture de #152, remarque R8) ; inconnu : nom neutralisé
         public static string NomReglage(string cible)
@@ -2263,11 +2267,13 @@ namespace DeR4Tizer
             {
                 bool refuse = false;
                 try { Directory.GetFiles(Commun.Dossier); } catch (UnauthorizedAccessException) { refuse = true; } catch { }
-                if (refuse && MessageBox.Show(L.En
+                var autoriser = new Commande { Action = "autoriserLecteur", Valeur = WindowsIdentity.GetCurrent().User.Value };
+                // Interface élevée : la confirmation détaillée de Canal tient lieu de question (relecture de #153, R14)
+                if (refuse && (Canal.ConfirmeraLui(autoriser) || MessageBox.Show(L.En
                         ? "deR4Tizer data (events, sessions, alerts) is restricted to administrators and authorised accounts.\n\nAuthorise this account (" + Environment.UserName + ") to read it? An administrator password will be asked."
                         : "Les données de deR4Tizer (événements, sessions, alertes) sont réservées aux administrateurs et aux comptes autorisés.\n\nAutoriser ce compte (" + Environment.UserName + ") à les lire ? Le mot de passe d'un administrateur sera demandé.",
-                        "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                    Canal.Executer(new Commande { Action = "autoriserLecteur", Valeur = WindowsIdentity.GetCurrent().User.Value });
+                        "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes))
+                    Canal.Executer(autoriser);
             }
 
             bool premier;
