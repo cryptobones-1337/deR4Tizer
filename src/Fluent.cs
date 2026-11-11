@@ -330,7 +330,9 @@ namespace DeR4Tizer
                     if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble();
                     else if (ouverte == "Alertes" && pageAlertes != null) { pageAlertes.Rafraichir(); if (IsVisible) ((ISourceAlertes)source).MarquerAlertesLues(); }
                 };
-                source.Change += suivre;
+                // Pastilles d'abord, abonnement à l'état en dernier : si la construction échoue (repli au premier geste), aucun
+                // abonnement ne reste attaché (audit de #156, S156-02)
+                MettreAJourPastillesNav();
                 source.Rattacher(cle =>
                 {
                     Show();
@@ -345,7 +347,7 @@ namespace DeR4Tizer
                     if (!IsVisible) zone.Content = null;
                     else if (zone.Content == null) Ouvrir(ouverte ?? NavigationFluent.VueEnsemble);
                 };
-                MettreAJourPastillesNav();
+                source.Change += suivre;
             }
         }
 
