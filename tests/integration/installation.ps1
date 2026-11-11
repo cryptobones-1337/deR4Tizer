@@ -556,12 +556,13 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
         if ($proprietaire -eq 'SYSTEM') { return 'interface lancée en SYSTEM' }
         $true
     }
-    Verifier 'Relance : interface venue de la tâche (--cache --relance), jeton non élevé ; aucune interface élevée en session (U8)' {
+    Verifier 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' {
         $i = @(Interfaces-EnSession)
         if (-not $i.Count) { return 'aucune interface en session' }
         $etats = @($i | ForEach-Object { "pid $($_.ProcessId) : $($_.CommandLine) ; élevée $([D4tJeton]::Eleve([int]$_.ProcessId))" })
         Write-Host "  $($etats -join ' | ')"
-        if (@($i | Where-Object { $_.CommandLine -notmatch '--cache' -or $_.CommandLine -notmatch '--relance' }).Count) { return "interface hors de la tâche de relance : $($etats -join ' | ')" }
+        # Tâche de relance : --cache --relance ; clé Run à l'ouverture de session : --cache seul (relecture de #155, R18)
+        if (@($i | Where-Object { $_.CommandLine -notmatch '--cache' }).Count) { return "interface hors de la tâche de relance et de la clé Run : $($etats -join ' | ')" }
         if (@($i | Where-Object { [D4tJeton]::Eleve([int]$_.ProcessId) -ne 0 }).Count) { return "interface élevée ou jeton illisible : $($etats -join ' | ')" }
         $true
     }
@@ -584,7 +585,7 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
     }
 } else {
     NonExecute 'Relance : interface lancée dans la session ouverte (5 min au plus), sans invite' 'aucun compte connecté à la console'
-    NonExecute 'Relance : interface venue de la tâche (--cache --relance), jeton non élevé ; aucune interface élevée en session (U8)' 'aucun compte connecté à la console'
+    NonExecute 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' 'aucun compte connecté à la console'
     NonExecute 'Relance : interface arrêtée, relancée dans les 5 min, aucune seconde instance' 'aucun compte connecté à la console'
 }
 Verifier 'Relance : la tâche ne lève aucune alerte de persistance' {
