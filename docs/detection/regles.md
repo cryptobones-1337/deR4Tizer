@@ -233,6 +233,33 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Tests** : `dns_001_positif` (domaine d'une liste synthétique, sans tenir compte de la casse), `dns_001_negatif` (autre
   domaine ; sous-domaine, les listes portant des noms exacts ; nom vide) ; décision pure `moniteur::alerte_dns`
   (PR 3.8). Non exercée en VM : il faudrait une liste de domaines de test chargée par le service, que rien ne prévoit.
+- **Phase 7 (prévu)** : quand le filtrage par nom de domaine sera activé par l'utilisateur, l'alerte dira aussi que la
+  résolution a été bloquée.
+
+### Prévue, phase 7 : DNS-002, changement de serveur DNS sur une carte du poste
+- **État** : prévue, rien dans le code (PR 7.1 du dossier de la phase 7). Elle n'entre au registre des règles (`regles.rs`) qu'avec son code : son titre prendra alors la forme « ### DNS-002 : … ».
+- **Justification** : un logiciel malveillant ou une box compromise qui change le serveur DNS du poste fait passer
+  toutes les résolutions par l'attaquant (faux site de la banque, faux portail de la mairie) ; aujourd'hui, deR4Tizer
+  ne le voit pas, sauf par le fichier hosts (SYS-001).
+- **Télémétrie prévue** : serveurs DNS effectifs de chaque carte active (`GetAdaptersAddresses`, IpHelper), et registre
+  `Tcpip\Parameters\Interfaces\{GUID}` (`NameServer` statique, `DhcpNameServer`) et son équivalent `Tcpip6` ; relevé
+  toutes les 60 s, hors du verrou du moniteur.
+- **Décision prévue** (`changements_dns(avant, apres)`, pure) :
+  - serveur **statique** ajouté ou changé sur une carte physique (Ethernet, Wi-Fi), réseau inchangé (même
+    passerelle) : alerte ;
+  - changement qui accompagne un changement de réseau (nouvelle passerelle, nouveau serveur DHCP) : événement du
+    mini-SIEM seulement (portable qui change de Wi-Fi) ;
+  - cartes virtuelles et VPN : événement seulement ;
+  - filtrage actif et carte qui ne pointe plus vers le résolveur local : alerte « filtrage contourné ». Rien n'est remis
+    en place automatiquement (boucle avec un client VPN) : l'utilisateur réactive.
+- **Si elle manque** : `GetAdaptersAddresses` en échec ou registre illisible : collecte `ConfigDns` indisponible, jamais
+  « aucun changement ».
+- **Niveau prévu** : Alerte.
+- **Faux positifs attendus** : un utilisateur ou un prestataire qui règle un DNS à la main (alerte juste, mais
+  voulue) ; un logiciel de contrôle parental ou un VPN qui modifie la carte physique. À mesurer en VM.
+- **Tests prévus** : `dns002_statique_change_meme_reseau` (positif) ; `dns002_changement_de_reseau_sans_alerte`,
+  `dns002_carte_vpn_sans_alerte`, `dns002_lecture_impossible_collecte_indisponible` (négatifs) ; en VM, un témoin retenu
+  (DNS statique changé) et un témoin écarté (DHCP renouvelé).
 
 ## PRC : processus
 

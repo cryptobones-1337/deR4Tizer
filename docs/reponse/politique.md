@@ -27,6 +27,24 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 
 Tout le reste, IPS compris, est au niveau 2 au plus.
 
+## Filtrage par nom de domaine (phase 7, prévu)
+
+Rien dans le code aujourd'hui (dossier de la phase 7). Quand il viendra, le blocage d'un nom de domaine par le filtrage
+sera une **action automatique de niveau 2** : désactivée par défaut, activée sciemment par un administrateur, en deux
+activations séparées (« Navigation sécurisée », « Publicités et pistage »). Il ne s'ajoute pas au niveau 3.
+
+| | Prévu |
+|---|---|
+| Durée | Tant que le filtrage reste activé. |
+| Récupération | Désactivation par l'utilisateur (cartes réseau remises à l'identique, DHCP compris) ; désinstallation (même remise) ; autorisation d'un nom par l'utilisateur ; procédure manuelle écrite dans le README. |
+| Échec | Ouvert : si le résolveur local ne répond plus, les serveurs d'origine restent en secours ; jamais de coupure du DNS. |
+| Garde contre les boucles | Jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) : alerte DNS-002 et réactivation par l'utilisateur. |
+| Jamais bloqué | Une liste de protection compilée dans le binaire (mises à jour de Windows et de Defender, autorités de certification) et les noms autorisés par l'utilisateur. |
+| Ce qu'il n'est pas | Une barrière de sécurité : un programme qui a son propre résolveur (DNS chiffré intégré, adresse codée en dur) le contourne. Il réduit l'exposition, rien de plus. |
+
+Les blocages par domaine posés à la main dans le fichier hosts restent ce qu'ils sont aujourd'hui (manuels, lignes de
+l'utilisateur jamais réécrites).
+
 ## Règles communes
 
 - Une alerte critique n'est jamais adoucie (apprentissage, exceptions) ni retenue par le plafond de remontée.
