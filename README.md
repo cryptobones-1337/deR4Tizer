@@ -16,6 +16,17 @@
 
 deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail) et peuvent aussi partir vers le SIEM de votre choix.
 
+### Aperçu
+
+Captures réelles de l'interface (v4.3), prises dans la VM de test : Windows 11, Microsoft Defender actif, service
+installé depuis le MSI et laissé tourner quelques minutes. Aucune donnée d'un vrai poste.
+
+![Vue d'ensemble : état du poste, points à surveiller, bouton Panique](docs/images/interface-fr-vue-d-ensemble.png)
+
+![Connexions : programmes qui sortent sur Internet, destination, signataire, score](docs/images/interface-fr-connexions.png)
+
+![Santé : état de chaque collecte, ce qui manque et pourquoi](docs/images/interface-fr-sante.png)
+
 ### Fonctionnalités (v4.3)
 
 État réel de chaque capacité (validée sur Windows par la CI avant sa désactivation, contrôlée en VM de test, testée en labo, ou implémentée sans vérification) :
@@ -219,6 +230,15 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 ### Why
 
 deR4Tizer targets organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops. Everything runs **on the endpoint**, with no account, no cloud and no telemetry. Critical alerts reach the IT provider or contact person (ntfy, Teams, e-mail) and can also go to the SIEM of your choice.
+
+### Screenshots
+
+Real screenshots of the interface (v4.3), taken in the test VM: Windows 11, Microsoft Defender on, service installed
+from the MSI and left running for a few minutes. No data from a real computer.
+
+![Overview: computer status, points to watch, Panic button](docs/images/interface-en-vue-d-ensemble.png)
+
+![Connections: programs reaching the Internet, destination, signer, score](docs/images/interface-en-connexions.png)
 
 ### Features (v4.3)
 
