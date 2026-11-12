@@ -453,6 +453,12 @@ Verifier 'Résolveur local (7.3) : essai sur la boucle locale ; bloqué, relayé
         Start-Sleep 2
         $adresses = @(& $ecoutes)
         if ($adresses.Count -ne 2 -or @($adresses | Where-Object { $_ -notin '127.0.0.1', '::1' }).Count) { return "écoutes du service sur le port 53 pendant l'essai : $($adresses -join ', ')" }
+        # Liaison exclusive (audit de #161, S161-02) : aucun second socket sur le port 53 de la boucle locale
+        foreach ($ip in [Net.IPAddress]::Loopback, [Net.IPAddress]::IPv6Loopback) {
+            $u = $null
+            try { $u = New-Object Net.Sockets.UdpClient (New-Object Net.IPEndPoint $ip, 53); return "second socket lié à ${ip}:53 pendant l'essai" }
+            catch { } finally { if ($u) { $u.Close() } }
+        }
         $a = @(Resolve-DnsName pisteur.test -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
         if ($a.Count -ne 1 -or $a[0].IPAddress -ne '0.0.0.0') { return "A de pisteur.test : $($a | ForEach-Object IPAddress)" }
         $a6 = @(Resolve-DnsName x.pisteur.test -Type AAAA -Server 127.0.0.1 -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'AAAA' })

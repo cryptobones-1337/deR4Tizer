@@ -7612,6 +7612,17 @@ fn degradation_ouverte_amont_muet() {
     assert!(s.noter(false, 170));
 }
 
+/// Port source du relais : toujours dans la plage dynamique, toute la plage couverte (relecture de #161, constat 1)
+#[test]
+fn dns_port_source_dynamique() {
+    use crate::dns_local::port_dynamique;
+    assert_eq!(port_dynamique(0), 49152);
+    assert_eq!(port_dynamique(16383), 65535);
+    assert_eq!(port_dynamique(16384), 49152);
+    assert_eq!(port_dynamique(u16::MAX), 65535);
+    assert!((0..=u16::MAX).all(|a| port_dynamique(a) >= 49152));
+}
+
 /// Amonts : serveurs des cartes physiques, sans boucle locale, sans doublon, 4 au plus ; carte virtuelle écartée
 #[test]
 fn dns_amonts_des_cartes_physiques() {

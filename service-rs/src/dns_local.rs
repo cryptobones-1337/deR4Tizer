@@ -8,15 +8,19 @@
 //! - Bloqué : A `0.0.0.0`, AAAA `::`, autres types (HTTPS, SVCB…) réponse vide (NODATA) ; TTL 60 s. Nom spécial
 //!   `use-application-dns.net` : NXDOMAIN quand le filtrage est actif (D7-6 : Firefox ne passe pas de lui-même au DNS
 //!   chiffré).
-//! - Relayé : nouvel identifiant aléatoire (`BCryptGenRandom`), port source choisi par le système ; réponse acceptée
+//! - Relayé : nouvel identifiant et nouveau port source aléatoires (`BCryptGenRandom`, port tiré dans la plage
+//!   dynamique 49152-65535 : relecture de #161, constat 1 ; MS08-037) ; réponse acceptée
 //!   seulement si l'adresse de l'amont, l'identifiant et la question correspondent, puis rendue avec l'identifiant
 //!   d'origine. Pas de cache (le client DNS de Windows en a un). Réponse tronquée en UDP : rendue telle quelle, le client
 //!   réessaie en TCP auprès du résolveur, qui relaie alors en TCP. 2 s par amont, puis le suivant.
 //! - Amont : serveurs DNS des cartes physiques au lancement de l'essai (boucle locale exclue).
 //! - Dégradation ouverte : aucun amont ne répond pendant 30 s → l'essai s'arrête (le DNS du poste n'est jamais coupé :
 //!   les cartes ne sont pas réglées sur le résolveur).
-//! - Bornes : 16 requêtes en cours, au-delà la requête est ignorée (le client réessaie) ; ni PowerShell ni verrou du
-//!   moniteur sur le chemin d'une requête.
+//! - Bornes : 16 requêtes en cours, dont 4 connexions TCP au plus ; au-delà, la requête est ignorée (le client
+//!   réessaie). Une connexion TCP a 4 s en tout pour envoyer sa requête (audit de #161, S161-01). Ni PowerShell ni
+//!   verrou du moniteur sur le chemin d'une requête.
+//! - Écoutes liées avec `SO_EXCLUSIVEADDRUSE` : aucun autre programme ne peut se lier au même port à côté, et la
+//!   liaison échoue si un autre logiciel tient déjà le port 53 (audit de #161, S161-02, préalable à 7.4).
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -29,6 +33,10 @@ pub const MAX_TCP: usize = 4096;
 pub const TTL: u32 = 60;
 pub const CANARI: &str = "use-application-dns.net";
 pub const MAX_EN_COURS: usize = 16;
+/// Connexions TCP en cours, au plus (sur les 16) : l'UDP reste servi
+pub const MAX_TCP_EN_COURS: usize = 4;
+/// Échéance totale d'une connexion TCP pour envoyer sa requête, depuis l'acceptation
+const ECHEANCE_TCP: Duration = Duration::from_secs(4);
 pub const DUREE_ESSAI: Duration = Duration::from_secs(600);
 /// Délai par amont
 const DELAI_AMONT: Duration = Duration::from_secs(2);
@@ -241,10 +249,23 @@ fn identifiant_aleatoire() -> u16 {
     u16::from_ne_bytes(o)
 }
 
+/// Port de la plage dynamique (49152-65535) tiré de 16 bits aléatoires (pur, testé)
+pub fn port_dynamique(alea: u16) -> u16 {
+    49152 + alea % 16384
+}
+
+/// Socket UDP vers l'amont, lié à un port source tiré au hasard ; 8 essais si le port est pris, sinon aucun relais
+/// (jamais de repli sur le port choisi par le système)
+fn socket_amont(amont: IpAddr) -> Option<UdpSocket> {
+    (0..8).find_map(|_| {
+        let ip: IpAddr = if amont.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
+        UdpSocket::bind(SocketAddr::new(ip, port_dynamique(identifiant_aleatoire()))).ok()
+    })
+}
+
 /// Relais UDP vers un amont : réponse assortie ou None (délai, réponse étrangère ignorée)
 fn relayer_udp(paquet: &[u8], q: &Question, amont: IpAddr) -> Option<Vec<u8>> {
-    let local: SocketAddr = if amont.is_ipv4() { "0.0.0.0:0".parse().ok()? } else { "[::]:0".parse().ok()? };
-    let s = UdpSocket::bind(local).ok()?;
+    let s = socket_amont(amont)?;
     let cible = SocketAddr::new(amont, 53);
     let id = identifiant_aleatoire();
     s.send_to(&avec_id(paquet, id), cible).ok()?;
@@ -282,6 +303,9 @@ pub type Juge = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 struct Essai {
     arret: AtomicBool,
     en_cours: AtomicUsize,
+    tcp_en_cours: AtomicUsize,
+    /// Fils encore vivants (écoutes et requêtes) : un nouvel essai attend qu'ils aient tous rendu leurs sockets
+    fils: AtomicUsize,
     filtrage_actif: bool,
     juge: Juge,
     amonts: Vec<IpAddr>,
@@ -325,6 +349,76 @@ impl Essai {
         }
         true
     }
+
+    fn prendre_tcp(&self) -> bool {
+        if self.tcp_en_cours.fetch_add(1, Ordering::AcqRel) >= MAX_TCP_EN_COURS {
+            self.tcp_en_cours.fetch_sub(1, Ordering::AcqRel);
+            return false;
+        }
+        if !self.prendre() {
+            self.tcp_en_cours.fetch_sub(1, Ordering::AcqRel);
+            return false;
+        }
+        true
+    }
+}
+
+/// Lance un fil de l'essai ; un fil impossible à créer est abandonné sans arrêter le service (audit de #161,
+/// S161-03 : `std::thread::spawn` panique, et le service est compilé avec `panic = "abort"`)
+fn lancer(e: &Arc<Essai>, nom: &str, f: impl FnOnce() + Send + 'static) -> bool {
+    e.fils.fetch_add(1, Ordering::AcqRel);
+    let e2 = e.clone();
+    let r = std::thread::Builder::new().name(nom.into()).spawn(move || {
+        f();
+        e2.fils.fetch_sub(1, Ordering::AcqRel);
+    });
+    if r.is_err() {
+        e.fils.fetch_sub(1, Ordering::AcqRel);
+    }
+    r.is_ok()
+}
+
+/// Liaison exclusive (`SO_EXCLUSIVEADDRUSE`) d'un socket UDP ou d'une écoute TCP : erreur si un autre programme tient
+/// déjà l'adresse ou le port de toutes les adresses
+fn lier_exclusif(adresse: SocketAddr, tcp: bool) -> std::io::Result<std::os::windows::io::RawSocket> {
+    use windows::Win32::Networking::WinSock::{
+        bind, closesocket, listen, setsockopt, socket, AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, IPPROTO_TCP,
+        IPPROTO_UDP, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_IN6_0, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+    };
+    // Winsock initialisé par la bibliothèque standard (WSAStartup à la première utilisation)
+    let _ = UdpSocket::bind("127.0.0.1:0");
+    let (famille, type_, proto) = (
+        if adresse.is_ipv4() { AF_INET.0 as i32 } else { AF_INET6.0 as i32 },
+        if tcp { SOCK_STREAM } else { SOCK_DGRAM },
+        if tcp { IPPROTO_TCP.0 } else { IPPROTO_UDP.0 },
+    );
+    unsafe {
+        let s = socket(famille, type_, proto).map_err(|e| std::io::Error::from_raw_os_error(e.code().0))?;
+        let erreur = |s| {
+            let e = std::io::Error::last_os_error();
+            let _ = closesocket(s);
+            Err(e)
+        };
+        if setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, Some(&1i32.to_ne_bytes())) != 0 {
+            return erreur(s);
+        }
+        let lie = match adresse {
+            SocketAddr::V4(a) => {
+                let sa = SOCKADDR_IN { sin_family: AF_INET, sin_port: a.port().to_be(),
+                    sin_addr: IN_ADDR { S_un: IN_ADDR_0 { S_addr: u32::from_ne_bytes(a.ip().octets()) } }, sin_zero: [0; 8] };
+                bind(s, &sa as *const SOCKADDR_IN as *const SOCKADDR, std::mem::size_of::<SOCKADDR_IN>() as i32)
+            }
+            SocketAddr::V6(a) => {
+                let sa = SOCKADDR_IN6 { sin6_family: AF_INET6, sin6_port: a.port().to_be(), sin6_flowinfo: 0,
+                    sin6_addr: IN6_ADDR { u: IN6_ADDR_0 { Byte: a.ip().octets() } }, Anonymous: SOCKADDR_IN6_0 { sin6_scope_id: 0 } };
+                bind(s, &sa as *const SOCKADDR_IN6 as *const SOCKADDR, std::mem::size_of::<SOCKADDR_IN6>() as i32)
+            }
+        };
+        if lie != 0 || (tcp && listen(s, 64) != 0) {
+            return erreur(s);
+        }
+        Ok(s.0 as std::os::windows::io::RawSocket)
+    }
 }
 
 fn boucle_udp(e: Arc<Essai>, s: UdpSocket) {
@@ -337,20 +431,38 @@ fn boucle_udp(e: Arc<Essai>, s: UdpSocket) {
             continue;
         }
         let (e2, s2, p) = (e.clone(), s.clone(), tampon[..n].to_vec());
-        std::thread::spawn(move || {
+        if !lancer(&e, "résolveur local requête", move || {
             if let Some(v) = e2.repondre(&p, MAX_UDP, false) {
                 let _ = s2.send_to(&v, de);
             }
             e2.en_cours.fetch_sub(1, Ordering::AcqRel);
-        });
+        }) {
+            e.en_cours.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
-fn servir_tcp(e: &Essai, mut c: TcpStream) {
-    let _ = c.set_read_timeout(Some(DELAI_AMONT));
+/// Lecture complète avant l'échéance (pas seulement un délai par lecture : une connexion qui goutte un octet à la fois
+/// ne tient pas sa place plus longtemps)
+fn lire_avant(c: &mut TcpStream, tampon: &mut [u8], echeance: Instant) -> bool {
+    let mut lu = 0;
+    while lu < tampon.len() {
+        let Some(reste) = echeance.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) else { return false };
+        if c.set_read_timeout(Some(reste)).is_err() {
+            return false;
+        }
+        match c.read(&mut tampon[lu..]) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => lu += n,
+        }
+    }
+    true
+}
+
+fn servir_tcp(e: &Essai, mut c: TcpStream, echeance: Instant) {
     let _ = c.set_write_timeout(Some(DELAI_AMONT));
     let mut l = [0u8; 2];
-    if c.read_exact(&mut l).is_err() {
+    if !lire_avant(&mut c, &mut l, echeance) {
         return;
     }
     let n = u16::from_be_bytes(l) as usize;
@@ -358,7 +470,7 @@ fn servir_tcp(e: &Essai, mut c: TcpStream) {
         return;
     }
     let mut p = vec![0u8; n];
-    if c.read_exact(&mut p).is_err() {
+    if !lire_avant(&mut c, &mut p, echeance) {
         return;
     }
     if let Some(v) = e.repondre(&p, MAX_TCP, true) {
@@ -371,15 +483,22 @@ fn boucle_tcp(e: Arc<Essai>, l: TcpListener) {
     while !e.arret.load(Ordering::Relaxed) {
         match l.accept() {
             Ok((c, de)) => {
-                if !de.ip().is_loopback() || !e.prendre() {
+                let echeance = Instant::now() + ECHEANCE_TCP;
+                if !de.ip().is_loopback() || !e.prendre_tcp() {
                     continue;
                 }
                 let _ = c.set_nonblocking(false);
                 let e2 = e.clone();
-                std::thread::spawn(move || {
-                    servir_tcp(&e2, c);
-                    e2.en_cours.fetch_sub(1, Ordering::AcqRel);
-                });
+                let liberer = |x: &Essai| {
+                    x.en_cours.fetch_sub(1, Ordering::AcqRel);
+                    x.tcp_en_cours.fetch_sub(1, Ordering::AcqRel);
+                };
+                if !lancer(&e, "résolveur local connexion", move || {
+                    servir_tcp(&e2, c, echeance);
+                    liberer(&e2);
+                }) {
+                    liberer(&e);
+                }
             }
             Err(_) => std::thread::sleep(Duration::from_millis(100)),
         }
@@ -393,14 +512,22 @@ pub fn demarrer_essai(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>) -> 
     if g.as_ref().is_some_and(|e| !e.arret.load(Ordering::Relaxed)) {
         return Err("Un essai du résolveur local est déjà en cours.".into());
     }
+    // Essai précédent arrêté mais dont des fils tiennent encore un socket (une requête relayée : 8 s au plus) : message
+    // juste, plutôt que « port déjà pris » (audit de #161, S161-03)
+    if g.as_ref().is_some_and(|e| e.fils.load(Ordering::Acquire) > 0) {
+        return Err("L'essai précédent se termine : réessayez dans quelques secondes.".into());
+    }
     if amonts.is_empty() {
         return Err("Aucun serveur DNS d'amont sur les cartes physiques : essai impossible.".into());
     }
+    use std::os::windows::io::FromRawSocket;
     let pris = |e: std::io::Error| format!("Port 53 de la boucle locale déjà pris ({e}) : essai refusé ; deR4Tizer n'arrête pas l'autre logiciel.");
-    let u4 = UdpSocket::bind("127.0.0.1:53").map_err(pris)?;
-    let u6 = UdpSocket::bind("[::1]:53").map_err(pris)?;
-    let t4 = TcpListener::bind("127.0.0.1:53").map_err(pris)?;
-    let t6 = TcpListener::bind("[::1]:53").map_err(pris)?;
+    let (v4, v6): (SocketAddr, SocketAddr) = ("127.0.0.1:53".parse().unwrap(), "[::1]:53".parse().unwrap());
+    // Chaque socket est rendu à la bibliothèque standard dès sa liaison : fermé si une liaison suivante échoue
+    let u4 = unsafe { UdpSocket::from_raw_socket(lier_exclusif(v4, false).map_err(pris)?) };
+    let u6 = unsafe { UdpSocket::from_raw_socket(lier_exclusif(v6, false).map_err(pris)?) };
+    let t4 = unsafe { TcpListener::from_raw_socket(lier_exclusif(v4, true).map_err(pris)?) };
+    let t6 = unsafe { TcpListener::from_raw_socket(lier_exclusif(v6, true).map_err(pris)?) };
     for u in [&u4, &u6] {
         u.set_read_timeout(Some(Duration::from_millis(500))).map_err(|e| e.to_string())?;
     }
@@ -408,16 +535,23 @@ pub fn demarrer_essai(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>) -> 
         t.set_nonblocking(true).map_err(|e| e.to_string())?;
     }
     let e = Arc::new(Essai {
-        arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), filtrage_actif, juge, amonts: amonts.clone(),
+        arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), tcp_en_cours: AtomicUsize::new(0), fils: AtomicUsize::new(0),
+        filtrage_actif, juge, amonts: amonts.clone(),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
     });
+    let mut lances = true;
     for u in [u4, u6] {
         let e2 = e.clone();
-        std::thread::Builder::new().name("résolveur local udp".into()).spawn(move || boucle_udp(e2, u)).map_err(|x| x.to_string())?;
+        lances &= lancer(&e, "résolveur local udp", move || boucle_udp(e2, u));
     }
     for t in [t4, t6] {
         let e2 = e.clone();
-        std::thread::Builder::new().name("résolveur local tcp".into()).spawn(move || boucle_tcp(e2, t)).map_err(|x| x.to_string())?;
+        lances &= lancer(&e, "résolveur local tcp", move || boucle_tcp(e2, t));
+    }
+    if !lances {
+        e.arret.store(true, Ordering::Relaxed);
+        *g = Some(e);
+        return Err("Fils du résolveur local impossibles à créer : essai abandonné.".into());
     }
     // Fin de l'essai au plus tard après DUREE_ESSAI
     let e2 = e.clone();

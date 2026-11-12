@@ -36,7 +36,19 @@ documentaire du 2026-10-25).
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes
 lancé par un administrateur (commande `filtrageEssai`), sur `127.0.0.1:53` et `[::1]:53` seulement ; aucune carte n'est
-réglée sur lui. Écarts au dossier, voulus :
+réglée sur lui.
+
+Décisions ouvertes du dossier appliquées sur sa recommandation, révisables par le mainteneur avant 7.4 :
+
+- **D7-1** (mécanisme) : M2, le résolveur local ;
+- **D7-4** (réponse à un nom bloqué) : A `0.0.0.0`, AAAA `::`, autres types sans réponse (NODATA), TTL de 60 s ;
+- **D7-6** (nom spécial de Firefox) : `use-application-dns.net` répond NXDOMAIN quand le filtrage a une catégorie
+  active.
+
+Écarts au dossier, voulus :
+
+- pas de file de 256 requêtes : au-delà de 16 requêtes en cours (dont 4 connexions TCP), la requête est ignorée et le
+  client réessaie ;
 
 - une réponse tronquée en UDP est rendue telle quelle au client, qui réessaie en TCP auprès du résolveur (qui relaie
   alors en TCP), au lieu d'un nouvel essai en TCP par le résolveur lui-même ;
