@@ -2055,13 +2055,20 @@ fn mettre_a_jour_filtrage(p: &Arc<Partage>, dernier: &mut String) {
         let base = crate::filtrage::Filtrage::nouveau(&crate::filtrage::hotes_proteges(&config));
         let _ = crate::filtrage::telecharger(&actives, base.protection());
     }
-    let f = crate::filtrage::charger(&config, echec);
+    let mut f = crate::filtrage::charger(&config, echec);
     let r = crate::filtrage::resume(&actives, &f);
     if r != *dernier {
         commun::journal(&r);
         *dernier = r;
     }
-    *p.filtrage.write().unwrap() = f;
+    // Autorisations relues sous le verrou du filtrage, au moment du remplacement : une commande filtrageAutoriser ou
+    // filtrageRetirer passée pendant le téléchargement (jusqu'à 180 s par liste) n'est pas écrasée par la configuration
+    // lue au début (audit de #160, S160-02). La commande écrit config.json avant de prendre ce verrou
+    let mut g = p.filtrage.write().unwrap();
+    if !echec {
+        f.autoriser(&commun::lire::<commun::Config>("config.json").unwrap_or_default().filtrage.autorises);
+    }
+    *g = f;
 }
 
 fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {

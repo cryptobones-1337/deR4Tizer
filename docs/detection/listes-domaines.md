@@ -15,7 +15,8 @@ documentaire du 2026-10-25).
   chargé.
 - **Formats acceptés** : hosts (`0.0.0.0 domaine`), domaine seul, `||domaine^` et `@@||domaine^`. Toute autre règle
   (chemin, options `$…`, expressions régulières, règles cosmétiques) est écartée et comptée. Nom en ASCII, deux
-  étiquettes au moins (un nom accentué est attendu en `xn--`).
+  étiquettes au moins (un nom accentué est attendu en `xn--`), jamais un suffixe public de deux étiquettes (`co.uk`,
+  `gouv.fr`, `com.br`…) : une telle règle bloquerait tous les sites sous ce suffixe ; elle est écartée et comptée.
 - **Recherche** : le nom et ses parents (`a.b.exemple.fr` est bloqué par `exemple.fr`), jamais le domaine de premier
   niveau seul ; 10 recherches au plus, le nom lui-même puis les parents les plus courts.
 - **Ordre** : liste de protection, puis autorisations de l'utilisateur, puis exceptions `@@` d'une liste (elles ne lèvent

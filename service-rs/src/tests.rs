@@ -7413,6 +7413,29 @@ fn filtrage_rien_sans_categorie() {
     assert!(lue.filtrage.categories.is_empty());
 }
 
+/// Suffixe public de deux étiquettes : jamais un domaine de liste, ni une autorisation (audit de #160, S160-01) ; un
+/// domaine enregistré sous ce suffixe reste bloquable
+#[test]
+fn filtrage_suffixe_public_ecarte() {
+    use crate::filtrage::{analyser_ligne, normaliser, suffixe_public, Categorie, Filtrage, Ligne, Verdict};
+    for s in ["co.uk", "gouv.fr", "com.br", "gov.uk", "ac.jp", "org.au", "net.nz"] {
+        assert!(suffixe_public(s), "{s}");
+        assert_eq!(normaliser(s), None, "{s}");
+        assert_eq!(analyser_ligne(&format!("||{s}^")), Ligne::Ecartee, "{s}");
+        assert_eq!(analyser_ligne(&format!("@@||{s}^")), Ligne::Ecartee, "{s}");
+        assert_eq!(analyser_ligne(&format!("0.0.0.0 {s}")), Ligne::Ecartee, "{s}");
+    }
+    assert_eq!(analyser_ligne("||pub.co.uk^"), Ligne::Bloque("pub.co.uk".into()));
+    assert!(!suffixe_public("exemple.fr") && !suffixe_public("co.exemple.fr"));
+    let mut f = Filtrage::nouveau(&[]);
+    let l = crate::filtrage::lire_liste("||gouv.fr^\n||pub.co.uk^\n", f.protection());
+    assert_eq!((l.compte.entrees, l.compte.ecartees), (1, 1));
+    assert!(f.ajouter("Essai", Categorie::Publicite, l));
+    assert_eq!(f.decider("www.service.gouv.fr", &[Categorie::Publicite]), Verdict::Relaye);
+    assert!(matches!(f.decider("a.pub.co.uk", &[Categorie::Publicite]), Verdict::Bloque { .. }));
+    assert!(crate::validation::valider(&commande_json(r#"{"Action":"filtrageAutoriser","NomDns":"co.uk"}"#)).is_err());
+}
+
 /// Commandes filtrageAutoriser et filtrageRetirer : administrateurs seulement (comme toute commande), domaine validé
 #[test]
 fn filtrage_commandes_validees() {

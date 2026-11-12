@@ -108,8 +108,24 @@ fn empreinte(s: &str) -> u64 {
     h
 }
 
+/// Première étiquette des suffixes publics de deux étiquettes (`co.uk`, `gouv.fr`, `com.br`…). Une règle qui viserait
+/// un tel suffixe bloquerait, par la recherche des parents, tout un pays ou tous les sites publics : jamais un domaine
+/// (audit de #160, S160-01, l'équivalent pour les noms de la couverture aberrante des listes d'adresses)
+const SUFFIXES_PUBLICS: &[&str] = &[
+    "co", "com", "net", "org", "gov", "gouv", "ac", "edu", "mil", "asso", "ltd", "plc", "sch", "nhs", "gob",
+];
+
+/// Suffixe public de deux étiquettes (pur, testé)
+pub fn suffixe_public(nom: &str) -> bool {
+    match nom.split_once('.') {
+        Some((premiere, reste)) => !reste.contains('.') && SUFFIXES_PUBLICS.contains(&premiere),
+        None => true,
+    }
+}
+
 /// Nom normalisé : minuscules ASCII, sans point final, au moins deux étiquettes, valide au sens du fichier hosts, et
-/// jamais une adresse IP ni un nom de `.arpa`. Un nom internationalisé est attendu déjà en `xn--`
+/// jamais une adresse IP, un nom de `.arpa` ni un suffixe public de deux étiquettes. Un nom internationalisé est attendu
+/// déjà en `xn--`
 pub fn normaliser(nom: &str) -> Option<String> {
     let n = nom.trim();
     let n = n.strip_suffix('.').unwrap_or(n);
@@ -117,7 +133,8 @@ pub fn normaliser(nom: &str) -> Option<String> {
         return None;
     }
     let n = n.to_ascii_lowercase();
-    if !n.contains('.') || n.parse::<std::net::IpAddr>().is_ok() || n.ends_with(".arpa") || !crate::validation::nom_domaine_valide(&n) {
+    if !n.contains('.') || n.parse::<std::net::IpAddr>().is_ok() || n.ends_with(".arpa") || suffixe_public(&n)
+        || !crate::validation::nom_domaine_valide(&n) {
         return None;
     }
     Some(n)
