@@ -23,6 +23,7 @@ mod api;
 mod apprentissage;
 mod commun;
 mod defender;
+mod dns_surveillance;
 mod evenements;
 mod execution;
 mod export;

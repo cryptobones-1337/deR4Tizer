@@ -445,6 +445,40 @@ impl Moniteur {
                 }
             }).unwrap();
         }
+        // Serveurs DNS des cartes (phase 7, PR 7.1, DNS-002) : relevé toutes les 60 s, hors du verrou ; le premier relevé
+        // sert de référence, sans alerte ; une lecture impossible rend la collecte indisponible et garde la référence
+        {
+            let p = partage.clone();
+            std::thread::Builder::new().name("dns".into()).spawn(move || {
+                let mut precedent: Option<Vec<crate::dns_surveillance::CarteDns>> = None;
+                while !p.arret.load(Ordering::Relaxed) {
+                    match crate::dns_surveillance::releve() {
+                        Ok(cartes) => {
+                            collectes::succes(Collecte::ConfigDns);
+                            if let Some(avant) = &precedent {
+                                for c in crate::dns_surveillance::changements_dns(avant, &cartes) {
+                                    match c {
+                                        crate::dns_surveillance::Constat::Alerte(a) => p.alertes_externes.lock().unwrap().push(a),
+                                        crate::dns_surveillance::Constat::Evenement(texte) => crate::siem::enregistrer(crate::siem::Evenement {
+                                            heure: commun::maintenant(), source: "dns".into(), type_: "serveur-dns".into(), niveau: "Info".into(),
+                                            message: collectes::borner(&texte), ..Default::default()
+                                        }),
+                                    }
+                                }
+                            }
+                            precedent = Some(cartes);
+                        }
+                        Err(e) => collectes::echec(Collecte::ConfigDns, &e),
+                    }
+                    for _ in 0..60 {
+                        if p.arret.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                }
+            }).unwrap();
+        }
         // Avant toute publication, un état provisoire tiré du seul drapeau, sans requête au pare-feu : le service doit se
         // déclarer démarré en 30 s, et le pare-feu peut tarder juste après le démarrage de Windows (deux installations en
         // échec 1920 en VM depuis la PR 6.5). Le fil « sante » lit l'état effectif dès son premier tour

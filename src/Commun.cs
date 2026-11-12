@@ -90,6 +90,7 @@ namespace DeR4Tizer
             { "Extensions", "extensions de navigateur non vues" }, { "Peripheriques", "usage de la caméra et du micro non vu" },
             { "CaptureTrafic", "trafic non analysé (modules expérimentaux)" }, { "CaptureReseauLocal", "réseau local non analysé (module expérimental)" },
             { "Sessions", "interface de deR4Tizer non surveillée dans les sessions ouvertes" },
+            { "ConfigDns", "changement de serveur DNS des cartes non vu" },
         };
 
         public static string Consequence(string id)

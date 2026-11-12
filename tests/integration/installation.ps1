@@ -304,7 +304,7 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     $inconnues = @($c.Values | Where-Object { $_.Etat -eq 'Inconnue' } | ForEach-Object { $_.Id })
     if ($inconnues.Count) { return "collecte(s) jamais notée(s) : $($inconnues -join ', ') ; $vu" }
     foreach ($id in 'Connexions', 'Processus', 'JournalDefender', 'EtatDefender', 'JournalSecurite', 'JournalSysteme', 'JournalParefeu', 'JournalDns', 'Sessions',
-                    'Persistance', 'Leurres', 'Extensions', 'Peripheriques', 'CaptureTrafic') {
+                    'Persistance', 'Leurres', 'Extensions', 'Peripheriques', 'CaptureTrafic', 'ConfigDns') {
         if (-not $c[$id]) { return "collecte $id absente ; $vu" }
         if ($c[$id].Etat -ne 'Active') { return "collecte $id : $($c[$id].Etat) ($($c[$id].Raison)) ; $vu" }
     }
@@ -328,6 +328,44 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     if (-not $sysmon -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul) non dégradée : $($deg -join ', ')" }
     Write-Host "  collectes : $vu"
     Write-Host "  sans collecte : $($sans -join ', ')"
+    $true
+}
+
+# DNS-002 (phase 7, PR 7.1) : témoin retenu, serveur DNS statique réglé sur la carte de la VM (adresse de documentation,
+# RFC 5737), réseau inchangé : alerte en deux relevés au plus ; témoin écarté, retour au DHCP : aucune alerte de plus.
+# La carte est remise dans son état d'origine (la VM est de toute façon remise à son instantané après le scénario).
+# Toujours compter par @(Alertes-Dns2).Count : la sortie d'une fonction est déroulée, et sous Windows PowerShell 5.1
+# une alerte seule (PSCustomObject) n'a pas de .Count ($null, et $null -le 0 est vrai) : la première alerte n'était
+# jamais vue (premier passage de #159)
+function Alertes-Dns2 {
+    @(Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } |
+        Where-Object { $_.Regle -eq 'DNS-002' })
+}
+Verifier 'DNS-002 : DNS statique réglé sur la carte de la VM, réseau inchangé : alerte ; retour au DHCP : aucune alerte' {
+    $carte = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object -First 1
+    if (-not $carte) { return 'aucune carte physique active' }
+    $cle = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($carte.InterfaceGuid)"
+    $origine = [string](Get-ItemProperty $cle -Name NameServer -ErrorAction SilentlyContinue).NameServer
+    $avant = @(Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses
+    $n0 = @(Alertes-Dns2).Count
+    # Laisse au fil « dns » le temps d'un relevé de référence après les changements précédents
+    Start-Sleep 70
+    try {
+        Set-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -ServerAddresses '192.0.2.53'
+        $fin = (Get-Date).AddSeconds(150)
+        do { Start-Sleep 5; $n1 = @(Alertes-Dns2).Count } while ($n1 -le $n0 -and (Get-Date) -lt $fin)
+        if ($n1 -le $n0) { return "aucune alerte DNS-002 en 150 s (carte $($carte.Name), DNS avant : $($avant -join ', '))" }
+        $a = @(Alertes-Dns2) | Select-Object -Last 1
+        Write-Host "  alerte : $($a.Raisons)"
+        if ($a.Raisons -notmatch '192\.0\.2\.53') { return "alerte sans le nouveau serveur : $($a.Raisons)" }
+    } finally {
+        if ($origine.Trim()) { Set-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -ServerAddresses ($origine -split '[, ]+' | Where-Object { $_ }) }
+        else { Set-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -ResetServerAddresses }
+    }
+    if ($origine.Trim()) { Write-Host "  témoin écarté non applicable : DNS statique d'origine ($origine), sa remise est un changement statique" ; return $true }
+    Start-Sleep 140
+    $n2 = @(Alertes-Dns2).Count
+    if ($n2 -ne $n1) { return "retour au DHCP : $($n2 - $n1) alerte(s) DNS-002 de plus" }
     $true
 }
 
