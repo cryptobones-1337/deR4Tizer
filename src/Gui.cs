@@ -1259,6 +1259,10 @@ namespace DeR4Tizer
         public void RejouerPilote(string cle) { if (pilote != null) pilote(cle); }
         // Repli au premier geste (B1, relecture de #156, constat 2) : cette fenêtre se montre comme interface classique
         public void MontrerClassique() { Montrer(null, null); }
+
+        // Seconde instance (B2) : comme « Ouvrir » de la zone de notification (la coquille si elle est rattachée, sinon
+        // cette fenêtre)
+        public void MontrerDemande() { if (!IsDisposed) Montrer(null, null); }
         // Repli (B1) : la nouvelle interface n'a pas pu démarrer, l'interface classique le dit dans la zone de notification
         public void Signaler(string texte) { icone.ShowBalloonTip(8000, "deR4Tizer", texte, ToolTipIcon.Warning); }
         // Repli (B1) : la fenêtre cachée du pilote, créée avant l'échec, est libérée (icône, minuteurs) avant d'ouvrir
@@ -2226,12 +2230,61 @@ namespace DeR4Tizer
         // du dossier) ; avant, l'interface classique prend le relais
         static bool piloteDemarre;
 
+        // Seconde instance (B2, dossier de la bascule) : événement de la session, sans aucune donnée ; la première instance
+        // se montre comme sur « Ouvrir ». Un événement précréé par un autre programme avec des droits fermés ramène au
+        // comportement muet d'avant ; ouvert, il ne permet que de montrer la fenêtre
+        const string EvenementMontrer = @"Local\deR4Tizer.Interface.Montrer";
+
+        // Décision pure : une seconde instance ne signale la première que sur un geste de l'utilisateur (menu Démarrer,
+        // raccourci, --page) ; jamais la clé Run ni la tâche de relance (--cache, --relance : la fenêtre surgirait toutes
+        // les 5 min), ni l'assistant élevé, ni un dossier de test, ni --classique. La page demandée est ignorée (question 5)
+        internal static bool SignalerPremiere(string[] args)
+        {
+            foreach (var a in new[] { "--cache", "--relance", "--commande-fichier", "--dossier", "--classique" })
+                if (Array.IndexOf(args, a) >= 0) return false;
+            return true;
+        }
+
+        [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
+
+        static void SignalerInstance()
+        {
+            try
+            {
+                using (var e = EventWaitHandle.OpenExisting(EvenementMontrer))
+                {
+                    // La première instance pourra passer au premier plan (sinon Windows ne fait que clignoter sa barre)
+                    AllowSetForegroundWindow(-1);
+                    e.Set();
+                }
+            }
+            catch { }
+        }
+
+        // Première instance : attend le signal sur un fil d'arrière-plan et montre la fenêtre sur le fil de l'interface
+        static void Ecouter(Fenetre f)
+        {
+            EventWaitHandle e;
+            try { e = new EventWaitHandle(false, EventResetMode.AutoReset, EvenementMontrer); }
+            catch { return; }
+            var fil = new Thread(() =>
+            {
+                while (true)
+                {
+                    e.WaitOne();
+                    try { if (f.IsDisposed) return; f.BeginInvoke((Action)f.MontrerDemande); } catch { if (f.IsDisposed) return; }
+                }
+            }) { IsBackground = true, Name = "deR4Tizer.Montrer" };
+            fil.Start();
+        }
+
         // Pilote WPF (U1) dans une méthode à part, jamais intégrée à Main : les assemblys WPF ne sont chargées que si la
         // coquille est lancée, jamais pour l'assistant élevé (--commande-fichier) ni pour --classique (docs/roadmap/interface.md)
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         static int LancerPilote(bool cache)
         {
             var ancienne = new Fenetre(true);
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier") < 0) Ecouter(ancienne);
             try { return LancerCoquille(ancienne, cache); }
             catch { if (!piloteDemarre) ancienne.Liberer(); throw; }
         }
@@ -2338,16 +2391,18 @@ namespace DeR4Tizer
             // Une seule interface à la fois, sauf pour un dossier de données de test
             using (new Mutex(true, i >= 0 ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier))
             {
-                if (!premier) return 0;
+                // Seconde instance (B2) : signale la première sur un geste de l'utilisateur, puis sort
+                if (!premier) { if (SignalerPremiere(args)) SignalerInstance(); return 0; }
                 // Bascule (B1) : la coquille WPF est l'interface par défaut ; la fenêtre d'aujourd'hui reste cachée (zone de
                 // notification, rafraîchissement, commandes). --classique : l'interface d'avant la refonte
-                if (Mode(args) == "classique") { Application.Run(new Fenetre(args.Contains("--cache"))); return 0; }
+                if (Mode(args) == "classique") { var classique = new Fenetre(args.Contains("--cache")); if (i < 0) Ecouter(classique); Application.Run(classique); return 0; }
                 try { return LancerPilote(args.Contains("--cache")); }
                 catch (Exception e)
                 {
                     if (piloteDemarre) throw;
                     // WPF ou la coquille n'a pas pu démarrer : l'interface classique prend le relais et le dit
                     var repli = new Fenetre(args.Contains("--cache"));
+                    if (i < 0) Ecouter(repli);
                     repli.Signaler((L.En ? "The new interface could not start; the classic interface is shown instead. " : "La nouvelle interface n'a pas pu démarrer ; l'interface classique la remplace. ") + Canal.Visible(e.GetType().Name));
                     Application.Run(repli);
                 }
