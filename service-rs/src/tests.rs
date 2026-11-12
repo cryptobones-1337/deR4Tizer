@@ -3751,7 +3751,8 @@ fn dns002_statique_change_meme_reseau() {
 #[test]
 fn dns002_changement_de_reseau_sans_alerte() {
     let avant = [carte_dns("{A}", 71, "192.0.2.1", &["192.0.2.53"], true)];
-    let reseau = [carte_dns("{A}", 71, "203.0.113.1", &["203.0.113.53"], true)];
+    // Nouveau réseau, DNS donné par son DHCP (un DNS statique qui change alerte, même avec une autre passerelle)
+    let reseau = [carte_dns("{A}", 71, "203.0.113.1", &["203.0.113.53"], false)];
     let c = crate::dns_surveillance::changements_dns(&avant, &reseau);
     assert!(alertes_dns(&c).is_empty());
     assert_eq!(c.len(), 1, "un événement");
@@ -3775,6 +3776,32 @@ fn dns002_carte_vpn_sans_alerte() {
         assert_eq!(c.len(), 1, "type {t} : événement");
     }
     assert!(!crate::dns_surveillance::physique(131) && crate::dns_surveillance::physique(6) && crate::dns_surveillance::physique(71));
+}
+
+/// Serveur statique changé en même temps qu'une passerelle : alerte quand même, la passerelle citée (audit de #159, S159-01)
+#[test]
+fn dns002_statique_change_avec_passerelle() {
+    let avant = [carte_dns("{A}", 6, "192.0.2.1", &["192.0.2.53"], false)];
+    let apres = [carte_dns("{A}", 6, "192.0.2.254", &["198.51.100.7"], true)];
+    let c = crate::dns_surveillance::changements_dns(&avant, &apres);
+    let a = alertes_dns(&c);
+    assert_eq!(a.len(), 1);
+    assert!(a[0].raisons.contains("passerelle changée au même moment : 192.0.2.1 → 192.0.2.254"), "{}", a[0].raisons);
+}
+
+/// DNS-002 jamais appris ni adouci par l'apprentissage ; une exception ne couvre que le jeu de serveurs de l'alerte
+/// (relecture de #159, constat 1)
+#[test]
+fn dns002_jamais_appris_exception_par_serveurs() {
+    let avant = [carte_dns("{A}", 6, "192.0.2.1", &["192.0.2.53"], false)];
+    let vers = |dns: &[&str]| {
+        let c = crate::dns_surveillance::changements_dns(&avant, &[carte_dns("{A}", 6, "192.0.2.1", dns, true)]);
+        match c.into_iter().next() { Some(crate::dns_surveillance::Constat::Alerte(a)) => a, _ => panic!("alerte attendue") }
+    };
+    let (a1, a2) = (vers(&["198.51.100.7"]), vers(&["203.0.113.9"]));
+    assert!(crate::apprentissage::signal_fort(&a1), "jamais appris");
+    assert_ne!(crate::apprentissage::signature(&a1), crate::apprentissage::signature(&a2), "une exception par jeu de serveurs");
+    assert!(a1.destination.contains("198.51.100.7"), "{}", a1.destination);
 }
 
 /// Lecture impossible : collecte ConfigDns indisponible, jamais « aucun changement » ; DNS-002 couverte par ConfigDns

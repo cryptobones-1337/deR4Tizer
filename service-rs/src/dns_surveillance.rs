@@ -1,6 +1,7 @@
-//! Surveillance des serveurs DNS des cartes du poste (phase 7, PR 7.1, règle DNS-002). Un logiciel malveillant ou une box
-//! compromise qui change le serveur DNS fait passer toutes les résolutions par l'attaquant ; le fichier hosts (SYS-001) ne
-//! le montre pas. Relevé toutes les 60 s, hors du verrou du moniteur : serveurs DNS effectifs, passerelles et type de
+//! Surveillance des serveurs DNS des cartes du poste (phase 7, PR 7.1, règle DNS-002). Un programme qui règle un serveur
+//! DNS statique sur une carte fait passer toutes les résolutions par lui ; le fichier hosts (SYS-001) ne le montre pas.
+//! Limite : une box compromise qui donne un serveur malveillant par le DHCP n'est pas signalée (changement donné par le
+//! réseau : événement seulement). Relevé toutes les 60 s, hors du verrou du moniteur : serveurs DNS effectifs, passerelles et type de
 //! chaque carte active (`GetAdaptersAddresses`), et serveur statique éventuel (`NameServer` du registre, IPv4 et IPv6).
 //! Lecture seule : rien n'est remis en place (décision D7-10 du dossier, ouverte : proposition « jamais automatique »).
 //! Lecture impossible : collecte `ConfigDns` indisponible, jamais « aucun changement ».
@@ -52,16 +53,20 @@ pub fn changements_dns(avant: &[CarteDns], apres: &[CarteDns]) -> Vec<Constat> {
         let quoi = format!("serveurs DNS de la carte « {} » : {} → {}", c.nom, liste(&a.dns), liste(&c.dns));
         if !physique(c.type_carte) {
             l.push(Constat::Evenement(format!("{quoi} (carte virtuelle ou VPN)")));
-        } else if a.passerelles != c.passerelles {
-            l.push(Constat::Evenement(format!("{quoi} (changement de réseau : passerelle {} → {})", liste(&a.passerelles), liste(&c.passerelles))));
         } else if c.statique && !c.dns.is_empty() {
+            // Un serveur réglé à la main ne vient pas du réseau : un changement de passerelle au même moment ne l'explique
+            // pas, il est seulement cité (audit de #159, S159-01). Serveurs dans la destination : une exception « ne plus
+            // alerter » ne couvre que ce jeu de serveurs précis (relecture de #159, constat 1)
+            let reseau = if a.passerelles != c.passerelles { format!(" ; passerelle changée au même moment : {} → {}", liste(&a.passerelles), liste(&c.passerelles)) } else { String::new() };
             l.push(Constat::Alerte(Alerte {
                 regle: crate::regles::DNS_002.into(),
                 id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Alerte".into(), score: 3,
-                processus: "?".into(), destination: format!("carte « {} »", c.nom),
-                raisons: format!("{quoi} : serveur DNS réglé à la main, réseau inchangé. Si ce changement n'est pas voulu (logiciel inconnu, prestataire non prévenu), toutes les résolutions de noms peuvent passer par un tiers : vérifier le réglage DNS de la carte."),
+                processus: "?".into(), destination: format!("carte « {} » → {}", c.nom, liste(&c.dns)),
+                raisons: format!("{quoi} : serveur DNS réglé à la main{reseau}. Si ce changement n'est pas voulu (logiciel inconnu, prestataire non prévenu), toutes les résolutions de noms peuvent passer par un tiers : vérifier le réglage DNS de la carte."),
                 ..Default::default()
             }));
+        } else if a.passerelles != c.passerelles {
+            l.push(Constat::Evenement(format!("{quoi} (changement de réseau : passerelle {} → {})", liste(&a.passerelles), liste(&c.passerelles))));
         } else {
             l.push(Constat::Evenement(format!("{quoi} (donné par le DHCP, réseau inchangé)")));
         }
@@ -105,12 +110,13 @@ pub fn releve() -> Result<Vec<CarteDns>, String> {
     use windows::Win32::Networking::WinSock::AF_UNSPEC;
     let mut l = Vec::new();
     unsafe {
+        // Tampon en mots de 8 octets : la structure lue demande cet alignement (audit de #159, S159-02)
         let mut taille: u32 = 32 * 1024;
-        let mut tampon = vec![0u8; taille as usize];
+        let mut tampon = vec![0u64; (taille as usize).div_ceil(8)];
         let drapeaux = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_GATEWAYS;
         let mut r = GetAdaptersAddresses(AF_UNSPEC.0 as u32, drapeaux, None, Some(tampon.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH), &mut taille);
         if r == 111 {
-            tampon = vec![0u8; taille as usize];
+            tampon = vec![0u64; (taille as usize).div_ceil(8)];
             r = GetAdaptersAddresses(AF_UNSPEC.0 as u32, drapeaux, None, Some(tampon.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH), &mut taille);
         }
         if r != 0 {

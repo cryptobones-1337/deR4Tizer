@@ -238,16 +238,17 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 
 ### DNS-002 : serveur DNS changé sur une carte du poste
 - **Code** : `dns_surveillance.rs` (`releve`, `changements_dns`) ; fil « dns » de `moniteur.rs` (phase 7, PR 7.1).
-- **Justification** : un logiciel malveillant ou une box compromise qui change le serveur DNS du poste fait passer
-  toutes les résolutions par l'attaquant (faux site de la banque, faux portail de la mairie) ; le fichier hosts (SYS-001)
-  ne le montre pas.
+- **Justification** : un programme qui règle un serveur DNS statique sur une carte du poste fait passer toutes les
+  résolutions par lui (faux site de la banque, faux portail de la mairie) ; le fichier hosts (SYS-001) ne le montre pas.
+- **Limite** : une box compromise qui donne un serveur malveillant par le DHCP n'est pas signalée : un changement donné
+  par le réseau n'est qu'un événement (relecture de #159, constat 2).
 - **Télémétrie** : serveurs DNS effectifs, passerelles et type de chaque carte active (`GetAdaptersAddresses`), et
   serveur statique éventuel (`NameServer` sous `Tcpip\Parameters\Interfaces\{GUID}` et son équivalent `Tcpip6`) ; relevé
   toutes les 60 s, hors du verrou du moniteur ; le premier relevé sert de référence, sans alerte.
 - **Décision** (`changements_dns(avant, apres)`, pure ; seules les cartes dont les serveurs DNS changent sont examinées) :
-  - serveur **statique** ajouté ou changé sur une carte physique (Ethernet, Wi-Fi), réseau inchangé (même
-    passerelle) : alerte ;
-  - changement qui accompagne un changement de réseau (autre passerelle) : événement du mini-SIEM (`dns`,
+  - serveur **statique** ajouté ou changé sur une carte physique (Ethernet, Wi-Fi) : alerte, même si la passerelle
+    change au même moment (un serveur réglé à la main ne vient pas du réseau ; la passerelle est citée) ;
+  - changement non statique qui accompagne un changement de réseau (autre passerelle) : événement du mini-SIEM (`dns`,
     `serveur-dns`) seulement (portable qui change de Wi-Fi) ;
   - changement donné par le DHCP sur le même réseau : événement seulement ;
   - cartes virtuelles et VPN : événement seulement ;
@@ -257,10 +258,12 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   automatiquement est la décision D7-10, ouverte.
 - **Si elle manque** : `GetAdaptersAddresses` en échec : collecte `ConfigDns` indisponible, jamais « aucun changement » ;
   la référence est gardée, un changement fait pendant la panne est signalé au retour.
-- **Niveau** : Alerte.
+- **Niveau** : Alerte. Signal fort : jamais appris ni adouci par l'apprentissage ; une exception « ne plus alerter »
+  ne couvre que le jeu de serveurs de l'alerte (cité dans la destination).
 - **Faux positifs attendus** : un utilisateur ou un prestataire qui règle un DNS à la main (alerte juste, mais
   voulue) ; un logiciel de contrôle parental ou un VPN qui modifie la carte physique.
-- **Tests** : `dns002_statique_change_meme_reseau` (positif, Ethernet et Wi-Fi) ; `dns002_changement_de_reseau_sans_alerte`
+- **Tests** : `dns002_statique_change_meme_reseau` (positif, Ethernet et Wi-Fi), `dns002_statique_change_avec_passerelle`,
+  `dns002_jamais_appris_exception_par_serveurs` ; `dns002_changement_de_reseau_sans_alerte`
   (autre passerelle, DHCP sur le même réseau, DNS inchangé, carte nouvelle ou disparue), `dns002_carte_vpn_sans_alerte`,
   `dns002_lecture_impossible_collecte_indisponible` (négatifs) ; en VM (3a), témoin retenu (DNS statique réglé sur la
   carte de la VM, réseau inchangé : alerte) et témoin écarté (retour au DHCP : pas d'alerte).

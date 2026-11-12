@@ -122,8 +122,11 @@ pub fn signal_fort(a: &Alerte) -> bool {
     // Constats de santé (SAN-*, phase 4) : jamais appris, sinon une collecte muette pendant l'apprentissage ne serait
     // plus jamais signalée. Actions de réponse (REP-*, phase 6) : une relance ou une isolation invérifiable ne tombe
     // jamais en « Info » (audit de #121, S121-01)
+    // DNS-002 (phase 7) : un serveur DNS changé n'est jamais appris, sinon un premier changement pendant l'apprentissage
+    // ferait taire tous les suivants sur la carte (relecture de #159, constat 1)
     a.regle.starts_with("SAN-")
         || a.regle.starts_with("REP-")
+        || a.regle == crate::regles::DNS_002
         || a.destination.starts_with("IDS :")
         || ["télécharge du code", "lolbin", "débogage à distance", "suppression des sauvegardes", "macro ou exploit", crate::persistance::REMARQUE_ANOMALIE_TACHES].iter().any(|m| r.contains(m))
 }
