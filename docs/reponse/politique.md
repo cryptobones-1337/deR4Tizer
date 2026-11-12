@@ -27,10 +27,11 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 
 Tout le reste, IPS compris, est au niveau 2 au plus.
 
-## Filtrage par nom de domaine (phase 7, prévu)
+## Filtrage par nom de domaine (phase 7, moteur livré, blocage prévu)
 
-Rien dans le code aujourd'hui (dossier de la phase 7). Quand il viendra, le blocage d'un nom de domaine par le filtrage
-sera une **action automatique de niveau 2** : désactivée par défaut, activée sciemment par un administrateur, en deux
+Le moteur de filtrage est dans le code (PR 7.2, `filtrage.rs`), **sans effet réseau** : il charge les listes des
+catégories actives (aucune par défaut) et décide pour un nom, mais rien ne le consulte encore. Quand le résolveur local
+viendra (PR 7.3, 7.4), le blocage d'un nom de domaine par le filtrage sera une **action automatique de niveau 2** : désactivée par défaut, activée sciemment par un administrateur, en deux
 activations séparées (« Navigation sécurisée », « Publicités et pistage »). Il ne s'ajoute pas au niveau 3.
 
 Les lignes marquées « D7-x » sont des propositions du dossier de la phase 7 ; ces décisions restent ouvertes et

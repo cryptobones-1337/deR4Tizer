@@ -55,6 +55,9 @@ pub struct Partage {
     /// Adresses à bloquer demandées par l'IPS : (IP, raison)
     pub blocages_ips: Arc<Mutex<Vec<(String, String)>>>,
     pub menaces: RwLock<Menaces>,
+    /// Filtrage par nom de domaine (phase 7, PR 7.2) : listes chargées, protection, autorisations ; consulté par le
+    /// résolveur local à partir de 7.3, aucun effet réseau avant
+    pub filtrage: RwLock<crate::filtrage::Filtrage>,
     pub defender: Mutex<EtatDefender>,
     pub baseline_occupee: AtomicBool,
     pub arret: AtomicBool,
@@ -143,6 +146,7 @@ impl Moniteur {
             alertes_externes: Arc::new(Mutex::new(Vec::new())),
             blocages_ips: Arc::new(Mutex::new(Vec::new())),
             menaces: RwLock::new(Menaces::charger(&HashMap::new())),
+            filtrage: RwLock::new(Default::default()),
             defender: Mutex::new(EtatDefender::default()),
             baseline_occupee: AtomicBool::new(false),
             arret: AtomicBool::new(false),
@@ -592,6 +596,23 @@ impl Moniteur {
                         p.alertes_externes.lock().unwrap().extend(constats);
                     }
                     for _ in 0..crate::sante::PERIODE_S {
+                        if p.arret.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                }
+            }).unwrap();
+        }
+        // Listes du filtrage (phase 7, PR 7.2) : toutes les heures, pour les catégories actives seulement ; rien sans
+        // catégorie active ; bilan journalisé quand il change. Aucun effet réseau : rien ne consulte encore ces listes
+        {
+            let p = partage.clone();
+            std::thread::Builder::new().name("filtrage".into()).spawn(move || {
+                let mut dernier = String::new();
+                while !p.arret.load(Ordering::Relaxed) {
+                    mettre_a_jour_filtrage(&p, &mut dernier);
+                    for _ in 0..3600 {
                         if p.arret.load(Ordering::Relaxed) {
                             return;
                         }
@@ -1355,6 +1376,42 @@ impl Moniteur {
                 let _ = commun::ecrire("config.json", &self.config);
                 Reponse::ok("Réglages de mise à jour enregistrés.")
             }
+            // Filtrage (phase 7, PR 7.2) : domaine jamais bloqué, et ses sous-domaines. Refusé en échec de la protection
+            // du dossier : la configuration en mémoire est alors celle par défaut, l'enregistrer écraserait la légitime
+            "filtrageAutoriser" | "filtrageRetirer" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
+                }
+                let Some(nom) = c.nom_dns.as_deref().and_then(crate::filtrage::normaliser) else {
+                    return Reponse::erreur("Nom de domaine invalide.");
+                };
+                let mut l = self.config.filtrage.autorises.clone();
+                let message = if action == "filtrageAutoriser" {
+                    if l.contains(&nom) {
+                        return Reponse::ok(format!("{nom} est déjà autorisé."));
+                    }
+                    if l.len() >= crate::filtrage::MAX_AUTORISES {
+                        return Reponse::erreur(format!("{} domaines autorisés au plus : retirez-en d'abord.", crate::filtrage::MAX_AUTORISES));
+                    }
+                    l.push(nom.clone());
+                    format!("{nom} et ses sous-domaines ne seront jamais bloqués par le filtrage.")
+                } else {
+                    let avant = l.len();
+                    l.retain(|x| x != &nom);
+                    if l.len() == avant {
+                        return Reponse::erreur(format!("{nom} n'est pas dans les domaines autorisés."));
+                    }
+                    format!("{nom} n'est plus dans les domaines autorisés.")
+                };
+                let ancienne = std::mem::replace(&mut self.config.filtrage.autorises, l);
+                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                    self.config.filtrage.autorises = ancienne;
+                    return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
+                }
+                partage.filtrage.write().unwrap().autoriser(&self.config.filtrage.autorises);
+                commun::journal(&format!("filtrage : {message}"));
+                Reponse::ok(message)
+            }
             "autoriserLecteur" => match crate::protection::autoriser(c.valeur.as_deref().unwrap_or("")) {
                 Ok(nom) => Reponse::ok(format!("Le compte {nom} peut maintenant lire les données de deR4Tizer.")),
                 Err(e) => Reponse::erreur(e),
@@ -1986,6 +2043,25 @@ fn message_coupure(n: usize) -> String {
 
 fn est_telemetrie(nom: &str) -> bool {
     commun::telemetrie().iter().flat_map(|(_, d)| d.iter()).any(|d| nom.eq_ignore_ascii_case(d) || nom.to_lowercase().ends_with(&format!(".{d}")))
+}
+
+/// Filtrage : téléchargement puis chargement, hors du verrou du moniteur. En échec de la protection du dossier de
+/// données : configuration ignorée, rien téléchargé ni chargé
+fn mettre_a_jour_filtrage(p: &Arc<Partage>, dernier: &mut String) {
+    let echec = commun::echec_protection().is_some();
+    let config: commun::Config = if echec { Default::default() } else { commun::lire("config.json").unwrap_or_default() };
+    let actives = crate::filtrage::categories_actives(&config);
+    if !echec {
+        let base = crate::filtrage::Filtrage::nouveau(&crate::filtrage::hotes_proteges(&config));
+        let _ = crate::filtrage::telecharger(&actives, base.protection());
+    }
+    let f = crate::filtrage::charger(&config, echec);
+    let r = crate::filtrage::resume(&actives, &f);
+    if r != *dernier {
+        commun::journal(&r);
+        *dernier = r;
+    }
+    *p.filtrage.write().unwrap() = f;
 }
 
 fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {

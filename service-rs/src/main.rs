@@ -27,6 +27,7 @@ mod dns_surveillance;
 mod evenements;
 mod execution;
 mod export;
+mod filtrage;
 mod gpo;
 mod hygiene;
 mod incidents;
