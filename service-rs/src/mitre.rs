@@ -45,7 +45,9 @@ const REGLES: &[(&[&str], &str, &str)] = &[
     (&["extension"], "T1176 Extension de navigateur",
      "Si vous n'avez pas installé cette extension, supprimez-la depuis la page des extensions du navigateur."),
     (&["caméra"], "T1125 Capture vidéo", "Si vous ne reconnaissez pas ce programme, fermez-le et mettez-le en quarantaine."),
-    (&["micro"], "T1123 Capture audio", "Si vous ne reconnaissez pas ce programme, fermez-le et mettez-le en quarantaine."),
+    // « utilise le micro » (VIE-001) et non « micro » seul, qui se trouve aussi dans « microsoft » : toute destination de
+    // Microsoft recevait la technique T1123 et son conseil (vu sur les captures de l'interface, 2026-11-12)
+    (&["utilise le micro"], "T1123 Capture audio", "Si vous ne reconnaissez pas ce programme, fermez-le et mettez-le en quarantaine."),
     (&["fichier hosts"], "T1565 Manipulation de données", "Ouvrez le fichier hosts (C:\\Windows\\System32\\drivers\\etc\\hosts) et retirez les lignes que vous n'avez pas ajoutées."),
     (&["baseline"], "T1562 Affaiblissement des défenses", "Un réglage de sécurité a été défait. Réappliquez-le depuis l'onglet Baseline et cherchez quel programme l'a modifié."),
     (&["ip directe"], "T1071 Communication sans résolution DNS", "Les malwares contactent souvent une IP en dur. Vérifiez le programme ; isolez-le s'il est inconnu."),
