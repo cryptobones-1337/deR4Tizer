@@ -369,6 +369,57 @@ Verifier 'DNS-002 : DNS statique réglé sur la carte de la VM, réseau inchang�
     $true
 }
 
+# Filtrage (phase 7, PR 7.2) : moteur sans effet réseau. Liste synthétique (domaines .test, RFC 2606) posée comme copie
+# récente d'EasyPrivacy (rien n'est retéléchargé avant 12 h), catégorie « publicite » activée : liste chargée et
+# comptée (formats, exception, règles écartées, domaine protégé ignoré) ; autorisations par le canal ; aucune carte
+# modifiée, aucune écoute sur le port 53. Configuration d'origine remise ensuite
+Verifier 'Filtrage (7.2) : liste synthétique chargée et comptée, autorisations par le canal, aucun effet réseau' {
+    $fConfig = Join-Path $script:Donnees 'config.json'
+    $configAvant = if (Test-Path $fConfig) { Get-Content $fConfig -Raw -Encoding UTF8 } else { $null }
+    $cartes = { (Get-DnsClientServerAddress | Sort-Object InterfaceIndex, AddressFamily | ForEach-Object { "$($_.InterfaceIndex)/$($_.AddressFamily)=$($_.ServerAddresses -join ',')" }) -join ' ; ' }
+    $dnsAvant = & $cartes
+    try {
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $script:Donnees 'filtrage')
+        Poser-EnAdministrateur 'filtrage\EasyPrivacy.txt' "! liste de test`n||pisteur.test^`n0.0.0.0 pub.test`n@@||ok.pisteur.test^`n||regle.test^`$third-party`n##.encart`n||windowsupdate.com^`n"
+        $o = if ($configAvant) { $configAvant | ConvertFrom-Json } else { [pscustomobject]@{} }
+        $o | Add-Member -Force -NotePropertyName Filtrage -NotePropertyValue ([pscustomobject]@{ Categories = @('publicite'); Autorises = @() })
+        [IO.File]::WriteAllText($fConfig, ($o | ConvertTo-Json -Depth 8 -Compress), (New-Object Text.UTF8Encoding $false))
+        icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        $null = Redemarrer-Service
+        $attendu = 'EasyPrivacy : 2 domaine(s), 1 exception(s), 2 règle(s) écartée(s), 1 domaine(s) protégé(s) ignoré(s)'
+        $fin = (Get-Date).AddSeconds(240)
+        do { Start-Sleep 5; $l = Journal 'filtrage : catégories actives' 1 } while ($l -notlike "*$attendu*" -and (Get-Date) -lt $fin)
+        if ($l -notlike "*$attendu*") { return "bilan attendu absent en 240 s : « $l » ; $(Journal 'filtrage' 3)" }
+        Write-Host "  $l"
+        $r = Commande '{"Action":"filtrageAutoriser","NomDns":"Ok.Pisteur.Test."}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "autorisation refusée : $($r.Message)" }
+        $c = Get-Content $fConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (@($c.Filtrage.Autorises) -notcontains 'ok.pisteur.test') { return "autorisation absente de config.json : $($c.Filtrage | ConvertTo-Json -Compress)" }
+        $r = Commande '{"Action":"filtrageAutoriser","NomDns":"test"}' | ConvertFrom-Json
+        if ($r.Ok) { return 'domaine de premier niveau seul accepté' }
+        $r = Commande '{"Action":"filtrageRetirer","NomDns":"ok.pisteur.test"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "retrait refusé : $($r.Message)" }
+        $r = Commande '{"Action":"filtrageRetirer","NomDns":"ok.pisteur.test"}' | ConvertFrom-Json
+        if ($r.Ok) { return 'retrait d''un domaine absent accepté' }
+        $c = Get-Content $fConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (@($c.Filtrage.Autorises).Count -ne 0 -or @($c.Filtrage.Categories) -notcontains 'publicite') { return "config.json après retrait : $($c.Filtrage | ConvertTo-Json -Compress)" }
+        $dnsApres = & $cartes
+        if ($dnsApres -ne $dnsAvant) { return "serveurs DNS des cartes modifiés : $dnsAvant → $dnsApres" }
+        $svc = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        $ecoute = @(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $svc) +
+            @(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $svc)
+        if ($ecoute.Count) { return 'le service écoute sur le port 53' }
+        $true
+    } finally {
+        if ($null -ne $configAvant) {
+            [IO.File]::WriteAllText($fConfig, $configAvant, (New-Object Text.UTF8Encoding $false))
+            icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        } else { Remove-Item $fConfig -Force -ErrorAction SilentlyContinue }
+        Remove-Item (Join-Path $script:Donnees 'filtrage') -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Redemarrer-Service
+    }
+}
+
 Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL-001 sans collecte' {
     # Récente : le service ne la retélécharge pas ; lue au premier tour du fil « contrôles »
     New-Item -ItemType Directory -Force (Join-Path $script:Donnees 'menaces') | Out-Null

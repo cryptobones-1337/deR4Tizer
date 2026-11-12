@@ -191,6 +191,21 @@ pub struct Config {
     pub notifications: ConfigNotifications,
     #[serde(deserialize_with = "nul_par_defaut")]
     pub maj: ConfigMaj,
+    /// Filtrage par nom de domaine (phase 7) : catégories actives (vide par défaut : rien n'est téléchargé ni bloqué)
+    /// et domaines autorisés par l'utilisateur
+    #[serde(deserialize_with = "nul_par_defaut")]
+    pub filtrage: ConfigFiltrage,
+}
+
+/// Filtrage par nom de domaine (phase 7, PR 7.2, `filtrage.rs`). Aucun effet réseau avant le résolveur local (7.3, 7.4)
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct ConfigFiltrage {
+    /// « securite », « publicite » ; noms inconnus ignorés
+    pub categories: Vec<String>,
+    /// Domaines jamais bloqués (et leurs sous-domaines), `filtrage::MAX_AUTORISES` au plus ; commandes
+    /// filtrageAutoriser et filtrageRetirer
+    pub autorises: Vec<String>,
 }
 
 /// Clé d'une commande reçue qui diffère d'une clé connue par la seule casse (« langue » à côté de « Langue ») :
@@ -338,6 +353,7 @@ impl Default for Config {
             listes_restreintes: false,
             notifications: ConfigNotifications::default(),
             maj: ConfigMaj::default(),
+            filtrage: ConfigFiltrage::default(),
         }
     }
 }

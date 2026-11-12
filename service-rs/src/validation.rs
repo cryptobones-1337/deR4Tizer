@@ -22,7 +22,7 @@ pub const ACTIONS: &[&str] = &[
     "verification", "bloquer", "bloquerIp", "debloquer", "toutDebloquer", "config", "reglages", "testerSyslog",
     "notifications", "testerNotifications", "exception", "apprentissage", "majVerifier", "majConfig", "autoriserLecteur",
     "jetonApi", "nouveauJeton", "majMenaces", "tuer", "suspendre", "reprendre", "tuerChaine", "quarantaine", "restaurer",
-    "restaurerRepli", "isolerProgramme", "panique", "baseline", "incident",
+    "restaurerRepli", "isolerProgramme", "panique", "baseline", "incident", "filtrageAutoriser", "filtrageRetirer",
 ];
 
 /// Réglages modifiables par « config »
@@ -221,6 +221,10 @@ pub fn valider(c: &Commande) -> Result<(), String> {
             }
             selection_baseline(c.cible.as_deref().unwrap_or("")).then_some(()).ok_or_else(|| "sélection de baseline invalide".into())
         }
+        // Filtrage (phase 7, PR 7.2) : domaine autorisé ou retiré, deux étiquettes au moins, ASCII (punycode pour un nom
+        // accentué)
+        "filtrageAutoriser" | "filtrageRetirer" => crate::filtrage::normaliser(requis(&c.nom_dns, "NomDns")?).map(|_| ())
+            .ok_or_else(|| "nom de domaine invalide (deux étiquettes au moins, ASCII ; punycode pour un nom accentué)".into()),
         autre => Err(format!("commande inconnue : {autre}")),
     }
 }

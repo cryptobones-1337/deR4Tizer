@@ -7267,3 +7267,198 @@ fn diagnostic_upnp_ancien_cite_la_derniere_liste() {
     assert!(c.texte.contains("dernière liste connue : 1 redirection(s) vers ce PC"), "{}", c.texte);
     assert_ne!(d.verdict, "expose");
 }
+
+// ------------------------------------------------------------ phase 7, PR 7.2 : moteur de filtrage (aucun effet réseau)
+
+fn liste_filtrage(texte: &str, f: &crate::filtrage::Filtrage) -> crate::filtrage::ListeLue {
+    crate::filtrage::lire_liste(texte, f.protection())
+}
+
+/// Domaine et parents : `a.b.pub.test` bloqué par `pub.test` ; jamais le domaine de premier niveau seul ; un nom
+/// allongé d'étiquettes reste bloqué (parents les plus courts) ; catégorie inactive : relayé
+#[test]
+fn filtrage_parent_bloque() {
+    use crate::filtrage::{Categorie, Filtrage, Verdict};
+    let mut f = Filtrage::nouveau(&[]);
+    let l = liste_filtrage("||pub.test^\n", &f);
+    assert!(f.ajouter("Essai", Categorie::Publicite, l));
+    let bloque = |n: &str| f.decider(n, &[Categorie::Publicite]);
+    assert_eq!(bloque("a.b.pub.test"), Verdict::Bloque { categorie: Categorie::Publicite, liste: "Essai".into() });
+    assert_eq!(bloque("PUB.test."), Verdict::Bloque { categorie: Categorie::Publicite, liste: "Essai".into() });
+    assert_eq!(bloque("test"), Verdict::Relaye, "domaine de premier niveau seul");
+    assert_eq!(bloque("autre.test"), Verdict::Relaye);
+    assert_eq!(bloque("pubXtest"), Verdict::Relaye);
+    let long = format!("{}pub.test", "x.".repeat(40));
+    assert!(matches!(bloque(&long), Verdict::Bloque { .. }), "nom allongé : {long}");
+    assert_eq!(f.decider("a.pub.test", &[]), Verdict::Relaye, "aucune catégorie active");
+    assert_eq!(f.decider("a.pub.test", &[Categorie::Securite]), Verdict::Relaye, "autre catégorie");
+    assert!(crate::filtrage::noms_a_chercher(&long).len() <= crate::filtrage::MAX_RECHERCHES);
+    assert_eq!(crate::filtrage::noms_a_chercher("a.b.pub.test"), vec!["a.b.pub.test", "b.pub.test", "pub.test"]);
+}
+
+/// Liste de protection : jamais bloquée, sous-domaines compris, même présente dans une liste (ignorée et comptée) ;
+/// hôtes de la configuration (remontée, mise à jour) protégés aussi
+#[test]
+fn filtrage_protection_prime() {
+    use crate::filtrage::{Categorie, Filtrage, Verdict};
+    let mut f = Filtrage::nouveau(&["ntfy.exemple.test".to_string()]);
+    let l = liste_filtrage("||windowsupdate.com^\n0.0.0.0 x.windowsupdate.com\nwww.msftconnecttest.com\n||ntfy.exemple.test^\n||pub.test^\n", &f);
+    assert_eq!(l.compte.proteges_ignores, 4, "{:?}", l.compte);
+    assert_eq!(l.compte.entrees, 1);
+    assert!(f.ajouter("Essai", Categorie::Securite, l));
+    for n in ["windowsupdate.com", "a.x.windowsupdate.com", "www.msftconnecttest.com", "ntfy.exemple.test", "time.windows.com"] {
+        assert_eq!(f.decider(n, &[Categorie::Securite, Categorie::Publicite]), Verdict::Protege, "{n}");
+    }
+    assert!(matches!(f.decider("pub.test", &[Categorie::Securite]), Verdict::Bloque { .. }));
+    assert_eq!(crate::filtrage::hote_d_url("https://ntfy.exemple.test:8443/sujet?x=1").as_deref(), Some("ntfy.exemple.test"));
+    assert_eq!(crate::filtrage::hote_d_url("http://ntfy.exemple.test/"), None, "https seulement");
+    assert_eq!(crate::filtrage::hote_d_url("https://192.0.2.1/"), None, "adresse IP : rien à protéger par le nom");
+}
+
+/// Autorisation de l'utilisateur : jamais bloqué, sous-domaines compris ; une exception `@@` d'une liste ne lève que
+/// les blocages de sa catégorie
+#[test]
+fn filtrage_autorisation_prime() {
+    use crate::filtrage::{Categorie, Filtrage, Verdict};
+    let mut f = Filtrage::nouveau(&[]);
+    let l = liste_filtrage("||mal.test^\n", &f);
+    assert!(f.ajouter("Sécurité", Categorie::Securite, l));
+    let l = liste_filtrage("||pisteur.test^\n@@||ok.pisteur.test^\n@@||mal.test^\n", &f);
+    assert!(f.ajouter("Pub", Categorie::Publicite, l));
+    let toutes = [Categorie::Securite, Categorie::Publicite];
+    assert_eq!(f.decider("ok.pisteur.test", &toutes), Verdict::Autorise);
+    assert_eq!(f.decider("a.ok.pisteur.test", &toutes), Verdict::Autorise);
+    assert!(matches!(f.decider("x.pisteur.test", &toutes), Verdict::Bloque { categorie: Categorie::Publicite, .. }));
+    assert!(matches!(f.decider("mal.test", &toutes), Verdict::Bloque { categorie: Categorie::Securite, .. }),
+        "l'exception d'une liste de publicité ne lève pas un blocage de sécurité");
+    f.autoriser(&["pisteur.test".to_string(), "mal.test".to_string(), "invalide".to_string()]);
+    assert_eq!(f.decider("x.pisteur.test", &toutes), Verdict::Autorise);
+    assert_eq!(f.decider("mal.test", &toutes), Verdict::Autorise, "l'utilisateur prime sur toute liste");
+    f.autoriser(&[]);
+    assert!(matches!(f.decider("x.pisteur.test", &toutes), Verdict::Bloque { .. }), "autorisation retirée");
+}
+
+/// Sous-ensemble accepté : hosts, domaine seul, `||d^`, `@@||d^` ; toute autre règle écartée et comptée
+#[test]
+fn filtrage_adblock_sous_ensemble() {
+    use crate::filtrage::{analyser_ligne, Ligne};
+    let b = |d: &str| Ligne::Bloque(d.to_string());
+    assert_eq!(analyser_ligne("||pub.test^"), b("pub.test"));
+    assert_eq!(analyser_ligne("  ||Pub.Test^  "), b("pub.test"));
+    assert_eq!(analyser_ligne("@@||ok.pub.test^"), Ligne::Exception("ok.pub.test".into()));
+    assert_eq!(analyser_ligne("0.0.0.0 pub.test"), b("pub.test"));
+    assert_eq!(analyser_ligne("127.0.0.1\tpub.test # commentaire"), b("pub.test"));
+    assert_eq!(analyser_ligne(":: pub.test"), b("pub.test"));
+    assert_eq!(analyser_ligne("pub.test"), b("pub.test"));
+    assert_eq!(analyser_ligne("xn--rvolution-c4a.test"), b("xn--rvolution-c4a.test"));
+    for ecartee in ["||pub.test^$third-party", "||pub.test/chemin^", "/banniere/", "##.pub", "pub.test##.encart",
+        "example.test#@#.pub", "||pub.test^|", "|https://pub.test/", "||*.pub.test^", "/^regex$/", "@@||pub.test^$document",
+        "0.0.0.0 localhost", "0.0.0.0 0.0.0.0", "révolution.test", "pub..test", "a b c", "||test^", "||192.0.2.1^", "||x.in-addr.arpa^"] {
+        assert_eq!(analyser_ligne(ecartee), Ligne::Ecartee, "{ecartee:?}");
+    }
+    for ignoree in ["", "   ", "! Titre : EasyPrivacy", "# commentaire hosts", "[Adblock Plus 2.0]"] {
+        assert_eq!(analyser_ligne(ignoree), Ligne::Ignoree, "{ignoree:?}");
+    }
+    let f = crate::filtrage::Filtrage::nouveau(&[]);
+    let l = liste_filtrage("! en-tête\n||a.test^\n||a.test^\n||b.test^$image\n@@||c.test^\n##.pub\nd.test\n", &f);
+    assert_eq!(l.compte, crate::filtrage::Compte { entrees: 2, exceptions: 1, ecartees: 2, proteges_ignores: 0 });
+}
+
+/// Garde-fou du remplacement : vide, effondrée (moins de la moitié) ou explosée (plus du double) : refusée, copie
+/// précédente gardée
+#[test]
+fn filtrage_liste_effondree_refusee() {
+    use crate::filtrage::remplacement_admis;
+    assert!(!remplacement_admis(1000, 499), "effondrée");
+    assert!(remplacement_admis(1000, 500));
+    assert!(remplacement_admis(1000, 2000));
+    assert!(!remplacement_admis(1000, 2001), "explosée");
+    assert!(!remplacement_admis(1000, 0), "vide");
+    assert!(!remplacement_admis(0, 0), "vide sans copie précédente");
+    assert!(remplacement_admis(0, 5), "première copie");
+    assert!(remplacement_admis(usize::MAX, usize::MAX), "pas de débordement");
+}
+
+/// Total borné : une liste qui ferait dépasser `MAX_ENTREES` n'est pas chargée (rien n'est tronqué)
+#[test]
+fn filtrage_total_borne() {
+    use crate::filtrage::{Categorie, Compte, Filtrage, ListeLue, MAX_ENTREES};
+    let mut f = Filtrage::nouveau(&[]);
+    let grande = ListeLue { bloques: (0..MAX_ENTREES as u64).collect(), exceptions: vec![], compte: Compte::default() };
+    assert!(f.ajouter("Grande", Categorie::Publicite, grande));
+    let une = ListeLue { bloques: vec![u64::MAX], exceptions: vec![], compte: Compte::default() };
+    assert!(!f.ajouter("Une de trop", Categorie::Publicite, une));
+    assert_eq!(f.total(), MAX_ENTREES);
+    assert_eq!(f.bilan.len(), 1);
+}
+
+/// Rien sans catégorie active : aucune liste téléchargée (aucun accès réseau) ni chargée ; noms inconnus ignorés ;
+/// aucune source de sécurité compilée (D7-2), et le bilan le dit
+#[test]
+fn filtrage_rien_sans_categorie() {
+    use crate::filtrage::{categories_actives, resume, telecharger, Categorie, Filtrage, SOURCES};
+    let mut c = crate::commun::Config::default();
+    assert!(categories_actives(&c).is_empty());
+    assert!(telecharger(&[], &[]).is_empty());
+    assert!(resume(&[], &Filtrage::nouveau(&[])).contains("aucune catégorie active"));
+    c.filtrage.categories = vec!["publicite".into(), "inconnue".into(), "publicite".into(), "securite".into()];
+    assert_eq!(categories_actives(&c), vec![Categorie::Securite, Categorie::Publicite]);
+    assert!(SOURCES.iter().all(|s| s.categorie == Categorie::Publicite && s.url.starts_with("https://")));
+    let r = resume(&[Categorie::Securite], &Filtrage::nouveau(&[]));
+    assert!(r.contains("aucune liste de sécurité retenue") && r.contains("aucun effet réseau"), "{r}");
+    // Configuration : la clé Filtrage est connue (une clé de même nom à la casse près serait refusée, AUD6-03)
+    let modele = serde_json::to_value(crate::commun::Config::default()).unwrap();
+    assert!(modele.get("Filtrage").and_then(|f| f.get("Autorises")).is_some());
+    let lue: crate::commun::Config = serde_json::from_str(r#"{"Filtrage":null}"#).unwrap();
+    assert!(lue.filtrage.categories.is_empty());
+}
+
+/// Suffixe public de deux étiquettes : jamais un domaine de liste, ni une autorisation (audit de #160, S160-01) ; un
+/// domaine enregistré sous ce suffixe reste bloquable
+#[test]
+fn filtrage_suffixe_public_ecarte() {
+    use crate::filtrage::{analyser_ligne, normaliser, suffixe_public, Categorie, Filtrage, Ligne, Verdict};
+    for s in ["co.uk", "gouv.fr", "com.br", "gov.uk", "ac.jp", "org.au", "net.nz"] {
+        assert!(suffixe_public(s), "{s}");
+        assert_eq!(normaliser(s), None, "{s}");
+        assert_eq!(analyser_ligne(&format!("||{s}^")), Ligne::Ecartee, "{s}");
+        assert_eq!(analyser_ligne(&format!("@@||{s}^")), Ligne::Ecartee, "{s}");
+        assert_eq!(analyser_ligne(&format!("0.0.0.0 {s}")), Ligne::Ecartee, "{s}");
+    }
+    assert_eq!(analyser_ligne("||pub.co.uk^"), Ligne::Bloque("pub.co.uk".into()));
+    assert!(!suffixe_public("exemple.fr") && !suffixe_public("co.exemple.fr"));
+    let mut f = Filtrage::nouveau(&[]);
+    let l = crate::filtrage::lire_liste("||gouv.fr^\n||pub.co.uk^\n", f.protection());
+    assert_eq!((l.compte.entrees, l.compte.ecartees), (1, 1));
+    assert!(f.ajouter("Essai", Categorie::Publicite, l));
+    assert_eq!(f.decider("www.service.gouv.fr", &[Categorie::Publicite]), Verdict::Relaye);
+    assert!(matches!(f.decider("a.pub.co.uk", &[Categorie::Publicite]), Verdict::Bloque { .. }));
+    assert!(crate::validation::valider(&commande_json(r#"{"Action":"filtrageAutoriser","NomDns":"co.uk"}"#)).is_err());
+}
+
+/// Commandes filtrageAutoriser et filtrageRetirer : administrateurs seulement (comme toute commande), domaine validé
+#[test]
+fn filtrage_commandes_validees() {
+    use crate::validation::{autorisee, valider, Client};
+    for a in ["filtrageAutoriser", "filtrageRetirer"] {
+        assert!(autorisee(a, Client::Administrateur) && !autorisee(a, Client::Autre), "{a}");
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"{a}","NomDns":"ok.pub.test"}}"#))).is_ok(), "{a}");
+        for mauvais in [r#""NomDns":"test""#, r#""NomDns":"révolution.test""#, r#""NomDns":"192.0.2.1""#, r#""NomDns":"""#, r#""Cible":"pub.test""#] {
+            assert!(valider(&commande_json(&format!(r#"{{"Action":"{a}",{mauvais}}}"#))).is_err(), "{a} {mauvais}");
+        }
+    }
+}
+
+/// Parseur de listes : aucune panique, quelle que soit l'entrée
+#[test]
+fn filtrage_torturer() {
+    let f = crate::filtrage::Filtrage::nouveau(&[]);
+    torturer_texte("||pub.test^\n@@||ok.pub.test^\n0.0.0.0 x.test # c\n##.pub\n", &mut |t| {
+        for l in t.lines() {
+            let _ = crate::filtrage::analyser_ligne(l);
+        }
+        let _ = crate::filtrage::lire_liste(t, f.protection());
+        let _ = crate::filtrage::noms_a_chercher(t);
+        let _ = f.decider(t, &[crate::filtrage::Categorie::Publicite]);
+    });
+}

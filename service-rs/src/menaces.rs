@@ -214,15 +214,8 @@ impl Menaces {
                 continue;
             }
             let tmp = f.with_extension("tmp");
-            let resultat = Command::new(crate::natif::curl_exe())
-                .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
-                    "--max-time", "180", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
-                .arg(&tmp)
-                .arg(s.url)
-                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-                .output();
-            match resultat {
-                Ok(sortie) if sortie.status.success() => {
+            match curl_https(s.url, &tmp, 104_857_600) {
+                Ok(()) => {
                     let nouvelle = compter(s, &tmp);
                     let ancienne = if f.exists() { compter(s, &f) } else { 0 };
                     if nouvelle == 0 || (ancienne >= 50 && nouvelle < ancienne / 5) {
@@ -234,14 +227,10 @@ impl Menaces {
                         let _ = fs::rename(&tmp, &f);
                     }
                 }
-                Ok(sortie) => {
-                    let message = String::from_utf8_lossy(&sortie.stderr).trim().to_string();
+                Err(message) => {
                     commun::journal(&format!("liste {} : {}", s.nom, message));
                     statuts.insert(s.nom.to_string(), format!("échec du téléchargement : {message}"));
                     let _ = fs::remove_file(&tmp);
-                }
-                Err(e) => {
-                    statuts.insert(s.nom.to_string(), format!("échec du téléchargement : {e}"));
                 }
             }
         }
@@ -462,6 +451,23 @@ fn dans_reseau6(ip: &[u8; 16], r: &Reseau6) -> bool {
     }
     let masque = (0xFFu32 << (8 - reste)) as u8;
     ip[complets] & masque == r.prefixe[complets] & masque
+}
+
+/// Téléchargement par curl.exe (fourni par Windows) : HTTPS seulement, redirections HTTPS seulement, `max_octets` au
+/// plus, 180 s au plus. Partagé avec le filtrage (phase 7, PR 7.2). Erreur : message de curl, ou échec du lancement
+pub(crate) fn curl_https(url: &str, sortie: &std::path::Path, max_octets: u64) -> Result<(), String> {
+    let r = Command::new(crate::natif::curl_exe())
+        .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &max_octets.to_string(),
+            "--max-time", "180", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
+        .arg(sortie)
+        .arg(url)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output();
+    match r {
+        Ok(s) if s.status.success() => Ok(()),
+        Ok(s) => Err(String::from_utf8_lossy(&s.stderr).trim().to_string()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Nombre d'entrées valides d'un fichier de liste (contrôle avant de remplacer la copie précédente)
