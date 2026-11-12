@@ -388,6 +388,20 @@ fn dossier() -> PathBuf {
     commun::dossier().join("filtrage")
 }
 
+/// Dernier refus par liste : une copie refusée (vide, effondrée, explosée) n'est retéléchargée qu'après 12 h, comme
+/// une copie acceptée, et non à chaque passage horaire (relecture de #160, R46)
+static REFUS: std::sync::Mutex<Vec<(&'static str, SystemTime)>> = std::sync::Mutex::new(Vec::new());
+
+fn refusee_recemment(nom: &str) -> bool {
+    REFUS.lock().unwrap().iter().any(|(n, t)| *n == nom && SystemTime::now().duration_since(*t).unwrap_or_default() < Duration::from_secs(12 * 3600))
+}
+
+fn noter_refus(nom: &'static str) {
+    let mut l = REFUS.lock().unwrap();
+    l.retain(|(n, _)| *n != nom);
+    l.push((nom, SystemTime::now()));
+}
+
 fn fichier(s: &Source) -> PathBuf {
     dossier().join(format!("{}.txt", s.nom))
 }
@@ -410,7 +424,7 @@ pub fn telecharger(actives: &[Categorie], protection: &[u64]) -> Vec<(String, St
         let recent = fs::metadata(&f).and_then(|m| m.modified())
             .map(|t| SystemTime::now().duration_since(t).unwrap_or_default() < Duration::from_secs(12 * 3600))
             .unwrap_or(false);
-        if recent {
+        if recent || refusee_recemment(s.nom) {
             continue;
         }
         let tmp = f.with_extension("tmp");
@@ -422,7 +436,8 @@ pub fn telecharger(actives: &[Categorie], protection: &[u64]) -> Vec<(String, St
                     let _ = fs::rename(&tmp, &f);
                 } else {
                     let m = format!("liste refusée : {nouvelle} domaine(s) contre {ancienne} dans la copie précédente, gardée");
-                    commun::journal(&format!("filtrage : {} : {m}", s.nom));
+                    commun::journal(&format!("filtrage : {} : {m} ; nouvel essai dans 12 h", s.nom));
+                    noter_refus(s.nom);
                     statuts.push((s.nom.to_string(), m));
                     let _ = fs::remove_file(&tmp);
                 }

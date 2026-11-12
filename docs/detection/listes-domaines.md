@@ -30,6 +30,32 @@ documentaire du 2026-10-25).
   d'après la documentation de Microsoft ; à compléter par les journaux d'une VM avec la PR 7.3, et à relire.
 - **Autorisations de l'utilisateur** : commandes `filtrageAutoriser` et `filtrageRetirer` (administrateurs), 1000
   domaines au plus, dans `config.json` ; refusées en échec de la protection du dossier.
+- **Liste refusée** (vide, effondrée, explosée) : copie précédente gardée, nouvel essai dans 12 h.
+
+## Résolveur local (PR 7.3, non branché)
+
+Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes
+lancé par un administrateur (commande `filtrageEssai`), sur `127.0.0.1:53` et `[::1]:53` seulement ; aucune carte n'est
+réglée sur lui.
+
+Décisions ouvertes du dossier appliquées sur sa recommandation, révisables par le mainteneur avant 7.4 :
+
+- **D7-1** (mécanisme) : M2, le résolveur local ;
+- **D7-4** (réponse à un nom bloqué) : A `0.0.0.0`, AAAA `::`, autres types sans réponse (NODATA), TTL de 60 s ;
+- **D7-6** (nom spécial de Firefox) : `use-application-dns.net` répond NXDOMAIN quand le filtrage a une catégorie
+  active.
+
+Écarts au dossier, voulus :
+
+- pas de file de 256 requêtes : au-delà de 16 requêtes en cours (dont 4 connexions TCP), la requête est ignorée et le
+  client réessaie ;
+
+- une réponse tronquée en UDP est rendue telle quelle au client, qui réessaie en TCP auprès du résolveur (qui relaie
+  alors en TCP), au lieu d'un nouvel essai en TCP par le résolveur lui-même ;
+- la dégradation ouverte arrête l'essai (les cartes ne pointent pas encore sur le résolveur) ; la collecte
+  `FiltrageDns` et la suspension de 5 minutes viendront avec l'activation (7.4) ;
+- le cas en VM est dans le scénario 3a, pas dans un scénario `filtrage` à part (qui demanderait d'étendre l'outillage
+  du passage complet) ; à reprendre en 7.4 si les cas se multiplient.
 
 ## Principe
 

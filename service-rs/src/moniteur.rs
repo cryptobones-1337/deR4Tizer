@@ -1378,6 +1378,32 @@ impl Moniteur {
             }
             // Filtrage (phase 7, PR 7.2) : domaine jamais bloqué, et ses sous-domaines. Refusé en échec de la protection
             // du dossier : la configuration en mémoire est alors celle par défaut, l'enregistrer écraserait la légitime
+            // Essai du résolveur local (phase 7, PR 7.3) : boucle locale seulement, non branché sur les cartes, 10 minutes
+            // au plus. Amont : serveurs DNS actuels des cartes physiques. Filtrage d'après les catégories actives
+            "filtrageEssai" => {
+                if c.valeur.as_deref() == Some("off") {
+                    return Reponse::ok(crate::dns_local::arreter_essai());
+                }
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : aucun essai du résolveur local.");
+                }
+                let amonts = match crate::dns_surveillance::releve() {
+                    Ok(cartes) => crate::dns_local::amonts(&cartes),
+                    Err(e) => return Reponse::erreur(format!("Cartes réseau illisibles : {e}")),
+                };
+                let actives = crate::filtrage::categories_actives(&self.config);
+                let (p, a) = (partage.clone(), actives.clone());
+                let juge: crate::dns_local::Juge = Arc::new(move |nom: &str| {
+                    matches!(p.filtrage.read().unwrap().decider(nom, &a), crate::filtrage::Verdict::Bloque { .. })
+                });
+                match crate::dns_local::demarrer_essai(!actives.is_empty(), juge, amonts) {
+                    Ok(m) => {
+                        commun::journal(&format!("résolveur local : {m}"));
+                        Reponse::ok(m)
+                    }
+                    Err(e) => Reponse::erreur(e),
+                }
+            }
             "filtrageAutoriser" | "filtrageRetirer" => {
                 if commun::echec_protection().is_some() {
                     return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
@@ -2065,8 +2091,9 @@ fn mettre_a_jour_filtrage(p: &Arc<Partage>, dernier: &mut String) {
     // filtrageRetirer passée pendant le téléchargement (jusqu'à 180 s par liste) n'est pas écrasée par la configuration
     // lue au début (audit de #160, S160-02). La commande écrit config.json avant de prendre ce verrou
     let mut g = p.filtrage.write().unwrap();
-    if !echec {
-        f.autoriser(&commun::lire::<commun::Config>("config.json").unwrap_or_default().filtrage.autorises);
+    // Relecture ratée : les autorisations posées par `charger` restent (audit de #160, S160-03 ; relecture, R50)
+    if let Some(c) = (!echec).then(|| commun::lire::<commun::Config>("config.json")).flatten() {
+        f.autoriser(&c.filtrage.autorises);
     }
     *g = f;
 }
