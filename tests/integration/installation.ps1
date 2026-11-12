@@ -265,7 +265,7 @@ if ($compte) {
         $avant = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
         $journal = Join-Path $script:Commun 'reparation-standard.log'
         $s = En-TantQue $compte @"
-`$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/fa', '$code', '/qn', '/l*v', '"$journal"'
+`$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/fa', '$code', '/qn', '/norestart', '/l*v', '"$journal"'
 'CODE=' + `$p.ExitCode
 "@ -Secondes 300
         if (Test-Path $journal) { Copy-Item $journal (Join-Path $Journaux 'reparation-standard.log') }
