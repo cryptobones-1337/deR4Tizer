@@ -167,7 +167,8 @@ if (-not $installe) {
         if (-not $okLangue) { continue }
         foreach ($page in $pages) {
             Verifier "Capture $code : $page" {
-                $o = Ouvrir-Interface @('--page', "`"$page`"")
+                # Interface d'avant la refonte : --classique depuis la bascule (B1)
+                $o = Ouvrir-Interface @('--classique', '--page', "`"$page`"")
                 if ($o.Erreur) { return $o.Erreur }
                 $p = $o.P
                 # Rendu et premier rafraîchissement
@@ -220,7 +221,7 @@ if (-not $installe) {
     foreach ($mode in 'actuelle', 'pilote') {
         foreach ($essai in 1..3) {
             Verifier "Mesure $mode, essai $essai" {
-                $o = Ouvrir-Interface (@('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @() }))
+                $o = Ouvrir-Interface (@('--page', '"Connexions"') + $(if ($mode -eq 'pilote') { @('--fluent') } else { @('--classique') }))
                 if ($o.Erreur) { return $o.Erreur }
                 $p = $o.P; $ms = $o.Ms
                 Start-Sleep 60
