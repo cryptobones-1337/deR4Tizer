@@ -1263,6 +1263,20 @@ namespace DeR4Tizer
         // Seconde instance (B2) : comme « Ouvrir » de la zone de notification (la coquille si elle est rattachée, sinon
         // cette fenêtre)
         public void MontrerDemande() { if (!IsDisposed) Montrer(null, null); }
+
+        // Fin de session et gestionnaire de redémarrage (correctif de B1) : sous la coquille, la boucle de messages est celle
+        // de WPF, et la boucle WinForms qui fermait l'interface à la fin de la session ne tourne plus. Sans ce relais,
+        // l'interface restait ouverte quand Windows Installer demandait de la fermer (réparation, mise à jour) : fichier
+        // tenu, redémarrage du poste demandé (vu deux fois en VM, événement 1074 de msiexec). WM_ENDSESSION accordé :
+        // fermeture complète, comme « Quitter »
+        public Action FinSession;
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_ENDSESSION = 0x0016;
+            base.WndProc(ref m);
+            if (m.Msg == WM_ENDSESSION && m.WParam != IntPtr.Zero && FinSession != null) FinSession();
+        }
+        public void QuitterTout() { quitter = true; Close(); }
         // Repli (B1) : la nouvelle interface n'a pas pu démarrer, l'interface classique le dit dans la zone de notification
         public void Signaler(string texte) { icone.ShowBalloonTip(8000, "deR4Tizer", texte, ToolTipIcon.Warning); }
         // Repli (B1) : la fenêtre cachée du pilote, créée avant l'échec, est libérée (icône, minuteurs) avant d'ouvrir
@@ -2353,6 +2367,7 @@ namespace DeR4Tizer
                 ancienne.RejouerPilote(cle);
             });
             ancienne.FormClosed += (s, e) => { if (coquille != null) coquille.Quitter(); app.Shutdown(); };
+            ancienne.FinSession = ancienne.QuitterTout;
             if (!cache) obtenir().Show();
             // Écoute de la seconde instance posée seulement une fois la coquille prête à tourner : en cas de repli, aucun fil ne
             // reste sur la fenêtre libérée (relecture de #158, R32)
