@@ -3717,6 +3717,82 @@ fn phase3_alerte_bornee_pire_cas() {
     assert!(octets < 16 * 1024 && octets * 1000 < TAILLE_MAX_ALERTES as usize, "pire cas : {octets} octets par alerte (promis : moins de 16 Ko)");
 }
 
+// ---------------------------------------------------------------- phase 7, PR 7.1 : DNS-002
+
+fn carte_dns(id: &str, type_carte: u32, passerelle: &str, dns: &[&str], statique: bool) -> crate::dns_surveillance::CarteDns {
+    crate::dns_surveillance::CarteDns {
+        id: id.into(), nom: format!("carte {id}"), type_carte,
+        passerelles: if passerelle.is_empty() { vec![] } else { vec![passerelle.into()] },
+        dns: dns.iter().map(|s| s.to_string()).collect(), statique,
+    }
+}
+
+fn alertes_dns(c: &[crate::dns_surveillance::Constat]) -> Vec<&crate::commun::Alerte> {
+    c.iter().filter_map(|x| if let crate::dns_surveillance::Constat::Alerte(a) = x { Some(a) } else { None }).collect()
+}
+
+/// DNS-002, positif : serveur statique changé sur une carte physique (Ethernet, Wi-Fi), même passerelle : alerte
+#[test]
+fn dns002_statique_change_meme_reseau() {
+    for t in [6, 71] {
+        let avant = [carte_dns("{A}", t, "192.0.2.1", &["192.0.2.53"], false)];
+        let apres = [carte_dns("{A}", t, "192.0.2.1", &["198.51.100.7"], true)];
+        let c = crate::dns_surveillance::changements_dns(&avant, &apres);
+        let a = alertes_dns(&c);
+        assert_eq!(a.len(), 1, "type {t}");
+        assert_eq!(a[0].regle, "DNS-002");
+        assert_eq!(a[0].niveau, "Alerte");
+        assert!(a[0].raisons.contains("192.0.2.53 → 198.51.100.7"), "{}", a[0].raisons);
+    }
+}
+
+/// DNS-002, négatifs : changement de réseau (autre passerelle), DHCP sur le même réseau, carte virtuelle ou VPN,
+/// carte nouvelle ou disparue, DNS inchangé : événement au plus, jamais d'alerte
+#[test]
+fn dns002_changement_de_reseau_sans_alerte() {
+    let avant = [carte_dns("{A}", 71, "192.0.2.1", &["192.0.2.53"], true)];
+    let reseau = [carte_dns("{A}", 71, "203.0.113.1", &["203.0.113.53"], true)];
+    let c = crate::dns_surveillance::changements_dns(&avant, &reseau);
+    assert!(alertes_dns(&c).is_empty());
+    assert_eq!(c.len(), 1, "un événement");
+    let dhcp = [carte_dns("{A}", 6, "192.0.2.1", &["192.0.2.54"], false)];
+    let c = crate::dns_surveillance::changements_dns(&[carte_dns("{A}", 6, "192.0.2.1", &["192.0.2.53"], false)], &dhcp);
+    assert!(alertes_dns(&c).is_empty() && c.len() == 1, "DHCP, même réseau : événement");
+    let meme = crate::dns_surveillance::changements_dns(&avant, &avant);
+    assert!(meme.is_empty(), "DNS inchangé : rien");
+    let nouvelle = crate::dns_surveillance::changements_dns(&avant, &[avant[0].clone(), carte_dns("{B}", 6, "192.0.2.1", &["198.51.100.7"], true)]);
+    assert!(nouvelle.is_empty(), "carte nouvelle : rien");
+    assert!(crate::dns_surveillance::changements_dns(&avant, &[]).is_empty(), "carte disparue : rien");
+}
+
+#[test]
+fn dns002_carte_vpn_sans_alerte() {
+    for t in [131, 23, 53, 24] {
+        let avant = [carte_dns("{V}", t, "", &["10.0.0.1"], true)];
+        let apres = [carte_dns("{V}", t, "", &["10.8.0.1"], true)];
+        let c = crate::dns_surveillance::changements_dns(&avant, &apres);
+        assert!(alertes_dns(&c).is_empty(), "type {t}");
+        assert_eq!(c.len(), 1, "type {t} : événement");
+    }
+    assert!(!crate::dns_surveillance::physique(131) && crate::dns_surveillance::physique(6) && crate::dns_surveillance::physique(71));
+}
+
+/// Lecture impossible : collecte ConfigDns indisponible, jamais « aucun changement » ; DNS-002 couverte par ConfigDns
+#[test]
+fn dns002_lecture_impossible_collecte_indisponible() {
+    use crate::collectes::Collecte;
+    assert_eq!(crate::collectes::besoins("DNS-002"), &[&[Collecte::ConfigDns][..]]);
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("Err(e) => collectes::echec(Collecte::ConfigDns, &e),"), "échec noté");
+    assert!(m.contains("collectes::succes(Collecte::ConfigDns);"), "succès noté");
+    // Premier relevé : référence sans alerte ; jamais de remise en place (lecture seule)
+    let d = include_str!("dns_surveillance.rs");
+    assert!(m.contains("if let Some(avant) = &precedent {"));
+    for interdit in ["SetInterfaceDnsSettings", "set_value", "SetAdapter", "netsh"] {
+        assert!(!d.contains(interdit), "lecture seule : {interdit}");
+    }
+}
+
 /// Phase 3.2 : registre des règles : identifiants uniques et bien formés, titres non vides ; le registre et
 /// docs/detection/regles.md listent exactement les mêmes identifiants (COR-R8 : numéro non attribué, absent du registre)
 #[test]

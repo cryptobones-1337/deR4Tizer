@@ -41,20 +41,22 @@ pub enum Collecte {
     CaptureReseauLocal,
     /// Sessions ouvertes et interface de chacune (phase 4, PR 4.5a)
     Sessions,
+    /// Serveurs DNS des cartes du poste (phase 7, PR 7.1, DNS-002)
+    ConfigDns,
 }
 
 use Collecte::*;
 
-pub const TOUTES: [Collecte; 23] = [
+pub const TOUTES: [Collecte; 24] = [
     Connexions, Processus, Sysmon, WmiProcessus, JournalDns, JournalDefender, EtatDefender, JournalSecurite, AuditDonnees,
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
-    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions,
+    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions, ConfigDns,
 ];
 
 // TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
 // collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
 const _: () = {
-    assert!(TOUTES.len() == Sessions as usize + 1);
+    assert!(TOUTES.len() == ConfigDns as usize + 1);
     let mut i = 0;
     while i < TOUTES.len() {
         assert!(TOUTES[i] as usize == i);
@@ -88,6 +90,7 @@ impl Collecte {
             CaptureTrafic => "CaptureTrafic",
             CaptureReseauLocal => "CaptureReseauLocal",
             Sessions => "Sessions",
+            ConfigDns => "ConfigDns",
         }
     }
 
@@ -104,6 +107,8 @@ impl Collecte {
             CaptureTrafic | CaptureReseauLocal => 60,
             // Fil « sante » : toutes les 30 s
             Sessions => 30,
+            // Fil « dns » : toutes les 60 s
+            ConfigDns => 180,
             WmiProcessus => 0,
             // Relevé des démarrages automatiques toutes les minutes (11 s au plus mesurées)
             Persistance => 120,
@@ -243,6 +248,7 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "RES-003" | "RES-006" | "RES-007" => &[&[Connexions]],
         "RES-005" => &[&[PaquetsParefeu]],
         "DNS-001" => &[DNS, &[ListesDomaines]],
+        "DNS-002" => &[&[ConfigDns]],
         "PRC-001" | "PRC-002" | "PRC-003" | "PRC-004" | "PRC-005" => &[PROCESSUS_CREES],
         "CHA-001" => &[&[Processus]],
         "PER-001" | "PER-002" => &[&[Persistance]],
@@ -364,7 +370,7 @@ const CASE: Case = Case {
     tus: AtomicU32::new(0),
     muette: AtomicBool::new(false),
 };
-static CASES: [Case; 23] = [CASE; 23];
+static CASES: [Case; TOUTES.len()] = [CASE; TOUTES.len()];
 
 fn maintenant() -> u64 {
     crate::commun::filetime(std::time::SystemTime::now())

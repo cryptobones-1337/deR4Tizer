@@ -27,6 +27,7 @@ registre! {
     RES_006 = "RES-006" : "nouveau port ouvert en écoute sur le réseau";
     RES_007 = "RES-007" : "connexion entrante depuis Internet";
     DNS_001 = "DNS-001" : "requête DNS vers un domaine malveillant connu";
+    DNS_002 = "DNS-002" : "serveur DNS changé sur une carte du poste";
     PRC_001 = "PRC-001" : "document bureautique qui lance un interpréteur";
     PRC_002 = "PRC-002" : "PowerShell obscurci ou qui télécharge du code";
     PRC_003 = "PRC-003" : "détournement d'outil Windows (LOLBin)";
