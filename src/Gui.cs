@@ -2253,26 +2253,58 @@ namespace DeR4Tizer
             {
                 using (var e = EventWaitHandle.OpenExisting(EvenementMontrer))
                 {
-                    // La première instance pourra passer au premier plan (sinon Windows ne fait que clignoter sa barre)
-                    AllowSetForegroundWindow(-1);
+                    // La première instance seule pourra passer au premier plan (sinon Windows ne fait que clignoter sa barre) ;
+                    // introuvable : aucun droit accordé (audit de #158, S158-02 : jamais ASFW_ANY)
+                    int pid = PremiereInstance();
+                    if (pid > 0) AllowSetForegroundWindow(pid);
                     e.Set();
                 }
             }
             catch { }
         }
 
+        // PID de la première instance : même nom, même session, même exécutable, autre PID ; 0 si introuvable
+        static int PremiereInstance()
+        {
+            try
+            {
+                using (var moi = Process.GetCurrentProcess())
+                {
+                    string chemin = moi.MainModule.FileName;
+                    foreach (var p in Process.GetProcessesByName(moi.ProcessName))
+                        using (p)
+                        {
+                            try
+                            {
+                                if (p.Id != moi.Id && p.SessionId == moi.SessionId && string.Equals(p.MainModule.FileName, chemin, StringComparison.OrdinalIgnoreCase))
+                                    return p.Id;
+                            }
+                            catch { }
+                        }
+                }
+            }
+            catch { }
+            return 0;
+        }
+
         // Première instance : attend le signal sur un fil d'arrière-plan et montre la fenêtre sur le fil de l'interface
         static void Ecouter(Fenetre f)
         {
             EventWaitHandle e;
-            try { e = new EventWaitHandle(false, EventResetMode.AutoReset, EvenementMontrer); }
+            bool cree;
+            try { e = new EventWaitHandle(false, EventResetMode.AutoReset, EvenementMontrer, out cree); }
             catch { return; }
+            // Événement déjà là (précréé par un autre programme, peut-être en réinitialisation manuelle et laissé signalé) :
+            // pas d'écoute, comportement muet d'avant (audit de #158, S158-01)
+            if (!cree) { e.Dispose(); return; }
             var fil = new Thread(() =>
             {
                 while (true)
                 {
                     e.WaitOne();
-                    try { if (f.IsDisposed) return; f.BeginInvoke((Action)f.MontrerDemande); } catch { if (f.IsDisposed) return; }
+                    try { if (f.IsDisposed) { e.Dispose(); return; } f.BeginInvoke((Action)f.MontrerDemande); } catch { if (f.IsDisposed) { e.Dispose(); return; } }
+                    // Au plus quelques signaux par seconde, quoi qu'il arrive
+                    Thread.Sleep(300);
                 }
             }) { IsBackground = true, Name = "deR4Tizer.Montrer" };
             fil.Start();
@@ -2284,7 +2316,6 @@ namespace DeR4Tizer
         static int LancerPilote(bool cache)
         {
             var ancienne = new Fenetre(true);
-            if (Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier") < 0) Ecouter(ancienne);
             try { return LancerCoquille(ancienne, cache); }
             catch { if (!piloteDemarre) ancienne.Liberer(); throw; }
         }
@@ -2323,6 +2354,9 @@ namespace DeR4Tizer
             });
             ancienne.FormClosed += (s, e) => { if (coquille != null) coquille.Quitter(); app.Shutdown(); };
             if (!cache) obtenir().Show();
+            // Écoute de la seconde instance posée seulement une fois la coquille prête à tourner : en cas de repli, aucun fil ne
+            // reste sur la fenêtre libérée (relecture de #158, R32)
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier") < 0) Ecouter(ancienne);
             piloteDemarre = true;
             app.Run();
             ancienne.Dispose();
