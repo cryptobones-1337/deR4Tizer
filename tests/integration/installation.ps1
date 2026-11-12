@@ -420,6 +420,83 @@ Verifier 'Filtrage (7.2) : liste synthétique chargée et comptée, autorisation
     }
 }
 
+# Résolveur local (phase 7, PR 7.3) : essai lancé par un administrateur (filtrageEssai), sur la boucle locale seulement,
+# non branché sur les cartes. Même liste synthétique que le cas 7.2. Bloqué (A, AAAA, TCP, autre type vide), nom spécial
+# de Firefox (NXDOMAIN), relayé (réponse de l'amont, jamais 0.0.0.0) ; écoutes du service sur le port 53 : 127.0.0.1 et
+# ::1 seulement, aucune après l'arrêt ; cartes inchangées
+Verifier 'Résolveur local (7.3) : essai sur la boucle locale ; bloqué, relayé, nom spécial de Firefox ; aucune écoute hors de la boucle locale ; cartes inchangées' {
+    $fConfig = Join-Path $script:Donnees 'config.json'
+    $configAvant = if (Test-Path $fConfig) { Get-Content $fConfig -Raw -Encoding UTF8 } else { $null }
+    $cartes = { (Get-DnsClientServerAddress | Sort-Object InterfaceIndex, AddressFamily | ForEach-Object { "$($_.InterfaceIndex)/$($_.AddressFamily)=$($_.ServerAddresses -join ',')" }) -join ' ; ' }
+    $ecoutes = {
+        $svc = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        @(@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $svc) +
+            @(Get-NetTCPConnection -LocalPort 53 -State Listen -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $svc) | ForEach-Object { [string]$_.LocalAddress } | Sort-Object -Unique)
+    }
+    $nomInexistant = { param($e) [string]$e.FullyQualifiedErrorId -like 'DNS_ERROR_RCODE_NAME_ERROR*' }
+    $dnsAvant = & $cartes
+    try {
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $script:Donnees 'filtrage')
+        Poser-EnAdministrateur 'filtrage\EasyPrivacy.txt' "! liste de test`n||pisteur.test^`n0.0.0.0 pub.test`n@@||ok.pisteur.test^`n"
+        $o = if ($configAvant) { $configAvant | ConvertFrom-Json } else { [pscustomobject]@{} }
+        $o | Add-Member -Force -NotePropertyName Filtrage -NotePropertyValue ([pscustomobject]@{ Categories = @('publicite'); Autorises = @() })
+        [IO.File]::WriteAllText($fConfig, ($o | ConvertTo-Json -Depth 8 -Compress), (New-Object Text.UTF8Encoding $false))
+        icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        $null = Redemarrer-Service
+        $fin = (Get-Date).AddSeconds(240)
+        do { Start-Sleep 5; $l = Journal 'filtrage : catégories actives' 1 } while ($l -notlike '*EasyPrivacy : 2 domaine(s)*' -and (Get-Date) -lt $fin)
+        if ($l -notlike '*EasyPrivacy : 2 domaine(s)*') { return "liste synthétique non chargée en 240 s : « $l »" }
+        if (@(& $ecoutes).Count) { return "écoute sur le port 53 avant l'essai : $((& $ecoutes) -join ', ')" }
+        $r = Commande '{"Action":"filtrageEssai","Valeur":"on"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "essai refusé : $($r.Message)" }
+        Write-Host "  $($r.Message)"
+        Start-Sleep 2
+        $adresses = @(& $ecoutes)
+        if ($adresses.Count -ne 2 -or @($adresses | Where-Object { $_ -notin '127.0.0.1', '::1' }).Count) { return "écoutes du service sur le port 53 pendant l'essai : $($adresses -join ', ')" }
+        $a = @(Resolve-DnsName pisteur.test -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
+        if ($a.Count -ne 1 -or $a[0].IPAddress -ne '0.0.0.0') { return "A de pisteur.test : $($a | ForEach-Object IPAddress)" }
+        $a6 = @(Resolve-DnsName x.pisteur.test -Type AAAA -Server 127.0.0.1 -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'AAAA' })
+        if ($a6.Count -ne 1 -or $a6[0].IPAddress -ne '::') { return "AAAA de x.pisteur.test : $($a6 | ForEach-Object IPAddress)" }
+        $t = @(Resolve-DnsName pub.test -Type A -Server 127.0.0.1 -DnsOnly -TcpOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
+        if ($t.Count -ne 1 -or $t[0].IPAddress -ne '0.0.0.0') { return "A de pub.test en TCP : $($t | ForEach-Object IPAddress)" }
+        $txt = @(Resolve-DnsName pisteur.test -Type TXT -Server 127.0.0.1 -DnsOnly -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'TXT' })
+        if ($txt.Count) { return "autre type (TXT) : réponse non vide" }
+        try { $null = Resolve-DnsName use-application-dns.net -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop; return 'nom spécial de Firefox résolu, NXDOMAIN attendu' }
+        catch { if (-not (& $nomInexistant $_)) { return "nom spécial de Firefox : $($_.FullyQualifiedErrorId)" } }
+        # Relayé : l'amont répond (adresses, ou nom inexistant pour un nom en .test) ; jamais 0.0.0.0, jamais un délai dépassé
+        foreach ($nom in 'ok.pisteur.test', 'www.msftconnecttest.com') {
+            try {
+                $rep = @(Resolve-DnsName $nom -Type A -Server 127.0.0.1 -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
+                if (@($rep | Where-Object IPAddress -eq '0.0.0.0').Count) { return "$nom bloqué au lieu d'être relayé" }
+                Write-Host "  relayé : $nom → $(($rep | ForEach-Object IPAddress) -join ', ')"
+            } catch {
+                if (-not (& $nomInexistant $_)) { return "$nom non relayé : $($_.FullyQualifiedErrorId)" }
+                Write-Host "  relayé : $nom → nom inexistant (réponse de l'amont)"
+            }
+        }
+        $r = Commande '{"Action":"filtrageEssai","Valeur":"off"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "arrêt refusé : $($r.Message)" }
+        $fin = (Get-Date).AddSeconds(10)
+        while (@(& $ecoutes).Count -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+        if (@(& $ecoutes).Count) { return "écoute sur le port 53 après l'arrêt : $((& $ecoutes) -join ', ')" }
+        $dnsApres = & $cartes
+        if ($dnsApres -ne $dnsAvant) { return "serveurs DNS des cartes modifiés : $dnsAvant → $dnsApres" }
+        $fin = (Get-Date).AddSeconds(10)
+        do { $l = Journal 'résolveur local : essai terminé' 1; if ($l -notmatch 'essai terminé') { Start-Sleep 1 } } while ($l -notmatch 'essai terminé' -and (Get-Date) -lt $fin)
+        if ($l -notmatch '(\d+) requête\(s\) bloquée\(s\)' -or [int]$Matches[1] -lt 4) { return "bilan de l'essai : « $l »" }
+        Write-Host "  $l"
+        $true
+    } finally {
+        try { $null = Commande '{"Action":"filtrageEssai","Valeur":"off"}' } catch { }
+        if ($null -ne $configAvant) {
+            [IO.File]::WriteAllText($fConfig, $configAvant, (New-Object Text.UTF8Encoding $false))
+            icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        } else { Remove-Item $fConfig -Force -ErrorAction SilentlyContinue }
+        Remove-Item (Join-Path $script:Donnees 'filtrage') -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Redemarrer-Service
+    }
+}
+
 Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL-001 sans collecte' {
     # Récente : le service ne la retélécharge pas ; lue au premier tour du fil « contrôles »
     New-Item -ItemType Directory -Force (Join-Path $script:Donnees 'menaces') | Out-Null

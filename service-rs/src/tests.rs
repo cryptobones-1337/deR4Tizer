@@ -7440,6 +7440,11 @@ fn filtrage_suffixe_public_ecarte() {
 #[test]
 fn filtrage_commandes_validees() {
     use crate::validation::{autorisee, valider, Client};
+    assert!(valider(&commande_json(r#"{"Action":"filtrageEssai","Valeur":"on"}"#)).is_ok());
+    assert!(valider(&commande_json(r#"{"Action":"filtrageEssai","Valeur":"off"}"#)).is_ok());
+    assert!(valider(&commande_json(r#"{"Action":"filtrageEssai","Valeur":"toujours"}"#)).is_err());
+    assert!(valider(&commande_json(r#"{"Action":"filtrageEssai"}"#)).is_err());
+    assert!(!autorisee("filtrageEssai", Client::Autre));
     for a in ["filtrageAutoriser", "filtrageRetirer"] {
         assert!(autorisee(a, Client::Administrateur) && !autorisee(a, Client::Autre), "{a}");
         assert!(valider(&commande_json(&format!(r#"{{"Action":"{a}","NomDns":"ok.pub.test"}}"#))).is_ok(), "{a}");
@@ -7460,5 +7465,181 @@ fn filtrage_torturer() {
         let _ = crate::filtrage::lire_liste(t, f.protection());
         let _ = crate::filtrage::noms_a_chercher(t);
         let _ = f.decider(t, &[crate::filtrage::Categorie::Publicite]);
+    });
+}
+
+// ------------------------------------------------------------ phase 7, PR 7.3 : résolveur local (non branché)
+
+/// Requête DNS d'essai : identifiant, RD, une question (nom, type, classe IN)
+fn requete_dns(id: u16, nom: &str, type_: u16) -> Vec<u8> {
+    let mut v = id.to_be_bytes().to_vec();
+    v.extend_from_slice(&[0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);
+    for e in nom.split('.').filter(|e| !e.is_empty()) {
+        v.push(e.len() as u8);
+        v.extend_from_slice(e.as_bytes());
+    }
+    v.push(0);
+    v.extend_from_slice(&type_.to_be_bytes());
+    v.extend_from_slice(&1u16.to_be_bytes());
+    v
+}
+
+fn requete_lue(p: &[u8]) -> crate::dns_local::Requete {
+    match crate::dns_local::lire_requete(p, crate::dns_local::MAX_UDP) {
+        crate::dns_local::Lecture::Requete(r) => r,
+        autre => panic!("requête attendue : {autre:?}"),
+    }
+}
+
+/// Requête bornée : deux questions, nom de plus de 253 caractères, pointeur de compression, paquet tronqué, trop long,
+/// opcode autre que 0 : FORMERR, rien relayé ; une réponse (bit QR) ou un paquet sans en-tête : ignorés
+#[test]
+fn dns_requete_bornee() {
+    use crate::dns_local::{lire_requete, Lecture, MAX_TCP, MAX_UDP};
+    let bonne = requete_dns(0x1234, "pub.test", 1);
+    let r = requete_lue(&bonne);
+    assert_eq!((r.id, r.question.nom.as_str(), r.question.type_, r.question.classe), (0x1234, "pub.test", 1, 1));
+    assert_eq!(r.question.brute, bonne[12..].to_vec());
+    let formerr = |p: &[u8]| lire_requete(p, MAX_UDP) == Lecture::Formerr(0x1234);
+    let mut deux = bonne.clone();
+    deux[5] = 2;
+    assert!(formerr(&deux), "deux questions");
+    let long = format!("{}.test", vec!["a".repeat(63); 4].join("."));
+    assert!(formerr(&requete_dns(0x1234, &long, 1)), "nom de plus de 253 caractères");
+    let etiquettes = vec!["a"; 128].join(".");
+    assert!(formerr(&requete_dns(0x1234, &etiquettes, 1)), "plus de 127 étiquettes");
+    let mut pointeur = bonne[..12].to_vec();
+    pointeur.extend_from_slice(&[0xC0, 0x0C, 0, 1, 0, 1]);
+    assert!(formerr(&pointeur), "pointeur de compression dans la question");
+    assert!(formerr(&bonne[..bonne.len() - 2]), "paquet tronqué (classe absente)");
+    assert!(formerr(&bonne[..14]), "nom tronqué");
+    let mut trop = bonne.clone();
+    trop.resize(MAX_UDP + 1, 0);
+    assert!(formerr(&trop), "plus de 512 octets en UDP");
+    assert!(matches!(lire_requete(&trop, MAX_TCP), Lecture::Requete(_)), "admis en TCP (EDNS ou remplissage)");
+    let mut opcode = bonne.clone();
+    opcode[2] |= 0x10;
+    assert!(formerr(&opcode), "opcode autre que QUERY");
+    let mut point = bonne[..12].to_vec();
+    point.extend_from_slice(&[3, b'a', b'.', b'b', 0, 0, 1, 0, 1]);
+    assert!(formerr(&point), "point dans une étiquette");
+    let mut reponse = bonne.clone();
+    reponse[2] |= 0x80;
+    assert_eq!(lire_requete(&reponse, MAX_UDP), Lecture::Ignoree, "réponse : ignorée");
+    assert_eq!(lire_requete(&bonne[..11], MAX_UDP), Lecture::Ignoree, "sans en-tête");
+    let f = crate::dns_local::reponse_formerr(0x1234);
+    assert_eq!((f.len(), f[3] & 0x0F, f[2] & 0x80), (12, 1, 0x80));
+}
+
+/// Nom bloqué : A 0.0.0.0, AAAA ::, type 65 (HTTPS) vide ; identifiant et question repris ; TTL 60 s
+#[test]
+fn dns_reponse_bloquee_a_aaaa_https() {
+    use crate::dns_local::reponse_bloquee;
+    for (type_, donnees) in [(1u16, vec![0u8; 4]), (28, vec![0u8; 16])] {
+        let p = requete_dns(0xBEEF, "pub.test", type_);
+        let v = reponse_bloquee(&requete_lue(&p));
+        assert_eq!(&v[..2], &[0xBE, 0xEF]);
+        assert_eq!(v[2] & 0x80, 0x80, "réponse");
+        assert_eq!(v[2] & 0x01, 0x01, "RD repris");
+        assert_eq!(v[3] & 0x0F, 0, "NOERROR");
+        assert_eq!(&v[4..8], &[0, 1, 0, 1], "une question, une réponse");
+        let q = &p[12..];
+        assert_eq!(&v[12..12 + q.len()], q, "question reprise");
+        let r = &v[12 + q.len()..];
+        assert_eq!(&r[..2], &[0xC0, 0x0C]);
+        assert_eq!(u16::from_be_bytes([r[2], r[3]]), type_);
+        assert_eq!(u32::from_be_bytes([r[6], r[7], r[8], r[9]]), 60);
+        assert_eq!(u16::from_be_bytes([r[10], r[11]]) as usize, donnees.len());
+        assert_eq!(&r[12..], &donnees[..]);
+    }
+    let p = requete_dns(7, "pub.test", 65);
+    let v = reponse_bloquee(&requete_lue(&p));
+    assert_eq!(&v[4..8], &[0, 1, 0, 0], "NODATA : aucune réponse");
+    assert_eq!(v.len(), p.len());
+}
+
+/// Réponse d'amont : identifiant, bit de réponse, question (nom sans la casse, type et classe à l'identique) ; sinon
+/// rejetée
+#[test]
+fn dns_reponse_amont_mal_assortie_ignoree() {
+    use crate::dns_local::{avec_id, reponse_assortie};
+    let p = requete_dns(0x0102, "pub.test", 1);
+    let q = &p[12..];
+    let mut rep = p.clone();
+    rep[2] |= 0x80;
+    assert!(reponse_assortie(&rep, 0x0102, q));
+    assert!(!reponse_assortie(&rep, 0x0103, q), "autre identifiant");
+    assert!(!reponse_assortie(&p, 0x0102, q), "pas une réponse");
+    let autre = { let mut a = requete_dns(0x0102, "pub.tesu", 1); a[2] |= 0x80; a };
+    assert!(!reponse_assortie(&autre, 0x0102, q), "autre question");
+    let casse = { let mut a = requete_dns(0x0102, "PuB.TeSt", 1); a[2] |= 0x80; a };
+    assert!(reponse_assortie(&casse, 0x0102, q), "casse changée par l'amont (0x20)");
+    let type_ = { let mut a = requete_dns(0x0102, "pub.test", 28); a[2] |= 0x80; a };
+    assert!(!reponse_assortie(&type_, 0x0102, q), "autre type");
+    assert!(!reponse_assortie(&rep[..14], 0x0102, q), "tronquée");
+    assert_eq!(&avec_id(&rep, 0xABCD)[..2], &[0xAB, 0xCD]);
+    assert_eq!(&avec_id(&rep, 0xABCD)[2..], &rep[2..]);
+}
+
+/// Nom spécial de Firefox : NXDOMAIN quand le filtrage est actif, relayé sinon ; nom bloqué : réponse locale seulement
+/// quand le filtrage est actif
+#[test]
+fn dns_canari_firefox() {
+    use crate::dns_local::{traiter, Action, CANARI};
+    let bloque = |n: &str| n == "pub.test";
+    let r = requete_lue(&requete_dns(9, CANARI, 1));
+    match traiter(&r, true, &bloque) {
+        Action::Repondre(v) => assert_eq!((v[3] & 0x0F, &v[6..8]), (3, &[0u8, 0][..]), "NXDOMAIN sans réponse"),
+        a => panic!("{a:?}"),
+    }
+    assert_eq!(traiter(&r, false, &bloque), Action::Relayer);
+    let r = requete_lue(&requete_dns(9, "Pub.Test", 1));
+    assert!(matches!(traiter(&r, true, &bloque), Action::Repondre(_)));
+    assert_eq!(traiter(&r, false, &bloque), Action::Relayer);
+    assert_eq!(traiter(&requete_lue(&requete_dns(9, "ok.test", 1)), true, &bloque), Action::Relayer);
+}
+
+/// Dégradation ouverte : 30 s sans aucune réponse d'amont (requêtes relayées) → arrêt ; une réponse remet à zéro
+#[test]
+fn degradation_ouverte_amont_muet() {
+    let mut s = crate::dns_local::Sante::default();
+    assert!(!s.noter(false, 100));
+    assert!(!s.noter(false, 129));
+    assert!(s.noter(false, 130), "30 s de silence");
+    assert!(!s.noter(true, 131));
+    assert!(!s.noter(false, 140));
+    assert!(!s.noter(false, 169));
+    assert!(s.noter(false, 170));
+}
+
+/// Amonts : serveurs des cartes physiques, sans boucle locale, sans doublon, 4 au plus ; carte virtuelle écartée
+#[test]
+fn dns_amonts_des_cartes_physiques() {
+    use crate::dns_surveillance::CarteDns;
+    let carte = |t: u32, dns: &[&str]| CarteDns { id: "{A}".into(), nom: "n".into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let l = crate::dns_local::amonts(&[
+        carte(6, &["192.0.2.53", "127.0.0.1", "::1", "192.0.2.53", "fe80::1%12"]),
+        carte(131, &["198.51.100.1"]),
+        carte(71, &["2001:db8::53", "198.51.100.2", "198.51.100.3", "198.51.100.4"]),
+    ]);
+    let attendu: Vec<std::net::IpAddr> = ["192.0.2.53", "2001:db8::53", "198.51.100.2", "198.51.100.3"].iter().map(|s| s.parse().unwrap()).collect();
+    assert_eq!(l, attendu);
+}
+
+/// Parseur et réponses : aucune panique, quelle que soit l'entrée
+#[test]
+fn dns_torturer() {
+    let bonne = requete_dns(1, "a.pub.test", 1);
+    torturer(&bonne, &mut |p| {
+        for max in [crate::dns_local::MAX_UDP, crate::dns_local::MAX_TCP] {
+            if let crate::dns_local::Lecture::Requete(r) = crate::dns_local::lire_requete(p, max) {
+                let _ = crate::dns_local::reponse_bloquee(&r);
+                let _ = crate::dns_local::reponse_nxdomain(&r);
+                let _ = crate::dns_local::traiter(&r, true, &|_: &str| true);
+                let _ = crate::dns_local::reponse_assortie(p, r.id, &r.question.brute);
+            }
+        }
+        let _ = crate::dns_local::reponse_assortie(p, 1, &bonne[12..]);
+        let _ = crate::dns_local::avec_id(p, 2);
     });
 }
