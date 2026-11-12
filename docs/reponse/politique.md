@@ -27,6 +27,27 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 
 Tout le reste, IPS compris, est au niveau 2 au plus.
 
+## Filtrage par nom de domaine (phase 7, prévu)
+
+Rien dans le code aujourd'hui (dossier de la phase 7). Quand il viendra, le blocage d'un nom de domaine par le filtrage
+sera une **action automatique de niveau 2** : désactivée par défaut, activée sciemment par un administrateur, en deux
+activations séparées (« Navigation sécurisée », « Publicités et pistage »). Il ne s'ajoute pas au niveau 3.
+
+Les lignes marquées « D7-x » sont des propositions du dossier de la phase 7 ; ces décisions restent ouvertes et
+reviennent au mainteneur.
+
+| | Prévu |
+|---|---|
+| Durée | Tant que le filtrage reste activé : c'est un **mode**, pas une action ponctuelle, donc sans échéance (même écart que l'IPS). Pour qu'un faux positif durable ne passe pas inaperçu (le site d'une mairie dans une liste publicitaire), un compteur des noms bloqués et un signal au-delà d'un seuil, ou un rappel périodique, sont à prévoir avec l'interface (PR 7.5) (audit de #157, S157-02). |
+| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le mécanisme proposé (résolveur local, D7-1 ouverte) : cartes réseau remises à l'identique, DHCP compris. |
+| Échec | Ouvert, jamais de coupure du DNS. Avec le mécanisme proposé (D7-1 ouverte) : serveurs d'origine en secours si le résolveur local ne répond plus. |
+| Garde contre les boucles | Proposition du dossier (D7-10, ouverte) : jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) ; alerte DNS-002 et réactivation par l'utilisateur. |
+| Jamais bloqué | Une liste de protection compilée dans le binaire (mises à jour de Windows et de Defender, autorités de certification) et les noms autorisés par l'utilisateur. |
+| Ce qu'il n'est pas | Une barrière de sécurité : un programme qui a son propre résolveur (DNS chiffré intégré, adresse codée en dur) le contourne. Il réduit l'exposition, rien de plus. |
+
+Les blocages par domaine posés à la main dans le fichier hosts restent ce qu'ils sont aujourd'hui (manuels, lignes de
+l'utilisateur jamais réécrites).
+
 ## Règles communes
 
 - Une alerte critique n'est jamais adoucie (apprentissage, exceptions) ni retenue par le plafond de remontée.
