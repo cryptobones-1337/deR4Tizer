@@ -7543,6 +7543,14 @@ fn activation_ordre_des_operations() {
     assert!(des.contains("map_err") && des.find("?;").is_some(), "carte non rendue : erreur, résolveur gardé");
     let arr = &m[m.find("pub fn arreter(&mut self)").unwrap()..];
     assert!(ordre(arr, "restaurer_toutes", "arreter_permanent"), "arrêt du service : cartes rendues d'abord");
+    // Audit de #164, S164-04 : un seul verrou des opérations sur les cartes, pris par chacune d'elles
+    for f in ["fn activer_filtrage(", "fn desactiver_filtrage(", "fn reprendre_filtrage("] {
+        assert!(corps(f).contains("verrou_cartes()"), "{f} sans le verrou des cartes");
+    }
+    assert!(arr[..arr.find("arreter_permanent").unwrap()].contains("verrou_cartes()"), "arrêt sans le verrou des cartes");
+    let sonde = corps("fn demarrer_sonde_filtrage(");
+    let apres = &sonde[sonde.find("sonder(").unwrap()..];
+    assert!(apres.contains("verrou_cartes()") && apres.contains("RESTAURATION_EN_ATTENTE.load"), "sonde : verrou après la sonde lente, état revérifié");
     let rep = corps("fn reprendre_filtrage(");
     assert!(ordre(rep, "demarrer_permanent", "appliquer_toutes"), "démarrage : cartes réglées seulement après le résolveur");
     // Audit de #164, S164-01 : au démarrage, le port est pris avant toute remise, et relâché seulement après une remise

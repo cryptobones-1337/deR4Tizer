@@ -649,6 +649,7 @@ impl Moniteur {
         // l'audit de #161) ; repris au prochain démarrage (Config.filtrage.actif et filtrage-origine.json gardés)
         // Remise ratée : seconde tentative, puis repli qui retire au moins la boucle locale (audit de #164, S164-02) ; le
         // processus ne peut pas garder le port après sa fin
+        let _verrou = verrou_cartes();
         if crate::dns_local::permanent_actif() {
             if let Some(o) = crate::filtrage_cartes::lire_origine() {
                 let rendu = crate::filtrage_cartes::restaurer_toutes(&o).or_else(|_| crate::filtrage_cartes::restaurer_toutes(&o));
@@ -1439,9 +1440,6 @@ impl Moniteur {
                 if commun::echec_protection().is_some() {
                     return Reponse::erreur("Protection du dossier de données en échec : le filtrage n'est pas activé.");
                 }
-                if crate::dns_local::permanent_actif() {
-                    return Reponse::ok("Le filtrage est déjà activé.");
-                }
                 match activer_filtrage(partage, &self.config) {
                     Ok(m) => {
                         self.config.filtrage.actif = true;
@@ -2156,6 +2154,13 @@ fn rappel_silence() -> Arc<dyn Fn() + Send + Sync> {
 /// résolveur lancé et contrôlé, puis cartes réglées et vérifiées ; au moindre écart, tout est rendu
 fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<String, String> {
     use crate::filtrage_cartes as fc;
+    let _verrou = verrou_cartes();
+    if RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+        return Err("Une remise des cartes est en attente (résolveur en simple relais) : désactivez d'abord le filtrage.".into());
+    }
+    if crate::dns_local::permanent_actif() {
+        return Err("Le filtrage est déjà activé.".into());
+    }
     if let Some(r) = fc::refus(&fc::suffixe_dns(), fc::strategie_dns()) {
         return Err(format!("Activation refusée : {r}"));
     }
@@ -2196,11 +2201,13 @@ fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<S
 /// garde le port (préalable de l'audit de #161) et l'erreur est rendue
 fn desactiver_filtrage() -> Result<String, String> {
     use crate::filtrage_cartes as fc;
+    let _verrou = verrou_cartes();
     if let Some(o) = fc::lire_origine() {
         fc::restaurer_toutes(&o).map_err(|e| format!("Cartes non rendues, filtrage gardé (le résolveur garde le port 53) : {e}"))?;
     }
     crate::dns_local::arreter_permanent();
     fc::effacer_origine();
+    RESTAURATION_EN_ATTENTE.store(false, Ordering::Release);
     Ok("Filtrage désactivé : cartes rendues à leur état d'origine, résolveur local arrêté.".into())
 }
 
@@ -2208,6 +2215,7 @@ fn desactiver_filtrage() -> Result<String, String> {
 /// tient le port et répond, sinon cartes rendues
 fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
     use crate::filtrage_cartes as fc;
+    let _verrou = verrou_cartes();
     let Some(origine) = fc::lire_origine() else {
         if config.filtrage.actif {
             commun::journal("filtrage : activé mais état d'origine des cartes absent ; non repris (réactiver)");
@@ -2262,6 +2270,14 @@ fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
 /// réessaie, et le relâche seulement quand aucune carte ne pointe plus sur la boucle locale
 static RESTAURATION_EN_ATTENTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Verrou des opérations sur les cartes (audit de #164, S164-04) : pris par l'activation, la désactivation, la reprise au
+/// démarrage, l'arrêt et la sonde ; sous ce verrou, l'état est revérifié avant tout réglage
+static CARTES: Mutex<()> = Mutex::new(());
+
+fn verrou_cartes() -> std::sync::MutexGuard<'static, ()> {
+    CARTES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Sonde de l'amont : silence constaté → toutes les 5 minutes, un amont répond-il ? Si oui, cartes rebranchées
 fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
     let p = partage.clone();
@@ -2274,6 +2290,10 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                 std::thread::sleep(Duration::from_secs(1));
             }
             if RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+                let _verrou = verrou_cartes();
+                if !RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+                    continue;
+                }
                 if let Some(o) = crate::filtrage_cartes::lire_origine() {
                     if crate::filtrage_cartes::restaurer_toutes(&o).is_ok() && !crate::filtrage_cartes::encore_sur_la_boucle(&o) {
                         crate::dns_local::arreter_permanent();
@@ -2285,6 +2305,11 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                 continue;
             }
             if crate::dns_local::permanent_actif() && crate::dns_local::en_silence() && crate::dns_local::sonder(&crate::dns_local::amonts_en_cours()) {
+                // Sonde (lente) hors du verrou ; état revérifié sous le verrou avant de rebrancher (S164-04)
+                let _verrou = verrou_cartes();
+                if !(crate::dns_local::permanent_actif() && crate::dns_local::en_silence()) || RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+                    continue;
+                }
                 if let Some(o) = crate::filtrage_cartes::lire_origine() {
                     match crate::filtrage_cartes::appliquer_toutes(&o) {
                         Ok(()) => {
