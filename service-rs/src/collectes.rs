@@ -254,7 +254,8 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "RES-005" => &[&[PaquetsParefeu]],
         "DNS-001" => &[DNS, &[ListesDomaines]],
         "DNS-002" => &[&[ConfigDns]],
-        "DNS-003" => &[&[FiltrageDns]],
+        // Rattachée à ConfigDns : FiltrageDns est justement indisponible quand la règle se déclenche (relecture de #165, R70)
+        "DNS-003" => &[&[ConfigDns]],
         "PRC-001" | "PRC-002" | "PRC-003" | "PRC-004" | "PRC-005" => &[PROCESSUS_CREES],
         "CHA-001" => &[&[Processus]],
         "PER-001" | "PER-002" => &[&[Persistance]],

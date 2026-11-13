@@ -57,6 +57,9 @@ mise à jour, pas seulement un retour arrière.
   « contourné sur la carte … », « suspendu : … », « inactif »), catégories, cartes, amont, listes (nom, catégorie,
   licence, date, entrées, exceptions, règles écartées, domaines protégés ignorés), compteurs par catégorie et par liste,
   **50 derniers noms bloqués gardés 24 h** (heure, nom, liste ; ni programme ni compte), autorisations.
+- **Lecteurs** : le résolveur sert tout le poste ; un compte autorisé à lire les données de deR4Tizer voit donc les noms
+  bloqués de tous les utilisateurs du poste, comme il voit déjà leurs connexions (relecture de #165, R71 ; à dire aussi
+  dans l'interface, 7.5b).
 - **Aucun nom relayé n'est noté.** L'état du filtrage n'entre ni dans `etat.json` ni dans l'API (test
   `filtrage_etat_hors_api`) ; rien n'est remonté au prestataire, sauf l'alerte DNS-001 existante.
 - Commande `filtrageCategories` (administrateurs) : catégories actives, appliquées sans relancer le résolveur.
@@ -76,7 +79,9 @@ Décisions ouvertes du dossier appliquées sur sa recommandation, révisables pa
 - **D7-1** (mécanisme) : M2, le résolveur local ;
 - **D7-4** (réponse à un nom bloqué) : A `0.0.0.0`, AAAA `::`, autres types sans réponse (NODATA), TTL de 60 s ;
 - **D7-6** (nom spécial de Firefox) : `use-application-dns.net` répond NXDOMAIN quand le filtrage a une catégorie
-  active.
+  active ;
+- **D7-9** (journal des blocages, PR 7.5a) : compteurs et 50 derniers noms bloqués gardés 24 h, sur le poste ; aucun
+  journal des noms relayés ; rien de remonté au-delà de DNS-001.
 
 Écarts au dossier, voulus :
 

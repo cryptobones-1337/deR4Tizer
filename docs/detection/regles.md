@@ -277,7 +277,8 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   répondre à toutes les résolutions de noms du poste, SYSTEM compris.
 - **Télémétrie** : échec de la liaison exclusive du résolveur ; relecture du registre des cartes (`NameServer`) ;
   table UDP (`GetExtendedUdpTable`) pour le PID qui tient le port 53.
-- **Si elle manque** : collecte `FiltrageDns` indisponible ou désactivée ; la règle se tait.
+- **Si elle manque** : relevé des cartes impossible (collecte `ConfigDns` indisponible) : la règle se tait. Elle n'est pas
+  rattachée à `FiltrageDns`, indisponible justement quand elle se déclenche (relecture de #165, R70).
 - **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
 - **Faux positifs attendus** : un autre résolveur légitime installé après l'activation du filtrage (partage de
   connexion, Docker, WSL) : l'alerte reste juste, la carte pointe sur lui sans qu'on l'ait voulu.

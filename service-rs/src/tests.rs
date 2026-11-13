@@ -7508,7 +7508,7 @@ fn filtrage_alerte_port_dns_tenu() {
     assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.pid), ("DNS-003", "Critique", Some(42)));
     assert!(a.raisons.contains("processus 42") && a.raisons.contains("adresse non vérifiée") && a.raisons.contains("Ethernet") && a.destination == "127.0.0.1:53", "{}", a.raisons);
     assert!(crate::moniteur::alerte_port_dns_tenu(None, "", &["Wi-Fi".into()]).raisons.contains("programme inconnu"));
-    assert_eq!(crate::collectes::besoins("DNS-003"), &[&[crate::collectes::Collecte::FiltrageDns][..]]);
+    assert_eq!(crate::collectes::besoins("DNS-003"), &[&[crate::collectes::Collecte::ConfigDns][..]]);
 }
 
 /// Commande filtrageCategories : noms connus seulement ; vide accepté (aucune catégorie)
