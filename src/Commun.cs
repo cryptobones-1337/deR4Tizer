@@ -463,6 +463,23 @@ namespace DeR4Tizer
         public List<string> Autorises { get; set; }
     }
 
+    // Textes du filtrage partagés par la page « Navigation » et par Canal.Decrire (assistant élevé, sans WPF) : ici, et
+    // jamais dans Fluent.cs (audit de #166, S166-01)
+    public static class TextesFiltrage
+    {
+        public static bool SansListeSecurite(EtatFiltrage e)
+        {
+            if (e == null || e.Listes == null) return true;
+            foreach (var x in e.Listes) if (x != null && x.Categorie == "sécurité") return false;
+            return true;
+        }
+
+        public static string RienBloqueSecurite()
+        {
+            return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
+        }
+    }
+
     public class InfosMenaces
     {
         public string MisAJour { get; set; }

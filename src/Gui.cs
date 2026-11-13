@@ -636,8 +636,8 @@ namespace DeR4Tizer
                         var noms = v.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => x == "securite" ? (en ? "safe browsing" : "navigation sécurisée") : x == "publicite" ? (en ? "ads and tracking" : "publicités et pistage") : Visible(x)).ToList();
                         // Navigation sécurisée sans liste de sécurité publiée : rien n'est bloqué, dit avant d'agir (relecture de #166)
                         bool securite = v.Split(',').Select(x => x.Trim()).Contains("securite");
-                        string avert = securite && VueNavigationFluent.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
-                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + VueNavigationFluent.RienBloqueSecurite() : "";
+                        string avert = securite && TextesFiltrage.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
+                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + TextesFiltrage.RienBloqueSecurite() : "";
                         return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms)) + avert;
                     }
                 case "filtrageAutoriser": return (en ? "Never block " : "Ne jamais bloquer ") + nomDns + (en ? " and its subdomains (filtering)" : " ni ses sous-domaines (filtrage)");

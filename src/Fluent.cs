@@ -2950,15 +2950,10 @@ namespace DeR4Tizer
 
         // Aucune liste publiée de catégorie « sécurité » (D7-2 : aucune n'est compilée aujourd'hui) : la catégorie ne bloque
         // rien, et la page le dit au lieu d'afficher « Activé » seul (relecture de #166, constat 1)
-        public static bool SansListeSecurite(EtatFiltrage e)
-        {
-            return e == null || e.Listes == null || !e.Listes.Any(x => x != null && x.Categorie == LibelleService("securite"));
-        }
-
-        public static string RienBloqueSecurite()
-        {
-            return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
-        }
+        // Décisions partagées avec Canal.Decrire, gardées dans Commun.cs (TextesFiltrage) : l'assistant élevé ne doit jamais
+        // dépendre d'une classe de Fluent.cs (audit de #166, S166-01)
+        public static bool SansListeSecurite(EtatFiltrage e) { return TextesFiltrage.SansListeSecurite(e); }
+        public static string RienBloqueSecurite() { return TextesFiltrage.RienBloqueSecurite(); }
 
         public static string Honnete()
         {
