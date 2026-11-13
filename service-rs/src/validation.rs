@@ -23,7 +23,7 @@ pub const ACTIONS: &[&str] = &[
     "notifications", "testerNotifications", "exception", "apprentissage", "majVerifier", "majConfig", "autoriserLecteur",
     "jetonApi", "nouveauJeton", "majMenaces", "tuer", "suspendre", "reprendre", "tuerChaine", "quarantaine", "restaurer",
     "restaurerRepli", "isolerProgramme", "panique", "baseline", "incident", "filtrageAutoriser", "filtrageRetirer",
-    "filtrageEssai",
+    "filtrageEssai", "filtrage",
 ];
 
 /// Réglages modifiables par « config »
@@ -227,7 +227,8 @@ pub fn valider(c: &Commande) -> Result<(), String> {
         "filtrageAutoriser" | "filtrageRetirer" => crate::filtrage::normaliser(requis(&c.nom_dns, "NomDns")?).map(|_| ())
             .ok_or_else(|| "nom de domaine invalide (deux étiquettes au moins, ASCII ; punycode pour un nom accentué)".into()),
         // Essai du résolveur local (phase 7, PR 7.3), sur la boucle locale seulement, 10 minutes au plus
-        "filtrageEssai" => matches!(c.valeur.as_deref(), Some("on" | "off"))
+        // Activation du filtrage sur les cartes (PR 7.4) : on ou off
+        "filtrageEssai" | "filtrage" => matches!(c.valeur.as_deref(), Some("on" | "off"))
             .then_some(()).ok_or_else(|| "valeur attendue : on ou off".into()),
         autre => Err(format!("commande inconnue : {autre}")),
     }

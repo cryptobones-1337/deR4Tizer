@@ -32,6 +32,17 @@ documentaire du 2026-10-25).
   domaines au plus, dans `config.json` ; refusées en échec de la protection du dossier.
 - **Liste refusée** (vide, effondrée, explosée) : copie précédente gardée, nouvel essai dans 12 h.
 
+## Activation sur les cartes (PR 7.4)
+
+Commande `filtrage` (`on` ou `off`, administrateurs ; l'interface viendra en 7.5). Activation : refus si le poste a un
+suffixe DNS principal (poste joint à un domaine) ou une stratégie DNS ou NRPT (D7-5, recommandation appliquée) ;
+origine des cartes enregistrée dans `filtrage-origine.json` avant toute modification ; résolveur permanent lancé et
+contrôlé ; cartes Ethernet et Wi-Fi physiques actives réglées (`127.0.0.1` puis leurs serveurs, `::1` puis leurs
+serveurs IPv6) et vérifiées ; au moindre écart, tout est rendu. Repris au démarrage du service. Écarts au dossier :
+la collecte `FiltrageDns` et l'affichage viendront avec l'interface (7.5) ; une carte branchée après l'activation n'est
+pas réglée (réactiver) ; la restauration avant une mise à jour se fait à l'arrêt du service par msiexec, pour toute
+mise à jour, pas seulement un retour arrière.
+
 ## Résolveur local (PR 7.3, non branché)
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes

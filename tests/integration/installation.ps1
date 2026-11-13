@@ -503,6 +503,81 @@ Verifier 'Résolveur local (7.3) : essai sur la boucle locale ; bloqué, relayé
     }
 }
 
+# Activation du filtrage (phase 7, PR 7.4) : commande « filtrage on » ; cartes physiques réglées sur 127.0.0.1 puis
+# leurs serveurs d'origine (secours) ; résolution du poste filtrée (nom bloqué : 0.0.0.0, nom relayé : réponse de
+# l'amont) ; redémarrage du service : cartes rendues à l'arrêt puis réglées de nouveau ; « filtrage off » : cartes
+# remises à l'identique (DHCP redevient DHCP), plus d'écoute sur le port 53. Configuration d'origine remise ensuite
+Verifier 'Filtrage activé (7.4) : cartes sur le résolveur local avec secours, résolution filtrée, reprise après redémarrage, désactivation à l''identique' {
+    $fConfig = Join-Path $script:Donnees 'config.json'
+    $configAvant = if (Test-Path $fConfig) { Get-Content $fConfig -Raw -Encoding UTF8 } else { $null }
+    $carte = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object -First 1
+    if (-not $carte) { return 'aucune carte physique active' }
+    $etat = {
+        $c4 = (Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses -join ','
+        $c6 = (Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv6).ServerAddresses -join ','
+        $n4 = [string](Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($carte.InterfaceGuid)" -Name NameServer -ErrorAction SilentlyContinue).NameServer
+        "v4=$c4 | v6=$c6 | NameServer=$n4"
+    }
+    $ecoutes = {
+        $svc = (Get-CimInstance Win32_Service -Filter "Name='deR4Tizer'").ProcessId
+        @(@(Get-NetUDPEndpoint -LocalPort 53 -ErrorAction SilentlyContinue | Where-Object OwningProcess -eq $svc) | ForEach-Object { [string]$_.LocalAddress } | Sort-Object -Unique)
+    }
+    $avant = & $etat
+    $origine4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses)
+    try {
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $script:Donnees 'filtrage')
+        Poser-EnAdministrateur 'filtrage\EasyPrivacy.txt' "! liste de test`n||pisteur.test^`n0.0.0.0 pub.test`n"
+        $o = if ($configAvant) { $configAvant | ConvertFrom-Json } else { [pscustomobject]@{} }
+        $o | Add-Member -Force -NotePropertyName Filtrage -NotePropertyValue ([pscustomobject]@{ Categories = @('publicite'); Autorises = @() })
+        [IO.File]::WriteAllText($fConfig, ($o | ConvertTo-Json -Depth 8 -Compress), (New-Object Text.UTF8Encoding $false))
+        icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        $null = Redemarrer-Service
+        $fin = (Get-Date).AddSeconds(240)
+        do { Start-Sleep 5; $l = Journal 'filtrage : catégories actives' 1 } while ($l -notlike '*EasyPrivacy : 2 domaine(s)*' -and (Get-Date) -lt $fin)
+        if ($l -notlike '*EasyPrivacy : 2 domaine(s)*') { return "liste synthétique non chargée en 240 s : « $l »" }
+        $r = Commande '{"Action":"filtrage","Valeur":"on"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "activation refusée : $($r.Message)" }
+        Write-Host "  $($r.Message)"
+        $actif4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses)
+        $actif6 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv6).ServerAddresses)
+        if ($actif4[0] -ne '127.0.0.1' -or @($origine4 | Where-Object { $_ -notin $actif4 }).Count) { return "IPv4 après activation : $($actif4 -join ',') (origine : $($origine4 -join ','))" }
+        if ($actif6[0] -ne '::1') { return "IPv6 après activation : $($actif6 -join ',')" }
+        Clear-DnsClientCache
+        $a = @(Resolve-DnsName pisteur.test -Type A -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
+        if ($a.Count -ne 1 -or $a[0].IPAddress -ne '0.0.0.0') { return "résolution du poste, pisteur.test : $($a | ForEach-Object IPAddress)" }
+        try {
+            $rep = @(Resolve-DnsName www.msftconnecttest.com -Type A -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
+            if (@($rep | Where-Object IPAddress -eq '0.0.0.0').Count) { return 'nom protégé bloqué' }
+        } catch { if ([string]$_.FullyQualifiedErrorId -notlike 'DNS_ERROR_RCODE_NAME_ERROR*') { return "nom protégé non relayé : $($_.FullyQualifiedErrorId)" } }
+        # Redémarrage : cartes rendues à l'arrêt, réglées de nouveau au démarrage
+        Stop-Service deR4Tizer -Force
+        $arrete4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses)
+        if ($arrete4 -contains '127.0.0.1') { return "service arrêté, carte encore sur 127.0.0.1 : $($arrete4 -join ',')" }
+        Start-Service deR4Tizer
+        if (-not (Attendre-Canal)) { return 'le service ne répond plus après le redémarrage' }
+        $fin = (Get-Date).AddSeconds(30)
+        do { Start-Sleep 2; $repris4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses) } while ($repris4[0] -ne '127.0.0.1' -and (Get-Date) -lt $fin)
+        if ($repris4[0] -ne '127.0.0.1') { return "filtrage non repris au démarrage : $($repris4 -join ',') ; $(Journal 'filtrage' 3)" }
+        $r = Commande '{"Action":"filtrage","Valeur":"off"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "désactivation refusée : $($r.Message)" }
+        $apres = & $etat
+        if ($apres -ne $avant) { return "cartes après désactivation : $apres (avant : $avant)" }
+        $fin = (Get-Date).AddSeconds(10)
+        while (@(& $ecoutes).Count -and (Get-Date) -lt $fin) { Start-Sleep 1 }
+        if (@(& $ecoutes).Count) { return "écoute sur le port 53 après la désactivation : $((& $ecoutes) -join ', ')" }
+        if (Test-Path (Join-Path $script:Donnees 'filtrage-origine.json')) { return 'filtrage-origine.json resté après la désactivation' }
+        $true
+    } finally {
+        try { $null = Commande '{"Action":"filtrage","Valeur":"off"}' } catch { }
+        if ($null -ne $configAvant) {
+            [IO.File]::WriteAllText($fConfig, $configAvant, (New-Object Text.UTF8Encoding $false))
+            icacls $fConfig /setowner '*S-1-5-32-544' /Q | Out-Null
+        } else { Remove-Item $fConfig -Force -ErrorAction SilentlyContinue }
+        Remove-Item (Join-Path $script:Donnees 'filtrage') -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Redemarrer-Service
+    }
+}
+
 Verifier 'État des collectes : liste LOLDrivers vide publiée indisponible, PIL-001 sans collecte' {
     # Récente : le service ne la retélécharge pas ; lue au premier tour du fil « contrôles »
     New-Item -ItemType Directory -Force (Join-Path $script:Donnees 'menaces') | Out-Null

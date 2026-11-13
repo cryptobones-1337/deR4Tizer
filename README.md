@@ -97,6 +97,13 @@ Désinstallation depuis « Applications », ou `msiexec /x deR4Tizer.msi /qn`. E
 pare-feu et les leurres, remet les réglages de sécurité d'origine et efface les données ; `GARDER_BASELINE=1` et
 `GARDER_DONNEES=1` conservent respectivement les réglages et les données.
 
+Filtrage par nom de domaine activé (phase 7) : les cartes Ethernet et Wi-Fi sont réglées sur le résolveur de
+deR4Tizer (`127.0.0.1`, `::1`), leurs serveurs d'origine en secours. Désactivation, arrêt du service et désinstallation
+les rendent à leur état d'origine (noté dans `filtrage-origine.json`, dans le dossier de données). Si une carte restait
+sur `127.0.0.1` (service arrêté brutalement, retour manuel à une version sans filtrage), le DNS marche encore par les
+serveurs de secours ; pour la rendre à la main, en administrateur : `netsh interface ip set dns "<carte>" dhcp` et
+`netsh interface ipv6 set dns "<carte>" dhcp` (ou les serveurs d'origine notés dans le fichier).
+
 La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
 relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par le scénario
 d'intégration : même processus du service avant et après).
@@ -215,7 +222,7 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
 7. ✅ Suivi des incidents, chronologie, santé des collectes et de l'interface (phase 4)
 8. ✅ Réponse bornée par la politique : identité revalidée, garde contre les boucles, échéances (phase 6)
 9. 🔄 Refonte de l'interface (WPF) et assistant de premier lancement (en cours, avant la phase 7) ; la nouvelle interface est l'interface par défaut ; l'interface d'avant reste disponible par `deR4Tizer.exe --classique` (contenu : Vue d'ensemble de l'état du poste, bouton panique, pages Connexions, Trafic (carte des pays et débit), Alertes, Incidents, Événements, Détection, Chaînes, Blocages, Quarantaine, Menaces, Baseline, Pare-feu, Démarrage auto, Extensions, Vie privée, Réseau local, Réponses en cours, Santé et Réglages avec panneau de détails ; toutes les pages sont désormais natives ; « Premiers réglages » : six étapes (bienvenue, vérification, apprentissage, qui prévenir, réponses automatiques, résumé) proposées au premier lancement de la coquille et rejouables depuis Réglages ; on peut y terminer l'apprentissage, activer ou désactiver les réponses automatiques et envoyer un message de test aux canaux d'alerte déjà réglés, chaque changement confirmé par un administrateur ; au démarrage de session, l'interface reste dans la zone de notification sans fenêtre ; deR4Tizer dans le menu Démarrer montre l'interface déjà ouverte ; si la nouvelle interface ne peut pas démarrer, l'interface classique la remplace et le signale)
-10. 🔄 Filtrage par nom de domaine (phase 7, en cours) : changement de serveur DNS sur une carte du poste signalé (DNS-002) ; le filtrage lui-même est prévu, désactivé par défaut
+10. 🔄 Filtrage par nom de domaine (phase 7, en cours) : changement de serveur DNS sur une carte du poste signalé (DNS-002) ; filtrage activable par un administrateur (commande `filtrage`, l'interface viendra), désactivé par défaut ; listes « publicités et pistage » (EasyPrivacy, EasyList), aucune liste de sécurité pour l'instant
 
 « ✅ » veut dire livré dans le code, pas validé pour la production : voir la matrice des capacités.
 
@@ -302,6 +309,12 @@ automatic installation can be turned on in the settings (signed releases).
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
+With domain-name filtering on (phase 7), Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
+`::1`), with their original servers as fallback. Turning it off, stopping the service and uninstalling restore their
+original state (recorded in `filtrage-origine.json`, in the data folder). If a card were left on `127.0.0.1` (service
+killed, manual rollback to a version without filtering), DNS still works through the fallback servers; to restore it by
+hand, as administrator: `netsh interface ip set dns "<card>" dhcp` and `netsh interface ipv6 set dns "<card>" dhcp` (or
+the original servers recorded in the file).
 Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service
 (the refusal for a standard account is checked by the integration scenario: same service process before and after).
 
@@ -343,7 +356,7 @@ The full list is in the French section above. In particular:
 7. ✅ Incident tracking, timeline, health of collections and interface (phase 4)
 8. ✅ Response bounded by the policy: identity re-checked, loop guard, deadlines (phase 6)
 9. 🔄 Interface redesign (WPF) and first-run assistant (in progress, before phase 7); the new interface is the default interface; the previous interface remains available with `deR4Tizer.exe --classique` (contents: Overview of the computer's status, panic button, Connections, Traffic (country map and throughput), Alerts, Incidents, Events, Detection, Chains, Blocks, Quarantine, Threats, Baseline, Firewall, Autostart, Extensions, Privacy, Local network, Ongoing responses, Health and Settings pages with a details panel; every page is now native; « First-run setup »: six steps (welcome, check, learning, who to notify, automatic responses, summary) offered the first time the shell opens and available again from Settings; learning can be ended, automatic responses turned on or off and a test message sent to the alert channels already set up there, each change confirmed by an administrator; at sign-in, the interface stays in the notification area without a window; deR4Tizer in the Start menu shows the interface already running; if the new interface cannot start, the classic interface replaces it and says so)
-10. 🔄 Domain-name filtering (phase 7, in progress): a DNS server change on one of the computer's network cards is reported (DNS-002); the filtering itself is planned, off by default
+10. 🔄 Domain-name filtering (phase 7, in progress): a DNS server change on one of the computer's network cards is reported (DNS-002); filtering can be turned on by an administrator (`filtrage` command, the interface will follow), off by default; "ads and tracking" lists (EasyPrivacy, EasyList), no security list yet
 
 "✅" means delivered in the code, not validated for production: see the capability matrix.
 

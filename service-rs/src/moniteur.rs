@@ -247,6 +247,10 @@ impl Moniteur {
         crate::export::demarrer(&m.config.syslog);
         crate::notifications::demarrer(&m.config.notifications);
         if !console {
+            // Filtrage activé (PR 7.4) : résolveur relancé, puis cartes réglées seulement s'il tient le port ; sinon cartes
+            // rendues (contrôle au démarrage, préalable de l'audit de #161). Sonde de l'amont toutes les 5 minutes
+            reprendre_filtrage(&partage, &m.config);
+            demarrer_sonde_filtrage(&partage);
             // Capture des paquets : trafic, NDR local, DPI, IDS/IPS
             // Trafic, DPI et IDS sur l'interface de la route par défaut (le tunnel, avec un VPN) ;
             // NDR sur la carte du réseau local
@@ -641,6 +645,16 @@ impl Moniteur {
 
     pub fn arreter(&mut self) {
         self.partage.arret.store(true, Ordering::SeqCst);
+        // Filtrage activé : cartes rendues à leur état d'origine AVANT que le résolveur relâche le port 53 (préalable de
+        // l'audit de #161) ; repris au prochain démarrage (Config.filtrage.actif et filtrage-origine.json gardés)
+        if crate::dns_local::permanent_actif() {
+            if let Some(o) = crate::filtrage_cartes::lire_origine() {
+                if let Err(e) = crate::filtrage_cartes::restaurer_toutes(&o) {
+                    commun::journal(&format!("filtrage : cartes non rendues à l'arrêt ({e}) ; leurs serveurs d'origine restent en secours"));
+                }
+            }
+            crate::dns_local::arreter_permanent();
+        }
         // Alertes pas encore reprises par le cycle, enregistrées avant l'arrêt : persistance, relevé en cours compris
         // (relecture de #61), puis files des autres fils et détections de processus (phase 1). Relevé attendu 8 s au plus,
         // sous les 10 s annoncées à Windows (wait_hint) ; au-delà, ou si Windows tue le service à l'extinction, l'alerte
@@ -1404,6 +1418,40 @@ impl Moniteur {
                     Err(e) => Reponse::erreur(e),
                 }
             }
+            // Activation du filtrage sur les cartes (PR 7.4, accord explicite du mainteneur)
+            "filtrage" => {
+                if c.valeur.as_deref() == Some("off") {
+                    return match desactiver_filtrage() {
+                        Ok(m) => {
+                            self.config.filtrage.actif = false;
+                            let _ = commun::ecrire("config.json", &self.config);
+                            commun::journal(&format!("filtrage : {m}"));
+                            Reponse::ok(m)
+                        }
+                        Err(e) => Reponse::erreur(e),
+                    };
+                }
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : le filtrage n'est pas activé.");
+                }
+                if crate::dns_local::permanent_actif() {
+                    return Reponse::ok("Le filtrage est déjà activé.");
+                }
+                match activer_filtrage(partage, &self.config) {
+                    Ok(m) => {
+                        self.config.filtrage.actif = true;
+                        if let Err(e) = commun::ecrire("config.json", &self.config) {
+                            commun::journal(&format!("filtrage : activé, mais configuration non enregistrée ({e}) : non repris au prochain démarrage"));
+                        }
+                        commun::journal(&format!("filtrage : {m}"));
+                        Reponse::ok(m)
+                    }
+                    Err(e) => {
+                        commun::journal(&format!("filtrage : activation refusée : {e}"));
+                        Reponse::erreur(e)
+                    }
+                }
+            }
             "filtrageAutoriser" | "filtrageRetirer" => {
                 if commun::echec_protection().is_some() {
                     return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
@@ -2071,6 +2119,145 @@ fn est_telemetrie(nom: &str) -> bool {
     commun::telemetrie().iter().flat_map(|(_, d)| d.iter()).any(|d| nom.eq_ignore_ascii_case(d) || nom.to_lowercase().ends_with(&format!(".{d}")))
 }
 
+/// Juge du résolveur : verdict du filtrage pour les catégories actives (verrou du filtrage seulement)
+fn juge_filtrage(partage: &Arc<Partage>, actives: Vec<crate::filtrage::Categorie>) -> crate::dns_local::Juge {
+    let p = partage.clone();
+    Arc::new(move |nom: &str| matches!(p.filtrage.read().unwrap().decider(nom, &actives), crate::filtrage::Verdict::Bloque { .. }))
+}
+
+/// Amonts du résolveur permanent : serveurs d'origine des cartes (boucle locale exclue), sans doublon, 4 au plus
+fn amonts_origine(o: &[crate::filtrage_cartes::OrigineCarte]) -> Vec<std::net::IpAddr> {
+    let mut l: Vec<std::net::IpAddr> = Vec::new();
+    for ip in o.iter().flat_map(|c| c.dns4.iter().chain(c.dns6.iter())).filter_map(|s| s.parse().ok()) {
+        if !l.contains(&ip) && l.len() < 4 {
+            l.push(ip);
+        }
+    }
+    l
+}
+
+/// Silence de l'amont (mode permanent) : cartes rendues, port gardé ; la sonde les rebranchera
+fn rappel_silence() -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(|| {
+        if let Some(o) = crate::filtrage_cartes::lire_origine() {
+            if let Err(e) = crate::filtrage_cartes::restaurer_toutes(&o) {
+                commun::journal(&format!("filtrage : cartes non rendues pendant le silence de l'amont ({e})"));
+            }
+        }
+    })
+}
+
+/// Activation (PR 7.4) : refus (D7-5), origine relevée et enregistrée AVANT toute modification (échec fermé),
+/// résolveur lancé et contrôlé, puis cartes réglées et vérifiées ; au moindre écart, tout est rendu
+fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<String, String> {
+    use crate::filtrage_cartes as fc;
+    if let Some(r) = fc::refus(&fc::suffixe_dns(), fc::strategie_dns()) {
+        return Err(format!("Activation refusée : {r}"));
+    }
+    let origine = fc::releve_origine().map_err(|e| format!("Cartes réseau illisibles : {e}"))?;
+    if origine.is_empty() {
+        return Err("Aucune carte Ethernet ou Wi-Fi active : rien à régler.".into());
+    }
+    if let Some(o) = origine.iter().find(|o| fc::deja_reglee(o)) {
+        return Err(format!("La carte « {} » est déjà réglée sur le résolveur local (activation précédente non rendue) : désactivez d'abord, ou rendez-la à la main (voir le README).", o.nom));
+    }
+    let amonts = amonts_origine(&origine);
+    if amonts.is_empty() {
+        return Err("Aucun serveur DNS d'origine sur les cartes : rien vers quoi relayer.".into());
+    }
+    commun::ecrire(fc::FICHIER, &origine).map_err(|e| format!("État d'origine des cartes non enregistré ({e}) : rien n'est modifié."))?;
+    let actives = crate::filtrage::categories_actives(config);
+    if let Err(e) = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives.clone()), amonts.clone(), rappel_silence()) {
+        fc::effacer_origine();
+        return Err(e);
+    }
+    if !crate::dns_local::repond_localement() {
+        crate::dns_local::arreter_permanent();
+        fc::effacer_origine();
+        return Err("Le résolveur local ne répond pas au contrôle : rien n'est modifié.".into());
+    }
+    if let Err(e) = fc::appliquer_toutes(&origine) {
+        crate::dns_local::arreter_permanent();
+        fc::effacer_origine();
+        return Err(format!("Réglage des cartes en échec, cartes rendues : {e}"));
+    }
+    let noms: Vec<&str> = origine.iter().map(|o| o.nom.as_str()).collect();
+    Ok(format!("Filtrage activé : carte(s) {} réglée(s) sur le résolveur de deR4Tizer, serveurs actuels en secours ({}) ; {}.",
+        noms.join(", "), amonts.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "),
+        if actives.is_empty() { "aucune catégorie active : rien n'est bloqué" } else { "catégories : listes chargées" }))
+}
+
+/// Désactivation : cartes rendues et vérifiées, PUIS résolveur arrêté ; si une carte n'est pas rendue, le résolveur
+/// garde le port (préalable de l'audit de #161) et l'erreur est rendue
+fn desactiver_filtrage() -> Result<String, String> {
+    use crate::filtrage_cartes as fc;
+    if let Some(o) = fc::lire_origine() {
+        fc::restaurer_toutes(&o).map_err(|e| format!("Cartes non rendues, filtrage gardé (le résolveur garde le port 53) : {e}"))?;
+    }
+    crate::dns_local::arreter_permanent();
+    fc::effacer_origine();
+    Ok("Filtrage désactivé : cartes rendues à leur état d'origine, résolveur local arrêté.".into())
+}
+
+/// Démarrage du service : filtrage activé et origine enregistrée → résolveur relancé ; cartes réglées seulement s'il
+/// tient le port et répond, sinon cartes rendues
+fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
+    use crate::filtrage_cartes as fc;
+    let Some(origine) = fc::lire_origine() else {
+        if config.filtrage.actif {
+            commun::journal("filtrage : activé mais état d'origine des cartes absent ; non repris (réactiver)");
+        }
+        return;
+    };
+    if !config.filtrage.actif || commun::echec_protection().is_some() {
+        // Origine restée sans filtrage actif (arrêt brutal pendant une désactivation, ou protection en échec) : cartes rendues
+        let _ = fc::restaurer_toutes(&origine);
+        if !config.filtrage.actif {
+            fc::effacer_origine();
+        }
+        commun::journal("filtrage : non repris au démarrage ; cartes rendues à leur état d'origine");
+        return;
+    }
+    let actives = crate::filtrage::categories_actives(config);
+    let repris = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives), amonts_origine(&origine), rappel_silence())
+        .and_then(|_| if crate::dns_local::repond_localement() { Ok(()) } else { Err("le résolveur ne répond pas".into()) })
+        .and_then(|_| fc::appliquer_toutes(&origine));
+    match repris {
+        Ok(()) => commun::journal("filtrage : repris au démarrage, cartes réglées sur le résolveur local"),
+        Err(e) => {
+            crate::dns_local::arreter_permanent();
+            let _ = fc::restaurer_toutes(&origine);
+            commun::journal(&format!("filtrage : non repris au démarrage ({e}) ; cartes rendues, filtrage suspendu jusqu'au prochain démarrage ou à une réactivation"));
+        }
+    }
+}
+
+/// Sonde de l'amont : silence constaté → toutes les 5 minutes, un amont répond-il ? Si oui, cartes rebranchées
+fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
+    let p = partage.clone();
+    let _ = std::thread::Builder::new().name("filtrage sonde".into()).spawn(move || {
+        while !p.arret.load(Ordering::Relaxed) {
+            for _ in 0..300 {
+                if p.arret.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            if crate::dns_local::permanent_actif() && crate::dns_local::en_silence() && crate::dns_local::sonder(&crate::dns_local::amonts_en_cours()) {
+                if let Some(o) = crate::filtrage_cartes::lire_origine() {
+                    match crate::filtrage_cartes::appliquer_toutes(&o) {
+                        Ok(()) => {
+                            crate::dns_local::fin_silence();
+                            commun::journal("filtrage : l'amont répond de nouveau ; cartes rebranchées sur le résolveur local");
+                        }
+                        Err(e) => commun::journal(&format!("filtrage : cartes non rebranchées après le silence ({e})")),
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Filtrage : téléchargement puis chargement, hors du verrou du moniteur. En échec de la protection du dossier de
 /// données : configuration ignorée, rien téléchargé ni chargé
 fn mettre_a_jour_filtrage(p: &Arc<Partage>, dernier: &mut String) {
@@ -2344,6 +2531,16 @@ fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
 
 /// Désinstallation : retire tous les blocages et désactive le journal DNS s'il l'avait activé
 pub fn nettoyer() {
+    // Filtrage (PR 7.4) : cartes rendues à leur état d'origine (le service est arrêté : il les a normalement déjà rendues)
+    if let Some(o) = crate::filtrage_cartes::lire_origine() {
+        match crate::filtrage_cartes::restaurer_toutes(&o) {
+            Ok(()) => {
+                crate::filtrage_cartes::effacer_origine();
+                println!("Cartes réseau rendues à leur état d'origine (filtrage).");
+            }
+            Err(e) => println!("Cartes réseau non rendues ({e}) : voir la procédure manuelle du README."),
+        }
+    }
     crate::relance::compte_rendu("retirée", crate::relance::retirer());
     // Dossier de travail de la mise à jour (Program Files) : inconnu du paquet MSI, retiré ici
     match fs::remove_dir_all(crate::maj::dossier_travail()) {

@@ -7468,6 +7468,96 @@ fn filtrage_torturer() {
     });
 }
 
+// ------------------------------------------------------------ phase 7, PR 7.4 : activation sur les cartes
+
+fn origine_essai(dns4: &[&str], dns6: &[&str]) -> crate::filtrage_cartes::OrigineCarte {
+    crate::filtrage_cartes::OrigineCarte {
+        id: "{00000000-0000-0000-0000-000000000001}".into(), nom: "Ethernet".into(),
+        dns4: dns4.iter().map(|s| s.to_string()).collect(), dns6: dns6.iter().map(|s| s.to_string()).collect(), ..Default::default()
+    }
+}
+
+/// Valeurs réglées : résolveur local d'abord, serveurs d'origine en secours (IPv4 et IPv6)
+#[test]
+fn activation_valeurs_reglees() {
+    use crate::filtrage_cartes::valeurs_activees;
+    assert_eq!(valeurs_activees(&origine_essai(&["192.0.2.1", "192.0.2.2"], &["2001:db8::1"])),
+        ("127.0.0.1,192.0.2.1,192.0.2.2".to_string(), "::1,2001:db8::1".to_string()));
+    assert_eq!(valeurs_activees(&origine_essai(&["192.0.2.1"], &[])), ("127.0.0.1,192.0.2.1".to_string(), "::1".to_string()));
+}
+
+/// Origine : cartes physiques seulement ; NameServer statique relu (vide : DHCP) ; serveurs effectifs sans boucle locale,
+/// sans adresse de lien local à zone, 3 au plus par famille
+#[test]
+fn activation_origine_des_cartes() {
+    use crate::dns_surveillance::CarteDns;
+    use crate::filtrage_cartes::origine_de;
+    let carte = |id: &str, t: u32, dns: &[&str]| CarteDns { id: id.into(), nom: id.into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let ns = |pile: &str, id: &str| if pile == "Tcpip" && id == "{S}" { "192.0.2.53".to_string() } else { String::new() };
+    let o = origine_de(&[
+        carte("{D}", 6, &["192.0.2.1", "127.0.0.1", "fe80::1%12", "2001:db8::1", "::1", "0.0.0.0"]),
+        carte("{S}", 71, &["192.0.2.53", "198.51.100.1", "198.51.100.2", "198.51.100.3"]),
+        carte("{V}", 131, &["198.51.100.9"]),
+        carte("", 6, &["198.51.100.8"]),
+    ], &ns);
+    assert_eq!(o.len(), 2, "carte virtuelle et carte sans identifiant écartées");
+    assert_eq!((o[0].ns4.as_str(), o[0].dns4.clone(), o[0].dns6.clone()), ("", vec!["192.0.2.1".to_string()], vec!["2001:db8::1".to_string()]));
+    assert_eq!((o[1].ns4.as_str(), o[1].dns4.len()), ("192.0.2.53", 3));
+}
+
+/// Une carte déjà réglée sur le résolveur local n'est jamais enregistrée comme origine (on la rendrait au résolveur)
+#[test]
+fn activation_carte_deja_reglee_refusee() {
+    use crate::filtrage_cartes::{deja_reglee, meme_liste, OrigineCarte};
+    assert!(deja_reglee(&OrigineCarte { ns4: "127.0.0.1,192.0.2.1".into(), ..Default::default() }));
+    assert!(deja_reglee(&OrigineCarte { ns6: "::1 2001:db8::1".into(), ..Default::default() }));
+    assert!(!deja_reglee(&OrigineCarte { ns4: "192.0.2.1,127.0.0.1".into(), ..Default::default() }));
+    assert!(!deja_reglee(&OrigineCarte::default()));
+    assert!(meme_liste("127.0.0.1,192.0.2.1", "127.0.0.1 192.0.2.1") && meme_liste("", " ") && !meme_liste("a,b", "b,a"));
+}
+
+/// Refus (D7-5) : suffixe DNS principal (poste joint à un domaine), stratégie DNS ou NRPT
+#[test]
+fn activation_refusee_domaine_ou_strategie() {
+    use crate::filtrage_cartes::refus;
+    assert!(refus("ad.exemple.test", false).is_some_and(|r| r.contains("domaine")));
+    assert!(refus("", true).is_some_and(|r| r.contains("NRPT")));
+    assert!(refus("  ", false).is_none());
+    assert!(crate::validation::valider(&commande_json(r#"{"Action":"filtrage","Valeur":"on"}"#)).is_ok());
+    assert!(crate::validation::valider(&commande_json(r#"{"Action":"filtrage","Valeur":"activer"}"#)).is_err());
+    assert!(!crate::validation::autorisee("filtrage", crate::validation::Client::Autre));
+}
+
+/// Ordre des opérations (préalables de l'audit de #161) : origine enregistrée avant tout réglage ; résolveur lancé et
+/// contrôlé avant les cartes ; cartes rendues AVANT l'arrêt du résolveur (désactivation et arrêt du service)
+#[test]
+fn activation_ordre_des_operations() {
+    let m = include_str!("moniteur.rs");
+    let corps = |nom: &str| { let d = m.find(nom).unwrap_or_else(|| panic!("{nom}")); &m[d..d + m[d..].find("\n}\n").or_else(|| m[d..].find("\r\n}\r\n")).unwrap()] };
+    let ordre = |c: &str, a: &str, b: &str| c.find(a).unwrap_or_else(|| panic!("{a}")) < c.find(b).unwrap_or_else(|| panic!("{b}"));
+    let act = corps("fn activer_filtrage(");
+    assert!(ordre(act, "commun::ecrire(fc::FICHIER", "demarrer_permanent"), "origine enregistrée d'abord");
+    assert!(ordre(act, "demarrer_permanent", "repond_localement") && ordre(act, "repond_localement", "appliquer_toutes"));
+    let des = corps("fn desactiver_filtrage(");
+    assert!(ordre(des, "restaurer_toutes", "arreter_permanent"), "cartes rendues avant le résolveur arrêté");
+    assert!(des.contains("map_err") && des.find("?;").is_some(), "carte non rendue : erreur, résolveur gardé");
+    let arr = &m[m.find("pub fn arreter(&mut self)").unwrap()..];
+    assert!(ordre(arr, "restaurer_toutes", "arreter_permanent"), "arrêt du service : cartes rendues d'abord");
+    let rep = corps("fn reprendre_filtrage(");
+    assert!(ordre(rep, "demarrer_permanent", "appliquer_toutes"), "démarrage : cartes réglées seulement après le résolveur");
+}
+
+/// Requête construite par le résolveur (sonde, contrôle) : relue telle quelle
+#[test]
+fn activation_requete_de_controle() {
+    use crate::dns_local::{lire_requete, requete, Lecture, MAX_UDP};
+    match lire_requete(&requete(7, "www.msftconnecttest.com", 1), MAX_UDP) {
+        Lecture::Requete(r) => assert_eq!((r.id, r.question.nom.as_str(), r.question.type_), (7, "www.msftconnecttest.com", 1)),
+        a => panic!("{a:?}"),
+    }
+    torturer_texte("a.b.test", &mut |t| { let _ = lire_requete(&requete(1, t, 1), crate::dns_local::MAX_TCP); });
+}
+
 // ------------------------------------------------------------ phase 7, PR 7.3 : résolveur local (non branché)
 
 /// Requête DNS d'essai : identifiant, RD, une question (nom, type, classe IN)
