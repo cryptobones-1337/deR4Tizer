@@ -2222,8 +2222,9 @@ fn noter_collecte_filtrage(config_actif: bool) {
 /// 53 ; il répondrait aux résolutions du poste (pure, testée)
 pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[String]) -> Alerte {
     let qui = match pid {
-        Some(p) if !chemin.is_empty() => format!("le processus {p} ({chemin})"),
-        Some(p) => format!("le processus {p}"),
+        // PID lu sur le port 53, quelle que soit l'adresse (audit de #165, S165-01) : à confirmer avant d'arrêter le programme
+        Some(p) if !chemin.is_empty() => format!("probablement le processus {p} ({chemin} ; adresse non vérifiée)"),
+        Some(p) => format!("probablement le processus {p} (adresse non vérifiée)"),
         None => "un programme inconnu".into(),
     };
     Alerte {
@@ -2442,6 +2443,10 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
 /// Filtrage : téléchargement puis chargement, hors du verrou du moniteur. En échec de la protection du dossier de
 /// données : configuration ignorée, rien téléchargé ni chargé
 fn mettre_a_jour_filtrage(p: &Arc<Partage>, dernier: &mut String) {
+    // Un seul rechargement à la fois : passage horaire et commande filtrageCategories ne se croisent pas (audit de #165,
+    // S165-02 : deux curl sur le même fichier temporaire)
+    static RECHARGEMENT: Mutex<()> = Mutex::new(());
+    let _un_seul = RECHARGEMENT.lock().unwrap_or_else(|e| e.into_inner());
     let echec = commun::echec_protection().is_some();
     let config: commun::Config = if echec { Default::default() } else { commun::lire("config.json").unwrap_or_default() };
     let actives = crate::filtrage::categories_actives(&config);
