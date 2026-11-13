@@ -647,10 +647,15 @@ impl Moniteur {
         self.partage.arret.store(true, Ordering::SeqCst);
         // Filtrage activé : cartes rendues à leur état d'origine AVANT que le résolveur relâche le port 53 (préalable de
         // l'audit de #161) ; repris au prochain démarrage (Config.filtrage.actif et filtrage-origine.json gardés)
+        // Remise ratée : seconde tentative, puis repli qui retire au moins la boucle locale (audit de #164, S164-02) ; le
+        // processus ne peut pas garder le port après sa fin
         if crate::dns_local::permanent_actif() {
             if let Some(o) = crate::filtrage_cartes::lire_origine() {
-                if let Err(e) = crate::filtrage_cartes::restaurer_toutes(&o) {
-                    commun::journal(&format!("filtrage : cartes non rendues à l'arrêt ({e}) ; leurs serveurs d'origine restent en secours"));
+                let rendu = crate::filtrage_cartes::restaurer_toutes(&o).or_else(|_| crate::filtrage_cartes::restaurer_toutes(&o));
+                if let Err(e) = rendu {
+                    let repli: Vec<String> = o.iter().filter_map(|c| crate::filtrage_cartes::retirer_boucle(c).err()).collect();
+                    commun::journal(&format!("filtrage : cartes non rendues à l'identique à l'arrêt ({e}) ; repli (serveurs d'origine en statique, sans la boucle locale) : {}",
+                        if repli.is_empty() { "fait".to_string() } else { format!("en échec ({})", repli.join(" ; ")) }));
                 }
             }
             crate::dns_local::arreter_permanent();
@@ -2209,28 +2214,53 @@ fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
         }
         return;
     };
-    if !config.filtrage.actif || commun::echec_protection().is_some() {
-        // Origine restée sans filtrage actif (arrêt brutal pendant une désactivation, ou protection en échec) : cartes rendues
-        let _ = fc::restaurer_toutes(&origine);
-        if !config.filtrage.actif {
+    // Le port est pris AVANT toute remise ou tout réglage, et n'est relâché que lorsqu'aucune carte ne pointe plus sur la
+    // boucle locale (audit de #164, S164-01). Filtrage non actif ou protection en échec : simple relais pendant la remise
+    let reprendre = config.filtrage.actif && commun::echec_protection().is_none();
+    let actives = if reprendre { crate::filtrage::categories_actives(config) } else { Vec::new() };
+    let lie = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives), amonts_origine(&origine), rappel_silence());
+    if let Err(e) = &lie {
+        // Port déjà pris par un autre programme : rien ne peut le tenir ; cartes rendues au mieux, origine gardée si une
+        // carte reste sur la boucle locale
+        let r = fc::restaurer_toutes(&origine);
+        if r.is_ok() && !fc::encore_sur_la_boucle(&origine) && !reprendre {
             fc::effacer_origine();
         }
-        commun::journal("filtrage : non repris au démarrage ; cartes rendues à leur état d'origine");
+        commun::journal(&format!("filtrage : résolveur local impossible à lancer au démarrage ({e}) ; cartes rendues : {}",
+            r.err().unwrap_or_else(|| "faites".into())));
         return;
     }
-    let actives = crate::filtrage::categories_actives(config);
-    let repris = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives), amonts_origine(&origine), rappel_silence())
-        .and_then(|_| if crate::dns_local::repond_localement() { Ok(()) } else { Err("le résolveur ne répond pas".into()) })
-        .and_then(|_| fc::appliquer_toutes(&origine));
+    if !reprendre {
+        match fc::restaurer_toutes(&origine) {
+            Ok(()) if !fc::encore_sur_la_boucle(&origine) => {
+                crate::dns_local::arreter_permanent();
+                fc::effacer_origine();
+                commun::journal("filtrage : non repris au démarrage ; cartes rendues à leur état d'origine");
+            }
+            r => {
+                RESTAURATION_EN_ATTENTE.store(true, Ordering::Release);
+                commun::journal(&format!("filtrage : cartes non rendues au démarrage ({}) ; le résolveur garde le port, nouvel essai par la sonde",
+                    r.err().unwrap_or_else(|| "une carte pointe encore sur la boucle locale".into())));
+            }
+        }
+        return;
+    }
+    let repris = if crate::dns_local::repond_localement() { fc::appliquer_toutes(&origine) } else { Err("l'amont ne répond pas encore".into()) };
     match repris {
         Ok(()) => commun::journal("filtrage : repris au démarrage, cartes réglées sur le résolveur local"),
         Err(e) => {
-            crate::dns_local::arreter_permanent();
-            let _ = fc::restaurer_toutes(&origine);
-            commun::journal(&format!("filtrage : non repris au démarrage ({e}) ; cartes rendues, filtrage suspendu jusqu'au prochain démarrage ou à une réactivation"));
+            // Cartes rendues EN TENANT le port ; la sonde les rebranchera quand l'amont répondra (S164-01, S164-03)
+            let r = fc::restaurer_toutes(&origine);
+            crate::dns_local::marquer_silence();
+            commun::journal(&format!("filtrage : suspendu au démarrage ({e}) ; cartes rendues ({}), port gardé, nouvel essai par la sonde toutes les 5 minutes",
+                r.err().unwrap_or_else(|| "faites".into())));
         }
     }
 }
+
+/// Remise des cartes en attente (démarrage sans filtrage actif, remise ratée) : le résolveur garde le port, la sonde
+/// réessaie, et le relâche seulement quand aucune carte ne pointe plus sur la boucle locale
+static RESTAURATION_EN_ATTENTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Sonde de l'amont : silence constaté → toutes les 5 minutes, un amont répond-il ? Si oui, cartes rebranchées
 fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
@@ -2242,6 +2272,17 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                     return;
                 }
                 std::thread::sleep(Duration::from_secs(1));
+            }
+            if RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+                if let Some(o) = crate::filtrage_cartes::lire_origine() {
+                    if crate::filtrage_cartes::restaurer_toutes(&o).is_ok() && !crate::filtrage_cartes::encore_sur_la_boucle(&o) {
+                        crate::dns_local::arreter_permanent();
+                        crate::filtrage_cartes::effacer_origine();
+                        RESTAURATION_EN_ATTENTE.store(false, Ordering::Release);
+                        commun::journal("filtrage : cartes enfin rendues à leur état d'origine ; résolveur local arrêté");
+                    }
+                }
+                continue;
             }
             if crate::dns_local::permanent_actif() && crate::dns_local::en_silence() && crate::dns_local::sonder(&crate::dns_local::amonts_en_cours()) {
                 if let Some(o) = crate::filtrage_cartes::lire_origine() {

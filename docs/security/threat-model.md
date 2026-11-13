@@ -44,11 +44,16 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   - cartes rendues avant de relâcher le port : désactivation (une carte non rendue garde le résolveur et son port),
     arrêt du service, désinstallation (`--nettoyer`) ; silence de l'amont : cartes rendues, port gardé, rebranchées par
     une sonde toutes les 5 minutes ;
-  - contrôle au démarrage : cartes réglées seulement si le résolveur a pu se lier et répond ; sinon rendues.
+  - contrôle au démarrage : le port est pris avant toute remise ou tout réglage ; cartes réglées seulement si le
+    résolveur répond ; sinon rendues en tenant le port, et rebranchées par la sonde ; port relâché seulement quand
+    aucune carte ne pointe plus sur la boucle locale (audit de #164, S164-01).
 
   **Risque restant** : si le service est tué (plantage, arrêt forcé), le port est relâché alors que les cartes pointent
   encore sur `127.0.0.1`, jusqu'au redémarrage par le gestionnaire de services (5 s) et le contrôle du démarrage. Dans cet
-  intervalle, un programme local qui prendrait le port 53 répondrait aux résolutions du poste. Écrit, non fermé ;
+  intervalle, un programme local qui prendrait le port 53 répondrait aux résolutions du poste. Même risque si, à un
+  arrêt normal, la remise des cartes échoue deux fois : un repli retire alors au moins `127.0.0.1` et `::1` (serveurs
+  d'origine en statique), mais s'il échoue aussi, le port est relâché avec la carte sur la boucle locale (S164-02).
+  Écrit, non fermé ;
 - ce qu'un compte standard local peut en faire : viser l'analyseur par des paquets forgés, saturer le résolveur (déni
   de service local qu'il peut déjà provoquer autrement), contourner le filtrage (possible : ce n'est pas une barrière ;
   changer le DNS des cartes demande d'être administrateur, et DNS-002 le signale).

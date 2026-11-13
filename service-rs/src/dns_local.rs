@@ -545,6 +545,13 @@ pub fn en_silence() -> bool {
     ESSAI.lock().unwrap().as_ref().is_some_and(|e| e.silence.load(Ordering::Acquire))
 }
 
+/// Silence posé d'office (démarrage sans amont joignable : cartes rendues, port gardé, la sonde rebranchera)
+pub fn marquer_silence() {
+    if let Some(e) = ESSAI.lock().unwrap().as_ref() {
+        e.silence.store(true, Ordering::Release);
+    }
+}
+
 pub fn fin_silence() {
     if let Some(e) = ESSAI.lock().unwrap().as_ref() {
         e.silence.store(false, Ordering::Release);

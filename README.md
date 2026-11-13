@@ -102,7 +102,10 @@ deR4Tizer (`127.0.0.1`, `::1`), leurs serveurs d'origine en secours. Désactivat
 les rendent à leur état d'origine (noté dans `filtrage-origine.json`, dans le dossier de données). Si une carte restait
 sur `127.0.0.1` (service arrêté brutalement, retour manuel à une version sans filtrage), le DNS marche encore par les
 serveurs de secours ; pour la rendre à la main, en administrateur : `netsh interface ip set dns "<carte>" dhcp` et
-`netsh interface ipv6 set dns "<carte>" dhcp` (ou les serveurs d'origine notés dans le fichier).
+`netsh interface ipv6 set dns "<carte>" dhcp` (ou les serveurs d'origine notés dans le fichier). Limite pour un
+portable : les serveurs de secours et l'amont sont ceux du réseau de l'activation ; sur un autre réseau, si ces serveurs
+ne répondent pas, le filtrage se suspend (cartes rendues) et reprend quand l'amont répond de nouveau. Pour suivre un
+nouveau réseau, désactiver puis réactiver le filtrage.
 
 La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
 relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par le scénario
@@ -314,7 +317,9 @@ With domain-name filtering on (phase 7), Ethernet and Wi-Fi cards point to the d
 original state (recorded in `filtrage-origine.json`, in the data folder). If a card were left on `127.0.0.1` (service
 killed, manual rollback to a version without filtering), DNS still works through the fallback servers; to restore it by
 hand, as administrator: `netsh interface ip set dns "<card>" dhcp` and `netsh interface ipv6 set dns "<card>" dhcp` (or
-the original servers recorded in the file).
+the original servers recorded in the file). Laptop limit: the fallback servers and the upstream are those of the network
+where filtering was turned on; on another network, if they do not answer, filtering is suspended (cards restored) and
+resumes when the upstream answers again. To follow a new network, turn filtering off and on again.
 Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service
 (the refusal for a standard account is checked by the integration scenario: same service process before and after).
 

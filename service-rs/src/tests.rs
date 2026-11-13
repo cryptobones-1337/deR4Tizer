@@ -7545,6 +7545,13 @@ fn activation_ordre_des_operations() {
     assert!(ordre(arr, "restaurer_toutes", "arreter_permanent"), "arrêt du service : cartes rendues d'abord");
     let rep = corps("fn reprendre_filtrage(");
     assert!(ordre(rep, "demarrer_permanent", "appliquer_toutes"), "démarrage : cartes réglées seulement après le résolveur");
+    // Audit de #164, S164-01 : au démarrage, le port est pris avant toute remise, et relâché seulement après une remise
+    // vérifiée (aucune carte sur la boucle locale) ; reprise ratée : cartes rendues en tenant le port
+    assert!(ordre(rep, "demarrer_permanent", "restaurer_toutes"), "port pris avant toute remise");
+    let sans = &rep[rep.find("if !reprendre {").unwrap()..];
+    assert!(ordre(sans, "encore_sur_la_boucle", "arreter_permanent"), "port relâché seulement sans carte sur la boucle");
+    let rate = &rep[rep.find("Err(e) => {\n            // Cartes rendues EN TENANT").or_else(|| rep.find("Err(e) => {\r\n            // Cartes rendues EN TENANT")).unwrap()..];
+    assert!(!rate[..rate.find("marquer_silence").unwrap()].contains("arreter_permanent"), "reprise ratée : port gardé");
 }
 
 /// Requête construite par le résolveur (sonde, contrôle) : relue telle quelle

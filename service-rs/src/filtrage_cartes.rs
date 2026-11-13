@@ -121,6 +121,19 @@ pub fn restaurer(o: &OrigineCarte) -> Result<(), String> {
     regler_et_verifier(o, &o.ns4, &o.ns6)
 }
 
+/// Remise de repli d'une carte (audit de #164, S164-02) : ses serveurs d'origine en statique, sans `127.0.0.1` ni `::1`.
+/// Utilisée quand la remise à l'identique a échoué deux fois et que le port va être relâché (arrêt du service)
+pub fn retirer_boucle(o: &OrigineCarte) -> Result<(), String> {
+    regler_et_verifier(o, &o.dns4.join(","), &o.dns6.join(","))
+}
+
+/// Une carte de la liste pointe-t-elle encore sur la boucle locale ? (relecture du registre)
+pub fn encore_sur_la_boucle(l: &[OrigineCarte]) -> bool {
+    l.iter().any(|o| {
+        serveurs(&registre_ns("Tcpip", &o.id)).iter().any(|s| s == "127.0.0.1") || serveurs(&registre_ns("Tcpip6", &o.id)).iter().any(|s| s == "::1")
+    })
+}
+
 /// Rend toutes les cartes ; erreurs réunies (aucune n'arrête les suivantes)
 pub fn restaurer_toutes(l: &[OrigineCarte]) -> Result<(), String> {
     let e: Vec<String> = l.iter().filter_map(|o| restaurer(o).err()).collect();
