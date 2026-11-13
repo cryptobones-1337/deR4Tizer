@@ -1,7 +1,9 @@
 //! Résolveur local (phase 7, PR 7.3) : écoute UDP et TCP sur `127.0.0.1:53` et `[::1]:53` **seulement**, répond
 //! lui-même pour un nom bloqué par le filtrage (`filtrage.rs`) et relaie le reste vers l'amont. **Non branché sur les
-//! cartes** : aucune carte n'est réglée sur lui (activation en 7.4, avec l'accord explicite du mainteneur). Il ne tourne
-//! que pendant un essai lancé par un administrateur (commande `filtrageEssai`), 10 minutes au plus.
+//! cartes** pendant un essai (commande `filtrageEssai`, 10 minutes au plus). En mode permanent (PR 7.4, activation du
+//! filtrage, `filtrage_cartes.rs`), les cartes physiques sont réglées sur lui ; quand l'amont se tait, les cartes sont
+//! rendues à leurs serveurs d'origine **sans relâcher le port** (préalable de l'audit de #161, S161-02), puis rebranchées
+//! dès qu'une sonde de l'amont répond.
 //!
 //! - Requête (parseur borné, torturé) : UDP 512 octets, TCP 4096 au plus ; une seule question ; nom de 253 caractères
 //!   et 127 étiquettes au plus, sans pointeur de compression ; sinon FORMERR, rien n'est relayé.
@@ -313,6 +315,11 @@ struct Essai {
     debut: Instant,
     bloquees: AtomicUsize,
     relayees: AtomicUsize,
+    /// Mode permanent (filtrage activé) : le silence de l'amont n'arrête pas le résolveur, il appelle `sur_silence`
+    permanent: bool,
+    /// Silence de l'amont constaté (mode permanent) : cartes rendues à leurs serveurs d'origine, en attente de la sonde
+    silence: AtomicBool,
+    sur_silence: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 static ESSAI: Mutex<Option<Arc<Essai>>> = Mutex::new(None);
@@ -331,8 +338,15 @@ impl Essai {
                     let rep = self.amonts.iter().find_map(|&a| if tcp { relayer_tcp(paquet, &r.question, a) } else { relayer_udp(paquet, &r.question, a) });
                     let maintenant = self.debut.elapsed().as_secs();
                     if self.sante.lock().unwrap().noter(rep.is_some(), maintenant) {
-                        crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s, essai arrêté (dégradation ouverte)");
-                        self.arret.store(true, Ordering::Relaxed);
+                        if !self.permanent {
+                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s, essai arrêté (dégradation ouverte)");
+                            self.arret.store(true, Ordering::Relaxed);
+                        } else if !self.silence.swap(true, Ordering::AcqRel) {
+                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s ; cartes rendues à leurs serveurs d'origine, port gardé (dégradation ouverte)");
+                            if let Some(f) = &self.sur_silence {
+                                f();
+                            }
+                        }
                     }
                     self.relayees.fetch_add(1, Ordering::Relaxed);
                     rep.map(|v| avec_id(&v, r.id))
@@ -393,7 +407,8 @@ fn lier_exclusif(adresse: SocketAddr, tcp: bool) -> std::io::Result<std::os::win
         if tcp { IPPROTO_TCP.0 } else { IPPROTO_UDP.0 },
     );
     unsafe {
-        let s = socket(famille, type_, proto).map_err(|e| std::io::Error::from_raw_os_error(e.code().0))?;
+        // Code d'erreur Winsock du dernier appel, pas le HRESULT (relecture de #161, R57)
+        let s = socket(famille, type_, proto).map_err(|_| std::io::Error::last_os_error())?;
         let erreur = |s| {
             let e = std::io::Error::last_os_error();
             let _ = closesocket(s);
@@ -508,6 +523,84 @@ fn boucle_tcp(e: Arc<Essai>, l: TcpListener) {
 /// Lance un essai du résolveur sur la boucle locale (10 minutes au plus). Refusé si un essai tourne déjà, si aucun
 /// amont n'est connu, ou si le port 53 de la boucle locale est déjà pris (le service n'arrête jamais l'autre logiciel)
 pub fn demarrer_essai(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>) -> Result<String, String> {
+    demarrer(filtrage_actif, juge, amonts.clone(), None)?;
+    let amonts: Vec<String> = amonts.iter().map(IpAddr::to_string).collect();
+    Ok(format!("Essai du résolveur local lancé pour 10 minutes sur 127.0.0.1 et ::1 (amont : {} ; filtrage {}). Aucune carte réseau n'est réglée sur lui.",
+        amonts.join(", "), if filtrage_actif { "actif" } else { "sans catégorie active : tout est relayé" }))
+}
+
+/// Lance le résolveur en mode permanent (filtrage activé, PR 7.4) : pas de durée, le silence de l'amont appelle
+/// `sur_silence` (cartes rendues) au lieu d'arrêter. Mêmes refus que l'essai
+pub fn demarrer_permanent(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: Arc<dyn Fn() + Send + Sync>) -> Result<(), String> {
+    demarrer(filtrage_actif, juge, amonts, Some(sur_silence))
+}
+
+/// Le résolveur tourne-t-il en mode permanent ?
+pub fn permanent_actif() -> bool {
+    ESSAI.lock().unwrap().as_ref().is_some_and(|e| e.permanent && !e.arret.load(Ordering::Relaxed))
+}
+
+/// Silence de l'amont en cours (mode permanent), et remise à zéro quand la sonde a répondu et les cartes sont rebranchées
+pub fn en_silence() -> bool {
+    ESSAI.lock().unwrap().as_ref().is_some_and(|e| e.silence.load(Ordering::Acquire))
+}
+
+/// Silence posé d'office (démarrage sans amont joignable : cartes rendues, port gardé, la sonde rebranchera)
+pub fn marquer_silence() {
+    if let Some(e) = ESSAI.lock().unwrap().as_ref() {
+        e.silence.store(true, Ordering::Release);
+    }
+}
+
+pub fn fin_silence() {
+    if let Some(e) = ESSAI.lock().unwrap().as_ref() {
+        e.silence.store(false, Ordering::Release);
+        *e.sante.lock().unwrap() = Sante::default();
+    }
+}
+
+/// Amonts du résolveur en cours (sonde)
+pub fn amonts_en_cours() -> Vec<IpAddr> {
+    ESSAI.lock().unwrap().as_ref().map(|e| e.amonts.clone()).unwrap_or_default()
+}
+
+/// Requête DNS d'un nom (une question, classe IN, RD) (pure, testée)
+pub fn requete(id: u16, nom: &str, type_: u16) -> Vec<u8> {
+    let mut v = id.to_be_bytes().to_vec();
+    v.extend_from_slice(&[0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);
+    for e in nom.split('.').filter(|e| !e.is_empty()).take(127) {
+        let e = &e.as_bytes()[..e.len().min(63)];
+        v.push(e.len() as u8);
+        v.extend_from_slice(e);
+    }
+    v.push(0);
+    v.extend_from_slice(&type_.to_be_bytes());
+    v.extend_from_slice(&CLASSE_IN.to_be_bytes());
+    v
+}
+
+/// Sonde : un des amonts répond-il à une requête d'un nom de la liste de protection ?
+pub fn sonder(amonts: &[IpAddr]) -> bool {
+    let p = requete(identifiant_aleatoire(), "www.msftconnecttest.com", TYPE_A);
+    let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return false };
+    amonts.iter().any(|&a| relayer_udp(&p, &r.question, a).is_some())
+}
+
+/// Le résolveur local répond-il sur 127.0.0.1 ? (contrôle avant de régler les cartes)
+pub fn repond_localement() -> bool {
+    let p = requete(identifiant_aleatoire(), "www.msftconnecttest.com", TYPE_A);
+    let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return false };
+    let Ok(s) = UdpSocket::bind("127.0.0.1:0") else { return false };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+    if s.send_to(&p, "127.0.0.1:53").is_err() {
+        return false;
+    }
+    let mut t = [0u8; MAX_TCP];
+    matches!(s.recv_from(&mut t), Ok((n, _)) if reponse_assortie(&t[..n], r.id, &r.question.brute))
+}
+
+fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: Option<Arc<dyn Fn() + Send + Sync>>) -> Result<(), String> {
+    let permanent = sur_silence.is_some();
     let mut g = ESSAI.lock().unwrap();
     if g.as_ref().is_some_and(|e| !e.arret.load(Ordering::Relaxed)) {
         return Err("Un essai du résolveur local est déjà en cours.".into());
@@ -538,6 +631,7 @@ pub fn demarrer_essai(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>) -> 
         arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), tcp_en_cours: AtomicUsize::new(0), fils: AtomicUsize::new(0),
         filtrage_actif, juge, amonts: amonts.clone(),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
+        permanent, silence: AtomicBool::new(false), sur_silence,
     });
     let mut lances = true;
     for u in [u4, u6] {
@@ -553,29 +647,48 @@ pub fn demarrer_essai(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>) -> 
         *g = Some(e);
         return Err("Fils du résolveur local impossibles à créer : essai abandonné.".into());
     }
-    // Fin de l'essai au plus tard après DUREE_ESSAI
+    // Fin de l'essai au plus tard après DUREE_ESSAI (essai seulement). Fil impossible à créer : écoutes arrêtées et essai
+    // enregistré, pour que « off » le trouve (relecture de #161, R56)
     let e2 = e.clone();
-    std::thread::Builder::new().name("résolveur local fin".into()).spawn(move || {
-        while !e2.arret.load(Ordering::Relaxed) && e2.debut.elapsed() < DUREE_ESSAI {
+    let fin = std::thread::Builder::new().name("résolveur local fin".into()).spawn(move || {
+        while !e2.arret.load(Ordering::Relaxed) && (e2.permanent || e2.debut.elapsed() < DUREE_ESSAI) {
             std::thread::sleep(Duration::from_secs(1));
         }
         e2.arret.store(true, Ordering::Relaxed);
-        crate::commun::journal(&format!("résolveur local : essai terminé ({} requête(s) bloquée(s), {} relayée(s))",
-            e2.bloquees.load(Ordering::Relaxed), e2.relayees.load(Ordering::Relaxed)));
-    }).map_err(|x| x.to_string())?;
+        crate::commun::journal(&format!("résolveur local : {} ({} requête(s) bloquée(s), {} relayée(s))",
+            if e2.permanent { "arrêté" } else { "essai terminé" }, e2.bloquees.load(Ordering::Relaxed), e2.relayees.load(Ordering::Relaxed)));
+    });
+    if fin.is_err() {
+        e.arret.store(true, Ordering::Relaxed);
+        *g = Some(e);
+        return Err("Fil de fin du résolveur local impossible à créer : abandonné.".into());
+    }
     *g = Some(e);
-    let amonts: Vec<String> = amonts.iter().map(IpAddr::to_string).collect();
-    Ok(format!("Essai du résolveur local lancé pour 10 minutes sur 127.0.0.1 et ::1 (amont : {} ; filtrage {}). Aucune carte réseau n'est réglée sur lui.",
-        amonts.join(", "), if filtrage_actif { "actif" } else { "sans catégorie active : tout est relayé" }))
+    Ok(())
 }
 
-/// Arrête l'essai en cours (les écoutes se ferment dans la seconde)
+/// Arrête l'essai en cours (les écoutes se ferment dans la seconde). Le mode permanent ne s'arrête que par
+/// `arreter_permanent`, après la remise des cartes
 pub fn arreter_essai() -> String {
     match ESSAI.lock().unwrap().as_ref() {
+        Some(e) if e.permanent && !e.arret.load(Ordering::Relaxed) => "Le filtrage est activé : le résolveur local tourne en permanence ; désactivez le filtrage pour l'arrêter.".into(),
         Some(e) if !e.arret.load(Ordering::Relaxed) => {
             e.arret.store(true, Ordering::Relaxed);
             "Essai du résolveur local arrêté.".into()
         }
         _ => "Aucun essai du résolveur local en cours.".into(),
+    }
+}
+
+/// Arrête le résolveur permanent, puis attend (5 s au plus) que ses fils aient rendu leurs sockets. À n'appeler
+/// qu'après la remise des cartes (préalable de l'audit de #161)
+pub fn arreter_permanent() {
+    let e = ESSAI.lock().unwrap().clone();
+    if let Some(e) = e.filter(|e| e.permanent) {
+        e.arret.store(true, Ordering::Relaxed);
+        let fin = Instant::now() + Duration::from_secs(5);
+        while e.fils.load(Ordering::Acquire) > 0 && Instant::now() < fin {
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }

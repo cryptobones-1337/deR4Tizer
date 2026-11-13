@@ -38,10 +38,22 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
 - réponses de l'amont acceptées seulement si l'amont, l'identifiant et la question correspondent, identifiant et port
   source aléatoires (port tiré dans la plage dynamique) : **tenu** (`dns_reponse_amont_mal_assortie_ignoree`,
   `dns_port_source_dynamique`) ;
-- **préalables à l'activation (7.4)**, du même audit : jamais de carte réglée sur la boucle locale sans la liaison
-  exclusive tenue par le service ; cartes remises à l'identique avant de relâcher le port (arrêt, désactivation, fin du
-  service) ; contrôle au démarrage du service. Sinon, un compte standard qui prendrait le port 53 relâché répondrait à
-  toutes les résolutions du poste, SYSTEM compris ;
+- **préalables à l'activation (7.4)**, du même audit, **tenus** par `filtrage_cartes.rs` et le moniteur (test
+  `activation_ordre_des_operations`, cas 3a « Filtrage activé (7.4) ») :
+  - jamais de carte réglée sans la liaison exclusive : le résolveur démarre et répond au contrôle avant le réglage ;
+  - cartes rendues avant de relâcher le port : désactivation (une carte non rendue garde le résolveur et son port),
+    arrêt du service, désinstallation (`--nettoyer`) ; silence de l'amont : cartes rendues, port gardé, rebranchées par
+    une sonde toutes les 5 minutes ;
+  - contrôle au démarrage : le port est pris avant toute remise ou tout réglage ; cartes réglées seulement si le
+    résolveur répond ; sinon rendues en tenant le port, et rebranchées par la sonde ; port relâché seulement quand
+    aucune carte ne pointe plus sur la boucle locale (audit de #164, S164-01).
+
+  **Risque restant** : si le service est tué (plantage, arrêt forcé), le port est relâché alors que les cartes pointent
+  encore sur `127.0.0.1`, jusqu'au redémarrage par le gestionnaire de services (5 s) et le contrôle du démarrage. Dans cet
+  intervalle, un programme local qui prendrait le port 53 répondrait aux résolutions du poste. Même risque si, à un
+  arrêt normal, la remise des cartes échoue deux fois : un repli retire alors au moins `127.0.0.1` et `::1` (serveurs
+  d'origine en statique), mais s'il échoue aussi, le port est relâché avec la carte sur la boucle locale (S164-02).
+  Écrit, non fermé ;
 - ce qu'un compte standard local peut en faire : viser l'analyseur par des paquets forgés, saturer le résolveur (déni
   de service local qu'il peut déjà provoquer autrement), contourner le filtrage (possible : ce n'est pas une barrière ;
   changer le DNS des cartes demande d'être administrateur, et DNS-002 le signale).

@@ -206,6 +206,8 @@ pub struct ConfigFiltrage {
     /// Domaines jamais bloqués (et leurs sous-domaines), `filtrage::MAX_AUTORISES` au plus ; commandes
     /// filtrageAutoriser et filtrageRetirer
     pub autorises: Vec<String>,
+    /// Filtrage activé sur les cartes (PR 7.4, commande `filtrage`) : repris au démarrage du service
+    pub actif: bool,
 }
 
 /// Clé d'une commande reçue qui diffère d'une clé connue par la seule casse (« langue » à côté de « Langue ») :
