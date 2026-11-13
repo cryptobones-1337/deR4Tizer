@@ -91,6 +91,7 @@ namespace DeR4Tizer
             { "CaptureTrafic", "trafic non analysé (modules expérimentaux)" }, { "CaptureReseauLocal", "réseau local non analysé (module expérimental)" },
             { "Sessions", "interface de deR4Tizer non surveillée dans les sessions ouvertes" },
             { "ConfigDns", "changement de serveur DNS des cartes non vu" },
+            { "FiltrageDns", "filtrage par nom de domaine suspendu : rien n'est bloqué, le DNS du poste passe par les serveurs d'origine" },
         };
 
         public static string Consequence(string id)

@@ -7468,6 +7468,73 @@ fn filtrage_torturer() {
     });
 }
 
+// ------------------------------------------------------------ phase 7, PR 7.5a : état publié, compteurs, catégories
+
+/// Derniers blocages : 50 au plus, un nom remonté au lieu d'être répété, 24 h de garde, le plus récent d'abord ;
+/// compteurs par liste et par catégorie
+#[test]
+fn filtrage_derniers_blocages_bornes() {
+    use crate::filtrage::{Categorie, StatsFiltrage, GARDE_DERNIERS_S, MAX_DERNIERS};
+    let mut s = StatsFiltrage::default();
+    for i in 0..(MAX_DERNIERS + 10) {
+        s.noter(1000 + i as u64, format!("h{i}"), &format!("n{i}.pub.test"), Categorie::Publicite, "EasyPrivacy");
+    }
+    s.noter(2000, "h".into(), "n55.pub.test", Categorie::Publicite, "EasyList");
+    let d = s.derniers(2000);
+    assert_eq!(d.len(), MAX_DERNIERS);
+    assert_eq!(d[0].nom, "n55.pub.test", "le plus récent d'abord");
+    assert_eq!(d.iter().filter(|b| b.nom == "n55.pub.test").count(), 1, "remonté, pas répété");
+    assert_eq!(s.par_liste.get("EasyPrivacy"), Some(&(MAX_DERNIERS as u64 + 10)));
+    assert_eq!(s.par_categorie.get("publicité et pistage"), Some(&(MAX_DERNIERS as u64 + 11)));
+    assert!(s.derniers(2000 + GARDE_DERNIERS_S).is_empty(), "plus de 24 h : oubliés");
+}
+
+/// Libellé de l'état publié
+#[test]
+fn filtrage_libelle_etat() {
+    use crate::filtrage::libelle_etat;
+    assert_eq!(libelle_etat(false, true, true, true, &[]), "inactif");
+    assert_eq!(libelle_etat(true, true, true, false, &[]), "remise des cartes en attente");
+    assert_eq!(libelle_etat(true, false, false, false, &[]), "suspendu : résolveur local non lancé");
+    assert_eq!(libelle_etat(true, false, true, true, &[]), "suspendu : amont injoignable");
+    assert_eq!(libelle_etat(true, false, true, false, &["Wi-Fi".into()]), "contourné sur la carte Wi-Fi");
+    assert_eq!(libelle_etat(true, false, true, false, &[]), "actif");
+}
+
+/// DNS-003 (S164-05) : Critique, PID et chemin du programme qui tient le port, cartes nommées
+#[test]
+fn filtrage_alerte_port_dns_tenu() {
+    let a = crate::moniteur::alerte_port_dns_tenu(Some(42), r"C:\outil\dns.exe", &["Ethernet".into()]);
+    assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.pid), ("DNS-003", "Critique", Some(42)));
+    assert!(a.raisons.contains("processus 42") && a.raisons.contains("Ethernet") && a.destination == "127.0.0.1:53", "{}", a.raisons);
+    assert!(crate::moniteur::alerte_port_dns_tenu(None, "", &["Wi-Fi".into()]).raisons.contains("programme inconnu"));
+    assert_eq!(crate::collectes::besoins("DNS-003"), &[&[crate::collectes::Collecte::FiltrageDns][..]]);
+}
+
+/// Commande filtrageCategories : noms connus seulement ; vide accepté (aucune catégorie)
+#[test]
+fn filtrage_commande_categories() {
+    use crate::validation::{autorisee, valider, Client};
+    for v in ["", "publicite", "securite,publicite", " publicite , securite "] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageCategories","Valeur":"{v}"}}"#))).is_ok(), "{v:?}");
+    }
+    for v in ["pub", "publicite,inconnue", "Publicite"] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageCategories","Valeur":"{v}"}}"#))).is_err(), "{v:?}");
+    }
+    assert!(!autorisee("filtrageCategories", Client::Autre));
+}
+
+/// Données de navigation (dossier, § 4.7) : l'état du filtrage n'entre ni dans etat.json ni dans l'API
+#[test]
+fn filtrage_etat_hors_api() {
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains(r#"commun::ecrire("filtrage-etat.json""#));
+    let etat = &m[m.find(r#"commun::ecrire("etat.json", &Etat {"#).unwrap()..];
+    let etat = &etat[..etat.find("});").unwrap()];
+    assert!(!etat.contains("filtrage"), "etat.json sans données du filtrage");
+    assert!(!include_str!("api.rs").contains("filtrage-etat"), "l'API ne sert pas filtrage-etat.json");
+}
+
 // ------------------------------------------------------------ phase 7, PR 7.4 : activation sur les cartes
 
 fn origine_essai(dns4: &[&str], dns6: &[&str]) -> crate::filtrage_cartes::OrigineCarte {

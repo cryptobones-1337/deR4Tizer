@@ -58,6 +58,10 @@ pub struct Partage {
     /// Filtrage par nom de domaine (phase 7, PR 7.2) : listes chargées, protection, autorisations ; consulté par le
     /// résolveur local à partir de 7.3, aucun effet réseau avant
     pub filtrage: RwLock<crate::filtrage::Filtrage>,
+    /// Catégories actives lues par le résolveur à chaque requête (changées par filtrageCategories sans relancer, PR 7.5a)
+    pub categories_filtrage: RwLock<Vec<crate::filtrage::Categorie>>,
+    /// Compteurs et derniers noms bloqués (jamais les noms relayés)
+    pub stats_filtrage: Mutex<crate::filtrage::StatsFiltrage>,
     pub defender: Mutex<EtatDefender>,
     pub baseline_occupee: AtomicBool,
     pub arret: AtomicBool,
@@ -117,6 +121,8 @@ pub struct Moniteur {
     derniere_signature_etat: String,
     dernier_etat_ecrit: Instant,
     derniere_sauvegarde_dns: Instant,
+    /// Dernière publication de filtrage-etat.json (heure, contenu sans l'heure)
+    dernier_etat_filtrage: (Instant, crate::filtrage::EtatFiltrage),
     premier_passage: bool,
     numero_passage: u64,
     surveillances: Surveillances,
@@ -147,6 +153,8 @@ impl Moniteur {
             blocages_ips: Arc::new(Mutex::new(Vec::new())),
             menaces: RwLock::new(Menaces::charger(&HashMap::new())),
             filtrage: RwLock::new(Default::default()),
+            categories_filtrage: RwLock::new(Vec::new()),
+            stats_filtrage: Mutex::new(Default::default()),
             defender: Mutex::new(EtatDefender::default()),
             baseline_occupee: AtomicBool::new(false),
             arret: AtomicBool::new(false),
@@ -211,6 +219,7 @@ impl Moniteur {
             derniere_signature_etat: String::new(),
             dernier_etat_ecrit: Instant::now() - Duration::from_secs(60),
             derniere_sauvegarde_dns: Instant::now(),
+            dernier_etat_filtrage: (Instant::now() - Duration::from_secs(3600), Default::default()),
             premier_passage: true,
             numero_passage: 0,
             arbre: Arbre::default(),
@@ -1017,6 +1026,16 @@ impl Moniteur {
             s.rdp,
             s.ecoutes.iter().map(|e| format!("{}:{}", e.pid, e.port)).collect::<Vec<_>>().join(";")
         );
+        // État du filtrage (PR 7.5a) : fichier à part, jamais dans etat.json ni dans l'API (données de navigation)
+        if self.dernier_etat_filtrage.0.elapsed() >= Duration::from_secs(10) {
+            let e = etat_filtrage(&self.partage, &self.config);
+            if e != self.dernier_etat_filtrage.1 || self.dernier_etat_filtrage.0.elapsed() >= Duration::from_secs(300) {
+                let mut publie = e.clone();
+                publie.mis_a_jour = commun::maintenant();
+                let _ = commun::ecrire("filtrage-etat.json", &publie);
+                self.dernier_etat_filtrage = (Instant::now(), e);
+            }
+        }
         if signature_etat != self.derniere_signature_etat || self.dernier_etat_ecrit.elapsed() >= Duration::from_secs(30) {
             let ip_connues = self.partage.dns.lock().unwrap().len();
             let n = flux.len();
@@ -1454,6 +1473,27 @@ impl Moniteur {
                         Reponse::erreur(e)
                     }
                 }
+            }
+            // Catégories du filtrage (PR 7.5a) : « securite », « publicite », séparées par des virgules ; vide : aucune.
+            // Appliquées sans relancer le résolveur ; listes téléchargées et rechargées hors du verrou
+            "filtrageCategories" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
+                }
+                let noms: Vec<String> = c.valeur.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
+                self.config.filtrage.categories = noms;
+                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                    return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
+                }
+                let actives = crate::filtrage::categories_actives(&self.config);
+                *partage.categories_filtrage.write().unwrap() = actives.clone();
+                crate::dns_local::regler_filtrage_actif(!actives.is_empty());
+                let p = partage.clone();
+                let _ = std::thread::Builder::new().name("filtrage rechargement".into()).spawn(move || mettre_a_jour_filtrage(&p, &mut String::new()));
+                let m = if actives.is_empty() { "Filtrage : aucune catégorie active, rien n'est bloqué.".to_string() }
+                    else { format!("Filtrage : catégories actives : {}.", actives.iter().map(|c| c.libelle()).collect::<Vec<_>>().join(", ")) };
+                commun::journal(&m);
+                Reponse::ok(m)
             }
             "filtrageAutoriser" | "filtrageRetirer" => {
                 if commun::echec_protection().is_some() {
@@ -2124,8 +2164,75 @@ fn est_telemetrie(nom: &str) -> bool {
 
 /// Juge du résolveur : verdict du filtrage pour les catégories actives (verrou du filtrage seulement)
 fn juge_filtrage(partage: &Arc<Partage>, actives: Vec<crate::filtrage::Categorie>) -> crate::dns_local::Juge {
+    *partage.categories_filtrage.write().unwrap() = actives;
     let p = partage.clone();
-    Arc::new(move |nom: &str| matches!(p.filtrage.read().unwrap().decider(nom, &actives), crate::filtrage::Verdict::Bloque { .. }))
+    Arc::new(move |nom: &str| {
+        let actives = p.categories_filtrage.read().unwrap().clone();
+        match p.filtrage.read().unwrap().decider(nom, &actives) {
+            crate::filtrage::Verdict::Bloque { categorie, liste } => {
+                p.stats_filtrage.lock().unwrap().noter(maintenant_s(), commun::maintenant(), nom, categorie, &liste);
+                true
+            }
+            _ => false,
+        }
+    })
+}
+
+/// État du filtrage publié (PR 7.5a), sans l'heure ; l'appelant compare puis horodate
+fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filtrage::EtatFiltrage {
+    use crate::filtrage_cartes as fc;
+    let origine = fc::lire_origine().unwrap_or_default();
+    let cartes: Vec<crate::filtrage::CartePubliee> = origine.iter()
+        .map(|o| crate::filtrage::CartePubliee { nom: o.nom.clone(), reglee: fc::encore_sur_la_boucle(std::slice::from_ref(o)) }).collect();
+    let resolveur = crate::dns_local::permanent_actif();
+    let silence = crate::dns_local::en_silence();
+    let contournees: Vec<String> = if resolveur && !silence { cartes.iter().filter(|c| !c.reglee).map(|c| c.nom.clone()).collect() } else { Vec::new() };
+    let f = partage.filtrage.read().unwrap();
+    let mut st = partage.stats_filtrage.lock().unwrap();
+    crate::filtrage::EtatFiltrage {
+        mis_a_jour: String::new(),
+        etat: crate::filtrage::libelle_etat(config.filtrage.actif, RESTAURATION_EN_ATTENTE.load(Ordering::Acquire), resolveur, silence, &contournees),
+        categories: crate::filtrage::categories_actives(config).iter().map(|c| c.libelle().to_string()).collect(),
+        cartes,
+        amonts: crate::dns_local::amonts_en_cours().iter().map(|a| a.to_string()).collect(),
+        listes: crate::filtrage::listes_publiees(&f),
+        par_categorie: st.par_categorie.clone(),
+        par_liste: st.par_liste.clone(),
+        derniers: st.derniers(maintenant_s()),
+        autorises: config.filtrage.autorises.clone(),
+    }
+}
+
+/// Collecte FiltrageDns (PR 7.5a) : active quand le filtrage tourne, indisponible quand il est suspendu, désactivée sinon
+fn noter_collecte_filtrage(config_actif: bool) {
+    if !config_actif {
+        collectes::desactivee(Collecte::FiltrageDns, "filtrage par nom de domaine non activé");
+    } else if RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) {
+        collectes::echec(Collecte::FiltrageDns, "remise des cartes en attente");
+    } else if !crate::dns_local::permanent_actif() {
+        collectes::echec(Collecte::FiltrageDns, "filtrage suspendu : résolveur local non lancé");
+    } else if crate::dns_local::en_silence() {
+        collectes::echec(Collecte::FiltrageDns, "filtrage suspendu : amont injoignable");
+    } else {
+        collectes::succes(Collecte::FiltrageDns);
+    }
+}
+
+/// Alerte DNS-003 (audit de #164, S164-05) : une carte pointe sur la boucle locale mais un autre programme tient le port
+/// 53 ; il répondrait aux résolutions du poste (pure, testée)
+pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[String]) -> Alerte {
+    let qui = match pid {
+        Some(p) if !chemin.is_empty() => format!("le processus {p} ({chemin})"),
+        Some(p) => format!("le processus {p}"),
+        None => "un programme inconnu".into(),
+    };
+    Alerte {
+        regle: crate::regles::DNS_003.into(), id: commun::nouvel_id(), heure: commun::maintenant(), niveau: "Critique".into(), score: 10,
+        processus: if chemin.is_empty() { "inconnu".into() } else { chemin.to_string() }, pid, chemin: chemin.to_string(),
+        destination: "127.0.0.1:53".into(),
+        raisons: format!("Le port DNS de la boucle locale est tenu par {qui} alors que la carte {} pointe encore sur le résolveur de deR4Tizer : ce programme peut répondre à toutes les résolutions de noms du poste. Arrêtez-le, puis rendez la carte (README, procédure manuelle) ou réactivez le filtrage.", cartes.join(", ")),
+        ..Default::default()
+    }
 }
 
 /// Amonts du résolveur permanent : serveurs d'origine des cartes (boucle locale exclue), sans doublon, 4 au plus
@@ -2234,6 +2341,13 @@ fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
         if r.is_ok() && !fc::encore_sur_la_boucle(&origine) && !reprendre {
             fc::effacer_origine();
         }
+        let sur_la_boucle: Vec<String> = origine.iter().filter(|o| fc::encore_sur_la_boucle(std::slice::from_ref(o))).map(|o| o.nom.clone()).collect();
+        if !sur_la_boucle.is_empty() {
+            let moi = std::process::id();
+            let pid = crate::natif::lister_udp().into_iter().find(|(port, p)| *port == 53 && *p != moi).map(|(_, p)| p);
+            let chemin = pid.map(crate::natif::chemin_processus).unwrap_or_default();
+            partage.alertes_externes.lock().unwrap().push(alerte_port_dns_tenu(pid, &chemin, &sur_la_boucle));
+        }
         commun::journal(&format!("filtrage : résolveur local impossible à lancer au démarrage ({e}) ; cartes rendues : {}",
             r.err().unwrap_or_else(|| "faites".into())));
         return;
@@ -2283,6 +2397,7 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
     let p = partage.clone();
     let _ = std::thread::Builder::new().name("filtrage sonde".into()).spawn(move || {
         while !p.arret.load(Ordering::Relaxed) {
+            noter_collecte_filtrage(commun::lire::<commun::Config>("config.json").is_some_and(|c| c.filtrage.actif) && commun::echec_protection().is_none());
             for _ in 0..300 {
                 if p.arret.load(Ordering::Relaxed) {
                     return;

@@ -270,6 +270,19 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 
 ## PRC : processus
 
+### DNS-003 : port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur
+- **Code** : `moniteur.rs` (`reprendre_filtrage`, `alerte_port_dns_tenu`) (phase 7, PR 7.5a ; audit de #164, S164-05).
+- **Justification** : filtrage activé, le service redémarre et ne peut pas lier le port 53 de la boucle locale, alors
+  qu'une carte pointe encore sur `127.0.0.1` ou `::1` (remise impossible) : le programme qui tient le port peut
+  répondre à toutes les résolutions de noms du poste, SYSTEM compris.
+- **Télémétrie** : échec de la liaison exclusive du résolveur ; relecture du registre des cartes (`NameServer`) ;
+  table UDP (`GetExtendedUdpTable`) pour le PID qui tient le port 53.
+- **Si elle manque** : collecte `FiltrageDns` indisponible ou désactivée ; la règle se tait.
+- **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
+- **Faux positifs attendus** : un autre résolveur légitime installé après l'activation du filtrage (partage de
+  connexion, Docker, WSL) : l'alerte reste juste, la carte pointe sur lui sans qu'on l'ait voulu.
+- **Tests** : `filtrage_alerte_port_dns_tenu`.
+
 ### PRC-001 : document bureautique qui lance un interpréteur
 - **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
 - **Justification** : Word, Excel ou un lecteur PDF qui lance PowerShell, cmd, wscript… est la marque d'une macro ou

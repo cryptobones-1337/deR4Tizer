@@ -51,6 +51,20 @@ mise à jour, pas seulement un retour arrière.
   plus, rien ne pointe sur la boucle locale et elle compte comme rendue. La désactivation, l'arrêt et la désinstallation
   ne sont jamais bloqués par elle.
 
+## État publié, données de navigation (PR 7.5a)
+
+- `filtrage-etat.json`, dans le dossier de données protégé (mêmes lecteurs que le reste) : état (« actif »,
+  « contourné sur la carte … », « suspendu : … », « inactif »), catégories, cartes, amont, listes (nom, catégorie,
+  licence, date, entrées, exceptions, règles écartées, domaines protégés ignorés), compteurs par catégorie et par liste,
+  **50 derniers noms bloqués gardés 24 h** (heure, nom, liste ; ni programme ni compte), autorisations.
+- **Aucun nom relayé n'est noté.** L'état du filtrage n'entre ni dans `etat.json` ni dans l'API (test
+  `filtrage_etat_hors_api`) ; rien n'est remonté au prestataire, sauf l'alerte DNS-001 existante.
+- Commande `filtrageCategories` (administrateurs) : catégories actives, appliquées sans relancer le résolveur.
+- Collecte `FiltrageDns` : active quand le filtrage tourne, indisponible quand il est suspendu, désactivée sinon.
+- Règle DNS-003 (Critique) : port 53 de la boucle locale tenu par un autre programme alors qu'une carte pointe encore
+  sur le résolveur (audit de #164, S164-05).
+- La page « Navigation » de l'interface viendra en 7.5b.
+
 ## Résolveur local (PR 7.3, non branché)
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes
