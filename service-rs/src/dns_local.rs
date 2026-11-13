@@ -308,7 +308,8 @@ struct Essai {
     tcp_en_cours: AtomicUsize,
     /// Fils encore vivants (écoutes et requêtes) : un nouvel essai attend qu'ils aient tous rendu leurs sockets
     fils: AtomicUsize,
-    filtrage_actif: bool,
+    /// Une catégorie au moins est active (nom spécial de Firefox, réponses locales) ; changé sans relancer (PR 7.5a)
+    filtrage_actif: AtomicBool,
     juge: Juge,
     amonts: Vec<IpAddr>,
     sante: Mutex<Sante>,
@@ -329,7 +330,7 @@ impl Essai {
         match lire_requete(paquet, max) {
             Lecture::Ignoree => None,
             Lecture::Formerr(id) => Some(reponse_formerr(id)),
-            Lecture::Requete(r) => match traiter(&r, self.filtrage_actif, &*self.juge) {
+            Lecture::Requete(r) => match traiter(&r, self.filtrage_actif.load(Ordering::Relaxed), &*self.juge) {
                 Action::Repondre(v) => {
                     self.bloquees.fetch_add(1, Ordering::Relaxed);
                     Some(v)
@@ -545,6 +546,13 @@ pub fn en_silence() -> bool {
     ESSAI.lock().unwrap().as_ref().is_some_and(|e| e.silence.load(Ordering::Acquire))
 }
 
+/// Catégories changées pendant que le résolveur tourne (commande filtrageCategories)
+pub fn regler_filtrage_actif(actif: bool) {
+    if let Some(e) = ESSAI.lock().unwrap().as_ref() {
+        e.filtrage_actif.store(actif, Ordering::Relaxed);
+    }
+}
+
 /// Silence posé d'office (démarrage sans amont joignable : cartes rendues, port gardé, la sonde rebranchera)
 pub fn marquer_silence() {
     if let Some(e) = ESSAI.lock().unwrap().as_ref() {
@@ -629,7 +637,7 @@ fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: 
     }
     let e = Arc::new(Essai {
         arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), tcp_en_cours: AtomicUsize::new(0), fils: AtomicUsize::new(0),
-        filtrage_actif, juge, amonts: amonts.clone(),
+        filtrage_actif: AtomicBool::new(filtrage_actif), juge, amonts: amonts.clone(),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
         permanent, silence: AtomicBool::new(false), sur_silence,
     });

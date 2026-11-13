@@ -549,6 +549,25 @@ Verifier 'Filtrage activé (7.4) : cartes sur le résolveur local avec secours, 
             $rep = @(Resolve-DnsName www.msftconnecttest.com -Type A -DnsOnly -ErrorAction Stop | Where-Object { $_.Type -eq 'A' })
             if (@($rep | Where-Object IPAddress -eq '0.0.0.0').Count) { return 'nom protégé bloqué' }
         } catch { if ([string]$_.FullyQualifiedErrorId -notlike 'DNS_ERROR_RCODE_NAME_ERROR*') { return "nom protégé non relayé : $($_.FullyQualifiedErrorId)" } }
+        # État publié (PR 7.5a) : « actif », nom bloqué dans les derniers blocages, jamais dans etat.json
+        $fEtat = Join-Path $script:Donnees 'filtrage-etat.json'
+        $fin = (Get-Date).AddSeconds(40)
+        do { Start-Sleep 3; $ef = Get-Content $fEtat -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json } while (-not (@($ef.Derniers) | Where-Object Nom -eq 'pisteur.test') -and (Get-Date) -lt $fin)
+        if ($ef.Etat -ne 'actif') { return "filtrage-etat.json : état « $($ef.Etat) »" }
+        if (-not (@($ef.Derniers) | Where-Object Nom -eq 'pisteur.test')) { return "pisteur.test absent des derniers blocages : $(@($ef.Derniers).Nom -join ', ')" }
+        if ((Get-Content (Join-Path $script:Donnees 'etat.json') -Raw -Encoding UTF8) -match 'pisteur\.test') { return 'nom bloqué présent dans etat.json' }
+        # Catégories coupées : plus rien n'est bloqué, sans relancer le résolveur ; remises ensuite
+        $r = Commande '{"Action":"filtrageCategories","Valeur":""}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "catégories refusées : $($r.Message)" }
+        Clear-DnsClientCache
+        $sans = @(Resolve-DnsName pub.test -Type A -DnsOnly -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'A' -and $_.IPAddress -eq '0.0.0.0' })
+        if ($sans.Count) { return 'pub.test encore bloqué sans catégorie active' }
+        $r = Commande '{"Action":"filtrageCategories","Valeur":"publicite"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "catégories refusées : $($r.Message)" }
+        Clear-DnsClientCache
+        $fin = (Get-Date).AddSeconds(30)
+        do { Start-Sleep 2; $avec = @(Resolve-DnsName pub.test -Type A -DnsOnly -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'A' -and $_.IPAddress -eq '0.0.0.0' }); Clear-DnsClientCache } while (-not $avec.Count -and (Get-Date) -lt $fin)
+        if (-not $avec.Count) { return 'pub.test non bloqué après remise de la catégorie' }
         # Redémarrage : cartes rendues à l'arrêt, réglées de nouveau au démarrage
         Stop-Service deR4Tizer -Force
         $arrete4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses)

@@ -43,20 +43,22 @@ pub enum Collecte {
     Sessions,
     /// Serveurs DNS des cartes du poste (phase 7, PR 7.1, DNS-002)
     ConfigDns,
+    /// Filtrage par nom de domaine sur les cartes (phase 7, PR 7.5a) : actif, suspendu ou non activé
+    FiltrageDns,
 }
 
 use Collecte::*;
 
-pub const TOUTES: [Collecte; 24] = [
+pub const TOUTES: [Collecte; 25] = [
     Connexions, Processus, Sysmon, WmiProcessus, JournalDns, JournalDefender, EtatDefender, JournalSecurite, AuditDonnees,
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
-    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions, ConfigDns,
+    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions, ConfigDns, FiltrageDns,
 ];
 
 // TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
 // collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
 const _: () = {
-    assert!(TOUTES.len() == ConfigDns as usize + 1);
+    assert!(TOUTES.len() == FiltrageDns as usize + 1);
     let mut i = 0;
     while i < TOUTES.len() {
         assert!(TOUTES[i] as usize == i);
@@ -91,6 +93,7 @@ impl Collecte {
             CaptureReseauLocal => "CaptureReseauLocal",
             Sessions => "Sessions",
             ConfigDns => "ConfigDns",
+            FiltrageDns => "FiltrageDns",
         }
     }
 
@@ -109,6 +112,8 @@ impl Collecte {
             Sessions => 30,
             // Fil « dns » : toutes les 60 s
             ConfigDns => 180,
+            // Fil « filtrage sonde » : toutes les 5 minutes
+            FiltrageDns => 900,
             WmiProcessus => 0,
             // Relevé des démarrages automatiques toutes les minutes (11 s au plus mesurées)
             Persistance => 120,
@@ -249,6 +254,8 @@ pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
         "RES-005" => &[&[PaquetsParefeu]],
         "DNS-001" => &[DNS, &[ListesDomaines]],
         "DNS-002" => &[&[ConfigDns]],
+        // Rattachée à ConfigDns : FiltrageDns est justement indisponible quand la règle se déclenche (relecture de #165, R70)
+        "DNS-003" => &[&[ConfigDns]],
         "PRC-001" | "PRC-002" | "PRC-003" | "PRC-004" | "PRC-005" => &[PROCESSUS_CREES],
         "CHA-001" => &[&[Processus]],
         "PER-001" | "PER-002" => &[&[Persistance]],

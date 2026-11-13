@@ -53,7 +53,11 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   intervalle, un programme local qui prendrait le port 53 répondrait aux résolutions du poste. Même risque si, à un
   arrêt normal, la remise des cartes échoue deux fois : un repli retire alors au moins `127.0.0.1` et `::1` (serveurs
   d'origine en statique), mais s'il échoue aussi, le port est relâché avec la carte sur la boucle locale (S164-02).
-  Écrit, non fermé ;
+  Écrit, non fermé ; depuis la PR 7.5a, ce cas au démarrage lève l'alerte critique DNS-003 avec le PID du programme
+  qui tient le port ;
+- **données de navigation** (PR 7.5a) : seuls les 50 derniers noms **bloqués** sont gardés, 24 h, dans
+  `filtrage-etat.json` (dossier protégé) ; aucun nom relayé n'est noté ; rien de cela n'entre dans `etat.json` ni dans
+  l'API ;
 - ce qu'un compte standard local peut en faire : viser l'analyseur par des paquets forgés, saturer le résolveur (déni
   de service local qu'il peut déjà provoquer autrement), contourner le filtrage (possible : ce n'est pas une barrière ;
   changer le DNS des cartes demande d'être administrateur, et DNS-002 le signale).

@@ -50,9 +50,8 @@ pub struct Source {
     pub nom: &'static str,
     pub categorie: Categorie,
     pub url: &'static str,
-    /// Conditions, d'après la page du projet (lecture technique, pas un avis juridique) ; affichées avec l'attribution
-    /// par l'interface (PR 7.5)
-    #[allow(dead_code)]
+    /// Conditions, d'après la page du projet (lecture technique, pas un avis juridique) ; publiées avec l'attribution
+    /// (`filtrage-etat.json`, PR 7.5a)
     pub licence: &'static str,
 }
 
@@ -357,6 +356,119 @@ impl Filtrage {
         }
         if excepte { Verdict::Autorise } else { Verdict::Relaye }
     }
+}
+
+/// Un nom bloqué, tel que publié (heure, nom, liste, catégorie) : ni programme ni compte, le résolveur ne les connaît pas
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct Blocage {
+    pub heure: String,
+    pub nom: String,
+    pub liste: String,
+    pub categorie: String,
+}
+
+/// Blocages gardés au plus (phase 7, PR 7.5a ; dossier, § 4.7)
+pub const MAX_DERNIERS: usize = 50;
+/// Durée de garde des derniers blocages
+pub const GARDE_DERNIERS_S: u64 = 24 * 3600;
+
+/// Compteurs et derniers noms bloqués (pure, testée). Aucun nom relayé n'est jamais noté : seuls les blocages, pour que
+/// l'utilisateur comprenne pourquoi un site ne marche pas
+#[derive(Default)]
+pub struct StatsFiltrage {
+    pub par_liste: std::collections::BTreeMap<String, u64>,
+    pub par_categorie: std::collections::BTreeMap<String, u64>,
+    derniers: std::collections::VecDeque<(u64, Blocage)>,
+}
+
+impl StatsFiltrage {
+    /// Note un blocage ; un nom déjà dans les derniers est remonté (pas cinquante fois le même pisteur)
+    pub fn noter(&mut self, maintenant_s: u64, heure: String, nom: &str, categorie: Categorie, liste: &str) {
+        *self.par_liste.entry(liste.to_string()).or_default() += 1;
+        *self.par_categorie.entry(categorie.libelle().to_string()).or_default() += 1;
+        self.derniers.retain(|(_, b)| b.nom != nom);
+        self.derniers.push_back((maintenant_s, Blocage { heure, nom: nom.chars().take(253).collect(), liste: liste.into(), categorie: categorie.libelle().into() }));
+        while self.derniers.len() > MAX_DERNIERS {
+            self.derniers.pop_front();
+        }
+    }
+
+    /// Derniers blocages de moins de 24 h, le plus récent d'abord
+    pub fn derniers(&mut self, maintenant_s: u64) -> Vec<Blocage> {
+        self.derniers.retain(|(t, _)| maintenant_s.saturating_sub(*t) < GARDE_DERNIERS_S);
+        self.derniers.iter().rev().map(|(_, b)| b.clone()).collect()
+    }
+}
+
+/// Une liste, telle que publiée
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ListePubliee {
+    pub nom: String,
+    pub categorie: String,
+    pub licence: String,
+    pub mise_a_jour: String,
+    pub entrees: usize,
+    pub exceptions: usize,
+    pub ecartees: usize,
+    pub proteges_ignores: usize,
+}
+
+/// Une carte, telle que publiée
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct CartePubliee {
+    pub nom: String,
+    /// Réglée sur le résolveur local (relecture du registre)
+    pub reglee: bool,
+}
+
+/// État du filtrage publié dans `filtrage-etat.json` (dossier de données protégé, mêmes lecteurs que le reste), jamais
+/// dans `etat.json` ni dans l'API : les noms bloqués sont des données de navigation (dossier, § 4.7)
+#[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct EtatFiltrage {
+    pub mis_a_jour: String,
+    /// « inactif », « actif », « contourné sur la carte … », « suspendu : … », « remise des cartes en attente »
+    pub etat: String,
+    pub categories: Vec<String>,
+    pub cartes: Vec<CartePubliee>,
+    pub amonts: Vec<String>,
+    pub listes: Vec<ListePubliee>,
+    pub par_categorie: std::collections::BTreeMap<String, u64>,
+    pub par_liste: std::collections::BTreeMap<String, u64>,
+    pub derniers: Vec<Blocage>,
+    pub autorises: Vec<String>,
+}
+
+/// Libellé de l'état (pure, testée)
+pub fn libelle_etat(actif: bool, remise_en_attente: bool, resolveur: bool, silence: bool, contournees: &[String]) -> String {
+    if !actif {
+        "inactif".into()
+    } else if remise_en_attente {
+        "remise des cartes en attente".into()
+    } else if !resolveur {
+        "suspendu : résolveur local non lancé".into()
+    } else if silence {
+        "suspendu : amont injoignable".into()
+    } else if !contournees.is_empty() {
+        format!("contourné sur la carte {}", contournees.join(", "))
+    } else {
+        "actif".into()
+    }
+}
+
+/// Listes chargées, avec licence et date de la copie locale
+pub fn listes_publiees(f: &Filtrage) -> Vec<ListePubliee> {
+    f.bilan.iter().map(|(nom, cat, c)| {
+        let s = SOURCES.iter().find(|s| s.nom == nom);
+        let date = s.and_then(|s| fs::metadata(fichier(s)).ok()).and_then(|m| m.modified().ok()).map(|t| commun::heure(t).chars().take(16).collect()).unwrap_or_default();
+        ListePubliee {
+            nom: nom.clone(), categorie: cat.libelle().into(), licence: s.map(|s| s.licence.to_string()).unwrap_or_default(), mise_a_jour: date,
+            entrees: c.entrees, exceptions: c.exceptions, ecartees: c.ecartees, proteges_ignores: c.proteges_ignores,
+        }
+    }).collect()
 }
 
 /// Catégories actives d'après la configuration (noms inconnus ignorés)
