@@ -80,7 +80,7 @@ namespace DeR4Tizer
             { "secrets enregistrés", "secrets recorded" }, { "sans secret enregistré", "no secret recorded" },
             // Navigation et pages
             { "Connexions", "Connections" }, { "Alertes", "Alerts" }, { "Chaînes", "Chains" }, { "Vie privée", "Privacy" },
-            { "Pare-feu", "Firewall" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },
+            { "Pare-feu", "Firewall" }, { "Navigation", "Browsing" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },
             { "Blocages", "Blocks" }, { "Quarantaine", "Quarantine" }, { "Menaces", "Threats" }, { "Réglages", "Settings" },
             { "Chaînes de processus", "Process chains" }, { "Vie privée et accès", "Privacy and access" },
             { "Pare-feu et exposition à Internet", "Firewall and Internet exposure" }, { "Démarrage automatique", "Autostart" },

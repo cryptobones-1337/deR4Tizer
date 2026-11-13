@@ -73,7 +73,7 @@ namespace DeR4Tizer
                 g(null, new[] { VueEnsemble, "" }),
                 g("Surveillance", new[] { "Connexions", "", "Trafic", "", "Alertes", "", "Incidents", "",
                     "Événements", "", "Détection", "", "Chaînes", "" }),
-                g("Protection", new[] { "Blocages", "", "Quarantaine", "", "Menaces", "", "Baseline", "", "Pare-feu", "" }),
+                g("Protection", new[] { "Blocages", "", "Quarantaine", "", "Menaces", "", "Baseline", "", "Pare-feu", "", "Navigation", "" }),
                 g("Système et confidentialité", new[] { "Démarrage auto", "", "Extensions", "", "Vie privée", "", "Réseau local", "" }),
                 g("", new[] { "Réponses en cours", "", "Santé", "", "Réglages", "" }),
             };
@@ -504,6 +504,8 @@ namespace DeR4Tizer
             // Baseline et Pare-feu en WPF (U5b)
             if (cle == "Baseline") { zone.Content = new PageBaselineFluent(); return; }
             if (cle == "Pare-feu") { zone.Content = new PageParefeuFluent(); return; }
+            // Navigation (phase 7, PR 7.5b) : filtrage par nom de domaine
+            if (cle == "Navigation") { zone.Content = new PageNavigationFluent(); return; }
             // Démarrage auto, Extensions et Vie privée en WPF (U6a)
             if (cle == "Démarrage auto") { zone.Content = new PageDemarrageFluent(source as ISourceReponses); return; }
             if (cle == "Extensions") { zone.Content = new PageExtensionsFluent(); return; }
@@ -2894,6 +2896,200 @@ namespace DeR4Tizer
             }
             Liste(lignes);
             Panneau(lignes.Count > 0 ? lignes[Math.Min(choisie, lignes.Count - 1)] : null, L.En ? "Select a list to read its detail." : "Sélectionnez une liste pour lire son détail.");
+        }
+    }
+    // Décisions pures de la page « Navigation » (phase 7, PR 7.5b), testées par tests\rendu-pilote.ps1. Tout ce qui vient
+    // de filtrage-etat.json (noms bloqués : écrits par les sites et les programmes du poste) passe par Canal.Visible
+    public static class VueNavigationFluent
+    {
+        public static readonly string[] Categories = { "securite", "publicite" };
+
+        public static string NomCategorie(string cle)
+        {
+            bool en = L.En;
+            return cle == "securite" ? (en ? "Safe browsing" : "Navigation sécurisée") : cle == "publicite" ? (en ? "Ads and tracking" : "Publicités et pistage") : Canal.Visible(cle);
+        }
+
+        // Libellé publié par le service pour une catégorie (filtrage.rs, Categorie::libelle)
+        public static string LibelleService(string cle) { return cle == "securite" ? "sécurité" : cle == "publicite" ? "publicité et pistage" : cle; }
+
+        public static bool Actif(EtatFiltrage e) { return e != null && !string.IsNullOrEmpty(e.Etat) && e.Etat != "inactif"; }
+
+        public static bool CategorieActive(EtatFiltrage e, string cle)
+        {
+            return e != null && e.Categories != null && e.Categories.Contains(LibelleService(cle));
+        }
+
+        // Valeur de la commande filtrageCategories après un basculement (pure, testée)
+        public static string ValeurApres(EtatFiltrage e, string cle, bool activer)
+        {
+            var l = Categories.Where(c => c == cle ? activer : CategorieActive(e, c)).ToList();
+            return string.Join(",", l);
+        }
+
+        // État publié, traduit en anglais pour les libellés connus ; inconnu : neutralisé tel quel
+        public static string EtatTexte(string etat)
+        {
+            string s = etat ?? "";
+            if (!L.En) return Canal.Visible(s);
+            if (s == "inactif") return "off";
+            if (s == "actif") return "on";
+            if (s == "suspendu : amont injoignable") return "suspended: upstream unreachable";
+            if (s == "suspendu : résolveur local non lancé") return "suspended: local resolver not running";
+            if (s == "remise des cartes en attente") return "card restore pending";
+            if (s.StartsWith("contourné sur la carte ")) return "bypassed on card " + Canal.Visible(s.Substring("contourné sur la carte ".Length));
+            return Canal.Visible(s);
+        }
+
+        // Gravité : 1 si le filtrage activé ne filtre pas (suspendu, contourné, remise en attente), 0 sinon
+        public static int Gravite(EtatFiltrage e)
+        {
+            if (!Actif(e)) return 0;
+            return e.Etat == "actif" ? 0 : 1;
+        }
+
+        public static string Honnete()
+        {
+            return L.En ? "Filtering does not protect against a program that uses its own DNS or encrypted DNS."
+                        : "Le filtrage ne protège pas contre un programme qui utilise son propre DNS ou un DNS chiffré.";
+        }
+
+        public static string Lecteurs()
+        {
+            return L.En ? "Blocked names cover every user of this computer: an account allowed to read deR4Tizer data sees them."
+                        : "Les noms bloqués concernent tous les utilisateurs du poste : un compte autorisé à lire les données de deR4Tizer les voit.";
+        }
+
+        public static string Resume(EtatFiltrage e, bool lu, bool illisible)
+        {
+            bool en = L.En;
+            if (!lu) return en ? "Reading…" : "Lecture en cours…";
+            if (illisible) return en ? "Filtering state unreadable (filtrage-etat.json)." : "État du filtrage illisible (filtrage-etat.json).";
+            if (e == null) return (en ? "Domain-name filtering: off (no state published by the service yet)." : "Filtrage par nom de domaine : inactif (aucun état publié par le service pour l'instant).") + "\n" + Honnete();
+            var cats = Categories.Where(c => CategorieActive(e, c)).Select(NomCategorie).ToList();
+            var amonts = (e.Amonts ?? new List<string>()).Select(Canal.Visible).ToList();
+            return (en ? "Filtering: " : "Filtrage : ") + EtatTexte(e.Etat)
+                + (en ? "  ·  categories: " : "  ·  catégories : ") + (cats.Count == 0 ? (en ? "none" : "aucune") : string.Join(", ", cats))
+                + (amonts.Count == 0 ? "" : (en ? "  ·  upstream: " : "  ·  amont : ") + string.Join(", ", amonts))
+                + "\n" + Honnete() + "\n" + Lecteurs();
+        }
+
+        public static string TexteActivation(bool actif)
+        {
+            return actif ? (L.En ? "Turn filtering off" : "Désactiver le filtrage") : (L.En ? "Turn filtering on" : "Activer le filtrage");
+        }
+
+        public static string TexteCategorie(string cle, bool actif)
+        {
+            return (actif ? (L.En ? "On" : "Activé") : (L.En ? "Off" : "Désactivé")) + "  ·  " + NomCategorie(cle);
+        }
+
+        // Lignes de la page, et pour chacune : « b » (blocage), « a » (autorisation) ou « l » (liste), avec le nom
+        public static List<KeyValuePair<string, LigneEtatFluent>> Lignes(EtatFiltrage e)
+        {
+            bool en = L.En;
+            var r = new List<KeyValuePair<string, LigneEtatFluent>>();
+            if (e == null) return r;
+            foreach (var b in (e.Derniers ?? new List<BlocageFiltrage>()).Where(x => x != null))
+            {
+                var l = new LigneEtatFluent { Titre = Canal.Visible(b.Nom), Etiquette = en ? "blocked" : "bloqué", Sous = Canal.Visible(b.Liste) + "  ·  " + Canal.Visible(b.Heure), Gravite = 0 };
+                l.Detail.Add(new LigneDetail { Titre = en ? "Name" : "Nom", Texte = Canal.Visible(b.Nom), Chasse = true });
+                l.Detail.Add(new LigneDetail { Titre = en ? "List" : "Liste", Texte = Canal.Visible(b.Liste) + " (" + Canal.Visible(b.Categorie) + ")" });
+                l.Detail.Add(new LigneDetail { Titre = en ? "Time" : "Heure", Texte = Canal.Visible(b.Heure) });
+                r.Add(new KeyValuePair<string, LigneEtatFluent>("b" + (b.Nom ?? ""), l));
+            }
+            foreach (var a in (e.Autorises ?? new List<string>()).Where(x => !string.IsNullOrEmpty(x)))
+            {
+                var l = new LigneEtatFluent { Titre = Canal.Visible(a), Etiquette = en ? "allowed" : "autorisé", Sous = en ? "never blocked, subdomains included" : "jamais bloqué, sous-domaines compris" };
+                r.Add(new KeyValuePair<string, LigneEtatFluent>("a" + a, l));
+            }
+            foreach (var x in (e.Listes ?? new List<ListeFiltrage>()).Where(y => y != null))
+            {
+                var l = new LigneEtatFluent
+                {
+                    Titre = Canal.Visible(x.Nom), Etiquette = Canal.Visible(x.Categorie),
+                    Sous = x.Entrees.ToString("N0") + (en ? " domains" : " domaines") + (string.IsNullOrEmpty(x.MiseAJour) ? "" : "  ·  " + Canal.Visible(x.MiseAJour))
+                };
+                l.Detail.Add(new LigneDetail { Titre = en ? "License" : "Licence", Texte = Canal.Visible(x.Licence) });
+                l.Detail.Add(new LigneDetail { Titre = en ? "Entries" : "Entrées", Texte = x.Entrees.ToString("N0") + (en ? " domains, " : " domaines, ") + x.Exceptions.ToString("N0") + (en ? " exceptions" : " exceptions") });
+                l.Detail.Add(new LigneDetail { Titre = en ? "Skipped" : "Écartées", Texte = x.Ecartees.ToString("N0") + (en ? " rules (other syntax), " : " règles (autre syntaxe), ") + x.ProtegesIgnores.ToString("N0") + (en ? " never-blocked domains (built-in list) ignored" : " domaines jamais bloqués (liste intégrée) ignorés") });
+                r.Add(new KeyValuePair<string, LigneEtatFluent>("l" + (x.Nom ?? ""), l));
+            }
+            return r;
+        }
+    }
+
+    // Page « Navigation » en WPF (phase 7, PR 7.5b) : filtrage-etat.json ; activation, catégories et autorisations par les
+    // mêmes commandes que le service (ActionsProtection, confirmées par Canal dans une interface élevée)
+    class PageNavigationFluent : PageProtectionFluent
+    {
+        EtatFiltrage etat;
+        bool illisible;
+
+        public PageNavigationFluent() { Afficher(); }
+
+        protected override object LireFichiers()
+        {
+            bool absent;
+            var e = LectureFluent.Lire<EtatFiltrage>("filtrage-etat.json", out absent);
+            return new object[] { e, absent };
+        }
+
+        protected override void Recevoir(object lecture)
+        {
+            var r = (object[])lecture;
+            bool absent = (bool)r[1];
+            illisible = !absent && r[0] == null;
+            if (r[0] != null || absent) etat = r[0] as EtatFiltrage;
+        }
+
+        protected override void Afficher()
+        {
+            resume.Text = VueNavigationFluent.Resume(etat, lu, illisible);
+            resume.Foreground = Jetons.Pinceau(lu && (illisible || VueNavigationFluent.Gravite(etat) > 0) ? Jetons.Attention : Jetons.TexteSecondaire);
+            var paires = VueNavigationFluent.Lignes(etat);
+            var lignes = paires.Select(p => p.Value).ToList();
+            bool actif = VueNavigationFluent.Actif(etat);
+            string cats = string.Join(",", VueNavigationFluent.Categories.Where(c => VueNavigationFluent.CategorieActive(etat, c)));
+            string signature = choisie + "#" + resume.Text + "#" + lu + "#" + actif + "#" + cats + "#" + string.Join(";", paires.Select(p => p.Key + "|" + p.Value.Sous));
+            if (signature == vu) return;
+            vu = signature;
+            outils.Children.Clear();
+            if (lu && !illisible)
+            {
+                var barre = new WrapPanel();
+                barre.Children.Add(Outil(VueNavigationFluent.TexteActivation(actif), !actif, (s, e) => { if (ActionsProtection.Filtrage(!actif)) Charger(); }));
+                outils.Children.Add(barre);
+                outils.Children.Add(Briques.Titre(L.En ? "Categories" : "Catégories", 0));
+                foreach (var c in VueNavigationFluent.Categories)
+                {
+                    string cle = c;
+                    bool on = VueNavigationFluent.CategorieActive(etat, cle);
+                    var b = Outil("", on, (s, e) => { ActionsProtection.FiltrageCategories(VueNavigationFluent.ValeurApres(etat, cle, !on)); Charger(); });
+                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on), TextWrapping = TextWrapping.Wrap };
+                    b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    b.Margin = new Thickness(0, 0, 0, 6);
+                    outils.Children.Add(b);
+                }
+                outils.Children.Add(new Border { Height = 6 });
+            }
+            Liste(lignes);
+            int i = Math.Min(choisie, Math.Max(0, lignes.Count - 1));
+            var pile = Panneau(lignes.Count > 0 ? lignes[i] : null, L.En ? "Select a blocked name, an allowed domain or a list." : "Sélectionnez un nom bloqué, un domaine autorisé ou une liste.");
+            if (pile != null && lignes.Count > 0)
+            {
+                string cle = paires[i].Key, nom = cle.Substring(1);
+                if (cle[0] == 'b' && nom.Length > 0)
+                {
+                    pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                    pile.Children.Add(Briques.Action(L.En ? "Allow this domain" : "Autoriser ce domaine", true, (s, e) => { ActionsProtection.FiltrageAutoriser(nom); Charger(); }));
+                }
+                else if (cle[0] == 'a' && nom.Length > 0)
+                {
+                    pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                    pile.Children.Add(Briques.Action(L.En ? "Remove the authorization" : "Retirer l'autorisation", false, (s, e) => { ActionsProtection.FiltrageRetirer(nom); Charger(); }));
+                }
+            }
         }
     }
     // Décisions pures de la page Baseline de la coquille (U5b), testées par tests\rendu-pilote.ps1
