@@ -7654,3 +7654,19 @@ fn dns_torturer() {
         let _ = crate::dns_local::avec_id(p, 2);
     });
 }
+
+/// MITRE : une destination de Microsoft n'est pas une capture audio ; l'usage du micro (VIE-001) l'est toujours
+#[test]
+fn mitre_micro_pas_microsoft() {
+    use crate::commun::Alerte;
+    let mut a = Alerte { regle: "RES-003".into(), raisons: "première connexion à Internet de ce programme (lancé par services)".into(),
+        destination: "mobile.events.data.microsoft.com".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut a);
+    assert!(!a.mitre.contains("T1123"), "{}", a.mitre);
+    let mut v = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise le micro pour la première fois".into(), destination: "Micro".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut v);
+    assert_eq!(v.mitre, "T1123 Capture audio");
+    let mut c = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise la caméra pour la première fois".into(), destination: "Caméra".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut c);
+    assert_eq!(c.mitre, "T1125 Capture vidéo");
+}
