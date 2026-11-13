@@ -114,24 +114,32 @@ pub enum Remise {
     Rien,
 }
 
-pub fn remise(api_ok: bool, cle_existe: bool) -> Remise {
-    match (api_ok, cle_existe) {
-        (true, _) => Remise::Api,
-        (false, true) => Remise::Registre,
-        (false, false) => Remise::Rien,
+/// `presente` : la carte figure dans le relevé courant. Une carte présente que l'API refuse garde l'erreur (et donc le
+/// port) : le registre seul pourrait différer du réglage actif (audit de #164, S164-06)
+pub fn remise(api_ok: bool, presente: bool, cle_existe: bool) -> Result<Remise, ()> {
+    match (api_ok, presente, cle_existe) {
+        (true, _, _) => Ok(Remise::Api),
+        (false, true, _) => Err(()),
+        (false, false, true) => Ok(Remise::Registre),
+        (false, false, false) => Ok(Remise::Rien),
     }
 }
 
-fn cle_carte(pile: &str, id: &str) -> Option<winreg::RegKey> {
+/// Clé du registre d'une carte, composée à partir du GUID analysé, jamais de la chaîne lue dans l'origine (S164-06)
+fn nom_cle(g: &windows::core::GUID) -> String {
+    format!("{{{g:?}}}")
+}
+
+fn cle_carte(pile: &str, g: &windows::core::GUID) -> Option<winreg::RegKey> {
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE};
     winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey_with_flags(format!(r"SYSTEM\CurrentControlSet\Services\{pile}\Parameters\Interfaces\{id}"), KEY_READ | KEY_SET_VALUE).ok()
+        .open_subkey_with_flags(format!(r"SYSTEM\CurrentControlSet\Services\{pile}\Parameters\Interfaces\{}", nom_cle(g)), KEY_READ | KEY_SET_VALUE).ok()
 }
 
 /// Écrit NameServer dans le registre (carte absente) ; une chaîne vide efface le réglage statique (DHCP)
-fn ecrire_registre(id: &str, ns4: &str, ns6: &str) -> Result<(), String> {
+fn ecrire_registre(g: &windows::core::GUID, ns4: &str, ns6: &str) -> Result<(), String> {
     for (pile, v) in [("Tcpip", ns4), ("Tcpip6", ns6)] {
-        if let Some(k) = cle_carte(pile, id) {
+        if let Some(k) = cle_carte(pile, g) {
             k.set_value("NameServer", &v.to_string()).map_err(|e| format!("registre {pile} : {e}"))?;
         }
     }
@@ -141,12 +149,16 @@ fn ecrire_registre(id: &str, ns4: &str, ns6: &str) -> Result<(), String> {
 /// Règle puis vérifie (relecture du registre) ; erreur si l'écart persiste. Carte absente : registre écrit directement ;
 /// carte sans clé : comptée comme rendue
 fn regler_et_verifier(o: &OrigineCarte, ns4: &str, ns6: &str) -> Result<(), String> {
+    // GUID validé d'abord : aucun repli avec un identifiant qui n'en est pas un (S164-06)
+    let g = guid(&o.id)?;
     let api = regler(&o.id, ns4, ns6);
-    let cle = cle_carte("Tcpip", &o.id).is_some() || cle_carte("Tcpip6", &o.id).is_some();
-    match remise(api.is_ok(), cle) {
-        Remise::Api => {}
-        Remise::Registre => ecrire_registre(&o.id, ns4, ns6).map_err(|e| format!("carte « {} » absente ({}) ; {e}", o.nom, api.err().unwrap_or_default()))?,
-        Remise::Rien => return Ok(()),
+    let presente = api.is_err() && crate::dns_surveillance::releve().map(|l| l.iter().any(|c| c.id.eq_ignore_ascii_case(&o.id))).unwrap_or(true);
+    let cle = cle_carte("Tcpip", &g).is_some() || cle_carte("Tcpip6", &g).is_some();
+    match remise(api.is_ok(), presente, cle) {
+        Ok(Remise::Api) => {}
+        Ok(Remise::Registre) => ecrire_registre(&g, ns4, ns6).map_err(|e| format!("carte « {} » absente ({}) ; {e}", o.nom, api.err().unwrap_or_default()))?,
+        Ok(Remise::Rien) => return Ok(()),
+        Err(()) => return Err(format!("carte « {} » présente mais réglage refusé : {}", o.nom, api.err().unwrap_or_default())),
     }
     let (lu4, lu6) = (registre_ns("Tcpip", &o.id), registre_ns("Tcpip6", &o.id));
     if meme_liste(&lu4, ns4) && meme_liste(&lu6, ns6) {

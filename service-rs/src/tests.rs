@@ -7521,14 +7521,18 @@ fn activation_carte_deja_reglee_refusee() {
 #[test]
 fn activation_carte_absente() {
     use crate::filtrage_cartes::{remise, Remise};
-    assert_eq!(remise(true, true), Remise::Api);
-    assert_eq!(remise(true, false), Remise::Api);
-    assert_eq!(remise(false, true), Remise::Registre);
-    assert_eq!(remise(false, false), Remise::Rien);
+    assert_eq!(remise(true, true, true), Ok(Remise::Api));
+    assert_eq!(remise(true, false, false), Ok(Remise::Api));
+    assert_eq!(remise(false, false, true), Ok(Remise::Registre));
+    assert_eq!(remise(false, false, false), Ok(Remise::Rien));
+    // Audit de #164, S164-06 : carte présente refusée par l'API → erreur (port gardé), jamais le registre seul
+    assert_eq!(remise(false, true, true), Err(()));
+    assert_eq!(remise(false, true, false), Err(()));
     let f = include_str!("filtrage_cartes.rs");
     let d = f.find("fn regler_et_verifier(").unwrap();
     let corps = &f[d..d + f[d..].find("\n}").unwrap()];
-    assert!(corps.contains("Remise::Registre => ecrire_registre") && corps.contains("Remise::Rien => return Ok(())"));
+    assert!(corps.contains("Remise::Registre) => ecrire_registre(&g") && corps.contains("Remise::Rien) => return Ok(())"));
+    assert!(corps.find("let g = guid(&o.id)?").unwrap() < corps.find("regler(&o.id").unwrap(), "GUID validé avant tout appel");
     assert!(corps.find("remise(").unwrap() < corps.find("registre_ns(").unwrap(), "vérification après la remise choisie");
 }
 
