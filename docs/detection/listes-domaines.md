@@ -43,6 +43,14 @@ la collecte `FiltrageDns` et l'affichage viendront avec l'interface (7.5) ; une 
 pas réglée (réactiver) ; la restauration avant une mise à jour se fait à l'arrêt du service par msiexec, pour toute
 mise à jour, pas seulement un retour arrière.
 
+- **Après un démarrage du poste** : tant que l'amont ne répond pas (réseau pas encore prêt), les cartes restent sur
+  leurs serveurs d'origine, sans filtrage ; la sonde les rebranche dès que l'amont répond, sous 5 minutes. Le port 53
+  est tenu pendant toute cette fenêtre.
+- **Carte disparue depuis l'activation** (station d'accueil, clé USB, carte désactivée) : si Windows la connaît
+  encore, son réglage d'origine est écrit directement dans le registre et repris à son retour ; s'il ne la connaît
+  plus, rien ne pointe sur la boucle locale et elle compte comme rendue. La désactivation, l'arrêt et la désinstallation
+  ne sont jamais bloqués par elle.
+
 ## Résolveur local (PR 7.3, non branché)
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes

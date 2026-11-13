@@ -7516,6 +7516,22 @@ fn activation_carte_deja_reglee_refusee() {
     assert!(meme_liste("127.0.0.1,192.0.2.1", "127.0.0.1 192.0.2.1") && meme_liste("", " ") && !meme_liste("a,b", "b,a"));
 }
 
+/// Carte disparue depuis l'activation (relecture de #164, constat 2) : l'API refuse, la clé existe → registre écrit ;
+/// plus de clé → comptée comme rendue ; jamais un blocage de la désactivation, de l'arrêt ou de la désinstallation
+#[test]
+fn activation_carte_absente() {
+    use crate::filtrage_cartes::{remise, Remise};
+    assert_eq!(remise(true, true), Remise::Api);
+    assert_eq!(remise(true, false), Remise::Api);
+    assert_eq!(remise(false, true), Remise::Registre);
+    assert_eq!(remise(false, false), Remise::Rien);
+    let f = include_str!("filtrage_cartes.rs");
+    let d = f.find("fn regler_et_verifier(").unwrap();
+    let corps = &f[d..d + f[d..].find("\n}").unwrap()];
+    assert!(corps.contains("Remise::Registre => ecrire_registre") && corps.contains("Remise::Rien => return Ok(())"));
+    assert!(corps.find("remise(").unwrap() < corps.find("registre_ns(").unwrap(), "vérification après la remise choisie");
+}
+
 /// Refus (D7-5) : suffixe DNS principal (poste joint à un domaine), stratégie DNS ou NRPT
 #[test]
 fn activation_refusee_domaine_ou_strategie() {

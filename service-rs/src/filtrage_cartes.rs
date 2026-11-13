@@ -101,9 +101,53 @@ fn regler(id: &str, ns4: &str, ns6: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Règle puis vérifie (relecture du registre) ; erreur si l'écart persiste
+/// Comment rendre ou régler une carte (pure, testée ; relecture de #164, constat 2 : carte disparue depuis
+/// l'activation, station d'accueil, clé USB, carte désactivée)
+#[derive(Debug, PartialEq, Eq)]
+pub enum Remise {
+    /// Par l'API (carte présente)
+    Api,
+    /// L'API refuse (carte absente) mais sa clé existe : valeur écrite dans le registre, reprise par Windows au retour de
+    /// la carte
+    Registre,
+    /// Plus aucune clé pour cette carte : rien ne pointe sur la boucle locale, la carte compte comme rendue
+    Rien,
+}
+
+pub fn remise(api_ok: bool, cle_existe: bool) -> Remise {
+    match (api_ok, cle_existe) {
+        (true, _) => Remise::Api,
+        (false, true) => Remise::Registre,
+        (false, false) => Remise::Rien,
+    }
+}
+
+fn cle_carte(pile: &str, id: &str) -> Option<winreg::RegKey> {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE};
+    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(format!(r"SYSTEM\CurrentControlSet\Services\{pile}\Parameters\Interfaces\{id}"), KEY_READ | KEY_SET_VALUE).ok()
+}
+
+/// Écrit NameServer dans le registre (carte absente) ; une chaîne vide efface le réglage statique (DHCP)
+fn ecrire_registre(id: &str, ns4: &str, ns6: &str) -> Result<(), String> {
+    for (pile, v) in [("Tcpip", ns4), ("Tcpip6", ns6)] {
+        if let Some(k) = cle_carte(pile, id) {
+            k.set_value("NameServer", &v.to_string()).map_err(|e| format!("registre {pile} : {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Règle puis vérifie (relecture du registre) ; erreur si l'écart persiste. Carte absente : registre écrit directement ;
+/// carte sans clé : comptée comme rendue
 fn regler_et_verifier(o: &OrigineCarte, ns4: &str, ns6: &str) -> Result<(), String> {
-    regler(&o.id, ns4, ns6)?;
+    let api = regler(&o.id, ns4, ns6);
+    let cle = cle_carte("Tcpip", &o.id).is_some() || cle_carte("Tcpip6", &o.id).is_some();
+    match remise(api.is_ok(), cle) {
+        Remise::Api => {}
+        Remise::Registre => ecrire_registre(&o.id, ns4, ns6).map_err(|e| format!("carte « {} » absente ({}) ; {e}", o.nom, api.err().unwrap_or_default()))?,
+        Remise::Rien => return Ok(()),
+    }
     let (lu4, lu6) = (registre_ns("Tcpip", &o.id), registre_ns("Tcpip6", &o.id));
     if meme_liste(&lu4, ns4) && meme_liste(&lu6, ns6) {
         Ok(())
