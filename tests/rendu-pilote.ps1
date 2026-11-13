@@ -335,6 +335,16 @@ try {
     $etEn = [string]$vn.GetMethod('EtatTexte').Invoke($null, @('contourné sur la carte Wi-Fi'))
     $langue.GetField('En').SetValue($null, $false)
     Cas 'Navigation : état traduit en anglais' ($etEn -eq 'bypassed on card Wi-Fi') $etEn
+    # Relecture de #166, constat 1 : « Navigation sécurisée » activée sans liste de sécurité publiée ne bloque rien, dit
+    # dans le résumé, l'interrupteur et la confirmation
+    $catsS = New-Object 'Collections.Generic.List[string]'; $catsS.Add('sécurité')
+    $efSec = & $nouv $efT @{ Etat = 'actif'; Categories = $catsS }
+    $resS = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efSec, $true, $false))
+    $intS = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true))
+    $intP = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('publicite', $true, $true))
+    Cas 'Navigation : sécurité sans liste, « rien n''est bloqué » dans le résumé et l''interrupteur ; publicité inchangée' ($resS.Contains("aucune liste de sécurité : rien n'est bloqué") -and $intS.Contains("rien n'est bloqué") -and -not $intP.Contains('rien') -and $vn.GetMethod('SansListeSecurite').Invoke($null, @($efSec))) "$resS | $intS"
+    $gS = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'Navigation : confirmation des catégories, sécurité sans liste dite avant d''agir' ($gS.Contains('VueNavigationFluent.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))') -and $gS.Contains('VueNavigationFluent.RienBloqueSecurite()'))
     $gN = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
     Cas 'Navigation : filtrage, catégories et autorisations confirmés par Canal dans une interface élevée ; activation qui dit ce qui change' ($gN.Contains('"filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer" };') -and $gN.Contains('vos serveurs DNS actuels restent en secours') -and $gN.Contains('if (!Canal.ConfirmeraLui(c) && MessageBox.Show(Canal.Decrire(c)'))
     Cas 'Menaces : étiquette courte (ok, désactivée, en échec), statut entier dans le détail ; réglage : état d''abord' (([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[2]))) -eq 'désactivée' -and ([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[1]))) -eq 'en échec' -and ([string]$vm.GetMethod('TexteReglage').Invoke($null, @('ListesRestreintes', $false))).StartsWith('Désactivé  ·  ') -and $fluentSrc.Contains('Text = VueMenacesFluent.TexteReglage(nom, actif), TextWrapping = TextWrapping.Wrap'))

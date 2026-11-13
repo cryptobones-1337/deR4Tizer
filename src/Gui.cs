@@ -628,13 +628,17 @@ namespace DeR4Tizer
                 // Filtrage par nom de domaine (PR 7.5b) : ce qui change est dit avant d'agir (dossier, § 4.5)
                 case "filtrage":
                     return v == "on"
-                        ? (en ? "TURN ON domain-name filtering\n  • Wi-Fi and Ethernet cards will use the deR4Tizer resolver (127.0.0.1, ::1)\n  • your current DNS servers stay as fallback\n  • turned off, the cards return exactly to their current settings"
-                              : "ACTIVER le filtrage par nom de domaine\n  • les cartes Wi-Fi et Ethernet utiliseront le résolveur de deR4Tizer (127.0.0.1, ::1)\n  • vos serveurs DNS actuels restent en secours\n  • à la désactivation, les cartes reviennent exactement à leur réglage actuel")
+                        ? (en ? "TURN ON domain-name filtering\n  • Wi-Fi and Ethernet cards will use the deR4Tizer resolver (127.0.0.1, ::1)\n  • your current DNS servers stay as fallback\n  • turned off, the cards return to their original settings (recorded before any change)"
+                              : "ACTIVER le filtrage par nom de domaine\n  • les cartes Wi-Fi et Ethernet utiliseront le résolveur de deR4Tizer (127.0.0.1, ::1)\n  • vos serveurs DNS actuels restent en secours\n  • à la désactivation, les cartes reviennent à leur réglage d'origine (noté avant toute modification)")
                         : (en ? "TURN OFF domain-name filtering: cards returned to their original DNS settings" : "DÉSACTIVER le filtrage par nom de domaine : cartes rendues à leur réglage DNS d'origine");
                 case "filtrageCategories":
                     {
                         var noms = v.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => x == "securite" ? (en ? "safe browsing" : "navigation sécurisée") : x == "publicite" ? (en ? "ads and tracking" : "publicités et pistage") : Visible(x)).ToList();
-                        return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms));
+                        // Navigation sécurisée sans liste de sécurité publiée : rien n'est bloqué, dit avant d'agir (relecture de #166)
+                        bool securite = v.Split(',').Select(x => x.Trim()).Contains("securite");
+                        string avert = securite && VueNavigationFluent.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
+                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + VueNavigationFluent.RienBloqueSecurite() : "";
+                        return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms)) + avert;
                     }
                 case "filtrageAutoriser": return (en ? "Never block " : "Ne jamais bloquer ") + nomDns + (en ? " and its subdomains (filtering)" : " ni ses sous-domaines (filtrage)");
                 case "filtrageRetirer": return (en ? "Remove " : "Retirer ") + nomDns + (en ? " from the allowed domains (filtering)" : " des domaines autorisés (filtrage)");

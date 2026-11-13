@@ -2948,6 +2948,18 @@ namespace DeR4Tizer
             return e.Etat == "actif" ? 0 : 1;
         }
 
+        // Aucune liste publiée de catégorie « sécurité » (D7-2 : aucune n'est compilée aujourd'hui) : la catégorie ne bloque
+        // rien, et la page le dit au lieu d'afficher « Activé » seul (relecture de #166, constat 1)
+        public static bool SansListeSecurite(EtatFiltrage e)
+        {
+            return e == null || e.Listes == null || !e.Listes.Any(x => x != null && x.Categorie == LibelleService("securite"));
+        }
+
+        public static string RienBloqueSecurite()
+        {
+            return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
+        }
+
         public static string Honnete()
         {
             return L.En ? "Filtering does not protect against a program that uses its own DNS or encrypted DNS."
@@ -2971,6 +2983,7 @@ namespace DeR4Tizer
             return (en ? "Filtering: " : "Filtrage : ") + EtatTexte(e.Etat)
                 + (en ? "  ·  categories: " : "  ·  catégories : ") + (cats.Count == 0 ? (en ? "none" : "aucune") : string.Join(", ", cats))
                 + (amonts.Count == 0 ? "" : (en ? "  ·  upstream: " : "  ·  amont : ") + string.Join(", ", amonts))
+                + (CategorieActive(e, "securite") && SansListeSecurite(e) ? "\n" + NomCategorie("securite") + " : " + RienBloqueSecurite() : "")
                 + "\n" + Honnete() + "\n" + Lecteurs();
         }
 
@@ -2979,9 +2992,10 @@ namespace DeR4Tizer
             return actif ? (L.En ? "Turn filtering off" : "Désactiver le filtrage") : (L.En ? "Turn filtering on" : "Activer le filtrage");
         }
 
-        public static string TexteCategorie(string cle, bool actif)
+        public static string TexteCategorie(string cle, bool actif, bool sansListe)
         {
-            return (actif ? (L.En ? "On" : "Activé") : (L.En ? "Off" : "Désactivé")) + "  ·  " + NomCategorie(cle);
+            return (actif ? (L.En ? "On" : "Activé") : (L.En ? "Off" : "Désactivé")) + "  ·  " + NomCategorie(cle)
+                + (cle == "securite" && sansListe ? "  ·  " + RienBloqueSecurite() : "");
         }
 
         // Lignes de la page, et pour chacune : « b » (blocage), « a » (autorisation) ou « l » (liste), avec le nom
@@ -3066,7 +3080,7 @@ namespace DeR4Tizer
                     string cle = c;
                     bool on = VueNavigationFluent.CategorieActive(etat, cle);
                     var b = Outil("", on, (s, e) => { ActionsProtection.FiltrageCategories(VueNavigationFluent.ValeurApres(etat, cle, !on)); Charger(); });
-                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on), TextWrapping = TextWrapping.Wrap };
+                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on, VueNavigationFluent.SansListeSecurite(etat)), TextWrapping = TextWrapping.Wrap };
                     b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     b.Margin = new Thickness(0, 0, 0, 6);
                     outils.Children.Add(b);
@@ -3082,6 +3096,7 @@ namespace DeR4Tizer
                 if (cle[0] == 'b' && nom.Length > 0)
                 {
                     pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+                    pile.Children.Add(new TextBlock { Text = L.En ? "Allows this exact name and its subdomains, not the whole domain of the list rule." : "Autorise ce nom exact et ses sous-domaines, pas tout le domaine de la règle de la liste.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
                     pile.Children.Add(Briques.Action(L.En ? "Allow this domain" : "Autoriser ce domaine", true, (s, e) => { ActionsProtection.FiltrageAutoriser(nom); Charger(); }));
                 }
                 else if (cle[0] == 'a' && nom.Length > 0)
