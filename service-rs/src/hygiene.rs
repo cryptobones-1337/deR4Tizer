@@ -668,7 +668,7 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
 pub(crate) fn alerte_inventaire_tronque(tronquees: usize) -> Alerte {
     commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers par profil"));
     alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
-        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
+        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
 }
 
 /// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
