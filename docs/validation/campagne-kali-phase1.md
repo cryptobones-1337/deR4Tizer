@@ -8,7 +8,7 @@
 | Code audité | `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` (section 5, campagne Kali) ; instantanés de campagne relus dans le `CLAUDE.md` de la PR #172 (section 5, campagne Kali) ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f` (`main`) |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
-> **Rappel sur l'approbation (v1.3).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.3 doit être transmise au mainteneur, pour information, avant toute exécution.** Nouveauté principale : configuration C (baseline de deR4Tizer appliquée à 100 %), configuration principale de mesure sur décision du mainteneur (5.1.11). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2).
+> **Rappel sur l'approbation (v1.3).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.3 a été transmise au mainteneur, pour information, le 2026-11-14, avant toute exécution.** Nouveauté principale : configuration C (baseline de deR4Tizer appliquée à 100 %), configuration principale de mesure sur décision du mainteneur (5.1.11). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2).
 
 ## Approbation
 
@@ -24,7 +24,7 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
 - **2026-11-14, version 1.3** : approuvée par l'agent de validation (configuration C principale, baseline appliquée à
   100 % sur décision du mainteneur ; attendu en configuration C pour chaque scénario ; classe P « prévenu (baseline) » ;
   scénario de contrôle S-19 ; défaut D-BAS-01). **Cette approbation n'est ni humaine ni indépendante** ; elle ne lève
-  aucune règle, et la v1.3 doit être transmise au mainteneur, pour information, avant toute exécution.
+  aucune règle, et la v1.3 a été transmise au mainteneur, pour information, le 2026-11-14, avant toute exécution.
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -662,8 +662,8 @@ scénario (3.1).
 10. **Publication** : ce document, une fois transmis au mainteneur, est proposé sous `docs/validation/` par une PR de
     documentation seule, après la garde PII ; la fusion reste décidée par le mainteneur.
 11. **Configuration C, principale de mesure (v1.3), sur décision du mainteneur du 2026-11-14 au soir** : les tests Kali
-    se font avec la baseline de deR4Tizer appliquée à 100 %, l'un des intérêts du produit (décision rapportée par l'agent
-    principal ; son texte exact est à citer à la publication). Mise en œuvre : la baseline est appliquée par le service
+    se font avec la baseline de deR4Tizer appliquée à 100 %, l'un des intérêts du produit (décision citée telle quelle :
+    « pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait »). Mise en œuvre : la baseline est appliquée par le service
     lui-même (`baseline appliquer`, trois profils, une seule commande), jamais réglage par réglage à la main ; elle ne fait
     que durcir Defender, ce que S-19 vérifie (aucun réglage plus faible, aucune exclusion) : la règle 2 de `CLAUDE.md`
     reste entière. Effet réversible (instantané « campagne C », annulation par le service), confiné à la VM de test.
