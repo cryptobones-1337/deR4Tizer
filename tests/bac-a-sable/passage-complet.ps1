@@ -1,6 +1,12 @@
 ﻿# Passage complet (preuve locale de CLAUDE.md, section 4) depuis le worktree d'intégration : tests unitaires, MSI, puis
 # 3a, 3b et 3c dans la VM de test (tests\vm\lancer.ps1, par défaut) ou dans Windows Sandbox (-Cible bac-a-sable).
 # Résumé de chaque tableau ; clés et binaires de test du 3c effacés quoi qu'il arrive. À surveiller avec vigie.ps1.
+# Échec fermé (audit du 2026-11-14, F1) : un worktree modifié est refusé avant toute compilation (l'arbre annoncé dans
+# la preuve est celui de HEAD, le MSI est construit depuis le worktree : ils doivent être identiques) ; tout ÉCHOUÉ,
+# résultat absent, lanceur ou préparation en échec, ou worktree modifié par le passage donne « PASSAGE EN ÉCHEC » et le
+# code de sortie 1 ; sinon « PASSAGE RÉUSSI » et 0. Liste de scénarios vide ou nom inconnu refusés, échec de git refusé
+# (relecture de #174, D1, D2). Un NON EXÉCUTÉ ne fait pas échouer le passage : seuls ceux déjà connus et justifiés sont
+# admis (CLAUDE.md, section 4), au lecteur de la preuve d'en juger.
 # Usage : .\tests\bac-a-sable\passage-complet.ps1 -Depot <worktree d'intégration> [-Cible vm|bac-a-sable]
 param([string]$Depot = 'C:\d4t-integration', [string]$Racine = 'C:\d4t-bac-a-sable', [string[]]$Scenarios = @('installation', 'quarantaine', 'maj'),
       [ValidateSet('vm', 'bac-a-sable')] [string]$Cible = 'vm',
@@ -21,7 +27,32 @@ function Dossier-Du-Passage([string]$Scenario) {
     Get-ChildItem $Racine -Directory | Where-Object { $_.Name -match $motif -and $_.CreationTimeUtc -ge $debutPassage } |
         Sort-Object CreationTimeUtc | Select-Object -Last 1
 }
-"commit : $(git rev-parse --short HEAD) ; modifications : $(@(git status --porcelain).Count)"
+# D1 : liste de scénarios contrôlée (un nom mal écrit ne ferait rien tourner)
+$connus = @('installation', 'quarantaine', 'lot3d', 'mesure', 'maj')
+$inconnus = @($Scenarios | Where-Object { $connus -notcontains $_ })
+if (@($Scenarios).Count -eq 0 -or $inconnus.Count -gt 0) {
+    "scénarios refusés : liste vide ou nom inconnu ($($inconnus -join ', ')) ; connus : $($connus -join ', ')"
+    'PASSAGE EN ÉCHEC'
+    exit 1
+}
+# D2 : un échec de git (pas un dépôt, propriétaire douteux…) ne passe jamais pour un worktree propre
+function Etat-Git {
+    $l = @(git status --porcelain 2>$null)
+    if ($LASTEXITCODE -ne 0) { return -1 }
+    $l.Count
+}
+$modifications = Etat-Git
+$court = git rev-parse --short HEAD
+if ($modifications -lt 0 -or $LASTEXITCODE -ne 0) { 'git en échec : état du worktree inconnu, passage refusé'; 'PASSAGE EN ÉCHEC'; exit 1 }
+"commit : $court ; modifications : $modifications"
+if ($modifications -ne 0) {
+    "worktree modifié ($modifications) : passage refusé, l'arbre testé ne serait pas celui de HEAD (commiter d'abord)"
+    git status --porcelain | Select-Object -First 10
+    'PASSAGE EN ÉCHEC'
+    exit 1
+}
+$script:echec = $false
+$script:resumes = 0
 
 # Windows Sandbox n'accepte qu'une instance : attendre la fermeture complète de la précédente (elle peut traîner
 # quand le poste est chargé, et lancer.ps1 rend la main dès le tableau écrit)
@@ -35,22 +66,27 @@ function Attendre-Fermeture {
 function Resume([string]$Scenario) {
     # Seulement un dossier créé par CE passage : jamais le tableau d'un passage antérieur
     $s = Dossier-Du-Passage $Scenario
-    if (-not $s) { "== $Scenario : AUCUN RÉSULTAT de ce passage (le lanceur a échoué avant le scénario)"; return }
+    if (-not $s) { $script:echec = $true; "== $Scenario : AUCUN RÉSULTAT de ce passage (le lanceur a échoué avant le scénario)"; return }
     $t = Get-ChildItem $s.FullName -Filter '*-tableau.md' -ErrorAction SilentlyContinue
-    if (-not $t) { "== $Scenario : pas de tableau ($($s.Name))"; return }
+    if (-not $t) { $script:echec = $true; "== $Scenario : pas de tableau ($($s.Name))"; return }
     $c = Get-Content $t.FullName -Encoding UTF8
+    $script:resumes++
+    if (@($c | Select-String '\| ÉCHOUÉ \|').Count -gt 0 -or @($c | Select-String '\| RÉUSSI \|').Count -eq 0) { $script:echec = $true }
     "== $Scenario ($($s.Name)) : RÉUSSI=$(@($c | Select-String '\| RÉUSSI \|').Count) ÉCHOUÉ=$(@($c | Select-String '\| ÉCHOUÉ \|').Count) NON EXÉCUTÉ=$(@($c | Select-String '\| NON EXÉCUTÉ \|').Count)"
     $c | Select-String '\| ÉCHOUÉ \||\| NON EXÉCUTÉ \|' | ForEach-Object { $_.Line }
 }
 
 Remove-Item (Join-Path $Racine 'entree\maj'), (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue
 & .\tests\bac-a-sable\preparer.ps1 *> "$env:TEMP\d4t-prep.log"
-if (-not $?) { 'préparation en échec'; Get-Content "$env:TEMP\d4t-prep.log" -Tail 25; exit 1 }
+if (-not $?) { 'préparation en échec'; Get-Content "$env:TEMP\d4t-prep.log" -Tail 25; 'PASSAGE EN ÉCHEC'; exit 1 }
 "tests unitaires : $((Get-Content "$env:TEMP\d4t-prep.log" | Select-String 'test result' | Select-Object -Last 1).Line.Trim())"
 $os = Get-CimInstance Win32_OperatingSystem
 $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
-"commit testé : $(git rev-parse HEAD)"
-"arbre testé : $(git rev-parse 'HEAD^{tree}')"
+$commit = git rev-parse HEAD; $okCommit = $LASTEXITCODE -eq 0
+$arbre = git rev-parse 'HEAD^{tree}'; $okArbre = $LASTEXITCODE -eq 0
+if (-not ($okCommit -and $okArbre)) { 'git en échec : commit ou arbre testé inconnu'; 'PASSAGE EN ÉCHEC'; exit 1 }
+"commit testé : $commit"
+"arbre testé : $arbre"
 "MSI (3a, 3b) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
 # « mesure » (mesure du cycle, environ 25 min) seulement si demandé : ne fait pas partie de la preuve de CLAUDE.md
@@ -59,23 +95,36 @@ foreach ($s in @('installation', 'quarantaine', 'lot3d', 'mesure') | Where-Objec
     # Exception du lanceur (VM injoignable, console vide…) : notée, et les scénarios suivants tournent quand même
     # (avant : elle arrêtait tout le passage)
     try { & $lanceur -Scenario $s @options *> "$env:TEMP\d4t-$s.log"; $ok = $? } catch { $ok = $false; "== $s : exception du lanceur : $($_.Exception.Message)" }
-    if (-not $ok) { "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
+    if (-not $ok) { $script:echec = $true; "== $s : lanceur en échec :"; Get-Content "$env:TEMP\d4t-$s.log" -Tail 6 }
     Resume $s
     if ($Cible -eq 'vm') { $v = Dossier-Du-Passage $s | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
 }
 if ($Scenarios -contains 'maj') { try {
     Attendre-Fermeture
     & .\tests\bac-a-sable\preparer.ps1 -Maj *> "$env:TEMP\d4t-prep-maj.log"
-    if (-not $? -or -not (Test-Path (Join-Path $Racine 'entree\maj\versions.txt'))) { 'préparation -Maj en échec'; Get-Content "$env:TEMP\d4t-prep-maj.log" -Tail 25 }
+    if (-not $? -or -not (Test-Path (Join-Path $Racine 'entree\maj\versions.txt'))) { $script:echec = $true; 'préparation -Maj en échec'; Get-Content "$env:TEMP\d4t-prep-maj.log" -Tail 25 }
     else {
         "MSI (3c, reconstruit après les paquets de test) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
         try { & $lanceur -Scenario maj @options *> "$env:TEMP\d4t-maj.log"; $ok = $? } catch { $ok = $false; "== maj : exception du lanceur : $($_.Exception.Message)" }
-        if (-not $ok) { "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
+        if (-not $ok) { $script:echec = $true; "== maj : lanceur en échec :"; Get-Content "$env:TEMP\d4t-maj.log" -Tail 6 }
         Resume 'maj'
         if ($Cible -eq 'vm') { $v = Dossier-Du-Passage 'maj' | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }
+} catch {
+    $script:echec = $true
+    "== maj : exception : $($_.Exception.Message)"
 } finally {
     Remove-Item (Join-Path $Racine 'entree\maj'), (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue
     "entree\maj restant : $(Test-Path (Join-Path $Racine 'entree\maj'))"
-    "modifications du worktree après passage : $(@(git status --porcelain).Count)"
 } }
+$apres = Etat-Git
+"modifications du worktree après passage : $apres"
+if ($apres -ne 0) { $script:echec = $true }
+# Autant de scénarios résumés (tableau lu) que de scénarios demandés (D1)
+if ($script:resumes -ne @($Scenarios | Select-Object -Unique).Count) {
+    $script:echec = $true
+    "scénarios résumés : $($script:resumes) sur $(@($Scenarios | Select-Object -Unique).Count) demandés"
+}
+if ($script:echec) { 'PASSAGE EN ÉCHEC'; exit 1 }
+'PASSAGE RÉUSSI'
+exit 0
