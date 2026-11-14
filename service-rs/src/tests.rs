@@ -8077,15 +8077,29 @@ fn audit_b2_b8_cablage() {
     let garde = g.find("commun::echec_protection().is_some()").expect("garde");
     assert!(garde < g.find(r#"commun::ecrire("config.json", config)"#).expect("écriture"), "garde avant l'écriture");
     assert_eq!(m.matches(r#"ecrire("config.json""#).count(), 1, "une seule écriture de config.json dans moniteur.rs");
-    for (nom, source) in [("commun.rs", include_str!("commun.rs")), ("maj.rs", include_str!("maj.rs")), ("reponse.rs", include_str!("reponse.rs")),
-                          ("filtrage.rs", include_str!("filtrage.rs")), ("notifications.rs", include_str!("notifications.rs"))] {
-        assert!(!source.contains(r#"ecrire("config.json""#), "écriture directe de config.json dans {nom}");
+    // Tout service-rs/src, hors fichiers de tests et hors moniteur.rs (relecture de #173, R2)
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut vus = 0;
+    for f in std::fs::read_dir(&src).unwrap().flatten() {
+        let nom = f.file_name().to_string_lossy().to_string();
+        if !nom.ends_with(".rs") || nom.starts_with("tests") || nom == "moniteur.rs" {
+            continue;
+        }
+        vus += 1;
+        let texte = std::fs::read_to_string(f.path()).unwrap();
+        assert!(!texte.contains(r#"ecrire("config.json""#) && !texte.contains(r#"ecrire_dans("config.json""#), "écriture directe de config.json dans {nom}");
     }
+    assert!(vus > 30, "modules lus : {vus}");
     for bras in [r#""config" => {"#, r#""reglages" => {"#, r#""majConfig" => {"#, r#""notifications" | "testerNotifications" => {"#] {
         let b = &m[m.find(bras).unwrap()..];
         let avant = &b[..b.find("ecrire_config(&self.config)").unwrap()];
         assert!(avant.contains("commun::echec_protection().is_some()"), "{bras} refusé en amont, message clair (B8)");
     }
+    // R3 : le refus des notifications vaut pour les deux actions (enregistrer_secrets écrit notifications.json)
+    let n = &m[m.find(r#""notifications" | "testerNotifications" => {"#).unwrap()..];
+    let n = &n[..n.find("crate::notifications::enregistrer_secrets").unwrap()];
+    assert!(n.contains("\n                if commun::echec_protection().is_some() {") && !n.contains("action == \"notifications\" &&"),
+            "notifications et testerNotifications refusées avant enregistrer_secrets (S173-02, R3)");
     for f in [include_str!("moniteur.rs"), include_str!("siem.rs")] {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }

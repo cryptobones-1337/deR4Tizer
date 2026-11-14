@@ -1465,11 +1465,11 @@ impl Moniteur {
                         Ok(m) => {
                             self.config.filtrage.actif = false;
                             // Cartes toujours rendues ; en échec de la protection, ecrire_config n'écrit rien (audit de
-                            // #173, S173-03) : dit dans la réponse et au journal, le filtrage reviendrait au prochain
-                            // démarrage une fois la protection rétablie (S173-05)
+                            // #173, S173-03) : dit dans la réponse et au journal (S173-05, relecture R1 : l'état d'origine
+                            // est effacé, le filtrage ne reprend pas, mais la configuration le dit encore actif)
                             let m = match ecrire_config(&self.config) {
                                 Ok(()) => m,
-                                Err(e) => format!("{m} ; désactivation non enregistrée ({e}) : à refaire une fois la protection rétablie, sinon le filtrage reprendra au prochain démarrage"),
+                                Err(e) => format!("{m} ; désactivation non enregistrée ({e}) : la configuration indique encore le filtrage actif, le désactiver de nouveau une fois la protection rétablie"),
                             };
                             commun::journal(&format!("filtrage : {m}"));
                             Reponse::ok(m)
