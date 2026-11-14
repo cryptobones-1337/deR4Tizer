@@ -290,9 +290,12 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
        connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
        à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
-     - VM cible partie de son instantané dédié « propre + outils de campagne » (voir les dépendances ci-dessous ;
-       Bureau à distance activé pour la force brute, comptes de test, etc.), remise à son instantané « propre » après
-       la campagne.
+     - VM cible partie de l'un de ses deux instantanés de campagne, préparés hors campagne : « campagne A » (sans
+       Sysmon) et « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous). Chacun contient
+       deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance
+       activé pour la force brute, etc.). Leurs noms ne commencent jamais par « propre », pour que les passages
+       complets (`tests/vm/lancer.ps1`, qui prend le plus récent instantané « propre… ») n'en partent jamais. VM
+       remise à son instantané « propre » après la campagne.
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
        résultat, jamais un obstacle à contourner.
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
@@ -325,26 +328,30 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          avec les journaux natifs de Windows. Installées hors campagne (Internet seulement à ce moment-là), versions
          figées et notées dans chaque rapport, **sans aucune exclusion Defender**, même pour le dossier des fiches,
          contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
-         résultat. Un instantané dédié de la VM de test (« propre + outils de campagne ») les contient ; l'instantané
-         « propre » des passages complets reste sans eux.
+         résultat. Seul l'instantané « campagne B » les contient ; « campagne A » et l'instantané « propre » des
+         passages complets restent sans eux.
        - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
          mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis « L'agent
-         apprpuve », cités tels quels). Les scénarios sont documentés dans le dépôt (`docs/validation/`, en Markdown :
-         technique ATT&CK, SIMULATION ou émulation, préconditions, résultat attendu, délai maximal, nettoyage, preuves
-         attendues, au niveau du comportement, sans commande offensive détaillée), avec l'approbation écrite (date,
-         version) ; chaque ajout ou changement de scénario est approuvé de même avant d'être exécuté, et chaque
-         version approuvée est transmise au mainteneur, pour information, avant exécution. Cette approbation n'est ni
-         humaine ni indépendante (même modèle que celui qui exécute) et n'est jamais présentée comme telle. Elle ne
-         lève aucune des règles de cette section : un scénario qui en sortirait (Defender touché, réseau hors labo,
-         vol d'identifiants réel, charge destructive, saisie de mot de passe) ne peut pas être approuvé par l'agent ;
-         s'il n'est pas clairement sûr, réversible et confiné au laboratoire, il remonte au mainteneur. Le mainteneur
-         peut retirer un scénario ou reprendre l'approbation à tout moment. Les correctifs issus de la campagne
-         suivent le circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage complet en VM,
-         validateur de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni l'IDS, ni le DPI, ni
-         le NDR. Aucune fusion par l'agent de validation ; la fusion reste décidée par cryptobones-1337. Résultats
-         bruts gardés hors du dépôt ; rapports de campagne (`docs/validation/`), matrice des capacités et README mis à
-         jour dans le dépôt, après la garde PII. L'agent de validation est un fichier local, hors de Git : sa consigne
-         de lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
+         apprpuve », cités tels quels). Les scénarios sont documentés dans le dépôt (demande du mainteneur, 2026-11-14
+         : « Il faudra bien mettre à jour les fichiers md et documenter les scénarios dans le github »)
+         (`docs/validation/`, en Markdown : technique ATT&CK, SIMULATION ou émulation, préconditions, résultat
+         attendu, délai maximal, nettoyage, preuves attendues, au niveau du comportement, sans commande offensive
+         détaillée), avec l'approbation écrite (date, version), après la garde PII ; un scénario est publié (fusionné
+         sur `main`) avant sa première exécution, et chaque rapport note la version de la liste exécutée ; chaque
+         ajout ou changement de scénario est approuvé de même avant d'être exécuté, et chaque version approuvée est
+         transmise au mainteneur, pour information, avant exécution. Cette approbation n'est ni humaine ni
+         indépendante (même modèle que celui qui exécute) et n'est jamais présentée comme telle. Elle ne lève aucune
+         des règles de cette section : un scénario qui en sortirait (Defender touché, réseau hors labo, vol
+         d'identifiants réel, charge destructive, saisie de mot de passe) ne peut pas être approuvé par l'agent ; s'il
+         n'est pas clairement sûr, réversible et confiné au laboratoire, il remonte au mainteneur. Le mainteneur peut
+         retirer un scénario ou reprendre l'approbation à tout moment. Les correctifs issus de la campagne suivent le
+         circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage complet en VM, validateur
+         de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni l'IDS, ni le DPI, ni le NDR.
+         Aucune fusion par l'agent de validation ; la fusion reste décidée par cryptobones-1337. Résultats bruts
+         gardés hors du dépôt ; rapports de campagne (`docs/validation/`), matrice des capacités et README mis à jour
+         dans le dépôt, après la garde PII ; la matrice et le README disent « testé en labo (campagne Kali, date) »
+         avec les classes A à E, jamais « validé ». L'agent de validation est un fichier local, hors de Git : sa
+         consigne de lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
 7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
