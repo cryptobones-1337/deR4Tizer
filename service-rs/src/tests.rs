@@ -8196,6 +8196,8 @@ fn audit_s175_04_plafond_par_profil() {
     assert!(chrome.find("examines += 1;").unwrap() < chrome.find("read_dir(ext.path())").unwrap() && chrome.contains("examines > MAX_DOSSIERS_PAR_PROFIL"), "dossiers examinés comptés avant toute lecture (S175-07)");
     let v = &h[h.find("pub fn verifier_extensions()").unwrap()..];
     assert!(v.contains("if tronquees > 0 {") && v.contains("alerte_inventaire_tronque(tronquees)"), "troncature signalée");
+}
+
 // ------------------------------------------------------------ audit du 2026-11-14, lot 3 (tables bornées)
 
 /// A6, A7, S176-01 : budget par catégorie, une synthèse par catégorie ; une inondation d'une catégorie ne tait pas les
