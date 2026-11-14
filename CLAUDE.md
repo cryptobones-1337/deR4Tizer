@@ -290,8 +290,9 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
        connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
        à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
-     - VM cible remise à son instantané « propre » avant et après la campagne (Bureau à distance activé pour la force
-       brute, comptes de test, etc.).
+     - VM cible partie de son instantané dédié « propre + outils de campagne » (voir les dépendances ci-dessous ;
+       Bureau à distance activé pour la force brute, comptes de test, etc.), remise à son instantané « propre » après
+       la campagne.
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
        résultat, jamais un obstacle à contourner.
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
