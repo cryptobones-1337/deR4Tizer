@@ -1060,6 +1060,11 @@ pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: 
     if deja.get(&cle).is_some_and(|t| t.elapsed() < fenetre) {
         return Admission::Deja;
     }
+    // Purge des clés expirées dès que la table dépasse ce que 16 catégories pleines occuperaient : une catégorie
+    // maintenue sous son budget ne la fait plus grossir sans fin (audit v2 de #176, S176-04)
+    if deja.len() > par_categorie.saturating_mul(16) {
+        deja.retain(|_, t| t.elapsed() < fenetre);
+    }
     let cat = categorie_cle(&cle).to_string();
     let prefixe = format!("{cat}|");
     let compter = |d: &HashMap<String, std::time::Instant>| d.iter().filter(|(k, t)| (k.starts_with(&prefixe) || **k == cat) && t.elapsed() < fenetre).count();

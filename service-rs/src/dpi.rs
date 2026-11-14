@@ -126,7 +126,8 @@ impl Dpi {
         // Table bornée, synthèse au-delà (audit du 2026-11-14, A7 ; correction de sûreté : DPI gelé)
         let (niveau, score, destination, raisons) = match commun::admettre_cle(&mut self.deja, cle, Duration::from_secs(3600), MAX_CLES_ALERTES) {
             commun::Admission::Nouvelle => (niveau.to_string(), score, destination, raisons),
-            commun::Admission::PlafondAtteint(cat) => ("Alerte".to_string(), 6, "analyse du trafic".to_string(),
+            // Synthèse au niveau de l'alerte qui l'a déclenchée si elle était Critique (information de l'audit v2 de #176)
+            commun::Admission::PlafondAtteint(cat) => (if niveau == "Critique" { "Critique" } else { "Alerte" }.to_string(), if niveau == "Critique" { score.max(6) } else { 6 }, "analyse du trafic".to_string(),
                 format!("Plus de {MAX_CLES_ALERTES} alertes distinctes « {cat} » de l'analyse du trafic en une heure : les suivantes de cette catégorie ne sont plus signalées une à une (inondation probable) ; les autres catégories restent signalées")),
             _ => return,
         };

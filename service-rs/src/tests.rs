@@ -8217,6 +8217,12 @@ fn audit_a6_a7_admission_plafonnee() {
     assert_eq!(admettre_cle(&mut deja, "arp-double|10.0.0.254".into(), h, 3), Admission::Nouvelle, "les autres catégories restent signalées (S176-01)");
     assert_eq!(admettre_cle(&mut deja, "ja3|abc".into(), h, 3), Admission::Nouvelle);
     assert!(deja.len() <= 6, "table bornée : {}", deja.len());
+    // S176-04 : une catégorie maintenue sous son budget ne fait pas grossir la table sans fin (clés expirées purgées)
+    let mut deja = std::collections::HashMap::new();
+    for i in 0..10_000 {
+        admettre_cle(&mut deja, format!("port|{i}"), Duration::ZERO, 100);
+    }
+    assert!(deja.len() <= 100 * 16 + 1, "table purgée : {}", deja.len());
     let mut deja = std::collections::HashMap::new();
     for i in 0..3 {
         admettre_cle(&mut deja, format!("port|k{i}"), Duration::ZERO, 3);
