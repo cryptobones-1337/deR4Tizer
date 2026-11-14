@@ -290,9 +290,12 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
        connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
        à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
-     - VM cible partie de son instantané dédié « propre + outils de campagne » (voir les dépendances ci-dessous ;
-       Bureau à distance activé pour la force brute, comptes de test, etc.), remise à son instantané « propre » après
-       la campagne.
+     - VM cible partie de l'un de ses deux instantanés de campagne, préparés hors campagne : « campagne A » (sans
+       Sysmon) et « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous). Chacun contient
+       deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance
+       activé pour la force brute, etc.). Leurs noms ne commencent jamais par « propre », pour que les passages
+       complets (`tests/vm/lancer.ps1`, qui prend le plus récent instantané « propre… ») n'en partent jamais. VM
+       remise à son instantané « propre » après la campagne.
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
        résultat, jamais un obstacle à contourner.
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
@@ -325,8 +328,8 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          avec les journaux natifs de Windows. Installées hors campagne (Internet seulement à ce moment-là), versions
          figées et notées dans chaque rapport, **sans aucune exclusion Defender**, même pour le dossier des fiches,
          contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
-         résultat. Un instantané dédié de la VM de test (« propre + outils de campagne ») les contient ; l'instantané
-         « propre » des passages complets reste sans eux.
+         résultat. Seul l'instantané « campagne B » les contient ; « campagne A » et l'instantané « propre » des
+         passages complets restent sans eux.
        - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
          mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis « L'agent
          apprpuve », cités tels quels). Les scénarios sont documentés dans le dépôt (demande du mainteneur, 2026-11-14

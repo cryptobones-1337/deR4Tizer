@@ -2,18 +2,25 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.1** |
-| Date de la version 1.1 | 2026-11-14 |
-| Version précédente | 1.0 du 2026-11-14 |
-| Code audité | `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` (section 5, campagne Kali) |
+| Version de la liste | **1.2** |
+| Date de la version 1.2 | 2026-11-14 |
+| Versions précédentes | 1.1 du 2026-11-14 ; 1.0 du 2026-11-14 |
+| Code audité | `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` (section 5, campagne Kali) ; instantanés de campagne relus dans le `CLAUDE.md` de la PR #172 (section 5, campagne Kali) |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
-> **Rappel sur l'approbation (v1.1).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.1 est transmise au mainteneur, pour information, avant toute exécution.** Les deux volets autrefois laissés au mainteneur (volet T1562.002 de S-13 ; DNS-003, désormais S-18) sont approuvés en v1.1 à la suite de sa décision du 2026-11-14 citée en 5.2.
+> **Rappel sur l'approbation (v1.2).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.2 est transmise au mainteneur, pour information, avant toute exécution.** Les deux volets autrefois laissés au mainteneur (volet T1562.002 de S-13 ; DNS-003, désormais S-18) restent approuvés depuis la v1.1, à la suite de sa décision du 2026-11-14 citée en 5.2.
 
 ## Approbation
 
 Approuvée le 2026-11-14, version 1.0, par l'agent de validation, en application de `CLAUDE.md` (section 5, phase 7,
 campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution »).
+
+- **2026-11-14, version 1.1** : approuvée par l'agent de validation (volets T1562.002 de S-13 et DNS-003 approuvés sur la
+  décision du mainteneur citée en 5.2).
+- **2026-11-14, version 1.2** : approuvée par l'agent de validation, après le « Pas go » de la relecture de la PR #172
+  (instantanés de campagne « campagne A » et « campagne B », approbation datée, sens de « non mesurée »). **Cette
+  approbation n'est ni humaine ni indépendante** ; elle ne lève aucune règle, et la v1.2 est transmise au mainteneur, pour
+  information, avant toute exécution.
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -24,7 +31,8 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   reprendre l'approbation à tout moment. Tout ajout ou changement de scénario fait l'objet d'une nouvelle version
   approuvée de la même façon avant d'être exécuté.
 - L'exécution ne commence qu'une fois les prérequis de la section 4 vérifiés, par N-01 puis S-01 seul ; le scénario
-  suivant n'est lancé que si l'environnement est propre et les preuves du précédent complètes.
+  suivant n'est lancé que si l'état de référence est vérifié (VM conforme à l'instantané de campagne de sa configuration,
+  section 3.0) et les preuves du précédent complètes.
 
 **Retenus (v1.1)** : N-01 à N-05 ; S-01 à S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à
 S-18 ; S-16 avec son option longue (2 h). **Ajouté en v1.1** : S-18 (DNS-003).
@@ -39,6 +47,13 @@ S-13 ; DNS-003 (devenu S-18). Décision citée mot pour mot en section 5.2.
 **Changements de la v1.1 par rapport à la v1.0** : les deux volets ci-dessus passent de « non approuvé / laissé au
 mainteneur » à approuvé ; S-18 créé pour DNS-003, avec nettoyage à rétablissement vérifié (service relancé et vérifié)
 et remise à l'instantané ; cross-références des sections 2, 3 et 5 mises à jour ; en-tête passé en version 1.1.
+
+**Changements de la v1.2 par rapport à la v1.1** (relecture de la PR #172, « Pas go ») : D1, les configurations A et B
+partent des instantanés de campagne « campagne A » et « campagne B » (deR4Tizer installé, apprentissage terminé, comptes
+de test, réglages du labo), et non plus de « propre », qui n'a rien de cela ; toutes les remises par essai et par lot
+visent l'instantané de la configuration ; la VM ne revient à « propre » qu'après la campagne (sections 3.0, 4, 5.1.2,
+5.1.3 et renvois) ; D2, approbation datée de la v1.2 ; section 1.3, « non mesurée » précisé en « non mesurée en VM ».
+Aucun scénario ajouté, retiré ni changé dans son action ou son attendu.
 Document écrit pour être publiable tel quel (`docs/validation/`) : niveau comportement, identifiants ATT&CK, attendus,
 nettoyage et preuves ; aucune commande offensive détaillée ; aucune donnée personnelle, aucun chemin de profil, aucun
 identifiant de compte ni mot de passe. Adresses en plages de documentation (RFC 5737), noms de test en `.test` (RFC 2606).
@@ -89,7 +104,9 @@ résultat.
 
 ### 1.3 Règles (`regles.rs`, `docs/detection/regles.md`)
 
-État de mesure : **non mesurée** pour toutes les fiches, sauf PER-001 (clé Run) et DNS-002, vues au scénario 3a.
+État de mesure : **non mesurée en VM** pour toutes les fiches, sauf PER-001 (clé Run) et DNS-002, vues au scénario 3a.
+« Non mesurée en VM » ne veut pas dire « sans test » : certaines lignes de la matrice des capacités sont « testé en labo »
+sur la foi de tests unitaires ; aucune n'a encore été mesurée par une campagne d'attaque en VM.
 
 - RES-001 (menace connue, Critique, blocage automatique si Spamhaus DROP ou Feodo Tracker), RES-002 (score ≥ 3 : non signé
   +3, dossier temporaire +3, origine Internet +2/3, ligne suspecte +3, IP directe +2, balise +1/3, port hors liste +1),
@@ -187,9 +204,19 @@ non lu par deR4Tizer.
 
 - Adressage : VM cible 203.0.113.10, Kali 203.0.113.20 sur `d4t-labo` ; lien d'administration 198.51.100.0/24 entre le
   poste et Kali seulement ; carte « Default Switch » de la VM débranchée.
-- Instantané de départ selon la configuration (décision 5.1.2) : « propre » (A, sans Sysmon) ou « propre + outils de campagne » (B, avec Sysmon) ; remise à l'instantané avant et après chaque lot, et **avant chaque essai
-  des scénarios à corrélation** (COR-*) : la déduplication d'une heure et la fenêtre d'échecs de 30 min sont en mémoire,
-  un second essai sans remise ne serait pas indépendant.
+- Instantané de départ selon la configuration (décision 5.1.2) : « campagne A » (configuration A, sans Sysmon) ou
+  « campagne B » (configuration B, avec Sysmon et Atomic Red Team). Les deux sont préparés hors campagne et contiennent
+  deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance, partage de
+  fichiers, profil réseau). Leurs noms ne commencent jamais par « propre ».
+- Dans tout ce document, **« remise à l'instantané » désigne la remise à l'instantané de campagne de la configuration de
+  l'essai** (« campagne A » ou « campagne B »), **jamais à « propre »** : « propre » est l'instantané des passages
+  complets, sans deR4Tizer, sans comptes de test ni réglages du labo ; y revenir effacerait les préconditions de S-01 à
+  S-04, S-13 et S-17. Remise avant et après chaque lot, et **avant chaque essai des scénarios à corrélation** (COR-*) :
+  la déduplication d'une heure et la fenêtre d'échecs de 30 min sont en mémoire, un second essai sans remise ne serait
+  pas indépendant.
+- La VM n'est remise à « propre » qu'**après la campagne**, une fois les preuves collectées.
+- Atomic Red Team n'existe que dans « campagne B » : une fiche Atomic (S-09 par exemple) ne sert qu'en configuration B ;
+  en configuration A, le comportement est produit sans elle.
 - Comptes locaux de test dédiés ; mots de passe de labo jamais écrits dans un rapport ni dans le dépôt.
 - Horodatage : début (UTC) relevé sur la VM ; latence = `HeureUtc` de l'alerte moins `TimeCreated` de l'événement Windows
   déclencheur (et, en second, moins le début de l'action).
@@ -209,7 +236,8 @@ non lu par deR4Tizer.
 **N-01 — Témoin de chaîne : activité légitime (négatif, valide la collecte et les preuves)**
 - Technique : aucune (négatif).
 - Nature : activité légitime.
-- Préconditions : instantané ; collectes actives ; apprentissage terminé (décision 5.1.1) ; horloges relevées.
+- Préconditions : instantané de campagne de la configuration (« campagne A » ou « campagne B », 3.0) ; collectes actives ;
+  apprentissage terminé (décision 5.1.1) ; horloges relevées.
 - Action : ouverture de session locale du compte de test, une commande d'administration PowerShell signée lancée par
   fichier, consultation de l'interface.
 - Attendu : aucune alerte Alerte/Critique ; 4624 présents dans le SIEM ; aucune collecte en panne.
@@ -449,8 +477,10 @@ non lu par deR4Tizer.
 2. Adresses : 203.0.113.10 (VM), 203.0.113.20 (Kali), adresse secondaire de Kali réservée à S-07 ; profil réseau de la
    carte de la VM relevé, Bureau à distance et partage de fichiers autorisés sur ce profil.
 3. Horloges : écart VM, Kali et hôte relevé au début et à la fin de chaque lot.
-4. Instantanés « propre + outils de campagne » (Sysmon, Atomic, versions figées) et « propre » présents ; Defender actif,
-   sans exclusion, état relevé.
+4. Instantanés de campagne « campagne A » (sans Sysmon) et « campagne B » (Sysmon et Atomic, versions figées) présents,
+   préparés hors campagne, chacun avec deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages
+   du labo ; aucun nom ne commence par « propre » ; instantané « propre » présent pour le retour après la campagne
+   seulement ; Defender actif, sans exclusion, état relevé dans chaque instantané de campagne.
 5. deR4Tizer : version et empreinte du MSI ; service en marche ; aucune collecte « Inconnue » ; profil « journalisation »
    conforme (audit Logon, 4688 avec ligne de commande, 4104, 4663, `pfirewall.log`) ; état de l'apprentissage ; source
    des processus (Sysmon ou WMI) relevée.
@@ -463,21 +493,26 @@ non lu par deR4Tizer.
 
 ## 5. Décisions de conception et points laissés au mainteneur
 
-### 5.1 Décisions prises par l'agent de validation (v1.0)
+### 5.1 Décisions prises par l'agent de validation (v1.0 ; 2 et 3 révisées en v1.2)
 
 1. **Apprentissage terminé dans l'instantané de campagne.** Raison : on mesure le régime normal d'un poste après ses
    7 premiers jours ; en apprentissage, presque toute « Alerte » sortirait « Info » et la mesure ne dirait rien des règles.
    La fin de l'apprentissage est relevée (date, `apprentissage.json`) dans chaque rapport ; une mesure en apprentissage
    pourra venir plus tard, notée à part.
-2. **Deux configurations, jamais fusionnées.** Configuration A « sans Sysmon » : instantané « propre », collecte
-   indépendante par les journaux natifs (4688 avec ligne de commande, 4104, Planificateur, Defender). Configuration B
-   « avec Sysmon » : instantané « propre + outils de campagne ». Raison : deR4Tizer choisit Sysmon au démarrage s'il est
+2. **Deux configurations, jamais fusionnées** (révisée en v1.2). Configuration A « sans Sysmon » : instantané
+   « campagne A », collecte indépendante par les journaux natifs (4688 avec ligne de commande, 4104, Planificateur,
+   Defender). Configuration B « avec Sysmon » : instantané « campagne B » (Sysmon et Atomic Red Team). Les deux sont
+   préparés hors campagne avec deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo ;
+   aucun ne part de « propre », qui ne sert qu'au retour après la campagne. Raison : deR4Tizer choisit Sysmon au démarrage s'il est
    présent ; A mesure le poste client par défaut, B la meilleure télémétrie disponible ; Sysmon n'est une collecte
    indépendante que pour les événements que deR4Tizer ne lit pas (tout sauf 1 et 22). Scénarios sans processus (COR-*,
    DNS, IPC-03, D4-1) : configuration A suffit ; scénarios PRC et persistance : les deux.
-3. **Remise à l'instantané avant chaque essai des scénarios à corrélation** (S-01 à S-04, S-13, S-17). Raison : la
-   déduplication d'une heure et la fenêtre d'échecs de 30 min sont en mémoire ; sans remise, les essais ne sont pas
-   indépendants. Les autres scénarios gardent la remise par lot, avec l'état propre vérifié entre deux essais.
+3. **Remise à l'instantané de campagne de la configuration avant chaque essai des scénarios à corrélation** (S-01 à
+   S-04, S-13, S-17 ; révisée en v1.2). Raison : la déduplication d'une heure et la fenêtre d'échecs de 30 min sont en
+   mémoire ; sans remise, les essais ne sont pas indépendants. La remise vise « campagne A » ou « campagne B », jamais
+   « propre », qui effacerait deR4Tizer, les comptes de test et les réglages du labo. Les autres scénarios gardent la
+   remise par lot vers le même instantané, avec l'état de référence vérifié entre deux essais. La VM revient à « propre »
+   seulement après la campagne.
 4. **Résolveur DNS de labo sur Kali**, sur `d4t-labo` seulement, qui ne répond que pour une zone `.test` et les noms du
    labo, sans aucun relais vers Internet. Raison : le filtrage ne s'engage que si un amont répond (limite écrite en
    phase 7) ; c'est la seule façon de l'exercer hors Internet. Outil côté Kali, hors de la VM de test : aucune dépendance

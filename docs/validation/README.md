@@ -5,7 +5,7 @@ section 5, campagne Kali).
 
 | Document | Contenu |
 |---|---|
-| [campagne-kali-phase1.md](campagne-kali-phase1.md) | Audit initial des capacités, cartographie ATT&CK, liste fermée de scénarios (version 1.1, approuvée par l'agent de validation le 2026-11-14) |
+| [campagne-kali-phase1.md](campagne-kali-phase1.md) | Audit initial des capacités, cartographie ATT&CK, liste fermée de scénarios (version 1.2, approuvée par l'agent de validation le 2026-11-14) |
 
 ## À savoir
 
