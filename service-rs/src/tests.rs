@@ -3312,7 +3312,9 @@ fn canal_durcissement_cablage() {
     assert!(canal.contains("PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,"), "clients distants refusés");
     let t = &canal[canal.find("fn traiter(").unwrap()..];
     assert!(t.find("lire_commande(tube, DELAI_LECTURE)").unwrap() < t.find("identite_client_tube(tube)").unwrap(), "identité lue après la commande");
-    assert!(t.contains("ecrire_reponse(tube, &sortie, DELAI_ECRITURE)") && !t.contains("FlushFileBuffers"), "réponse bornée");
+    assert!(t.contains("ecrire_reponse(tube, &sortie, DELAI_ECRITURE) && debut.elapsed() >= DELAI_ECRITURE") && !t.contains("FlushFileBuffers"), "réponse bornée, journal à l'échéance seulement (S168-01)");
+    let g = &canal[canal.find("pub fn avec_echeance").unwrap()..canal.find("pub fn lire_commande").unwrap()];
+    assert!(g.contains("std::thread::Builder::new()") && !g.contains("std::thread::spawn("), "fil de garde sans panique (R1)");
     let n = include_str!("natif.rs");
     let f = &n[n.find("pub fn identite_client_tube(").unwrap()..];
     let f = &f[..f.find("fn identite_jeton(").unwrap()];

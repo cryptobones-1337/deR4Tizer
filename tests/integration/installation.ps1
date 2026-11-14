@@ -143,7 +143,7 @@ Verifier 'Canal : un client qui ne lit jamais la réponse ne bloque pas le canal
         if (-not $j.Ok) { return "réponse : $($j.Message)" }
         if ($d -gt 15) { return "réponse en $d s" }
     } finally { $muet.Dispose() }
-    if (-not (Journal 'réponse non lue par le client')) { return 'journal : rien noté' }
+    if (-not (Journal 'réponse non lue par le client dans le délai')) { return 'journal : rien noté' }
     $true
 }
 # Concurrence : huit clients simultanés (fils séparés) reçoivent chacun leur réponse

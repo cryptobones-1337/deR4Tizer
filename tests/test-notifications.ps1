@@ -17,7 +17,7 @@ Start-Transcript -Path $log -Force | Out-Null
 $dossier = Join-Path $env:ProgramData 'deR4Tizer'
 
 function Envoyer($commande) {
-    $tube = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [System.IO.Pipes.PipeDirection]::InOut)
+    $tube = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Identification)
     $tube.Connect(3000)
     $e = New-Object System.IO.StreamWriter($tube, (New-Object System.Text.UTF8Encoding($false)))
     $e.AutoFlush = $true

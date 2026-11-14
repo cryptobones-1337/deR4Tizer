@@ -145,7 +145,8 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
 
 /// Exécute `f` en `delai` au plus pour ses E/S synchrones sur ce fil : à l'échéance, un fil de garde annule l'E/S
 /// bloquante en cours (CancelSynchronousIo), et recommence toutes les 100 ms tant que `f` n'a pas rendu la main (une
-/// annulation tombée entre deux E/S ne serait pas retenue). Sans garde possible : None, `f` n'est pas exécutée.
+/// annulation tombée entre deux E/S ne serait pas retenue). Sans garde possible (fil non ouvert ou non créé) : None,
+/// `f` n'est pas exécutée, sans panique (relecture de #168, R1).
 pub fn avec_echeance<T>(delai: Duration, f: impl FnOnce() -> T) -> Option<T> {
     use std::sync::mpsc::{channel, RecvTimeoutError};
     use windows::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
@@ -153,7 +154,7 @@ pub fn avec_echeance<T>(delai: Duration, f: impl FnOnce() -> T) -> Option<T> {
     let fil = unsafe { OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId()) }.ok()?;
     let brut = fil.0 as usize;
     let (fin, attente) = channel::<()>();
-    let garde = std::thread::spawn(move || unsafe {
+    let lance = std::thread::Builder::new().name("garde-canal".into()).spawn(move || unsafe {
         let f = HANDLE(brut as _);
         if attente.recv_timeout(delai) == Err(RecvTimeoutError::Timeout) {
             while attente.recv_timeout(Duration::from_millis(100)) == Err(RecvTimeoutError::Timeout) {
@@ -162,6 +163,10 @@ pub fn avec_echeance<T>(delai: Duration, f: impl FnOnce() -> T) -> Option<T> {
         }
         let _ = CloseHandle(f);
     });
+    let Ok(garde) = lance else {
+        unsafe { let _ = CloseHandle(HANDLE(brut as _)); }
+        return None;
+    };
     let r = f();
     let _ = fin.send(());
     let _ = garde.join();
@@ -292,8 +297,11 @@ fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>
         };
         let mut sortie = serde_json::to_vec(&reponse).unwrap_or_default();
         sortie.extend_from_slice(b"\r\n");
-        if !ecrire_reponse(tube, &sortie, DELAI_ECRITURE) {
-            commun::journal("canal de commandes : réponse non lue par le client (parti ou muet), connexion fermée");
+        // Journal seulement à l'échéance : un client qui lit la réponse puis ferme avant l'attente de lecture n'est pas
+        // un client muet (audit de #168, S168-01)
+        let debut = Instant::now();
+        if !ecrire_reponse(tube, &sortie, DELAI_ECRITURE) && debut.elapsed() >= DELAI_ECRITURE {
+            commun::journal("canal de commandes : réponse non lue par le client dans le délai, connexion fermée");
         }
         let _ = DisconnectNamedPipe(tube);
     }
