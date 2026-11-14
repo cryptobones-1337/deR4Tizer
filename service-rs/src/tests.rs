@@ -8193,6 +8193,7 @@ fn audit_s175_04_plafond_par_profil() {
     assert!(i.contains("let debut_profil = l.len();"), "compte par profil");
     let chrome = &i[i.find("for ext in exts").unwrap()..];
     assert!(chrome.find("MAX_EXTENSIONS_PAR_PROFIL").unwrap() < chrome.find("lire_profil_borne").unwrap(), "plafond avant la lecture du manifeste");
+    assert!(chrome.find("examines += 1;").unwrap() < chrome.find("read_dir(ext.path())").unwrap() && chrome.contains("examines > MAX_DOSSIERS_PAR_PROFIL"), "dossiers examinés comptés avant toute lecture (S175-07)");
     let v = &h[h.find("pub fn verifier_extensions()").unwrap()..];
     assert!(v.contains("if tronquees > 0 {") && v.contains("alerte_inventaire_tronque(tronquees)"), "troncature signalée");
 }

@@ -552,6 +552,9 @@ const TAILLE_MAX_EXTENSIONS_FIREFOX: u64 = 16 << 20;
 /// standard qui crée des milliers de dossiers d'extension ne masque ni les extensions des autres profils ni les
 /// 1 000 alertes gardées ; au-delà, les manifestes ne sont plus lus et la troncature est signalée par une alerte
 const MAX_EXTENSIONS_PAR_PROFIL: usize = 500;
+/// Dossiers d'extension examinés par profil, valides ou non (audit v3 de #175, S175-07) : des milliers de dossiers au
+/// manifeste invalide ne rendent plus le travail de chaque relevé illimité
+const MAX_DOSSIERS_PAR_PROFIL: usize = 2000;
 const MAX_ALERTES_EXTENSIONS: usize = 20;
 
 pub fn inventaire_extensions() -> Vec<Extension> {
@@ -569,13 +572,15 @@ pub(crate) fn inventaire_extensions_borne() -> (Vec<Extension>, usize) {
     ];
     for profil in profils() {
         let debut_profil = l.len();
+        let mut examines = 0usize;
         for (nav, rel) in navigateurs {
             let donnees = profil.join(rel);
             let Ok(sous) = fs::read_dir(&donnees) else { continue };
             for p in sous.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("Extensions").is_dir()) {
                 let Ok(exts) = fs::read_dir(p.join("Extensions")) else { continue };
                 for ext in exts.map_while(Result::ok) {
-                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL {
+                    examines += 1;
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL || examines > MAX_DOSSIERS_PAR_PROFIL {
                         tronquees += 1;
                         continue;
                     }
@@ -613,7 +618,8 @@ pub(crate) fn inventaire_extensions_borne() -> (Vec<Extension>, usize) {
                     if a["location"].as_str() != Some("app-profile") {
                         continue; // extensions intégrées à Firefox
                     }
-                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL {
+                    examines += 1;
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL || examines > MAX_DOSSIERS_PAR_PROFIL {
                         tronquees += 1;
                         continue;
                     }
@@ -658,15 +664,15 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     (liste, alertes)
 }
 
-/// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
-/// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
 /// Inventaire tronqué (S175-04) : signalé, jamais muet
 pub(crate) fn alerte_inventaire_tronque(tronquees: usize) -> Alerte {
-    commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} par profil"));
+    commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers par profil"));
     alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
         format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
 }
 
+/// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
+/// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
 pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMap<String, String>, apprentissage: bool) -> Vec<Alerte> {
     let mut alertes = Vec::new();
     let mut en_plus = 0usize;
