@@ -7468,6 +7468,42 @@ fn filtrage_torturer() {
     });
 }
 
+// ------------------------------------------------------------ phase 7, PR 7.6 : résolveur tiers choisi (Quad9)
+
+/// Repli au portail captif : tiers muet et réseau qui répond → réseau ; tiers qui répond de nouveau → tiers ; sans tiers
+/// choisi, jamais de repli ; tiers muet et réseau muet → on garde (la dégradation ouverte s'en charge)
+#[test]
+fn amont_tiers_repli_portail() {
+    use crate::filtrage::{amont_tiers_repli, Repli};
+    assert_eq!(amont_tiers_repli(true, false, false, true), Repli::VersReseau);
+    assert_eq!(amont_tiers_repli(true, false, false, false), Repli::Garder);
+    assert_eq!(amont_tiers_repli(true, false, true, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(true, true, true, false), Repli::VersTiers);
+    assert_eq!(amont_tiers_repli(true, true, false, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(false, false, false, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(false, true, true, true), Repli::VersReseau, "tiers retiré pendant un repli : réseau");
+}
+
+/// Liste compilée et courte : Quad9 seul, nommé (exploitant, pays, filtre), adresses valides ; jamais par défaut ;
+/// commande validée
+#[test]
+fn amont_tiers_compile_et_valide() {
+    use crate::filtrage::{adresses_tiers, amont_tiers, AMONTS_TIERS};
+    assert_eq!(AMONTS_TIERS.len(), 1);
+    let q = amont_tiers("quad9").expect("quad9");
+    assert!(q.exploitant.contains("Suisse") && q.filtre.contains("pas la publicité"));
+    assert_eq!(adresses_tiers(q).len(), q.adresses.len());
+    assert!(crate::commun::Config::default().filtrage.amont.is_empty(), "jamais par défaut");
+    use crate::validation::valider;
+    for v in ["reseau", "quad9"] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageAmont","Valeur":"{v}"}}"#))).is_ok(), "{v}");
+    }
+    for v in ["Quad9", "dns4eu", "9.9.9.9", ""] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageAmont","Valeur":"{v}"}}"#))).is_err(), "{v}");
+    }
+    assert!(!crate::validation::autorisee("filtrageAmont", crate::validation::Client::Autre));
+}
+
 // ------------------------------------------------------------ phase 7, PR 7.5a : état publié, compteurs, catégories
 
 /// Derniers blocages : 50 au plus, un nom remonté au lieu d'être répété, 24 h de garde, le plus récent d'abord ;

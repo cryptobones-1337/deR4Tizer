@@ -440,6 +440,10 @@ pub struct EtatFiltrage {
     pub par_liste: std::collections::BTreeMap<String, u64>,
     pub derniers: Vec<Blocage>,
     pub autorises: Vec<String>,
+    /// Résolveur d'amont choisi : vide (« résolveur de votre réseau ») ou la clé d'un résolveur tiers (PR 7.6)
+    pub amont_choisi: String,
+    /// Résolveur tiers choisi mais injoignable : repli sur le DNS du réseau (portail captif)
+    pub repli_tiers: bool,
 }
 
 /// Libellé de l'état (pure, testée)
@@ -469,6 +473,49 @@ pub fn listes_publiees(f: &Filtrage) -> Vec<ListePubliee> {
             entrees: c.entrees, exceptions: c.exceptions, ecartees: c.ecartees, proteges_ignores: c.proteges_ignores,
         }
     }).collect()
+}
+
+/// Résolveur tiers proposé (liste compilée et courte, dossier § 4.6 ; D7-8 tranchée par le mainteneur le 2026-11-14 :
+/// Quad9). Jamais par défaut ; nommé avec son exploitant, son pays et ce qu'il filtre
+pub struct AmontTiers {
+    pub cle: &'static str,
+    pub nom: &'static str,
+    pub exploitant: &'static str,
+    pub filtre: &'static str,
+    pub adresses: &'static [&'static str],
+}
+
+pub const AMONTS_TIERS: &[AmontTiers] = &[AmontTiers {
+    cle: "quad9", nom: "Quad9", exploitant: "Fondation Quad9, Suisse, à but non lucratif",
+    filtre: "bloque les domaines malveillants ; pas la publicité",
+    adresses: &["9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9"],
+}];
+
+pub fn amont_tiers(cle: &str) -> Option<&'static AmontTiers> {
+    AMONTS_TIERS.iter().find(|a| a.cle == cle)
+}
+
+pub fn adresses_tiers(a: &AmontTiers) -> Vec<std::net::IpAddr> {
+    a.adresses.iter().filter_map(|s| s.parse().ok()).collect()
+}
+
+/// Repli au portail captif (pure, testée) : un résolveur tiers choisi qui se tait (hôtel, gare : le portail bloque le
+/// DNS extérieur) cède la place au DNS du réseau, si celui-ci répond ; il revient dès qu'il répond de nouveau
+#[derive(Debug, PartialEq, Eq)]
+pub enum Repli {
+    Garder,
+    VersReseau,
+    VersTiers,
+}
+
+pub fn amont_tiers_repli(tiers_choisi: bool, en_repli: bool, tiers_repond: bool, reseau_repond: bool) -> Repli {
+    match (tiers_choisi, en_repli) {
+        (false, true) => Repli::VersReseau,
+        (false, false) => Repli::Garder,
+        (true, false) if !tiers_repond && reseau_repond => Repli::VersReseau,
+        (true, true) if tiers_repond => Repli::VersTiers,
+        _ => Repli::Garder,
+    }
 }
 
 /// Catégories actives d'après la configuration (noms inconnus ignorés)

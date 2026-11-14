@@ -71,6 +71,18 @@ mise à jour, pas seulement un retour arrière.
   « Retirer » ; ligne honnête (« ne protège pas contre un programme qui utilise son propre DNS ou un DNS chiffré ») et
   lecteurs dits. Commandes confirmées par Canal dans une interface élevée.
 
+## Résolveur tiers choisi (PR 7.6)
+
+- **D7-8, tranchée par le mainteneur le 2026-11-14** (conditions de Quad9 lues et acceptées par lui) : liste compilée
+  et courte, **Quad9** seul (Fondation Quad9, Suisse, à but non lucratif ; bloque les domaines malveillants, pas la
+  publicité ; 9.9.9.9, 149.112.112.112, 2620:fe::fe, 2620:fe::9). **Jamais par défaut** : « résolveur de votre réseau »
+  reste l'amont tant que l'administrateur ne choisit pas Quad9 (commande `filtrageAmont`, page « Navigation »).
+- Quand Quad9 est choisi, **toutes les requêtes non bloquées lui sont envoyées** : dit dans la confirmation et sur la
+  page.
+- **Repli au portail captif** (`amont_tiers_repli`, pure) : Quad9 muet et DNS du réseau qui répond → repli sur le DNS
+  du réseau, affiché ; Quad9 qui répond de nouveau → il redevient l'amont. Sondes toutes les 5 minutes.
+- DNS4EU reste écarté (particuliers seulement, sans usage commercial). DNS chiffré : étape 7.7 facultative, non faite.
+
 ## Résolveur local (PR 7.3, non branché)
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes

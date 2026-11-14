@@ -311,7 +311,8 @@ struct Essai {
     /// Une catégorie au moins est active (nom spécial de Firefox, réponses locales) ; changé sans relancer (PR 7.5a)
     filtrage_actif: AtomicBool,
     juge: Juge,
-    amonts: Vec<IpAddr>,
+    /// Amonts, changés à chaud (résolveur tiers choisi, repli au portail captif : PR 7.6)
+    amonts: std::sync::RwLock<Vec<IpAddr>>,
     sante: Mutex<Sante>,
     debut: Instant,
     bloquees: AtomicUsize,
@@ -336,7 +337,8 @@ impl Essai {
                     Some(v)
                 }
                 Action::Relayer => {
-                    let rep = self.amonts.iter().find_map(|&a| if tcp { relayer_tcp(paquet, &r.question, a) } else { relayer_udp(paquet, &r.question, a) });
+                    let amonts = self.amonts.read().unwrap().clone();
+                    let rep = amonts.iter().find_map(|&a| if tcp { relayer_tcp(paquet, &r.question, a) } else { relayer_udp(paquet, &r.question, a) });
                     let maintenant = self.debut.elapsed().as_secs();
                     if self.sante.lock().unwrap().noter(rep.is_some(), maintenant) {
                         if !self.permanent {
@@ -546,6 +548,16 @@ pub fn en_silence() -> bool {
     ESSAI.lock().unwrap().as_ref().is_some_and(|e| e.silence.load(Ordering::Acquire))
 }
 
+/// Amonts changés pendant que le résolveur tourne (résolveur tiers choisi ou repli, PR 7.6) ; santé remise à zéro
+pub fn regler_amonts(amonts: Vec<IpAddr>) {
+    if let Some(e) = ESSAI.lock().unwrap().as_ref() {
+        if !amonts.is_empty() {
+            *e.amonts.write().unwrap() = amonts;
+            *e.sante.lock().unwrap() = Sante::default();
+        }
+    }
+}
+
 /// Catégories changées pendant que le résolveur tourne (commande filtrageCategories)
 pub fn regler_filtrage_actif(actif: bool) {
     if let Some(e) = ESSAI.lock().unwrap().as_ref() {
@@ -569,7 +581,7 @@ pub fn fin_silence() {
 
 /// Amonts du résolveur en cours (sonde)
 pub fn amonts_en_cours() -> Vec<IpAddr> {
-    ESSAI.lock().unwrap().as_ref().map(|e| e.amonts.clone()).unwrap_or_default()
+    ESSAI.lock().unwrap().as_ref().map(|e| e.amonts.read().unwrap().clone()).unwrap_or_default()
 }
 
 /// Requête DNS d'un nom (une question, classe IN, RD) (pure, testée)
@@ -637,7 +649,7 @@ fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: 
     }
     let e = Arc::new(Essai {
         arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), tcp_en_cours: AtomicUsize::new(0), fils: AtomicUsize::new(0),
-        filtrage_actif: AtomicBool::new(filtrage_actif), juge, amonts: amonts.clone(),
+        filtrage_actif: AtomicBool::new(filtrage_actif), juge, amonts: std::sync::RwLock::new(amonts.clone()),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
         permanent, silence: AtomicBool::new(false), sur_silence,
     });

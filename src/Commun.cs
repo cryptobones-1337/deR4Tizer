@@ -461,6 +461,9 @@ namespace DeR4Tizer
         public Dictionary<string, long> ParListe { get; set; }
         public List<BlocageFiltrage> Derniers { get; set; }
         public List<string> Autorises { get; set; }
+        // Résolveur d'amont choisi (PR 7.6) : vide, celui du réseau ; « quad9 » ; RepliTiers : Quad9 injoignable, DNS du réseau
+        public string AmontChoisi { get; set; }
+        public bool RepliTiers { get; set; }
     }
 
     // Textes du filtrage partagés par la page « Navigation » et par Canal.Decrire (assistant élevé, sans WPF) : ici, et
@@ -472,6 +475,15 @@ namespace DeR4Tizer
             if (e == null || e.Listes == null) return true;
             foreach (var x in e.Listes) if (x != null && x.Categorie == "sécurité") return false;
             return true;
+        }
+
+        // Résolveur tiers compilé (PR 7.6), nommé comme dans le service (filtrage.rs, AMONTS_TIERS)
+        public static string NomTiers(string cle) { return cle == "quad9" ? "Quad9" : null; }
+
+        public static string PresentationTiers(string cle)
+        {
+            if (cle != "quad9") return "";
+            return L.En ? "Quad9 Foundation, Switzerland, non-profit; blocks malicious domains, not ads" : "Fondation Quad9, Suisse, à but non lucratif ; bloque les domaines malveillants, pas la publicité";
         }
 
         public static string RienBloqueSecurite()

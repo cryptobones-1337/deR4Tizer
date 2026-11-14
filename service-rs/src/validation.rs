@@ -23,7 +23,7 @@ pub const ACTIONS: &[&str] = &[
     "notifications", "testerNotifications", "exception", "apprentissage", "majVerifier", "majConfig", "autoriserLecteur",
     "jetonApi", "nouveauJeton", "majMenaces", "tuer", "suspendre", "reprendre", "tuerChaine", "quarantaine", "restaurer",
     "restaurerRepli", "isolerProgramme", "panique", "baseline", "incident", "filtrageAutoriser", "filtrageRetirer",
-    "filtrageEssai", "filtrage", "filtrageCategories",
+    "filtrageEssai", "filtrage", "filtrageCategories", "filtrageAmont",
 ];
 
 /// Réglages modifiables par « config »
@@ -231,6 +231,9 @@ pub fn valider(c: &Commande) -> Result<(), String> {
         "filtrageCategories" => c.valeur.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty())
             .all(|n| crate::filtrage::Categorie::de_nom(n).is_some()).then_some(())
             .ok_or_else(|| "catégories attendues : securite, publicite (séparées par des virgules)".into()),
+        // Résolveur d'amont (PR 7.6) : « reseau » ou la clé d'un résolveur tiers compilé
+        "filtrageAmont" => c.valeur.as_deref().filter(|v| *v == "reseau" || crate::filtrage::amont_tiers(v).is_some()).map(|_| ())
+            .ok_or_else(|| "résolveur attendu : reseau ou quad9".into()),
         // Activation du filtrage sur les cartes (PR 7.4) : on ou off
         "filtrageEssai" | "filtrage" => matches!(c.valeur.as_deref(), Some("on" | "off"))
             .then_some(()).ok_or_else(|| "valeur attendue : on ou off".into()),

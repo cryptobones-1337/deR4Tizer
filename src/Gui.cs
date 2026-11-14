@@ -81,6 +81,15 @@ namespace DeR4Tizer
             return true;
         }
 
+        public static bool FiltrageAmont(string cle)
+        {
+            var c = new Commande { Action = "filtrageAmont", Valeur = cle };
+            if (!Canal.ConfirmeraLui(c) && MessageBox.Show(Canal.Decrire(c) + "\n\n" + (L.En ? "Continue?" : "Continuer ?"), "deR4Tizer",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            Canal.Executer(c);
+            return true;
+        }
+
         public static void FiltrageCategories(string valeur) { Canal.Executer(new Commande { Action = "filtrageCategories", Valeur = valeur ?? "" }); }
         public static void FiltrageAutoriser(string nom) { Canal.Executer(new Commande { Action = "filtrageAutoriser", NomDns = nom }); }
         public static void FiltrageRetirer(string nom) { Canal.Executer(new Commande { Action = "filtrageRetirer", NomDns = nom }); }
@@ -314,7 +323,7 @@ namespace DeR4Tizer
         // ou ne font que tester : pas de seconde fenêtre
         static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "testerNotifications", "majConfig", "autoriserLecteur", "exception",
             // Filtrage par nom de domaine (phase 7, PR 7.5b ; audit de #160, #164, #165 : à confirmer avec l'interface)
-            "filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer" };
+            "filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer", "filtrageAmont" };
 
         public static bool ConfirmeEnAdministrateur(Commande c)
         {
@@ -640,6 +649,13 @@ namespace DeR4Tizer
                             ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + TextesFiltrage.RienBloqueSecurite() : "";
                         return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms)) + avert;
                     }
+                // Résolveur d'amont (PR 7.6) : le tiers est nommé et l'envoi de ses requêtes est dit avant d'agir (dossier, § 4.6)
+                case "filtrageAmont":
+                    return TextesFiltrage.NomTiers(v) != null
+                        ? (en ? "Use " : "Utiliser ") + TextesFiltrage.NomTiers(v) + (en ? " as upstream resolver\n  • " : " comme résolveur d'amont\n  • ") + TextesFiltrage.PresentationTiers(v)
+                            + (en ? "\n  • your DNS queries that are not blocked will be SENT TO " : "\n  • vos requêtes DNS non bloquées seront ENVOYÉES À ") + TextesFiltrage.NomTiers(v)
+                            + (en ? "\n  • if it does not answer (captive portal), your network's DNS takes over\n  • reversible at any time" : "\n  • s'il ne répond pas (portail captif), le DNS de votre réseau prend le relais\n  • réversible à tout moment")
+                        : (en ? "Go back to your network's resolver" : "Revenir au résolveur de votre réseau");
                 case "filtrageAutoriser": return (en ? "Never block " : "Ne jamais bloquer ") + nomDns + (en ? " and its subdomains (filtering)" : " ni ses sous-domaines (filtrage)");
                 case "filtrageRetirer": return (en ? "Remove " : "Retirer ") + nomDns + (en ? " from the allowed domains (filtering)" : " des domaines autorisés (filtrage)");
                 default: return Visible(c.Action) + " " + vc;

@@ -2979,7 +2979,25 @@ namespace DeR4Tizer
                 + (en ? "  ·  categories: " : "  ·  catégories : ") + (cats.Count == 0 ? (en ? "none" : "aucune") : string.Join(", ", cats))
                 + (amonts.Count == 0 ? "" : (en ? "  ·  upstream: " : "  ·  amont : ") + string.Join(", ", amonts))
                 + (CategorieActive(e, "securite") && SansListeSecurite(e) ? "\n" + NomCategorie("securite") + " : " + RienBloqueSecurite() : "")
+                + "\n" + TexteAmont(e)
                 + "\n" + Honnete() + "\n" + Lecteurs();
+        }
+
+        // Résolveur d'amont (PR 7.6) : celui du réseau, ou le tiers nommé, avec l'envoi des requêtes dit, et le repli
+        public static string TexteAmont(EtatFiltrage e)
+        {
+            bool en = L.En;
+            string t = e == null ? null : TextesFiltrage.NomTiers(e.AmontChoisi);
+            if (t == null) return en ? "Upstream resolver: your network's." : "Résolveur d'amont : celui de votre réseau.";
+            return (en ? "Upstream resolver: " : "Résolveur d'amont : ") + t + " (" + TextesFiltrage.PresentationTiers(e.AmontChoisi) + ")"
+                + (en ? "; your DNS queries that are not blocked are sent to " : " ; vos requêtes DNS non bloquées sont envoyées à ") + t + "."
+                + (e.RepliTiers ? (en ? " Not answering (captive portal?): your network's DNS is used for now." : " Injoignable (portail captif ?) : le DNS de votre réseau est utilisé pour l'instant.") : "");
+        }
+
+        public static string TexteChoixAmont(string cle, bool choisi)
+        {
+            string nom = cle == "reseau" ? (L.En ? "Your network's resolver" : "Résolveur de votre réseau") : TextesFiltrage.NomTiers(cle) + "  ·  " + TextesFiltrage.PresentationTiers(cle);
+            return (choisi ? (L.En ? "Chosen" : "Choisi") + "  ·  " : "") + nom;
         }
 
         public static string TexteActivation(bool actif)
@@ -3060,7 +3078,7 @@ namespace DeR4Tizer
             var lignes = paires.Select(p => p.Value).ToList();
             bool actif = VueNavigationFluent.Actif(etat);
             string cats = string.Join(",", VueNavigationFluent.Categories.Where(c => VueNavigationFluent.CategorieActive(etat, c)));
-            string signature = choisie + "#" + resume.Text + "#" + lu + "#" + actif + "#" + cats + "#" + string.Join(";", paires.Select(p => p.Key + "|" + p.Value.Sous));
+            string signature = choisie + "#" + resume.Text + "#" + lu + "#" + actif + "#" + cats + "#" + (etat == null ? "" : etat.AmontChoisi + etat.RepliTiers) + "#" + string.Join(";", paires.Select(p => p.Key + "|" + p.Value.Sous));
             if (signature == vu) return;
             vu = signature;
             outils.Children.Clear();
@@ -3076,6 +3094,19 @@ namespace DeR4Tizer
                     bool on = VueNavigationFluent.CategorieActive(etat, cle);
                     var b = Outil("", on, (s, e) => { ActionsProtection.FiltrageCategories(VueNavigationFluent.ValeurApres(etat, cle, !on)); Charger(); });
                     b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on, VueNavigationFluent.SansListeSecurite(etat)), TextWrapping = TextWrapping.Wrap };
+                    b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    b.Margin = new Thickness(0, 0, 0, 6);
+                    outils.Children.Add(b);
+                }
+                // Résolveur d'amont (PR 7.6) : deux choix, jamais le tiers par défaut
+                outils.Children.Add(Briques.Titre(L.En ? "Upstream resolver" : "Résolveur d'amont", 0));
+                string courant = etat == null || TextesFiltrage.NomTiers(etat.AmontChoisi) == null ? "reseau" : etat.AmontChoisi;
+                foreach (var a in new[] { "reseau", "quad9" })
+                {
+                    string cleA = a;
+                    bool choisi = cleA == courant;
+                    var b = Outil("", choisi, (s, e) => { if (!choisi && ActionsProtection.FiltrageAmont(cleA)) Charger(); });
+                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteChoixAmont(cleA, choisi), TextWrapping = TextWrapping.Wrap };
                     b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     b.Margin = new Thickness(0, 0, 0, 6);
                     outils.Children.Add(b);

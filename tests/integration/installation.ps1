@@ -568,6 +568,19 @@ Verifier 'Filtrage activé (7.4) : cartes sur le résolveur local avec secours, 
         $fin = (Get-Date).AddSeconds(30)
         do { Start-Sleep 2; $avec = @(Resolve-DnsName pub.test -Type A -DnsOnly -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'A' -and $_.IPAddress -eq '0.0.0.0' }); Clear-DnsClientCache } while (-not $avec.Count -and (Get-Date) -lt $fin)
         if (-not $avec.Count) { return 'pub.test non bloqué après remise de la catégorie' }
+        # Résolveur tiers (PR 7.6) : contrôle de configuration (sans dépendre d'Internet, déclaré) : Quad9 choisi puis
+        # retiré ; état publié et amonts du résolveur suivent, sans relance
+        $r = Commande '{"Action":"filtrageAmont","Valeur":"quad9"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "Quad9 refusé : $($r.Message)" }
+        $fin = (Get-Date).AddSeconds(30)
+        do { Start-Sleep 3; $ef = Get-Content $fEtat -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json } while ($ef.AmontChoisi -ne 'quad9' -and (Get-Date) -lt $fin)
+        if ($ef.AmontChoisi -ne 'quad9' -or (-not (@($ef.Amonts) -contains '9.9.9.9') -and -not $ef.RepliTiers)) { return "Quad9 non appliqué : amont « $($ef.AmontChoisi) », amonts $(@($ef.Amonts) -join ', ')" }
+        Write-Host "  Quad9 choisi : amonts $(@($ef.Amonts) -join ', ') ; repli : $($ef.RepliTiers)"
+        $r = Commande '{"Action":"filtrageAmont","Valeur":"reseau"}' | ConvertFrom-Json
+        if (-not $r.Ok) { return "retour au réseau refusé : $($r.Message)" }
+        $fin = (Get-Date).AddSeconds(30)
+        do { Start-Sleep 3; $ef = Get-Content $fEtat -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json } while (($ef.AmontChoisi -or @($ef.Amonts) -contains '9.9.9.9') -and (Get-Date) -lt $fin)
+        if ($ef.AmontChoisi -or @($ef.Amonts) -contains '9.9.9.9') { return "retour au réseau non appliqué : amont « $($ef.AmontChoisi) », amonts $(@($ef.Amonts) -join ', ')" }
         # Redémarrage : cartes rendues à l'arrêt, réglées de nouveau au démarrage
         Stop-Service deR4Tizer -Force
         $arrete4 = @((Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses)
