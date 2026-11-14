@@ -2482,6 +2482,13 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                         if !toujours || !crate::dns_local::permanent_actif() || RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) || REPLI_TIERS.load(Ordering::Acquire) != en_repli {
                             continue;
                         }
+                        // Tiers retiré de config.json à la main pendant un repli : l'amont est déjà le réseau. Oublier le repli
+                        // suffit : ni rebranchement sans sonde, ni journal « tiers injoignable » (audit de #167, R-v2-1)
+                        if tiers.is_none() {
+                            REPLI_TIERS.store(false, Ordering::Release);
+                            commun::journal("filtrage : résolveur tiers retiré de la configuration pendant un repli ; amont : DNS du réseau");
+                            continue;
+                        }
                         // Repli seulement avec un tiers choisi : sans tiers, l'amont est déjà le réseau (S167-02, boucle évitée)
                         REPLI_TIERS.store(decision == crate::filtrage::Repli::VersReseau && tiers.is_some(), Ordering::Release);
                         crate::dns_local::regler_amonts(amonts_voulus(&config, &origine));

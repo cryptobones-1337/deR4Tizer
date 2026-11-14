@@ -340,8 +340,8 @@ try {
     $catsS = New-Object 'Collections.Generic.List[string]'; $catsS.Add('sécurité')
     $efSec = & $nouv $efT @{ Etat = 'actif'; Categories = $catsS }
     $resS = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efSec, $true, $false))
-    $intS = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true))
-    $intP = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('publicite', $true, $true))
+    $intS = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $null))
+    $intP = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('publicite', $true, $true, $null))
     Cas 'Navigation : sécurité sans liste, « rien n''est bloqué » dans le résumé et l''interrupteur ; publicité inchangée' ($resS.Contains("aucune liste de sécurité : rien n'est bloqué") -and $intS.Contains("rien n'est bloqué") -and -not $intP.Contains('rien') -and $vn.GetMethod('SansListeSecurite').Invoke($null, @($efSec))) "$resS | $intS"
     $gS = [IO.File]::ReadAllText("$src\Gui.cs")
     # PR 7.6 : Quad9 nommé, envoi des requêtes dit, repli dit ; confirmation qui nomme le tiers
@@ -351,7 +351,21 @@ try {
     Cas 'Navigation : Quad9 nommé (fondation suisse), requêtes envoyées dites, repli dit ; défaut : résolveur du réseau' ($amQ.Contains('Quad9') -and $amQ.Contains('Suisse') -and $amQ.Contains('vos requêtes DNS non bloquées sont envoyées à Quad9') -and $amQ.Contains('portail captif') -and $amR.Contains('celui de votre réseau')) "$amQ | $amR"
     Cas 'Navigation : choix de l''amont confirmé par Canal, tiers nommé et envoi dit' ($gS.Contains('"filtrageRetirer", "filtrageAmont" };') -and $gS.Contains('vos requêtes DNS non bloquées seront ENVOYÉES À '))
     $decrire = $gS.Substring($gS.IndexOf('public static string Decrire(Commande c)')); $decrire = $decrire.Substring(0, $decrire.IndexOf('public static string DecrireIncident('))
-    Cas 'Navigation : confirmation des catégories, sécurité sans liste dite avant d''agir ; Canal.Decrire ne nomme aucune classe de Fluent.cs (S166-01)' ($gS.Contains('TextesFiltrage.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))') -and $gS.Contains('TextesFiltrage.RienBloqueSecurite()') -and -not $decrire.Contains('Fluent'))
+    Cas 'Navigation : confirmation des catégories, sécurité sans liste dite avant d''agir ; Canal.Decrire ne nomme aucune classe de Fluent.cs (S166-01)' ($gS.Contains('var etatF = Commun.Lire<EtatFiltrage>("filtrage-etat.json");') -and $gS.Contains('TextesFiltrage.SansListeSecurite(etatF)') -and $gS.Contains('TextesFiltrage.RienBloqueSecurite(etatF)') -and -not $decrire.Contains('Fluent'))
+    # Relecture de #167, R4 : sans liste de sécurité, Quad9 choisi et joignable bloque encore ce qu'il connaît ; en repli,
+    # rien n'est bloqué ; l'amont en vigueur est dit à l'activation, Quad9 proposé s'il n'est pas choisi
+    $tf = & $t 'TextesFiltrage'
+    $efQj = & $nouv $efT @{ Etat = 'actif'; Categories = $catsS; AmontChoisi = 'quad9'; RepliTiers = $false }
+    $efQr = & $nouv $efT @{ Etat = 'actif'; Categories = $catsS; AmontChoisi = 'quad9'; RepliTiers = $true }
+    $rbJ = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $efQj))
+    $rbR = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $efQr))
+    $resQ = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efQj, $true, $false))
+    Cas 'Navigation : sécurité sans liste, Quad9 joignable : « seul Quad9 bloque » ; en repli : « rien n''est bloqué » (R4)' ($rbJ.Contains('seul Quad9 bloque les domaines malveillants') -and -not $rbJ.Contains("rien n'est bloqué") -and $rbR.Contains("rien n'est bloqué") -and $resQ.Contains('seul Quad9 bloque')) "$rbJ | $rbR"
+    $actR = [string]$tf.GetMethod('AmontALActivation').Invoke($null, @($efSec))
+    $actQ = [string]$tf.GetMethod('AmontALActivation').Invoke($null, @($efQj))
+    $actN = [string]$tf.GetMethod('AmontALActivation').Invoke($null, @($null))
+    Cas 'Navigation : activation, amont dit, Quad9 proposé s''il n''est pas choisi (R4)' ($actR.Contains('Quad9') -and $actR.Contains('peut être choisi') -and $actN.Contains('peut être choisi') -and $actQ.Contains('vos requêtes DNS non bloquées lui sont envoyées') -and -not $actQ.Contains('peut être choisi') -and $gS.Contains('TextesFiltrage.AmontALActivation(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))')) "$actR | $actQ"
+    Cas 'Navigation : confirmation de Quad9, noms locaux, réseau d''entreprise et délai sans filtrage dits (R6)' ($gS.Contains('sur un réseau d''entreprise, gardez le résolveur de votre réseau') -and $gS.Contains('après jusqu''à 30 s puis jusqu''à 5 minutes SANS filtrage') -and $gS.Contains('on a company network, keep your network''s resolver'))
     $gN = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
     Cas 'Navigation : filtrage, catégories et autorisations confirmés par Canal dans une interface élevée ; activation qui dit ce qui change' ($gN.Contains('"filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer", "filtrageAmont" };') -and $gN.Contains('vos serveurs DNS actuels restent en secours') -and $gN.Contains('if (!Canal.ConfirmeraLui(c) && MessageBox.Show(Canal.Decrire(c)'))
     Cas 'Menaces : étiquette courte (ok, désactivée, en échec), statut entier dans le détail ; réglage : état d''abord' (([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[2]))) -eq 'désactivée' -and ([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[1]))) -eq 'en échec' -and ([string]$vm.GetMethod('TexteReglage').Invoke($null, @('ListesRestreintes', $false))).StartsWith('Désactivé  ·  ') -and $fluentSrc.Contains('Text = VueMenacesFluent.TexteReglage(nom, actif), TextWrapping = TextWrapping.Wrap'))

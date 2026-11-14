@@ -490,6 +490,25 @@ namespace DeR4Tizer
         {
             return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
         }
+
+        // Sans liste de sécurité, Quad9 choisi et joignable bloque encore les domaines malveillants qu'il connaît ; en repli
+        // (portail captif), rien n'est bloqué (relecture de #167, R4)
+        public static string RienBloqueSecurite(EtatFiltrage e)
+        {
+            string t = e == null ? null : NomTiers(e.AmontChoisi);
+            if (t == null || e.RepliTiers) return RienBloqueSecurite();
+            return L.En ? "no security list: only " + t + " blocks the malicious domains it knows (DNS-001 alerts remain)"
+                        : "aucune liste de sécurité : seul " + t + " bloque les domaines malveillants qu'il connaît (les alertes DNS-001 restent)";
+        }
+
+        // Proposée à l'activation : l'amont en vigueur, et Quad9 au choix s'il n'est pas déjà choisi (relecture de #167, R4)
+        public static string AmontALActivation(EtatFiltrage e)
+        {
+            string t = e == null ? null : NomTiers(e.AmontChoisi);
+            if (t != null) return (L.En ? "upstream resolver: " : "résolveur d'amont : ") + t + (L.En ? " (your DNS queries that are not blocked are sent to it)" : " (vos requêtes DNS non bloquées lui sont envoyées)");
+            return L.En ? "upstream resolver: your network's; Quad9 (blocks malicious domains) can be chosen on the \"Browsing\" page"
+                        : "résolveur d'amont : celui de votre réseau ; Quad9 (bloque les domaines malveillants) peut être choisi sur la page « Navigation »";
+        }
     }
 
     public class InfosMenaces

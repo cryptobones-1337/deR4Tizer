@@ -649,14 +649,16 @@ namespace DeR4Tizer
                     return v == "on"
                         ? (en ? "TURN ON domain-name filtering\n  • Wi-Fi and Ethernet cards will use the deR4Tizer resolver (127.0.0.1, ::1)\n  • your current DNS servers stay as fallback\n  • turned off, the cards return to their original settings (recorded before any change)"
                               : "ACTIVER le filtrage par nom de domaine\n  • les cartes Wi-Fi et Ethernet utiliseront le résolveur de deR4Tizer (127.0.0.1, ::1)\n  • vos serveurs DNS actuels restent en secours\n  • à la désactivation, les cartes reviennent à leur réglage d'origine (noté avant toute modification)")
+                          + "\n  • " + TextesFiltrage.AmontALActivation(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
                         : (en ? "TURN OFF domain-name filtering: cards returned to their original DNS settings" : "DÉSACTIVER le filtrage par nom de domaine : cartes rendues à leur réglage DNS d'origine");
                 case "filtrageCategories":
                     {
                         var noms = v.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => x == "securite" ? (en ? "safe browsing" : "navigation sécurisée") : x == "publicite" ? (en ? "ads and tracking" : "publicités et pistage") : Visible(x)).ToList();
                         // Navigation sécurisée sans liste de sécurité publiée : rien n'est bloqué, dit avant d'agir (relecture de #166)
                         bool securite = v.Split(',').Select(x => x.Trim()).Contains("securite");
-                        string avert = securite && TextesFiltrage.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
-                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + TextesFiltrage.RienBloqueSecurite() : "";
+                        var etatF = Commun.Lire<EtatFiltrage>("filtrage-etat.json");
+                        string avert = securite && TextesFiltrage.SansListeSecurite(etatF)
+                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + TextesFiltrage.RienBloqueSecurite(etatF) : "";
                         return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms)) + avert;
                     }
                 // Résolveur d'amont (PR 7.6) : le tiers est nommé et l'envoi de ses requêtes est dit avant d'agir (dossier, § 4.6)
@@ -664,7 +666,10 @@ namespace DeR4Tizer
                     return TextesFiltrage.NomTiers(v) != null
                         ? (en ? "Use " : "Utiliser ") + TextesFiltrage.NomTiers(v) + (en ? " as upstream resolver\n  • " : " comme résolveur d'amont\n  • ") + TextesFiltrage.PresentationTiers(v)
                             + (en ? "\n  • your DNS queries that are not blocked will be SENT TO " : "\n  • vos requêtes DNS non bloquées seront ENVOYÉES À ") + TextesFiltrage.NomTiers(v)
-                            + (en ? "\n  • if it does not answer (captive portal), your network's DNS takes over\n  • reversible at any time" : "\n  • s'il ne répond pas (portail captif), le DNS de votre réseau prend le relais\n  • réversible à tout moment")
+                            + (en ? "\n  • local names and reverse lookups of private addresses the computer does not resolve itself are sent too: on a company network, keep your network's resolver"
+                                  : "\n  • les noms locaux et les requêtes inverses d'adresses privées que le poste ne résout pas lui-même lui sont aussi envoyés : sur un réseau d'entreprise, gardez le résolveur de votre réseau")
+                            + (en ? "\n  • if it does not answer (captive portal), your network's DNS takes over, after up to 30 s then up to 5 minutes WITHOUT filtering\n  • reversible at any time"
+                                  : "\n  • s'il ne répond pas (portail captif), le DNS de votre réseau prend le relais, après jusqu'à 30 s puis jusqu'à 5 minutes SANS filtrage\n  • réversible à tout moment")
                         : (en ? "Go back to your network's resolver" : "Revenir au résolveur de votre réseau");
                 case "filtrageAutoriser": return (en ? "Never block " : "Ne jamais bloquer ") + nomDns + (en ? " and its subdomains (filtering)" : " ni ses sous-domaines (filtrage)");
                 case "filtrageRetirer": return (en ? "Remove " : "Retirer ") + nomDns + (en ? " from the allowed domains (filtering)" : " des domaines autorisés (filtrage)");
