@@ -329,20 +329,22 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          « propre » des passages complets reste sans eux.
        - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
          mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis « L'agent
-         apprpuve », cités tels quels). L'approbation est écrite (fichier de la liste, date, version), gardée hors du
-         dépôt dans le dossier local de la campagne avec les résultats bruts ; chaque ajout ou changement de scénario
-         est approuvé de même avant d'être exécuté, et chaque version approuvée est transmise au mainteneur, pour
-         information, avant exécution. Cette approbation n'est ni humaine ni indépendante (même modèle que celui qui
-         exécute) et n'est jamais présentée comme telle. Elle ne lève aucune des règles de cette section : un scénario
-         qui en sortirait (Defender touché, réseau hors labo, vol d'identifiants réel, charge destructive, saisie de
-         mot de passe) ne peut pas être approuvé par l'agent ; s'il n'est pas clairement sûr, réversible et confiné au
-         laboratoire, il remonte au mainteneur. Le mainteneur peut retirer un scénario ou reprendre l'approbation à
-         tout moment. Les correctifs issus de la campagne suivent le circuit habituel (relecture, audit de sécurité
-         pour un chemin privilégié, passage complet en VM, validateur de fusion) et restent dans le cadre des phases
-         ouvertes : ils ne dégèlent ni l'IDS, ni le DPI, ni le NDR. Aucune fusion par l'agent de validation ; la
-         fusion reste décidée par cryptobones-1337. Résultats bruts gardés hors du dépôt ; rapports et matrice des
-         capacités après la garde PII. L'agent de validation est un fichier local, hors de Git : sa consigne de
-         lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
+         apprpuve », cités tels quels). Les scénarios sont documentés dans le dépôt (`docs/validation/`, en Markdown :
+         technique ATT&CK, SIMULATION ou émulation, préconditions, résultat attendu, délai maximal, nettoyage, preuves
+         attendues, au niveau du comportement, sans commande offensive détaillée), avec l'approbation écrite (date,
+         version) ; chaque ajout ou changement de scénario est approuvé de même avant d'être exécuté, et chaque
+         version approuvée est transmise au mainteneur, pour information, avant exécution. Cette approbation n'est ni
+         humaine ni indépendante (même modèle que celui qui exécute) et n'est jamais présentée comme telle. Elle ne
+         lève aucune des règles de cette section : un scénario qui en sortirait (Defender touché, réseau hors labo,
+         vol d'identifiants réel, charge destructive, saisie de mot de passe) ne peut pas être approuvé par l'agent ;
+         s'il n'est pas clairement sûr, réversible et confiné au laboratoire, il remonte au mainteneur. Le mainteneur
+         peut retirer un scénario ou reprendre l'approbation à tout moment. Les correctifs issus de la campagne
+         suivent le circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage complet en VM,
+         validateur de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni l'IDS, ni le DPI, ni
+         le NDR. Aucune fusion par l'agent de validation ; la fusion reste décidée par cryptobones-1337. Résultats
+         bruts gardés hors du dépôt ; rapports de campagne (`docs/validation/`), matrice des capacités et README mis à
+         jour dans le dépôt, après la garde PII. L'agent de validation est un fichier local, hors de Git : sa consigne
+         de lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
 7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
