@@ -8113,6 +8113,9 @@ fn audit_a3_lecture_profil_bornee() {
     use crate::hygiene::lire_profil_borne;
     let d = std::env::temp_dir().join(format!("der4tizer-audit-a3-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
+    struct Menage(std::path::PathBuf);
+    impl Drop for Menage { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    let _menage = Menage(d.clone());
     std::fs::create_dir_all(&d).unwrap();
     let f = d.join("manifest.json");
     std::fs::write(&f, vec![b'a'; 100]).unwrap();
@@ -8132,9 +8135,37 @@ fn audit_a2_a8_cablage() {
             "marque Internet bornée à 4 Ko et à échéance (A2)");
     let h = include_str!("hygiene.rs");
     let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
-    let p = &p[..p.find("FICHIER_LEURRES").unwrap()];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
     assert!(!p.contains("empreinte_verifiee(&f)") && p.contains("empreinte_a_echeance(&f)"), "empreinte des leurres à échéance (A8)");
     let i = &h[h.find("pub fn inventaire_extensions()").unwrap()..];
     let i = &i[..i.find("\n}").unwrap()];
     assert!(!i.contains("fs::read_to_string"), "fichiers d'extensions lus bornés, sans suivre de lien (A3)");
+}
+
+/// S175-03 : au-delà de 20 nouvelles extensions au même relevé, une seule alerte de synthèse (les 1 000 alertes
+/// gardées ne sont pas chassées)
+#[test]
+fn audit_s175_03_alertes_extensions_plafonnees() {
+    use crate::hygiene::{nouvelles_extensions, Extension};
+    let mut connues = std::collections::HashMap::new();
+    let mut liste: Vec<Extension> = (0..500).map(|i| Extension { navigateur: "Chrome (Default)".into(), id: format!("id{i}"), nom: format!("ext{i}"), ..Default::default() }).collect();
+    let a = nouvelles_extensions(&mut liste, &mut connues, false);
+    assert_eq!(a.len(), 21, "20 alertes puis une synthèse");
+    assert!(a[20].raisons.contains("480 autre(s)"), "{}", a[20].raisons);
+    assert_eq!(connues.len(), 500, "toutes mémorisées : pas d'alerte au relevé suivant");
+    assert!(nouvelles_extensions(&mut liste, &mut connues, false).is_empty());
+}
+
+/// S175-01 et S175-02 : leurre hors délai gardé dans la liste, audit posé avant le second contrôle ; origine hors
+/// délai jamais mise en cache (contrôle de câblage)
+#[test]
+fn audit_s175_01_02_cablage() {
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
+    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 2, "leurre hors délai gardé (S175-01)");
+    assert!(p.find("poser_audit_verifie").unwrap() < p.find("let e = match empreinte_a_echeance(&f)").unwrap(), "audit avant le second contrôle (S175-01)");
+    let m = include_str!("moniteur.rs");
+    assert!(!m.contains("self.origines.entry(chemin.clone()).or_insert_with"), "origine hors délai jamais en cache (S175-02)");
+    assert!(m.contains("if !o.as_ref().is_some_and(|x| x.hors_delai) {"), "origine hors délai jamais en cache (S175-02)");
 }

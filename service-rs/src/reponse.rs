@@ -29,6 +29,8 @@ pub struct Origine {
     pub zone: u32,
     pub source: String,
     pub age_jours: u64,
+    /// Marque lue hors délai : origine inconnue pour ce passage, jamais gardée en cache (audit de #175, S175-02)
+    pub hors_delai: bool,
 }
 
 /// Lit la marque « téléchargé depuis Internet » (flux de données alternatif Zone.Identifier) et l'âge du fichier
@@ -46,7 +48,9 @@ pub fn origine(chemin: &str) -> Option<Origine> {
     // 4 Ko au plus et à échéance (audit du 2026-11-14, A2) : appelée pendant le cycle, sous le verrou du moniteur ;
     // un flux de plusieurs Go ou tenu par un verrou opportuniste ne fige plus le cycle. Hors délai : origine inconnue
     let c = PathBuf::from(chemin);
-    if let Ok(Some(t)) = natif::lecture_fichier("marque", chemin, move || Some(lire_marque_internet(&c))) {
+    let lue = natif::lecture_fichier("marque", chemin, move || Some(lire_marque_internet(&c)));
+    o.hors_delai = lue.is_err();
+    if let Ok(Some(t)) = lue {
         for l in t.lines() {
             if let Some(z) = l.strip_prefix("ZoneId=") {
                 o.zone = z.trim().parse().unwrap_or(0);

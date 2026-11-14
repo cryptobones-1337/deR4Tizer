@@ -275,13 +275,24 @@ pub fn poser_leurres() -> Vec<Leurre> {
         }
     }
     let noms = noms_leurres();
+    // Liste précédente : un leurre hors délai garde son entrée, sinon il ne serait plus retiré à la désinstallation
+    // (audit de #175, S175-01)
+    let precedents: Vec<Leurre> = commun::lire(FICHIER_LEURRES).unwrap_or_default();
+    let garder_precedent = |liste: &mut Vec<Leurre>, f: &Path| {
+        if let Some(p) = precedents.iter().find(|p| Path::new(&p.chemin) == f) {
+            liste.push(p.clone());
+        }
+    };
     let mut liste = Vec::new();
     for (profil, sid) in &profils {
         for (dossier, nom) in &noms {
             let f = profil.join(dossier).join(nom);
             // Empreinte à échéance (audit du 2026-11-14, A8, famille S103-07) : un leurre tenu par un verrou ne fige plus
             // la pose ; hors délai, ce leurre est laissé pour le prochain passage (jamais recréé à l'aveugle)
-            let Ok(presente) = empreinte_a_echeance(&f) else { continue };
+            let Ok(presente) = empreinte_a_echeance(&f) else {
+                garder_precedent(&mut liste, &f);
+                continue;
+            };
             if presente.is_none() {
                 // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi)
                 match sous_l_identite(sid, || creer_leurre(&f)) {
@@ -289,10 +300,19 @@ pub fn poser_leurres() -> Vec<Leurre> {
                     _ => continue,
                 }
             }
-            let Ok(Some(e)) = empreinte_a_echeance(&f) else { continue };
+            // Audit posé dès que le leurre existe, avant le second contrôle (S175-01 : un leurre neuf hors délai au
+            // second contrôle restait sans audit, LEU-002 aveugle)
             if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
                 commun::journal(&format!("leurres : audit non posé sur {} ({x})", f.display()));
             }
+            let e = match empreinte_a_echeance(&f) {
+                Ok(Some(e)) => e,
+                Ok(None) => continue,
+                Err(_) => {
+                    garder_precedent(&mut liste, &f);
+                    continue;
+                }
+            };
             liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e });
         }
     }
@@ -528,6 +548,10 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
 /// Firefox quelques centaines de Ko
 const TAILLE_MAX_MANIFESTE: u64 = 1 << 20;
 const TAILLE_MAX_EXTENSIONS_FIREFOX: u64 = 16 << 20;
+/// Plafonds d'entrées (audit de #175, S175-03) : un compte standard qui crée des milliers de dossiers d'extension ne
+/// remplit ni l'inventaire ni les 1 000 alertes gardées
+const MAX_EXTENSIONS: usize = 2000;
+const MAX_ALERTES_EXTENSIONS: usize = 20;
 
 pub fn inventaire_extensions() -> Vec<Extension> {
     let mut l = Vec::new();
@@ -608,6 +632,10 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     let apprentissage = connues.is_none();
     let mut connues = connues.unwrap_or_default();
     let mut liste = inventaire_extensions();
+    if liste.len() > MAX_EXTENSIONS {
+        commun::journal(&format!("extensions : {} trouvées, seules les {MAX_EXTENSIONS} premières sont suivies", liste.len()));
+        liste.truncate(MAX_EXTENSIONS);
+    }
     let alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
     let _ = commun::ecrire("extensions-connues.json", &connues);
     liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
@@ -619,6 +647,7 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
 /// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
 pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMap<String, String>, apprentissage: bool) -> Vec<Alerte> {
     let mut alertes = Vec::new();
+    let mut en_plus = 0usize;
     for e in liste.iter_mut() {
         let cle = format!("{}|{}", e.navigateur, e.id);
         match connues.get(&cle) {
@@ -626,7 +655,9 @@ pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMa
             None => {
                 e.depuis = commun::maintenant();
                 connues.insert(cle, e.depuis.clone());
-                if !apprentissage {
+                if !apprentissage && alertes.len() >= MAX_ALERTES_EXTENSIONS {
+                    en_plus += 1;
+                } else if !apprentissage {
                     alertes.push(alerte(crate::regles::EXT_001, if e.dangereuse { "Alerte" } else { "Info" }, if e.dangereuse { 4 } else { 0 }, &e.nom, "",
                         &format!("extension {}", e.navigateur),
                         format!("NOUVELLE extension de navigateur « {} » {}{}", e.nom, e.version,
@@ -634,6 +665,10 @@ pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMa
                 }
             }
         }
+    }
+    if en_plus > 0 {
+        alertes.push(alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
+            format!("{en_plus} autre(s) NOUVELLE(S) extension(s) de navigateur au même relevé (au-delà de {MAX_ALERTES_EXTENSIONS} alertes) : vérifiez la liste des extensions  [MITRE T1176]")));
     }
     alertes
 }

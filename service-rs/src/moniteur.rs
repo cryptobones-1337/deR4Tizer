@@ -776,7 +776,17 @@ impl Moniteur {
                 m.chercher_ip(ip).or_else(|| nom.as_deref().and_then(|n| m.chercher_domaine(n)))
             };
             // Origine du fichier : téléchargé depuis Internet, récent, non signé
-            let origine_fichier = self.origines.entry(chemin.clone()).or_insert_with(|| reponse::origine(&chemin)).clone();
+            // Une origine lue hors délai n'est pas gardée : relue au prochain passage (audit de #175, S175-02)
+            let origine_fichier = match self.origines.get(&chemin) {
+                Some(o) => o.clone(),
+                None => {
+                    let o = reponse::origine(&chemin);
+                    if !o.as_ref().is_some_and(|x| x.hors_delai) {
+                        self.origines.insert(chemin.clone(), o.clone());
+                    }
+                    o
+                }
+            };
             let texte_origine = origine_fichier.as_ref().and_then(|o| o.texte());
             let bloque = self.est_bloque(ip, nom.as_deref());
             let (score, raisons) = score_flux(&IndicesFlux {
