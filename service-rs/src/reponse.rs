@@ -43,7 +43,10 @@ pub fn origine(chemin: &str) -> Option<Origine> {
         .map(|d| d.as_secs() / 86400)
         .unwrap_or(9999);
     let mut o = Origine { age_jours, ..Default::default() };
-    if let Ok(t) = fs::read_to_string(format!("{chemin}:Zone.Identifier")) {
+    // 4 Ko au plus et à échéance (audit du 2026-11-14, A2) : appelée pendant le cycle, sous le verrou du moniteur ;
+    // un flux de plusieurs Go ou tenu par un verrou opportuniste ne fige plus le cycle. Hors délai : origine inconnue
+    let c = PathBuf::from(chemin);
+    if let Ok(Some(t)) = natif::lecture_fichier("marque", chemin, move || Some(lire_marque_internet(&c))) {
         for l in t.lines() {
             if let Some(z) = l.strip_prefix("ZoneId=") {
                 o.zone = z.trim().parse().unwrap_or(0);

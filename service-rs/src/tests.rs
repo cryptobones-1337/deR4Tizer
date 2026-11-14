@@ -8104,3 +8104,37 @@ fn audit_b2_b8_cablage() {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }
 }
+
+// ------------------------------------------------------------ audit du 2026-11-14, lot 2 (lectures bornées)
+
+/// A3 : un fichier des profils lu en SYSTEM est borné ; au-delà de la borne, rien n'est rendu (pas de JSON tronqué)
+#[test]
+fn audit_a3_lecture_profil_bornee() {
+    use crate::hygiene::lire_profil_borne;
+    let d = std::env::temp_dir().join(format!("der4tizer-audit-a3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("manifest.json");
+    std::fs::write(&f, vec![b'a'; 100]).unwrap();
+    assert_eq!(lire_profil_borne(&f, 100).map(|t| t.len()), Some(100), "à la borne : lu");
+    assert_eq!(lire_profil_borne(&f, 99), None, "au-delà de la borne : rien");
+    assert_eq!(lire_profil_borne(&d.join("absent.json"), 100), None);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A2 et A8 : lectures à échéance pendant le cycle et la pose des leurres (contrôle de câblage)
+#[test]
+fn audit_a2_a8_cablage() {
+    let r = include_str!("reponse.rs");
+    let o = &r[r.find("pub fn origine(chemin: &str)").unwrap()..];
+    let o = &o[..o.find("\n}").unwrap()];
+    assert!(o.contains(r#"natif::lecture_fichier("marque""#) && o.contains("lire_marque_internet(&c)") && !o.contains("read_to_string"),
+            "marque Internet bornée à 4 Ko et à échéance (A2)");
+    let h = include_str!("hygiene.rs");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES").unwrap()];
+    assert!(!p.contains("empreinte_verifiee(&f)") && p.contains("empreinte_a_echeance(&f)"), "empreinte des leurres à échéance (A8)");
+    let i = &h[h.find("pub fn inventaire_extensions()").unwrap()..];
+    let i = &i[..i.find("\n}").unwrap()];
+    assert!(!i.contains("fs::read_to_string"), "fichiers d'extensions lus bornés, sans suivre de lien (A3)");
+}

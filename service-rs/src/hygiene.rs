@@ -145,6 +145,22 @@ pub fn empreinte_verifiee(chemin: &Path) -> Option<String> {
     Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Empreinte vérifiée (sans suivre de lien) à échéance
+fn empreinte_a_echeance(f: &Path) -> Result<Option<String>, crate::natif::HorsDelai> {
+    let c = f.to_path_buf();
+    crate::natif::lecture_fichier("leurre", &f.to_string_lossy(), move || empreinte_verifiee(&c))
+}
+
+/// Texte d'un fichier des profils lu en SYSTEM (audit du 2026-11-14, A3) : sans suivre de lien (chemin final vérifié)
+/// et borné à `max` octets ; au-delà, None (un fichier tronqué ne donnerait qu'un JSON invalide)
+pub(crate) fn lire_profil_borne(chemin: &Path, max: u64) -> Option<String> {
+    // GENERIC_READ | SYNCHRONIZE, tout partage
+    let f = crate::natif::ouvrir_verifie(chemin, 0x8000_0000 | 0x0010_0000, 0x7, false).ok()?;
+    let mut t = String::new();
+    let lus = f.take(max + 1).read_to_string(&mut t).ok()?;
+    (lus as u64 <= max).then_some(t)
+}
+
 /// Exécute `f` sous l'identité du propriétaire du profil s'il a une session ouverte (ses droits s'appliquent : une
 /// jonction vers un dossier protégé échoue en plus du contrôle du chemin final) ; None sans session
 fn sous_l_identite<T>(sid: &str, f: impl FnOnce() -> T) -> Option<T> {
@@ -263,14 +279,17 @@ pub fn poser_leurres() -> Vec<Leurre> {
     for (profil, sid) in &profils {
         for (dossier, nom) in &noms {
             let f = profil.join(dossier).join(nom);
-            if empreinte_verifiee(&f).is_none() {
+            // Empreinte à échéance (audit du 2026-11-14, A8, famille S103-07) : un leurre tenu par un verrou ne fige plus
+            // la pose ; hors délai, ce leurre est laissé pour le prochain passage (jamais recréé à l'aveugle)
+            let Ok(presente) = empreinte_a_echeance(&f) else { continue };
+            if presente.is_none() {
                 // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi)
                 match sous_l_identite(sid, || creer_leurre(&f)) {
                     Some(Ok(())) => {}
                     _ => continue,
                 }
             }
-            let Some(e) = empreinte_verifiee(&f) else { continue };
+            let Ok(Some(e)) = empreinte_a_echeance(&f) else { continue };
             if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
                 commun::journal(&format!("leurres : audit non posé sur {} ({x})", f.display()));
             }
@@ -492,7 +511,7 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
     let nom = manifeste["name"].as_str().unwrap_or("").to_string();
     let Some(cle) = nom.strip_prefix("__MSG_").and_then(|n| n.strip_suffix("__")) else { return nom };
     for langue in ["fr", "en", "en_US"] {
-        if let Ok(t) = fs::read_to_string(dossier.join("_locales").join(langue).join("messages.json")) {
+        if let Some(t) = lire_profil_borne(&dossier.join("_locales").join(langue).join("messages.json"), TAILLE_MAX_MANIFESTE) {
             if let Ok(m) = serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')) {
                 if let Some(obj) = m.as_object() {
                     if let Some((_, v)) = obj.iter().find(|(k, _)| k.eq_ignore_ascii_case(cle)) {
@@ -504,6 +523,11 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
     }
     nom
 }
+
+/// Bornes des fichiers d'extensions lus en SYSTEM (A3) : un manifeste réel fait quelques Ko, extensions.json de
+/// Firefox quelques centaines de Ko
+const TAILLE_MAX_MANIFESTE: u64 = 1 << 20;
+const TAILLE_MAX_EXTENSIONS_FIREFOX: u64 = 16 << 20;
 
 pub fn inventaire_extensions() -> Vec<Extension> {
     let mut l = Vec::new();
@@ -522,7 +546,7 @@ pub fn inventaire_extensions() -> Vec<Extension> {
                     let id = ext.file_name().to_string_lossy().to_string();
                     // Dernière version installée
                     let Some(version) = fs::read_dir(ext.path()).ok().and_then(|v| v.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("manifest.json").exists()).max()) else { continue };
-                    let Ok(t) = fs::read_to_string(version.join("manifest.json")) else { continue };
+                    let Some(t) = lire_profil_borne(&version.join("manifest.json"), TAILLE_MAX_MANIFESTE) else { continue };
                     let Ok(m) = serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')) else { continue };
                     let mut perms = texte_json(&m["permissions"]);
                     perms.extend(texte_json(&m["host_permissions"]));
@@ -547,7 +571,7 @@ pub fn inventaire_extensions() -> Vec<Extension> {
         // Firefox : extensions.json de chaque profil
         if let Ok(pf) = fs::read_dir(profil.join(r"AppData\Roaming\Mozilla\Firefox\Profiles")) {
             for p in pf.map_while(Result::ok) {
-                let Ok(t) = fs::read_to_string(p.path().join("extensions.json")) else { continue };
+                let Some(t) = lire_profil_borne(&p.path().join("extensions.json"), TAILLE_MAX_EXTENSIONS_FIREFOX) else { continue };
                 let Ok(m) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
                 for a in m["addons"].as_array().cloned().unwrap_or_default() {
                     if a["location"].as_str() != Some("app-profile") {
