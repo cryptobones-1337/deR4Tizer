@@ -55,6 +55,8 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   d'origine en statique), mais s'il échoue aussi, le port est relâché avec la carte sur la boucle locale (S164-02).
   Écrit, non fermé ; depuis la PR 7.5a, ce cas au démarrage lève l'alerte critique DNS-003 avec le PID du programme
   qui tient le port ;
+- **résolveur tiers** (PR 7.6) : Quad9 choisi, toutes les requêtes DNS non bloquées du poste lui sont envoyées (en
+  clair : pas de DNS chiffré, 7.7 non faite) ; jamais par défaut, dit dans la confirmation et sur la page ;
 - **données de navigation** (PR 7.5a) : seuls les 50 derniers noms **bloqués** sont gardés, 24 h, dans
   `filtrage-etat.json` (dossier protégé) ; aucun nom relayé n'est noté ; rien de cela n'entre dans `etat.json` ni dans
   l'API ;

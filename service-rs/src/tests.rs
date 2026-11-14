@@ -7468,6 +7468,60 @@ fn filtrage_torturer() {
     });
 }
 
+// ------------------------------------------------------------ phase 7, PR 7.6 : résolveur tiers choisi (Quad9)
+
+/// Repli au portail captif : tiers muet et réseau qui répond → réseau ; tiers qui répond de nouveau → tiers ; sans tiers
+/// choisi, jamais de repli ; tiers muet et réseau muet → on garde (la dégradation ouverte s'en charge)
+#[test]
+fn amont_tiers_repli_portail() {
+    use crate::filtrage::{amont_tiers_repli, Repli};
+    assert_eq!(amont_tiers_repli(true, false, false, true), Repli::VersReseau);
+    assert_eq!(amont_tiers_repli(true, false, false, false), Repli::Garder);
+    assert_eq!(amont_tiers_repli(true, false, true, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(true, true, true, false), Repli::VersTiers);
+    assert_eq!(amont_tiers_repli(true, true, false, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(false, false, false, true), Repli::Garder);
+    assert_eq!(amont_tiers_repli(false, true, true, true), Repli::VersReseau, "tiers retiré pendant un repli : réseau");
+}
+
+/// Relecture de #167, D1 : la commande filtrageAmont prend le verrou des cartes ; la sonde relit la configuration sous
+/// ce verrou et abandonne une décision prise sur un autre amont
+#[test]
+fn amont_tiers_cablage_sous_verrou() {
+    let m = include_str!("moniteur.rs");
+    let cmd = &m[m.find(r#""filtrageAmont" => {"#).unwrap()..];
+    assert!(cmd[..cmd.find("self.config.filtrage.amont =").unwrap()].contains("verrou_cartes()"), "commande sous le verrou");
+    let sonde = &m[m.find("fn demarrer_sonde_filtrage(").unwrap()..];
+    let bascule = &sonde[sonde.find("if decision != crate::filtrage::Repli::Garder {").unwrap()..];
+    let avant = &bascule[..bascule.find("REPLI_TIERS.store(").unwrap()];
+    assert!(avant.contains("verrou_cartes()") && avant.contains(r#"commun::lire::<commun::Config>("config.json")"#) && avant.contains("let toujours"), "relecture et revérification sous le verrou");
+    assert!(avant.contains("crate::dns_local::permanent_actif()") && avant.contains("RESTAURATION_EN_ATTENTE.load") && avant.contains("REPLI_TIERS.load(Ordering::Acquire) != en_repli"), "état revérifié (audit de #167, S167-01)");
+    assert!(bascule.contains("Repli::VersReseau && tiers.is_some()"), "pas de repli sans tiers (S167-02)");
+    let d = include_str!("dns_local.rs");
+    let arr = &d[d.find("pub fn arreter_permanent()").unwrap()..];
+    assert!(arr[..arr.find("\n}").unwrap()].contains("e.silence.store(false"), "plus de silence après l'arrêt");
+}
+
+/// Liste compilée et courte : Quad9 seul, nommé (exploitant, pays, filtre), adresses valides ; jamais par défaut ;
+/// commande validée
+#[test]
+fn amont_tiers_compile_et_valide() {
+    use crate::filtrage::{adresses_tiers, amont_tiers, AMONTS_TIERS};
+    assert_eq!(AMONTS_TIERS.len(), 1);
+    let q = amont_tiers("quad9").expect("quad9");
+    assert!(q.exploitant.contains("Suisse") && q.filtre.contains("pas la publicité"));
+    assert_eq!(adresses_tiers(q).len(), q.adresses.len());
+    assert!(crate::commun::Config::default().filtrage.amont.is_empty(), "jamais par défaut");
+    use crate::validation::valider;
+    for v in ["reseau", "quad9"] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageAmont","Valeur":"{v}"}}"#))).is_ok(), "{v}");
+    }
+    for v in ["Quad9", "dns4eu", "9.9.9.9", ""] {
+        assert!(valider(&commande_json(&format!(r#"{{"Action":"filtrageAmont","Valeur":"{v}"}}"#))).is_err(), "{v}");
+    }
+    assert!(!crate::validation::autorisee("filtrageAmont", crate::validation::Client::Autre));
+}
+
 // ------------------------------------------------------------ phase 7, PR 7.5a : état publié, compteurs, catégories
 
 /// Derniers blocages : 50 au plus, un nom remonté au lieu d'être répété, 24 h de garde, le plus récent d'abord ;

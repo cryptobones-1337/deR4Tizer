@@ -1495,6 +1495,31 @@ impl Moniteur {
                 commun::journal(&m);
                 Reponse::ok(m)
             }
+            // Résolveur d'amont (PR 7.6 ; D7-8 tranchée : Quad9). Jamais par défaut ; appliqué sans relancer le résolveur
+            "filtrageAmont" => {
+                // Sous le verrou des cartes : la sonde relit la configuration sous ce même verrou avant toute bascule
+                // (relecture de #167, D1)
+                let _verrou = verrou_cartes();
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
+                }
+                let v = c.valeur.as_deref().unwrap_or("reseau");
+                self.config.filtrage.amont = if v == "reseau" { String::new() } else { v.to_string() };
+                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                    return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
+                }
+                REPLI_TIERS.store(false, Ordering::Release);
+                if crate::dns_local::permanent_actif() {
+                    let origine = crate::filtrage_cartes::lire_origine().unwrap_or_default();
+                    crate::dns_local::regler_amonts(amonts_voulus(&self.config, &origine));
+                }
+                let m = match crate::filtrage::amont_tiers(&self.config.filtrage.amont) {
+                    Some(t) => format!("Résolveur d'amont : {} ({} ; {}). Les requêtes DNS non bloquées lui sont envoyées ; repli sur le DNS du réseau s'il ne répond pas.", t.nom, t.exploitant, t.filtre),
+                    None => "Résolveur d'amont : celui de votre réseau.".to_string(),
+                };
+                commun::journal(&format!("filtrage : {m}"));
+                Reponse::ok(m)
+            }
             "filtrageAutoriser" | "filtrageRetirer" => {
                 if commun::echec_protection().is_some() {
                     return Reponse::erreur("Protection du dossier de données en échec : la configuration n'est pas modifiée.");
@@ -2200,6 +2225,8 @@ fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filt
         par_liste: st.par_liste.clone(),
         derniers: st.derniers(maintenant_s()),
         autorises: config.filtrage.autorises.clone(),
+        amont_choisi: crate::filtrage::amont_tiers(&config.filtrage.amont).map(|t| t.cle.to_string()).unwrap_or_default(),
+        repli_tiers: REPLI_TIERS.load(Ordering::Acquire),
     }
 }
 
@@ -2233,6 +2260,17 @@ pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[Str
         destination: "127.0.0.1:53".into(),
         raisons: format!("Le port DNS de la boucle locale est tenu par {qui} alors que la carte {} pointe encore sur le résolveur de deR4Tizer : ce programme peut répondre à toutes les résolutions de noms du poste. Arrêtez-le, puis rendez la carte (README, procédure manuelle) ou réactivez le filtrage.", cartes.join(", ")),
         ..Default::default()
+    }
+}
+
+/// Repli au portail captif en cours (résolveur tiers choisi mais injoignable, PR 7.6)
+static REPLI_TIERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Amonts voulus : le résolveur tiers choisi (hors repli), sinon les serveurs d'origine des cartes
+fn amonts_voulus(config: &commun::Config, origine: &[crate::filtrage_cartes::OrigineCarte]) -> Vec<std::net::IpAddr> {
+    match crate::filtrage::amont_tiers(&config.filtrage.amont) {
+        Some(t) if !REPLI_TIERS.load(Ordering::Acquire) => crate::filtrage::adresses_tiers(t),
+        _ => amonts_origine(origine),
     }
 }
 
@@ -2285,14 +2323,16 @@ fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<S
     }
     commun::ecrire(fc::FICHIER, &origine).map_err(|e| format!("État d'origine des cartes non enregistré ({e}) : rien n'est modifié."))?;
     let actives = crate::filtrage::categories_actives(config);
-    if let Err(e) = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives.clone()), amonts.clone(), rappel_silence()) {
+    REPLI_TIERS.store(false, Ordering::Release);
+    if let Err(e) = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives.clone()), amonts_voulus(config, &origine), rappel_silence()) {
         fc::effacer_origine();
         return Err(e);
     }
     if !crate::dns_local::repond_localement() {
         crate::dns_local::arreter_permanent();
         fc::effacer_origine();
-        return Err("Le résolveur local ne répond pas au contrôle : rien n'est modifié.".into());
+        let tiers = crate::filtrage::amont_tiers(&config.filtrage.amont).map(|t| format!(" (amont choisi : {}, injoignable ? portail captif ? choisissez « résolveur de votre réseau » puis réactivez)", t.nom)).unwrap_or_default();
+        return Err(format!("Le résolveur local ne répond pas au contrôle{tiers} : rien n'est modifié."));
     }
     if let Err(e) = fc::appliquer_toutes(&origine) {
         crate::dns_local::arreter_permanent();
@@ -2300,7 +2340,11 @@ fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<S
         return Err(format!("Réglage des cartes en échec, cartes rendues : {e}"));
     }
     let noms: Vec<&str> = origine.iter().map(|o| o.nom.as_str()).collect();
-    Ok(format!("Filtrage activé : carte(s) {} réglée(s) sur le résolveur de deR4Tizer, serveurs actuels en secours ({}) ; {}.",
+    let amont = match crate::filtrage::amont_tiers(&config.filtrage.amont) {
+        Some(t) => format!(" ; amont : {} (requêtes non bloquées envoyées à {})", t.nom, t.nom),
+        None => " ; amont : le résolveur de votre réseau".into(),
+    };
+    Ok(format!("Filtrage activé : carte(s) {} réglée(s) sur le résolveur de deR4Tizer, serveurs actuels en secours ({}){amont} ; {}.",
         noms.join(", "), amonts.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "),
         if actives.is_empty() { "aucune catégorie active : rien n'est bloqué" } else { "catégories : listes chargées" }))
 }
@@ -2334,7 +2378,8 @@ fn reprendre_filtrage(partage: &Arc<Partage>, config: &commun::Config) {
     // boucle locale (audit de #164, S164-01). Filtrage non actif ou protection en échec : simple relais pendant la remise
     let reprendre = config.filtrage.actif && commun::echec_protection().is_none();
     let actives = if reprendre { crate::filtrage::categories_actives(config) } else { Vec::new() };
-    let lie = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives), amonts_origine(&origine), rappel_silence());
+    let amonts = if reprendre { amonts_voulus(config, &origine) } else { amonts_origine(&origine) };
+    let lie = crate::dns_local::demarrer_permanent(!actives.is_empty(), juge_filtrage(partage, actives), amonts, rappel_silence());
     if let Err(e) = &lie {
         // Port déjà pris par un autre programme : rien ne peut le tenir ; cartes rendues au mieux, origine gardée si une
         // carte reste sur la boucle locale
@@ -2419,6 +2464,38 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                     }
                 }
                 continue;
+            }
+            // Repli au portail captif (PR 7.6) : sondes hors du verrou, décision pure, bascule sous le verrou des cartes
+            if crate::dns_local::permanent_actif() {
+                if let (Some(config), Some(origine)) = (commun::lire::<commun::Config>("config.json"), crate::filtrage_cartes::lire_origine()) {
+                    let tiers = crate::filtrage::amont_tiers(&config.filtrage.amont);
+                    let en_repli = REPLI_TIERS.load(Ordering::Acquire);
+                    let tiers_repond = tiers.is_some_and(|t| (!en_repli && !crate::dns_local::en_silence()) || crate::dns_local::sonder(&crate::filtrage::adresses_tiers(t)));
+                    let reseau_repond = tiers.is_some() && !tiers_repond && crate::dns_local::sonder(&amonts_origine(&origine));
+                    let decision = crate::filtrage::amont_tiers_repli(tiers.is_some(), en_repli, tiers_repond, reseau_repond);
+                    if decision != crate::filtrage::Repli::Garder {
+                        let _verrou = verrou_cartes();
+                        // Relecture sous le verrou : configuration, origine et état peuvent avoir changé pendant les sondes
+                        // (commande filtrageAmont, désactivation). Décision prise sur un autre amont : abandonnée (D1)
+                        let (Some(config), Some(origine)) = (commun::lire::<commun::Config>("config.json"), crate::filtrage_cartes::lire_origine()) else { continue };
+                        let toujours = crate::filtrage::amont_tiers(&config.filtrage.amont).map(|t| t.cle) == tiers.map(|t| t.cle);
+                        if !toujours || !crate::dns_local::permanent_actif() || RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) || REPLI_TIERS.load(Ordering::Acquire) != en_repli {
+                            continue;
+                        }
+                        // Repli seulement avec un tiers choisi : sans tiers, l'amont est déjà le réseau (S167-02, boucle évitée)
+                        REPLI_TIERS.store(decision == crate::filtrage::Repli::VersReseau && tiers.is_some(), Ordering::Release);
+                        crate::dns_local::regler_amonts(amonts_voulus(&config, &origine));
+                        if crate::dns_local::en_silence() && crate::filtrage_cartes::appliquer_toutes(&origine).is_ok() {
+                            crate::dns_local::fin_silence();
+                        }
+                        commun::journal(if decision == crate::filtrage::Repli::VersReseau {
+                            "filtrage : résolveur tiers injoignable (portail captif ?) ; repli sur le DNS du réseau"
+                        } else {
+                            "filtrage : le résolveur tiers répond de nouveau ; il redevient l'amont"
+                        });
+                        continue;
+                    }
+                }
             }
             if crate::dns_local::permanent_actif() && crate::dns_local::en_silence() && crate::dns_local::sonder(&crate::dns_local::amonts_en_cours()) {
                 // Sonde (lente) hors du verrou ; état revérifié sous le verrou avant de rebrancher (S164-04)

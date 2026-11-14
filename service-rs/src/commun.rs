@@ -208,6 +208,8 @@ pub struct ConfigFiltrage {
     pub autorises: Vec<String>,
     /// Filtrage activé sur les cartes (PR 7.4, commande `filtrage`) : repris au démarrage du service
     pub actif: bool,
+    /// Résolveur d'amont : vide, celui du réseau (défaut) ; sinon la clé d'un résolveur tiers compilé (« quad9 ») (PR 7.6)
+    pub amont: String,
 }
 
 /// Clé d'une commande reçue qui diffère d'une clé connue par la seule casse (« langue » à côté de « Langue ») :
