@@ -362,6 +362,11 @@ try {
     $resQ = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efQj, $true, $false))
     $efQs = & $nouv $efT @{ Etat = 'suspendu : amont injoignable'; Categories = $catsS; AmontChoisi = 'quad9'; RepliTiers = $false }
     $rbS = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $efQs))
+    $efQi = & $nouv $efT @{ Etat = 'inactif'; Categories = $catsS; AmontChoisi = 'quad9'; RepliTiers = $false }
+    $efQc = & $nouv $efT @{ Etat = 'contourné sur la carte Wi-Fi'; Categories = $catsS; AmontChoisi = 'quad9'; RepliTiers = $false }
+    $rbI = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $efQi))
+    $rbC = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true, $efQc))
+    Cas 'Navigation : Quad9 choisi, filtrage inactif : « rien n''est bloqué » ; contourné sur une carte : « seul Quad9 bloque » (S169-03)' ($rbI.Contains("rien n'est bloqué") -and $rbC.Contains('seul Quad9 bloque')) "$rbI | $rbC"
     Cas 'Navigation : sécurité sans liste, Quad9 joignable : « seul Quad9 bloque » ; en repli ou suspendu : « rien n''est bloqué » (R4, S169-02)' ($rbJ.Contains('seul Quad9 bloque les domaines malveillants') -and -not $rbJ.Contains("rien n'est bloqué") -and $rbR.Contains("rien n'est bloqué") -and $rbS.Contains("rien n'est bloqué") -and $resQ.Contains('seul Quad9 bloque')) "$rbJ | $rbR | $rbS"
     $actR = [string]$tf.GetMethod('AmontALActivation').Invoke($null, @($efSec))
     $actQ = [string]$tf.GetMethod('AmontALActivation').Invoke($null, @($efQj))

@@ -492,12 +492,13 @@ namespace DeR4Tizer
         }
 
         // Sans liste de sécurité, Quad9 choisi et joignable bloque encore les domaines malveillants qu'il connaît ; en repli
-        // (portail captif) ou filtrage suspendu (cartes rendues au DNS du réseau), rien n'est bloqué (relecture de #167, R4 ;
-        // audit de #169, S169-02)
+        // (portail captif), et dans tout état autre que « actif » ou « contourné… » (suspendu, inactif, remise des cartes en
+        // attente : Quad9 n'est pas utilisé), rien n'est bloqué (relecture de #167, R4 ; audit de #169, S169-02, S169-03)
         public static string RienBloqueSecurite(EtatFiltrage e)
         {
             string t = e == null ? null : NomTiers(e.AmontChoisi);
-            if (t == null || e.RepliTiers || (e.Etat ?? "").StartsWith("suspendu")) return RienBloqueSecurite();
+            string etat = e == null ? "" : (e.Etat ?? "");
+            if (t == null || e.RepliTiers || !(etat == "actif" || etat.StartsWith("contourné"))) return RienBloqueSecurite();
             return L.En ? "no security list: only " + t + " blocks the malicious domains it knows (DNS-001 alerts remain)"
                         : "aucune liste de sécurité : seul " + t + " bloque les domaines malveillants qu'il connaît (les alertes DNS-001 restent)";
         }
