@@ -1353,7 +1353,8 @@ impl Moniteur {
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
                 }
-                if action == "notifications" && commun::echec_protection().is_some() {
+                // Les deux réécrivent config.json (audit de #173, S173-02)
+                if commun::echec_protection().is_some() {
                     return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
                 }
                 if let Err(e) = crate::notifications::controler_demande(c.valeur.as_deref().unwrap_or("")) {
@@ -1463,7 +1464,11 @@ impl Moniteur {
                     return match desactiver_filtrage() {
                         Ok(m) => {
                             self.config.filtrage.actif = false;
-                            let _ = commun::ecrire("config.json", &self.config);
+                            // Cartes toujours rendues ; en échec de la protection, la configuration en mémoire est celle
+                            // par défaut : ne pas l'écrire (audit de #173, S173-03)
+                            if commun::echec_protection().is_none() {
+                                let _ = commun::ecrire("config.json", &self.config);
+                            }
                             commun::journal(&format!("filtrage : {m}"));
                             Reponse::ok(m)
                         }

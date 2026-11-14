@@ -214,8 +214,12 @@ pub fn nom_copie_simple(n: &str) -> bool {
 
 impl ElementQuarantaine {
     /// Nom de la copie, ou None si l'entrée (identifiant ou nom enregistré) n'est pas un nom simple : aucune action
-    /// sur une telle entrée (audit du 2026-11-14, B3)
+    /// sur une telle entrée (audit du 2026-11-14, B3). L'identifiant est exigé simple même quand le nom est
+    /// enregistré : la migration en bâtit le nom de la nouvelle copie (audit de #173, S173-01)
     pub fn nom_fichier(&self) -> Option<String> {
+        if !nom_copie_simple(&self.id) {
+            return None;
+        }
         let n = if self.fichier.is_empty() { format!("{}.quarantaine", self.id) } else { self.fichier.clone() };
         nom_copie_simple(&n).then_some(n)
     }

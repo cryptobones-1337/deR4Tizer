@@ -8024,6 +8024,12 @@ fn audit_b3_nom_de_copie_simple() {
                    "nom avec espace", "nom\u{0}nul", long.as_str()] {
         assert!(!simple(refuse), "{refuse:?}");
     }
+    // S173-01 : identifiant non simple, même avec un nom enregistré simple : aucune action (la migration en bâtit un nom)
+    use crate::reponse::ElementQuarantaine;
+    let e = ElementQuarantaine { id: "..\\sortie".into(), fichier: "a.quarantaine".into(), ..Default::default() };
+    assert_eq!(e.nom_fichier(), None);
+    let e = ElementQuarantaine { id: "abc-123".into(), fichier: "abc-123-def.quarantaine".into(), ..Default::default() };
+    assert_eq!(e.nom_fichier().as_deref(), Some("abc-123-def.quarantaine"));
 }
 
 /// B3 : à la reprise, une entrée forgée dont le nom de copie désigne un fichier hors du dossier ne fait rien
@@ -8071,7 +8077,13 @@ fn audit_b2_b8_cablage() {
     }
     let n = &m[m.find(r#""notifications" | "testerNotifications" => {"#).unwrap()..];
     let avant = &n[..n.find(r#"commun::ecrire("config.json""#).unwrap()];
-    assert!(avant.contains(r#"action == "notifications" && commun::echec_protection().is_some()"#), "notifications refusées en échec de protection (B8)");
+    assert!(avant.contains("commun::echec_protection().is_some()") && !avant.contains(r#"action == "notifications" && commun::echec_protection()"#),
+            "notifications et testerNotifications refusées en échec de protection (B8, S173-02)");
+    let f = &m[m.find(r#"            "filtrage" => {"#).unwrap()..];
+    let off = &f[..f.find("Err(e) => Reponse::erreur(e),").unwrap()];
+    assert!(off.contains("if commun::echec_protection().is_none() {\n                                let _ = commun::ecrire(\"config.json\"")
+            || off.contains("if commun::echec_protection().is_none() {\r\n                                let _ = commun::ecrire(\"config.json\""),
+            "filtrage off : cartes rendues, config.json non écrit en échec (S173-03)");
     for f in [include_str!("moniteur.rs"), include_str!("siem.rs")] {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }
