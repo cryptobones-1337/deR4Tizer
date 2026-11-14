@@ -204,9 +204,20 @@ pub enum EtatQuarantaine {
     Restauree,
 }
 
+/// Nom de fichier simple dans quarantaine\ (audit du 2026-11-14, B3) : lettres et chiffres ASCII, « - », « _ » et
+/// « . », 1 à 200 caractères, ni « .. », ni point initial. Refuse tout séparateur, lecteur ou chemin absolu, donc
+/// tout ce qu'un quarantaine.json réécrit ferait joindre hors du dossier
+pub fn nom_copie_simple(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 200 && !n.starts_with('.') && !n.contains("..")
+        && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+}
+
 impl ElementQuarantaine {
-    pub fn nom_fichier(&self) -> String {
-        if self.fichier.is_empty() { format!("{}.quarantaine", self.id) } else { self.fichier.clone() }
+    /// Nom de la copie, ou None si l'entrée (identifiant ou nom enregistré) n'est pas un nom simple : aucune action
+    /// sur une telle entrée (audit du 2026-11-14, B3)
+    pub fn nom_fichier(&self) -> Option<String> {
+        let n = if self.fichier.is_empty() { format!("{}.quarantaine", self.id) } else { self.fichier.clone() };
+        nom_copie_simple(&n).then_some(n)
     }
 
     pub fn etat(&self) -> EtatQuarantaine {
@@ -490,7 +501,7 @@ pub fn restaurer_transaction(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     use std::io::{Seek, SeekFrom};
     let i = liste.iter().position(|e| e.id == id).ok_or("élément introuvable")?;
     let e = liste[i].clone();
-    let source = dossier.join(e.nom_fichier());
+    let source = dossier.join(e.nom_fichier().ok_or("nom de la copie en quarantaine refusé : restauration refusée")?);
     if e.sha256.len() != 64 {
         return Err("empreinte de la copie inconnue : restauration refusée".into());
     }
@@ -718,7 +729,13 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     let mut messages = Vec::new();
     let mut garder = Vec::new();
     for mut e in liste.drain(..) {
-        let copie = dossier.join(e.nom_fichier());
+        let Some(nom) = e.nom_fichier() else {
+            // Entrée au nom refusé : conservée telle quelle, sans rien supprimer ni déplacer (B3)
+            messages.push(format!("quarantaine : entrée {} au nom de copie refusé, conservée sans action", e.id.chars().take(40).collect::<String>()));
+            garder.push(e);
+            continue;
+        };
+        let copie = dossier.join(nom);
         // Fichier restauré : à l'emplacement où il l'a été (origine ou dossier de repli)
         let chemin = if e.etat() == EtatQuarantaine::Restauree && !e.chemin_restaure.is_empty() { &e.chemin_restaure } else { &e.chemin_origine };
         let original = etat_original(Path::new(chemin), &e.sha256);
@@ -747,7 +764,7 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
         }
     }
     *liste = garder;
-    let connus: std::collections::HashSet<String> = liste.iter().map(|e| e.nom_fichier().to_lowercase()).collect();
+    let connus: std::collections::HashSet<String> = liste.iter().filter_map(|e| e.nom_fichier()).map(|n| n.to_lowercase()).collect();
     for f in fs::read_dir(dossier).into_iter().flatten().flatten() {
         let n = f.file_name().to_string_lossy().to_string();
         if !connus.contains(&n.to_lowercase()) {
@@ -767,7 +784,8 @@ pub fn migrer_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>, s
     let mut messages = Vec::new();
     let mut empreintes_ajoutees = false;
     for i in 0..liste.len() {
-        let ancien = dossier.join(liste[i].nom_fichier());
+        let Some(nom) = liste[i].nom_fichier() else { continue };
+        let ancien = dossier.join(nom);
         if fs::symlink_metadata(&ancien).is_err() {
             continue;
         }

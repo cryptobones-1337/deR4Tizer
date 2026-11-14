@@ -1490,7 +1490,7 @@ fn lot1bis_quarantaine_redemarrage_restauration() {
     assert!(!origine.exists(), "original retiré");
     assert_eq!(liste[0].etat(), EtatQuarantaine::Terminee);
     assert_eq!(m.lu(), liste, "manifeste enregistré");
-    let copie = dq.join(liste[0].nom_fichier());
+    let copie = dq.join(liste[0].nom_fichier().unwrap());
     // Copie créée par le service avec ses droits : propriétaire celui du SDDL (en service, SYSTEM)
     let s = crate::natif::lire_securite(&copie).unwrap();
     assert_eq!(s.proprietaire, moi);
@@ -1669,7 +1669,7 @@ fn lot1bis_echec_du_manifeste_etat_reel_des_fichiers() {
     assert_eq!(std::fs::read(&f).unwrap(), b"AAA");
     let mut lu = m.lu();
     assert_eq!(lu[0].etat(), EtatQuarantaine::Restauree);
-    std::fs::write(dq.join(lu[0].nom_fichier()), b"AAA").unwrap(); // copie encore présente (retrait raté)
+    std::fs::write(dq.join(lu[0].nom_fichier().unwrap()), b"AAA").unwrap(); // copie encore présente (retrait raté)
     reprendre_quarantaine(&dq, &mut lu);
     assert!(lu.is_empty() && copies() == 0);
 
@@ -1791,7 +1791,7 @@ fn lot1bis_copie_encodee_jamais_en_clair() {
     let m = Manifeste::new(&d, 0);
     let mut liste = Vec::new();
     quarantaine_transaction(&dq, &mut liste, &f, "enc", "test", &sddl, &|l| m.ecrire(l)).unwrap();
-    let chemin_copie = dq.join(liste[0].nom_fichier());
+    let chemin_copie = dq.join(liste[0].nom_fichier().unwrap());
     let copie = std::fs::read(&chemin_copie).unwrap();
     assert!(est_encodee(&chemin_copie) && copie.starts_with(b"D4TQ"));
     for motif in [&b"ligne de test"[..], b"deR4Tizer", b"0123456789"] {
@@ -8008,4 +8008,71 @@ fn mitre_micro_pas_microsoft() {
     let mut c = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise la caméra pour la première fois".into(), destination: "Caméra".into(), ..Default::default() };
     crate::mitre::enrichir(&mut c);
     assert_eq!(c.mitre, "T1125 Capture vidéo");
+}
+
+// ------------------------------------------------------------ audit du 2026-11-14, lot 1 (frontière du dossier de données)
+
+/// B3 : un nom de copie qui sort du dossier de quarantaine (séparateur, « .. », chemin absolu, lecteur) est refusé
+#[test]
+fn audit_b3_nom_de_copie_simple() {
+    use crate::reponse::nom_copie_simple as simple;
+    for ok in ["abc-123.quarantaine", "a1b2_c3-d4-e5.quarantaine", "x"] {
+        assert!(simple(ok), "{ok}");
+    }
+    let long = "a".repeat(201);
+    for refuse in ["", "..\\victime.txt", "../victime.txt", "a/b", "a\\b", "C:\\Windows\\win.ini", "C:x", ".cache", "a..b",
+                   "nom avec espace", "nom\u{0}nul", long.as_str()] {
+        assert!(!simple(refuse), "{refuse:?}");
+    }
+}
+
+/// B3 : à la reprise, une entrée forgée dont le nom de copie désigne un fichier hors du dossier ne fait rien
+/// supprimer (avant le correctif : « en_cours », original intact, « copie » présente = le fichier visé, supprimé)
+#[test]
+fn audit_b3_reprise_entree_forgee_ne_supprime_rien() {
+    use crate::reponse::{reprendre_quarantaine, ElementQuarantaine};
+    let d = std::env::temp_dir().join(format!("der4tizer-audit-b3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let dq = d.join("quarantaine");
+    std::fs::create_dir_all(&dq).unwrap();
+    let original = d.join("original.txt");
+    std::fs::write(&original, b"contenu").unwrap();
+    let victime = d.join("victime.txt");
+    std::fs::write(&victime, b"a garder").unwrap();
+    let sha = crate::hygiene::empreinte_fichier(&original).expect("empreinte");
+    for fichier in [victime.to_string_lossy().to_string(), "..\\victime.txt".to_string()] {
+        let mut liste = vec![ElementQuarantaine { id: "abc".into(), chemin_origine: original.to_string_lossy().into(), fichier: fichier.clone(),
+                                                  sha256: sha.clone(), etat: "en_cours".into(), ..Default::default() }];
+        let messages = reprendre_quarantaine(&dq, &mut liste);
+        assert!(victime.exists(), "fichier visé supprimé par {fichier}");
+        assert_eq!(liste.len(), 1, "entrée conservée");
+        assert_eq!(liste[0].etat, "en_cours", "entrée laissée telle quelle");
+        assert!(messages.iter().any(|m| m.contains("nom de copie refusé")), "{messages:?}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// B2 et B8 : adresse du manifeste revalidée à chaque vérification et passée par --url ; commandes qui réécrivent
+/// config.json refusées en échec de la protection du dossier (contrôle de câblage)
+#[test]
+fn audit_b2_b8_cablage() {
+    let maj = include_str!("maj.rs").replace("\r\n", "\n");
+    let t = &maj[maj.find("fn telecharger(").unwrap()..];
+    let t = &t[..t.find("\n}").unwrap()];
+    assert!(t.contains(".arg(\"--url\")\n        .arg(url)"), "adresse par --url (B2)");
+    let v = &maj[maj.find("fn verifier(config: &ConfigMaj").unwrap()..];
+    let avant = &v[..v.find("telecharger(&config.url").unwrap()];
+    assert!(avant.contains("commun::adresse_manifeste_simple(&config.url)"), "adresse revalidée avant le téléchargement (B2)");
+    let m = include_str!("moniteur.rs");
+    for bras in [r#""config" => {"#, r#""reglages" => {"#, r#""majConfig" => {"#] {
+        let b = &m[m.find(bras).unwrap()..];
+        let avant = &b[..b.find(r#"commun::ecrire("config.json""#).unwrap()];
+        assert!(avant.contains("commun::echec_protection().is_some()"), "{bras} refusé en échec de protection (B8)");
+    }
+    let n = &m[m.find(r#""notifications" | "testerNotifications" => {"#).unwrap()..];
+    let avant = &n[..n.find(r#"commun::ecrire("config.json""#).unwrap()];
+    assert!(avant.contains(r#"action == "notifications" && commun::echec_protection().is_some()"#), "notifications refusées en échec de protection (B8)");
+    for f in [include_str!("moniteur.rs"), include_str!("siem.rs")] {
+        assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
+    }
 }

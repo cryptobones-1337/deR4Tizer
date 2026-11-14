@@ -245,6 +245,8 @@ fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), S
         .args(["-q", "-g", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
             "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
         .arg(destination)
+        // Par --url : une adresse qui commencerait par « - » ne peut pas devenir une option (audit du 2026-11-14, B2)
+        .arg("--url")
         .arg(url)
         .creation_flags(0x0800_0000)
         .output()
@@ -293,6 +295,10 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     let dossier = commun::dossier().join("maj");
     let _ = fs::create_dir_all(&dossier);
     let f_manifeste = dossier.join("manifeste.json");
+    // config.json relu du disque : l'adresse est revalidée ici, pas seulement à la commande majConfig (B2)
+    if !commun::adresse_manifeste_simple(&config.url) {
+        return (String::new(), "adresse du manifeste refusée (config.json) : aucune vérification".into());
+    }
     if let Err(e) = telecharger(&config.url, &f_manifeste, TAILLE_MAX_MANIFESTE) {
         return (String::new(), format!("manifeste illisible ({e})"));
     }

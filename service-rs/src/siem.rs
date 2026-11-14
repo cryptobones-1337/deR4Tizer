@@ -534,7 +534,8 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
     let mut correlation = Correlation::default();
     let mut incidents: Vec<Incident> = commun::lire("incidents.json").unwrap_or_default();
     let mut fichier: Option<(String, fs::File)> = None;
-    let mut dernier_menage = Instant::now() - Duration::from_secs(86_400);
+    // Jamais de soustraction qui panique, quelle que soit l'origine d'Instant (audit du 2026-11-14, A1)
+    let mut dernier_menage = Instant::now().checked_sub(Duration::from_secs(86_400)).unwrap_or_else(Instant::now);
     let mut ecrits = 0u64;
     while let Ok(e) = rx.recv() {
         ecrits += 1;

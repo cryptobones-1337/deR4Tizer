@@ -217,9 +217,9 @@ impl Moniteur {
             empreinte_hosts: blocage::empreinte_hosts(),
             expiration: Instant::now(),
             derniere_signature_etat: String::new(),
-            dernier_etat_ecrit: Instant::now() - Duration::from_secs(60),
+            dernier_etat_ecrit: Instant::now().checked_sub(Duration::from_secs(60)).unwrap_or_else(Instant::now),
             derniere_sauvegarde_dns: Instant::now(),
-            dernier_etat_filtrage: (Instant::now() - Duration::from_secs(3600), Default::default()),
+            dernier_etat_filtrage: (Instant::now().checked_sub(Duration::from_secs(3600)).unwrap_or_else(Instant::now), Default::default()),
             premier_passage: true,
             numero_passage: 0,
             arbre: Arbre::default(),
@@ -1265,7 +1265,12 @@ impl Moniteur {
                 }
                 r
             }
+            // Commandes qui réécrivent config.json : refusées en échec de la protection du dossier (audit du
+            // 2026-11-14, B8), comme les commandes filtrage*
             "config" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let actif = c.valeur.as_deref() == Some("true");
                 let quoi = match c.cible.as_deref() {
                     Some("BlocageAutoMenaces") => {
@@ -1294,6 +1299,9 @@ impl Moniteur {
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
             "reglages" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let n = match commun::lire_reglages(c.valeur.as_deref().unwrap_or("")) {
                     Ok(n) => n,
                     Err(e) => return Reponse::erreur(e),
@@ -1344,6 +1352,9 @@ impl Moniteur {
                     config: Option<commun::ConfigNotifications>,
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
+                }
+                if action == "notifications" && commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
                 }
                 if let Err(e) = crate::notifications::controler_demande(c.valeur.as_deref().unwrap_or("")) {
                     return Reponse::erreur(e);
@@ -1407,6 +1418,9 @@ impl Moniteur {
                 Reponse::ok("Recherche de mise à jour lancée : le résultat s'affichera dans les Réglages.")
             }
             "majConfig" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let m = match commun::lire_config_maj(c.valeur.as_deref().unwrap_or("")) {
                     Ok(m) => m,
                     Err(e) => return Reponse::erreur(e),
