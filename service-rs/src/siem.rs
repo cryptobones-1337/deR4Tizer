@@ -630,6 +630,24 @@ pub(crate) struct Correlation {
     entites: HashMap<String, VecDeque<(Instant, String)>>,
 }
 
+/// Plafonds des files de corrélation (audit du 2026-11-14, A5) : événements gardés par clé, et clés distinctes ; au-delà,
+/// la clé la moins récemment active est oubliée (une inondation de sources ne bloque pas l'entrée d'une source nouvelle)
+pub(crate) const MAX_PAR_CLE: usize = 200;
+pub(crate) const MAX_CLES: usize = 5000;
+
+/// Garde au plus MAX_CLES clés : si `cle` est nouvelle et la table pleine, retire les files vides puis, s'il le faut,
+/// celle dont le dernier événement est le plus ancien (pur, testé)
+pub(crate) fn borner_cles<T>(table: &mut HashMap<String, VecDeque<T>>, cle: &str, dernier: impl Fn(&VecDeque<T>) -> Option<Instant>) {
+    if table.len() < MAX_CLES || table.contains_key(cle) {
+        return;
+    }
+    table.retain(|_, f| !f.is_empty());
+    while table.len() >= MAX_CLES {
+        let Some(vieille) = table.iter().min_by_key(|(_, f)| dernier(f)).map(|(k, _)| k.clone()) else { break };
+        table.remove(&vieille);
+    }
+}
+
 /// Entités distinctes d'une même règle de corrélation par heure ; au-delà, regroupées
 pub(crate) const MAX_ENTITES_PAR_REGLE: usize = 10;
 
@@ -690,9 +708,14 @@ impl Correlation {
             // R1 / R2 : force brute, puis réussite depuis la même source
             "echec-session" => {
                 let cle = if e.ip.is_empty() { format!("compte {}", e.utilisateur) } else { e.ip.clone() };
+                borner_cles(&mut self.echecs, &cle, |f| f.back().map(|x| x.0));
                 let file = self.echecs.entry(cle.clone()).or_default();
                 file.push_back((Instant::now(), trace(e)));
                 file.retain(|(t, _)| t.elapsed() < Duration::from_secs(1800));
+                // Au plus MAX_PAR_CLE échecs gardés par source (audit du 2026-11-14, A5) : plus de recopie illimitée
+                while file.len() > MAX_PAR_CLE {
+                    file.pop_front();
+                }
                 let recents: Vec<String> = file.iter().filter(|(t, _)| t.elapsed() < Duration::from_secs(300)).map(|(_, s)| s.clone()).collect();
                 if recents.len() >= 5 && self.une_fois(format!("R1|{cle}")) {
                     let entite = self.entite_bornee("R1", format!("source:{cle}"));
@@ -780,10 +803,14 @@ impl Correlation {
         // R6 : un même programme déclenche au moins 3 détections différentes en 10 minutes (attaque en plusieurs étapes)
         if e.source == "alerte" && e.type_ != "incident" && !e.processus.is_empty() && e.niveau != "Info" {
             let cle = e.processus.to_lowercase();
+            borner_cles(&mut self.alertes_processus, &cle, |f| f.back().map(|x| x.0));
             let file = self.alertes_processus.entry(cle.clone()).or_default();
             let detection = if e.mitre.is_empty() { e.message.split(':').next().unwrap_or("").to_string() } else { e.mitre.clone() };
             file.push_back((Instant::now(), detection, trace(e)));
             file.retain(|(t, _, _)| t.elapsed() < Duration::from_secs(600));
+            while file.len() > MAX_PAR_CLE {
+                file.pop_front();
+            }
             let distinctes: HashSet<&String> = file.iter().map(|(_, d, _)| d).collect();
             if distinctes.len() >= 3 {
                 let evts: Vec<String> = file.iter().map(|(_, _, s)| s.clone()).collect();

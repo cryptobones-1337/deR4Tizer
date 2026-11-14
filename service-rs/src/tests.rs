@@ -8104,3 +8104,47 @@ fn audit_b2_b8_cablage() {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }
 }
+
+// ------------------------------------------------------------ audit du 2026-11-14, lot 3 (tables bornées)
+
+/// A6, A7 : table de déduplication plafonnée, une seule synthèse par fenêtre, clés connues toujours reconnues
+#[test]
+fn audit_a6_a7_admission_plafonnee() {
+    use crate::commun::{admettre_cle, Admission};
+    use std::time::Duration;
+    let mut deja = std::collections::HashMap::new();
+    let h = Duration::from_secs(3600);
+    for i in 0..3 {
+        assert_eq!(admettre_cle(&mut deja, format!("dhcp|10.0.0.{i}"), h, 3), Admission::Nouvelle);
+    }
+    assert_eq!(admettre_cle(&mut deja, "dhcp|10.0.0.1".into(), h, 3), Admission::Deja, "clé déjà vue");
+    assert_eq!(admettre_cle(&mut deja, "dhcp|10.0.0.9".into(), h, 3), Admission::PlafondAtteint, "première clé au-delà : synthèse");
+    for i in 10..1000 {
+        assert_eq!(admettre_cle(&mut deja, format!("dhcp|10.0.{i}.1"), h, 3), Admission::PlafondDejaSignale, "plus rien ensuite");
+    }
+    assert!(deja.len() <= 4, "table bornée : {}", deja.len());
+    // Fenêtre écoulée : les clés expirent, de nouvelles entrent
+    let mut deja = std::collections::HashMap::new();
+    for i in 0..3 {
+        admettre_cle(&mut deja, format!("k{i}"), Duration::ZERO, 3);
+    }
+    assert_eq!(admettre_cle(&mut deja, "neuve".into(), Duration::ZERO, 3), Admission::Nouvelle);
+}
+
+/// A5 : files de corrélation bornées par clé et en nombre de clés ; la clé la moins récente est oubliée
+#[test]
+fn audit_a5_files_de_correlation_bornees() {
+    use crate::siem::{borner_cles, MAX_CLES};
+    use std::collections::{HashMap, VecDeque};
+    use std::time::Instant;
+    let mut t: HashMap<String, VecDeque<(Instant, String)>> = HashMap::new();
+    for i in 0..MAX_CLES {
+        t.insert(format!("10.0.{}.{}", i / 250, i % 250), VecDeque::from([(Instant::now(), String::new())]));
+    }
+    let la_plus_vieille = "10.0.0.0".to_string();
+    t.get_mut(&la_plus_vieille).unwrap()[0].0 = Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap();
+    borner_cles(&mut t, "203.0.113.5", |f| f.back().map(|x| x.0));
+    assert!(t.len() < MAX_CLES && !t.contains_key(&la_plus_vieille), "place faite pour une source nouvelle");
+    let s = include_str!("siem.rs");
+    assert!(s.matches("while file.len() > MAX_PAR_CLE").count() == 2, "files bornées par clé (échecs, alertes par programme)");
+}
