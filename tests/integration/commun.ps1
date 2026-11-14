@@ -46,9 +46,10 @@ function Bilan([string]$Titre) {
 
 # ---------------------------------------------------------------- service et canal
 
-# Requête sur le canal du service, en administrateur ; renvoie la ligne de réponse
-function Commande([string]$Json, [int]$Delai = 5000) {
-    $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut)
+# Requête sur le canal du service, en administrateur ; renvoie la ligne de réponse. Niveau Identification, comme
+# l'interface et le script de mise à jour (durcissement du canal) ; -Niveau Anonymous pour le cas du client sans jeton
+function Commande([string]$Json, [int]$Delai = 5000, [string]$Niveau = 'Identification') {
+    $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]$Niveau)
     try {
         $c.Connect($Delai)
         $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true

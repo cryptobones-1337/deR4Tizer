@@ -212,11 +212,17 @@ namespace DeR4Tizer
             }
         }
 
+        // Lecture de la réponse bornée (durcissement du canal) : un service bloqué ne fige pas l'interface sans fin.
+        // Large : certaines commandes (listes, quarantaine, mode panique) prennent plusieurs dizaines de secondes
+        const int DELAI_REPONSE = 120000;
+
         public static Reponse Envoyer(Commande c)
         {
             try
             {
-                using (var tube = new NamedPipeClientStream(".", Commun.NomPipe, PipeDirection.InOut))
+                // Niveau Identification : le service lit le jeton de la connexion pour identifier le client, sans
+                // pouvoir agir avec (durcissement du canal)
+                using (var tube = new NamedPipeClientStream(".", Commun.NomPipe, PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Identification))
                 {
                     tube.Connect(3000);
                     // Le serveur du tube doit être le processus du service : un programme qui aurait pris le nom du
@@ -229,8 +235,12 @@ namespace DeR4Tizer
                             : "Le canal de commandes n'est pas tenu par le service deR4Tizer (usurpation possible) : commande non envoyée." };
                     var ecrivain = new StreamWriter(tube, new UTF8Encoding(false)) { AutoFlush = true };
                     ecrivain.WriteLine(Commun.Json().Serialize(c));
-                    string ligne = new StreamReader(tube, Encoding.UTF8).ReadLine();
-                    return Commun.Json().Deserialize<Reponse>(ligne);
+                    var lecture = new StreamReader(tube, Encoding.UTF8).ReadLineAsync();
+                    if (!lecture.Wait(DELAI_REPONSE))
+                        return new Reponse { Ok = false, Message = L.En
+                            ? "The deR4Tizer service did not answer in time: the command may still be running, check its result before trying again."
+                            : "Le service deR4Tizer n'a pas répondu à temps : la commande est peut-être encore en cours, vérifiez son résultat avant de réessayer." };
+                    return Commun.Json().Deserialize<Reponse>(lecture.Result);
                 }
             }
             catch (System.TimeoutException) { return new Reponse { Ok = false, Message = "Le service deR4Tizer ne répond pas. Est-il démarré ?" }; }

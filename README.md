@@ -66,7 +66,7 @@ le DPI et l'IDS/IPS sont expérimentaux.
 deR4TizerSvc.exe   service Windows en Rust, compte SYSTEM (surveillance, réponse, export)
 deR4Tizer.exe      interface C# (.NET Framework 4.8, fourni avec Windows), sans droits admin
 C:\ProgramData\deR4Tizer   état partagé (JSON), journal ; lecture : administrateurs et comptes autorisés
-\\.\pipe\deR4Tizer         commandes interface → service (administrateurs et SYSTEM seulement)
+\\.\pipe\deR4Tizer         commandes interface → service (administrateurs et SYSTEM seulement, sur ce poste : connexions distantes refusées)
 ```
 
 Aucun pilote noyau, aucune dépendance à installer : uniquement des API Windows (ETW, journal d'événements, WMI, pare-feu, IP Helper, WinVerifyTrust).
@@ -289,7 +289,7 @@ IDS/IPS are experimental.
 deR4TizerSvc.exe   Rust Windows service, SYSTEM account (monitoring, response, export)
 deR4Tizer.exe      C# interface (.NET Framework 4.8, ships with Windows), no admin rights
 C:\ProgramData\deR4Tizer   shared state (JSON), log; readable by administrators and authorised accounts
-\\.\pipe\deR4Tizer         interface → service commands (Administrators and SYSTEM only)
+\\.\pipe\deR4Tizer         interface → service commands (Administrators and SYSTEM only, on this computer: remote connections refused)
 ```
 
 No kernel driver and nothing extra to install: only Windows APIs (ETW, Event Log, WMI, Firewall, IP Helper, WinVerifyTrust).

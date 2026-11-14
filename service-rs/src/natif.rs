@@ -704,9 +704,13 @@ pub fn est_systeme() -> bool {
 }
 
 /// Identité du client d'un tube (phase 1, autorisation par commande) : SYSTEM, administrateur (groupe
-/// Administrateurs actif dans son jeton), ou autre. Lue sur le jeton du PROCESSUS client
-/// (GetNamedPipeClientProcessId), sans emprunter son identité : rien ne change sur le fil du service. Tout échec
-/// (processus disparu, jeton illisible) : « autre », donc refus (échec fermé).
+/// Administrateurs actif dans son jeton), ou autre. Lue sur le jeton de la CONNEXION (durcissement du canal, après une
+/// relecture indépendante) : emprunt de l'identité du client (ImpersonateNamedPipeClient, appelé après la lecture de
+/// la commande comme le demande sa documentation), jeton du fil ouvert au nom du service, retour immédiat à l'identité
+/// du service, puis lecture du jeton hors emprunt. Lié à la connexion qui a porté la commande, sans course sur un PID
+/// repris par un autre processus. Les clients se connectent au niveau Identification : le service peut lire leur
+/// jeton, jamais agir avec. Client au niveau Anonymous (aucun jeton) ou tout échec : « autre », donc refus (échec
+/// fermé). Retour à l'identité du service impossible : arrêt (`retour_ou_arret`).
 pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
     identite_client_tube(tube).0
 }
@@ -715,25 +719,36 @@ pub fn client_tube(tube: HANDLE) -> crate::validation::Client {
 /// (phase 4, PR 4.2). Le SID ne sert qu'à l'historique, jamais à une autorisation
 pub fn identite_client_tube(tube: HANDLE) -> (crate::validation::Client, String) {
     use crate::validation::Client;
-    use windows::Win32::Foundation::BOOL;
-    use windows::Win32::Security::{
-        CheckTokenMembership, CreateWellKnownSid, DuplicateToken, GetTokenInformation, IsWellKnownSid, SecurityIdentification, TokenUser,
-        WinBuiltinAdministratorsSid, WinLocalSystemSid, PSID, TOKEN_DUPLICATE, TOKEN_QUERY, TOKEN_USER,
-    };
-    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::Security::{RevertToSelf, TOKEN_QUERY};
+    use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
     unsafe {
-        let mut pid = 0u32;
-        if GetNamedPipeClientProcessId(tube, &mut pid).is_err() || pid == 0 {
-            return (Client::Autre, String::new());
-        }
-        let Ok(processus) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return (Client::Autre, String::new()) };
+        let emprunt = ImpersonateNamedPipeClient(tube).is_ok();
         let mut jeton = HANDLE::default();
-        let ouvert = OpenProcessToken(processus, TOKEN_QUERY | TOKEN_DUPLICATE, &mut jeton).is_ok();
-        let _ = CloseHandle(processus);
+        // Ouvert au nom du service (OpenAsSelf) : un jeton au niveau Identification ne permet pas d'ouvrir un objet
+        let ouvert = emprunt && OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut jeton).is_ok();
+        if emprunt {
+            retour_ou_arret(RevertToSelf().map_err(|e| e.to_string()), "identification du client du canal", arreter);
+        }
         if !ouvert {
             return (Client::Autre, String::new());
         }
+        let r = identite_jeton(jeton);
+        let _ = CloseHandle(jeton);
+        r
+    }
+}
+
+/// SYSTEM, administrateur (groupe Administrateurs actif) ou autre, et SID du compte, d'un jeton d'emprunt (niveau
+/// Identification au moins) ouvert avec TOKEN_QUERY
+fn identite_jeton(jeton: HANDLE) -> (crate::validation::Client, String) {
+    use crate::validation::Client;
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Security::{
+        CheckTokenMembership, CreateWellKnownSid, GetTokenInformation, IsWellKnownSid, TokenUser, WinBuiltinAdministratorsSid,
+        WinLocalSystemSid, PSID, TOKEN_USER,
+    };
+    unsafe {
         let mut tampon = vec![0u64; 64];
         let mut taille = 0u32;
         let lu = GetTokenInformation(jeton, TokenUser, Some(tampon.as_mut_ptr() as *mut c_void), (tampon.len() * 8) as u32, &mut taille).is_ok();
@@ -741,23 +756,18 @@ pub fn identite_client_tube(tube: HANDLE) -> (crate::validation::Client, String)
         let systeme = lu && IsWellKnownSid((*(tampon.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool();
         let mut client = if systeme { Client::Systeme } else { Client::Autre };
         if !systeme {
-            // CheckTokenMembership exige un jeton d'emprunt : copie au niveau « identification » (aucun accès possible)
-            let mut copie = HANDLE::default();
-            if DuplicateToken(jeton, SecurityIdentification, &mut copie).is_ok() {
-                let mut sid = vec![0u64; 16];
-                let mut t = (sid.len() * 8) as u32;
-                let psid = PSID(sid.as_mut_ptr() as *mut c_void);
-                let mut membre = BOOL(0);
-                if CreateWellKnownSid(WinBuiltinAdministratorsSid, None, psid, &mut t).is_ok()
-                    && CheckTokenMembership(copie, psid, &mut membre).is_ok()
-                    && membre.as_bool()
-                {
-                    client = Client::Administrateur;
-                }
-                let _ = CloseHandle(copie);
+            // Jeton d'emprunt déjà (celui de la connexion) : CheckTokenMembership le prend tel quel
+            let mut sid = vec![0u64; 16];
+            let mut t = (sid.len() * 8) as u32;
+            let psid = PSID(sid.as_mut_ptr() as *mut c_void);
+            let mut membre = BOOL(0);
+            if CreateWellKnownSid(WinBuiltinAdministratorsSid, None, psid, &mut t).is_ok()
+                && CheckTokenMembership(jeton, psid, &mut membre).is_ok()
+                && membre.as_bool()
+            {
+                client = Client::Administrateur;
             }
         }
-        let _ = CloseHandle(jeton);
         (client, sid)
     }
 }
