@@ -80,7 +80,11 @@ mise à jour, pas seulement un retour arrière.
 - Quand Quad9 est choisi, **toutes les requêtes non bloquées lui sont envoyées** : dit dans la confirmation et sur la
   page.
 - **Repli au portail captif** (`amont_tiers_repli`, pure) : Quad9 muet et DNS du réseau qui répond → repli sur le DNS
-  du réseau, affiché ; Quad9 qui répond de nouveau → il redevient l'amont. Sondes toutes les 5 minutes.
+  du réseau, affiché ; Quad9 qui répond de nouveau → il redevient l'amont. Sondes toutes les 5 minutes. Avant le
+  repli, il peut s'écouler 30 s (dégradation ouverte : cartes rendues, sans filtrage) puis jusqu'à 5 minutes de sonde
+  (relecture de #167, R2).
+- Quad9 déjà choisi et injoignable au moment d'activer le filtrage (portail captif) : l'activation est refusée, avec un
+  message qui le nomme ; choisir « résolveur de votre réseau » puis réactiver (R1).
 - DNS4EU reste écarté (particuliers seulement, sans usage commercial). DNS chiffré : étape 7.7 facultative, non faite.
 
 ## Résolveur local (PR 7.3, non branché)
