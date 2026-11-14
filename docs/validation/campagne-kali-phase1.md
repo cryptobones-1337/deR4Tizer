@@ -2,13 +2,13 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.2** |
-| Date de la version 1.2 | 2026-11-14 |
-| Versions précédentes | 1.1 du 2026-11-14 ; 1.0 du 2026-11-14 |
-| Code audité | `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` (section 5, campagne Kali) ; instantanés de campagne relus dans le `CLAUDE.md` de la PR #172 (section 5, campagne Kali) |
+| Version de la liste | **1.3** |
+| Date de la version 1.3 | 2026-11-14 |
+| Versions précédentes | 1.2 du 2026-11-14 (publiée sous `docs/validation/campagne-kali-phase1.md`) ; 1.1 et 1.0 du 2026-11-14 |
+| Code audité | `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` (section 5, campagne Kali) ; instantanés de campagne relus dans le `CLAUDE.md` de la PR #172 (section 5, campagne Kali) ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f` (`main`) |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
-> **Rappel sur l'approbation (v1.2).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.2 est transmise au mainteneur, pour information, avant toute exécution.** Les deux volets autrefois laissés au mainteneur (volet T1562.002 de S-13 ; DNS-003, désormais S-18) restent approuvés depuis la v1.1, à la suite de sa décision du 2026-11-14 citée en 5.2.
+> **Rappel sur l'approbation (v1.3).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.3 doit être transmise au mainteneur, pour information, avant toute exécution.** Nouveauté principale : configuration C (baseline de deR4Tizer appliquée à 100 %), configuration principale de mesure sur décision du mainteneur (5.1.11). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2).
 
 ## Approbation
 
@@ -21,6 +21,10 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   (instantanés de campagne « campagne A » et « campagne B », approbation datée, sens de « non mesurée »). **Cette
   approbation n'est ni humaine ni indépendante** ; elle ne lève aucune règle, et la v1.2 est transmise au mainteneur, pour
   information, avant toute exécution.
+- **2026-11-14, version 1.3** : approuvée par l'agent de validation (configuration C principale, baseline appliquée à
+  100 % sur décision du mainteneur ; attendu en configuration C pour chaque scénario ; classe P « prévenu (baseline) » ;
+  scénario de contrôle S-19 ; défaut D-BAS-01). **Cette approbation n'est ni humaine ni indépendante** ; elle ne lève
+  aucune règle, et la v1.3 doit être transmise au mainteneur, pour information, avant toute exécution.
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -34,8 +38,9 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   suivant n'est lancé que si l'état de référence est vérifié (VM conforme à l'instantané de campagne de sa configuration,
   section 3.0) et les preuves du précédent complètes.
 
-**Retenus (v1.1)** : N-01 à N-05 ; S-01 à S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à
-S-18 ; S-16 avec son option longue (2 h). **Ajouté en v1.1** : S-18 (DNS-003).
+**Retenus (v1.3)** : N-01 à N-05 ; S-01 à S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à
+S-19 ; S-16 avec son option longue (2 h, en configuration A). **Ajoutés** : S-18 (DNS-003) en v1.1 ; S-19 (contrôle de la
+configuration C) en v1.3. Configurations : C principale, A comparaison, B collecte Sysmon (3.0, 5.1.2, 5.1.11).
 
 **Écartés (v1.1)** : T1567 (D, aucun service web réel autorisé) ; T1055 (non exécuté) ; T1562.001 contre Defender, les
 journaux de Windows ou deR4Tizer (interdit) ; fiches Atomic qui téléchargent, désactivent une protection, lisent la
@@ -54,6 +59,15 @@ de test, réglages du labo), et non plus de « propre », qui n'a rien de cela ;
 visent l'instantané de la configuration ; la VM ne revient à « propre » qu'après la campagne (sections 3.0, 4, 5.1.2,
 5.1.3 et renvois) ; D2, approbation datée de la v1.2 ; section 1.3, « non mesurée » précisé en « non mesurée en VM ».
 Aucun scénario ajouté, retiré ni changé dans son action ou son attendu.
+
+**Changements de la v1.3 par rapport à la v1.2** (décision du mainteneur du 2026-11-14 au soir, citée telle quelle : « pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait » ; en résumé : tests Kali avec la
+baseline de deR4Tizer appliquée à 100 %) : configuration C ajoutée, instantané « campagne C » (« campagne A » plus la
+baseline appliquée par le service, profils journalisation, recommandé et renforcé), devenue configuration principale de
+mesure ; A reste la comparaison (installation sans baseline au-delà du profil journalisation appliqué d'office), B la
+collecte Sysmon ; section 1.7 (effets de la baseline sur la campagne) ; classe P « prévenu (baseline) », jamais
+confondue avec une détection (section 2) ; un attendu en configuration C, marqué HYPOTHÈSE, pour chaque scénario et
+chaque test négatif ; S-19, contrôle de la configuration C ; section 5.3, défaut D-BAS-01 constaté à la lecture ;
+sections 3.0, 3.3, 4 et 5.1 mises à jour. Actions et nettoyages des scénarios existants inchangés.
 Document écrit pour être publiable tel quel (`docs/validation/`) : niveau comportement, identifiants ATT&CK, attendus,
 nettoyage et preuves ; aucune commande offensive détaillée ; aucune donnée personnelle, aucun chemin de profil, aucun
 identifiant de compte ni mot de passe. Adresses en plages de documentation (RFC 5737), noms de test en `.test` (RFC 2606).
@@ -153,6 +167,33 @@ DNS de labo (décision 5.1.4).
 - Les plages de documentation RFC 5737 comptent comme Internet pour le service : c'est ce qui rend COR-R9 possible ;
   effets de bord attendus : VM vue « exposée », RES-005, RES-007, indice « IP directe » vers Kali.
 
+### 1.7 Baseline de deR4Tizer appliquée à 100 % (configuration C, ajouté en v1.3)
+
+Lu dans `service-rs/src/baseline.rs` (`main` à `ede269f`). La baseline passe par la GPO locale (Registry.pol,
+audit.csv) ; les valeurs d'origine sont sauvegardées pour l'annulation ; l'application est refusée sur un poste géré
+(domaine ou MDM). Trois profils : journalisation (appliqué d'office, donc déjà présent en A et B), recommandé, renforcé.
+Effets attendus sur la campagne, tous **HYPOTHÈSE** :
+
+| Règle de la baseline | Profil | Effet attendu sur la campagne |
+|---|---|---|
+| `reseau.bureau-distance` (Bureau à distance et Assistance refusés par stratégie) | recommandé | S-01, S-02, S-05 (a), N-04 : connexion RDP impossible ; COR-R1, R2 et la variante Critique de R9 par RDP non exerçables en C, mesurées en A |
+| `reseau.pare-feu` (pare-feu actif sur les trois profils, entrées bloquées par défaut sur le profil public) | recommandé | règles d'autorisation locales conservées (fusion locale non désactivée) ; davantage de paquets refusés journalisés (S-08) |
+| `reseau.smb1`, `reseau.invite-smb` ; `reseau.signature-smb` (côté client) | recommandé ; renforcé | S-03, S-04, S-17 : Kali doit parler SMB 2 ou 3 ; la signature exigée côté client de la VM ne touche pas la VM en serveur |
+| `asr.scripts-obscurcis`, `asr.scripts-telecharges` | recommandé | S-10 : contenu obscurci bloqué possible ; la création du processus et sa ligne de commande restent visibles |
+| `asr.lsass` ; `systeme.lsa` (processus protégé, redémarrage requis) ; `systeme.wdigest` | recommandé ; renforcé ; recommandé | S-15 : l'accès « informations limitées » reste permis ; une lecture de mémoire serait refusée (jamais exercée) |
+| `asr.psexec-wmi` | renforcé | aucun scénario n'exécute à distance ; effet de bord possible sur un outil qui crée des processus par WMI (relevé) |
+| `asr.prevalence` (mode audit) | renforcé | programmes de test récents (S-14, S-16, S-18) : événements d'audit 1122, sans blocage |
+| `asr.rancongiciel` | recommandé | s'appuie sur le cloud, injoignable dans le labo : effet incertain sur S-16 |
+| `defender.dossiers-blocage` (accès contrôlé aux dossiers, blocage) | renforcé | S-16 : les leurres sont dans Documents, Images et Bureau, dossiers protégés : l'écriture du programme de test non signé serait refusée ; témoins de S-09 hors de ces dossiers |
+| `defender.pua`, `defender.cloud`, `defender.reseau` | recommandé | sans Internet, cloud et réputation injoignables : effet attendu faible sur S-07 et S-11 ; toute réaction relevée |
+| `systeme.wsh` (Windows Script Host désactivé) | renforcé | toute variante .vbs ou .js (fiches Atomic) bloquée ; S-09 et S-10 passent par PowerShell |
+| `systeme.smartscreen` (avertir) | recommandé | N-03 : avertissement à l'ouverture d'un fichier téléchargé, pas au téléchargement |
+| `systeme.uac` (bureau sécurisé) | recommandé | sans effet attendu sur le pilotage par PowerShell Direct (vérifié par N-01 en C) |
+
+En configuration C, une action peut être **prévenue** (empêchée par un réglage de Windows posé par la baseline, ou par
+Defender durci par elle) sans être **détectée** par deR4Tizer : les deux sont notés séparément (classe P, section 2).
+Défaut constaté à la lecture : D-BAS-01 (section 5.3).
+
 ---
 
 ## 2. Cartographie ATT&CK → alerte attendue
@@ -161,6 +202,16 @@ Classe a priori : **HYPOTHÈSE** pour toutes les lignes. A détection attendue ;
 attendue mais incorrecte ou trop générique ; D non exécutable dans le labo ; E non testable avec l'architecture
 actuelle. Sous-classes descriptives proposées : B1 reçu par deR4Tizer sans règle, B2 produit par Windows ou Sysmon mais
 non lu par deR4Tizer.
+
+Classe ajoutée en v1.3 : **P, prévenu (baseline)**. Le comportement est empêché, preuve à l'appui, par un réglage de
+Windows posé par la baseline (P-baseline : Bureau à distance refusé, pare-feu, Windows Script Host, protection LSA…) ou
+par un composant de Defender durci par elle (P-Defender : règle ASR, accès contrôlé aux dossiers, PUA, protection réseau,
+antivirus ; événements Defender 1121, 1123, 1126 ou détection ; refus de connexion relevé côté Kali). **P n'est jamais
+une détection** : un essai entièrement prévenu sort du dénominateur de détection de deR4Tizer (ni VP, ni FN) et est
+compté à part (taux de prévention, par configuration) ; si deR4Tizer alerte aussi, l'essai est noté « P + A » et seule la
+part A entre dans le score de détection. Une réaction de Defender en configuration A ou B (sans baseline durcie) est
+notée « bloqué par Defender », jamais attribuée à la baseline. Les attendus en configuration C figurent dans chaque
+scénario (3.1).
 
 | Technique | Comportement simulé | Capteur requis | Événement attendu | Règle | Alerte attendue | Classe a priori (HYPOTHÈSE) |
 |---|---|---|---|---|---|---|
@@ -204,19 +255,30 @@ non lu par deR4Tizer.
 
 - Adressage : VM cible 203.0.113.10, Kali 203.0.113.20 sur `d4t-labo` ; lien d'administration 198.51.100.0/24 entre le
   poste et Kali seulement ; carte « Default Switch » de la VM débranchée.
-- Instantané de départ selon la configuration (décision 5.1.2) : « campagne A » (configuration A, sans Sysmon) ou
-  « campagne B » (configuration B, avec Sysmon et Atomic Red Team). Les deux sont préparés hors campagne et contiennent
-  deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance, partage de
-  fichiers, profil réseau). Leurs noms ne commencent jamais par « propre ».
+- Instantané de départ selon la configuration (décisions 5.1.2 et 5.1.11) :
+  - « campagne C » (configuration C, **principale de mesure** depuis la v1.3) : « campagne A » plus la baseline de
+    deR4Tizer appliquée par le service lui-même (`baseline appliquer`, profils journalisation, recommandé et renforcé,
+    en une seule commande), puis redémarrage ; sans Sysmon ;
+  - « campagne A » (configuration A, comparaison) : l'installation sans baseline au-delà du profil journalisation
+    appliqué d'office ; sans Sysmon ;
+  - « campagne B » (configuration B, collecte Sysmon) : avec Sysmon et Atomic Red Team.
+  Les trois sont préparés hors campagne et contiennent deR4Tizer installé, l'apprentissage terminé, les comptes de test et
+  les réglages du labo (Bureau à distance, partage de fichiers, profil réseau) ; en C, la baseline l'emporte sur ces
+  réglages quand elle les contredit (Bureau à distance refusé). Leurs noms ne commencent jamais par « propre ».
 - Dans tout ce document, **« remise à l'instantané » désigne la remise à l'instantané de campagne de la configuration de
-  l'essai** (« campagne A » ou « campagne B »), **jamais à « propre »** : « propre » est l'instantané des passages
+  l'essai** (« campagne A », « campagne B » ou « campagne C »), **jamais à « propre »** : « propre » est l'instantané des passages
   complets, sans deR4Tizer, sans comptes de test ni réglages du labo ; y revenir effacerait les préconditions de S-01 à
   S-04, S-13 et S-17. Remise avant et après chaque lot, et **avant chaque essai des scénarios à corrélation** (COR-*) :
   la déduplication d'une heure et la fenêtre d'échecs de 30 min sont en mémoire, un second essai sans remise ne serait
   pas indépendant.
 - La VM n'est remise à « propre » qu'**après la campagne**, une fois les preuves collectées.
 - Atomic Red Team n'existe que dans « campagne B » : une fiche Atomic (S-09 par exemple) ne sert qu'en configuration B ;
-  en configuration A, le comportement est produit sans elle.
+  en configuration A ou C, le comportement est produit sans elle.
+- Chaque scénario porte un attendu en configuration C, marqué HYPOTHÈSE. Scénarios que C rend inexécutables ou
+  entièrement prévenus (S-01, S-02, S-05 (a), N-04 : Bureau à distance refusé ; S-16 : leurres dans des dossiers
+  protégés) : la détection se mesure en A, l'essai en C reste une mesure de prévention (classe P). S-19 est exécuté au
+  début de chaque lot en C ; s'il échoue, le lot est invalide (D).
+- Scores séparés par configuration (A, B, C), jamais fusionnés ; classe P comptée à part, jamais comme détection.
 - Comptes locaux de test dédiés ; mots de passe de labo jamais écrits dans un rapport ni dans le dépôt.
 - Horodatage : début (UTC) relevé sur la VM ; latence = `HeureUtc` de l'alerte moins `TimeCreated` de l'événement Windows
   déclencheur (et, en second, moins le début de l'action).
@@ -244,6 +306,7 @@ non lu par deR4Tizer.
 - Délai : 10 min d'observation.
 - Nettoyage : fermeture de session.
 - Preuves : communes + état des collectes au début et à la fin.
+- Attendu en configuration C (HYPOTHÈSE) : identique ; vérifie en plus que le pilotage par PowerShell Direct et la collecte des preuves fonctionnent sous la baseline (UAC sur bureau sécurisé, règles ASR) ; aucune alerte Alerte/Critique due à la baseline.
 
 **S-01 — Force brute RDP, échecs seuls (premier scénario : valide la chaîne de mesure, COR-R1)**
 - Technique : T1110.001.
@@ -256,6 +319,7 @@ non lu par deR4Tizer.
 - Délai maximal : 120 s après le 5e échec.
 - Nettoyage : remise à l'instantané avant l'essai suivant.
 - Preuves : communes + 4625 exportés ; journal côté Kali (heure, nombre, résultat ; sans mot de passe).
+- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-baseline)** : Bureau à distance refusé par `reseau.bureau-distance`, connexion refusée côté Kali, aucune 4625 par RDP, COR-R1 non exercée (paquets refusés journalisés possibles, RES-005). Ce n'est pas un FN : COR-R1 se mesure en C par S-03 et en A par S-01.
 
 **S-02 — Force brute RDP suivie d'une réussite**
 - Technique : T1110.001, T1078.003, T1133.
@@ -267,6 +331,7 @@ non lu par deR4Tizer.
 - Délai : 120 s après la 4624.
 - Nettoyage : déconnexion ; remise à l'instantané.
 - Preuves : communes + 4624 (types 3 et 10), 4625.
+- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-baseline)** comme S-01 ; COR-R2 et la variante Critique de COR-R9 (Bureau à distance) non exerçables en C, mesurées en A.
 
 **S-03 — Force brute SMB suivie d'une réussite**
 - Technique : T1110.001, T1021.002.
@@ -279,6 +344,7 @@ non lu par deR4Tizer.
 - Délai : 120 s.
 - Nettoyage : remise à l'instantané.
 - Preuves : communes + 4625/4624 avec le champ d'adresse source.
+- Attendu en configuration C (HYPOTHÈSE) : identique à A (COR-R1, COR-R2, COR-R9 Alerte) si l'autorisation « partage de fichiers » du profil de la carte survit au blocage des entrées par défaut ; Kali en SMB 2 ou 3 (SMBv1 désactivé). Accès refusé par le pare-feu : P-baseline, relevé.
 
 **S-04 — Connexion distante au canal de commandes (IPC-03)**
 - Technique : aucune directe (frontière de privilège).
@@ -289,6 +355,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : remise à l'instantané.
 - Preuves : erreur côté Kali, `journal.txt`, SIEM.
+- Attendu en configuration C (HYPOTHÈSE) : identique (refus du tube, COR-R9 Alerte) ; si la session SMB est refusée en amont : P-baseline, et le refus du tube n'est pas exercé (D pour IPC-03).
 
 **S-05 — Essais D4-1 : interface en session Bureau à distance et au changement rapide d'utilisateur**
 - Technique : aucune (essai fonctionnel reporté, décision D4-1).
@@ -300,6 +367,7 @@ non lu par deR4Tizer.
 - Délai : 25 min par cas.
 - Nettoyage : sessions fermées ; remise à l'instantané.
 - Preuves : processus par session, SIEM (`Type` « interface »), alertes SAN.
+- Attendu en configuration C (HYPOTHÈSE) : (a) **non exécutable** (Bureau à distance refusé) : D en C, mesuré en A ; (b) identique à A.
 
 **S-06 — Changement de serveur DNS et filtrage DNS**
 - Technique : sans correspondance exacte (redirection de résolution) ; fonction de phase 7.
@@ -313,6 +381,7 @@ non lu par deR4Tizer.
 - Délai : 180 s (a), 60 s (b).
 - Nettoyage : filtrage désactivé, réglages d'origine vérifiés ; remise à l'instantané.
 - Preuves : communes + `filtrage-etat.json`, `filtrage-origine.json`, réglages des cartes avant et après.
+- Attendu en configuration C (HYPOTHÈSE) : identique ; LLMNR désactivé et protection réseau sans effet attendu sur les noms `.test` et l'amont du labo.
 
 **S-07 — Domaine et adresse inscrits dans des listes de menaces de test**
 - Technique : T1071 (infrastructure connue).
@@ -326,6 +395,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : déblocage ; listes de test retirées ; remise à l'instantané.
 - Preuves : communes + règles « deR4Tizer » du pare-feu avant et après.
+- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-001, RES-001, blocage de 7 jours) ; sans réputation joignable, la protection réseau ne devrait pas bloquer l'adresse du labo ; si elle le fait : P-Defender relevé à part, DNS-001 restant attendue (la résolution précède la connexion).
 
 **S-08 — Balayage de ports**
 - Technique : T1046.
@@ -337,6 +407,7 @@ non lu par deR4Tizer.
 - Délai : 180 s.
 - Nettoyage : remise à l'instantané.
 - Preuves : communes + `pfirewall.log`, `exposition.json`, nombre de RES-005.
+- Attendu en configuration C (HYPOTHÈSE) : comme A, avec davantage de paquets refusés journalisés si la carte est sur le profil public et le port 3389 fermé ; nombre de RES-005 comparé à A.
 
 **S-09 — Persistance par clé Run et par tâche planifiée**
 - Technique : T1547.001, T1053.005.
@@ -348,6 +419,7 @@ non lu par deR4Tizer.
 - Délai : 180 s.
 - Nettoyage : valeur et tâche supprimées ; aucune alerte résiduelle.
 - Preuves : communes + `demarrage.json`.
+- Attendu en configuration C (HYPOTHÈSE) : PER-001 Alerte pour (a) et (b), aucune règle ASR ne couvrant clé Run ni tâche planifiée ; témoin écrit hors des dossiers protégés (sinon P-Defender par l'accès contrôlé aux dossiers, relevé) ; variante par Windows Script Host bloquée (P-baseline), non utilisée.
 
 **S-10 — PowerShell encodé et obscurci (contenu bénin)**
 - Technique : T1059.001, T1027.
@@ -358,6 +430,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : témoin supprimé.
 - Preuves : communes + Sysmon 1, 4688, 4104.
+- Attendu en configuration C (HYPOTHÈSE) : (a) PRC-002 Alerte (ligne de commande visible à la création du processus), avec un blocage possible du contenu par `asr.scripts-obscurcis` (événement 1121) : « P + A » ; (b) blocage probable du script obscurci (P-Defender), aucune alerte de deR4Tizer (aucune règle), 4104 relevé s'il est produit.
 
 **S-11 — Commande et contrôle HTTP simulé, transfert d'un fichier bénin**
 - Technique : T1071.001, T1105.
@@ -371,6 +444,7 @@ non lu par deR4Tizer.
 - Délai : 300 s (a), 60 s (b, c).
 - Nettoyage : fichiers supprimés ; remise à l'instantané.
 - Preuves : communes + journal du serveur, journal Defender.
+- Attendu en configuration C (HYPOTHÈSE) : identique (RES-002, PRC-002, PRC-003) ; cloud et protection réseau injoignables, effet attendu faible ; toute détection ou tout blocage de Defender noté à part (P-Defender ou DEF-001).
 
 **S-12 — Exfiltration d'un fichier canari**
 - Technique : T1041.
@@ -381,6 +455,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : canari supprimé des deux côtés.
 - Preuves : communes + empreinte du canari, journal du serveur.
+- Attendu en configuration C (HYPOTHÈSE) : identique (RES-002 selon le score) ; aucune règle de la baseline ne porte sur l'envoi HTTP.
 
 **S-13 — Service, compte administrateur, journal dédié effacé, audit modifié**
 - Technique : T1543.003, T1136.001, T1098, T1070.001 (SIMULATION), T1562.002 (SIMULATION).
@@ -393,6 +468,7 @@ non lu par deR4Tizer.
 - Délai : 120 s ; 25 min pour BAS-001.
 - Nettoyage : service, compte, journal dédié supprimés ; sous-catégorie d'audit remise dans son état initial (relevé avant l'essai) et le rétablissement vérifié (comparaison avant/après) ; remise à l'instantané après l'essai.
 - Preuves : communes + 7045, 4720, 4732, 104, 4719 ; politique d'audit avant et après.
+- Attendu en configuration C (HYPOTHÈSE) : identique (COR-R5, COR-R3, COR-R4, COR-R7) ; aucune règle ASR ne bloque la création du service ni du compte ; BAS-001 attendue si la sous-catégorie modifiée appartient au profil journalisation ; la GPO locale peut rétablir d'elle-même la sous-catégorie à son actualisation : heure du rétablissement relevée.
 
 **S-14 — Lecture d'un fichier d'identifiants de navigateur (SIMULATION)**
 - Technique : T1555.003 (SIMULATION).
@@ -404,6 +480,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : programme de test supprimé ; remise à l'instantané.
 - Preuves : communes + 4663.
+- Attendu en configuration C (HYPOTHÈSE) : identique (VOL-001 Critique) : l'accès contrôlé aux dossiers ne bloque que l'écriture et ne protège pas ce fichier ; audit ASR de prévalence (1122) possible pour le programme de test, sans blocage.
 
 **S-15 — Accès limité à LSASS (SIMULATION)**
 - Technique : T1003.001 (SIMULATION).
@@ -415,6 +492,7 @@ non lu par deR4Tizer.
 - Délai : 60 s.
 - Nettoyage : aucun.
 - Preuves : communes + Sysmon 10.
+- Attendu en configuration C (HYPOTHÈSE) : identique (aucune alerte de deR4Tizer, B2) : la protection LSA et `asr.lsass` laissent passer l'accès « informations limitées » ; toute réaction (1121, ouverture refusée) est relevée comme P, sans changer la classe de détection.
 
 **S-16 — Leurre anti-rançongiciel touché (SIMULATION, réponse automatique)**
 - Technique : T1486 (SIMULATION).
@@ -426,6 +504,7 @@ non lu par deR4Tizer.
 - Délai : 60 s ; 2 h 05 pour l'option.
 - Nettoyage : reprise puis arrêt du programme de test ; remise à l'instantané.
 - Preuves : communes + 4663, état du processus.
+- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-Defender)** : leurres dans Documents, Images et Bureau, protégés par l'accès contrôlé aux dossiers en blocage ; écriture du programme de test non signé refusée (événement 1123), leurre intact ; LEU-002 et la suspension automatique probablement non déclenchées (aucune modification réussie). Détection et réponse automatique mesurées en A ; option longue en A seulement. LEU-002 malgré tout en C : « P + A », relevé.
 
 **S-17 — Session administrative à distance sur un partage administratif**
 - Technique : T1021.002.
@@ -436,6 +515,7 @@ non lu par deR4Tizer.
 - Délai : 120 s.
 - Nettoyage : remise à l'instantané.
 - Preuves : communes + 4624, 4672, 5140.
+- Attendu en configuration C (HYPOTHÈSE) : identique (COR-R9 Alerte, 4672) ; `asr.psexec-wmi` sans objet (aucune exécution à distance) ; Kali en SMB 2 ou 3.
 
 **S-18 — DNS-003 : port 53 de la boucle locale tenu par un autre programme au redémarrage du service (approuvé en v1.1)**
 - Technique : sans correspondance ATT&CK exacte (interférence avec le résolveur local, détournement de la résolution) ; fonction de phase 7.
@@ -447,16 +527,53 @@ non lu par deR4Tizer.
 - Délai maximal : 180 s après la relance du service.
 - Nettoyage : programme d'écoute arrêté, port 53 libéré ; **service deR4Tizer relancé et son bon fonctionnement vérifié** (le tube répond à une demande de version, collectes revenues « Active », filtrage et cartes rendus à leur état d'origine, comparaison avant/après) ; **remise à l'instantané après l'essai**.
 - Preuves : communes + `filtrage-etat.json` et `filtrage-origine.json` avant et après, réglage des cartes avant et après, `journal.txt` (arrêt et relance du service, échec de liaison du port 53, PID relevé), état des collectes au début et à la fin.
+- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-003 Critique avec le PID) ; programme d'écoute récent : audit ASR de prévalence (1122) possible, sans blocage ; nettoyage inchangé (service relancé et vérifié, remise à « campagne C »).
+
+**S-19 — Contrôle de la configuration C : conformité de la baseline et état de Defender (ajouté en v1.3)**
+- Technique : aucune (contrôle de configuration ; préalable de chaque lot en configuration C).
+- Nature : contrôle, lecture seule.
+- Préconditions : « campagne C » préparé hors campagne depuis « campagne A » : relevé de référence de Defender
+  (Get-MpPreference, Get-MpComputerStatus) et de `baseline.json` pris dans « campagne A » juste avant l'application ;
+  baseline appliquée par le service lui-même, en une seule commande `baseline appliquer` avec les profils journalisation,
+  recommandé et renforcé (deux commandes successives risqueraient une BAS-001 à tort, 5.3) ; redémarrage avant la prise
+  de l'instantané (protection LSA).
+- Action : à la préparation, puis au début de chaque lot en C : relevé de `baseline.json` (évaluation par le service) et
+  de l'état de Defender (Get-MpPreference, Get-MpComputerStatus) ; comparaison réglage par réglage avec le relevé de
+  référence.
+- Attendu (HYPOTHÈSE) :
+  - Defender : **aucun réglage plus faible qu'avant** : protection en temps réel, surveillance du comportement, analyse
+    des scripts et des téléchargements, protection contre les falsifications, niveau de protection cloud, PUA, protection
+    réseau, accès contrôlé aux dossiers ; règles ASR jamais rétrogradées (blocage vers audit ou désactivé) ; aucune
+    exclusion avant comme après (chemins, extensions, processus, adresses). Valeurs plus fortes attendues : PUA activé,
+    cloud avancé avec blocage élevé, protection réseau activée, accès contrôlé aux dossiers en blocage, règles ASR du
+    profil en blocage (prévalence en audit). « Plus faible » est défini réglage par réglage dans une table écrite avant
+    le premier relevé ; un réglage sans ordre naturel (consentement d'envoi d'échantillons) est relevé et signalé, jamais
+    classé d'office.
+  - Baseline : profils journalisation et renforcé à 100 % ; profil recommandé **sous 100 %**, du seul fait de
+    `defender.dossiers-audit` vue non conforme (défaut D-BAS-01, 5.3) ; tout autre écart rend le lot invalide (D)
+    jusqu'à explication.
+  - Effets vérifiés au-delà du registre : Bureau à distance refusé (port 3389 fermé) ; protection LSA effective après
+    redémarrage (un registre conforme ne prouve pas la protection) ; pare-feu actif sur les trois profils ;
+    `EnableControlledFolderAccess` effectif relevé (confirme ou infirme la lecture de D-BAS-01).
+  - deR4Tizer : aucune alerte Alerte/Critique due à l'application elle-même ; aucune BAS-001 tant que rien n'est
+    modifié ; toute alerte relevée et analysée.
+- Délai : relevé immédiat ; 25 min d'observation après l'application (relevé BAS-001 toutes les 10 min).
+- Nettoyage : aucun (lecture seule) ; la VM reste dans l'état de « campagne C ».
+- Garde-fou : un réglage de Defender plus faible qu'avant arrête la configuration C et remonte au mainteneur
+  (`CLAUDE.md`, règle 2) ; aucun réglage de Defender n'est corrigé à la main pour poursuivre.
+- Preuves : `baseline.json`, `baseline-sauvegarde.json`, Get-MpPreference et Get-MpComputerStatus avant (« campagne A »)
+  et après (« campagne C »), table de comparaison, état de Bureau à distance, de la protection LSA, du pare-feu et de
+  l'accès contrôlé aux dossiers.
 
 ### 3.2 Tests négatifs
 
-| Id | Activité légitime | Attendu |
-|---|---|---|
-| N-01 | sessions locales, administration PowerShell par fichier signé | aucune Alerte/Critique |
-| N-02 | tâche planifiée créée par un administrateur vers un programme signé de Program Files | PER-001 Info au plus |
-| N-03 | téléchargement autorisé depuis Kali par le navigateur | aucune RES-002 ; RES-003 Info admise |
-| N-04 | une erreur de mot de passe puis réussite en Bureau à distance | aucune COR-R1/R2 ; COR-R9 reste attendue (aucun négatif R9 possible : tout le labo est « public » pour le service) |
-| N-05 | réglage DNS rendu au DHCP | aucune DNS-002 |
+| Id | Activité légitime | Attendu | Attendu en configuration C (HYPOTHÈSE) |
+|---|---|---|---|
+| N-01 | sessions locales, administration PowerShell par fichier signé | aucune Alerte/Critique | identique ; aucune alerte due à la baseline |
+| N-02 | tâche planifiée créée par un administrateur vers un programme signé de Program Files | PER-001 Info au plus | identique |
+| N-03 | téléchargement autorisé depuis Kali par le navigateur | aucune RES-002 ; RES-003 Info admise | identique ; avertissement SmartScreen à l'ouverture du fichier, sans alerte de deR4Tizer |
+| N-04 | une erreur de mot de passe puis réussite en Bureau à distance | aucune COR-R1/R2 ; COR-R9 reste attendue (aucun négatif R9 possible : tout le labo est « public » pour le service) | non exécutable (Bureau à distance refusé) : D en C, mesuré en A |
+| N-05 | réglage DNS rendu au DHCP | aucune DNS-002 | identique |
 
 ### 3.3 Écartés ou non exécutés
 
@@ -465,6 +582,8 @@ non lu par deR4Tizer.
 - T1562.001 contre Defender, les journaux Windows ou deR4Tizer : D (interdit).
 - DNS-003 : exige l'arrêt puis la relance du service ; **approuvé en v1.1** (décision du mainteneur du 2026-11-14, 5.2), devenu le scénario S-18 (section 3.1).
 - Volet T1562.002 de S-13 : **approuvé en v1.1** (décision du mainteneur du 2026-11-14, 5.2), exécuté dans S-13.
+- En configuration C seulement (v1.3) : S-01, S-02, S-05 (a) et N-04 non exécutables comme détection (Bureau à distance
+  refusé par la baseline), S-16 attendu prévenu ; ils sont mesurés en A (3.0). L'essai en C reste une mesure de prévention.
 - Fiches Atomic qui téléchargent, désactivent une protection, lisent la mémoire de LSASS ou effacent un journal réel :
   écartées d'office.
 
@@ -477,7 +596,8 @@ non lu par deR4Tizer.
 2. Adresses : 203.0.113.10 (VM), 203.0.113.20 (Kali), adresse secondaire de Kali réservée à S-07 ; profil réseau de la
    carte de la VM relevé, Bureau à distance et partage de fichiers autorisés sur ce profil.
 3. Horloges : écart VM, Kali et hôte relevé au début et à la fin de chaque lot.
-4. Instantanés de campagne « campagne A » (sans Sysmon) et « campagne B » (Sysmon et Atomic, versions figées) présents,
+4. Instantanés de campagne « campagne A » (sans Sysmon), « campagne B » (Sysmon et Atomic, versions figées) et
+   « campagne C » (« campagne A » plus la baseline à 100 %, point 10) présents,
    préparés hors campagne, chacun avec deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages
    du labo ; aucun nom ne commence par « propre » ; instantané « propre » présent pour le retour après la campagne
    seulement ; Defender actif, sans exclusion, état relevé dans chaque instantané de campagne.
@@ -487,19 +607,23 @@ non lu par deR4Tizer.
 6. Collecte indépendante : 4688, 4104, Planificateur, Defender, Sysmon (configuration notée) lisibles et exportables.
 7. Comptes de test créés, seuil de verrouillage relevé ; aucun mot de passe dans une preuve.
 8. Kali : outils et versions notés ; serveur HTTP et amont DNS du labo prêts (S-06, S-07, S-11) ; journal horodaté.
-9. Collecte des preuves sur la VM (PowerShell Direct) essayée à blanc sur N-01.
+9. Collecte des preuves sur la VM (PowerShell Direct) essayée à blanc sur N-01, en configuration A et en configuration C.
+10. « campagne C » : préparé depuis « campagne A » ; relevé de référence de Defender et de `baseline.json` pris avant
+    l'application ; baseline appliquée par le service en une seule commande (journalisation, recommandé, renforcé) ;
+    redémarrage ; S-19 réussi ; instantané pris ensuite.
 
 ---
 
 ## 5. Décisions de conception et points laissés au mainteneur
 
-### 5.1 Décisions prises par l'agent de validation (v1.0 ; 2 et 3 révisées en v1.2)
+### 5.1 Décisions prises par l'agent de validation (v1.0 ; 2 et 3 révisées en v1.2 ; 2 révisée et 11 ajoutée en v1.3)
 
 1. **Apprentissage terminé dans l'instantané de campagne.** Raison : on mesure le régime normal d'un poste après ses
    7 premiers jours ; en apprentissage, presque toute « Alerte » sortirait « Info » et la mesure ne dirait rien des règles.
    La fin de l'apprentissage est relevée (date, `apprentissage.json`) dans chaque rapport ; une mesure en apprentissage
    pourra venir plus tard, notée à part.
-2. **Deux configurations, jamais fusionnées** (révisée en v1.2). Configuration A « sans Sysmon » : instantané
+2. **Trois configurations, jamais fusionnées** (révisée en v1.2 ; en v1.3, configuration C ajoutée et devenue principale,
+   voir 5.1.11 ; ce qui suit vaut pour A et B). Configuration A « sans Sysmon » : instantané
    « campagne A », collecte indépendante par les journaux natifs (4688 avec ligne de commande, 4104, Planificateur,
    Defender). Configuration B « avec Sysmon » : instantané « campagne B » (Sysmon et Atomic Red Team). Les deux sont
    préparés hors campagne avec deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo ;
@@ -537,6 +661,15 @@ non lu par deR4Tizer.
    dans tous les scores.
 10. **Publication** : ce document, une fois transmis au mainteneur, est proposé sous `docs/validation/` par une PR de
     documentation seule, après la garde PII ; la fusion reste décidée par le mainteneur.
+11. **Configuration C, principale de mesure (v1.3), sur décision du mainteneur du 2026-11-14 au soir** : les tests Kali
+    se font avec la baseline de deR4Tizer appliquée à 100 %, l'un des intérêts du produit (décision rapportée par l'agent
+    principal ; son texte exact est à citer à la publication). Mise en œuvre : la baseline est appliquée par le service
+    lui-même (`baseline appliquer`, trois profils, une seule commande), jamais réglage par réglage à la main ; elle ne fait
+    que durcir Defender, ce que S-19 vérifie (aucun réglage plus faible, aucune exclusion) : la règle 2 de `CLAUDE.md`
+    reste entière. Effet réversible (instantané « campagne C », annulation par le service), confiné à la VM de test.
+    A reste la comparaison (sans baseline), B la collecte Sysmon. Conséquence assumée : les scénarios par Bureau à
+    distance et S-16 deviennent des mesures de prévention en C, et leur détection se mesure en A. Le profil renforcé est
+    appliqué malgré ses avertissements de compatibilité : c'est une VM de test.
 
 ### 5.2 Points remontés au mainteneur, tranchés le 2026-11-14
 
@@ -558,3 +691,34 @@ v1.1 lui est transmise, pour information, avant toute exécution ; il peut retir
    rétablissement vérifié : programme d'écoute arrêté, port 53 libéré, **service relancé et son bon fonctionnement
    vérifié** (tube qui répond, collectes « Active », filtrage et cartes rendus à l'identique), puis remise à
    l'instantané après l'essai.
+
+### 5.3 Défauts du produit constatés à la lecture (ajouté en v1.3)
+
+**D-BAS-01 : deux règles de la baseline écrivent la même valeur de registre.** Constat de lecture de `baseline.rs` et
+`gpo.rs` à `ede269f`, non mesuré en VM.
+- `defender.dossiers-audit` (profil recommandé) et `defender.dossiers-blocage` (profil renforcé) posent toutes deux
+  `EnableControlledFolderAccess` dans la stratégie de l'accès contrôlé aux dossiers : 2 (audit) pour l'une, 1 (blocage)
+  pour l'autre.
+- Appliquées ensemble, `appliquer` ajoute les deux entrées à Registry.pol dans l'ordre de `REGLES` (`modifier_pol`
+  retire les entrées existantes de même valeur, puis ajoute les nouvelles sans les dédoublonner entre elles) : le
+  blocage, écrit en dernier, l'emporte (HYPOTHÈSE de lecture, vérifiée par S-19).
+- `evaluer` compare règle par règle la valeur lue à la valeur attendue : `defender.dossiers-audit` est alors vue « non
+  conforme » et le profil recommandé ne peut pas atteindre 100 %. **Une conformité de 100 % sur tous les profils est
+  donc impossible.**
+- Effets : une règle affichée « non conforme » alors que le réglage effectif est plus fort ; deux entrées dans
+  Registry.pol pour une même valeur ; et, si les profils recommandé puis renforcé sont appliqués par deux commandes
+  successives, la règle d'audit, appliquée et conforme, devient non conforme du fait de deR4Tizer lui-même : une BAS-001
+  « réglage modifié hors de deR4Tizer » serait alors levée à tort (HYPOTHÈSE de lecture de `derives`, non mesurée).
+- Correctif proposé, minimal, soumis au circuit habituel (prérelecteur, auditeur, passage complet en VM, validateur ;
+  fusion décidée par le mainteneur) : déclarer les deux règles exclusives, la plus forte remplaçant la plus faible ; à
+  l'évaluation, `defender.dossiers-audit` conforme si la valeur effective est 2 ou 1, ou marquée « remplacée par le
+  blocage » ; à l'application, ne pas écrire la valeur d'audit quand le blocage est sélectionné ; l'annulation garde
+  `reglages_partages`. Tests de non-régression : trois profils appliqués, scores à 100 %, une seule entrée, valeur 1 ;
+  recommandé seul, valeur 2 ; recommandé puis renforcé par deux commandes, aucune BAS-001 ; renforcé annulé seul, retour
+  à 2 ; tout annulé, valeur d'origine. Effet sur la détection : aucun ; supprime un faux « non conforme » et un faux
+  positif possible de BAS-001.
+- Effet sur la campagne : S-19 attend le profil recommandé sous 100 % ; ce constat n'est pas un échec de S-19.
+
+**Point à vérifier P-BAS-02** : `systeme.lsa` (protection LSA) est vue conforme dès que la valeur de registre est posée,
+alors qu'elle n'agit qu'après un redémarrage (le texte de la règle le dit). Défaut non établi : S-19 vérifie la
+protection effective après redémarrage.
