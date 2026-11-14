@@ -76,6 +76,9 @@ fn publique(ip: std::net::Ipv4Addr) -> bool {
     crate::parefeu::publique(&IpAddr::V4(ip))
 }
 
+/// Clés de déduplication gardées une heure (A7)
+const MAX_CLES_ALERTES: usize = 500;
+
 impl Dpi {
     pub fn nouveau(partage: Arc<Partage>) -> Dpi {
         let ja3 = Arc::new(RwLock::new(HashMap::new()));
@@ -120,15 +123,18 @@ impl Dpi {
     }
 
     fn alerter(&mut self, cle: String, niveau: &str, score: i32, programme: &str, ip: String, port: u16, destination: String, raisons: String, mitre: &str) {
-        if self.deja.get(&cle).map(|t| t.elapsed() < Duration::from_secs(3600)).unwrap_or(false) {
-            return;
-        }
-        self.deja.insert(cle, Instant::now());
+        // Table bornée, synthèse au-delà (audit du 2026-11-14, A7 ; correction de sûreté : DPI gelé)
+        let (niveau, score, destination, raisons) = match commun::admettre_cle(&mut self.deja, cle, Duration::from_secs(3600), MAX_CLES_ALERTES) {
+            commun::Admission::Nouvelle => (niveau.to_string(), score, destination, raisons),
+            commun::Admission::PlafondAtteint => ("Alerte".to_string(), 6, "analyse du trafic".to_string(),
+                format!("Plus de {MAX_CLES_ALERTES} alertes distinctes de l'analyse du trafic en une heure : les suivantes ne sont plus signalées une à une")),
+            _ => return,
+        };
         self.alertes.lock().unwrap().push(Alerte {
             regle: crate::regles::EXP_DPI_001.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
-            niveau: niveau.into(),
+            niveau,
             score,
             processus: programme.into(),
             destination,
@@ -198,7 +204,8 @@ impl Dpi {
             }
             let Some((n, v)) = l.split_once(':') else { continue };
             match n.trim().to_ascii_lowercase().as_str() {
-                "host" => hote = v.trim().to_string(),
+                // Nom d'hôte DNS : 253 caractères au plus (A7)
+                "host" => hote = v.trim().chars().take(253).collect(),
                 "user-agent" => agent = v.trim().chars().take(150).collect(),
                 "authorization" if v.trim().to_ascii_lowercase().starts_with("basic") => basic = true,
                 _ => {}

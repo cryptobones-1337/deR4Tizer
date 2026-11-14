@@ -1033,6 +1033,42 @@ pub fn maintenant() -> String {
 
 // ------------------------------------------------------------ journal
 
+/// Admission d'une clé de déduplication d'alertes (audit du 2026-11-14, A6, A7)
+#[derive(Debug, PartialEq, Eq)]
+pub enum Admission {
+    /// Nouvelle clé : alerter
+    Nouvelle,
+    /// Déjà alertée dans la fenêtre
+    Deja,
+    /// Table pleine : une seule alerte de synthèse par fenêtre
+    PlafondAtteint,
+    /// Table pleine, synthèse déjà émise dans la fenêtre
+    PlafondDejaSignale,
+}
+
+const CLE_PLAFOND: &str = "\u{0}plafond";
+
+/// Table `deja` bornée à `plafond` clés (pur, testé) : les clés expirées sont retirées seulement quand la table est
+/// pleine (coût linéaire rare) ; au-delà, plus aucune clé n'entre et une seule synthèse est demandée par fenêtre. Un
+/// appareil du réseau local qui varie une valeur à chaque paquet ne produit donc plus une alerte par paquet
+pub fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: String, fenetre: std::time::Duration, plafond: usize) -> Admission {
+    if deja.get(&cle).is_some_and(|t| t.elapsed() < fenetre) {
+        return Admission::Deja;
+    }
+    if deja.len() >= plafond {
+        deja.retain(|_, t| t.elapsed() < fenetre);
+    }
+    if deja.len() >= plafond {
+        if deja.get(CLE_PLAFOND).is_some_and(|t| t.elapsed() < fenetre) {
+            return Admission::PlafondDejaSignale;
+        }
+        deja.insert(CLE_PLAFOND.into(), std::time::Instant::now());
+        return Admission::PlafondAtteint;
+    }
+    deja.insert(cle, std::time::Instant::now());
+    Admission::Nouvelle
+}
+
 /// Message ramené à une seule ligne de journal (pur, testé)
 pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
