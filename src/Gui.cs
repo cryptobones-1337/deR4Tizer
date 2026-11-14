@@ -70,6 +70,21 @@ namespace DeR4Tizer
 
         public static void MajMenaces() { Canal.Executer(new Commande { Action = "majMenaces" }); }
 
+        // Filtrage par nom de domaine (PR 7.5b). Activation : la question dit ce qui change (Canal la pose lui-même dans
+        // une interface élevée) ; catégories et autorisations : mêmes commandes que le service
+        public static bool Filtrage(bool activer)
+        {
+            var c = new Commande { Action = "filtrage", Valeur = activer ? "on" : "off" };
+            if (!Canal.ConfirmeraLui(c) && MessageBox.Show(Canal.Decrire(c) + "\n\n" + (L.En ? "Continue?" : "Continuer ?"), "deR4Tizer",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            Canal.Executer(c);
+            return true;
+        }
+
+        public static void FiltrageCategories(string valeur) { Canal.Executer(new Commande { Action = "filtrageCategories", Valeur = valeur ?? "" }); }
+        public static void FiltrageAutoriser(string nom) { Canal.Executer(new Commande { Action = "filtrageAutoriser", NomDns = nom }); }
+        public static void FiltrageRetirer(string nom) { Canal.Executer(new Commande { Action = "filtrageRetirer", NomDns = nom }); }
+
         // Baseline (U5b) : mêmes questions et même commande que les boutons d'aujourd'hui, pour les deux interfaces
         public const string QuestionRecommande = "Appliquer les règles du profil « recommandé » par la stratégie de groupe locale ?\n\nToutes sont réversibles (bouton Annuler).";
         public const string QuestionRenforce = "Le profil « renforcé » peut gêner certains logiciels (voir la colonne Compatibilité).\n\nAppliquer quand même ?";
@@ -297,7 +312,9 @@ namespace DeR4Tizer
         // pose sa propre question avant l'une d'elles la saute quand Canal la confirmera (ConfirmeraLui : une seule fenêtre,
         // relecture de #153, constat 1). Les autres ont déjà leur question dans les pages, ou protègent,
         // ou ne font que tester : pas de seconde fenêtre
-        static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "testerNotifications", "majConfig", "autoriserLecteur", "exception" };
+        static readonly string[] ConfirmeesEnAdministrateur = { "config", "apprentissage", "debloquer", "reglages", "notifications", "testerNotifications", "majConfig", "autoriserLecteur", "exception",
+            // Filtrage par nom de domaine (phase 7, PR 7.5b ; audit de #160, #164, #165 : à confirmer avec l'interface)
+            "filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer" };
 
         public static bool ConfirmeEnAdministrateur(Commande c)
         {
@@ -608,6 +625,23 @@ namespace DeR4Tizer
                         try { nom = new SecurityIdentifier(v).Translate(typeof(NTAccount)).Value; } catch { }
                         return (en ? "Allow the account " : "Autoriser le compte ") + Visible(nom) + (en ? " to read deR4Tizer data (events, sessions, alerts)" : " à lire les données de deR4Tizer (événements, sessions, alertes)");
                     }
+                // Filtrage par nom de domaine (PR 7.5b) : ce qui change est dit avant d'agir (dossier, § 4.5)
+                case "filtrage":
+                    return v == "on"
+                        ? (en ? "TURN ON domain-name filtering\n  • Wi-Fi and Ethernet cards will use the deR4Tizer resolver (127.0.0.1, ::1)\n  • your current DNS servers stay as fallback\n  • turned off, the cards return to their original settings (recorded before any change)"
+                              : "ACTIVER le filtrage par nom de domaine\n  • les cartes Wi-Fi et Ethernet utiliseront le résolveur de deR4Tizer (127.0.0.1, ::1)\n  • vos serveurs DNS actuels restent en secours\n  • à la désactivation, les cartes reviennent à leur réglage d'origine (noté avant toute modification)")
+                        : (en ? "TURN OFF domain-name filtering: cards returned to their original DNS settings" : "DÉSACTIVER le filtrage par nom de domaine : cartes rendues à leur réglage DNS d'origine");
+                case "filtrageCategories":
+                    {
+                        var noms = v.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Select(x => x == "securite" ? (en ? "safe browsing" : "navigation sécurisée") : x == "publicite" ? (en ? "ads and tracking" : "publicités et pistage") : Visible(x)).ToList();
+                        // Navigation sécurisée sans liste de sécurité publiée : rien n'est bloqué, dit avant d'agir (relecture de #166)
+                        bool securite = v.Split(',').Select(x => x.Trim()).Contains("securite");
+                        string avert = securite && TextesFiltrage.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))
+                            ? "\n  • " + (en ? "safe browsing: " : "navigation sécurisée : ") + TextesFiltrage.RienBloqueSecurite() : "";
+                        return (en ? "Filtering categories: " : "Catégories du filtrage : ") + (noms.Count == 0 ? (en ? "none (nothing is blocked)" : "aucune (rien n'est bloqué)") : string.Join(", ", noms)) + avert;
+                    }
+                case "filtrageAutoriser": return (en ? "Never block " : "Ne jamais bloquer ") + nomDns + (en ? " and its subdomains (filtering)" : " ni ses sous-domaines (filtrage)");
+                case "filtrageRetirer": return (en ? "Remove " : "Retirer ") + nomDns + (en ? " from the allowed domains (filtering)" : " des domaines autorisés (filtrage)");
                 default: return Visible(c.Action) + " " + vc;
             }
         }

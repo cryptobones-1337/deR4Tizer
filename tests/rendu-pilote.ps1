@@ -37,8 +37,8 @@ try {
     $groupes = $nav.GetMethod('Groupes').Invoke($null, @())
     $cles = @($groupes | ForEach-Object { $_.Entrees } | ForEach-Object { $_.Cle })
     $attendues = "Vue d'ensemble", 'Connexions', 'Trafic', 'Alertes', 'Incidents', 'Événements', 'Détection', 'Réseau local', 'Chaînes', 'Vie privée',
-        'Pare-feu', 'Démarrage auto', 'Baseline', 'Extensions', 'Blocages', 'Quarantaine', 'Réponses en cours', 'Menaces', 'Santé', 'Réglages'
-    Cas 'navigation : 20 entrées, chacune une fois' ($cles.Count -eq 20 -and @($cles | Sort-Object -Unique).Count -eq 20) ($cles -join ', ')
+        'Pare-feu', 'Démarrage auto', 'Baseline', 'Extensions', 'Blocages', 'Quarantaine', 'Réponses en cours', 'Menaces', 'Santé', 'Réglages', 'Navigation'
+    Cas 'navigation : 21 entrées, chacune une fois (Navigation, phase 7)' ($cles.Count -eq 21 -and @($cles | Sort-Object -Unique).Count -eq 21) ($cles -join ', ')
     Cas 'navigation : toutes les pages d''aujourd''hui présentes' (@($attendues | Where-Object { $cles -notcontains $_ }).Count -eq 0)
     Cas 'navigation : Vue d''ensemble en tête' ($cles[0] -eq "Vue d'ensemble")
     Cas 'navigation : Réponses en cours, Santé, Réglages toujours visibles en bas' ((@($groupes[-1].Entrees | ForEach-Object { $_.Cle }) -join '|') -eq 'Réponses en cours|Santé|Réglages')
@@ -316,6 +316,38 @@ try {
     $im = & $nouv $imT @{ TotalIp = 10; TotalReseaux = 2; TotalDomaines = 3; MisAJour = '2026-11-10 06:00'; Sources = $ls }
     $rm = [string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($im, $true, $false))
     Cas 'Menaces : liste en échec signalée, désactivée par choix non comptée' ($rm.Contains('1 liste(s) en échec') -and $vm.GetMethod('Gravite').Invoke($null, @($ls[2])) -eq 0 -and $vm.GetMethod('Gravite').Invoke($null, @($ls[1])) -eq 1) $rm
+    # Navigation (phase 7, PR 7.5b) : filtrage-etat.json ; catégories basculées une à une ; état suspendu signalé ; ligne
+    # honnête et lecteurs dits ; noms bloqués neutralisés ; confirmations de l'interface élevée
+    $vn = & $t 'VueNavigationFluent'; $efT = & $t 'EtatFiltrage'; $bfT = & $t 'BlocageFiltrage'
+    $catsN = New-Object 'Collections.Generic.List[string]'; $catsN.Add('publicité et pistage')
+    $dern = New-Object "Collections.Generic.List[$($bfT.FullName)]"
+    $dern.Add((& $nouv $bfT @{ Nom = "pisteur.test`r`n" + [char]0x202E; Liste = 'EasyPrivacy'; Heure = '2026-11-13 08:00:00'; Categorie = 'publicité et pistage' }))
+    $efA = & $nouv $efT @{ Etat = 'actif'; Categories = $catsN; Derniers = $dern }
+    $efS = & $nouv $efT @{ Etat = 'suspendu : amont injoignable'; Categories = $catsN }
+    $efI = & $nouv $efT @{ Etat = 'inactif' }
+    $resN = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efA, $true, $false))
+    $lgN = $vn.GetMethod('Lignes').Invoke($null, @($efA))
+    Cas 'Navigation : catégories basculées une à une (securite ajoutée, publicite retirée)' (([string]$vn.GetMethod('ValeurApres').Invoke($null, @($efA, 'securite', $true))) -eq 'securite,publicite' -and ([string]$vn.GetMethod('ValeurApres').Invoke($null, @($efA, 'publicite', $false))) -eq '')
+    Cas 'Navigation : suspendu signalé, actif et inactif non' ($vn.GetMethod('Gravite').Invoke($null, @($efS)) -eq 1 -and $vn.GetMethod('Gravite').Invoke($null, @($efA)) -eq 0 -and $vn.GetMethod('Gravite').Invoke($null, @($efI)) -eq 0 -and -not $vn.GetMethod('Actif').Invoke($null, @($efI)))
+    Cas 'Navigation : ligne honnête (DNS propre ou chiffré) et lecteurs dits' ($resN.Contains('ne protège pas contre un programme qui utilise son propre DNS') -and $resN.Contains('tous les utilisateurs du poste') -and $resN.Contains('Publicités et pistage')) $resN
+    Cas 'Navigation : nom bloqué neutralisé (fin de ligne, contrôle bidirectionnel)' ($lgN.Count -eq 1 -and -not $lgN[0].Value.Titre.Contains("`n") -and -not $lgN[0].Value.Titre.Contains([string][char]0x202E) -and $lgN[0].Key.StartsWith('b')) $lgN[0].Value.Titre
+    $langue.GetField('En').SetValue($null, $true)
+    $etEn = [string]$vn.GetMethod('EtatTexte').Invoke($null, @('contourné sur la carte Wi-Fi'))
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'Navigation : état traduit en anglais' ($etEn -eq 'bypassed on card Wi-Fi') $etEn
+    # Relecture de #166, constat 1 : « Navigation sécurisée » activée sans liste de sécurité publiée ne bloque rien, dit
+    # dans le résumé, l'interrupteur et la confirmation
+    $catsS = New-Object 'Collections.Generic.List[string]'; $catsS.Add('sécurité')
+    $efSec = & $nouv $efT @{ Etat = 'actif'; Categories = $catsS }
+    $resS = [string]$vn.GetMethod('Resume').Invoke($null, [object[]]@($efSec, $true, $false))
+    $intS = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('securite', $true, $true))
+    $intP = [string]$vn.GetMethod('TexteCategorie').Invoke($null, @('publicite', $true, $true))
+    Cas 'Navigation : sécurité sans liste, « rien n''est bloqué » dans le résumé et l''interrupteur ; publicité inchangée' ($resS.Contains("aucune liste de sécurité : rien n'est bloqué") -and $intS.Contains("rien n'est bloqué") -and -not $intP.Contains('rien') -and $vn.GetMethod('SansListeSecurite').Invoke($null, @($efSec))) "$resS | $intS"
+    $gS = [IO.File]::ReadAllText("$src\Gui.cs")
+    $decrire = $gS.Substring($gS.IndexOf('public static string Decrire(Commande c)')); $decrire = $decrire.Substring(0, $decrire.IndexOf('public static string DecrireIncident('))
+    Cas 'Navigation : confirmation des catégories, sécurité sans liste dite avant d''agir ; Canal.Decrire ne nomme aucune classe de Fluent.cs (S166-01)' ($gS.Contains('TextesFiltrage.SansListeSecurite(Commun.Lire<EtatFiltrage>("filtrage-etat.json"))') -and $gS.Contains('TextesFiltrage.RienBloqueSecurite()') -and -not $decrire.Contains('Fluent'))
+    $gN = [IO.File]::ReadAllText("$src\Gui.cs") -replace "`r`n", "`n"
+    Cas 'Navigation : filtrage, catégories et autorisations confirmés par Canal dans une interface élevée ; activation qui dit ce qui change' ($gN.Contains('"filtrage", "filtrageCategories", "filtrageAutoriser", "filtrageRetirer" };') -and $gN.Contains('vos serveurs DNS actuels restent en secours') -and $gN.Contains('if (!Canal.ConfirmeraLui(c) && MessageBox.Show(Canal.Decrire(c)'))
     Cas 'Menaces : étiquette courte (ok, désactivée, en échec), statut entier dans le détail ; réglage : état d''abord' (([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[2]))) -eq 'désactivée' -and ([string]$vm.GetMethod('Etiquette').Invoke($null, @($ls[1]))) -eq 'en échec' -and ([string]$vm.GetMethod('TexteReglage').Invoke($null, @('ListesRestreintes', $false))).StartsWith('Désactivé  ·  ') -and $fluentSrc.Contains('Text = VueMenacesFluent.TexteReglage(nom, actif), TextWrapping = TextWrapping.Wrap'))
     Cas 'Menaces : statut neutralisé dans le détail' (-not ((@($vm.GetMethod('Detail').Invoke($null, @($ls[1])) | ForEach-Object { $_.Texte }) -join '|') -match "[\u202E\r\n]"))
     Cas 'Menaces : avant lecture « Lecture en cours… », sans fichier « pas encore chargées », illisible rien de conclu' (([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $false, $false))) -eq 'Lecture en cours…' -and ([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $false))) -eq 'Listes pas encore chargées.' -and ([string]$vm.GetMethod('Resume').Invoke($null, [object[]]@($null, $true, $true))).Contains('rien n''est conclu'))
@@ -616,10 +648,10 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
     # Rendu hors écran : coquille construite sans Show(), contenu mesuré, arrangé et rendu
     foreach ($code in 'fr', 'en') {
         $langue.GetField('En').SetValue($null, $code -eq 'en')
-        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages', 'Premiers réglages') {
+        foreach ($page in "Vue d'ensemble", 'Connexions', 'Incidents', 'Réponses en cours', 'Santé', 'Détection', 'Événements', 'Chaînes', 'Trafic', 'Blocages', 'Quarantaine', 'Menaces', 'Baseline', 'Pare-feu', 'Navigation', 'Démarrage auto', 'Extensions', 'Vie privée', 'Réseau local', 'Réglages', 'Premiers réglages') {
             $fen = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, [object[]]@(), $null)
             $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @($page))
-            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent'; 'Premiers réglages' = 'PageAssistantFluent' }[$page]
+            $natif = @{ 'Incidents' = 'PageIncidentsFluent'; 'Réponses en cours' = 'PageReponsesFluent'; 'Santé' = 'PageSanteFluent'; 'Détection' = 'PageDetectionFluent'; 'Événements' = 'PageEvenementsFluent'; 'Connexions' = 'PageConnexionsFluent'; 'Chaînes' = 'PageChainesFluent'; 'Trafic' = 'PageTraficFluent'; 'Blocages' = 'PageBlocagesFluent'; 'Quarantaine' = 'PageQuarantaineFluent'; 'Menaces' = 'PageMenacesFluent'; 'Baseline' = 'PageBaselineFluent'; 'Pare-feu' = 'PageParefeuFluent'; 'Navigation' = 'PageNavigationFluent'; 'Démarrage auto' = 'PageDemarrageFluent'; 'Extensions' = 'PageExtensionsFluent'; 'Vie privée' = 'PageVieFluent'; 'Réseau local' = 'PageReseauLocalFluent'; 'Réglages' = 'PageReglagesFluent'; 'Premiers réglages' = 'PageAssistantFluent' }[$page]
             if ($natif) {
                 $zoneC = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
                 Cas "$page $code : page native WPF (U2c)" ($zoneC.GetType().Name -eq $natif) $zoneC.GetType().Name

@@ -66,7 +66,10 @@ mise à jour, pas seulement un retour arrière.
 - Collecte `FiltrageDns` : active quand le filtrage tourne, indisponible quand il est suspendu, désactivée sinon.
 - Règle DNS-003 (Critique) : port 53 de la boucle locale tenu par un autre programme alors qu'une carte pointe encore
   sur le résolveur (audit de #164, S164-05).
-- La page « Navigation » de l'interface viendra en 7.5b.
+- Page « Navigation » de l'interface (PR 7.5b) : état, catégories (deux interrupteurs séparés), activation (la question
+  dit ce qui change), listes et licences, derniers noms bloqués avec « Autoriser ce domaine », autorisations avec
+  « Retirer » ; ligne honnête (« ne protège pas contre un programme qui utilise son propre DNS ou un DNS chiffré ») et
+  lecteurs dits. Commandes confirmées par Canal dans une interface élevée.
 
 ## Résolveur local (PR 7.3, non branché)
 

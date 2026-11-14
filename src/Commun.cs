@@ -421,6 +421,65 @@ namespace DeR4Tizer
         public string Licence { get; set; }
     }
 
+    // État du filtrage par nom de domaine publié par le service (phase 7, PR 7.5a : filtrage-etat.json, dossier protégé ;
+    // jamais dans etat.json ni dans l'API). Lu par la page « Navigation » (PR 7.5b)
+    public class BlocageFiltrage
+    {
+        public string Heure { get; set; }
+        public string Nom { get; set; }
+        public string Liste { get; set; }
+        public string Categorie { get; set; }
+    }
+
+    public class ListeFiltrage
+    {
+        public string Nom { get; set; }
+        public string Categorie { get; set; }
+        public string Licence { get; set; }
+        public string MiseAJour { get; set; }
+        public int Entrees { get; set; }
+        public int Exceptions { get; set; }
+        public int Ecartees { get; set; }
+        public int ProtegesIgnores { get; set; }
+    }
+
+    public class CarteFiltrage
+    {
+        public string Nom { get; set; }
+        public bool Reglee { get; set; }
+    }
+
+    public class EtatFiltrage
+    {
+        public string MisAJour { get; set; }
+        public string Etat { get; set; }
+        public List<string> Categories { get; set; }
+        public List<CarteFiltrage> Cartes { get; set; }
+        public List<string> Amonts { get; set; }
+        public List<ListeFiltrage> Listes { get; set; }
+        public Dictionary<string, long> ParCategorie { get; set; }
+        public Dictionary<string, long> ParListe { get; set; }
+        public List<BlocageFiltrage> Derniers { get; set; }
+        public List<string> Autorises { get; set; }
+    }
+
+    // Textes du filtrage partagés par la page « Navigation » et par Canal.Decrire (assistant élevé, sans WPF) : ici, et
+    // jamais dans Fluent.cs (audit de #166, S166-01)
+    public static class TextesFiltrage
+    {
+        public static bool SansListeSecurite(EtatFiltrage e)
+        {
+            if (e == null || e.Listes == null) return true;
+            foreach (var x in e.Listes) if (x != null && x.Categorie == "sécurité") return false;
+            return true;
+        }
+
+        public static string RienBloqueSecurite()
+        {
+            return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
+        }
+    }
+
     public class InfosMenaces
     {
         public string MisAJour { get; set; }
