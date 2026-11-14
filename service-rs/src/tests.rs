@@ -7495,6 +7495,11 @@ fn amont_tiers_cablage_sous_verrou() {
     let bascule = &sonde[sonde.find("if decision != crate::filtrage::Repli::Garder {").unwrap()..];
     let avant = &bascule[..bascule.find("REPLI_TIERS.store(").unwrap()];
     assert!(avant.contains("verrou_cartes()") && avant.contains(r#"commun::lire::<commun::Config>("config.json")"#) && avant.contains("let toujours"), "relecture et revérification sous le verrou");
+    assert!(avant.contains("crate::dns_local::permanent_actif()") && avant.contains("RESTAURATION_EN_ATTENTE.load") && avant.contains("REPLI_TIERS.load(Ordering::Acquire) != en_repli"), "état revérifié (audit de #167, S167-01)");
+    assert!(bascule.contains("Repli::VersReseau && tiers.is_some()"), "pas de repli sans tiers (S167-02)");
+    let d = include_str!("dns_local.rs");
+    let arr = &d[d.find("pub fn arreter_permanent()").unwrap()..];
+    assert!(arr[..arr.find("\n}").unwrap()].contains("e.silence.store(false"), "plus de silence après l'arrêt");
 }
 
 /// Liste compilée et courte : Quad9 seul, nommé (exploitant, pays, filtre), adresses valides ; jamais par défaut ;

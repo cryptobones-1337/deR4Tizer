@@ -706,6 +706,9 @@ pub fn arreter_permanent() {
     let e = ESSAI.lock().unwrap().clone();
     if let Some(e) = e.filter(|e| e.permanent) {
         e.arret.store(true, Ordering::Relaxed);
+        // Plus de silence après l'arrêt : aucune sonde ne doit rebrancher des cartes sur un résolveur arrêté (audit de
+        // #167, S167-01, en défense)
+        e.silence.store(false, Ordering::Release);
         let fin = Instant::now() + Duration::from_secs(5);
         while e.fils.load(Ordering::Acquire) > 0 && Instant::now() < fin {
             std::thread::sleep(Duration::from_millis(100));

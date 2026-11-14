@@ -2482,7 +2482,8 @@ fn demarrer_sonde_filtrage(partage: &Arc<Partage>) {
                         if !toujours || !crate::dns_local::permanent_actif() || RESTAURATION_EN_ATTENTE.load(Ordering::Acquire) || REPLI_TIERS.load(Ordering::Acquire) != en_repli {
                             continue;
                         }
-                        REPLI_TIERS.store(decision == crate::filtrage::Repli::VersReseau, Ordering::Release);
+                        // Repli seulement avec un tiers choisi : sans tiers, l'amont est déjà le réseau (S167-02, boucle évitée)
+                        REPLI_TIERS.store(decision == crate::filtrage::Repli::VersReseau && tiers.is_some(), Ordering::Release);
                         crate::dns_local::regler_amonts(amonts_voulus(&config, &origine));
                         if crate::dns_local::en_silence() && crate::filtrage_cartes::appliquer_toutes(&origine).is_ok() {
                             crate::dns_local::fin_silence();

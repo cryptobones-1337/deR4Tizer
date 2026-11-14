@@ -78,7 +78,8 @@ mise à jour, pas seulement un retour arrière.
   publicité ; 9.9.9.9, 149.112.112.112, 2620:fe::fe, 2620:fe::9). **Jamais par défaut** : « résolveur de votre réseau »
   reste l'amont tant que l'administrateur ne choisit pas Quad9 (commande `filtrageAmont`, page « Navigation »).
 - Quand Quad9 est choisi, **toutes les requêtes non bloquées lui sont envoyées** : dit dans la confirmation et sur la
-  page.
+  page. Cela comprend les noms locaux et les requêtes inverses d'adresses privées que le poste n'a pas résolus
+  lui-même (audit de #167, S167-03) ; sur un réseau d'entreprise, garder « résolveur de votre réseau ».
 - **Repli au portail captif** (`amont_tiers_repli`, pure) : Quad9 muet et DNS du réseau qui répond → repli sur le DNS
   du réseau, affiché ; Quad9 qui répond de nouveau → il redevient l'amont. Sondes toutes les 5 minutes. Avant le
   repli, il peut s'écouler 30 s (dégradation ouverte : cartes rendues, sans filtrage) puis jusqu'à 5 minutes de sonde
