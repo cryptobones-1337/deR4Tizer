@@ -290,14 +290,22 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
        connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
        à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
-     - VM cible partie de l'un de ses deux instantanés de campagne, préparés hors campagne : « campagne A » (sans
+     - VM cible partie de l'un de ses trois instantanés de campagne, préparés hors campagne : « campagne A » (sans
        Sysmon) et « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous). Chacun contient
        deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance
        activé pour la force brute, etc.). Leurs noms ne commencent jamais par « propre », pour que les passages
        complets (`tests/vm/lancer.ps1`, qui prend le plus récent instantané « propre… ») n'en partent jamais. VM
        remise à son instantané « propre » après la campagne.
+     - Troisième instantané, « campagne C », configuration principale de mesure, décidée par le mainteneur le
+       2026-11-14 (« pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait ») : « campagne A » plus la baseline de deR4Tizer appliquée par le service lui-même
+       (`baseline appliquer`, profils journalisation, recommandé et renforcé, en une seule commande), puis un
+       redémarrage. A reste la comparaison sans baseline, B la collecte Sysmon. La baseline refuse le Bureau à
+       distance : la force brute par Bureau à distance et les essais D4-1 se font en configuration A.
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
-       résultat, jamais un obstacle à contourner.
+       résultat, jamais un obstacle à contourner. En configuration C, Defender ne change que par la baseline de
+       deR4Tizer, jamais à la main, et jamais en l'affaiblissant : son état est relevé avant et après (scénario
+       S-19) ; un réglage plus faible qu'avant, ou une exclusion, arrête la configuration C, l'instantané n'est pas
+       pris et l'écart remonte au mainteneur comme un défaut du produit.
      - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
        brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
        résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
@@ -328,7 +336,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          avec les journaux natifs de Windows. Installées hors campagne (Internet seulement à ce moment-là), versions
          figées et notées dans chaque rapport, **sans aucune exclusion Defender**, même pour le dossier des fiches,
          contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
-         résultat. Seul l'instantané « campagne B » les contient ; « campagne A » et l'instantané « propre » des
+         résultat. Seul l'instantané « campagne B » les contient ; « campagne A », « campagne C » et l'instantané « propre » des
          passages complets restent sans eux.
        - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
          mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis « L'agent
