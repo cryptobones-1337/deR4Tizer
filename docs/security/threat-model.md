@@ -56,7 +56,10 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   Écrit, non fermé ; depuis la PR 7.5a, ce cas au démarrage lève l'alerte critique DNS-003 avec le PID du programme
   qui tient le port ;
 - **résolveur tiers** (PR 7.6) : Quad9 choisi, toutes les requêtes DNS non bloquées du poste lui sont envoyées (en
-  clair : pas de DNS chiffré, 7.7 non faite) ; jamais par défaut, dit dans la confirmation et sur la page ;
+  clair : pas de DNS chiffré, 7.7 non faite), noms locaux et requêtes inverses d'adresses privées compris ; jamais par
+  défaut, dit dans la confirmation et sur la page. La confirmation conseille de garder le résolveur du réseau sur un
+  réseau d'entreprise, et dit qu'au portail captif le relais par le DNS du réseau vient après jusqu'à 30 s puis
+  jusqu'à 5 minutes sans filtrage (relecture de #167, R6) ;
 - **données de navigation** (PR 7.5a) : seuls les 50 derniers noms **bloqués** sont gardés, 24 h, dans
   `filtrage-etat.json` (dossier protégé) ; aucun nom relayé n'est noté ; rien de cela n'entre dans `etat.json` ni dans
   l'API ;

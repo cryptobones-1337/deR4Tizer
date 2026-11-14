@@ -2953,7 +2953,7 @@ namespace DeR4Tizer
         // Décisions partagées avec Canal.Decrire, gardées dans Commun.cs (TextesFiltrage) : l'assistant élevé ne doit jamais
         // dépendre d'une classe de Fluent.cs (audit de #166, S166-01)
         public static bool SansListeSecurite(EtatFiltrage e) { return TextesFiltrage.SansListeSecurite(e); }
-        public static string RienBloqueSecurite() { return TextesFiltrage.RienBloqueSecurite(); }
+        public static string RienBloqueSecurite(EtatFiltrage e) { return TextesFiltrage.RienBloqueSecurite(e); }
 
         public static string Honnete()
         {
@@ -2978,7 +2978,7 @@ namespace DeR4Tizer
             return (en ? "Filtering: " : "Filtrage : ") + EtatTexte(e.Etat)
                 + (en ? "  ·  categories: " : "  ·  catégories : ") + (cats.Count == 0 ? (en ? "none" : "aucune") : string.Join(", ", cats))
                 + (amonts.Count == 0 ? "" : (en ? "  ·  upstream: " : "  ·  amont : ") + string.Join(", ", amonts))
-                + (CategorieActive(e, "securite") && SansListeSecurite(e) ? "\n" + NomCategorie("securite") + " : " + RienBloqueSecurite() : "")
+                + (CategorieActive(e, "securite") && SansListeSecurite(e) ? "\n" + NomCategorie("securite") + " : " + RienBloqueSecurite(e) : "")
                 + "\n" + TexteAmont(e)
                 + "\n" + Honnete() + "\n" + Lecteurs();
         }
@@ -3005,10 +3005,10 @@ namespace DeR4Tizer
             return actif ? (L.En ? "Turn filtering off" : "Désactiver le filtrage") : (L.En ? "Turn filtering on" : "Activer le filtrage");
         }
 
-        public static string TexteCategorie(string cle, bool actif, bool sansListe)
+        public static string TexteCategorie(string cle, bool actif, bool sansListe, EtatFiltrage e)
         {
             return (actif ? (L.En ? "On" : "Activé") : (L.En ? "Off" : "Désactivé")) + "  ·  " + NomCategorie(cle)
-                + (cle == "securite" && sansListe ? "  ·  " + RienBloqueSecurite() : "");
+                + (cle == "securite" && sansListe ? "  ·  " + RienBloqueSecurite(e) : "");
         }
 
         // Lignes de la page, et pour chacune : « b » (blocage), « a » (autorisation) ou « l » (liste), avec le nom
@@ -3093,7 +3093,7 @@ namespace DeR4Tizer
                     string cle = c;
                     bool on = VueNavigationFluent.CategorieActive(etat, cle);
                     var b = Outil("", on, (s, e) => { ActionsProtection.FiltrageCategories(VueNavigationFluent.ValeurApres(etat, cle, !on)); Charger(); });
-                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on, VueNavigationFluent.SansListeSecurite(etat)), TextWrapping = TextWrapping.Wrap };
+                    b.Content = new TextBlock { Text = VueNavigationFluent.TexteCategorie(cle, on, VueNavigationFluent.SansListeSecurite(etat), etat), TextWrapping = TextWrapping.Wrap };
                     b.HorizontalAlignment = HorizontalAlignment.Stretch; b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     b.Margin = new Thickness(0, 0, 0, 6);
                     outils.Children.Add(b);

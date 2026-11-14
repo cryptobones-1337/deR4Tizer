@@ -490,6 +490,29 @@ namespace DeR4Tizer
         {
             return L.En ? "no security list: nothing is blocked (DNS-001 alerts remain)" : "aucune liste de sécurité : rien n'est bloqué (les alertes DNS-001 restent)";
         }
+
+        // Sans liste de sécurité, Quad9 choisi et joignable bloque encore les domaines malveillants qu'il connaît ; en repli
+        // (portail captif), et dans tout état autre que « actif » ou « contourné… » (suspendu, inactif, remise des cartes en
+        // attente : Quad9 n'est pas utilisé), rien n'est bloqué (relecture de #167, R4 ; audit de #169, S169-02, S169-03)
+        public static string RienBloqueSecurite(EtatFiltrage e)
+        {
+            string t = e == null ? null : NomTiers(e.AmontChoisi);
+            string etat = e == null ? "" : (e.Etat ?? "");
+            if (t == null || e.RepliTiers || !(etat == "actif" || etat.StartsWith("contourné"))) return RienBloqueSecurite();
+            return L.En ? "no security list: only " + t + " blocks the malicious domains it knows (DNS-001 alerts remain)"
+                        : "aucune liste de sécurité : seul " + t + " bloque les domaines malveillants qu'il connaît (les alertes DNS-001 restent)";
+        }
+
+        // Proposée à l'activation : l'amont, et Quad9 au choix s'il n'est pas déjà choisi (relecture de #167, R4). Lu dans le
+        // dernier état publié (10 s au plus de retard sur un choix qui vient d'être fait) : dit comme tel (audit de #169, S169-01)
+        public static string AmontALActivation(EtatFiltrage e)
+        {
+            string t = e == null ? null : NomTiers(e.AmontChoisi);
+            string pre = L.En ? "upstream resolver (last published state): " : "résolveur d'amont (dernier état publié) : ";
+            if (t != null) return pre + t + (L.En ? " (your DNS queries that are not blocked are sent to it)" : " (vos requêtes DNS non bloquées lui sont envoyées)");
+            return pre + (L.En ? "your network's; Quad9 (blocks malicious domains) can be chosen on the \"Browsing\" page"
+                               : "celui de votre réseau ; Quad9 (bloque les domaines malveillants) peut être choisi sur la page « Navigation »");
+        }
     }
 
     public class InfosMenaces

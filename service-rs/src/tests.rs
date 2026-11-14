@@ -7587,6 +7587,9 @@ fn amont_tiers_cablage_sous_verrou() {
     assert!(avant.contains("verrou_cartes()") && avant.contains(r#"commun::lire::<commun::Config>("config.json")"#) && avant.contains("let toujours"), "relecture et revérification sous le verrou");
     assert!(avant.contains("crate::dns_local::permanent_actif()") && avant.contains("RESTAURATION_EN_ATTENTE.load") && avant.contains("REPLI_TIERS.load(Ordering::Acquire) != en_repli"), "état revérifié (audit de #167, S167-01)");
     assert!(bascule.contains("Repli::VersReseau && tiers.is_some()"), "pas de repli sans tiers (S167-02)");
+    let sans_tiers = &bascule[bascule.find("if tiers.is_none() {").expect("tiers retiré pendant un repli (R-v2-1)")..];
+    let sans_tiers = &sans_tiers[..sans_tiers.find("continue;").unwrap()];
+    assert!(sans_tiers.contains("REPLI_TIERS.store(false") && !sans_tiers.contains("regler_amonts") && !sans_tiers.contains("appliquer_toutes"), "repli oublié sans rebranchement (R-v2-1)");
     let d = include_str!("dns_local.rs");
     let arr = &d[d.find("pub fn arreter_permanent()").unwrap()..];
     assert!(arr[..arr.find("\n}").unwrap()].contains("e.silence.store(false"), "plus de silence après l'arrêt");

@@ -86,6 +86,12 @@ mise à jour, pas seulement un retour arrière.
   (relecture de #167, R2).
 - Quad9 déjà choisi et injoignable au moment d'activer le filtrage (portail captif) : l'activation est refusée, avec un
   message qui le nomme ; choisir « résolveur de votre réseau » puis réactiver (R1).
+- Suivis de la relecture de #167 : à l'activation, la confirmation dit l'amont en vigueur et propose Quad9 s'il n'est
+  pas choisi (R4) ; sans liste de sécurité, la page dit « seul Quad9 bloque les domaines malveillants qu'il connaît »
+  quand Quad9 est choisi et joignable, « rien n'est bloqué » sinon, repli compris (R4) ; la confirmation du choix de
+  Quad9 dit aussi l'envoi des noms locaux, le conseil pour un réseau d'entreprise et le délai sans filtrage avant le
+  relais (R6). Tiers retiré de `config.json` à la main pendant un repli : le repli est oublié, sans rebranchement ni
+  journal « tiers injoignable » (audit de #167, R-v2-1).
 - DNS4EU reste écarté (particuliers seulement, sans usage commercial). DNS chiffré : étape 7.7 facultative, non faite.
 
 ## Résolveur local (PR 7.3, non branché)
