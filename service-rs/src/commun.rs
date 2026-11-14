@@ -1033,37 +1033,46 @@ pub fn maintenant() -> String {
 
 // ------------------------------------------------------------ journal
 
-/// Admission d'une clé de déduplication d'alertes (audit du 2026-11-14, A6, A7)
+/// Admission d'une clé de déduplication d'alertes (audit du 2026-11-14, A6, A7 ; audit de #176, S176-01)
 #[derive(Debug, PartialEq, Eq)]
-pub enum Admission {
+pub(crate) enum Admission {
     /// Nouvelle clé : alerter
     Nouvelle,
     /// Déjà alertée dans la fenêtre
     Deja,
-    /// Table pleine : une seule alerte de synthèse par fenêtre
-    PlafondAtteint,
-    /// Table pleine, synthèse déjà émise dans la fenêtre
+    /// Budget de la catégorie épuisé : une seule alerte de synthèse par catégorie et par fenêtre
+    PlafondAtteint(String),
+    /// Budget épuisé, synthèse de cette catégorie déjà émise dans la fenêtre
     PlafondDejaSignale,
 }
 
-const CLE_PLAFOND: &str = "\u{0}plafond";
+/// Catégorie d'une clé : ce qui précède le premier « | » (« dhcp|10.0.0.9 » → « dhcp »)
+fn categorie_cle(cle: &str) -> &str {
+    cle.split('|').next().unwrap_or(cle)
+}
 
-/// Table `deja` bornée à `plafond` clés (pur, testé) : les clés expirées sont retirées seulement quand la table est
-/// pleine (coût linéaire rare) ; au-delà, plus aucune clé n'entre et une seule synthèse est demandée par fenêtre. Un
-/// appareil du réseau local qui varie une valeur à chaque paquet ne produit donc plus une alerte par paquet
-pub fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: String, fenetre: std::time::Duration, plafond: usize) -> Admission {
+/// Table `deja` bornée par catégorie (pur, testé) : au plus `par_categorie` clés vivantes par catégorie ; au-delà,
+/// cette catégorie seule cesse d'alerter une à une, avec une synthèse par fenêtre. Une inondation dans une catégorie
+/// (options DHCP variées, ports sortants) ne tait donc jamais les autres (usurpation de passerelle, JA3, serveur de
+/// contrôle : S176-01). Les marques de synthèse commencent par U+0000, qu'aucune clé construite par les modules ne
+/// porte (préfixes ASCII fixes)
+pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: String, fenetre: std::time::Duration, par_categorie: usize) -> Admission {
     if deja.get(&cle).is_some_and(|t| t.elapsed() < fenetre) {
         return Admission::Deja;
     }
-    if deja.len() >= plafond {
+    let cat = categorie_cle(&cle).to_string();
+    let prefixe = format!("{cat}|");
+    let compter = |d: &HashMap<String, std::time::Instant>| d.iter().filter(|(k, t)| (k.starts_with(&prefixe) || **k == cat) && t.elapsed() < fenetre).count();
+    if compter(deja) >= par_categorie {
         deja.retain(|_, t| t.elapsed() < fenetre);
-    }
-    if deja.len() >= plafond {
-        if deja.get(CLE_PLAFOND).is_some_and(|t| t.elapsed() < fenetre) {
-            return Admission::PlafondDejaSignale;
+        if compter(deja) >= par_categorie {
+            let marque = format!("\u{0}plafond|{cat}");
+            if deja.get(&marque).is_some_and(|t| t.elapsed() < fenetre) {
+                return Admission::PlafondDejaSignale;
+            }
+            deja.insert(marque, std::time::Instant::now());
+            return Admission::PlafondAtteint(cat);
         }
-        deja.insert(CLE_PLAFOND.into(), std::time::Instant::now());
-        return Admission::PlafondAtteint;
     }
     deja.insert(cle, std::time::Instant::now());
     Admission::Nouvelle

@@ -636,14 +636,18 @@ pub(crate) const MAX_PAR_CLE: usize = 200;
 pub(crate) const MAX_CLES: usize = 5000;
 
 /// Garde au plus MAX_CLES clés : si `cle` est nouvelle et la table pleine, retire les files vides puis, s'il le faut,
-/// celle dont le dernier événement est le plus ancien (pur, testé)
+/// une clé du même type que `cle` (compte ou adresse), de préférence à un seul événement, sinon la moins récente (pur,
+/// testé). Une inondation de comptes locaux n'évince donc pas la file d'une adresse distante (audit de #176, S176-02)
 pub(crate) fn borner_cles<T>(table: &mut HashMap<String, VecDeque<T>>, cle: &str, dernier: impl Fn(&VecDeque<T>) -> Option<Instant>) {
     if table.len() < MAX_CLES || table.contains_key(cle) {
         return;
     }
     table.retain(|_, f| !f.is_empty());
+    let compte = |k: &str| k.starts_with("compte ");
     while table.len() >= MAX_CLES {
-        let Some(vieille) = table.iter().min_by_key(|(_, f)| dernier(f)).map(|(k, _)| k.clone()) else { break };
+        let meme_type = table.keys().any(|k| compte(k) == compte(cle));
+        let Some(vieille) = table.iter().filter(|(k, _)| !meme_type || compte(k) == compte(cle))
+            .min_by_key(|(_, f)| (f.len(), dernier(f))).map(|(k, _)| k.clone()) else { break };
         table.remove(&vieille);
     }
 }

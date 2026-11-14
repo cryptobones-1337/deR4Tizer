@@ -76,8 +76,8 @@ fn publique(ip: std::net::Ipv4Addr) -> bool {
     crate::parefeu::publique(&IpAddr::V4(ip))
 }
 
-/// Clés de déduplication gardées une heure (A7)
-const MAX_CLES_ALERTES: usize = 500;
+/// Clés de déduplication gardées une heure, par catégorie d'alerte (A7, S176-01)
+const MAX_CLES_ALERTES: usize = 100;
 
 impl Dpi {
     pub fn nouveau(partage: Arc<Partage>) -> Dpi {
@@ -126,8 +126,8 @@ impl Dpi {
         // Table bornée, synthèse au-delà (audit du 2026-11-14, A7 ; correction de sûreté : DPI gelé)
         let (niveau, score, destination, raisons) = match commun::admettre_cle(&mut self.deja, cle, Duration::from_secs(3600), MAX_CLES_ALERTES) {
             commun::Admission::Nouvelle => (niveau.to_string(), score, destination, raisons),
-            commun::Admission::PlafondAtteint => ("Alerte".to_string(), 6, "analyse du trafic".to_string(),
-                format!("Plus de {MAX_CLES_ALERTES} alertes distinctes de l'analyse du trafic en une heure : les suivantes ne sont plus signalées une à une")),
+            commun::Admission::PlafondAtteint(cat) => ("Alerte".to_string(), 6, "analyse du trafic".to_string(),
+                format!("Plus de {MAX_CLES_ALERTES} alertes distinctes « {cat} » de l'analyse du trafic en une heure : les suivantes de cette catégorie ne sont plus signalées une à une (inondation probable) ; les autres catégories restent signalées")),
             _ => return,
         };
         self.alertes.lock().unwrap().push(Alerte {
