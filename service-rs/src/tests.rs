@@ -3201,28 +3201,21 @@ fn phase1_debit_du_canal() {
     assert!(!d.accepter(t + Duration::from_secs(10)));
 }
 
+/// Identité lue sur le jeton de la CONNEXION, après la lecture de la commande (durcissement du canal) : client au
+/// niveau Identification (celui de l'interface et du script de mise à jour) identifié, même sans avoir rien écrit
+/// (constaté : le jeton est celui de la connexion ; une commande vide est de toute façon refusée) ; client Anonymous :
+/// « autre » (échec fermé)
 #[test]
 fn phase1_client_du_tube_identifie_sur_son_jeton() {
     use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::Storage::FileSystem::{ReadFile, PIPE_ACCESS_DUPLEX, SECURITY_ANONYMOUS, SECURITY_IDENTIFICATION};
     use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
-    let nom = format!(r"\\.\pipe\d4t-essai-phase1-client-{}", std::process::id());
-    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
-    let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
-    assert!(!tube.is_invalid());
-    let n = nom.clone();
-    let client = std::thread::spawn(move || {
-        let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&n).unwrap();
-        c.write_all(b"x").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    });
-    let _ = unsafe { ConnectNamedPipe(tube, None) };
     // Le client est ce processus de test : comparé à un calcul indépendant (IsUserAnAdmin : administrateur élevé).
     // Tests lancés élevés : le cas « administrateur » est exercé ; sinon « autre » (et le passage VM, en
     // administrateur, exerce le cas élevé avec le service réel)
-    let vu = crate::natif::client_tube(HANDLE(tube.0));
     let attendu = if crate::natif::est_systeme() {
         crate::validation::Client::Systeme
     } else if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
@@ -3230,11 +3223,108 @@ fn phase1_client_du_tube_identifie_sur_son_jeton() {
     } else {
         crate::validation::Client::Autre
     };
-    assert_eq!(vu, attendu, "client du tube mal identifié");
-    client.join().unwrap();
-    unsafe { let _ = CloseHandle(tube); }
+    for (essai, niveau, ecrit, voulu) in [
+        ("identification", SECURITY_IDENTIFICATION.0, true, attendu),
+        ("anonyme", SECURITY_ANONYMOUS.0, true, crate::validation::Client::Autre),
+        ("rien écrit", SECURITY_IDENTIFICATION.0, false, attendu),
+    ] {
+        let nom = format!(r"\\.\pipe\d4t-essai-phase1-client-{}-{}", std::process::id(), essai.len());
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+        assert!(!tube.is_invalid());
+        let n = nom.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(niveau).open(&n).unwrap();
+            if ecrit {
+                c.write_all(b"x").unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        });
+        let _ = unsafe { ConnectNamedPipe(tube, None) };
+        if ecrit {
+            let mut b = [0u8; 1];
+            let mut lus = 0u32;
+            assert!(unsafe { ReadFile(tube, Some(&mut b), Some(&mut lus), None) }.is_ok() && lus == 1, "{essai} : lecture");
+        }
+        let (vu, sid) = crate::natif::identite_client_tube(HANDLE(tube.0));
+        assert_eq!(vu, voulu, "{essai} : client du tube mal identifié");
+        assert_eq!(sid.is_empty(), essai == "anonyme", "{essai} : SID lu seulement sur un jeton");
+        client.join().unwrap();
+        unsafe { let _ = CloseHandle(tube); }
+    }
     // Handle invalide : « autre » (échec fermé)
     assert_eq!(crate::natif::client_tube(windows::Win32::Foundation::INVALID_HANDLE_VALUE), crate::validation::Client::Autre);
+}
+
+/// Durcissement du canal, IPC-04 : la réponse est écrite en un délai borné ; un client qui ne la lit jamais (réponse
+/// plus grande que le tampon du tube : l'écriture elle-même bloquerait) ne bloque pas le canal, un client qui la lit
+/// la reçoit en entier
+#[test]
+fn canal_reponse_bornee_client_qui_ne_lit_pas() {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    for (essai, taille, lit) in [("muet, petite réponse", 100usize, false), ("muet, grande réponse", 4000, false), ("lecteur", 4000, true)] {
+        let nom = format!(r"\\.\pipe\d4t-essai-ipc04-{}-{}-{}", std::process::id(), taille, lit);
+        let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+        let tube = unsafe { CreateNamedPipeW(PCWSTR(large.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+        assert!(!tube.is_invalid());
+        let n = nom.clone();
+        let client = std::thread::spawn(move || {
+            let mut c = std::fs::OpenOptions::new().read(true).write(true).open(&n).unwrap();
+            let mut recu = Vec::new();
+            if lit {
+                let mut b = [0u8; 1024];
+                while !recu.ends_with(b"\n") {
+                    let k = c.read(&mut b).unwrap();
+                    assert!(k > 0);
+                    recu.extend_from_slice(&b[..k]);
+                }
+            }
+            // Le client garde la connexion ouverte, sans (plus) rien lire
+            std::thread::sleep(Duration::from_secs(4));
+            recu.len()
+        });
+        let _ = unsafe { ConnectNamedPipe(tube, None) };
+        let mut sortie = vec![b'a'; taille - 2];
+        sortie.extend_from_slice(b"\r\n");
+        let debut = Instant::now();
+        let ok = crate::canal::ecrire_reponse(HANDLE(tube.0), &sortie, Duration::from_millis(800));
+        let duree = debut.elapsed();
+        assert!(duree < Duration::from_secs(3), "{essai} : écriture non bornée ({duree:?})");
+        assert_eq!(ok, lit, "{essai} : réponse lue ?");
+        unsafe { let _ = CloseHandle(tube); }
+        let recu = client.join().unwrap();
+        assert_eq!(recu, if lit { taille } else { 0 }, "{essai} : réponse reçue en entier");
+    }
+}
+
+/// Durcissement du canal (relecture indépendante, accord du mainteneur) : câblage. Clients distants refusés par le tube ;
+/// identité lue sur le jeton de la connexion, après la lecture, jamais plus sur le PID ; réponse écrite en un délai
+/// borné ; clients du service (interface, script de mise à jour) au niveau Identification, avec lecture bornée côté
+/// interface
+#[test]
+fn canal_durcissement_cablage() {
+    let canal = include_str!("canal.rs").replace("\r\n", "\n");
+    assert!(canal.contains("PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,"), "clients distants refusés");
+    let t = &canal[canal.find("fn traiter(").unwrap()..];
+    assert!(t.find("lire_commande(tube, DELAI_LECTURE)").unwrap() < t.find("identite_client_tube(tube)").unwrap(), "identité lue après la commande");
+    assert!(t.contains("ecrire_reponse(tube, &sortie, DELAI_ECRITURE) && debut.elapsed() >= DELAI_ECRITURE") && !t.contains("FlushFileBuffers"), "réponse bornée, journal à l'échéance seulement (S168-01)");
+    let g = &canal[canal.find("pub fn avec_echeance").unwrap()..canal.find("pub fn lire_commande").unwrap()];
+    assert!(g.contains("std::thread::Builder::new()") && !g.contains("std::thread::spawn("), "fil de garde sans panique (R1)");
+    let n = include_str!("natif.rs");
+    let f = &n[n.find("pub fn identite_client_tube(").unwrap()..];
+    let f = &f[..f.find("fn identite_jeton(").unwrap()];
+    assert!(f.contains("ImpersonateNamedPipeClient(tube)") && f.contains("OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true"), "jeton de la connexion");
+    assert!(f.contains("retour_ou_arret(RevertToSelf()"), "retour à soi vérifié");
+    assert!(!n.contains("GetNamedPipeClientProcessId"), "plus d'identification par le PID");
+    assert!(include_str!("maj.rs").contains("[IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)"), "script de mise à jour");
+    let gui = include_str!("../../src/Gui.cs");
+    assert!(gui.contains("PipeOptions.None, TokenImpersonationLevel.Identification)"), "interface au niveau Identification");
+    assert!(gui.contains("DELAI_REPONSE"), "lecture bornée côté interface");
 }
 
 /// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue

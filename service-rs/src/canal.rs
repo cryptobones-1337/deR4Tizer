@@ -7,8 +7,12 @@
 //! Un client qui se connecte puis se tait ne bloque pas le canal : la lecture d'une commande est bornée dans le
 //! temps (DELAI_LECTURE). Si le nom est déjà pris au démarrage (squat), alerte critique locale avec le PID et le
 //! chemin du processus qui tient le tube, lus en client anonyme.
-//! Phase 1 : avant toute exécution, débit borné (DEBIT_MAX par DEBIT_FENETRE), client identifié sur le jeton de son
-//! processus (SYSTEM, administrateur, autre), autorisation par commande et validation de chaque champ (validation.rs).
+//! Phase 1 : avant toute exécution, débit borné (DEBIT_MAX par DEBIT_FENETRE), client identifié sur le jeton de sa
+//! connexion (SYSTEM, administrateur, autre), autorisation par commande et validation de chaque champ (validation.rs).
+//! Durcissement (relecture indépendante du canal) : clients distants refusés par le tube lui-même
+//! (PIPE_REJECT_REMOTE_CLIENTS) ; identité lue sur le jeton de la connexion, après la lecture de la commande, et non
+//! plus sur le PID du processus client ; réponse écrite en DELAI_ECRITURE au plus, un client qui ne la lit jamais ne
+//! bloque plus le canal (IPC-04).
 
 use crate::commun::{self, Commande, Reponse};
 use crate::validation::{self, Client, Debit};
@@ -23,12 +27,17 @@ use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToS
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
 /// Délai maximal de lecture d'une commande : l'interface et le script de mise à jour écrivent la leur dès la
 /// connexion
 const DELAI_LECTURE: Duration = Duration::from_secs(10);
+
+/// Délai maximal d'écriture de la réponse, jusqu'à sa lecture par le client : l'interface et le script de mise à jour
+/// la lisent dès qu'elle arrive
+const DELAI_ECRITURE: Duration = Duration::from_secs(5);
 
 /// Phase 1 : débit maximal du canal (toutes commandes confondues) ; l'interface n'envoie qu'une commande par action
 /// de l'utilisateur, le script de mise à jour une vérification par seconde au plus
@@ -66,7 +75,9 @@ fn creer(console: bool, premiere: bool) -> Result<HANDLE, (String, u32)> {
         };
         let nom = large(commun::NOM_PIPE);
         let mode = if premiere { PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE } else { PIPE_ACCESS_DUPLEX };
-        let tube = CreateNamedPipeW(PCWSTR(nom.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        // Clients distants refusés par le tube lui-même (relecture indépendante du canal) ; la DACL ne laissait déjà
+        // passer que SYSTEM et les administrateurs
+        let tube = CreateNamedPipeW(PCWSTR(nom.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES, 4096, 4096, 0, Some(&attributs));
         let _ = LocalFree(HLOCAL(sd.0));
         if tube == INVALID_HANDLE_VALUE || tube.is_invalid() {
@@ -132,21 +143,18 @@ pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bo
     }).unwrap();
 }
 
-/// Lit une commande (jusqu'à la fin de ligne, 64 Ko au plus) en DELAI au plus : un fil de garde annule la
-/// lecture bloquante de ce fil (CancelSynchronousIo) à l'échéance, et recommence tant que la lecture n'est pas
-/// finie (une annulation tombée entre deux lectures ne serait pas retenue). Sans garde possible, rien n'est lu.
-pub fn lire_commande(tube: HANDLE, delai: Duration) -> Vec<u8> {
+/// Exécute `f` en `delai` au plus pour ses E/S synchrones sur ce fil : à l'échéance, un fil de garde annule l'E/S
+/// bloquante en cours (CancelSynchronousIo), et recommence toutes les 100 ms tant que `f` n'a pas rendu la main (une
+/// annulation tombée entre deux E/S ne serait pas retenue). Sans garde possible (fil non ouvert ou non créé) : None,
+/// `f` n'est pas exécutée, sans panique (relecture de #168, R1).
+pub fn avec_echeance<T>(delai: Duration, f: impl FnOnce() -> T) -> Option<T> {
     use std::sync::mpsc::{channel, RecvTimeoutError};
     use windows::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
     use windows::Win32::System::IO::CancelSynchronousIo;
-    let mut demande = Vec::new();
-    let Ok(fil) = (unsafe { OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId()) }) else {
-        commun::journal("canal de commandes : garde de lecture impossible, commande ignorée");
-        return demande;
-    };
+    let fil = unsafe { OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId()) }.ok()?;
     let brut = fil.0 as usize;
     let (fin, attente) = channel::<()>();
-    let garde = std::thread::spawn(move || unsafe {
+    let lance = std::thread::Builder::new().name("garde-canal".into()).spawn(move || unsafe {
         let f = HANDLE(brut as _);
         if attente.recv_timeout(delai) == Err(RecvTimeoutError::Timeout) {
             while attente.recv_timeout(Duration::from_millis(100)) == Err(RecvTimeoutError::Timeout) {
@@ -155,25 +163,56 @@ pub fn lire_commande(tube: HANDLE, delai: Duration) -> Vec<u8> {
         }
         let _ = CloseHandle(f);
     });
-    let debut = Instant::now();
-    let mut tampon = [0u8; 4096];
-    loop {
-        let mut lus = 0u32;
-        if unsafe { ReadFile(tube, Some(&mut tampon), Some(&mut lus), None) }.is_err() || lus == 0 {
-            break;
-        }
-        demande.extend_from_slice(&tampon[..lus as usize]);
-        if demande.contains(&b'\n') || demande.len() > 65536 || debut.elapsed() >= delai {
-            break;
-        }
-    }
+    let Ok(garde) = lance else {
+        unsafe { let _ = CloseHandle(HANDLE(brut as _)); }
+        return None;
+    };
+    let r = f();
     let _ = fin.send(());
     let _ = garde.join();
+    Some(r)
+}
+
+/// Lit une commande (jusqu'à la fin de ligne, 64 Ko au plus) en DELAI au plus (`avec_echeance`). Sans garde
+/// possible, rien n'est lu.
+pub fn lire_commande(tube: HANDLE, delai: Duration) -> Vec<u8> {
+    let debut = Instant::now();
+    let lu = avec_echeance(delai, || {
+        let mut demande = Vec::new();
+        let mut tampon = [0u8; 4096];
+        loop {
+            let mut lus = 0u32;
+            if unsafe { ReadFile(tube, Some(&mut tampon), Some(&mut lus), None) }.is_err() || lus == 0 {
+                break;
+            }
+            demande.extend_from_slice(&tampon[..lus as usize]);
+            if demande.contains(&b'\n') || demande.len() > 65536 || debut.elapsed() >= delai {
+                break;
+            }
+        }
+        demande
+    });
+    let Some(mut demande) = lu else {
+        commun::journal("canal de commandes : garde de lecture impossible, commande ignorée");
+        return Vec::new();
+    };
     // Échéance atteinte sans fin de ligne : commande incomplète, ignorée
     if !demande.contains(&b'\n') && debut.elapsed() >= delai {
         demande.clear();
     }
     demande
+}
+
+/// Écrit la réponse puis attend que le client l'ait lue (FlushFileBuffers : sans cette attente, DisconnectNamedPipe
+/// jetterait une réponse non lue), le tout en `delai` au plus (`avec_echeance`) : un client qui ne lit jamais la
+/// réponse ne bloque plus le canal (relecture indépendante du canal, IPC-04). Vrai si la réponse a été lue ; sans
+/// garde possible, rien n'est écrit.
+pub fn ecrire_reponse(tube: HANDLE, sortie: &[u8], delai: Duration) -> bool {
+    avec_echeance(delai, || unsafe {
+        let mut ecrits = 0u32;
+        WriteFile(tube, Some(sortie), Some(&mut ecrits), None).is_ok() && ecrits as usize == sortie.len() && FlushFileBuffers(tube).is_ok()
+    })
+    .unwrap_or(false)
 }
 
 /// PID du processus qui tient un tube nommé, lu en client ANONYME (SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS) :
@@ -241,10 +280,11 @@ pub fn admettre(demande: &[u8], client: Client, debit_ok: bool) -> Result<Comman
 
 fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>, debit: &mut Debit) {
     unsafe {
-        // Client identifié dès la connexion, avant la lecture (jusqu'à DELAI_LECTURE) : un client qui écrirait puis se
-        // terminerait laisserait sinon son PID libre pour un autre processus
-        let (client, sid) = crate::natif::identite_client_tube(tube);
+        // Commande lue d'abord, puis identité lue sur le jeton de la connexion (ImpersonateNamedPipeClient après une
+        // lecture, comme le demande sa documentation) : liée à la connexion qui a porté la commande, et non plus à un
+        // PID qu'un autre processus pourrait reprendre
         let demande = lire_commande(tube, DELAI_LECTURE);
+        let (client, sid) = crate::natif::identite_client_tube(tube);
         let reponse = match admettre(&demande, client, debit.accepter(Instant::now())) {
             Ok(mut c) => {
                 // Auteur des transitions d'incident : SID lu sur le jeton du client, jamais pris dans la commande
@@ -257,9 +297,12 @@ fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>
         };
         let mut sortie = serde_json::to_vec(&reponse).unwrap_or_default();
         sortie.extend_from_slice(b"\r\n");
-        let mut ecrits = 0u32;
-        let _ = WriteFile(tube, Some(&sortie), Some(&mut ecrits), None);
-        let _ = FlushFileBuffers(tube);
+        // Journal seulement à l'échéance : un client qui lit la réponse puis ferme avant l'attente de lecture n'est pas
+        // un client muet (audit de #168, S168-01)
+        let debut = Instant::now();
+        if !ecrire_reponse(tube, &sortie, DELAI_ECRITURE) && debut.elapsed() >= DELAI_ECRITURE {
+            commun::journal("canal de commandes : réponse non lue par le client dans le délai, connexion fermée");
+        }
         let _ = DisconnectNamedPipe(tube);
     }
 }

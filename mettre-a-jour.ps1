@@ -34,7 +34,7 @@ try {
     # Vérifie que le canal de commandes répond (une commande inconnue doit être refusée proprement)
     Start-Sleep -Seconds 3
     try {
-        $tube = New-Object IO.Pipes.NamedPipeClientStream '.', 'deR4Tizer', 'InOut'
+        $tube = New-Object IO.Pipes.NamedPipeClientStream '.', 'deR4Tizer', 'InOut', 'None', 'Identification'
         $tube.Connect(5000)
         $ecrivain = New-Object IO.StreamWriter $tube; $ecrivain.AutoFlush = $true
         $ecrivain.WriteLine('{"Action":"verification"}')

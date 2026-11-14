@@ -115,6 +115,58 @@ Verifier 'Canal : le service répond en administrateur, avec sa version' {
     if ($j.Message -ne "deR4Tizer $Version") { return "réponse : $($j.Message)" }
     $true
 }
+# Durcissement du canal : identité lue sur le jeton de la connexion. Un administrateur connecté au niveau Anonymous
+# n'a pas de jeton à montrer : « autre », seulement « verification ». Valeur invalide : rien n'est exécuté, même au
+# niveau Identification (refus par la validation, après l'autorisation)
+Verifier 'Canal : identité lue sur le jeton de la connexion (administrateur au niveau Anonymous refusé pour une commande d''administration)' {
+    $anonyme = Commande '{"Action":"filtrageAmont","Valeur":"invalide"}' -Niveau Anonymous | ConvertFrom-Json
+    if ($anonyme.Ok -or $anonyme.Message -notmatch 'non autorisée pour ce client') { return "anonyme : $($anonyme.Message)" }
+    $v = Commande '{"Action":"verification"}' -Niveau Anonymous | ConvertFrom-Json
+    if (-not $v.Ok) { return "anonyme, verification : $($v.Message)" }
+    $id = Commande '{"Action":"filtrageAmont","Valeur":"invalide"}' | ConvertFrom-Json
+    if ($id.Ok -or $id.Message -notmatch 'résolveur attendu') { return "identification : $($id.Message)" }
+    $true
+}
+# IPC-04 : un client qui écrit sa commande puis ne lit jamais la réponse ne bloque plus le canal (réponse écrite en
+# 5 s au plus, puis connexion fermée, noté au journal)
+Verifier 'Canal : un client qui ne lit jamais la réponse ne bloque pas le canal (IPC-04)' {
+    $muet = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
+    try {
+        $muet.Connect(5000)
+        $w = New-Object IO.StreamWriter($muet); $w.AutoFlush = $true
+        $w.WriteLine('{"Action":"verification"}')
+        Start-Sleep -Milliseconds 300
+        $chrono = [Diagnostics.Stopwatch]::StartNew()
+        $j = Commande '{"Action":"verification"}' 30000 | ConvertFrom-Json
+        $d = $chrono.Elapsed.TotalSeconds
+        Write-Host "  canal derrière un client muet : $([math]::Round($d, 1)) s"
+        if (-not $j.Ok) { return "réponse : $($j.Message)" }
+        if ($d -gt 15) { return "réponse en $d s" }
+    } finally { $muet.Dispose() }
+    if (-not (Journal 'réponse non lue par le client dans le délai')) { return 'journal : rien noté' }
+    $true
+}
+# Concurrence : huit clients simultanés (fils séparés) reçoivent chacun leur réponse
+Verifier 'Canal : huit clients simultanés reçoivent chacun leur réponse' {
+    $code = {
+        $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
+        try {
+            $c.Connect(30000)
+            $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c)
+            $w.WriteLine('{"Action":"verification"}')
+            $t = $r.ReadLineAsync()
+            if ($t.Wait(60000)) { $t.Result } else { 'muet' }
+        } catch { 'erreur ' + $_.Exception.Message } finally { $c.Dispose() }
+    }
+    $pool = [runspacefactory]::CreateRunspacePool(1, 8); $pool.Open()
+    try {
+        $taches = @(1..8 | ForEach-Object { $p = [powershell]::Create(); $p.RunspacePool = $pool; [void]$p.AddScript($code); [pscustomobject]@{ P = $p; H = $p.BeginInvoke() } })
+        $reponses = @($taches | ForEach-Object { $_.P.EndInvoke($_.H); $_.P.Dispose() })
+    } finally { $pool.Close() }
+    $ok = @($reponses | Where-Object { $_ -match '"Ok":\s*true' }).Count
+    if ($ok -ne 8) { return "$ok réponse(s) sur 8 : $($reponses -join ' | ')" }
+    $true
+}
 $etat1 = Attendre-Etat $debut
 Verifier 'Dossier de données : propriétaire Administrateurs, héritage coupé' {
     $d = Droits $script:Donnees

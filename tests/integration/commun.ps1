@@ -46,9 +46,10 @@ function Bilan([string]$Titre) {
 
 # ---------------------------------------------------------------- service et canal
 
-# Requête sur le canal du service, en administrateur ; renvoie la ligne de réponse
-function Commande([string]$Json, [int]$Delai = 5000) {
-    $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut)
+# Requête sur le canal du service, en administrateur ; renvoie la ligne de réponse. Niveau Identification, comme
+# l'interface et le script de mise à jour (durcissement du canal) ; -Niveau Anonymous pour le cas du client sans jeton
+function Commande([string]$Json, [int]$Delai = 5000, [string]$Niveau = 'Identification') {
+    $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]$Niveau)
     try {
         $c.Connect($Delai)
         $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true
@@ -384,7 +385,7 @@ function Essais-Standard($Compte, [string[]]$Exclus = @(), [string[]]$EnSysteme 
     [IO.File]::WriteAllLines($liste, $cibles, (New-Object Text.UTF8Encoding($true)))
     $s = En-TantQue $Compte @"
 function Nom-Exception(`$err) { `$x = `$err.Exception; while (`$x.InnerException) { `$x = `$x.InnerException }; `$x.GetType().Name }
-try { `$c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut); `$c.Connect(5000)
+try { `$c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification); `$c.Connect(5000)
       `$w = New-Object IO.StreamWriter(`$c); `$w.AutoFlush = `$true; `$r = New-Object IO.StreamReader(`$c)
       `$w.WriteLine('{"Action":"toutDebloquer"}'); 'TUBE|canal|REPONSE ' + `$r.ReadLine() } catch { 'TUBE|canal|' + (Nom-Exception `$_) }
 `$n = [guid]::NewGuid().ToString('N')
