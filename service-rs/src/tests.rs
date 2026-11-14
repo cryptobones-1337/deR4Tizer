@@ -8069,21 +8069,23 @@ fn audit_b2_b8_cablage() {
     let v = &maj[maj.find("fn verifier(config: &ConfigMaj").unwrap()..];
     let avant = &v[..v.find("telecharger(&config.url").unwrap()];
     assert!(avant.contains("commun::adresse_manifeste_simple(&config.url)"), "adresse revalidée avant le téléchargement (B2)");
-    let m = include_str!("moniteur.rs");
-    for bras in [r#""config" => {"#, r#""reglages" => {"#, r#""majConfig" => {"#] {
-        let b = &m[m.find(bras).unwrap()..];
-        let avant = &b[..b.find(r#"commun::ecrire("config.json""#).unwrap()];
-        assert!(avant.contains("commun::echec_protection().is_some()"), "{bras} refusé en échec de protection (B8)");
+    // B8, relecture de #173 (D1 à D3) : un seul point d'écriture de config.json, gardé en échec de protection ; plus
+    // aucune écriture directe ailleurs dans le service
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let g = &m[m.find("fn ecrire_config(config: &commun::Config)").expect("ecrire_config")..];
+    let g = &g[..g.find("\n}").unwrap()];
+    let garde = g.find("commun::echec_protection().is_some()").expect("garde");
+    assert!(garde < g.find(r#"commun::ecrire("config.json", config)"#).expect("écriture"), "garde avant l'écriture");
+    assert_eq!(m.matches(r#"ecrire("config.json""#).count(), 1, "une seule écriture de config.json dans moniteur.rs");
+    for (nom, source) in [("commun.rs", include_str!("commun.rs")), ("maj.rs", include_str!("maj.rs")), ("reponse.rs", include_str!("reponse.rs")),
+                          ("filtrage.rs", include_str!("filtrage.rs")), ("notifications.rs", include_str!("notifications.rs"))] {
+        assert!(!source.contains(r#"ecrire("config.json""#), "écriture directe de config.json dans {nom}");
     }
-    let n = &m[m.find(r#""notifications" | "testerNotifications" => {"#).unwrap()..];
-    let avant = &n[..n.find(r#"commun::ecrire("config.json""#).unwrap()];
-    assert!(avant.contains("commun::echec_protection().is_some()") && !avant.contains(r#"action == "notifications" && commun::echec_protection()"#),
-            "notifications et testerNotifications refusées en échec de protection (B8, S173-02)");
-    let f = &m[m.find(r#"            "filtrage" => {"#).unwrap()..];
-    let off = &f[..f.find("Err(e) => Reponse::erreur(e),").unwrap()];
-    assert!(off.contains("if commun::echec_protection().is_none() {\n                                let _ = commun::ecrire(\"config.json\"")
-            || off.contains("if commun::echec_protection().is_none() {\r\n                                let _ = commun::ecrire(\"config.json\""),
-            "filtrage off : cartes rendues, config.json non écrit en échec (S173-03)");
+    for bras in [r#""config" => {"#, r#""reglages" => {"#, r#""majConfig" => {"#, r#""notifications" | "testerNotifications" => {"#] {
+        let b = &m[m.find(bras).unwrap()..];
+        let avant = &b[..b.find("ecrire_config(&self.config)").unwrap()];
+        assert!(avant.contains("commun::echec_protection().is_some()"), "{bras} refusé en amont, message clair (B8)");
+    }
     for f in [include_str!("moniteur.rs"), include_str!("siem.rs")] {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }

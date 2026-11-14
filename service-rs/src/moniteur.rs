@@ -1279,7 +1279,7 @@ impl Moniteur {
                     }
                     Some("ListesRestreintes") => {
                         self.config.listes_restreintes = actif;
-                        let _ = commun::ecrire("config.json", &self.config);
+                        let _ = ecrire_config(&self.config);
                         let p = partage.clone();
                         std::thread::spawn(move || mettre_a_jour_menaces(&p, true));
                         "Listes non commerciales ou non vérifiées"
@@ -1294,7 +1294,7 @@ impl Moniteur {
                     }
                     _ => return Reponse::erreur("réglage inconnu"),
                 };
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok(format!("{quoi} {}.", if actif { "activé(e)" } else { "désactivé(e)" }))
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
@@ -1329,7 +1329,7 @@ impl Moniteur {
                     self.config.api = n.api;
                     crate::api::demarrer(&self.config.api);
                 }
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok("Réglages enregistrés.")
             }
             "testerSyslog" => {
@@ -1372,7 +1372,7 @@ impl Moniteur {
                     return Reponse::erreur(format!("Secrets non enregistrés : {e}"));
                 }
                 self.config.notifications = d.config.unwrap_or_default();
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 crate::notifications::configurer(&self.config.notifications);
                 if action == "testerNotifications" {
                     match crate::notifications::tester(&self.config.notifications) {
@@ -1427,7 +1427,7 @@ impl Moniteur {
                     Err(e) => return Reponse::erreur(e),
                 };
                 self.config.maj = m;
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok("Réglages de mise à jour enregistrés.")
             }
             // Filtrage (phase 7, PR 7.2) : domaine jamais bloqué, et ses sous-domaines. Refusé en échec de la protection
@@ -1464,11 +1464,9 @@ impl Moniteur {
                     return match desactiver_filtrage() {
                         Ok(m) => {
                             self.config.filtrage.actif = false;
-                            // Cartes toujours rendues ; en échec de la protection, la configuration en mémoire est celle
-                            // par défaut : ne pas l'écrire (audit de #173, S173-03)
-                            if commun::echec_protection().is_none() {
-                                let _ = commun::ecrire("config.json", &self.config);
-                            }
+                            // Cartes toujours rendues ; en échec de la protection, ecrire_config n'écrit rien (audit de
+                            // #173, S173-03)
+                            let _ = ecrire_config(&self.config);
                             commun::journal(&format!("filtrage : {m}"));
                             Reponse::ok(m)
                         }
@@ -1481,7 +1479,7 @@ impl Moniteur {
                 match activer_filtrage(partage, &self.config) {
                     Ok(m) => {
                         self.config.filtrage.actif = true;
-                        if let Err(e) = commun::ecrire("config.json", &self.config) {
+                        if let Err(e) = ecrire_config(&self.config) {
                             commun::journal(&format!("filtrage : activé, mais configuration non enregistrée ({e}) : non repris au prochain démarrage"));
                         }
                         commun::journal(&format!("filtrage : {m}"));
@@ -1501,7 +1499,7 @@ impl Moniteur {
                 }
                 let noms: Vec<String> = c.valeur.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
                 self.config.filtrage.categories = noms;
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
                 let actives = crate::filtrage::categories_actives(&self.config);
@@ -1524,7 +1522,7 @@ impl Moniteur {
                 }
                 let v = c.valeur.as_deref().unwrap_or("reseau");
                 self.config.filtrage.amont = if v == "reseau" { String::new() } else { v.to_string() };
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
                 REPLI_TIERS.store(false, Ordering::Release);
@@ -1565,7 +1563,7 @@ impl Moniteur {
                     format!("{nom} n'est plus dans les domaines autorisés.")
                 };
                 let ancienne = std::mem::replace(&mut self.config.filtrage.autorises, l);
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     self.config.filtrage.autorises = ancienne;
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
@@ -2283,6 +2281,16 @@ pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[Str
 }
 
 /// Repli au portail captif en cours (résolveur tiers choisi mais injoignable, PR 7.6)
+/// Seul point d'écriture de config.json par le service (relecture de #173, D3) : en échec de la protection du
+/// dossier, la configuration en mémoire est celle par défaut ; l'écrire écraserait la configuration légitime. Les
+/// commandes refusent en amont, avec un message clair ; cette garde couvre toute écriture, présente et future
+fn ecrire_config(config: &commun::Config) -> Result<(), String> {
+    if commun::echec_protection().is_some() {
+        return Err("protection du dossier de données en échec : configuration non enregistrée".into());
+    }
+    commun::ecrire("config.json", config)
+}
+
 static REPLI_TIERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Amonts voulus : le résolveur tiers choisi (hors repli), sinon les serveurs d'origine des cartes

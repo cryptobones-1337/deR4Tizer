@@ -735,7 +735,8 @@ pub fn reprendre_quarantaine(dossier: &Path, liste: &mut Vec<ElementQuarantaine>
     for mut e in liste.drain(..) {
         let Some(nom) = e.nom_fichier() else {
             // Entrée au nom refusé : conservée telle quelle, sans rien supprimer ni déplacer (B3)
-            messages.push(format!("quarantaine : entrée {} au nom de copie refusé, conservée sans action", e.id.chars().take(40).collect::<String>()));
+            messages.push(format!("quarantaine : entrée {} au nom de copie refusé, conservée sans action",
+                                  commun::ligne_de_journal(&e.id.chars().take(40).collect::<String>())));
             garder.push(e);
             continue;
         };
