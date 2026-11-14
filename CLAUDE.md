@@ -327,7 +327,14 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
          résultat. Un instantané dédié de la VM de test (« propre + outils de campagne ») les contient ; l'instantané
          « propre » des passages complets reste sans eux.
-       - Liste fermée de scénarios approuvée par le mainteneur avant toute exécution. Les correctifs issus de la
+       - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
+         mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis
+         « L'agent apprpuve », cités tels quels). L'approbation est écrite (fichier de la liste,
+         date, version) et chaque ajout ou changement de scénario est approuvé de même avant d'être exécuté. Elle ne lève aucune des règles de cette section : un
+         scénario qui en sortirait (Defender touché, réseau hors labo, vol d'identifiants réel, charge destructive,
+         saisie de mot de passe) ne peut pas être approuvé par l'agent ; s'il n'est pas clairement sûr, réversible et
+         confiné au laboratoire, il remonte au mainteneur. Le mainteneur peut retirer un scénario ou reprendre
+         l'approbation à tout moment. Les correctifs issus de la
          campagne suivent le circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage
          complet en VM, validateur de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni
          l'IDS, ni le DPI, ni le NDR. Aucune fusion par l'agent de validation ; la fusion reste décidée par
