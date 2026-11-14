@@ -145,6 +145,22 @@ pub fn empreinte_verifiee(chemin: &Path) -> Option<String> {
     Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Empreinte vérifiée (sans suivre de lien) à échéance
+fn empreinte_a_echeance(f: &Path) -> Result<Option<String>, crate::natif::HorsDelai> {
+    let c = f.to_path_buf();
+    crate::natif::lecture_fichier("leurre", &f.to_string_lossy(), move || empreinte_verifiee(&c))
+}
+
+/// Texte d'un fichier des profils lu en SYSTEM (audit du 2026-11-14, A3) : sans suivre de lien (chemin final vérifié)
+/// et borné à `max` octets ; au-delà, None (un fichier tronqué ne donnerait qu'un JSON invalide)
+pub(crate) fn lire_profil_borne(chemin: &Path, max: u64) -> Option<String> {
+    // GENERIC_READ | SYNCHRONIZE, tout partage
+    let f = crate::natif::ouvrir_verifie(chemin, 0x8000_0000 | 0x0010_0000, 0x7, false).ok()?;
+    let mut t = String::new();
+    let lus = f.take(max + 1).read_to_string(&mut t).ok()?;
+    (lus as u64 <= max).then_some(t)
+}
+
 /// Exécute `f` sous l'identité du propriétaire du profil s'il a une session ouverte (ses droits s'appliquent : une
 /// jonction vers un dossier protégé échoue en plus du contrôle du chemin final) ; None sans session
 fn sous_l_identite<T>(sid: &str, f: impl FnOnce() -> T) -> Option<T> {
@@ -259,21 +275,44 @@ pub fn poser_leurres() -> Vec<Leurre> {
         }
     }
     let noms = noms_leurres();
+    // Liste précédente : un leurre hors délai garde son entrée, sinon il ne serait plus retiré à la désinstallation
+    // (audit de #175, S175-01)
+    let precedents: Vec<Leurre> = commun::lire(FICHIER_LEURRES).unwrap_or_default();
+    let garder_precedent = |liste: &mut Vec<Leurre>, f: &Path| {
+        if let Some(p) = precedents.iter().find(|p| Path::new(&p.chemin) == f) {
+            liste.push(p.clone());
+        }
+    };
     let mut liste = Vec::new();
     for (profil, sid) in &profils {
         for (dossier, nom) in &noms {
             let f = profil.join(dossier).join(nom);
-            if empreinte_verifiee(&f).is_none() {
+            // Empreinte à échéance (audit du 2026-11-14, A8, famille S103-07) : un leurre tenu par un verrou ne fige plus
+            // la pose ; hors délai, ce leurre est laissé pour le prochain passage (jamais recréé à l'aveugle)
+            let Ok(presente) = empreinte_a_echeance(&f) else {
+                garder_precedent(&mut liste, &f);
+                continue;
+            };
+            if presente.is_none() {
                 // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi)
                 match sous_l_identite(sid, || creer_leurre(&f)) {
                     Some(Ok(())) => {}
                     _ => continue,
                 }
             }
-            let Some(e) = empreinte_verifiee(&f) else { continue };
+            // Audit posé dès que le leurre existe, avant le second contrôle (S175-01 : un leurre neuf hors délai au
+            // second contrôle restait sans audit, LEU-002 aveugle)
             if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
                 commun::journal(&format!("leurres : audit non posé sur {} ({x})", f.display()));
             }
+            let e = match empreinte_a_echeance(&f) {
+                Ok(Some(e)) => e,
+                Ok(None) => continue,
+                Err(_) => {
+                    garder_precedent(&mut liste, &f);
+                    continue;
+                }
+            };
             liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e });
         }
     }
@@ -492,7 +531,7 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
     let nom = manifeste["name"].as_str().unwrap_or("").to_string();
     let Some(cle) = nom.strip_prefix("__MSG_").and_then(|n| n.strip_suffix("__")) else { return nom };
     for langue in ["fr", "en", "en_US"] {
-        if let Ok(t) = fs::read_to_string(dossier.join("_locales").join(langue).join("messages.json")) {
+        if let Some(t) = lire_profil_borne(&dossier.join("_locales").join(langue).join("messages.json"), TAILLE_MAX_MANIFESTE) {
             if let Ok(m) = serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')) {
                 if let Some(obj) = m.as_object() {
                     if let Some((_, v)) = obj.iter().find(|(k, _)| k.eq_ignore_ascii_case(cle)) {
@@ -505,24 +544,50 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
     nom
 }
 
+/// Bornes des fichiers d'extensions lus en SYSTEM (A3) : un manifeste réel fait quelques Ko, extensions.json de
+/// Firefox quelques centaines de Ko
+const TAILLE_MAX_MANIFESTE: u64 = 1 << 20;
+const TAILLE_MAX_EXTENSIONS_FIREFOX: u64 = 16 << 20;
+/// Plafonds d'entrées (audit de #175, S175-03, S175-04) : par profil et pendant l'énumération, pour qu'un compte
+/// standard qui crée des milliers de dossiers d'extension ne masque ni les extensions des autres profils ni les
+/// 1 000 alertes gardées ; au-delà, les manifestes ne sont plus lus et la troncature est signalée par une alerte
+const MAX_EXTENSIONS_PAR_PROFIL: usize = 500;
+/// Dossiers d'extension examinés par profil, valides ou non (audit v3 de #175, S175-07) : des milliers de dossiers au
+/// manifeste invalide ne rendent plus le travail de chaque relevé illimité
+const MAX_DOSSIERS_PAR_PROFIL: usize = 2000;
+const MAX_ALERTES_EXTENSIONS: usize = 20;
+
 pub fn inventaire_extensions() -> Vec<Extension> {
+    inventaire_extensions_borne().0
+}
+
+/// Inventaire plafonné par profil ; rend aussi le nombre d'extensions non examinées au-delà du plafond
+pub(crate) fn inventaire_extensions_borne() -> (Vec<Extension>, usize) {
     let mut l = Vec::new();
+    let mut tronquees = 0usize;
     let navigateurs = [
         ("Chrome", r"AppData\Local\Google\Chrome\User Data"),
         ("Brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data"),
         ("Edge", r"AppData\Local\Microsoft\Edge\User Data"),
     ];
     for profil in profils() {
+        let debut_profil = l.len();
+        let mut examines = 0usize;
         for (nav, rel) in navigateurs {
             let donnees = profil.join(rel);
             let Ok(sous) = fs::read_dir(&donnees) else { continue };
             for p in sous.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("Extensions").is_dir()) {
                 let Ok(exts) = fs::read_dir(p.join("Extensions")) else { continue };
                 for ext in exts.map_while(Result::ok) {
+                    examines += 1;
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL || examines > MAX_DOSSIERS_PAR_PROFIL {
+                        tronquees += 1;
+                        continue;
+                    }
                     let id = ext.file_name().to_string_lossy().to_string();
                     // Dernière version installée
                     let Some(version) = fs::read_dir(ext.path()).ok().and_then(|v| v.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("manifest.json").exists()).max()) else { continue };
-                    let Ok(t) = fs::read_to_string(version.join("manifest.json")) else { continue };
+                    let Some(t) = lire_profil_borne(&version.join("manifest.json"), TAILLE_MAX_MANIFESTE) else { continue };
                     let Ok(m) = serde_json::from_str::<serde_json::Value>(t.trim_start_matches('\u{feff}')) else { continue };
                     let mut perms = texte_json(&m["permissions"]);
                     perms.extend(texte_json(&m["host_permissions"]));
@@ -547,11 +612,16 @@ pub fn inventaire_extensions() -> Vec<Extension> {
         // Firefox : extensions.json de chaque profil
         if let Ok(pf) = fs::read_dir(profil.join(r"AppData\Roaming\Mozilla\Firefox\Profiles")) {
             for p in pf.map_while(Result::ok) {
-                let Ok(t) = fs::read_to_string(p.path().join("extensions.json")) else { continue };
+                let Some(t) = lire_profil_borne(&p.path().join("extensions.json"), TAILLE_MAX_EXTENSIONS_FIREFOX) else { continue };
                 let Ok(m) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
                 for a in m["addons"].as_array().cloned().unwrap_or_default() {
                     if a["location"].as_str() != Some("app-profile") {
                         continue; // extensions intégrées à Firefox
+                    }
+                    examines += 1;
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL || examines > MAX_DOSSIERS_PAR_PROFIL {
+                        tronquees += 1;
+                        continue;
                     }
                     let mut perms = texte_json(&a["userPermissions"]["permissions"]);
                     perms.extend(texte_json(&a["userPermissions"]["origins"]));
@@ -569,7 +639,7 @@ pub fn inventaire_extensions() -> Vec<Extension> {
             }
         }
     }
-    l
+    (l, tronquees)
 }
 
 /// Compare à l'inventaire précédent : alerte sur chaque nouvelle extension (sauf au premier relevé)
@@ -583,18 +653,29 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     let connues: Option<HashMap<String, String>> = commun::lire("extensions-connues.json");
     let apprentissage = connues.is_none();
     let mut connues = connues.unwrap_or_default();
-    let mut liste = inventaire_extensions();
-    let alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
+    let (mut liste, tronquees) = inventaire_extensions_borne();
+    let mut alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
+    if tronquees > 0 {
+        alertes.push(alerte_inventaire_tronque(tronquees));
+    }
     let _ = commun::ecrire("extensions-connues.json", &connues);
     liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
     let _ = commun::ecrire("extensions.json", &liste);
     (liste, alertes)
 }
 
+/// Inventaire tronqué (S175-04) : signalé, jamais muet
+pub(crate) fn alerte_inventaire_tronque(tronquees: usize) -> Alerte {
+    commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers par profil"));
+    alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
+        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
+}
+
 /// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
 /// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
 pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMap<String, String>, apprentissage: bool) -> Vec<Alerte> {
     let mut alertes = Vec::new();
+    let mut en_plus = 0usize;
     for e in liste.iter_mut() {
         let cle = format!("{}|{}", e.navigateur, e.id);
         match connues.get(&cle) {
@@ -602,7 +683,9 @@ pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMa
             None => {
                 e.depuis = commun::maintenant();
                 connues.insert(cle, e.depuis.clone());
-                if !apprentissage {
+                if !apprentissage && alertes.len() >= MAX_ALERTES_EXTENSIONS {
+                    en_plus += 1;
+                } else if !apprentissage {
                     alertes.push(alerte(crate::regles::EXT_001, if e.dangereuse { "Alerte" } else { "Info" }, if e.dangereuse { 4 } else { 0 }, &e.nom, "",
                         &format!("extension {}", e.navigateur),
                         format!("NOUVELLE extension de navigateur « {} » {}{}", e.nom, e.version,
@@ -610,6 +693,10 @@ pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMa
                 }
             }
         }
+    }
+    if en_plus > 0 {
+        alertes.push(alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
+            format!("{en_plus} autre(s) NOUVELLE(S) extension(s) de navigateur au même relevé (au-delà de {MAX_ALERTES_EXTENSIONS} alertes) : vérifiez la liste des extensions  [MITRE T1176]")));
     }
     alertes
 }

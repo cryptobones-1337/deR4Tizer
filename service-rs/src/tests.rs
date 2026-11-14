@@ -8104,3 +8104,96 @@ fn audit_b2_b8_cablage() {
         assert!(!f.contains("Instant::now() - Duration"), "aucune soustraction d'Instant qui panique (A1)");
     }
 }
+
+// ------------------------------------------------------------ audit du 2026-11-14, lot 2 (lectures bornées)
+
+/// A3 : un fichier des profils lu en SYSTEM est borné ; au-delà de la borne, rien n'est rendu (pas de JSON tronqué)
+#[test]
+fn audit_a3_lecture_profil_bornee() {
+    use crate::hygiene::lire_profil_borne;
+    let d = std::env::temp_dir().join(format!("der4tizer-audit-a3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    struct Menage(std::path::PathBuf);
+    impl Drop for Menage { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    let _menage = Menage(d.clone());
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("manifest.json");
+    std::fs::write(&f, vec![b'a'; 100]).unwrap();
+    assert_eq!(lire_profil_borne(&f, 100).map(|t| t.len()), Some(100), "à la borne : lu");
+    assert_eq!(lire_profil_borne(&f, 99), None, "au-delà de la borne : rien");
+    assert_eq!(lire_profil_borne(&d.join("absent.json"), 100), None);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A2 et A8 : lectures à échéance pendant le cycle et la pose des leurres (contrôle de câblage)
+#[test]
+fn audit_a2_a8_cablage() {
+    let r = include_str!("reponse.rs");
+    let o = &r[r.find("pub fn origine(chemin: &str)").unwrap()..];
+    let o = &o[..o.find("\n}").unwrap()];
+    assert!(o.contains(r#"natif::lecture_fichier("marque""#) && o.contains("lire_marque_internet(&c)") && !o.contains("read_to_string"),
+            "marque Internet bornée à 4 Ko et à échéance (A2)");
+    let h = include_str!("hygiene.rs");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
+    assert!(!p.contains("empreinte_verifiee(&f)") && p.contains("empreinte_a_echeance(&f)"), "empreinte des leurres à échéance (A8)");
+    let i = &h[h.find("pub fn inventaire_extensions()").unwrap()..];
+    let i = &i[..i.find("\n}").unwrap()];
+    assert!(!i.contains("fs::read_to_string"), "fichiers d'extensions lus bornés, sans suivre de lien (A3)");
+}
+
+/// S175-03 : au-delà de 20 nouvelles extensions au même relevé, une seule alerte de synthèse (les 1 000 alertes
+/// gardées ne sont pas chassées)
+#[test]
+fn audit_s175_03_alertes_extensions_plafonnees() {
+    use crate::hygiene::{nouvelles_extensions, Extension};
+    let mut connues = std::collections::HashMap::new();
+    let mut liste: Vec<Extension> = (0..500).map(|i| Extension { navigateur: "Chrome (Default)".into(), id: format!("id{i}"), nom: format!("ext{i}"), ..Default::default() }).collect();
+    let a = nouvelles_extensions(&mut liste, &mut connues, false);
+    assert_eq!(a.len(), 21, "20 alertes puis une synthèse");
+    assert!(a[20].raisons.contains("480 autre(s)"), "{}", a[20].raisons);
+    assert_eq!(connues.len(), 500, "toutes mémorisées : pas d'alerte au relevé suivant");
+    assert!(nouvelles_extensions(&mut liste, &mut connues, false).is_empty());
+}
+
+/// S175-01 et S175-02 : leurre hors délai gardé dans la liste, audit posé avant le second contrôle ; origine hors
+/// délai jamais mise en cache (contrôle de câblage)
+#[test]
+fn audit_s175_01_02_cablage() {
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
+    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 2, "leurre hors délai gardé (S175-01)");
+    assert!(p.find("poser_audit_verifie").unwrap() < p.find("let e = match empreinte_a_echeance(&f)").unwrap(), "audit avant le second contrôle (S175-01)");
+    let m = include_str!("moniteur.rs");
+    assert!(!m.contains("self.origines.entry(chemin.clone()).or_insert_with"), "origine hors délai jamais en cache (S175-02)");
+    assert!(m.contains("if reponse::origine_a_garder(&o) {"), "origine hors délai jamais en cache (S175-02)");
+}
+
+/// S175-02 : décision pure de mise en cache de l'origine
+#[test]
+fn audit_s175_02_origine_hors_delai_pas_en_cache() {
+    use crate::reponse::{origine_a_garder, Origine};
+    assert!(origine_a_garder(&None), "pas de chemin : rien à relire");
+    assert!(origine_a_garder(&Some(Origine { zone: 3, ..Default::default() })), "marque lue : gardée");
+    assert!(origine_a_garder(&Some(Origine::default())), "sans marque, lue à temps : gardée");
+    assert!(!origine_a_garder(&Some(Origine { hors_delai: true, ..Default::default() })), "hors délai : relue au passage suivant");
+}
+
+/// S175-04 : plafond par profil appliqué pendant l'énumération, avant la lecture du manifeste ; troncature signalée
+#[test]
+fn audit_s175_04_plafond_par_profil() {
+    let a = crate::hygiene::alerte_inventaire_tronque(7);
+    assert_eq!(a.regle, "EXT-001");
+    assert_eq!(a.niveau, "Alerte");
+    assert!(a.raisons.contains("PARTIEL") && a.raisons.contains("7 extension(s)"), "{}", a.raisons);
+    let h = include_str!("hygiene.rs");
+    let i = &h[h.find("pub(crate) fn inventaire_extensions_borne()").unwrap()..];
+    let i = &i[..i.find("\n}").unwrap()];
+    assert!(i.contains("let debut_profil = l.len();"), "compte par profil");
+    let chrome = &i[i.find("for ext in exts").unwrap()..];
+    assert!(chrome.find("MAX_EXTENSIONS_PAR_PROFIL").unwrap() < chrome.find("lire_profil_borne").unwrap(), "plafond avant la lecture du manifeste");
+    assert!(chrome.find("examines += 1;").unwrap() < chrome.find("read_dir(ext.path())").unwrap() && chrome.contains("examines > MAX_DOSSIERS_PAR_PROFIL"), "dossiers examinés comptés avant toute lecture (S175-07)");
+    let v = &h[h.find("pub fn verifier_extensions()").unwrap()..];
+    assert!(v.contains("if tronquees > 0 {") && v.contains("alerte_inventaire_tronque(tronquees)"), "troncature signalée");
+}
