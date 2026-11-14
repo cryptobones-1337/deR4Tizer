@@ -217,9 +217,9 @@ impl Moniteur {
             empreinte_hosts: blocage::empreinte_hosts(),
             expiration: Instant::now(),
             derniere_signature_etat: String::new(),
-            dernier_etat_ecrit: Instant::now() - Duration::from_secs(60),
+            dernier_etat_ecrit: Instant::now().checked_sub(Duration::from_secs(60)).unwrap_or_else(Instant::now),
             derniere_sauvegarde_dns: Instant::now(),
-            dernier_etat_filtrage: (Instant::now() - Duration::from_secs(3600), Default::default()),
+            dernier_etat_filtrage: (Instant::now().checked_sub(Duration::from_secs(3600)).unwrap_or_else(Instant::now), Default::default()),
             premier_passage: true,
             numero_passage: 0,
             arbre: Arbre::default(),
@@ -1265,7 +1265,12 @@ impl Moniteur {
                 }
                 r
             }
+            // Commandes qui réécrivent config.json : refusées en échec de la protection du dossier (audit du
+            // 2026-11-14, B8), comme les commandes filtrage*
             "config" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let actif = c.valeur.as_deref() == Some("true");
                 let quoi = match c.cible.as_deref() {
                     Some("BlocageAutoMenaces") => {
@@ -1274,7 +1279,7 @@ impl Moniteur {
                     }
                     Some("ListesRestreintes") => {
                         self.config.listes_restreintes = actif;
-                        let _ = commun::ecrire("config.json", &self.config);
+                        let _ = ecrire_config(&self.config);
                         let p = partage.clone();
                         std::thread::spawn(move || mettre_a_jour_menaces(&p, true));
                         "Listes non commerciales ou non vérifiées"
@@ -1289,11 +1294,14 @@ impl Moniteur {
                     }
                     _ => return Reponse::erreur("réglage inconnu"),
                 };
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok(format!("{quoi} {}.", if actif { "activé(e)" } else { "désactivé(e)" }))
             }
             // ---------------- réglages (langue, syslog, API d'export) : Valeur = Config en JSON
             "reglages" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let n = match commun::lire_reglages(c.valeur.as_deref().unwrap_or("")) {
                     Ok(n) => n,
                     Err(e) => return Reponse::erreur(e),
@@ -1321,7 +1329,7 @@ impl Moniteur {
                     self.config.api = n.api;
                     crate::api::demarrer(&self.config.api);
                 }
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok("Réglages enregistrés.")
             }
             "testerSyslog" => {
@@ -1345,6 +1353,10 @@ impl Moniteur {
                     #[serde(flatten)]
                     secrets: crate::notifications::Secrets,
                 }
+                // Les deux réécrivent config.json (audit de #173, S173-02)
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 if let Err(e) = crate::notifications::controler_demande(c.valeur.as_deref().unwrap_or("")) {
                     return Reponse::erreur(e);
                 }
@@ -1360,7 +1372,7 @@ impl Moniteur {
                     return Reponse::erreur(format!("Secrets non enregistrés : {e}"));
                 }
                 self.config.notifications = d.config.unwrap_or_default();
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 crate::notifications::configurer(&self.config.notifications);
                 if action == "testerNotifications" {
                     match crate::notifications::tester(&self.config.notifications) {
@@ -1407,12 +1419,15 @@ impl Moniteur {
                 Reponse::ok("Recherche de mise à jour lancée : le résultat s'affichera dans les Réglages.")
             }
             "majConfig" => {
+                if commun::echec_protection().is_some() {
+                    return Reponse::erreur("Protection du dossier de données en échec : réglages non enregistrés (la configuration en mémoire est celle par défaut).");
+                }
                 let m = match commun::lire_config_maj(c.valeur.as_deref().unwrap_or("")) {
                     Ok(m) => m,
                     Err(e) => return Reponse::erreur(e),
                 };
                 self.config.maj = m;
-                let _ = commun::ecrire("config.json", &self.config);
+                let _ = ecrire_config(&self.config);
                 Reponse::ok("Réglages de mise à jour enregistrés.")
             }
             // Filtrage (phase 7, PR 7.2) : domaine jamais bloqué, et ses sous-domaines. Refusé en échec de la protection
@@ -1449,7 +1464,13 @@ impl Moniteur {
                     return match desactiver_filtrage() {
                         Ok(m) => {
                             self.config.filtrage.actif = false;
-                            let _ = commun::ecrire("config.json", &self.config);
+                            // Cartes toujours rendues ; en échec de la protection, ecrire_config n'écrit rien (audit de
+                            // #173, S173-03) : dit dans la réponse et au journal (S173-05, relecture R1 : l'état d'origine
+                            // est effacé, le filtrage ne reprend pas, mais la configuration le dit encore actif)
+                            let m = match ecrire_config(&self.config) {
+                                Ok(()) => m,
+                                Err(e) => format!("{m} ; désactivation non enregistrée ({e}) : la configuration indique encore le filtrage actif, le désactiver de nouveau une fois la protection rétablie"),
+                            };
                             commun::journal(&format!("filtrage : {m}"));
                             Reponse::ok(m)
                         }
@@ -1462,7 +1483,7 @@ impl Moniteur {
                 match activer_filtrage(partage, &self.config) {
                     Ok(m) => {
                         self.config.filtrage.actif = true;
-                        if let Err(e) = commun::ecrire("config.json", &self.config) {
+                        if let Err(e) = ecrire_config(&self.config) {
                             commun::journal(&format!("filtrage : activé, mais configuration non enregistrée ({e}) : non repris au prochain démarrage"));
                         }
                         commun::journal(&format!("filtrage : {m}"));
@@ -1482,7 +1503,7 @@ impl Moniteur {
                 }
                 let noms: Vec<String> = c.valeur.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
                 self.config.filtrage.categories = noms;
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
                 let actives = crate::filtrage::categories_actives(&self.config);
@@ -1505,7 +1526,7 @@ impl Moniteur {
                 }
                 let v = c.valeur.as_deref().unwrap_or("reseau");
                 self.config.filtrage.amont = if v == "reseau" { String::new() } else { v.to_string() };
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
                 REPLI_TIERS.store(false, Ordering::Release);
@@ -1546,7 +1567,7 @@ impl Moniteur {
                     format!("{nom} n'est plus dans les domaines autorisés.")
                 };
                 let ancienne = std::mem::replace(&mut self.config.filtrage.autorises, l);
-                if let Err(e) = commun::ecrire("config.json", &self.config) {
+                if let Err(e) = ecrire_config(&self.config) {
                     self.config.filtrage.autorises = ancienne;
                     return Reponse::erreur(format!("Configuration non enregistrée : {e}"));
                 }
@@ -2261,6 +2282,16 @@ pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[Str
         raisons: format!("Le port DNS de la boucle locale est tenu par {qui} alors que la carte {} pointe encore sur le résolveur de deR4Tizer : ce programme peut répondre à toutes les résolutions de noms du poste. Arrêtez-le, puis rendez la carte (README, procédure manuelle) ou réactivez le filtrage.", cartes.join(", ")),
         ..Default::default()
     }
+}
+
+/// Seul point d'écriture de config.json par le service (relecture de #173, D3) : en échec de la protection du
+/// dossier, la configuration en mémoire est celle par défaut ; l'écrire écraserait la configuration légitime. Les
+/// commandes refusent en amont, avec un message clair ; cette garde couvre toute écriture, présente et future
+fn ecrire_config(config: &commun::Config) -> Result<(), String> {
+    if commun::echec_protection().is_some() {
+        return Err("protection du dossier de données en échec : configuration non enregistrée".into());
+    }
+    commun::ecrire("config.json", config)
 }
 
 /// Repli au portail captif en cours (résolveur tiers choisi mais injoignable, PR 7.6)
