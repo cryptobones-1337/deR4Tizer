@@ -1465,8 +1465,12 @@ impl Moniteur {
                         Ok(m) => {
                             self.config.filtrage.actif = false;
                             // Cartes toujours rendues ; en échec de la protection, ecrire_config n'écrit rien (audit de
-                            // #173, S173-03)
-                            let _ = ecrire_config(&self.config);
+                            // #173, S173-03) : dit dans la réponse et au journal, le filtrage reviendrait au prochain
+                            // démarrage une fois la protection rétablie (S173-05)
+                            let m = match ecrire_config(&self.config) {
+                                Ok(()) => m,
+                                Err(e) => format!("{m} ; désactivation non enregistrée ({e}) : à refaire une fois la protection rétablie, sinon le filtrage reprendra au prochain démarrage"),
+                            };
                             commun::journal(&format!("filtrage : {m}"));
                             Reponse::ok(m)
                         }
@@ -2280,7 +2284,6 @@ pub(crate) fn alerte_port_dns_tenu(pid: Option<u32>, chemin: &str, cartes: &[Str
     }
 }
 
-/// Repli au portail captif en cours (résolveur tiers choisi mais injoignable, PR 7.6)
 /// Seul point d'écriture de config.json par le service (relecture de #173, D3) : en échec de la protection du
 /// dossier, la configuration en mémoire est celle par défaut ; l'écrire écraserait la configuration légitime. Les
 /// commandes refusent en amont, avec un message clair ; cette garde couvre toute écriture, présente et future
@@ -2291,6 +2294,7 @@ fn ecrire_config(config: &commun::Config) -> Result<(), String> {
     commun::ecrire("config.json", config)
 }
 
+/// Repli au portail captif en cours (résolveur tiers choisi mais injoignable, PR 7.6)
 static REPLI_TIERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Amonts voulus : le résolveur tiers choisi (hors repli), sinon les serveurs d'origine des cartes
