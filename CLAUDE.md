@@ -284,7 +284,12 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      chronologie (phase 4), la réponse et ses durées maximales (phase 6) et le filtrage DNS (phase 7).
      - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet ; VM
        adressées dans une plage de documentation (RFC 5737, par exemple 203.0.113.0/24), jamais une plage publique
-       réelle, pour que COR-R9 (session depuis une adresse publique) puisse se déclencher.
+       réelle, pour que COR-R9 (session depuis une adresse publique) puisse se déclencher. Seule exception, choisie
+       par le mainteneur le 2026-11-14 (« Lien d'admin SSH ») : un lien d'administration sur un commutateur séparé,
+       entre le poste et Kali seulement, dans une autre plage de documentation (198.51.100.0/24), sans routage vers
+       la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
+       connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
+       à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
      - VM cible remise à son instantané « propre » avant et après la campagne (Bureau à distance activé pour la force
        brute, comptes de test, etc.).
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
@@ -312,14 +317,22 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          faux positifs ; aucune hypothèse présentée comme un résultat.
        - Vol d'identifiants, injection et contournement des défenses : simulations inoffensives et réversibles
          seulement, marquées SIMULATION ; aucun outil de vol d'identifiants, aucune charge destructive.
-       - Dépendances acceptées par le mainteneur le 2026-11-14, dans la VM de test seulement : Atomic Red Team
-         (fiches Windows lues avant usage : prérequis, commande, nettoyage ; toute fiche qui télécharge une charge,
-         désactive une protection ou n'est pas réversible est écartée) et Sysmon, pour la collecte indépendante
-         avec les journaux natifs de Windows.
+       - Dépendances acceptées par le mainteneur le 2026-11-14 (« J ACCEPTE LES DEUX DEPENDANCES »), dans la VM de
+         test seulement : Atomic Red Team (MIT ; fiches Windows lues avant usage : prérequis, commande, nettoyage ;
+         toute fiche qui télécharge une charge, désactive une protection ou n'est pas réversible est écartée) et
+         Sysmon (licence Sysinternals, propriétaire : aucun binaire dans le dépôt), pour la collecte indépendante
+         avec les journaux natifs de Windows. Installées hors campagne (Internet seulement à ce moment-là), versions
+         figées et notées dans chaque rapport, **sans aucune exclusion Defender**, même pour le dossier des fiches,
+         contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
+         résultat. Un instantané dédié de la VM de test (« propre + outils de campagne ») les contient ; l'instantané
+         « propre » des passages complets reste sans eux.
        - Liste fermée de scénarios approuvée par le mainteneur avant toute exécution. Les correctifs issus de la
-         campagne suivent le circuit habituel (relecture, audit, passage complet en VM, validateur) ; aucune
-         fusion par l'agent de validation. Résultats bruts gardés hors du dépôt ; rapports et matrice des capacités
-         après la garde PII.
+         campagne suivent le circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage
+         complet en VM, validateur de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni
+         l'IDS, ni le DPI, ni le NDR. Aucune fusion par l'agent de validation ; la fusion reste décidée par
+         cryptobones-1337. Résultats bruts gardés hors du dépôt ; rapports et matrice des capacités après la garde
+         PII. L'agent de validation est un fichier local, hors de Git : sa consigne de lecture seule est une
+         consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
 7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
