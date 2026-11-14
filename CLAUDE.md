@@ -297,6 +297,29 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
        Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
        mainteneur lance lui-même les scénarios.
+     - Boucle continue de validation (purple team), décidée par le mainteneur le 2026-11-14 : la campagne n'est pas
+       un essai unique mais un cycle répété, audit → test → collecte → mesure → analyse → correctif proposé →
+       non-régression → rapport, sur un corpus versionné fondé sur MITRE ATT&CK (PowerShell obfusqué, persistance,
+       commande et contrôle, exfiltration, mouvement latéral dans le labo, et les scénarios ci-dessus).
+       - Rôles : un agent de validation (`.claude/agents/purple-team.md`, local) conçoit les scénarios, la
+         cartographie (technique → comportement → capteur → événement → règle → alerte) et les mesures, analyse les
+         résultats et rédige les rapports, en lecture seule. Claude Code seul exécute (clé SSH sur un lien
+         d'administration hôte ↔ Kali réservé à SSH ; PowerShell Direct vers la VM de test).
+       - Mesure honnête : classes A (détection confirmée), B (événement collecté sans alerte), C (alerte incorrecte
+         ou trop générique), D (non exécuté ou invalide, « non évalué », jamais 0), E (non testable avec
+         l'architecture actuelle, NDR, IDS et DPI gelés) ; simulations et émulations jamais fusionnées dans un même
+         score ; 10 répétitions valides avant une mesure consolidée ; tests négatifs (activité légitime) pour les
+         faux positifs ; aucune hypothèse présentée comme un résultat.
+       - Vol d'identifiants, injection et contournement des défenses : simulations inoffensives et réversibles
+         seulement, marquées SIMULATION ; aucun outil de vol d'identifiants, aucune charge destructive.
+       - Dépendances acceptées par le mainteneur le 2026-11-14, dans la VM de test seulement : Atomic Red Team
+         (fiches Windows lues avant usage : prérequis, commande, nettoyage ; toute fiche qui télécharge une charge,
+         désactive une protection ou n'est pas réversible est écartée) et Sysmon, pour la collecte indépendante
+         avec les journaux natifs de Windows.
+       - Liste fermée de scénarios approuvée par le mainteneur avant toute exécution. Les correctifs issus de la
+         campagne suivent le circuit habituel (relecture, audit, passage complet en VM, validateur) ; aucune
+         fusion par l'agent de validation. Résultats bruts gardés hors du dépôt ; rapports et matrice des capacités
+         après la garde PII.
 7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
