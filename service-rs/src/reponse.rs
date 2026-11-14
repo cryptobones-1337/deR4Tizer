@@ -33,6 +33,11 @@ pub struct Origine {
     pub hors_delai: bool,
 }
 
+/// Une origine va en cache seulement si sa marque a été lue à temps (pur, testé ; audit de #175, S175-02)
+pub fn origine_a_garder(o: &Option<Origine>) -> bool {
+    !o.as_ref().is_some_and(|x| x.hors_delai)
+}
+
 /// Lit la marque « téléchargé depuis Internet » (flux de données alternatif Zone.Identifier) et l'âge du fichier
 pub fn origine(chemin: &str) -> Option<Origine> {
     if chemin.is_empty() {

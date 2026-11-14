@@ -548,25 +548,37 @@ fn nom_chromium(dossier: &Path, manifeste: &serde_json::Value) -> String {
 /// Firefox quelques centaines de Ko
 const TAILLE_MAX_MANIFESTE: u64 = 1 << 20;
 const TAILLE_MAX_EXTENSIONS_FIREFOX: u64 = 16 << 20;
-/// Plafonds d'entrées (audit de #175, S175-03) : un compte standard qui crée des milliers de dossiers d'extension ne
-/// remplit ni l'inventaire ni les 1 000 alertes gardées
-const MAX_EXTENSIONS: usize = 2000;
+/// Plafonds d'entrées (audit de #175, S175-03, S175-04) : par profil et pendant l'énumération, pour qu'un compte
+/// standard qui crée des milliers de dossiers d'extension ne masque ni les extensions des autres profils ni les
+/// 1 000 alertes gardées ; au-delà, les manifestes ne sont plus lus et la troncature est signalée par une alerte
+const MAX_EXTENSIONS_PAR_PROFIL: usize = 500;
 const MAX_ALERTES_EXTENSIONS: usize = 20;
 
 pub fn inventaire_extensions() -> Vec<Extension> {
+    inventaire_extensions_borne().0
+}
+
+/// Inventaire plafonné par profil ; rend aussi le nombre d'extensions non examinées au-delà du plafond
+pub(crate) fn inventaire_extensions_borne() -> (Vec<Extension>, usize) {
     let mut l = Vec::new();
+    let mut tronquees = 0usize;
     let navigateurs = [
         ("Chrome", r"AppData\Local\Google\Chrome\User Data"),
         ("Brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data"),
         ("Edge", r"AppData\Local\Microsoft\Edge\User Data"),
     ];
     for profil in profils() {
+        let debut_profil = l.len();
         for (nav, rel) in navigateurs {
             let donnees = profil.join(rel);
             let Ok(sous) = fs::read_dir(&donnees) else { continue };
             for p in sous.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("Extensions").is_dir()) {
                 let Ok(exts) = fs::read_dir(p.join("Extensions")) else { continue };
                 for ext in exts.map_while(Result::ok) {
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL {
+                        tronquees += 1;
+                        continue;
+                    }
                     let id = ext.file_name().to_string_lossy().to_string();
                     // Dernière version installée
                     let Some(version) = fs::read_dir(ext.path()).ok().and_then(|v| v.map_while(Result::ok).map(|e| e.path()).filter(|p| p.join("manifest.json").exists()).max()) else { continue };
@@ -601,6 +613,10 @@ pub fn inventaire_extensions() -> Vec<Extension> {
                     if a["location"].as_str() != Some("app-profile") {
                         continue; // extensions intégrées à Firefox
                     }
+                    if l.len() - debut_profil >= MAX_EXTENSIONS_PAR_PROFIL {
+                        tronquees += 1;
+                        continue;
+                    }
                     let mut perms = texte_json(&a["userPermissions"]["permissions"]);
                     perms.extend(texte_json(&a["userPermissions"]["origins"]));
                     let dangereuse = perms.iter().any(|x| PERMISSIONS_DANGEREUSES.contains(&x.as_str()));
@@ -617,7 +633,7 @@ pub fn inventaire_extensions() -> Vec<Extension> {
             }
         }
     }
-    l
+    (l, tronquees)
 }
 
 /// Compare à l'inventaire précédent : alerte sur chaque nouvelle extension (sauf au premier relevé)
@@ -631,12 +647,11 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     let connues: Option<HashMap<String, String>> = commun::lire("extensions-connues.json");
     let apprentissage = connues.is_none();
     let mut connues = connues.unwrap_or_default();
-    let mut liste = inventaire_extensions();
-    if liste.len() > MAX_EXTENSIONS {
-        commun::journal(&format!("extensions : {} trouvées, seules les {MAX_EXTENSIONS} premières sont suivies", liste.len()));
-        liste.truncate(MAX_EXTENSIONS);
+    let (mut liste, tronquees) = inventaire_extensions_borne();
+    let mut alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
+    if tronquees > 0 {
+        alertes.push(alerte_inventaire_tronque(tronquees));
     }
-    let alertes = nouvelles_extensions(&mut liste, &mut connues, apprentissage);
     let _ = commun::ecrire("extensions-connues.json", &connues);
     liste.sort_by(|a, b| b.dangereuse.cmp(&a.dangereuse).then(a.nom.to_lowercase().cmp(&b.nom.to_lowercase())));
     let _ = commun::ecrire("extensions.json", &liste);
@@ -645,6 +660,13 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
 
 /// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
 /// chacune, sauf au premier relevé (apprentissage) ; Alerte si ses permissions sont sensibles, sinon Info
+/// Inventaire tronqué (S175-04) : signalé, jamais muet
+pub(crate) fn alerte_inventaire_tronque(tronquees: usize) -> Alerte {
+    commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} par profil"));
+    alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
+        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
+}
+
 pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMap<String, String>, apprentissage: bool) -> Vec<Alerte> {
     let mut alertes = Vec::new();
     let mut en_plus = 0usize;

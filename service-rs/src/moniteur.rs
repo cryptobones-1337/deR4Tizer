@@ -781,7 +781,7 @@ impl Moniteur {
                 Some(o) => o.clone(),
                 None => {
                     let o = reponse::origine(&chemin);
-                    if !o.as_ref().is_some_and(|x| x.hors_delai) {
+                    if reponse::origine_a_garder(&o) {
                         self.origines.insert(chemin.clone(), o.clone());
                     }
                     o

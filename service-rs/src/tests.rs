@@ -8167,5 +8167,32 @@ fn audit_s175_01_02_cablage() {
     assert!(p.find("poser_audit_verifie").unwrap() < p.find("let e = match empreinte_a_echeance(&f)").unwrap(), "audit avant le second contrôle (S175-01)");
     let m = include_str!("moniteur.rs");
     assert!(!m.contains("self.origines.entry(chemin.clone()).or_insert_with"), "origine hors délai jamais en cache (S175-02)");
-    assert!(m.contains("if !o.as_ref().is_some_and(|x| x.hors_delai) {"), "origine hors délai jamais en cache (S175-02)");
+    assert!(m.contains("if reponse::origine_a_garder(&o) {"), "origine hors délai jamais en cache (S175-02)");
+}
+
+/// S175-02 : décision pure de mise en cache de l'origine
+#[test]
+fn audit_s175_02_origine_hors_delai_pas_en_cache() {
+    use crate::reponse::{origine_a_garder, Origine};
+    assert!(origine_a_garder(&None), "pas de chemin : rien à relire");
+    assert!(origine_a_garder(&Some(Origine { zone: 3, ..Default::default() })), "marque lue : gardée");
+    assert!(origine_a_garder(&Some(Origine::default())), "sans marque, lue à temps : gardée");
+    assert!(!origine_a_garder(&Some(Origine { hors_delai: true, ..Default::default() })), "hors délai : relue au passage suivant");
+}
+
+/// S175-04 : plafond par profil appliqué pendant l'énumération, avant la lecture du manifeste ; troncature signalée
+#[test]
+fn audit_s175_04_plafond_par_profil() {
+    let a = crate::hygiene::alerte_inventaire_tronque(7);
+    assert_eq!(a.regle, "EXT-001");
+    assert_eq!(a.niveau, "Alerte");
+    assert!(a.raisons.contains("PARTIEL") && a.raisons.contains("7 extension(s)"), "{}", a.raisons);
+    let h = include_str!("hygiene.rs");
+    let i = &h[h.find("pub(crate) fn inventaire_extensions_borne()").unwrap()..];
+    let i = &i[..i.find("\n}").unwrap()];
+    assert!(i.contains("let debut_profil = l.len();"), "compte par profil");
+    let chrome = &i[i.find("for ext in exts").unwrap()..];
+    assert!(chrome.find("MAX_EXTENSIONS_PAR_PROFIL").unwrap() < chrome.find("lire_profil_borne").unwrap(), "plafond avant la lecture du manifeste");
+    let v = &h[h.find("pub fn verifier_extensions()").unwrap()..];
+    assert!(v.contains("if tronquees > 0 {") && v.contains("alerte_inventaire_tronque(tronquees)"), "troncature signalée");
 }
