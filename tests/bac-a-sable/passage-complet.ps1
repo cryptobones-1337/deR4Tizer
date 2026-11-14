@@ -4,7 +4,9 @@
 # Échec fermé (audit du 2026-11-14, F1) : un worktree modifié est refusé avant toute compilation (l'arbre annoncé dans
 # la preuve est celui de HEAD, le MSI est construit depuis le worktree : ils doivent être identiques) ; tout ÉCHOUÉ,
 # résultat absent, lanceur ou préparation en échec, ou worktree modifié par le passage donne « PASSAGE EN ÉCHEC » et le
-# code de sortie 1 ; sinon « PASSAGE RÉUSSI » et 0.
+# code de sortie 1 ; sinon « PASSAGE RÉUSSI » et 0. Liste de scénarios vide ou nom inconnu refusés, échec de git refusé
+# (relecture de #174, D1, D2). Un NON EXÉCUTÉ ne fait pas échouer le passage : seuls ceux déjà connus et justifiés sont
+# admis (CLAUDE.md, section 4), au lecteur de la preuve d'en juger.
 # Usage : .\tests\bac-a-sable\passage-complet.ps1 -Depot <worktree d'intégration> [-Cible vm|bac-a-sable]
 param([string]$Depot = 'C:\d4t-integration', [string]$Racine = 'C:\d4t-bac-a-sable', [string[]]$Scenarios = @('installation', 'quarantaine', 'maj'),
       [ValidateSet('vm', 'bac-a-sable')] [string]$Cible = 'vm',
@@ -25,8 +27,24 @@ function Dossier-Du-Passage([string]$Scenario) {
     Get-ChildItem $Racine -Directory | Where-Object { $_.Name -match $motif -and $_.CreationTimeUtc -ge $debutPassage } |
         Sort-Object CreationTimeUtc | Select-Object -Last 1
 }
-$modifications = @(git status --porcelain).Count
-"commit : $(git rev-parse --short HEAD) ; modifications : $modifications"
+# D1 : liste de scénarios contrôlée (un nom mal écrit ne ferait rien tourner)
+$connus = @('installation', 'quarantaine', 'lot3d', 'mesure', 'maj')
+$inconnus = @($Scenarios | Where-Object { $connus -notcontains $_ })
+if (@($Scenarios).Count -eq 0 -or $inconnus.Count -gt 0) {
+    "scénarios refusés : liste vide ou nom inconnu ($($inconnus -join ', ')) ; connus : $($connus -join ', ')"
+    'PASSAGE EN ÉCHEC'
+    exit 1
+}
+# D2 : un échec de git (pas un dépôt, propriétaire douteux…) ne passe jamais pour un worktree propre
+function Etat-Git {
+    $l = @(git status --porcelain 2>$null)
+    if ($LASTEXITCODE -ne 0) { return -1 }
+    $l.Count
+}
+$modifications = Etat-Git
+$court = git rev-parse --short HEAD
+if ($modifications -lt 0 -or $LASTEXITCODE -ne 0) { 'git en échec : état du worktree inconnu, passage refusé'; 'PASSAGE EN ÉCHEC'; exit 1 }
+"commit : $court ; modifications : $modifications"
 if ($modifications -ne 0) {
     "worktree modifié ($modifications) : passage refusé, l'arbre testé ne serait pas celui de HEAD (commiter d'abord)"
     git status --porcelain | Select-Object -First 10
@@ -34,6 +52,7 @@ if ($modifications -ne 0) {
     exit 1
 }
 $script:echec = $false
+$script:resumes = 0
 
 # Windows Sandbox n'accepte qu'une instance : attendre la fermeture complète de la précédente (elle peut traîner
 # quand le poste est chargé, et lancer.ps1 rend la main dès le tableau écrit)
@@ -51,6 +70,7 @@ function Resume([string]$Scenario) {
     $t = Get-ChildItem $s.FullName -Filter '*-tableau.md' -ErrorAction SilentlyContinue
     if (-not $t) { $script:echec = $true; "== $Scenario : pas de tableau ($($s.Name))"; return }
     $c = Get-Content $t.FullName -Encoding UTF8
+    $script:resumes++
     if (@($c | Select-String '\| ÉCHOUÉ \|').Count -gt 0 -or @($c | Select-String '\| RÉUSSI \|').Count -eq 0) { $script:echec = $true }
     "== $Scenario ($($s.Name)) : RÉUSSI=$(@($c | Select-String '\| RÉUSSI \|').Count) ÉCHOUÉ=$(@($c | Select-String '\| ÉCHOUÉ \|').Count) NON EXÉCUTÉ=$(@($c | Select-String '\| NON EXÉCUTÉ \|').Count)"
     $c | Select-String '\| ÉCHOUÉ \||\| NON EXÉCUTÉ \|' | ForEach-Object { $_.Line }
@@ -62,8 +82,11 @@ if (-not $?) { 'préparation en échec'; Get-Content "$env:TEMP\d4t-prep.log" -T
 "tests unitaires : $((Get-Content "$env:TEMP\d4t-prep.log" | Select-String 'test result' | Select-Object -Last 1).Line.Trim())"
 $os = Get-CimInstance Win32_OperatingSystem
 $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
-"commit testé : $(git rev-parse HEAD)"
-"arbre testé : $(git rev-parse 'HEAD^{tree}')"
+$commit = git rev-parse HEAD; $okCommit = $LASTEXITCODE -eq 0
+$arbre = git rev-parse 'HEAD^{tree}'; $okArbre = $LASTEXITCODE -eq 0
+if (-not ($okCommit -and $okArbre)) { 'git en échec : commit ou arbre testé inconnu'; 'PASSAGE EN ÉCHEC'; exit 1 }
+"commit testé : $commit"
+"arbre testé : $arbre"
 "MSI (3a, 3b) : SHA-256 $((Get-FileHash (Join-Path $Racine 'entree\deR4Tizer.msi') -Algorithm SHA256).Hash)"
 "Cible : $Cible ; Windows de l'hôte : $($os.Caption) $($os.Version).$ubr"
 # « mesure » (mesure du cycle, environ 25 min) seulement si demandé : ne fait pas partie de la preuve de CLAUDE.md
@@ -87,14 +110,21 @@ if ($Scenarios -contains 'maj') { try {
         Resume 'maj'
         if ($Cible -eq 'vm') { $v = Dossier-Du-Passage 'maj' | Get-ChildItem -Filter '*-vm.txt'; if ($v) { Get-Content $v.FullName } }
     }
+} catch {
+    $script:echec = $true
+    "== maj : exception : $($_.Exception.Message)"
 } finally {
     Remove-Item (Join-Path $Racine 'entree\maj'), (Join-Path $Racine 'tmp') -Recurse -Force -ErrorAction SilentlyContinue
     "entree\maj restant : $(Test-Path (Join-Path $Racine 'entree\maj'))"
 } }
-$apres = @(git status --porcelain).Count
+$apres = Etat-Git
 "modifications du worktree après passage : $apres"
 if ($apres -ne 0) { $script:echec = $true }
-# Scénarios demandés sans résultat (aucun appel à Resume) : déjà couverts par « AUCUN RÉSULTAT » ; verdict final
+# Autant de scénarios résumés (tableau lu) que de scénarios demandés (D1)
+if ($script:resumes -ne @($Scenarios | Select-Object -Unique).Count) {
+    $script:echec = $true
+    "scénarios résumés : $($script:resumes) sur $(@($Scenarios | Select-Object -Unique).Count) demandés"
+}
 if ($script:echec) { 'PASSAGE EN ÉCHEC'; exit 1 }
 'PASSAGE RÉUSSI'
 exit 0
