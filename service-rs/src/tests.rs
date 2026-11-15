@@ -8197,3 +8197,69 @@ fn audit_s175_04_plafond_par_profil() {
     let v = &h[h.find("pub fn verifier_extensions()").unwrap()..];
     assert!(v.contains("if tronquees > 0 {") && v.contains("alerte_inventaire_tronque(tronquees)"), "troncature signalée");
 }
+
+// ------------------------------------------------------------ audit du 2026-11-14, lot 3 (tables bornées)
+
+/// A6, A7, S176-01 : budget par catégorie, une synthèse par catégorie ; une inondation d'une catégorie ne tait pas les
+/// autres (usurpation de passerelle après une inondation d'options DHCP)
+#[test]
+fn audit_a6_a7_admission_plafonnee() {
+    use crate::commun::{admettre_cle, Admission};
+    use std::time::Duration;
+    let mut deja = std::collections::HashMap::new();
+    let h = Duration::from_secs(3600);
+    for i in 0..3 {
+        assert_eq!(admettre_cle(&mut deja, format!("dhcp|10.0.0.{i}"), h, 3), Admission::Nouvelle);
+    }
+    assert_eq!(admettre_cle(&mut deja, "dhcp|10.0.0.1".into(), h, 3), Admission::Deja, "clé déjà vue");
+    assert_eq!(admettre_cle(&mut deja, "dhcp|10.0.0.9".into(), h, 3), Admission::PlafondAtteint("dhcp".into()), "synthèse de la catégorie");
+    for i in 10..1000 {
+        assert_eq!(admettre_cle(&mut deja, format!("dhcp|10.0.{i}.1"), h, 3), Admission::PlafondDejaSignale, "plus rien dans cette catégorie");
+    }
+    assert_eq!(admettre_cle(&mut deja, "arp-double|10.0.0.254".into(), h, 3), Admission::Nouvelle, "les autres catégories restent signalées (S176-01)");
+    assert_eq!(admettre_cle(&mut deja, "ja3|abc".into(), h, 3), Admission::Nouvelle);
+    assert!(deja.len() <= 6, "table bornée : {}", deja.len());
+    // S176-04 : une catégorie maintenue sous son budget ne fait pas grossir la table sans fin (clés expirées purgées)
+    let mut deja = std::collections::HashMap::new();
+    for i in 0..10_000 {
+        admettre_cle(&mut deja, format!("port|{i}"), Duration::ZERO, 100);
+    }
+    assert!(deja.len() <= 100 * 16 + 1, "table purgée : {}", deja.len());
+    let mut deja = std::collections::HashMap::new();
+    for i in 0..3 {
+        admettre_cle(&mut deja, format!("port|k{i}"), Duration::ZERO, 3);
+    }
+    assert_eq!(admettre_cle(&mut deja, "port|neuve".into(), Duration::ZERO, 3), Admission::Nouvelle, "clés expirées : place libre");
+}
+
+/// A5 : files de corrélation bornées par clé et en nombre de clés ; la clé la moins récente est oubliée
+#[test]
+fn audit_a5_files_de_correlation_bornees() {
+    use crate::siem::{borner_cles, MAX_CLES};
+    use std::collections::{HashMap, VecDeque};
+    use std::time::Instant;
+    let mut t: HashMap<String, VecDeque<(Instant, String)>> = HashMap::new();
+    for i in 0..MAX_CLES {
+        t.insert(format!("10.0.{}.{}", i / 250, i % 250), VecDeque::from([(Instant::now(), String::new())]));
+    }
+    let la_plus_vieille = "10.0.0.0".to_string();
+    t.get_mut(&la_plus_vieille).unwrap()[0].0 = Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap();
+    borner_cles(&mut t, "203.0.113.5", |f| f.back().map(|x| x.0));
+    assert!(t.len() < MAX_CLES && !t.contains_key(&la_plus_vieille), "place faite pour une source nouvelle");
+    // S176-02 : une inondation de comptes locaux n'évince pas la file d'une adresse distante (plusieurs échecs)
+    let mut t: HashMap<String, VecDeque<(Instant, String)>> = HashMap::new();
+    let ancien = Instant::now().checked_sub(std::time::Duration::from_secs(120)).unwrap();
+    t.insert("203.0.113.7".into(), VecDeque::from(vec![(ancien, String::new()); 4]));
+    for i in 0..MAX_CLES - 1 {
+        t.insert(format!("compte essai{i}"), VecDeque::from([(Instant::now(), String::new())]));
+    }
+    for i in 0..3 * MAX_CLES {
+        let cle = format!("compte inondation{i}");
+        borner_cles(&mut t, &cle, |f| f.back().map(|x| x.0));
+        t.entry(cle).or_default().push_back((Instant::now(), String::new()));
+    }
+    assert_eq!(t.get("203.0.113.7").map(|f| f.len()), Some(4), "file de l'adresse distante gardée (S176-02)");
+    assert!(t.len() <= MAX_CLES);
+    let s = include_str!("siem.rs");
+    assert!(s.matches("while file.len() > MAX_PAR_CLE").count() == 2, "files bornées par clé (échecs, alertes par programme)");
+}

@@ -74,18 +74,25 @@ struct Interne {
     reponses: HashMap<(String, &'static str), Vec<(Instant, String)>>,
 }
 
+/// Clés de déduplication gardées une heure, par catégorie d'alerte (A6, S176-01)
+const MAX_CLES_ALERTES: usize = 100;
+
 impl Interne {
     fn alerter(&mut self, cle: String, niveau: &str, score: i32, destination: String, raisons: String, mitre: &str) {
-        self.deja.retain(|_, t| t.elapsed() < Duration::from_secs(3600));
-        if self.deja.contains_key(&cle) {
-            return;
-        }
-        self.deja.insert(cle, Instant::now());
+        // Table bornée, synthèse au-delà (audit du 2026-11-14, A6 ; correction de sûreté, logique de détection
+        // inchangée : NDR gelé)
+        let (niveau, score, destination, raisons) = match commun::admettre_cle(&mut self.deja, cle, Duration::from_secs(3600), MAX_CLES_ALERTES) {
+            commun::Admission::Nouvelle => (niveau.to_string(), score, destination, raisons),
+            // Synthèse au niveau de l'alerte qui l'a déclenchée si elle était Critique (information de l'audit v2 de #176)
+            commun::Admission::PlafondAtteint(cat) => (if niveau == "Critique" { "Critique" } else { "Alerte" }.to_string(), if niveau == "Critique" { score.max(6) } else { 6 }, "réseau local".to_string(),
+                format!("Plus de {MAX_CLES_ALERTES} alertes distinctes « {cat} » du réseau local en une heure : les suivantes de cette catégorie ne sont plus signalées une à une (inondation probable) ; les autres catégories restent signalées")),
+            _ => return,
+        };
         self.alertes.lock().unwrap().push(Alerte {
             regle: crate::regles::EXP_NDR_001.into(),
             id: commun::nouvel_id(),
             heure: commun::maintenant(),
-            niveau: niveau.into(),
+            niveau,
             score,
             processus: "réseau local".into(),
             destination,

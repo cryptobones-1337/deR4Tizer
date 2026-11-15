@@ -1033,6 +1033,56 @@ pub fn maintenant() -> String {
 
 // ------------------------------------------------------------ journal
 
+/// Admission d'une clé de déduplication d'alertes (audit du 2026-11-14, A6, A7 ; audit de #176, S176-01)
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    /// Nouvelle clé : alerter
+    Nouvelle,
+    /// Déjà alertée dans la fenêtre
+    Deja,
+    /// Budget de la catégorie épuisé : une seule alerte de synthèse par catégorie et par fenêtre
+    PlafondAtteint(String),
+    /// Budget épuisé, synthèse de cette catégorie déjà émise dans la fenêtre
+    PlafondDejaSignale,
+}
+
+/// Catégorie d'une clé : ce qui précède le premier « | » (« dhcp|10.0.0.9 » → « dhcp »)
+fn categorie_cle(cle: &str) -> &str {
+    cle.split('|').next().unwrap_or(cle)
+}
+
+/// Table `deja` bornée par catégorie (pur, testé) : au plus `par_categorie` clés vivantes par catégorie ; au-delà,
+/// cette catégorie seule cesse d'alerter une à une, avec une synthèse par fenêtre. Une inondation dans une catégorie
+/// (options DHCP variées, ports sortants) ne tait donc jamais les autres (usurpation de passerelle, JA3, serveur de
+/// contrôle : S176-01). Les marques de synthèse commencent par U+0000, qu'aucune clé construite par les modules ne
+/// porte (préfixes ASCII fixes)
+pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: String, fenetre: std::time::Duration, par_categorie: usize) -> Admission {
+    if deja.get(&cle).is_some_and(|t| t.elapsed() < fenetre) {
+        return Admission::Deja;
+    }
+    // Purge des clés expirées dès que la table dépasse ce que 16 catégories pleines occuperaient : une catégorie
+    // maintenue sous son budget ne la fait plus grossir sans fin (audit v2 de #176, S176-04)
+    if deja.len() > par_categorie.saturating_mul(16) {
+        deja.retain(|_, t| t.elapsed() < fenetre);
+    }
+    let cat = categorie_cle(&cle).to_string();
+    let prefixe = format!("{cat}|");
+    let compter = |d: &HashMap<String, std::time::Instant>| d.iter().filter(|(k, t)| (k.starts_with(&prefixe) || **k == cat) && t.elapsed() < fenetre).count();
+    if compter(deja) >= par_categorie {
+        deja.retain(|_, t| t.elapsed() < fenetre);
+        if compter(deja) >= par_categorie {
+            let marque = format!("\u{0}plafond|{cat}");
+            if deja.get(&marque).is_some_and(|t| t.elapsed() < fenetre) {
+                return Admission::PlafondDejaSignale;
+            }
+            deja.insert(marque, std::time::Instant::now());
+            return Admission::PlafondAtteint(cat);
+        }
+    }
+    deja.insert(cle, std::time::Instant::now());
+    Admission::Nouvelle
+}
+
 /// Message ramené à une seule ligne de journal (pur, testé)
 pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
