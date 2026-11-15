@@ -26,7 +26,8 @@ fonctionne, dans les deux configurations, avant toute mesure offensive consolid�
 | S-01 (force brute RDP, échecs seuls) | A | VP | Série d'échecs d'authentification RDP (mots de passe faux, aucun accès obtenu) → 6× événement 4625 tous de la source → COR-R1 **Alerte** sur l'entité `source:<Kali>` (« 5 échecs d'ouverture de session en 5 minutes ») dans le délai → 1 incident ouvert. Annexes admises : RES-004 (Alerte) et RES-005 (Critique), classées « artefact d'exposition de labo » (adresse du labo, exclue du décompte VP et FP). **Consolidation : 10 essais sur 10 = VP** (0 FN, 0 FP, 0 invalide ; 6× 4625 et 1 COR-R1 par essai) — détection déterministe. |
 
 En configuration C, S-01 est **prévenu** (Bureau à distance refusé par la baseline) : la détection COR-R1 se mesure en A
-(S-01) ; en C, COR-R1 se mesurera par un vecteur d'ouverture de session non RDP (S-03).
+(S-01) ; en C, COR-R1 **est mesurée** par un vecteur d'ouverture de session non RDP (S-03, SMB), sous réserve que le
+partage SMB soit autorisé — détection confirmée dans ce cas (voir la ligne SMB de la grille).
 
 ## Persistance (PER-001)
 
@@ -40,6 +41,7 @@ En configuration C, S-01 est **prévenu** (Bureau à distance refusé par la bas
 | Scénario | Configuration | Verdict | Résumé |
 |---|---|---|---|
 | S-13 (service + compte admin + journal effacé + audit modifié) | C | C (3/4 + 1 constat) | **R4** (journal effacé) et **R5** (service depuis un dossier suspect) en **Critique** ; **R7** (protection affaiblie par modification de l'audit) en **Alerte** ; **BAS-001** (dérive de baseline) confirmée. La 4ᵉ corrélation attendue, **R3**, ne se déclenche pas : voir le constat ci-dessous. |
+| S-13 (service + compte admin + journal effacé + audit modifié) | A | C (3/4 + 1 constat) | Identique à C : **R4** et **R5** en **Critique**, **R7** en **Alerte**, **BAS-001** confirmée ; **R3** dégrade en **R3b**. Le constat R3 est donc indépendant de la configuration. |
 
 ### Constat produit — corrélation R3 « nouveau compte administrateur »
 
@@ -53,8 +55,9 @@ membre par **identifiant de sécurité (SID)**, le nom de compte valant « - » 
 SID : le rapprochement échoue toujours, quel que soit le mode d'ajout (par nom ou par SID). **Confirmé par événements
 bruts** : le 4720 porte `TargetUserName` et `TargetSid=…-1004` ; le 4732 porte `MemberName=« - »` (vide) et
 `MemberSid=…-1004` — le même SID que le compte créé. La donnée de rapprochement existe donc (SID identique), mais le
-produit relie par nom, indisponible dans le 4732. Correctif prouvé (hors de la campagne, à décider par le mainteneur) :
-conserver le **SID** du compte créé (présent dans le 4720) et rapprocher le **MemberSid** du 4732.
+produit relie par nom, indisponible dans le 4732. Cause **prouvée** par les événements bruts ; **correctif proposé**
+(hors de la campagne, à décider par le mainteneur) : conserver le **SID** du compte créé (présent dans le 4720) et
+rapprocher le **MemberSid** du 4732.
 
 ## Grille de couverture (premier passage)
 
@@ -65,10 +68,10 @@ conserver le **SID** du compte créé (présent dans le 4720) et rapprocher le *
 | Force brute RDP (T1110.001) | COR-R1 | **VP 10/10** | prévenu (RDP refusé) ; COR-R1 mesuré en C par S-03 |
 | Force brute SMB (T1110.001, T1021.002) | COR-R1 | **VP** (IP source présente dans le 4625) | **prévention** (baseline bloque SMB par défaut) **+ détection VP** si SMB autorisé ; COR-R2/R9 reportés (volet réussite) |
 | Persistance (T1547.001, T1053.005) | PER-001 ×2 | **VP** | **VP** |
-| Service depuis dossier suspect (T1543.003) | COR-R5 | non exécuté | **VP (Critique)** |
-| Effacement de journal (T1070.001) | COR-R4 | non exécuté | **VP (Critique)** |
-| Protection affaiblie / audit (T1562.002) | COR-R7 + BAS-001 | non exécuté | **VP (Alerte + BAS-001)** |
-| Compte créé puis promu admin (T1136.001) | COR-R3 | non exécuté | **constat : R3 inatteignable, dégrade en R3b** |
+| Service depuis dossier suspect (T1543.003) | COR-R5 | **VP (Critique)** | **VP (Critique)** |
+| Effacement de journal (T1070.001) | COR-R4 | **VP (Critique)** | **VP (Critique)** |
+| Protection affaiblie / audit (T1562.002) | COR-R7 + BAS-001 | **VP (Alerte + BAS-001)** | **VP (Alerte + BAS-001)** |
+| Compte créé puis promu admin (T1136.001) | COR-R3 | **constat : R3 inatteignable, dégrade en R3b** | **constat : R3 inatteignable, dégrade en R3b** |
 
 Aucune case n'est notée « 0 » : non évalué ≠ échec.
 
