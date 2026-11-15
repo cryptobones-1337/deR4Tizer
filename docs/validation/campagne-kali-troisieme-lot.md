@@ -2,8 +2,11 @@
 
 Date : 2026-11-15. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
-(RFC 5737), non routables. Prolonge le second lot (`campagne-kali-second-lot.md`) : il lève le scénario qui y était
-noté « non exécuté » (S-06, règle DNS-002).
+(RFC 5737), non routables. Prolonge le second lot (`campagne-kali-second-lot.md`), qui notait S-06 « non exécuté » :
+ce lot exécute **la jambe DNS-002 de S-06** (changement de serveur DNS). La liste v1.4 définit S-06 en **deux jambes** —
+(a) DNS-002 et (b) le filtrage par résolveur local (un nom `.test` de la liste résolu en adresse nulle, dans les
+« derniers blocages ») ; **seule la jambe (a) est exécutée ici**. La jambe filtrage (b) et DNS-003 (S-18) restent pour
+un prochain lot (voir « Portée de ce lot »).
 
 **Réserve (latences)** : comme aux passages précédents, l'horloge de la VM est décalée dans les résultats bruts ; le
 verdict VP repose sur la présence règle/niveau/entité, pas sur l'heure. Précondition auto-validée (voir ci-dessous).
@@ -27,12 +30,13 @@ changement normal.
 
 ## Portée de ce lot
 
-Ce lot couvre la **détection du changement de serveur DNS (DNS-002)**, entièrement locale et non destructrice (réglage
-réversible, remise à l'instantané en fin d'essai). Il **ne couvre pas** l'activation du moteur de filtrage par résolveur
-local (réglage des cartes sur le résolveur de deR4Tizer) ni la règle **DNS-003** (port de la boucle locale tenu par un
-autre programme, S-18) : ces deux points demandent un préalable de labo supplémentaire (l'amont DNS du labo doit répondre
-au nom de contrôle que le service interroge avant de régler les cartes) et une orchestration plus intrusive, prévus pour
-un prochain lot.
+Ce lot exécute **la jambe DNS-002 de S-06** : la détection du changement de serveur DNS, entièrement locale et non
+destructrice (réglage réversible, remise à l'instantané en fin d'essai). Il **ne couvre pas la jambe filtrage de S-06**
+(activation du moteur de filtrage par résolveur local, réglage des cartes sur le résolveur de deR4Tizer, un nom `.test`
+résolu en adresse nulle et vu dans les « derniers blocages »), **ni la règle DNS-003** (port de la boucle locale tenu par
+un autre programme, S-18) — deux scénarios distincts. Tous deux demandent un préalable de labo supplémentaire (l'amont
+DNS du labo doit répondre au nom de contrôle que le service interroge avant de régler les cartes) et une orchestration
+plus intrusive, prévus pour un prochain lot.
 
 ## Grille de couverture — mise à jour (cumul premier + second + troisième lot)
 
@@ -50,9 +54,10 @@ menaces (domaine + IP + blocage), et détournement du serveur DNS d'une carte**.
 
 ## Scénarios restant pour un prochain lot
 
-- **Activation du moteur de filtrage** (résolveur local branché sur les cartes) et **S-18 (DNS-003)** : testables, code
-  présent dans la source ; préalable de labo à monter (amont DNS du labo répondant au nom de contrôle d'activation) et
-  orchestration intrusive mais bornée par l'instantané.
+- **Jambe filtrage de S-06** (résolveur local branché sur les cartes : un nom `.test` de la liste résolu en adresse
+  nulle, vu dans les « derniers blocages ») et **S-18 (DNS-003)** (port de la boucle locale tenu par un autre
+  programme) : deux scénarios distincts, testables, code présent dans la source ; même préalable de labo à monter
+  (amont DNS du labo répondant au nom de contrôle d'activation) et orchestration intrusive mais bornée par l'instantané.
 
 ## Méthode (rappel)
 
