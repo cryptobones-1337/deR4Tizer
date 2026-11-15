@@ -47,11 +47,13 @@ désormais, en vrais positifs mesurés : **témoin négatif propre, durcissement
 corrélations service/compte/journal/audit, vol d'identifiants, et renseignement sur les menaces (domaine + IP + blocage)**.
 Le constat produit R3 (corrélation « nouveau compte administrateur ») reste ouvert, correctif proposé au mainteneur.
 
-## Scénario en attente du mainteneur
+## Scénario non exécuté dans ce lot
 
-- **S-06 (filtrage DNS, règle DNS-002)** : reste en attente. Le code du filtrage DNS n'est pas présent dans la source
-  relue (présent seulement dans le binaire installé — fonction de phase 7.4 non encore fusionnée). Questions au
-  mainteneur consignées dans la liste v1.4. La détection DNS de bout en bout est, elle, couverte par S-07 (DNS-001).
+- **S-06 (filtrage DNS, règle DNS-002)** : non exécuté dans ce lot — ses préalables de labo (résolveur local actif,
+  filtrage activé sur les cartes, liste de filtrage synthétique `.test`, amont DNS de labo) restent à monter. Le code
+  correspondant (détection d'un changement de serveur DNS et filtrage par résolveur local) **est présent** dans la
+  source : S-06 est testable et planifié pour un prochain lot. La détection DNS de bout en bout est déjà couverte ici par
+  S-07 (DNS-001).
 
 ## Méthode (rappel)
 
