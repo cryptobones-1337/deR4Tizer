@@ -5,10 +5,10 @@
 | Version de la liste | **1.4** |
 | Date de la version 1.4 | 2026-11-15 |
 | Versions précédentes | 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
-| Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07 et constat de S-06 établis à la **lecture de la source `service-rs` version 4.3** (`Cargo.toml` 4.3.0, `commun::VERSION = "4.3"`) du checkout de travail ; aucune mesure n'y est présentée. |
+| Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
-> **Rappel sur l'approbation (v1.4).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.4 a été transmise au mainteneur, pour information, le 2026-11-15, avant toute exécution.** Nouveautés principales : **correction de l'énoncé de S-07** (adresse de menace placée dans une source de **confiance haute**, et non « liste de niveau 3 » : une source de réputation ne déclenche pas le blocage automatique) ; **règles de décision D-1** (artefact d'exposition de labo RES-004/005) **et D-2** (collecte « Indisponible » après restauration) inscrites comme règles de notation (5.4) ; **S-06** (DNS-002 et filtrage DNS) classé **« en attente du mainteneur » (classe E)**, code absent de la source 4.3 lue (5.5). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2). **Rien ici n'est un résultat.**
+> **Rappel sur l'approbation (v1.4).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.4 a été transmise au mainteneur, pour information, le 2026-11-15, avant toute exécution.** Nouveautés principales : **correction de l'énoncé de S-07** (adresse de menace placée dans une source de **confiance haute**, et non « liste de niveau 3 » : une source de réputation ne déclenche pas le blocage automatique) ; **règles de décision D-1** (artefact d'exposition de labo RES-004/005) **et D-2** (collecte « Indisponible » après restauration) inscrites comme règles de notation (5.4) ; **S-06** (DNS-002 et filtrage DNS) **réécrit au niveau comportement et testable** (DNS-002 = Alerte ; filtrage = blocage sans alerte, noté dans les « derniers blocages »), après correction de l'erreur « code absent » de la rédaction initiale (checkout périmé ; le code est bien dans `main`, 5.5). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2). **Rien ici n'est un résultat.**
 
 ## Approbation
 
@@ -25,8 +25,9 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   D-BAS-01). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur le 2026-11-14 avant toute
   exécution.
 - **2026-11-15, version 1.4** : approuvée par l'agent de validation (correction de l'énoncé de S-07 : source de
-  **confiance haute**, non « niveau 3 » ; **règles de décision D-1 et D-2** inscrites ; **S-06** classé
-  **« en attente du mainteneur » (classe E)**, avec quatre questions au mainteneur). **Cette approbation n'est ni humaine
+  **confiance haute**, non « niveau 3 » ; **règles de décision D-1 et D-2** inscrites ; **S-06 réécrit au niveau
+  comportement et classé testable** — le code de DNS-002 et du filtrage est présent dans `main`, l'erreur « code absent »
+  d'une rédaction initiale venait d'un checkout périmé). **Cette approbation n'est ni humaine
   ni indépendante** ; elle ne lève aucune règle, et la v1.4 a été transmise au mainteneur, pour information, le 2026-11-15,
   avant toute exécution.
 
@@ -34,14 +35,14 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
 - Elle ne lève aucune règle : aucun scénario qui toucherait Defender, sortirait du labo, volerait un identifiant réel,
   porterait une charge destructive ou exigerait une saisie de mot de passe n'est approuvé. Les cas douteux sont laissés au
-  mainteneur (sections 5.2 et 5.5).
+  mainteneur (section 5.2).
 - Cette version est transmise au mainteneur, pour information, **avant toute exécution**. Il peut retirer un scénario ou
   reprendre l'approbation à tout moment. Tout ajout ou changement fait l'objet d'une nouvelle version approuvée avant
   d'être exécuté.
 - L'exécution ne commence qu'une fois les prérequis de la section 4 vérifiés, par N-01 puis S-01 seul ; le scénario
   suivant n'est lancé que si l'état de référence est vérifié et les preuves du précédent complètes.
 
-**Retenus (v1.4)** : N-01 à N-05 ; S-01 à S-05 ; **S-06 en attente du mainteneur (classe E, non exécuté)** ; S-07 à
+**Retenus (v1.4)** : N-01 à N-05 ; S-01 à S-05 ; **S-06 (DNS-002 et filtrage DNS, testable)** ; S-07 à
 S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à S-19 ; S-16 avec son option longue (2 h, en
 configuration A). **Ajoutés** : S-18 (DNS-003) en v1.1 ; S-19 (contrôle de la configuration C) en v1.3. Configurations :
 C principale, A comparaison, B collecte Sysmon (3.0, 5.1.2, 5.1.11).
@@ -52,9 +53,10 @@ C principale, A comparaison, B collecte Sysmon (3.0, 5.1.2, 5.1.11).
 **Tranchés par le mainteneur le 2026-11-14, approuvés en v1.1** : volet T1562.002 de S-13 ; DNS-003 (devenu S-18).
 Décision citée mot pour mot en section 5.2.
 
-**En attente du mainteneur (v1.4)** : **S-06** (DNS-002 et filtrage DNS). Classe E : la fonction correspondante est
-**absente de la source `service-rs` 4.3 lue** ; quatre questions remontées au mainteneur (5.5) avant tout déblocage. Tant
-qu'elles ne sont pas tranchées, S-06 n'est **pas exécuté** et n'est **jamais compté 0** (NON ÉVALUÉ).
+**Correction (v1.4)** : **S-06** (DNS-002 et filtrage DNS) avait été faussement classé « code absent / en attente du
+mainteneur » par une rédaction initiale, à cause d'un checkout périmé (branche `passages-en-vm`, antérieure aux fusions
+de phase 7.3/7.4). Le code est bien présent dans `main` : S-06 est **testable** et sa fiche est réécrite au niveau
+comportement (3.1, 5.5).
 
 **Changements de la v1.1 à la v1.0** : les deux volets ci-dessus passent de « laissé au mainteneur » à approuvé ; S-18
 créé pour DNS-003 ; cross-références mises à jour ; en-tête en version 1.1.
@@ -71,7 +73,7 @@ configuration principale de mesure ; A reste la comparaison, B la collecte Sysmo
 (baseline) », jamais confondue avec une détection ; un attendu en configuration C (HYPOTHÈSE) par scénario et par test
 négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scénarios existants inchangés.
 
-**Changements de la v1.4 à la v1.3** (lecture de la source `service-rs` 4.3) :
+**Changements de la v1.4 à la v1.3** (lecture du worktree complet de `main`, après les fusions de phase 7.3/7.4) :
 - **S-07 corrigé.** La v1.3 plaçait l'adresse de menace dans une « liste de niveau 3 ». **Une source de réputation (par
   exemple un niveau 3) ne déclenche PAS le blocage automatique** ; le blocage automatique de 7 jours exige une source de
   **confiance haute**. L'énoncé de S-07 (3.1), la cartographie (2) et la décision 5.1.5 sont corrigés : l'adresse de
@@ -84,10 +86,13 @@ négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scé
   dans les preuves ; D-2, critère de collecte « Indisponible » après restauration (une collecte dont dépend une règle du
   scénario doit être « Active » au départ, prouvée par une lecture postérieure à la restauration, sinon essai invalide,
   classe D, jamais 0).
-- **S-06 classé « en attente du mainteneur » (classe E)** (1.5, 2, 3.1, 3.3, 5.5) : le code de **DNS-002** et du
-  **filtrage DNS** (résolveur local) est **absent de la source 4.3 lue**. S-06 n'est **pas exécuté** ; quatre questions
-  remontées (5.5). Le témoin N-05 reste exécutable comme contrôle mais **ne mesure pas DNS-002** : classé **E** (non
-  applicable au build), **pas D**. La chaîne DNS du produit reste couverte par **S-07** (DNS-001). Aucune action ni
+- **S-06 réécrit au niveau comportement, testable** (1.5, 2, 3.1, 3.3, 5.5) : une rédaction initiale avait classé S-06
+  « code absent / classe E » ; c'était une **erreur due à un checkout périmé** (branche `passages-en-vm`, antérieure aux
+  fusions de phase 7.3/7.4). Le code de **DNS-002** (`dns_surveillance.rs`) et du **filtrage DNS** (résolveur local,
+  `dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`) est bien dans `main` et listé par la matrice des capacités. S-06
+  couvre désormais (a) DNS-002 = changement de serveur DNS statique sur une carte → Alerte, et (b) le filtrage par
+  résolveur local = un nom `.test` de la liste est résolu en adresse nulle et apparaît dans les « derniers blocages »,
+  sans alerte. Le témoin **N-05** redevient un **témoin négatif normal** (retour au DHCP sans alerte). Aucune action ni
   nettoyage d'un autre scénario n'est changé.
 
 Document publiable tel quel (`docs/validation/`) : niveau comportement, identifiants ATT&CK, attendus, nettoyage et
@@ -137,20 +142,20 @@ résultat.
 | Cartes réseau | DNS-002, DNS-003 | 60 s — voir réserve ci-dessous |
 | PowerShell 4104 | **aucune règle** | produit par Windows, jamais lu |
 
-> **Réserve (v1.4) sur la ligne « Cartes réseau / DNS-002, DNS-003 ».** À la lecture de la source `service-rs` 4.3,
-> **aucune surveillance de changement de serveur DNS de carte (DNS-002) ni aucun code de filtrage DNS (résolveur local)**
-> n'a été trouvé : le seul code DNS présent est la **lecture du journal DNS-Client (3008)** qui alimente **DNS-001**, et le
-> vidage du cache DNS. **DNS-002 et le filtrage DNS sont donc traités comme absents du build 4.3 (S-06 en classe E, 5.5).**
-> La règle **DNS-003** (S-18) s'appuie sur la même fonction de filtrage : sa confirmation est **suspendue à la même
-> question de version de source** (5.5, question 1) ; S-18 reste approuvé en v1.1 mais **ne doit pas être exécuté avant**
-> cette confirmation (réserve inscrite dans sa fiche, 3.1).
+> **Note (v1.4) sur la ligne « Cartes réseau / DNS-002, DNS-003 ».** À la lecture du worktree complet de `main` (après
+> les fusions de phase 7.3/7.4), la **surveillance du serveur DNS de carte (DNS-002, `dns_surveillance.rs`)** et le
+> **filtrage DNS par résolveur local** (`dns_local.rs` sur `127.0.0.1:53` et `[::1]:53`, moteur `filtrage.rs`, activation
+> sur les cartes `filtrage_cartes.rs`, état `filtrage-etat.json`) sont bien présents, en plus de la lecture du journal
+> DNS-Client (3008) qui alimente **DNS-001** et du vidage du cache. Une rédaction initiale les disait « absents » : erreur
+> due à un checkout périmé, corrigée ici (5.5). **DNS-002, le filtrage et DNS-003 (S-18) sont donc testables.** Prudence
+> conservée, non bloquante : vérifier que le binaire installé correspond bien à cette source de `main` avant de mesurer.
 
 ### 1.3 Règles (`regles.rs`, `docs/detection/regles.md`)
 
 État de mesure : **non mesurée en VM** pour toutes les fiches, sauf PER-001 (clé Run) et DNS-002, vues au scénario 3a.
-**Réserve v1.4** : la « DNS-002 vue au scénario 3a » du premier passage ne provient pas de la source 4.3 lue (DNS-002 y
-est absente) ; elle vient vraisemblablement d'un binaire construit depuis une branche non fusionnée ou d'un service
-antérieur — à clarifier (5.5).
+La « DNS-002 vue au scénario 3a » provient simplement de `main` (règle `DNS_002` de `regles.rs`, détection dans
+`dns_surveillance.rs`) ; la spéculation d'une rédaction initiale (binaire d'une branche non fusionnée) venait d'un
+checkout périmé et est retirée (5.5).
 
 - RES-001 (menace connue, Critique, blocage automatique **si la source est de confiance haute**, par exemple un bloc DROP
   ou une liste C2 de botnets), RES-002 (score ≥ 3), RES-003 (Info), RES-004, RES-005, RES-006, RES-007.
@@ -170,23 +175,24 @@ antérieur — à clarifier (5.5).
 | Blocage IPS | 2, IPS désactivé par défaut | 24 h | levé |
 | Suspension manuelle, isolation, panique | 2 | 24 h, 7 j, 4 h | jamais levé, relance |
 | Quarantaine, blocage manuel | 2 | 30 j, 90 j | rappel Info |
-| Filtrage DNS | 2, mode désactivé par défaut | aucune | — (fonction absente de la source 4.3 lue : S-06, 5.5) |
+| Filtrage DNS | 2, mode désactivé par défaut | aucune | — (un blocage n'est pas une alerte : il apparaît dans les « derniers blocages », `filtrage-etat.json` ; S-06) |
 
 Gardes : 3 blocages de la même adresse par 24 h, 30 blocages par listes par heure, décision humaine respectée 7 jours ;
 REP-002 quand une action est retenue.
 
-### 1.5 Filtrage DNS (phase 7) — **absent de la source 4.3 lue (v1.4)**
+### 1.5 Filtrage DNS (phase 7) — **présent dans `main` (v1.4)**
 
 Fonction documentée (phase 7) : résolveur local sur la boucle, cartes physiques réglées sur lui à l'activation, serveurs
 d'origine en secours, échec ouvert ; un blocage n'est pas une alerte (il apparaît dans un fichier d'état). Limite
 documentée : tant que l'amont ne répond pas, les cartes restent sur leurs serveurs d'origine, sans filtrage ; un labo
 sans Internet exige donc un amont DNS de labo (décision 5.1.4).
 
-**Constat de lecture (v1.4) : ce code est absent de la source `service-rs` 4.3.** Ni le filtrage DNS (résolveur local,
-réglage d'activation, fichiers d'état) ni la détection DNS-002 (changement de serveur DNS de carte) n'ont été trouvés ;
-la matrice des capacités ne les liste pas. **Conséquence** : le scénario S-06 et le témoin N-05 sont **en attente du
-mainteneur**, classe E (5.5). Aucune mesure du filtrage n'est tentée tant que la source alignée sur le binaire réellement
-installé n'est pas fournie et lue.
+**Constat de lecture (v1.4) : ce code est présent dans `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`,
+état `filtrage-etat.json`), et DNS-002 dans `dns_surveillance.rs` ; la matrice des capacités les liste (résolveur local,
+moteur de filtrage, état/DNS-003, Quad9). Une rédaction initiale les disait « absents » : erreur due à un checkout périmé
+(branche `passages-en-vm`), corrigée ici. **Conséquence** : le scénario S-06 est **testable** (3.1) et le témoin N-05 est
+un **témoin négatif normal** (3.2). Seule prudence maintenue, non bloquante : confirmer que le binaire installé correspond
+à cette source avant de mesurer (section 4).
 
 ### 1.6 Limites connues qui pèsent sur la campagne
 
@@ -200,8 +206,8 @@ installé n'est pas fournie et lue.
 - La plage de documentation RFC 5737 compte comme Internet pour le service : c'est ce qui rend COR-R9 possible ; effets de
   bord : VM vue « exposée », RES-004/RES-005, RES-007, indice « IP directe ». Ces RES-004/RES-005 sur une adresse du labo
   sont des **artefacts d'exposition de labo** (règle de décision D-1, 5.4).
-- **DNS-002 et filtrage DNS absents de la source 4.3 lue** (1.5) : S-06 en classe E, DNS-003 (S-18) suspendu à la même
-  confirmation de version de source (5.5).
+- **DNS-002, filtrage DNS et DNS-003 présents dans `main`** (1.5) : S-06 et S-18 sont testables ; seule prudence, non
+  bloquante, confirmer que le binaire installé correspond à la source avant de mesurer (section 4).
 
 ### 1.7 Baseline de deR4Tizer appliquée à 100 % (configuration C, ajouté en v1.3)
 
@@ -273,9 +279,9 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 | T1567 | envoi vers un service web public | — | — | — | — | D (aucun service réel autorisé) |
 | — (menace connue) | connexion vers une adresse du labo inscrite dans une **source de confiance haute** | table TCP, liste locale | connexion | RES-001 | RES-001 Critique ; blocage automatique 7 j | A |
 | — (DNS) | résolution d'un nom `.test` d'une liste de domaines **de confiance haute** | DNS-Client / Sysmon 22 | requête | DNS-001 | DNS-001 Critique | A (listes restreintes à activer) |
-| — (DNS, S-06) | serveur DNS statique réglé sur la carte | cartes, registre | changement | DNS-002 | DNS-002 Alerte | **E (en attente du mainteneur)** : règle absente de la source 4.3 lue (5.5) |
-| — (DNS, S-18) | port 53 de la boucle tenu par un autre programme au redémarrage | échec de liaison, registre des cartes, table UDP | échec de liaison exclusive + PID | DNS-003 | DNS-003 Critique (PID) | A (approuvé en v1.1) **sous réserve** : s'appuie sur la fonction de filtrage absente de la source 4.3 lue ; confirmation suspendue à la question 1 (5.5) |
-| — (filtrage, S-06) | résolution d'un nom `.test` de la liste de filtrage | résolveur local | blocage | — | aucune alerte ; nom dans les derniers blocages | **E (en attente du mainteneur)** : fonction absente de la source 4.3 lue (5.5) |
+| — (DNS, S-06) | serveur DNS statique réglé sur la carte | cartes, registre | changement | DNS-002 | DNS-002 Alerte | A |
+| — (DNS, S-18) | port 53 de la boucle tenu par un autre programme au redémarrage | échec de liaison, registre des cartes, table UDP | échec de liaison exclusive + PID | DNS-003 | DNS-003 Critique (PID) | A (approuvé en v1.1 ; filtrage présent dans `main`) |
+| — (filtrage, S-06) | résolution d'un nom `.test` de la liste de filtrage | résolveur local | blocage | — | aucune alerte ; nom dans les derniers blocages | A (essai fonctionnel : blocage attendu, sans alerte) |
 | IPC-03 | ouverture du canal depuis Kali par le réseau | tube | refus | — | refus, aucune commande exécutée | A (refus attendu) |
 
 ---
@@ -394,25 +400,38 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 - Attendu en configuration C (HYPOTHÈSE) : (a) **non exécutable** (Bureau à distance refusé) : D en C, mesuré en A ;
   (b) identique à A.
 
-**S-06 — Changement de serveur DNS et filtrage DNS : EN ATTENTE DU MAINTENEUR (classe E)**
+**S-06 — Changement de serveur DNS (DNS-002) et filtrage DNS par résolveur local**
 - Technique : sans correspondance ATT&CK exacte (redirection de résolution) ; fonction de phase 7. Nature : émulation
-  (DNS-002), essai fonctionnel (filtrage).
-- **Statut v1.4 : EN ATTENTE DU MAINTENEUR, classe E (non testable avec l'architecture lue), NON EXÉCUTÉ.** À la lecture
-  de la source `service-rs` 4.3, **le code de DNS-002** (détection d'un changement de serveur DNS de carte) **et du
-  filtrage DNS** (résolveur local, réglage d'activation, fichiers d'état, liste de filtrage) **est absent** ; le seul code
-  DNS présent alimente DNS-001 (journal DNS-Client 3008) et le vidage du cache. **S-06 n'est donc pas exécutable contre un
-  binaire construit depuis cette source.** Il n'est **pas compté 0** (NON ÉVALUÉ) ; quatre questions sont remontées au
-  mainteneur (5.5) avant tout déblocage, et une nouvelle version approuvée de la liste sera nécessaire pour le réactiver.
-- Mesure de repli (sans la fonction de phase 7, inscrite ici pour éviter toute confusion) :
-  - la **chaîne DNS du produit** (détection d'un nom malveillant connu) est **couverte par S-07** (DNS-001) ;
-  - le **témoin négatif N-05** (réglage DNS rendu au DHCP) reste exécutable comme **contrôle de non-régression**, mais
-    **ne mesure pas DNS-002** tant que la règle est absente : il est classé **E** (non applicable au build), **pas D** ;
-  - **aucun repli ne reproduit le filtrage** (résolveur local) : cette partie reste **E / en attente du mainteneur**.
-- Préconditions (pour mémoire, non réunies tant que S-06 est en attente) : amont DNS de labo sur Kali ; liste de filtrage
-  synthétique `.test` ; commande d'activation du filtrage — **format, emplacement et commande à confirmer par le
-  mainteneur** (5.5).
-- Action / Attendu / Délai : **sans objet tant que S-06 est en attente** (« pas de mesure sur une fonction non lue »).
-- Nettoyage / instantané / Preuves : sans objet tant que S-06 n'est pas exécuté.
+  (DNS-002, changement de serveur DNS), essai fonctionnel (filtrage par résolveur local).
+- **Statut v1.4 : testable.** Le code est présent dans `main` (DNS-002 : `dns_surveillance.rs` ; filtrage : résolveur
+  local `dns_local.rs`, moteur `filtrage.rs`, activation sur les cartes `filtrage_cartes.rs`, état `filtrage-etat.json`).
+  Une rédaction initiale classait S-06 « code absent / classe E » : c'était une erreur due à un checkout périmé, corrigée
+  (5.5). L'activation des cartes sur le résolveur local en SYSTEM a l'accord du mainteneur (phase 7.4) : ce n'est pas une
+  question ouverte.
+- Préconditions : configuration A suffit ; amont DNS de labo sur Kali (le résolveur local relaie vers lui ; sans amont qui
+  répond, les cartes restent sur leurs serveurs d'origine, limite de 5.1.4) ; résolveur local actif ; filtrage activé par
+  la commande `filtrage` de l'administrateur (cartes physiques réglées sur le résolveur local, serveurs d'origine en
+  secours) ; liste de filtrage synthétique locale avec un nom `.test` (noms `.test` uniquement, aucune liste de tiers) ;
+  état des collectes, du filtrage et des cartes relevé ; critère D-2 (5.4) : les collectes `ConfigDns` (DNS-002) et
+  `FiltrageDns` doivent être « Active » au départ, prouvées par une lecture postérieure à la restauration.
+- Action : (a) **DNS-002** : un serveur DNS statique est réglé sur une carte physique active de la VM (réseau inchangé),
+  puis le relevé des cartes (toutes les 60 s) le compare ; (b) **filtrage** : résolution par le client DNS de Windows d'un
+  nom `.test` présent dans la liste de filtrage synthétique.
+- Attendu : (a) **DNS-002 Alerte** (serveur DNS réglé à la main sur une carte physique ; règle non adoucie par
+  l'apprentissage) ; (b) **aucune alerte** : le nom `.test` listé est résolu en **adresse nulle** et apparaît dans les
+  « derniers blocages » (`filtrage-etat.json`), l'état du filtrage le comptant ; un nom `.test` **hors** liste est relayé
+  vers l'amont de labo (témoin). 1 incident pour DNS-002 au plus.
+- Délai maximal : 120 s pour DNS-002 (après le relevé des cartes) ; 60 s pour le filtrage.
+- Nettoyage : serveur DNS statique retiré, carte rendue au DHCP (témoin négatif N-05 : aucune alerte au retour au DHCP,
+  changement donné par le réseau) ; filtrage désactivé par la commande `filtrage` (cartes rendues à leurs serveurs
+  d'origine, port 53 relâché, résolveur local arrêté) ; liste de filtrage synthétique retirée ; **vérifier que les cartes
+  et le filtrage sont rendus à l'identique** ; remise à l'instantané après l'essai.
+- Preuves : communes + réglage DNS des cartes avant/après (relevé et registre `NameServer`), `alertes.json` (DNS-002),
+  `filtrage-etat.json` (derniers blocages, catégories, état actif), événement DNS brut (nom résolu), état des collectes
+  `ConfigDns` et `FiltrageDns` au début et à la fin.
+- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-002 Alerte ; blocage sans alerte) ; aucune règle de la baseline
+  ne porte sur le réglage DNS des cartes ni sur le filtrage ; si le poste est vu « joint à un domaine », l'activation du
+  filtrage est refusée (décision D7-5 du code) : le relever, et mesurer alors le filtrage en configuration A.
 
 **S-07 — Domaine et adresse inscrits dans des listes de menaces de test (confiance haute) — DNS-001 / RES-001**
 - Technique : T1071 (infrastructure connue). Nature : émulation.
@@ -556,10 +575,9 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
   émulation.
 - Statut : **approuvé en v1.1** (décision du mainteneur du 2026-11-14, 5.2). Exige un **arrêt du service deR4Tizer puis sa
   relance** ; exécutable seulement parce que le mainteneur l'a tranché (dérogation au principe « deR4Tizer intact »).
-- **Réserve v1.4 (ne pas exécuter avant confirmation) :** S-18 s'appuie sur la **fonction de filtrage DNS** (cartes
-  réglées sur le résolveur local), **absente de la source `service-rs` 4.3 lue** (1.5). Sa confirmation est **suspendue à
-  la question 1 de la section 5.5** (version de source alignée sur le binaire réellement installé). Tant que cette version
-  n'est pas fournie et lue, S-18 reste approuvé mais **n'est pas exécuté**, pour ne pas mesurer une fonction non lue.
+- **Note v1.4 :** S-18 s'appuie sur la **fonction de filtrage DNS** (cartes réglées sur le résolveur local), **présente
+  dans `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`, 1.5) : S-18 est testable. Seule prudence, non
+  bloquante, confirmer que le binaire installé correspond à cette source avant de mesurer.
 - Préconditions : configuration A suffit ; filtrage DNS activé (cartes réglées sur le résolveur local) ; état des
   collectes, du filtrage et des cartes relevé ; un programme d'écoute bénin de labo prêt (il ouvre seulement le port 53 en
   écoute locale, sans servir de vraie résolution).
@@ -609,19 +627,19 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 | N-02 | tâche planifiée créée par un administrateur vers un programme signé de Program Files | PER-001 Info au plus | identique |
 | N-03 | téléchargement autorisé depuis Kali par le navigateur | aucune RES-002 ; RES-003 Info admise | identique ; avertissement SmartScreen à l'ouverture du fichier, sans alerte de deR4Tizer |
 | N-04 | une erreur de mot de passe puis réussite en Bureau à distance | aucune COR-R1/R2 ; COR-R9 reste attendue (tout le labo est « public » pour le service) | non exécutable (Bureau à distance refusé) : D en C, mesuré en A |
-| N-05 | réglage DNS rendu au DHCP | **E (v1.4) : ne mesure pas DNS-002, règle absente de la source 4.3 lue.** Reste exécutable comme contrôle de non-régression (aucune alerte attendue), mais non applicable au build pour DNS-002 (pas D). | identique (E) |
+| N-05 | réglage DNS rendu au DHCP (après S-06) | témoin négatif : DNS-002 ne se déclenche pas au retour au DHCP (changement donné par le réseau : événement du mini-SIEM, sans alerte) | identique |
 
 ### 3.3 Écartés, non exécutés ou en attente
 
 - T1567 : D (aucun service web réel autorisé ; un substitut du labo serait T1041).
 - T1055 : non exécuté ; aucune injection, même bénigne, sans accord explicite ; aucun capteur consommé.
 - T1562.001 contre Defender, les journaux Windows ou deR4Tizer : D (interdit).
-- DNS-003 : exige l'arrêt puis la relance du service ; **approuvé en v1.1** (5.2), devenu S-18 ; **réserve v1.4** :
-  suspendu à la confirmation de version de source (5.5, question 1), car il s'appuie sur la fonction de filtrage absente de
-  la source 4.3 lue.
+- DNS-003 : exige l'arrêt puis la relance du service ; **approuvé en v1.1** (5.2), devenu S-18 ; filtrage présent dans
+  `main` (5.5) : S-18 testable.
 - Volet T1562.002 de S-13 : **approuvé en v1.1** (5.2), exécuté dans S-13.
-- **S-06 (DNS-002 + filtrage DNS) : en attente du mainteneur, classe E (v1.4).** Code absent de la source 4.3 lue ; non
-  exécuté, jamais compté 0 ; quatre questions remontées (5.5). Le témoin N-05 est classé E pour DNS-002.
+- **S-06 (DNS-002 + filtrage DNS) : testable (v1.4).** Code présent dans `main` ; fiche réécrite au niveau comportement
+  (3.1). L'erreur « code absent » d'une rédaction initiale venait d'un checkout périmé (5.5). N-05 est un témoin négatif
+  normal.
 - En configuration C seulement (v1.3) : S-01, S-02, S-05 (a) et N-04 non exécutables comme détection (Bureau à distance
   refusé), S-16 attendu prévenu ; mesurés en A. L'essai en C reste une mesure de prévention.
 - Fiches Atomic qui téléchargent, désactivent une protection, lisent la mémoire de LSASS ou effacent un journal réel :
@@ -643,11 +661,11 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
    état relevé dans chaque instantané.
 5. deR4Tizer : version et empreinte du MSI ; service en marche ; aucune collecte « Inconnue » ; profil « journalisation »
    conforme ; état de l'apprentissage ; source des processus (Sysmon ou WMI) relevée. **Version de source alignée sur le
-   binaire installé relevée** (pour S-06/S-18, 5.5) : si le binaire expose DNS-002 ou le filtrage absents de la source
-   `main` 4.3, fournir la branche/commit correspondant avant d'exercer ces règles.
+   binaire installé relevée** (pour S-06/S-18) : confirmer que le binaire installé correspond bien à la source de `main`
+   (après les fusions de phase 7.3/7.4) qui expose DNS-002 et le filtrage, avant de mesurer ces règles.
 6. Collecte indépendante : 4688, 4104, Planificateur, Defender, Sysmon (configuration notée) lisibles et exportables.
 7. Comptes de test créés, seuil de verrouillage relevé ; aucun mot de passe dans une preuve.
-8. Kali : outils et versions notés ; serveur HTTP et amont DNS du labo prêts (S-07, S-11 ; S-06 seulement si débloqué) ;
+8. Kali : outils et versions notés ; serveur HTTP et amont DNS du labo prêts (S-07, S-11, S-06) ;
    journal horodaté.
 9. Collecte des preuves sur la VM (PowerShell Direct) essayée à blanc sur N-01, en configuration A et en configuration C.
 10. « campagne C » : préparé depuis « campagne A » ; relevé de référence de Defender et de `baseline.json` pris avant
@@ -673,8 +691,8 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
    essais ne sont pas indépendants. La remise vise l'instantané de la configuration, jamais « propre ». La VM revient à
    « propre » seulement après la campagne.
 4. **Résolveur DNS de labo sur Kali**, sur `d4t-labo` seulement, pour une zone `.test` et les noms du labo, sans relais
-   vers Internet. Raison : exercer DNS-001 (S-07) hors Internet ; le filtrage de phase 7 (S-06) l'exigerait aussi, mais est
-   en attente (5.5). Outil côté Kali, hors de la VM de test.
+   vers Internet. Raison : exercer DNS-001 (S-07) hors Internet ; le filtrage de phase 7 (S-06) l'exige aussi (amont du résolveur
+   local). Outil côté Kali, hors de la VM de test.
 5. **Listes restreintes activées pour S-07, avec des listes synthétiques locales** (noms `.test`, adresse secondaire de
    Kali), posées par un administrateur, effacées par la remise à l'instantané. **Correction v1.4 :** l'adresse de menace
    est placée dans une **source de confiance haute** (par exemple une liste C2 de botnets ou un bloc DROP), **et non dans
@@ -690,7 +708,7 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
    puis fermeture, aucune copie, aucun déchiffrement. S-15 (LSASS en accès « informations limitées ») reste dans la forme
    prévue par la consigne.
 9. **Classement** : T1567 en D ; T1055 non exécuté (D) ; B1 et B2 restent des sous-divisions de B ; **classe E** réservée
-   au gelé (IDS/DPI/NDR) **et aux fonctions absentes de la source lue** (S-06, 5.5).
+   au gelé (IDS/DPI/NDR). S-06 n'est plus en E : le code de DNS-002 et du filtrage est présent dans `main` (5.5).
 10. **Publication** : ce document, une fois transmis au mainteneur, est proposé sous `docs/validation/` par une PR de
     documentation seule, après la garde PII ; la fusion reste décidée par le mainteneur.
 11. **Configuration C, principale de mesure (v1.3), sur décision du mainteneur du 2026-11-14** : les tests Kali se font
@@ -714,8 +732,7 @@ il peut retirer un scénario ou reprendre l'approbation à tout moment.
 2. **DNS-003** (devenu S-18) : exige d'arrêter le service deR4Tizer, de faire tenir le port 53 par un autre programme, et
    de relancer le service. **Approuvé en v1.1** ; seule dérogation au principe « deR4Tizer intact », tenant à cette
    décision écrite. Nettoyage à rétablissement vérifié (programme d'écoute arrêté, port 53 libéré, service relancé et
-   vérifié) puis remise à l'instantané. **Réserve v1.4** : s'appuie sur la fonction de filtrage absente de la source 4.3
-   lue ; à exécuter seulement après la confirmation de version de source (5.5, question 1).
+   vérifié) puis remise à l'instantané. Filtrage présent dans `main` (5.5) : S-18 est testable.
 
 ### 5.3 Défauts du produit constatés à la lecture (ajouté en v1.3)
 
@@ -768,29 +785,24 @@ du mandat ; elles encadrent le décompte et la validité des essais. Transmises 
   événementielle ou périodique passe-t-elle « Indisponible » à tort ? À instrumenter en phase 5, sans impact sur la
   notation des campagnes.
 
-### 5.5 Point remonté au mainteneur, en attente (v1.4) — S-06 (DNS-002 et filtrage DNS)
+### 5.5 Correction v1.4 — S-06 (DNS-002 et filtrage DNS) : erreur « code absent » d'une rédaction initiale
 
-À la lecture de la source `service-rs` **4.3** (`main`), **le code de DNS-002** (changement de serveur DNS de carte) **et
-du filtrage DNS** (résolveur local, réglage d'activation, fichiers d'état, liste de filtrage) **est absent** ; la matrice
-des capacités ne les liste pas ; le seul code DNS présent alimente **DNS-001** (journal DNS-Client 3008). La « DNS-002 vue
-au scénario 3a » du premier passage ne peut donc pas provenir de cette source : vraisemblablement d'un binaire construit
-depuis une branche non fusionnée (phase 7.4) ou d'un service antérieur. **S-06 est classé E (en attente du mainteneur) et
-n'est pas exécuté ; jamais compté 0 (NON ÉVALUÉ).** La règle DNS-003 (S-18) s'appuie sur la même fonction de filtrage :
-elle est **suspendue à la même question de version de source** (question 1).
+Une rédaction initiale de la v1.4 affirmait que le code de **DNS-002** et du **filtrage DNS** (résolveur local) était
+« absent de la source », classait **S-06 en classe E / en attente du mainteneur** et remontait quatre questions au
+mainteneur. **Cette prémisse était fausse.** Elle venait d'un **checkout de travail périmé** (branche `passages-en-vm`),
+antérieur aux fusions de phase 7.3/7.4.
 
-**Quatre questions au mainteneur (au niveau comportement), préalables à tout déblocage de S-06 (et à l'exécution de
-S-18) :**
-1. **Version de source alignée sur le binaire installé.** Le filtrage DNS et DNS-002 sont-ils dans une branche non
-   fusionnée (phase 7.4) ? Fournir le commit/la branche correspondant au binaire **réellement installé** dans l'instantané
-   de test, afin de **lire la règle avant de l'exercer** (pas de mesure sur une fonction non lue). Cette réponse gate aussi
-   S-18 (DNS-003).
-2. **Activation du filtrage.** Par quel réglage/commande du canal le filtrage s'active-t-il (cartes pointées sur le
-   résolveur local) ? Nom du réglage et fichiers d'état écrits (existent-ils dans la branche de phase 7.4 ?).
-3. **Liste de filtrage.** Emplacement, format attendu (noms `.test` ? format hosts ?), propriétaire requis, et réponse
-   attendue (résolution en adresse nulle ? présence dans « derniers blocages » ?).
-4. **DNS-002.** Quel signal exact (événement, sondage de carte) et quel niveau (Alerte) ? Se déclenche-t-il au réglage
-   d'un serveur DNS statique sur la carte ? Au retour au DHCP, l'absence d'alerte (témoin N-05) est-elle attendue ?
+À la lecture du **worktree complet de `main` à jour**, le code est bien présent :
+- **DNS-002** : `dns_surveillance.rs` (relevé des serveurs DNS des cartes toutes les 60 s ; un serveur statique changé
+  sur une carte physique lève la règle `DNS_002`, niveau Alerte), règle déclarée dans `regles.rs`.
+- **Filtrage DNS** : résolveur local sur `127.0.0.1:53` et `[::1]:53` (`dns_local.rs`), moteur de filtrage et état
+  (`filtrage.rs`, `EtatFiltrage`, `filtrage-etat.json`, « derniers blocages »), activation sur les cartes
+  (`filtrage_cartes.rs`, commande `filtrage` de l'administrateur, phase 7.4, réglage des cartes en SYSTEM accordé par le
+  mainteneur), **DNS-003** via l'alerte « port DNS tenu » (`alerte_port_dns_tenu`, Critique, au démarrage du service).
+- La **matrice des capacités** (`capability-matrix.md`) liste DNS-002, le moteur de filtrage, le résolveur local,
+  l'état/DNS-003 et Quad9.
 
-Tant que ces questions ne sont pas tranchées et la source alignée lue, l'action, l'attendu, le nettoyage et les preuves
-de S-06 ne sont **pas réécrits** (ils seraient des hypothèses sur une fonction non lue). Une **nouvelle version approuvée**
-de la liste réactivera S-06 (et confirmera S-18) après réponse du mainteneur.
+**Conséquences :** S-06 est **testable**, sa fiche est réécrite au niveau comportement (3.1) ; DNS-003 (S-18) est
+testable (5.2) ; N-05 est un témoin négatif normal (3.2). **Il n'y a pas de question bloquante au mainteneur sur ce
+point.** Seule prudence maintenue, non bloquante : avant de mesurer, confirmer que le **binaire installé** dans
+l'instantané de test correspond bien à cette source de `main` (empreinte du MSI et version relevées, section 4, point 5).
