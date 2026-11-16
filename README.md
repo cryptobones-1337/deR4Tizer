@@ -203,9 +203,10 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
 - Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
 - L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
-- Le lot 3d tourne dans une VM de test, Microsoft Defender pleinement actif : c'est un signal, pas une preuve sur un poste
-  réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi sur la version distribuée, des binaires signés et
-  une relecture indépendante.
+- Le lot 3d a été mesuré dans une VM de test, Microsoft Defender pleinement actif (sans et avec la baseline durcie) :
+  le produit installé n'est pas détecté (aucune exclusion, scan et analyse rapide sans détection, service intact).
+  C'est un signal, pas une preuve sur un poste réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi
+  sur la version distribuée et signée, et une relecture indépendante.
 - La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
 - Un logiciel « connu » n'est pas suspendu s'il touche un leurre, et son alerte est au niveau Info. Les droits de son dossier ne sont pas vérifiés : un dossier de Program Files ouvert par un installateur tiers, cas relevé sur un poste, permet à un compte standard d'y poser une copie signée ; un processus creux lancé depuis un binaire autorisé garde aussi ce statut.
 - Un compte standard peut atteindre le plafond de 30 blocages par heure en se connectant à 31 adresses listées : les
@@ -339,8 +340,10 @@ Routes are listed in the French section above (paths are identical). `/expositio
 
 The full list is in the French section above. In particular:
 
-- Batch 3d runs in a test VM with Microsoft Defender fully active: a signal, not proof on a real machine. No distribution
-  before a green GitHub CI, batch 3d passed on the distributed version, signed binaries and an independent review.
+- Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
+  the installed product is not detected (no exclusion, scan and quick scan with no detection, service intact). A
+  signal, not proof on a real machine. No distribution before a green GitHub CI, batch 3d passed on the distributed
+  and signed version, and an independent review.
 - The interface window has never been opened in real conditions; its decisions are tested separately.
 - Known software is not suspended when it touches a canary, and its alert is at Info level. Its folder's permissions are not checked: a Program Files folder left open by a third-party installer, a case found on one machine, lets a standard account drop a signed copy there; a hollowed process started from an allowed binary keeps this status too.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
