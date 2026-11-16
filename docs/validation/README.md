@@ -11,6 +11,7 @@ section 5, campagne Kali).
 | [campagne-kali-troisieme-lot.md](campagne-kali-troisieme-lot.md) | Résultats du troisième lot (liste v1.4) : détection du changement de serveur DNS sur une carte (DNS-002), en configurations A et C — la **jambe DNS-002 de S-06** (la jambe filtrage de S-06 et DNS-003/S-18 restent à exécuter) |
 | [campagne-kali-quatrieme-lot.md](campagne-kali-quatrieme-lot.md) | Résultats du quatrième lot (liste v1.4) : **jambe filtrage de S-06** (un nom listé bloqué en adresse nulle), en configurations A et C — S-06 est couvert en entier ; et pourquoi **DNS-003 (S-18)** n'est pas mesurable de bout en bout en laboratoire |
 | [campagne-kali-cinquieme-lot.md](campagne-kali-cinquieme-lot.md) | Résultats du cinquième lot (liste v1.4) : **lot 3d Defender formel** (le produit installé n'est pas détecté par un Defender pleinement actif, configurations A et C, binaire non encore signé) et **sessions standard** (spécificité : N-01 et N-02 sans alerte forte ; N-05 déjà couvert) |
+| [campagne-kali-sixieme-lot.md](campagne-kali-sixieme-lot.md) | Résultats du sixième lot (liste v1.4) : scénarios restants — sessions et corrélations (S-17 session admin distante, S-04 tube IPC, S-02 force brute RDP + réussite), réseau (S-11 C2 HTTP, S-12 exfiltration, S-08 balayage), exécution et simulations (S-10 PowerShell encodé, S-15 LSASS, S-16 leurre), présence de l'interface (S-05 SAN-010) ; deux constats produits (COR-R9 par RDP en Alerte ; PRC-002 non déterministe sans Sysmon) |
 
 ## À savoir
 
