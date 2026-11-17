@@ -396,6 +396,9 @@ function Alertes-Dns2 {
 Verifier 'DNS-002 : DNS statique réglé sur la carte de la VM, réseau inchangé : alerte ; retour au DHCP : aucune alerte' {
     $carte = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object -First 1
     if (-not $carte) { return 'aucune carte physique active' }
+    # Sur un runner CI, la carte peut n'avoir aucune configuration DNS IPv4 interrogeable (Get-DnsClientServerAddress
+    # jette) : ce scénario (changement de serveur DNS sur la carte) n'a alors pas son prérequis — non exécuté, pas échoué
+    try { $null = Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4 -ErrorAction Stop } catch { return "NONEXEC::pas de configuration DNS IPv4 interrogeable sur la carte ($($carte.Name)) : prérequis absent (runner/CI)" }
     $cle = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($carte.InterfaceGuid)"
     $origine = [string](Get-ItemProperty $cle -Name NameServer -ErrorAction SilentlyContinue).NameServer
     $avant = @(Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses
@@ -564,6 +567,8 @@ Verifier 'Filtrage activé (7.4) : cartes sur le résolveur local avec secours, 
     $configAvant = if (Test-Path $fConfig) { Get-Content $fConfig -Raw -Encoding UTF8 } else { $null }
     $carte = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object -First 1
     if (-not $carte) { return 'aucune carte physique active' }
+    # Même prérequis que DNS-002 : sans configuration DNS interrogeable sur la carte (runner/CI), non exécuté
+    try { $null = Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4 -ErrorAction Stop } catch { return "NONEXEC::pas de configuration DNS IPv4 interrogeable sur la carte ($($carte.Name)) : prérequis absent (runner/CI)" }
     $etat = {
         $c4 = (Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv4).ServerAddresses -join ','
         $c6 = (Get-DnsClientServerAddress -InterfaceIndex $carte.ifIndex -AddressFamily IPv6).ServerAddresses -join ','
@@ -888,6 +893,9 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
         $true
     }
     Verifier 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' {
+        # Sans UAC (EnableLUA=0, cas d'un runner CI), il n'y a pas de jeton filtré : toute interface est élevée et la
+        # propriété « interface non élevée en session » est intestable ici — non exécuté. Elle reste vérifiée sur un poste à UAC actif.
+        if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA -eq 0) { return 'NONEXEC::UAC désactivé (EnableLUA=0) : jeton non filtré, interface forcément élevée (prérequis absent, runner/CI)' }
         $i = @(Interfaces-EnSession)
         if (-not $i.Count) { return 'aucune interface en session' }
         $etats = @($i | ForEach-Object { "pid $($_.ProcessId) : $($_.CommandLine) ; élevée $([D4tJeton]::Eleve([int]$_.ProcessId))" })

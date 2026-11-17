@@ -20,7 +20,9 @@ function Noter([string]$Scenario, [string]$Resultat, [string]$Detail) {
 function Verifier([string]$Scenario, [scriptblock]$Test) {
     try {
         $r = @(& $Test) | Select-Object -Last 1
-        if ($r -eq $true) { Noter $Scenario 'RÉUSSI' '' } else { Noter $Scenario 'ÉCHOUÉ' ([string]$r) }
+        if ($r -eq $true) { Noter $Scenario 'RÉUSSI' '' }
+        elseif ("$r".StartsWith('NONEXEC::')) { Noter $Scenario 'NON EXÉCUTÉ' ("$r".Substring(9)) }
+        else { Noter $Scenario 'ÉCHOUÉ' ([string]$r) }
     } catch {
         Noter $Scenario 'ÉCHOUÉ' ('exception : ' + $_.Exception.Message)
     }
