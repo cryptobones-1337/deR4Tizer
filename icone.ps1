@@ -1,5 +1,5 @@
-﻿# Génère src\deR4Tizer.ico : un rat « dératisé » (sur le dos, pattes en l'air, œil en croix) en dégradé cyan→bleu,
-# sur un carré arrondi sombre. Clin d'œil aux RAT (Remote Access Trojans). Dessiné à chaque taille pour rester net en 16 px.
+﻿# Génère src\deR4Tizer.ico : une tête de rat stylisée de face (triangles et losanges, deux yeux en croix) en dégradé
+# cyan→bleu, sur un carré arrondi sombre. Clin d'œil aux RAT (Remote Access Trojans). Dessinée à chaque taille pour rester nette en 16 px.
 param([string]$Sortie = (Join-Path $PSScriptRoot 'src\deR4Tizer.ico'), [string]$Apercu)
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'Stop'
