@@ -1898,6 +1898,18 @@ fn taches_examen_n_ouvre_aucun_fichier() {
     std::fs::remove_dir_all(&d).unwrap();
 }
 
+/// Correction du FP « tâches VS » : un orphelin du dossier des tâches n'est une anomalie que si son propriétaire
+/// n'est pas de confiance. Un compte non privilégié ne peut forger un propriétaire SYSTEM/administrateurs, donc un
+/// vrai fichier planté reste signalé ; un artefact d'installeur admin (propriétaire de confiance) ne l'est plus ;
+/// propriétaire illisible → anomalie conservée (échec fermé)
+#[test]
+fn anomalie_sans_tache_selon_proprietaire() {
+    use crate::persistance::anomalie_sans_tache as a;
+    assert!(!a(Some(true)), "propriétaire de confiance : artefact d'installeur admin, pas une anomalie");
+    assert!(a(Some(false)), "propriétaire non de confiance : fichier posé par un compte non privilégié, anomalie");
+    assert!(a(None), "propriétaire illisible : anomalie conservée (échec fermé)");
+}
+
 /// D1, S106-04 : la revérification s'arrête au plafond d'anomalies : des fichiers vides ne font pas interroger le Planificateur sans fin
 #[test]
 fn taches_examen_appels_bornes() {

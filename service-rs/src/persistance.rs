@@ -545,6 +545,15 @@ pub(crate) fn verdict_reverification(code: u32) -> Fichier {
     }
 }
 
+/// Décision pure : un fichier du dossier des tâches sans tâche enregistrée n'est une anomalie que si son
+/// propriétaire n'est pas de confiance. Un compte non privilégié ne peut pas poser un fichier appartenant à
+/// SYSTEM ou aux administrateurs (il ne tient ni `SeRestorePrivilege` ni `SeTakeOwnershipPrivilege`) : un fichier
+/// réellement planté garde un propriétaire non privilégié et reste signalé. Échec fermé : propriétaire illisible
+/// (`None`) → anomalie conservée. Corrige un faux positif sur les artefacts d'un installeur admin (relecture de #103, D5)
+pub(crate) fn anomalie_sans_tache(proprietaire_de_confiance: Option<bool>) -> bool {
+    proprietaire_de_confiance != Some(true)
+}
+
 /// Examine le dossier des tâches, pour ses seules anomalies : les tâches viennent du Planificateur, un fichier posé là n'en est pas une
 /// (audit de #103, S103-02, S103-03). Aucun point d'analyse n'est suivi (jonction, lien), et le service n'y ouvre rien. `enregistree` dit si un nom
 /// relatif correspond à une tâche ; elle n'est plus appelée une fois les anomalies au plafond. Rend les
@@ -932,6 +941,25 @@ pub(crate) fn lire_taches_planificateur(traiter: &mut dyn FnMut(&str, bool, &[Ac
     l
 }
 
+/// Propriétaire du fichier, lu par un handle qui ne suit aucun lien (point d'analyse ouvert tel quel), en
+/// attributs seuls (`READ_CONTROL`), partage maximal pour ne jamais verrouiller ni attendre. Qualifie un orphelin
+/// du dossier des tâches : le parcours (`examiner_dossier_taches`) n'ouvre toujours rien ; seule cette
+/// qualification, bornée au plafond d'anomalies, ouvre ce handle. `None` si illisible (→ anomalie conservée)
+fn proprietaire_oriente_sans_lien(chemin: &Path) -> Option<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const READ_CONTROL: u32 = 0x0002_0000;
+    const PARTAGE_MAX: u32 = 0x1 | 0x2 | 0x4; // FILE_SHARE_READ | WRITE | DELETE
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let f = std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL)
+        .share_mode(PARTAGE_MAX)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(chemin)
+        .ok()?;
+    crate::natif::lire_securite_handle(&f).map(|s| crate::protection::proprietaire_acceptable(&s.proprietaire))
+}
+
 fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
     use windows::core::BSTR;
     let _com = ComFil::nouveau();
@@ -964,6 +992,9 @@ fn taches(sortie: &std::sync::Mutex<Vec<EntreeDemarrage>>) {
                 // Supprimée depuis : plus de fichier, rien à dire
                 Err(e) => match verdict_reverification(e.code().0 as u32) {
                     Fichier::SansTache if !existe_tel_quel(chemin) => Fichier::Enregistre,
+                    // Un orphelin au propriétaire de confiance (SYSTEM / administrateurs) est un artefact d'installeur
+                    // privilégié, pas une pré-position d'un compte non privilégié : on ne le signale pas
+                    Fichier::SansTache if !anomalie_sans_tache(proprietaire_oriente_sans_lien(chemin)) => Fichier::Enregistre,
                     v => v,
                 },
             }
