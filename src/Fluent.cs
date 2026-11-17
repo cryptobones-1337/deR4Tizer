@@ -17,9 +17,26 @@ namespace DeR4Tizer
     // Jetons de la direction visuelle (contrastes calculés selon WCAG, testés)
     public static class Jetons
     {
-        public static readonly Color Fond = Hex("#141518"), Carte = Hex("#1E2024"), Surface = Hex("#262A30"),
-            Texte = Hex("#E6E8EB"), TexteSecondaire = Hex("#9AA3AF"), Accent = Hex("#3BA7F0"), TexteSurAccent = Hex("#0B1220"),
-            Danger = Hex("#F0605A"), Attention = Hex("#F2A93B"), Succes = Hex("#2FBF71"), Separateur = Hex("#2E3238");
+        // Accessibilité : en contraste élevé de Windows, la palette suit les couleurs système ; sinon le thème sombre.
+        public static readonly bool ContrasteEleve = SystemParameters.HighContrast;
+        public static readonly Color Fond, Carte, Surface, Texte, TexteSecondaire, Accent, TexteSurAccent, Danger, Attention, Succes, Separateur;
+        static Jetons()
+        {
+            if (ContrasteEleve)
+            {
+                Fond = SystemColors.WindowColor; Carte = SystemColors.ControlColor; Surface = SystemColors.ControlColor;
+                Texte = SystemColors.WindowTextColor; TexteSecondaire = SystemColors.GrayTextColor;
+                Accent = SystemColors.HighlightColor; TexteSurAccent = SystemColors.HighlightTextColor;
+                Separateur = SystemColors.WindowTextColor;
+                Danger = SystemColors.WindowTextColor; Attention = SystemColors.WindowTextColor; Succes = SystemColors.WindowTextColor;
+            }
+            else
+            {
+                Fond = Hex("#141518"); Carte = Hex("#1E2024"); Surface = Hex("#262A30");
+                Texte = Hex("#E6E8EB"); TexteSecondaire = Hex("#9AA3AF"); Accent = Hex("#3BA7F0"); TexteSurAccent = Hex("#0B1220");
+                Danger = Hex("#F0605A"); Attention = Hex("#F2A93B"); Succes = Hex("#2FBF71"); Separateur = Hex("#2E3238");
+            }
+        }
         public static readonly FontFamily Police = new FontFamily("Segoe UI Variable Text, Segoe UI");
         public static readonly FontFamily PoliceTitre = new FontFamily("Segoe UI Variable Display, Segoe UI");
         public static readonly FontFamily Icones = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets");
@@ -38,6 +55,28 @@ namespace DeR4Tizer
             };
             double la = lum(a), lb = lum(b);
             return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+        }
+
+        // Indicateur de focus clavier partagé (accessibilité) : un cadre accent — ou la surbrillance système en contraste
+        // élevé — autour de l'élément focalisé au clavier. Ne s'affiche pas à la souris (comportement natif de FocusVisualStyle).
+        static Style styleFocus;
+        public static Style StyleFocus()
+        {
+            if (styleFocus != null) return styleFocus;
+            var modele = new ControlTemplate();
+            var rect = new FrameworkElementFactory(typeof(System.Windows.Shapes.Rectangle));
+            rect.SetValue(System.Windows.Shapes.Shape.StrokeProperty, Pinceau(Accent));
+            rect.SetValue(System.Windows.Shapes.Shape.StrokeThicknessProperty, 2.0);
+            rect.SetValue(System.Windows.Shapes.Rectangle.RadiusXProperty, Rayon);
+            rect.SetValue(System.Windows.Shapes.Rectangle.RadiusYProperty, Rayon);
+            rect.SetValue(FrameworkElement.MarginProperty, new Thickness(-2));
+            rect.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+            modele.VisualTree = rect;
+            var s = new Style();
+            s.Setters.Add(new Setter(Control.TemplateProperty, modele));
+            s.Seal();
+            styleFocus = s;
+            return s;
         }
     }
 
@@ -361,6 +400,23 @@ namespace DeR4Tizer
             base.OnClosing(e);
         }
 
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+        // Barre de titre sombre (accessibilité/finition) : DWMWA_USE_IMMERSIVE_DARK_MODE (20, repli 19 sur Windows ancien).
+        // Laissée au système en contraste élevé. Sans effet si l'API est absente.
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            if (Jetons.ContrasteEleve) return;
+            try
+            {
+                var h = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                int oui = 1;
+                if (DwmSetWindowAttribute(h, 20, ref oui, 4) != 0) DwmSetWindowAttribute(h, 19, ref oui, 4);
+            }
+            catch { }
+        }
+
         // Compteurs de la navigation, repris de la fenêtre d'aujourd'hui (alertes non lues, démarrage, vie privée…)
         void MettreAJourPastillesNav()
         {
@@ -420,10 +476,12 @@ namespace DeR4Tizer
             DockPanel.SetDock(compteur, Dock.Right);
             contenu.Children.Add(compteur);
             pastillesNav[e.Cle] = compteur;
-            contenu.Children.Add(new TextBlock { Text = L.T(e.Cle), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            contenu.Children.Add(new TextBlock { Text = L.T(e.Cle), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = L.T(e.Cle) });
             // Couleur donnée au bouton : sans elle, WPF écrit le libellé et l'icône en noir (vu sur le rendu : noir sur gris)
             var b = new Button { Content = contenu, Foreground = Jetons.Pinceau(Jetons.Texte), HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
             b.Template = Modele();
+            System.Windows.Automation.AutomationProperties.SetName(b, L.T(e.Cle));
+            b.FocusVisualStyle = Jetons.StyleFocus();
             b.Click += (s, a) => Ouvrir(e.Cle);
             boutons.Add(b);
             cles[b] = e.Cle;
@@ -729,12 +787,20 @@ namespace DeR4Tizer
             var niveauTexte = new TextBlock { Text = Canal.Visible(L.T(a.Niveau ?? "")), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(8, 0, 0, 0) };
             DockPanel.SetDock(niveauTexte, Dock.Right);
             haut.Children.Add(niveauTexte);
-            haut.Children.Add(new TextBlock { Text = (nonLue ? "• " : "") + Canal.Visible(a.Processus), FontWeight = nonLue ? FontWeights.SemiBold : FontWeights.Normal, TextTrimming = TextTrimming.CharacterEllipsis });
+            haut.Children.Add(new TextBlock { Text = (nonLue ? "• " : "") + Canal.Visible(a.Processus), FontWeight = nonLue ? FontWeights.SemiBold : FontWeights.Normal, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = Canal.Visible(a.Processus) });
             pile.Children.Add(haut);
             string sous = Canal.Visible(a.Heure) + (string.IsNullOrEmpty(a.Destination) ? "" : "  ·  " + Canal.Visible(a.Destination));
-            pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis });
+            pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = sous });
             cadre.Child = pile;
-            cadre.MouseLeftButtonUp += (s, e) => { choisie = a.Id; Rafraichir(); };
+            // Accessibilité : focus clavier (Tab + flèches), activation Entrée/Espace, nom lu par les lecteurs d'écran, survol.
+            cadre.Focusable = true;
+            cadre.FocusVisualStyle = Jetons.StyleFocus();
+            System.Windows.Automation.AutomationProperties.SetName(cadre, string.Join(", ", new[] { Canal.Visible(a.Processus), Canal.Visible(L.T(a.Niveau ?? "")), sous }.Where(x => !string.IsNullOrEmpty(x))));
+            Action activer = () => { choisie = a.Id; Rafraichir(); };
+            cadre.MouseLeftButtonUp += (s, e) => activer();
+            cadre.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { activer(); e.Handled = true; } };
+            cadre.MouseEnter += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
+            cadre.MouseLeave += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
             return cadre;
         }
 
@@ -860,14 +926,22 @@ namespace DeR4Tizer
                 Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 8, 14, 8),
                 Margin = new Thickness(0, 0, 0, 6), BorderThickness = new Thickness(3, 0, 0, 0), BorderBrush = Jetons.Pinceau(couleur), Cursor = Cursors.Hand
             };
+            // Accessibilité : la ligne prend le focus (Tab puis flèches), s'active au clavier (Entrée/Espace) et porte un
+            // nom lu par les lecteurs d'écran ; anneau de focus partagé ; fond en surface au survol et au focus clavier.
+            cadre.Focusable = true;
+            cadre.FocusVisualStyle = Jetons.StyleFocus();
+            System.Windows.Automation.AutomationProperties.SetName(cadre, string.Join(", ", new[] { titre, etiquette, sous }.Where(x => !string.IsNullOrEmpty(x))));
+            cadre.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { choisir(); e.Handled = true; } };
+            cadre.MouseEnter += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
+            cadre.MouseLeave += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
             var pile = new StackPanel();
             var haut = new DockPanel();
             var et = new TextBlock { Text = etiquette, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : couleur), Margin = new Thickness(8, 0, 0, 0) };
             DockPanel.SetDock(et, Dock.Right);
             haut.Children.Add(et);
-            haut.Children.Add(new TextBlock { Text = titre, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : Jetons.Texte), TextTrimming = TextTrimming.CharacterEllipsis });
+            haut.Children.Add(new TextBlock { Text = titre, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : Jetons.Texte), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = titre });
             pile.Children.Add(haut);
-            if (!string.IsNullOrEmpty(sous)) pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis });
+            if (!string.IsNullOrEmpty(sous)) pile.Children.Add(new TextBlock { Text = sous, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = sous });
             cadre.Child = pile;
             cadre.MouseLeftButtonUp += (s, e) => choisir();
             return cadre;
@@ -887,6 +961,8 @@ namespace DeR4Tizer
                 BorderBrush = Jetons.Pinceau(fort ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
             };
             b.Template = Coquille.ModeleBouton();
+            System.Windows.Automation.AutomationProperties.SetName(b, texte);
+            b.FocusVisualStyle = Jetons.StyleFocus();
             b.Click += clic;
             return b;
         }
@@ -905,6 +981,9 @@ namespace DeR4Tizer
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
             resume.TextWrapping = TextWrapping.Wrap; resume.FontSize = 12; resume.Margin = new Thickness(0, 0, 0, 12);
             Grid.SetColumnSpan(resume, 2); g.Children.Add(resume);
+            // Accessibilité : Tab entre une fois dans la liste, les flèches déplacent le focus d'une ligne à l'autre.
+            KeyboardNavigation.SetTabNavigation(liste, KeyboardNavigationMode.Once);
+            KeyboardNavigation.SetDirectionalNavigation(liste, KeyboardNavigationMode.Contained);
             var defile = new ScrollViewer { Content = liste, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 0, 16, 0) };
             Grid.SetRow(defile, 2); g.Children.Add(defile);
             var panneau = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20) };
