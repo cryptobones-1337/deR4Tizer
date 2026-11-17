@@ -2454,6 +2454,16 @@ namespace DeR4Tizer
             var cfg = Commun.Lire<Config>("config.json");
             L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
 
+            // Finition : les nombres et dates affichés suivent la langue de l'interface (« 1 851 » en français, pas
+            // « 1,851 »). Les horodatages stockés gardent leurs séparateurs (format numérique, identiques en fr-FR/en-US).
+            try
+            {
+                var culture = System.Globalization.CultureInfo.GetCultureInfo(L.En ? "en-US" : "fr-FR");
+                System.Threading.Thread.CurrentThread.CurrentCulture = culture;
+                System.Globalization.CultureInfo.DefaultThreadCurrentCulture = culture;
+            }
+            catch { }
+
             // Mode « assistant » : lancé en administrateur par l'interface pour transmettre une commande au service.
             // Il lit la commande dans le fichier et montre en clair ce qu'il va faire avant de l'envoyer. Il n'efface
             // rien (l'interface qui l'a lancé efface le fichier) et ne lit qu'un fichier de commande de deR4Tizer :
