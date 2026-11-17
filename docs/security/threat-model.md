@@ -119,7 +119,16 @@ Veut publier une version malveillante que les postes installeraient.
   sessions) le couvre. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
   Windows Sandbox seulement). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
   versions 4.2 et 4.3 publiées (corrigée par la PR #26, non encore publiée), n'installe rien aujourd'hui.
-- Choix du certificat : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
+- Certificat retenu (2026-11) : certificat de signature de code open source de Certum, RSA 3072, 365 jours, au nom du
+  mainteneur (personne physique, donc propre au projet : le problème du certificat commun à plusieurs projets ne se pose
+  pas). Clé dans le nuage (SimplySign) : elle ne sort jamais de chez Certum et ne passe pas par GitHub ; la signature
+  se fait sur le poste du mainteneur (`signer-version.ps1`), sur des exécutables compilés sans secret. Risques
+  résiduels : une session SimplySign ouverte sur un poste compromis permet de faire signer n'importe quel fichier
+  (protection du poste et du second facteur du mainteneur) ; si le renouvellement annuel change la clé, la nouvelle
+  doit être épinglée à l'avance dans une version signée par l'ancienne ; empreinte épinglée par erreur (empreinte du
+  certificat au lieu de celle de la clé) : `signer-version.ps1` refuse de signer un service où la clé n'est pas
+  épinglée. Aucun de ces points n'a encore été essayé avec le vrai certificat.
+- Autres certificats écartés : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
   ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
   Parades, à décider par cryptobones-1337 (changement du modèle de confiance) : une seconde signature propre au projet

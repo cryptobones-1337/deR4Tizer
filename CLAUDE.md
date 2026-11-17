@@ -360,6 +360,38 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          dans le dépôt, après la garde PII ; la matrice et le README disent « testé en labo (campagne Kali, date) »
          avec les classes A à E, jamais « validé ». L'agent de validation est un fichier local, hors de Git : sa
          consigne de lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
+       - Campagne RedWidow en toute fin de boucle (après la boucle purple team, jamais pendant), décidée par le
+         mainteneur le 2026-11-17 (réseau : « le réseau: OK » ; dépendance : « La dépendance: j'accèpte », en réponse
+         à la proposition d'une passerelle limitée au seul fournisseur de modèles et d'accepter RedWidow comme
+         troisième dépendance). RedWidow (extension VS Code pilotant un agent IA dans un conteneur Exegol ou Kali,
+         licence MIT, version figée et notée dans le rapport) attaque la VM de test `deR4Tizer-test-26H2` depuis la VM
+         Kali, en complément de la boucle, pour un regard extérieur que celle-ci n'a pas (l'agent qui conçoit et celui
+         qui exécute y sont le même modèle).
+         - Hors score consolidé : c'est un essai de fin de parcours, pas l'une des 10 répétitions valides ; ses
+           résultats sont rapportés à part, jamais fusionnés avec les mesures de la boucle.
+         - Réseau : exception à la règle « jamais Internet » de la campagne, pour cette campagne seulement. Une
+           passerelle temporaire, nommée, ouverte depuis la VM Kali vers le seul fournisseur de modèles de RedWidow,
+           jamais vers la VM de test, le réseau local ni le reste d'Internet ; fermée hors campagne. La VM de test
+           reste pilotée sans réseau (PowerShell Direct) et sur le commutateur interne de documentation (RFC 5737).
+         - Dépendance : RedWidow accepté dans la VM Kali seulement, version figée, installé hors campagne (passerelle
+           ouverte à ce moment-là). N'entre pas dans la VM de test ni dans le dépôt.
+         - Defender intact (règle 2) : un outil de RedWidow mis en quarantaine ou détecté est un résultat, jamais un
+           obstacle à contourner ; aucune exclusion.
+         - Mode « Bypass » de RedWidow interdit : chaque action sensible passe par sa carte d'autorisation (tenue par
+           le mainteneur ou par Claude Code) ; jamais d'agent qui agit sans confirmation pendant une durée choisie.
+         - Vol d'identifiants, injection, contournement des défenses : simulations inoffensives et réversibles
+           seulement, marquées SIMULATION ; aucun outil de vol d'identifiants réel, aucune charge destructive, comme
+           pour le reste de la boucle.
+         - L'archive d'audit de RedWidow (fil de mission, journaux, empreintes SHA-256) et l'état de deR4Tizer sont
+           gardés hors du dépôt ; seuls les écarts, traités comme des défauts par le circuit habituel (relecture,
+           audit de sécurité pour un chemin privilégié, passage complet en VM, validateur de fusion), entrent dans
+           `docs/validation/`, la matrice des capacités et le README, après la garde PII.
+         - RedWidow pilote un agent du même modèle que Claude Code : cette campagne n'est pas une relecture
+           indépendante au sens de la section 4, et rien ne doit la présenter comme telle.
+         - Ne dégèle pas le DPI (l'IDS et le NDR le sont depuis le 2026-11-16). Aucune fusion par RedWidow ni par son agent ; la fusion reste
+           décidée par cryptobones-1337. Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les
+           journaux ni les preuves publiées ; Claude Code ne saisit pas de mot de passe (accès par clé SSH posée par
+           le mainteneur, comme pour la campagne Kali).
 7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
    le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
    une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
@@ -377,8 +409,17 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    7.
    L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9.
 
-L'IDS, le DPI et le NDR restent gelés en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées.
+Le DPI reste gelé en l'état (corrections de sûreté uniquement) tant que ces phases ne sont pas validées ; l'IDS et le
+NDR l'étaient aussi jusqu'au 2026-11-16 (paragraphe « Dégel de l'IDS et du NDR » ci-dessous).
 Seule exception, pour la phase 3 (mainteneur, 2026-10-25, par ces mots : « Yes: add the rule identifier line to IDS, DPI and NDR alerts, with no other change to their logic. They stay frozen otherwise. ») : une ligne qui pose l'identifiant de règle (`EXP-*`, `docs/detection/regles.md`) dans leurs alertes, sans autre changement de leur logique.
+
+Dégel de l'IDS et du NDR : phase « détection réseau » ouverte par le mainteneur le 2026-11-16 (consignée dans
+`docs/validation/campagne-kali-detection-reseau-lot1.md`), confirmée le 2026-11-17 par ces mots : « NDR/IDS sont bien
+dégelés. » L'IDS (`ids.rs`) et le NDR (`ndr.rs`) entrent en validation dans la campagne Kali : corrections,
+durcissements et validation de leurs détections. Ce dégel prime sur les mentions de gel de l'IDS et du NDR plus haut
+(phases 7, 8 et 9, boucle purple team, classe E de la mesure). Le DPI reste gelé. Le reste s'applique sans
+changement : règles de la section 2, protocole et relecture de la section 4, passage en VM, état « expérimental » dans
+la matrice tant qu'une mesure ne le justifie pas, et accord du mainteneur pour toute capacité nouvelle.
 
 ## 6. Actions réservées à l'humain
 

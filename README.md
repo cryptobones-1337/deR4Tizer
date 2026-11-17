@@ -163,26 +163,33 @@ signée n'ont ni clé épinglée ni paquet de retour arrière disponible : ils n
 parc part donc d'une première version signée, installée à la main (ou par GPO, Intune, prestataire). Procédure de
 publication :
 
-1. obtenir le certificat de signature de code et calculer l'empreinte SHA-256 de sa clé publique ;
-2. la renseigner dans la variable de dépôt `CLE_SIGNATURE` (avec, plus tard, celle de la clé suivante) ;
-3. ranger le certificat dans l'environnement GitHub « publication » (approbation obligatoire) ;
-4. poser le tag `vX.Y` correspondant à la version du code : la CI compile, signe, construit le MSI et publie la
-   version avec son manifeste ;
-5. installer ce MSI sur chaque poste ; les versions suivantes pourront ensuite s'installer seules (si l'installation
+1. calculer l'empreinte à épingler : SHA-256 de la **clé publique seule** du certificat (champ
+   `SubjectPublicKeyInfo.PublicKey`, celui que lit le service), ni l'empreinte du certificat, ni celle du bloc
+   `SubjectPublicKeyInfo` entier. `signer-version.ps1` l'affiche ; en PowerShell :
+   `$c.PublicKey.EncodedKeyValue.RawData` haché en SHA-256, `$c` étant le certificat du magasin ;
+2. la renseigner dans la variable de dépôt `CLE_SIGNATURE` pour la CI, ou dans `DER4TIZER_CLES_SIGNATURE` pour une
+   compilation locale (avec, plus tard, celle de la clé suivante, séparée par une virgule) ;
+3. poser le tag `vX.Y` correspondant à la version du code : la CI teste et compile les exécutables, **sans les
+   signer** (artefact « executables ») ;
+4. sur le poste du mainteneur, session de signature ouverte : `signer-version.ps1 -Source <artefact>`, avec
+   `DER4TIZER_CERT_SHA1` (empreinte du certificat dans le magasin). Le script refuse de signer si la clé du certificat
+   n'est pas épinglée dans le service, signe les exécutables, construit et signe le MSI, vérifie chaque signature
+   et son horodatage, puis écrit le manifeste et les empreintes. Il ne publie rien ;
+5. publier la version GitHub à la main (décision du mainteneur), avec les fichiers signés, le manifeste et les
+   empreintes ;
+6. installer ce MSI sur chaque poste ; les versions suivantes pourront ensuite s'installer seules (si l'installation
    automatique est activée), le paquet de cette première version servant de retour arrière.
 
-Protéger la publication : ranger les secrets de signature dans l'environnement GitHub « publication » avec une
-approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules). La compilation (où
-s'exécutent les scripts des dépendances) se fait dans un job sans secret ; la signature, dans un job à part qui ne
-reçoit que les exécutables ; l'archive WiX est vérifiée par son empreinte et les actions sont épinglées par SHA.
-L'idéal reste une clé hors de GitHub (Azure Trusted Signing, SignPath).
+Protéger la publication : la clé de signature ne passe jamais par GitHub (certificat « dans le nuage » : elle reste
+chez l'autorité, la session de signature est ouverte par le mainteneur) ; aucun mot de passe sur une ligne de
+commande (`signtool /sha1`, certificat désigné par son empreinte). La compilation, où s'exécutent les scripts des
+dépendances, se fait dans GitHub sans aucun secret. Protéger aussi les tags `v*` (Settings › Rules).
 
-Pour signer : obtenir un certificat de signature de code (gratuit pour l'open source via
-[SignPath Foundation](https://signpath.org), ou Azure Trusted Signing, ou un certificat OV au format .pfx ; pour
-les mises à jour automatiques, SignPath et Azure Trusted Signing ne le sont pas en l'état : voir `docs/security/threat-model.md`), puis
-ajouter les secrets `CERTIFICAT_PFX` (fichier .pfx en base64) et `CERTIFICAT_MOT_DE_PASSE`. En local,
-`DER4TIZER_CERT_SHA1` (empreinte d'un certificat du magasin) fait signer `compiler.ps1`. Tant que les binaires ne sont
-pas signés, Windows affiche « éditeur inconnu » et les postes signalent les nouvelles versions sans les installer.
+Certificat retenu : certificat de signature de code open source de Certum (RSA 3072, 365 jours, clé dans le
+nuage, SimplySign), au nom du mainteneur ; choix et risques dans `docs/security/threat-model.md`. Au renouvellement,
+si la clé change, la nouvelle doit être épinglée (deuxième entrée de `CLE_SIGNATURE`) dans une version signée par
+l'ancienne, sinon la mise à jour automatique s'arrête. Tant que les binaires ne sont pas signés, Windows affiche
+« éditeur inconnu » et les postes signalent les nouvelles versions sans les installer.
 
 ### Limites connues
 
@@ -191,8 +198,8 @@ pas signés, Windows affiche « éditeur inconnu » et les postes signalent les 
   bloquant le TCP entrant vers le service fait aussi tomber la capture (mesuré : 3 Ko reçus en 20 s au lieu de 304 Ko).
   Le service n'écoute aucun port réseau, sauf l'API facultative, filtrée par adresse et bloquée sur le profil Public.
 - Capture IPv4 seulement pour l'instant ; le pays est celui du titulaire du bloc d'adresses (un CDN peut apparaître aux États-Unis).
-- Les exécutables ne sont pas encore signés (certificat de signature de code à obtenir, par exemple SignPath
-  Foundation pour les projets open source) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
+- Les exécutables ne sont pas encore signés (certificat Certum en cours d'émission, signature locale par
+  `signer-version.ps1`, jamais encore exécutée) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
 - deR4Tizer complète Microsoft Defender, il ne le remplace pas : un attaquant administrateur peut arrêter le service.
 - Mode panique : les serveurs DNS et de notification restent joignables pour tous les programmes (un malware
   pourrait s'en servir pour faire sortir des données) ; préférez un serveur ntfy auto-hébergé à ntfy.sh.

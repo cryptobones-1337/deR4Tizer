@@ -1,16 +1,14 @@
-# Publication d'une version : à chaque tag « v4.3 », compilation, signature (si un certificat est configuré),
-# empreintes SHA-256 et manifeste pour la mise à jour automatique, puis publication de la version GitHub.
+# Préparation d'une version : à chaque tag « v4.3 », tests et compilation des exécutables, sans aucun secret.
 #
-# Trois jobs, pour que le certificat ne côtoie jamais de code tiers :
-#   compiler  sans secret : tests et compilation (les scripts de compilation des dépendances s'exécutent ici)
-#   signer    environnement « publication » (secrets, approbation) : reçoit seulement les exécutables, les
-#             signe, construit le MSI avec WiX (archive vérifiée par son empreinte), le signe, écrit le manifeste
-#   publier   crée la version GitHub avec les fichiers signés
+# La signature ne se fait PAS dans GitHub : la clé du certificat de signature de code reste chez l'autorité
+# (certificat « dans le nuage », session SimplySign du mainteneur). Le mainteneur télécharge l'artefact
+# « executables », puis lance signer-version.ps1 sur son poste : contrôle que la clé du certificat est épinglée
+# dans le service, signature, MSI signé, manifeste et empreintes. La publication de la version GitHub est ensuite
+# une décision du mainteneur, faite à la main (CLAUDE.md, section 6).
 #
-# Secrets facultatifs (environnement « publication ») : CERTIFICAT_PFX (fichier .pfx en base64) et
-# CERTIFICAT_MOT_DE_PASSE. Variable de dépôt CLE_SIGNATURE : empreinte SHA-256 de la clé publique du
-# certificat (et de la suivante, séparées par une virgule), épinglée dans le binaire. Sans elles, les binaires
-# ne sont pas signés et les postes signalent la version sans l'installer.
+# Variable de dépôt CLE_SIGNATURE (non secrète) : empreinte SHA-256 de la clé publique du certificat (et de la
+# suivante, séparées par une virgule), épinglée dans le binaire ; signer-version.ps1 refuse de signer un service
+# où elle manque.
 name: Publication
 
 on:
@@ -28,16 +26,18 @@ jobs:
 
       - name: Le tag correspond à la version du code
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
+          if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
 
       - name: Rust stable
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
       - name: Tests
         working-directory: service-rs
-        run: cargo test --release
+        run: cargo test --release --locked
 
       - name: Compilation
         shell: pwsh
@@ -46,9 +46,10 @@ jobs:
           # versions signées par l'une d'elles (variable de dépôt, non secrète)
           DER4TIZER_CLES_SIGNATURE: ${{ vars.CLE_SIGNATURE }}
         run: |
-          cd service-rs; cargo build --release; cd ..
+          cd service-rs; cargo build --release --locked; cd ..
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
+          Get-FileHash bin/*.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content bin/SHA256SUMS-non-signes.txt
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -56,100 +57,4 @@ jobs:
           path: |
             bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
-          retention-days: 1
-
-  signer:
-    needs: compiler
-    runs-on: windows-latest
-    # Environnement GitHub « publication » : y ranger les secrets de signature et exiger une approbation
-    # (Settings > Environments) ; protéger aussi les tags v* (Settings > Rules)
-    environment: publication
-    env:
-      # Les secrets ne sont pas lisibles dans une condition « if » : on passe par une variable
-      AVEC_CERTIFICAT: ${{ secrets.CERTIFICAT_PFX != '' }}
-    steps:
-      # Seulement les sources du paquet (construire-msi.ps1, installeur\) : rien n'est compilé ici
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: executables
-          path: bin
-
-      - name: WiX 3.14 (licence MS-RL), archive vérifiée
-        shell: pwsh
-        run: |
-          $wix = Join-Path $env:RUNNER_TEMP 'wix314'
-          Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile "$wix.zip"
-          $h = (Get-FileHash "$wix.zip" -Algorithm SHA256).Hash
-          if ($h -ne '6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31') { throw "Archive WiX inattendue ($h)." }
-          Expand-Archive "$wix.zip" $wix
-          "WIX=$wix" >> $env:GITHUB_ENV
-
-      - name: Signature des exécutables
-        if: env.AVEC_CERTIFICAT == 'true'
-        env:
-          CERTIFICAT: ${{ secrets.CERTIFICAT_PFX }}
-          MOT_DE_PASSE: ${{ secrets.CERTIFICAT_MOT_DE_PASSE }}
-        shell: pwsh
-        run: |
-          $pfx = Join-Path $env:RUNNER_TEMP 'certificat.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICAT))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          & $signtool.FullName sign /f $pfx /p $env:MOT_DE_PASSE /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 bin/deR4Tizer.exe bin/deR4TizerSvc.exe
-          if ($LASTEXITCODE) { throw 'Échec de la signature.' }
-          "PFX=$pfx" >> $env:GITHUB_ENV
-
-      - name: Paquet MSI
-        shell: pwsh
-        env:
-          MOT_DE_PASSE: ${{ secrets.CERTIFICAT_MOT_DE_PASSE }}
-        run: |
-          ./construire-msi.ps1
-          if ($env:PFX -and (Test-Path $env:PFX)) {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-            & $signtool.FullName sign /f $env:PFX /p $env:MOT_DE_PASSE /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d deR4Tizer bin/deR4Tizer.msi
-            if ($LASTEXITCODE) { throw 'Échec de la signature du paquet.' }
-          }
-
-      - name: Effacement du certificat
-        if: always()
-        shell: pwsh
-        run: if ($env:PFX -and (Test-Path $env:PFX)) { Remove-Item $env:PFX -Force }
-
-      - name: Manifeste de mise à jour
-        shell: pwsh
-        run: |
-          # Un seul fichier, le paquet MSI : c'est lui que les postes installent, et sa version y est lue après
-          # vérification de sa signature (les exécutables restent joints à la version pour une installation manuelle)
-          $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
-          $fichiers = foreach ($n in 'deR4Tizer.msi') {
-            [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
-          }
-          [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: version
-          path: |
-            bin/deR4Tizer.msi
-            bin/deR4TizerSvc.exe
-            bin/deR4Tizer.exe
-            bin/manifeste.json
-          retention-days: 1
-
-  publier:
-    needs: signer
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: version
-          path: bin
-
-      - name: Version GitHub
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} bin/deR4Tizer.msi bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --repo ${{ github.repository }} --title "deR4Tizer ${{ github.ref_name }}" --generate-notes
+            bin/SHA256SUMS-non-signes.txt

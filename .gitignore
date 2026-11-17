@@ -30,3 +30,8 @@ Thumbs.db
 desktop.ini
 installeur/obj/
 __pycache__/
+
+# Certificats et clés : jamais dans le dépôt (PKI de test comprise)
+*.pfx
+*.p12
+*.key
