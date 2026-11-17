@@ -872,6 +872,20 @@ public static class D4tJeton
         }
         finally { CloseHandle(p); }
     }
+    // Type d'élévation du jeton (TokenElevationType, classe 18) : 1 Default (pas de jeton filtré), 2 Full, 3 Limited, -1 illisible
+    public static int TypeElevation(int pid)
+    {
+        IntPtr p = OpenProcess(0x1000, false, pid);
+        if (p == IntPtr.Zero) return -1;
+        try
+        {
+            IntPtr t;
+            if (!OpenProcessToken(p, 0x0008, out t)) return -1;
+            try { int v, r; return GetTokenInformation(t, 18, out v, 4, out r) ? v : -1; }
+            finally { CloseHandle(t); }
+        }
+        finally { CloseHandle(p); }
+    }
 }
 '@
 function Attendre-Interface([int]$Secondes = 360) {
@@ -893,9 +907,12 @@ if ((Get-CimInstance Win32_ComputerSystem).UserName) {
         $true
     }
     Verifier 'Relance : interface venue de la tâche ou de la clé Run (--cache), jeton non élevé ; aucune interface élevée en session (U8)' {
-        # Sans UAC (EnableLUA=0, cas d'un runner CI), il n'y a pas de jeton filtré : toute interface est élevée et la
-        # propriété « interface non élevée en session » est intestable ici — non exécuté. Elle reste vérifiée sur un poste à UAC actif.
-        if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA -eq 0) { return 'NONEXEC::UAC désactivé (EnableLUA=0) : jeton non filtré, interface forcément élevée (prérequis absent, runner/CI)' }
+        # La propriété « interface non élevée en session » n'est testable que si la session a un jeton filtré (UAC à
+        # division de jeton). Sur un runner CI, le jeton n'est pas divisé (type d'élévation « Default ») : tout
+        # processus y est élevé — non exécuté. Elle reste vérifiée sur un poste à jeton filtré (Full/Limited).
+        $typeJeton = [D4tJeton]::TypeElevation($PID)
+        Write-Host "  type d'élévation du jeton de test : $typeJeton (1=Default sans jeton filtré, 2=Full, 3=Limited)"
+        if ($typeJeton -eq 1) { return "NONEXEC::session sans jeton filtré (type d'élévation Default) : aucune interface non élevée possible (prérequis absent, runner/CI)" }
         $i = @(Interfaces-EnSession)
         if (-not $i.Count) { return 'aucune interface en session' }
         $etats = @($i | ForEach-Object { "pid $($_.ProcessId) : $($_.CommandLine) ; élevée $([D4tJeton]::Eleve([int]$_.ProcessId))" })
