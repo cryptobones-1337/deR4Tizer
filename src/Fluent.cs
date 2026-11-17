@@ -711,6 +711,9 @@ namespace DeR4Tizer
         public PageAlertes(ISourceAlertes source)
         {
             this.source = source;
+            // Accessibilité : comme les autres listes (Briques.Disposer), Tab entre une fois, les flèches déplacent le focus.
+            KeyboardNavigation.SetTabNavigation(liste, KeyboardNavigationMode.Once);
+            KeyboardNavigation.SetDirectionalNavigation(liste, KeyboardNavigationMode.Contained);
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition());
@@ -801,6 +804,8 @@ namespace DeR4Tizer
             cadre.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { activer(); e.Handled = true; } };
             cadre.MouseEnter += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
             cadre.MouseLeave += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
+            cadre.GotFocus += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
+            cadre.LostFocus += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
             return cadre;
         }
 
@@ -934,6 +939,8 @@ namespace DeR4Tizer
             cadre.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { choisir(); e.Handled = true; } };
             cadre.MouseEnter += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
             cadre.MouseLeave += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
+            cadre.GotFocus += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
+            cadre.LostFocus += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
             var pile = new StackPanel();
             var haut = new DockPanel();
             var et = new TextBlock { Text = etiquette, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(estompee ? Jetons.TexteSecondaire : couleur), Margin = new Thickness(8, 0, 0, 0) };
