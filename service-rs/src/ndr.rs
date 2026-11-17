@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetAdaptersInfo, GetIpNetTable2, IP_ADAPTER_INFO, IP_ADDR_STRING, MIB_IPNET_TABLE2};
-use windows::Win32::Networking::WinSock::AF_INET;
+use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetAdaptersAddresses, GetAdaptersInfo, GetIpNetTable2, GET_ADAPTERS_ADDRESSES_FLAGS, IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_INFO, IP_ADDR_STRING, MIB_IPNET_TABLE2};
+use windows::Win32::Networking::WinSock::{AF_INET, SOCKADDR_IN, SOCKET_ADDRESS};
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -158,7 +158,10 @@ fn infos_interface(locale: Ipv4Addr) -> Option<(String, String, String, u32)> {
             let mut adresse: *const IP_ADDR_STRING = &info.IpAddressList;
             while !adresse.is_null() {
                 if texte_ip(&*adresse) == locale.to_string() {
-                    let dhcp = if info.DhcpEnabled != 0 { texte_ip(&info.DhcpServer) } else { String::new() };
+                    // Le serveur DHCP est lu via GetAdaptersAddresses (voir serveur_dhcp) : GetAdaptersInfo.DhcpServer
+                    // revient vide sur certaines cartes (carte synthétique Hyper-V observée), ce qui rendait la
+                    // détection de serveur DHCP pirate inerte (dhcp_interface vide → tout serveur jugé légitime).
+                    let dhcp = serveur_dhcp(locale);
                     return Some((texte_ip(&info.GatewayList), dhcp, texte_masque(&*adresse), info.Index));
                 }
                 adresse = (*adresse).Next;
@@ -167,6 +170,70 @@ fn infos_interface(locale: Ipv4Addr) -> Option<(String, String, String, u32)> {
         }
     }
     None
+}
+
+/// Serveur DHCP de l'interface qui porte `locale`, lu via GetAdaptersAddresses (champ `Dhcpv4Server`).
+///
+/// `GetAdaptersInfo.DhcpServer` revient vide sur certaines cartes (observé sur une carte réseau synthétique
+/// Hyper-V : l'OS connaît le serveur, mais l'API héritée ne le remonte pas), ce qui laissait `dhcp_interface`
+/// vide et rendait la détection de serveur DHCP pirate (EXP-NDR-001, T1557.003) inerte. `GetAdaptersAddresses`
+/// est l'API recommandée par Microsoft et expose le serveur de façon fiable. Repli identique à l'ancien
+/// comportement : chaîne vide en l'absence de bail (`Dhcpv4Server` = 0.0.0.0) ou si l'appel échoue — jamais de
+/// fausse alerte.
+fn serveur_dhcp(locale: Ipv4Addr) -> String {
+    let famille = AF_INET.0 as u32;
+    let flags = GET_ADAPTERS_ADDRESSES_FLAGS(0);
+    let mut taille = 0u32;
+    unsafe {
+        // 1er appel : dimensionne le tampon (renvoie ERROR_BUFFER_OVERFLOW et remplit `taille`).
+        GetAdaptersAddresses(famille, flags, None, None, &mut taille);
+        if taille == 0 {
+            return String::new();
+        }
+        let mut tampon = vec![0u8; taille as usize];
+        let premier = tampon.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
+        if GetAdaptersAddresses(famille, flags, None, Some(premier), &mut taille) != 0 {
+            return String::new();
+        }
+        let mut a = premier;
+        while !a.is_null() {
+            let info = &*a;
+            // L'interface porte-t-elle l'adresse `locale` ?
+            let mut uni = info.FirstUnicastAddress;
+            let mut porte = false;
+            while !uni.is_null() {
+                if sockaddr_ipv4(&(*uni).Address) == Some(locale) {
+                    porte = true;
+                    break;
+                }
+                uni = (*uni).Next;
+            }
+            if porte {
+                return match sockaddr_ipv4(&info.Dhcpv4Server) {
+                    Some(ip) if !ip.is_unspecified() => ip.to_string(),
+                    _ => String::new(),
+                };
+            }
+            a = info.Next;
+        }
+    }
+    String::new()
+}
+
+/// IPv4 portée par un `SOCKET_ADDRESS` (sockaddr AF_INET) ; `None` si pointeur nul, trop court, ou autre famille.
+fn sockaddr_ipv4(sa: &SOCKET_ADDRESS) -> Option<Ipv4Addr> {
+    let p = sa.lpSockaddr;
+    if p.is_null() || (sa.iSockaddrLength as usize) < std::mem::size_of::<SOCKADDR_IN>() {
+        return None;
+    }
+    unsafe {
+        if (*p).sa_family != AF_INET {
+            return None;
+        }
+        let sin = &*(p as *const SOCKADDR_IN);
+        // S_addr est en ordre réseau (big-endian), comme partout ailleurs dans ce module.
+        Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.S_un.S_addr)))
+    }
 }
 
 /// Voisins IPv4 connus de Windows sur l'interface : (IP, MAC)
@@ -523,4 +590,38 @@ pub fn nom_dns_test(m: &[u8]) -> Option<String> {
 #[cfg(test)]
 pub fn nom_nbns_test(m: &[u8]) -> Option<String> {
     nom_nbns(m)
+}
+
+#[cfg(test)]
+mod tests_dhcp {
+    use super::*;
+    use windows::Win32::Networking::WinSock::{IN_ADDR, IN_ADDR_0, SOCKADDR};
+
+    #[test]
+    fn sockaddr_ipv4_extrait_adresse_en_ordre_reseau() {
+        // sockaddr AF_INET portant 203.0.113.20 (octets en ordre réseau)
+        let mut sin = SOCKADDR_IN::default();
+        sin.sin_family = AF_INET;
+        sin.sin_addr = IN_ADDR {
+            S_un: IN_ADDR_0 { S_addr: u32::from_ne_bytes([203, 0, 113, 20]) },
+        };
+        let sa = SOCKET_ADDRESS {
+            lpSockaddr: &mut sin as *mut SOCKADDR_IN as *mut SOCKADDR,
+            iSockaddrLength: std::mem::size_of::<SOCKADDR_IN>() as i32,
+        };
+        assert_eq!(sockaddr_ipv4(&sa), Some(Ipv4Addr::new(203, 0, 113, 20)));
+    }
+
+    #[test]
+    fn sockaddr_ipv4_rejette_pointeur_nul_ou_court() {
+        let nul = SOCKET_ADDRESS { lpSockaddr: std::ptr::null_mut(), iSockaddrLength: 0 };
+        assert_eq!(sockaddr_ipv4(&nul), None);
+        let mut sin = SOCKADDR_IN::default();
+        sin.sin_family = AF_INET;
+        let court = SOCKET_ADDRESS {
+            lpSockaddr: &mut sin as *mut SOCKADDR_IN as *mut SOCKADDR,
+            iSockaddrLength: 4, // plus court qu'un SOCKADDR_IN
+        };
+        assert_eq!(sockaddr_ipv4(&court), None);
+    }
 }
