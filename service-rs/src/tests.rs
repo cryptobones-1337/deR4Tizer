@@ -6893,7 +6893,11 @@ fn panique_premier_releve_et_etiquettes_de_lien() {
 #[test]
 fn isolation_descente_par_handles_et_noms_de_windows() {
     use crate::natif::{ouvrir_sans_traverser_lien as o, ErreurOuverture as E};
-    let r = std::env::temp_dir().join(format!("d4t-iso613-{}", std::process::id()));
+    // Forme longue dès la racine : en production, le chemin passé à la descente est déjà un chemin final
+    // (`chemin_final_a_isoler`), donc en noms longs. Sur un runner dont %TEMP% est en 8.3 (`C:\Users\RUNNER~1\…`),
+    // un `temp_dir()` brut rendrait la racine courte et le détour `Detourne(p)` (qui reprend le chemin fourni)
+    // ne correspondrait plus à `forme_longue(…)` : on développe donc la racine une fois pour toutes.
+    let r = crate::natif::forme_longue(&std::env::temp_dir()).join(format!("d4t-iso613-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&r);
     std::fs::create_dir_all(r.join("a").join("b")).unwrap();
     std::fs::write(r.join("a").join("b").join("x.exe"), b"x").unwrap();
