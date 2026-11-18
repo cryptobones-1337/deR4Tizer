@@ -106,7 +106,7 @@ d'aujourd'hui : voir les points non tranchés) ; Résumé avec « Plus tard ». 
 - Le service, le canal et les droits ne changent pas, sauf le diagnostic d'exposition de U5.
 - `tests/test-confirmations.ps1` inchangé : les confirmations élevées disent toujours ce que fait la commande.
 - « Collecte indisponible » n'est jamais montré comme « rien de suspect ».
-- README français et anglais à chaque PR qui change ce que l'on voit.
+- README (en anglais seul depuis le 2026-11-18 ; l'interface de l'app reste bilingue) à jour à chaque PR qui change ce que l'on voit.
 
 ## Tests
 

@@ -21,7 +21,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 9. **Pas de test destructif sur le poste hôte.** Pas de malware réel. Les scénarios sont bénins et reproductibles, en CI ou en VM.
 10. **Petits changements.** Un lot = un commit (ou une pull request) cohérent et relisible. Pas de réécriture de module quand une correction ciblée suffit. Pas de nouvelle dépendance sans justification (maintenance, licence, nécessité) écrite dans le message de commit.
 11. **Aucun secret** dans les journaux, les messages d'erreur, la ligne de commande ou les fichiers lisibles par les comptes autorisés.
-12. **Langue.** Code, commentaires, messages, documentation et commits en français, comme le reste du dépôt.
+12. **Langue.** Code, commentaires, messages, documentation et commits en français, comme le reste du dépôt. Exception (décision du 2026-11-18) : le README et la page de présentation (GitHub Pages) sont en anglais, pour une portée internationale ; l'interface de l'application reste bilingue français/anglais.
 
 ## 3. Repères d'architecture
 
