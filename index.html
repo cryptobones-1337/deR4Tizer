@@ -389,11 +389,61 @@
           <li class="lang-en"><b>Your data</b> stays on the computer, readable by you only.</li>
         </ul>
       </div>
-      <pre aria-hidden="false">deR4TizerSvc.exe   <span style="color:#7fe3d4">the service that watches</span>
-deR4Tizer.exe      <span style="color:#7fe3d4">the app you open</span>
+      <svg class="archi-diagram" viewBox="0 0 440 476" role="img"
+           aria-label="Two programs on the computer: a service that runs as SYSTEM and watches, an app you open without admin rights, your data kept local and readable by you only, Microsoft Defender running alongside untouched, and only critical alerts leaving to the IT provider or SIEM.">
+        <defs>
+          <marker id="ah" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" fill="var(--accent2)"/></marker>
+          <marker id="ahm" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" fill="var(--faint)"/></marker>
+          <marker id="ahm2" markerWidth="9" markerHeight="9" refX="1.5" refY="3" orient="auto"><path d="M6.5 0 L0 3 L6.5 6 Z" fill="var(--faint)"/></marker>
+        </defs>
+        <!-- computer frame -->
+        <rect x="18" y="40" width="404" height="348" rx="18" fill="var(--card2)" stroke="var(--line2)"/>
+        <rect x="150" y="24" width="140" height="26" rx="13" fill="var(--card)" stroke="var(--line2)"/>
+        <text x="220" y="41" text-anchor="middle" font-size="12" font-weight="700" fill="var(--muted)">On this computer</text>
 
-<span style="color:#9db0c8">No driver. No dependency.</span>
-<span style="color:#9db0c8">Works alongside Microsoft Defender.</span></pre>
+        <!-- service -->
+        <rect x="34" y="58" width="372" height="118" rx="12" fill="var(--card)" stroke="var(--accent)" stroke-width="1.5"/>
+        <rect x="50" y="74" width="11" height="11" rx="2.5" fill="var(--accent2)"/>
+        <text x="69" y="84" font-size="14" font-weight="700" fill="var(--txt)" font-family="ui-monospace,Consolas,monospace">deR4TizerSvc.exe</text>
+        <text x="50" y="104" font-size="10.5" fill="var(--muted)">The service — runs as SYSTEM, in the background</text>
+        <g font-size="10.5" font-weight="700" text-anchor="middle" fill="var(--accent2)">
+          <rect x="50"    y="124" width="75" height="26" rx="7" fill="var(--card2)" stroke="var(--line2)"/><text x="87.5"  y="141">Watch</text>
+          <rect x="137.5" y="124" width="75" height="26" rx="7" fill="var(--card2)" stroke="var(--line2)"/><text x="175"   y="141">Detect</text>
+          <rect x="225"   y="124" width="75" height="26" rx="7" fill="var(--card2)" stroke="var(--line2)"/><text x="262.5" y="141">Respond</text>
+          <rect x="312.5" y="124" width="75" height="26" rx="7" fill="var(--card2)" stroke="var(--line2)"/><text x="350"   y="141">Record</text>
+        </g>
+
+        <!-- channel service <-> app -->
+        <line x1="100" y1="176" x2="100" y2="196" stroke="var(--faint)" stroke-width="1.4" marker-start="url(#ahm2)" marker-end="url(#ahm)"/>
+        <text x="110" y="190" font-size="9" fill="var(--faint)">channel</text>
+
+        <!-- app -->
+        <rect x="34" y="196" width="224" height="104" rx="12" fill="var(--card)" stroke="var(--line2)"/>
+        <rect x="50" y="212" width="11" height="11" rx="2.5" fill="var(--muted)"/>
+        <text x="69" y="222" font-size="13.5" font-weight="700" fill="var(--txt)" font-family="ui-monospace,Consolas,monospace">deR4Tizer.exe</text>
+        <text x="50" y="242" font-size="10.5" fill="var(--muted)">The app you open — no admin rights</text>
+        <text x="50" y="262" font-size="10.5" fill="var(--muted)">Shows the computer's status</text>
+
+        <!-- data -->
+        <rect x="274" y="196" width="132" height="104" rx="12" fill="var(--card2)" stroke="var(--line2)"/>
+        <rect x="290" y="214" width="10" height="10" rx="2.5" fill="var(--ok)"/>
+        <text x="305" y="223" font-size="12" font-weight="700" fill="var(--txt)">Local data</text>
+        <text x="290" y="245" font-size="10" fill="var(--muted)">readable by</text>
+        <text x="290" y="259" font-size="10" fill="var(--muted)">you only</text>
+        <line x1="274" y1="248" x2="258" y2="248" stroke="var(--faint)" stroke-width="1.4" marker-end="url(#ahm)"/>
+
+        <!-- defender -->
+        <rect x="34" y="320" width="372" height="46" rx="10" fill="var(--card2)" stroke="var(--line2)" stroke-dasharray="4 4"/>
+        <rect x="50" y="338" width="10" height="10" rx="2.5" fill="var(--faint)"/>
+        <text x="68" y="347" font-size="11" fill="var(--muted)">Microsoft Defender — runs alongside, untouched</text>
+
+        <!-- outbound -->
+        <line x1="220" y1="388" x2="220" y2="416" stroke="var(--accent2)" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="230" y="405" font-size="9.5" font-weight="600" fill="var(--accent2)">only critical alerts leave</text>
+        <rect x="86" y="418" width="268" height="48" rx="12" fill="var(--card)" stroke="var(--accent2)"/>
+        <text x="220" y="438" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--txt)">IT provider / SIEM</text>
+        <text x="220" y="456" text-anchor="middle" font-size="10.5" fill="var(--muted)">ntfy · Teams · e-mail</text>
+      </svg>
     </div>
   </section>
 
