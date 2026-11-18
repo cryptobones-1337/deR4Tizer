@@ -452,6 +452,17 @@ namespace DeR4Tizer
             piedPoint.Fill = Jetons.Pinceau(statut != "" ? Jetons.Succes : Jetons.TexteSecondaire);
         }
 
+        // Tuile de compteur : barre d'accent à gauche, grand nombre, libellé (Vue d'ensemble)
+        static UIElement Tuile(string nombre, string libelle, Color couleur)
+        {
+            var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), BorderBrush = Jetons.Pinceau(couleur), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 12, 12), Width = 190 };
+            var c = new StackPanel();
+            c.Children.Add(new TextBlock { Text = Canal.Visible(nombre), FontSize = 26, FontWeight = FontWeights.SemiBold });
+            c.Children.Add(new TextBlock { Text = libelle, FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+            carte.Child = c;
+            return carte;
+        }
+
         // Logo : tête de rat géométrique (clin d'œil « RAT »), dessin vectoriel autonome (rendu identique en test et en prod)
         static UIElement LogoRat()
         {
@@ -645,7 +656,7 @@ namespace DeR4Tizer
         // rien, le bouton panique (même chemin et même confirmation qu'aujourd'hui) et la ligne d'état du service
         UIElement VueEnsemble()
         {
-            var pile = new StackPanel { MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
+            var pile = new StackPanel { MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Left };
             var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
@@ -681,8 +692,50 @@ namespace DeR4Tizer
                 pile.Children.Add(carte);
             };
             section("À traiter", 2, Jetons.Danger);
-            section("À surveiller", 1, Jetons.Attention);
-            section("En ordre et informations", 0, Jetons.TexteSecondaire);
+            // Tuiles « à surveiller » : les compteurs de la nav (gravité >= 1), barre d'accent, grand nombre et libellé
+            if (source != null)
+            {
+                var badges = source.Badges();
+                var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+                foreach (var g in NavigationFluent.Groupes())
+                    foreach (var e in g.Entrees)
+                    {
+                        PointEtat b;
+                        if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
+                            wrap.Children.Add(Tuile(b.Texte, e.Cle == "Baseline" ? L.T("Réglages de sécurité appliqués") : L.T(e.Cle), b.Gravite == 2 ? Jetons.Danger : Jetons.Attention));
+                    }
+                if (wrap.Children.Count > 0)
+                {
+                    pile.Children.Add(new TextBlock { Text = L.T("À surveiller"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Attention), Margin = new Thickness(0, 0, 0, 10) });
+                    pile.Children.Add(wrap);
+                }
+            }
+            // « En ordre » : un seul conteneur, lignes séparées, libellé à gauche et état à droite (séparé sur « : »)
+            var enOrdre = points.Where(p => p.Gravite == 0).ToList();
+            if (enOrdre.Count > 0)
+            {
+                pile.Children.Add(new TextBlock { Text = L.T("En ordre et informations"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 0, 10) });
+                var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 4, 6, 4), Margin = new Thickness(0, 0, 0, 12) };
+                var col = new StackPanel();
+                for (int i = 0; i < enOrdre.Count; i++)
+                {
+                    if (i > 0) col.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(14, 0, 14, 0) });
+                    string t = enOrdre[i].Texte ?? ""; int sep = t.IndexOf(" : ", StringComparison.Ordinal);
+                    string libelle = sep >= 0 ? t.Substring(0, sep) : t;
+                    string etat = sep >= 0 ? t.Substring(sep + 3) : "";
+                    var dock = new DockPanel { Margin = new Thickness(14, 11, 14, 11) };
+                    var puce = new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = Jetons.Pinceau(Jetons.Succes), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+                    DockPanel.SetDock(puce, Dock.Left);
+                    dock.Children.Add(puce);
+                    var droite = new TextBlock { Text = etat, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+                    DockPanel.SetDock(droite, Dock.Right);
+                    dock.Children.Add(droite);
+                    dock.Children.Add(new TextBlock { Text = libelle, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+                    col.Children.Add(dock);
+                }
+                carte.Child = col;
+                pile.Children.Add(carte);
+            }
 
             if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))
             {

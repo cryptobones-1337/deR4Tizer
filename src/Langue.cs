@@ -82,7 +82,7 @@ namespace DeR4Tizer
             { "Connexions", "Connections" }, { "Alertes", "Alerts" }, { "Chaînes", "Chains" }, { "Vie privée", "Privacy" },
             { "Pare-feu", "Firewall" }, { "Navigation", "Browsing" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },
             { "Blocages", "Blocks" }, { "Quarantaine", "Quarantine" }, { "Menaces", "Threats" }, { "Réglages", "Settings" },
-            { "Suspecte", "Suspicious" }, { "Menace", "Threat" }, { "Réglages de sécurité recommandés : {0} appliqués", "Recommended security settings: {0} applied" },
+            { "Suspecte", "Suspicious" }, { "Menace", "Threat" }, { "Réglages de sécurité recommandés : {0} appliqués", "Recommended security settings: {0} applied" }, { "Réglages de sécurité appliqués", "Security settings applied" },
             { "Chronologie des événements. Flèches gauche et droite pour parcourir les tranches, Entrée pour filtrer.", "Event timeline. Left and right arrows to move between time slices, Enter to filter." },
             { "{0} à {1} : {2} infos, {3} alertes, {4} critiques", "{0} to {1}: {2} info, {3} alerts, {4} critical" },
             { "Chaînes de processus", "Process chains" }, { "Vie privée et accès", "Privacy and access" },
