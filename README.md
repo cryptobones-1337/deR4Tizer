@@ -95,6 +95,9 @@ resumes when the upstream answers again. To follow a new network, turn filtering
 Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": it stops and restarts the service
 (the refusal for a standard account is checked by the integration scenario: same service process before and after).
 
+Development: `.\construire-msi.ps1` builds the package (WiX 3.14, MS-RL licence, royalty-free); `.\mettre-a-jour.ps1`
+replaces the executables of an existing installation.
+
 ### SIEM integration
 
 **Syslog**: Settings → *Alert forwarding*. JSON format (RFC 5424 header, JSON detail) or CEF.
@@ -113,6 +116,53 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 | `/api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json\|ndjson` | Event search (mini-SIEM) |
 | `/api/v1/incidents` | Correlation incidents |
 | `/api/v1/journal?lignes=200` | Service log (text) |
+
+### Automatic updates and signing
+
+> **Known limit.** On versions 4.2 and 4.3 already installed, automatic updates install nothing: the install script,
+> launched without a console, did not run (fixed in `main` by PR #26, not yet in a published release). An installed 4.2
+> or 4.3 therefore does not update itself: install by hand (`msiexec /i deR4Tizer.msi`) a version that contains this
+> fix; automatic updates then work from that one onward.
+
+Each `vX.Y` tag triggers the *Release* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
+GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
+strict (known fields only, 64 KB at most, a single file: the MSI package) and is never authoritative on its own, since
+it is not signed. Automatic installation is off by default; when on, it installs a package only if its hash is the one
+in the manifest, if it is signed by one of the **keys pinned in the binary** (SHA-256 hashes of the public keys, repo
+variable `CLE_SIGNATURE`, passed to the build as `DER4TIZER_CLES_SIGNATURE`: the current key and the next one,
+comma-separated, to get through certificate renewal), with revocation checked, and if the **version read from the
+signed package** (`ProductVersion`, with deR4Tizer's `UpgradeCode`) is the one in the manifest and strictly newer than
+the installed version. Before any installation, the service also fetches the package of **its own version**, verified
+the same way, so it can roll back; without it, nothing is installed. The files are kept in `%ProgramFiles%\deR4Tizer\maj`,
+reserved to SYSTEM (permissions checked before each use), and the hashes are re-checked just before execution. The
+service must then answer with valid JSON on its channel, with the new version, within 60 s; otherwise the previous
+version's package is reinstalled. Without a pinned key, a version is only reported: a compromised GitHub account is not
+enough to run a binary as SYSTEM across the fleet. The health check also verifies that the channel's pipe is held by the
+service process (and not by a program that created it while the old version was stopped).
+
+**First deployment.** No version has been released yet, and machines installed before the first signed version have
+neither a pinned key nor a rollback package available: they will never update on their own. The fleet therefore starts
+from a first signed version, installed by hand (or by GPO, Intune, IT provider). Release procedure:
+
+1. obtain the code-signing certificate and compute the SHA-256 hash of its public key;
+2. set it in the repo variable `CLE_SIGNATURE` (later, together with the next key's);
+3. place the certificate in the GitHub "release" environment (approval required);
+4. push the `vX.Y` tag matching the code version: CI builds, signs, builds the MSI and publishes the release with its
+   manifest;
+5. install this MSI on each machine; later versions can then install on their own (if automatic installation is on),
+   this first version's package serving as the rollback.
+
+Protect releases: keep the signing secrets in the GitHub "release" environment with a required approval (Settings ›
+Environments), protect the `v*` tags (Settings › Rules). The build (where the dependencies' scripts run) happens in a
+job with no secret; signing, in a separate job that receives only the executables; the WiX archive is verified by its
+hash and the actions are pinned by SHA. The ideal remains a key outside GitHub (Azure Trusted Signing, SignPath).
+
+To sign: obtain a code-signing certificate (free for open source via [SignPath Foundation](https://signpath.org), or
+Azure Trusted Signing, or an OV certificate in .pfx format; for automatic updates, SignPath and Azure Trusted Signing
+are not suitable as-is: see `docs/security/threat-model.md`), then add the secrets `CERTIFICAT_PFX` (.pfx file in
+base64) and `CERTIFICAT_MOT_DE_PASSE`. Locally, `DER4TIZER_CERT_SHA1` (the hash of a certificate in the store) makes
+`compiler.ps1` sign. Until the binaries are signed, Windows shows "unknown publisher" and machines report new versions
+without installing them.
 
 ### Known limits
 
