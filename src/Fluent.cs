@@ -311,6 +311,8 @@ namespace DeR4Tizer
         string ouverte;
         PageAlertes pageAlertes;
         readonly Dictionary<string, TextBlock> pastillesNav = new Dictionary<string, TextBlock>();
+        System.Windows.Shapes.Ellipse piedPoint;   // pied daté du rail : état du service
+        TextBlock piedTexte;
         readonly ContentControl zone = new ContentControl();
         readonly TextBlock titrePage = new TextBlock();
         readonly List<Button> boutons = new List<Button>();
@@ -438,14 +440,49 @@ namespace DeR4Tizer
                 }
                 else kv.Value.Visibility = Visibility.Collapsed;
             }
+            MettreAJourPied();
         }
 
+        // Pied du rail : « · »-séparé depuis le statut du service (mise à jour, démarrage, version) ; pastille verte si en ligne
+        void MettreAJourPied()
+        {
+            if (piedTexte == null) return;
+            string statut = source == null ? "" : (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
+            piedTexte.Text = statut != "" ? statut : "v" + Commun.Version;
+            piedPoint.Fill = Jetons.Pinceau(statut != "" ? Jetons.Succes : Jetons.TexteSecondaire);
+        }
+
+        // Logo : tête de rat géométrique (clin d'œil « RAT »), dessin vectoriel autonome (rendu identique en test et en prod)
+        static UIElement LogoRat()
+        {
+            var cyan = Jetons.Pinceau(Jetons.Accent);
+            var creux = Jetons.Pinceau(Jetons.Carte);
+            var c = new Canvas { Width = 26, Height = 26, VerticalAlignment = VerticalAlignment.Center };
+            Func<double[], System.Windows.Media.Brush, System.Windows.Shapes.Polygon> poly = (pts, b) =>
+            {
+                var p = new System.Windows.Shapes.Polygon { Fill = b };
+                for (int i = 0; i < pts.Length; i += 2) p.Points.Add(new Point(pts[i], pts[i + 1]));
+                return p;
+            };
+            c.Children.Add(poly(new double[] { 4, 9, 9, 2, 12, 10 }, cyan));
+            c.Children.Add(poly(new double[] { 22, 9, 17, 2, 14, 10 }, cyan));
+            var tete = new System.Windows.Shapes.Rectangle { Width = 16, Height = 15, RadiusX = 5, RadiusY = 5, Fill = cyan };
+            Canvas.SetLeft(tete, 5); Canvas.SetTop(tete, 7); c.Children.Add(tete);
+            Action<double, double> croix = (cx, cy) =>
+            {
+                foreach (var d in new[] { new[] { -2.3, -2.3, 2.3, 2.3 }, new[] { 2.3, -2.3, -2.3, 2.3 } })
+                    c.Children.Add(new System.Windows.Shapes.Line { X1 = cx + d[0], Y1 = cy + d[1], X2 = cx + d[2], Y2 = cy + d[3], Stroke = creux, StrokeThickness = 1.7, StrokeStartLineCap = System.Windows.Media.PenLineCap.Round, StrokeEndLineCap = System.Windows.Media.PenLineCap.Round });
+            };
+            croix(10, 13); croix(16, 13);
+            c.Children.Add(poly(new double[] { 13, 16.5, 15, 19, 13, 21.5, 11, 19 }, creux));
+            return c;
+        }
         UIElement Navigation()
         {
             var fond = new Border { Background = Jetons.Pinceau(Jetons.Carte) };
             var dock = new DockPanel { Margin = new Thickness(12, 16, 12, 16) };
             var marque = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 20) };
-            marque.Children.Add(new TextBlock { Text = "", FontFamily = Jetons.Icones, FontSize = 22, Foreground = Jetons.Pinceau(Jetons.Accent), VerticalAlignment = VerticalAlignment.Center });
+            marque.Children.Add(LogoRat());
             marque.Children.Add(new TextBlock { Text = "deR4Tizer", FontFamily = Jetons.PoliceTitre, FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(marque, Dock.Top);
             dock.Children.Add(marque);
@@ -454,6 +491,15 @@ namespace DeR4Tizer
             var bas = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
             bas.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(8, 0, 8, 8) });
             foreach (var e in groupes.Last().Entrees) bas.Children.Add(Bouton(e));
+            // Pied daté : pastille d'état + statut du service (dernière mise à jour, version)
+            bas.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(8, 8, 8, 0) });
+            piedPoint = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 4, 7, 0), Fill = Jetons.Pinceau(Jetons.Succes) };
+            piedTexte = new TextBlock { FontSize = 11, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap };
+            var piedBloc = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 10, 10, 2) };
+            piedBloc.Children.Add(piedPoint);
+            piedBloc.Children.Add(piedTexte);
+            bas.Children.Add(piedBloc);
+            MettreAJourPied();
             DockPanel.SetDock(bas, Dock.Bottom);
             dock.Children.Add(bas);
 
