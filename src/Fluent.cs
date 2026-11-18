@@ -650,10 +650,15 @@ namespace DeR4Tizer
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
             var couleurTete = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.Succes;
-            var tete = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 20) };
-            tete.Children.Add(new TextBlock { Text = gravite == 2 ? "" : gravite == 1 ? "" : "", FontFamily = Jetons.Icones, FontSize = 22, Foreground = Jetons.Pinceau(couleurTete), VerticalAlignment = VerticalAlignment.Center });
-            tete.Children.Add(new TextBlock { Text = resume, FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap });
-            pile.Children.Add(tete);
+            // Bandeau d'état dominant : carte teintée par la gravité, tuile d'icône, résumé en grand
+            var bandeau = new Border { Background = new LinearGradientBrush(VueTraficFluent.Melange(Jetons.Carte, couleurTete, 0.16), Jetons.Carte, 0), BorderBrush = Jetons.Pinceau(VueTraficFluent.Melange(Jetons.Separateur, couleurTete, 0.35)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(20, 18, 20, 18), Margin = new Thickness(0, 0, 0, 20) };
+            var ligneBandeau = new StackPanel { Orientation = Orientation.Horizontal };
+            var tuileIcone = new Border { Width = 46, Height = 46, CornerRadius = new CornerRadius(10), Background = Jetons.Pinceau(VueTraficFluent.Melange(Jetons.Carte, couleurTete, 0.28)), VerticalAlignment = VerticalAlignment.Center };
+            tuileIcone.Child = new TextBlock { Text = gravite == 2 ? "" : gravite == 1 ? "" : "", FontFamily = Jetons.Icones, FontSize = 24, Foreground = Jetons.Pinceau(couleurTete), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            ligneBandeau.Children.Add(tuileIcone);
+            ligneBandeau.Children.Add(new TextBlock { Text = resume, FontSize = 23, FontWeight = FontWeights.SemiBold, Margin = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 620 });
+            bandeau.Child = ligneBandeau;
+            pile.Children.Add(bandeau);
 
             Action<string, int, Color> section = (titre, g, couleur) =>
             {
