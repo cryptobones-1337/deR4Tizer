@@ -145,6 +145,29 @@
   .disclaimer{background:color-mix(in srgb,var(--warn) 10%, var(--card)); border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line2));
     border-radius:14px; padding:14px 16px; color:var(--muted); font-size:13.5px; margin-top:14px}
   .disclaimer b{color:var(--warn)}
+
+  .roadmap{list-style:none; padding:0; margin:20px 0 0; position:relative}
+  .roadmap::before{content:""; position:absolute; left:11px; top:6px; bottom:14px; width:2px; background:var(--line2)}
+  .roadmap li{position:relative; padding:0 0 22px 42px}
+  .roadmap li:last-child{padding-bottom:0}
+  .roadmap .dot{position:absolute; left:2px; top:1px; width:20px; height:20px; border-radius:50%; background:var(--bg); border:2px solid var(--line2); display:grid; place-items:center}
+  .roadmap .dot::after{content:""; width:7px; height:7px; border-radius:50%; background:var(--faint)}
+  .roadmap li.done .dot{border-color:var(--ok)} .roadmap li.done .dot::after{background:var(--ok)}
+  .roadmap li.now .dot{border-color:var(--accent)} .roadmap li.now .dot::after{background:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+  .roadmap li.next .dot{border-color:var(--warn)} .roadmap li.next .dot::after{background:var(--warn)}
+  .roadmap .rhead{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .roadmap .rhead b{color:var(--txt); font-size:15px}
+  .roadmap .tag{font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; padding:3px 9px; border-radius:999px; border:1px solid var(--line2); color:var(--muted); background:var(--card)}
+  .roadmap li.done .tag{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,var(--line2))}
+  .roadmap li.now .tag{color:var(--accent2); border-color:color-mix(in srgb,var(--accent2) 40%,var(--line2))}
+  .roadmap li.next .tag{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--line2))}
+  .roadmap p{margin:4px 0 0; color:var(--muted); font-size:13.5px}
+
+  .shots img{cursor:zoom-in}
+  .lb{position:fixed; inset:0; background:rgba(3,8,18,.86); display:none; align-items:center; justify-content:center; padding:24px; z-index:200; cursor:zoom-out}
+  .lb.open{display:flex}
+  .lb img{max-width:min(1100px,96vw); max-height:92vh; width:auto; height:auto; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .shots figure{cursor:zoom-in}
 </style>
 </head>
 <body>
@@ -180,7 +203,7 @@
   <section class="hero" style="border-top:0">
     <div class="badges">
       <span class="pill ok">Open source · EUPL-1.2</span>
-      <span class="pill">Windows 10 / 11</span>
+      <span class="pill">Windows 11</span>
       <span class="pill warn lang-fr">Sans cloud · sans télémétrie</span>
       <span class="pill warn lang-en">No cloud · no telemetry</span>
     </div>
@@ -366,11 +389,11 @@
           <li class="lang-en"><b>Your data</b> stays on the computer, readable by you only.</li>
         </ul>
       </div>
-      <pre aria-hidden="false">deR4TizerSvc.exe   <span style="color:#7fe3d4">le service qui surveille</span>
-deR4Tizer.exe      <span style="color:#7fe3d4">l'application que vous ouvrez</span>
+      <pre aria-hidden="false">deR4TizerSvc.exe   <span style="color:#7fe3d4">the service that watches</span>
+deR4Tizer.exe      <span style="color:#7fe3d4">the app you open</span>
 
-<span style="color:#9db0c8">Aucun pilote. Aucune dépendance.</span>
-<span style="color:#9db0c8">Fonctionne avec Microsoft Defender.</span></pre>
+<span style="color:#9db0c8">No driver. No dependency.</span>
+<span style="color:#9db0c8">Works alongside Microsoft Defender.</span></pre>
     </div>
   </section>
 
@@ -380,14 +403,31 @@ deR4Tizer.exe      <span style="color:#7fe3d4">l'application que vous ouvrez</sp
     <h2 class="lang-fr">Où en est le projet</h2><h2 class="lang-en">Where the project stands</h2>
     <p class="section-lead lang-fr">Le projet avance vite : le cœur est en place, quelques fonctions avancées sont encore en test. Une première version téléchargeable arrive bientôt.</p>
     <p class="section-lead lang-en">The project moves fast: the core is in place, a few advanced features are still in testing. A first downloadable version is coming soon.</p>
-    <div class="status">
-      <span class="chip ok lang-fr">Fonctionne avec Microsoft Defender</span><span class="chip ok lang-en">Works alongside Microsoft Defender</span>
-      <span class="chip exp lang-fr">Certaines fonctions encore en test</span><span class="chip exp lang-en">Some features still in testing</span>
-      <span class="chip lang-fr">Première version bientôt disponible</span><span class="chip lang-en">First version coming soon</span>
-    </div>
+    <ol class="roadmap">
+      <li class="done"><span class="dot"></span>
+        <div class="rhead"><b>Local monitoring &amp; mini-SIEM</b><span class="tag">Done</span></div>
+        <p>A searchable event timeline with retention, and a health view that tells you what each collector is doing.</p></li>
+      <li class="done"><span class="dot"></span>
+        <div class="rhead"><b>Detection rules &amp; incidents</b><span class="tag">Done</span></div>
+        <p>Behaviour rules raise alerts, grouped into incidents with a plain risk level &mdash; suspicious or threat.</p></li>
+      <li class="done"><span class="dot"></span>
+        <div class="rhead"><b>Bounded response &amp; hardening</b><span class="tag">Done</span></div>
+        <p>Quarantine a file, block a connection in one click, apply a recommended security baseline.</p></li>
+      <li class="now"><span class="dot"></span>
+        <div class="rhead"><b>Network visibility &mdash; NDR</b><span class="tag">In testing</span></div>
+        <p>See which programs reach the Internet, where to, signed by whom, and how risky it looks.</p></li>
+      <li class="now"><span class="dot"></span>
+        <div class="rhead"><b>Redesigned interface</b><span class="tag">In progress</span></div>
+        <p>A clearer, calmer layout &mdash; full keyboard navigation, high-contrast and screen-reader support.</p></li>
+      <li class="next"><span class="dot"></span>
+        <div class="rhead"><b>Deep packet inspection &middot; IDS / IPS</b><span class="tag">Planned</span></div>
+        <p>Signature and protocol inspection on the wire, on top of the connection view.</p></li>
+      <li class="next"><span class="dot"></span>
+        <div class="rhead"><b>Signed first release</b><span class="tag">Next up</span></div>
+        <p>A single signed installer you can download and run like any Windows program.</p></li>
+    </ol>
     <div class="disclaimer">
-      <span class="lang-fr"><b>Pas encore disponible.</b> Il n'y a pas encore de version à télécharger. Dès que la première sera prête, elle s'installera comme n'importe quel logiciel Windows : un fichier à ouvrir.</span>
-      <span class="lang-en"><b>Not available yet.</b> There is no version to download yet. As soon as the first one is ready, it will install like any Windows program: a single file to open.</span>
+      <b>Not available yet.</b> There is no version to download yet. As soon as the first one is ready, it will install like any Windows program: a single file to open.
     </div>
   </section>
 
@@ -421,6 +461,7 @@ deR4Tizer.exe      <span style="color:#7fe3d4">l'application que vous ouvrez</sp
   </div>
 </footer>
 
+<div class="lb" id="lb" aria-hidden="true"><img alt=""></div>
 <script>
 (function(){
   var root=document.documentElement;
@@ -442,6 +483,15 @@ deR4Tizer.exe      <span style="color:#7fe3d4">l'application que vous ouvrez</sp
     var next = cur? (cur==='dark'?'light':'dark') : (mql.matches?'light':'dark');
     root.setAttribute('data-theme', next); store('d4t-theme', next); ico();
   });
+
+  // lightbox : cliquer une capture pour l'agrandir
+  var lb=document.getElementById('lb'), lbi=lb.querySelector('img');
+  function closeLb(){ lb.classList.remove('open'); lb.setAttribute('aria-hidden','true'); lbi.removeAttribute('src'); }
+  document.querySelectorAll('.shots img').forEach(function(im){
+    im.addEventListener('click', function(){ lbi.src=im.currentSrc||im.src; lbi.alt=im.alt||''; lb.classList.add('open'); lb.setAttribute('aria-hidden','false'); });
+  });
+  lb.addEventListener('click', closeLb);
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeLb(); });
 })();
 </script>
 </body>
