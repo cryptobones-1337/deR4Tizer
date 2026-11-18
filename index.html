@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>deR4Tizer · Local endpoint defense for Windows</title>
+<meta name="description" content="deR4Tizer: EDR-style detection, a mini-SIEM and hardening, running locally on Windows, no cloud or telemetry. For organisations with no SOC and no EDR budget. Proof of concept, open source (EUPL-1.2).">
+<style>
+  :root{
+    --bg:#0b1220; --bg2:#0f172a; --card:#111c30; --card2:#16233b;
+    --line:#223148; --line2:#2b3c57;
+    --txt:#e6edf6; --muted:#9db0c8; --faint:#6f829c;
+    --accent:#2dd4bf; --accent2:#38bdf8; --accentink:#032b27;
+    --warn:#f6b24a; --danger:#f0637a; --ok:#54d08a;
+    --radius:16px; --maxw:1080px;
+    --shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 18px 40px -24px rgba(0,0,0,.8);
+    --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  }
+  :root:not([data-theme="dark"]) @media (prefers-color-scheme: light){}
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#eef2f8; --bg2:#f7f9fc; --card:#ffffff; --card2:#f4f7fb;
+      --line:#dbe3ee; --line2:#cbd6e6;
+      --txt:#0f1d33; --muted:#4a5c76; --faint:#75869e;
+      --accent:#0d9488; --accent2:#0284c7; --accentink:#ffffff;
+      --warn:#b26a00; --danger:#c62f49; --ok:#1f9d57;
+      --shadow:0 1px 0 rgba(0,0,0,.02) inset, 0 16px 34px -26px rgba(16,34,66,.5);
+    }
+  }
+  :root[data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 500px at 50% -200px, rgba(45,212,191,.10), transparent 60%),
+      radial-gradient(900px 500px at 90% -100px, rgba(56,189,248,.08), transparent 55%),
+      var(--bg);
+    color:var(--txt); font-family:var(--font); line-height:1.6;
+    -webkit-font-smoothing:antialiased; font-size:16px;
+  }
+  a{color:inherit}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 20px}
+  .lang-en{display:none}
+  html[data-lang="en"] .lang-fr{display:none}
+  html[data-lang="en"] .lang-en{display:revert}
+
+  /* Header */
+  header.site{position:sticky; top:0; z-index:50; backdrop-filter:blur(10px);
+    background:color-mix(in srgb, var(--bg) 82%, transparent); border-bottom:1px solid var(--line)}
+  .nav{display:flex; align-items:center; gap:14px; height:62px}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:.2px; text-decoration:none}
+  .brand .mark{width:26px; height:26px; flex:0 0 auto}
+  .brand b{font-size:18px}
+  .brand .tag{color:var(--faint); font-weight:600; font-size:12px; border:1px solid var(--line2); padding:1px 7px; border-radius:999px}
+  .nav .spacer{flex:1}
+  .nav a.link{color:var(--muted); text-decoration:none; font-weight:600; font-size:14px; padding:8px 10px; border-radius:10px}
+  .nav a.link:hover{color:var(--txt); background:var(--card)}
+  .ctl{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line2); background:var(--card);
+    color:var(--muted); border-radius:10px; padding:6px 10px; font:inherit; font-size:13px; font-weight:700; cursor:pointer}
+  .ctl:hover{color:var(--txt); border-color:var(--accent)}
+  .seg{display:inline-flex; border:1px solid var(--line2); border-radius:10px; overflow:hidden}
+  .seg button{border:0; background:var(--card); color:var(--muted); font:inherit; font-weight:700; font-size:13px; padding:6px 10px; cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--accent); color:var(--accentink)}
+  @media (max-width:720px){ .nav a.link.hideSm{display:none} }
+
+  /* Hero */
+  .hero{padding:72px 0 28px}
+  .badges{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px}
+  .pill{font-size:12.5px; font-weight:700; color:var(--muted); border:1px solid var(--line2);
+    background:var(--card); padding:4px 11px; border-radius:999px}
+  .pill.ok{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,var(--line2))}
+  .pill.warn{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--line2))}
+  h1{font-size:clamp(34px,6vw,58px); line-height:1.04; margin:.1em 0 .18em; letter-spacing:-.5px}
+  h1 .grad{background:linear-gradient(92deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .lead{font-size:clamp(17px,2.4vw,21px); color:var(--muted); max-width:720px; margin:0 0 10px}
+  .sub{color:var(--faint); max-width:720px; margin:0 0 26px}
+  .cta{display:flex; flex-wrap:wrap; gap:12px; margin-bottom:14px}
+  .btn{display:inline-flex; align-items:center; gap:9px; text-decoration:none; font-weight:700; font-size:15px;
+    padding:12px 18px; border-radius:12px; border:1px solid var(--line2); color:var(--txt); background:var(--card); transition:.15s}
+  .btn:hover{transform:translateY(-1px); border-color:var(--accent)}
+  .btn.primary{background:linear-gradient(92deg,var(--accent),var(--accent2)); color:var(--accentink); border-color:transparent}
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn svg{width:17px;height:17px}
+  .note{font-size:13.5px; color:var(--faint)}
+  .motif{margin:30px 0 4px; display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; color:var(--faint); font-weight:700; letter-spacing:.3px; text-transform:uppercase; font-size:13px}
+  .motif b{color:var(--accent)}
+  .motif .dot{width:5px;height:5px;border-radius:50%;background:var(--line2)}
+
+  /* Sections */
+  section{padding:46px 0; border-top:1px solid var(--line)}
+  .eyebrow{color:var(--accent); font-weight:800; letter-spacing:.14em; text-transform:uppercase; font-size:12.5px; margin:0 0 10px}
+  h2{font-size:clamp(24px,3.6vw,34px); margin:0 0 10px; letter-spacing:-.3px}
+  .section-lead{color:var(--muted); max-width:760px; margin:0 0 26px}
+
+  .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px}
+  .step{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow)}
+  .step .n{font-size:12px; font-weight:800; color:var(--accent); letter-spacing:.12em}
+  .step h3{margin:6px 0 6px; font-size:17px}
+  .step p{margin:0; color:var(--muted); font-size:14.5px}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow)}
+  .card h3{margin:0 0 7px; font-size:16px; display:flex; align-items:center; gap:9px}
+  .card h3 .ic{width:20px;height:20px;color:var(--accent);flex:0 0 auto}
+  .card p{margin:0; color:var(--muted); font-size:14px}
+  .card .exp{display:inline-block; margin-top:9px; font-size:11.5px; font-weight:700; color:var(--warn);
+    border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line2)); padding:1px 8px; border-radius:999px}
+
+  .guard{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px}
+  .g{background:linear-gradient(180deg,var(--card),var(--card2)); border:1px solid var(--line); border-radius:var(--radius); padding:18px}
+  .g h3{margin:0 0 6px; font-size:15.5px; display:flex; gap:8px; align-items:center}
+  .g h3 .ic{width:18px;height:18px;color:var(--accent)}
+  .g p{margin:0; color:var(--muted); font-size:14px}
+
+  .shots{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px}
+  figure{margin:0; background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow)}
+  figure img{display:block; width:100%; height:auto; background:var(--bg2)}
+  figcaption{padding:11px 14px; color:var(--muted); font-size:13.5px; border-top:1px solid var(--line)}
+
+  pre{background:#060c17; color:#cfe0f5; border:1px solid var(--line2); border-radius:14px; padding:16px; overflow:auto; font-size:13px; line-height:1.55;
+    font-family:"Cascadia Code",ui-monospace,"SFMono-Regular",Consolas,monospace}
+  :root:not([data-theme="dark"]) pre{background:#0b1324; color:#dbe7f7}
+  code.inl{background:var(--card2); border:1px solid var(--line2); border-radius:6px; padding:.06em .4em; font-family:ui-monospace,Consolas,monospace; font-size:.92em}
+
+  .rail{display:grid; grid-template-columns:1.1fr .9fr; gap:22px; align-items:start}
+  @media (max-width:800px){ .rail{grid-template-columns:1fr} }
+  ul.clean{list-style:none; padding:0; margin:0}
+  ul.clean li{padding:9px 0 9px 26px; position:relative; color:var(--muted); border-top:1px solid var(--line)}
+  ul.clean li:first-child{border-top:0}
+  ul.clean li::before{content:""; position:absolute; left:4px; top:16px; width:8px;height:8px;border-radius:50%;background:var(--accent)}
+  ul.clean li b{color:var(--txt)}
+
+  .status{display:flex; flex-wrap:wrap; gap:10px; margin-top:4px}
+  .chip{font-size:13px; font-weight:700; padding:6px 12px; border-radius:999px; border:1px solid var(--line2); color:var(--muted); background:var(--card)}
+  .chip.ok{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,var(--line2))}
+  .chip.exp{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--line2))}
+
+  footer{border-top:1px solid var(--line); padding:40px 0 60px; color:var(--faint); font-size:13.5px}
+  footer h4{color:var(--txt); font-size:14px; margin:0 0 8px}
+  footer a{color:var(--muted); text-decoration:none}
+  footer a:hover{color:var(--accent)}
+  .foot-grid{display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:24px; margin-bottom:26px}
+  @media (max-width:720px){ .foot-grid{grid-template-columns:1fr} }
+  .credits{font-size:12px; color:var(--faint); line-height:1.7; border-top:1px solid var(--line); padding-top:18px}
+  .disclaimer{background:color-mix(in srgb,var(--warn) 10%, var(--card)); border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line2));
+    border-radius:14px; padding:14px 16px; color:var(--muted); font-size:13.5px; margin-top:14px}
+  .disclaimer b{color:var(--warn)}
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="deR4Tizer">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <defs><linearGradient id="g" x1="2" y1="3" x2="22" y2="21"><stop stop-color="#2dd4bf"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs>
+        <polygon points="4,7.5 10,7.5 4.5,1.5" fill="url(#g)"/><polygon points="20,7.5 14,7.5 19.5,1.5" fill="url(#g)"/>
+        <polygon points="5.5,6.7 8.6,6.7 5.9,3.2" fill="#042b27" opacity=".5"/><polygon points="18.5,6.7 15.4,6.7 18.1,3.2" fill="#042b27" opacity=".5"/>
+        <polygon points="3.5,7 20.5,7 12,20.5" fill="url(#g)"/>
+        <g stroke="url(#g)" stroke-width=".55" stroke-linecap="round" opacity=".7"><path d="M10.3 16.6 L6.6 16"/><path d="M10.3 17.4 L7 17.8"/><path d="M13.7 16.6 L17.4 16"/><path d="M13.7 17.4 L17 17.8"/></g>
+        <polygon points="12,15.8 13,16.9 12,18 11,16.9" fill="#042b27"/>
+        <g stroke="#042b27" stroke-width="1.35" stroke-linecap="round"><path d="M7.4 9.8 L9.7 11.9 M9.7 9.8 L7.4 11.9"/><path d="M14.3 9.8 L16.6 11.9 M16.6 9.8 L14.3 11.9"/></g>
+      </svg>
+      <b>deR4Tizer</b>
+      <span class="tag lang-fr">preuve de concept</span>
+      <span class="tag lang-en">proof of concept</span>
+    </a>
+    <span class="spacer"></span>
+    <a class="link hideSm" href="#features"><span class="lang-fr">Fonctions</span><span class="lang-en">Features</span></a>
+    <a class="link hideSm" href="#garde-fous"><span class="lang-fr">Garde-fous</span><span class="lang-en">Guarantees</span></a>
+    <a class="link hideSm" href="#install">Install</a>
+    <a class="link" href="https://github.com/cryptobones-1337/deR4Tizer" target="_blank" rel="noopener">GitHub</a>
+    <button class="ctl" id="theme" type="button" aria-label="Thème / Theme"><span id="themeIco">◐</span></button>
+  </div>
+</header>
+
+<a id="top"></a>
+<main class="wrap">
+
+  <!-- HERO -->
+  <section class="hero" style="border-top:0">
+    <div class="badges">
+      <span class="pill ok">Open source · EUPL-1.2</span>
+      <span class="pill">Windows 10 / 11</span>
+      <span class="pill warn lang-fr">Sans cloud · sans télémétrie</span>
+      <span class="pill warn lang-en">No cloud · no telemetry</span>
+    </div>
+    <h1 class="lang-fr">La défense <span class="grad">locale</span> du poste Windows,<br>sans cloud.</h1>
+    <h1 class="lang-en">Local <span class="grad">endpoint</span> defense for Windows,<br>no cloud.</h1>
+    <p class="lead lang-fr">Détection type EDR, mini-SIEM et durcissement : tout tourne <b>sur le poste</b>, sans compte, sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail), et peuvent partir vers votre SIEM.</p>
+    <p class="lead lang-en">EDR-style detection, a mini-SIEM and hardening: everything runs <b>on the endpoint</b>, with no account and no telemetry. Critical alerts reach the IT provider or contact person (ntfy, Teams, e-mail), and can go to your SIEM.</p>
+    <p class="sub lang-fr">Pensé pour les structures sans SOC ni budget EDR : petites communes, TPE, artisans, commerces.</p>
+    <p class="sub lang-en">Built for organisations with neither a SOC nor an EDR budget: small municipalities, micro-businesses, craftspeople, shops.</p>
+
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/cryptobones-1337/deR4Tizer" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.2-3.1-.12-.3-.52-1.48.11-3.08 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.6.23 2.78.11 3.08.75.81 1.2 1.84 1.2 3.1 0 4.43-2.7 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.2.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+        <span class="lang-fr">Voir sur GitHub</span><span class="lang-en">View on GitHub</span>
+      </a>
+      <a class="btn" href="https://github.com/cryptobones-1337/deR4Tizer/releases" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <span class="lang-fr">Télécharger (versions)</span><span class="lang-en">Download (releases)</span>
+      </a>
+    </div>
+    <p class="note lang-fr">Pas encore de version téléchargeable.</p>
+    <p class="note lang-en">No download available yet.</p>
+
+    <div class="motif">
+      <span class="lang-fr"><b>Observer</b></span><span class="lang-en"><b>Watch</b></span><span class="dot"></span>
+      <span class="lang-fr"><b>Détecter</b></span><span class="lang-en"><b>Detect</b></span><span class="dot"></span>
+      <span class="lang-fr"><b>Répondre</b></span><span class="lang-en"><b>Respond</b></span><span class="dot"></span>
+      <span class="lang-fr"><b>Tracer</b></span><span class="lang-en"><b>Record</b></span>
+    </div>
+  </section>
+
+  <!-- HOW / PILLARS -->
+  <section id="how">
+    <p class="eyebrow lang-fr">Comment ça marche</p><p class="eyebrow lang-en">How it works</p>
+    <h2 class="lang-fr">Cinq collectes, une réponse bornée</h2>
+    <h2 class="lang-en">Five collections, one bounded response</h2>
+    <p class="section-lead lang-fr">deR4Tizer surveille le poste en continu et vous montre ce qui s'y passe. Aucun pilote à installer, aucune dépendance : il s'appuie seulement sur Windows.</p>
+    <p class="section-lead lang-en">deR4Tizer watches the computer continuously and shows you what happens on it. No driver to install, no dependency: it relies on Windows alone.</p>
+    <div class="steps">
+      <div class="step"><div class="n">01 · <span class="lang-fr">RÉSEAU</span><span class="lang-en">NETWORK</span></div>
+        <h3 class="lang-fr">Trafic & NDR</h3><h3 class="lang-en">Traffic & NDR</h3>
+        <p class="lang-fr">Connexions sortantes par programme, score, beaconing, carte des pays. NDR local : ARP, DHCP pirate, LLMNR/NBNS/mDNS.</p>
+        <p class="lang-en">Outbound connections per program, score, beaconing, country map. Local NDR: ARP, rogue DHCP, LLMNR/NBNS/mDNS.</p></div>
+      <div class="step"><div class="n">02 · <span class="lang-fr">PROCESSUS</span><span class="lang-en">PROCESSES</span></div>
+        <h3 class="lang-fr">Exécution & persistance</h3><h3 class="lang-en">Execution & persistence</h3>
+        <p class="lang-fr">Arbre des processus et score par chaîne, PowerShell obscurci, MITRE ATT&CK, clés Run / services / tâches / WMI.</p>
+        <p class="lang-en">Process tree with chain score, obfuscated PowerShell, MITRE ATT&CK, Run keys / services / tasks / WMI.</p></div>
+      <div class="step"><div class="n">03 · <span class="lang-fr">RANÇONGICIEL</span><span class="lang-en">RANSOMWARE</span></div>
+        <h3 class="lang-fr">Leurres & blocage</h3><h3 class="lang-en">Canaries & block</h3>
+        <p class="lang-fr">Fichiers leurres, suspension automatique du programme qui y touche, avec des garde-fous contre les faux positifs.</p>
+        <p class="lang-en">Canary files, automatic suspension of the program touching them, with guards against false positives.</p></div>
+      <div class="step"><div class="n">04 · <span class="lang-fr">RÉPONSE</span><span class="lang-en">RESPONSE</span></div>
+        <h3 class="lang-fr">Bornée par la politique</h3><h3 class="lang-en">Policy-bounded</h3>
+        <p class="lang-fr">Tuer, suspendre, isoler, quarantaine, bouton PANIQUE. Identité revalidée avant d'agir ; rien n'est levé en silence.</p>
+        <p class="lang-en">Kill, suspend, isolate, quarantine, PANIC button. Identity re-checked before acting; nothing is lifted silently.</p></div>
+      <div class="step"><div class="n">05 · <span class="lang-fr">SIEM</span><span class="lang-en">SIEM</span></div>
+        <h3 class="lang-fr">Mini-SIEM & incidents</h3><h3 class="lang-en">Mini-SIEM & incidents</h3>
+        <p class="lang-fr">Événements normalisés 30 j, recherche, chronologie, corrélation (force brute, nouvel admin, attaque multi-étapes…).</p>
+        <p class="lang-en">Normalised events for 30 days, search, timeline, correlation (brute force, new admin, multi-stage attack…).</p></div>
+    </div>
+  </section>
+
+  <!-- SCREENSHOTS -->
+  <section id="apercu">
+    <p class="eyebrow lang-fr">Aperçu</p><p class="eyebrow lang-en">Screenshots</p>
+    <h2 class="lang-fr">L'interface</h2><h2 class="lang-en">The interface</h2>
+    <p class="section-lead lang-fr">Un coup d'œil à ce que vous voyez au quotidien.</p>
+    <p class="section-lead lang-en">A look at what you see day to day.</p>
+    <div class="shots">
+      <figure><img alt="Vue d'ensemble / Overview"
+        data-fr="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-vue-d-ensemble.png"
+        data-en="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-en-vue-d-ensemble.png"
+        src="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-vue-d-ensemble.png" loading="lazy">
+        <figcaption><span class="lang-fr">Vue d'ensemble : état du poste, points à surveiller, bouton Panique.</span><span class="lang-en">Overview: computer status, points to watch, Panic button.</span></figcaption></figure>
+      <figure><img alt="Connexions / Connections"
+        data-fr="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-connexions.png"
+        data-en="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-en-connexions.png"
+        src="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-connexions.png" loading="lazy">
+        <figcaption><span class="lang-fr">Connexions : programmes qui sortent, destination, signataire, score.</span><span class="lang-en">Connections: programs reaching the Internet, destination, signer, score.</span></figcaption></figure>
+      <figure><img alt="Santé / Health"
+        data-fr="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-sante.png"
+        data-en="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-sante.png"
+        src="https://raw.githubusercontent.com/cryptobones-1337/deR4Tizer/main/docs/images/interface-fr-sante.png" loading="lazy">
+        <figcaption><span class="lang-fr">Santé : état de chaque collecte, ce qui manque et pourquoi.</span><span class="lang-en">Health: state of each collection, what is missing and why.</span></figcaption></figure>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <p class="eyebrow lang-fr">Fonctions</p><p class="eyebrow lang-en">Features</p>
+    <h2 class="lang-fr">Ce que deR4Tizer surveille</h2><h2 class="lang-en">What deR4Tizer watches</h2>
+    <p class="section-lead lang-fr">Les fonctions marquées « expérimental » sont encore en cours de mise au point.</p>
+    <p class="section-lead lang-en">Features marked “experimental” are still being refined.</p>
+    <div class="grid">
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg><span class="lang-fr">Réseau</span><span class="lang-en">Network</span></h3>
+        <p class="lang-fr">Connexions sortantes en direct par programme, score de suspicion, détection de balises, première sortie Internet d'un programme.</p>
+        <p class="lang-en">Live outbound connections per program, suspicion score, beaconing detection, a program's first Internet connection.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 3 6v6c0 5 3.5 8.5 9 10 5.5-1.5 9-5 9-10V6l-9-4Z"/></svg><span class="lang-fr">Renseignement menaces</span><span class="lang-en">Threat intel</span></h3>
+        <p class="lang-fr">Listes open source rafraîchies toutes les 12 h ; blocage pare-feu automatique (Spamhaus DROP, Feodo Tracker), plafonné ; les autres listes alertent seulement.</p>
+        <p class="lang-en">Open-source lists refreshed every 12 h; automatic firewall blocking (Spamhaus DROP, Feodo Tracker), capped; other lists only alert.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h10v10H7zM3 10V5a2 2 0 0 1 2-2h5M21 14v5a2 2 0 0 1-2 2h-5"/></svg><span class="lang-fr">Processus</span><span class="lang-en">Processes</span></h3>
+        <p class="lang-fr">Arbre des processus, score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK.</p>
+        <p class="lang-en">Process tree, cumulative chain score, obfuscated PowerShell, MITRE ATT&CK techniques.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4 12H2M22 12h-2M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/><circle cx="12" cy="12" r="3"/></svg><span class="lang-fr">Persistance</span><span class="lang-en">Persistence</span></h3>
+        <p class="lang-fr">Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée.</p>
+        <p class="lang-en">Run keys, services, scheduled tasks, WMI, Startup folders: alert on any new or changed entry.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V5a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/><path d="M14 3v6h6M8 13l2 2 4-4"/></svg><span class="lang-fr">Rançongiciels</span><span class="lang-en">Ransomware</span></h3>
+        <p class="lang-fr">Fichiers leurres, suspension automatique ; alerte seule pour un logiciel connu et signé, avec garde-fous précis.</p>
+        <p class="lang-en">Canary files, automatic suspension; alert-only for known, signed software, with precise guards.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12s3-7 9-7 9 7 9 7-3 7-9 7-9-7-9-7Z"/><circle cx="12" cy="12" r="3"/></svg><span class="lang-fr">Vie privée</span><span class="lang-en">Privacy</span></h3>
+        <p class="lang-fr">Caméra, micro, outils de prise en main à distance, ports ouverts ; audit d'accès aux dossiers sensibles des navigateurs.</p>
+        <p class="lang-en">Camera, microphone, remote-control tools, open ports; access auditing on sensitive browser folders.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg><span class="lang-fr">Mini-SIEM</span><span class="lang-en">Mini-SIEM</span></h3>
+        <p class="lang-fr">Événements normalisés 30 j, recherche, chronologie, incidents de corrélation ; suivi des incidents (ouvert, pris en charge, clos motivé).</p>
+        <p class="lang-en">Normalised events for 30 days, search, timeline, correlation incidents; incident tracking (open, in progress, closed with a reason).</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6M12 22v-4M2 12h6M22 12h-4"/><path d="M5 5l4 4M19 19l-4-4M19 5l-4 4M5 19l4-4"/></svg><span class="lang-fr">Analyse du trafic</span><span class="lang-en">Traffic analysis</span></h3>
+        <p class="lang-fr">Capture passive (sockets brutes, sans pilote) : débit, programmes, destinations, ports, pays (RIR) et carte du monde en direct.</p>
+        <p class="lang-en">Passive capture (raw sockets, no driver): throughput, programs, destinations, ports, countries (RIRs) and a live world map.</p></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg><span class="lang-fr">NDR local</span><span class="lang-en">Local NDR</span></h3>
+        <p class="lang-fr">Usurpation ARP, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS avec leurre actif ; fonctionne derrière un VPN.</p>
+        <p class="lang-en">ARP spoofing, new devices, rogue DHCP, LLMNR/NBNS/mDNS poisoning with an active decoy; works behind a VPN.</p>
+        <span class="exp lang-fr">expérimental</span><span class="exp lang-en">experimental</span></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 14h4"/></svg><span class="lang-fr">DPI</span><span class="lang-en">DPI</span></h3>
+        <p class="lang-fr">Noms TLS (SNI), empreintes JA3 (SSLBL), HTTP en clair, tunnel DNS, SMB/Telnet/FTP vers Internet, noms comparés aux listes.</p>
+        <p class="lang-en">TLS names (SNI), JA3 fingerprints (SSLBL), cleartext HTTP, DNS tunnelling, SMB/Telnet/FTP to the Internet, names checked against lists.</p>
+        <span class="exp lang-fr">expérimental</span><span class="exp lang-en">experimental</span></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 4-3.5 7-8 9-4.5-2-8-5-8-9V7l8-4Z"/><path d="M9 12h6"/></svg><span class="lang-fr">IDS / IPS</span><span class="lang-en">IDS / IPS</span></h3>
+        <p class="lang-fr">Règles au format Suricata (sous-ensemble) + fichiers <code class="inl">.rules</code> (Emerging Threats Open) ; en mode IPS, blocage au pare-feu.</p>
+        <p class="lang-en">Suricata-format rules (subset) + <code class="inl">.rules</code> files (Emerging Threats Open); IPS mode blocks at the firewall.</p>
+        <span class="exp lang-fr">expérimental</span><span class="exp lang-en">experimental</span></div>
+      <div class="card"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg><span class="lang-fr">Intégration SIEM</span><span class="lang-en">SIEM integration</span></h3>
+        <p class="lang-fr">Syslog RFC 5424 (JSON ou CEF), API HTTP d'export en lecture seule avec jeton ; remontée ntfy, Teams, e-mail SMTP chiffré.</p>
+        <p class="lang-en">Syslog RFC 5424 (JSON or CEF), read-only HTTP export API with a token; forwarding via ntfy, Teams, encrypted SMTP e-mail.</p></div>
+    </div>
+  </section>
+
+  <!-- GUARANTEES -->
+  <section id="garde-fous">
+    <p class="eyebrow lang-fr">Garde-fous</p><p class="eyebrow lang-en">Guarantees</p>
+    <h2 class="lang-fr">Conçu pour rester sous contrôle</h2><h2 class="lang-en">Built to stay under control</h2>
+    <div class="guard">
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/></svg><span class="lang-fr">Tout en local</span><span class="lang-en">Everything local</span></h3>
+        <p class="lang-fr">Aucun compte, aucun cloud, aucune télémétrie. Les données ne quittent pas le poste sauf vers les canaux d'alerte et le SIEM que vous choisissez.</p>
+        <p class="lang-en">No account, no cloud, no telemetry. Data never leaves the endpoint except to the alert channels and the SIEM you choose.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/><path d="M3 3l18 18"/></svg><span class="lang-fr">Fonctionne sans Internet</span><span class="lang-en">Works offline</span></h3>
+        <p class="lang-fr">La détection est embarquée : processus, réseau local, NDR, mini-SIEM, réponse et alertes (syslog, ntfy auto-hébergé) tournent déconnecté. Un atout pour les environnements isolés et souverains, là où un EDR dépendant d'un cloud ne peut pas fonctionner. Les listes de menaces et règles se mettent à jour par Internet, ou par un miroir interne.</p>
+        <p class="lang-en">Detection runs on the endpoint: processes, local network, NDR, mini-SIEM, response and alerts (syslog, self-hosted ntfy) work disconnected. An asset for isolated and sovereign environments, where a cloud-dependent EDR cannot run. Threat lists and rules update over the Internet, or from an internal mirror.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span class="lang-fr">Terrain d'essai transparent</span><span class="lang-en">A transparent test range</span></h3>
+        <p class="lang-fr">Open source, sans boîte noire : chaque règle de détection a un identifiant et une fiche (justification, télémétrie, faux positifs attendus). Pentesters et équipes red team peuvent tester obfuscations, scripts et scénarios ATT&CK contre lui et voir exactement ce qui se déclenche, et pourquoi.</p>
+        <p class="lang-en">Open source, no black box: every detection rule has an id and a sheet (rationale, telemetry, expected false positives). Pentesters and red teams can test obfuscations, scripts and ATT&CK scenarios against it and see exactly what fires, and why.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l7 4v6c0 5-3 8-7 10-4-2-7-5-7-10V6l7-4Z"/><path d="M9 12l2 2 4-4"/></svg><span class="lang-fr">Complète Defender</span><span class="lang-en">Complements Defender</span></h3>
+        <p class="lang-fr">deR4Tizer <b>s'ajoute</b> à Microsoft Defender, il ne le remplace pas et ne le touche pas. Validé en VM : installé, il n'est pas détecté par Defender actif.</p>
+        <p class="lang-en">deR4Tizer <b>adds to</b> Microsoft Defender; it neither replaces nor touches it. Checked in a VM: once installed, it is not detected by an active Defender.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg><span class="lang-fr">Réversible</span><span class="lang-en">Reversible</span></h3>
+        <p class="lang-fr">La désinstallation retire blocages, règles de pare-feu et leurres, remet les réglages de sécurité d'origine et efface les données.</p>
+        <p class="lang-en">Uninstalling removes blocks, firewall rules and canaries, restores the original security settings and deletes the data.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span class="lang-fr">Confidentialité & échec fermé</span><span class="lang-en">Privacy & fail-closed</span></h3>
+        <p class="lang-fr">Données lisibles par SYSTEM, les administrateurs et les comptes autorisés seulement ; propriétaire et droits réimposés à chaque démarrage. En cas d'échec de la vérification, configuration et secrets sont ignorés.</p>
+        <p class="lang-en">Data readable only by SYSTEM, administrators and authorised accounts; owner and permissions re-enforced at every start. If the check fails, settings and secrets are ignored.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="lang-fr">Réponse revalidée</span><span class="lang-en">Re-checked response</span></h3>
+        <p class="lang-fr">L'identité du processus est revalidée juste avant chaque action. Une suspension, une isolation ou le mode panique ne sont jamais levés automatiquement : ils sont relancés au prestataire à échéance.</p>
+        <p class="lang-en">Process identity is re-checked just before each action. A suspension, isolation or panic mode is never lifted automatically: it is raised again to the IT provider at its deadline.</p></div>
+      <div class="g"><h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><span class="lang-fr">Preuve de concept</span><span class="lang-en">Proof of concept</span></h3>
+        <p class="lang-fr">Projet en développement actif, non audité. Il complète votre antivirus, il ne le remplace pas.</p>
+        <p class="lang-en">Under active development, not audited. It complements your antivirus, it does not replace it.</p></div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section id="archi">
+    <div class="rail">
+      <div>
+        <p class="eyebrow lang-fr">Sous le capot</p><p class="eyebrow lang-en">Under the hood</p>
+        <h2 class="lang-fr">Deux programmes, zéro pilote</h2><h2 class="lang-en">Two programs, zero driver</h2>
+        <p class="section-lead lang-fr">deR4Tizer n'installe aucun pilote système et n'ajoute aucune dépendance. L'application de suivi fonctionne sans droits administrateur.</p>
+        <p class="section-lead lang-en">deR4Tizer installs no system driver and adds no dependency. The monitoring app runs without administrator rights.</p>
+        <ul class="clean">
+          <li class="lang-fr"><b>Un service</b> qui surveille le poste en continu, en arrière-plan.</li>
+          <li class="lang-en"><b>A service</b> that watches the computer continuously, in the background.</li>
+          <li class="lang-fr"><b>Une application</b> pour voir l'état du poste, sans droits administrateur.</li>
+          <li class="lang-en"><b>An app</b> to see the computer's status, without administrator rights.</li>
+          <li class="lang-fr"><b>Vos données</b> restent sur le poste, lisibles par vous seul.</li>
+          <li class="lang-en"><b>Your data</b> stays on the computer, readable by you only.</li>
+        </ul>
+      </div>
+      <pre aria-hidden="false">deR4TizerSvc.exe   <span style="color:#7fe3d4">le service qui surveille</span>
+deR4Tizer.exe      <span style="color:#7fe3d4">l'application que vous ouvrez</span>
+
+<span style="color:#9db0c8">Aucun pilote. Aucune dépendance.</span>
+<span style="color:#9db0c8">Fonctionne avec Microsoft Defender.</span></pre>
+    </div>
+  </section>
+
+  <!-- STATUS -->
+  <section id="install">
+    <p class="eyebrow lang-fr">État & feuille de route</p><p class="eyebrow lang-en">Status & roadmap</p>
+    <h2 class="lang-fr">Où en est le projet</h2><h2 class="lang-en">Where the project stands</h2>
+    <p class="section-lead lang-fr">Le projet avance vite : le cœur est en place, quelques fonctions avancées sont encore en test. Une première version téléchargeable arrive bientôt.</p>
+    <p class="section-lead lang-en">The project moves fast: the core is in place, a few advanced features are still in testing. A first downloadable version is coming soon.</p>
+    <div class="status">
+      <span class="chip ok lang-fr">Fonctionne avec Microsoft Defender</span><span class="chip ok lang-en">Works alongside Microsoft Defender</span>
+      <span class="chip exp lang-fr">Certaines fonctions encore en test</span><span class="chip exp lang-en">Some features still in testing</span>
+      <span class="chip lang-fr">Première version bientôt disponible</span><span class="chip lang-en">First version coming soon</span>
+    </div>
+    <div class="disclaimer">
+      <span class="lang-fr"><b>Pas encore disponible.</b> Il n'y a pas encore de version à télécharger. Dès que la première sera prête, elle s'installera comme n'importe quel logiciel Windows : un fichier à ouvrir.</span>
+      <span class="lang-en"><b>Not available yet.</b> There is no version to download yet. As soon as the first one is ready, it will install like any Windows program: a single file to open.</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>deR4Tizer</h4>
+        <p class="lang-fr">Couche de défense locale et complémentaire pour Windows, pour les petites structures sans SOC. Open source, licence EUPL-1.2.</p>
+        <p class="lang-en">A local, complementary defence layer for Windows, for small organisations without a SOC. Open source, EUPL-1.2.</p>
+      </div>
+      <div>
+        <h4 class="lang-fr">Liens</h4><h4 class="lang-en">Links</h4>
+        <p><a href="https://github.com/cryptobones-1337/deR4Tizer" target="_blank" rel="noopener">GitHub</a><br>
+        <a href="https://github.com/cryptobones-1337/deR4Tizer/releases" target="_blank" rel="noopener"><span class="lang-fr">Versions</span><span class="lang-en">Releases</span></a><br>
+        <a href="https://github.com/cryptobones-1337/deR4Tizer/blob/main/docs/roadmap/capability-matrix.md" target="_blank" rel="noopener"><span class="lang-fr">Matrice des capacités</span><span class="lang-en">Capability matrix</span></a><br>
+        <a href="https://github.com/cryptobones-1337/deR4Tizer/blob/main/LICENSE" target="_blank" rel="noopener">EUPL-1.2</a></p>
+      </div>
+      <div>
+        <h4 class="lang-fr">Pour qui</h4><h4 class="lang-en">For whom</h4>
+        <p class="lang-fr">Petites communes, TPE, artisans, commerces et leurs prestataires informatiques.</p>
+        <p class="lang-en">Small municipalities, micro-businesses, craftspeople, shops, and their IT providers.</p>
+      </div>
+    </div>
+    <div class="credits">
+      <span class="lang-fr">Sources de renseignement : Spamhaus DROP · FireHOL niveau 1 · abuse.ch Feodo Tracker &amp; SSLBL · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers. Géolocalisation : statistiques « delegated » ARIN, RIPE NCC, APNIC, LACNIC, AFRINIC. Carte : Natural Earth (domaine public). Ces listes appartiennent à leurs auteurs et restent soumises à leurs conditions.</span>
+      <span class="lang-en">Threat-intelligence credits: Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker &amp; SSLBL · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers. Geolocation: “delegated” stats from ARIN, RIPE NCC, APNIC, LACNIC, AFRINIC. Map: Natural Earth (public domain). These lists belong to their authors and remain subject to their own terms.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+  function read(k){try{return localStorage.getItem(k)}catch(e){return null}}
+
+  // English-only page : afficher le contenu EN et les captures EN
+  root.setAttribute('lang','en'); root.setAttribute('data-lang','en');
+  document.querySelectorAll('img[data-en]').forEach(function(img){ var s=img.getAttribute('data-en'); if(s) img.src=s; });
+
+  // theme
+  var savedTheme=read('d4t-theme');
+  if(savedTheme==='dark'||savedTheme==='light') root.setAttribute('data-theme',savedTheme);
+  function ico(){ var d=root.getAttribute('data-theme'); document.getElementById('themeIco').textContent = d==='light'?'☀':(d==='dark'?'☾':'◐'); }
+  ico();
+  document.getElementById('theme').addEventListener('click', function(){
+    var cur=root.getAttribute('data-theme');
+    var mql=window.matchMedia('(prefers-color-scheme: dark)');
+    var next = cur? (cur==='dark'?'light':'dark') : (mql.matches?'light':'dark');
+    root.setAttribute('data-theme', next); store('d4t-theme', next); ico();
+  });
+})();
+</script>
+</body>
+</html>
