@@ -216,7 +216,8 @@ try {
     $calme = & $fx @{ Cle = 'e'; Score = 0; Processus = 'a'; Pid = 52; Ip = '7.7.7.7'; Port = 80; Raisons = 'BLOQUÉ' }
     $lf = New-Object "Collections.Generic.List[$($fluxT.FullName)]"; foreach ($x in $calme, $complet, $menace, $alerteF) { $lf.Add($x) }
     $cles = { param($n) (@($vc.GetMethod('Filtrer').Invoke($null, [object[]]@($lf.PSObject.BaseObject, [int]$n)) | ForEach-Object { $_.Cle }) -join ',') }
-    Cas 'Connexions : menace d''abord, puis score ; filtres suspectes et menaces' ((& $cles 0) -eq 'c,d,a,e' -and (& $cles 1) -eq 'c,d,a' -and (& $cles 2) -eq 'c') "$(& $cles 0) / $(& $cles 1) / $(& $cles 2)"
+    # « Suspectes » suit le même seuil que la pastille (gravité >= 1) : a (score 2, gravité 0) n'y est plus, comme il n'a pas de pastille
+    Cas 'Connexions : menace d''abord, puis score ; « Suspectes » = pastille (gravité >= 1), pas score >= 1' ((& $cles 0) -eq 'c,d,a,e' -and (& $cles 1) -eq 'c,d' -and (& $cles 2) -eq 'c') "$(& $cles 0) / $(& $cles 1) / $(& $cles 2)"
     Cas 'Connexions : gravité (menace 2, score de 3 au moins 1), ligne bloquée estompée' ($vc.GetMethod('Gravite').Invoke($null, @($menace)) -eq 2 -and $vc.GetMethod('Gravite').Invoke($null, @($alerteF)) -eq 1 -and $vc.GetMethod('Gravite').Invoke($null, @($complet)) -eq 0 -and $vc.GetMethod('Bloquee').Invoke($null, @($calme)))
     $dc = @($vc.GetMethod('Detail').Invoke($null, @($complet)))
     $txtC = (@($dc | ForEach-Object { $_.Texte }) + @($vc.GetMethod('Sous').Invoke($null, @($complet)), $vc.GetMethod('Destination').Invoke($null, @($complet)))) -join '|'
@@ -247,6 +248,10 @@ try {
     $susL = $vch.GetMethod('Suspectes').Invoke($null, [object[]](, $lch.PSObject.BaseObject)); $sus = @($susL)
     Cas 'Chaînes : score nul écarté (comme aujourd''hui), plus lourdes d''abord' ((@($sus | ForEach-Object { $_.Racine }) -join ',') -eq 'r1,r2') (@($sus | ForEach-Object { $_.Racine }) -join ',')
     Cas 'Chaînes : au-delà de 12 critique, nœud qui compte en rouge, nœud à 0 neutre' ($vch.GetMethod('Gravite').Invoke($null, @($forte)) -eq 2 -and $vch.GetMethod('Gravite').Invoke($null, @($faible)) -eq 1 -and $vch.GetMethod('GraviteNoeud').Invoke($null, @($forte, $nds[1])) -eq 2 -and $vch.GetMethod('GraviteNoeud').Invoke($null, @($forte, $nds[0])) -eq 0)
+    $briq = & $t 'Briques'
+    $nivCh = { param($g) [string]$briq.GetMethod('NiveauChaine').Invoke($null, @([int]$g)) }
+    $nivRi = { param($g) [string]$briq.GetMethod('NiveauRisque').Invoke($null, @([int]$g)) }
+    Cas 'Vocabulaire : chaîne au-delà de 12 dit « Alerte » (pas « Menace ») ; Connexions garde « Menace » ; gravité 1 = « Suspecte » ; gravité 0 = rien' ((& $nivCh 2) -eq 'Alerte' -and (& $nivCh 1) -eq 'Suspecte' -and (& $nivCh 0) -eq '' -and (& $nivRi 2) -eq 'Menace' -and (& $nivRi 1) -eq 'Suspecte') "chaîne $(& $nivCh 2) / connexion $(& $nivRi 2)"
     $actionsN = { param($n) (@($vch.GetMethod('Actions').Invoke($null, @($n))) -join ',') }
     Cas 'Chaînes : actions du menu d''aujourd''hui, PID système sans tuer ni suspendre' ((& $actionsN $nds[1]) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier' -and (& $actionsN $nds[2]) -eq 'copier') "$(& $actionsN $nds[1]) / $(& $actionsN $nds[2])"
     $txtN = (@($vch.GetMethod('Detail').Invoke($null, @($nds[1])) | ForEach-Object { $_.Texte }) + @([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($susL, $true, $false, '2026-11-10 10:00:00', $null)), [string]$vch.GetMethod('Sous').Invoke($null, @($forte)))) -join '|'

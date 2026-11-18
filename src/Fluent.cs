@@ -1060,6 +1060,7 @@ namespace DeR4Tizer
     // par le Narrateur. Cette sous-classe s'annonce comme « élément de liste » et porte son nom.
     class LigneBord : Border
     {
+        public bool EstOuverte;   // ligne sélectionnée : cible du focus rendu après un rafraîchissement (défaut A)
         protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() { return new LignePeer(this); }
     }
     class LignePeer : System.Windows.Automation.Peers.FrameworkElementAutomationPeer
@@ -1080,6 +1081,8 @@ namespace DeR4Tizer
         // « score N » est illisible pour un non-informaticien : on montre le mot du produit (le chiffre reste au panneau de
         // détail). Gravité 0 = rien à signaler, aucune étiquette. Vocabulaire du service : Suspecte, Menace.
         public static string NiveauRisque(int gravite) { return gravite == 2 ? L.T("Menace") : gravite == 1 ? L.T("Suspecte") : ""; }
+        // Chaînes : gravité 2 = score au-delà du seuil d'alerte (12), pas une menace avérée → « Alerte », pas « Menace »
+        public static string NiveauChaine(int gravite) { return gravite == 2 ? L.T("Alerte") : gravite == 1 ? L.T("Suspecte") : ""; }
 
         // Carte de liste : barre de couleur à gauche, titre et étiquette d'état à droite, sous-ligne secondaire
         public static Border Ligne(string titre, string etiquette, string sous, int gravite, bool ouverte, bool estompee, Action choisir)
@@ -1092,6 +1095,7 @@ namespace DeR4Tizer
             };
             // Contraste élevé : Carte == Surface, donc la sélection ne se voit pas par le fond ; on la marque par une bordure accent.
             if (ouverte && Jetons.ContrasteEleve) { cadre.BorderThickness = new Thickness(2); cadre.BorderBrush = Jetons.Pinceau(Jetons.Accent); }
+            cadre.EstOuverte = ouverte;
             // Accessibilité : la ligne prend le focus (Tab puis flèches), s'active au clavier (Entrée/Espace) et porte un
             // nom lu par les lecteurs d'écran ; anneau de focus partagé ; fond en surface au survol et au focus clavier.
             cadre.Focusable = true;
@@ -1719,8 +1723,11 @@ namespace DeR4Tizer
         public ChronologieFluent()
         {
             Height = 104; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12);
-            // Accessibilité (défaut 4) : focus clavier et flèches, en plus du clic
+            // Accessibilité (défaut 4) : focus clavier et flèches, en plus du clic ; le contour de la tranche n'est tracé
+            // que si la chronologie a le focus clavier, donc on redessine quand le focus entre ou sort
             Focusable = true; FocusVisualStyle = Jetons.StyleFocus();
+            GotKeyboardFocus += (s, e) => InvalidateVisual();
+            LostKeyboardFocus += (s, e) => InvalidateVisual();
         }
 
         public void Definir(ResultatSiem resultat, DateTime? debut) { r = resultat; choixDebut = debut; int n = Tranches; if (curseur >= n) curseur = n - 1; InvalidateVisual(); }
@@ -2064,10 +2071,10 @@ namespace DeR4Tizer
 
         public static string Cle(FluxInfo f) { return f.Cle ?? (f.Pid + "|" + f.Ip + "|" + f.Port); }
 
-        // Filtre 0 : toutes ; 1 : suspectes (score de 1 au moins, ou menace) ; 2 : menaces. Plus graves d'abord, puis score
+        // Filtre 0 : toutes ; 1 : suspectes (même seuil que la pastille : gravité >= 1, soit score au seuil d'alerte ou menace) ; 2 : menaces. Plus graves d'abord, puis score
         public static List<FluxInfo> Filtrer(IList<FluxInfo> flux, int filtre)
         {
-            return (flux ?? new List<FluxInfo>()).Where(f => f != null && (filtre == 0 || (filtre == 1 && (f.Score >= 1 || Gravite(f) == 2)) || (filtre == 2 && Gravite(f) == 2)))
+            return (flux ?? new List<FluxInfo>()).Where(f => f != null && (filtre == 0 || (filtre == 1 && Gravite(f) >= 1) || (filtre == 2 && Gravite(f) == 2)))
                 .OrderByDescending(Gravite).ThenByDescending(f => f.Score).ThenBy(f => f.Processus ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(Cle, StringComparer.Ordinal).ToList();
         }
 
@@ -2247,7 +2254,7 @@ namespace DeR4Tizer
                 {
                     var e = Commun.Lire<Etat>("etat.json");
                     string p = e == null ? null : VueReseauFluent.Panne(e, collecte);
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } Afficher(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } bool fcs = liste.IsKeyboardFocusWithin; Afficher(); if (fcs && !liste.IsKeyboardFocusWithin) RendreFocusListe(); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -2283,6 +2290,15 @@ namespace DeR4Tizer
         protected void Vide(string texte)
         {
             liste.Children.Add(new TextBlock { Text = texte, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
+        }
+
+        // Accessibilité (défaut A) : commun à toutes les pages de liste. Un rafraîchissement qui reconstruit la liste
+        // détruit la ligne focalisée ; si le focus clavier y était, il est rendu à la ligne ouverte (ou à la première).
+        void RendreFocusListe()
+        {
+            UIElement cible = null;
+            foreach (UIElement c in liste.Children) { var lb = c as LigneBord; if (lb == null) continue; if (cible == null) cible = lb; if (lb.EstOuverte) { cible = lb; break; } }
+            if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
         }
     }
 
@@ -2393,7 +2409,7 @@ namespace DeR4Tizer
             foreach (var c in chaines)
             {
                 string cle = VueChainesFluent.Cle(c);
-                liste.Children.Add(Briques.Ligne(Canal.Visible(c.Resume), Briques.NiveauRisque(VueChainesFluent.Gravite(c)), VueChainesFluent.Sous(c), VueChainesFluent.Gravite(c), cle == choisie, false, () => { choisie = cle; noeud = null; Afficher(); }));
+                liste.Children.Add(Briques.Ligne(Canal.Visible(c.Resume), Briques.NiveauChaine(VueChainesFluent.Gravite(c)), VueChainesFluent.Sous(c), VueChainesFluent.Gravite(c), cle == choisie, false, () => { choisie = cle; noeud = null; Afficher(); }));
             }
             Detailler(c0, n0);
         }
