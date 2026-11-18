@@ -83,7 +83,7 @@ try {
     }
     $avec = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badges))
     $lu = @($avec | ForEach-Object { "$($pointT.GetField('Texte').GetValue($_))=$($pointT.GetField('Gravite').GetValue($_))" }) -join '|'
-    Cas "Vue d'ensemble : compteurs colorés de la navigation à surveiller, jamais à traiter" ($lu -eq 't=0|Baseline : 12%=1|Démarrage auto : 2=1') $lu
+    Cas "Vue d'ensemble : compteurs colorés de la navigation à surveiller, jamais à traiter" ($lu -eq 't=0|Réglages de sécurité recommandés : 12% appliqués=1|Démarrage auto : 2=1') $lu
     Cas "Vue d'ensemble : avec un compteur rouge, la tête n'est plus « aucun problème »" ((& $resume $avec) -eq "Rien d'avéré, 2 points à surveiller|1") (& $resume $avec)
     $langue.GetField('En').SetValue($null, $true)
     $deux = $vue.GetProperty('DeuxPoints').GetValue($null)
@@ -112,7 +112,7 @@ try {
     $textes = ($lignes | ForEach-Object { $_.Texte }) -join '|'
     Cas 'Alertes : détail neutralisé (U+202E, largeur nulle, retours à la ligne), lignes vides omises, chemin en chasse fixe' (-not ($textes -match "[\u202E\u200B\r\n]") -and -not ($lignes | Where-Object { $_.Titre -eq 'Que faire' }) -and ($lignes | Where-Object { $_.Titre -eq 'Chemin' }).Chasse) $textes
     $fluentSrc = [IO.File]::ReadAllText("$src\Fluent.cs")
-    Cas 'Alertes : niveau affiché par Visible (audit de #136, S136-01)' (-not $fluentSrc.Contains('Text = L.T(a.Niveau') -and ([regex]::Matches($fluentSrc, 'Canal\.Visible\(L\.T\(a\.Niveau')).Count -eq 2)
+    Cas 'Alertes : niveau affiché par Visible (audit de #136, S136-01)' (-not $fluentSrc.Contains('Text = L.T(a.Niveau') -and ([regex]::Matches($fluentSrc, 'Canal\.Visible\(L\.T\(a\.Niveau')).Count -eq 3)
 
     # PID d'une alerte ancienne (relecture de #136, remarque 5) : refus si le processus est lancé après l'alerte, heures dites sinon
     $pidA = & $t 'PidAlerte'

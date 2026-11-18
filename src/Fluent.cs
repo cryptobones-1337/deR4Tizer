@@ -279,7 +279,13 @@ namespace DeR4Tizer
                 {
                     PointEtat b;
                     if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
-                        r.Add(new PointEtat { Texte = L.T(e.Cle) + DeuxPoints + b.Texte, Gravite = 1 });
+                    {
+                        // « Baseline : 12% » est illisible : phrase claire (le détail reste la page Baseline).
+                        string t = e.Cle == "Baseline"
+                            ? string.Format(L.T("Réglages de sécurité recommandés : {0} appliqués"), b.Texte)
+                            : L.T(e.Cle) + DeuxPoints + b.Texte;
+                        r.Add(new PointEtat { Texte = t, Gravite = 1 });
+                    }
                 }
             return r;
         }
@@ -760,6 +766,7 @@ namespace DeR4Tizer
             bandeau.Visibility = string.IsNullOrEmpty(collectes) ? Visibility.Collapsed : Visibility.Visible;
             bandeau.Foreground = Jetons.Pinceau(source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire);
 
+            bool rendreFocus = liste.IsKeyboardFocusWithin;
             liste.Children.Clear();
             var visibles = VueAlertesFluent.Filtrer(toutes, niveau);
             if (visibles.Count == 0)
@@ -769,10 +776,14 @@ namespace DeR4Tizer
                     Foreground = Jetons.Pinceau(niveau == null && source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire)
                 });
             string lue = source.DerniereLue();
-            foreach (var a in visibles) liste.Children.Add(Ligne(a, VueAlertesFluent.NonLue(a, lue)));
+            UIElement premiereLigne = null, ligneChoisie = null;
+            foreach (var a in visibles) { var l = Ligne(a, VueAlertesFluent.NonLue(a, lue)); if (premiereLigne == null) premiereLigne = l; if (a.Id == choisie) ligneChoisie = l; liste.Children.Add(l); }
             if (toutes.Count(a => niveau == null || a.Niveau == niveau) > VueAlertesFluent.Maximum)
                 liste.Children.Add(new TextBlock { Text = string.Format(L.T("Les {0} plus récentes sont affichées."), VueAlertesFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 8, 0, 0) });
             Afficher(visibles.FirstOrDefault(a => a.Id == choisie) ?? visibles.FirstOrDefault());
+            // Accessibilité (défaut 1) : le rafraîchissement reconstruit la liste et détruit la ligne qui avait le focus.
+            // Si le focus clavier était dans la liste, le rendre à la ligne ouverte (ou à la première), après la mise en page.
+            if (rendreFocus) { var cible = ligneChoisie ?? premiereLigne; if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input); }
         }
 
         UIElement Ligne(Alerte a, bool nonLue)
@@ -780,11 +791,12 @@ namespace DeR4Tizer
             int g = VueAlertesFluent.Gravite(a.Niveau);
             var couleur = g == 2 ? Jetons.Danger : g == 1 ? Jetons.Attention : Jetons.TexteSecondaire;
             bool ouverte = a.Id == choisie;
-            var cadre = new Border
+            var cadre = new LigneBord
             {
                 Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 8, 14, 8),
                 Margin = new Thickness(0, 0, 0, 6), BorderThickness = new Thickness(3, 0, 0, 0), BorderBrush = Jetons.Pinceau(couleur), Cursor = Cursors.Hand
             };
+            if (ouverte && Jetons.ContrasteEleve) { cadre.BorderThickness = new Thickness(2); cadre.BorderBrush = Jetons.Pinceau(Jetons.Accent); }
             var pile = new StackPanel();
             var haut = new DockPanel();
             var niveauTexte = new TextBlock { Text = Canal.Visible(L.T(a.Niveau ?? "")), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(8, 0, 0, 0) };
@@ -915,6 +927,20 @@ namespace DeR4Tizer
         }
     }
 
+    // Ligne de liste accessible : un Border nu n'a pas d'AutomationPeer en WPF, donc AutomationProperties.Name n'est pas lu
+    // par le Narrateur. Cette sous-classe s'annonce comme « élément de liste » et porte son nom.
+    class LigneBord : Border
+    {
+        protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() { return new LignePeer(this); }
+    }
+    class LignePeer : System.Windows.Automation.Peers.FrameworkElementAutomationPeer
+    {
+        public LignePeer(FrameworkElement proprietaire) : base(proprietaire) { }
+        protected override System.Windows.Automation.Peers.AutomationControlType GetAutomationControlTypeCore() { return System.Windows.Automation.Peers.AutomationControlType.ListItem; }
+        protected override string GetClassNameCore() { return "Ligne"; }
+        protected override bool IsControlElementCore() { return true; }
+    }
+
     // Briques communes aux pages natives de la coquille : ligne de liste, titre de section, bouton d'action, disposition
     static class Briques
     {
@@ -922,15 +948,21 @@ namespace DeR4Tizer
 
         public static Color Couleur(int gravite) { return gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.TexteSecondaire; }
 
+        // « score N » est illisible pour un non-informaticien : on montre le mot du produit (le chiffre reste au panneau de
+        // détail). Gravité 0 = rien à signaler, aucune étiquette. Vocabulaire du service : Suspecte, Menace.
+        public static string NiveauRisque(int gravite) { return gravite == 2 ? L.T("Menace") : gravite == 1 ? L.T("Suspecte") : ""; }
+
         // Carte de liste : barre de couleur à gauche, titre et étiquette d'état à droite, sous-ligne secondaire
         public static Border Ligne(string titre, string etiquette, string sous, int gravite, bool ouverte, bool estompee, Action choisir)
         {
             var couleur = Couleur(gravite);
-            var cadre = new Border
+            var cadre = new LigneBord
             {
                 Background = Jetons.Pinceau(ouverte ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 8, 14, 8),
                 Margin = new Thickness(0, 0, 0, 6), BorderThickness = new Thickness(3, 0, 0, 0), BorderBrush = Jetons.Pinceau(couleur), Cursor = Cursors.Hand
             };
+            // Contraste élevé : Carte == Surface, donc la sélection ne se voit pas par le fond ; on la marque par une bordure accent.
+            if (ouverte && Jetons.ContrasteEleve) { cadre.BorderThickness = new Thickness(2); cadre.BorderBrush = Jetons.Pinceau(Jetons.Accent); }
             // Accessibilité : la ligne prend le focus (Tab puis flèches), s'active au clavier (Entrée/Espace) et porte un
             // nom lu par les lecteurs d'écran ; anneau de focus partagé ; fond en surface au survol et au focus clavier.
             cadre.Focusable = true;
@@ -1552,11 +1584,17 @@ namespace DeR4Tizer
     {
         ResultatSiem r;
         DateTime? choixDebut;
+        int curseur = -1;   // tranche sous le curseur clavier (défaut 4) ; -1 = aucune
         public event Action<DateTime?, DateTime?> TrancheChoisie;
 
-        public ChronologieFluent() { Height = 104; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12); }
+        public ChronologieFluent()
+        {
+            Height = 104; Cursor = Cursors.Hand; Margin = new Thickness(0, 0, 0, 12);
+            // Accessibilité (défaut 4) : focus clavier et flèches, en plus du clic
+            Focusable = true; FocusVisualStyle = Jetons.StyleFocus();
+        }
 
-        public void Definir(ResultatSiem resultat, DateTime? debut) { r = resultat; choixDebut = debut; InvalidateVisual(); }
+        public void Definir(ResultatSiem resultat, DateTime? debut) { r = resultat; choixDebut = debut; int n = Tranches; if (curseur >= n) curseur = n - 1; InvalidateVisual(); }
 
         int Tranches { get { return r == null || r.Compteurs == null ? 0 : r.Compteurs.GetLength(0); } }
 
@@ -1607,6 +1645,9 @@ namespace DeR4Tizer
                     g.DrawRectangle(Jetons.Pinceau(couleurs[niv]), null, new Rect(Gauche + t * pas + 1, y, Math.Max(1, pas - 2), segments[niv]));
                 }
             }
+            // Accessibilité (défaut 4) : contour de la tranche sous le curseur clavier
+            if (IsKeyboardFocused && curseur >= 0 && curseur < n)
+                g.DrawRectangle(null, new Pen(Jetons.Pinceau(Jetons.Accent), 2), new Rect(Gauche + curseur * pas + 1, Haut - 2, Math.Max(1, pas - 2), h + 4));
         }
 
         // Hauteurs des segments d'une tranche (Info, Alerte, Critique), pour les tests : même calcul que le rendu
@@ -1630,11 +1671,71 @@ namespace DeR4Tizer
             double x = e.GetPosition(this).X - Gauche, l = ActualWidth - 2 * Gauche;
             if (x < 0 || x >= l) return;
             int t = Math.Min(n - 1, (int)(x / (l / n)));
+            curseur = t; Focus(); InvalidateVisual();
+            ChoisirTranche(t);
+        }
+
+        void ChoisirTranche(int t)
+        {
+            int n = Tranches;
+            if (n == 0 || TrancheChoisie == null || t < 0 || t >= n) return;
             DateTime d, f;
             RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out f);
             if (choixDebut.HasValue && Math.Abs((choixDebut.Value - d).TotalSeconds) < 1) TrancheChoisie(null, null);
             else TrancheChoisie(d, f);
         }
+
+        int IndexChoisi()
+        {
+            int n = Tranches;
+            if (!choixDebut.HasValue) return -1;
+            for (int t = 0; t < n; t++) { DateTime d, f; RechercheSiem.Tranche(r.Debut, r.Fin, n, t, out d, out f); if (Math.Abs((choixDebut.Value - d).TotalSeconds) < 1) return t; }
+            return -1;
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            int n = Tranches;
+            if (n > 0)
+            {
+                if (e.Key == Key.Home) { curseur = 0; InvalidateVisual(); e.Handled = true; }
+                else if (e.Key == Key.End) { curseur = n - 1; InvalidateVisual(); e.Handled = true; }
+                else if (e.Key == Key.Left || e.Key == Key.Right)
+                {
+                    if (curseur < 0) curseur = Math.Max(0, IndexChoisi());
+                    else curseur = e.Key == Key.Left ? Math.Max(0, curseur - 1) : Math.Min(n - 1, curseur + 1);
+                    InvalidateVisual(); e.Handled = true;
+                }
+                else if ((e.Key == Key.Enter || e.Key == Key.Space) && curseur >= 0) { ChoisirTranche(curseur); e.Handled = true; }
+            }
+            base.OnKeyDown(e);
+        }
+
+        string DescriptionGenerale() { return L.T("Chronologie des événements. Flèches gauche et droite pour parcourir les tranches, Entrée pour filtrer."); }
+
+        string DescriptionCurseur()
+        {
+            int n = Tranches;
+            if (curseur < 0 || curseur >= n) return DescriptionGenerale();
+            DateTime d, f;
+            RechercheSiem.Tranche(r.Debut, r.Fin, n, curseur, out d, out f);
+            string format = (r.Fin - r.Debut).TotalHours > 24 ? "dd/MM HH:mm" : "HH:mm";
+            return string.Format(L.T("{0} à {1} : {2} infos, {3} alertes, {4} critiques"), d.ToString(format), f.ToString(format), r.Compteurs[curseur, 0], r.Compteurs[curseur, 1], r.Compteurs[curseur, 2]);
+        }
+
+        internal string NomAccessible() { return curseur >= 0 ? DescriptionCurseur() : DescriptionGenerale(); }
+
+        protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() { return new ChronologiePeer(this); }
+    }
+
+    // Accessibilité (défaut 4) : expose la chronologie aux lecteurs d'écran ; le nom décrit la tranche sous le curseur
+    class ChronologiePeer : System.Windows.Automation.Peers.FrameworkElementAutomationPeer
+    {
+        public ChronologiePeer(ChronologieFluent o) : base(o) { }
+        protected override System.Windows.Automation.Peers.AutomationControlType GetAutomationControlTypeCore() { return System.Windows.Automation.Peers.AutomationControlType.Custom; }
+        protected override string GetClassNameCore() { return "Chronologie"; }
+        protected override bool IsControlElementCore() { return true; }
+        protected override string GetNameCore() { return ((ChronologieFluent)Owner).NomAccessible(); }
     }
 
     // Page Événements en WPF (U3b) : même recherche que la page d'aujourd'hui (RechercheSiem, lecture seule, hors du fil de
@@ -2102,7 +2203,7 @@ namespace DeR4Tizer
             foreach (var f in lignes.Take(VueConnexionsFluent.Maximum))
             {
                 string cle = VueConnexionsFluent.Cle(f);
-                liste.Children.Add(Briques.Ligne(Canal.Visible(f.Processus) + "  →  " + VueConnexionsFluent.Destination(f), "score " + f.Score, VueConnexionsFluent.Sous(f),
+                liste.Children.Add(Briques.Ligne(Canal.Visible(f.Processus) + "  →  " + VueConnexionsFluent.Destination(f), Briques.NiveauRisque(VueConnexionsFluent.Gravite(f)), VueConnexionsFluent.Sous(f),
                     VueConnexionsFluent.Gravite(f), cle == choisie, VueConnexionsFluent.Bloquee(f), () => { choisie = cle; Afficher(); }));
             }
             if (lignes.Count > VueConnexionsFluent.Maximum)
@@ -2163,7 +2264,7 @@ namespace DeR4Tizer
             foreach (var c in chaines)
             {
                 string cle = VueChainesFluent.Cle(c);
-                liste.Children.Add(Briques.Ligne(Canal.Visible(c.Resume), "score " + c.Score, VueChainesFluent.Sous(c), VueChainesFluent.Gravite(c), cle == choisie, false, () => { choisie = cle; noeud = null; Afficher(); }));
+                liste.Children.Add(Briques.Ligne(Canal.Visible(c.Resume), Briques.NiveauRisque(VueChainesFluent.Gravite(c)), VueChainesFluent.Sous(c), VueChainesFluent.Gravite(c), cle == choisie, false, () => { choisie = cle; noeud = null; Afficher(); }));
             }
             Detailler(c0, n0);
         }
@@ -2171,25 +2272,39 @@ namespace DeR4Tizer
         void Detailler(Chaine c, NoeudChaine n0)
         {
             bool en = L.En;
+            bool rendreFocus = detail.IsKeyboardFocusWithin;
             if (c == null) { detail.Content = new TextBlock { Text = en ? "Select a chain to read who launched what." : "Sélectionnez une chaîne pour lire qui a lancé quoi.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
             var pile = new StackPanel();
             pile.Children.Add(new TextBlock { Text = Canal.Visible(c.Resume), FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             pile.Children.Add(new TextBlock { Text = "score " + c.Score + "  ·  " + (en ? "alert above 12" : "alerte au-delà de 12"), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(VueChainesFluent.Gravite(c))), Margin = new Thickness(0, 2, 0, 4) });
             pile.Children.Add(Briques.Titre(en ? "Who launched what" : "Qui a lancé quoi", 10));
+            UIElement noeudChoisi = null;
             foreach (var n in c.Noeuds ?? new List<NoeudChaine>())
             {
                 int pid = n.Pid;
                 int g = VueChainesFluent.GraviteNoeud(c, n);
-                var ligne = new Border
+                bool ouvert = n == n0;
+                var ligne = new LigneBord
                 {
-                    Background = Jetons.Pinceau(n == n0 ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(4), Padding = new Thickness(8, 3, 8, 3),
+                    Background = Jetons.Pinceau(ouvert ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(4), Padding = new Thickness(8, 3, 8, 3),
                     Margin = new Thickness(Math.Min(Math.Max(n.Profondeur, 0), 8) * 14, 0, 0, 2), Cursor = Cursors.Hand
                 };
                 var texte = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis };
                 texte.Inlines.Add(new System.Windows.Documents.Run((n.Profondeur > 0 ? "└ " : "") + Canal.Visible(n.Nom)) { Foreground = Jetons.Pinceau(n.Score > 0 ? Jetons.Texte : Jetons.TexteSecondaire) });
                 texte.Inlines.Add(new System.Windows.Documents.Run("  " + pid + (n.Score > 0 ? "  ·  +" + n.Score : "")) { Foreground = Jetons.Pinceau(n.Score > 0 ? Briques.Couleur(g) : Jetons.TexteSecondaire), FontSize = 12 });
                 ligne.Child = texte;
-                ligne.MouseLeftButtonUp += (s, e) => { noeud = pid; Afficher(); };
+                // Accessibilité (défaut 4) : focus clavier, activation Entrée/Espace, nom lu par les lecteurs d'écran
+                ligne.Focusable = true;
+                ligne.FocusVisualStyle = Jetons.StyleFocus();
+                System.Windows.Automation.AutomationProperties.SetName(ligne, Canal.Visible(n.Nom) + ", PID " + pid + (n.Score > 0 ? ", +" + n.Score : ""));
+                Action activer = () => { noeud = pid; Afficher(); };
+                ligne.MouseLeftButtonUp += (s, e) => activer();
+                ligne.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { activer(); e.Handled = true; } };
+                ligne.MouseEnter += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Surface); };
+                ligne.MouseLeave += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Carte); };
+                ligne.GotFocus += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Surface); };
+                ligne.LostFocus += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Carte); };
+                if (ouvert) noeudChoisi = ligne;
                 pile.Children.Add(ligne);
             }
             if (n0 != null)
@@ -2199,6 +2314,8 @@ namespace DeR4Tizer
                 Actions(pile, VueChainesFluent.Actions(n0), a => Agir(n0, a));
             }
             detail.Content = pile;
+            // Accessibilité (défaut 4) : si le focus clavier était dans le détail, le rendre au nœud ouvert après reconstruction
+            if (rendreFocus && noeudChoisi != null) noeudChoisi.Dispatcher.BeginInvoke(new Action(() => noeudChoisi.Focus()), System.Windows.Threading.DispatcherPriority.Input);
         }
 
         void Agir(NoeudChaine n, string action)
