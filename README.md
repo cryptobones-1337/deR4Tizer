@@ -124,7 +124,7 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 > or 4.3 therefore does not update itself: install by hand (`msiexec /i deR4Tizer.msi`) a version that contains this
 > fix; automatic updates then work from that one onward.
 
-Each `vX.Y` tag triggers the *Release* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
+Each `vX.Y` tag triggers the *Publication* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
 GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
 strict (known fields only, 64 KB at most, a single file: the MSI package) and is never authoritative on its own, since
 it is not signed. Automatic installation is off by default; when on, it installs a package only if its hash is the one
@@ -146,13 +146,13 @@ from a first signed version, installed by hand (or by GPO, Intune, IT provider).
 
 1. obtain the code-signing certificate and compute the SHA-256 hash of its public key;
 2. set it in the repo variable `CLE_SIGNATURE` (later, together with the next key's);
-3. place the certificate in the GitHub "release" environment (approval required);
+3. place the certificate in the GitHub "publication" environment (approval required);
 4. push the `vX.Y` tag matching the code version: CI builds, signs, builds the MSI and publishes the release with its
    manifest;
 5. install this MSI on each machine; later versions can then install on their own (if automatic installation is on),
    this first version's package serving as the rollback.
 
-Protect releases: keep the signing secrets in the GitHub "release" environment with a required approval (Settings ›
+Protect releases: keep the signing secrets in the GitHub "publication" environment with a required approval (Settings ›
 Environments), protect the `v*` tags (Settings › Rules). The build (where the dependencies' scripts run) happens in a
 job with no secret; signing, in a separate job that receives only the executables; the WiX archive is verified by its
 hash and the actions are pinned by SHA. The ideal remains a key outside GitHub (Azure Trusted Signing, SignPath).
