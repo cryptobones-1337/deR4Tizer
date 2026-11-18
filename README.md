@@ -1,242 +1,13 @@
 # deR4Tizer
 
-**Protection locale pour Windows : détection type EDR, mini-SIEM et durcissement, sans cloud.**
-*Local protection for Windows: EDR-style detection, mini-SIEM and hardening, no cloud.*
+**Local endpoint defense for Windows: EDR-style detection, a mini-SIEM and hardening; no cloud, no telemetry.**
 
-[Français](#français) · [English](#english)
-
-> ⚠️ **Preuve de concept / Proof of concept.** Projet en développement actif, non audité. Ne remplace pas un antivirus ni un EDR commercial.
-> Under active development, not audited. Does not replace an antivirus or a commercial EDR.
+> ⚠️ **Proof of concept.** Under active development, not audited. Does not replace an antivirus or a commercial EDR.
+>
+> The interface is bilingual (English / French); this README and the project site are in English.
 
 ---
 
-## Français
-
-### Pourquoi
-
-deR4Tizer s'adresse aux structures qui n'ont ni SOC ni budget EDR : petites communes, TPE, artisans, commerces. Tout tourne **sur le poste**, sans compte, sans cloud et sans télémétrie. Les alertes critiques arrivent chez le prestataire ou le référent (ntfy, Teams, e-mail) et peuvent aussi partir vers le SIEM de votre choix.
-
-### Aperçu
-
-Captures réelles de l'interface (v4.3), prises dans la VM de test : Windows 11, Microsoft Defender actif, service
-installé depuis le MSI et laissé tourner quelques minutes. Aucune donnée d'un vrai poste.
-
-![Vue d'ensemble : état du poste, points à surveiller, bouton Panique](docs/images/interface-fr-vue-d-ensemble.png)
-
-![Connexions : programmes qui sortent sur Internet, destination, signataire, score](docs/images/interface-fr-connexions.png)
-
-![Santé : état de chaque collecte, ce qui manque et pourquoi](docs/images/interface-fr-sante.png)
-
-### Fonctionnalités (v4.3)
-
-État réel de chaque capacité (validée sur Windows par la CI avant sa désactivation, contrôlée en VM de test, testée en labo, ou implémentée sans vérification) :
-[matrice des capacités](docs/roadmap/capability-matrix.md). Aucune n'est encore prête pour la production ; le NDR,
-le DPI et l'IDS/IPS sont expérimentaux.
-
-| Domaine | Ce que fait deR4Tizer |
-|---|---|
-| **Réseau** | Connexions sortantes en direct par programme, score de suspicion, détection de balises (beaconing), première connexion d'un programme à Internet |
-| **Renseignement sur les menaces** | Listes open source mises à jour toutes les 12 h ; blocage automatique au pare-feu, actif par défaut et désactivable, pour Spamhaus DROP et Feodo Tracker seulement, 30 par heure au plus ; les autres listes donnent une alerte seule |
-| **Processus** | Arbre des processus et score cumulé par chaîne, PowerShell obscurci, techniques MITRE ATT&CK |
-| **Persistance** | Clés Run, services, tâches planifiées, WMI, dossiers Démarrage : alerte sur toute entrée nouvelle ou modifiée |
-| **Rançongiciels** | Fichiers leurres, suspension automatique du programme qui y touche ; alerte seule si c'est un logiciel connu et signé, au nom exact, installé hors du profil, si un administrateur l'a repris (7 jours, même fichier), ou après 3 suspensions en 24 h d'un programme signé installé dans Program Files |
-| **Vol de données** | Audit d'accès aux dossiers sensibles des navigateurs et applications |
-| **Vie privée** | Caméra, micro, outils de prise en main à distance, ports ouverts |
-| **Pare-feu** | Suivi des changements de règles (avec le programme auteur), exposition à Internet (paquets entrants depuis une IP publique) ; diagnostic par contrôle (adresse IPv4 publique, IPv6 globale, connexions acceptées, sources bloquées, UPnP, pare-feu de Windows), chacun constaté, pas constaté ou non vérifié, et verdict : « PC exposé » (rouge) seulement pour une exposition prouvée, « exposition à surveiller » (orange, par exemple une IPv6 globale seule), « rien relevé » ou « contrôles incomplets », jamais « aucune exposition » ni « protégé » |
-| **Durcissement** | Baseline inspirée d'Intune et de Microsoft, appliquée par la stratégie de groupe locale, réversible |
-| **Réponse** | Tuer, suspendre, isoler du réseau (sur le chemin réel du programme, jonctions résolues), mettre en quarantaine, bouton PANIQUE (coupe Internet, posé en entier ou pas du tout, état réel vérifié sur le pare-feu) ; identité du processus revalidée juste avant l'action ; une suspension, une isolation ou le mode panique ne sont jamais levés automatiquement, mais relancés au prestataire à leur échéance, comme une quarantaine (30 jours) ou un blocage manuel (90 jours) ; les actions automatiques passent par une garde contre les boucles, sans jamais retenir l'alerte, et une adresse débloquée à la main n'est pas rebloquée pendant 7 jours |
-| **Mini-SIEM** | Événements normalisés (sessions, comptes, groupes, processus, services, connexions, pare-feu, alertes) conservés 30 jours, recherche, chronologie, incidents de corrélation (force brute, session après échecs, nouvel administrateur, journal effacé, service suspect, protection affaiblie, attaque en plusieurs étapes, accès depuis Internet) |
-| **Suivi des incidents** | Alertes rattachées à des incidents : ouvert, pris en charge, clos avec un motif, jamais fermé automatiquement ; chronologie par incident (alertes, événements, actions de réponse, trous de collecte) ; page Incidents de l'interface |
-| **Santé** | Collectes, remontée des alertes et interface surveillées, avec un constat quand l'une s'arrête ; remontée, si elle est configurée, retentée après un échec ; interface relancée par une tâche planifiée ; page Santé et pastille d'en-tête |
-| **Règles de détection** | Chaque règle a un identifiant et une entrée dans `docs/detection/regles.md` ; la plupart ont une fiche : justification, télémétrie, faux positifs attendus ; « rien de suspect » est distingué de « collecte indisponible » |
-| **Analyse du trafic** | Capture passive des paquets (sockets brutes de Windows, sans pilote) : débit, programmes, destinations, ports et pays (registres Internet régionaux), carte du monde en direct |
-| **NDR local** (expérimental) | Usurpation ARP de la passerelle, nouveaux appareils, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS (Responder) avec leurre actif ; fonctionne aussi derrière un VPN |
-| **DPI** (expérimental) | Nom des sites TLS (SNI) et empreintes JA3 (liste SSLBL), HTTP en clair (identifiants envoyés sans chiffrement), DNS (tunnel DNS), SMB/Telnet/FTP vers Internet, noms comparés aux listes de menaces |
-| **IDS / IPS** (expérimental) | Règles au format Suricata (sous-ensemble : content, nocase, offset/depth/distance/within, flags, dsize…), règles intégrées + fichiers `.rules` (par exemple Emerging Threats Open) ; en mode IPS, blocage au pare-feu |
-| **Remontée des alertes** | Vers le prestataire ou le référent : ntfy, Microsoft Teams (webhook de flux de travail, carte avec le « quoi faire »), e-mail SMTP chiffré ; regroupement des alertes, plafond horaire, secrets réservés aux administrateurs |
-| **Intégration** | Syslog RFC 5424 (UDP/TCP, JSON ou CEF, en clair), API HTTP d'export en lecture seule avec jeton |
-| **Confidentialité** | Données (événements, sessions, alertes, appareils) lisibles seulement par SYSTEM, les administrateurs et les comptes autorisés ; jeton de l'API réservé aux administrateurs ; dossier créé avec ses droits par l'installation, propriétaire et droits réimposés et vérifiés à chaque démarrage, fichiers d'un autre propriétaire ignorés ; si la vérification échoue, configuration et secrets sont ignorés et l'interface l'affiche |
-| **Moins de bruit** | Mode apprentissage les 7 premiers jours (comportements mémorisés), exceptions « ne plus alerter pour ce comportement », critère « IP directe » neutralisé pour les VPN, messageries et jeux connus ; les alertes critiques ne sont jamais adoucies |
-| **Mise à jour** | Vérification quotidienne ; installation (désactivée par défaut) seulement si l'empreinte SHA-256 est juste et si le fichier est signé par l'une des clés épinglées dans le binaire, révocation vérifiée sur toute la chaîne, une révocation injoignable, inconnue ou révoquée faisant refuser l'installation (échec fermé), fichiers gardés dans un dossier réservé à SYSTEM, avec retour à l'ancienne version si le service ne répond plus (validation sur Windows en cours) |
-| **Interface** | Français / anglais ; page « Réponses en cours » : chaque action qui dure (suspension, isolation, mode panique, quarantaine, blocage manuel), son échéance de relance et sa récupération ; le mode panique dit sa portée avant d'agir et son état réel ensuite |
-
-### Architecture
-
-```
-deR4TizerSvc.exe   service Windows en Rust, compte SYSTEM (surveillance, réponse, export)
-deR4Tizer.exe      interface C# (.NET Framework 4.8, fourni avec Windows), sans droits admin
-C:\ProgramData\deR4Tizer   état partagé (JSON), journal ; lecture : administrateurs et comptes autorisés
-\\.\pipe\deR4Tizer         commandes interface → service (administrateurs et SYSTEM seulement, sur ce poste : connexions distantes refusées)
-```
-
-Aucun pilote noyau, aucune dépendance à installer : uniquement des API Windows (ETW, journal d'événements, WMI, pare-feu, IP Helper, WinVerifyTrust).
-
-### Compiler
-
-Prérequis : Windows 10/11, Visual Studio Build Tools 2022 (charge de travail « Développement Desktop en C++ »), [rustup](https://rustup.rs) avec la chaîne **stable-x86_64-pc-windows-msvc**, la même que la CI. Les tests sur un poste se font avec l'artefact compilé par la CI.
-
-```powershell
-rustup toolchain install stable-x86_64-pc-windows-msvc
-.\compiler.ps1          # interface (csc de Windows) + service Rust → bin\
-```
-
-### Installer
-
-Aucune version n'est publiée à ce jour (voir « Premier déploiement » plus bas). Une fois publiée : télécharger
-`deR4Tizer.msi` depuis la [page des versions](https://github.com/cryptobones-1337/deR4Tizer/releases) et l'ouvrir. Le service démarre aussitôt ; l'interface démarre d'elle-même, sans droits d'administrateur, dans les minutes qui suivent l'installation (tâche de relance), puis à chaque ouverture de
-session ; l'installeur ne la lance pas. Elle se trouve aussi dans le menu Démarrer. Licence et textes de l'installeur en français et en anglais. Les nouvelles versions sont signalées ; leur installation automatique s'active dans les réglages (versions signées).
-
-Déploiement sur un parc (GPO, Intune, prestataire) :
-
-```bat
-msiexec /i deR4Tizer.msi /qn
-msiexec /i deR4Tizer.msi /qn LANCEMENT_SESSION=0     :: sans lancement de l'interface à l'ouverture de session, ni tâche de relance (conservé aux mises à jour)
-```
-
-Désinstallation depuis « Applications », ou `msiexec /x deR4Tizer.msi /qn`. Elle retire les blocages, les règles de
-pare-feu et les leurres, remet les réglages de sécurité d'origine et efface les données ; `GARDER_BASELINE=1` et
-`GARDER_DONNEES=1` conservent respectivement les réglages et les données.
-
-Filtrage par nom de domaine activé (phase 7) : les cartes Ethernet et Wi-Fi sont réglées sur le résolveur de
-deR4Tizer (`127.0.0.1`, `::1`), leurs serveurs d'origine en secours. Désactivation, arrêt du service et désinstallation
-les rendent à leur état d'origine (noté dans `filtrage-origine.json`, dans le dossier de données). Si une carte restait
-sur `127.0.0.1` (service arrêté brutalement, retour manuel à une version sans filtrage), le DNS marche encore par les
-serveurs de secours ; pour la rendre à la main, en administrateur : `netsh interface ip set dns "<carte>" dhcp` et
-`netsh interface ipv6 set dns "<carte>" dhcp` (ou les serveurs d'origine notés dans le fichier). Limite pour un
-portable : les serveurs de secours et l'amont sont ceux du réseau de l'activation ; sur un autre réseau, si ces serveurs
-ne répondent pas, le filtrage se suspend (cartes rendues) et reprend quand l'amont répond de nouveau. Pour suivre un
-nouveau réseau, désactiver puis réactiver le filtrage.
-
-La réparation (`msiexec /fa`) est réservée aux administrateurs et absente de « Applications » : elle arrête et
-relance le service, ce qu'un compte standard ne doit pas pouvoir déclencher (refus vérifié par le scénario
-d'intégration : même processus du service avant et après).
-
-Développement : `.\construire-msi.ps1` construit le paquet (WiX 3.14, licence MS-RL, sans redevance) ;
-`.\mettre-a-jour.ps1` remplace les exécutables d'une installation existante.
-
-### Intégration SIEM
-
-**Syslog** : Réglages → *Envoi des alertes*. Format JSON (en-tête RFC 5424, détail en JSON) ou CEF.
-
-**API d'export** : Réglages → *API d'export*. Écoute sur `127.0.0.1:8642` par défaut. Le réseau local est possible (profils Domaine et Privé uniquement), **en clair** (HTTP, sans TLS) : jeton et données passent en clair, à réserver à un réseau de confiance.
-
-```bash
-curl -H "Authorization: Bearer <jeton>" "http://127.0.0.1:8642/api/v1/alertes?niveau=Alerte&format=ndjson"
-```
-
-| Route | Contenu |
-|---|---|
-| `/api/v1/sante` | Disponibilité (sans jeton) |
-| `/api/v1/alertes?depuis=&niveau=&limite=&format=json\|ndjson\|cef` | Alertes |
-| `/api/v1/connexions`, `/exposition` (avec le diagnostic par contrôle : constaté, pas constaté, non vérifié), `/baseline`, `/regles-parefeu`, `/blocages` | État |
-| `/api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json\|ndjson` | Recherche dans les événements (mini-SIEM) |
-| `/api/v1/incidents` | Incidents de corrélation |
-| `/api/v1/journal?lignes=200` | Journal du service (texte) |
-
-### Mise à jour automatique et signature
-
-> **Limite connue.** Dans les versions 4.2 et 4.3 déjà installées, la mise à jour automatique n'installe rien : le script
-> d'installation, lancé sans console, ne s'exécutait pas (corrigé dans `main` par la PR #26, pas encore dans une version publiée). Une 4.2 ou une
-> 4.3 installée ne se met donc pas à jour seule : installer à la main (`msiexec /i deR4Tizer.msi`) une version qui
-> contient ce correctif ; la mise à jour automatique fonctionne ensuite à partir de celle-ci.
-
-Chaque tag `vX.Y` lance le workflow *Publication* : tests, compilation, signature, empreintes et `manifeste.json`
-joints à la version GitHub. Les postes lisent ce manifeste une fois par jour (`releases/latest/download/manifeste.json`).
-Le manifeste est strict (champs connus seulement, 64 Ko au plus, un seul fichier : le paquet MSI) et ne fait jamais
-foi seul, puisqu'il n'est pas signé. L'installation automatique est désactivée par défaut ; activée, elle n'installe
-un paquet que si son empreinte est celle du manifeste, s'il est signé par l'une des **clés épinglées dans le
-binaire** (empreintes SHA-256 des clés publiques, variable de dépôt `CLE_SIGNATURE`, transmise à la compilation
-sous le nom `DER4TIZER_CLES_SIGNATURE` : la clé actuelle et la suivante, séparées par une virgule, pour passer le
-renouvellement du certificat), révocation vérifiée, et si la **version lue dans le paquet signé** (`ProductVersion`,
-avec l'`UpgradeCode` de deR4Tizer) est celle du manifeste et strictement plus récente que la version installée.
-Avant toute installation, le service se procure aussi le paquet de **sa propre version**, vérifié de la même façon,
-pour pouvoir y revenir ; sans lui, rien n'est installé. Les fichiers sont gardés dans `%ProgramFiles%\deR4Tizer\maj`,
-réservé à SYSTEM (droits vérifiés avant chaque usage), et les empreintes sont revérifiées juste avant l'exécution.
-Le service doit ensuite répondre en JSON valide sur son canal, avec la nouvelle version, dans les 60 s ; sinon le
-paquet de la version précédente est réinstallé. Sans clé épinglée, une version est seulement signalée : un compte
-GitHub compromis ne suffit pas à faire exécuter un binaire en SYSTEM sur le parc. Le contrôle de santé vérifie
-aussi que le tube du canal est tenu par le processus du service (et non par un programme qui l'aurait créé pendant
-l'arrêt de l'ancienne version).
-
-**Premier déploiement.** Aucune version n'est publiée à ce jour, et les postes installés avant la première version
-signée n'ont ni clé épinglée ni paquet de retour arrière disponible : ils ne se mettront jamais à jour seuls. Le
-parc part donc d'une première version signée, installée à la main (ou par GPO, Intune, prestataire). Procédure de
-publication :
-
-1. obtenir le certificat de signature de code et calculer l'empreinte SHA-256 de sa clé publique ;
-2. la renseigner dans la variable de dépôt `CLE_SIGNATURE` (avec, plus tard, celle de la clé suivante) ;
-3. ranger le certificat dans l'environnement GitHub « publication » (approbation obligatoire) ;
-4. poser le tag `vX.Y` correspondant à la version du code : la CI compile, signe, construit le MSI et publie la
-   version avec son manifeste ;
-5. installer ce MSI sur chaque poste ; les versions suivantes pourront ensuite s'installer seules (si l'installation
-   automatique est activée), le paquet de cette première version servant de retour arrière.
-
-Protéger la publication : ranger les secrets de signature dans l'environnement GitHub « publication » avec une
-approbation obligatoire (Settings › Environments), protéger les tags `v*` (Settings › Rules). La compilation (où
-s'exécutent les scripts des dépendances) se fait dans un job sans secret ; la signature, dans un job à part qui ne
-reçoit que les exécutables ; l'archive WiX est vérifiée par son empreinte et les actions sont épinglées par SHA.
-L'idéal reste une clé hors de GitHub (Azure Trusted Signing, SignPath).
-
-Pour signer : obtenir un certificat de signature de code (gratuit pour l'open source via
-[SignPath Foundation](https://signpath.org), ou Azure Trusted Signing, ou un certificat OV au format .pfx ; pour
-les mises à jour automatiques, SignPath et Azure Trusted Signing ne le sont pas en l'état : voir `docs/security/threat-model.md`), puis
-ajouter les secrets `CERTIFICAT_PFX` (fichier .pfx en base64) et `CERTIFICAT_MOT_DE_PASSE`. En local,
-`DER4TIZER_CERT_SHA1` (empreinte d'un certificat du magasin) fait signer `compiler.ps1`. Tant que les binaires ne sont
-pas signés, Windows affiche « éditeur inconnu » et les postes signalent les nouvelles versions sans les installer.
-
-### Limites connues
-
-- Un PC sur un réseau commuté ne voit que son propre trafic, le broadcast et le multicast : ce n'est pas un NDR de tout le réseau (il faudrait un port miroir).
-- La règle de pare-feu « deR4Tizer capture » autorise tout l'entrant vers le service : c'est nécessaire, une règle
-  bloquant le TCP entrant vers le service fait aussi tomber la capture (mesuré : 3 Ko reçus en 20 s au lieu de 304 Ko).
-  Le service n'écoute aucun port réseau, sauf l'API facultative, filtrée par adresse et bloquée sur le profil Public.
-- Capture IPv4 seulement pour l'instant ; le pays est celui du titulaire du bloc d'adresses (un CDN peut apparaître aux États-Unis).
-- Les exécutables ne sont pas encore signés (certificat de signature de code à obtenir, par exemple SignPath
-  Foundation pour les projets open source) ; le service reconnaît ses propres fichiers par leur empreinte SHA-256.
-- deR4Tizer complète Microsoft Defender, il ne le remplace pas : un attaquant administrateur peut arrêter le service.
-- Mode panique : les serveurs DNS et de notification restent joignables pour tous les programmes (un malware
-  pourrait s'en servir pour faire sortir des données) ; préférez un serveur ntfy auto-hébergé à ntfy.sh.
-- La détection des voleurs de données repose sur l'identité du programme qui lit les fichiers : elle ne voit pas
-  l'injection de code dans le navigateur. Le lancement d'un navigateur en débogage à distance
-  (`--remote-debugging-port`, technique courante de vol de cookies) est en revanche signalé.
-- Sur un poste géré (domaine, Intune), la baseline est en lecture seule ; si l'organisation n'active pas l'audit
-  du système de fichiers, une pastille signale que le vol de données n'est pas surveillé.
-- Les règles IDS utilisant `pcre`, `byte_test` et quelques autres options sont ignorées plutôt que mal appliquées.
-- L'export syslog part en clair (UDP ou TCP, sans TLS) : à réserver à un réseau local de confiance.
-- Le lot 3d a été mesuré dans une VM de test, Microsoft Defender pleinement actif (sans et avec la baseline durcie) :
-  le produit installé n'est pas détecté (aucune exclusion, scan et analyse rapide sans détection, service intact).
-  C'est un signal, pas une preuve sur un poste réel. Aucune distribution avant une CI GitHub verte, le lot 3d réussi
-  sur la version distribuée et signée, et une relecture indépendante.
-- La fenêtre de l'interface n'a jamais été ouverte en conditions réelles ; ses décisions sont testées à part.
-- Un logiciel « connu » n'est pas suspendu s'il touche un leurre, et son alerte est au niveau Info. Les droits de son dossier ne sont pas vérifiés : un dossier de Program Files ouvert par un installateur tiers, cas relevé sur un poste, permet à un compte standard d'y poser une copie signée ; un processus creux lancé depuis un binaire autorisé garde aussi ce statut.
-- Un compte standard peut atteindre le plafond de 30 blocages par heure en se connectant à 31 adresses listées : les
-  blocages par les listes s'arrêtent alors une heure, les alertes restent. Une alerte de l'IPS (expérimental) dit « bloquée »
-  même si la garde retient ensuite le blocage.
-- Les traces restent sur la machine surveillée (SIEM : 30 jours et 1 Go au plus) : un administrateur peut les effacer, et
-  une intrusion découverte tard peut en être sortie. Aucun export chiffré et complet n'existe (`docs/security/threat-model.md`).
-
-### Feuille de route
-
-1. ✅ Réglages, langue FR/EN, syslog, API d'export
-2. ✅ Mini-SIEM local : stockage, recherche, chronologie, corrélation
-3. ✅ Analyse du trafic, géolocalisation par pays (données publiques des RIR), carte du monde
-4. ✅ NDR local : usurpation ARP, serveur DHCP pirate, empoisonnement LLMNR/NBNS/mDNS
-5. ✅ DPI et IDS/IPS : SNI, DNS, empreintes JA3, règles compatibles Suricata
-6. ✅ Règles de détection identifiées et documentées, état des collectes (phase 3)
-7. ✅ Suivi des incidents, chronologie, santé des collectes et de l'interface (phase 4)
-8. ✅ Réponse bornée par la politique : identité revalidée, garde contre les boucles, échéances (phase 6)
-9. ✅ Refonte de l'interface (WPF) et assistant de premier lancement ; la nouvelle interface est l'interface par défaut ; l'interface d'avant reste disponible par `deR4Tizer.exe --classique` (contenu : Vue d'ensemble de l'état du poste, bouton panique, pages Connexions, Trafic (carte des pays et débit), Alertes, Incidents, Événements, Détection, Chaînes, Blocages, Quarantaine, Menaces, Baseline, Pare-feu, Démarrage auto, Extensions, Vie privée, Réseau local, Réponses en cours, Santé et Réglages avec panneau de détails ; toutes les pages sont désormais natives ; « Premiers réglages » : six étapes (bienvenue, vérification, apprentissage, qui prévenir, réponses automatiques, résumé) proposées au premier lancement de la coquille et rejouables depuis Réglages ; on peut y terminer l'apprentissage, activer ou désactiver les réponses automatiques et envoyer un message de test aux canaux d'alerte déjà réglés, chaque changement confirmé par un administrateur ; au démarrage de session, l'interface reste dans la zone de notification sans fenêtre ; deR4Tizer dans le menu Démarrer montre l'interface déjà ouverte ; si la nouvelle interface ne peut pas démarrer, l'interface classique la remplace et le signale)
-10. 🔄 Filtrage par nom de domaine (phase 7, en cours) : changement de serveur DNS sur une carte du poste signalé (DNS-002) ; filtrage activable par un administrateur depuis la page « Navigation » de l'interface (état, catégories, listes et licences, derniers noms bloqués, « Autoriser ce domaine »), désactivé par défaut ; listes « publicités et pistage » (EasyPrivacy, EasyList), aucune liste de sécurité pour l'instant ; résolveur d'amont au choix, proposé à l'activation : celui du réseau (défaut) ou Quad9 (fondation suisse, bloque les domaines malveillants ; les requêtes non bloquées lui sont alors envoyées, noms locaux compris : sur un réseau d'entreprise, garder celui du réseau), avec repli sur le DNS du réseau derrière un portail captif
-
-« ✅ » veut dire livré dans le code, pas validé pour la production : voir la matrice des capacités.
-
-### Licence
-
-[EUPL-1.2](LICENSE) (licence publique de l'Union européenne).
-
----
-
-## English
 
 ### Why
 
@@ -334,12 +105,28 @@ Repair (`msiexec /fa`) is restricted to administrators and hidden from "Apps": i
 curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?niveau=Alerte&format=ndjson"
 ```
 
-Routes are listed in the French section above (paths are identical). `/exposition` also carries the per-check diagnostic (found, not found, not checked).
+| Route | Content |
+|---|---|
+| `/api/v1/sante` | Availability (no token) |
+| `/api/v1/alertes?depuis=&niveau=&limite=&format=json\|ndjson\|cef` | Alerts |
+| `/api/v1/connexions`, `/exposition` (with the per-check diagnostic: found, not found, not checked), `/baseline`, `/regles-parefeu`, `/blocages` | State |
+| `/api/v1/evenements?q=&source=&type=&niveau=&depuis=&jusqua=&limite=&format=json\|ndjson` | Event search (mini-SIEM) |
+| `/api/v1/incidents` | Correlation incidents |
+| `/api/v1/journal?lignes=200` | Service log (text) |
 
 ### Known limits
 
-The full list is in the French section above. In particular:
+Known, by design — be aware before relying on it:
 
+- A PC on a switched network sees only its own traffic, broadcast and multicast: this is not a whole-network NDR (a mirror port would be needed).
+- The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary — a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
+- IPv4 capture only for now; the country is that of the address-block holder (a CDN may appear in the United States).
+- Executables are not signed yet (a code-signing certificate is being obtained, e.g. SignPath Foundation for open source); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
+- deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
+- Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
+- On a managed device (domain, Intune), the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
+- IDS rules using `pcre`, `byte_test` and a few other options are ignored rather than mis-applied.
+- Syslog export is sent in cleartext (UDP or TCP, no TLS): keep it to a trusted local network.
 - Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
   the installed product is not detected (no exclusion, scan and quick scan with no detection, service intact). A
   signal, not proof on a real machine. No distribution before a green GitHub CI, batch 3d passed on the distributed
@@ -374,21 +161,14 @@ The full list is in the French section above. In particular:
 
 ---
 
-## Sources de renseignement / Threat-intelligence credits
-
-Par défaut, seules les listes dont les conditions autorisent tout usage sont utilisées : Spamhaus DROP (citation, un
-téléchargement par jour) et abuse.ch Feodo Tracker / SSLBL (usage équitable). Les autres (FireHOL niveau 1, qui agrège
-DShield, ThreatView, Emerging Threats, CINS Army, IPsum, Phishing Army en CC BY-NC 4.0) sont non commerciales ou à
-vérifier : elles ne s'activent que par un réglage explicite, pour un usage personnel. Chaque liste est téléchargée en
-HTTPS, limitée à 100 Mo, rejetée si elle se vide ou s'effondre, et ignorée si elle couvrirait plus de 134 millions
-d'adresses ; les réseaux privés, CGNAT, de lien local et multicast ne sont jamais signalés ni bloqués.
+## Threat-intelligence credits
 
 By default only lists whose terms allow any use are enabled (Spamhaus DROP, abuse.ch Feodo Tracker / SSLBL). The others
+(FireHOL level 1, which aggregates DShield, ThreatView, Emerging Threats, CINS Army, IPsum, Phishing Army under CC BY-NC 4.0)
 are non-commercial or unverified and must be enabled explicitly, for personal use. Lists are fetched over HTTPS only,
 capped at 100 MB, rejected when empty or collapsing, and ignored when covering more than 134 million addresses; private,
 CGNAT, link-local and multicast networks are never flagged or blocked.
 
-Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker et SSLBL (JA3) · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers.
-Géolocalisation / geolocation : statistiques « delegated » d'ARIN, RIPE NCC, APNIC, LACNIC et AFRINIC. Carte / map : Natural Earth 1:110m (domaine public / public domain).
-Ces listes appartiennent à leurs auteurs et restent soumises à leurs propres conditions d'utilisation.
+Spamhaus DROP · FireHOL level 1 · abuse.ch Feodo Tracker and SSLBL (JA3) · ThreatView · Emerging Threats · CINS Army · IPsum · Phishing Army · LOLDrivers.
+Geolocation: "delegated" statistics from ARIN, RIPE NCC, APNIC, LACNIC and AFRINIC. Map: Natural Earth 1:110m (public domain).
 These lists belong to their authors and remain subject to their own terms of use.
