@@ -340,6 +340,7 @@ namespace DeR4Tizer
             FontSize = 14;
             Foreground = Jetons.Pinceau(Jetons.Texte);
             UseLayoutRounding = true;
+            Resources.Add(typeof(System.Windows.Controls.Primitives.ScrollBar), StyleDefilement());
             TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
 
             var grille = new Grid();
@@ -777,6 +778,29 @@ namespace DeR4Tizer
             }
 
             return new ScrollViewer { Content = pile, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        }
+
+        // Barre de défilement sombre : fine, pouce arrondi teinté, pas de boutons fléchés (chrome de Windows retiré)
+        static Style StyleDefilement()
+        {
+            Func<Color, string> hex = c => string.Format("#{0:X2}{1:X2}{2:X2}", c.R, c.G, c.B);
+            string n = hex(VueTraficFluent.Melange(Jetons.Separateur, Jetons.TexteSecondaire, 0.45));
+            string h = hex(VueTraficFluent.Melange(Jetons.Separateur, Jetons.TexteSecondaire, 0.8));
+            string x =
+                "<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='ScrollBar'>" +
+                "<Setter Property='Background' Value='Transparent'/><Setter Property='Width' Value='10'/><Setter Property='MinWidth' Value='10'/>" +
+                "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ScrollBar'>" +
+                "<Grid Background='Transparent'><Track Name='PART_Track' IsDirectionReversed='True'>" +
+                "<Track.Thumb><Thumb MinHeight='24'><Thumb.Template><ControlTemplate TargetType='Thumb'>" +
+                "<Border x:Name='t' Background='" + n + "' CornerRadius='4' Margin='2,1,2,1'/>" +
+                "<ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='t' Property='Background' Value='" + h + "'/></Trigger></ControlTemplate.Triggers>" +
+                "</ControlTemplate></Thumb.Template></Thumb></Track.Thumb>" +
+                "<Track.IncreaseRepeatButton><RepeatButton Command='ScrollBar.PageDownCommand' Opacity='0' Focusable='False'/></Track.IncreaseRepeatButton>" +
+                "<Track.DecreaseRepeatButton><RepeatButton Command='ScrollBar.PageUpCommand' Opacity='0' Focusable='False'/></Track.DecreaseRepeatButton>" +
+                "</Track></Grid></ControlTemplate></Setter.Value></Setter>" +
+                "<Style.Triggers><Trigger Property='Orientation' Value='Horizontal'><Setter Property='Width' Value='Auto'/><Setter Property='MinWidth' Value='0'/><Setter Property='Height' Value='10'/><Setter Property='MinHeight' Value='10'/></Trigger></Style.Triggers>" +
+                "</Style>";
+            return (Style)System.Windows.Markup.XamlReader.Parse(x);
         }
 
         static ControlTemplate modeleSimple;
