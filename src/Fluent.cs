@@ -1101,7 +1101,23 @@ namespace DeR4Tizer
             cadre.Focusable = true;
             cadre.FocusVisualStyle = Jetons.StyleFocus();
             System.Windows.Automation.AutomationProperties.SetName(cadre, string.Join(", ", new[] { titre, etiquette, sous }.Where(x => !string.IsNullOrEmpty(x))));
-            cadre.KeyDown += (s, e) => { if (e.Key == Key.Enter || e.Key == Key.Space) { choisir(); e.Handled = true; } };
+            // Accessibilité (défaut A) : activer au clavier reconstruit la liste et détruit cette ligne ; on rend le focus
+            // à la ligne ouverte de la liste reconstruite (sa référence change, mais le conteneur parent reste le même)
+            cadre.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter || e.Key == Key.Space)
+                {
+                    var parent = cadre.Parent as Panel;
+                    choisir();
+                    if (parent != null)
+                        foreach (UIElement enfant in parent.Children)
+                        {
+                            var lb = enfant as LigneBord;
+                            if (lb != null && lb.EstOuverte) { lb.Dispatcher.BeginInvoke(new Action(() => lb.Focus()), System.Windows.Threading.DispatcherPriority.Input); break; }
+                        }
+                    e.Handled = true;
+                }
+            };
             cadre.MouseEnter += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
             cadre.MouseLeave += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Carte); };
             cadre.GotFocus += (s, e) => { if (!ouverte) cadre.Background = Jetons.Pinceau(Jetons.Surface); };
