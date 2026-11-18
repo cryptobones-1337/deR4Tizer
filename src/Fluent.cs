@@ -313,6 +313,7 @@ namespace DeR4Tizer
         readonly Dictionary<string, TextBlock> pastillesNav = new Dictionary<string, TextBlock>();
         System.Windows.Shapes.Ellipse piedPoint;   // pied daté du rail : état du service
         TextBlock piedTexte;
+        Button boutonPanique;                        // panique dans l'en-tête (haut à droite), état suivi au rafraîchissement
         readonly ContentControl zone = new ContentControl();
         readonly TextBlock titrePage = new TextBlock();
         readonly List<Button> boutons = new List<Button>();
@@ -352,9 +353,21 @@ namespace DeR4Tizer
             titrePage.FontFamily = Jetons.PoliceTitre;
             titrePage.FontSize = 26;
             titrePage.FontWeight = FontWeights.SemiBold;
-            titrePage.Margin = new Thickness(0, 0, 0, 16);
-            DockPanel.SetDock(titrePage, Dock.Top);
-            droite.Children.Add(titrePage);
+            titrePage.VerticalAlignment = VerticalAlignment.Center;
+            // En-tête : titre à gauche, bouton Panique à droite (action globale, toujours accessible)
+            var entete = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+            DockPanel.SetDock(entete, Dock.Top);
+            if (source != null)
+            {
+                boutonPanique = new Button { Padding = new Thickness(16, 7, 16, 7), Cursor = Cursors.Hand, FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center };
+                boutonPanique.Template = ModeleSimple();
+                boutonPanique.Click += (s, a) => source.DemanderPanique();
+                MettreAJourPanique();
+                DockPanel.SetDock(boutonPanique, Dock.Right);
+                entete.Children.Add(boutonPanique);
+            }
+            entete.Children.Add(titrePage);
+            droite.Children.Add(entete);
             droite.Children.Add(zone);
             Grid.SetColumn(droite, 1);
             grille.Children.Add(droite);
@@ -441,6 +454,7 @@ namespace DeR4Tizer
                 else kv.Value.Visibility = Visibility.Collapsed;
             }
             MettreAJourPied();
+            MettreAJourPanique();
         }
 
         // Pied du rail : « · »-séparé depuis le statut du service (mise à jour, démarrage, version) ; pastille verte si en ligne
@@ -450,6 +464,17 @@ namespace DeR4Tizer
             string statut = source == null ? "" : (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
             piedTexte.Text = statut != "" ? statut : "v" + Commun.Version;
             piedPoint.Fill = Jetons.Pinceau(statut != "" ? Jetons.Succes : Jetons.TexteSecondaire);
+        }
+
+        // Bouton Panique de l'en-tête : texte et couleurs selon l'état (actif = fond accent, sinon contour rouge)
+        void MettreAJourPanique()
+        {
+            if (boutonPanique == null || source == null) return;
+            bool active = source.PaniqueActive();
+            boutonPanique.Content = source.TextePanique();
+            boutonPanique.Foreground = Jetons.Pinceau(active ? Jetons.TexteSurAccent : Jetons.Danger);
+            boutonPanique.Background = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Carte);
+            boutonPanique.BorderBrush = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Danger);
         }
 
         // Tuile de compteur : barre d'accent à gauche, grand nombre, libellé (Vue d'ensemble)
@@ -751,30 +776,6 @@ namespace DeR4Tizer
                 pile.Children.Add(carte);
             }
 
-            if (source != null)
-            {
-                bool active = source.PaniqueActive();
-                var panique = new Button
-                {
-                    Content = source.TextePanique(), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(16, 8, 16, 8),
-                    Margin = new Thickness(0, 8, 0, 0), Cursor = Cursors.Hand, FontWeight = FontWeights.SemiBold,
-                    Foreground = Jetons.Pinceau(active ? Jetons.TexteSurAccent : Jetons.Danger),
-                    Background = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Carte), BorderBrush = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Danger), BorderThickness = new Thickness(1)
-                };
-                panique.Template = ModeleSimple();
-                panique.Click += (s, a) => source.DemanderPanique();
-                pile.Children.Add(panique);
-                pile.Children.Add(new TextBlock
-                {
-                    // Phrase selon l'état (audit de #134, S134-01) : quand la panique est active, le bouton sert à la retirer
-                    Text = L.T(active ? "Rétablit Internet sur ce poste ; ce qui sera fait est dit avant d'agir."
-                                      : "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir."),
-                    FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 6, 0, 16), TextWrapping = TextWrapping.Wrap
-                });
-                string statut = (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
-                if (statut != "")
-                    pile.Children.Add(new TextBlock { Text = statut, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
-            }
             return new ScrollViewer { Content = pile, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         }
 
