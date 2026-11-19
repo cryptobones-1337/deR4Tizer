@@ -1266,11 +1266,19 @@ namespace DeR4Tizer
 
         public static void RendreFocus(Panel p, int rang, bool premierSinon)
         {
-            UIElement cible = null;
-            foreach (UIElement c in p.Children) { var lb = c as LigneBord; if (lb != null && lb.EstOuverte) { cible = lb; break; } }
-            if (cible == null && rang >= 0 && rang < p.Children.Count && p.Children[rang].Focusable) cible = p.Children[rang];
-            if (cible == null && premierSinon) foreach (UIElement c in p.Children) if (c.Focusable) { cible = c; break; }
+            var cible = CibleFocus(p, rang, premierSinon);
             if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        // Le rang où était le focus d'abord : parcourir la liste aux flèches sans ouvrir de ligne ne doit pas être ramené à
+        // la ligne ouverte à chaque rafraîchissement (relecture de #205, défaut A) ; la ligne ouverte seulement si ce rang
+        // n'existe plus, puis la première ligne (liste seulement)
+        public static UIElement CibleFocus(Panel p, int rang, bool premierSinon)
+        {
+            if (rang >= 0 && rang < p.Children.Count && p.Children[rang].Focusable) return p.Children[rang];
+            foreach (UIElement c in p.Children) { var lb = c as LigneBord; if (lb != null && lb.EstOuverte) return lb; }
+            if (premierSinon) foreach (UIElement c in p.Children) if (c.Focusable) return c;
+            return null;
         }
 
         // Grille commune : résumé en haut, liste à gauche, panneau de détails à droite
