@@ -1,9 +1,9 @@
 # Phase 6 : politique de réponse appliquée dans le code
 
 Ouverte le 2026-11-01, à la fin de la phase 4, sur l'accord explicite du mainteneur (réponse « Oui, selon le dossier »,
-`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Ce qu'il
-prévoit n'existe pas encore dans le code, sauf ce qui est dit « comme aujourd'hui » : chaque élément passe à « testé en labo » dans la matrice
-(`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
+`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Écrit avant le code ; la phase est depuis livrée et validée par le
+mainteneur le 2026-11-03 (`CLAUDE.md`, section 5, point 4) : l'état de chaque élément est celui de la matrice
+(`docs/roadmap/capability-matrix.md`).
 
 ## Besoin
 
@@ -98,7 +98,9 @@ registre n'est pas reproduit. Les scénarios le déclareront « non exécuté »
 
 ## À inscrire dans `CLAUDE.md` par le mainteneur
 
-L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé, sous la section 5, point 4 :
+Note du 2026-11-19 : `CLAUDE.md` cite depuis l'ouverture et la validation de la phase 6 avec les mots du mainteneur
+(section 5, point 4) et dit que la preuve locale en VM tient lieu de CI GitHub « comme pour les phases 3, 4 et 6 »
+(point 5). Texte proposé à l'époque, sous la section 5, point 4 :
 
 - Ouverture : le 2026-11-01, à la fin de la phase 4, accord explicite du mainteneur pour coder la phase selon le dossier
   de conception (réponse « Oui, selon le dossier »). Décisions de la phase : `docs/roadmap/phase6.md`.

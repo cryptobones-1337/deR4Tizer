@@ -1,13 +1,14 @@
 # Architecture actuelle de deR4Tizer
 
-État au 2026-10-22 (`main`, version 4.3). Description du code tel qu'il est, pas d'une cible.
+État au 2026-10-22 (`main`, version 4.3), complété au fil des PR jusqu'au 2026-11-19. Description du code tel qu'il
+est, pas d'une cible.
 
 ## Composants
 
 | Composant | Langage | Compte | Rôle |
 |---|---|---|---|
 | `deR4TizerSvc.exe` (`service-rs/`) | Rust (chaîne MSVC pour les binaires livrés) | SYSTEM | Surveillance, détection, réponse, export, mise à jour, protection du dossier de données. |
-| `deR4Tizer.exe` (`src/`) | C#, .NET Framework 4.8 | Utilisateur, sans droits d'administrateur | Affichage de l'état ; actions envoyées au service par le canal, avec l'UAC (`runas`). |
+| `deR4Tizer.exe` (`src/`) | C#, .NET Framework 4.8 (WPF pour l'interface par défaut, `src/Fluent.cs` ; WinForms pour l'interface d'avant, `--classique`, et la fenêtre cachée qui porte la zone de notification) | Utilisateur, sans droits d'administrateur | Affichage de l'état ; actions envoyées au service par le canal, avec l'UAC (`runas`). |
 | `deR4Tizer.msi` (`installeur/deR4Tizer.wxs`, `construire-msi.ps1`) | WiX 3.14 | Administrateur | Installation du service (démarrage automatique, redémarrage sur échec), du dossier de données avec ses droits, mise à niveau (`MajorUpgrade`, `AllowDowngrades`), désinstallation (`--nettoyer`, `--supprimer-donnees` sauf `GARDER_DONNEES=1`). |
 
 Aucun pilote noyau. API Windows utilisées : journaux d'événements, ETW, WMI, pare-feu (COM), IP Helper,
@@ -28,7 +29,9 @@ sockets brutes (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, sécurité N
 `surveillance` (cœur, `moniteur.rs`, relève toutes les 3 s), `commandes` (canal), `protection` (droits du dossier,
 toutes les heures), `listes de menaces` (12 h ; 24 h pour les deux listes Spamhaus DROP), `mise à jour` (quotidienne, 10 min après le démarrage),
 `notifications`, `syslog`, `api`, `siem`, `ndr`, `geoip`, `ja3`, `audit données sensibles`, `traces de processus`,
-`contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours, attendue 8 s au plus), plus un fil de capture par interface réseau (`capture.rs`). À l'arrêt du service, les alertes encore en file (persistance, alertes des autres fils, détections de processus) sont enregistrées dans `alertes.json` avant la sortie ; une alerte produite par un fil après cette reprise peut encore être perdue.
+`contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours, attendue 8 s au plus), `dns` (relevé des serveurs DNS des cartes, DNS-002, toutes les 60 s), `sante` (santé de l'interface et des collectes),
+`chronologies` (chronologie de chaque incident), `filtrage` (filtrage par nom de domaine, avec `filtrage rechargement`,
+`filtrage sonde` et `résolveur local fin`), `garde-canal`, plus un fil de capture par interface réseau (`capture.rs`). À l'arrêt du service, les alertes encore en file (persistance, alertes des autres fils, détections de processus) sont enregistrées dans `alertes.json` avant la sortie ; une alerte produite par un fil après cette reprise peut encore être perdue.
 
 Registre des règles (phase 3, `regles.rs`) : un identifiant stable par détection existante, compilé dans le binaire (aucun fichier de règles) ; chaque producteur d'alertes pose le sien dans `Alerte.Regle`, repris par le SIEM (`Evenement.Regle`, avec `Modele`). Liste et fiches : `docs/detection/regles.md`.
 
@@ -50,7 +53,10 @@ lecture. Contenu principal :
 | Élément | Rôle |
 |---|---|
 | `config.json` | Réglages (API, mise à jour, blocage automatique, IPS…). |
-| `reponses.json` | Historique de la garde contre les boucles : actions automatiques récentes, décisions humaines (`politique.rs`). |
+| `reponses.json` | Registre des actions en cours et de leurs échéances, relances comprises ; historique de la garde contre les boucles : actions automatiques récentes, décisions humaines (`politique.rs`). |
+| `suivi-incidents.json`, `chronologies\` | Cycle de vie des incidents (ouvert, pris en charge, clos) et chronologie de chacun (phase 4). |
+| `mesures.json` | Mesures du cycle de surveillance (`mesure.rs`). |
+| `filtrage-etat.json`, `filtrage-origine.json` | État publié du filtrage par nom de domaine ; réglages DNS d'origine des cartes, pour les rendre (phase 7). |
 | `lecteurs.json` | Comptes autorisés en lecture. |
 | `etat.json`, `alertes.json`, `incidents.json`, `journal.txt` | État publié, alertes, incidents, journal du service. |
 | `siem\` | Événements normalisés, un fichier NDJSON par jour (30 jours, 1 Go au plus). |

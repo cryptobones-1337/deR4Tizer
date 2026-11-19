@@ -1,6 +1,6 @@
 # Listes de domaines du filtrage DNS (phase 7) : sources, licences, choix
 
-État : **moteur livré, sans effet réseau** (PR 7.2, `filtrage.rs`). Ce document fixe ce que le filtrage par nom de
+État : **dans le code** : moteur (PR 7.2, `filtrage.rs`), résolveur local (7.3), activation sur les cartes (7.4), page « Navigation » et journal des blocages (7.5), résolveur tiers Quad9 au choix (7.6) ; DNS chiffré (7.7, facultative) non fait. Ce document fixe ce que le filtrage par nom de
 domaine de la phase 7 télécharge, et pourquoi. Il reprend le dossier de conception de la phase 7 (section 5, recherche
 documentaire du 2026-10-25).
 
@@ -34,12 +34,12 @@ documentaire du 2026-10-25).
 
 ## Activation sur les cartes (PR 7.4)
 
-Commande `filtrage` (`on` ou `off`, administrateurs ; l'interface viendra en 7.5). Activation : refus si le poste a un
+Commande `filtrage` (`on` ou `off`, administrateurs ; dans l'interface depuis 7.5b, page « Navigation »). Activation : refus si le poste a un
 suffixe DNS principal (poste joint à un domaine) ou une stratégie DNS ou NRPT (D7-5, recommandation appliquée) ;
 origine des cartes enregistrée dans `filtrage-origine.json` avant toute modification ; résolveur permanent lancé et
 contrôlé ; cartes Ethernet et Wi-Fi physiques actives réglées (`127.0.0.1` puis leurs serveurs, `::1` puis leurs
 serveurs IPv6) et vérifiées ; au moindre écart, tout est rendu. Repris au démarrage du service. Écarts au dossier :
-la collecte `FiltrageDns` et l'affichage viendront avec l'interface (7.5) ; une carte branchée après l'activation n'est
+la collecte `FiltrageDns` et l'affichage sont venus avec 7.5 (plus bas) ; une carte branchée après l'activation n'est
 pas réglée (réactiver) ; la restauration avant une mise à jour se fait à l'arrêt du service par msiexec, pour toute
 mise à jour, pas seulement un retour arrière.
 
@@ -94,13 +94,13 @@ mise à jour, pas seulement un retour arrière.
   journal « tiers injoignable » (audit de #167, R-v2-1).
 - DNS4EU reste écarté (particuliers seulement, sans usage commercial). DNS chiffré : étape 7.7 facultative, non faite.
 
-## Résolveur local (PR 7.3, non branché)
+## Résolveur local (PR 7.3 ; branché sur les cartes par 7.4)
 
 Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne que pendant un **essai** de 10 minutes
 lancé par un administrateur (commande `filtrageEssai`), sur `127.0.0.1:53` et `[::1]:53` seulement ; aucune carte n'est
 réglée sur lui.
 
-Décisions ouvertes du dossier appliquées sur sa recommandation, révisables par le mainteneur avant 7.4 :
+Décisions du dossier appliquées sur sa recommandation, sans décision écrite du mainteneur, toujours en vigueur après 7.4 :
 
 - **D7-1** (mécanisme) : M2, le résolveur local ;
 - **D7-4** (réponse à un nom bloqué) : A `0.0.0.0`, AAAA `::`, autres types sans réponse (NODATA), TTL de 60 s ;
@@ -128,8 +128,9 @@ Décisions ouvertes du dossier appliquées sur sa recommandation, révisables pa
   deR4Tizer ne **redistribue** aucune liste.
 - Les obligations de partage des licences GPL et CC BY-SA portent sur la redistribution, pas sur l'usage. Une licence
   « non commerciale » restreint en revanche l'**usage**, ce qui exclut les TPE et les communes.
-- Ce qui suit est une **lecture technique** des pages des projets, **pas un avis juridique**. Les choix restent au
-  mainteneur (décisions D7-2, D7-3 et D7-8 du dossier, ouvertes).
+- Ce qui suit est une **lecture technique** des pages des projets, **pas un avis juridique**. D7-8 a été tranchée par le
+  mainteneur le 2026-11-14 ; D7-2 (aucune liste de sécurité) et D7-3 (EasyPrivacy et EasyList) sont appliquées sur la
+  recommandation du dossier, sans décision écrite du mainteneur.
 - Les sources seront compilées dans le binaire : aucune adresse de liste ne sera lue d'un fichier.
 
 ## Listes examinées
@@ -144,7 +145,7 @@ Décisions ouvertes du dossier appliquées sur sa recommandation, révisables pa
 | Phishing Army | sécurité | CC BY-NC 4.0 | non | Reste sous « listes restreintes » pour DNS-001, jamais pour le blocage. |
 | ThreatView domaines | sécurité | à vérifier | inconnu | Idem. |
 | StevenBlack « unified » | publicité, logiciels malveillants | dépôt sous MIT, mais agrège des listes non commerciales (MVPS, Dan Pollock) | non | Écartée. |
-| Résolveur Quad9 (au lieu d'une liste) | sécurité | service gratuit ; conditions à relire par le mainteneur | à confirmer | Proposé comme amont choisi, nommé, pour « Navigation sécurisée ». |
+| Résolveur Quad9 (au lieu d'une liste) | sécurité | service gratuit ; conditions lues et acceptées par le mainteneur (D7-8, 2026-11-14) | permis | Retenu comme amont au choix de l'administrateur, jamais par défaut (PR 7.6). |
 
 ## Ce qui sera bloqué par défaut : rien
 

@@ -1,8 +1,9 @@
 # Politique de réponse de deR4Tizer
 
 Une action de réponse coupe ou modifie quelque chose sur le poste du client : elle doit être juste, réversible
-et prévisible. Cette politique fixe ce que deR4Tizer a le droit de faire seul. Son application complète dans le
-code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
+et prévisible. Cette politique fixe ce que deR4Tizer a le droit de faire seul. Elle est appliquée dans le
+code depuis la phase 6 (validée par le mainteneur le 2026-11-03, `CLAUDE.md`, section 5, point 4) ; les écarts qui
+restent sont listés plus bas.
 
 ## Niveaux
 
@@ -27,22 +28,24 @@ code relève de la phase 6 ; l'écart avec le code actuel est listé plus bas.
 
 Tout le reste, IPS compris, est au niveau 2 au plus.
 
-## Filtrage par nom de domaine (phase 7, moteur livré, blocage prévu)
+## Filtrage par nom de domaine (phase 7, dans le code)
 
-Le moteur de filtrage est dans le code (PR 7.2, `filtrage.rs`), **sans effet réseau** : il charge les listes des
-catégories actives (aucune par défaut) et décide pour un nom, mais rien ne le consulte encore. Quand le résolveur local
-viendra (PR 7.3, 7.4), le blocage d'un nom de domaine par le filtrage sera une **action automatique de niveau 2** : désactivée par défaut, activée sciemment par un administrateur, en deux
-activations séparées (« Navigation sécurisée », « Publicités et pistage »). Il ne s'ajoute pas au niveau 3.
+Le filtrage est dans le code : moteur (PR 7.2, `filtrage.rs`), résolveur local (PR 7.3, `dns_local.rs`), activation
+sur les cartes (PR 7.4), page « Navigation » et journal des blocages (PR 7.5), résolveur tiers Quad9 au choix (PR 7.6).
+Le blocage d'un nom de domaine par le filtrage est une **action automatique de niveau 2** : désactivée par défaut,
+activée sciemment par un administrateur, catégories activées séparément (« Navigation sécurisée », « Publicités et
+pistage »). Il ne s'ajoute pas au niveau 3.
 
-Les lignes marquées « D7-x » sont des propositions du dossier de la phase 7 ; ces décisions restent ouvertes et
-reviennent au mainteneur.
+Les lignes marquées « D7-x » renvoient au dossier de la phase 7. D7-8 (Quad9) a été tranchée par le mainteneur le
+2026-11-14 ; D7-1, D7-2, D7-3 et D7-10 sont des recommandations du dossier appliquées dans le code, sans décision écrite
+du mainteneur (`docs/detection/listes-domaines.md`).
 
-| | Prévu |
+| | Dans le code |
 |---|---|
-| Durée | Tant que le filtrage reste activé : c'est un **mode**, pas une action ponctuelle, donc sans échéance (même écart que l'IPS). Pour qu'un faux positif durable ne passe pas inaperçu (le site d'une mairie dans une liste publicitaire), un compteur des noms bloqués et un signal au-delà d'un seuil, ou un rappel périodique, sont à prévoir avec l'interface (PR 7.5) (audit de #157, S157-02). |
-| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le mécanisme proposé (résolveur local, D7-1 ouverte) : cartes réseau remises à l'identique, DHCP compris. |
-| Échec | Ouvert, jamais de coupure du DNS. Avec le mécanisme proposé (D7-1 ouverte) : serveurs d'origine en secours si le résolveur local ne répond plus. |
-| Garde contre les boucles | Proposition du dossier (D7-10, ouverte) : jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) ; alerte DNS-002 et réactivation par l'utilisateur. |
+| Durée | Tant que le filtrage reste activé : c'est un **mode**, pas une action ponctuelle, donc sans échéance (contrairement à l'IPS, dont les blocages durent 24 h). Pour qu'un faux positif durable ne passe pas inaperçu (le site d'une mairie dans une liste publicitaire), un compteur des noms bloqués et un signal au-delà d'un seuil, ou un rappel périodique, sont à prévoir avec l'interface (PR 7.5) (audit de #157, S157-02). |
+| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le résolveur local (D7-1, recommandation appliquée) : cartes réseau remises à l'identique, DHCP compris, à la désactivation, à l'arrêt du service et à la désinstallation. |
+| Échec | Ouvert, jamais de coupure du DNS : serveurs d'origine en secours si le résolveur local ne répond plus. |
+| Garde contre les boucles | Recommandation du dossier appliquée (D7-10, sans décision écrite du mainteneur) : jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) ; alerte DNS-002 et réactivation par l'utilisateur. |
 | Jamais bloqué | Une liste de protection compilée dans le binaire (mises à jour de Windows et de Defender, autorités de certification) et les noms autorisés par l'utilisateur. |
 | Ce qu'il n'est pas | Une barrière de sécurité : un programme qui a son propre résolveur (DNS chiffré intégré, adresse codée en dur) le contourne. Il réduit l'exposition, rien de plus. |
 
@@ -104,9 +107,9 @@ est retenue. Un administrateur peut toujours agir à la main.
   rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
   en mémoire, sans son historique, et la réponse reste.
 
-## Prévu en phase 6 (pas encore dans le code)
+## Durées et récupération (phase 6, dans le code)
 
-Décisions : `docs/roadmap/phase6.md`. Ces valeurs entrent en vigueur avec la PR qui les apporte.
+Décisions : `docs/roadmap/phase6.md`. Ces valeurs sont en vigueur depuis les PR citées dans le tableau.
 
 **Mode panique transactionnel (PR 6.5).** Les deux règles sont posées et vérifiées (présentes, activées, en blocage),
 puis seulement le drapeau est écrit ; un échec à n'importe quelle étape retire tout et lève l'alerte REP-003 « mode
@@ -175,12 +178,12 @@ qu'il peut avoir été repris hors de deR4Tizer.
 Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une au contrôle suivant : 24 h s'il vient de l'IPS,
 7 jours sinon.
 
-**Récupération.** Chaque procédure sera écrite et vérifiée en VM par la PR qui porte l'action ; celle qui n'est que lue sera déclarée « non exécutée ».
+**Récupération.** Avec le service, isoler puis libérer un programme (scénario 3b) et activer puis désactiver le mode panique (scénario 3a) sont exercés à chaque passage complet en VM depuis la phase 6 (par exemple la preuve de la PR #168 : 3a 90 réussis, 3b 34 réussis, 0 échec). Les procédures service arrêté et après la désinstallation sont écrites, pas exercées en VM ; les échéances longues (2 h, 24 h, 7 jours) ne sont vérifiées qu'en labo.
 
 | Action | Avec le service | Service arrêté ou en panne | Après la désinstallation |
 |---|---|---|---|
 | Suspension | « Reprendre » (identité revalidée) ou « Tuer » | Moniteur de ressources de Windows (`resmon`, « Reprendre le processus »), ou arrêt du processus dans le Gestionnaire des tâches | le processus reste suspendu jusqu'à son arrêt ou au redémarrage : redémarrer le poste |
-| Isolation | « Libérer » (sur le chemin final ; contrôle VM écrit par la PR 6.6, pas encore exécuté) | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
+| Isolation | « Libérer » (sur le chemin final ; exercé en VM au scénario 3b) | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
 | Mode panique | « Rétablir Internet » ; aussi sûr en état « incertain » (signal VM, PR 6.5) | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu, puis le fichier `panique-active` du dossier de données | `--nettoyer`, d'après les règles et pas seulement le drapeau |
 | Blocage IP | « Débloquer » | règles « deR4Tizer » du pare-feu | `--nettoyer` |
 | Quarantaine | « Restaurer » ou repli | aucune (copie encodée dans le dossier de données) | avec `GARDER_DONNEES=1` : réinstaller puis restaurer ; sans : perdue, à vérifier |
@@ -189,5 +192,5 @@ Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une au
 
 | Écart | Où | À traiter |
 |---|---|---|
-| L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Phase 6. |
-| Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Phase 6. |
+| L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Traité en phase 6 : blocage de 24 h, levé à l'échéance (PR 6.4, tableau plus haut). |
+| Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Traité en phase 6 : durées et relances (PR 6.4, tableau plus haut). |

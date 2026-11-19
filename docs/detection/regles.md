@@ -233,8 +233,8 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Tests** : `dns_001_positif` (domaine d'une liste synthétique, sans tenir compte de la casse), `dns_001_negatif` (autre
   domaine ; sous-domaine, les listes portant des noms exacts ; nom vide) ; décision pure `moniteur::alerte_dns`
   (PR 3.8). Non exercée en VM : il faudrait une liste de domaines de test chargée par le service, que rien ne prévoit.
-- **Phase 7 (prévu)** : quand le filtrage par nom de domaine sera activé par l'utilisateur, l'alerte dira aussi que la
-  résolution a été bloquée.
+- **Phase 7** : le filtrage par nom de domaine est dans le code (PR 7.2 à 7.6) ; le blocage d'un nom par le filtrage est
+  compté dans les « derniers blocages » de la page « Navigation », sans changer cette alerte.
 
 ### DNS-002 : serveur DNS changé sur une carte du poste
 - **Code** : `dns_surveillance.rs` (`releve`, `changements_dns`) ; fil « dns » de `moniteur.rs` (phase 7, PR 7.1).
@@ -253,9 +253,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   - changement donné par le DHCP sur le même réseau : événement seulement ;
   - cartes virtuelles et VPN : événement seulement ;
   - carte nouvelle ou disparue : rien.
-  Rien n'est remis en place (lecture seule). Le cas « filtrage actif et carte qui ne pointe plus vers le mécanisme de
-  blocage » viendra avec le filtrage (D7-1 ouverte) ; la proposition du dossier de ne rien remettre en place
-  automatiquement est la décision D7-10, ouverte.
+  Rien n'est remis en place (lecture seule). Le cas « filtrage actif et port 53 de la boucle locale tenu par un autre
+  programme » est la règle DNS-003 (PR 7.5a) ; rien n'est remis en place automatiquement après un changement par un
+  tiers (D7-10, recommandation du dossier appliquée, sans décision écrite du mainteneur).
 - **Si elle manque** : `GetAdaptersAddresses` en échec : collecte `ConfigDns` indisponible, jamais « aucun changement » ;
   la référence est gardée, un changement fait pendant la panne est signalé au retour.
 - **Niveau** : Alerte. Signal fort : jamais appris ni adouci par l'apprentissage ; une exception « ne plus alerter »
