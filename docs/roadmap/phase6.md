@@ -88,7 +88,7 @@ reprise par un administrateur arrête une boucle.
 
 ## Preuve
 
-GitHub Actions est toujours désactivé. Pour la phase 6, la preuve locale en VM tient lieu de CI GitHub, d'après la même
+GitHub Actions était alors désactivé (du 2026-10-22 au 2026-11-17). Pour la phase 6, la preuve locale en VM tient lieu de CI GitHub, d'après la même
 réponse du mainteneur, qui portait aussi sur ce régime de preuve, en attendant qu'il l'inscrive dans `CLAUDE.md`. Rien ne
 change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et relecture indépendante restent exigés.
 

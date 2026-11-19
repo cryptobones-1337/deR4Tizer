@@ -19,8 +19,8 @@ cargo test --release
   message valide et des milliers d'entrées pseudo-aléatoires, jamais de panique : le service est compilé avec
   `panic = "abort"`).
 - Le job `windows` de la CI exécute la même commande (chaîne MSVC) à chaque PR et sur `main`, et vérifie que le
-  service ne dépend pas du runtime Visual C++ (`dumpbin /dependents`). GitHub Actions est désactivé sur le dépôt
-  depuis le 2026-10-22 : ce job n'a pas tourné sur l'arbre actuel.
+  service ne dépend pas du runtime Visual C++ (`dumpbin /dependents`). GitHub Actions a été désactivé du
+  2026-10-22 au 2026-11-17 ; depuis, ce job tourne à chaque PR (469 réussis le 2026-11-19, run 44480286774 (PR #205, `cd36ee4`, 2026-11-19)).
 
 ## Compilation
 
@@ -39,12 +39,14 @@ Chaque script écrit un tableau (RÉUSSI, ÉCHOUÉ, NON EXÉCUTÉ avec la raison
 |---|---|---|---|---|
 | 3a | `integration-installation` | `tests/integration/installation.ps1` | run 39822711631 (`3194bb6`) | 42 scénarios, 0 échoué, 0 non exécuté |
 | 3b | `integration-quarantaine` | `tests/integration/quarantaine.ps1` | run 39822711631 (`3194bb6`) | 21 scénarios, 0 échoué, 1 non exécuté |
-| 3c | `integration-maj` | `tests/integration/maj.ps1` | jamais exécuté en CI | — |
+| 3c | `integration-maj` | `tests/integration/maj.ps1` | run 44480286774 (PR #205, `cd36ee4`, 2026-11-19) | 20 scénarios, 0 échoué, 1 non exécuté |
 
 Non exécuté en 3b : refus par `creer_sans_lien` d'une jonction posée entre le contrôle du propriétaire et la
 création (course non reproductible de façon déterministe).
 
-## Intégration en Windows Sandbox (preuve locale pendant la désactivation de GitHub Actions)
+Au même run 44480286774 (PR #205, `cd36ee4`, 2026-11-19) : 3a 91 scénarios, 0 échoué, 4 non exécutés ; 3b 35, 0 échoué, 1 non exécuté.
+
+## Intégration en Windows Sandbox (preuve locale pendant la désactivation de GitHub Actions, du 2026-10-22 au 2026-11-17)
 
 Mêmes scripts, lancés par `tests/bac-a-sable/preparer.ps1` puis `lancer.ps1 -Scenario installation|quarantaine|maj`
 (et `preparer.ps1 -Maj` pour 3c), dans une Windows Sandbox jetable. Signal, pas preuve : ni poste réel ni Defender

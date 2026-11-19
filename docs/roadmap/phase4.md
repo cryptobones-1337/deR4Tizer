@@ -67,7 +67,7 @@ selon les recommandations du dossier de conception ; le mainteneur peut revenir 
 
 ## Preuve
 
-GitHub Actions est toujours désactivé. `CLAUDE.md` ne prévoit la preuve locale en VM à la place de la CI GitHub que pour
+GitHub Actions était alors désactivé (du 2026-10-22 au 2026-11-17). `CLAUDE.md` ne prévoit la preuve locale en VM à la place de la CI GitHub que pour
 la phase 3. Pour la phase 4, elle est **appliquée d'après la réponse du mainteneur du 2026-10-26**, en attendant qu'il
 l'inscrive dans `CLAUDE.md`. Rien ne change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et
 relecture indépendante restent exigés.
