@@ -124,7 +124,9 @@ Veut publier une version malveillante que les postes installeraient.
   versions 4.2 et 4.3 déjà installées (corrigée par la PR #26 ; aucune version n'est publiée sur GitHub), n'installe rien
   aujourd'hui.
 - Choix du certificat : l'épinglage repose sur la clé publique. Certificat retenu par le mainteneur le 2026-11-11 :
-  Certum Open Source, à son nom, propre au projet ; sa clé publique est épinglée (`CLE_SIGNATURE`) ; valable jusqu'au
+  Certum Open Source, au nom du mainteneur ; sa clé publique est épinglée (`CLE_SIGNATURE`). L'épinglage accepterait
+  aussi un paquet signé par cette même clé pour un autre projet du même titulaire (l'`UpgradeCode` et la version
+  restent contrôlés). Le certificat est valable jusqu'au
   2027-11-17, le renouvellement (nouvelle clé à épingler) est à préparer avant cette date. SignPath et Azure Trusted
   Signing, écartés, n'étaient pas utilisables en l'état :
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
