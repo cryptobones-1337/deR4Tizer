@@ -1,6 +1,8 @@
 # Campagne Kali — premier passage
 
 Date : 2026-11-15. Liste des scénarios : v1.3 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : (1) Le report de S-06 reposait sur une prémisse fausse (« code du filtrage absent du checkout ») : `campagne-kali-phase1.md`, §5.5, la corrige ; S-06 a été mesuré aux troisième et quatrième lots. (2) Le constat COR-R3 reste ouvert, non corrigé dans le code au 2026-11-19. (3) Hors S-01 en configuration A (10 essais), aucun nombre d'essais n'est donné : mesures non consolidées ; S-14 et les volets simulés de S-13 sont des SIMULATIONS.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation (RFC 5737),
 non routables.
 

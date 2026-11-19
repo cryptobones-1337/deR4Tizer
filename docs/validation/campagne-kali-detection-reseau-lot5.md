@@ -1,6 +1,8 @@
 # Campagne Kali — cinquième lot « détection réseau » : durcissement (fuzzing des décodeurs) + DHCP pirate
 
 Date : 2026-11-17. Ce lot couvre deux choses : (1) le **durcissement volet 1** — fuzzing des décodeurs de paquets,
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Le « durcissement proposé » et le « correctif identifié » du §2 et du §3 sont faits : PR #190, fusionnée le 2026-11-17 ; S-21 reste à remesurer.
 et (2) le scénario **S-21 (serveur DHCP pirate)**, qui aboutit à un **constat de limite mesuré** et à une piste de
 durcissement. Lab isolé ; résultats bruts hors dépôt ; aucune donnée personnelle, aucun nom de poste, aucun mot de
 passe.
@@ -66,6 +68,4 @@ contrôlée par l'attaquant, un `OFFER` forgé peut désigner une IP **bénigne*
 - **Revue des blocs `unsafe`** et **corroboration anti-faux-positifs** : rédigées (volets 2 et 3 du durcissement),
   à instruire avec le correctif ci-dessus.
 
-**Documentation seule : passage non requis.** Lab isolé, résultats bruts hors dépôt. Aucune donnée personnelle.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Lab isolé, résultats bruts hors dépôt. Aucune donnée personnelle.

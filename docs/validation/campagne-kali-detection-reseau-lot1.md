@@ -1,6 +1,8 @@
 # Campagne Kali — premier lot « détection réseau » (NDR / IDS dégelés)
 
 Date : 2026-11-16. La phase « détection réseau » a été **ouverte par le mainteneur** (dégel du 2026-11-16) :
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Les constats du §2 (leurre actif sauté 10 minutes après un échec de `bind`, injection de faux positifs) ne sont pas corrigés au 2026-11-19.
 le NDR local (`ndr.rs`, `EXP-NDR-001`) et l'IDS (`ids.rs`, `EXP-IDS-001`), jusque-là expérimentaux et gelés,
 entrent en validation. Ce premier lot éprouve les détections accessibles **sans privilège root** sur la machine
 attaquante. Lab isolé ; adresses en plages de documentation (RFC 5737) ; noms de test en `.test` (RFC 2606) ;

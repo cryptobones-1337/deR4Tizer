@@ -1,6 +1,8 @@
 # Campagne Kali — quatrième lot « détection réseau » (redirection UPnP)
 
 Date : 2026-11-16. Ce lot mesure la détection des **redirections de ports UPnP** (`EXP-NDR-001`, T1133 : le PC
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. « Couverture NDR complète » : sans le DHCP pirate (S-21, à remesurer après la PR #190) ni le responder passif NBNS (non exercé, voir la note du troisième lot).
 rendu joignable depuis Internet). Lab isolé ; résultats bruts hors dépôt ; aucune donnée personnelle, aucun nom de
 poste, aucun mot de passe.
 

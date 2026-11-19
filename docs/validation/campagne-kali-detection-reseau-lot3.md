@@ -1,6 +1,8 @@
 # Campagne Kali — troisième lot « détection réseau » (responder passif mDNS)
 
 Date : 2026-11-16. Ce lot ferme la couverture **responder passif** en ajoutant le volet **mDNS**, après LLMNR
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Le §3 compte le responder passif NBNS comme couvert « via le leurre actif, S-25 » : S-25 est la jambe NBNS du leurre actif ; le responder passif NBNS n'a pas été exercé.
 (S-23, deuxième lot) et la jambe NBNS du leurre actif (S-25). Lab isolé ; adresses en plages de documentation
 (RFC 5737) ; noms de test en `.test` / `.local` (RFC 2606, RFC 6762) ; résultats bruts hors dépôt. Aucune donnée
 personnelle, aucun nom de poste, aucun mot de passe. Root borné par les mêmes unités systemd auditables (pilotage

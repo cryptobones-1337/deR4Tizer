@@ -199,7 +199,7 @@ Known, by design. Be aware before relying on it:
 1. ✅ Settings, FR/EN language, syslog, export API
 2. ✅ Local mini-SIEM: storage, search, timeline, correlation
 3. ✅ Traffic analysis, per-country geolocation (public RIR data), world map
-4. ✅ Local NDR: ARP spoofing, rogue DHCP server, LLMNR/NBNS/mDNS poisoning
+4. ✅ Local NDR: ARP spoofing, rogue DHCP server (not yet measured positive in the lab), LLMNR/NBNS/mDNS poisoning
 5. ✅ DPI and IDS/IPS: SNI, DNS, JA3 fingerprints, Suricata-compatible rules
 6. ✅ Identified and documented detection rules, collection status (phase 3)
 7. ✅ Incident tracking, timeline, health of collections and interface (phase 4)

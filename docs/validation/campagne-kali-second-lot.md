@@ -1,6 +1,8 @@
 # Campagne Kali — second lot (vol d'identifiants, listes de menaces)
 
 Date : 2026-11-15. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : « couverture » et « vrais positifs mesurés » désignent des essais isolés : aucun nombre d'essais n'est donné, aucune mesure n'est consolidée (10 essais valides, `CLAUDE.md`). Le constat COR-R3 reste ouvert, non corrigé au 2026-11-19.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation (RFC 5737),
 non routables. Prolonge le rapport du premier passage (`campagne-kali-premier-passage.md`) : il lève deux des préalables
 qui y étaient notés (profil de navigateur pour VOL-001, listes de menaces actives pour DNS-001/RES-001).

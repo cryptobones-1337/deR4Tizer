@@ -806,3 +806,26 @@ antérieur aux fusions de phase 7.3/7.4.
 testable (5.2) ; N-05 est un témoin négatif normal (3.2). **Il n'y a pas de question bloquante au mainteneur sur ce
 point.** Seule prudence maintenue, non bloquante : avant de mesurer, confirmer que le **binaire installé** dans
 l'instantané de test correspond bien à cette source de `main` (empreinte du MSI et version relevées, section 4, point 5).
+
+## 6. Version 1.5 (2026-11-19) : scénarios de détection réseau S-20 à S-27, approuvés après exécution
+
+Ajoutés à la liste approuvée le 2026-11-19 sur décision du mainteneur (« Scénario S20 à S27, il faut les ajouter à la
+liste approuvée », `CLAUDE.md`, campagne Kali). **Approbation après coup** : ces scénarios ont été conçus dans le dossier
+de conception « détection réseau » (hors dépôt) et exécutés du 2026-11-16 au 2026-11-17, avant leur inscription ici.
+Niveaux et techniques d'après le code (`ndr.rs`, `ids.rs`). Nature : émulation bénigne et réversible depuis la VM Kali,
+sur le segment de laboratoire (topologie accordée le 2026-11-19).
+
+| Id | Comportement | Technique | Règle et niveau attendus | Rapport |
+|---|---|---|---|---|
+| S-20 | usurpation ARP de la passerelle (deux adresses sur une même adresse MAC) | T1557.002 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot2.md` |
+| S-21 | serveur DHCP pirate (un second serveur sur le segment) | T1557.003 | EXP-NDR-001 Critique | lot 2 et lot 5 « détection réseau » (à remesurer après la PR #190) |
+| S-22 | répondeur LLMNR qui répond au leurre actif | T1557.001 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot1.md` |
+| S-23 | répondeur passif LLMNR (au moins 3 noms) | T1557.001 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot2.md` |
+| S-24 | trafic portant le motif de la règle IDS de test intégrée (sid 9000000) | aucune posée par le code | EXP-IDS-001, niveau de la règle | `campagne-kali-detection-reseau-lot1.md` |
+| S-25 | répondeur NBNS réel qui répond au leurre actif (jambe NBNS du leurre) | T1557.001 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot2.md` |
+| S-26 | répondeur passif mDNS (au moins 15 noms) | T1557.001 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot3.md` |
+| S-27 | redirection UPnP d'un port vers ce PC annoncée par la box émulée | T1133 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot4.md` |
+
+Pour chacun : préconditions et nettoyage décrits dans son rapport ; remise à l'instantané avant et après chaque essai ;
+résultat attendu = l'alerte ci-dessus dans le délai du cycle du NDR ; mesures non consolidées tant qu'il n'y a pas 10
+essais valides. Non couverts : responder passif NBNS (non exercé), IDS directionnel et de contenu, mode IPS.
