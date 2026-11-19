@@ -285,9 +285,10 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6, la preuve locale en VM tient
    lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. Inscrit le 2026-11-03 sur l'autorisation du
    mainteneur (« Ok pour modifier Claude. Md je t'autorise »).
-   La phase 7 a commencé avant la validation de cette phase, sur la consigne du mainteneur du 2026-11-11 (journal des
-   décisions, hors dépôt : finir le MSI U8 et la bascule B1, puis ouvrir la phase 7 sans demander la validation de la
-   phase Interface). Validée ensuite par le mainteneur le 2026-11-19, par ces mots : « Tu as mon accord pour la
+   La phase 7 a commencé avant la validation de cette phase (et avant celle des phases 1, 3 et 4, validées elles aussi
+   le 2026-11-19), sur la consigne du mainteneur du 2026-11-11 : « commence la phase 7 sans poser la question »
+   (journal des décisions, hors dépôt), interprétée comme : finir le MSI U8 et la bascule B1, déjà engagés, puis
+   ouvrir la phase 7 sans demander la validation de la phase Interface. Validée ensuite par le mainteneur le 2026-11-19, par ces mots : « Tu as mon accord pour la
    validation. La phase interface maintenant, vu qu'elle a été revue par un externe », puis sa réponse « Validée
    maintenant ». Restent à faire, après cette validation : B3, B4 et U8b (`docs/roadmap/interface.md`).
 6. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
@@ -311,9 +312,9 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - Démarrage : premiers essais le 2026-11-15, après la fusion des PR 7.1 à 7.6 (dernière le 2026-11-14, #167).
        Le mainteneur, le 2026-11-19 : « Considère que la campagne Kali a démarré après la phase 7. »
      - Scénarios S-20 à S-27 (détection réseau) : exécutés du 2026-11-16 au 2026-11-17 avant d'être inscrits dans la
-       liste approuvée ; ajoutés à la liste approuvée (version 1.5) le 2026-11-19, par ces mots du mainteneur :
-       « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » Approbation après coup, dite telle dans la
-       liste et dans les rapports.
+       liste approuvée ; à ajouter à la liste approuvée (version 1.5), décidé le 2026-11-19 par ces mots du
+       mainteneur : « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » La liste
+       (`campagne-kali-phase1.md`) et les rapports diront que c'est une approbation après coup.
      - Topologie : deux écarts à la règle « Réseau » ci-dessous, accordés par le mainteneur le 2026-11-19 (« Ok pour la
        topologie du labo ») : la VM cible a deux cartes, dont une sur le réseau du poste, désactivée de façon
        réversible pendant les essais réseau (`campagne-kali-detection-reseau-lot1.md`) ; le segment de laboratoire est
