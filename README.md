@@ -122,7 +122,7 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 ### Automatic updates and signing
 
 > **Known limit.** On versions 4.2 and 4.3 already installed, automatic updates install nothing: the install script,
-> launched without a console, did not run (fixed in `main` by PR #26, not yet in a published release). An installed 4.2
+> launched without a console, did not run (fixed in `main` by PR #26; no version is published on GitHub yet). An installed 4.2
 > or 4.3 therefore does not update itself: install by hand (`msiexec /i deR4Tizer.msi`) a version that contains this
 > fix; automatic updates then work from that one onward.
 
@@ -157,12 +157,11 @@ from a first signed version, installed by hand (or by GPO, Intune, IT provider).
 Protect releases: keep the signing secrets in the GitHub "publication" environment with a required approval (Settings ›
 Environments), protect the `v*` tags (Settings › Rules). The build (where the dependencies' scripts run) happens in a
 job with no secret; signing, in a separate job that receives only the executables; the WiX archive is verified by its
-hash and the actions are pinned by SHA. The ideal remains a key outside GitHub (Azure Trusted Signing, SignPath).
+hash and the actions are pinned by SHA. The certificate chosen (Certum Open Source, 2026-11-11) keeps its key in Certum's cloud (SimplySign): it never enters GitHub, and signing is done on the maintainer's own computer.
 
-To sign: obtain a code-signing certificate (free for open source via [SignPath Foundation](https://signpath.org), or
-Azure Trusted Signing, or an OV certificate in .pfx format; for automatic updates, SignPath and Azure Trusted Signing
-are not suitable as-is: see `docs/security/threat-model.md`), then add the secrets `CERTIFICAT_PFX` (.pfx file in
-base64) and `CERTIFICAT_MOT_DE_PASSE`. Locally, `DER4TIZER_CERT_SHA1` (the hash of a certificate in the store) makes
+With a certificate in .pfx format instead, the signing job of the workflow uses the secrets `CERTIFICAT_PFX` (.pfx file
+in base64) and `CERTIFICAT_MOT_DE_PASSE`; it is not used with the Certum certificate. SignPath Foundation and Azure
+Trusted Signing were set aside: not suitable as-is for automatic updates (see `docs/security/threat-model.md`). Locally, `DER4TIZER_CERT_SHA1` (the hash of a certificate in the store) makes
 `compiler.ps1` sign. Until the binaries are signed, Windows shows "unknown publisher" and machines report new versions
 without installing them.
 
@@ -173,7 +172,7 @@ Known, by design. Be aware before relying on it:
 - A PC on a switched network sees only its own traffic, broadcast and multicast: this is not a whole-network NDR (a mirror port would be needed).
 - The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary, because a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
 - IPv4 capture only for now; the country is that of the address-block holder (a CDN may appear in the United States).
-- Executables are not signed yet (a code-signing certificate is being obtained, e.g. SignPath Foundation for open source); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
+- Executables are not signed yet (the Certum code-signing certificate is held; the release remains to be signed and published); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
 - On a managed device (domain, Intune), the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.

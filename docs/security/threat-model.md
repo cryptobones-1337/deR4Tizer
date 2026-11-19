@@ -121,8 +121,12 @@ Veut publier une version malveillante que les postes installeraient.
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
   sessions) le couvre. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
   Windows Sandbox seulement). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
-  versions 4.2 et 4.3 publiées (corrigée par la PR #26, non encore publiée), n'installe rien aujourd'hui.
-- Choix du certificat : l'épinglage repose sur la clé publique. SignPath et Azure Trusted Signing ne sont pas utilisables en l'état.
+  versions 4.2 et 4.3 déjà installées (corrigée par la PR #26 ; aucune version n'est publiée sur GitHub), n'installe rien
+  aujourd'hui.
+- Choix du certificat : l'épinglage repose sur la clé publique. Certificat retenu par le mainteneur le 2026-11-11 :
+  Certum Open Source, à son nom, propre au projet ; sa clé publique est épinglée (`CLE_SIGNATURE`) ; valable jusqu'au
+  2027-11-17, le renouvellement (nouvelle clé à épingler) est à préparer avant cette date. SignPath et Azure Trusted
+  Signing, écartés, n'étaient pas utilisables en l'état :
   SignPath Foundation émet le certificat à son propre nom, peut-être commun à plusieurs projets : épingler sa clé
   ferait accepter un MSI signé pour un autre projet, avec l'`UpgradeCode` de deR4Tizer et une version plus élevée.
   Parades, à décider par cryptobones-1337 (changement du modèle de confiance) : une seconde signature propre au projet
