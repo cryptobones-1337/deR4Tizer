@@ -19,10 +19,10 @@ conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 | Remontée des alertes | Service | ntfy, Teams, serveur SMTP | Secrets réservés aux administrateurs, gardés en mémoire du service entre deux envois (fichier retiré : ntfy et Teams coupés au tour suivant, un serveur SMTP sans compte reste joignable ; modifié à la main : pas adopté avant le prochain réglage ou redémarrage) ; envois par `curl.exe` de Windows (HTTPS, SMTP avec TLS). | `notifications_*` |
 | Export syslog | Service | Réseau | **En clair** (UDP ou TCP, sans TLS). | — |
 
-### Résolveur DNS local (phase 7, PR 7.3 : essai seulement, non branché sur les cartes)
+### Résolveur DNS local (phase 7 : PR 7.3, branché sur les cartes par 7.4)
 
-Dans le code (`dns_local.rs`), mécanisme M2 du dossier (D7-1 : recommandation appliquée, révisable par le mainteneur
-avant 7.4). En 7.3, il n'écoute que pendant un **essai de 10 minutes** lancé par un administrateur (commande
+Dans le code (`dns_local.rs`), mécanisme M2 du dossier (D7-1 : recommandation appliquée, sans décision écrite du
+mainteneur). En 7.3, il n'écoutait que pendant un **essai de 10 minutes** lancé par un administrateur (commande
 `filtrageEssai`) ; aucune carte n'est réglée sur lui. C'est la première écoute réseau du service en dehors de l'API
 facultative, et le premier analyseur de requêtes et de réponses DNS non fiables en SYSTEM (avec `panic = "abort"`).
 État des exigences écrites avant le code (audit de #157, S157-01 ; dossier de la phase 7, section 6) :

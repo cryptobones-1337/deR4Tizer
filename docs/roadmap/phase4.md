@@ -2,8 +2,9 @@
 
 Ouverte le 2026-10-27, à la fusion de la dernière PR de la phase 3 (PR 3.12), d'après la réponse du mainteneur du
 2026-10-26 (`CLAUDE.md`, section 5, point 3). Ce document fixe le périmètre, le découpage et les décisions de la phase.
-Rien de ce qu'il décrit n'existe encore dans le code : chaque élément passe à « testé en labo » dans la matrice
-(`docs/roadmap/capability-matrix.md`) seulement avec la PR qui l'apporte.
+Écrit avant le code ; la phase est depuis livrée (PR 4.1 à 4.6) : l'état de chaque élément est celui de la matrice
+(`docs/roadmap/capability-matrix.md`). La réponse du mainteneur du 2026-10-26 est notée au journal des décisions,
+hors dépôt ; `CLAUDE.md` ne la cite pas.
 
 ## Besoin
 
@@ -73,7 +74,9 @@ relecture indépendante restent exigés.
 
 ## À inscrire dans `CLAUDE.md` par le mainteneur
 
-L'agent ne peut pas modifier `CLAUDE.md`. Texte proposé, sous la section 5, point 3 :
+Note du 2026-11-19 : `CLAUDE.md` dit depuis que la preuve locale en VM tient lieu de CI GitHub « comme pour les phases 3,
+4 et 6 » (section 5, point 5, inscrit le 2026-11-03 sur l'autorisation du mainteneur) ; le texte proposé ci-dessous n'y
+a pas été repris tel quel. Texte proposé à l'époque, sous la section 5, point 3 :
 
 - Ouverture : le 2026-10-26, le mainteneur a demandé d'enchaîner sur la phase 4 à la fin de la phase 3, sans attendre sa
   validation de celle-ci (réponse « Enchaîner sur la phase 4 »). Décisions de la phase : `docs/roadmap/phase4.md`.

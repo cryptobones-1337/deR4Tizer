@@ -11,6 +11,8 @@ cargo test --release
 
 - 2026-10-24, arbre `7ad06963` (`main` `1cf04fe`), local, chaîne `stable-x86_64-pc-windows-msvc` :
   **86 réussis, 0 échoué**.
+- 2026-11-19, job `windows` de la CI (run 44476563634, PR #205, commit `774e3cb`, service identique à `main`), chaîne
+  MSVC : **469 réussis, 0 échoué** (tests de `tests.rs` et de `tests_detection.rs`).
 - Contenu (`service-rs/src/tests.rs`) : fonctions pures qui lisent des données du réseau ou de fichiers externes
   (paquets, TLS, DNS, règles IDS, manifestes, UPnP), décisions de sécurité (droits, tri au démarrage,
   quarantaine, reprise, restauration, mise à jour, clé épinglée), avec un mini-fuzz (toutes les troncatures d'un
@@ -118,4 +120,7 @@ Tableaux en commentaire des PR #43, #44, #45, #46.
 - Scénarios demandant une session interactive (aucune en Windows Sandbox ; celle du runner hébergé est un
   administrateur) : leurres posés dans le profil de la session, restauration avec la session d'un utilisateur
   standard, lecture des données par le compte de la console.
-- Interface : aucun test automatisé ; rendu à 125 % et 150 % non vérifié sur un écran réel.
+- Interface : tests automatisés de ses décisions et de son rendu hors écran (`tests/rendu-pilote.ps1`,
+  `tests/test-confirmations.ps1`, `tests/test-reponses-interface.ps1`, `tests/test-incidents-interface.ps1`), et captures
+  réelles en VM (`tests/vm/captures.ps1`) ; rendu à 125 % et 150 % non vérifié sur un écran réel ; les fenêtres de
+  confirmation ne sont exercées par aucun scénario.
