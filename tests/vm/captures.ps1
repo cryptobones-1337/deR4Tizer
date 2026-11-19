@@ -59,6 +59,7 @@ public static class D4tCapture
     // Toute station non interactive a aussi un bureau « Default » (relecture de #132, D1)
     public static bool Interactif() { return Station() == "WinSta0" && Bureau() == "Default" && Session() == SessionConsole(); }
     public static int Dpi(IntPtr h) { try { return GetDpiForWindow(h); } catch { return 0; } }
+    public static void Avant(IntPtr h) { ShowWindow(h, 9); SetForegroundWindow(h); }
     // PrintWindow avec PW_RENDERFULLCONTENT (2) : la fenêtre est rendue même si une autre la recouvre
     public static Bitmap Fenetre(IntPtr h)
     {
@@ -210,6 +211,36 @@ if (-not $installe) {
                 $true
             }
         }
+    }
+    # Essai clavier du focus rendu (relecture de #205, défaut A) : page Santé de la coquille (rafraîchie toutes les 15 s),
+    # première ligne ouverte par Entrée, trois flèches vers le bas sans Entrée, puis 20 s : le focus doit être resté sur la
+    # quatrième ligne, pas revenu à la ligne ouverte. Élément focalisé lu par UI Automation, comme un lecteur d'écran
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
+    Verifier 'Clavier : focus gardé au rang parcouru après un rafraîchissement (Santé, 20 s)' {
+        $o = Ouvrir-Interface @('--page', '"Santé"')
+        if ($o.Erreur) { return $o.Erreur }
+        Start-Sleep 6
+        [D4tCapture]::Avant($o.P.MainWindowHandle)
+        $racine = [Windows.Automation.AutomationElement]::FromHandle($o.P.MainWindowHandle)
+        $cond = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ClassNameProperty, 'Ligne')
+        $lignes = $racine.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)
+        if ($lignes.Count -lt 5) { return "trop peu de lignes dans Santé ($($lignes.Count)) pour l'essai" }
+        $focalise = { $f = [Windows.Automation.AutomationElement]::FocusedElement; if ($f) { $f.Current.ClassName + ' : ' + $f.Current.Name } else { '(aucun)' } }
+        $lignes[0].SetFocus(); Start-Sleep -Milliseconds 500
+        [Windows.Forms.SendKeys]::SendWait('{ENTER}'); Start-Sleep 1
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep 1
+        $attendu = 'Ligne : ' + $lignes[3].Current.Name
+        $avant = & $focalise
+        Start-Sleep 20
+        $apres = & $focalise
+        $b = [D4tCapture]::Ecran($o.P.MainWindowHandle)
+        if ($b) { try { $b.Save((Join-Path $dossierCaptures 'clavier-sante-apres-rafraichissement.png'), [Drawing.Imaging.ImageFormat]::Png) } finally { $b.Dispose() } }
+        "attendu : $attendu`r`navant le rafraîchissement : $avant`r`naprès 20 s : $apres" | Set-Content (Join-Path $dossierCaptures 'clavier.txt') -Encoding UTF8
+        if ($avant -ne $attendu) { return "après trois flèches, focus sur « $avant » au lieu de « $attendu »" }
+        if ($apres -ne $avant) { return "après un rafraîchissement, focus passé de « $avant » à « $apres »" }
+        $true
     }
     Arreter-Interface
     (@('langue | page | fichier | taille | résolution') + $index) | Set-Content (Join-Path $dossierCaptures 'index.txt') -Encoding UTF8

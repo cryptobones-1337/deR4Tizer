@@ -186,6 +186,9 @@ public class SourceSimulee : RealProxy
     $ligneT.GetField('EstOuverte').SetValue($panneau.Children[0], $false)
     $cibles += "|$(& $cible 9 $true)|$(& $cible 9 $false)"
     Cas "Focus rendu : au rang parcouru aux flèches, pas ramené à la ligne ouverte ; ligne ouverte si le rang a disparu ; premier seulement dans la liste (défaut A, D2)" ($cibles -eq '2|0|0|0|aucune') $cibles
+    $encoreDans = { param($el) $briquesT.GetMethod('FocusEncoreDans').Invoke($null, [object[]]@($panneau.psobject.BaseObject, $el)) }
+    $l3 = $panneau.Children[3]; $avantRetrait = & $encoreDans $l3; $panneau.Children.Clear(); $apresRetrait = & $encoreDans $l3
+    Cas "Focus rendu : une ligne retirée par la reconstruction n'est plus « dans la liste », même si WPF n'a pas encore déplacé le focus (essai clavier en VM)" ($avantRetrait -and -not $apresRetrait -and -not (& $encoreDans $null)) "avant $avantRetrait, après $apresRetrait"
     Cas "Focus clavier rendu après le rafraîchissement : même brique sur les sept familles de pages de liste rafraîchies (défaut 4)" ($sansFocus.Count -eq 0) ($sansFocus -join ', ')
     Add-Type -AssemblyName System.ServiceProcess
     $etatT = & $t 'Etat'; [DateTime]$maint = [DateTime]::Now
