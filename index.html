@@ -430,11 +430,11 @@
         </div>
         <div class="box exp">
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-5-9V3"/></svg></div>
-          <h3>Experimental<span class="tag">frozen</span></h3>
+          <h3>Experimental<span class="tag">in validation</span></h3>
           <ul>
-            <li>Local NDR: ARP spoofing, rogue DHCP, LLMNR/NBNS/mDNS poisoning</li>
-            <li>DPI: TLS names, JA3 fingerprints, cleartext HTTP, DNS tunnelling</li>
-            <li>IDS / IPS: a subset of the Suricata rule format</li>
+            <li>Local NDR: ARP spoofing, rogue DHCP, LLMNR/NBNS/mDNS poisoning · tested in the <a href="https://github.com/cryptobones-1337/deR4Tizer/tree/main/docs/validation" target="_blank" rel="noopener">Kali campaign</a></li>
+            <li>IDS / IPS: a subset of the Suricata rule format, IPS off by default · tested in the Kali campaign</li>
+            <li>DPI: TLS names, JA3 fingerprints, cleartext HTTP, DNS tunnelling · reopened for work, not yet measured in the campaign</li>
           </ul>
         </div>
       </div>
@@ -615,7 +615,7 @@
           <ul>
             <li><b>Domain-name filtering</b>Ads and tracking blocked by DNS, off by default, restored on uninstall.</li>
             <li><b>Accessibility</b>Keyboard and high contrast are in; screen-reader checks remain.</li>
-            <li><b>Attack campaign</b>ATT&amp;CK scenarios run from a Kali VM in a closed lab, once filtering is done.</li>
+            <li><b>Attack campaign</b>Running since 15 November: ATT&amp;CK scenarios from a Kali VM against a test VM in a closed lab, network detection included. <a href="https://github.com/cryptobones-1337/deR4Tizer/tree/main/docs/validation" target="_blank" rel="noopener">Published reports</a>.</li>
           </ul>
         </div>
         <div class="col gate">
@@ -644,11 +644,12 @@
   <section class="close tight">
     <div class="wrap">
       <h2>Read it, test it, break it</h2>
-      <p class="section-lead">The code, the detection rules and the threat model are public. Reviews and attack reports are welcome.</p>
+      <p class="section-lead">The code, the detection rules, the threat model and the test evidence (the Kali campaign reports) are public. Reviews and attack reports are welcome.</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/cryptobones-1337/deR4Tizer" target="_blank" rel="noopener">Open the repository</a>
         <a class="btn" href="https://github.com/cryptobones-1337/deR4Tizer/blob/main/docs/security/threat-model.md" target="_blank" rel="noopener">Threat model</a>
         <a class="btn" href="https://github.com/cryptobones-1337/deR4Tizer/blob/main/docs/roadmap/capability-matrix.md" target="_blank" rel="noopener">Capability matrix</a>
+        <a class="btn" href="https://github.com/cryptobones-1337/deR4Tizer/tree/main/docs/validation" target="_blank" rel="noopener">Campaign reports</a>
       </div>
     </div>
   </section>
