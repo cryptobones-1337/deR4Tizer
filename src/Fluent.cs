@@ -985,6 +985,10 @@ namespace DeR4Tizer
             bandeau.Foreground = Jetons.Pinceau(source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire);
 
             bool rendreFocus = liste.IsKeyboardFocusWithin;
+            // Clé de la ligne focalisée, lue avant la reconstruction (relecture de #205, défaut A : parcourir aux flèches
+            // sans ouvrir ne doit pas être ramené à la ligne choisie à chaque rafraîchissement)
+            string idFocus = null;
+            foreach (UIElement c in liste.Children) { var fe = c as FrameworkElement; if (fe != null && fe.IsKeyboardFocusWithin) idFocus = fe.Tag as string; }
             liste.Children.Clear();
             var visibles = VueAlertesFluent.Filtrer(toutes, niveau);
             if (visibles.Count == 0)
@@ -994,14 +998,22 @@ namespace DeR4Tizer
                     Foreground = Jetons.Pinceau(niveau == null && source.CollectesEnAlarme() ? Jetons.Attention : Jetons.TexteSecondaire)
                 });
             string lue = source.DerniereLue();
-            UIElement premiereLigne = null, ligneChoisie = null;
-            foreach (var a in visibles) { var l = Ligne(a, VueAlertesFluent.NonLue(a, lue)); if (premiereLigne == null) premiereLigne = l; if (a.Id == choisie) ligneChoisie = l; liste.Children.Add(l); }
+            UIElement premiereLigne = null, ligneChoisie = null, ligneFocus = null;
+            foreach (var a in visibles)
+            {
+                var l = Ligne(a, VueAlertesFluent.NonLue(a, lue));
+                var fl = l as FrameworkElement; if (fl != null) fl.Tag = a.Id;
+                if (premiereLigne == null) premiereLigne = l;
+                if (a.Id == choisie) ligneChoisie = l;
+                if (idFocus != null && a.Id == idFocus) ligneFocus = l;
+                liste.Children.Add(l);
+            }
             if (toutes.Count(a => niveau == null || a.Niveau == niveau) > VueAlertesFluent.Maximum)
                 liste.Children.Add(new TextBlock { Text = string.Format(L.T("Les {0} plus récentes sont affichées."), VueAlertesFluent.Maximum), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 8, 0, 0) });
             Afficher(visibles.FirstOrDefault(a => a.Id == choisie) ?? visibles.FirstOrDefault());
             // Accessibilité (défaut 1) : le rafraîchissement reconstruit la liste et détruit la ligne qui avait le focus.
             // Si le focus clavier était dans la liste, le rendre à la ligne ouverte (ou à la première), après la mise en page.
-            if (rendreFocus) { var cible = ligneChoisie ?? premiereLigne; if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input); }
+            if (rendreFocus) { var cible = ligneFocus ?? ligneChoisie ?? premiereLigne; if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input); }
         }
 
         UIElement Ligne(Alerte a, bool nonLue)
@@ -1255,7 +1267,15 @@ namespace DeR4Tizer
             for (int i = 0; i < panneaux.Length; i++) avant[i] = panneaux[i] != null && panneaux[i].IsKeyboardFocusWithin ? RangFocus(panneaux[i]) : -2;
             afficher();
             for (int i = 0; i < panneaux.Length; i++)
-                if (avant[i] != -2 && !panneaux[i].IsKeyboardFocusWithin) { RendreFocus(panneaux[i], avant[i], i == 0); break; }
+                if (avant[i] != -2 && !FocusEncoreDans(panneaux[i], Keyboard.FocusedElement as DependencyObject)) { RendreFocus(panneaux[i], avant[i], i == 0); break; }
+        }
+
+        // Juste après la reconstruction, IsKeyboardFocusWithin reste vrai : WPF ne retire le focus d'une ligne détruite
+        // qu'un peu plus tard, puis le donne à la fenêtre (essai clavier en VM de #205). On regarde donc si l'élément
+        // focalisé est encore dans le panneau
+        public static bool FocusEncoreDans(Panel p, DependencyObject f)
+        {
+            return f != null && f is Visual && (f == p || p.IsAncestorOf(f));
         }
 
         static int RangFocus(Panel p)
@@ -2552,12 +2572,14 @@ namespace DeR4Tizer
         {
             bool en = L.En;
             bool rendreFocus = detail.IsKeyboardFocusWithin;
+            var noeudFocalise = Keyboard.FocusedElement as LigneBord;
+            object pidFocus = rendreFocus && noeudFocalise != null ? noeudFocalise.Tag : null;
             if (c == null) { detail.Content = new TextBlock { Text = en ? "Select a chain to read who launched what." : "Sélectionnez une chaîne pour lire qui a lancé quoi.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap }; return; }
             var pile = new StackPanel();
             pile.Children.Add(new TextBlock { Text = Canal.Visible(c.Resume), FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             pile.Children.Add(new TextBlock { Text = "score " + c.Score + "  ·  " + (en ? "alert above 12" : "alerte au-delà de 12"), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(VueChainesFluent.Gravite(c))), Margin = new Thickness(0, 2, 0, 4) });
             pile.Children.Add(Briques.Titre(en ? "Who launched what" : "Qui a lancé quoi", 10));
-            UIElement noeudChoisi = null;
+            UIElement noeudChoisi = null, noeudFocus = null;
             foreach (var n in c.Noeuds ?? new List<NoeudChaine>())
             {
                 int pid = n.Pid;
@@ -2566,7 +2588,7 @@ namespace DeR4Tizer
                 var ligne = new LigneBord
                 {
                     Background = Jetons.Pinceau(ouvert ? Jetons.Surface : Jetons.Carte), CornerRadius = new CornerRadius(4), Padding = new Thickness(8, 3, 8, 3),
-                    Margin = new Thickness(Math.Min(Math.Max(n.Profondeur, 0), 8) * 14, 0, 0, 2), Cursor = Cursors.Hand
+                    Margin = new Thickness(Math.Min(Math.Max(n.Profondeur, 0), 8) * 14, 0, 0, 2), Cursor = Cursors.Hand, Tag = pid
                 };
                 var texte = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis };
                 texte.Inlines.Add(new System.Windows.Documents.Run((n.Profondeur > 0 ? "└ " : "") + Canal.Visible(n.Nom)) { Foreground = Jetons.Pinceau(n.Score > 0 ? Jetons.Texte : Jetons.TexteSecondaire) });
@@ -2583,7 +2605,8 @@ namespace DeR4Tizer
                 ligne.MouseLeave += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Carte); };
                 ligne.GotFocus += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Surface); };
                 ligne.LostFocus += (s, e) => { if (!ouvert) ligne.Background = Jetons.Pinceau(Jetons.Carte); };
-                if (ouvert) noeudChoisi = ligne;
+                if (ouvert && noeudChoisi == null) noeudChoisi = ligne;
+                if (pidFocus is int && (int)pidFocus == pid) noeudFocus = ligne;
                 pile.Children.Add(ligne);
             }
             if (n0 != null)
@@ -2594,7 +2617,8 @@ namespace DeR4Tizer
             }
             detail.Content = pile;
             // Accessibilité (défaut 4) : si le focus clavier était dans le détail, le rendre au nœud ouvert après reconstruction
-            if (rendreFocus && noeudChoisi != null) noeudChoisi.Dispatcher.BeginInvoke(new Action(() => noeudChoisi.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+            var cibleNoeud = noeudFocus ?? noeudChoisi;
+            if (rendreFocus && cibleNoeud != null) cibleNoeud.Dispatcher.BeginInvoke(new Action(() => cibleNoeud.Focus()), System.Windows.Threading.DispatcherPriority.Input);
         }
 
         void Agir(NoeudChaine n, string action)
