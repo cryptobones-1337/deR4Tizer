@@ -100,7 +100,7 @@ Le résolveur local (`dns_local.rs`) consulte ce moteur. En 7.3, il ne tourne qu
 lancé par un administrateur (commande `filtrageEssai`), sur `127.0.0.1:53` et `[::1]:53` seulement ; aucune carte n'est
 réglée sur lui.
 
-Décisions du dossier appliquées sur sa recommandation, sans décision écrite du mainteneur, toujours en vigueur après 7.4 :
+Décisions du dossier appliquées sur sa recommandation, toujours en vigueur après 7.4 (D7-1 : mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12) ; les autres : sans décision écrite du mainteneur) :
 
 - **D7-1** (mécanisme) : M2, le résolveur local ;
 - **D7-4** (réponse à un nom bloqué) : A `0.0.0.0`, AAAA `::`, autres types sans réponse (NODATA), TTL de 60 s ;

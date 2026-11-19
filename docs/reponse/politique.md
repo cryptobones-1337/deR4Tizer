@@ -37,13 +37,14 @@ activée sciemment par un administrateur, catégories activées séparément («
 pistage »). Il ne s'ajoute pas au niveau 3.
 
 Les lignes marquées « D7-x » renvoient au dossier de la phase 7. D7-8 (Quad9) a été tranchée par le mainteneur le
-2026-11-14 ; D7-1, D7-2, D7-3 et D7-10 sont des recommandations du dossier appliquées dans le code, sans décision écrite
-du mainteneur (`docs/detection/listes-domaines.md`).
+2026-11-14 ; D7-1 (résolveur local) est une recommandation du dossier appliquée, mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12) ;
+D7-2, D7-3 et D7-10 sont des recommandations du dossier appliquées dans le code, sans décision écrite du mainteneur
+(`docs/detection/listes-domaines.md`).
 
 | | Dans le code |
 |---|---|
 | Durée | Tant que le filtrage reste activé : c'est un **mode**, pas une action ponctuelle, donc sans échéance (contrairement à l'IPS, dont les blocages durent 24 h). Pour qu'un faux positif durable ne passe pas inaperçu (le site d'une mairie dans une liste publicitaire), un compteur des noms bloqués et un signal au-delà d'un seuil, ou un rappel périodique, sont à prévoir avec l'interface (PR 7.5) (audit de #157, S157-02). |
-| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le résolveur local (D7-1, recommandation appliquée) : cartes réseau remises à l'identique, DHCP compris, à la désactivation, à l'arrêt du service et à la désinstallation. |
+| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le résolveur local (D7-1, recommandation appliquée, mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12)) : cartes réseau remises à l'identique, DHCP compris, à la désactivation, à l'arrêt du service et à la désinstallation. |
 | Échec | Ouvert, jamais de coupure du DNS : serveurs d'origine en secours si le résolveur local ne répond plus. |
 | Garde contre les boucles | Recommandation du dossier appliquée (D7-10, sans décision écrite du mainteneur) : jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) ; alerte DNS-002 et réactivation par l'utilisateur. |
 | Jamais bloqué | Une liste de protection compilée dans le binaire (mises à jour de Windows et de Defender, autorités de certification) et les noms autorisés par l'utilisateur. |
