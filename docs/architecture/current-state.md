@@ -26,7 +26,7 @@ sockets brutes (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, sécurité N
 ## Fils du service
 
 `surveillance` (cœur, `moniteur.rs`, relève toutes les 3 s), `commandes` (canal), `protection` (droits du dossier,
-toutes les heures), `listes de menaces` (12 h), `mise à jour` (quotidienne, 10 min après le démarrage),
+toutes les heures), `listes de menaces` (12 h ; 24 h pour les deux listes Spamhaus DROP), `mise à jour` (quotidienne, 10 min après le démarrage),
 `notifications`, `syslog`, `api`, `siem`, `ndr`, `geoip`, `ja3`, `audit données sensibles`, `traces de processus`,
 `contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours, attendue 8 s au plus), plus un fil de capture par interface réseau (`capture.rs`). À l'arrêt du service, les alertes encore en file (persistance, alertes des autres fils, détections de processus) sont enregistrées dans `alertes.json` avant la sortie ; une alerte produite par un fil après cette reprise peut encore être perdue.
 
