@@ -166,10 +166,10 @@ without installing them.
 
 ### Known limits
 
-Known, by design — be aware before relying on it:
+Known, by design. Be aware before relying on it:
 
 - A PC on a switched network sees only its own traffic, broadcast and multicast: this is not a whole-network NDR (a mirror port would be needed).
-- The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary — a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
+- The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary, because a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
 - IPv4 capture only for now; the country is that of the address-block holder (a CDN may appear in the United States).
 - Executables are not signed yet (a code-signing certificate is being obtained, e.g. SignPath Foundation for open source); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
