@@ -2,7 +2,7 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.4** |
+| Version de la liste | **1.5** (S-20 à S-27 ajoutés le 2026-11-19, §6 ; version 1.4 pour le reste) |
 | Date de la version 1.4 | 2026-11-15 |
 | Versions précédentes | 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
 | Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
@@ -30,6 +30,8 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   d'une rédaction initiale venait d'un checkout périmé). **Cette approbation n'est ni humaine
   ni indépendante** ; elle ne lève aucune règle, et la v1.4 a été transmise au mainteneur, pour information, le 2026-11-15,
   avant toute exécution.
+- **2026-11-19, version 1.5** : S-20 à S-27 ajoutés sur décision du mainteneur (`CLAUDE.md`, campagne Kali), **après
+  leur exécution** (2026-11-16 et 2026-11-17) ; aucune approbation préalable de l'agent de validation (§6).
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.

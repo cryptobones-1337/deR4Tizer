@@ -45,9 +45,10 @@ section 5, campagne Kali).
     rapport (horloge de la VM décalée dans les résultats bruts) ;
   - versions de Sysmon, d'Atomic Red Team et de Windows : absentes des rapports ;
   - vocabulaire hors des classes A à E : « RÉUSSI » (témoin négatif sans alerte forte), « P-baseline » et
-    « P-Defender » (attaque prévenue en amont, classe P de la liste v1.3), « GAP (C/E) » (aucune règle), « B2 »
-    (classe B en configuration B), « D/limite » (essai invalide, classe D) ;
-  - S-14 et les volets simulés de S-13 sont des simulations, non marqués SIMULATION dans le premier passage.
+    « P-Defender » (attaque prévenue en amont, classe P de la liste v1.3), « GAP (C/E) » (aucune règle), « D/limite » (essai invalide, classe D) ;
+    « B2 », lui, est une sous-classe de B définie par la liste (§2 : produit par Windows ou Sysmon mais non lu) ;
+  - les volets simulés de S-13 (premier passage) et S-14 (second lot) sont des simulations, non marquées SIMULATION dans
+    leurs rapports.
 - **Techniques ATT&CK : le code fait foi** : DNS-002 ne porte aucune technique dans le code (les rapports qui écrivent
   T1557 le font de leur propre chef ; la liste v1.4 dit « sans correspondance exacte ») ; VOL-001 porte « T1555 / T1539 »
   (la liste écrit T1555.003) ; COR-R1 et COR-R2 portent T1110 (la liste écrit T1110.001) ; niveaux et techniques
