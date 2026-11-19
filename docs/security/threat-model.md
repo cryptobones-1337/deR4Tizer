@@ -111,8 +111,8 @@ Veut publier une version malveillante que les postes installeraient.
   les binaires compilés avec elle) ; certificat dans l'environnement « publication » (secrets ; approbation obligatoire à confirmer),
   compilation séparée de la signature ; ensemble de règles « tags-version » actif sur les tags (vu le 2026-10-22,
   contenu à confirmer) ; `main` protégée (PR obligatoire, pas de poussée forcée ; vérifications de CI obligatoires
-  retirées temporairement pendant la désactivation de GitHub Actions, remplacées par la preuve locale de
-  `CLAUDE.md`) ; version lue
+  retirées pendant la désactivation de GitHub Actions, du 2026-10-22 au 2026-11-17, et pas encore rétablies : la CI
+  tourne, mais une fusion n'exige pas qu'elle soit verte) ; version lue
   dans le paquet signé, plus récente que l'installée.
 - Retour arrière : le MSI accepte une version plus ancienne (`AllowDowngrades`, nécessaire au retour arrière) ; le refus
   d'une version plus ancienne est assuré par le service, pour la mise à jour automatique seulement : un administrateur
@@ -120,7 +120,7 @@ Veut publier une version malveillante que les postes installeraient.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
   sessions) le couvre. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
-  Windows Sandbox seulement). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
+  Windows Sandbox, puis en CI au run 44480286774 (PR #205, `cd36ee4`, 2026-11-19)). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
   versions 4.2 et 4.3 déjà installées (corrigée par la PR #26 ; aucune version n'est publiée sur GitHub), n'installe rien
   aujourd'hui.
 - Choix du certificat : l'épinglage repose sur la clé publique. Certificat retenu par le mainteneur le 2026-11-11 :

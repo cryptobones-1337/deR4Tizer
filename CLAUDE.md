@@ -96,9 +96,9 @@ relecteur externe :
 2. Contrôles : arbre intégré reproduit et égal à l'arbre de la preuve ; pas d'empilement ; fusion sans conflit ;
    `cargo test --release` (MSVC) et, pour chaque correctif, un test qui échoue sans lui ; documentation et règles de
    ce fichier ; données personnelles ; description exacte.
-3. Verdict par PR : « Go » ou « Pas go » motivé ; sans preuve Windows Sandbox sur l'arbre annoncé, « Go sous réserve
-   du passage Sandbox ».
-4. Le verdict ne remplace ni le passage en Windows Sandbox ni la décision de fusion, qui reste à cryptobones-1337.
+3. Verdict par PR : « Go » ou « Pas go » motivé ; sans preuve de passage sur l'arbre annoncé (CI verte depuis le
+   2026-11-19 ; avant, VM de test ou Windows Sandbox, section « Exception temporaire »), « Go sous réserve du passage ».
+4. Le verdict ne remplace ni ce passage ni la décision de fusion, qui reste à cryptobones-1337.
 
 Limite : l'agent est le même modèle que l'auteur des changements ; leurs angles morts peuvent coïncider. Cette
 relecture n'est donc pas une relecture indépendante, et rien ne doit la présenter comme telle (README, matrice,

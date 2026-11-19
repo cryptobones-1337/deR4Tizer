@@ -412,7 +412,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Tests** : `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
   `per_001_nettoyage_onedrive` ; existants : `tache_com_cible_le_serveur_du_clsid`,
   `tache_com_hors_windows_sans_serveur_signalee`. En VM : clé Run de test vers `cmd.exe /c rem` (3a, « Alerte de
-  persistance produite juste avant un arrêt », bout en bout). État : validé sur Windows (VM) pour la clé Run.
+  persistance produite juste avant un arrêt », bout en bout). État : réussi en VM de test pour la clé Run (scénario 3a, Defender actif).
 
 ### PER-002 : démarrage automatique modifié
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).

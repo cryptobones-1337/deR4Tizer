@@ -74,10 +74,10 @@ Dossier de travail de la mise à jour : `%ProgramFiles%\deR4Tizer\maj`, réserv�
 
 ## Compilation et CI
 
-- Tests : `cargo test --release` (chaîne GNU en local, MSVC en CI).
+- Tests : `cargo test --release` (chaîne MSVC, en local comme en CI ; jamais de compilation locale GNU).
 - Binaires livrés : chaîne MSVC (`compiler-rs.ps1` en local, job `windows` en CI) ; interface :
   `compiler.ps1 -InterfaceSeulement` ; paquet : `construire-msi.ps1`.
 - `.github/workflows/ci.yml` : `windows` (tests, compilation, MSI, artefacts), `integration-installation` (3a),
-  `integration-quarantaine` (3b), tous trois obligatoires sur `main` ; `integration-maj` (3c) dans la PR #10.
+  `integration-quarantaine` (3b), et `integration-maj` (3c), qui tournent à chaque PR ; aucun n'est une vérification obligatoire sur `main` aujourd'hui (protection non rétablie, action du mainteneur).
 - `.github/workflows/publication.yml` : sur un tag `v*`, compilation sans secret, signature dans l'environnement
   « publication », manifeste, version GitHub.

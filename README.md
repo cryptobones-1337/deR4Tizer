@@ -24,7 +24,7 @@ from the MSI and left running for a few minutes. No data from a real computer.
 
 ### Features (v4.3)
 
-Actual state of each capability (validated on Windows by the CI before it was disabled, checked in a test VM, lab-tested, or implemented without verification):
+Actual state of each capability (validated on Windows by the CI, checked in a test VM, lab-tested, or implemented without verification; the CI was disabled from 2026-10-22 to 2026-11-17):
 [capability matrix](docs/roadmap/capability-matrix.md) (in French). None is production-ready yet; NDR, DPI and
 IDS/IPS are experimental and under validation in the Kali lab campaign (reports in [docs/validation/](docs/validation/),
 in French).
