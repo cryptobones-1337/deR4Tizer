@@ -798,7 +798,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 |---|---|---|
 | EXP-IDS-001 | IDS (règles au format Suricata) ; niveau selon la priorité de la règle (1 Critique, 2 Alerte, sinon Info), aucune technique ATT&CK posée par le code ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` |
 | EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
-| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` |
+| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/NBNS/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` |
 
 - Gelés par `CLAUDE.md` pendant la phase 3 : seule une ligne qui pose l'identifiant de règle a été ajoutée à leurs
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25). Dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).
