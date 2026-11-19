@@ -38,6 +38,8 @@ namespace DeR4Tizer
             { "Le processus qui porte ce PID a été lancé après l'alerte : ce n'est pas le programme de l'alerte. Rien n'est envoyé.",
               "The process with this PID was started after the alert: it is not the program of the alert. Nothing is sent." },
             { "En ordre et informations", "In order and information" },
+            { "Service hors ligne : rien n'est surveillé", "Service offline: nothing is being monitored" }, { "Service à vérifier", "Service needs checking" },
+            { "Ouvrir la page {0}", "Open the {0} page" },
             { "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir.", "Cuts this computer off the Internet; the scope and how to undo it are stated before acting." },
             { "Rétablit Internet sur ce poste ; ce qui sera fait est dit avant d'agir.", "Restores Internet access on this computer; what will be done is stated before acting." },
             { "Réponses en cours", "Ongoing responses" }, { "domaines", "domains" },
