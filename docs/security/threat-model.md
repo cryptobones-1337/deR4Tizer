@@ -21,8 +21,8 @@ conditions réelles, aux scénarios de CI (`docs/roadmap/capability-matrix.md`).
 
 ### Résolveur DNS local (phase 7 : PR 7.3, branché sur les cartes par 7.4)
 
-Dans le code (`dns_local.rs`), mécanisme M2 du dossier (D7-1 : recommandation appliquée, sans décision écrite du
-mainteneur). En 7.3, il n'écoutait que pendant un **essai de 10 minutes** lancé par un administrateur (commande
+Dans le code (`dns_local.rs`), mécanisme M2 du dossier (D7-1 : recommandation appliquée ;
+mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12)). En 7.3, il n'écoutait que pendant un **essai de 10 minutes** lancé par un administrateur (commande
 `filtrageEssai`) ; aucune carte n'est réglée sur lui. C'est la première écoute réseau du service en dehors de l'API
 facultative, et le premier analyseur de requêtes et de réponses DNS non fiables en SYSTEM (avec `panic = "abort"`).
 État des exigences écrites avant le code (audit de #157, S157-01 ; dossier de la phase 7, section 6) :
