@@ -414,9 +414,10 @@ L'IDS, le DPI et le NDR sont restés gelés en l'état (corrections de sûreté 
 et 2026-11-18 (paragraphe « Dégel de l'IDS, du NDR et du DPI » ci-dessous).
 Seule exception, pour la phase 3 (mainteneur, 2026-10-25, par ces mots : « Yes: add the rule identifier line to IDS, DPI and NDR alerts, with no other change to their logic. They stay frozen otherwise. ») : une ligne qui pose l'identifiant de règle (`EXP-*`, `docs/detection/regles.md`) dans leurs alertes, sans autre changement de leur logique.
 
-Dégel de l'IDS, du NDR et du DPI : phase « détection réseau » ouverte par le mainteneur le 2026-11-16 par ces mots :
-« Ok dégel repasse en boucle de déploiement autonome » (consignée dans
-`docs/validation/campagne-kali-detection-reseau-lot1.md`), confirmée le 2026-11-17 : « NDR/IDS sont bien dégelés. »
+Dégel de l'IDS, du NDR et du DPI : phase « détection réseau » ouverte par le mainteneur le 2026-11-16 (ouverture
+consignée dans `docs/validation/campagne-kali-detection-reseau-lot1.md`), par ces mots, notés au journal des décisions
+hors dépôt : « Ok dégel repasse en boucle de déploiement autonome » ; confirmée le 2026-11-17 : « NDR/IDS sont bien
+dégelés. »
 Le DPI est dégelé à son tour le 2026-11-18, avec le NDR et l'IDS, confirmé le 2026-11-19 par ces mots : « Tout reste
 dégelé ». L'IDS (`ids.rs`), le NDR (`ndr.rs`) et le DPI (`dpi.rs`) entrent en validation dans la campagne Kali :
 corrections, durcissements et validation de leurs détections. Ce dégel prime sur les mentions de gel de l'IDS, du DPI
