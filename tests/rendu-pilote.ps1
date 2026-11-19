@@ -150,6 +150,20 @@ public class SourceSimulee : RealProxy
     $ok1 = $piedT.GetValue($fen).Text.StartsWith('Service à vérifier · ') -and $piedP.GetValue($fen).Fill.Color -eq $jetons.GetField('Attention').GetValue($null)
     $fen.Close()
     Cas "Pied du rail : vert en ligne, orange à vérifier, rouge hors ligne sans l'ancien statut (défaut 2)" ($ok0 -and $ok1 -and $ok2) "0=$ok0 1=$ok1 2=$ok2 « $texte2 »"
+    # Défauts 5, 7, 8 (prérelecture de #205, D3) et focus d'une tuile gardé à la reconstruction (D1)
+    $fen = & $nouvelleCoquille 0
+    $bp = $coquille.GetField('boutonPanique', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen)
+    $phraseP = "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir."
+    Cas "Bouton Panique : phrase S134-01 en infobulle et en aide du lecteur d'écran (défaut 7)" ($bp.ToolTip -eq $phraseP -and [Windows.Automation.AutomationProperties]::GetHelpText($bp) -eq $phraseP) "$($bp.ToolTip)"
+    Cas "Pied du rail : texte dans un DockPanel, retour à la ligne (défaut 5)" ($piedT.GetValue($fen).Parent -is [Windows.Controls.DockPanel] -and $piedT.GetValue($fen).TextWrapping -eq 'Wrap')
+    $fen.Close()
+    $styleB = $coquille.GetMethod('StyleDefilement', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @())
+    $sens = foreach ($o in 'Vertical', 'Horizontal') {
+        $sb = New-Object Windows.Controls.Primitives.ScrollBar; $sb.Orientation = $o; $sb.Style = $styleB; $sb.Width = 200; $sb.Height = 200
+        $sb.Measure((New-Object Windows.Size 200, 200)); $sb.Arrange((New-Object Windows.Rect 0, 0, 200, 200)); $sb.UpdateLayout()
+        "$o=$($sb.Track.IsDirectionReversed)" }
+    Cas "Barre de défilement : sens inversé pour la verticale seulement (défaut 8)" (($sens -join '|') -eq 'Vertical=True|Horizontal=False') ($sens -join '|')
+    Cas "Vue d'ensemble : tuile focalisée retrouvée après la reconstruction toutes les 2 s (prérelecture de #205, D1)" (([IO.File]::ReadAllText("$src\Fluent.cs")).Contains('if (ouverte == NavigationFluent.VueEnsemble) ReconstruireVueEnsemble();') -and ([IO.File]::ReadAllText("$src\Fluent.cs")).Contains('tuilesVue[cle] = b;'))
     # Défaut 4 : focus rendu après le rafraîchissement périodique par la même brique sur toutes les pages de liste
     $fluentTxt = [IO.File]::ReadAllText("$src\Fluent.cs")
     $sansFocus = @(foreach ($cl in 'PageIncidentsFluent', 'PageReponsesFluent', 'PageSanteFluent', 'PageDetectionFluent', 'PageEtatServiceFluent', 'PageProtectionFluent', 'PageTraficFluent') {

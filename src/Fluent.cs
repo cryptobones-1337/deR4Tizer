@@ -353,6 +353,18 @@ namespace DeR4Tizer
         System.Windows.Shapes.Ellipse piedPoint;   // pied daté du rail : état du service
         TextBlock piedTexte;
         Button boutonPanique;                        // panique dans l'en-tête (haut à droite), état suivi au rafraîchissement
+        // Tuiles de la Vue d'ensemble par clé de page : le focus clavier posé sur une tuile la suit à la reconstruction
+        readonly Dictionary<string, Button> tuilesVue = new Dictionary<string, Button>();
+
+        // Vue d'ensemble reconstruite à chaque état publié (2 s) : une tuile focalisée au clavier le reste (relecture de la
+        // refonte, défaut 6 ; prérelecture de #205, D1)
+        void ReconstruireVueEnsemble()
+        {
+            string cle = tuilesVue.Where(kv => kv.Value.IsKeyboardFocused).Select(kv => kv.Key).FirstOrDefault();
+            zone.Content = VueEnsemble();
+            Button b;
+            if (cle != null && tuilesVue.TryGetValue(cle, out b)) b.Dispatcher.BeginInvoke(new Action(() => b.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+        }
         readonly ContentControl zone = new ContentControl();
         readonly TextBlock titrePage = new TextBlock();
         readonly List<Button> boutons = new List<Button>();
@@ -427,7 +439,7 @@ namespace DeR4Tizer
                     MettreAJourPastillesNav();
                     // Cachée (zone de notification) : rien n'est reconstruit (dossier de la bascule, constat 5)
                     if (!IsVisible) return;
-                    if (ouverte == NavigationFluent.VueEnsemble) zone.Content = VueEnsemble();
+                    if (ouverte == NavigationFluent.VueEnsemble) ReconstruireVueEnsemble();
                     else if (ouverte == "Alertes" && pageAlertes != null) { pageAlertes.Rafraichir(); if (IsVisible) ((ISourceAlertes)source).MarquerAlertesLues(); }
                 };
                 // Pastilles d'abord, abonnement à l'état en dernier : si la construction échoue (repli au premier geste), aucun
@@ -557,6 +569,7 @@ namespace DeR4Tizer
             c.Children.Add(new TextBlock { Text = t.Libelle, FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
             b.Content = c;
             string cle = t.Cle;
+            tuilesVue[cle] = b;
             b.Click += (s, a) => Ouvrir(cle);
             return b;
         }
@@ -760,6 +773,7 @@ namespace DeR4Tizer
             var pile = new StackPanel { MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Left };
             var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
             var sections = source == null ? new VueEnsembleFluent.SectionsVue() : VueEnsembleFluent.Sections(source.Points(), source.Badges());
+            tuilesVue.Clear();
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
             var couleurTete = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.Succes;
@@ -1232,14 +1246,16 @@ namespace DeR4Tizer
 
         // Accessibilité (défaut A ; relecture de la refonte, défaut 4) : commun à toutes les pages qui reconstruisent une
         // liste au rafraîchissement périodique. Si le focus clavier était dans un des panneaux et que la reconstruction l'a
-        // détruit, il est rendu à la ligne ouverte, sinon au contrôle de même rang, sinon au premier focalisable
+        // détruit, il est rendu à la ligne ouverte, sinon au contrôle de même rang, sinon (liste seulement, premier panneau)
+        // à la première ligne : dans une barre d'outils, jamais à un bouton que l'utilisateur n'a pas choisi (prérelecture
+        // de #205, D2)
         public static void GarderFocus(Action afficher, params Panel[] panneaux)
         {
             var avant = new int[panneaux.Length];
             for (int i = 0; i < panneaux.Length; i++) avant[i] = panneaux[i] != null && panneaux[i].IsKeyboardFocusWithin ? RangFocus(panneaux[i]) : -2;
             afficher();
             for (int i = 0; i < panneaux.Length; i++)
-                if (avant[i] != -2 && !panneaux[i].IsKeyboardFocusWithin) { RendreFocus(panneaux[i], avant[i]); break; }
+                if (avant[i] != -2 && !panneaux[i].IsKeyboardFocusWithin) { RendreFocus(panneaux[i], avant[i], i == 0); break; }
         }
 
         static int RangFocus(Panel p)
@@ -1248,12 +1264,12 @@ namespace DeR4Tizer
             return -1;
         }
 
-        public static void RendreFocus(Panel p, int rang)
+        public static void RendreFocus(Panel p, int rang, bool premierSinon)
         {
             UIElement cible = null;
             foreach (UIElement c in p.Children) { var lb = c as LigneBord; if (lb != null && lb.EstOuverte) { cible = lb; break; } }
             if (cible == null && rang >= 0 && rang < p.Children.Count && p.Children[rang].Focusable) cible = p.Children[rang];
-            if (cible == null) foreach (UIElement c in p.Children) if (c.Focusable) { cible = c; break; }
+            if (cible == null && premierSinon) foreach (UIElement c in p.Children) if (c.Focusable) { cible = c; break; }
             if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
         }
 
