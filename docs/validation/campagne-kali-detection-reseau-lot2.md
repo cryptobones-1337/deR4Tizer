@@ -1,6 +1,8 @@
 # Campagne Kali — second lot « détection réseau » (usurpation ARP, NBNS réel, responder passif)
 
 Date : 2026-11-16. Suite du premier lot de la phase « détection réseau ». Ce lot éprouve les détections qui
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Le §2 conclut que l'absence d'alerte DHCP pirate « n'est pas un défaut » : le cinquième lot « détection réseau » mesure le contraire (serveur DHCP de l'interface lu vide sur une carte Hyper-V, détection inerte), corrigé par la PR #190 (2026-11-17) ; S-21 reste à remesurer, jamais mesuré positif.
 exigeaient un **accès privilégié** sur la machine attaquante. Le root y est désormais disponible mais **strictement
 borné** : trois **unités systemd figées et auditables** — un responder NBNS/LLMNR/mDNS (sans poisoner DHCP ni
 WPAD), un `dnsmasq` en DHCP seul, et un `arpspoof` ciblé sur la seule adresse de la cible — pilotées par

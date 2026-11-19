@@ -10,16 +10,19 @@ que ce document et le registre listent les mêmes identifiants.
 Les niveaux indiqués sont ceux que le code produit **avant** l'apprentissage et les exceptions : `apprentissage::filtrer`
 peut faire passer une « Alerte » en « Info ». Seuls les niveaux « Critique » et « Info » sont garantis tels quels.
 
-État de mesure de toutes les fiches à ce jour : **non mesurée**. Aucune n'a encore de test positif et négatif à son nom,
-ni de faux positifs comptés. Les PR de domaine de la phase 3 les mesurent une à une (en labo, puis en VM quand c'est
+État de mesure : aucune fiche n'est **consolidée** (10 essais valides, `CLAUDE.md`) ni n'a de faux positifs comptés sur le
+terrain. Depuis l'écriture de ce paragraphe, chaque règle de domaine a ses tests positif et négatif en labo, et
+plusieurs ont une mesure en VM ou dans la campagne Kali, dite sur leur fiche (RES-003, PER-001, RES-001, DNS-001,
+PRC-002, LEU-002, VOL-001, corrélations). Les PR de domaine de la phase 3 les mesurent une à une (en labo, puis en VM quand c'est
 permis) et mettent la fiche et `docs/roadmap/capability-matrix.md` à jour.
 
 Règles de forme :
 
 - identifiant `DOM-NNN`, jamais réutilisé ; une règle retirée reste listée, marquée « retirée » ;
 - `COR-R1` à `COR-R10` gardent les numéros actuels du SIEM (`incidents.json`) ;
-- `EXP-*` : modules expérimentaux gelés (IDS, DPI, NDR). Seule une ligne d'identifiant de règle est ajoutée à leurs
-  alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
+- `EXP-*` : modules expérimentaux (IDS, DPI, NDR), gelés pendant la phase 3 : seule une ligne d'identifiant de règle a
+  été ajoutée à leurs alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
+  dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI ») ;
 - une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte qu'elle
   contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001 ; `processus::regle_retenue`). Une alerte ne
   porte qu'une règle. Pour les lignes de commande, tous les motifs sont cherchés et nommés dans les raisons, et la
@@ -114,7 +117,9 @@ modules expérimentaux.
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 - **Tests** : `res_001_positif` (adresse d'une liste synthétique trouvée, score 10, alerte même pour une connexion déjà
   ouverte au démarrage), `res_001_negatif` (adresse privée refusée au chargement de la liste ; adresse absente) ;
-  décisions pures `moniteur::score_flux` et `moniteur::regle_flux` (PR 3.8). Non exercée en VM.
+  décisions pures `moniteur::score_flux` et `moniteur::regle_flux` (PR 3.8). Non exercée dans les scénarios VM ; mesurée
+  dans la campagne Kali (`docs/validation/campagne-kali-second-lot.md`, 2026-11-15 : VP en configurations A et C, avec
+  le blocage de 7 jours), non consolidée.
 
 ### RES-002 : nouvelle connexion au score suspect (≥ 3)
 - **Code** : `moniteur.rs` (calcul du score des flux, niveau Alerte).
@@ -232,7 +237,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 - **Tests** : `dns_001_positif` (domaine d'une liste synthétique, sans tenir compte de la casse), `dns_001_negatif` (autre
   domaine ; sous-domaine, les listes portant des noms exacts ; nom vide) ; décision pure `moniteur::alerte_dns`
-  (PR 3.8). Non exercée en VM : il faudrait une liste de domaines de test chargée par le service, que rien ne prévoit.
+  (PR 3.8). Non exercée dans les scénarios VM (il faudrait une liste de domaines de test chargée par le service) ;
+  mesurée dans la campagne Kali avec une liste synthétique (`campagne-kali-second-lot.md`, 2026-11-15 : VP en
+  configurations A et C), non consolidée.
 - **Phase 7** : le filtrage par nom de domaine est dans le code (PR 7.2 à 7.6) ; le blocage d'un nom par le filtrage est
   compté dans les « derniers blocages » de la page « Navigation », sans changer cette alerte.
 
@@ -268,8 +275,6 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   `dns002_lecture_impossible_collecte_indisponible` (négatifs) ; en VM (3a), témoin retenu (DNS statique réglé sur la
   carte de la VM, réseau inchangé : alerte) et témoin écarté (retour au DHCP : pas d'alerte).
 
-## PRC : processus
-
 ### DNS-003 : port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur
 - **Code** : `moniteur.rs` (`reprendre_filtrage`, `alerte_port_dns_tenu`) (phase 7, PR 7.5a ; audit de #164, S164-05).
 - **Justification** : filtrage activé, le service redémarre et ne peut pas lier le port 53 de la boucle locale, alors
@@ -283,6 +288,8 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Faux positifs attendus** : un autre résolveur légitime installé après l'activation du filtrage (partage de
   connexion, Docker, WSL) : l'alerte reste juste, la carte pointe sur lui sans qu'on l'ait voulu.
 - **Tests** : `filtrage_alerte_port_dns_tenu`.
+
+## PRC : processus
 
 ### PRC-001 : document bureautique qui lance un interpréteur
 - **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
@@ -308,7 +315,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_002_positif` (`-enc` d'une charge de plus de 40 caractères ; `IEX` d'un `DownloadString`),
-  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court). Non exercée en VM : sans Sysmon, la ligne de
+  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court). Campagne Kali (`campagne-kali-sixieme-lot.md`,
+  2026-11-16) : VP avec Sysmon (configuration B), non déterministe sans Sysmon ; non consolidée. Non exercée dans les
+  scénarios VM : sans Sysmon, la ligne de
   commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
   qu'on ne touche pas.
 
@@ -508,7 +517,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   annoncée seulement si elle a eu lieu), `leu_002_negatif` (autre fichier ; logiciel connu : Info, non suspendu) ;
   décisions pures `hygiene::pid_touchant_leurre_parmi` et `vol_donnees::alerte_leurre_touche` (PR 3.9 : noms des
   leurres passés en paramètre, sans lire ni créer le fichier des noms) ; existant : `b1_leurre_touche_par_rundll32_suspendu`
-  (décision de suspension). Non exercée en VM.
+  (décision de suspension). Non exercée dans les scénarios VM ; campagne Kali (`campagne-kali-sixieme-lot.md`,
+  2026-11-16) : VP en configuration A, prévenu par Defender en configuration C ; non consolidée.
 
 ## VOL : vol de données
 
@@ -528,7 +538,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   Critique ; d'ailleurs : Alerte ; par un « chrome.exe » non signé par Google : alerte), `vol_001_negatif` (fichier hors
   des dossiers surveillés ; dossier parcouru sans lecture ; notre propre service ; une alerte par programme et par cible
   en 24 h, `vol_donnees::premiere_en_24h`, PR 3.9) ; décision `vol_donnees::analyser` sur des événements 4663
-  synthétiques. Non exercée en VM.
+  synthétiques. Non exercée dans les scénarios VM ; campagne Kali (`campagne-kali-second-lot.md`, 2026-11-15, simulation
+  sur un compte de test vide) : VP Critique en configurations A et C ; non consolidée.
 
 ## SYS : fichier hosts et pare-feu
 
@@ -687,7 +698,12 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   - COR-R9 : Bureau à distance depuis une adresse publique (Critique), autre session (Alerte) ; pas depuis le réseau
     local.
   Les fenêtres de temps (5 min, 30 min, 10 min, une heure) ne sont pas exercées : le moteur lit l'horloge lui-même.
-  COR-R10 n'est pas testée : sa vérification télécharge la liste LOLDrivers. Aucune n'est exercée en VM. Faux positifs
+  COR-R10 n'est pas testée : sa vérification télécharge la liste LOLDrivers. Aucune n'est exercée dans les scénarios VM ;
+  la campagne Kali en mesure plusieurs (`campagne-kali-premier-passage.md` et `campagne-kali-sixieme-lot.md`) : COR-R1,
+  COR-R2, COR-R4, COR-R5, COR-R7 et COR-R9 en VP, non consolidés. Limites connues, non corrigées : COR-R3 ne se
+  déclenche pas par le vecteur standard (l'ajout au groupe, événement 4732, porte le SID du membre, rapproché du nom du
+  compte créé : on obtient COR-R3b, Alerte) ; COR-R9 par Bureau à distance mesurée en Alerte et non en Critique (ordre
+  des ouvertures de session type 3 puis type 10). Faux positifs
   mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun incident ; la mesure les sous-estime, car
   l'activité n'ouvre aucune session, n'installe aucun service et ne change aucun compte.
 
@@ -768,7 +784,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 - **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un
   programme ou une adresse actifs, ce que le prestataire doit savoir. L'alerte d'origine part toujours : RES-001 et LEU-002
-  disent que l'action est retenue, pas l'alerte de l'IPS (`ids.rs`, gelé), écrite dès la détection.
+  disent que l'action est retenue, pas l'alerte de l'IPS (`ids.rs`, non corrigé à ce jour), écrite dès la détection.
 - **Télémétrie** : aucune collecte, l'historique des actions automatiques (`reponses.json`).
 - **Bornes** : une alerte par cible et par 24 h, une par arrêt d'une heure des listes, une par heure pour l'IPS, une par
   démarrage pour un fichier mal formé. Une retenue pour décision humaine n'en lève pas : c'est un choix de l'administrateur.
@@ -776,17 +792,17 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   renouvelée après une longue coupure.
 - **Que faire** : vérifier le programme ou l'adresse cités. Une action manuelle reste toujours possible.
 
-## EXP : modules expérimentaux (gelés)
+## EXP : modules expérimentaux (dégelés en novembre 2026, en validation)
 
 | Id | Module | Code |
 |---|---|---|
-| EXP-IDS-001 | IDS (règles au format Suricata) ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` |
+| EXP-IDS-001 | IDS (règles au format Suricata) ; niveau selon la priorité de la règle (1 Critique, 2 Alerte, sinon Info), aucune technique ATT&CK posée par le code ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` |
 | EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
-| EXP-NDR-001 | NDR | `ndr.rs` |
+| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` |
 
-- Gelés par `CLAUDE.md` : seule une ligne qui pose l'identifiant de règle est ajoutée à leurs alertes (PR 3.2), sans
-  autre changement de logique (mainteneur, 2026-10-25).
+- Gelés par `CLAUDE.md` pendant la phase 3 : seule une ligne qui pose l'identifiant de règle a été ajoutée à leurs
+  alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25). Dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).
 - Un identifiant par module (PR 3.2) : chacun de ces modules produit ses alertes à un seul endroit, et la règle précise
-  (sid de l'IDS, motif du DPI ou du NDR) reste dans les raisons. Un découpage plus fin attendra leur dégel.
+  (sid de l'IDS, motif du DPI ou du NDR) reste dans les raisons. Un découpage plus fin reste à faire dans leur validation.
 - **Télémétrie** : capture réseau.
 - **Tests** : ceux des modules, inchangés ; aucune mesure de faux positifs pendant la phase 3.

@@ -1,5 +1,7 @@
 # Campagne Kali — cinquième lot (lot 3d Defender formel ; sessions standard : spécificité)
 
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : (1) Le « lot 3d » mesuré ici (scan de Defender sans détection, sur le produit des instantanés, sans artefact de la CI, sans quarantaine ni restauration) n'est pas le lot 3d de `CLAUDE.md` et de la matrice (`tests/vm/lot3d.ps1`, 12 contrôles) : c'est un essai de non-détection. (2) N-02 en configuration C est une hypothèse, non évaluée. (3) Aucun nombre d'essais n'est donné : mesures non consolidées.
+
 Date : 2026-11-16. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
 (RFC 5737) ; noms de test en `.test` (RFC 2606). Ce lot couvre deux critères durs restants de l'étape 1 :

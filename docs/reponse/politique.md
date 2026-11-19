@@ -94,7 +94,7 @@ est retenue. Un administrateur peut toujours agir à la main.
 - **Limite du plafond des listes** : un compte standard peut l'atteindre en se connectant à 31 adresses listées. Les
   blocages par les listes s'arrêtent alors une heure, renouvelable ; les alertes « Critique » restent. Le plafond protège
   d'une liste corrompue.
-- **Limite de l'IPS** : `ids.rs`, gelé, écrit « bloquée » dans son alerte dès la détection, même si l'action est ensuite
+- **Limite de l'IPS** : `ids.rs`, non corrigé à ce jour, écrit « bloquée » dans son alerte dès la détection, même si l'action est ensuite
   retenue ; le SIEM et le journal disent la retenue.
 - **Décision humaine sur un programme** : liée à l'empreinte de l'exécutable. Un fichier remplacé au même chemin n'en
   hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été

@@ -1,6 +1,8 @@
 # Campagne Kali — sixième lot (scénarios v1.4 restants : sessions, réseau, exécution, simulations)
 
 Date : 2026-11-16. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : (1) « Ce lot termine les scénarios v1.4 non encore exécutés » est inexact : restent sans résultat N-03, N-04, S-18, S-05 (a) et (b), S-10 (b), S-11 (b) et (c), l'option longue de S-16, « Débloquer » de S-07 et le volet réussite de S-03 (liste dans `README.md` de ce dossier). (2) Grille du §5 : N-02 « RÉUSSI » en configuration C et SAN-010 en C sont des hypothèses (« tenue pour identique ») : non évalués ; les lignes PowerShell encodé (PRC-002, VP avec Sysmon) et accès limité à LSASS (B2) sont des mesures de la configuration B, pas de A ni de C. (3) « IDS/DPI/NDR gelés » vaut à la date du lot ; dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »). (4) Aucun nombre d'essais n'est donné : mesures non consolidées.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
 (RFC 5737) ; noms de test en `.test` (RFC 2606). Ce lot termine les scénarios v1.4 non encore exécutés.
 

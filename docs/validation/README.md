@@ -5,7 +5,7 @@ section 5, campagne Kali).
 
 | Document | Contenu |
 |---|---|
-| [campagne-kali-phase1.md](campagne-kali-phase1.md) | Audit initial des capacités, cartographie ATT&CK, liste fermée de scénarios (version 1.4, approuvée par l'agent de validation le 2026-11-15) |
+| [campagne-kali-phase1.md](campagne-kali-phase1.md) | Audit initial des capacités, cartographie ATT&CK, liste fermée de scénarios (version 1.4, approuvée par l'agent de validation le 2026-11-15 ; version 1.5, S-20 à S-27 ajoutés le 2026-11-19 sur décision du mainteneur, après leur exécution) |
 | [campagne-kali-premier-passage.md](campagne-kali-premier-passage.md) | Résultats du premier passage (liste v1.3) : chaîne de mesure validée, force brute RDP/SMB, persistance, corrélations système, et le constat produit sur la corrélation R3 |
 | [campagne-kali-second-lot.md](campagne-kali-second-lot.md) | Résultats du second lot (liste v1.4) : vol d'identifiants (VOL-001) et listes de menaces (DNS-001, RES-001 + blocage automatique 7 jours), en configurations A et C |
 | [campagne-kali-troisieme-lot.md](campagne-kali-troisieme-lot.md) | Résultats du troisième lot (liste v1.4) : détection du changement de serveur DNS sur une carte (DNS-002), en configurations A et C — la **jambe DNS-002 de S-06** (la jambe filtrage de S-06 et DNS-003/S-18 restent à exécuter) |
@@ -29,3 +29,31 @@ section 5, campagne Kali).
   version de la liste exécutée.
 - Premier passage publié le 2026-11-15 (liste v1.3) : voir
   [campagne-kali-premier-passage.md](campagne-kali-premier-passage.md). Les résultats bruts restent hors dépôt.
+
+## État au 2026-11-19 (audit documentaire)
+
+- **Versions de liste** : premier passage, liste v1.3 ; lots 2 à 6, liste v1.4 ; cinq lots « détection réseau »,
+  scénarios S-20 à S-27, inscrits dans la liste v1.5 après leur exécution (approbation après coup, décision du
+  mainteneur du 2026-11-19).
+- **Scénarios v1.4 encore sans résultat** : N-03, N-04, S-18 (non reproductible de bout en bout en labo), S-05 (a)
+  Bureau à distance et (b) bascule rapide d'utilisateur, S-10 (b), S-11 (b) et (c), l'option longue de S-16,
+  « Débloquer » de S-07, le volet réussite de S-03 ; S-21 (v1.5) à remesurer après la PR #190.
+- **Écarts aux règles de mesure (`CLAUDE.md`)** :
+  - nombre d'essais : seul S-01 en configuration A a 10 essais (S-10 : 2) ; toutes les autres mesures sont des essais
+    isolés, donc **non consolidées**, même là où un rapport écrit « couverture » ou « acquis » ;
+  - délais : les verdicts VP sont rendus sans le délai maximal que la liste exige, et les latences ne sont dans aucun
+    rapport (horloge de la VM décalée dans les résultats bruts) ;
+  - versions de Sysmon, d'Atomic Red Team et de Windows : absentes des rapports ;
+  - vocabulaire hors des classes A à E : « RÉUSSI » (témoin négatif sans alerte forte), « P-baseline » et
+    « P-Defender » (attaque prévenue en amont, classe P de la liste v1.3), « GAP (C/E) » (aucune règle), « B2 »
+    (classe B en configuration B), « D/limite » (essai invalide, classe D) ;
+  - S-14 et les volets simulés de S-13 sont des simulations, non marqués SIMULATION dans le premier passage.
+- **Techniques ATT&CK : le code fait foi** : DNS-002 ne porte aucune technique dans le code (les rapports qui écrivent
+  T1557 le font de leur propre chef ; la liste v1.4 dit « sans correspondance exacte ») ; VOL-001 porte « T1555 / T1539 »
+  (la liste écrit T1555.003) ; COR-R1 et COR-R2 portent T1110 (la liste écrit T1110.001) ; niveaux et techniques
+  d'EXP-NDR-001 et EXP-IDS-001 dans `docs/detection/regles.md`.
+- **Couverture « responder passif »** : LLMNR (S-23) et mDNS (S-26) exercés ; NBNS passif non exercé (S-25 est la
+  jambe NBNS du leurre actif).
+- **Constats ouverts, non corrigés** : COR-R3 (rapprochement par nom au lieu du SID) ; COR-R9 par Bureau à distance en
+  Alerte ; PRC-002 non déterministe sans Sysmon ; leurre actif sauté 10 minutes après un échec de `bind` ; injection de
+  faux positifs DHCP et responder passif. Corrigé : DHCP pirate inerte (PR #190, S-21 à remesurer).

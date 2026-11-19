@@ -1,6 +1,8 @@
 # Campagne Kali — quatrième lot (filtrage DNS : jambe filtrage de S-06 ; limite de testabilité de DNS-003)
 
 Date : 2026-11-15. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+
+> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : « couverture » et « vrais positifs mesurés » désignent des essais isolés : aucun nombre d'essais n'est donné, aucune mesure n'est consolidée (10 essais valides, `CLAUDE.md`). Le constat COR-R3 reste ouvert, non corrigé au 2026-11-19.
 Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
 (RFC 5737) ; noms de test en `.test` (RFC 2606). Prolonge le troisième lot (`campagne-kali-troisieme-lot.md`) : il
 exécute **la jambe filtrage (b) de S-06**, après la jambe DNS-002 (a) du troisième lot. S-06 est donc **couvert en

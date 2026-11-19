@@ -304,7 +304,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      ni d'affaiblissement de Defender (règle 2) : si Defender signale le mécanisme, on en change ; effets sur les VPN,
      les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
      si l'utilisateur le choisit, et il est nommé dans l'interface.
-   - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas.
+   - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas. (Ils sont dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).)
    - Fin de phase 7 : campagne d'attaque complète depuis la VM Kali de test (`d4t-kali`, déjà déployée par le
      mainteneur), demandée par le mainteneur le 2026-10-27 (« I propose to do a full test after phase 7, add it to
      claude.md »). Elle vise la VM `deR4Tizer-test-26H2` et exerce ensemble la détection, les incidents et leur
@@ -312,9 +312,9 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - Démarrage : premiers essais le 2026-11-15, après la fusion des PR 7.1 à 7.6 (dernière le 2026-11-14, #167).
        Le mainteneur, le 2026-11-19 : « Considère que la campagne Kali a démarré après la phase 7. »
      - Scénarios S-20 à S-27 (détection réseau) : exécutés du 2026-11-16 au 2026-11-17 avant d'être inscrits dans la
-       liste approuvée ; à ajouter à la liste approuvée (version 1.5), décidé le 2026-11-19 par ces mots du
+       liste approuvée ; ajoutés à la liste approuvée (version 1.5), décidé le 2026-11-19 par ces mots du
        mainteneur : « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » La liste
-       (`campagne-kali-phase1.md`) et les rapports diront que c'est une approbation après coup.
+       (`campagne-kali-phase1.md`, §6) et les rapports disent que c'est une approbation après coup.
      - Topologie : deux écarts à la règle « Réseau » ci-dessous, accordés par le mainteneur le 2026-11-19 (« Ok pour la
        topologie du labo ») : la VM cible a deux cartes, dont une sur le réseau du poste, désactivée de façon
        réversible pendant les essais réseau (`campagne-kali-detection-reseau-lot1.md`) ; le segment de laboratoire est
@@ -329,7 +329,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
        à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
      - VM cible partie de l'un de ses trois instantanés de campagne, préparés hors campagne : « campagne A » (sans
-       Sysmon) et « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous). Chacun contient
+       Sysmon), « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous) et « campagne C » (configuration principale, décrite plus bas). Chacun contient
        deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance
        activé pour la force brute, etc.). Leurs noms ne commencent jamais par « propre », pour que les passages
        complets (`tests/vm/lancer.ps1`, qui prend le plus récent instantané « propre… ») n'en partent jamais. VM
@@ -362,7 +362,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
          d'administration hôte ↔ Kali réservé à SSH ; PowerShell Direct vers la VM de test).
        - Mesure honnête : classes A (détection confirmée), B (événement collecté sans alerte), C (alerte incorrecte
          ou trop générique), D (non exécuté ou invalide, « non évalué », jamais 0), E (non testable avec
-         l'architecture actuelle, NDR, IDS et DPI gelés) ; simulations et émulations jamais fusionnées dans un même
+         l'architecture actuelle, NDR, IDS et DPI gelés à l'écriture de cette règle, dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »)) ; simulations et émulations jamais fusionnées dans un même
          score ; 10 répétitions valides avant une mesure consolidée ; tests négatifs (activité légitime) pour les
          faux positifs ; aucune hypothèse présentée comme un résultat.
        - Vol d'identifiants, injection et contournement des défenses : simulations inoffensives et réversibles
@@ -446,7 +446,7 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    alors le serveur d'envoi) ; adresse jamais journalisée ni envoyée ailleurs qu'à ce service (et au serveur d'envoi du
    code, s'il est retenu) ; désactivée par défaut ; service tiers nommé dans l'interface. Mêmes garde-fous que la phase
    7.
-   L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9.
+   L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9. (Ils sont dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).)
 
 L'IDS, le DPI et le NDR sont restés gelés en l'état (corrections de sûreté uniquement) jusqu'aux dégels des 2026-11-16
 et 2026-11-18 (paragraphe « Dégel de l'IDS, du NDR et du DPI » ci-dessous).
