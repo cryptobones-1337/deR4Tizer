@@ -127,9 +127,13 @@ public class SourceSimulee : RealProxy
     $orange = @($tb | Where-Object { $_.Text -eq 'Defender (falsification off)' })
     Cas "Vue d'ensemble : un fait orange de l'en-tête est affiché sous « À surveiller » (défaut 1)" ($orange.Count -eq 1 -and @($tb | Where-Object { $_.Text -eq 'À surveiller' }).Count -eq 1) "$($orange.Count) affiché(s)"
     $sections = $vue.GetMethod('Sections').Invoke($null, @($faits, $badges))
-    $nAff = $sections.ATraiter.Count + $sections.ASurveiller.Count + $sections.Tuiles.Count
-    $rAvec = & $resume ($vue.GetMethod('AvecCompteurs').Invoke($null, @($faits, $badges)))
-    Cas "Vue d'ensemble : la tête compte exactement ce qui est affiché (faits orange + tuiles)" ($rAvec -eq "Rien d'avéré, $nAff points à surveiller|1" -and $nAff -eq 3) "$rAvec ; affichés $nAff"
+    # Compté dans l'arbre rendu : tuiles (boutons du WrapPanel) + faits orange affichés, comparés à la phrase de tête affichée
+    $noeuds = New-Object Collections.Generic.List[object]; $pileN = New-Object Collections.Stack; $pileN.Push($zoneV)
+    while ($pileN.Count) { $n = $pileN.Pop(); $noeuds.Add($n); if ($n -is [Windows.DependencyObject]) { foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pileN.Push($e) } } }
+    $tuilesRendues = @($noeuds | Where-Object { $_ -is [Windows.Controls.Button] -and $_.Parent -is [Windows.Controls.WrapPanel] }).Count
+    $nAff = $tuilesRendues + $orange.Count
+    $tete = @($tb | Where-Object { $_.Text -like "Rien d'avéré,*" } | ForEach-Object { $_.Text })
+    Cas "Vue d'ensemble : la phrase de tête affichée compte exactement les faits orange et les tuiles rendus" ($tete.Count -eq 1 -and $tete[0] -eq "Rien d'avéré, $nAff points à surveiller" -and $tuilesRendues -eq 2) "« $($tete -join ' / ') » ; rendus : $tuilesRendues tuiles + $($orange.Count) fait(s)"
     $tuiles = @($sections.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)=$($_.Nombre)" }) -join '|'
     Cas "Vue d'ensemble : tuiles des compteurs colorés seulement, un mot n'est pas un nombre" ($tuiles -eq 'Démarrage auto=2=True|Baseline=12%=True' -or $tuiles -eq 'Baseline=12%=True|Démarrage auto=2=True') $tuiles
     Cas "Vue d'ensemble : « LIVE » n'est pas mis en grand comme un nombre" (-not $vue.GetMethod('EstNombre').Invoke($null, @('LIVE')) -and $vue.GetMethod('EstNombre').Invoke($null, @('999+')))
@@ -138,7 +142,11 @@ public class SourceSimulee : RealProxy
     foreach ($x in $tb) { if ($x.Text -in 'Service en ligne', 'Processus') { $d = $x.Parent; $pu = @($d.Children | Where-Object { $_ -is [Windows.Controls.Border] })[0]; $puces[$x.Text] = $pu.Background.Color } }
     $vert = $jetons.GetField('Succes').GetValue($null); $gris = $jetons.GetField('TexteSecondaire').GetValue($null)
     Cas "Vue d'ensemble : puce verte pour « Service en ligne », grise pour l'information « Processus » (défaut 3)" ($puces['Service en ligne'] -eq $vert -and $puces['Processus'] -eq $gris) "$($puces['Service en ligne']) / $($puces['Processus'])"
-    Cas "Vue d'ensemble : « sain » vient de la couleur verte de l'en-tête" ($statutSrc.Contains('Sain = p.Couleur == Theme.Vert'))
+    $fenetreT = & $t 'Fenetre'; $themeT = & $t 'Theme'; $pastilleT = $asm.GetType('DeR4Tizer.Entete+Pastille')
+    $sainDe = { param($couleur) $pa = [Activator]::CreateInstance($pastilleT); $pastilleT.GetField('Texte').SetValue($pa, 'X'); $pastilleT.GetField('Couleur').SetValue($pa, $themeT.GetField($couleur).GetValue($null))
+        $pt = $fenetreT.GetMethod('PointDe', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @($pa)); "$($pointT.GetField('Sain').GetValue($pt))/$($pointT.GetField('Gravite').GetValue($pt))" }
+    $sains = @('Vert', 'Cyan', 'TexteDim', 'Jaune', 'Rouge' | ForEach-Object { "$_=$(& $sainDe $_)" }) -join '|'
+    Cas "Vue d'ensemble : « sain » pour une pastille verte seulement, pas pour une information cyan ou grise" ($sains -eq 'Vert=True/0|Cyan=False/0|TexteDim=False/0|Jaune=False/1|Rouge=False/2') $sains
     # Défaut 2 : pied du rail selon l'état réel du service
     $piedT = $coquille.GetField('piedTexte', [Reflection.BindingFlags]'Instance,NonPublic'); $piedP = $coquille.GetField('piedPoint', [Reflection.BindingFlags]'Instance,NonPublic')
     $ok0 = $piedT.GetValue($fen).Text -eq 'mis à jour 10:00   · v4.3' -and $piedP.GetValue($fen).Fill.Color -eq $vert
@@ -170,8 +178,23 @@ public class SourceSimulee : RealProxy
         $i = $fluentTxt.IndexOf("class $cl "); $j = $fluentTxt.IndexOf("`n    class ", $i + 10); $k = $fluentTxt.IndexOf("`n    abstract class ", $i + 10)
         if ($k -gt 0 -and ($j -lt 0 -or $k -lt $j)) { $j = $k }
         if ($i -lt 0 -or -not $fluentTxt.Substring($i, $j - $i).Contains('Briques.GarderFocus(')) { $cl } })
+    $ligneT = & $t 'LigneBord'; $briquesT = & $t 'Briques'
+    $panneau = New-Object Windows.Controls.StackPanel
+    0..3 | ForEach-Object { $lb = [Activator]::CreateInstance($ligneT, $true); $lb.Focusable = $true; $ligneT.GetField('EstOuverte').SetValue($lb, [bool]($_ -eq 0)); $null = $panneau.Children.Add($lb) }
+    $cible = { param($rang, $premier) $c = $briquesT.GetMethod('CibleFocus').Invoke($null, [object[]]@($panneau.psobject.BaseObject, [int]$rang, [bool]$premier)); if ($null -eq $c) { 'aucune' } else { $panneau.Children.IndexOf($c) } }
+    $cibles = "$(& $cible 2 $true)|$(& $cible 9 $true)|$(& $cible -1 $true)"
+    $ligneT.GetField('EstOuverte').SetValue($panneau.Children[0], $false)
+    $cibles += "|$(& $cible 9 $true)|$(& $cible 9 $false)"
+    Cas "Focus rendu : au rang parcouru aux flèches, pas ramené à la ligne ouverte ; ligne ouverte si le rang a disparu ; premier seulement dans la liste (défaut A, D2)" ($cibles -eq '2|0|0|0|aucune') $cibles
     Cas "Focus clavier rendu après le rafraîchissement : même brique sur les sept familles de pages de liste rafraîchies (défaut 4)" ($sansFocus.Count -eq 0) ($sansFocus -join ', ')
-    Cas "Pied du rail : santé du service calculée sur l'état réel (en marche, lisible, récent)" ($statutSrc.Contains('santeService = etatService != ServiceControllerStatus.Running ? 2 : etat == null || VueSante.EtatAncien(etat, DateTime.Now) ? 1 : 0;'))
+    Add-Type -AssemblyName System.ServiceProcess
+    $etatT = & $t 'Etat'; [DateTime]$maint = [DateTime]::Now
+    $etatDe = { param($date) if ($null -eq $date) { return $null }; $e = [Activator]::CreateInstance($etatT); $etatT.GetProperty('MisAJour').SetValue($e, $date); $e }
+    $santeDe = { param($statutSvc, $date) $eo = & $etatDe $date; if ($null -ne $eo) { $eo = $eo.psobject.BaseObject }; if ($null -ne $statutSvc) { $statutSvc = $statutSvc.psobject.BaseObject }; $fenetreT.GetMethod('Sante', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($statutSvc, $eo, $maint.psobject.BaseObject)) }
+    $frais = $maint.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture); $vieux = $maint.AddDays(-2).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    $en = [ServiceProcess.ServiceControllerStatus]::Running; $arr = [ServiceProcess.ServiceControllerStatus]::Stopped
+    $santes = "$(& $santeDe $en $frais)|$(& $santeDe $en $vieux)|$(& $santeDe $en $null)|$(& $santeDe $arr $frais)|$(& $santeDe $null $frais)"
+    Cas "Pied du rail : santé du service (en marche et frais 0, état ancien 1, état absent 1, arrêté 2, non installé 2)" ($santes -eq '0|1|1|2|2') $santes
 
     # Page Alertes (U2b) : actions offertes selon l'alerte, ordre et plafond de la liste, détail neutralisé
     $alertes = & $t 'VueAlertesFluent'; $alerteT = & $t 'Alerte'
