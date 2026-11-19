@@ -25,7 +25,7 @@ comportement + antivirus) et (2) **aucune exclusion** ne couvre un chemin ou un 
 déclaré invalide (D), jamais un faux « aucune détection ».
 
 **Point notable (honnête)** : le binaire installé `deR4TizerSvc.exe` est **non signé** (la signature de code — Certum /
-SignPath — est l'étape 5 du lancement, pas encore faite). Le résultat est d'autant plus significatif : Defender, y compris
+SignPath — est l'étape 5 du lancement, pas encore faite). *Note du 2026-11-19 : « étape 5 du lancement » renvoie au plan de lancement du mainteneur, hors dépôt (signature de la version, puis lot 3d rejoué sur la version signée) ; le certificat retenu est Certum Open Source (2026-11-11), SignPath est écarté (`CLAUDE.md`, section 6).* Le résultat est d'autant plus significatif : Defender, y compris
 en baseline durcie (ASR activé, cloud élevé, PUA), **ne flague pas** un service SYSTEM non signé.
 
 **Portée** : c'est un **signal en VM de test**, pas une preuve sur un poste réel. Les conditions de distribution restent

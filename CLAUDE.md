@@ -21,7 +21,15 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 9. **Pas de test destructif sur le poste hôte.** Pas de malware réel. Les scénarios sont bénins et reproductibles, en CI ou en VM.
 10. **Petits changements.** Un lot = un commit (ou une pull request) cohérent et relisible. Pas de réécriture de module quand une correction ciblée suffit. Pas de nouvelle dépendance sans justification (maintenance, licence, nécessité) écrite dans le message de commit.
 11. **Aucun secret** dans les journaux, les messages d'erreur, la ligne de commande ou les fichiers lisibles par les comptes autorisés.
-12. **Langue.** Code, commentaires, messages, documentation et commits en français, comme le reste du dépôt. Exception (décision du 2026-11-18) : le README et la page de présentation (GitHub Pages) sont en anglais, pour une portée internationale ; l'interface de l'application reste bilingue français/anglais.
+12. **Langue.** Code, commentaires, messages, documentation et commits en français, comme le reste du dépôt. Exception (décision du mainteneur du 2026-11-18, confirmée le 2026-11-19 par ces mots : « C'est moi qui ai demandé anglais seul le 18 du 11 ») : le README et la page de présentation (GitHub Pages) sont en anglais, pour une portée internationale ; l'interface de l'application reste bilingue français/anglais.
+13. **Données personnelles.** Aucune donnée personnelle dans le dépôt ni sur GitHub (commits, PR, commentaires, captures),
+    contrôlé par la garde PII. Seule exception, décidée par le mainteneur le 2026-11-19 : son nom, affiché sur son profil
+    GitHub parce qu'il en a besoin pour le certificat de signature à son nom (Certum), et repris par GitHub comme auteur
+    ou commiteur des fusions faites sur GitHub (depuis le 2026-11-12) ; l'historique n'est pas réécrit. Par ces mots :
+    « je dois laisser mon nom sur le profil GitHub. Donc ça, tu peux l'ajouter. C'est le seul P2I qui sera conservé
+    parce que j'en ai besoin pour récupérer mon certificat signé à mon nom » et « Réécrire l'historique. Non, c'est pas
+    nécessaire. » Les commits écrits par Claude Code restent sous l'identité `cryptobones-1337` ; le nom figure aussi dans
+    la signature des binaires (décision du 2026-11-11), jamais dans les fichiers du dépôt.
 
 ## 3. Repères d'architecture
 
@@ -96,7 +104,16 @@ Limite : l'agent est le même modèle que l'auteur des changements ; leurs angle
 relecture n'est donc pas une relecture indépendante, et rien ne doit la présenter comme telle (README, matrice,
 publications).
 
-### Exception temporaire : GitHub Actions désactivé sur le dépôt (depuis le 2026-10-22)
+### Exception temporaire : GitHub Actions désactivé sur le dépôt (du 2026-10-22 au 2026-11-17)
+
+Fin de l'exception : la CI GitHub a été rallumée le 2026-11-17, sur le choix du mainteneur (« Rallumer la CI », pour
+fusionner la PR #190). Depuis le 2026-11-19, par sa réponse « CI seule suffit » à la question « la preuve en VM
+reste-t-elle exigée en plus de la CI pour fusionner une PR de code ? » : la CI verte (`windows`,
+`integration-installation`, `integration-quarantaine`, `integration-maj`) fait la preuve de fusion d'une PR de code ;
+la VM de test reste pour ce que la CI ne couvre pas (essais au clavier en session ouverte, lot 3d avec Defender actif,
+campagne Kali). Point 5 ci-dessous : les vérifications obligatoires ne sont pas encore rétablies sur `main` (vérifié le
+2026-11-19 : branche sans protection ; réglage réservé au mainteneur, section 6). La suite décrit le régime de
+l'exception, gardé pour l'historique et comme secours si la CI redevient indisponible.
 
 Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par une preuve locale, avec l'accord de cryptobones-1337 :
 1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
@@ -113,7 +130,7 @@ Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par un
 4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
 5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
 
-Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM, que les binaires ne sont pas signés et qu'une relecture indépendante (personne ou organisme autre que Claude) n'a pas été faite.
+Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM sur la version distribuée et signée (mainteneur, 2026-11-19 : « A5 lot 3D, il fallait bien rejouer sur la version distribuée et signée »), que les binaires ne sont pas signés et qu'une relecture indépendante (personne ou organisme autre que Claude) n'a pas été faite.
 
 ## 5. File de travail (dans cet ordre)
 
@@ -247,11 +264,15 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      - texte des confirmations de l'assistant élevé passé par `Visible()` partout ;
      - fenêtre de confirmation qui renvoie à la ligne et défile, et montre le domaine enregistrable (S60-06/07).
    - Une fois ces correctifs fusionnés, chacun relu et couvert par un passage VM sans ÉCHOUÉ sur l'arbre intégré, la phase 1 est validée par cryptobones-1337.
+   - Validation confirmée par le mainteneur le 2026-11-19, par ces mots : « Phase 1 est validée. »
    - La phase 3 s'ouvre alors. Pour son ouverture et pour ses PR, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub.
    - Le 2026-10-25, le mainteneur a levé, pour l'ouverture de la phase 3, la condition du lot 3d, par ces mots : « Phase 3 can open ». Le lot 3d était alors « non exécuté » dans `docs/roadmap/capability-matrix.md` (réussi en VM depuis, 12 sur 12 aux passages complets verts de novembre 2026), alors que cet en-tête pose la condition « après validation des lots 1 à 5 ». La phase 3 s'ouvre donc à la validation de la phase 1 (puce précédente), sans attendre le lot 3d.
    - Rien ne change pour la distribution : la règle de la section 4 reste entière (CI GitHub verte, lot 3d réussi, binaires signés, relecture indépendante).
 2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
+   Validée par le mainteneur le 2026-11-19, par ces mots : « Phase 3 validée. »
 3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
+   Validée par le mainteneur le 2026-11-19, par sa réponse « Oui, validée » à la question « Phase 4 (incidents,
+   chronologie, santé) : tu n'en as pas parlé. Est-elle validée ? ».
    Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
 4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
    Validée par le mainteneur le 2026-11-03, par ces mots : « Je valide », en réponse à la question « Valides-tu la phase 6 :
@@ -264,6 +285,11 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
    découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6, la preuve locale en VM tient
    lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. Inscrit le 2026-11-03 sur l'autorisation du
    mainteneur (« Ok pour modifier Claude. Md je t'autorise »).
+   La phase 7 a commencé avant la validation de cette phase, sur la consigne du mainteneur du 2026-11-11 (journal des
+   décisions, hors dépôt : finir le MSI U8 et la bascule B1, puis ouvrir la phase 7 sans demander la validation de la
+   phase Interface). Validée ensuite par le mainteneur le 2026-11-19, par ces mots : « Tu as mon accord pour la
+   validation. La phase interface maintenant, vu qu'elle a été revue par un externe », puis sa réponse « Validée
+   maintenant ». Restent à faire, après cette validation : B3, B4 et U8b (`docs/roadmap/interface.md`).
 6. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
    mots : « Open a phase for the feature > do it like your example », l'exemple proposé étant « Phase 7: domain-name
    filtering (DNS, ads, tracking) ». Commence une fois les phases 1, 3, 4 et 6 validées par la relecture et par
@@ -282,6 +308,17 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
      mainteneur), demandée par le mainteneur le 2026-10-27 (« I propose to do a full test after phase 7, add it to
      claude.md »). Elle vise la VM `deR4Tizer-test-26H2` et exerce ensemble la détection, les incidents et leur
      chronologie (phase 4), la réponse et ses durées maximales (phase 6) et le filtrage DNS (phase 7).
+     - Démarrage : premiers essais le 2026-11-15, après la fusion des PR 7.1 à 7.6 (dernière le 2026-11-14, #167).
+       Le mainteneur, le 2026-11-19 : « Considère que la campagne Kali a démarré après la phase 7. »
+     - Scénarios S-20 à S-27 (détection réseau) : exécutés du 2026-11-16 au 2026-11-17 avant d'être inscrits dans la
+       liste approuvée ; ajoutés à la liste approuvée (version 1.5) le 2026-11-19, par ces mots du mainteneur :
+       « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » Approbation après coup, dite telle dans la
+       liste et dans les rapports.
+     - Topologie : deux écarts à la règle « Réseau » ci-dessous, accordés par le mainteneur le 2026-11-19 (« Ok pour la
+       topologie du labo ») : la VM cible a deux cartes, dont une sur le réseau du poste, désactivée de façon
+       réversible pendant les essais réseau (`campagne-kali-detection-reseau-lot1.md`) ; le segment de laboratoire est
+       ré-adressé en 192.168.50.0/24 (RFC 1918) pour les essais UPnP et IDS directionnel, de façon réversible par
+       l'instantané (`campagne-kali-detection-reseau-lot4.md`).
      - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet ; VM
        adressées dans une plage de documentation (RFC 5737, par exemple 203.0.113.0/24), jamais une plage publique
        réelle, pour que COR-R9 (session depuis une adresse publique) puisse se déclencher. Seule exception, choisie
@@ -429,10 +466,10 @@ la matrice tant qu'une mesure ne le justifie pas, et accord du mainteneur pour t
 
 Claude Code ne les fait pas ; il peut les rappeler.
 
-- Supprimer la version GitHub v4.1 (publiée avec l'ancien mécanisme de mise à jour) et vérifier que tous les postes sont en 4.2 ou plus.
+- Vérifier que tous les postes sont en 4.2 ou plus. Aucune version n'est publiée sur GitHub (vérifié le 2026-11-19 ; mainteneur, le même jour : « La release n'est pas encore disponible et publiée sur GitHub, vu que c'est pas signé »).
 - Activer la protection de `main` : pull request obligatoire, CI verte obligatoire, pas de poussée forcée.
 - Protéger les tags `v*` ; exiger une approbation sur l'environnement `publication`.
-- Obtenir le certificat de signature (SignPath Foundation ou Azure Trusted Signing) et renseigner la variable `CLE_SIGNATURE`.
+- Signer la version : certificat Certum Open Source, choisi par le mainteneur le 2026-11-11 (journal des décisions ; nom du titulaire visible dans la signature des binaires seulement), obtenu, valable jusqu'au 2027-11-17 ; variable `CLE_SIGNATURE` renseignée. La clé reste dans le nuage de Certum (SimplySign) : la signature se fait sur le poste du mainteneur. SignPath Foundation et Azure Trusted Signing sont écartés.
 - Décider de toute publication.
 
 ## 7. Définition de « terminé »
