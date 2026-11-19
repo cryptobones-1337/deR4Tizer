@@ -1377,6 +1377,8 @@ namespace DeR4Tizer
 
             DateTime d0;
             var etat = Commun.Lire<Etat>("etat.json");
+            // Pied de la coquille : vert seulement service en marche avec un état lisible et récent (relecture de la refonte, défaut 2)
+            santeService = etatService != ServiceControllerStatus.Running ? 2 : etat == null || VueSante.EtatAncien(etat, DateTime.Now) ? 1 : 0;
             // « SERVICE EN LIGNE » seul ne dirait rien de ce qu'il surveille : les pastilles de risque ont disparu (audit de #105, S105-02)
             if (etat == null && etatService == ServiceControllerStatus.Running)
                 pastilles.Add(new Entete.Pastille { Texte = L.T("ÉTAT ILLISIBLE : SERVICE OU DROITS DU COMPTE À VÉRIFIER"), Couleur = Theme.Jaune });
@@ -1561,7 +1563,7 @@ namespace DeR4Tizer
             }
             // Coquille du pilote (U2) : mêmes faits que l'en-tête, publiés après chaque rafraîchissement
             // Textes neutralisés (Canal.Visible) : noms de programmes et d'outils venus du service (relecture de #134, D1)
-            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Affichable(p.Texte), Gravite = Entete.Gravite(p.Couleur) }).ToList();
+            pointsCourants = entete.Pastilles.Select(p => new PointEtat { Texte = VueEnsembleFluent.Affichable(p.Texte), Gravite = Entete.Gravite(p.Couleur), Sain = p.Couleur == Theme.Vert }).ToList();
             var change = Change;
             if (change != null) change();
         }
@@ -1571,6 +1573,8 @@ namespace DeR4Tizer
         List<PointEtat> pointsCourants = new List<PointEtat>();
         public event Action Change;
         public List<PointEtat> Points() { return pointsCourants; }
+        int santeService = 2;
+        public int SanteService() { return santeService; }
         public string Statut() { return Canal.Visible(statut.Text); }
         public string TextePanique() { return VueEnsembleFluent.Affichable(btnPanique.Text); }
         public bool PaniqueActive() { return paniqueActive; }

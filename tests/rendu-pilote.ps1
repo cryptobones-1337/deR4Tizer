@@ -90,6 +90,75 @@ try {
     $langue.GetField('En').SetValue($null, $false)
     Cas "Vue d'ensemble : deux-points sans espace avant en anglais, avec en français" ($deux -eq ': ' -and $vue.GetProperty('DeuxPoints').GetValue($null) -eq ' : ')
 
+    # Relecture de la refonte (défauts 1 à 3) : la coquille rendue avec une source simulée (mandataire de l'interface
+    # ISourceEtat, aucun service) ; ce que l'écran affirme est lu dans l'arbre des contrôles
+    Add-Type -TypeDefinition @'
+using System; using System.Collections; using System.Runtime.Remoting.Messaging; using System.Runtime.Remoting.Proxies;
+public class SourceSimulee : RealProxy
+{
+    readonly Hashtable r;
+    public SourceSimulee(Type t, Hashtable r) : base(t) { this.r = r; }
+    public override IMessage Invoke(IMessage m)
+    {
+        var c = (IMethodCallMessage)m;
+        // Méthodes d'object appelées par PowerShell lui-même (GetType, ToString…)
+        if (c.MethodBase.DeclaringType == typeof(object))
+            return new ReturnMessage(c.MethodName == "GetType" ? (object)GetProxiedType() : c.MethodName == "ToString" ? (object)"SourceSimulee" : c.MethodName == "GetHashCode" ? (object)0 : (object)false, null, 0, c.LogicalCallContext, c);
+        var rt = ((System.Reflection.MethodInfo)c.MethodBase).ReturnType;
+        object v = r.ContainsKey(c.MethodName) ? r[c.MethodName] : (rt.IsValueType && rt != typeof(void) ? Activator.CreateInstance(rt) : null);
+        return new ReturnMessage(v, null, 0, c.LogicalCallContext, c);
+    }
+}
+'@
+    $faits = [Activator]::CreateInstance([Collections.Generic.List``1].MakeGenericType($pointT))
+    foreach ($f in @(@('Service en ligne', 0, $true), @('Defender (falsification off)', 1, $false), @('Processus : WMI', 0, $false))) {
+        $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Texte').SetValue($p, $f[0]); $pointT.GetField('Gravite').SetValue($p, [int]$f[1]); $pointT.GetField('Sain').SetValue($p, [bool]$f[2]); $faits.Add($p)
+    }
+    $textesDe = { param($racine) $l = New-Object Collections.Generic.List[object]; $pile = New-Object Collections.Stack; $pile.Push($racine)
+        while ($pile.Count) { $n = $pile.Pop(); if ($n -is [Windows.Controls.TextBlock]) { $l.Add($n) }; if ($n -is [Windows.DependencyObject]) { foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pile.Push($e) } } }; , $l }
+    $nouvelleCoquille = { param([int]$sante)
+        $h = @{ Points = $faits; Badges = $badges; Statut = '▸ mis à jour 10:00   ▸ v4.3'; TextePanique = 'Panique'; SanteService = $sante }
+        $src = (New-Object SourceSimulee ((& $t 'ISourceEtat'), $h)).GetTransparentProxy()
+        $fen = $coquille.GetConstructor([Type[]]@((& $t 'ISourceEtat'))).Invoke([object[]]@($src))
+        $null = $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @("Vue d'ensemble")); $fen }
+    $fen = & $nouvelleCoquille 0
+    $zoneV = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
+    $tb = & $textesDe $zoneV
+    $orange = @($tb | Where-Object { $_.Text -eq 'Defender (falsification off)' })
+    Cas "Vue d'ensemble : un fait orange de l'en-tête est affiché sous « À surveiller » (défaut 1)" ($orange.Count -eq 1 -and @($tb | Where-Object { $_.Text -eq 'À surveiller' }).Count -eq 1) "$($orange.Count) affiché(s)"
+    $sections = $vue.GetMethod('Sections').Invoke($null, @($faits, $badges))
+    $nAff = $sections.ATraiter.Count + $sections.ASurveiller.Count + $sections.Tuiles.Count
+    $rAvec = & $resume ($vue.GetMethod('AvecCompteurs').Invoke($null, @($faits, $badges)))
+    Cas "Vue d'ensemble : la tête compte exactement ce qui est affiché (faits orange + tuiles)" ($rAvec -eq "Rien d'avéré, $nAff points à surveiller|1" -and $nAff -eq 3) "$rAvec ; affichés $nAff"
+    $tuiles = @($sections.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)=$($_.Nombre)" }) -join '|'
+    Cas "Vue d'ensemble : tuiles des compteurs colorés seulement, un mot n'est pas un nombre" ($tuiles -eq 'Démarrage auto=2=True|Baseline=12%=True' -or $tuiles -eq 'Baseline=12%=True|Démarrage auto=2=True') $tuiles
+    Cas "Vue d'ensemble : « LIVE » n'est pas mis en grand comme un nombre" (-not $vue.GetMethod('EstNombre').Invoke($null, @('LIVE')) -and $vue.GetMethod('EstNombre').Invoke($null, @('999+')))
+    # Défaut 3 : puce verte pour le seul fait sain, grise pour une information
+    $puces = @{}
+    foreach ($x in $tb) { if ($x.Text -in 'Service en ligne', 'Processus') { $d = $x.Parent; $pu = @($d.Children | Where-Object { $_ -is [Windows.Controls.Border] })[0]; $puces[$x.Text] = $pu.Background.Color } }
+    $vert = $jetons.GetField('Succes').GetValue($null); $gris = $jetons.GetField('TexteSecondaire').GetValue($null)
+    Cas "Vue d'ensemble : puce verte pour « Service en ligne », grise pour l'information « Processus » (défaut 3)" ($puces['Service en ligne'] -eq $vert -and $puces['Processus'] -eq $gris) "$($puces['Service en ligne']) / $($puces['Processus'])"
+    Cas "Vue d'ensemble : « sain » vient de la couleur verte de l'en-tête" ($statutSrc.Contains('Sain = p.Couleur == Theme.Vert'))
+    # Défaut 2 : pied du rail selon l'état réel du service
+    $piedT = $coquille.GetField('piedTexte', [Reflection.BindingFlags]'Instance,NonPublic'); $piedP = $coquille.GetField('piedPoint', [Reflection.BindingFlags]'Instance,NonPublic')
+    $ok0 = $piedT.GetValue($fen).Text -eq 'mis à jour 10:00   · v4.3' -and $piedP.GetValue($fen).Fill.Color -eq $vert
+    $fen.Close()
+    $fen = & $nouvelleCoquille 2
+    $texte2 = $piedT.GetValue($fen).Text; $ok2 = $texte2.StartsWith("Service hors ligne : rien n'est surveillé") -and -not $texte2.Contains('10:00') -and $piedP.GetValue($fen).Fill.Color -eq $jetons.GetField('Danger').GetValue($null)
+    $fen.Close()
+    $fen = & $nouvelleCoquille 1
+    $ok1 = $piedT.GetValue($fen).Text.StartsWith('Service à vérifier · ') -and $piedP.GetValue($fen).Fill.Color -eq $jetons.GetField('Attention').GetValue($null)
+    $fen.Close()
+    Cas "Pied du rail : vert en ligne, orange à vérifier, rouge hors ligne sans l'ancien statut (défaut 2)" ($ok0 -and $ok1 -and $ok2) "0=$ok0 1=$ok1 2=$ok2 « $texte2 »"
+    # Défaut 4 : focus rendu après le rafraîchissement périodique par la même brique sur toutes les pages de liste
+    $fluentTxt = [IO.File]::ReadAllText("$src\Fluent.cs")
+    $sansFocus = @(foreach ($cl in 'PageIncidentsFluent', 'PageReponsesFluent', 'PageSanteFluent', 'PageDetectionFluent', 'PageEtatServiceFluent', 'PageProtectionFluent', 'PageTraficFluent') {
+        $i = $fluentTxt.IndexOf("class $cl "); $j = $fluentTxt.IndexOf("`n    class ", $i + 10); $k = $fluentTxt.IndexOf("`n    abstract class ", $i + 10)
+        if ($k -gt 0 -and ($j -lt 0 -or $k -lt $j)) { $j = $k }
+        if ($i -lt 0 -or -not $fluentTxt.Substring($i, $j - $i).Contains('Briques.GarderFocus(')) { $cl } })
+    Cas "Focus clavier rendu après le rafraîchissement : même brique sur les sept familles de pages de liste rafraîchies (défaut 4)" ($sansFocus.Count -eq 0) ($sansFocus -join ', ')
+    Cas "Pied du rail : santé du service calculée sur l'état réel (en marche, lisible, récent)" ($statutSrc.Contains('santeService = etatService != ServiceControllerStatus.Running ? 2 : etat == null || VueSante.EtatAncien(etat, DateTime.Now) ? 1 : 0;'))
+
     # Page Alertes (U2b) : actions offertes selon l'alerte, ordre et plafond de la liste, détail neutralisé
     $alertes = & $t 'VueAlertesFluent'; $alerteT = & $t 'Alerte'
     $nouvelle = { param([hashtable]$h) $a = [Activator]::CreateInstance($alerteT); foreach ($k in $h.Keys) { $alerteT.GetProperty($k).SetValue($a, $h[$k]) }; $a }

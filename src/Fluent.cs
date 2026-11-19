@@ -125,6 +125,9 @@ namespace DeR4Tizer
     {
         public string Texte;
         public int Gravite;
+        // Vert dans l'en-tête (service en ligne, Defender OK) : seul fait qui a droit à la puce verte d'« En ordre » ;
+        // une information (cyan, gris) n'est pas un état sain (relecture de la refonte, défaut 3)
+        public bool Sain;
     }
 
     // Ce que la coquille lit de la fenêtre d'aujourd'hui (U2) : mêmes faits, même chemin pour la panique
@@ -137,6 +140,9 @@ namespace DeR4Tizer
         bool PaniqueActive();
         void DemanderPanique();
         Dictionary<string, PointEtat> Badges();
+        // État du service pour le pied du rail : 0 en ligne et état frais, 1 à vérifier (état ancien ou illisible),
+        // 2 arrêté ou non installé (relecture de la refonte, défaut 2 : le point vert ne suivait que la présence d'un texte)
+        int SanteService();
         // La zone de notification montre la coquille (page demandée, ou celle ouverte si null)
         void Rattacher(Action<string> montrer);
     }
@@ -289,6 +295,39 @@ namespace DeR4Tizer
                 }
             return r;
         }
+
+        // Une tuile « à surveiller » : un compteur de la navigation, qui ouvre sa page
+        public class TuileVue { public string Cle; public string Icone; public string Valeur; public string Libelle; public bool Nombre; }
+
+        // Ce que la Vue d'ensemble affiche, rangé : chaque fait de l'en-tête dans la section de sa gravité (aucun n'est
+        // perdu), plus les compteurs de la navigation en tuiles. Resume(AvecCompteurs) compte exactement ces éléments : la
+        // refonte avait remplacé la liste « à surveiller » par les seules tuiles et perdu les faits orange de l'en-tête
+        // (Defender sans protection contre la falsification, exposition, journal DNS inactif…) que la tête comptait encore
+        // (relecture de la refonte, défaut 1)
+        public class SectionsVue
+        {
+            public List<PointEtat> ATraiter = new List<PointEtat>(), ASurveiller = new List<PointEtat>(), EnOrdre = new List<PointEtat>();
+            public List<TuileVue> Tuiles = new List<TuileVue>();
+        }
+
+        public static SectionsVue Sections(IList<PointEtat> points, IDictionary<string, PointEtat> badges)
+        {
+            var s = new SectionsVue();
+            foreach (var p in points ?? new List<PointEtat>())
+                (p.Gravite >= 2 ? s.ATraiter : p.Gravite == 1 ? s.ASurveiller : s.EnOrdre).Add(p);
+            if (badges == null) return s;
+            foreach (var g in NavigationFluent.Groupes())
+                foreach (var e in g.Entrees)
+                {
+                    PointEtat b;
+                    if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
+                        s.Tuiles.Add(new TuileVue { Cle = e.Cle, Icone = e.Icone, Valeur = b.Texte ?? "", Libelle = e.Cle == "Baseline" ? L.T("Réglages de sécurité appliqués") : L.T(e.Cle), Nombre = EstNombre(b.Texte) });
+                }
+            return s;
+        }
+
+        // Compteur chiffré (« 3 », « 12% », « 999+ ») : en grand ; un mot (« LIVE », « EXPOSÉ ») reste à la taille du texte
+        public static bool EstNombre(string t) { return !string.IsNullOrEmpty(t) && char.IsDigit(t[0]); }
 
         // Phrase de tête : jamais « vous êtes protégé » ; un état inconnu n'est pas un état sain
         public static string Resume(IList<PointEtat> points, out int gravite)
@@ -458,13 +497,24 @@ namespace DeR4Tizer
             MettreAJourPanique();
         }
 
-        // Pied du rail : « · »-séparé depuis le statut du service (mise à jour, démarrage, version) ; pastille verte si en ligne
+        // Pied du rail : pastille selon l'état réel du service (vert seulement en ligne avec un état frais, orange à vérifier,
+        // rouge arrêté) et statut « · »-séparé (mise à jour, démarrage, version). Service arrêté : l'ancien statut n'est plus
+        // montré, il daterait d'avant l'arrêt (relecture de la refonte, défaut 2)
         void MettreAJourPied()
         {
             if (piedTexte == null) return;
-            string statut = source == null ? "" : (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
-            piedTexte.Text = statut != "" ? statut : "v" + Commun.Version;
-            piedPoint.Fill = Jetons.Pinceau(statut != "" ? Jetons.Succes : Jetons.TexteSecondaire);
+            if (source == null) { piedTexte.Text = "v" + Commun.Version; piedPoint.Fill = Jetons.Pinceau(Jetons.TexteSecondaire); return; }
+            int sante = source.SanteService();
+            string statut = (source.Statut() ?? "").Replace("▸", "·").Trim(' ', '·');
+            piedTexte.Text = TextePied(sante, statut);
+            piedPoint.Fill = Jetons.Pinceau(sante == 0 ? Jetons.Succes : sante == 1 ? Jetons.Attention : Jetons.Danger);
+        }
+
+        internal static string TextePied(int sante, string statut)
+        {
+            if (sante >= 2) return L.T("Service hors ligne : rien n'est surveillé") + " · v" + Commun.Version;
+            if (sante == 1) return L.T("Service à vérifier") + (statut != "" ? " · " + statut : " · v" + Commun.Version);
+            return statut != "" ? statut : "v" + Commun.Version;
         }
 
         // Bouton Panique de l'en-tête : texte et couleurs selon l'état (actif = fond accent, sinon contour rouge)
@@ -476,17 +526,39 @@ namespace DeR4Tizer
             boutonPanique.Foreground = Jetons.Pinceau(active ? Jetons.TexteSurAccent : Jetons.Danger);
             boutonPanique.Background = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Carte);
             boutonPanique.BorderBrush = Jetons.Pinceau(active ? Jetons.Accent : Jetons.Danger);
+            // Phrase selon l'état (audit de #134, S134-01), retirée de la Vue d'ensemble avec l'ancien bouton : gardée en
+            // infobulle et en aide du lecteur d'écran (relecture de la refonte, défaut 7)
+            string aide = L.T(active ? "Rétablit Internet sur ce poste ; ce qui sera fait est dit avant d'agir."
+                                     : "Coupe Internet sur ce poste ; la portée et le retour arrière sont dits avant d'agir.");
+            boutonPanique.ToolTip = aide;
+            System.Windows.Automation.AutomationProperties.SetHelpText(boutonPanique, aide);
         }
 
-        // Tuile de compteur : barre d'accent à gauche, grand nombre, libellé (Vue d'ensemble)
-        static UIElement Tuile(string nombre, string libelle, Color couleur)
+        // Tuile de compteur (Vue d'ensemble) : barre orange à gauche (un compteur est « à surveiller » au plus, comme dans
+        // Resume), icône et valeur, libellé ; bouton focalisable qui ouvre la page du compteur (relecture de la refonte,
+        // défaut 6). Un mot (« LIVE ») garde la taille du texte, seul un chiffre est mis en grand
+        Button Tuile(VueEnsembleFluent.TuileVue t)
         {
-            var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), BorderBrush = Jetons.Pinceau(couleur), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 12, 12), Width = 190 };
+            var b = new Button { Template = ModeleSimple(), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Carte), BorderBrush = Jetons.Pinceau(Jetons.Attention), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 12, 12), Width = 190, HorizontalContentAlignment = HorizontalAlignment.Stretch, Foreground = Jetons.Pinceau(Jetons.Texte) };
+            b.FocusVisualStyle = Jetons.StyleFocus();
+            string valeur = Canal.Visible(t.Nombre ? t.Valeur : VueEnsembleFluent.Phrase(t.Valeur));
+            System.Windows.Automation.AutomationProperties.SetName(b, t.Libelle + VueEnsembleFluent.DeuxPoints + valeur);
+            b.ToolTip = string.Format(L.T("Ouvrir la page {0}"), L.T(t.Cle));
             var c = new StackPanel();
-            c.Children.Add(new TextBlock { Text = Canal.Visible(nombre), FontSize = 26, FontWeight = FontWeights.SemiBold });
-            c.Children.Add(new TextBlock { Text = libelle, FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
-            carte.Child = c;
-            return carte;
+            var haut = new DockPanel();
+            if (!string.IsNullOrEmpty(t.Icone))
+            {
+                var ic = new TextBlock { Text = t.Icone, FontFamily = Jetons.Icones, FontSize = 16, Foreground = Jetons.Pinceau(Jetons.Attention), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+                DockPanel.SetDock(ic, Dock.Left);
+                haut.Children.Add(ic);
+            }
+            haut.Children.Add(new TextBlock { Text = valeur, FontSize = t.Nombre ? 26 : 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            c.Children.Add(haut);
+            c.Children.Add(new TextBlock { Text = t.Libelle, FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+            b.Content = c;
+            string cle = t.Cle;
+            b.Click += (s, a) => Ouvrir(cle);
+            return b;
         }
 
         // Logo : tête de rat géométrique (clin d'œil « RAT »), dessin vectoriel autonome (rendu identique en test et en prod)
@@ -532,7 +604,10 @@ namespace DeR4Tizer
             bas.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(8, 8, 8, 0) });
             piedPoint = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 4, 7, 0), Fill = Jetons.Pinceau(Jetons.Succes) };
             piedTexte = new TextBlock { FontSize = 11, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap };
-            var piedBloc = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 10, 10, 2) };
+            // DockPanel : le texte prend la largeur restante et passe à la ligne (un StackPanel horizontal lui donnait une
+            // largeur infinie, relecture de la refonte, défaut 5)
+            var piedBloc = new DockPanel { Margin = new Thickness(12, 10, 10, 2) };
+            DockPanel.SetDock(piedPoint, Dock.Left);
             piedBloc.Children.Add(piedPoint);
             piedBloc.Children.Add(piedTexte);
             bas.Children.Add(piedBloc);
@@ -684,6 +759,7 @@ namespace DeR4Tizer
         {
             var pile = new StackPanel { MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Left };
             var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
+            var sections = source == null ? new VueEnsembleFluent.SectionsVue() : VueEnsembleFluent.Sections(source.Points(), source.Badges());
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
             var couleurTete = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : Jetons.Succes;
@@ -697,13 +773,12 @@ namespace DeR4Tizer
             bandeau.Child = ligneBandeau;
             pile.Children.Add(bandeau);
 
-            Action<string, int, Color> section = (titre, g, couleur) =>
+            Action<string, List<PointEtat>, Color> section = (titre, faits, couleur) =>
             {
-                var faits = points.Where(p => p.Gravite == g).ToList();
                 if (faits.Count == 0) return;
                 var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 0, 12) };
                 var contenu = new StackPanel();
-                contenu.Children.Add(new TextBlock { Text = L.T(titre), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(0, 0, 0, 8) });
+                if (titre != null) contenu.Children.Add(new TextBlock { Text = L.T(titre), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(0, 0, 0, 8) });
                 foreach (var f in faits)
                 {
                     var ligne = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
@@ -717,27 +792,20 @@ namespace DeR4Tizer
                 carte.Child = contenu;
                 pile.Children.Add(carte);
             };
-            section("À traiter", 2, Jetons.Danger);
-            // Tuiles « à surveiller » : les compteurs de la nav (gravité >= 1), barre d'accent, grand nombre et libellé
-            if (source != null)
+            section("À traiter", sections.ATraiter, Jetons.Danger);
+            // « À surveiller » : les faits orange de l'en-tête en liste (jamais perdus, défaut 1), puis les compteurs de la
+            // navigation en tuiles cliquables
+            if (sections.ASurveiller.Count > 0 || sections.Tuiles.Count > 0)
             {
-                var badges = source.Badges();
+                pile.Children.Add(new TextBlock { Text = L.T("À surveiller"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Attention), Margin = new Thickness(0, 0, 0, 10) });
+                section(null, sections.ASurveiller, Jetons.Attention);
                 var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-                foreach (var g in NavigationFluent.Groupes())
-                    foreach (var e in g.Entrees)
-                    {
-                        PointEtat b;
-                        if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
-                            wrap.Children.Add(Tuile(b.Texte, e.Cle == "Baseline" ? L.T("Réglages de sécurité appliqués") : L.T(e.Cle), b.Gravite == 2 ? Jetons.Danger : Jetons.Attention));
-                    }
-                if (wrap.Children.Count > 0)
-                {
-                    pile.Children.Add(new TextBlock { Text = L.T("À surveiller"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Attention), Margin = new Thickness(0, 0, 0, 10) });
-                    pile.Children.Add(wrap);
-                }
+                foreach (var tv in sections.Tuiles) wrap.Children.Add(Tuile(tv));
+                if (wrap.Children.Count > 0) pile.Children.Add(wrap);
             }
-            // « En ordre » : un seul conteneur, lignes séparées, libellé à gauche et état à droite (séparé sur « : »)
-            var enOrdre = points.Where(p => p.Gravite == 0).ToList();
+            // « En ordre » : un seul conteneur, lignes séparées, libellé à gauche et état à droite (séparé sur « : ») ; puce
+            // verte pour un fait sain seulement, grise pour une information (défaut 3)
+            var enOrdre = sections.EnOrdre;
             if (enOrdre.Count > 0)
             {
                 pile.Children.Add(new TextBlock { Text = L.T("En ordre et informations"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 0, 10) });
@@ -750,7 +818,7 @@ namespace DeR4Tizer
                     string libelle = sep >= 0 ? t.Substring(0, sep) : t;
                     string etat = sep >= 0 ? t.Substring(sep + 3) : "";
                     var dock = new DockPanel { Margin = new Thickness(14, 11, 14, 11) };
-                    var puce = new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = Jetons.Pinceau(Jetons.Succes), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+                    var puce = new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = Jetons.Pinceau(enOrdre[i].Sain ? Jetons.Succes : Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
                     DockPanel.SetDock(puce, Dock.Left);
                     dock.Children.Add(puce);
                     var droite = new TextBlock { Text = etat, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
@@ -791,13 +859,20 @@ namespace DeR4Tizer
                 "<Setter Property='Background' Value='Transparent'/><Setter Property='Width' Value='10'/><Setter Property='MinWidth' Value='10'/>" +
                 "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ScrollBar'>" +
                 "<Grid Background='Transparent'><Track Name='PART_Track' IsDirectionReversed='True'>" +
-                "<Track.Thumb><Thumb MinHeight='24'><Thumb.Template><ControlTemplate TargetType='Thumb'>" +
+                "<Track.Thumb><Thumb x:Name='pouce' MinHeight='24'><Thumb.Template><ControlTemplate TargetType='Thumb'>" +
                 "<Border x:Name='t' Background='" + n + "' CornerRadius='4' Margin='2,1,2,1'/>" +
                 "<ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='t' Property='Background' Value='" + h + "'/></Trigger></ControlTemplate.Triggers>" +
                 "</ControlTemplate></Thumb.Template></Thumb></Track.Thumb>" +
-                "<Track.IncreaseRepeatButton><RepeatButton Command='ScrollBar.PageDownCommand' Opacity='0' Focusable='False'/></Track.IncreaseRepeatButton>" +
-                "<Track.DecreaseRepeatButton><RepeatButton Command='ScrollBar.PageUpCommand' Opacity='0' Focusable='False'/></Track.DecreaseRepeatButton>" +
-                "</Track></Grid></ControlTemplate></Setter.Value></Setter>" +
+                "<Track.IncreaseRepeatButton><RepeatButton x:Name='plus' Command='ScrollBar.PageDownCommand' Opacity='0' Focusable='False'/></Track.IncreaseRepeatButton>" +
+                "<Track.DecreaseRepeatButton><RepeatButton x:Name='moins' Command='ScrollBar.PageUpCommand' Opacity='0' Focusable='False'/></Track.DecreaseRepeatButton>" +
+                "</Track></Grid>" +
+                // Sens inversé pour la seule barre verticale (haut = début) ; l'horizontale garde gauche = début et pages
+                // gauche/droite (relecture de la refonte, défaut 8 : elle défilait à l'envers)
+                "<ControlTemplate.Triggers><Trigger Property='Orientation' Value='Horizontal'>" +
+                "<Setter TargetName='PART_Track' Property='IsDirectionReversed' Value='False'/><Setter TargetName='pouce' Property='MinHeight' Value='0'/><Setter TargetName='pouce' Property='MinWidth' Value='24'/>" +
+                "<Setter TargetName='plus' Property='Command' Value='ScrollBar.PageRightCommand'/><Setter TargetName='moins' Property='Command' Value='ScrollBar.PageLeftCommand'/>" +
+                "</Trigger></ControlTemplate.Triggers>" +
+                "</ControlTemplate></Setter.Value></Setter>" +
                 "<Style.Triggers><Trigger Property='Orientation' Value='Horizontal'><Setter Property='Width' Value='Auto'/><Setter Property='MinWidth' Value='0'/><Setter Property='Height' Value='10'/><Setter Property='MinHeight' Value='10'/></Trigger></Style.Triggers>" +
                 "</Style>";
             return (Style)System.Windows.Markup.XamlReader.Parse(x);
@@ -1155,6 +1230,33 @@ namespace DeR4Tizer
             return b;
         }
 
+        // Accessibilité (défaut A ; relecture de la refonte, défaut 4) : commun à toutes les pages qui reconstruisent une
+        // liste au rafraîchissement périodique. Si le focus clavier était dans un des panneaux et que la reconstruction l'a
+        // détruit, il est rendu à la ligne ouverte, sinon au contrôle de même rang, sinon au premier focalisable
+        public static void GarderFocus(Action afficher, params Panel[] panneaux)
+        {
+            var avant = new int[panneaux.Length];
+            for (int i = 0; i < panneaux.Length; i++) avant[i] = panneaux[i] != null && panneaux[i].IsKeyboardFocusWithin ? RangFocus(panneaux[i]) : -2;
+            afficher();
+            for (int i = 0; i < panneaux.Length; i++)
+                if (avant[i] != -2 && !panneaux[i].IsKeyboardFocusWithin) { RendreFocus(panneaux[i], avant[i]); break; }
+        }
+
+        static int RangFocus(Panel p)
+        {
+            for (int i = 0; i < p.Children.Count; i++) if (p.Children[i].IsKeyboardFocusWithin) return i;
+            return -1;
+        }
+
+        public static void RendreFocus(Panel p, int rang)
+        {
+            UIElement cible = null;
+            foreach (UIElement c in p.Children) { var lb = c as LigneBord; if (lb != null && lb.EstOuverte) { cible = lb; break; } }
+            if (cible == null && rang >= 0 && rang < p.Children.Count && p.Children[rang].Focusable) cible = p.Children[rang];
+            if (cible == null) foreach (UIElement c in p.Children) if (c.Focusable) { cible = c; break; }
+            if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
         // Grille commune : résumé en haut, liste à gauche, panneau de détails à droite
         public static void Disposer(Grid g, TextBlock resume, StackPanel liste, ContentControl detail) { Disposer(g, resume, null, liste, detail); }
 
@@ -1223,7 +1325,7 @@ namespace DeR4Tizer
                     bool absent = lu == null && VueIncidents.SuiviAbsent(Commun.Dossier);
                     var etat = Commun.Lire<Etat>("etat.json");
                     int? pannes = etat == null ? (int?)null : Couverture.EnPannes(etat).Count;
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Recevoir(lu, absent, pannes); }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Briques.GarderFocus(() => Recevoir(lu, absent, pannes), liste); }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -1344,7 +1446,7 @@ namespace DeR4Tizer
                 {
                     bool illisible;
                     var l = ActionsReponses.Lire(out illisible);
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Recevoir(l, illisible); }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Briques.GarderFocus(() => Recevoir(l, illisible), liste); }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -1529,7 +1631,7 @@ namespace DeR4Tizer
                 try
                 {
                     var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lignes = l; lu = true; vu = null; Afficher(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lignes = l; lu = true; vu = null; Briques.GarderFocus(Afficher, liste); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -1602,7 +1704,7 @@ namespace DeR4Tizer
                 try
                 {
                     var i = Commun.Lire<EtatIds>("ids.json"); var d = Commun.Lire<EtatDpi>("dpi.json"); var c = Commun.Lire<Config>("config.json");
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { ids = i; dpi = d; ips = c == null ? (bool?)null : c.Ips; lu = true; Afficher(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { ids = i; dpi = d; ips = c == null ? (bool?)null : c.Ips; lu = true; Briques.GarderFocus(Afficher, liste, outils); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -2270,7 +2372,7 @@ namespace DeR4Tizer
                 {
                     var e = Commun.Lire<Etat>("etat.json");
                     string p = e == null ? null : VueReseauFluent.Panne(e, collecte);
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } bool fcs = liste.IsKeyboardFocusWithin; Afficher(); if (fcs && !liste.IsKeyboardFocusWithin) RendreFocusListe(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } Briques.GarderFocus(Afficher, liste); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -2308,14 +2410,6 @@ namespace DeR4Tizer
             liste.Children.Add(new TextBlock { Text = texte, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap });
         }
 
-        // Accessibilité (défaut A) : commun à toutes les pages de liste. Un rafraîchissement qui reconstruit la liste
-        // détruit la ligne focalisée ; si le focus clavier y était, il est rendu à la ligne ouverte (ou à la première).
-        void RendreFocusListe()
-        {
-            UIElement cible = null;
-            foreach (UIElement c in liste.Children) { var lb = c as LigneBord; if (lb == null) continue; if (cible == null) cible = lb; if (lb.EstOuverte) { cible = lb; break; } }
-            if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
-        }
     }
 
     // Page Connexions en WPF (U4a) : flux sortants en direct lus dans etat.json, filtres, panneau de détails ; mêmes
@@ -2809,7 +2903,7 @@ namespace DeR4Tizer
                         // Illisible après une lecture : la dernière carte et les dernières listes restent, et c'est dit
                         if (x == null) illisible = t != null;
                         else { t = x; illisible = false; vuFichier = date; }
-                        Afficher();
+                        Briques.GarderFocus(Afficher, liste, vues);
                     }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
@@ -3068,7 +3162,7 @@ namespace DeR4Tizer
                 try
                 {
                     var r = LireFichiers();
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; Recevoir(r); Afficher(); } }));
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; Recevoir(r); Briques.GarderFocus(Afficher, liste, outils); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
