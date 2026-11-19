@@ -26,7 +26,8 @@ from the MSI and left running for a few minutes. No data from a real computer.
 
 Actual state of each capability (validated on Windows by the CI before it was disabled, checked in a test VM, lab-tested, or implemented without verification):
 [capability matrix](docs/roadmap/capability-matrix.md) (in French). None is production-ready yet; NDR, DPI and
-IDS/IPS are experimental.
+IDS/IPS are experimental and under validation in the Kali lab campaign (reports in [docs/validation/](docs/validation/),
+in French).
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -45,9 +46,9 @@ IDS/IPS are experimental.
 | **Health** | Collections, alert forwarding and interface monitored, with a finding when one stops; forwarding, when configured, retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
 | **Detection rules** | Each rule has an identifier and an entry in `docs/detection/regles.md` (in French); most have a sheet: rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
 | **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
-| **Local NDR** (experimental) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
-| **DPI** (experimental) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
-| **IDS / IPS** (experimental) | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
+| **Local NDR** (experimental, lab-tested in the Kali campaign) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
+| **DPI** (experimental, not yet measured in the campaign) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
+| **IDS / IPS** (experimental, lab-tested in the Kali campaign) | Suricata-format rules (subset: content, nocase, offset/depth/distance/within, flags, dsize…), built-in rules + `.rules` files (e.g. Emerging Threats Open); IPS mode blocks at the firewall |
 | **Alert forwarding** | To the IT provider or contact person: ntfy, Microsoft Teams (workflow webhook, card with the "what to do"), encrypted SMTP e-mail; alert grouping, hourly cap, secrets restricted to administrators |
 | **Integration** | Syslog RFC 5424 (UDP/TCP, JSON or CEF, cleartext), read-only HTTP export API with token |
 | **Privacy** | Data (events, sessions, alerts, devices) readable only by SYSTEM, administrators and authorised accounts; API token restricted to administrators; folder created with its permissions by the installer, owner and permissions enforced and checked at every start, files owned by anyone else ignored; if the check fails, settings and secrets are ignored and the interface shows it |
@@ -202,6 +203,8 @@ Known, by design. Be aware before relying on it:
 8. ✅ Response bounded by the policy: identity re-checked, loop guard, deadlines (phase 6)
 9. ✅ Interface redesign (WPF) and first-run assistant; the new interface is the default interface; the previous interface remains available with `deR4Tizer.exe --classique` (contents: Overview of the computer's status, panic button, Connections, Traffic (country map and throughput), Alerts, Incidents, Events, Detection, Chains, Blocks, Quarantine, Threats, Baseline, Firewall, Autostart, Extensions, Privacy, Local network, Ongoing responses, Health and Settings pages with a details panel; every page is now native; « First-run setup »: six steps (welcome, check, learning, who to notify, automatic responses, summary) offered the first time the shell opens and available again from Settings; learning can be ended, automatic responses turned on or off and a test message sent to the alert channels already set up there, each change confirmed by an administrator; at sign-in, the interface stays in the notification area without a window; deR4Tizer in the Start menu shows the interface already running; if the new interface cannot start, the classic interface replaces it and says so)
 10. 🔄 Domain-name filtering (phase 7, in progress): a DNS server change on one of the computer's network cards is reported (DNS-002); filtering can be turned on by an administrator from the "Browsing" page of the interface (state, categories, lists and licenses, last blocked names, "Allow this domain"), off by default; "ads and tracking" lists (EasyPrivacy, EasyList), no security list yet; upstream resolver of your choice, offered when turning filtering on: your network's (default) or Quad9 (Swiss foundation, blocks malicious domains; queries that are not blocked are then sent to it, local names included: on a company network, keep your network's), falling back to your network's DNS behind a captive portal
+
+11. 🔄 Attack campaign (since 15 November 2026): ATT&CK scenarios run from a Kali VM against a test VM in a closed lab, network detection included (NDR, IDS); each batch is published in [docs/validation/](docs/validation/) (in French) with its result class (A to E). Local NDR: ARP spoofing, active LLMNR/NBNS decoy, passive LLMNR/NBNS/mDNS responders and UPnP redirection detected in the lab; rogue DHCP server to be measured again after a fix (#190). IDS: built-in test rule detected end to end. Network decoders fuzzed (about 151 million calls, no crash). DPI: not yet measured. "Lab-tested" here never means "validated".
 
 "✅" means delivered in the code, not validated for production: see the capability matrix.
 
