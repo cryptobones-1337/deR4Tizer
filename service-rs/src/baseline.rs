@@ -434,6 +434,23 @@ pub fn taille_a_poser(effective: u64, cible_ko: u32) -> bool {
     effective < cible_ko as u64 * 1024
 }
 
+/// Décision pure de l'évaluation : sans stratégie, un journal dont la taille effective atteint la cible est conforme ;
+/// plus petit, illisible, ou avec une stratégie présente : jamais par ce chemin (prérelecture de #219, D1 ; S219-01)
+pub fn conforme_par_taille_effective(strategie: Option<&str>, effective: Option<u64>, cible_ko: u32) -> bool {
+    strategie.is_none() && effective.map(|t| !taille_a_poser(t, cible_ko)).unwrap_or(false)
+}
+
+/// Décision pure : la stratégie de taille est écrite si le journal est plus petit que la cible, ou si une stratégie
+/// présente est plus petite que la cible ; absente avec un journal assez grand : rien (audit de #219, S219-01)
+pub fn strategie_taille_a_ecrire(effective: u64, cible_ko: u32, strategie: Option<&str>) -> bool {
+    match strategie.and_then(|s| s.trim().parse::<u64>().ok()) {
+        Some(ko) if ko < cible_ko as u64 => true,
+        Some(_) => taille_a_poser(effective, cible_ko),
+        None if strategie.is_some() => true,
+        None => taille_a_poser(effective, cible_ko),
+    }
+}
+
 /// Canal d'une clé de stratégie de taille de journal (…\EventLog\<canal>), s'il en est une
 fn canal_taille(cle: &str, nom: &str) -> Option<&'static str> {
     if nom != "MaxSize" || !cle.contains(r"\EventLog\") {
@@ -545,13 +562,13 @@ fn verifier_mecanisme(m: &Mecanisme) -> (Option<bool>, String, String) {
             if actuel.is_none() && SURS_PAR_DEFAUT.iter().any(|(n, c)| n == nom && cle.contains(c)) {
                 return (Some(true), "absent (sûr par défaut)".into(), attendu);
             }
-            // Journal déjà au moins aussi grand que la cible, sans stratégie : conforme, rien à poser (S218-02)
+            // Journal déjà au moins aussi grand que la cible, sans stratégie : conforme, rien à poser (S218-02). Une
+            // stratégie présente mais plus petite n'est jamais masquée par la taille effective (audit de #219, S219-01)
             if let (Some(canal), Dword(ko)) = (canal_taille(cle, nom), valeur) {
-                if !valeur_satisfaite(nom, valeur, actuel.as_deref()) {
-                    if let Some(t) = lire_taille_journal(canal) {
-                        if !taille_a_poser(t, *ko) {
-                            return (Some(true), format!("taille effective {t} octets"), attendu);
-                        }
+                if actuel.is_none() {
+                    let t = lire_taille_journal(canal);
+                    if conforme_par_taille_effective(actuel.as_deref(), t, *ko) {
+                        return (Some(true), format!("taille effective {} octets", t.unwrap_or(0)), attendu);
                     }
                 }
             }
@@ -859,8 +876,12 @@ pub fn retirer_bureau_distance(nb_regles: usize, rdp_actif: Option<bool>) -> boo
 }
 
 /// Bureau à distance activé sur ce poste (fDenyTSConnections = 0) ; None si illisible
+/// La stratégie (Terminal Services) prime sur la clé système : un Bureau à distance ouvert par stratégie est vu (audit
+/// de #219, S219-03)
 fn bureau_distance_actif() -> Option<bool> {
-    lire_registre(r"SYSTEM\CurrentControlSet\Control\Terminal Server", "fDenyTSConnections")?.trim().parse::<u32>().ok().map(|v| v == 0)
+    let lire = |cle: &str| lire_registre(cle, "fDenyTSConnections");
+    let v = lire(r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services").or_else(|| lire(r"SYSTEM\CurrentControlSet\Control\Terminal Server"))?;
+    v.trim().parse::<u32>().ok().map(|v| v == 0)
 }
 
 pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
@@ -871,13 +892,19 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     // Protection LSA sans verrou UEFI : seulement à partir de Windows 11 22H2, avant toute écriture (B5)
     let mut note = String::new();
     let mut regles: Vec<&Regle> = regles_demandees.to_vec();
-    if regles.iter().any(|r| r.id == "systeme.lsa") && retirer_lsa(regles.len(), lsa_applicable(build_windows()))? {
+    // Les deux écartements comptent les règles demandées, pas la liste déjà réduite (prérelecture de #219, D2)
+    let demandees = regles_demandees.len();
+    if regles.iter().any(|r| r.id == "systeme.lsa") && retirer_lsa(demandees, lsa_applicable(build_windows()))? {
         regles.retain(|r| r.id != "systeme.lsa");
         note = " « Protection LSA » non appliquée : elle demande Windows 11 22H2 ou plus récent.".into();
     }
-    if regles.iter().any(|r| r.id == "reseau.bureau-distance") && retirer_bureau_distance(regles.len(), bureau_distance_actif()) {
+    if regles.iter().any(|r| r.id == "reseau.bureau-distance") && retirer_bureau_distance(demandees, bureau_distance_actif()) {
         regles.retain(|r| r.id != "reseau.bureau-distance");
         note.push_str(" « Bureau à distance désactivé » non appliquée : le Bureau à distance est activé sur ce poste (l'appliquer seule pour le couper).");
+    }
+    // Tout écarté : ni sauvegarde ni gpupdate pour rien (prérelecture de #219, D2)
+    if regles.is_empty() {
+        return Ok(format!("Aucune règle appliquée.{note}"));
     }
     let regles: &[&Regle] = &regles;
     sauvegarder_fichiers_gpo();
@@ -916,10 +943,13 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
                         let taille = lire_taille_journal(canal).ok_or_else(|| format!("taille du journal « {canal} » illisible : rien n'a été modifié."))?;
                         origine.push((format!("taille|{canal}"), Some(taille.to_string())));
                         if let Dword(ko) = valeur {
-                            a_poser = taille_a_poser(taille, *ko);
-                            if !a_poser {
+                            // wevtutil seulement si le journal est plus petit que la cible : jamais de réduction (S218-02)
+                            if !taille_a_poser(taille, *ko) {
                                 deja_assez_grands.push(canal);
                             }
+                            // Stratégie écrite si le journal est trop petit, ou si une stratégie présente ne satisfait
+                            // pas la règle (abaissée par un tiers) : jamais laissée en place (audit de #219, S219-01)
+                            a_poser = strategie_taille_a_ecrire(taille, *ko, lire_registre(cle, nom).as_deref());
                         }
                     }
                     if a_poser && ecriture_retenue(cle, nom, valeur, &autres) && !deja_plus_stricte(nom, valeur, lire_registre(cle, nom).as_deref()) {
@@ -1160,7 +1190,8 @@ pub fn derives(avant: &EtatBaseline, apres: &EtatBaseline) -> Vec<Alerte> {
         [premiere, ..] => {
             let titres: Vec<&str> = sans_effet.iter().map(|r| r.titre.as_str()).collect();
             let mut a = alerte(premiere, format!("{} réglages de sécurité posés mais plus appliqués par Microsoft Defender : {} (état actuel de la première : {})", titres.len(), titres.join(", "), premiere.actuel));
-            a.destination = format!("baseline : {} réglages Defender", titres.len());
+            // Destination stable d'un regroupement à l'autre ; le nombre et les règles sont dans les raisons (S219-02)
+            a.destination = "baseline : réglages Defender".into();
             alertes.push(a);
         }
     }

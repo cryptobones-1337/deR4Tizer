@@ -961,7 +961,7 @@ fn baseline_b5_lsa_sans_verrou_et_taille_de_journal() {
     let src = include_str!("baseline.rs");
     assert!(src.contains("origine.push((format!(\"taille|{canal}\"), Some(taille.to_string())));"));
     assert!(src.contains("[\"taille\", canal] => {"));
-    assert!(src.contains("if regles.iter().any(|r| r.id == \"systeme.lsa\") && retirer_lsa(regles.len(), lsa_applicable(build_windows()))? {"));
+    assert!(src.contains("if regles.iter().any(|r| r.id == \"systeme.lsa\") && retirer_lsa(demandees, lsa_applicable(build_windows()))? {"));
     // Prérelecture de #218, D1 : avant 22H2, la règle est écartée d'un profil (le reste s'applique), refusée seule,
     // et sortie du score
     use crate::baseline::retirer_lsa;
@@ -8675,7 +8675,7 @@ fn baseline_u_textes_et_bureau_distance() {
     // U4, U5 : la confirmation du profil et l'en-tête ne promettent plus « sans effet de bord »
     let src = include_str!("baseline.rs");
     assert!(!src.contains("sans effet de bord notable"));
-    assert!(src.contains("if regles.iter().any(|r| r.id == \"reseau.bureau-distance\") && retirer_bureau_distance(regles.len(), bureau_distance_actif())"));
+    assert!(src.contains("if regles.iter().any(|r| r.id == \"reseau.bureau-distance\") && retirer_bureau_distance(demandees, bureau_distance_actif())"));
     let gui = include_str!("../../src/Gui.cs");
     let q = gui.lines().find(|l| l.contains("QuestionRecommande =")).expect("question du profil");
     assert!(q.contains("Bureau à distance") && q.contains("élévation") && q.contains("invité"), "effets dits dans la confirmation");
@@ -8702,3 +8702,43 @@ fn baseline_s218_valeur_plus_stricte_et_journal_jamais_reduit() {
     assert!(src.contains("if !deja_assez_grands.contains(&canal) {"));
     assert!(src.contains(".filter(|_| canal_de_la_regle)"), "canal recoupé avec la règle");
 }
+
+#[test]
+fn baseline_s219_strategie_de_taille_abaissee_jamais_masquee() {
+    // Audit de #219, S219-01 : une stratégie de taille présente mais plus petite que la cible n'est jamais masquée par
+    // la taille effective, et elle est réécrite à l'application
+    use crate::baseline::strategie_taille_a_ecrire;
+    let un_go = 1_073_741_824u64;
+    assert!(strategie_taille_a_ecrire(un_go, 1_048_576, Some("20480")), "stratégie abaissée à 20 Mo, journal encore à 1 Go : réécrite");
+    assert!(!strategie_taille_a_ecrire(un_go, 1_048_576, None), "pas de stratégie, journal assez grand : rien");
+    assert!(strategie_taille_a_ecrire(20 * 1024 * 1024, 1_048_576, None), "pas de stratégie, journal trop petit : écrite");
+    assert!(!strategie_taille_a_ecrire(un_go, 1_048_576, Some("1048576")), "stratégie à la cible : rien de plus");
+    assert!(strategie_taille_a_ecrire(un_go, 1_048_576, Some("abc")), "stratégie illisible : réécrite");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("a_poser = strategie_taille_a_ecrire(taille, *ko, lire_registre(cle, nom).as_deref());"));
+    assert!(src.contains("                if actuel.is_none() {"), "taille effective prise seulement sans stratégie");
+    // S219-03 : la stratégie du Bureau à distance est lue avant la clé système
+    assert!(src.contains(r#"lire(r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services").or_else(|| lire(r"SYSTEM\CurrentControlSet\Control\Terminal Server"))?"#));
+    // S219-02 : destination stable
+    assert!(src.contains("a.destination = \"baseline : réglages Defender\".into();"));
+}
+
+#[test]
+fn baseline_d1_d2_prerelecture_219() {
+    // D1 : la conformité par la taille effective, extraite en décision pure
+    use crate::baseline::conforme_par_taille_effective;
+    let un_go = 1_073_741_824u64;
+    assert!(conforme_par_taille_effective(None, Some(un_go), 1_048_576), "sans stratégie, 1 Go pour 1 Go : conforme");
+    assert!(conforme_par_taille_effective(None, Some(4 * un_go), 1_048_576), "plus grand : conforme");
+    assert!(!conforme_par_taille_effective(None, Some(20 * 1024 * 1024), 1_048_576), "plus petit : jamais conforme");
+    assert!(!conforme_par_taille_effective(None, None, 1_048_576), "taille illisible : jamais conforme");
+    assert!(!conforme_par_taille_effective(Some("20480"), Some(un_go), 1_048_576), "stratégie présente : jamais par ce chemin");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("if conforme_par_taille_effective(actuel.as_deref(), t, *ko) {"));
+    // D2 : les écartements comptent les règles demandées ; tout écarté = rien d'écrit
+    assert!(src.contains("retirer_lsa(demandees, lsa_applicable(build_windows()))?"));
+    assert!(src.contains("retirer_bureau_distance(demandees, bureau_distance_actif())"));
+    assert!(!src.contains("retirer_bureau_distance(regles.len(), bureau_distance_actif())"));
+    assert!(src.contains("return Ok(format!(\"Aucune règle appliquée.{note}\"));"));
+}
+

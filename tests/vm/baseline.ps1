@@ -15,6 +15,10 @@ param(
 New-Item -ItemType Directory -Force -Path $Journaux | Out-Null
 $fichier = Join-Path $script:Donnees 'baseline.json'
 $sauvegarde = Join-Path $script:Donnees 'baseline-sauvegarde.json'
+# VM seulement : le script applique et annule toute la baseline, et réécrit la sauvegarde du retour arrière (audit de
+# #219, S219-04)
+$modele = (Get-CimInstance Win32_ComputerSystem).Model
+if ($modele -notmatch 'Virtual Machine|VMware|VirtualBox|KVM') { throw "Script réservé à la VM de test (modèle : $modele)." }
 
 # Clés posées par les règles (service-rs\src\baseline.rs), relevées en entier ; journaux activés ou dimensionnés
 $cles = @(
@@ -149,6 +153,8 @@ if ($installe) {
     }
     Verifier 'Sauvegarde illisible : application refusée, rien n''est modifié (B1)' {
         $temoin = Releve
+        $copie = "$sauvegarde.essai"
+        if (Test-Path $sauvegarde) { Copy-Item $sauvegarde $copie -Force }
         [IO.File]::WriteAllText($sauvegarde, '{ pas du json')
         try {
             $b = Operation 'appliquer' 'reseau.llmnr'
@@ -156,7 +162,10 @@ if ($installe) {
             if (-not $refus) { return "application non refusée : $($b.Message)" }
             $reste = Ecarts $temoin (Releve)
             if ($reste.Count) { return "modifié malgré le refus : $($reste -join ' ; ')" }
-        } finally { Remove-Item $sauvegarde -Force -ErrorAction SilentlyContinue }
+        } finally {
+            Remove-Item $sauvegarde -Force -ErrorAction SilentlyContinue
+            if (Test-Path $copie) { Move-Item $copie $sauvegarde -Force }
+        }
         $true
     }
     Verifier 'Désinstallation' {
