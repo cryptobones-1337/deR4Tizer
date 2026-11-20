@@ -8794,6 +8794,21 @@ fn baseline_d1_d2_prerelecture_220() {
     // D1 : une remise en échec remet la règle dans la sauvegarde et dit la valeur d'origine
     assert!(src.contains("sauvegarde.regles.insert(id.to_string(), o.clone());"));
     assert!(src.contains("let gardee = match ecrire_sauvegarde(&sauvegarde) {"));
-    assert!(src.contains(r#"format!("{}\\{} = {}", x.0, x.1, x.2)"#), "valeur d'origine dans le message");
+    assert!(src.contains(r#"format!("{}\\{} = {}", x.0, x.1, commun::masquer_chemin(&x.2))"#), "valeur d'origine dans le message, chemin masqué");
+}
+
+#[test]
+fn baseline_s220_03_et_04_messages() {
+    // Audit de #220 : l'entrée étrangère est citée (S220-03) ; la valeur d'origine dite a son chemin de profil masqué
+    // (S220-04)
+    use crate::baseline::message_non_remises;
+    assert_eq!(message_non_remises(&[], &[]), "");
+    let m = message_non_remises(&["systeme.uac"], &["systeme.uac : SYSTEM\\X\\ImagePath".to_string()]);
+    assert!(m.contains("non remise pour : systeme.uac"), "{m}");
+    assert!(m.contains("étrangère(s) à la règle") && m.contains("SYSTEM\\X\\ImagePath"), "{m}");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("etrangeres.push(format!("));
+    assert!(src.contains("commun::masquer_chemin(&x.2)"));
+    assert_eq!(crate::commun::masquer_chemin(r"C:\Users\quelquun\journaux\x.evtx"), r"%USERPROFILE%\journaux\x.evtx");
 }
 
