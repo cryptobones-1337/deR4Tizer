@@ -291,7 +291,7 @@ pub static REGLES: &[Regle] = &[
     Regle {
         id: "systeme.lsa", profil: "renforcé", categorie: "Système", titre: "Protection LSA (processus protégé)",
         pourquoi: "Empêche la lecture de la mémoire de LSASS, où Windows garde les secrets de connexion.",
-        compat: "Redémarrage nécessaire. Rares pilotes ou anciens gestionnaires d'identifiants incompatibles. Windows 11 22H2 ou plus récent seulement : protection sans verrou UEFI, donc annulable (c'est déjà le réglage par défaut des installations récentes) ; sur une version plus ancienne, la règle n'est pas appliquée.",
+        compat: "Redémarrage nécessaire. Rares pilotes ou anciens gestionnaires d'identifiants incompatibles. Windows 11 22H2 ou plus récent seulement : protection sans verrou UEFI, donc annulable (c'est déjà le réglage par défaut des installations récentes) ; sur une version plus ancienne, la règle est écartée (le reste du profil s'applique) et sortie du score.",
         mecanismes: &[Registre { cle: r"SYSTEM\CurrentControlSet\Control\Lsa", nom: "RunAsPPL", valeur: Dword(2) }],
     },
     Regle {
@@ -641,6 +641,7 @@ pub fn evaluer() -> EtatBaseline {
     let mut totaux: HashMap<&str, (u32, u32)> = HashMap::new();
     // État effectif de Defender, lu une fois par évaluation (B4), avec une échéance (audit de #217, S217-02)
     let (mode, prefs) = defender_borne();
+    let lsa_ok = lsa_applicable(build_windows());
     for r in REGLES {
         let verifs: Vec<_> = r.mecanismes.iter().map(verifier_mecanisme).collect();
         let etat_registre = if verifs.iter().any(|v| v.0 == Some(false)) {
@@ -652,9 +653,14 @@ pub fn evaluer() -> EtatBaseline {
         };
         // Une règle posée dans le registre n'est conforme que si Defender l'applique vraiment (B4)
         let effets: Vec<Effet> = r.mecanismes.iter().map(|m| effet_defender(m, prefs.as_ref(), &mode)).collect();
-        let (etat, note) = etat_regle(etat_registre, &effets);
+        let (etat, mut note) = etat_regle(etat_registre, &effets);
         let t = totaux.entry(r.profil).or_default();
-        t.1 += 1;
+        // Règle LSA impossible à appliquer sur ce Windows : dite, et hors du score (prérelecture de #218, D1)
+        if r.id == "systeme.lsa" && etat != "conforme" && !lsa_ok {
+            note.push_str(" (non applicable avant Windows 11 22H2 : hors du score)");
+        } else {
+            t.1 += 1;
+        }
         if etat == "conforme" {
             t.0 += 1;
         }
@@ -798,11 +804,31 @@ pub fn selection(cible: &str) -> Vec<&'static Regle> {
     REGLES.iter().filter(|r| ids.contains(&r.profil) || ids.contains(&r.id) || (ids.contains(&"recommandé+") && r.profil != "renforcé")).collect()
 }
 
-pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
+/// Décision pure (prérelecture de #218, D1) : avant Windows 11 22H2 (ou build illisible), la règle LSA est écartée
+/// d'une application de plusieurs règles, qui se fait sans elle ; demandée seule, elle est refusée
+pub fn retirer_lsa(nb_regles: usize, applicable: bool) -> Result<bool, String> {
+    if applicable {
+        Ok(false)
+    } else if nb_regles > 1 {
+        Ok(true)
+    } else {
+        Err("Protection LSA non appliquée : elle demande Windows 11 22H2 ou plus récent (sinon elle ne serait pas annulable) ; rien n'a été modifié.".into())
+    }
+}
+
+pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     if let Some(g) = gestion_fraiche() {
         return Err(g);
     }
     let mut sauvegarde = lire_sauvegarde()?;
+    // Protection LSA sans verrou UEFI : seulement à partir de Windows 11 22H2, avant toute écriture (B5)
+    let mut note = String::new();
+    let mut regles: Vec<&Regle> = regles_demandees.to_vec();
+    if regles.iter().any(|r| r.id == "systeme.lsa") && retirer_lsa(regles.len(), lsa_applicable(build_windows()))? {
+        regles.retain(|r| r.id != "systeme.lsa");
+        note = " « Protection LSA » non appliquée : elle demande Windows 11 22H2 ou plus récent.".into();
+    }
+    let regles: &[&Regle] = &regles;
     sauvegarder_fichiers_gpo();
     let mut ajouts = Vec::new();
     let mut audit = gpo::lire_audit();
@@ -821,10 +847,6 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     let origines_connues: HashMap<String, Option<String>> = sauvegarde.regles.values()
         .flat_map(|l| l.iter().filter(|(m, _)| m.starts_with("reg|")).map(|(m, v)| (m.to_ascii_lowercase(), v.clone())))
         .collect();
-    // Protection LSA sans verrou UEFI : seulement à partir de Windows 11 22H2 ; sinon refus, avant toute écriture (B5)
-    if regles.iter().any(|r| r.id == "systeme.lsa") && !lsa_applicable(build_windows()) {
-        return Err("Protection LSA non appliquée : elle demande Windows 11 22H2 ou plus récent (sinon elle ne serait pas annulable) ; rien n'a été modifié.".into());
-    }
     // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
         let mut origine = Vec::new();
@@ -896,7 +918,7 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
             }
         }
     }
-    Ok(format!("{} règle(s) appliquée(s) par la GPO locale.", regles.len()))
+    Ok(format!("{} règle(s) appliquée(s) par la GPO locale.{note}", regles.len()))
 }
 
 /// Taille effective des journaux pour les règles appliquées : le service Journal d'événements ne relit la
