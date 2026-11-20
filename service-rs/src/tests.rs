@@ -800,7 +800,7 @@ fn baseline_b3_recommande_apres_renforce_ne_retrograde_pas() {
     assert!(!valeur_satisfaite("AutreNom", &audit, Some("1")), "relation limitée à la valeur déclarée");
     // câblage : appliquer filtre ses écritures, verifier_mecanisme passe par valeur_satisfaite
     let src = include_str!("baseline.rs");
-    assert!(src.contains("if ecriture_retenue(cle, nom, valeur, &autres) {"));
+    assert!(src.contains("if a_poser && ecriture_retenue(cle, nom, valeur, &autres) && !deja_plus_stricte(nom, valeur, lire_registre(cle, nom).as_deref()) {"));
     assert!(src.contains("(Some(valeur_satisfaite(nom, valeur, actuel.as_deref()))"));
 }
 
@@ -8681,4 +8681,24 @@ fn baseline_u_textes_et_bureau_distance() {
     assert!(q.contains("Bureau à distance") && q.contains("élévation") && q.contains("invité"), "effets dits dans la confirmation");
     let langue = include_str!("../../src/Langue.cs");
     assert!(langue.contains("Remote Desktop is turned off"), "traduction de la confirmation");
+}
+
+#[test]
+fn baseline_s218_valeur_plus_stricte_et_journal_jamais_reduit() {
+    // Audit de #218 : RunAsPPL = 1 déjà en place n'est pas remplacé par 2 (S218-01) ; un journal plus grand que la
+    // cible n'est jamais réduit (S218-02) ; le canal remis à l'annulation est celui de la règle (S218-03)
+    use crate::baseline::{deja_plus_stricte, taille_a_poser, Valeur::Dword};
+    assert!(deja_plus_stricte("RunAsPPL", &Dword(2), Some("1")), "verrou UEFI déjà choisi : gardé");
+    assert!(!deja_plus_stricte("RunAsPPL", &Dword(2), Some("2")));
+    assert!(!deja_plus_stricte("RunAsPPL", &Dword(2), Some("0")));
+    assert!(!deja_plus_stricte("RunAsPPL", &Dword(2), None));
+    assert!(!deja_plus_stricte("RunAsPPL", &Dword(2), Some("abc")));
+    assert!(taille_a_poser(20 * 1024 * 1024, 1_048_576), "20 Mo < 1 Go : à poser");
+    assert!(!taille_a_poser(1_073_741_824, 1_048_576), "déjà 1 Go : rien");
+    assert!(!taille_a_poser(4 * 1_073_741_824, 1_048_576), "4 Go : jamais réduit");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("if a_poser && ecriture_retenue(cle, nom, valeur, &autres) && !deja_plus_stricte(nom, valeur, lire_registre(cle, nom).as_deref()) {"));
+    assert!(src.contains("if lire_taille_journal(canal).map(|t| taille_a_poser(t, *ko)).unwrap_or(false) {"), "forcer_tailles ne réduit jamais");
+    assert!(src.contains("if !deja_assez_grands.contains(&canal) {"));
+    assert!(src.contains(".filter(|_| canal_de_la_regle)"), "canal recoupé avec la règle");
 }
