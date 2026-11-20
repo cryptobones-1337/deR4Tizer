@@ -1067,7 +1067,8 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     // jamais écrite ; la règle reste alors dans la sauvegarde et c'est dit (audit de #220, S220-01)
                     let Some(catalogue) = mecanisme_de(r, cle, nom) else {
                         remise = false;
-                        etrangeres.push(format!("{} : {cle}\\{nom}", r.id));
+                        // Bornée : au plus 5 entrées citées, chacune à 200 caractères (audit de #221, S221-02)
+                        etrangeres.push(commun::borner_texte(&format!("{} : {cle}\\{nom}", r.id), 200));
                         continue;
                     };
                     // Type du catalogue : une valeur texte (règle ASR) est remise en texte (audit de #220, S220-02)
@@ -1224,7 +1225,9 @@ pub fn message_non_remises(non_remises: &[&str], etrangeres: &[String]) -> Strin
         t.push_str(&format!(" Valeur d'origine non remise pour : {} (gardées dans la sauvegarde, marquées appliquées : à réessayer).", non_remises.join(", ")));
     }
     if !etrangeres.is_empty() {
-        t.push_str(&format!(" Entrée(s) de la sauvegarde étrangère(s) à la règle, jamais écrite(s) (à retirer de baseline-sauvegarde.json par un administrateur) : {}.", etrangeres.join(", ")));
+        let citees: Vec<&str> = etrangeres.iter().take(5).map(String::as_str).collect();
+        let reste = if etrangeres.len() > 5 { format!(" et {} autre(s)", etrangeres.len() - 5) } else { String::new() };
+        t.push_str(&format!(" Entrée(s) de la sauvegarde étrangère(s) à la règle, jamais écrite(s) (à retirer de baseline-sauvegarde.json par un administrateur) : {}{reste}.", citees.join(", ")));
     }
     t
 }

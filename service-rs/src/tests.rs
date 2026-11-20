@@ -8807,8 +8807,31 @@ fn baseline_s220_03_et_04_messages() {
     assert!(m.contains("non remise pour : systeme.uac"), "{m}");
     assert!(m.contains("étrangère(s) à la règle") && m.contains("SYSTEM\\X\\ImagePath"), "{m}");
     let src = include_str!("baseline.rs");
-    assert!(src.contains("etrangeres.push(format!("));
+    assert!(src.contains("etrangeres.push(commun::borner_texte(&format!("));
     assert!(src.contains("commun::masquer_chemin(&x.2)"));
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\quelquun\journaux\x.evtx"), r"%USERPROFILE%\journaux\x.evtx");
+}
+
+#[test]
+fn masquage_s221_toutes_les_formes_de_profil_et_texte_borne() {
+    // Audit de #221 : toutes les formes d'un dossier de profil sont masquées, où qu'elles soient (S221-01) ; un texte
+    // venu de la sauvegarde est borné (S221-02)
+    use crate::commun::{borner_texte, masquer_chemin};
+    let p = "%USERPROFILE%";
+    assert_eq!(masquer_chemin(r"C:\Users\marie\a.txt"), format!(r"{p}\a.txt"));
+    assert_eq!(masquer_chemin("C:/Users/marie/a.txt"), format!("{p}/a.txt"));
+    assert_eq!(masquer_chemin(r"\\?\C:\Users\marie\a.txt"), format!(r"{p}\a.txt"));
+    assert_eq!(masquer_chemin(r"%SystemDrive%\Users\marie\a.txt"), format!(r"{p}\a.txt"));
+    assert_eq!(masquer_chemin(r"journal = D:\users\Marie Curie"), format!("journal = {p}"), "nom de profil avec espace masqué en entier");
+    assert_eq!(masquer_chemin(r"a C:\Users\x\b ; C:\Users\y\c"), format!(r"a {p}\b ; {p}\c"), "toutes les occurrences");
+    assert_eq!(masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
+    assert_eq!(masquer_chemin(r"C:\Users"), r"C:\Users", "dossier racine seul : rien à masquer");
+    let long = "x".repeat(10_000);
+    let b = borner_texte(&long, 200);
+    assert_eq!(b.chars().count(), 201, "200 caractères et l'ellipse");
+    assert_eq!(borner_texte(r"C:\Users\marie\k", 200), format!(r"{p}\k"));
+    let m = crate::baseline::message_non_remises(&[], &(0..8).map(|i| format!("r{i}")).collect::<Vec<_>>());
+    assert!(m.contains("r4") && !m.contains("r5") && m.contains("et 3 autre(s)"), "{m}");
+    crate::tests::torturer_texte(r"\\?\C:\Users\marie\x", &mut |t| { let _ = masquer_chemin(t); let _ = borner_texte(t, 10); });
 }
 
