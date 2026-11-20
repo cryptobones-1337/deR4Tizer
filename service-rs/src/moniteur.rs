@@ -433,8 +433,10 @@ impl Moniteur {
                         baseline_avant = Some(b);
                         mesure::noter("controles.baseline", t);
                         p.baseline_occupee.store(false, Ordering::Release);
+                        // Consommé seulement si le bloc a tourné : une opération de l'interface au premier tour ne
+                        // fait pas sauter l'application automatique jusqu'au prochain démarrage (audit de #215, S215-09)
+                        premier = false;
                     }
-                    premier = false;
                     for _ in 0..600 {
                         if p.arret.load(Ordering::Relaxed) {
                             return;

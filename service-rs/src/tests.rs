@@ -751,6 +751,80 @@ fn baseline_annuler_ne_masque_aucun_echec_de_restauration() {
 }
 
 #[test]
+fn baseline_b3_aucune_cle_en_conflit_sauf_plus_stricte_declaree() {
+    // Relecture de la baseline du 2026-11-20, B3 (a) : deux règles qui posent la même clé et le même nom avec des
+    // valeurs différentes ne sont admises que si l'une est déclarée plus stricte que l'autre (PLUS_STRICTES)
+    use crate::baseline::{Mecanisme::Registre, Valeur::Dword, PLUS_STRICTES, REGLES};
+    let mut poses: Vec<(&str, &str, &str, String)> = Vec::new();
+    for r in REGLES {
+        for m in r.mecanismes {
+            if let Registre { cle, nom, valeur } = m {
+                poses.push((r.id, cle, nom, match valeur { Dword(n) => n.to_string(), crate::baseline::Valeur::Texte(t) => t.to_string() }));
+            }
+        }
+    }
+    let mut conflits = Vec::new();
+    for (i, a) in poses.iter().enumerate() {
+        for b in &poses[i + 1..] {
+            if a.1.eq_ignore_ascii_case(b.1) && a.2.eq_ignore_ascii_case(b.2) && a.3 != b.3 {
+                let declare = |x: &str, y: &str| PLUS_STRICTES.iter().any(|(n, v, acc)| n.eq_ignore_ascii_case(a.2) && v.to_string() == x && acc.iter().any(|w| w.to_string() == y));
+                if !declare(&a.3, &b.3) && !declare(&b.3, &a.3) {
+                    conflits.push(format!("{} et {} : {} / {}", a.0, b.0, a.1, a.2));
+                }
+            }
+        }
+    }
+    assert!(conflits.is_empty(), "clés en conflit non déclarées : {conflits:?}");
+    // la seule paire connue est bien déclarée
+    assert!(PLUS_STRICTES.iter().any(|(n, v, acc)| *n == "EnableControlledFolderAccess" && *v == 2 && acc.contains(&1)));
+}
+
+#[test]
+fn baseline_b3_recommande_apres_renforce_ne_retrograde_pas() {
+    // B3 (b) et (c) : la valeur d'audit (2) n'est pas écrite quand le blocage (1) est appliqué ou appliqué en même
+    // temps ; et le blocage satisfait la règle d'audit, donc pas de « non conforme » ni de BAS-001 à tort
+    use crate::baseline::{ecriture_retenue, valeur_satisfaite, Valeur::Dword};
+    let cle = r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access";
+    let nom = "EnableControlledFolderAccess";
+    let blocage = Dword(1);
+    let audit = Dword(2);
+    assert!(!ecriture_retenue(cle, nom, &audit, &[(cle, nom, &blocage)]), "audit après blocage : pas d'écriture");
+    assert!(ecriture_retenue(cle, nom, &blocage, &[(cle, nom, &audit)]), "blocage après audit : écrit");
+    assert!(ecriture_retenue(cle, nom, &audit, &[]), "audit seul : écrit");
+    assert!(ecriture_retenue(cle, nom, &audit, &[(cle, nom, &audit)]), "même valeur : écrite");
+    assert!(valeur_satisfaite(nom, &audit, Some("1")), "blocage satisfait l'audit");
+    assert!(valeur_satisfaite(nom, &audit, Some("2")));
+    assert!(!valeur_satisfaite(nom, &audit, Some("0")), "désactivé ne satisfait pas l'audit");
+    assert!(!valeur_satisfaite(nom, &blocage, Some("2")), "l'audit ne satisfait pas le blocage");
+    assert!(!valeur_satisfaite(nom, &audit, None));
+    assert!(!valeur_satisfaite("AutreNom", &audit, Some("1")), "relation limitée à la valeur déclarée");
+    // câblage : appliquer filtre ses écritures, verifier_mecanisme passe par valeur_satisfaite
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("if ecriture_retenue(cle, nom, valeur, &autres) {"));
+    assert!(src.contains("(Some(valeur_satisfaite(nom, valeur, actuel.as_deref()))"));
+}
+
+#[test]
+fn baseline_s215_07_a_09_cablage() {
+    let src = include_str!("baseline.rs");
+    // S215-07 : une erreur d'accès autre que « introuvable » vaut « présente »
+    let d = src.find("fn lire_sauvegarde()").unwrap();
+    let corps = &src[d..d + 1200];
+    assert!(corps.contains("symlink_metadata") && corps.contains("ErrorKind::NotFound"));
+    assert!(!corps.contains(".exists()"));
+    // S215-08 : PowerShell sans entrée standard héritée
+    let d = src.find("fn lire_gestion()").unwrap();
+    assert!(src[d..d + 2500].contains(".stdin(std::process::Stdio::null())"));
+    // S215-09 : « premier » consommé dans le bloc de la baseline, pas après
+    let m = include_str!("moniteur.rs");
+    let d = m.find("p.baseline_occupee.compare_exchange(false, true").unwrap();
+    let bloc = &m[d..d + 3000];
+    let fin = bloc.find("p.baseline_occupee.store(false, Ordering::Release);\r\n                        // Consommé")
+        .or_else(|| bloc.find("p.baseline_occupee.store(false, Ordering::Release);\n                        // Consommé"));
+    assert!(fin.is_some(), "premier remis à faux dans le bloc, après avoir rendu le drapeau");
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
