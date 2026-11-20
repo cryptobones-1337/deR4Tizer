@@ -654,7 +654,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `baseline.rs` (`derives`, toutes les 10 min).
 - **Justification** : un réglage de durcissement qui revient en arrière (par un malware, une mise à jour ou une
   personne) rouvre une faiblesse.
-- **Conditions** : seuls les réglages appliqués par deR4Tizer, passés de « conforme » à « non conforme », sont suivis.
+- **Conditions** : seuls les réglages appliqués par deR4Tizer sont suivis. Deux cas : passés de « conforme » à « non
+  conforme » dans le registre (l'état du registre est gardé à part, si bien qu'un relevé « inconnu » ou « sans effet »
+  dû à Defender ne masque pas une modification qui suit, audit de #217, S217-01) ; passés de « conforme » à « sans
+  effet » (Microsoft Defender n'applique plus la règle : antivirus passif ou valeur effective différente).
 - **Télémétrie** : évaluation de la baseline.
 - **Si elle manque** : évaluation impossible : aucune dérive calculée.
 - **Niveau** : Alerte.
@@ -662,7 +665,8 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   positifs mesurés en VM (scénario `mesure`, 22 min) : aucun ; aucun réglage n'est changé pendant la mesure.
 - **Tests** : `bas_001_positif` (règle appliquée par deR4Tizer, conforme puis non conforme : Alerte, valeurs attendue
   et actuelle dans les raisons), `bas_001_negatif` (règle non appliquée par deR4Tizer ; déjà non conforme ; état
-  inconnu ; règle nouvelle), sur `baseline::derives`. Non exercée en VM.
+  inconnu ; règle nouvelle), `bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet` (modification vue après
+  un relevé « inconnu » ou « sans effet » ; passage à « sans effet »), sur `baseline::derives`. Non exercée en VM.
 
 ## COR : corrélations du SIEM
 

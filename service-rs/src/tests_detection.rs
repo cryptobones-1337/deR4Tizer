@@ -1336,3 +1336,30 @@ fn bas_001_negatif() {
                                    regle_baseline("d", "non conforme", true)]);
     assert!(derives(&avant, &apres).is_empty());
 }
+
+#[test]
+fn bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet() {
+    // Audit de #217, S217-01 : la modification se juge sur le registre seul ; un tour où Defender est illisible ou
+    // passif ne casse plus la chaîne d'alertes
+    use crate::baseline::{derives, EtatRegle};
+    let r = |etat: &str, registre: &str| EtatRegle { etat_registre: registre.into(), ..regle_baseline("asr", etat, true) };
+    // conforme -> inconnu (registre intact) -> non conforme : alerte au troisième relevé
+    let t1 = etat_baseline(vec![r("conforme", "conforme")]);
+    let t2 = etat_baseline(vec![r("inconnu", "conforme")]);
+    let t3 = etat_baseline(vec![r("non conforme", "non conforme")]);
+    assert!(derives(&t1, &t2).is_empty(), "Defender illisible seul : pas d'alerte");
+    assert_eq!(derives(&t2, &t3).len(), 1, "modification après un tour inconnu : alerte");
+    // sans effet (registre intact) -> non conforme : alerte
+    let t2b = etat_baseline(vec![r("sans effet", "conforme")]);
+    assert_eq!(derives(&t2b, &t3).len(), 1, "modification après un tour sans effet : alerte");
+    // conforme -> sans effet : Defender n'applique plus la règle, alerte distincte
+    let a = derives(&t1, &t2b);
+    assert_eq!(a.len(), 1);
+    assert!(a[0].raisons.contains("plus appliqué par Microsoft Defender"), "{}", a[0].raisons);
+    // sans effet -> sans effet : rien de nouveau
+    assert!(derives(&t2b, &t2b).is_empty());
+    // l'état du registre n'est jamais publié
+    let json = serde_json::to_string(&t3).unwrap();
+    assert!(!json.contains("EtatRegistre"), "{json}");
+}
+
