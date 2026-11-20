@@ -340,6 +340,10 @@ pub struct EtatRegle {
     pub actuel: String,
     pub attendu: String,
     pub appliquee: bool,
+    /// État lu dans le registre seul, gardé en mémoire et jamais publié : BAS-001 porte sur lui, pour qu'un tour
+    /// « inconnu » ou « sans effet » dû à Defender ne casse pas la chaîne d'alertes (audit de #217, S217-01)
+    #[serde(skip)]
+    pub etat_registre: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -605,9 +609,8 @@ pub fn evaluer() -> EtatBaseline {
     let sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     let mut regles = Vec::new();
     let mut totaux: HashMap<&str, (u32, u32)> = HashMap::new();
-    // État effectif de Defender, lu une fois par évaluation (B4)
-    let mode = crate::defender::etat().mode;
-    let prefs = crate::defender::preferences();
+    // État effectif de Defender, lu une fois par évaluation (B4), avec une échéance (audit de #217, S217-02)
+    let (mode, prefs) = defender_borne();
     for r in REGLES {
         let verifs: Vec<_> = r.mecanismes.iter().map(verifier_mecanisme).collect();
         let etat_registre = if verifs.iter().any(|v| v.0 == Some(false)) {
@@ -636,10 +639,29 @@ pub fn evaluer() -> EtatBaseline {
             actuel: verifs.iter().map(|v| v.1.clone()).collect::<Vec<_>>().join(" / ") + &note,
             attendu: verifs.iter().map(|v| v.2.clone()).collect::<Vec<_>>().join(" / "),
             appliquee: sauvegarde.regles.contains_key(r.id),
+            etat_registre: etat_registre.into(),
         });
     }
     let scores = totaux.into_iter().map(|(p, (ok, n))| (p.to_string(), if n == 0 { 0 } else { ok * 100 / n })).collect();
     EtatBaseline { mis_a_jour: commun::maintenant(), regles, scores, message: gestion().unwrap_or_default() }
+}
+
+/// Lecture WMI d'un Defender bloqué : jamais plus de 30 s pendant que le drapeau de la baseline est tenu ; une
+/// lecture encore bloquée n'en relance pas une autre. Dépassement : mode vide et préférences absentes, donc
+/// « inconnu » pour les règles Defender (audit de #217, S217-02)
+fn defender_borne() -> (String, Option<crate::defender::PrefsDefender>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static EN_COURS: AtomicBool = AtomicBool::new(false);
+    if EN_COURS.swap(true, Ordering::AcqRel) {
+        return (String::new(), None);
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let lu = (crate::defender::etat().mode, crate::defender::preferences());
+        EN_COURS.store(false, Ordering::Release);
+        let _ = tx.send(lu);
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_default()
 }
 
 /// Décision pure : état d'une règle à partir de l'état lu dans le registre et de l'effet réel de ses mécanismes
@@ -964,21 +986,38 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
 }
 
-/// Écarts sur des règles appliquées par deR4Tizer : quelqu'un a modifié un réglage de sécurité
+/// État d'une règle dans le registre seul (celui de l'état publié pour un relevé qui ne le porte pas)
+fn etat_lu_registre(r: &EtatRegle) -> &str {
+    if r.etat_registre.is_empty() { &r.etat } else { &r.etat_registre }
+}
+
+/// Écarts sur des règles appliquées par deR4Tizer : quelqu'un a modifié un réglage de sécurité (registre), ou
+/// Defender a cessé d'appliquer une règle conforme au relevé précédent. La modification se juge sur le registre
+/// seul : un tour « inconnu » ou « sans effet » dû à Defender ne la masque pas (audit de #217, S217-01)
 pub fn derives(avant: &EtatBaseline, apres: &EtatBaseline) -> Vec<Alerte> {
     let anciens: HashMap<&str, &EtatRegle> = avant.regles.iter().map(|r| (r.id.as_str(), r)).collect();
+    let alerte = |r: &EtatRegle, raisons: String| Alerte {
+        regle: crate::regles::BAS_001.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Alerte".into(),
+        score: 5,
+        processus: "?".into(),
+        destination: format!("baseline : {}", r.titre),
+        raisons,
+        ..Default::default()
+    };
     apres.regles.iter()
-        .filter(|r| r.appliquee && r.etat == "non conforme" && anciens.get(r.id.as_str()).map(|a| a.etat == "conforme").unwrap_or(false))
-        .map(|r| Alerte {
-            regle: crate::regles::BAS_001.into(),
-            id: commun::nouvel_id(),
-            heure: commun::maintenant(),
-            niveau: "Alerte".into(),
-            score: 5,
-            processus: "?".into(),
-            destination: format!("baseline : {}", r.titre),
-            raisons: format!("réglage de sécurité MODIFIÉ hors de deR4Tizer (attendu : {}, actuel : {})", r.attendu, r.actuel),
-            ..Default::default()
+        .filter(|r| r.appliquee)
+        .filter_map(|r| {
+            let a = anciens.get(r.id.as_str())?;
+            if etat_lu_registre(r) == "non conforme" && etat_lu_registre(a) == "conforme" {
+                Some(alerte(r, format!("réglage de sécurité MODIFIÉ hors de deR4Tizer (attendu : {}, actuel : {})", r.attendu, r.actuel)))
+            } else if r.etat == "sans effet" && a.etat == "conforme" {
+                Some(alerte(r, format!("réglage de sécurité posé mais plus appliqué par Microsoft Defender (attendu : {}, actuel : {})", r.attendu, r.actuel)))
+            } else {
+                None
+            }
         })
         .collect()
 }

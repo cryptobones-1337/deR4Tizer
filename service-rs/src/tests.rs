@@ -898,7 +898,10 @@ fn baseline_b4_etat_effectif_de_defender() {
     // câblage : evaluer lit l'état effectif et passe par etat_regle ; le score ne compte que « conforme »
     let src = include_str!("baseline.rs");
     assert!(src.contains("let (etat, note) = etat_regle(etat_registre, &effets);"));
-    assert!(src.contains("let prefs = crate::defender::preferences();"));
+    assert!(src.contains("let (mode, prefs) = defender_borne();"));
+    // S217-02 : lecture de Defender bornée, jamais relancée tant qu'une lecture est bloquée
+    assert!(src.contains("rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_default()"));
+    assert!(src.contains("if EN_COURS.swap(true, Ordering::AcqRel) {"));
 }
 
 #[test]
