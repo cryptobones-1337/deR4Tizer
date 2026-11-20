@@ -291,8 +291,8 @@ pub static REGLES: &[Regle] = &[
     Regle {
         id: "systeme.lsa", profil: "renforcé", categorie: "Système", titre: "Protection LSA (processus protégé)",
         pourquoi: "Empêche la lecture de la mémoire de LSASS, où Windows garde les secrets de connexion.",
-        compat: "Redémarrage nécessaire. Rares pilotes ou anciens gestionnaires d'identifiants incompatibles.",
-        mecanismes: &[Registre { cle: r"SYSTEM\CurrentControlSet\Control\Lsa", nom: "RunAsPPL", valeur: Dword(1) }],
+        compat: "Redémarrage nécessaire. Rares pilotes ou anciens gestionnaires d'identifiants incompatibles. Windows 11 22H2 ou plus récent seulement : protection sans verrou UEFI, donc annulable (c'est déjà le réglage par défaut des installations récentes) ; sur une version plus ancienne, la règle n'est pas appliquée.",
+        mecanismes: &[Registre { cle: r"SYSTEM\CurrentControlSet\Control\Lsa", nom: "RunAsPPL", valeur: Dword(2) }],
     },
     Regle {
         id: "systeme.wsh", profil: "renforcé", categorie: "Système", titre: "Windows Script Host désactivé (.vbs, .js)",
@@ -366,7 +366,37 @@ struct Sauvegarde {
 /// Valeurs plus strictes qui satisfont une règle moins stricte posée sur la même clé (relecture de la baseline du
 /// 2026-11-20, B3) : (nom de la valeur, valeur attendue, valeurs plus strictes acceptées). L'accès contrôlé aux
 /// dossiers en blocage (1) satisfait la règle « mode audit » (2) et n'est jamais rétrogradé par elle
-pub const PLUS_STRICTES: &[(&str, u32, &[u32])] = &[("EnableControlledFolderAccess", 2, &[1])];
+/// La protection LSA avec verrou UEFI (RunAsPPL = 1) satisfait la règle sans verrou (2) : elle protège autant, mais
+/// n'est pas annulable sans l'outil de Microsoft ; deR4Tizer ne la pose jamais (B5)
+pub const PLUS_STRICTES: &[(&str, u32, &[u32])] = &[("EnableControlledFolderAccess", 2, &[1]), ("RunAsPPL", 2, &[1])];
+
+/// Build de Windows à partir duquel RunAsPPL = 2 (protection sans verrou UEFI) existe : Windows 11 22H2 (22621)
+pub const BUILD_LSA_SANS_VERROU: u32 = 22621;
+
+/// Décision pure : la règle LSA peut-elle être appliquée sur ce build ? Build illisible : non (échec fermé)
+pub fn lsa_applicable(build: Option<u32>) -> bool {
+    build.map(|b| b >= BUILD_LSA_SANS_VERROU).unwrap_or(false)
+}
+
+fn build_windows() -> Option<u32> {
+    lire_registre(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentBuildNumber")?.trim().parse().ok()
+}
+
+/// Taille maximale effective d'un journal, lue dans la sortie de « wevtutil gl » (ligne « maxSize: N »)
+pub fn taille_effective(sortie: &str) -> Option<u64> {
+    sortie.lines().find_map(|l| {
+        let (n, v) = l.trim().split_once(':')?;
+        if n.trim().eq_ignore_ascii_case("maxSize") { v.trim().parse().ok() } else { None }
+    })
+}
+
+fn lire_taille_journal(canal: &str) -> Option<u64> {
+    let o = std::process::Command::new("wevtutil.exe").args(["gl", canal]).output().ok()?;
+    if !o.status.success() {
+        return None;
+    }
+    taille_effective(&String::from_utf8_lossy(&o.stdout))
+}
 
 fn plus_stricte(nom: &str, attendu: &Valeur, autre: &Valeur) -> bool {
     match (attendu, autre) {
@@ -791,6 +821,10 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     let origines_connues: HashMap<String, Option<String>> = sauvegarde.regles.values()
         .flat_map(|l| l.iter().filter(|(m, _)| m.starts_with("reg|")).map(|(m, v)| (m.to_ascii_lowercase(), v.clone())))
         .collect();
+    // Protection LSA sans verrou UEFI : seulement à partir de Windows 11 22H2 ; sinon refus, avant toute écriture (B5)
+    if regles.iter().any(|r| r.id == "systeme.lsa") && !lsa_applicable(build_windows()) {
+        return Err("Protection LSA non appliquée : elle demande Windows 11 22H2 ou plus récent (sinon elle ne serait pas annulable) ; rien n'a été modifié.".into());
+    }
     // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
         let mut origine = Vec::new();
@@ -800,6 +834,13 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
                     let cle_origine = format!(r"reg|{cle}|{nom}");
                     let o = origines_connues.get(&cle_origine.to_ascii_lowercase()).cloned().unwrap_or_else(|| lire_registre(cle, nom));
                     origine.push((cle_origine, o));
+                    // Taille de journal : la taille effective d'origine est relevée, pour la remettre à l'annulation
+                    // (B5 : retirer la stratégie ne la remet pas, essai en VM du 2026-11-20)
+                    if *nom == "MaxSize" && cle.contains(r"\EventLog\") {
+                        let canal = cle.rsplit('\\').next().unwrap_or("");
+                        let taille = lire_taille_journal(canal).ok_or_else(|| format!("taille du journal « {canal} » illisible : rien n'a été modifié."))?;
+                        origine.push((format!("taille|{canal}"), Some(taille.to_string())));
+                    }
                     if ecriture_retenue(cle, nom, valeur, &autres) {
                         ajouts.push(entree(cle, nom, valeur));
                     }
@@ -930,6 +971,15 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     if valeur.as_deref() == Some("false") {
                         remise &= evenements::activer_journal(canal, false);
                     }
+                }
+                ["taille", canal] => {
+                    // Taille effective d'origine remise (B5)
+                    let ok = match valeur.as_deref().and_then(|v| v.parse::<u64>().ok()) {
+                        Some(t) => std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{t}")]).output()
+                            .map(|o| o.status.success()).unwrap_or(false),
+                        None => false,
+                    };
+                    remise &= ok;
                 }
                 _ => {}
             }
