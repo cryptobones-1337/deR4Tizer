@@ -673,10 +673,18 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
     let mut journaux: Vec<&str> = Vec::new();
-    // Valeurs posées par les règles déjà appliquées ou appliquées en même temps (B3)
+    // Valeurs plus strictes qui retiennent une écriture (B3) : celles posées dans le même appel, et celles des règles
+    // déjà appliquées seulement si elles sont vraiment en place (audit de #216, S216-01 : jamais sur le seul marquage)
     let autres: Vec<(&str, &str, &Valeur)> = REGLES.iter()
-        .filter(|r| sauvegarde.regles.contains_key(r.id) || regles.iter().any(|x| x.id == r.id))
-        .flat_map(|r| r.mecanismes.iter().filter_map(|m| if let Registre { cle, nom, valeur } = m { Some((*cle, *nom, valeur)) } else { None }))
+        .flat_map(|r| r.mecanismes.iter().filter_map(move |m| if let Registre { cle, nom, valeur } = m { Some((r, *cle, *nom, valeur)) } else { None }))
+        .filter(|(r, cle, nom, valeur)| regles.iter().any(|x| x.id == r.id)
+            || (sauvegarde.regles.contains_key(r.id) && valeur_satisfaite(nom, valeur, lire_registre(cle, nom).as_deref())))
+        .map(|(_, cle, nom, valeur)| (cle, nom, valeur))
+        .collect();
+    // Origine déjà relevée par une règle appliquée sur la même clé : c'est elle qui fait foi, pas la valeur posée
+    // depuis par deR4Tizer (audit de #216, S216-02)
+    let origines_connues: HashMap<String, Option<String>> = sauvegarde.regles.values()
+        .flat_map(|l| l.iter().filter(|(m, _)| m.starts_with("reg|")).map(|(m, v)| (m.to_ascii_lowercase(), v.clone())))
         .collect();
     // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
@@ -684,7 +692,9 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
         for m in r.mecanismes {
             match m {
                 Registre { cle, nom, valeur } => {
-                    origine.push((format!(r"reg|{cle}|{nom}"), lire_registre(cle, nom)));
+                    let cle_origine = format!(r"reg|{cle}|{nom}");
+                    let o = origines_connues.get(&cle_origine.to_ascii_lowercase()).cloned().unwrap_or_else(|| lire_registre(cle, nom));
+                    origine.push((cle_origine, o));
                     if ecriture_retenue(cle, nom, valeur, &autres) {
                         ajouts.push(entree(cle, nom, valeur));
                     }

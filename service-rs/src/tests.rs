@@ -825,6 +825,24 @@ fn baseline_s215_07_a_09_cablage() {
 }
 
 #[test]
+fn baseline_s216_01_a_03_cablage() {
+    let src = include_str!("baseline.rs");
+    let d = src.find("pub fn appliquer(").unwrap();
+    let corps = &src[d..d + 4000];
+    // S216-01 : une règle déjà appliquée ne retient une écriture que si sa valeur est vraiment en place
+    assert!(corps.contains("(sauvegarde.regles.contains_key(r.id) && valeur_satisfaite(nom, valeur, lire_registre(cle, nom).as_deref()))"),
+        "retenue seulement si la valeur plus stricte est en place");
+    assert!(!corps.contains(".filter(|r| sauvegarde.regles.contains_key(r.id) || regles.iter().any(|x| x.id == r.id))"),
+        "plus de retenue sur le seul marquage « appliquée »");
+    // S216-02 : origine reprise de la règle déjà appliquée sur la même clé
+    assert!(corps.contains("origines_connues.get(&cle_origine.to_ascii_lowercase())"));
+    // S216-03 : l'application automatique ne passe plus par-dessus une opération demandée par l'interface
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains("!p.baseline_commande_recue.load(Ordering::Acquire)"));
+    assert!(m.contains("if matches!(c.valeur.as_deref(), Some(\"appliquer\") | Some(\"annuler\")) {"), "une réévaluation ne compte pas");
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
