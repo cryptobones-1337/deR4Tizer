@@ -657,7 +657,9 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Conditions** : seuls les réglages appliqués par deR4Tizer sont suivis. Deux cas : passés de « conforme » à « non
   conforme » dans le registre (l'état du registre est gardé à part, si bien qu'un relevé « inconnu » ou « sans effet »
   dû à Defender ne masque pas une modification qui suit, audit de #217, S217-01) ; passés de « conforme » à « sans
-  effet » (Microsoft Defender n'applique plus la règle : antivirus passif ou valeur effective différente).
+  effet » (Microsoft Defender n'applique plus la règle : antivirus passif ou valeur effective différente) ; plusieurs
+  règles passées « sans effet » au même relevé donnent une seule alerte qui les nomme (S217-04). Une règle illisible à
+  un relevé garde son dernier état connu pour la comparaison suivante (S217-05).
 - **Télémétrie** : évaluation de la baseline.
 - **Si elle manque** : évaluation impossible : aucune dérive calculée.
 - **Niveau** : Alerte.
@@ -666,7 +668,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Tests** : `bas_001_positif` (règle appliquée par deR4Tizer, conforme puis non conforme : Alerte, valeurs attendue
   et actuelle dans les raisons), `bas_001_negatif` (règle non appliquée par deR4Tizer ; déjà non conforme ; état
   inconnu ; règle nouvelle), `bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet` (modification vue après
-  un relevé « inconnu » ou « sans effet » ; passage à « sans effet »), sur `baseline::derives`. Non exercée en VM.
+  un relevé « inconnu » ou « sans effet » ; passage à « sans effet »), `bas_001_s217_04_et_05_regroupement_et_dernier_etat_connu`, sur `baseline::derives`. Non exercée en VM.
 
 ## COR : corrélations du SIEM
 

@@ -1097,19 +1097,48 @@ pub fn derives(avant: &EtatBaseline, apres: &EtatBaseline) -> Vec<Alerte> {
         raisons,
         ..Default::default()
     };
-    apres.regles.iter()
-        .filter(|r| r.appliquee)
-        .filter_map(|r| {
-            let a = anciens.get(r.id.as_str())?;
-            if etat_lu_registre(r) == "non conforme" && etat_lu_registre(a) == "conforme" {
-                Some(alerte(r, format!("réglage de sécurité MODIFIÉ hors de deR4Tizer (attendu : {}, actuel : {})", r.attendu, r.actuel)))
-            } else if r.etat == "sans effet" && a.etat == "conforme" {
-                Some(alerte(r, format!("réglage de sécurité posé mais plus appliqué par Microsoft Defender (attendu : {}, actuel : {})", r.attendu, r.actuel)))
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut alertes = Vec::new();
+    let mut sans_effet: Vec<&EtatRegle> = Vec::new();
+    for r in apres.regles.iter().filter(|r| r.appliquee) {
+        let Some(a) = anciens.get(r.id.as_str()) else { continue };
+        if etat_lu_registre(r) == "non conforme" && etat_lu_registre(a) == "conforme" {
+            alertes.push(alerte(r, format!("réglage de sécurité MODIFIÉ hors de deR4Tizer (attendu : {}, actuel : {})", r.attendu, r.actuel)));
+        } else if r.etat == "sans effet" && a.etat == "conforme" {
+            sans_effet.push(r);
+        }
+    }
+    // Defender qui cesse d'appliquer des règles (mode passif, redémarrage) : une seule alerte pour toutes, au lieu d'une
+    // par règle (audit de #217, S217-04)
+    match sans_effet.as_slice() {
+        [] => {}
+        [r] => alertes.push(alerte(r, format!("réglage de sécurité posé mais plus appliqué par Microsoft Defender (attendu : {}, actuel : {})", r.attendu, r.actuel))),
+        [premiere, ..] => {
+            let titres: Vec<&str> = sans_effet.iter().map(|r| r.titre.as_str()).collect();
+            let mut a = alerte(premiere, format!("{} réglages de sécurité posés mais plus appliqués par Microsoft Defender : {} (état actuel de la première : {})", titres.len(), titres.join(", "), premiere.actuel));
+            a.destination = format!("baseline : {} réglages Defender", titres.len());
+            alertes.push(a);
+        }
+    }
+    alertes
+}
+
+/// Relevé gardé pour la comparaison suivante : une règle illisible à ce relevé (état effectif ou registre) garde son
+/// dernier état connu, pour qu'un tour « inconnu » ne fasse pas manquer une alerte au tour suivant (audit de #217,
+/// S217-05). Le relevé publié, lui, reste tel quel
+pub fn retenir(avant: Option<&EtatBaseline>, b: &EtatBaseline) -> EtatBaseline {
+    let mut r = b.clone();
+    let Some(avant) = avant else { return r };
+    let anciens: HashMap<&str, &EtatRegle> = avant.regles.iter().map(|x| (x.id.as_str(), x)).collect();
+    for x in r.regles.iter_mut() {
+        let Some(a) = anciens.get(x.id.as_str()) else { continue };
+        if x.etat == "inconnu" {
+            x.etat = a.etat.clone();
+        }
+        if x.etat_registre == "inconnu" {
+            x.etat_registre = a.etat_registre.clone();
+        }
+    }
+    r
 }
 
 /// Réglages retirés par une annulation mais encore utilisés par une règle toujours appliquée : on remet la

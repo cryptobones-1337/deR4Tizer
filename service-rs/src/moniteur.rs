@@ -434,7 +434,8 @@ impl Moniteur {
                             p.alertes_externes.lock().unwrap().extend(baseline::derives(avant, &b));
                         }
                         let _ = commun::ecrire("baseline.json", &b);
-                        baseline_avant = Some(b);
+                        // Dernier état connu retenu pour une règle illisible à ce relevé (audit de #217, S217-05)
+                        baseline_avant = Some(baseline::retenir(baseline_avant.as_ref(), &b));
                         mesure::noter("controles.baseline", t);
                         p.baseline_occupee.store(false, Ordering::Release);
                         // Consommé seulement si le bloc a tourné : une opération de l'interface au premier tour ne
