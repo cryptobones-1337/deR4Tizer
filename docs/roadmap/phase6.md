@@ -21,7 +21,7 @@ Une action de réponse coupe ou modifie quelque chose sur un poste sans informat
 
 - aucune nouvelle action, aucun nouveau déclencheur automatique, aucun élargissement du niveau 3 ;
 - aucun arrêt automatique d'un processus, aucune mise en quarantaine automatique ;
-- aucune modification de la logique de l'IDS, du DPI ou du NDR, qui restent gelés : la politique s'applique en aval, dans
+- aucune modification de la logique de l'IDS, du DPI ou du NDR, qui restaient gelés pendant la phase 6 (dégelés depuis : IDS et NDR le 2026-11-16, DPI le 2026-11-18) : la politique s'applique en aval, dans
   le moniteur ;
 - rien de Microsoft Defender, ni rien des phases 7 à 9.
 
