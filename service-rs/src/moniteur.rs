@@ -64,6 +64,9 @@ pub struct Partage {
     pub stats_filtrage: Mutex<crate::filtrage::StatsFiltrage>,
     pub defender: Mutex<EtatDefender>,
     pub baseline_occupee: AtomicBool,
+    /// Une commande baseline est arrivée de l'interface depuis le démarrage : l'application automatique du profil
+    /// « journalisation » ne passe plus par-dessus (audit de #216, S216-03)
+    pub baseline_commande_recue: AtomicBool,
     pub arret: AtomicBool,
     /// Alertes du relevé des démarrages automatiques (fil « persistance »), traitées comme avant, sans clé de
     /// déduplication
@@ -157,6 +160,7 @@ impl Moniteur {
             stats_filtrage: Mutex::new(Default::default()),
             defender: Mutex::new(EtatDefender::default()),
             baseline_occupee: AtomicBool::new(false),
+            baseline_commande_recue: AtomicBool::new(false),
             arret: AtomicBool::new(false),
             alertes_persistance: Mutex::new(Vec::new()),
             entrees_persistance: AtomicUsize::new(0),
@@ -419,7 +423,7 @@ impl Moniteur {
                         collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues, "réglages de la baseline");
                         // Le service applique lui-même le profil « journalisation » (demandé par l'utilisateur),
                         // une fois au démarrage, s'il n'est pas conforme
-                        if premier && !console && baseline::gestion().is_none() && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
+                        if premier && !console && !p.baseline_commande_recue.load(Ordering::Acquire) && baseline::gestion().is_none() && b.regles.iter().any(|r| r.profil == "journalisation" && r.etat == "non conforme") {
                             let r = baseline::appliquer(&baseline::selection("journalisation"));
                             commun::journal(&format!("baseline « journalisation » : {}", r.unwrap_or_else(|e| format!("échec : {e}"))));
                             premier = false;
@@ -1798,6 +1802,9 @@ En-tête : Authorization: Bearer {j}"))
             }
             "baseline" => {
                 // Valeur : appliquer / annuler / evaluer ; Cible : profil(s) ou identifiants de règles séparés par des virgules
+                if matches!(c.valeur.as_deref(), Some("appliquer") | Some("annuler")) {
+                    partage.baseline_commande_recue.store(true, Ordering::Release);
+                }
                 if partage.baseline_occupee.swap(true, Ordering::Relaxed) {
                     return Reponse::erreur("Une opération sur la baseline est déjà en cours.");
                 }
