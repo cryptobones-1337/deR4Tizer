@@ -1,7 +1,8 @@
 //! Baseline de sécurité, inspirée des baselines Intune / Microsoft Security Baseline, adaptée à un PC personnel.
 //! Trois profils :
 //!   - « journalisation » : journaux nécessaires à la détection, appliqué automatiquement par le service ;
-//!   - « recommandé »     : durcissement sans effet de bord notable, appliqué à la demande ;
+//!   - « recommandé »     : durcissement courant, appliqué à la demande ; quelques règles changent l'usage du poste
+//!                          (Bureau à distance, invites du contrôle de compte, partages invités), dites règle par règle ;
 //!   - « renforcé »       : durcissement plus strict, peut gêner certains logiciels (indiqué règle par règle).
 //! Tout passe par la GPO locale (Registry.pol, audit.csv). Les valeurs précédentes sont sauvegardées
 //! pour pouvoir revenir en arrière, règle par règle ou en bloc.
@@ -160,13 +161,13 @@ pub static REGLES: &[Regle] = &[
     // ---------------------------------------------------------------- Defender
     Regle {
         id: "defender.pua", profil: "recommandé", categorie: "Defender", titre: "Blocage des applications potentiellement indésirables",
-        pourquoi: "Adwares, mineurs de cryptomonnaie, faux optimiseurs.", compat: "",
+        pourquoi: "Adwares, mineurs de cryptomonnaie, faux optimiseurs.", compat: "Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[Registre { cle: DEFENDER, nom: "PUAProtection", valeur: Dword(1) }],
     },
     Regle {
         id: "defender.cloud", profil: "recommandé", categorie: "Defender", titre: "Protection cloud avancée et blocage renforcé",
         pourquoi: "Defender interroge le cloud Microsoft pour les fichiers inconnus et bloque plus tôt.",
-        compat: "Envoie des métadonnées de fichiers à Microsoft (comme le réglage par défaut de Windows).",
+        compat: "Envoie des métadonnées de fichiers à Microsoft (comme le réglage par défaut de Windows). Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[
             Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Spynet", nom: "SpynetReporting", valeur: Dword(2) },
             Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Spynet", nom: "SubmitSamplesConsent", valeur: Dword(1) },
@@ -175,23 +176,23 @@ pub static REGLES: &[Regle] = &[
     },
     Regle {
         id: "defender.reseau", profil: "recommandé", categorie: "Defender", titre: "Protection réseau",
-        pourquoi: "Bloque l'accès aux sites malveillants connus depuis n'importe quel programme, pas seulement Edge.", compat: "",
+        pourquoi: "Bloque l'accès aux sites malveillants connus depuis n'importe quel programme, pas seulement Edge.", compat: "Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Network Protection", nom: "EnableNetworkProtection", valeur: Dword(1) }],
     },
     Regle {
         id: "defender.usb", profil: "recommandé", categorie: "Defender", titre: "Analyse des supports amovibles",
-        pourquoi: "Les clés USB sont analysées lors de l'analyse complète.", compat: "",
+        pourquoi: "Les clés USB sont analysées lors de l'analyse complète.", compat: "Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Scan", nom: "DisableRemovableDriveScanning", valeur: Dword(0) }],
     },
     Regle {
         id: "defender.dossiers-audit", profil: "recommandé", categorie: "Defender", titre: "Accès contrôlé aux dossiers (mode audit)",
-        pourquoi: "Note les programmes qui modifieraient Documents, Images… sans rien bloquer. Prépare le mode bloquant.", compat: "",
+        pourquoi: "Note les programmes qui modifieraient Documents, Images… sans rien bloquer. Prépare le mode bloquant.", compat: "Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access", nom: "EnableControlledFolderAccess", valeur: Dword(2) }],
     },
     Regle {
         id: "defender.dossiers-blocage", profil: "renforcé", categorie: "Defender", titre: "Accès contrôlé aux dossiers (blocage)",
         pourquoi: "Protection forte contre les rançongiciels : seuls les programmes de confiance modifient vos dossiers personnels.",
-        compat: "Certains jeux et logiciels de retouche devront être autorisés dans Sécurité Windows.",
+        compat: "Certains jeux et logiciels de retouche devront être autorisés dans Sécurité Windows. Sécurité Windows peut alors afficher « géré par votre organisation » et griser l'interrupteur de ce réglage.",
         mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access", nom: "EnableControlledFolderAccess", valeur: Dword(1) }],
     },
     asr!("asr.courriel", "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550", "1", "recommandé", "Bloquer les exécutables arrivant par courriel", ""),
@@ -225,7 +226,7 @@ pub static REGLES: &[Regle] = &[
     },
     Regle {
         id: "reseau.invite-smb", profil: "recommandé", categorie: "Réseau", titre: "Refuser les connexions SMB invité non sécurisées",
-        pourquoi: "Empêche de se connecter à un faux partage réseau sans authentification.", compat: "Certains vieux NAS sans mot de passe.",
+        pourquoi: "Empêche de se connecter à un faux partage réseau sans authentification.", compat: "Les partages réseau en accès invité, sans mot de passe (certains vieux NAS), ne sont plus accessibles.",
         mecanismes: &[Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation", nom: "AllowInsecureGuestAuth", valeur: Dword(0) }],
     },
     Regle {
@@ -245,7 +246,7 @@ pub static REGLES: &[Regle] = &[
     },
     Regle {
         id: "reseau.bureau-distance", profil: "recommandé", categorie: "Réseau", titre: "Bureau à distance et Assistance à distance désactivés",
-        pourquoi: "Les arnaques au faux support technique et les intrusions passent souvent par là.", compat: "Si vous utilisez le Bureau à distance, ne l'appliquez pas.",
+        pourquoi: "Les arnaques au faux support technique et les intrusions passent souvent par là.", compat: "Coupe le Bureau à distance et l'Assistance à distance. Appliquée avec tout le profil, elle est laissée de côté si le Bureau à distance est activé sur ce poste.",
         mecanismes: &[
             Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services", nom: "fDenyTSConnections", valeur: Dword(1) },
             Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services", nom: "fAllowToGetHelp", valeur: Dword(0) },
@@ -268,7 +269,8 @@ pub static REGLES: &[Regle] = &[
     },
     Regle {
         id: "systeme.uac", profil: "recommandé", categorie: "Système", titre: "Contrôle de compte (UAC) sur le bureau sécurisé",
-        pourquoi: "La demande d'élévation ne peut pas être cliquée par un programme malveillant.", compat: "",
+        pourquoi: "La demande d'élévation ne peut pas être cliquée par un programme malveillant.",
+        compat: "Un compte administrateur reçoit une demande de confirmation, sur le bureau sécurisé, pour chaque élévation, y compris celles d'outils de Windows.",
         mecanismes: &[
             Registre { cle: r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", nom: "EnableLUA", valeur: Dword(1) },
             Registre { cle: r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", nom: "ConsentPromptBehaviorAdmin", valeur: Dword(2) },
@@ -816,6 +818,18 @@ pub fn retirer_lsa(nb_regles: usize, applicable: bool) -> Result<bool, String> {
     }
 }
 
+/// Décision pure (relecture de la baseline du 2026-11-20, U1) : la règle qui coupe le Bureau à distance est
+/// laissée de côté quand elle est appliquée avec d'autres (profil entier) et que le Bureau à distance est activé, ou
+/// que son état est illisible ; appliquée seule, elle est un choix explicite
+pub fn retirer_bureau_distance(nb_regles: usize, rdp_actif: Option<bool>) -> bool {
+    nb_regles > 1 && rdp_actif != Some(false)
+}
+
+/// Bureau à distance activé sur ce poste (fDenyTSConnections = 0) ; None si illisible
+fn bureau_distance_actif() -> Option<bool> {
+    lire_registre(r"SYSTEM\CurrentControlSet\Control\Terminal Server", "fDenyTSConnections")?.trim().parse::<u32>().ok().map(|v| v == 0)
+}
+
 pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     if let Some(g) = gestion_fraiche() {
         return Err(g);
@@ -827,6 +841,10 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     if regles.iter().any(|r| r.id == "systeme.lsa") && retirer_lsa(regles.len(), lsa_applicable(build_windows()))? {
         regles.retain(|r| r.id != "systeme.lsa");
         note = " « Protection LSA » non appliquée : elle demande Windows 11 22H2 ou plus récent.".into();
+    }
+    if regles.iter().any(|r| r.id == "reseau.bureau-distance") && retirer_bureau_distance(regles.len(), bureau_distance_actif()) {
+        regles.retain(|r| r.id != "reseau.bureau-distance");
+        note.push_str(" « Bureau à distance désactivé » non appliquée : le Bureau à distance est activé sur ce poste (l'appliquer seule pour le couper).");
     }
     let regles: &[&Regle] = &regles;
     sauvegarder_fichiers_gpo();

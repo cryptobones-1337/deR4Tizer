@@ -95,7 +95,7 @@ namespace DeR4Tizer
         public static void FiltrageRetirer(string nom) { Canal.Executer(new Commande { Action = "filtrageRetirer", NomDns = nom }); }
 
         // Baseline (U5b) : mêmes questions et même commande que les boutons d'aujourd'hui, pour les deux interfaces
-        public const string QuestionRecommande = "Appliquer les règles du profil « recommandé » par la stratégie de groupe locale ?\n\nToutes sont réversibles (bouton Annuler).";
+        public const string QuestionRecommande = "Appliquer les règles du profil « recommandé » par la stratégie de groupe locale ?\n\nQuelques-unes changent l'usage du poste : le Bureau à distance est coupé (sauf s'il est activé sur ce poste : la règle est alors laissée de côté), un compte administrateur confirme chaque élévation sur le bureau sécurisé, et les partages réseau en accès invité (anciens NAS) ne sont plus accessibles.\n\nToutes sont réversibles (bouton Annuler).";
         public const string QuestionRenforce = "Le profil « renforcé » peut gêner certains logiciels (voir la colonne Compatibilité).\n\nAppliquer quand même ?";
         public const string QuestionAnnulerRegles = "Revenir aux valeurs d'origine pour les règles sélectionnées ?";
         public const string QuestionToutAnnuler = "Revenir aux valeurs d'origine pour toutes les règles « recommandé » et « renforcé » ?\n(La journalisation reste active.)";
