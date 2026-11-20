@@ -1363,3 +1363,33 @@ fn bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet() {
     assert!(!json.contains("EtatRegistre"), "{json}");
 }
 
+#[test]
+fn bas_001_s217_04_et_05_regroupement_et_dernier_etat_connu() {
+    use crate::baseline::{derives, retenir, EtatRegle};
+    let r = |id: &str, etat: &str, registre: &str| EtatRegle { etat_registre: registre.into(), ..regle_baseline(id, etat, true) };
+    // S217-04 : trois règles qui passent « sans effet » ensemble donnent une seule alerte qui les nomme toutes
+    let avant = etat_baseline(vec![r("a", "conforme", "conforme"), r("b", "conforme", "conforme"), r("c", "conforme", "conforme")]);
+    let apres = etat_baseline(vec![r("a", "sans effet", "conforme"), r("b", "sans effet", "conforme"), r("c", "sans effet", "conforme")]);
+    let al = derives(&avant, &apres);
+    assert_eq!(al.len(), 1, "une seule alerte");
+    assert!(al[0].raisons.starts_with("3 réglages") && al[0].raisons.contains("règle a") && al[0].raisons.contains("règle c"), "{}", al[0].raisons);
+    // une modification du registre garde son alerte propre, à côté du regroupement
+    let apres2 = etat_baseline(vec![r("a", "sans effet", "conforme"), r("b", "sans effet", "conforme"), r("c", "non conforme", "non conforme")]);
+    assert_eq!(derives(&avant, &apres2).len(), 2);
+    // S217-05 : conforme, puis inconnu, puis sans effet : l'alerte part grâce au dernier état connu retenu
+    let t1 = etat_baseline(vec![r("a", "conforme", "conforme")]);
+    let t2 = etat_baseline(vec![r("a", "inconnu", "inconnu")]);
+    let t3 = etat_baseline(vec![r("a", "sans effet", "conforme")]);
+    let garde = retenir(Some(&t1), &t2);
+    assert_eq!(garde.regles[0].etat, "conforme");
+    assert_eq!(garde.regles[0].etat_registre, "conforme");
+    assert!(derives(&t1, &t2).is_empty());
+    assert_eq!(derives(&garde, &t3).len(), 1, "sans effet après un tour inconnu : alerte");
+    // registre illisible un tour, puis modifié : alerte
+    let t3b = etat_baseline(vec![r("a", "non conforme", "non conforme")]);
+    assert_eq!(derives(&garde, &t3b).len(), 1);
+    // premier relevé : rien à retenir
+    assert_eq!(retenir(None, &t2).regles[0].etat, "inconnu");
+    // câblage
+    assert!(include_str!("moniteur.rs").contains("baseline_avant = Some(baseline::retenir(baseline_avant.as_ref(), &b));"));
+}
