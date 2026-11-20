@@ -411,7 +411,9 @@ impl Moniteur {
                     let t = Instant::now();
                     tour_pilotes = (tour_pilotes + 1) % 144;
 
-                    if !p.baseline_occupee.load(Ordering::Relaxed) {
+                    // Drapeau pris (et non seulement lu) : une opération lancée par l'interface ne tourne jamais en
+                    // même temps que l'évaluation ou l'application automatique (audit de #215, S215-02)
+                    if p.baseline_occupee.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
                         let b = baseline::evaluer();
                         let inconnues = b.regles.iter().filter(|r| r.etat == "inconnu").count();
                         collectes::noter_comptes(Collecte::Baseline, b.regles.len() - inconnues, inconnues, "réglages de la baseline");
@@ -421,6 +423,7 @@ impl Moniteur {
                             let r = baseline::appliquer(&baseline::selection("journalisation"));
                             commun::journal(&format!("baseline « journalisation » : {}", r.unwrap_or_else(|e| format!("échec : {e}"))));
                             premier = false;
+                            p.baseline_occupee.store(false, Ordering::Release);
                             continue; // réévalue tout de suite pour publier l'état après application
                         }
                         if let Some(avant) = &baseline_avant {
@@ -429,6 +432,7 @@ impl Moniteur {
                         let _ = commun::ecrire("baseline.json", &b);
                         baseline_avant = Some(b);
                         mesure::noter("controles.baseline", t);
+                        p.baseline_occupee.store(false, Ordering::Release);
                     }
                     premier = false;
                     for _ in 0..600 {
