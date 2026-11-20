@@ -8756,7 +8756,7 @@ fn baseline_t3_annulation_rend_les_valeurs_d_origine_apres_gpupdate() {
     let gp = corps.find("etapes.push((\"mise à jour des stratégies (gpupdate)\"").expect("gpupdate");
     let rm = corps.find("let pas_remises = remettre_valeurs(&a_remettre);").expect("remise après gpupdate");
     assert!(rm > gp, "valeurs d'origine remises après gpupdate");
-    assert!(corps.contains("a_remettre.retain(|(c, nm, _, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
+    assert!(corps.contains("a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
     // S219-05 : une stratégie de taille plus grande que la cible satisfait la règle et n'est jamais abaissée
     assert!(valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("2097152")));
     assert!(!valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("20480")));
@@ -8779,5 +8779,21 @@ fn baseline_s220_entree_etrangere_refusee_et_type_garde() {
     let src = include_str!("baseline.rs");
     assert!(src.contains("let Some(catalogue) = mecanisme_de(r, cle, nom) else {"));
     assert!(src.contains("(false, Ok(d)) => k.set_value(nom, &d).is_ok(),"), "texte jamais converti en nombre");
+}
+
+#[test]
+fn baseline_d1_d2_prerelecture_220() {
+    // D2 : la remise exige l'écriture ET la bonne valeur relue
+    use crate::baseline::remise_reussie;
+    assert!(remise_reussie(true, "1", Some("1")));
+    assert!(!remise_reussie(false, "1", Some("1")), "écriture en échec : jamais réussie");
+    assert!(!remise_reussie(true, "1", Some("0")), "mauvaise valeur relue");
+    assert!(!remise_reussie(true, "1", None), "valeur absente");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("!remise_reussie(ecrit, v, lire_registre(cle, nom).as_deref())"));
+    // D1 : une remise en échec remet la règle dans la sauvegarde et dit la valeur d'origine
+    assert!(src.contains("sauvegarde.regles.insert(id.to_string(), o.clone());"));
+    assert!(src.contains("let gardee = match ecrire_sauvegarde(&sauvegarde) {"));
+    assert!(src.contains(r#"format!("{}\\{} = {}", x.0, x.1, x.2)"#), "valeur d'origine dans le message");
 }
 
