@@ -411,29 +411,88 @@ fn verifier_mecanisme(m: &Mecanisme) -> (Option<bool>, String, String) {
     }
 }
 
+/// Gestion du poste lue : jamais « non géré » par défaut (relecture de la baseline du 2026-11-20, B2)
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gestion {
+    NonGere,
+    /// Message pour l'utilisateur : par qui le poste est géré
+    Gere(String),
+    /// Lancement de PowerShell en échec, sortie vide ou mal formée
+    Illisible,
+}
+
+/// Analyse de la sortie « PartOfDomain|nombre d'inscriptions MDM ». Seule une réponse complète et bien formée
+/// vaut « non géré » ; tout le reste est illisible (échec fermé : la baseline reste en lecture seule)
+pub fn analyser_gestion(sortie: Option<&str>) -> Gestion {
+    let Some(s) = sortie else { return Gestion::Illisible };
+    let Some((d, m)) = s.trim().split_once('|') else { return Gestion::Illisible };
+    let domaine = match d.trim().to_ascii_lowercase().as_str() {
+        "true" => true,
+        "false" => false,
+        _ => return Gestion::Illisible,
+    };
+    let Ok(mdm) = m.trim().parse::<u32>() else { return Gestion::Illisible };
+    let mut l = Vec::new();
+    if domaine {
+        l.push("domaine Active Directory");
+    }
+    if mdm > 0 {
+        l.push("Intune (ou autre gestion MDM)");
+    }
+    if l.is_empty() {
+        Gestion::NonGere
+    } else {
+        Gestion::Gere(format!("Poste géré par {} : la baseline est en lecture seule, pour ne pas entrer en conflit avec les stratégies de l'organisation.", l.join(" et ")))
+    }
+}
+
+/// Message de lecture seule, ou None si la baseline peut être appliquée
+pub fn message_gestion(g: &Gestion) -> Option<String> {
+    match g {
+        Gestion::NonGere => None,
+        Gestion::Gere(m) => Some(m.clone()),
+        Gestion::Illisible => Some("Gestion du poste illisible (domaine ou Intune non vérifiable) : la baseline est en lecture seule, par prudence.".into()),
+    }
+}
+
+fn lire_gestion() -> Gestion {
+    crate::mesure::powershell("baseline");
+    let sortie = std::process::Command::new(crate::natif::powershell_exe())
+        .args(["-NoProfile", "-NonInteractive", "-Command",
+            "$d = (Get-CimInstance Win32_ComputerSystem).PartOfDomain; \
+             $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \
+               Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProviderID -eq 'MS DM Server' }).Count; \
+             \"$d|$m\""])
+        .output();
+    match sortie {
+        Ok(o) if o.status.success() => analyser_gestion(Some(&String::from_utf8_lossy(&o.stdout))),
+        _ => analyser_gestion(None),
+    }
+}
+
+static GESTION: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> = std::sync::Mutex::new(None);
+
 /// Gestion existante du poste : la GPO de domaine ou Intune écraserait la GPO locale, ou entrerait en conflit
-/// avec elle ; dans ce cas la baseline est seulement évaluée (lecture seule). Calculé une fois.
+/// avec elle ; dans ce cas la baseline est seulement évaluée (lecture seule). Pour l'évaluation périodique :
+/// gardée 10 minutes, puis relue (un poste joint à un domaine après le démarrage est vu sans redémarrage)
 pub fn gestion() -> Option<String> {
-    static G: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    G.get_or_init(|| {
-        let mut l = Vec::new();
-        crate::mesure::powershell("baseline");
-        let sortie = std::process::Command::new(crate::natif::powershell_exe())
-            .args(["-NoProfile", "-NonInteractive", "-Command",
-                "$d = (Get-CimInstance Win32_ComputerSystem).PartOfDomain; \
-                 $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \
-                   Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProviderID -eq 'MS DM Server' }).Count; \
-                 \"$d|$m\""])
-            .output().map(|s| String::from_utf8_lossy(&s.stdout).trim().to_string()).unwrap_or_default();
-        let (domaine, mdm) = sortie.split_once('|').unwrap_or(("False", "0"));
-        if domaine.eq_ignore_ascii_case("true") {
-            l.push("domaine Active Directory");
+    if let Ok(g) = GESTION.lock() {
+        if let Some((t, m)) = g.as_ref() {
+            if t.elapsed() < std::time::Duration::from_secs(600) {
+                return m.clone();
+            }
         }
-        if mdm.trim().parse::<u32>().unwrap_or(0) > 0 {
-            l.push("Intune (ou autre gestion MDM)");
-        }
-        (!l.is_empty()).then(|| format!("Poste géré par {} : la baseline est en lecture seule, pour ne pas entrer en conflit avec les stratégies de l'organisation.", l.join(" et ")))
-    }).clone()
+    }
+    gestion_fraiche()
+}
+
+/// Relue à l'instant : avant toute application
+pub fn gestion_fraiche() -> Option<String> {
+    let m = message_gestion(&lire_gestion());
+    if let Ok(mut g) = GESTION.lock() {
+        *g = Some((std::time::Instant::now(), m.clone()));
+    }
+    m
 }
 
 pub fn evaluer() -> EtatBaseline {
@@ -473,6 +532,40 @@ pub fn evaluer() -> EtatBaseline {
 
 // ------------------------------------------------------------ application et retour en arrière
 
+/// Une étape d'application ou d'annulation : nom lisible et action
+pub type Etape<'a> = (&'a str, Box<dyn FnMut() -> Result<(), String> + 'a>);
+
+/// Enchaîne les étapes dans l'ordre et s'arrête à la première en échec. Le message dit ce qui est fait et ce
+/// qui ne l'est pas ; si la première étape échoue (sauvegarde du retour arrière), rien n'a été modifié
+/// (relecture de la baseline du 2026-11-20, B1)
+pub fn executer_etapes(etapes: &mut [Etape]) -> Result<(), String> {
+    let mut faites: Vec<&str> = Vec::new();
+    for i in 0..etapes.len() {
+        let nom = etapes[i].0;
+        if let Err(e) = (etapes[i].1)() {
+            let non_faites: Vec<&str> = etapes[i..].iter().map(|x| x.0).collect();
+            return Err(if faites.is_empty() {
+                format!("{nom} impossible ({e}) : rien n'a été modifié.")
+            } else {
+                format!("{nom} impossible ({e}). Fait : {}. Non fait : {}.", faites.join(", "), non_faites.join(", "))
+            });
+        }
+        faites.push(nom);
+    }
+    Ok(())
+}
+
+/// Écrit la sauvegarde du retour arrière puis la relit : une sauvegarde qu'on ne peut pas relire à l'identique
+/// ne protège rien
+fn ecrire_sauvegarde(sauvegarde: &Sauvegarde) -> Result<(), String> {
+    commun::ecrire("baseline-sauvegarde.json", sauvegarde)?;
+    match commun::lire::<Sauvegarde>("baseline-sauvegarde.json") {
+        Some(relue) if relue.regles == sauvegarde.regles => Ok(()),
+        Some(_) => Err("relue différente de celle écrite".into()),
+        None => Err("illisible après écriture".into()),
+    }
+}
+
 fn entree(cle: &str, nom: &str, v: &Valeur) -> EntreePol {
     match v {
         Dword(n) => EntreePol::dword(cle, nom, *n),
@@ -500,7 +593,7 @@ pub fn selection(cible: &str) -> Vec<&'static Regle> {
 }
 
 pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
-    if let Some(g) = gestion() {
+    if let Some(g) = gestion_fraiche() {
         return Err(g);
     }
     sauvegarder_fichiers_gpo();
@@ -508,6 +601,8 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     let mut ajouts = Vec::new();
     let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
+    let mut journaux: Vec<&str> = Vec::new();
+    // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
         let mut origine = Vec::new();
         for m in r.mecanismes {
@@ -529,20 +624,32 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
                 Journal { canal } => {
                     let actif = evenements::journal_actif(canal).unwrap_or(false);
                     origine.push((format!("journal|{canal}"), Some(actif.to_string())));
-                    evenements::activer_journal(canal, true);
+                    journaux.push(canal);
                 }
             }
         }
         // On ne garde que la toute première valeur d'origine d'une règle
         sauvegarde.regles.entry(r.id.to_string()).or_insert(origine);
     }
-    gpo::modifier_pol(&ajouts, &[]).map_err(|e| format!("Registry.pol : {e}"))?;
+    // La sauvegarde du retour arrière d'abord : si elle ne peut pas être écrite et relue, rien n'est modifié
+    let mut etapes: Vec<Etape> = vec![("sauvegarde du retour arrière", Box::new(|| ecrire_sauvegarde(&sauvegarde)))];
+    etapes.push(("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &[]).map_err(|e| e.to_string()))));
     if audit_modifie {
-        gpo::ecrire_audit(&audit).map_err(|e| format!("audit.csv : {e}"))?;
+        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit).map_err(|e| e.to_string()))));
     }
-    gpo::marquer_gpt(audit_modifie).map_err(|e| format!("gpt.ini : {e}"))?;
-    let _ = commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
-    gpo::gpupdate()?;
+    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
+    if !journaux.is_empty() {
+        etapes.push(("journaux d'événements", Box::new(|| {
+            let echecs: Vec<&str> = journaux.iter().copied().filter(|c| !evenements::activer_journal(c, true)).collect();
+            if echecs.is_empty() { Ok(()) } else { Err(format!("non activé(s) : {}", echecs.join(", "))) }
+        })));
+    }
+    etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
+    if let Err(e) = executer_etapes(&mut etapes) {
+        commun::journal(&format!("baseline : application en échec : {e}"));
+        return Err(e);
+    }
+    drop(etapes);
     // Le service Journal d'événements ne relit la taille maximale qu'à son redémarrage : appliquée aussi tout de suite
     for r in regles {
         for m in r.mecanismes {
@@ -641,14 +748,25 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             };
         }
     }
-    gpo::modifier_pol(&ajouts, &retraits).map_err(|e| format!("Registry.pol : {e}"))?;
     if audit_modifie {
         audit.retain(|l| l.2 != 0);
-        gpo::ecrire_audit(&audit).map_err(|e| format!("audit.csv : {e}"))?;
     }
-    gpo::marquer_gpt(audit_modifie).map_err(|e| format!("gpt.ini : {e}"))?;
-    let _ = commun::ecrire("baseline-sauvegarde.json", &sauvegarde);
-    gpo::gpupdate()?;
+    // Valeurs d'origine déjà remises dans le registre ci-dessus ; une étape en échec est dite, jamais masquée
+    // (relecture de la baseline du 2026-11-20, B1) : si la sauvegarde ne peut pas être mise à jour, les règles
+    // annulées restent marquées appliquées et le message le dit
+    let mut etapes: Vec<Etape> = vec![("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &retraits).map_err(|e| e.to_string())))];
+    if audit_modifie {
+        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit).map_err(|e| e.to_string()))));
+    }
+    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
+    etapes.push(("mise à jour de la sauvegarde (sinon les règles annulées restent marquées appliquées)", Box::new(|| ecrire_sauvegarde(&sauvegarde))));
+    etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
+    if let Err(e) = executer_etapes(&mut etapes) {
+        let e = format!("valeurs d'origine remises dans le registre ; {e}");
+        commun::journal(&format!("baseline : annulation incomplète : {e}"));
+        return Err(e);
+    }
+    drop(etapes);
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
 }
 
