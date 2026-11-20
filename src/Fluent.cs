@@ -3654,7 +3654,9 @@ namespace DeR4Tizer
         public static int Score(EtatBaseline b, string profil) { int s = 0; if (b != null && b.Scores != null) b.Scores.TryGetValue(profil, out s); return s; }
 
         // 1 : règle non conforme d'un profil attendu (journalisation, recommandé) ; le renforcé reste un choix, pas un défaut
-        public static int Gravite(EtatRegle r) { return r.Etat == "non conforme" && r.Profil != "renforcé" ? 1 : 0; }
+        // « sans effet » (B4 de la relecture de la baseline du 2026-11-20) : posé mais pas appliqué par Defender, à signaler
+        // quel que soit le profil, puisque la protection affichée n'existe pas
+        public static int Gravite(EtatRegle r) { return r.Etat == "sans effet" || (r.Etat == "non conforme" && r.Profil != "renforcé") ? 1 : 0; }
 
         public static List<EtatRegle> Regles(EtatBaseline b, string profil)
         {

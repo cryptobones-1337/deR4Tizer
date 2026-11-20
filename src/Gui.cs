@@ -2012,6 +2012,8 @@ namespace DeR4Tizer
                         { Tag = r, ToolTipText = Canal.Visible(r.Pourquoi) };
                     if (r.Etat == "conforme") item.ForeColor = Theme.Vert;
                     else if (r.Etat == "non conforme") Colorer(item, profil == "renforcé" ? Theme.Panneau : Theme.FondAttention, Theme.Texte, false);
+                    // Posé mais sans effet (Defender n'est pas l'antivirus actif, réglage ignoré) : signalé comme un écart
+                    else if (r.Etat == "sans effet") Colorer(item, Theme.FondAttention, Theme.Texte, false);
                     else item.ForeColor = Theme.TexteDim;
                     lvBaseline.Items.Add(item);
                 }

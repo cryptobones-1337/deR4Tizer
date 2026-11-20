@@ -843,6 +843,98 @@ fn baseline_s216_01_a_03_cablage() {
 }
 
 #[test]
+fn baseline_b4_etat_effectif_de_defender() {
+    // Relecture de la baseline du 2026-11-20, B4 : une règle Defender posée dans le registre n'est conforme que si
+    // Defender l'applique ; Defender passif ou réglage ignoré = « sans effet » ; état illisible = jamais conforme
+    use crate::baseline::{effet_defender, etat_regle, Effet, Mecanisme::Registre, Valeur::{Dword, Texte}};
+    use crate::defender::{prefs_depuis, PrefsDefender};
+    use std::collections::HashMap;
+    use wmi::Variant;
+    let asr_cle = r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules";
+    let guid = "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550";
+    // lecture de MSFT_MpPreference
+    let mut o: HashMap<String, Variant> = HashMap::new();
+    o.insert("PUAProtection".into(), Variant::UI1(1));
+    o.insert("DisableRemovableDriveScanning".into(), Variant::Bool(false));
+    o.insert("EnableControlledFolderAccess".into(), Variant::UI1(1));
+    o.insert("AttackSurfaceReductionRules_Ids".into(), Variant::Array(vec![Variant::String(guid.to_lowercase())]));
+    o.insert("AttackSurfaceReductionRules_Actions".into(), Variant::Array(vec![Variant::UI1(1)]));
+    let p: PrefsDefender = prefs_depuis(&o);
+    assert_eq!(p.valeurs.get("PUAProtection").map(String::as_str), Some("1"));
+    assert_eq!(p.valeurs.get("DisableRemovableDriveScanning").map(String::as_str), Some("0"));
+    assert_eq!(p.asr.get(guid).map(String::as_str), Some("1"), "GUID mis en majuscules");
+    let pua = Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender", nom: "PUAProtection", valeur: Dword(1) };
+    let usb = Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Scan", nom: "DisableRemovableDriveScanning", valeur: Dword(0) };
+    let cfa_audit = Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access", nom: "EnableControlledFolderAccess", valeur: Dword(2) };
+    let asr_ok = Registre { cle: asr_cle, nom: guid, valeur: Texte("1") };
+    let asr_audit = Registre { cle: asr_cle, nom: guid, valeur: Texte("2") };
+    let asr_absente = Registre { cle: asr_cle, nom: "D4F940AB-401B-4EFC-AADC-AD5F3C50688A", valeur: Texte("1") };
+    let hors = Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient", nom: "EnableMulticast", valeur: Dword(0) };
+    let interrupteur = Registre { cle: r"SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR", nom: "ExploitGuard_ASR_Rules", valeur: Dword(1) };
+    // Defender actif
+    assert_eq!(effet_defender(&pua, Some(&p), "Normal"), Effet::Conforme);
+    assert_eq!(effet_defender(&usb, Some(&p), "Normal"), Effet::Conforme, "booléen faux = 0");
+    assert_eq!(effet_defender(&cfa_audit, Some(&p), "Normal"), Effet::Conforme, "blocage effectif satisfait l'audit");
+    assert_eq!(effet_defender(&asr_ok, Some(&p), "Normal"), Effet::Conforme);
+    assert!(matches!(effet_defender(&asr_audit, Some(&p), "Normal"), Effet::SansEffet(r) if r.contains("valeur 1")), "action différente");
+    assert!(matches!(effet_defender(&asr_absente, Some(&p), "Normal"), Effet::SansEffet(r) if r.contains("absente")));
+    assert_eq!(effet_defender(&hors, Some(&p), "Normal"), Effet::NonConcerne);
+    assert_eq!(effet_defender(&interrupteur, Some(&p), "Normal"), Effet::NonConcerne);
+    // Defender passif, ou pas l'antivirus actif
+    for mode in ["Passive Mode", "SxS Passive Mode", "EDR Block Mode", "Not running"] {
+        assert!(matches!(effet_defender(&pua, Some(&p), mode), Effet::SansEffet(r) if r.contains("pas l'antivirus actif")), "{mode}");
+    }
+    // illisible : jamais conforme
+    assert_eq!(effet_defender(&pua, None, "Normal"), Effet::Illisible);
+    assert_eq!(effet_defender(&pua, Some(&p), ""), Effet::Illisible);
+    assert_eq!(effet_defender(&Registre { cle: r"x", nom: "MpCloudBlockLevel", valeur: Dword(2) }, Some(&p), "Normal"), Effet::Illisible, "propriété absente de la lecture");
+    // état de la règle
+    assert_eq!(etat_regle("conforme", &[Effet::Conforme, Effet::NonConcerne]).0, "conforme");
+    let (e, note) = etat_regle("conforme", &[Effet::SansEffet("Defender passif".into())]);
+    assert_eq!(e, "sans effet");
+    assert!(note.contains("Defender passif"));
+    assert_eq!(etat_regle("conforme", &[Effet::Illisible]).0, "inconnu", "illisible n'est jamais conforme");
+    assert_eq!(etat_regle("non conforme", &[Effet::Conforme]).0, "non conforme", "le registre reste la première condition");
+    // câblage : evaluer lit l'état effectif et passe par etat_regle ; le score ne compte que « conforme »
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("let (etat, note) = etat_regle(etat_registre, &effets);"));
+    assert!(src.contains("let prefs = crate::defender::preferences();"));
+}
+
+#[test]
+fn baseline_t2_table_des_regles() {
+    // Relecture de la baseline du 2026-11-20, T2 : identifiants uniques ; GUID ASR et d'audit bien formés, sans doublon
+    use crate::baseline::{Mecanisme::{Audit, Registre}, REGLES};
+    let mut ids = std::collections::HashSet::new();
+    for r in REGLES {
+        assert!(ids.insert(r.id), "identifiant en double : {}", r.id);
+    }
+    let guid_ok = |g: &str| {
+        let g = g.trim_matches(|c| c == '{' || c == '}');
+        let parties: Vec<&str> = g.split('-').collect();
+        parties.len() == 5 && [8, 4, 4, 4, 12].iter().zip(&parties).all(|(n, p)| p.len() == *n && p.chars().all(|c| c.is_ascii_hexdigit()))
+    };
+    let (mut asr, mut audit) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+    for r in REGLES {
+        for m in r.mecanismes {
+            match m {
+                Registre { cle, nom, .. } if cle.ends_with(r"\ASR\Rules") => {
+                    assert!(guid_ok(nom), "GUID ASR mal formé : {nom} ({})", r.id);
+                    assert!(asr.insert(nom.to_uppercase()), "GUID ASR en double : {nom}");
+                }
+                Audit { guid, .. } => {
+                    assert!(guid_ok(guid), "GUID d'audit mal formé : {guid} ({})", r.id);
+                    assert!(audit.insert(guid.to_uppercase()), "GUID d'audit en double : {guid}");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(asr.len(), 15);
+    assert_eq!(audit.len(), 14);
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");

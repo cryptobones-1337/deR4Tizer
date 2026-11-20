@@ -386,6 +386,67 @@ pub fn ecriture_retenue(cle: &str, nom: &str, valeur: &Valeur, autres: &[(&str, 
     !autres.iter().any(|(c, n, v)| c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom) && plus_stricte(nom, valeur, v))
 }
 
+/// Propriété de MSFT_MpPreference qui porte l'effet d'une valeur de stratégie Defender (B4)
+pub fn propriete_effective(nom: &str) -> Option<&'static str> {
+    match nom {
+        "PUAProtection" => Some("PUAProtection"),
+        "SpynetReporting" => Some("MAPSReporting"),
+        "SubmitSamplesConsent" => Some("SubmitSamplesConsent"),
+        "MpCloudBlockLevel" => Some("CloudBlockLevel"),
+        "EnableNetworkProtection" => Some("EnableNetworkProtection"),
+        "DisableRemovableDriveScanning" => Some("DisableRemovableDriveScanning"),
+        "EnableControlledFolderAccess" => Some("EnableControlledFolderAccess"),
+        _ => None,
+    }
+}
+
+/// Effet réel d'un mécanisme Defender déjà posé dans le registre (relecture de la baseline du 2026-11-20, B4)
+#[derive(Debug, Clone, PartialEq)]
+pub enum Effet {
+    /// Mécanisme hors Defender, ou sans état effectif propre (ExploitGuard_ASR_Rules)
+    NonConcerne,
+    Conforme,
+    /// Posé, mais sans effet : la raison est dite
+    SansEffet(String),
+    /// État de Defender illisible : jamais « conforme »
+    Illisible,
+}
+
+/// Décision pure : effet d'un mécanisme selon l'état effectif de Defender et son mode de fonctionnement
+/// (AMRunningMode ; vide = illisible)
+pub fn effet_defender(m: &Mecanisme, prefs: Option<&crate::defender::PrefsDefender>, mode: &str) -> Effet {
+    let Registre { cle, nom, valeur } = m else { return Effet::NonConcerne };
+    let est_asr = cle.eq_ignore_ascii_case(ASR);
+    let propriete = if est_asr { None } else {
+        match propriete_effective(nom) {
+            Some(p) => Some(p),
+            None => return Effet::NonConcerne,
+        }
+    };
+    if mode.trim().is_empty() {
+        return Effet::Illisible;
+    }
+    if !mode.trim().eq_ignore_ascii_case("Normal") {
+        return Effet::SansEffet(format!("Microsoft Defender n'est pas l'antivirus actif (mode « {} »)", mode.trim()));
+    }
+    let Some(p) = prefs else { return Effet::Illisible };
+    let effectif = match propriete {
+        None => match p.asr.get(&nom.to_uppercase()) {
+            Some(a) => a.clone(),
+            None => return Effet::SansEffet("règle posée par stratégie, absente des règles ASR en vigueur dans Defender".into()),
+        },
+        Some(prop) => match p.valeurs.get(prop) {
+            Some(v) => v.clone(),
+            None => return Effet::Illisible,
+        },
+    };
+    if valeur_satisfaite(nom, valeur, Some(&effectif)) {
+        Effet::Conforme
+    } else {
+        Effet::SansEffet(format!("réglage posé, mais Defender applique la valeur {effectif}"))
+    }
+}
+
 fn decrire(v: &Valeur) -> String {
     match v {
         Dword(n) => n.to_string(),
@@ -544,15 +605,21 @@ pub fn evaluer() -> EtatBaseline {
     let sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     let mut regles = Vec::new();
     let mut totaux: HashMap<&str, (u32, u32)> = HashMap::new();
+    // État effectif de Defender, lu une fois par évaluation (B4)
+    let mode = crate::defender::etat().mode;
+    let prefs = crate::defender::preferences();
     for r in REGLES {
         let verifs: Vec<_> = r.mecanismes.iter().map(verifier_mecanisme).collect();
-        let etat = if verifs.iter().any(|v| v.0 == Some(false)) {
+        let etat_registre = if verifs.iter().any(|v| v.0 == Some(false)) {
             "non conforme"
         } else if verifs.iter().all(|v| v.0 == Some(true)) {
             "conforme"
         } else {
             "inconnu"
         };
+        // Une règle posée dans le registre n'est conforme que si Defender l'applique vraiment (B4)
+        let effets: Vec<Effet> = r.mecanismes.iter().map(|m| effet_defender(m, prefs.as_ref(), &mode)).collect();
+        let (etat, note) = etat_regle(etat_registre, &effets);
         let t = totaux.entry(r.profil).or_default();
         t.1 += 1;
         if etat == "conforme" {
@@ -566,13 +633,29 @@ pub fn evaluer() -> EtatBaseline {
             pourquoi: r.pourquoi.into(),
             compat: r.compat.into(),
             etat: etat.into(),
-            actuel: verifs.iter().map(|v| v.1.clone()).collect::<Vec<_>>().join(" / "),
+            actuel: verifs.iter().map(|v| v.1.clone()).collect::<Vec<_>>().join(" / ") + &note,
             attendu: verifs.iter().map(|v| v.2.clone()).collect::<Vec<_>>().join(" / "),
             appliquee: sauvegarde.regles.contains_key(r.id),
         });
     }
     let scores = totaux.into_iter().map(|(p, (ok, n))| (p.to_string(), if n == 0 { 0 } else { ok * 100 / n })).collect();
     EtatBaseline { mis_a_jour: commun::maintenant(), regles, scores, message: gestion().unwrap_or_default() }
+}
+
+/// Décision pure : état d'une règle à partir de l'état lu dans le registre et de l'effet réel de ses mécanismes
+/// Defender. Trois états jamais confondus pour une règle posée : « conforme » (effectif), « sans effet » (avec la
+/// raison), « inconnu » (état de Defender illisible). Seul « conforme » compte dans le score
+pub fn etat_regle(etat_registre: &'static str, effets: &[Effet]) -> (&'static str, String) {
+    if etat_registre != "conforme" {
+        return (etat_registre, String::new());
+    }
+    if let Some(Effet::SansEffet(raison)) = effets.iter().find(|e| matches!(e, Effet::SansEffet(_))) {
+        return ("sans effet", format!(" (posé, sans effet : {raison})"));
+    }
+    if effets.iter().any(|e| *e == Effet::Illisible) {
+        return ("inconnu", " (état effectif de Microsoft Defender illisible)".into());
+    }
+    ("conforme", String::new())
 }
 
 // ------------------------------------------------------------ application et retour en arrière
