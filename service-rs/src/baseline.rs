@@ -1048,7 +1048,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Valeurs d'origine présentes : remises encore une fois après la mise à jour des stratégies, qui retire la valeur
     // de Registry.pol en l'effaçant du registre (passage T3 en VM du 2026-11-20 : EnableLUA, ConsentPromptBehaviorAdmin
     // et PromptOnSecureDesktop effacés à l'annulation de systeme.uac ; limite S215-05)
-    let mut a_remettre: Vec<(String, String, String)> = Vec::new();
+    let mut a_remettre: Vec<(String, String, String, bool)> = Vec::new();
     for r in regles {
         let Some(origine) = sauvegarde.regles.remove(r.id) else { continue };
         n += 1;
@@ -1057,13 +1057,21 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             let parties: Vec<&str> = m.splitn(3, '|').collect();
             match parties.as_slice() {
                 ["reg", cle, nom] => {
+                    // Clé et nom recoupés avec un mécanisme de la règle : une entrée étrangère de la sauvegarde n'est
+                    // jamais écrite ; la règle reste alors dans la sauvegarde et c'est dit (audit de #220, S220-01)
+                    let Some(catalogue) = mecanisme_de(r, cle, nom) else {
+                        remise = false;
+                        continue;
+                    };
+                    // Type du catalogue : une valeur texte (règle ASR) est remise en texte (audit de #220, S220-02)
+                    let texte = matches!(catalogue, Texte(_));
                     retraits.push(EntreePol::dword(cle, nom, 0));
                     if let Some(v) = &valeur {
-                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone()));
+                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone(), texte));
                     }
                     // La valeur posée reste dans le registre : on remet celle d'origine (ou on la supprime)
                     let ok = match hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
-                        Ok((k, _)) => match valeur.as_deref().map(|v| v.parse::<u32>()) {
+                        Ok((k, _)) => match valeur.as_deref().map(|v| if texte { Err(()) } else { v.parse::<u32>().map_err(|_| ()) }) {
                             Some(Ok(d)) => k.set_value(nom, &d).is_ok(),
                             Some(Err(_)) => k.set_value(nom, &valeur.clone().unwrap_or_default()).is_ok(),
                             // Valeur absente à l'origine : supprimée ; déjà absente, c'est bon aussi
@@ -1155,7 +1163,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     drop(etapes);
     // Après gpupdate : valeurs d'origine remises et relues, sauf celles d'un réglage partagé encore utilisé par une
     // règle appliquée (sa valeur reste posée)
-    a_remettre.retain(|(c, nm, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    a_remettre.retain(|(c, nm, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
     let pas_remises = remettre_valeurs(&a_remettre);
     if !pas_remises.is_empty() {
         let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {}.{non_remises_txt}", pas_remises.join(", "));
@@ -1171,15 +1179,23 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
 }
 
 /// Remet des valeurs d'origine dans le registre et les relit ; rend celles qui n'ont pas pu être remises
-fn remettre_valeurs(valeurs: &[(String, String, String)]) -> Vec<String> {
+fn remettre_valeurs(valeurs: &[(String, String, String, bool)]) -> Vec<String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    valeurs.iter().filter_map(|(cle, nom, v)| {
-        let ecrit = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY).ok().map(|(k, _)| match v.parse::<u32>() {
-            Ok(d) => k.set_value(nom, &d).is_ok(),
-            Err(_) => k.set_value(nom, v).is_ok(),
+    valeurs.iter().filter_map(|(cle, nom, v, texte)| {
+        let ecrit = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY).ok().map(|(k, _)| match (texte, v.parse::<u32>()) {
+            (false, Ok(d)) => k.set_value(nom, &d).is_ok(),
+            _ => k.set_value(nom, v).is_ok(),
         }).unwrap_or(false);
         if ecrit && valeur_remise(v, lire_registre(cle, nom).as_deref()) { None } else { Some(format!("{cle}\\{nom}")) }
     }).collect()
+}
+
+/// Mécanisme de registre de la règle pour une clé et un nom lus dans la sauvegarde ; None si étranger à la règle
+pub fn mecanisme_de<'a>(r: &'a Regle, cle: &str, nom: &str) -> Option<&'a Valeur> {
+    r.mecanismes.iter().find_map(|m| match m {
+        Registre { cle: c, nom: n, valeur } if c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom) => Some(valeur),
+        _ => None,
+    })
 }
 
 /// Décision pure : la valeur relue est bien la valeur d'origine

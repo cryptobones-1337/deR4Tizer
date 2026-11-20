@@ -8756,11 +8756,28 @@ fn baseline_t3_annulation_rend_les_valeurs_d_origine_apres_gpupdate() {
     let gp = corps.find("etapes.push((\"mise à jour des stratégies (gpupdate)\"").expect("gpupdate");
     let rm = corps.find("let pas_remises = remettre_valeurs(&a_remettre);").expect("remise après gpupdate");
     assert!(rm > gp, "valeurs d'origine remises après gpupdate");
-    assert!(corps.contains("a_remettre.retain(|(c, nm, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
+    assert!(corps.contains("a_remettre.retain(|(c, nm, _, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
     // S219-05 : une stratégie de taille plus grande que la cible satisfait la règle et n'est jamais abaissée
     assert!(valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("2097152")));
     assert!(!valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("20480")));
     assert!(!strategie_taille_a_ecrire(20 * 1024 * 1024, 1_048_576, Some("2097152")), "2 Go posés : jamais réécrits à 1 Go");
     assert!(strategie_taille_a_ecrire(1_073_741_824, 1_048_576, Some("20480")), "abaissée : réécrite");
+}
+
+#[test]
+fn baseline_s220_entree_etrangere_refusee_et_type_garde() {
+    // Audit de #220 : une entrée de la sauvegarde étrangère à la règle n'est jamais écrite (S220-01) ; une valeur
+    // texte du catalogue (règle ASR) est remise en texte (S220-02)
+    use crate::baseline::{mecanisme_de, Valeur::Texte, REGLES};
+    let uac = REGLES.iter().find(|r| r.id == "systeme.uac").unwrap();
+    assert!(mecanisme_de(uac, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "enablelua").is_some(), "casse ignorée");
+    assert!(mecanisme_de(uac, r"SYSTEM\CurrentControlSet\Services\X", "ImagePath").is_none(), "clé étrangère refusée");
+    assert!(mecanisme_de(uac, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "Debugger").is_none(), "nom étranger refusé");
+    let asr = REGLES.iter().find(|r| r.id == "asr.courriel").unwrap();
+    let texte = asr.mecanismes.iter().find_map(|m| match m { crate::baseline::Mecanisme::Registre { cle, nom, valeur: Texte(_) } => Some((*cle, *nom)), _ => None }).expect("mécanisme texte");
+    assert!(matches!(mecanisme_de(asr, texte.0, texte.1), Some(Texte(_))), "type texte connu");
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("let Some(catalogue) = mecanisme_de(r, cle, nom) else {"));
+    assert!(src.contains("(false, Ok(d)) => k.set_value(nom, &d).is_ok(),"), "texte jamais converti en nombre");
 }
 
