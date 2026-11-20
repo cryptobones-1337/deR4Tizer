@@ -8652,3 +8652,33 @@ fn audit_a5_files_de_correlation_bornees() {
     let s = include_str!("siem.rs");
     assert!(s.matches("while file.len() > MAX_PAR_CLE").count() == 2, "files bornées par clé (échecs, alertes par programme)");
 }
+
+#[test]
+fn baseline_u_textes_et_bureau_distance() {
+    // Relecture de la baseline du 2026-11-20, bloc U et T2 : les effets sur l'usage du poste sont dits, et la règle qui
+    // coupe le Bureau à distance n'est pas emportée par le profil entier quand il est en service
+    use crate::baseline::{retirer_bureau_distance, REGLES};
+    // U1 : décision pure
+    assert!(retirer_bureau_distance(5, Some(true)), "profil entier, RDP actif : laissée de côté");
+    assert!(retirer_bureau_distance(5, None), "profil entier, état illisible : laissée de côté");
+    assert!(!retirer_bureau_distance(5, Some(false)), "profil entier, RDP coupé : appliquée");
+    assert!(!retirer_bureau_distance(1, Some(true)), "seule : choix explicite, appliquée");
+    // T2 : chaque règle qui change l'usage du poste le dit
+    for id in ["reseau.bureau-distance", "systeme.uac", "reseau.invite-smb", "systeme.lsa"] {
+        let r = REGLES.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("{id} absente"));
+        assert!(!r.compat.trim().is_empty(), "{id} : compatibilité vide");
+    }
+    // U3 : les réglages Defender posés par stratégie disent l'effet sur Sécurité Windows
+    for r in REGLES.iter().filter(|r| r.id.starts_with("defender.") && r.mecanismes.iter().any(|m| matches!(m, crate::baseline::Mecanisme::Registre { .. }))) {
+        assert!(r.compat.contains("géré par votre organisation"), "{} : effet sur Sécurité Windows non dit", r.id);
+    }
+    // U4, U5 : la confirmation du profil et l'en-tête ne promettent plus « sans effet de bord »
+    let src = include_str!("baseline.rs");
+    assert!(!src.contains("sans effet de bord notable"));
+    assert!(src.contains("if regles.iter().any(|r| r.id == \"reseau.bureau-distance\") && retirer_bureau_distance(regles.len(), bureau_distance_actif())"));
+    let gui = include_str!("../../src/Gui.cs");
+    let q = gui.lines().find(|l| l.contains("QuestionRecommande =")).expect("question du profil");
+    assert!(q.contains("Bureau à distance") && q.contains("élévation") && q.contains("invité"), "effets dits dans la confirmation");
+    let langue = include_str!("../../src/Langue.cs");
+    assert!(langue.contains("Remote Desktop is turned off"), "traduction de la confirmation");
+}
