@@ -1496,6 +1496,13 @@ Verifier 'Baseline : une règle ASR est dite conforme seulement si Defender l''a
     $b = & $attendreBaseline $d
     if (-not $b) { return 'baseline.json non réécrit après appliquer' }
     if ($b.Message -like 'Échec*') { return "appliquer : $($b.Message)" }
+    # Defender prend la stratégie un peu après gpupdate : réévaluation demandée après un délai, puis lecture de
+    # Defender aussitôt, pour comparer deux lectures proches (prérelecture de #217)
+    Start-Sleep 15
+    $dEval = Get-Date
+    $null = Commande (@{ Action = 'baseline'; Valeur = 'evaluer' } | ConvertTo-Json -Compress) 30000
+    $bEval = & $attendreBaseline $dEval
+    if ($bEval) { $b = $bEval }
     # Ce que Defender applique vraiment, lu ici indépendamment du service
     $mode = (Get-MpComputerStatus -ErrorAction SilentlyContinue).AMRunningMode
     $pref = Get-MpPreference -ErrorAction SilentlyContinue
@@ -1504,14 +1511,19 @@ Verifier 'Baseline : une règle ASR est dite conforme seulement si Defender l''a
         $ids = @($pref.AttackSurfaceReductionRules_Ids); $acts = @($pref.AttackSurfaceReductionRules_Actions)
         for ($k = 0; $k -lt $ids.Count; $k++) { if ($ids[$k] -ieq $guid) { $action = [string]$acts[$k] } }
     }
-    $attendu = if ($mode -eq 'Normal' -and $action -eq '1') { 'conforme' } elseif ($mode) { 'sans effet' } else { 'inconnu' }
+    # Préférences illisibles : le service rend « inconnu », jamais « sans effet » (prérelecture de #217)
+    $attendu = if (-not $mode -or ($mode -eq 'Normal' -and -not $pref)) { 'inconnu' } elseif ($mode -eq 'Normal' -and $action -eq '1') { 'conforme' } else { 'sans effet' }
     $etat = ($b.Regles | Where-Object { $_.Id -eq 'asr.courriel' }).Etat
     $constat = "mode « $mode », action effective « $action », état publié « $etat »"
     Write-Host "  B4 : $constat"
     $dAnn = Get-Date
     $null = Commande (@{ Action = 'baseline'; Valeur = 'annuler'; Cible = 'asr.courriel' } | ConvertTo-Json -Compress) 30000
-    $null = & $attendreBaseline $dAnn
+    $bAnn = & $attendreBaseline $dAnn
     if ($etat -ne $attendu) { return "état attendu « $attendu » ; $constat" }
+    # Annulation contrôlée : la règle ASR ne reste pas posée (prérelecture de #217)
+    if (-not $bAnn) { return 'baseline.json non réécrit après annuler' }
+    if ($bAnn.Message -like 'Échec*') { return "annuler : $($bAnn.Message)" }
+    if (($bAnn.Regles | Where-Object { $_.Id -eq 'asr.courriel' }).Appliquee) { return 'règle encore appliquée après annuler' }
     $true
 }
 
