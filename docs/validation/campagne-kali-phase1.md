@@ -2,7 +2,7 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.5** (S-20 à S-27 ajoutés le 2026-11-19, §6 ; version 1.4 pour le reste) |
+| Version de la liste | **1.6** (S-19 et préparation de « campagne C » réécrits le 2026-11-20 après la relecture de la baseline ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
 | Date de la version 1.4 | 2026-11-15 |
 | Versions précédentes | 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
 | Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
@@ -34,6 +34,14 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   avant toute exécution.
 - **2026-11-19, version 1.5** : S-20 à S-27 ajoutés sur décision du mainteneur (`CLAUDE.md`, campagne Kali), **après
   leur exécution** (2026-11-16 et 2026-11-17) ; aucune approbation préalable de l'agent de validation (§6).
+- **2026-11-20, version 1.6** : approuvée par l'agent de validation (S-19 réécrit après la relecture de la baseline du
+  2026-11-20, PR #215 à #221 : protection LSA attendue à RunAsPPL = 2, 1 admis seulement s'il était déjà en place,
+  RunAsPPLBoot relevé seulement ; `reseau.bureau-distance` laissée de côté par l'application du profil, puis appliquée
+  seule à la préparation de « campagne C » ; règles Defender jugées sur leur état effectif et recoupées avec
+  Get-MpPreference ; journal Sécurité jamais réduit ; scores attendus 100/100/100 ; réévaluation de la baseline demandée
+  au service avant le relevé ; empreinte du binaire contrôlée). Actions et nettoyages des autres scénarios inchangés.
+  **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur pour information. Exécutée le
+  2026-11-20 (S-19 essai 3 : RÉUSSI, 3.1).
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -221,7 +229,7 @@ journalisation (appliqué d'office), recommandé, renforcé. Effets attendus sur
 
 | Règle de la baseline | Profil | Effet attendu sur la campagne |
 |---|---|---|
-| `reseau.bureau-distance` | recommandé | S-01, S-02, S-05 (a), N-04 : RDP impossible ; COR-R1/R2 et la variante Critique de R9 par RDP non exerçables en C, mesurées en A |
+| `reseau.bureau-distance` | recommandé | S-01, S-02, S-05 (a), N-04 : RDP impossible ; COR-R1/R2 et la variante Critique de R9 par RDP non exerçables en C, mesurées en A. Laissée de côté par l'application du profil quand le Bureau à distance est activé ; posée seule à la préparation de C (v1.6) |
 | `reseau.pare-feu` | recommandé | règles d'autorisation locales conservées ; davantage de paquets refusés journalisés (S-08) |
 | `reseau.smb1`, `reseau.invite-smb` ; `reseau.signature-smb` | recommandé ; renforcé | S-03, S-04, S-17 : Kali doit parler SMB 2 ou 3 ; signature exigée côté client, VM en serveur non touchée |
 | `asr.scripts-obscurcis`, `asr.scripts-telecharges` | recommandé | S-10 : contenu obscurci bloqué possible ; création du processus et ligne de commande restent visibles |
@@ -298,7 +306,7 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
   plage de documentation distincte entre le poste et Kali seulement ; carte « Default Switch » de la VM débranchée.
 - Instantané de départ selon la configuration (décisions 5.1.2 et 5.1.11) :
   - « campagne C » (configuration C, **principale de mesure** depuis la v1.3) : « campagne A » plus la baseline de
-    deR4Tizer appliquée par le service lui-même (`baseline appliquer`, trois profils, une seule commande), puis
+    deR4Tizer appliquée par le service lui-même (trois profils en une commande, puis `reseau.bureau-distance` seule), puis
     redémarrage ; sans Sysmon ;
   - « campagne A » (configuration A, comparaison) : installation sans baseline au-delà du profil journalisation appliqué
     d'office ; sans Sysmon ;
@@ -600,28 +608,44 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 
 **S-19 — Contrôle de la configuration C : conformité de la baseline et état de Defender (ajouté en v1.3)**
 - Technique : aucune (contrôle de configuration ; préalable de chaque lot en configuration C). Nature : contrôle, lecture
-  seule.
-- Préconditions : « campagne C » préparé hors campagne depuis « campagne A » : relevé de référence de Defender
-  (Get-MpPreference, Get-MpComputerStatus) et de `baseline.json` pris dans « campagne A » juste avant l'application ;
-  baseline appliquée par le service en une seule commande `baseline appliquer` (journalisation, recommandé, renforcé ; deux
-  commandes successives risqueraient une BAS-001 à tort, 5.3) ; redémarrage avant la prise de l'instantané.
-- Action : à la préparation, puis au début de chaque lot en C : relevé de `baseline.json` et de l'état de Defender ;
-  comparaison réglage par réglage avec le relevé de référence.
+  seule. Le service est seulement prié de réévaluer la baseline (aucun réglage écrit).
+- Préconditions (v1.6) : « campagne A » porte le service de `main` (empreinte du binaire notée) ; « campagne C » est
+  préparé depuis ce « campagne A ». Relevé de référence de Defender (Get-MpPreference, Get-MpComputerStatus), de
+  `baseline.json`, de la protection LSA et de la taille du journal Sécurité pris dans « campagne A ». Baseline appliquée par
+  le service en deux commandes : d'abord les profils journalisation, recommandé et renforcé (le message doit dire que
+  `reseau.bureau-distance` est laissée de côté, le Bureau à distance de « campagne A » étant activé), puis
+  `reseau.bureau-distance` seule. Ensuite, mise à jour des stratégies, redémarrage, prise de l'instantané. Windows 11 22H2
+  ou plus récent (build 22621).
+- Action : à la préparation, puis au début de chaque lot en C : réévaluation de la baseline demandée au service, puis
+  relevé de `baseline.json` et de l'état de Defender, comparaison réglage par réglage avec le relevé de référence.
 - Attendu (HYPOTHÈSE) :
-  - Defender : **aucun réglage plus faible qu'avant** (protection temps réel, surveillance du comportement, analyse des
-    scripts et des téléchargements, protection contre les falsifications, cloud, PUA, protection réseau, accès contrôlé aux
-    dossiers) ; règles ASR jamais rétrogradées ; aucune exclusion avant comme après. Valeurs plus fortes attendues. « Plus
-    faible » défini réglage par réglage dans une table écrite avant le premier relevé.
-  - Baseline : profils journalisation et renforcé à 100 % ; profil recommandé **sous 100 %**, du seul fait de
-    `defender.dossiers-audit` vue non conforme (défaut D-BAS-01, 5.3) ; tout autre écart rend le lot invalide (D).
-  - Effets au-delà du registre : Bureau à distance refusé (port 3389 fermé) ; protection LSA effective après redémarrage ;
-    pare-feu actif sur les trois profils ; `EnableControlledFolderAccess` effectif relevé.
-  - deR4Tizer : aucune alerte Alerte/Critique due à l'application elle-même ; aucune BAS-001 tant que rien n'est modifié.
-- Délai : relevé immédiat ; 25 min d'observation après l'application. Nettoyage : aucun (lecture seule).
-- Garde-fou : un réglage de Defender plus faible qu'avant arrête la configuration C et remonte au mainteneur
-  (`CLAUDE.md`, règle 2) ; aucun réglage de Defender n'est corrigé à la main pour poursuivre.
-- Preuves : `baseline.json`, `baseline-sauvegarde.json`, Get-MpPreference et Get-MpComputerStatus avant et après, table
-  de comparaison, état de Bureau à distance, de la protection LSA, du pare-feu et de l'accès contrôlé aux dossiers.
+  - Defender : **aucun réglage plus faible qu'avant** (protection temps réel, comportement, scripts, téléchargements,
+    falsifications, cloud, PUA, protection réseau, accès contrôlé aux dossiers, analyse des supports amovibles) ; mode
+    « Normal » ; règles ASR jamais rétrogradées ; aucune exclusion. « Plus faible » est défini dans une table écrite avant
+    le premier relevé.
+  - Baseline : trois profils à 100 %, toutes les règles « conforme » et appliquées. Les 21 règles Defender (6 Defender,
+    15 ASR) concordent avec Get-MpPreference : « conforme » si et seulement si Defender applique la valeur. Aucune règle
+    « sans effet » ni « inconnu ».
+  - Effets au-delà du registre : Bureau à distance et Assistance à distance refusés par stratégie, port 3389 fermé.
+    Protection LSA : RunAsPPL = 2 (1 accepté seulement s'il était déjà en place dans « campagne A »), événement Wininit 12
+    postérieur à « campagne A » (RunAsPPLBoot relevé, non exigé). Journal Sécurité d'au moins 1 Gio, jamais plus petit
+    qu'en « campagne A », stratégie absente ou au moins égale à la cible. Pare-feu actif sur les trois profils, entrant
+    bloqué par défaut sur le profil Public. `EnableControlledFolderAccess` = 1.
+  - deR4Tizer : aucune alerte Alerte ou Critique, aucune BAS-001 pendant l'observation.
+- Délai : relevé immédiat ; 25 min d'observation. Nettoyage : aucun.
+- Garde-fou : un réglage de Defender plus faible, ou Defender hors du mode Normal, arrête la configuration C et remonte au
+  mainteneur (`CLAUDE.md`, règle 2) ; rien n'est corrigé à la main pour poursuivre.
+- Verdict : RÉUSSI si tout ce qui précède est vrai ; ARRÊT si Defender est affaibli ou hors du mode Normal ; INVALIDE (D)
+  sinon, en séparant les préalables (binaire, réévaluation, build), les écarts de configuration et les défauts du produit
+  (désaccord entre la baseline et Defender, alerte pendant l'observation).
+- Preuves : `baseline.json`, `baseline-sauvegarde.json`, messages des deux commandes d'application, Get-MpPreference et
+  Get-MpComputerStatus avant et après, table de comparaison, recoupement des règles Defender, empreinte du binaire, état du
+  Bureau à distance, de la protection LSA, du journal Sécurité, du pare-feu et de l'accès contrôlé aux dossiers.
+- Mesure (v1.6, 2026-11-20, essai 3, service A67EDD13, Windows 11 build 26300) : **RÉUSSI**. Préparation : la règle du
+  Bureau à distance laissée de côté par le profil et dite, puis appliquée seule ; scores 100/100/100. S-19 : 28 réglages
+  Defender comparés, 0 plus faible, mode Normal, 0 exclusion ; 21 règles Defender recoupées, 0 désaccord ; Bureau à
+  distance refusé (3389 fermé) ; RunAsPPL = 2 et Wininit 12 postérieur à A ; journal Sécurité 1 Gio ; pare-feu actif,
+  entrant Public bloqué ; 0 alerte Alerte/Critique et 0 BAS-001 en 25 min.
 
 ### 3.2 Tests négatifs
 
@@ -672,9 +696,9 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 8. Kali : outils et versions notés ; serveur HTTP et amont DNS du labo prêts (S-07, S-11, S-06) ;
    journal horodaté.
 9. Collecte des preuves sur la VM (PowerShell Direct) essayée à blanc sur N-01, en configuration A et en configuration C.
-10. « campagne C » : préparé depuis « campagne A » ; relevé de référence de Defender et de `baseline.json` pris avant
-    l'application ; baseline appliquée par le service en une seule commande ; redémarrage ; S-19 réussi ; instantané pris
-    ensuite.
+10. « campagne C » : préparé depuis « campagne A » (service de `main` dans A et C, empreinte notée) ; relevé de
+    référence de Defender et de `baseline.json` pris avant l'application ; baseline appliquée par le service (trois profils
+    en une commande, puis `reseau.bureau-distance` seule) ; redémarrage ; S-19 réussi ; instantané pris ensuite.
 
 ---
 
@@ -753,10 +777,16 @@ il peut retirer un scénario ou reprendre l'approbation à tout moment.
 - Correctif proposé, minimal, soumis au circuit habituel : déclarer les deux règles exclusives, la plus forte remplaçant
   la plus faible. Tests de non-régression décrits. Effet sur la détection : aucun ; supprime un faux « non conforme » et un
   faux positif possible de BAS-001.
-- Effet sur la campagne : S-19 attend le profil recommandé sous 100 % ; ce constat n'est pas un échec de S-19.
+- Effet sur la campagne : S-19 attendait le profil recommandé sous 100 % (v1.3 à 1.5) ; ce constat n'était pas un échec
+  de S-19.
+- **Corrigé** : relecture de la baseline du 2026-11-20, lot B3 (`PLUS_STRICTES` : l'accès contrôlé aux dossiers en
+  blocage satisfait la règle d'audit, et l'écriture de l'audit est retenue quand le blocage est en place, PR #216).
+  **Confirmé en VM** par S-19 v1.6 (2026-11-20, essai 3) : profil recommandé à 100 %.
 
 **Point à vérifier P-BAS-02** : `systeme.lsa` (protection LSA) est vue conforme dès que la valeur de registre est posée,
-alors qu'elle n'agit qu'après un redémarrage. Défaut non établi : S-19 vérifie la protection effective après redémarrage.
+alors qu'elle n'agit qu'après un redémarrage. Défaut non établi : S-19 vérifie la protection effective après redémarrage
+(v1.6 : événement Wininit 12 postérieur à « campagne A » ; vérifié le 2026-11-20). Toujours ouvert : la règle reste jugée
+sur le registre seul.
 
 ### 5.4 Règles de décision D-1 et D-2 (ajoutées en v1.4, tranchées par l'agent de validation)
 

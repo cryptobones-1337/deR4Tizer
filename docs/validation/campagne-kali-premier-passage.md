@@ -20,6 +20,7 @@ fonctionne, dans les deux configurations, avant toute mesure offensive consolid�
 | N-01 (témoin de chaîne, négatif) | A (sans baseline) | RÉUSSI | Activité légitime : 0 alerte Alerte/Critique, ouverture de session vue, aucune collecte dégradée. |
 | N-01 (témoin de chaîne, négatif) | C (baseline 100 %) | RÉUSSI | Identique sous baseline durcie : pilotage et collecte des preuves opérationnels (UAC bureau sécurisé, règles ASR). |
 | S-19 (contrôle de la configuration C) | C | RÉUSSI | Baseline conforme (journalisation 100, renforcé 100, recommandé 96 = écart D-BAS-01 attendu). Defender : 27 réglages comparés à la référence, **aucun affaibli, aucune exclusion**. Bureau à distance refusé (port 3389 fermé). Protection LSA effective. Pare-feu actif sur les trois profils. 0 alerte en 25 min. Le score recommandé à 96 fait passer D-BAS-01 d'hypothèse de lecture à **constat mesuré** (appuie le correctif prévu en phase 6). |
+| S-19 v1.6 (rejoué le 2026-11-20, après la relecture de la baseline) | C | RÉUSSI | Service de `main` après les PR #215 à #221 : scores 100/100/100 (D-BAS-01 corrigé et confirmé), 21 règles Defender recoupées avec Get-MpPreference sans désaccord, 28 réglages Defender comparés sans affaiblissement, protection LSA à RunAsPPL = 2, journal Sécurité 1 Gio, 0 alerte en 25 min. Fiche et mesure : `campagne-kali-phase1.md`, S-19. |
 
 ## Détection de force brute (COR-R1)
 
