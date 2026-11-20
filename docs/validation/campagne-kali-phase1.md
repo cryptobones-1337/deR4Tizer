@@ -40,8 +40,10 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   seule à la préparation de « campagne C » ; règles Defender jugées sur leur état effectif et recoupées avec
   Get-MpPreference ; journal Sécurité jamais réduit ; scores attendus 100/100/100 ; réévaluation de la baseline demandée
   au service avant le relevé ; empreinte du binaire contrôlée). Actions et nettoyages des autres scénarios inchangés.
-  **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur pour information. Exécutée le
-  2026-11-20 (S-19 essai 3 : RÉUSSI, 3.1).
+  **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur pour information. **Exécutée avant
+  publication** : l'approbation de l'agent (2026-11-20, vers 22 h 50) a précédé l'essai (S-19 essai 3, 23 h 20 : RÉUSSI,
+  3.1), mais la fiche v1.6 n'était pas encore fusionnée sur `main`, contrairement à `CLAUDE.md` (publication avant la
+  première exécution) ; écart signalé au mainteneur, qui peut en prendre acte comme pour S-20 à S-27.
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -641,7 +643,10 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 - Preuves : `baseline.json`, `baseline-sauvegarde.json`, messages des deux commandes d'application, Get-MpPreference et
   Get-MpComputerStatus avant et après, table de comparaison, recoupement des règles Defender, empreinte du binaire, état du
   Bureau à distance, de la protection LSA, du journal Sécurité, du pare-feu et de l'accès contrôlé aux dossiers.
-- Mesure (v1.6, 2026-11-20, essai 3, service A67EDD13, Windows 11 build 26300) : **RÉUSSI**. Préparation : la règle du
+- Mesure (v1.6, 2026-11-20, essai 3, seul essai sur la v1.6 ; les essais 1 et 2 du 2026-11-15 portaient sur la v1.3 ;
+  exécuté avant la publication de cette fiche, voir l'entrée de version 1.6) : service compilé depuis la tête de #221
+  (eb399a4, non fusionnée au moment de l'essai ; `main` c64e64e plus des changements de messages seulement), binaire du
+  service A67EDD13, Windows 11 build 26300 : **RÉUSSI**. Préparation : la règle du
   Bureau à distance laissée de côté par le profil et dite, puis appliquée seule ; scores 100/100/100. S-19 : 28 réglages
   Defender comparés, 0 plus faible, mode Normal, 0 exclusion ; 21 règles Defender recoupées, 0 désaccord ; Bureau à
   distance refusé (3389 fermé) ; RunAsPPL = 2 et Wininit 12 postérieur à A ; journal Sécurité 1 Gio ; pare-feu actif,
