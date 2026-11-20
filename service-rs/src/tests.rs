@@ -938,6 +938,33 @@ fn baseline_t2_table_des_regles() {
 }
 
 #[test]
+fn baseline_b5_lsa_sans_verrou_et_taille_de_journal() {
+    // Relecture de la baseline du 2026-11-20, B5, d'après l'essai en VM du même jour (génération 2, Secure Boot) :
+    // RunAsPPL = 2 (sans verrou UEFI), refusée avant Windows 11 22H2 ; 1 satisfait la règle sans être jamais posée
+    use crate::baseline::{lsa_applicable, taille_effective, valeur_satisfaite, Mecanisme::Registre, Valeur::Dword, REGLES};
+    let lsa = REGLES.iter().find(|r| r.id == "systeme.lsa").unwrap();
+    assert!(lsa.mecanismes.iter().any(|m| matches!(m, Registre { nom: "RunAsPPL", valeur: Dword(2), .. })), "valeur 2 posée");
+    assert!(!lsa.mecanismes.iter().any(|m| matches!(m, Registre { nom: "RunAsPPL", valeur: Dword(1), .. })), "jamais le verrou UEFI");
+    assert!(lsa.compat.contains("22H2"), "compatibilité dite");
+    assert!(valeur_satisfaite("RunAsPPL", &Dword(2), Some("1")), "protection avec verrou : conforme");
+    assert!(!valeur_satisfaite("RunAsPPL", &Dword(2), Some("0")));
+    assert!(lsa_applicable(Some(22621)) && lsa_applicable(Some(26300)));
+    assert!(!lsa_applicable(Some(22000)) && !lsa_applicable(Some(19045)), "Windows 10 et 11 21H2 : refusée");
+    assert!(!lsa_applicable(None), "build illisible : refusée");
+    // taille effective d'un journal, lue dans « wevtutil gl »
+    let sortie = "name: Security\r\nenabled: true\r\nlogging:\r\n  logFileName: Security.evtx\r\n  retention: false\r\n  autoBackup: false\r\n  maxSize: 20971520\r\n";
+    assert_eq!(taille_effective(sortie), Some(20_971_520));
+    assert_eq!(taille_effective("maxSize: abc"), None);
+    assert_eq!(taille_effective(""), None);
+    crate::tests::torturer_texte("  maxSize: 20971520\r\n", &mut |t| { let _ = taille_effective(t); });
+    // câblage : la taille d'origine est relevée à l'application et remise à l'annulation ; LSA refusée avant 22H2
+    let src = include_str!("baseline.rs");
+    assert!(src.contains("origine.push((format!(\"taille|{canal}\"), Some(taille.to_string())));"));
+    assert!(src.contains("[\"taille\", canal] => {"));
+    assert!(src.contains("if regles.iter().any(|r| r.id == \"systeme.lsa\") && !lsa_applicable(build_windows())"));
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
