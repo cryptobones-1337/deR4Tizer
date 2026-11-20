@@ -457,14 +457,31 @@ pub fn message_gestion(g: &Gestion) -> Option<String> {
 
 fn lire_gestion() -> Gestion {
     crate::mesure::powershell("baseline");
-    let sortie = std::process::Command::new(crate::natif::powershell_exe())
+    let enfant = std::process::Command::new(crate::natif::powershell_exe())
         .args(["-NoProfile", "-NonInteractive", "-Command",
             "$d = (Get-CimInstance Win32_ComputerSystem).PartOfDomain; \
              $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \
                Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProviderID -eq 'MS DM Server' }).Count; \
              \"$d|$m\""])
-        .output();
-    match sortie {
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut enfant) = enfant else { return analyser_gestion(None) };
+    // Attente bornée (audit de #215, S215-04) : un WMI bloqué ne fige ni le fil « contrôles » ni une application
+    let debut = std::time::Instant::now();
+    loop {
+        match enfant.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if debut.elapsed() < std::time::Duration::from_secs(60) => std::thread::sleep(std::time::Duration::from_millis(200)),
+            _ => {
+                let _ = enfant.kill();
+                let _ = enfant.wait();
+                commun::journal("baseline : gestion du poste sans réponse en 60 s, tenue pour illisible");
+                return analyser_gestion(None);
+            }
+        }
+    }
+    match enfant.wait_with_output() {
         Ok(o) if o.status.success() => analyser_gestion(Some(&String::from_utf8_lossy(&o.stdout))),
         _ => analyser_gestion(None),
     }
@@ -555,6 +572,27 @@ pub fn executer_etapes(etapes: &mut [Etape]) -> Result<(), String> {
     Ok(())
 }
 
+/// Sauvegarde du retour arrière telle qu'elle est sur disque : absente, elle est vide ; présente mais illisible
+/// (droits du dossier non vérifiés, propriétaire non admis, contenu abîmé), l'opération est refusée avant toute
+/// écriture, pour ne jamais l'écraser par une sauvegarde vide (audit de #215, S215-01)
+fn lire_sauvegarde() -> Result<Sauvegarde, String> {
+    // Protection du dossier de données en échec : la sauvegarde n'est pas fiable, ni lisible ni relisible
+    // (prérelecture de #215, D1)
+    if commun::echec_protection().is_some() {
+        return Err("protection du dossier de données en échec : la baseline n'est ni appliquée ni annulée, la sauvegarde du retour arrière n'étant pas fiable.".into());
+    }
+    decider_sauvegarde(commun::dossier().join("baseline-sauvegarde.json").exists(), commun::lire("baseline-sauvegarde.json"))
+}
+
+/// Décision pure de lire_sauvegarde
+pub fn decider_sauvegarde<T: Default>(existe: bool, lue: Option<T>) -> Result<T, String> {
+    match (existe, lue) {
+        (_, Some(s)) => Ok(s),
+        (false, None) => Ok(T::default()),
+        (true, None) => Err("sauvegarde du retour arrière présente mais illisible (droits ou contenu) : rien n'a été modifié, pour ne pas la perdre.".into()),
+    }
+}
+
 /// Écrit la sauvegarde du retour arrière puis la relit : une sauvegarde qu'on ne peut pas relire à l'identique
 /// ne protège rien
 fn ecrire_sauvegarde(sauvegarde: &Sauvegarde) -> Result<(), String> {
@@ -596,8 +634,8 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     if let Some(g) = gestion_fraiche() {
         return Err(g);
     }
+    let mut sauvegarde = lire_sauvegarde()?;
     sauvegarder_fichiers_gpo();
-    let mut sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     let mut ajouts = Vec::new();
     let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
@@ -612,7 +650,8 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
                     ajouts.push(entree(cle, nom, valeur));
                 }
                 Audit { guid, nom, reglage } => {
-                    let actuel = gpo::audit_effectif(guid).unwrap_or(0);
+                    // Valeur d'origine illisible : refus, jamais « désactivé » par défaut (audit de #215, S215-03)
+                    let actuel = gpo::audit_effectif(guid).ok_or_else(|| format!("audit « {nom} » illisible : rien n'a été modifié."))?;
                     origine.push((format!("audit|{guid}|{nom}"), Some(actuel.to_string())));
                     let guid_maj = guid.to_uppercase();
                     match audit.iter_mut().find(|l| l.0 == guid_maj) {
@@ -622,7 +661,7 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
                     audit_modifie = true;
                 }
                 Journal { canal } => {
-                    let actif = evenements::journal_actif(canal).unwrap_or(false);
+                    let actif = evenements::journal_actif(canal).ok_or_else(|| format!("journal « {canal} » illisible : rien n'a été modifié."))?;
                     origine.push((format!("journal|{canal}"), Some(actif.to_string())));
                     journaux.push(canal);
                 }
@@ -681,54 +720,68 @@ pub fn forcer_tailles() {
 }
 
 pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
-    let mut sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
+    let mut sauvegarde = lire_sauvegarde()?;
+    if !regles.iter().any(|r| sauvegarde.regles.contains_key(r.id)) {
+        return Ok("Aucune de ces règles n'a été appliquée par deR4Tizer : rien à annuler.".into());
+    }
     let mut retraits = Vec::new();
     let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
     let mut n = 0;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    // Règles dont une valeur d'origine n'a pas pu être remise : gardées dans la sauvegarde, et dites
+    // (prérelecture de #215, D2)
+    let mut non_remises: Vec<&str> = Vec::new();
     for r in regles {
         let Some(origine) = sauvegarde.regles.remove(r.id) else { continue };
         n += 1;
-        for (m, valeur) in origine {
+        let mut remise = true;
+        for (m, valeur) in origine.clone() {
             let parties: Vec<&str> = m.splitn(3, '|').collect();
             match parties.as_slice() {
                 ["reg", cle, nom] => {
                     retraits.push(EntreePol::dword(cle, nom, 0));
                     // La valeur posée reste dans le registre : on remet celle d'origine (ou on la supprime)
-                    if let Ok((k, _)) = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
-                        match valeur.as_deref().map(|v| v.parse::<u32>()) {
-                            Some(Ok(d)) => {
-                                let _ = k.set_value(nom, &d);
-                            }
-                            Some(Err(_)) => {
-                                let _ = k.set_value(nom, &valeur.clone().unwrap_or_default());
-                            }
-                            None => {
-                                let _ = k.delete_value(nom);
-                            }
-                        }
-                    }
+                    let ok = match hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
+                        Ok((k, _)) => match valeur.as_deref().map(|v| v.parse::<u32>()) {
+                            Some(Ok(d)) => k.set_value(nom, &d).is_ok(),
+                            Some(Err(_)) => k.set_value(nom, &valeur.clone().unwrap_or_default()).is_ok(),
+                            // Valeur absente à l'origine : supprimée ; déjà absente, c'est bon aussi
+                            None => match k.delete_value(nom) {
+                                Ok(()) => true,
+                                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+                            },
+                        },
+                        Err(_) => false,
+                    };
+                    remise &= ok;
                 }
                 ["audit", guid, _] => {
                     let avant: u32 = valeur.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0);
                     if let Some(l) = audit.iter_mut().find(|l| l.0 == guid.to_uppercase()) {
                         l.2 = avant;
                     }
-                    let _ = std::process::Command::new("auditpol.exe")
+                    let ok = std::process::Command::new("auditpol.exe")
                         .args(["/set", &format!("/subcategory:{guid}"),
                             &format!("/success:{}", if avant & 1 != 0 { "enable" } else { "disable" }),
                             &format!("/failure:{}", if avant & 2 != 0 { "enable" } else { "disable" })])
-                        .output();
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false);
+                    remise &= ok;
                     audit_modifie = true;
                 }
                 ["journal", canal] => {
                     if valeur.as_deref() == Some("false") {
-                        evenements::activer_journal(canal, false);
+                        remise &= evenements::activer_journal(canal, false);
                     }
                 }
                 _ => {}
             }
+        }
+        if !remise {
+            sauvegarde.regles.insert(r.id.to_string(), origine);
+            non_remises.push(r.id);
         }
     }
     // Réglages partagés (ExploitGuard_ASR_Rules pour toutes les règles ASR, EnableControlledFolderAccess pour
@@ -761,12 +814,20 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
     etapes.push(("mise à jour de la sauvegarde (sinon les règles annulées restent marquées appliquées)", Box::new(|| ecrire_sauvegarde(&sauvegarde))));
     etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
+    let non_remises_txt = if non_remises.is_empty() { String::new() } else {
+        format!(" Valeur d'origine non remise pour : {} (gardées dans la sauvegarde, marquées appliquées : à réessayer).", non_remises.join(", "))
+    };
     if let Err(e) = executer_etapes(&mut etapes) {
-        let e = format!("valeurs d'origine remises dans le registre ; {e}");
-        commun::journal(&format!("baseline : annulation incomplète : {e}"));
+        let e = format!("annulation incomplète : {e}{non_remises_txt}");
+        commun::journal(&format!("baseline : {e}"));
         return Err(e);
     }
     drop(etapes);
+    if !non_remises.is_empty() {
+        let e = format!("{} règle(s) annulée(s) sur {n}.{non_remises_txt}", n - non_remises.len());
+        commun::journal(&format!("baseline : annulation incomplète : {e}"));
+        return Err(e);
+    }
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
 }
 

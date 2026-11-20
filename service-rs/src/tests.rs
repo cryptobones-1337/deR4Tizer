@@ -691,6 +691,66 @@ fn baseline_b2_gestion_illisible_vaut_lecture_seule() {
 }
 
 #[test]
+fn baseline_s215_01_sauvegarde_illisible_jamais_ecrasee() {
+    // Audit de #215, S215-01 : une sauvegarde présente mais illisible fait refuser l'opération avant toute écriture,
+    // au lieu d'être lue vide puis écrasée
+    use crate::baseline::decider_sauvegarde;
+    assert_eq!(decider_sauvegarde::<Vec<u8>>(false, None), Ok(Vec::new()), "absente : vide");
+    assert_eq!(decider_sauvegarde(true, Some(vec![1u8])), Ok(vec![1u8]), "présente et lisible");
+    let e = decider_sauvegarde::<Vec<u8>>(true, None).unwrap_err();
+    assert!(e.contains("illisible") && e.contains("rien n'a été modifié"), "{e}");
+    // câblage : appliquer et annuler passent par lire_sauvegarde, plus jamais par unwrap_or_default
+    let src = include_str!("baseline.rs");
+    for f in ["pub fn appliquer(", "pub fn annuler("] {
+        let d = src.find(f).unwrap();
+        let corps = &src[d..d + 400];
+        assert!(corps.contains("lire_sauvegarde()?"), "{f} lit la sauvegarde par lire_sauvegarde");
+    }
+    assert!(!src.contains("let mut sauvegarde: Sauvegarde = commun::lire(\"baseline-sauvegarde.json\").unwrap_or_default();"));
+    // annuler sans règle appliquée : rien n'est réécrit
+    let d = src.find("pub fn annuler(").unwrap();
+    assert!(src[d..d + 400].contains("rien à annuler"));
+}
+
+#[test]
+fn baseline_s215_02_a_04_cablage() {
+    let src = include_str!("baseline.rs");
+    // S215-03 : une valeur d'origine illisible fait refuser l'application, jamais « désactivé » par défaut
+    assert!(!src.contains("audit_effectif(guid).unwrap_or(0)"));
+    assert!(!src.contains("journal_actif(canal).unwrap_or(false)"));
+    // S215-04 : PowerShell borné à 60 s, tué au-delà
+    let d = src.find("fn lire_gestion()").unwrap();
+    let corps = &src[d..d + 2500];
+    assert!(corps.contains("try_wait()") && corps.contains("enfant.kill()") && corps.contains("from_secs(60)"));
+    // S215-02 : le moniteur prend le drapeau de la baseline (et le rend sur chaque chemin)
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains("p.baseline_occupee.compare_exchange(false, true"), "drapeau pris, pas seulement lu");
+    assert!(!m.contains("if !p.baseline_occupee.load(Ordering::Relaxed)"));
+    let d = m.find("p.baseline_occupee.compare_exchange(false, true").unwrap();
+    let bloc = &m[d..d + 2500];
+    assert_eq!(bloc.matches("p.baseline_occupee.store(false, Ordering::Release);").count(), 2, "rendu avant continue et en fin de bloc");
+}
+
+#[test]
+fn baseline_annuler_ne_masque_aucun_echec_de_restauration() {
+    // Prérelecture de #215, D2 : une valeur d'origine non remise (registre, auditpol, journal) garde la règle dans la
+    // sauvegarde et le message le dit ; plus d'affirmation « valeurs d'origine remises » sans contrôle
+    let src = include_str!("baseline.rs");
+    let d = src.find("pub fn annuler(").unwrap();
+    let f = src[d..].find("\npub fn ").map(|i| d + i).unwrap();
+    let corps = &src[d..f];
+    assert!(!corps.contains("let _ = k.set_value"), "écriture de la valeur d'origine contrôlée");
+    assert!(!corps.contains("let _ = k.delete_value"), "suppression contrôlée");
+    assert!(corps.contains(".map(|o| o.status.success())"), "code de sortie d'auditpol contrôlé");
+    assert!(corps.contains("remise &= evenements::activer_journal(canal, false)"), "retour de la coupure du journal contrôlé");
+    assert!(corps.contains("sauvegarde.regles.insert(r.id.to_string(), origine)"), "règle non remise gardée dans la sauvegarde");
+    assert!(!corps.contains("valeurs d'origine remises dans le registre"), "plus d'affirmation sans contrôle");
+    // D1 : protection du dossier en échec, ni application ni annulation
+    let d = src.find("fn lire_sauvegarde()").unwrap();
+    assert!(src[d..d + 600].contains("commun::echec_protection().is_some()"));
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");
