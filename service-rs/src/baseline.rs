@@ -359,6 +359,33 @@ struct Sauvegarde {
     regles: HashMap<String, Vec<(String, Option<String>)>>,
 }
 
+/// Valeurs plus strictes qui satisfont une règle moins stricte posée sur la même clé (relecture de la baseline du
+/// 2026-11-20, B3) : (nom de la valeur, valeur attendue, valeurs plus strictes acceptées). L'accès contrôlé aux
+/// dossiers en blocage (1) satisfait la règle « mode audit » (2) et n'est jamais rétrogradé par elle
+pub const PLUS_STRICTES: &[(&str, u32, &[u32])] = &[("EnableControlledFolderAccess", 2, &[1])];
+
+fn plus_stricte(nom: &str, attendu: &Valeur, autre: &Valeur) -> bool {
+    match (attendu, autre) {
+        (Dword(a), Dword(b)) => PLUS_STRICTES.iter().any(|(n, v, acc)| n.eq_ignore_ascii_case(nom) && v == a && acc.contains(b)),
+        _ => false,
+    }
+}
+
+/// Valeur actuelle conforme à l'attendu : égale, ou plus stricte selon PLUS_STRICTES
+pub fn valeur_satisfaite(nom: &str, attendu: &Valeur, actuel: Option<&str>) -> bool {
+    match actuel {
+        None => false,
+        Some(a) if a == decrire(attendu) => true,
+        Some(a) => a.trim().parse::<u32>().map(|b| plus_stricte(nom, attendu, &Dword(b))).unwrap_or(false),
+    }
+}
+
+/// Une valeur n'est pas écrite si une règle déjà appliquée, ou appliquée en même temps, pose une valeur plus
+/// stricte sur la même clé : appliquer « recommandé » après « renforcé » ne rétrograde rien
+pub fn ecriture_retenue(cle: &str, nom: &str, valeur: &Valeur, autres: &[(&str, &str, &Valeur)]) -> bool {
+    !autres.iter().any(|(c, n, v)| c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom) && plus_stricte(nom, valeur, v))
+}
+
 fn decrire(v: &Valeur) -> String {
     match v {
         Dword(n) => n.to_string(),
@@ -398,7 +425,7 @@ fn verifier_mecanisme(m: &Mecanisme) -> (Option<bool>, String, String) {
             if actuel.is_none() && SURS_PAR_DEFAUT.iter().any(|(n, c)| n == nom && cle.contains(c)) {
                 return (Some(true), "absent (sûr par défaut)".into(), attendu);
             }
-            (Some(actuel.as_deref() == Some(attendu.as_str())), actuel.unwrap_or_else(|| "absent".into()), attendu)
+            (Some(valeur_satisfaite(nom, valeur, actuel.as_deref())), actuel.unwrap_or_else(|| "absent".into()), attendu)
         }
         Audit { guid, reglage, .. } => match gpo::audit_effectif(guid) {
             Some(v) => (Some(v & reglage == *reglage), nom_audit(v).into(), nom_audit(*reglage).into()),
@@ -463,6 +490,7 @@ fn lire_gestion() -> Gestion {
              $m = @(Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Enrollments -ErrorAction SilentlyContinue | \
                Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProviderID -eq 'MS DM Server' }).Count; \
              \"$d|$m\""])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn();
@@ -581,7 +609,12 @@ fn lire_sauvegarde() -> Result<Sauvegarde, String> {
     if commun::echec_protection().is_some() {
         return Err("protection du dossier de données en échec : la baseline n'est ni appliquée ni annulée, la sauvegarde du retour arrière n'étant pas fiable.".into());
     }
-    decider_sauvegarde(commun::dossier().join("baseline-sauvegarde.json").exists(), commun::lire("baseline-sauvegarde.json"))
+    // Toute erreur autre que « introuvable » vaut « présente » (audit de #215, S215-07)
+    let existe = match std::fs::symlink_metadata(commun::dossier().join("baseline-sauvegarde.json")) {
+        Ok(_) => true,
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    };
+    decider_sauvegarde(existe, commun::lire("baseline-sauvegarde.json"))
 }
 
 /// Décision pure de lire_sauvegarde
@@ -640,6 +673,11 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
     let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
     let mut journaux: Vec<&str> = Vec::new();
+    // Valeurs posées par les règles déjà appliquées ou appliquées en même temps (B3)
+    let autres: Vec<(&str, &str, &Valeur)> = REGLES.iter()
+        .filter(|r| sauvegarde.regles.contains_key(r.id) || regles.iter().any(|x| x.id == r.id))
+        .flat_map(|r| r.mecanismes.iter().filter_map(|m| if let Registre { cle, nom, valeur } = m { Some((*cle, *nom, valeur)) } else { None }))
+        .collect();
     // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
         let mut origine = Vec::new();
@@ -647,7 +685,9 @@ pub fn appliquer(regles: &[&Regle]) -> Result<String, String> {
             match m {
                 Registre { cle, nom, valeur } => {
                     origine.push((format!(r"reg|{cle}|{nom}"), lire_registre(cle, nom)));
-                    ajouts.push(entree(cle, nom, valeur));
+                    if ecriture_retenue(cle, nom, valeur, &autres) {
+                        ajouts.push(entree(cle, nom, valeur));
+                    }
                 }
                 Audit { guid, nom, reglage } => {
                     // Valeur d'origine illisible : refus, jamais « désactivé » par défaut (audit de #215, S215-03)
