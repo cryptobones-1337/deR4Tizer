@@ -3982,7 +3982,10 @@ namespace DeR4Tizer
             {
                 pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
                 string id = choix.Id;
-                if (choix.Etat != "conforme") pile.Children.Add(Briques.Action(L.En ? "Apply this rule" : "Appliquer cette règle", true, (s, e) => { if (ActionsProtection.Baseline("appliquer", id, null)) Charger(); }));
+                // « sans effet » : le réglage est déjà posé, le réappliquer ne changerait rien tant que Defender n'est pas
+                // l'antivirus actif ou applique une autre valeur ; on le dit au lieu de proposer le bouton (prérelecture de #217)
+                if (choix.Etat == "sans effet") pile.Children.Add(new TextBlock { Text = L.En ? "Already set: reapplying would change nothing while Microsoft Defender does not apply it (another antivirus is active, or Defender applies another value)." : "Déjà posé : le réappliquer ne changerait rien tant que Microsoft Defender ne l'applique pas (autre antivirus actif, ou Defender applique une autre valeur).", TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 0, 6) });
+                else if (choix.Etat != "conforme") pile.Children.Add(Briques.Action(L.En ? "Apply this rule" : "Appliquer cette règle", true, (s, e) => { if (ActionsProtection.Baseline("appliquer", id, null)) Charger(); }));
                 if (choix.Appliquee) pile.Children.Add(Briques.Action(L.En ? "Revert this rule" : "Annuler cette règle", false, (s, e) => { if (ActionsProtection.Baseline("annuler", id, ActionsProtection.QuestionAnnulerRegles)) Charger(); }));
             }
         }
