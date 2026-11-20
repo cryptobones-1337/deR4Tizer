@@ -1048,9 +1048,13 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Valeurs d'origine présentes : remises encore une fois après la mise à jour des stratégies, qui retire la valeur
     // de Registry.pol en l'effaçant du registre (passage T3 en VM du 2026-11-20 : EnableLUA, ConsentPromptBehaviorAdmin
     // et PromptOnSecureDesktop effacés à l'annulation de systeme.uac ; limite S215-05)
-    let mut a_remettre: Vec<(String, String, String, bool)> = Vec::new();
+    let mut a_remettre: Vec<(String, String, String, bool, &str)> = Vec::new();
+    // Origines des règles annulées, pour les remettre dans la sauvegarde si une remise échoue après gpupdate
+    // (prérelecture de #220, D1)
+    let mut annulees: HashMap<&str, Vec<(String, Option<String>)>> = HashMap::new();
     for r in regles {
         let Some(origine) = sauvegarde.regles.remove(r.id) else { continue };
+        annulees.insert(r.id, origine.clone());
         n += 1;
         let mut remise = true;
         for (m, valeur) in origine.clone() {
@@ -1067,7 +1071,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     let texte = matches!(catalogue, Texte(_));
                     retraits.push(EntreePol::dword(cle, nom, 0));
                     if let Some(v) = &valeur {
-                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone(), texte));
+                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone(), texte, r.id));
                     }
                     // La valeur posée reste dans le registre : on remet celle d'origine (ou on la supprime)
                     let ok = match hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
@@ -1163,10 +1167,24 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     drop(etapes);
     // Après gpupdate : valeurs d'origine remises et relues, sauf celles d'un réglage partagé encore utilisé par une
     // règle appliquée (sa valeur reste posée)
-    a_remettre.retain(|(c, nm, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
     let pas_remises = remettre_valeurs(&a_remettre);
     if !pas_remises.is_empty() {
-        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {}.{non_remises_txt}", pas_remises.join(", "));
+        // Jamais perdue : la règle revient dans la sauvegarde (une nouvelle annulation la réessaie) et la valeur
+        // d'origine est dite, pour une remise à la main au besoin (prérelecture de #220, D1)
+        let mut ids: Vec<&str> = pas_remises.iter().map(|x| x.4).collect();
+        ids.dedup();
+        for id in &ids {
+            if let Some(o) = annulees.get(id) {
+                sauvegarde.regles.insert(id.to_string(), o.clone());
+            }
+        }
+        let gardee = match ecrire_sauvegarde(&sauvegarde) {
+            Ok(()) => format!("règle(s) {} gardée(s) dans la sauvegarde, marquée(s) appliquée(s) : à réessayer", ids.join(", ")),
+            Err(e) => format!("sauvegarde non mise à jour ({e})"),
+        };
+        let detail: Vec<String> = pas_remises.iter().map(|x| format!("{}\\{} = {}", x.0, x.1, x.2)).collect();
+        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {} ; {gardee}.{non_remises_txt}", detail.join(", "));
         commun::journal(&format!("baseline : {e}"));
         return Err(e);
     }
@@ -1179,15 +1197,22 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
 }
 
 /// Remet des valeurs d'origine dans le registre et les relit ; rend celles qui n'ont pas pu être remises
-fn remettre_valeurs(valeurs: &[(String, String, String, bool)]) -> Vec<String> {
+fn remettre_valeurs<'a, 'b>(valeurs: &'a [(String, String, String, bool, &'b str)]) -> Vec<&'a (String, String, String, bool, &'b str)> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    valeurs.iter().filter_map(|(cle, nom, v, texte)| {
+    valeurs.iter().filter(|x| {
+        let (cle, nom, v, texte, _) = x;
         let ecrit = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY).ok().map(|(k, _)| match (texte, v.parse::<u32>()) {
             (false, Ok(d)) => k.set_value(nom, &d).is_ok(),
             _ => k.set_value(nom, v).is_ok(),
         }).unwrap_or(false);
-        if ecrit && valeur_remise(v, lire_registre(cle, nom).as_deref()) { None } else { Some(format!("{cle}\\{nom}")) }
+        !remise_reussie(ecrit, v, lire_registre(cle, nom).as_deref())
     }).collect()
+}
+
+/// Décision pure : une remise n'est réussie que si l'écriture a réussi ET que la valeur relue est l'origine
+/// (prérelecture de #220, D2)
+pub fn remise_reussie(ecrit: bool, origine: &str, relue: Option<&str>) -> bool {
+    ecrit && valeur_remise(origine, relue)
 }
 
 /// Mécanisme de registre de la règle pour une clé et un nom lus dans la sauvegarde ; None si étranger à la règle
