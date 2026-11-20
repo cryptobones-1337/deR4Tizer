@@ -434,8 +434,18 @@ impl Default for ConfigMaj {
 /// Chemin d'un profil utilisateur masqué (« C:\Users\marie\… » → « %USERPROFILE%\… ») : un poste partagé ne
 /// montre pas les noms des comptes ni leurs dossiers
 pub fn masquer_chemin(chemin: &str) -> String {
+    // Toutes les formes d'un dossier de profil, où qu'elles soient dans le texte : « C:\Users\nom », « C:/Users/nom »,
+    // « \\?\C:\Users\nom », « %SystemDrive%\Users\nom » (audit de #221, S221-01)
     static R: OnceLock<regex::Regex> = OnceLock::new();
-    R.get_or_init(|| regex::Regex::new(r"(?i)^[a-z]:\\users\\[^\\]+").unwrap()).replace(chemin, "%USERPROFILE%").into_owned()
+    R.get_or_init(|| regex::Regex::new(r"(?i)(?:\\\\\?\\)?(?:[a-z]:|%systemdrive%)[\\/]users[\\/][^\\/:;,\r\n]+").unwrap())
+        .replace_all(chemin, "%USERPROFILE%").into_owned()
+}
+
+/// Texte venu d'un fichier que seul un administrateur peut écrire, recopié dans un message : chemin de profil masqué et
+/// longueur bornée (audit de #221, S221-02)
+pub fn borner_texte(texte: &str, max: usize) -> String {
+    let t = masquer_chemin(texte);
+    if t.chars().count() <= max { t } else { format!("{}…", t.chars().take(max).collect::<String>()) }
 }
 
 /// API HTTP d'export (lecture seule), protégée par un jeton
