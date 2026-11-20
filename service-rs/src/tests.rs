@@ -8742,3 +8742,25 @@ fn baseline_d1_d2_prerelecture_219() {
     assert!(src.contains("return Ok(format!(\"Aucune règle appliquée.{note}\"));"));
 }
 
+#[test]
+fn baseline_t3_annulation_rend_les_valeurs_d_origine_apres_gpupdate() {
+    // Passage T3 en VM du 2026-11-20 : l'annulation de systeme.uac effaçait les valeurs d'origine, remises avant la
+    // mise à jour des stratégies qui les retire ; elles sont remises et relues après (limite S215-05 levée)
+    use crate::baseline::{strategie_taille_a_ecrire, valeur_remise, valeur_satisfaite, Valeur::Dword};
+    assert!(valeur_remise("5", Some("5")) && valeur_remise("1", Some(" 1 ")));
+    assert!(!valeur_remise("5", None), "effacée : non remise");
+    assert!(!valeur_remise("5", Some("2")));
+    let src = include_str!("baseline.rs");
+    let d = src.find("pub fn annuler(").unwrap();
+    let corps = &src[d..];
+    let gp = corps.find("etapes.push((\"mise à jour des stratégies (gpupdate)\"").expect("gpupdate");
+    let rm = corps.find("let pas_remises = remettre_valeurs(&a_remettre);").expect("remise après gpupdate");
+    assert!(rm > gp, "valeurs d'origine remises après gpupdate");
+    assert!(corps.contains("a_remettre.retain(|(c, nm, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
+    // S219-05 : une stratégie de taille plus grande que la cible satisfait la règle et n'est jamais abaissée
+    assert!(valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("2097152")));
+    assert!(!valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("20480")));
+    assert!(!strategie_taille_a_ecrire(20 * 1024 * 1024, 1_048_576, Some("2097152")), "2 Go posés : jamais réécrits à 1 Go");
+    assert!(strategie_taille_a_ecrire(1_073_741_824, 1_048_576, Some("20480")), "abaissée : réécrite");
+}
+

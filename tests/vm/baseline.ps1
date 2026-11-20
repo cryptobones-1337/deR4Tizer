@@ -63,7 +63,8 @@ function Releve {
     $l = New-Object System.Collections.Generic.List[string]
     foreach ($c in $cles) {
         $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($c)
-        if (-not $k) { $l.Add("$c : (absente)"); continue }
+        # Clé vide et clé absente sont équivalentes : seules les valeurs comptent (passage T3 du 2026-11-20)
+        if (-not $k -or $k.ValueCount -eq 0) { $l.Add("$c : (absente ou vide)"); if ($k) { $k.Close() }; continue }
         foreach ($n in ($k.GetValueNames() | Sort-Object)) { $l.Add("$c|$n=$(@($k.GetValue($n)) -join ',')") }
         $k.Close()
     }

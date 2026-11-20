@@ -402,6 +402,8 @@ fn lire_taille_journal(canal: &str) -> Option<u64> {
 
 fn plus_stricte(nom: &str, attendu: &Valeur, autre: &Valeur) -> bool {
     match (attendu, autre) {
+        // Taille de journal : une taille plus grande que la cible est plus stricte (audit de #219, S219-05)
+        (Dword(a), Dword(b)) if nom.eq_ignore_ascii_case("MaxSize") => b > a,
         (Dword(a), Dword(b)) => PLUS_STRICTES.iter().any(|(n, v, acc)| n.eq_ignore_ascii_case(nom) && v == a && acc.contains(b)),
         _ => false,
     }
@@ -445,7 +447,8 @@ pub fn conforme_par_taille_effective(strategie: Option<&str>, effective: Option<
 pub fn strategie_taille_a_ecrire(effective: u64, cible_ko: u32, strategie: Option<&str>) -> bool {
     match strategie.and_then(|s| s.trim().parse::<u64>().ok()) {
         Some(ko) if ko < cible_ko as u64 => true,
-        Some(_) => taille_a_poser(effective, cible_ko),
+        // Stratégie au moins égale à la cible (2 Go posés par l'organisation) : jamais abaissée (audit de #219, S219-05)
+        Some(_) => false,
         None if strategie.is_some() => true,
         None => taille_a_poser(effective, cible_ko),
     }
@@ -1042,6 +1045,10 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Règles dont une valeur d'origine n'a pas pu être remise : gardées dans la sauvegarde, et dites
     // (prérelecture de #215, D2)
     let mut non_remises: Vec<&str> = Vec::new();
+    // Valeurs d'origine présentes : remises encore une fois après la mise à jour des stratégies, qui retire la valeur
+    // de Registry.pol en l'effaçant du registre (passage T3 en VM du 2026-11-20 : EnableLUA, ConsentPromptBehaviorAdmin
+    // et PromptOnSecureDesktop effacés à l'annulation de systeme.uac ; limite S215-05)
+    let mut a_remettre: Vec<(String, String, String)> = Vec::new();
     for r in regles {
         let Some(origine) = sauvegarde.regles.remove(r.id) else { continue };
         n += 1;
@@ -1051,6 +1058,9 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             match parties.as_slice() {
                 ["reg", cle, nom] => {
                     retraits.push(EntreePol::dword(cle, nom, 0));
+                    if let Some(v) = &valeur {
+                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone()));
+                    }
                     // La valeur posée reste dans le registre : on remet celle d'origine (ou on la supprime)
                     let ok = match hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
                         Ok((k, _)) => match valeur.as_deref().map(|v| v.parse::<u32>()) {
@@ -1143,12 +1153,38 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         return Err(e);
     }
     drop(etapes);
+    // Après gpupdate : valeurs d'origine remises et relues, sauf celles d'un réglage partagé encore utilisé par une
+    // règle appliquée (sa valeur reste posée)
+    a_remettre.retain(|(c, nm, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    let pas_remises = remettre_valeurs(&a_remettre);
+    if !pas_remises.is_empty() {
+        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {}.{non_remises_txt}", pas_remises.join(", "));
+        commun::journal(&format!("baseline : {e}"));
+        return Err(e);
+    }
     if !non_remises.is_empty() {
         let e = format!("{} règle(s) annulée(s) sur {n}.{non_remises_txt}", n - non_remises.len());
         commun::journal(&format!("baseline : annulation incomplète : {e}"));
         return Err(e);
     }
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
+}
+
+/// Remet des valeurs d'origine dans le registre et les relit ; rend celles qui n'ont pas pu être remises
+fn remettre_valeurs(valeurs: &[(String, String, String)]) -> Vec<String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    valeurs.iter().filter_map(|(cle, nom, v)| {
+        let ecrit = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY).ok().map(|(k, _)| match v.parse::<u32>() {
+            Ok(d) => k.set_value(nom, &d).is_ok(),
+            Err(_) => k.set_value(nom, v).is_ok(),
+        }).unwrap_or(false);
+        if ecrit && valeur_remise(v, lire_registre(cle, nom).as_deref()) { None } else { Some(format!("{cle}\\{nom}")) }
+    }).collect()
+}
+
+/// Décision pure : la valeur relue est bien la valeur d'origine
+pub fn valeur_remise(origine: &str, relue: Option<&str>) -> bool {
+    relue.map(|r| r.trim() == origine.trim()).unwrap_or(false)
 }
 
 /// État d'une règle dans le registre seul (celui de l'état publié pour un relevé qui ne le porte pas)
