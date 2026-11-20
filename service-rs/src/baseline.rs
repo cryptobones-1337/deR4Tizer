@@ -422,6 +422,29 @@ pub fn ecriture_retenue(cle: &str, nom: &str, valeur: &Valeur, autres: &[(&str, 
     !autres.iter().any(|(c, n, v)| c.eq_ignore_ascii_case(cle) && n.eq_ignore_ascii_case(nom) && plus_stricte(nom, valeur, v))
 }
 
+/// Valeur déjà en place plus stricte que celle de la règle (RunAsPPL = 1 posé par l'administrateur) : elle n'est pas
+/// remplacée (audit de #218, S218-01)
+pub fn deja_plus_stricte(nom: &str, valeur: &Valeur, actuel: Option<&str>) -> bool {
+    actuel.and_then(|a| a.trim().parse::<u32>().ok()).map(|b| plus_stricte(nom, valeur, &Dword(b))).unwrap_or(false)
+}
+
+/// Taille de journal à poser seulement si la taille effective est plus petite que la cible : un journal plus grand
+/// n'est jamais réduit (audit de #218, S218-02)
+pub fn taille_a_poser(effective: u64, cible_ko: u32) -> bool {
+    effective < cible_ko as u64 * 1024
+}
+
+/// Canal d'une clé de stratégie de taille de journal (…\EventLog\<canal>), s'il en est une
+fn canal_taille(cle: &str, nom: &str) -> Option<&'static str> {
+    if nom != "MaxSize" || !cle.contains(r"\EventLog\") {
+        return None;
+    }
+    REGLES.iter().flat_map(|r| r.mecanismes.iter()).find_map(|m| match m {
+        Registre { cle: c, nom: "MaxSize", .. } if c.eq_ignore_ascii_case(cle) => c.rsplit('\\').next(),
+        _ => None,
+    })
+}
+
 /// Propriété de MSFT_MpPreference qui porte l'effet d'une valeur de stratégie Defender (B4)
 pub fn propriete_effective(nom: &str) -> Option<&'static str> {
     match nom {
@@ -521,6 +544,16 @@ fn verifier_mecanisme(m: &Mecanisme) -> (Option<bool>, String, String) {
             let attendu = decrire(valeur);
             if actuel.is_none() && SURS_PAR_DEFAUT.iter().any(|(n, c)| n == nom && cle.contains(c)) {
                 return (Some(true), "absent (sûr par défaut)".into(), attendu);
+            }
+            // Journal déjà au moins aussi grand que la cible, sans stratégie : conforme, rien à poser (S218-02)
+            if let (Some(canal), Dword(ko)) = (canal_taille(cle, nom), valeur) {
+                if !valeur_satisfaite(nom, valeur, actuel.as_deref()) {
+                    if let Some(t) = lire_taille_journal(canal) {
+                        if !taille_a_poser(t, *ko) {
+                            return (Some(true), format!("taille effective {t} octets"), attendu);
+                        }
+                    }
+                }
             }
             (Some(valeur_satisfaite(nom, valeur, actuel.as_deref())), actuel.unwrap_or_else(|| "absent".into()), attendu)
         }
@@ -865,6 +898,8 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     let origines_connues: HashMap<String, Option<String>> = sauvegarde.regles.values()
         .flat_map(|l| l.iter().filter(|(m, _)| m.starts_with("reg|")).map(|(m, v)| (m.to_ascii_lowercase(), v.clone())))
         .collect();
+    // Journaux déjà au moins aussi grands que la cible : ni stratégie ni wevtutil (S218-02)
+    let mut deja_assez_grands: Vec<&str> = Vec::new();
     // Relevé des valeurs d'origine, sans rien modifier
     for r in regles {
         let mut origine = Vec::new();
@@ -876,12 +911,18 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
                     origine.push((cle_origine, o));
                     // Taille de journal : la taille effective d'origine est relevée, pour la remettre à l'annulation
                     // (B5 : retirer la stratégie ne la remet pas, essai en VM du 2026-11-20)
-                    if *nom == "MaxSize" && cle.contains(r"\EventLog\") {
-                        let canal = cle.rsplit('\\').next().unwrap_or("");
+                    let mut a_poser = true;
+                    if let Some(canal) = canal_taille(cle, nom) {
                         let taille = lire_taille_journal(canal).ok_or_else(|| format!("taille du journal « {canal} » illisible : rien n'a été modifié."))?;
                         origine.push((format!("taille|{canal}"), Some(taille.to_string())));
+                        if let Dword(ko) = valeur {
+                            a_poser = taille_a_poser(taille, *ko);
+                            if !a_poser {
+                                deja_assez_grands.push(canal);
+                            }
+                        }
                     }
-                    if ecriture_retenue(cle, nom, valeur, &autres) {
+                    if a_poser && ecriture_retenue(cle, nom, valeur, &autres) && !deja_plus_stricte(nom, valeur, lire_registre(cle, nom).as_deref()) {
                         ajouts.push(entree(cle, nom, valeur));
                     }
                 }
@@ -928,10 +969,11 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     // Le service Journal d'événements ne relit la taille maximale qu'à son redémarrage : appliquée aussi tout de suite
     for r in regles {
         for m in r.mecanismes {
-            if let Registre { cle, nom: "MaxSize", valeur: Dword(ko) } = m {
-                if cle.contains(r"\EventLog\") {
-                    let canal = cle.rsplit('\\').next().unwrap_or("");
-                    let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+            if let Registre { cle, nom: nom @ "MaxSize", valeur: Dword(ko) } = m {
+                if let Some(canal) = canal_taille(cle, nom) {
+                    if !deja_assez_grands.contains(&canal) {
+                        let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                    }
                 }
             }
         }
@@ -945,10 +987,12 @@ pub fn forcer_tailles() {
     let sauvegarde: Sauvegarde = commun::lire("baseline-sauvegarde.json").unwrap_or_default();
     for r in REGLES.iter().filter(|r| sauvegarde.regles.contains_key(r.id)) {
         for m in r.mecanismes {
-            if let Registre { cle, nom: "MaxSize", valeur: Dword(ko) } = m {
-                if cle.contains(r"\EventLog\") {
-                    let canal = cle.rsplit('\\').next().unwrap_or("");
-                    let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+            if let Registre { cle, nom: nom @ "MaxSize", valeur: Dword(ko) } = m {
+                if let Some(canal) = canal_taille(cle, nom) {
+                    // Jamais de réduction : seulement si la taille effective est plus petite que la cible (S218-02)
+                    if lire_taille_journal(canal).map(|t| taille_a_poser(t, *ko)).unwrap_or(false) {
+                        let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                    }
                 }
             }
         }
@@ -1013,8 +1057,9 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     }
                 }
                 ["taille", canal] => {
-                    // Taille effective d'origine remise (B5)
-                    let ok = match valeur.as_deref().and_then(|v| v.parse::<u64>().ok()) {
+                    // Taille effective d'origine remise (B5), seulement pour un canal de la règle elle-même (S218-03)
+                    let canal_de_la_regle = r.mecanismes.iter().any(|m| matches!(m, Registre { cle, nom, .. } if canal_taille(cle, nom).map(|c| c.eq_ignore_ascii_case(canal)).unwrap_or(false)));
+                    let ok = match valeur.as_deref().and_then(|v| v.parse::<u64>().ok()).filter(|_| canal_de_la_regle) {
                         Some(t) => std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{t}")]).output()
                             .map(|o| o.status.success()).unwrap_or(false),
                         None => false,
