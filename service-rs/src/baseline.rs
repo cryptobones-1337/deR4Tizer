@@ -1045,6 +1045,8 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Règles dont une valeur d'origine n'a pas pu être remise : gardées dans la sauvegarde, et dites
     // (prérelecture de #215, D2)
     let mut non_remises: Vec<&str> = Vec::new();
+    // Entrées de la sauvegarde étrangères à leur règle, citées dans le message (audit de #220, S220-03)
+    let mut etrangeres: Vec<String> = Vec::new();
     // Valeurs d'origine présentes : remises encore une fois après la mise à jour des stratégies, qui retire la valeur
     // de Registry.pol en l'effaçant du registre (passage T3 en VM du 2026-11-20 : EnableLUA, ConsentPromptBehaviorAdmin
     // et PromptOnSecureDesktop effacés à l'annulation de systeme.uac ; limite S215-05)
@@ -1065,6 +1067,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     // jamais écrite ; la règle reste alors dans la sauvegarde et c'est dit (audit de #220, S220-01)
                     let Some(catalogue) = mecanisme_de(r, cle, nom) else {
                         remise = false;
+                        etrangeres.push(format!("{} : {cle}\\{nom}", r.id));
                         continue;
                     };
                     // Type du catalogue : une valeur texte (règle ASR) est remise en texte (audit de #220, S220-02)
@@ -1156,9 +1159,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
     etapes.push(("mise à jour de la sauvegarde (sinon les règles annulées restent marquées appliquées)", Box::new(|| ecrire_sauvegarde(&sauvegarde))));
     etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
-    let non_remises_txt = if non_remises.is_empty() { String::new() } else {
-        format!(" Valeur d'origine non remise pour : {} (gardées dans la sauvegarde, marquées appliquées : à réessayer).", non_remises.join(", "))
-    };
+    let non_remises_txt = message_non_remises(&non_remises, &etrangeres);
     if let Err(e) = executer_etapes(&mut etapes) {
         let e = format!("annulation incomplète : {e}{non_remises_txt}");
         commun::journal(&format!("baseline : {e}"));
@@ -1183,7 +1184,8 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             Ok(()) => format!("règle(s) {} gardée(s) dans la sauvegarde, marquée(s) appliquée(s) : à réessayer", ids.join(", ")),
             Err(e) => format!("sauvegarde non mise à jour ({e})"),
         };
-        let detail: Vec<String> = pas_remises.iter().map(|x| format!("{}\\{} = {}", x.0, x.1, x.2)).collect();
+        // Valeur d'origine dite pour une remise à la main, chemin de profil masqué (audit de #220, S220-04)
+        let detail: Vec<String> = pas_remises.iter().map(|x| format!("{}\\{} = {}", x.0, x.1, commun::masquer_chemin(&x.2))).collect();
         let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {} ; {gardee}.{non_remises_txt}", detail.join(", "));
         commun::journal(&format!("baseline : {e}"));
         return Err(e);
@@ -1213,6 +1215,18 @@ fn remettre_valeurs<'a, 'b>(valeurs: &'a [(String, String, String, bool, &'b str
 /// (prérelecture de #220, D2)
 pub fn remise_reussie(ecrit: bool, origine: &str, relue: Option<&str>) -> bool {
     ecrit && valeur_remise(origine, relue)
+}
+
+/// Décision pure : texte des règles non remises, avec les entrées étrangères à leur règle (audit de #220, S220-03)
+pub fn message_non_remises(non_remises: &[&str], etrangeres: &[String]) -> String {
+    let mut t = String::new();
+    if !non_remises.is_empty() {
+        t.push_str(&format!(" Valeur d'origine non remise pour : {} (gardées dans la sauvegarde, marquées appliquées : à réessayer).", non_remises.join(", ")));
+    }
+    if !etrangeres.is_empty() {
+        t.push_str(&format!(" Entrée(s) de la sauvegarde étrangère(s) à la règle, jamais écrite(s) (à retirer de baseline-sauvegarde.json par un administrateur) : {}.", etrangeres.join(", ")));
+    }
+    t
 }
 
 /// Mécanisme de registre de la règle pour une clé et un nom lus dans la sauvegarde ; None si étranger à la règle
