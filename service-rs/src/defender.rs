@@ -23,6 +23,62 @@ pub struct EtatDefender {
     pub derniere_analyse: String,
 }
 
+/// Réglages effectifs de Defender (MSFT_MpPreference) : ce que Defender applique vraiment, au-delà de la clé de
+/// stratégie (relecture de la baseline du 2026-11-20, B4)
+#[derive(Clone, Default, Debug)]
+pub struct PrefsDefender {
+    /// Nom de propriété -> valeur en texte (booléen : « 0 » ou « 1 »)
+    pub valeurs: HashMap<String, String>,
+    /// GUID de règle ASR en majuscules -> action (« 0 » désactivée, « 1 » blocage, « 2 » audit, « 6 » avertissement)
+    pub asr: HashMap<String, String>,
+}
+
+/// Propriétés lues : celles que la baseline pose par stratégie
+pub const PROPRIETES_EFFECTIVES: &[&str] = &["PUAProtection", "MAPSReporting", "SubmitSamplesConsent", "CloudBlockLevel",
+    "EnableNetworkProtection", "DisableRemovableDriveScanning", "EnableControlledFolderAccess"];
+
+fn texte_variant(v: &Variant) -> Option<String> {
+    match v {
+        Variant::Bool(b) => Some(if *b { "1" } else { "0" }.into()),
+        Variant::UI1(n) => Some(n.to_string()),
+        Variant::UI2(n) => Some(n.to_string()),
+        Variant::UI4(n) => Some(n.to_string()),
+        Variant::UI8(n) => Some(n.to_string()),
+        Variant::I1(n) => Some(n.to_string()),
+        Variant::I2(n) => Some(n.to_string()),
+        Variant::I4(n) => Some(n.to_string()),
+        Variant::I8(n) => Some(n.to_string()),
+        Variant::String(s) => Some(s.trim().to_string()),
+        _ => None,
+    }
+}
+
+/// Décision pure : réglages effectifs tirés d'un objet MSFT_MpPreference
+pub fn prefs_depuis(o: &HashMap<String, Variant>) -> PrefsDefender {
+    let mut p = PrefsDefender::default();
+    for nom in PROPRIETES_EFFECTIVES {
+        if let Some(t) = o.get(*nom).and_then(texte_variant) {
+            p.valeurs.insert(nom.to_string(), t);
+        }
+    }
+    if let (Some(Variant::Array(ids)), Some(Variant::Array(actions))) = (o.get("AttackSurfaceReductionRules_Ids"), o.get("AttackSurfaceReductionRules_Actions")) {
+        for (i, a) in ids.iter().zip(actions) {
+            if let (Variant::String(g), Some(t)) = (i, texte_variant(a)) {
+                p.asr.insert(g.trim().to_uppercase(), t);
+            }
+        }
+    }
+    p
+}
+
+/// Réglages effectifs, ou None si Defender ne répond pas (jamais lu comme « conforme »)
+pub fn preferences() -> Option<PrefsDefender> {
+    let com = COMLibrary::without_security().ok()?;
+    let con = WMIConnection::with_namespace_path(r"root\Microsoft\Windows\Defender", com).ok()?;
+    let r: Vec<HashMap<String, Variant>> = con.raw_query("SELECT * FROM MSFT_MpPreference").ok()?;
+    r.first().map(prefs_depuis)
+}
+
 /// Noms des règles ASR, pour des alertes lisibles
 fn nom_asr(id: &str) -> &'static str {
     match id.to_uppercase().as_str() {

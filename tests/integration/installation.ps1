@@ -1488,6 +1488,33 @@ Verifier 'Baseline à la demande : règle appliquée avec sa sauvegarde, puis an
     $true
 }
 
+Verifier 'Baseline : une règle ASR est dite conforme seulement si Defender l''applique (état effectif, B4)' {
+    $guid = 'BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550'
+    $d = Get-Date
+    $r = Commande (@{ Action = 'baseline'; Valeur = 'appliquer'; Cible = 'asr.courriel' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json
+    if (-not $r.Ok) { return "appliquer refusé : $($r.Message)" }
+    $b = & $attendreBaseline $d
+    if (-not $b) { return 'baseline.json non réécrit après appliquer' }
+    if ($b.Message -like 'Échec*') { return "appliquer : $($b.Message)" }
+    # Ce que Defender applique vraiment, lu ici indépendamment du service
+    $mode = (Get-MpComputerStatus -ErrorAction SilentlyContinue).AMRunningMode
+    $pref = Get-MpPreference -ErrorAction SilentlyContinue
+    $action = $null
+    if ($pref -and $pref.AttackSurfaceReductionRules_Ids) {
+        $ids = @($pref.AttackSurfaceReductionRules_Ids); $acts = @($pref.AttackSurfaceReductionRules_Actions)
+        for ($k = 0; $k -lt $ids.Count; $k++) { if ($ids[$k] -ieq $guid) { $action = [string]$acts[$k] } }
+    }
+    $attendu = if ($mode -eq 'Normal' -and $action -eq '1') { 'conforme' } elseif ($mode) { 'sans effet' } else { 'inconnu' }
+    $etat = ($b.Regles | Where-Object { $_.Id -eq 'asr.courriel' }).Etat
+    $constat = "mode « $mode », action effective « $action », état publié « $etat »"
+    Write-Host "  B4 : $constat"
+    $dAnn = Get-Date
+    $null = Commande (@{ Action = 'baseline'; Valeur = 'annuler'; Cible = 'asr.courriel' } | ConvertTo-Json -Compress) 30000
+    $null = & $attendreBaseline $dAnn
+    if ($etat -ne $attendu) { return "état attendu « $attendu » ; $constat" }
+    $true
+}
+
 # ---------------------------------------------------------------- phase 6, PR 6.5 : mode panique transactionnel, état effectif
 # Activer, vérifier les deux règles et l'état publié, redémarrer le service, désactiver ; puis un état incertain provoqué
 # (une règle retirée à la main). Toujours désactivé à la fin : un passage interrompu ne laisse pas la VM sans Internet.
