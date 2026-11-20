@@ -897,7 +897,7 @@ fn baseline_b4_etat_effectif_de_defender() {
     assert_eq!(etat_regle("non conforme", &[Effet::Conforme]).0, "non conforme", "le registre reste la première condition");
     // câblage : evaluer lit l'état effectif et passe par etat_regle ; le score ne compte que « conforme »
     let src = include_str!("baseline.rs");
-    assert!(src.contains("let (etat, note) = etat_regle(etat_registre, &effets);"));
+    assert!(src.contains("let (etat, mut note) = etat_regle(etat_registre, &effets);"));
     assert!(src.contains("let (mode, prefs) = defender_borne();"));
     // S217-02 : lecture de Defender bornée, jamais relancée tant qu'une lecture est bloquée
     assert!(src.contains("rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_default()"));
@@ -961,7 +961,14 @@ fn baseline_b5_lsa_sans_verrou_et_taille_de_journal() {
     let src = include_str!("baseline.rs");
     assert!(src.contains("origine.push((format!(\"taille|{canal}\"), Some(taille.to_string())));"));
     assert!(src.contains("[\"taille\", canal] => {"));
-    assert!(src.contains("if regles.iter().any(|r| r.id == \"systeme.lsa\") && !lsa_applicable(build_windows())"));
+    assert!(src.contains("if regles.iter().any(|r| r.id == \"systeme.lsa\") && retirer_lsa(regles.len(), lsa_applicable(build_windows()))? {"));
+    // Prérelecture de #218, D1 : avant 22H2, la règle est écartée d'un profil (le reste s'applique), refusée seule,
+    // et sortie du score
+    use crate::baseline::retirer_lsa;
+    assert_eq!(retirer_lsa(30, true), Ok(false), "22H2 ou plus : gardée");
+    assert_eq!(retirer_lsa(30, false), Ok(true), "profil avant 22H2 : écartée, le reste s'applique");
+    assert!(retirer_lsa(1, false).unwrap_err().contains("rien n'a été modifié"), "seule avant 22H2 : refus");
+    assert!(src.contains("if r.id == \"systeme.lsa\" && etat != \"conforme\" && !lsa_ok {"));
 }
 
 #[test]
