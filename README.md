@@ -175,7 +175,7 @@ Known, by design. Be aware before relying on it:
 - Executables are not signed yet (the Certum code-signing certificate is held; the release remains to be signed and published); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
-- On a managed device (domain, Intune), the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
+- On a managed device (domain, Intune), or when that cannot be checked, the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
 - IDS rules using `pcre`, `byte_test` and a few other options are ignored rather than mis-applied.
 - Syslog export is sent in cleartext (UDP or TCP, no TLS): keep it to a trusted local network.
 - The export API is plain HTTP: when it is opened to the local network, its token and data travel in cleartext, like syslog.

@@ -599,6 +599,98 @@ fn baseline_reglage_asr_partage_conserve() {
 }
 
 #[test]
+fn baseline_b1_sauvegarde_en_echec_rien_n_est_modifie() {
+    // Relecture de la baseline du 2026-11-20, B1 : la sauvegarde du retour arrière passe d'abord ; si elle échoue,
+    // aucune autre étape (Registry.pol, audit.csv, gpt.ini, journaux, gpupdate) n'est appelée
+    use crate::baseline::{executer_etapes, Etape};
+    use std::cell::RefCell;
+    let appels = RefCell::new(Vec::<&str>::new());
+    {
+        let mut etapes: Vec<Etape> = vec![
+            ("sauvegarde du retour arrière", Box::new(|| { appels.borrow_mut().push("sauvegarde"); Err("disque plein".to_string()) })),
+            ("Registry.pol", Box::new(|| { appels.borrow_mut().push("pol"); Ok(()) })),
+            ("gpt.ini", Box::new(|| { appels.borrow_mut().push("gpt"); Ok(()) })),
+        ];
+        let e = executer_etapes(&mut etapes).unwrap_err();
+        assert!(e.contains("rien n'a été modifié"), "{e}");
+        assert!(e.contains("disque plein"), "{e}");
+    }
+    assert_eq!(*appels.borrow(), vec!["sauvegarde"], "aucune modification après l'échec de la sauvegarde");
+
+    // Échec au milieu : le message dit ce qui est fait et ce qui ne l'est pas, et la suite n'est pas appelée
+    let appels = RefCell::new(Vec::<&str>::new());
+    {
+        let mut etapes: Vec<Etape> = vec![
+            ("sauvegarde du retour arrière", Box::new(|| { appels.borrow_mut().push("sauvegarde"); Ok(()) })),
+            ("Registry.pol", Box::new(|| { appels.borrow_mut().push("pol"); Ok(()) })),
+            ("audit.csv", Box::new(|| { appels.borrow_mut().push("audit"); Err("accès refusé".to_string()) })),
+            ("gpt.ini", Box::new(|| { appels.borrow_mut().push("gpt"); Ok(()) })),
+        ];
+        let e = executer_etapes(&mut etapes).unwrap_err();
+        assert!(e.contains("Fait : sauvegarde du retour arrière, Registry.pol."), "{e}");
+        assert!(e.contains("Non fait : audit.csv, gpt.ini."), "{e}");
+    }
+    assert_eq!(*appels.borrow(), vec!["sauvegarde", "pol", "audit"]);
+
+    // Tout réussit : toutes les étapes, dans l'ordre
+    let appels = RefCell::new(Vec::<&str>::new());
+    {
+        let mut etapes: Vec<Etape> = vec![
+            ("sauvegarde du retour arrière", Box::new(|| { appels.borrow_mut().push("sauvegarde"); Ok(()) })),
+            ("Registry.pol", Box::new(|| { appels.borrow_mut().push("pol"); Ok(()) })),
+        ];
+        assert!(executer_etapes(&mut etapes).is_ok());
+    }
+    assert_eq!(*appels.borrow(), vec!["sauvegarde", "pol"]);
+}
+
+#[test]
+fn baseline_b1_sauvegarde_ecrite_avant_toute_modification() {
+    // Câblage : dans appliquer, la sauvegarde est la première étape et le journal n'est plus activé pendant le
+    // relevé ; plus aucun « let _ = » sur l'écriture de la sauvegarde
+    let src = include_str!("baseline.rs");
+    let debut = src.find("pub fn appliquer(").unwrap();
+    let corps = &src[debut..src[debut..].find("
+pub fn ").map(|i| debut + i).unwrap_or(src.len())];
+    let i_sauvegarde = corps.find("(\"sauvegarde du retour arrière\"").expect("étape de sauvegarde");
+    let i_pol = corps.find("(\"Registry.pol\"").expect("étape Registry.pol");
+    assert!(i_sauvegarde < i_pol, "la sauvegarde passe avant Registry.pol");
+    let releve = &corps[..corps.find("let mut etapes").unwrap()];
+    assert!(!releve.contains("activer_journal"), "aucun journal activé pendant le relevé");
+    assert!(!src.contains("let _ = commun::ecrire(\"baseline-sauvegarde.json\""), "échec d'écriture de la sauvegarde jamais ignoré");
+}
+
+#[test]
+fn baseline_b2_gestion_illisible_vaut_lecture_seule() {
+    // Relecture de la baseline du 2026-11-20, B2 : seule une réponse complète vaut « non géré »
+    use crate::baseline::{analyser_gestion, message_gestion, Gestion};
+    assert_eq!(analyser_gestion(Some("False|0")), Gestion::NonGere);
+    assert_eq!(analyser_gestion(Some("  false|0\r\n")), Gestion::NonGere);
+    assert!(matches!(analyser_gestion(Some("True|0")), Gestion::Gere(m) if m.contains("domaine Active Directory")));
+    assert!(matches!(analyser_gestion(Some("False|2")), Gestion::Gere(m) if m.contains("Intune")));
+    assert!(matches!(analyser_gestion(Some("True|1")), Gestion::Gere(m) if m.contains("domaine Active Directory et Intune")));
+    // lancement en échec, sortie vide ou mal formée : illisible, jamais « non géré »
+    for s in [None, Some(""), Some("   "), Some("False"), Some("|0"), Some("False|"), Some("Faux|0"), Some("False|-1"), Some("False|abc"), Some("Erreur PowerShell")] {
+        assert_eq!(analyser_gestion(s), Gestion::Illisible, "{s:?}");
+    }
+    assert!(message_gestion(&Gestion::NonGere).is_none());
+    assert!(message_gestion(&Gestion::Illisible).unwrap().contains("lecture seule"));
+    // mini-fuzz : aucune panique, et une sortie abîmée n'est jamais lue « non géré » sauf si elle est exactement bien formée
+    crate::tests::torturer_texte("False|0", &mut |t| {
+        let g = analyser_gestion(Some(t));
+        if g == Gestion::NonGere {
+            let (d, m) = t.trim().split_once('|').unwrap();
+            assert!(d.trim().eq_ignore_ascii_case("false") && m.trim().parse::<u32>() == Ok(0), "{t:?}");
+        }
+    });
+    // plus de cache à vie : appliquer relit la gestion à chaque fois
+    let src = include_str!("baseline.rs");
+    assert!(!src.contains("OnceLock<Option<String>>"), "plus de résultat figé pour la vie du service");
+    let debut = src.find("pub fn appliquer(").unwrap();
+    assert!(src[debut..debut + 200].contains("gestion_fraiche()"), "appliquer relit la gestion");
+}
+
+#[test]
 fn chemins_de_profil_masques() {
     assert_eq!(crate::commun::masquer_chemin(r"C:\Users\marie\AppData\Local\Zoom\bin\Zoom.exe"), r"%USERPROFILE%\AppData\Local\Zoom\bin\Zoom.exe");
     assert_eq!(crate::commun::masquer_chemin(r"C:\Program Files\App\a.exe"), r"C:\Program Files\App\a.exe");

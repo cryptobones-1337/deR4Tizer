@@ -1446,6 +1446,48 @@ Verifier 'Registre : blocage manuel inscrit avec son échéance de 90 jours, lev
     $true
 }
 
+# ---------------------------------------------------------------- baseline à la demande (relecture du 2026-11-20, lot 1)
+# Une règle sans effet de bord sur le runner (reseau.llmnr : EnableMulticast = 0), appliquée puis annulée par le canal :
+# la sauvegarde du retour arrière contient la règle, la valeur est posée, puis l'annulation rend la valeur d'origine et
+# retire la règle de la sauvegarde. Un message « Échec » (dont « gestion du poste illisible ») fait échouer le cas.
+$attendreBaseline = { param($depuis)
+    $f = Join-Path $script:Donnees 'baseline.json'
+    $fin = (Get-Date).AddSeconds(180)
+    while ((Get-Date) -lt $fin) {
+        if ((Test-Path $f) -and (Get-Item $f).LastWriteTime -gt $depuis) { Start-Sleep 1; return (Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json) }
+        Start-Sleep 2
+    }
+    $null
+}
+$commandeBaseline = { param($op) Commande (@{ Action = 'baseline'; Valeur = $op; Cible = 'reseau.llmnr' } | ConvertTo-Json -Compress) 30000 | ConvertFrom-Json }
+Verifier 'Baseline à la demande : règle appliquée avec sa sauvegarde, puis annulée, valeur d''origine rendue' {
+    $cle = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'
+    $lireValeur = { (Get-ItemProperty $cle -Name EnableMulticast -ErrorAction SilentlyContinue).EnableMulticast }
+    $avant = & $lireValeur
+    $sauvegarde = Join-Path $script:Donnees 'baseline-sauvegarde.json'
+    $d = Get-Date
+    $r = & $commandeBaseline 'appliquer'
+    if (-not $r.Ok) { return "appliquer refusé : $($r.Message)" }
+    $b = & $attendreBaseline $d
+    if (-not $b) { return 'baseline.json non réécrit après appliquer' }
+    if ($b.Message -like 'Échec*') { return "appliquer : $($b.Message)" }
+    $s = Get-Content $sauvegarde -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $s.regles.'reseau.llmnr') { return 'règle absente de la sauvegarde du retour arrière' }
+    if ((& $lireValeur) -ne 0) { return "EnableMulticast après appliquer : $(& $lireValeur)" }
+    if (-not ($b.Regles | Where-Object { $_.Id -eq 'reseau.llmnr' }).Appliquee) { return 'règle non marquée appliquée' }
+    $d = Get-Date
+    $r = & $commandeBaseline 'annuler'
+    if (-not $r.Ok) { return "annuler refusé : $($r.Message)" }
+    $b = & $attendreBaseline $d
+    if (-not $b) { return 'baseline.json non réécrit après annuler' }
+    if ($b.Message -like 'Échec*') { return "annuler : $($b.Message)" }
+    $apres = & $lireValeur
+    if ($apres -ne $avant) { return "EnableMulticast après annuler : $apres (avant : $avant)" }
+    $s = Get-Content $sauvegarde -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($s.regles.'reseau.llmnr') { return 'règle encore dans la sauvegarde après annuler' }
+    $true
+}
+
 # ---------------------------------------------------------------- phase 6, PR 6.5 : mode panique transactionnel, état effectif
 # Activer, vérifier les deux règles et l'état publié, redémarrer le service, désactiver ; puis un état incertain provoqué
 # (une règle retirée à la main). Toujours désactivé à la fin : un passage interrompu ne laisse pas la VM sans Internet.
