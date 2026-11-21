@@ -36,7 +36,7 @@ chaque détection a sa collecte, sinon elle nomme les détections muettes et les
 pastille jaune compte les collectes en panne. Correspondance règle → sources :
 `collectes::besoins`. Depuis la PR 3.3b, toutes les sources sont notées : connexions, liste des processus, journaux
 (Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
-domaines, LOLDrivers, relevé des démarrages automatiques, baseline, leurres, audit des données (SACL), `pfirewall.log`,
+domaines, LOLDrivers, relevé des démarrages automatiques, audit des créations de processus (4688), baseline, leurres, audit des données (SACL), `pfirewall.log`,
 extensions, magasin des consentements (caméra, micro), capture du trafic et du réseau local. Ne suivent aucune
 source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, et les constats de santé SAN-* (qui portent sur les
 collectes elles-mêmes). Par défaut, les listes de domaines sont toutes à licence
@@ -51,7 +51,7 @@ connus non détectés :
 - Sysmon configuré sans l'événement 22 (il couvre quand même DNS-001), ou service Sysmon arrêté alors que son journal
   reste lisible ;
 - listes de menaces chargées depuis une copie locale ancienne (l'âge n'est pas suivi) ;
-- `JournalSecurite` noté par deux lecteurs (SIEM et accès aux fichiers 4663) : un seul en panne ne se voit pas, l'autre
+- `JournalSecurite` noté par trois lecteurs (SIEM, accès aux fichiers 4663, créations de processus 4688) : un seul en panne ne se voit pas, les autres
   continuant de lire le même journal ;
 - l'audit des données (SACL) posé ne prouve pas que la politique d'audit des accès aux objets est active : sans elle,
   aucun 4663 n'est produit (VOL-001, LEU-002) ; l'audit posé sur les leurres eux-mêmes n'est pas suivi (journal seul) ;
@@ -93,9 +93,19 @@ Lecture d'un journal suivi :
 - après un saut ou une rotation, la collecte reste « Partielle » une heure (« N numéro(s) d'événement perdu(s) »).
 
 Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
-première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : WMI
-prend le relais.
-« Partielle » (WMI sans Sysmon) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées dégradées.
+première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : l'audit
+des créations de processus (4688) prend le relais, sinon WMI.
+Créations de processus sans Sysmon (couverture ATT&CK, lot 1) : les règles PRC-001 à PRC-005 et les chaînes lisent les
+événements 4688 du journal Sécurité, qui portent le programme, sa ligne de commande et son parent même pour un
+processus déjà terminé. Collecte `AuditProcessus`, relue toutes les 5 min : « Active » (audit actif, ligne de commande
+réglée et vue) ; « Partielle » (ligne de commande absente : PRC-001 lit le 4688, PRC-002 à PRC-005 prennent la ligne
+de commande dans WMI) ; « Desactivee » (audit jamais activé : la baseline n'est pas appliquée, comme Sysmon absent) ;
+« Indisponible » (audit coupé après avoir été actif, réglage illisible, journal Sécurité illisible). Dans les trois
+derniers cas, le repli sur WMI est dit dans la raison, et un poste géré (baseline en lecture seule) est nommé. Une seule
+source analyse à la fois (l'audit s'il est actif ou partiel, sinon WMI, qui sinon ne fait que remplir le cache) ; une
+alerte déjà levée pour un PID et le même programme dans les 10 min n'est pas répétée par l'autre source.
+« Partielle » (WMI sans Sysmon ni audit actif) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées
+dégradées.
 
 Domaines : `RES` connexions, `DNS`, `PRC` processus, `CHA` chaînes de processus, `PER` persistance, `DEF` Defender,
 `LEU` leurres, `VOL` vol de données, `SYS` fichier hosts et pare-feu, `PIL` pilotes, `EXT` extensions de navigateur,
@@ -295,8 +305,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
 - **Justification** : Word, Excel ou un lecteur PDF qui lance PowerShell, cmd, wscript… est la marque d'une macro ou
   d'un exploit.
-- **Télémétrie** : création de processus (Sysmon 1 ou WMI) avec le parent.
-- **Si elle manque** : flux WMI arrêté : la source reste affichée « WMI » et la règle se tait.
+- **Télémétrie** : création de processus avec le parent (Sysmon 1, sinon événement 4688 du journal Sécurité, sinon WMI).
+- **Si elle manque** : sans Sysmon ni audit des créations de processus, flux WMI arrêté : la source reste affichée « WMI »
+  et la règle se tait.
 - **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
 - **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
@@ -308,8 +319,10 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ### PRC-002 : PowerShell obscurci ou qui télécharge du code
 - **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code »).
 - **Justification** : `-EncodedCommand` long, `DownloadString`, `IEX` d'une adresse : chargement de code typique.
-- **Télémétrie** : ligne de commande (Sysmon 1, ou WMI tant que le processus vit).
-- **Si elle manque** : processus terminé avant la lecture WMI : ligne de commande absente, la règle se tait.
+- **Télémétrie** : ligne de commande (Sysmon 1, sinon événement 4688 avec sa ligne de commande, sinon WMI tant que le
+  processus vit).
+- **Si elle manque** : sans Sysmon ni 4688 portant la ligne de commande, processus terminé avant la lecture WMI : ligne
+  de commande absente, la règle se tait.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : scripts d'administration ou d'installation encodés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
@@ -367,7 +380,8 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ### CHA-001 : chaîne de processus au score cumulé
 - **Code** : `chaines.rs` (au moins deux signaux et score au-dessus du seuil).
 - **Justification** : plusieurs actions suspectes d'une même descendance de processus forment une attaque en étapes.
-- **Télémétrie** : arbre des processus et signaux des autres règles.
+- **Télémétrie** : arbre des processus (liste des processus, et créations 4688 : un processus bref, terminé avant la
+  lecture de la liste, garde son parent) et signaux des autres règles.
 - **Si elle manque** : sans processus, aucune chaîne.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : installeurs qui enchaînent des outils signalés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions

@@ -7,6 +7,13 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Process rules without Sysmon: PRC-001 to PRC-005 and process chains read the Security log's process creation events
+  (4688), which carry the command line and the parent even after a short-lived program has exited; WMI is used only
+  when this audit is off. New collection "Process creation auditing (4688)" in the Health page (active, partial when
+  the command line is missing, disabled or unavailable, with the WMI fallback stated); one alert per process creation
+  whatever the source.
+- ATT&CK map of the "ransomware and opportunistic intrusion, small organisation" profile published
+  (`docs/validation/carte-attack.md`, ATT&CK v20.1).
 - Response register (`reponses.json`): an administrator's command waits for its copy to be written only after releasing
   the monitor lock, so a slow disk no longer delays the monitoring cycle.
 - Canary files: a known, signed backup tool is spared only if its folder can be written to by administrators, SYSTEM,

@@ -35,7 +35,7 @@ namespace DeR4Tizer
         public string Version { get; set; }
         public bool JournalDnsActif { get; set; }
         public int IpConnues { get; set; }
-        public string SourceProcessus { get; set; }     // "Sysmon", "WMI" ou "aucune"
+        public string SourceProcessus { get; set; }     // "Sysmon", "Audit 4688", "WMI" ou "aucune"
         public bool BureauADistance { get; set; }
         public List<FluxInfo> Flux { get; set; }
         public List<UsagePeripherique> Peripheriques { get; set; }
@@ -95,6 +95,7 @@ namespace DeR4Tizer
             { "Sessions", "interface de deR4Tizer non surveillée dans les sessions ouvertes" },
             { "ConfigDns", "changement de serveur DNS des cartes non vu" },
             { "FiltrageDns", "filtrage par nom de domaine suspendu : rien n'est bloqué, le DNS du poste passe par les serveurs d'origine" },
+            { "AuditProcessus", "programmes très brefs vus seulement par WMI (PRC-001 à PRC-005 dégradées)" },
         };
 
         public static string Consequence(string id)
@@ -132,6 +133,7 @@ namespace DeR4Tizer
             { "Sessions", "Sessions ouvertes" },
             { "ConfigDns", "Serveurs DNS des cartes" },
             { "FiltrageDns", "Filtrage par nom de domaine" },
+            { "AuditProcessus", "Audit des créations de programmes (4688)" },
         };
 
         public static string Nom(string id)
@@ -148,6 +150,15 @@ namespace DeR4Tizer
             if (c == null || c.Id != "Sysmon" || c.Etat != "Desactivee") return false;
             var w = Trouver(e, "WmiProcessus");
             return w != null && (w.Etat == "Active" || w.Etat == "Partielle");
+        }
+
+        // Sysmon absent mais l'audit des créations de processus (4688) actif : les règles de processus voient même les
+        // programmes brefs, avec leur ligne de commande (couverture ATT&CK, lot 1) ; ligne neutre, pas « désactivé »
+        public static bool SysmonRemplaceParAudit(Etat e, EtatCollecte c)
+        {
+            if (c == null || c.Id != "Sysmon" || c.Etat != "Desactivee") return false;
+            var a = Trouver(e, "AuditProcessus");
+            return a != null && a.Etat == "Active";
         }
 
         static bool EnPanne(EtatCollecte c)
@@ -273,7 +284,7 @@ namespace DeR4Tizer
             foreach (var c in EnPannes(e)) lignes.Add("▲ " + Decrire(c));
             foreach (var c in e.Collectes)
                 if (c != null && c.Etat == "Desactivee")
-                    lignes.Add("○ " + (SysmonRemplaceParWmi(e, c) ? L.T("Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)") : Decrire(c)));
+                    lignes.Add("○ " + (SysmonRemplaceParAudit(e, c) ? L.T("Sysmon (facultatif) absent : l'audit des créations de programmes (4688) le remplace, les programmes brefs sont vus avec leur ligne de commande") : SysmonRemplaceParWmi(e, c) ? L.T("Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)") : Decrire(c)));
             return string.Join("\n", lignes);
         }
 

@@ -5,7 +5,7 @@
 - **Version d'ATT&CK** : Enterprise v20.1 (13 octobre 2026), identifiants vérifiés le 2026-11-21 sur attack.mitre.org.
 - **Origine** : carte de départ établie en lecture seule par l'auditeur sur `main` (`7421f82`), à partir de
   `service-rs/src/mitre.rs`, `docs/detection/regles.md` et des rapports de ce dossier ; reprise ici après deux
-  vérifications (section « Vérifications du lot 0 ») et deux corrections.
+  vérifications (section « Vérifications du lot 0 ») et trois corrections.
 - **Ce que la carte n'est pas** : ni une couverture, ni une validation. Un état ne change que sur un rapport de campagne
   publié dans ce dossier ; les tests en labo de la campagne Kali sont faits en VM, par un agent, sur une liste approuvée
   par l'agent de validation (`README.md`, « À savoir »).

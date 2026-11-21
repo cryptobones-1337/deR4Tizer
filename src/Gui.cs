@@ -1423,7 +1423,7 @@ namespace DeR4Tizer
                     : new Entete.Pastille { Texte = L.T("NOMS DES SITES INCONNUS (JOURNAL DNS INACTIF)"), Couleur = Theme.Jaune });
                 pastilles.Add(new Entete.Pastille
                 {
-                    Texte = L.T("PROCESSUS") + " : " + (etat.SourceProcessus == "Sysmon" ? "SYSMON" : etat.SourceProcessus == "WMI" ? "WMI" : "—"),
+                    Texte = L.T("PROCESSUS") + " : " + (etat.SourceProcessus == "Sysmon" ? "SYSMON" : etat.SourceProcessus == "Audit 4688" ? "AUDIT 4688" : etat.SourceProcessus == "WMI" ? "WMI" : "—"),
                     Couleur = etat.SourceProcessus == "aucune" ? Theme.Jaune : Theme.Cyan
                 });
                 var actifs = (etat.Peripheriques ?? new List<UsagePeripherique>()).Where(u => u.EnCours).ToList();
