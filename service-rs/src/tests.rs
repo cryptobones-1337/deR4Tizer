@@ -8957,3 +8957,22 @@ fn s228_01_liste_d_acceptation_des_droits() {
     assert!(o(Some(&sec("S-1-5-21-1-2-3-1001", defaut.clone()))), "propriétaire utilisateur");
     assert!(o(Some(&sec("", defaut.clone()))), "propriétaire illisible");
 }
+
+#[test]
+fn reponses_json_illisible_jamais_ecrase_et_ecriture_hors_verrou() {
+    // Tri de l'inventaire de la phase 6 (2026-11-21) : S110-13 (fichier présent mais illisible jamais écrasé), S110-04 et
+    // S110-16 (lecture et écritures hors du verrou ETAT)
+    use crate::politique::{copie_a_ecrire, lecture_test as l, Lecture};
+    assert_eq!(l(Lecture::Absent), (false, false, true), "absent : garde vide, fichier écrit");
+    assert_eq!(l(Lecture::Refusee), (false, true, false), "lecture refusée : réponse gardée, fichier jamais écrasé");
+    assert_eq!(l(Lecture::Texte("{")), (true, false, false), "contenu mal formé : réponse coupée, fichier gardé");
+    assert_eq!(l(Lecture::Texte("{}")), (false, false, true));
+    assert!(copie_a_ecrire(2, 1) && !copie_a_ecrire(1, 2) && !copie_a_ecrire(3, 3), "jamais une copie plus ancienne");
+    let src = include_str!("politique.rs");
+    let a = src.find("fn avec<R>(").unwrap();
+    let corps = &src[a..a + src[a..].find("\n}\n").or_else(|| src[a..].find("\r\n}\r\n")).unwrap()];
+    assert!(corps.contains("drop(g);\n        let (texte, refusee) = lecture_initiale();") || corps.contains("drop(g);\r\n        let (texte, refusee) = lecture_initiale();"), "lecture initiale hors du verrou");
+    assert!(corps.contains("drop(g);\n    ecrire_copie(copie);") || corps.contains("drop(g);\r\n    ecrire_copie(copie);"), "écriture hors du verrou");
+    assert!(!corps.contains("commun::ecrire("), "aucune écriture sous ETAT");
+}
+

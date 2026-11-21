@@ -632,16 +632,53 @@ struct Etat {
     /// Fichier présent mais illisible : aucune action automatique, alerte seulement (échec fermé). Le fichier n'est pas écrasé
     illisible: bool,
     signale: bool,
+    /// Lecture refusée (fichier présent mais pas lisible : propriétaire non admis, fichier tenu ouvert, protection en
+    /// échec) : la garde repart en mémoire et la réponse reste, mais le fichier n'est jamais écrasé (audit de #110, S110-13)
+    ecriture_suspendue: bool,
+    /// Une écriture est due, faite hors du verrou à la sortie de `avec` (audit de #110, S110-04 et S110-16)
+    a_ecrire: bool,
+    /// Numéro de la dernière copie prise pour l'écriture : une copie plus ancienne n'écrase jamais une plus récente
+    generation: u64,
+}
+
+/// Ce que donne la lecture initiale de `reponses.json`
+pub(crate) enum Lecture<'a> {
+    Absent,
+    Texte(&'a str),
+    Refusee,
 }
 
 /// Décision pure. Seul un contenu mal formé coupe la réponse automatique, et seul un administrateur peut l'écrire. Une
 /// lecture refusée (fichier absent, tenu ouvert par un compte autorisé, protection en échec) ne dit rien du contenu : la
 /// garde repart en mémoire, et la réponse reste (audit de #110, S110-03)
 fn etat_initial(texte: Option<&str>) -> Etat {
-    match texte.map(|t| serde_json::from_str::<Historique>(t.trim_start_matches('\u{feff}'))) {
-        Some(Ok(h)) => Etat { h, illisible: false, signale: false },
-        Some(Err(_)) => Etat { h: Historique::default(), illisible: true, signale: false },
-        None => Etat { h: Historique::default(), illisible: false, signale: false },
+    etat_depuis(texte.map_or(Lecture::Absent, Lecture::Texte))
+}
+
+/// Décision pure : absent, la garde part vide et le fichier sera écrit ; contenu mal formé, réponse automatique coupée
+/// (S110-03) ; lecture refusée, garde vide en mémoire, réponse gardée, fichier jamais écrasé (S110-13)
+fn etat_depuis(l: Lecture) -> Etat {
+    let vide = |illisible, ecriture_suspendue| Etat { h: Historique::default(), illisible, signale: false, ecriture_suspendue, a_ecrire: false, generation: 0 };
+    match l {
+        Lecture::Absent => vide(false, false),
+        Lecture::Refusee => vide(false, true),
+        Lecture::Texte(t) => match serde_json::from_str::<Historique>(t.trim_start_matches('\u{feff}')) {
+            Ok(h) => Etat { h, ..vide(false, false) },
+            Err(_) => vide(true, false),
+        },
+    }
+}
+
+/// Lecture initiale, hors du verrou : « absent » seulement si Windows dit que le fichier n'existe pas
+fn lecture_initiale() -> (Option<String>, bool) {
+    let chemin = commun::dossier().join(FICHIER);
+    match std::fs::symlink_metadata(&chemin) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, false),
+        Err(_) => (None, true),
+        Ok(_) => match commun::lire_fichier(&chemin) {
+            Some(t) => (Some(t), false),
+            None => (None, true),
+        },
     }
 }
 
@@ -674,19 +711,62 @@ pub fn retenue_a_journaliser(vues: &mut std::collections::HashMap<String, u64>, 
 }
 
 static ETAT: Mutex<Option<Etat>> = Mutex::new(None);
+/// Dernière copie écrite : les écritures se suivent sous ce verrou, jamais sous `ETAT`
+static ECRITURE: Mutex<u64> = Mutex::new(0);
 
+/// Le verrou `ETAT` ne couvre que la mémoire : la lecture initiale et les écritures sur le disque (avec `sync_all`) se
+/// font hors de lui, pour qu'un disque lent ne fige ni le cycle ni le fil des leurres (audit de #110, S110-04 et S110-16)
 fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
     let mut g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
-    let e = g.get_or_insert_with(|| {
-        let texte = commun::lire_fichier(&commun::dossier().join(FICHIER));
-        etat_initial(texte.as_deref())
-    });
-    f(e)
+    if g.is_none() {
+        drop(g);
+        let (texte, refusee) = lecture_initiale();
+        let lu = match (&texte, refusee) {
+            (_, true) => Lecture::Refusee,
+            (Some(t), false) => Lecture::Texte(t),
+            (None, false) => Lecture::Absent,
+        };
+        let e = etat_depuis(lu);
+        if e.ecriture_suspendue {
+            commun::journal(&format!("{FICHIER} présent mais illisible : garde en mémoire seulement, fichier gardé tel quel (S110-13)"));
+        }
+        g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some(e);
+        }
+    }
+    let e = g.as_mut().expect("état chargé");
+    let r = f(e);
+    let copie = if std::mem::take(&mut e.a_ecrire) { instantane(e) } else { None };
+    drop(g);
+    ecrire_copie(copie);
+    r
 }
 
-fn enregistrer(e: &Etat) {
-    if !e.illisible && commun::echec_protection().is_none() {
-        let _ = commun::ecrire(FICHIER, &e.h);
+/// Une écriture est due : faite à la sortie de `avec`, hors du verrou
+fn enregistrer(e: &mut Etat) {
+    e.a_ecrire = true;
+}
+
+/// Décision pure : copie à écrire, numérotée ; aucune si le contenu est illisible ou si la lecture a été refusée
+fn instantane(e: &mut Etat) -> Option<(u64, Historique)> {
+    if e.illisible || e.ecriture_suspendue || commun::echec_protection().is_some() {
+        return None;
+    }
+    e.generation += 1;
+    Some((e.generation, e.h.clone()))
+}
+
+/// Décision pure : une copie n'est écrite que si elle est plus récente que la dernière écrite
+pub(crate) fn copie_a_ecrire(numero: u64, derniere: u64) -> bool {
+    numero > derniere
+}
+
+fn ecrire_copie(copie: Option<(u64, Historique)>) {
+    let Some((n, h)) = copie else { return };
+    let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+    if copie_a_ecrire(n, *derniere) && commun::ecrire(FICHIER, &h).is_ok() {
+        *derniere = n;
     }
 }
 
@@ -854,6 +934,16 @@ pub fn decision_humaine(cible: &str, empreinte: Option<String>) {
         e.h.decision_humaine(cible, empreinte, maintenant());
         enregistrer(e);
     })
+}
+
+/// (illisible, écriture suspendue, copie prise) pour une lecture donnée, après une action notée
+#[cfg(test)]
+pub(crate) fn lecture_test(l: Lecture) -> (bool, bool, bool) {
+    let mut e = etat_depuis(l);
+    e.h.noter(Genre::Suspension, "c", 1_800_000_000);
+    enregistrer(&mut e);
+    let copie = instantane(&mut e).is_some();
+    (e.illisible, e.ecriture_suspendue, copie)
 }
 
 #[cfg(test)]

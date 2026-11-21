@@ -109,7 +109,9 @@ est retenue. Un administrateur peut toujours agir à la main.
 - **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Contenu mal
   formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
   rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
-  en mémoire, sans son historique, et la réponse reste.
+  en mémoire, sans son historique, et la réponse reste ; le fichier n'est alors jamais écrasé, et le journal du service le
+  dit (S110-13, 2026-11-21). Le fichier est lu et écrit hors du verrou de la garde : un disque lent ne fige ni le cycle ni
+  le fil des leurres, et une copie plus ancienne n'écrase jamais une plus récente (S110-04, S110-16).
 
 ## Durées et récupération (phase 6, dans le code)
 
