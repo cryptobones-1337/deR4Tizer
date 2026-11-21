@@ -14,6 +14,10 @@
 # un certificat dont la clé n'est pas dans CLE_SIGNATURE, ou sans CLE_SIGNATURE, aucune version n'est publiée
 # (plan avant la première version signée, bloc 0.1, 2026-11-21) : tant que la signature se fait sur le poste du
 # mainteneur (Certum, clé dans SimplySign, pas de .pfx), pousser un tag v* échoue à la vérification.
+# Limite (audit de #226, S226-02) : cette garde protège contre l'accident, pas contre quelqu'un qui peut pousser un
+# tag (le workflow exécuté est celui du commit tagué) ; les vraies protections sont la règle sur les tags v*
+# (création réservée au mainteneur), l'approbation de l'environnement « publication » sur signer et publier, et la
+# vérification sur chaque poste (clé épinglée, chaîne et révocation).
 name: Publication
 
 on:
@@ -29,11 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Le nom du tag n'est jamais inséré dans un script : il passe par l'environnement et doit être de la forme
+      # vX.Y ou vX.Y.Z (audit de #226, S226-01)
       - name: Le tag correspond à la version du code
         shell: pwsh
+        env:
+          REF: ${{ github.ref_name }}
         run: |
+          if ($env:REF -cnotmatch '^v\d+\.\d+(\.\d+)?$') { throw "Tag refusé : forme vX.Y ou vX.Y.Z attendue." }
           $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
+          if ("v$v" -ne $env:REF) { throw "Tag $env:REF différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
 
       - name: Rust stable
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -122,14 +131,18 @@ jobs:
 
       - name: Manifeste de mise à jour
         shell: pwsh
+        env:
+          REF: ${{ github.ref_name }}
+          DEPOT: ${{ github.repository }}
         run: |
           # Un seul fichier, le paquet MSI : c'est lui que les postes installent, et sa version y est lue après
           # vérification de sa signature (les exécutables restent joints à la version pour une installation manuelle)
-          $base = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          if ($env:REF -cnotmatch '^v\d+\.\d+(\.\d+)?$') { throw "Tag refusé : forme vX.Y ou vX.Y.Z attendue." }
+          $base = "https://github.com/$env:DEPOT/releases/download/$env:REF"
           $fichiers = foreach ($n in 'deR4Tizer.msi') {
             [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
           }
-          [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
+          [ordered]@{ Version = $env:REF.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
 
       # Échec fermé : rien n'est transmis au job « publier » si un des trois fichiers n'est pas signé (valide,
       # horodaté) par une clé de CLE_SIGNATURE ; la présence du secret ne suffit pas
@@ -152,6 +165,8 @@ jobs:
   publier:
     needs: signer
     runs-on: ubuntu-latest
+    # Approbation de l'environnement « publication » exigée aussi ici (audit de #226, S226-02)
+    environment: publication
     permissions:
       contents: write
     steps:
@@ -163,4 +178,8 @@ jobs:
       - name: Version GitHub
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} bin/deR4Tizer.msi bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --repo ${{ github.repository }} --title "deR4Tizer ${{ github.ref_name }}" --generate-notes
+          REF: ${{ github.ref_name }}
+          DEPOT: ${{ github.repository }}
+        run: |
+          [[ "$REF" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo "Tag refusé : forme vX.Y ou vX.Y.Z attendue."; exit 1; }
+          gh release create "$REF" bin/deR4Tizer.msi bin/deR4TizerSvc.exe bin/deR4Tizer.exe bin/manifeste.json --repo "$DEPOT" --title "deR4Tizer $REF" --generate-notes
