@@ -4,13 +4,16 @@
 # Trois jobs, pour que le certificat ne côtoie jamais de code tiers :
 #   compiler  sans secret : tests et compilation (les scripts de compilation des dépendances s'exécutent ici)
 #   signer    environnement « publication » (secrets, approbation) : reçoit seulement les exécutables, les
-#             signe, construit le MSI avec WiX (archive vérifiée par son empreinte), le signe, écrit le manifeste
-#   publier   crée la version GitHub avec les fichiers signés
+#             signe, construit le MSI avec WiX (archive vérifiée par son empreinte), le signe, écrit le manifeste,
+#             puis VÉRIFIE les trois signatures (verifier-signatures.ps1) : échec fermé
+#   publier   crée la version GitHub avec les fichiers signés ; ne tourne que si la vérification a réussi
 #
 # Secrets facultatifs (environnement « publication ») : CERTIFICAT_PFX (fichier .pfx en base64) et
 # CERTIFICAT_MOT_DE_PASSE. Variable de dépôt CLE_SIGNATURE : empreinte SHA-256 de la clé publique du
-# certificat (et de la suivante, séparées par une virgule), épinglée dans le binaire. Sans elles, les binaires
-# ne sont pas signés et les postes signalent la version sans l'installer.
+# certificat (et de la suivante, séparées par une virgule), épinglée dans le binaire. Sans certificat, ou avec
+# un certificat dont la clé n'est pas dans CLE_SIGNATURE, ou sans CLE_SIGNATURE, aucune version n'est publiée
+# (plan avant la première version signée, bloc 0.1, 2026-11-21) : tant que la signature se fait sur le poste du
+# mainteneur (Certum, clé dans SimplySign, pas de .pfx), pousser un tag v* échoue à la vérification.
 name: Publication
 
 on:
@@ -127,6 +130,14 @@ jobs:
             [ordered]@{ Nom = $n; Url = "$base/$n"; Sha256 = (Get-FileHash "bin/$n" -Algorithm SHA256).Hash.ToLower() }
           }
           [ordered]@{ Version = '${{ github.ref_name }}'.TrimStart('v'); Fichiers = @($fichiers) } | ConvertTo-Json -Depth 4 | Set-Content bin/manifeste.json -Encoding utf8NoBOM
+
+      # Échec fermé : rien n'est transmis au job « publier » si un des trois fichiers n'est pas signé (valide,
+      # horodaté) par une clé de CLE_SIGNATURE ; la présence du secret ne suffit pas
+      - name: Vérification des signatures (échec fermé)
+        shell: pwsh
+        env:
+          CLES: ${{ vars.CLE_SIGNATURE }}
+        run: ./verifier-signatures.ps1 -Cles "$env:CLES" -Fichiers bin/deR4Tizer.msi, bin/deR4TizerSvc.exe, bin/deR4Tizer.exe
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
