@@ -55,10 +55,10 @@ pub struct Processus {
     pub source: Arc<Mutex<String>>,
     /// État de l'audit des créations de processus (`Note` en u8) : décide qui analyse, l'audit ou WMI
     audit: Arc<AtomicU8>,
-    /// Alertes de processus déjà levées (PID, programme) : une seule par création, quelle que soit la source
-    signales: Arc<Mutex<HashMap<u32, (String, Instant)>>>,
+    /// Alertes de processus déjà levées (PID, programme, règle) : une seule par création, quelle que soit la source
+    signales: Arc<Mutex<HashMap<(u32, String, String), Instant>>>,
     /// Créations vues par l'audit, pour l'arbre des chaînes (vidées par le moniteur à chaque cycle)
-    pub creations: Arc<Mutex<Vec<Creation4688>>>,
+    pub creations: Arc<Mutex<std::collections::VecDeque<Creation4688>>>,
     /// 4688 lus avec et sans ligne de commande depuis le dernier relevé de l'état de l'audit
     lignes: Arc<Mutex<(u32, u32)>>,
 }
@@ -194,8 +194,9 @@ pub(crate) fn lire_4688(d: &HashMap<String, String>) -> Option<Creation4688> {
     })
 }
 
-/// Décision pure (testée) : sans Sysmon, l'audit (4688) analyse les créations de processus s'il est actif ou partiel ;
-/// sinon WMI. Une seule source analyse à la fois, l'autre ne fait que remplir le cache
+/// Décision pure (testée) : source publiée sans Sysmon, l'audit (4688) s'il est actif ou partiel, sinon WMI. Les deux
+/// sources analysent toujours chaque création (aucune fenêtre sans analyse quand l'audit est coupé ou le journal
+/// Sécurité bloqué, prérelecture de #244, D1) ; `deja_signale` fusionne leurs doublons
 pub(crate) fn audit_analyse(note_audit: u8) -> bool {
     note_audit == Note::Active as u8 || note_audit == Note::Partielle as u8
 }
@@ -211,7 +212,8 @@ fn nom_sans_extension(chemin: &str) -> String {
 /// Décision pure (testée) : description d'un processus d'après son 4688. Une ligne de commande absente du 4688 est prise
 /// dans le cache (trace WMI, lue pendant que le processus vivait), seulement si le cache décrit le même programme
 pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) -> InfoProcessus {
-    let meme = cache.filter(|i| nom_fichier_min(&i.image) == nom_fichier_min(&c.image));
+    // Cache récent seulement : une ligne d'un ancien processus du même PID n'est jamais prêtée (audit de #244, S244-06)
+    let meme = cache.filter(|i| nom_fichier_min(&i.image) == nom_fichier_min(&c.image) && i.vu.elapsed() < Duration::from_secs(120));
     let parent_chemin = c.parent_image.clone().or_else(|| meme.and_then(|i| i.parent_chemin.clone()));
     InfoProcessus {
         image: c.image.clone(),
@@ -222,20 +224,22 @@ pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) 
     }
 }
 
-/// Une alerte de processus déjà levée pour ce PID et ce programme compte 10 min
-const DUREE_SIGNALE: Duration = Duration::from_secs(600);
+/// Fenêtre de fusion des doublons : la trace WMI et le 4688 d'une même création arrivent à quelques secondes d'écart
+/// (journal relu toutes les 2 s) ; au-delà, une création nouvelle sous le même PID alerte (prérelecture de #244, D2)
+const DUREE_SIGNALE: Duration = Duration::from_secs(30);
 
-/// Décision pure (testée) : une seule alerte par création de processus, quelle que soit la source (passage de WMI à
-/// l'audit ou retour). Vrai si ce PID a déjà levé une alerte pour le même programme depuis moins de 10 min ; sinon la
-/// création est notée. Table bornée : pleine, l'alerte part sans être notée (jamais de silence)
-pub(crate) fn deja_signale(vus: &mut HashMap<u32, (String, Instant)>, pid: u32, image: &str, maintenant: Instant) -> bool {
-    vus.retain(|_, (_, t)| maintenant.saturating_duration_since(*t) < DUREE_SIGNALE);
-    let nom = nom_fichier_min(image);
-    if vus.get(&pid).is_some_and(|(n, _)| *n == nom) {
+/// Décision pure (testée) : une seule alerte par création de processus et par règle, quelle que soit la source (trace
+/// WMI et 4688 d'une même création). Vrai si ce PID a levé la même règle pour le même programme depuis moins de 30 s ;
+/// sinon la création est notée. Une règle plus forte vue par l'autre source (ligne de commande du 4688 absente de la
+/// trace WMI) alerte quand même. Table bornée : pleine, l'alerte part sans être notée (jamais de silence)
+pub(crate) fn deja_signale(vus: &mut HashMap<(u32, String, String), Instant>, pid: u32, image: &str, regle: &str, maintenant: Instant) -> bool {
+    vus.retain(|_, t| maintenant.saturating_duration_since(*t) < DUREE_SIGNALE);
+    let cle = (pid, nom_fichier_min(image), regle.to_string());
+    if vus.contains_key(&cle) {
         return true;
     }
     if vus.len() < 10_000 {
-        vus.insert(pid, (nom, maintenant));
+        vus.insert(cle, maintenant);
     }
     false
 }
@@ -319,13 +323,13 @@ impl Processus {
             source: Arc::new(Mutex::new("aucune".into())),
             audit: Arc::new(AtomicU8::new(Note::Inconnue as u8)),
             signales: Arc::new(Mutex::new(HashMap::new())),
-            creations: Arc::new(Mutex::new(Vec::new())),
+            creations: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             lignes: Arc::new(Mutex::new((0, 0))),
         }
     }
 
-    /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon. Ordre des
-    /// sources : Sysmon s'il est lu, sinon l'audit (4688) s'il est actif ou partiel, sinon WMI
+    /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon. Sysmon s'il est
+    /// lu ; sinon l'audit (4688) et WMI analysent tous deux chaque création, doublons fusionnés
     pub fn demarrer(&self, journaux_windows: bool, sur_dns: impl Fn(&str, &str) + Send + 'static) {
         // Sysmon illisible maintenant : WMI à la place (abonner suivrait le journal quand même, sans source entre-temps)
         if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {
@@ -383,11 +387,9 @@ impl Processus {
                 if info.parent_chemin.is_none() {
                     info.parent_chemin = Some(crate::natif::chemin_processus(ppid)).filter(|c| !c.is_empty());
                 }
-                // Audit actif ou partiel : il analyse ; la trace WMI ne fait que remplir le cache (ligne de commande
-                // d'un processus encore vivant, reprise par le 4688 qui n'en a pas)
-                if !audit_analyse(moi.audit.load(Ordering::Relaxed)) {
-                    moi.analyser(pid, &info);
-                }
+                // Toujours analysée, même audit actif : un audit coupé ou un journal Sécurité bloqué ne laisse aucune
+                // fenêtre sans analyse (prérelecture de #244, D1) ; le 4688 de la même création est fusionné
+                moi.analyser(pid, &info);
             }
             // Flux terminé : plus aucune création de processus n'est vue
             commun::journal("traces de processus WMI interrompues");
@@ -469,8 +471,8 @@ impl Processus {
         });
     }
 
-    /// Un 4688 : la création va à l'arbre des chaînes (un processus bref y garde son parent) ; analysée si l'audit est
-    /// la source retenue (sinon WMI le fait)
+    /// Un 4688 : la création va à l'arbre des chaînes (un processus bref y garde son parent) et elle est analysée (la
+    /// trace WMI de la même création, si elle a déjà alerté pour la même règle, est fusionnée)
     pub(crate) fn traiter_4688(&self, xml: &str) {
         let Some(c) = lire_4688(&evenements::donnees(xml)) else { return };
         {
@@ -480,17 +482,20 @@ impl Processus {
         {
             let mut v = self.creations.lock().unwrap();
             if v.len() >= 5_000 {
-                v.remove(0);
+                v.pop_front();
             }
-            v.push(c.clone());
-        }
-        if !audit_analyse(self.audit.load(Ordering::Relaxed)) {
-            return;
+            // Copie pour l'arbre : ligne bornée (l'analyse, elle, lit la ligne entière ; audit de #244, S244-04)
+            let mut pour_arbre = c.clone();
+            pour_arbre.ligne_commande = pour_arbre.ligne_commande.map(|l| l.chars().take(1024).collect());
+            v.push_back(pour_arbre);
         }
         let cache = self.infos.lock().unwrap().get(&c.pid).cloned();
         let info = info_depuis_4688(&c, cache.as_ref());
-        self.infos.lock().unwrap().insert(c.pid, info.clone());
         self.analyser(c.pid, &info);
+        // Cache (origine des connexions, gardé une heure) : ligne bornée à 8 192 caractères (audit de #244, S244-04)
+        let mut garde = info;
+        garde.ligne_commande = garde.ligne_commande.map(|l| l.chars().take(8192).collect());
+        self.infos.lock().unwrap().insert(c.pid, garde);
     }
 
     /// Source publiée dans etat.json : l'audit quand il analyse, sinon la source notée (Sysmon, WMI ou aucune)
@@ -503,9 +508,9 @@ impl Processus {
         self.audit.store(note as u8, Ordering::Relaxed);
     }
 
-    fn analyser(&self, pid: u32, p: &InfoProcessus) {
+    pub(crate) fn analyser(&self, pid: u32, p: &InfoProcessus) {
         if let Some(a) = alerte_processus(pid, p) {
-            if deja_signale(&mut self.signales.lock().unwrap(), pid, &p.image, Instant::now()) {
+            if deja_signale(&mut self.signales.lock().unwrap(), pid, &p.image, &a.regle, Instant::now()) {
                 return;
             }
             self.detections.lock().unwrap().push(a);

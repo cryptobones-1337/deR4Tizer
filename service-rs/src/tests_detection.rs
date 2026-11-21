@@ -625,7 +625,7 @@ fn attack_lot1_source_des_regles_de_processus() {
 #[test]
 fn attack_lot1_processus_termine_detecte_par_son_4688() {
     use crate::collectes::Note;
-    use crate::processus::Processus;
+    use crate::processus::{InfoProcessus, Processus};
     // Le défaut corrigé : sans Sysmon, un PowerShell bref était déjà terminé quand WMI l'interrogeait. Le 4688 porte
     // tout (programme, ligne de commande, parent) : PRC-002 se lève sans que le processus vive encore
     let p = Processus::nouveau();
@@ -645,12 +645,23 @@ fn attack_lot1_processus_termine_detecte_par_son_4688() {
     // Témoin négatif : PowerShell ordinaire, aucune alerte
     p.traiter_4688(&xml_4688("0xfffff8", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", Some("powershell.exe -NoProfile -File C:\\scripts\\sauvegarde.ps1"), "0xfffff4", None));
     assert!(p.detections.lock().unwrap().is_empty(), "PowerShell ordinaire");
-    // Audit non retenu (WMI analyse) : le 4688 ne fait que nourrir l'arbre, aucune alerte en double
+    // Prérelecture de #244, D1 : audit noté actif mais aucun 4688 livré (audit coupé depuis le dernier relevé, journal
+    // bloqué) : la création vue par WMI alerte quand même ; son 4688, s'il arrive ensuite, est fusionné
     let q = Processus::nouveau();
-    q.regler_audit_test(Note::Desactivee);
+    q.regler_audit_test(Note::Active);
+    let trace = InfoProcessus::pour_test(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        Some("powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA"),
+        Some(r"C:\Windows\System32\cmd.exe"));
+    q.analyser(0xfffff0, &trace);
+    assert_eq!(q.detections.lock().unwrap().len(), 1, "audit actif sans 4688 : WMI alerte");
     q.traiter_4688(&x);
-    assert!(q.detections.lock().unwrap().is_empty());
-    assert_eq!(q.creations.lock().unwrap().len(), 1);
+    assert_eq!(q.detections.lock().unwrap().len(), 1, "4688 de la même création fusionné");
+    // Audit jamais activé : un 4688 qui arriverait quand même est analysé (aucune source n'est tue)
+    let r = Processus::nouveau();
+    r.regler_audit_test(Note::Desactivee);
+    r.traiter_4688(&x);
+    assert_eq!(r.detections.lock().unwrap().len(), 1);
+    assert_eq!(r.creations.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -659,10 +670,12 @@ fn attack_lot1_une_alerte_par_creation_et_cache_wmi() {
     use std::time::{Duration, Instant};
     let mut vus = std::collections::HashMap::new();
     let t = Instant::now();
-    assert!(!deja_signale(&mut vus, 50, r"C:\x\PowerShell.exe", t));
-    assert!(deja_signale(&mut vus, 50, "powershell.exe", t + Duration::from_secs(5)), "même PID, même programme (chemin WMI ou 4688)");
-    assert!(!deja_signale(&mut vus, 50, r"C:\x\cmd.exe", t + Duration::from_secs(6)), "PID réutilisé par un autre programme");
-    assert!(!deja_signale(&mut vus, 51, r"C:\x\cmd.exe", t + Duration::from_secs(700)), "après 10 min");
+    assert!(!deja_signale(&mut vus, 50, r"C:\x\PowerShell.exe", "PRC-002", t));
+    assert!(deja_signale(&mut vus, 50, "powershell.exe", "PRC-002", t + Duration::from_secs(5)), "même création vue par l'autre source");
+    assert!(!deja_signale(&mut vus, 50, "powershell.exe", "PRC-005", t + Duration::from_secs(5)), "règle plus forte vue par l'autre source");
+    assert!(!deja_signale(&mut vus, 50, r"C:\x\cmd.exe", "PRC-002", t + Duration::from_secs(6)), "PID réutilisé par un autre programme");
+    // Prérelecture de #244, D2 : même PID, même programme, création nouvelle deux minutes plus tard : elle alerte
+    assert!(!deja_signale(&mut vus, 50, "powershell.exe", "PRC-002", t + Duration::from_secs(120)), "création nouvelle sous le même PID");
     // Ligne de commande absente du 4688 : reprise du cache WMI du même programme, jamais d'un autre
     let c = Creation4688 { pid: 9, image: r"C:\W\powershell.exe".into(), ligne_commande: None, ppid: Some(8), parent_image: None };
     let wmi = InfoProcessus::pour_test(r"C:\W\powershell.exe", Some("powershell -enc AAAA"), Some(r"C:\W\cmd.exe"));
@@ -690,6 +703,10 @@ fn attack_lot1_cha_001_processus_bref_garde_son_parent() {
     let mut liste: std::collections::HashMap<u32, crate::natif::InfoListe> = std::collections::HashMap::new();
     liste.insert(200, crate::natif::InfoListe { nom: "cmd".into(), parent: 100 });
     arbre.maj(&liste);
+    // Audit de #244, S244-01 : un 4688 en retard (ancien processus du PID 200) n'efface pas les signaux de cmd, vivant
+    arbre.creation(200, Some(100), r"C:\Windows\System32\whoami.exe", None);
+    arbre.signaler(200, 1, "autre indice");
+    assert_eq!(arbre.chaines().iter().map(|c| c.score).max(), Some(13), "signaux du processus vivant gardés");
     arbre.creation(600, Some(500), r"C:\Windows\notepad.exe", None);
     assert!(arbre.alertes(&arbre.chaines()).is_empty(), "PID réutilisé : signaux de l'ancien programme effacés");
 }

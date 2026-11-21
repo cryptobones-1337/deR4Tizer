@@ -101,9 +101,14 @@ processus déjà terminé. Collecte `AuditProcessus`, relue toutes les 5 min : �
 réglée et vue) ; « Partielle » (ligne de commande absente : PRC-001 lit le 4688, PRC-002 à PRC-005 prennent la ligne
 de commande dans WMI) ; « Desactivee » (audit jamais activé : la baseline n'est pas appliquée, comme Sysmon absent) ;
 « Indisponible » (audit coupé après avoir été actif, réglage illisible, journal Sécurité illisible). Dans les trois
-derniers cas, le repli sur WMI est dit dans la raison, et un poste géré (baseline en lecture seule) est nommé. Une seule
-source analyse à la fois (l'audit s'il est actif ou partiel, sinon WMI, qui sinon ne fait que remplir le cache) ; une
-alerte déjà levée pour un PID et le même programme dans les 10 min n'est pas répétée par l'autre source.
+derniers cas, le repli sur WMI est dit dans la raison, et un poste géré (baseline en lecture seule) est nommé. Les deux
+sources analysent chaque création (aucune fenêtre sans analyse quand l'audit est coupé ou le journal bloqué) ; la même
+règle levée pour un PID et le même programme dans les 30 s n'est pas répétée par l'autre source. Limites : un audit
+coupé avant un redémarrage du service est dit « non activé » (l'état n'est gardé qu'en mémoire) ; un Windows dont
+`auditpol` n'est ni en anglais ni en français fait lire l'audit « non activé » (WMI prend le relais) ; `auditpol` figé
+laisse l'état au dernier relevé (WMI analyse de toute façon) ; un 4688 en retard ne remplace pas, dans l'arbre des
+chaînes, un processus vivant de même PID ; lignes de commande bornées à 1 024 caractères dans l'arbre, 300 dans les
+chaînes publiées, 8 192 dans le cache.
 « Partielle » (WMI sans Sysmon ni audit actif) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées
 dégradées.
 
