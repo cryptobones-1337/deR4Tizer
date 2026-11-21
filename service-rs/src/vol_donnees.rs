@@ -177,8 +177,9 @@ pub(crate) fn leurre_connu(chemin: &str, dossiers: &DossiersFermes, signe: &dyn 
 /// Décision pure : « connu » seulement si, en plus, le programme et ses dossiers sont fermés en écriture et qu'il tourne
 /// sous SYSTEM ou un administrateur (décision du mainteneur du 2026-11-21, S110-14, S114-01 et S114-02). Les droits ne
 /// sont lus que pour un candidat déjà retenu par le chemin, le nom et l'éditeur
-pub(crate) fn leurre_connu_garanti(chemin: &str, dossiers: &DossiersFermes, signe: &dyn Fn(&[&str]) -> bool, ferme: &dyn Fn(&str) -> bool, privilegie: bool) -> bool {
-    privilegie && leurre_connu(chemin, dossiers, signe) && ferme(chemin)
+pub(crate) fn leurre_connu_garanti(chemin: &str, dossiers: &DossiersFermes, signe: &dyn Fn(&[&str]) -> bool, ferme: &dyn Fn(&str) -> bool, privilegie: &dyn Fn() -> bool) -> bool {
+    // Le jeton n'est lu que pour un candidat déjà retenu (audit de #228, S228-03)
+    leurre_connu(chemin, dossiers, signe) && ferme(chemin) && privilegie()
 }
 
 /// Logiciel connu (dossier fermé, couple nom et éditeur vérifié, droits et compte contrôlés) qui peut toucher un leurre
@@ -186,8 +187,7 @@ pub(crate) fn leurre_connu_garanti(chemin: &str, dossiers: &DossiersFermes, sign
 pub fn leurre_autorise(pid: u32, chemin: &str) -> bool {
     let d = dossiers_fermes();
     let racines: Vec<String> = d.arbres.iter().chain(d.directs.iter()).cloned().collect();
-    let privilegie = crate::natif::compte_privilegie(pid) == Some(true);
-    leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), privilegie)
+    leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), &|| crate::natif::compte_privilegie(pid) == Some(true))
 }
 
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)

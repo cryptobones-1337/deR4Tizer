@@ -6466,7 +6466,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), t);"), "S113-06 : la trace porte l'heure de création");
     assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), \"\") {"), "6.3 : racine de la chaîne");
     assert!(m.contains("filter(|(p, i)| match execution::tuer(&a, *p, i) {"), "6.3 : descendants, identité relevée à la décision");
-    assert!(v.contains("leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), privilegie)"), "S113-10 : dossier fermé en production, droits et compte contrôlés");
+    assert!(v.contains("leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), &|| crate::natif::compte_privilegie(pid) == Some(true))"), "S113-10 : dossier fermé en production, droits et compte contrôlés");
     assert!(v.contains("Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {"), "6.3 : le leurre passe l'identité");
     let rp = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(rp.contains("agir(pid, attendu, PROCESS_TERMINATE, true,") && rp.contains("agir(pid, attendu, PROCESS_SUSPEND_RESUME, suspendre,"), "6.3 : action par le handle, contrôle critique pour tuer et suspendre");
@@ -8860,6 +8860,24 @@ fn publication_aucun_nom_de_titulaire_dans_le_journal() {
     let s = include_str!("../../verifier-signatures.ps1");
     for interdit in [".Subject", ".Issuer", "FriendlyName", "GetNameInfo"] {
         assert!(!s.contains(interdit), "{interdit} dans la sortie possible du script");
+    }
+}
+
+#[test]
+fn publication_tag_jamais_insere_et_revocation_verifiee() {
+    // Audit de #226 : le nom du tag ne passe que par l'environnement et doit être vX.Y(.Z) (S226-01) ; publier exige
+    // l'environnement « publication » (S226-02) ; la révocation est vérifiée en ligne, inconnu = refus (S226-03)
+    let wf = include_str!("../../.github/workflows/publication.yml");
+    let hors_env: Vec<&str> = wf.lines().filter(|l| l.contains("${{ github.ref_name }}") && !l.trim_start().starts_with("REF:")).collect();
+    assert!(hors_env.is_empty(), "nom du tag inséré dans un script : {hors_env:?}");
+    assert!(wf.matches(r"-cnotmatch '^v\d+\.\d+(\.\d+)?$'").count() >= 2, "forme du tag validée avant le manifeste");
+    assert!(wf.contains(r#"[[ "$REF" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]"#), "forme du tag validée dans publier");
+    let publier = wf.find("  publier:").unwrap();
+    assert!(wf[publier..].contains("environment: publication"), "approbation exigée pour publier");
+    let s = include_str!("../../verifier-signatures.ps1");
+    assert!(s.contains("X509RevocationMode]::Online") && s.contains("'RevocationStatusUnknown'") && s.contains("'Revoked'"));
+}
+
 #[test]
 fn s110_14_droits_compte_et_hotes_de_scripts() {
     // Décision du mainteneur du 2026-11-21 (S110-14, S113-10, S114-01, S114-02)
@@ -8895,19 +8913,6 @@ fn s110_14_droits_compte_et_hotes_de_scripts() {
 }
 
 #[test]
-fn publication_tag_jamais_insere_et_revocation_verifiee() {
-    // Audit de #226 : le nom du tag ne passe que par l'environnement et doit être vX.Y(.Z) (S226-01) ; publier exige
-    // l'environnement « publication » (S226-02) ; la révocation est vérifiée en ligne, inconnu = refus (S226-03)
-    let wf = include_str!("../../.github/workflows/publication.yml");
-    let hors_env: Vec<&str> = wf.lines().filter(|l| l.contains("${{ github.ref_name }}") && !l.trim_start().starts_with("REF:")).collect();
-    assert!(hors_env.is_empty(), "nom du tag inséré dans un script : {hors_env:?}");
-    assert!(wf.matches(r"-cnotmatch '^v\d+\.\d+(\.\d+)?$'").count() >= 2, "forme du tag validée avant le manifeste");
-    assert!(wf.contains(r#"[[ "$REF" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]"#), "forme du tag validée dans publier");
-    let publier = wf.find("  publier:").unwrap();
-    assert!(wf[publier..].contains("environment: publication"), "approbation exigée pour publier");
-    let s = include_str!("../../verifier-signatures.ps1");
-    assert!(s.contains("X509RevocationMode]::Online") && s.contains("'RevocationStatusUnknown'") && s.contains("'Revoked'"));
-}
 fn s110_14_connu_seulement_garanti() {
     use crate::vol_donnees::leurre_connu_garanti as c;
     let d = dossiers_de_test();
@@ -8915,15 +8920,40 @@ fn s110_14_connu_seulement_garanti() {
     let ferme = |_: &str| true;
     let ouvert = |_: &str| false;
     let p = r"C:\Program Files\Microsoft OneDrive\OneDrive.exe";
-    assert!(c(p, &d, &oui, &ferme, true));
-    assert!(!c(p, &d, &oui, &ouvert, true), "dossier ouvert en écriture : jamais connu");
-    assert!(!c(p, &d, &oui, &ferme, false), "compte de l'utilisateur : jamais connu");
+    let vrai = || true;
+    let faux = || false;
+    assert!(c(p, &d, &oui, &ferme, &vrai));
+    assert!(!c(p, &d, &oui, &ouvert, &vrai), "dossier ouvert en écriture : jamais connu");
+    assert!(!c(p, &d, &oui, &ferme, &faux), "compte de l'utilisateur : jamais connu");
     let lus = std::cell::Cell::new(0);
     let compte = |_: &str| { lus.set(lus.get() + 1); true };
-    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui, &compte, true));
+    let jetons = std::cell::Cell::new(0);
+    let jeton = || { jetons.set(jetons.get() + 1); true };
+    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui, &compte, &jeton));
     assert_eq!(lus.get(), 0, "droits non lus hors d'un candidat");
+    assert_eq!(jetons.get(), 0, "jeton non lu hors d'un candidat (S228-03)");
     let v = include_str!("vol_donnees.rs");
     assert!(v.contains("let connu = leurre_autorise(pid, &programme);"));
     assert!(v.contains("crate::politique::genre_suspension_garanti(programme, signe, &dossiers, ferme, privilegie)"));
 }
 
+#[test]
+fn s228_01_liste_d_acceptation_des_droits() {
+    // Audit de #228, S228-01 : écriture ou propriété hors de SYSTEM, Administrateurs, TrustedInstaller et des comptes de
+    // service = ouvert
+    use crate::natif::{Ace, Securite};
+    use crate::politique::ouvert_en_ecriture as o;
+    let ti = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+    let ace = |sid: &str, masque: u32| Ace { autorise: true, masque, sid: sid.into() };
+    let sec = |prop: &str, aces: Vec<Ace>| Securite { proprietaire: prop.into(), protege: false, aces, ace_inconnue: false };
+    let defaut = vec![ace("S-1-5-18", 0x1f01ff), ace("S-1-5-32-544", 0x1f01ff), ace(ti, 0x1f01ff), ace("S-1-5-32-545", 0x1200a9), ace("S-1-3-0", 0x1000_0000), ace("S-1-15-2-1", 0x1200a9)];
+    assert!(!o(Some(&sec(ti, defaut.clone()))), "Program Files par défaut : fermé");
+    assert!(!o(Some(&sec("S-1-5-80-123-456", defaut.clone()))), "propriétaire compte de service");
+    for sid in ["S-1-5-21-1-2-3-1001", "S-1-2-0", "S-1-2-1", "S-1-15-2-1", "S-1-5-19", "S-1-5-80-"] {
+        let mut a = defaut.clone();
+        a.push(ace(sid, 0x2));
+        assert!(o(Some(&sec(ti, a))), "écriture pour {sid}");
+    }
+    assert!(o(Some(&sec("S-1-5-21-1-2-3-1001", defaut.clone()))), "propriétaire utilisateur");
+    assert!(o(Some(&sec("", defaut.clone()))), "propriétaire illisible");
+}

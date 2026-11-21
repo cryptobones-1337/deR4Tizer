@@ -89,7 +89,7 @@ est retenue. Un administrateur peut toujours agir à la main.
   rançongiciel ne doit pouvoir s'exempter ni avec des programmes jetables, ni en se lançant quatre fois, ni par trois touches
   via `powershell.exe`. Seul un programme signé installé dans Program Files, hors interpréteurs, a un seuil ; depuis le
   2026-11-21 (décision du mainteneur, S110-14), il faut aussi que le programme et ses dossiers soient fermés en écriture
-  aux comptes ordinaires (droits lus) et qu'il tourne sous SYSTEM ou un administrateur, et la liste des interpréteurs est
+  (seuls SYSTEM, Administrateurs, TrustedInstaller ou un compte de service y écrivent ou en sont propriétaires) et qu'il tourne sous SYSTEM ou un administrateur, et la liste des interpréteurs est
   complétée (dotnet, deno, bun, Lua, R, Julia, Tcl, AutoHotkey, AutoIt, MSBuild, csi). En contrepartie,
   un programme légitime hors de ce cas est suspendu à chaque touche, et un programme relancé en boucle s'accumule, suspendu,
   jusqu'à ce qu'un administrateur le reprenne ou l'arrête. Le seuil de Program Files reste utilisable par un programme signé
