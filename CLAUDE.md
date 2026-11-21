@@ -336,9 +336,12 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        remise à son instantané « propre » après la campagne.
      - Troisième instantané, « campagne C », configuration principale de mesure, décidée par le mainteneur le
        2026-11-14 (« pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait ») : « campagne A » plus la baseline de deR4Tizer appliquée par le service lui-même
-       (`baseline appliquer`, profils journalisation, recommandé et renforcé, en une seule commande), puis un
-       redémarrage. A reste la comparaison sans baseline, B la collecte Sysmon. La baseline refuse le Bureau à
-       distance : la force brute par Bureau à distance et les essais D4-1 se font en configuration A.
+       (`baseline appliquer`, profils journalisation, recommandé et renforcé en une commande, puis
+       `reseau.bureau-distance` seule, depuis la liste v1.6 du 2026-11-20 : appliquée avec le profil, cette règle est
+       laissée de côté quand le Bureau à distance est activé, ce qu'il est dans « campagne A » ; l'appliquer seule garde
+       la baseline à 100 % voulue par le mainteneur), puis un redémarrage. A reste la comparaison sans baseline, B la
+       collecte Sysmon. En C, la baseline refuse le Bureau à distance : la force brute par Bureau à distance et les
+       essais D4-1 se font en configuration A.
      - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
        résultat, jamais un obstacle à contourner. En configuration C, Defender ne change que par la baseline de
        deR4Tizer, jamais à la main, et jamais en l'affaiblissant : son état est relevé avant et après (scénario
