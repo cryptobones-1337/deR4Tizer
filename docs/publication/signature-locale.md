@@ -42,7 +42,9 @@ compile, le poste du mainteneur signe. Décisions du mainteneur du 2026-11-21 :
 
 ## Ce que le script vérifie, et où il s'arrête
 
-Il s'arrête à la première vérification en échec, sans rien publier :
+Il s'arrête à la première vérification en échec, sans rien publier. Après un arrêt, le dossier de travail (indiqué au
+début, dans `%TEMP%`) garde les exécutables non signés et les fichiers déjà signés pour le diagnostic : l'effacer
+ensuite.
 
 - tag de la forme `vX.Y` ou `vX.Y.Z`, égal à la version du code ; copie du dépôt au commit du tag et propre ;
 - clé du certificat dans `CLE_SIGNATURE` (seule l'empreinte de la clé est affichée, jamais le nom du titulaire) ;
