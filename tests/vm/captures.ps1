@@ -1,7 +1,8 @@
 ﻿# Captures réelles de l'interface (phase « Interface et assistant d'installation », U0 : docs/roadmap/interface.md), dans
 # la VM de test (jamais sur un poste réel). Installe le service, le laisse tourner quelques cycles, puis ouvre chaque page
 # de l'interface installée (--page), en français puis en anglais, et enregistre la fenêtre en PNG dans la sortie du
-# scénario. Les captures servent de référence avant la refonte : elles ne sont pas publiées dans le dépôt.
+# scénario. Une attaque de démonstration sans effet est lancée avant l'attente, pour que les pages montrent de vraies
+# alertes. Les captures anglaises de la coquille (Vue d'ensemble, Alertes, Connexions) sont celles du README.
 #
 # Il faut une session interactive à la console (celle de l'instantané) : sans bureau, la capture serait noire, et le
 # scénario le dit (NON EXÉCUTÉ) au lieu de rendre des images vides. Mise à l'échelle : celle de la session (relevée) ;
@@ -159,9 +160,82 @@ if (-not $installe) {
 } elseif (-not [D4tCapture]::Interactif()) {
     NonExecute 'Captures' "pas de bureau visible à la console ($poste) : il faut une session ouverte à la console"
 } else {
+    # Notifications de la session coupées pendant les captures (VM jetable) : une notification de Windows ou de
+    # deR4Tizer (« interface arrêtée 3 fois en une heure », provoquée par les relances de ce scénario) recouvrait la
+    # fenêtre capturée. Réglage de l'utilisateur de la session ; la VM revient à son instantané après le scénario
+    New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    # Attaque de démonstration, sans effet, pour que les captures montrent de vraies alertes : une ligne de commande qui
+    # porte la suppression des sauvegardes (PRC-005, Critique) sans l'exécuter (« rem » : commentaire de cmd), et un
+    # PowerShell encodé qui ne fait qu'attendre (PRC-002). Rien n'est supprimé ni téléchargé ; VM seulement (refus en
+    # tête de script). Sans Sysmon, les démarrages sont relevés par WMI à intervalles : les deux processus vivent 3 min
+    # (un processus qui se ferme aussitôt passe inaperçu, vu au premier essai), lancés une fois la surveillance en route
+    Start-Sleep 30
+    Verifier 'Attaque de démonstration lancée (sans effet)' {
+        Start-Process cmd.exe -ArgumentList '/c', '"ping -n 180 127.0.0.1 >nul & rem vssadmin delete shadows /all /quiet"' -WindowStyle Hidden -ErrorAction SilentlyContinue
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Start-Sleep -Seconds 180'))
+        Start-Process powershell.exe -ArgumentList '-NoProfile', '-WindowStyle', 'Hidden', '-EncodedCommand', $enc -WindowStyle Hidden -ErrorAction SilentlyContinue
+        $true
+    }
     # Quelques cycles de surveillance : les pages montrent l'état réel d'une première ouverture
     Start-Sleep ($Minutes * 60)
     $index = New-Object System.Collections.Generic.List[string]
+    # Jeu du README d'abord, en anglais : avant le résumé de Microsoft Defender, qui s'affiche une dizaine de minutes
+    # après le démarrage et ne suit pas le réglage des notifications. Vue d'ensemble, Connexions, puis l'alerte critique
+    # de l'attaque de démonstration ouverte (filtre « Critical », première ligne ouverte par Entrée, UI Automation)
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
+    $okReadme = $true
+    # Notifications de Windows encore affichées (résumé de Defender) : fermées par leur bouton, trouvé par UI Automation
+    # dans les fenêtres « New notification » / « Nouvelle notification » ; rien d'autre n'est touché. Puis 2 s d'attente
+    function Fermer-Notifications {
+        $bureau = [Windows.Automation.AutomationElement]::RootElement
+        $fenetres = $bureau.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -match '^(New notification|Nouvelle notification)$' }
+        foreach ($f in $fenetres) {
+            $boutons = $f.FindAll([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)))
+            foreach ($b in @($boutons | Where-Object { $_.Current.Name -match '^(Dismiss|Close|Ignorer|Fermer)' })) {
+                try { $b.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() } catch { }
+            }
+        }
+        Start-Sleep 2
+    }
+    Verifier 'README : langue en envoyée au service' { try { Langue 'en'; $true } catch { $script:okReadme = $false; $_.Exception.Message } }
+    if ($okReadme) {
+        foreach ($page in "Vue d'ensemble", 'Connexions') {
+            Verifier "README : capture en de $page" {
+                $o = Ouvrir-Interface @('--fluent', '--page', "`"$page`"")
+                if ($o.Erreur) { return $o.Erreur }
+                Start-Sleep 5
+                Fermer-Notifications
+                $b = [D4tCapture]::Ecran($o.P.MainWindowHandle)
+                if (-not $b) { return 'fenêtre illisible' }
+                try { $b.Save((Join-Path $dossierCaptures ('readme-en-' + (Nom-Fichier $page) + '.png')), [Drawing.Imaging.ImageFormat]::Png) } finally { $b.Dispose() }
+                $true
+            }
+        }
+        foreach ($filtre in 'Critical', 'Alerts') {
+            Verifier "README : alerte de l'attaque de démonstration ouverte (filtre $filtre)" {
+                $o = Ouvrir-Interface @('--fluent', '--page', '"Alertes"')
+                if ($o.Erreur) { return $o.Erreur }
+                Start-Sleep 5
+                [D4tCapture]::Avant($o.P.MainWindowHandle)
+                $racine = [Windows.Automation.AutomationElement]::FromHandle($o.P.MainWindowHandle)
+                $boutons = $racine.FindAll([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)))
+                $bouton = @($boutons | Where-Object { $_.Current.Name -like "$filtre (*" }) | Select-Object -First 1
+                if (-not $bouton) { return "filtre « $filtre » introuvable" }
+                if ($bouton.Current.Name -eq "$filtre (0)") { return "aucune alerte dans le filtre « $filtre »" }
+                $bouton.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep 1
+                $lignes = $racine.FindAll([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ClassNameProperty, 'Ligne')))
+                if ($lignes.Count -lt 1) { return 'aucune ligne après le filtre' }
+                $lignes[0].SetFocus(); Start-Sleep -Milliseconds 500
+                [Windows.Forms.SendKeys]::SendWait('{ENTER}'); Start-Sleep 2
+                Fermer-Notifications
+                $b = [D4tCapture]::Ecran($o.P.MainWindowHandle)
+                if (-not $b) { return 'fenêtre illisible' }
+                try { $b.Save((Join-Path $dossierCaptures ('readme-en-alerte-' + $filtre.ToLowerInvariant() + '.png')), [Drawing.Imaging.ImageFormat]::Png) } finally { $b.Dispose() }
+                $true
+            }
+        }
+    }
     foreach ($code in 'fr', 'en') {
         $okLangue = $true
         Verifier "Langue $code envoyée au service" { try { Langue $code; $true } catch { $script:okLangue = $false; $_.Exception.Message } }
@@ -193,7 +267,8 @@ if (-not $installe) {
         Verifier "Pilote, langue $code envoyée au service" { try { Langue $code; $true } catch { $script:okLangue = $false; $_.Exception.Message } }
         if (-not $okLangue) { continue }
         # Premiers réglages (U7a) : page hors de la navigation, ouverte par --page comme les autres
-        foreach ($page in @("Vue d'ensemble") + $pages + @('Premiers réglages')) {
+        # Navigation (phase 7.5b) n'existe que dans la coquille
+        foreach ($page in @("Vue d'ensemble") + $pages + @('Navigation', 'Premiers réglages')) {
             Verifier "Capture du pilote $code : $page" {
                 $o = Ouvrir-Interface @('--fluent', '--page', "`"$page`"")
                 if ($o.Erreur) { return $o.Erreur }
@@ -212,6 +287,7 @@ if (-not $installe) {
             }
         }
     }
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
     # Essai clavier du focus rendu (relecture de #205, défaut A) : page Santé de la coquille (rafraîchie toutes les 15 s),
     # première ligne ouverte par Entrée, trois flèches vers le bas sans Entrée, puis 20 s : le focus doit être resté sur la
     # quatrième ligne, pas revenu à la ligne ouverte. Élément focalisé lu par UI Automation, comme un lecteur d'écran
