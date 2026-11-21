@@ -113,7 +113,9 @@ est retenue. Un administrateur peut toujours agir à la main.
   dit (S110-13, 2026-11-21). Le fichier est lu hors du verrou de la garde, et écrit par un fil dédié qui ne garde que la
   copie la plus récente : le cycle et le fil des leurres déposent la copie sans attendre le disque ; une commande
   d'administrateur (ouvrir, clore, lever, décision humaine) ne répond qu'une fois sa copie écrite, 10 s au plus, pour que
-  l'interface relise un fichier à jour ; une copie plus ancienne
+  l'interface relise un fichier à jour ; cette attente se fait une seule fois, à la fin de la commande, après avoir rendu
+  le verrou du moniteur : un disque lent ne retarde plus le cycle (revue de l'auditeur du 2026-11-21, point 2 ; mesuré
+  avec une écriture ralentie à 800 ms : le cycle attendait 700 ms, il n'attend plus) ; une copie plus ancienne
   n'écrase jamais une plus récente, et une écriture en échec est réessayée 5 s plus tard (S110-04, S110-16, S230-01,
   S230-02). Limite : la dernière copie peut être perdue si le service s'arrête avant son écriture ; un fichier refusé à la
   lecture initiale n'est pas relu avant le prochain démarrage (S230-03).
