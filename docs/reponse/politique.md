@@ -122,8 +122,8 @@ est retenue. Un administrateur peut toujours agir à la main.
   (point 1) : le journal du service dit seulement le premier échec d'écriture d'une série et le retour à la normale, et
   la page Santé montre une ligne « Registre des réponses » en échec tant que le fichier n'est pas écrit, ou quand la
   lecture initiale a été refusée (les échéances de la session seront alors perdues au redémarrage) ; le service publie un
-  code dans etat.json (`RegistreReponses` : vide, `EcritureEnEchec` avec `RegistreReponsesDepuis`, ou `LectureRefusee`),
-  traduit par l'interface.
+  code dans etat.json (`RegistreReponses` : vide, `EcritureEnEchec` avec `RegistreReponsesDepuis`, `LectureRefusee`,
+  `ContenuIllisible` ou `ProtectionEnEchec` : tous les cas où rien n'est écrit), traduit par l'interface.
 
 ## Durées et récupération (phase 6, dans le code)
 

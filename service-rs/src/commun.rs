@@ -81,8 +81,9 @@ pub struct Etat {
     pub exposition: crate::parefeu::Exposition,
     /// Vide si la protection du dossier de données est vérifiée ; sinon la raison de l'échec
     pub protection_donnees: String,
-    /// Registre des réponses (reponses.json) : vide s'il est écrit normalement ; « EcritureEnEchec » (avec le début de
-    /// l'échec) ou « LectureRefusee » (échéances de la session perdues au redémarrage). Code traduit par l'interface
+    /// Registre des réponses (reponses.json) : vide s'il est écrit normalement ; sinon « EcritureEnEchec » (avec le début
+    /// de l'échec), « LectureRefusee », « ContenuIllisible » ou « ProtectionEnEchec » (échéances de la session perdues au
+    /// redémarrage). Code traduit par l'interface
     pub registre_reponses: String,
     pub registre_reponses_depuis: String,
     /// État de chaque collecte (phase 3.3) et règles dont la télémétrie n'est pas lue (ou ne l'est qu'en partie)
