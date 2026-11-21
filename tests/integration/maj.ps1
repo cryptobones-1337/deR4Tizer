@@ -195,6 +195,61 @@ Verifier 'curl.exe (Schannel) accepte le serveur local en HTTPS, révocation vé
     $true
 }
 
+# ---------------------------------------------------------------- script de publication exécuté (bloc 0.1, revue
+# externe du 2026-11-21, défaut 2) : verifier-signatures.ps1 sur de vrais paquets signés, avec la clé épinglée dans
+# les binaires de test (même empreinte que le service). Code 1 et message attendu à chaque refus, code 0 seulement
+# pour un paquet signé par la clé épinglée, horodaté, dont la chaîne et la révocation se vérifient
+$verifierSig = Join-Path $PSScriptRoot '..\..\verifier-signatures.ps1'
+function Publication([string]$Cles, [string]$Fichier) {
+    $s = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifierSig -Cles $Cles -Fichiers $Fichier 2>&1 | Out-String
+    @{ Code = $LASTEXITCODE; Sortie = $s }
+}
+function Refus-Publication([string]$Cles, [string]$Fichier, [string]$Motif) {
+    $r = Publication $Cles $Fichier
+    if ($r.Code -ne 1) { return "code $($r.Code) au lieu de 1 : $($r.Sortie)" }
+    if ($r.Sortie -notmatch $Motif) { return "refus sans le motif attendu « $Motif » : $($r.Sortie)" }
+    $true
+}
+Verifier 'Publication : liste de clés vide, refus (code 1)' { Refus-Publication '' (Msi $Nouvelle) 'CLE_SIGNATURE absente ou invalide' }
+Verifier 'Publication : fichier non signé, refus (code 1)' { Refus-Publication $cle $ArtefactCi 'signature NotSigned' }
+Verifier 'Publication : clé non épinglée, refus (code 1)' { Refus-Publication $cle (Msi "$Nouvelle-autre") 'non épinglée' }
+Verifier 'Publication : clé épinglée sans horodatage, refus (code 1)' { Refus-Publication $cle (Msi $Nouvelle) 'sans horodatage' }
+# Copies horodatées : seule la signature change (même certificat), l'horodatage vient d'une autorité publique
+$horodates = Join-Path $env:RUNNER_TEMP 'd4t-horodates'
+New-Item -ItemType Directory -Force -Path $horodates | Out-Null
+$signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+$mdpPki = (Get-Content (Join-Path $Pki 'mot-de-passe.txt') -Raw).Trim()
+function Horodate([string]$Nom, [string]$Certificat) {
+    $f = Join-Path $horodates "$Nom.msi"
+    Copy-Item (Msi $Nom) $f -Force
+    $ac = if ($Certificat -eq 'sanscrl') { @('/ac', (Join-Path $Pki 'muette.crt')) } else { @() }
+    foreach ($essai in 1..3) {
+        $null = & $signtool.FullName sign /f (Join-Path $Pki "$Certificat.pfx") /p $mdpPki /fd SHA256 @ac /tr http://timestamp.digicert.com /td SHA256 /d deR4Tizer $f 2>&1
+        if (-not $LASTEXITCODE -and (Get-AuthenticodeSignature $f).TimeStamperCertificate) { return $f }
+        Start-Sleep 5
+    }
+    $null
+}
+$horoEpinglee = Horodate $Nouvelle 'epinglee'
+$horoRevoquee = Horodate "$Nouvelle-revoquee" 'revoquee'
+$horoSansCrl = Horodate "$Nouvelle-sanscrl" 'sanscrl'
+if (-not ($horoEpinglee -and $horoRevoquee -and $horoSansCrl)) {
+    NonExecute 'Publication : paquets horodatés (révoqué, CRL muette, accepté)' 'autorité d''horodatage publique injoignable depuis le runner'
+} else {
+    Verifier 'Publication : certificat révoqué, horodaté, refus (code 1)' { Refus-Publication $cle $horoRevoquee 'chaîne ou révocation non vérifiée' }
+    Verifier 'Publication : CRL injoignable, horodaté, refus (échec fermé, code 1)' { Refus-Publication $cle $horoSansCrl 'chaîne ou révocation non vérifiée' }
+    Verifier 'Publication : clé épinglée, horodaté, chaîne et révocation vérifiées, accepté (code 0) sans nom de titulaire' {
+        $r = Publication $cle $horoEpinglee
+        if ($r.Code -ne 0) { return "code $($r.Code) : $($r.Sortie)" }
+        if ($r.Sortie -notmatch "clé épinglée $cle") { return "empreinte absente du journal : $($r.Sortie)" }
+        # Le sujet du certificat ne doit jamais être écrit (journal public)
+        $sujet = (Get-AuthenticodeSignature $horoEpinglee).SignerCertificate.GetNameInfo('SimpleName', $false)
+        if ($sujet -and $r.Sortie.Contains($sujet)) { return 'le sujet du certificat est écrit dans le journal' }
+        $true
+    }
+}
+Remove-Item $horodates -Recurse -Force -ErrorAction SilentlyContinue
+
 # ---------------------------------------------------------------- version courante installée, adresse locale
 Publier-Neutre
 $debut = Get-Date
