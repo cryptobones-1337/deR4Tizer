@@ -1061,6 +1061,9 @@ impl Moniteur {
             let ip_connues = self.partage.dns.lock().unwrap().len();
             let n = flux.len();
             let (etats_collectes, regles_sans_collecte, regles_degradees, causes_sans_collecte) = collectes::publier();
+            // Registre des réponses : écriture en échec ou lecture initiale refusée, dit dans la page Santé (point 1 de
+            // la revue de l'auditeur du 2026-11-21)
+            let registre = politique::etat_registre();
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
@@ -1080,6 +1083,8 @@ impl Moniteur {
                 panique_etat: reponse::etat_panique().texte().into(),
                 exposition: self.exposition.clone(),
                 protection_donnees: commun::echec_protection().unwrap_or_default(),
+                registre_reponses: registre.0.into(),
+                registre_reponses_depuis: registre.1.map(|s| commun::heure_filetime(s * 10_000_000 + 116_444_736_000_000_000)).unwrap_or_default(),
                 collectes: etats_collectes,
                 regles_sans_collecte,
                 regles_degradees,

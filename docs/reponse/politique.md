@@ -118,7 +118,12 @@ est retenue. Un administrateur peut toujours agir à la main.
   avec une écriture ralentie à 800 ms : le cycle attendait 700 ms, il n'attend plus) ; une copie plus ancienne
   n'écrase jamais une plus récente, et une écriture en échec est réessayée 5 s plus tard (S110-04, S110-16, S230-01,
   S230-02). Limite : la dernière copie peut être perdue si le service s'arrête avant son écriture ; un fichier refusé à la
-  lecture initiale n'est pas relu avant le prochain démarrage (S230-03).
+  lecture initiale n'est pas relu avant le prochain démarrage (S230-03). Depuis la revue de l'auditeur du 2026-11-21
+  (point 1) : le journal du service dit seulement le premier échec d'écriture d'une série et le retour à la normale, et
+  la page Santé montre une ligne « Registre des réponses » en échec tant que le fichier n'est pas écrit, ou quand la
+  lecture initiale a été refusée (les échéances de la session seront alors perdues au redémarrage) ; le service publie un
+  code dans etat.json (`RegistreReponses` : vide, `EcritureEnEchec` avec `RegistreReponsesDepuis`, ou `LectureRefusee`),
+  traduit par l'interface.
 
 ## Durées et récupération (phase 6, dans le code)
 

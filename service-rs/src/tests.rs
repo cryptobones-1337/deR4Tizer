@@ -9053,7 +9053,8 @@ fn reponses_json_ecrivain_dedie() {
     assert!(!depot.contains("commun::ecrire("), "le fil appelant n'écrit pas sur le disque");
     assert!(depot.contains("SIGNAL.notify_one();"));
     let e = &src[d + f..];
-    assert!(e.contains("ecrire_registre(&h).is_ok()") && src.contains("fn ecrire_registre(h: &Historique) -> Result<(), String> {\r\n    commun::ecrire(FICHIER, h)") || src.replace("\r\n", "\n").contains("fn ecrire_registre(h: &Historique) -> Result<(), String> {\n    commun::ecrire(FICHIER, h)"));
+    assert!(e.contains("ecrire_registre(&h) };") && e.contains("let ecrite = resultat.is_ok();"));
+    assert!(src.replace("\r\n", "\n").contains("fn ecrire_registre(h: &Historique) -> Result<(), String> {\n    commun::ecrire(FICHIER, h)"));
     assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
     assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
 }
@@ -9157,7 +9158,7 @@ fn s230_05_attente_bornee_et_jamais_dans_le_cycle() {
     let p = include_str!("politique.rs").replace("\r\n", "\n");
     let e = p.find("fn ecrivain()").unwrap();
     let corps = &p[e..];
-    assert!(corps.contains("let ecrite = deja || ecrire_registre(&h).is_ok();"), "écriture disque hors du verrou ECRITURE");
+    assert!(corps.contains("let resultat = if deja { Ok(()) } else { ecrire_registre(&h) };"), "écriture disque hors du verrou ECRITURE");
     assert!(corps.contains("ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);"), "échec signalé");
 }
 
@@ -9171,4 +9172,30 @@ fn s113_05_signataire_pris_dans_l_etat_de_la_verification() {
     assert!(g.contains("string sujet = SujetDeLEtat(donnees.Donnees);"));
     assert!(g.contains("donnees.Etat = 2;"), "état toujours fermé (WTD_STATEACTION_CLOSE)");
     assert!(g.contains("WTHelperGetProvSignerFromChain(donnees, 0, false, 0)") && g.contains("WTHelperGetProvCertFromChain(signataire, 0)"));
+}
+
+#[test]
+fn registre_reponses_echec_journalise_une_fois_et_publie() {
+    // Revue de l'auditeur du 2026-11-21, point 1 : écriture de reponses.json en échec simulé, une ligne de journal au
+    // premier échec et une au retour, rien entre les deux ; constat publié pendant l'échec, retiré au retour
+    use crate::politique::{code_registre, SuiviEcriture};
+    let mut s = SuiviEcriture::default();
+    let premier = s.apres_essai(Some("accès refusé"), 1_000).expect("premier échec journalisé");
+    assert!(premier.contains("reponses.json") && premier.contains("accès refusé"));
+    assert!(s.apres_essai(Some("accès refusé"), 1_005).is_none(), "essai suivant en échec : rien au journal");
+    assert!(s.apres_essai(Some("disque plein"), 1_010).is_none(), "autre raison, même série : rien au journal");
+    assert_eq!(code_registre(false, s.echec_depuis), ("EcritureEnEchec", Some(1_000)), "constat levé pendant l'échec");
+    let retour = s.apres_essai(None, 1_030).expect("retour journalisé");
+    assert!(retour.contains("rétablie") && retour.contains("30 s"));
+    assert!(s.apres_essai(None, 1_035).is_none(), "écriture normale : rien au journal");
+    assert_eq!(code_registre(false, s.echec_depuis), ("", None), "constat retiré au retour");
+    // Lecture initiale refusée : constat tant que la session dure, même sans échec d'écriture
+    assert_eq!(code_registre(true, None).0, "LectureRefusee");
+    let src = include_str!("politique.rs").replace("\r\n", "\n");
+    let ecr = &src[src.find("fn ecrivain()").unwrap()..];
+    assert!(ecr.contains(".apres_essai(") && ecr.contains("commun::journal(&m)"), "le fil d'écriture passe par le suivi");
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains("politique::etat_registre()"), "état publié dans etat.json");
+    let i = include_str!("../../src/Incidents.cs");
+    assert!(i.contains("e.RegistreReponses") && i.contains("perdues au redémarrage"), "ligne de la page Santé");
 }
