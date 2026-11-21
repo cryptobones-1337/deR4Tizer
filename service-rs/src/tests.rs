@@ -9172,3 +9172,47 @@ fn s113_05_signataire_pris_dans_l_etat_de_la_verification() {
     assert!(g.contains("donnees.Etat = 2;"), "état toujours fermé (WTD_STATEACTION_CLOSE)");
     assert!(g.contains("WTHelperGetProvSignerFromChain(donnees, 0, false, 0)") && g.contains("WTHelperGetProvCertFromChain(signataire, 0)"));
 }
+
+#[test]
+fn signature_locale_script_unique_echec_ferme() {
+    // Plan avant la première version signée, bloc 1.1 (décisions du mainteneur du 2026-11-21) : artefact « a-signer »
+    // de la CI, empreinte comparée à celle de GitHub, MSI construit après la signature, manifeste d'après le MSI signé,
+    // verifier-signatures.ps1, horodatage Certum puis DigiCert en repli, brouillon de version seulement
+    let s = include_str!("../../signer-version.ps1").replace("\r\n", "\n");
+    for verif in [
+        r"if ($Tag -cnotmatch '^v\d+\.\d+(\.\d+)?$')",
+        "if ($tete -ne $commitTag)",
+        "if (git -C $racine status --porcelain)",
+        "if (\"v$version\" -ne $Tag)",
+        "n'est pas dans CLE_SIGNATURE",
+        "$compiler.conclusion -ne 'success'",
+        "$_.name -eq 'a-signer'",
+        "if ($recue -ne $attendue)",
+        "if ($s.Status -ne 'NotSigned')",
+        "6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31",
+        "verifier-signatures.ps1') -Cles $cles",
+        "if ($versionMsi -ne $attenduMsi)",
+        "existe déjà sur GitHub",
+    ] {
+        assert!(s.contains(verif), "vérification absente : {verif}");
+    }
+    // Chaque vérification arrête le script ; un brouillon seulement, jamais une version publiée
+    assert!(s.contains("function Arret([string]$t) { Write-Host \"ARRÊT : $t\" -ForegroundColor Red; exit 1 }"));
+    assert!(s.contains("--draft --verify-tag") && !s.contains("gh release edit"), "brouillon, publié à la main");
+    assert!(s.contains("foreach ($serveur in 'http://time.certum.pl/', 'http://timestamp.digicert.com')"), "Certum puis DigiCert");
+    // Ordre : exécutables signés, puis MSI construit avec eux, puis MSI signé, puis manifeste, puis vérification
+    let pos = |m: &str| s.find(m).unwrap_or_else(|| panic!("{m}"));
+    assert!(pos("Signer @((Join-Path $bin 'deR4Tizer.exe')") < pos("construire-msi.ps1') -Version $version"));
+    assert!(pos("construire-msi.ps1') -Version $version") < pos("Signer @((Join-Path $bin 'deR4Tizer.msi'))"));
+    assert!(pos("Signer @((Join-Path $bin 'deR4Tizer.msi'))") < pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))"));
+    assert!(pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))") < pos("verifier-signatures.ps1') -Cles $cles"));
+    assert!(pos("verifier-signatures.ps1') -Cles $cles") < pos("gh release create $Tag"));
+    // Le nom du titulaire n'est jamais affiché ; le jeton de gh n'est jamais écrit
+    for interdit in [".Subject", ".Issuer", "FriendlyName", "GetNameInfo", "Write-Host $jeton", "Write-Host \"$jeton"] {
+        assert!(!s.contains(interdit), "{interdit}");
+    }
+    let wf = include_str!("../../.github/workflows/publication.yml");
+    assert!(wf.contains("name: a-signer") && wf.contains("retention-days: 7"), "artefact à signer gardé 7 jours");
+    assert!(!wf.contains("name: executables"));
+    assert!(include_str!("../../docs/publication/signature-locale.md").contains("signer-version.ps1 -Tag vX.Y"));
+}
