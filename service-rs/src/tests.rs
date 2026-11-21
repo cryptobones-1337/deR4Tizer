@@ -9123,3 +9123,45 @@ fn s113_05_signataire_pris_dans_l_etat_de_la_verification() {
     assert!(g.contains("donnees.Etat = 2;"), "état toujours fermé (WTD_STATEACTION_CLOSE)");
     assert!(g.contains("WTHelperGetProvSignerFromChain(donnees, 0, false, 0)") && g.contains("WTHelperGetProvCertFromChain(signataire, 0)"));
 }
+
+#[test]
+fn textes_du_service_traduits_dans_l_interface_lot1() {
+    // Revue de l'auditeur du 2026-11-21, point 3 (premier lot) : techniques et conseils de mitre.rs traduits par la table
+    // de l'interface (un texte Rust retouché sans sa traduction fait échouer ce test, jamais l'affichage en silence) ;
+    // identifiants de collecte jamais affichés bruts ; plus de « clic droit » ; Sysmon facultatif hors du bandeau
+    let m = include_str!("mitre.rs");
+    let langue = include_str!("../../src/Langue.cs");
+    let re = regex::Regex::new(r#"\(&\[[^\]]*\],\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)"\)"#).unwrap();
+    let mut n = 0;
+    for c in re.captures_iter(m) {
+        for i in [1, 2] {
+            let fr = c[i].replace("\\\\", "\\");
+            // Même échappement côté C# : guillemet et barre oblique inverse
+            let cle = format!("{{ \"{}\", \"", fr.replace('\\', "\\\\").replace('"', "\\\""));
+            assert!(langue.contains(&cle), "sans traduction dans Langue.cs : {fr}");
+        }
+        n += 1;
+    }
+    assert!(n >= 28, "règles de mitre.rs lues : {n}");
+    assert!(!m.contains("clic droit") && !m.contains("onglet "), "conseils de l'ancienne interface");
+    // Clés en double : le dictionnaire de l'interface lèverait une exception au démarrage
+    let cles = regex::Regex::new(r#"\{ "((?:[^"\\]|\\.)*)", ""#).unwrap();
+    let mut vues = std::collections::HashSet::new();
+    for c in cles.captures_iter(langue) {
+        assert!(vues.insert(c[1].to_string()), "clé en double dans Langue.cs : {}", &c[1]);
+    }
+    // Chaque collecte a un nom lisible
+    let commun = include_str!("../../src/Commun.cs");
+    let noms = &commun[commun.find("static readonly Dictionary<string, string> Noms").unwrap()..];
+    let noms = &noms[..noms.find("};").unwrap()];
+    for c in crate::collectes::TOUTES {
+        assert!(noms.contains(&format!("{{ \"{}\", \"", c.id())), "collecte sans nom lisible : {}", c.id());
+    }
+    let f = include_str!("../../src/Fluent.cs");
+    assert!(f.contains("Couverture.Nom(a.Collecte)") && f.contains("L.T(a.Mitre)") && f.contains("L.T(a.Conseil)"));
+    let g = include_str!("../../src/Gui.cs");
+    assert!(g.contains("Couverture.Nom(a.Collecte)") && g.contains("L.T(a.Mitre)") && g.contains("L.T(a.Conseil)"));
+    assert!(include_str!("../../src/Incidents.cs").contains("Sujet = v(Couverture.Nom(c.Id))"));
+    assert!(commun.contains("Decrire(EtatCollecte c)") && commun.contains("return Nom(c.Id) + \" \" + etat"));
+    assert!(commun.contains("c.Etat == \"Desactivee\" && !SysmonRemplaceParWmi(e, c)"), "Sysmon facultatif hors du bandeau quand WMI voit les démarrages");
+}
