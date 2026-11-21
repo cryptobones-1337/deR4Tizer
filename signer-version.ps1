@@ -48,6 +48,10 @@ $version = (Select-String -Path (Join-Path $racine 'service-rs\src\commun.rs') -
 if ("v$version" -ne $Tag) { Arret "tag $Tag différent de la version du code ($version)" }
 $cles = Natif gh variable get CLE_SIGNATURE --repo $Depot
 if ($LASTEXITCODE -or -not $cles) { Arret 'variable de dépôt CLE_SIGNATURE illisible (gh auth status ?)' }
+# Valeur lue sur GitHub : seulement des empreintes SHA-256 en hexadécimal, séparées par des virgules ; toute autre forme
+# arrête le script (audit de #239, S239-07 : la valeur ne doit jamais pouvoir porter du code)
+$cles = ("$cles" -replace '\s', '').ToLowerInvariant()
+if ($cles -notmatch '^[0-9a-f]{64}(,[0-9a-f]{64})*$') { Arret 'CLE_SIGNATURE mal formée : empreintes SHA-256 hexadécimales séparées par des virgules attendues' }
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
 if (-not $signtool) { Arret 'signtool introuvable (Windows SDK)' }
 $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $Empreinte.ToUpperInvariant() } | Select-Object -First 1
@@ -165,11 +169,17 @@ $manifeste = [ordered]@{ Version = $version; Fichiers = @([ordered]@{ Nom = 'deR
 $empreintes = @{}
 foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe', 'manifeste.json') { $empreintes[$n] = Sha256 (Join-Path $bin $n) }
 Etape 'Vérification des signatures (verifier-signatures.ps1)'
-# Par -Command : avec -File, chaque chemin arrive comme un argument séparé et l'appel est refusé (prérelecture de #239, D1).
-# Chemins et clés sans apostrophe (dossier de travail du script, clés hexadécimales)
-$verifier = Join-Path $racine 'verifier-signatures.ps1'
-$liste = (@('deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe') | ForEach-Object { "'" + (Join-Path $bin $_) + "'" }) -join ','
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$verifier' -Cles '$cles' -Fichiers $liste; exit `$LASTEXITCODE"
+# Aucune valeur n'est insérée dans une ligne de commande : le script, les clés et les fichiers passent par
+# l'environnement du processus enfant, et la commande est un texte fixe (audit de #239, S239-07). -Command plutôt que
+# -File : avec -File, la liste des fichiers arrivait coupée et l'appel était refusé (prérelecture de #239, D1)
+$env:D4T_VERIFIER = Join-Path $racine 'verifier-signatures.ps1'
+$env:D4T_CLES = $cles
+$env:D4T_FICHIERS = (@('deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe') | ForEach-Object { Join-Path $bin $_ }) -join '|'
+try {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '& $env:D4T_VERIFIER -Cles $env:D4T_CLES -Fichiers ($env:D4T_FICHIERS -split ''\|''); exit $LASTEXITCODE'
+} finally {
+    Remove-Item Env:\D4T_VERIFIER, Env:\D4T_CLES, Env:\D4T_FICHIERS -ErrorAction SilentlyContinue
+}
 if ($LASTEXITCODE) { Arret 'vérification des signatures en échec' }
 $installeur = New-Object -ComObject WindowsInstaller.Installer
 $base_msi = $installeur.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installeur, @((Join-Path $bin 'deR4Tizer.msi'), 0))
