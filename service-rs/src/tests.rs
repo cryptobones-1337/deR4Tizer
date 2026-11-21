@@ -6764,6 +6764,10 @@ fn leurre_connu_exerce_en_vm() {
     // S113-05 : la vraie confirmation élevée, signé puis non signé, texte lu par UI Automation, rien envoyé
     assert!(q.contains("'--commande-fichier'") && q.contains(r"'deR4Tizer \((administrator|administrateur)\)'"), "confirmation élevée lue en VM");
     assert!(q.contains("'CN=deR4Tizer essai editeur'") && q.contains("aucune signature intégrée valide|no valid embedded signature"));
+    // S235-01 : racines de test sur machine jetable seulement, clé non exportable, nettoyage dans un finally
+    assert_eq!(q.matches("-not (Machine-Jetable)").count(), 2, "garde sur les deux blocs");
+    assert_eq!(q.matches("-KeyExportPolicy NonExportable").count(), 2);
+    assert!(q.contains("Remove-Item $dossierFerme, $dossierOuvert, $cer -Recurse") && q.contains("Remove-Item $dossierConf, $cerConf -Recurse"));
 }
 
 /// Revue externe du 2026-11-21, défaut 3 : les clients de synchronisation qui tournent sous le compte de l'utilisateur

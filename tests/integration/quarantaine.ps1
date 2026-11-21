@@ -14,6 +14,9 @@ param(
 )
 . (Join-Path $PSScriptRoot 'commun.ps1')
 New-Item -ItemType Directory -Force -Path $Journaux | Out-Null
+# Machine jetable : VM de test Hyper-V ou runner de GitHub Actions. Les cas qui approuvent une racine de test ne
+# tournent que là (audit de #235, S235-01)
+function Machine-Jetable { (Get-CimInstance Win32_ComputerSystem).Model -eq 'Virtual Machine' -or $env:GITHUB_ACTIONS -eq 'true' }
 $Origine = 'C:\d4t-origine'
 $Canaris = 'C:\d4t-canari'
 $Toleres = @{ $script:Programme = @($script:SidTrustedInstaller) }
@@ -432,18 +435,25 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
         'Logiciel connu : même programme dans un dossier ouvert aux utilisateurs : suspendu',
         'Logiciel connu : même programme fermé, lancé par le compte standard : suspendu'
     $certConnu = $null
+    $cer = Join-Path $script:Commun 'd4t-connu.cer'
+    # Racine approuvée au nom d'un éditeur réel : machine jetable seulement (VM de test ou runner de GitHub Actions),
+    # nettoyage dans un finally (prérelecture de #235)
+    if (-not (Machine-Jetable)) {
+        foreach ($t in $titresConnu) { NonExecute $t 'ni VM de test ni runner jetable : aucune racine de test approuvée ici' }
+    } else { try {
     try {
-        $certConnu = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Veeam Software Group GmbH' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2)
-        $cer = Join-Path $script:Commun 'd4t-connu.cer'
+        $certConnu = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Veeam Software Group GmbH' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2) -KeyExportPolicy NonExportable
         Export-Certificate -Cert $certConnu -FilePath $cer | Out-Null
         Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    } catch { $certConnu = $null }
+    } catch { }
+    # Empreinte gardée même si l'import échoue : le finally retire le certificat de My comme de Root (S235-01)
+    $racineOk = $certConnu -and @(Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Thumbprint -eq $certConnu.Thumbprint }).Count
     $dossierFerme = Join-Path $env:ProgramFiles 'd4t-essai-connu'
     $dossierOuvert = Join-Path $env:ProgramFiles 'd4t-essai-ouvert'
     $exeFerme = Join-Path $dossierFerme 'veeamagent.exe'
     $exeOuvert = Join-Path $dossierOuvert 'veeamagent.exe'
     $prets = $false
-    if ($certConnu) {
+    if ($racineOk) {
         foreach ($d in $dossierFerme, $dossierOuvert) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
         # Dossier ouvert : Utilisateurs (S-1-5-32-545) en modification, hérité
         $acl = Get-Acl $dossierOuvert
@@ -493,11 +503,16 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
             } finally { Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like "$env:ProgramFiles\d4t-essai-*" } | Stop-Process -Force -ErrorAction SilentlyContinue }
         }
     }
-    Start-Sleep 1
-    Remove-Item $dossierFerme, $dossierOuvert -Recurse -Force -ErrorAction SilentlyContinue
-    if ($certConnu) {
-        Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $certConnu.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue
-    }
+    } catch {
+        Noter 'Logiciel connu : préparation' 'ÉCHOUÉ' $_.Exception.Message
+    } finally {
+        Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like "$env:ProgramFiles\d4t-essai-*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep 1
+        Remove-Item $dossierFerme, $dossierOuvert, $cer -Recurse -Force -ErrorAction SilentlyContinue
+        if ($certConnu) {
+            Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $certConnu.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+    } }
     # Phase 6, PR 6.4 : registre des actions en cours
     $titreRegistre = 'Registre : suspension inscrite avec son échéance de 2 h, levée à la reprise, terminée quand le processus disparaît'
     if ($vuB) {
@@ -847,13 +862,15 @@ $titresConf = 'Confirmation élevée : éditeur d''un programme signé lu et aff
     'Confirmation élevée : programme non signé dit sans signature valide'
 if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
     foreach ($t in $titresConf) { NonExecute $t 'pas de bureau (session 0) : scénario de VM' }
+} elseif (-not (Machine-Jetable)) {
+    foreach ($t in $titresConf) { NonExecute $t 'ni VM de test ni runner jetable : aucune racine de test approuvée ici' }
 } else {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $certConf = $null; $procs = @()
     $dossierConf = Join-Path $env:ProgramFiles 'd4t-essai-confirmation'
+    $cerConf = Join-Path $script:Commun 'd4t-conf.cer'
     try {
-        $certConf = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=deR4Tizer essai editeur' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2)
-        $cerConf = Join-Path $script:Commun 'd4t-conf.cer'
+        $certConf = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=deR4Tizer essai editeur' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2) -KeyExportPolicy NonExportable
         Export-Certificate -Cert $certConf -FilePath $cerConf | Out-Null
         Import-Certificate -FilePath $cerConf -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
         New-Item -ItemType Directory -Force -Path $dossierConf | Out-Null
@@ -910,7 +927,7 @@ if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
     } finally {
         $procs | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
         Start-Sleep 1
-        Remove-Item $dossierConf -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $dossierConf, $cerConf -Recurse -Force -ErrorAction SilentlyContinue
         if ($certConf) { Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $certConf.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue }
     }
 }
