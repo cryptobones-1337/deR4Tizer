@@ -137,8 +137,9 @@ namespace DeR4Tizer
             return id != null && Noms.TryGetValue(id, out n) ? L.T(n) : (id ?? "");
         }
 
-        // Sysmon est facultatif : désactivé alors que les démarrages de programmes sont vus par WMI, aucune détection n'est
-        // perdue ; il n'est pas listé dans le bandeau de la page Alertes (la page Santé le garde, en neutre)
+        // Sysmon est facultatif : désactivé alors que WMI voit les démarrages de programmes (toujours « Partielle » : les
+        // programmes très brefs peuvent être manqués, PRC-001 à PRC-005 dégradées), il n'est pas dit « désactivé » comme
+        // une collecte coupée : le bandeau donne une ligne neutre avec la vraie conséquence (prérelecture de #238, D1)
         public static bool SysmonRemplaceParWmi(Etat e, EtatCollecte c)
         {
             if (c == null || c.Id != "Sysmon" || c.Etat != "Desactivee") return false;
@@ -267,7 +268,9 @@ namespace DeR4Tizer
             if (e == null || e.Collectes == null) return "";
             var lignes = new List<string>();
             foreach (var c in EnPannes(e)) lignes.Add("▲ " + Decrire(c));
-            foreach (var c in e.Collectes) if (c != null && c.Etat == "Desactivee" && !SysmonRemplaceParWmi(e, c)) lignes.Add("○ " + Decrire(c));
+            foreach (var c in e.Collectes)
+                if (c != null && c.Etat == "Desactivee")
+                    lignes.Add("○ " + (SysmonRemplaceParWmi(e, c) ? L.T("Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)") : Decrire(c)));
             return string.Join("\n", lignes);
         }
 

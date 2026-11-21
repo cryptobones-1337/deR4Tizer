@@ -68,10 +68,11 @@ try {
     $t = & $appel 'Detail' (Etat @((Collecte 'Leurres' 'Indisponible' 'aucun leurre posé'), (Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'Connexions' 'Active')))
     Cas 'bandeau : panne puis désactivée, état, raison, conséquence' ($t -eq ("▲ Fichiers leurres indisponible (aucun leurre posé) : chiffrement par un rançongiciel non repéré par les leurres`n○ Sysmon (facultatif) désactivée (Sysmon absent) : créations de programmes non vues")) $t
     Cas 'bandeau : rien quand tout est lu' ((& $appel 'Detail' (Etat @((Collecte 'Connexions' 'Active')))) -eq '')
-    # Sysmon facultatif : désactivé alors que WMI voit les démarrages, il n'est pas un avertissement (revue de l'auditeur
-    # du 2026-11-21, point 3) ; sans WMI, il reste dit
-    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'WmiProcessus' 'Active'), (Collecte 'Connexions' 'Active')))
-    Cas 'bandeau : Sysmon absent mais WMI actif, rien' ($t -eq '') $t
+    # Sysmon facultatif : désactivé alors que WMI voit les démarrages (en production, WMI est toujours « Partielle »), une
+    # ligne neutre dit la vraie conséquence au lieu de « désactivée » (revue de l'auditeur du 2026-11-21, point 3 ;
+    # prérelecture de #238, D1) ; sans WMI, la collecte reste décrite comme désactivée
+    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'WmiProcessus' 'Partielle' 'WMI : processus brefs manqués'), (Collecte 'Connexions' 'Active')))
+    Cas 'bandeau : Sysmon absent, WMI partiel : ligne neutre avec la conséquence' ($t -eq '○ Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)') $t
     # Identifiant de collecte jamais affiché brut
     Cas 'nom lisible : ListesDomaines' ((& $appel 'Nom' 'ListesDomaines') -eq 'Listes de domaines malveillants')
     Cas 'nom lisible : identifiant inconnu gardé' ((& $appel 'Nom' 'NouvelleSource') -eq 'NouvelleSource')

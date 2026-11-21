@@ -9163,5 +9163,16 @@ fn textes_du_service_traduits_dans_l_interface_lot1() {
     assert!(g.contains("Couverture.Nom(a.Collecte)") && g.contains("L.T(a.Mitre)") && g.contains("L.T(a.Conseil)"));
     assert!(include_str!("../../src/Incidents.cs").contains("Sujet = v(Couverture.Nom(c.Id))"));
     assert!(commun.contains("Decrire(EtatCollecte c)") && commun.contains("return Nom(c.Id) + \" \" + etat"));
-    assert!(commun.contains("c.Etat == \"Desactivee\" && !SysmonRemplaceParWmi(e, c)"), "Sysmon facultatif hors du bandeau quand WMI voit les démarrages");
+    // Sysmon facultatif : ligne neutre avec la vraie conséquence (WMI partiel, PRC-001 à PRC-005 dégradées), jamais
+    // retiré du bandeau (prérelecture de #238, D1)
+    assert!(commun.contains("SysmonRemplaceParWmi(e, c) ? L.T(\"Sysmon (facultatif) absent : WMI le remplace"), "ligne neutre de Sysmon");
+    assert!(commun.contains("w.Etat == \"Active\" || w.Etat == \"Partielle\""));
+    // Chaque nom de collecte a sa traduction anglaise
+    let valeurs = regex::Regex::new(r#"\{ "[A-Za-z]+", "([^"]+)" \}"#).unwrap();
+    let mut n = 0;
+    for c in valeurs.captures_iter(noms) {
+        assert!(langue.contains(&format!("{{ \"{}\", \"", &c[1])), "nom de collecte sans traduction : {}", &c[1]);
+        n += 1;
+    }
+    assert_eq!(n, crate::collectes::TOUTES.len(), "noms lus");
 }

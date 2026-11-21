@@ -151,9 +151,12 @@ Décision du mainteneur (2026-11-21) : le service émet des codes stables (règl
 collecte, état) et l'interface les traduit par ses tables, comme pour les sortes de réponse et les états. Les raisons
 des alertes gardent leur texte français : l'empreinte des exceptions (`apprentissage::signature_avec`), `mitre::enrichir`
 et les tests de l'interface sur « MENACE » et « BLOQUÉ » le lisent ; un code et des paramètres viendront s'y ajouter.
+Les techniques de `mitre.rs` entrent dans l'empreinte des exceptions : elles ne doivent pas être retouchées côté service,
+seulement traduites par l'interface.
 
 - **Lot 1 (fait)** : noms lisibles des 25 collectes (bandeau des alertes, détail d'une alerte, page Santé), Sysmon
-  facultatif hors du bandeau quand WMI voit les démarrages, conséquences manquantes (Sessions, ConfigDns, FiltrageDns),
+  absent remplacé par WMI dit par une ligne neutre avec sa vraie conséquence (WMI partiel : programmes très brefs
+  peut-être manqués, PRC-001 à PRC-005 dégradées) au lieu de « désactivée », conséquences manquantes (Sessions, ConfigDns, FiltrageDns),
   techniques et conseils de `mitre.rs` traduits par la table (un texte retouché sans sa traduction fait échouer
   `textes_du_service_traduits_dans_l_interface_lot1`), conseils qui renvoyaient à l'ancienne interface (« clic droit »,
   « onglet ») corrigés dans les deux langues.
