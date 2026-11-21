@@ -519,7 +519,9 @@ const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.ex
 /// modèle hérité. Tout autre SID (utilisateur précis, Utilisateurs, Tout le monde, LOCAL, CONSOLE LOGON…) ouvre l'objet
 fn sid_de_confiance(sid: &str) -> bool {
     matches!(sid, "S-1-5-18" | "S-1-5-32-544" | "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
-        || sid.strip_prefix("S-1-5-80-").is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit() || c == '-'))
+        // Un service précis, jamais NT SERVICE\ALL SERVICES (S-1-5-80-0), qui couvre aussi les services à faibles droits
+        // (audit de #229, S229-03)
+        || sid.strip_prefix("S-1-5-80-").is_some_and(|r| !r.is_empty() && r != "0" && r.chars().all(|c| c.is_ascii_digit() || c == '-'))
 }
 
 /// Écriture, ajout, création de sous-dossier, attributs étendus, suppression, changement de droits ou de propriétaire,

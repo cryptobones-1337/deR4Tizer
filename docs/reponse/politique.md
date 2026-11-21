@@ -80,7 +80,7 @@ est retenue. Un administrateur peut toujours agir à la main.
 | Garde | Seuil | Effet |
 |---|---|---|
 | Même blocage automatique sur la même adresse | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
-| Suspension d'un programme signé installé dans Program Files, hors interpréteurs, fermé en écriture aux comptes ordinaires et lancé sous SYSTEM ou un administrateur | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
+| Suspension d'un programme signé installé dans Program Files, hors interpréteurs, fermé en écriture (seuls SYSTEM, Administrateurs, TrustedInstaller ou un service précis y écrivent ou en sont propriétaires) et lancé sous SYSTEM ou un administrateur | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
 | Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
 | Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
 | Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
