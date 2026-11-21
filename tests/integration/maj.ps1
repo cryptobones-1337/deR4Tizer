@@ -203,9 +203,13 @@ $verifierSig = Join-Path $PSScriptRoot '..\..\verifier-signatures.ps1'
 # Exécuté par PowerShell 7 (pwsh, celui du workflow) et par Windows PowerShell 5.1 : même code de sortie exigé des
 # deux (audit de #233, S233-02)
 $hotesSig = @('pwsh.exe', 'powershell.exe') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
+# Un hôte absent est dit, jamais écarté en silence (audit de #233, S233-03)
+foreach ($h in @('pwsh.exe', 'powershell.exe') | Where-Object { $_ -notin $hotesSig }) { NonExecute "Publication : script sous $h" "$h absent du runner" }
 function Publication([string]$Cles, [string]$Fichier) {
     $r = foreach ($h in $hotesSig) {
-        $s = & $h -NoProfile -ExecutionPolicy Bypass -File $verifierSig -Cles $Cles -Fichiers $Fichier 2>&1 | Out-String
+        # Par -Command : une chaîne vide passée par -File arrive comme un argument manquant (prérelecture de #233, D1).
+        # Chemins et clés sans apostrophe (clé : 64 caractères hexadécimaux ou vide)
+        $s = & $h -NoProfile -ExecutionPolicy Bypass -Command "& '$verifierSig' -Cles '$Cles' -Fichiers '$Fichier'; exit `$LASTEXITCODE" 2>&1 | Out-String
         @{ Hote = $h; Code = $LASTEXITCODE; Sortie = $s }
     }
     $codes = @($r | ForEach-Object { $_.Code } | Select-Object -Unique)
@@ -220,7 +224,6 @@ function Refus-Publication([string]$Cles, [string]$Fichier, [string]$Motif) {
 }
 Verifier 'Publication : liste de clés vide, refus (code 1)' { Refus-Publication '' (Msi $Nouvelle) 'CLE_SIGNATURE absente ou invalide' }
 Verifier 'Publication : fichier non signé, refus (code 1)' { Refus-Publication $cle $ArtefactCi 'signature NotSigned' }
-Verifier 'Publication : clé non épinglée, refus (code 1)' { Refus-Publication $cle (Msi "$Nouvelle-autre") 'non épinglée' }
 Verifier 'Publication : clé épinglée sans horodatage, refus (code 1)' { Refus-Publication $cle (Msi $Nouvelle) 'sans horodatage' }
 # Copies horodatées : seule la signature change (même certificat), l'horodatage vient d'une autorité publique
 $horodates = Join-Path $env:RUNNER_TEMP 'd4t-horodates'
@@ -241,10 +244,16 @@ function Horodate([string]$Nom, [string]$Certificat) {
 $horoEpinglee = Horodate $Nouvelle 'epinglee'
 $horoRevoquee = Horodate "$Nouvelle-revoquee" 'revoquee'
 $horoSansCrl = Horodate "$Nouvelle-sanscrl" 'sanscrl'
-if (-not ($horoEpinglee -and $horoRevoquee -and $horoSansCrl)) {
-    NonExecute 'Publication : paquets horodatés (révoqué, CRL muette, accepté)' 'autorité d''horodatage publique injoignable depuis le runner'
+# Copie horodatée aussi pour la clé non épinglée : sans horodatage, le refus « sans horodatage » viendrait avant la
+# comparaison de la clé (prérelecture de #233, D1)
+$horoAutre = Horodate "$Nouvelle-autre" 'autre'
+if (-not ($horoEpinglee -and $horoRevoquee -and $horoSansCrl -and $horoAutre)) {
+    NonExecute 'Publication : paquets horodatés (clé non épinglée, révoqué, CRL muette, accepté)' 'autorité d''horodatage publique injoignable depuis le runner'
 } else {
-    Verifier 'Publication : certificat révoqué, horodaté, refus (code 1)' { Refus-Publication $cle $horoRevoquee 'chaîne ou révocation non vérifiée' }
+    Verifier 'Publication : clé non épinglée, horodatée, refus (code 1)' { Refus-Publication $cle $horoAutre 'non épinglée' }
+    # La révocation est vue dès le contrôle Authenticode (statut non Valid) ou, à défaut, par la chaîne : les deux
+    # motifs sont des refus justes (prérelecture de #233, D1)
+    Verifier 'Publication : certificat révoqué, horodaté, refus (code 1)' { Refus-Publication $cle $horoRevoquee '(?i)revoked|r[ée]voqu|chaîne ou révocation non vérifiée' }
     Verifier 'Publication : CRL injoignable, horodaté, refus (échec fermé, code 1)' { Refus-Publication $cle $horoSansCrl 'chaîne ou révocation non vérifiée' }
     Verifier 'Publication : clé épinglée, horodaté, chaîne et révocation vérifiées, accepté (code 0) sans nom de titulaire' {
         $r = Publication $cle $horoEpinglee
