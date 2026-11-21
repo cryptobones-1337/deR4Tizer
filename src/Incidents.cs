@@ -317,6 +317,28 @@ namespace DeR4Tizer
                 Source = "etat.json",
                 Gravite = string.IsNullOrEmpty(e.ProtectionDonnees) ? 0 : 1
             });
+            // Registre des réponses (reponses.json) : code du service, traduit ici (point 1 de la revue de l'auditeur du
+            // 2026-11-21). Service plus ancien : champ absent, ligne « non publié »
+            string reg = e.RegistreReponses;
+            l.Add(new LigneSante
+            {
+                Sujet = L.T("Registre des réponses"),
+                Etat = reg == null ? L.T("non publié") : reg == "" ? L.T("écrit") : reg == "LectureRefusee" ? L.T("lecture refusée")
+                    : reg == "ContenuIllisible" ? L.T("contenu illisible") : L.T("en échec"),
+                Date = reg == "EcritureEnEchec" && !string.IsNullOrEmpty(e.RegistreReponsesDepuis) ? v(e.RegistreReponsesDepuis) : v(e.MisAJour),
+                // Code inconnu (service plus récent) : dit « en échec » sans détail, jamais « écrit »
+                Detail = reg == "LectureRefusee"
+                    ? L.T("reponses.json n'a pas pu être lu au démarrage : il n'est jamais écrasé, la garde et les échéances tiennent en mémoire seulement et seront perdues au redémarrage du service.")
+                    : reg == "ContenuIllisible"
+                        ? L.T("reponses.json est mal formé : aucune action automatique (REP-002) et rien n'est enregistré ; retirez ce fichier du dossier de données puis redémarrez le service. Les échéances de la session seront perdues au redémarrage.")
+                    : reg == "ProtectionEnEchec"
+                        ? L.T("La protection du dossier de données est en échec (voir sa ligne) : reponses.json n'est pas écrit tant qu'elle n'est pas rétablie, les échéances de la session seront perdues au redémarrage.")
+                    : reg == "EcritureEnEchec"
+                        ? L.T("reponses.json ne peut pas être écrit (nouvel essai toutes les 5 s) : les actions en cours et leurs échéances ne sont pas enregistrées, elles seront perdues au redémarrage si l'écriture ne reprend pas.")
+                        : "",
+                Source = "etat.json",
+                Gravite = string.IsNullOrEmpty(reg) ? 0 : 1
+            });
             l.Add(new LigneSante
             {
                 Sujet = L.T("Interface par session"),
