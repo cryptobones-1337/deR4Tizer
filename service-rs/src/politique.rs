@@ -717,6 +717,21 @@ static ECRITURE: Mutex<u64> = Mutex::new(0);
 /// Le verrou `ETAT` ne couvre que la mémoire : la lecture initiale et les écritures sur le disque (avec `sync_all`) se
 /// font hors de lui, pour qu'un disque lent ne fige ni le cycle ni le fil des leurres (audit de #110, S110-04 et S110-16)
 fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
+    avec_copie(f).0
+}
+
+/// Décision d'un administrateur (commande) : la réponse de la commande ne part qu'une fois sa copie écrite (au plus
+/// 10 s), pour que l'interface et l'administrateur relisent un fichier à jour ; le cycle et le fil des leurres, eux,
+/// n'attendent jamais (régression vue par la CI de #230 : registre relu « Active » juste après une restauration)
+fn avec_attente<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
+    let (r, n) = avec_copie(f);
+    if let Some(n) = n {
+        attendre_ecriture(n, std::time::Duration::from_secs(10));
+    }
+    r
+}
+
+fn avec_copie<R>(f: impl FnOnce(&mut Etat) -> R) -> (R, Option<u64>) {
     let mut g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
     if g.is_none() {
         drop(g);
@@ -739,8 +754,24 @@ fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
     let r = f(e);
     let copie = if std::mem::take(&mut e.a_ecrire) { instantane(e) } else { None };
     drop(g);
+    let n = copie.as_ref().map(|(n, _)| *n);
     ecrire_copie(copie);
-    r
+    (r, n)
+}
+
+/// Copie écrite (ou dépassée par une plus récente) ; signalé par le fil d'écriture
+static ECRIT: std::sync::Condvar = std::sync::Condvar::new();
+
+fn attendre_ecriture(n: u64, delai: std::time::Duration) {
+    let fin = std::time::Instant::now() + delai;
+    let mut d = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+    while *d < n {
+        let reste = fin.saturating_duration_since(std::time::Instant::now());
+        if reste.is_zero() {
+            break;
+        }
+        d = ECRIT.wait_timeout(d, reste).unwrap_or_else(|e| e.into_inner()).0;
+    }
 }
 
 /// Une écriture est due : faite à la sortie de `avec`, hors du verrou
@@ -805,6 +836,7 @@ fn ecrivain() {
                 true
             } else if commun::ecrire(FICHIER, &h).is_ok() {
                 *derniere = n;
+                ECRIT.notify_all();
                 true
             } else {
                 false
@@ -868,14 +900,14 @@ pub fn suspendu_automatiquement(chemin: &str) -> bool {
 }
 
 pub fn ouvrir(sorte: Sorte, cible: &str, pid: Option<u32>, creation: Option<u64>) {
-    avec(|e| {
+    avec_attente(|e| {
         e.h.ouvrir(sorte, cible, pid, creation, maintenant());
         enregistrer(e);
     })
 }
 
 pub fn clore(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
-    avec(|e| {
+    avec_attente(|e| {
         if e.h.clore(sortes, cible, processus, etat) > 0 {
             enregistrer(e);
         }
@@ -982,7 +1014,7 @@ pub fn regrouper_relances(dues: &[(ActionEnCours, Effet)], t: u64) -> Vec<Alerte
 
 /// Un administrateur a levé ou repris une action automatique
 pub fn decision_humaine(cible: &str, empreinte: Option<String>) {
-    avec(|e| {
+    avec_attente(|e| {
         e.h.decision_humaine(cible, empreinte, maintenant());
         enregistrer(e);
     })

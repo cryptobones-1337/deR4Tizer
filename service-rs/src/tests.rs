@@ -8969,10 +8969,12 @@ fn reponses_json_illisible_jamais_ecrase_et_ecriture_hors_verrou() {
     assert_eq!(l(Lecture::Texte("{}")), (false, false, true));
     assert!(copie_a_ecrire(2, 1) && !copie_a_ecrire(1, 2) && !copie_a_ecrire(3, 3), "jamais une copie plus ancienne");
     let src = include_str!("politique.rs");
-    let a = src.find("fn avec<R>(").unwrap();
+    let a = src.find("fn avec_copie<R>(").unwrap();
     let corps = &src[a..a + src[a..].find("\n}\n").or_else(|| src[a..].find("\r\n}\r\n")).unwrap()];
     assert!(corps.contains("drop(g);\n        let (texte, refusee) = lecture_initiale();") || corps.contains("drop(g);\r\n        let (texte, refusee) = lecture_initiale();"), "lecture initiale hors du verrou");
-    assert!(corps.contains("drop(g);\n    ecrire_copie(copie);") || corps.contains("drop(g);\r\n    ecrire_copie(copie);"), "écriture hors du verrou");
+    let rendu = corps.rfind("drop(g);").expect("verrou rendu");
+    let depot = corps.find("ecrire_copie(copie);").expect("copie déposée");
+    assert!(rendu < depot, "copie déposée après avoir rendu le verrou");
     assert!(!corps.contains("commun::ecrire("), "aucune écriture sous ETAT");
 }
 
@@ -9008,3 +9010,21 @@ fn reponses_json_depot_garde_la_plus_recente() {
     let src = include_str!("politique.rs");
     assert!(src.contains("deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);"), "ecrire_copie passe par deposer");
 }
+
+#[test]
+fn reponses_json_commandes_attendent_leur_ecriture() {
+    // Régression vue par la CI de #230 : une commande d'administrateur (ouvrir, clore, décision humaine) attend que sa
+    // copie soit écrite ; le cycle (noter) et le fil des leurres (noter_suspension) n'attendent jamais
+    let src = include_str!("politique.rs").replace("\r\n", "\n");
+    for f in ["pub fn ouvrir(sorte: Sorte,", "pub fn clore(sortes: &[Sorte],", "pub fn decision_humaine(cible: &str, empreinte: Option<String>) {"] {
+        let d = src.find(f).unwrap_or_else(|| panic!("{f}"));
+        assert!(src[d..d + 200].contains("avec_attente(|e| {"), "{f} attend son écriture");
+    }
+    for f in ["pub fn noter(genre: Genre,", "pub fn noter_suspension(", "pub fn passer("] {
+        let d = src.find(f).unwrap_or_else(|| panic!("{f}"));
+        assert!(!src[d..d + 400].contains("avec_attente("), "{f} n'attend jamais le disque");
+    }
+    assert!(src.contains("*derniere = n;\n                ECRIT.notify_all();"), "le fil d'écriture signale chaque copie écrite");
+    assert!(src.contains("attendre_ecriture(n, std::time::Duration::from_secs(10));"), "attente bornée");
+}
+
