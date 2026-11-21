@@ -514,19 +514,26 @@ const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.ex
     "julia.exe", "tclsh.exe", "wish.exe", "autohotkey.exe", "autohotkey32.exe", "autohotkey64.exe", "autohotkeyu32.exe", "autohotkeyu64.exe", "autoit3.exe",
     "autoit3_x64.exe", "msbuild.exe", "csi.exe", "dotnet-script.exe"];
 
-/// Comptes d'un utilisateur ordinaire : une écriture permise à l'un d'eux rend un fichier ou un dossier « ouvert »
-const SIDS_ORDINAIRES: &[&str] = &["S-1-1-0", "S-1-5-11", "S-1-5-32-545", "S-1-5-4", "S-1-5-32-546", "S-1-5-7"];
+/// Liste d'acceptation (audit de #228, S228-01) : seuls SYSTEM, Administrateurs, TrustedInstaller et les comptes de service
+/// (S-1-5-80-…) peuvent écrire, ou être propriétaires, sans rendre l'objet « ouvert » ; CREATOR OWNER (S-1-3-0) n'est qu'un
+/// modèle hérité. Tout autre SID (utilisateur précis, Utilisateurs, Tout le monde, LOCAL, CONSOLE LOGON…) ouvre l'objet
+fn sid_de_confiance(sid: &str) -> bool {
+    matches!(sid, "S-1-5-18" | "S-1-5-32-544" | "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
+        || sid.strip_prefix("S-1-5-80-").is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit() || c == '-'))
+}
 
 /// Écriture, ajout, création de sous-dossier, attributs étendus, suppression, changement de droits ou de propriétaire,
 /// GENERIC_WRITE et GENERIC_ALL
 const MASQUE_ECRITURE: u32 = 0x2 | 0x4 | 0x10 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x4000_0000 | 0x1000_0000;
 
-/// Décision pure : un fichier ou un dossier est « ouvert » si un compte ordinaire peut y écrire, ou si sa liste de droits
-/// porte une entrée non reconnue ; illisible, il est ouvert (décision du mainteneur du 2026-11-21, S114-01)
+/// Décision pure : un fichier ou un dossier est « ouvert » si un compte hors de la liste d'acceptation peut y écrire, si
+/// son propriétaire est hors de cette liste, ou si sa liste de droits porte une entrée non reconnue ; illisible, il est
+/// ouvert (décision du mainteneur du 2026-11-21, S114-01 ; audit de #228, S228-01)
 pub fn ouvert_en_ecriture(s: Option<&crate::natif::Securite>) -> bool {
     match s {
         None => true,
-        Some(s) => s.ace_inconnue || s.aces.iter().any(|a| a.autorise && a.masque & MASQUE_ECRITURE != 0 && SIDS_ORDINAIRES.contains(&a.sid.as_str())),
+        Some(s) => s.ace_inconnue || !sid_de_confiance(&s.proprietaire)
+            || s.aces.iter().any(|a| a.autorise && a.masque & MASQUE_ECRITURE != 0 && a.sid != "S-1-3-0" && !sid_de_confiance(&a.sid)),
     }
 }
 
