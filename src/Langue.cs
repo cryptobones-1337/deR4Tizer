@@ -65,6 +65,7 @@ namespace DeR4Tizer
             { "état ancien", "old state" }, { "en marche", "running" }, { "Cet état n'est plus à jour : tout ce qui suit peut être ancien ; service à vérifier.", "This state is out of date: everything below may be old; check the service." },
             { "démarré le", "started on" }, { "Protection du dossier de données", "Data folder protection" }, { "vérifiée", "verified" }, { "en échec", "failing" },
             { "Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)", "Sysmon (optional) not installed: WMI replaces it, very short-lived programs may escape monitoring (PRC-001 to PRC-005 degraded)" },
+            { "Sysmon (facultatif) absent : l'audit des créations de programmes (4688) le remplace, les programmes brefs sont vus avec leur ligne de commande", "Sysmon (optional) not installed: process creation auditing (4688) replaces it, short-lived programs are seen with their command line" },
             // Textes fixes du service (mitre.rs : techniques et conseils), noms des collectes, conséquences (revue de l'auditeur du 2026-11-21, point 3)
             { "T1486 Chiffrement de données (rançongiciel)", "T1486 Data encrypted for impact (ransomware)" },
             { "Cliquez sur PANIQUE pour couper Internet, puis éteignez le PC si des fichiers changent d'extension. Ne payez pas : contactez un professionnel et restaurez vos sauvegardes.", "Click PANIC to cut the Internet, then turn the PC off if file extensions are changing. Do not pay: contact a professional and restore your backups." },
@@ -131,6 +132,7 @@ namespace DeR4Tizer
             { "Liste des programmes", "Program list" },
             { "Sysmon (facultatif)", "Sysmon (optional)" },
             { "Démarrages de programmes (WMI)", "Program starts (WMI)" },
+            { "Audit des créations de programmes (4688)", "Process creation auditing (4688)" },
             { "Journal DNS de Windows", "Windows DNS log" },
             { "Journal de Microsoft Defender", "Microsoft Defender log" },
             { "État de Microsoft Defender", "Microsoft Defender status" },
@@ -363,6 +365,7 @@ namespace DeR4Tizer
             { "Aucune alerte, {0} détection muette ↓", "No alerts, {0} silent detection ↓" },
             { "Aucune alerte, {0} détections muettes ↓", "No alerts, {0} silent detections ↓" },
             { "connexions réseau non vues", "network connections not seen" }, { "programmes en cours non listés", "running programs not listed" },
+            { "programmes très brefs vus seulement par WMI (PRC-001 à PRC-005 dégradées)", "very short-lived programs seen only through WMI (PRC-001 to PRC-005 degraded)" },
             { "créations de programmes non vues", "program starts not seen" }, { "domaines contactés non vus", "contacted domains not seen" },
             { "détections et réglages de Defender non vus", "Defender detections and settings not seen" }, { "état de Defender inconnu", "Defender status unknown" },
             { "ouvertures de session et accès aux fichiers non vus", "logons and file access not seen" }, { "accès aux données sensibles non vus", "sensitive data access not seen" },

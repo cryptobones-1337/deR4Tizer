@@ -73,6 +73,15 @@ try {
     # prérelecture de #238, D1) ; sans WMI, la collecte reste décrite comme désactivée
     $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'WmiProcessus' 'Partielle' 'WMI : processus brefs manqués'), (Collecte 'Connexions' 'Active')))
     Cas 'bandeau : Sysmon absent, WMI partiel : ligne neutre avec la conséquence' ($t -eq '○ Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)') $t
+    # Audit des créations de processus (4688) actif : il remplace Sysmon, les programmes brefs sont vus (couverture ATT&CK,
+    # lot 1) ; audit partiel ou absent : la ligne WMI reste, avec sa conséquence
+    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'AuditProcessus' 'Active'), (Collecte 'WmiProcessus' 'Partielle' 'WMI : processus brefs manqués')))
+    Cas 'bandeau : Sysmon absent, audit 4688 actif : ligne neutre de l''audit' ($t -eq '○ Sysmon (facultatif) absent : l''audit des créations de programmes (4688) le remplace, les programmes brefs sont vus avec leur ligne de commande') $t
+    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'AuditProcessus' 'Partielle' 'ligne de commande absente'), (Collecte 'WmiProcessus' 'Partielle' 'WMI : processus brefs manqués')))
+    Cas 'bandeau : audit 4688 partiel : ligne WMI' ($t -eq '○ Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)') $t
+    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'AuditProcessus' 'Desactivee' 'non activé'), (Collecte 'WmiProcessus' 'Partielle' 'p')))
+    Cas 'bandeau : audit 4688 non activé : dit, avec sa conséquence' ($t -match [regex]::Escape('○ Audit des créations de programmes (4688) désactivée (non activé) : programmes très brefs vus seulement par WMI (PRC-001 à PRC-005 dégradées)')) $t
+    Cas 'nom lisible : AuditProcessus' ((& $appel 'Nom' 'AuditProcessus') -eq 'Audit des créations de programmes (4688)')
     # Identifiant de collecte jamais affiché brut
     Cas 'nom lisible : ListesDomaines' ((& $appel 'Nom' 'ListesDomaines') -eq 'Listes de domaines malveillants')
     Cas 'nom lisible : identifiant inconnu gardé' ((& $appel 'Nom' 'NouvelleSource') -eq 'NouvelleSource')

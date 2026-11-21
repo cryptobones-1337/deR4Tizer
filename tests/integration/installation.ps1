@@ -366,6 +366,11 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     } else {
         if ($c['Sysmon'].Etat -ne 'Desactivee') { return "Sysmon absent mais collecte $($c['Sysmon'].Etat) ; $vu" }
         if ($c['WmiProcessus'].Etat -ne 'Partielle') { return "WMI des processus : $($c['WmiProcessus'].Etat) ; $vu" }
+        # Audit des créations de processus (4688) : toujours noté sans Sysmon ; désactivé ou indisponible, la raison dit le repli sur WMI
+        $a = $c['AuditProcessus']
+        if (-not $a -or $a.Etat -notin 'Active', 'Partielle', 'Desactivee', 'Indisponible') { return "audit des créations de processus : $($a.Etat) ; $vu" }
+        if ($a.Etat -in 'Desactivee', 'Indisponible' -and $a.Raison -notmatch 'WMI') { return "audit des créations de processus sans repli dit : $($a.Raison)" }
+        if ($a.Etat -in 'Active', 'Partielle' -and $e.SourceProcessus -ne 'Audit 4688') { return "audit $($a.Etat) mais source des processus : $($e.SourceProcessus)" }
     }
     if ($c['Baseline'].Etat -notin 'Active', 'Partielle') { return "baseline : $($c['Baseline'].Etat) ($($c['Baseline'].Raison)) ; $vu" }
     if ($c['ListesDomaines'].Etat -ne 'Desactivee') { return "listes de domaines : $($c['ListesDomaines'].Etat) (attendues désactivées par défaut) ; $vu" }

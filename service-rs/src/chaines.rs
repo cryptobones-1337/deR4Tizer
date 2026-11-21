@@ -68,7 +68,7 @@ impl Arbre {
             let e = self.processus.entry(pid).or_insert_with(|| Processus {
                 nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant,
             });
-            if e.nom != p.nom {
+            if !e.nom.eq_ignore_ascii_case(&p.nom) {
                 // Identifiant réutilisé par un autre programme
                 *e = Processus { nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant };
                 self.signaux.remove(&pid);
@@ -91,6 +91,30 @@ impl Arbre {
                 if let Some(l) = ligne {
                     p.ligne = l.to_string();
                 }
+            }
+        }
+    }
+
+    /// Création vue par l'audit (4688) : un processus bref, terminé avant la lecture de la liste, garde sa place dans
+    /// l'arbre et son parent ; PID réutilisé par un autre programme : l'entrée est remplacée et ses signaux effacés
+    pub fn creation(&mut self, pid: u32, parent: Option<u32>, chemin: &str, ligne: Option<&str>) {
+        if pid <= 4 {
+            return;
+        }
+        let nom = std::path::Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let maintenant = Instant::now();
+        match self.processus.get_mut(&pid) {
+            Some(e) if e.nom.eq_ignore_ascii_case(&nom) => {
+                if e.parent == 0 {
+                    e.parent = parent.unwrap_or(0);
+                }
+                self.completer(pid, chemin, ligne);
+            }
+            _ => {
+                self.processus.insert(pid, Processus {
+                    nom, parent: parent.unwrap_or(0), chemin: chemin.to_string(), ligne: ligne.unwrap_or_default().to_string(), vu: maintenant,
+                });
+                self.signaux.remove(&pid);
             }
         }
     }

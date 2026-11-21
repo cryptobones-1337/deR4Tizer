@@ -195,7 +195,7 @@ impl Moniteur {
         let journal_dns_actif = demarrer_dns(&partage);
         {
             let p = partage.clone();
-            processus.demarrer(move |nom, resultats| traiter_dns(&p, nom, resultats));
+            processus.demarrer(!console, move |nom, resultats| traiter_dns(&p, nom, resultats));
         }
 
         let (suivis, suivi_ecriture_permise) = crate::incidents::lire_suivi();
@@ -742,6 +742,11 @@ impl Moniteur {
                 HashMap::new()
             }
         };
+        // Créations vues par l'audit (4688) : un processus déjà terminé garde son parent dans l'arbre des chaînes
+        let creations: Vec<crate::processus::Creation4688> = std::mem::take(&mut *self.processus.creations.lock().unwrap());
+        for c in &creations {
+            self.arbre.creation(c.pid, c.ppid, &c.image, c.ligne_commande.as_deref());
+        }
         self.arbre.maj(&liste);
         let t = mesure::noter("cycle.connexions_et_processus", t);
         let connexions: Vec<Connexion> = toutes.iter().filter(|c| (c.etat == 5 || c.etat == 3) && !est_locale(&c.ip)).cloned().collect();
@@ -1071,7 +1076,7 @@ impl Moniteur {
                 // Même critère que l'indice « IP directe » : dernière lecture réussie il y a moins de trois intervalles
                 journal_dns_actif: collectes::lue_recemment(Collecte::JournalDns),
                 ip_connues,
-                source_processus: self.processus.source.lock().unwrap().clone(),
+                source_processus: self.processus.source_publiee(),
                 bureau_a_distance: s.rdp,
                 flux,
                 peripheriques: s.usages.clone(),

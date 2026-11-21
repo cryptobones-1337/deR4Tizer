@@ -45,20 +45,22 @@ pub enum Collecte {
     ConfigDns,
     /// Filtrage par nom de domaine sur les cartes (phase 7, PR 7.5a) : actif, suspendu ou non activé
     FiltrageDns,
+    /// Audit des créations de processus (4688, journal Sécurité) : source des règles de processus sans Sysmon
+    AuditProcessus,
 }
 
 use Collecte::*;
 
-pub const TOUTES: [Collecte; 25] = [
+pub const TOUTES: [Collecte; 26] = [
     Connexions, Processus, Sysmon, WmiProcessus, JournalDns, JournalDefender, EtatDefender, JournalSecurite, AuditDonnees,
     JournalSysteme, JournalParefeu, PaquetsParefeu, Persistance, Baseline, ListesMenaces, ListesDomaines, Loldrivers, Leurres,
-    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions, ConfigDns, FiltrageDns,
+    Extensions, Peripheriques, CaptureTrafic, CaptureReseauLocal, Sessions, ConfigDns, FiltrageDns, AuditProcessus,
 ];
 
 // TOUTES liste chaque collecte une fois, dans l'ordre de l'énumération : l'indice d'une case est son numéro. Une
 // collecte ajoutée sans être mise dans TOUTES ne compile pas (elle ne partagerait jamais la case d'une autre).
 const _: () = {
-    assert!(TOUTES.len() == FiltrageDns as usize + 1);
+    assert!(TOUTES.len() == AuditProcessus as usize + 1);
     let mut i = 0;
     while i < TOUTES.len() {
         assert!(TOUTES[i] as usize == i);
@@ -94,6 +96,7 @@ impl Collecte {
             Sessions => "Sessions",
             ConfigDns => "ConfigDns",
             FiltrageDns => "FiltrageDns",
+            AuditProcessus => "AuditProcessus",
         }
     }
 
@@ -115,6 +118,8 @@ impl Collecte {
             // Fil « filtrage sonde » : toutes les 5 minutes
             FiltrageDns => 900,
             WmiProcessus => 0,
+            // État relu toutes les 5 min (fil « audit des processus »)
+            AuditProcessus => 300,
             // Relevé des démarrages automatiques toutes les minutes (11 s au plus mesurées)
             Persistance => 120,
             // Fil « contrôles » : toutes les 10 min (relectures au démarrage du PC comprises, 10 min au plus)
@@ -244,7 +249,8 @@ pub struct CauseSansCollecte {
 /// Télémétrie dont dépend chaque règle du registre (docs/detection/regles.md, « Télémétrie »). Vide : aucune collecte
 /// externe suivie (contrôles du service lui-même, empreinte du fichier hosts, adresses des cartes, registre).
 pub fn besoins(regle: &str) -> &'static [&'static [Collecte]] {
-    const PROCESSUS_CREES: &[Collecte] = &[Sysmon, WmiProcessus];
+    // Sysmon, sinon l'audit des créations de processus (4688), sinon WMI (partiel par nature)
+    const PROCESSUS_CREES: &[Collecte] = &[Sysmon, AuditProcessus, WmiProcessus];
     const DNS: &[Collecte] = &[JournalDns, Sysmon];
     const SECURITE_OU_SYSTEME: &[Collecte] = &[JournalSecurite, JournalSysteme];
     match regle {

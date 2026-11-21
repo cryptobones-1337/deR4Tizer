@@ -1,15 +1,17 @@
 //! Origine des processus : qui a lancé quoi, avec quelle ligne de commande.
 //! Source principale : Sysmon s'il est installé (création de processus, requêtes DNS avec le programme
-//! demandeur). Sinon : traces de démarrage de processus de WMI. Applique quelques règles de détection
+//! demandeur). Sinon : événements 4688 du journal Sécurité (audit des créations de processus, lus même pour un
+//! processus déjà terminé), puis traces de démarrage de processus de WMI. Applique quelques règles de détection
 //! inspirées de Sigma (document Office qui lance un interpréteur, PowerShell obscurci, LOLBins, rançongiciels).
 
-use crate::collectes::{self, Collecte};
+use crate::collectes::{self, Collecte, Note};
 use crate::commun::{self, Alerte};
 use crate::evenements;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use wmi::{COMLibrary, Variant, WMIConnection};
@@ -51,6 +53,14 @@ pub struct Processus {
     infos: Arc<Mutex<HashMap<u32, InfoProcessus>>>,
     pub detections: Arc<Mutex<Vec<Alerte>>>,
     pub source: Arc<Mutex<String>>,
+    /// État de l'audit des créations de processus (`Note` en u8) : décide qui analyse, l'audit ou WMI
+    audit: Arc<AtomicU8>,
+    /// Alertes de processus déjà levées (PID, programme) : une seule par création, quelle que soit la source
+    signales: Arc<Mutex<HashMap<u32, (String, Instant)>>>,
+    /// Créations vues par l'audit, pour l'arbre des chaînes (vidées par le moniteur à chaque cycle)
+    pub creations: Arc<Mutex<Vec<Creation4688>>>,
+    /// 4688 lus avec et sans ligne de commande depuis le dernier relevé de l'état de l'audit
+    lignes: Arc<Mutex<(u32, u32)>>,
 }
 
 fn regles() -> &'static [(Regex, &'static str, &'static str)] {
@@ -138,6 +148,136 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
     })
 }
 
+/// Création de processus lue dans un événement 4688 du journal Sécurité (audit des créations de processus)
+#[derive(Clone, Debug, PartialEq)]
+pub struct Creation4688 {
+    pub pid: u32,
+    pub image: String,
+    pub ligne_commande: Option<String>,
+    /// Processus créateur (champ ProcessId du 4688)
+    pub ppid: Option<u32>,
+    pub parent_image: Option<String>,
+}
+
+/// Longueur gardée d'une ligne de commande (Windows : 32 767 caractères au plus)
+pub(crate) const LIGNE_MAX: usize = 32_768;
+
+/// Sous-catégorie « Audit Process Creation » (baseline, `audit.processus`)
+const GUID_AUDIT_PROCESSUS: &str = "{0CCE922B-69AE-11D9-BED3-505054503030}";
+
+/// Décision pure (testée) : PID d'un 4688, que Windows écrit en hexadécimal préfixé (« 0x1a2c »). Sans préfixe, vide,
+/// nul, trop long ou avec un caractère qui n'est pas hexadécimal : None
+pub(crate) fn pid_4688(v: &str) -> Option<u32> {
+    let v = v.trim();
+    let h = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X"))?;
+    if h.is_empty() || h.len() > 8 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(h, 16).ok().filter(|p| *p != 0)
+}
+
+fn champ(d: &HashMap<String, String>, cle: &str) -> Option<String> {
+    d.get(cle).map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// Décision pure (testée) : champs d'un 4688 (rendus par `evenements::donnees`). Sans PID lisible ni programme : None.
+/// Ligne de commande vide ou absente (réglage « ligne de commande dans les 4688 » coupé) : None ; très longue : bornée
+pub(crate) fn lire_4688(d: &HashMap<String, String>) -> Option<Creation4688> {
+    let pid = pid_4688(d.get("NewProcessId")?)?;
+    let image = champ(d, "NewProcessName")?;
+    Some(Creation4688 {
+        pid,
+        image,
+        ligne_commande: champ(d, "CommandLine").map(|l| if l.chars().count() > LIGNE_MAX { l.chars().take(LIGNE_MAX).collect() } else { l }),
+        ppid: d.get("ProcessId").and_then(|p| pid_4688(p)),
+        parent_image: champ(d, "ParentProcessName"),
+    })
+}
+
+/// Décision pure (testée) : sans Sysmon, l'audit (4688) analyse les créations de processus s'il est actif ou partiel ;
+/// sinon WMI. Une seule source analyse à la fois, l'autre ne fait que remplir le cache
+pub(crate) fn audit_analyse(note_audit: u8) -> bool {
+    note_audit == Note::Active as u8 || note_audit == Note::Partielle as u8
+}
+
+fn nom_fichier_min(chemin: &str) -> String {
+    Path::new(chemin).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+fn nom_sans_extension(chemin: &str) -> String {
+    Path::new(chemin).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// Décision pure (testée) : description d'un processus d'après son 4688. Une ligne de commande absente du 4688 est prise
+/// dans le cache (trace WMI, lue pendant que le processus vivait), seulement si le cache décrit le même programme
+pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) -> InfoProcessus {
+    let meme = cache.filter(|i| nom_fichier_min(&i.image) == nom_fichier_min(&c.image));
+    let parent_chemin = c.parent_image.clone().or_else(|| meme.and_then(|i| i.parent_chemin.clone()));
+    InfoProcessus {
+        image: c.image.clone(),
+        ligne_commande: c.ligne_commande.clone().or_else(|| meme.and_then(|i| i.ligne_commande.clone())),
+        parent: parent_chemin.as_deref().map(nom_sans_extension).or_else(|| meme.and_then(|i| i.parent.clone())),
+        parent_chemin,
+        vu: Instant::now(),
+    }
+}
+
+/// Une alerte de processus déjà levée pour ce PID et ce programme compte 10 min
+const DUREE_SIGNALE: Duration = Duration::from_secs(600);
+
+/// Décision pure (testée) : une seule alerte par création de processus, quelle que soit la source (passage de WMI à
+/// l'audit ou retour). Vrai si ce PID a déjà levé une alerte pour le même programme depuis moins de 10 min ; sinon la
+/// création est notée. Table bornée : pleine, l'alerte part sans être notée (jamais de silence)
+pub(crate) fn deja_signale(vus: &mut HashMap<u32, (String, Instant)>, pid: u32, image: &str, maintenant: Instant) -> bool {
+    vus.retain(|_, (_, t)| maintenant.saturating_duration_since(*t) < DUREE_SIGNALE);
+    let nom = nom_fichier_min(image);
+    if vus.get(&pid).is_some_and(|(n, _)| *n == nom) {
+        return true;
+    }
+    if vus.len() < 10_000 {
+        vus.insert(pid, (nom, maintenant));
+    }
+    false
+}
+
+/// Décision pure (testée) : état de la collecte « audit des créations de processus ». Le repli sur WMI est toujours
+/// dit ; jamais « rien de suspect » quand l'audit manque. Non activé (la baseline n'a pas été appliquée) : désactivée,
+/// comme Sysmon absent ; coupé après avoir été actif : indisponible. Poste géré (baseline en lecture seule) : dit
+pub(crate) fn note_audit(journal_lu: bool, audit: Option<u32>, ligne_reglee: bool, lignes: (u32, u32), deja_actif: bool,
+    gestion: &dyn Fn() -> Option<String>) -> (Note, String) {
+    const REPLI: &str = "les créations de processus passent par WMI (processus brefs manqués, PRC-001 à PRC-005 dégradées)";
+    let avec_gestion = |r: String| match gestion() {
+        Some(g) => format!("{r} ; {g}"),
+        None => r,
+    };
+    if !journal_lu {
+        return (Note::Indisponible, format!("journal Sécurité illisible : {REPLI}"));
+    }
+    let Some(a) = audit else {
+        return (Note::Indisponible, format!("réglage de l'audit des créations de processus illisible : {REPLI}"));
+    };
+    if a & 1 == 0 {
+        return if deja_actif {
+            (Note::Indisponible, avec_gestion(format!("audit des créations de processus coupé : {REPLI}")))
+        } else {
+            (Note::Desactivee, avec_gestion(format!("audit des créations de processus non activé (profil « journalisation » de la baseline) : {REPLI}")))
+        };
+    }
+    let (avec, sans) = lignes;
+    if !ligne_reglee || (sans > 0 && avec == 0) {
+        return (Note::Partielle, avec_gestion("ligne de commande absente des événements 4688 : PRC-002 à PRC-005 la prennent dans WMI (processus brefs manqués)".into()));
+    }
+    (Note::Active, String::new())
+}
+
+/// Réglage « ligne de commande dans les événements 4688 » (baseline, `journal.ligne-commande`)
+fn ligne_commande_reglee() -> bool {
+    winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit")
+        .and_then(|k| k.get_value::<u32, _>("ProcessCreationIncludeCmdLine_Enabled"))
+        .is_ok_and(|v| v != 0)
+}
+
 thread_local! {
     static CONNEXION_WMI: RefCell<Option<WMIConnection>> = const { RefCell::new(None) };
 }
@@ -177,23 +317,34 @@ impl Processus {
             infos: Arc::new(Mutex::new(HashMap::new())),
             detections: Arc::new(Mutex::new(Vec::new())),
             source: Arc::new(Mutex::new("aucune".into())),
+            audit: Arc::new(AtomicU8::new(Note::Inconnue as u8)),
+            signales: Arc::new(Mutex::new(HashMap::new())),
+            creations: Arc::new(Mutex::new(Vec::new())),
+            lignes: Arc::new(Mutex::new((0, 0))),
         }
     }
 
-    /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon
-    pub fn demarrer(&self, sur_dns: impl Fn(&str, &str) + Send + 'static) {
+    /// Démarre l'écoute des créations de processus ; `sur_dns` reçoit les requêtes DNS vues par Sysmon. Ordre des
+    /// sources : Sysmon s'il est lu, sinon l'audit (4688) s'il est actif ou partiel, sinon WMI
+    pub fn demarrer(&self, journaux_windows: bool, sur_dns: impl Fn(&str, &str) + Send + 'static) {
         // Sysmon illisible maintenant : WMI à la place (abonner suivrait le journal quand même, sans source entre-temps)
         if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) && evenements::lisible(JOURNAL_SYSMON) {
             let moi = self.clone();
             if evenements::abonner(JOURNAL_SYSMON, "*[System[(EventID=1 or EventID=22)]]", Collecte::Sysmon, move |xml| moi.traiter_sysmon(&xml, &sur_dns)) {
                 *self.source.lock().unwrap() = "Sysmon".into();
                 collectes::desactivee(Collecte::WmiProcessus, "inutile : Sysmon est lu");
+                collectes::desactivee(Collecte::AuditProcessus, "inutile : Sysmon est lu");
                 return;
             }
         } else if evenements::journal_actif(JOURNAL_SYSMON) == Some(true) {
             collectes::echec(Collecte::Sysmon, "journal Sysmon illisible au démarrage : WMI à la place");
         } else {
             collectes::desactivee(Collecte::Sysmon, "Sysmon absent ou son journal inactif");
+        }
+        if journaux_windows {
+            self.demarrer_audit();
+        } else {
+            collectes::desactivee(Collecte::AuditProcessus, "mode console : journal Sécurité non lu");
         }
         let moi = self.clone();
         let _ = std::thread::Builder::new().name("traces de processus".into()).spawn(move || {
@@ -232,7 +383,11 @@ impl Processus {
                 if info.parent_chemin.is_none() {
                     info.parent_chemin = Some(crate::natif::chemin_processus(ppid)).filter(|c| !c.is_empty());
                 }
-                moi.analyser(pid, &info);
+                // Audit actif ou partiel : il analyse ; la trace WMI ne fait que remplir le cache (ligne de commande
+                // d'un processus encore vivant, reprise par le 4688 qui n'en a pas)
+                if !audit_analyse(moi.audit.load(Ordering::Relaxed)) {
+                    moi.analyser(pid, &info);
+                }
             }
             // Flux terminé : plus aucune création de processus n'est vue
             commun::journal("traces de processus WMI interrompues");
@@ -285,8 +440,74 @@ impl Processus {
         self.analyser(pid, &info);
     }
 
+    /// Audit des créations de processus (4688, journal Sécurité), lu par son propre abonnement. Son état, relu toutes
+    /// les 5 min (réglage d'audit effectif, ligne de commande, lignes vues), décide qui analyse : l'audit s'il est actif
+    /// ou partiel, sinon WMI ; le repli est dit dans la raison de la collecte
+    fn demarrer_audit(&self) {
+        let moi = self.clone();
+        if !evenements::abonner("Security", "*[System[(EventID=4688)]]", Collecte::JournalSecurite, move |xml| moi.traiter_4688(&xml)) {
+            collectes::echec(Collecte::AuditProcessus, "abonnement au journal Sécurité impossible : les créations de processus passent par WMI");
+            return;
+        }
+        let moi = self.clone();
+        let _ = std::thread::Builder::new().name("audit des processus".into()).spawn(move || {
+            let mut deja_actif = false;
+            loop {
+                let lignes = std::mem::take(&mut *moi.lignes.lock().unwrap());
+                let (note, raison) = note_audit(evenements::lisible("Security"), crate::gpo::audit_effectif(GUID_AUDIT_PROCESSUS),
+                    ligne_commande_reglee(), lignes, deja_actif, &crate::baseline::gestion);
+                deja_actif |= matches!(note, Note::Active | Note::Partielle);
+                moi.audit.store(note as u8, Ordering::Relaxed);
+                match note {
+                    Note::Active => collectes::succes(Collecte::AuditProcessus),
+                    Note::Partielle => collectes::partielle(Collecte::AuditProcessus, &raison),
+                    Note::Desactivee => collectes::desactivee(Collecte::AuditProcessus, &raison),
+                    _ => collectes::echec(Collecte::AuditProcessus, &raison),
+                }
+                std::thread::sleep(Duration::from_secs(300));
+            }
+        });
+    }
+
+    /// Un 4688 : la création va à l'arbre des chaînes (un processus bref y garde son parent) ; analysée si l'audit est
+    /// la source retenue (sinon WMI le fait)
+    pub(crate) fn traiter_4688(&self, xml: &str) {
+        let Some(c) = lire_4688(&evenements::donnees(xml)) else { return };
+        {
+            let mut l = self.lignes.lock().unwrap();
+            if c.ligne_commande.is_some() { l.0 = l.0.saturating_add(1) } else { l.1 = l.1.saturating_add(1) }
+        }
+        {
+            let mut v = self.creations.lock().unwrap();
+            if v.len() >= 5_000 {
+                v.remove(0);
+            }
+            v.push(c.clone());
+        }
+        if !audit_analyse(self.audit.load(Ordering::Relaxed)) {
+            return;
+        }
+        let cache = self.infos.lock().unwrap().get(&c.pid).cloned();
+        let info = info_depuis_4688(&c, cache.as_ref());
+        self.infos.lock().unwrap().insert(c.pid, info.clone());
+        self.analyser(c.pid, &info);
+    }
+
+    /// Source publiée dans etat.json : l'audit quand il analyse, sinon la source notée (Sysmon, WMI ou aucune)
+    pub fn source_publiee(&self) -> String {
+        if audit_analyse(self.audit.load(Ordering::Relaxed)) { "Audit 4688".into() } else { self.source.lock().unwrap().clone() }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn regler_audit_test(&self, note: Note) {
+        self.audit.store(note as u8, Ordering::Relaxed);
+    }
+
     fn analyser(&self, pid: u32, p: &InfoProcessus) {
         if let Some(a) = alerte_processus(pid, p) {
+            if deja_signale(&mut self.signales.lock().unwrap(), pid, &p.image, Instant::now()) {
+                return;
+            }
             self.detections.lock().unwrap().push(a);
         }
     }
