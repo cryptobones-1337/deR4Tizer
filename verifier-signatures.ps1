@@ -2,7 +2,9 @@
 # par une clé épinglée (CLE_SIGNATURE : empreintes SHA-256 de la clé publique du certificat, séparées par des
 # virgules ; même calcul que natif::cle_signataire_verifiee, sur SubjectPublicKeyInfo.PublicKey). Échec fermé :
 # liste de clés vide ou invalide, fichier absent, signature non valide, sans horodatage ou d'une autre clé : code 1,
-# rien n'est publié. Utilisé par .github/workflows/publication.yml et par la procédure de signature locale.
+# rien n'est publié. Chaîne acceptée seulement sans erreur, ou seulement expirée quand la signature est horodatée
+# (liste d'acceptation). Utilisé par .github/workflows/publication.yml et par la procédure de signature locale ;
+# exécuté dans la CI sur de vrais paquets signés par la PKI de test (tests/integration/maj.ps1).
 # Usage : .\verifier-signatures.ps1 -Cles <empreinte[,empreinte]> -Fichiers bin\deR4Tizer.msi, bin\deR4TizerSvc.exe, bin\deR4Tizer.exe
 param(
     [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Cles,
@@ -33,8 +35,12 @@ foreach ($f in $Fichiers) {
         $ok = $chaine.Build($s.SignerCertificate)
         $etats = @($chaine.ChainStatus | ForEach-Object { [string]$_.Status })
     } finally { $chaine.Dispose() }
-    $bloquants = @($etats | Where-Object { $_ -in 'Revoked', 'RevocationStatusUnknown', 'OfflineRevocation', 'NotTrusted', 'UntrustedRoot', 'PartialChain' })
-    if ($bloquants.Count -or (-not $ok -and $etats.Count -eq 0)) { $refus += "$f : chaîne ou révocation non vérifiée ($($etats -join ', '))"; continue }
+    # Liste d'acceptation (revue externe du 2026-11-21, défaut 1) : chaîne construite sans erreur, ou seul « certificat
+    # expiré » (NotTimeValid), admis parce que la signature est horodatée (contrôlé plus haut). Tout autre état refuse,
+    # y compris ceux qu'une liste de refus oublierait (NotSignatureValid, NotValidForUsage, ExplicitDistrust...)
+    $autres = @($etats | Where-Object { $_ -notin 'NoError', 'NotTimeValid' })
+    $seulExpire = $etats.Count -gt 0 -and $autres.Count -eq 0
+    if ($autres.Count -or (-not $ok -and -not $seulExpire)) { $refus += "$f : chaîne ou révocation non vérifiée ($($etats -join ', '))"; continue }
     # Seule l'empreinte de la clé est écrite : le sujet du certificat porte le nom du titulaire, et ce journal est
     # public (décision du 2026-11-11 : le nom dans la signature des binaires seulement, prérelecture de #226)
     Write-Host "$f : signature valide, horodatée, clé épinglée $cle"
