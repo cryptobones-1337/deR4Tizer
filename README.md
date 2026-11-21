@@ -15,10 +15,15 @@ deR4Tizer targets organisations with neither a SOC nor an EDR budget: small muni
 
 ### Screenshots
 
-Real screenshots of the interface (v4.3), taken in the test VM: Windows 11, Microsoft Defender on, service installed
-from the MSI and left running for a few minutes. No data from a real computer.
+Real screenshots of the current interface (v4.3, 2026-11-21), taken in the test VM by `tests/vm/captures.ps1`:
+Windows 11 (not activated, hence the watermark), Microsoft Defender on, service installed from the MSI and left
+running for a few minutes, after a harmless demo attack (an encoded PowerShell that only waits, and a command line
+that carries a backup-deletion command without running it). No data from a real computer. Some texts that come from
+the service (rule details, advice, reasons) are still in French in the English interface.
 
-![Overview: computer status, points to watch, Panic button](docs/images/interface-en-vue-d-ensemble.png)
+![Overview: status banner, tiles to watch (alerts, chains, security settings, autostart), Panic button](docs/images/interface-en-vue-d-ensemble.png)
+
+![Alerts: the demo attack caught as a critical chain, PowerShell then cmd, with rule, ATT&CK technique, advice and reasons](docs/images/interface-en-alerte-critique.png)
 
 ![Connections: programs reaching the Internet, destination, signer, score](docs/images/interface-en-connexions.png)
 
