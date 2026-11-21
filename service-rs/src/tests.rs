@@ -9190,7 +9190,7 @@ fn signature_locale_script_unique_echec_ferme() {
         "if ($recue -ne $attendue)",
         "if ($s.Status -ne 'NotSigned')",
         "6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31",
-        "verifier-signatures.ps1') -Cles $cles",
+        "-Command \"& '$verifier' -Cles '$cles' -Fichiers $liste; exit `$LASTEXITCODE\"",
         "if ($versionMsi -ne $attenduMsi)",
         "existe déjà sur GitHub",
     ] {
@@ -9205,8 +9205,15 @@ fn signature_locale_script_unique_echec_ferme() {
     assert!(pos("Signer @((Join-Path $bin 'deR4Tizer.exe')") < pos("construire-msi.ps1') -Version $version"));
     assert!(pos("construire-msi.ps1') -Version $version") < pos("Signer @((Join-Path $bin 'deR4Tizer.msi'))"));
     assert!(pos("Signer @((Join-Path $bin 'deR4Tizer.msi'))") < pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))"));
-    assert!(pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))") < pos("verifier-signatures.ps1') -Cles $cles"));
-    assert!(pos("verifier-signatures.ps1') -Cles $cles") < pos("gh release create $Tag"));
+    assert!(pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))") < pos("-Command \"& '$verifier'"));
+    assert!(pos("-Command \"& '$verifier'") < pos("gh release create $Tag"));
+    // Prérelecture de #239 : verifier-signatures.ps1 jamais par -File (liste de fichiers coupée, D1) ; git par Natif
+    // (exception de Windows PowerShell 5.1, D2) ; empreintes prises avant la vérification (S239-04) ; référence exacte
+    // du tag (S239-05)
+    assert!(!s.contains("-File (Join-Path $racine 'verifier-signatures.ps1')"));
+    assert!(s.contains("Natif git -C $racine worktree add --detach $sources $commitTag"));
+    assert!(pos("$empreintes = @{}") < pos("-Command \"& '$verifier'"));
+    assert!(s.contains("repos/$Depot/git/ref/tags/$Tag"));
     // Audit de #239 : jeton seulement vers api.github.com (redirection suivie sans lui, S239-02) ; tag distant sur le
     // commit signé (S239-03) ; empreintes revérifiées avant l'envoi (S239-04) ; nettoyage (S239-01)
     assert!(s.contains("AllowAutoRedirect = $false") && s.contains("$sansJeton.GetByteArrayAsync($stockage)"));

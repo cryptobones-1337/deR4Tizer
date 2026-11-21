@@ -135,7 +135,7 @@ if ((Get-FileHash $wixZip -Algorithm SHA256).Hash -ne '6AC824E1642D6F7277D0ED7EA
 Expand-Archive $wixZip $wix
 # construire-msi.ps1 lit bin\ du dépôt : copie des sources du tag dans le dossier de travail, rien n'est écrit dans le dépôt
 $sources = Join-Path $Travail 'sources'
-git -C $racine worktree add --detach $sources $commitTag 2>&1 | Out-Null
+Natif git -C $racine worktree add --detach $sources $commitTag | Out-Null
 if ($LASTEXITCODE) { Arret 'copie des sources du tag impossible (git worktree)' }
 $wixAvant = $env:WIX; $certAvant = $env:DER4TIZER_CERT_SHA1
 try {
@@ -161,8 +161,15 @@ $manifeste = [ordered]@{ Version = $version; Fichiers = @([ordered]@{ Nom = 'deR
 [IO.File]::WriteAllText((Join-Path $bin 'manifeste.json'), ($manifeste | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
 
 # ---------------------------------------------------------------- 7. vérifications
+# Empreintes prises avant la vérification : elles sont revérifiées juste avant l'envoi (audit de #239, S239-04)
+$empreintes = @{}
+foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe', 'manifeste.json') { $empreintes[$n] = Sha256 (Join-Path $bin $n) }
 Etape 'Vérification des signatures (verifier-signatures.ps1)'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $racine 'verifier-signatures.ps1') -Cles $cles -Fichiers (Join-Path $bin 'deR4Tizer.msi'), (Join-Path $bin 'deR4TizerSvc.exe'), (Join-Path $bin 'deR4Tizer.exe')
+# Par -Command : avec -File, chaque chemin arrive comme un argument séparé et l'appel est refusé (prérelecture de #239, D1).
+# Chemins et clés sans apostrophe (dossier de travail du script, clés hexadécimales)
+$verifier = Join-Path $racine 'verifier-signatures.ps1'
+$liste = (@('deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe') | ForEach-Object { "'" + (Join-Path $bin $_) + "'" }) -join ','
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$verifier' -Cles '$cles' -Fichiers $liste; exit `$LASTEXITCODE"
 if ($LASTEXITCODE) { Arret 'vérification des signatures en échec' }
 $installeur = New-Object -ComObject WindowsInstaller.Installer
 $base_msi = $installeur.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installeur, @((Join-Path $bin 'deR4Tizer.msi'), 0))
@@ -183,10 +190,11 @@ if ($SansPublier) {
     exit 0
 }
 Etape 'Brouillon de version GitHub'
-$empreintes = @{}
-foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe', 'manifeste.json') { $empreintes[$n] = Sha256 (Join-Path $bin $n) }
-# Le tag de GitHub pointe sur le commit signé (audit de #239, S239-03)
-$distant = Natif gh api "repos/$Depot/commits/$Tag" --jq .sha
+# Le tag de GitHub pointe sur le commit signé (audit de #239, S239-03), lu par sa référence exacte de tag (une branche
+# du même nom ne peut pas être lue à sa place, S239-05) ; tag annoté : l'objet du tag est suivi jusqu'au commit
+$ref = Natif gh api "repos/$Depot/git/ref/tags/$Tag" --jq '.object.type + " " + .object.sha'
+$type, $distant = "$ref" -split ' ', 2
+if ($type -eq 'tag') { $distant = Natif gh api "repos/$Depot/git/tags/$distant" --jq .object.sha }
 if ($distant -ne $commitTag) { Arret "le tag $Tag de GitHub pointe sur $distant, pas sur le commit signé $commitTag" }
 Natif gh release view $Tag --repo $Depot | Out-Null
 if (-not $LASTEXITCODE) { Arret "une version $Tag existe déjà sur GitHub : rien n'est remplacé" }
