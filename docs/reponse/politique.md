@@ -80,14 +80,17 @@ est retenue. Un administrateur peut toujours agir à la main.
 | Garde | Seuil | Effet |
 |---|---|---|
 | Même blocage automatique sur la même adresse | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
-| Suspension d'un programme signé installé dans Program Files, hors interpréteurs | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
+| Suspension d'un programme signé installé dans Program Files, hors interpréteurs, fermé en écriture aux comptes ordinaires et lancé sous SYSTEM ou un administrateur | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
 | Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
 | Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
 | Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
 
 - **Suspension sans plafond global, et sans seuil hors de Program Files** (décisions du mainteneur, 2026-11-01) : un
   rançongiciel ne doit pouvoir s'exempter ni avec des programmes jetables, ni en se lançant quatre fois, ni par trois touches
-  via `powershell.exe`. Seul un programme signé installé dans Program Files, hors interpréteurs, a un seuil. En contrepartie,
+  via `powershell.exe`. Seul un programme signé installé dans Program Files, hors interpréteurs, a un seuil ; depuis le
+  2026-11-21 (décision du mainteneur, S110-14), il faut aussi que le programme et ses dossiers soient fermés en écriture
+  aux comptes ordinaires (droits lus) et qu'il tourne sous SYSTEM ou un administrateur, et la liste des interpréteurs est
+  complétée (dotnet, deno, bun, Lua, R, Julia, Tcl, AutoHotkey, AutoIt, MSBuild, csi). En contrepartie,
   un programme légitime hors de ce cas est suspendu à chaque touche, et un programme relancé en boucle s'accumule, suspendu,
   jusqu'à ce qu'un administrateur le reprenne ou l'arrête. Le seuil de Program Files reste utilisable par un programme signé
   déjà installé qui toucherait les leurres trois fois : l'alerte reste.
