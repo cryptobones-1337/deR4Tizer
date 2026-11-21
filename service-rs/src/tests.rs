@@ -6374,7 +6374,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("decidee == Action::Reprendre && politique::suspendu_automatiquement(&chemin)"), "reprise");
     let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
     assert!(v.contains("politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte)"), "leurre");
-    assert!(v.contains("politique::passer(genre_leurre(programme), programme,"), "leurre : garde");
+    assert!(v.contains("politique::passer(genre_leurre(pid, programme), programme,"), "leurre : garde");
     let (chemin_lu, signature_lue) = (v.find("if !crate::politique::installe_dans(programme, &dossiers)").unwrap(), v.find("crate::natif::signataire_a_echeance(programme), Ok(Some(_))").unwrap());
     assert!(chemin_lu < signature_lue, "S110-15");
     assert!(v.contains("matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)))"), "signature illisible : non signé");
@@ -6466,7 +6466,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(include_str!("politique.rs").contains("e.h.noter_avec(Genre::Suspension, chemin, empreinte, Some(creation), t);"), "S113-06 : la trace porte l'heure de création");
     assert!(m.contains("if !reponse::meme_processus(&racine, natif::creation_processus(pid), \"\") {"), "6.3 : racine de la chaîne");
     assert!(m.contains("filter(|(p, i)| match execution::tuer(&a, *p, i) {"), "6.3 : descendants, identité relevée à la décision");
-    assert!(v.contains("leurre_connu(chemin, &dossiers_fermes(), &|e| signe_par(chemin, e))"), "S113-10 : dossier fermé en production");
+    assert!(v.contains("leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), privilegie)"), "S113-10 : dossier fermé en production, droits et compte contrôlés");
     assert!(v.contains("Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {"), "6.3 : le leurre passe l'identité");
     let rp = include_str!("reponse.rs").replace("\r\n", "\n");
     assert!(rp.contains("agir(pid, attendu, PROCESS_TERMINATE, true,") && rp.contains("agir(pid, attendu, PROCESS_SUSPEND_RESUME, suspendre,"), "6.3 : action par le handle, contrôle critique pour tuer et suspendre");
@@ -8833,5 +8833,59 @@ fn masquage_s221_toutes_les_formes_de_profil_et_texte_borne() {
     let m = crate::baseline::message_non_remises(&[], &(0..8).map(|i| format!("r{i}")).collect::<Vec<_>>());
     assert!(m.contains("r4") && !m.contains("r5") && m.contains("et 3 autre(s)"), "{m}");
     crate::tests::torturer_texte(r"\\?\C:\Users\marie\x", &mut |t| { let _ = masquer_chemin(t); let _ = borner_texte(t, 10); });
+}
+
+#[test]
+fn s110_14_droits_compte_et_hotes_de_scripts() {
+    // Décision du mainteneur du 2026-11-21 (S110-14, S113-10, S114-01, S114-02)
+    use crate::natif::{Ace, Securite};
+    use crate::politique::{chemins_a_controler, genre_suspension_garanti as g, ouvert_en_ecriture as o, Genre::*};
+    let ace = |sid: &str, masque: u32, autorise: bool| Ace { autorise, masque, sid: sid.into() };
+    let sec = |aces: Vec<Ace>| Securite { proprietaire: "S-1-5-18".into(), protege: false, aces, ace_inconnue: false };
+    // Droits : lecture seule pour Utilisateurs = fermé ; écriture pour Utilisateurs, Utilisateurs authentifiés, Tout le monde = ouvert
+    assert!(!o(Some(&sec(vec![ace("S-1-5-32-545", 0x1200a9, true), ace("S-1-5-18", 0x1f01ff, true), ace("S-1-5-32-544", 0x1f01ff, true)]))));
+    for sid in ["S-1-5-32-545", "S-1-5-11", "S-1-1-0", "S-1-5-4"] {
+        assert!(o(Some(&sec(vec![ace(sid, 0x2, true)]))), "écriture pour {sid}");
+        assert!(o(Some(&sec(vec![ace(sid, 0x1000_0000, true)]))), "GENERIC_ALL pour {sid}");
+        assert!(!o(Some(&sec(vec![ace(sid, 0x2, false)]))), "refus : pas une ouverture");
+    }
+    assert!(o(Some(&sec(vec![ace("S-1-5-32-545", 0x40000, true)]))), "changer les droits = ouvert");
+    assert!(o(None), "droits illisibles = ouvert");
+    assert!(o(Some(&Securite { ace_inconnue: true, ..sec(vec![]) })), "entrée non reconnue = ouvert");
+    assert!(!o(Some(&sec(vec![ace("S-1-3-0", 0x1000_0000, true)]))), "CREATOR OWNER ne compte pas");
+    // Chemins contrôlés : le fichier, puis chaque dossier jusqu'à la racine exclue
+    assert_eq!(chemins_a_controler(r"C:\Program Files (x86)\Editeur\bin\app.exe", r"C:\Program Files (x86)"),
+               vec![r"C:\Program Files (x86)\Editeur\bin\app.exe".to_string(), r"C:\Program Files (x86)\Editeur\bin".into(), r"C:\Program Files (x86)\Editeur".into()]);
+    assert_eq!(chemins_a_controler(r"C:\Program Files\app.exe", r"C:\Program Files\"), vec![r"C:\Program Files\app.exe".to_string()]);
+    // Seuil : seulement fermé ET privilégié
+    let d = [r"C:\Program Files".to_string()];
+    let p = r"C:\Program Files\Editeur\app.exe";
+    assert_eq!(g(p, true, &d, true, true), Suspension);
+    assert_eq!(g(p, true, &d, false, true), SuspensionSansSeuil, "dossier ouvert en écriture");
+    assert_eq!(g(p, true, &d, true, false), SuspensionSansSeuil, "compte de l'utilisateur");
+    // Hôtes de scripts ajoutés : jamais de seuil
+    for h in ["dotnet.exe", "DENO.EXE", "bun.exe", "lua.exe", "Rscript.exe", "julia.exe", "AutoHotkey64.exe", "AutoIt3.exe", "MSBuild.exe", "csi.exe"] {
+        assert_eq!(g(&format!(r"C:\Program Files\X\{h}"), true, &d, true, true), SuspensionSansSeuil, "{h}");
+    }
+}
+
+#[test]
+fn s110_14_connu_seulement_garanti() {
+    use crate::vol_donnees::leurre_connu_garanti as c;
+    let d = dossiers_de_test();
+    let oui = |_: &[&str]| true;
+    let ferme = |_: &str| true;
+    let ouvert = |_: &str| false;
+    let p = r"C:\Program Files\Microsoft OneDrive\OneDrive.exe";
+    assert!(c(p, &d, &oui, &ferme, true));
+    assert!(!c(p, &d, &oui, &ouvert, true), "dossier ouvert en écriture : jamais connu");
+    assert!(!c(p, &d, &oui, &ferme, false), "compte de l'utilisateur : jamais connu");
+    let lus = std::cell::Cell::new(0);
+    let compte = |_: &str| { lus.set(lus.get() + 1); true };
+    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui, &compte, true));
+    assert_eq!(lus.get(), 0, "droits non lus hors d'un candidat");
+    let v = include_str!("vol_donnees.rs");
+    assert!(v.contains("let connu = leurre_autorise(pid, &programme);"));
+    assert!(v.contains("crate::politique::genre_suspension_garanti(programme, signe, &dossiers, ferme, privilegie)"));
 }
 

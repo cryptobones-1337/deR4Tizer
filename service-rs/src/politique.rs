@@ -507,7 +507,57 @@ pub fn installe_dans(chemin: &str, program_files: &[String]) -> bool {
 }
 
 /// Interpréteurs qu'une installation place dans Program Files : ils exécutent n'importe quel script, le seuil ne les couvre pas
-const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.exe", "perl.exe", "ruby.exe", "php.exe", "bash.exe", "sh.exe", "java.exe", "javaw.exe", "wscript.exe", "cscript.exe"];
+/// Complétée le 2026-11-21 (décision du mainteneur, S110-14) : hôtes .NET, JavaScript, Lua, R, Julia, Tcl, AutoHotkey,
+/// AutoIt, MSBuild, C# interactif
+const INTERPRETES: &[&str] = &["pwsh.exe", "python.exe", "pythonw.exe", "node.exe", "perl.exe", "ruby.exe", "php.exe", "php-cgi.exe", "bash.exe", "sh.exe",
+    "java.exe", "javaw.exe", "jshell.exe", "wscript.exe", "cscript.exe", "dotnet.exe", "deno.exe", "bun.exe", "lua.exe", "luajit.exe", "rscript.exe", "r.exe",
+    "julia.exe", "tclsh.exe", "wish.exe", "autohotkey.exe", "autohotkey32.exe", "autohotkey64.exe", "autohotkeyu32.exe", "autohotkeyu64.exe", "autoit3.exe",
+    "autoit3_x64.exe", "msbuild.exe", "csi.exe", "dotnet-script.exe"];
+
+/// Comptes d'un utilisateur ordinaire : une écriture permise à l'un d'eux rend un fichier ou un dossier « ouvert »
+const SIDS_ORDINAIRES: &[&str] = &["S-1-1-0", "S-1-5-11", "S-1-5-32-545", "S-1-5-4", "S-1-5-32-546", "S-1-5-7"];
+
+/// Écriture, ajout, création de sous-dossier, attributs étendus, suppression, changement de droits ou de propriétaire,
+/// GENERIC_WRITE et GENERIC_ALL
+const MASQUE_ECRITURE: u32 = 0x2 | 0x4 | 0x10 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x4000_0000 | 0x1000_0000;
+
+/// Décision pure : un fichier ou un dossier est « ouvert » si un compte ordinaire peut y écrire, ou si sa liste de droits
+/// porte une entrée non reconnue ; illisible, il est ouvert (décision du mainteneur du 2026-11-21, S114-01)
+pub fn ouvert_en_ecriture(s: Option<&crate::natif::Securite>) -> bool {
+    match s {
+        None => true,
+        Some(s) => s.ace_inconnue || s.aces.iter().any(|a| a.autorise && a.masque & MASQUE_ECRITURE != 0 && SIDS_ORDINAIRES.contains(&a.sid.as_str())),
+    }
+}
+
+/// Décision pure : chemins à contrôler pour un programme installé sous une racine : le fichier lui-même, puis chaque
+/// dossier jusqu'à la racine exclue (un dossier ouvert permet d'y déposer ou d'y remplacer le programme)
+pub fn chemins_a_controler(chemin: &str, racine: &str) -> Vec<String> {
+    let r = racine.trim_end_matches('\\').to_lowercase();
+    let mut v = vec![chemin.to_string()];
+    let mut c = chemin;
+    while let Some(i) = c.rfind('\\') {
+        c = &c[..i];
+        if c.to_lowercase() == r || c.len() <= r.len() {
+            break;
+        }
+        v.push(c.to_string());
+    }
+    v
+}
+
+/// Le programme et chacun de ses dossiers sous la racine sont fermés en écriture aux comptes ordinaires (lecture des droits)
+pub fn ferme_en_ecriture(chemin: &str, racines: &[String]) -> bool {
+    let c = chemin.to_lowercase();
+    let Some(racine) = racines.iter().find(|d| !d.is_empty() && c.starts_with(&format!("{}\\", d.trim_end_matches('\\').to_lowercase()))) else { return false };
+    chemins_a_controler(chemin, racine).iter().all(|p| !ouvert_en_ecriture(crate::natif::lire_securite(std::path::Path::new(p)).as_ref()))
+}
+
+/// Décision pure : le seuil par programme ne vaut aussi que si le programme et ses dossiers sont fermés en écriture et
+/// qu'il tourne sous SYSTEM ou un administrateur (décision du mainteneur du 2026-11-21, S110-14 et S114-02)
+pub fn genre_suspension_garanti(chemin: &str, signe: bool, program_files: &[String], ferme: bool, privilegie: bool) -> Genre {
+    if ferme && privilegie { genre_suspension(chemin, signe, program_files) } else { Genre::SuspensionSansSeuil }
+}
 
 /// Décision pure : le seuil par programme ne vaut que pour un programme signé, installé dans Program Files (un compte
 /// standard n'y écrit pas), et qui n'est pas un interpréteur
