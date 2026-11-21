@@ -6393,7 +6393,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("self.blocages = restants;"), "relecture de #116 : la liste en mémoire garde le blocage si hosts est refusé");
     // PR 6.5 : PowerShell du mode panique hors du verrou ; reponse::panique ne le lance plus
     let canal = include_str!("canal.rs").replace("\r\n", "\n");
-    assert!(canal.contains("let prealable = crate::moniteur::preparer(&c);\n                moniteur.lock().unwrap().executer(c, partage, prealable)"), "6.5 : préparé avant le verrou");
+    assert!(canal.contains("let prealable = crate::moniteur::preparer(&c);\n                let r = moniteur.lock().unwrap().executer(c, partage, prealable);"), "6.5 : préparé avant le verrou");
     let r = include_str!("reponse.rs").replace("\r\n", "\n");
     let corps = &r[r.find("pub fn panique(").unwrap()..];
     let corps = &corps[..corps.find("\n}\n").unwrap()];
@@ -9053,7 +9053,7 @@ fn reponses_json_ecrivain_dedie() {
     assert!(!depot.contains("commun::ecrire("), "le fil appelant n'écrit pas sur le disque");
     assert!(depot.contains("SIGNAL.notify_one();"));
     let e = &src[d + f..];
-    assert!(e.contains("commun::ecrire(FICHIER, &h).is_ok()"));
+    assert!(e.contains("ecrire_registre(&h).is_ok()") && src.contains("fn ecrire_registre(h: &Historique) -> Result<(), String> {\r\n    commun::ecrire(FICHIER, h)") || src.replace("\r\n", "\n").contains("fn ecrire_registre(h: &Historique) -> Result<(), String> {\n    commun::ecrire(FICHIER, h)"));
     assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
     assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
 }
@@ -9092,6 +9092,55 @@ fn reponses_json_commandes_attendent_leur_ecriture() {
     assert!(src.contains("attendre_ecriture(n, std::time::Duration::from_secs(10));"), "attente bornée");
 }
 
+#[test]
+fn point2_commande_attend_sa_copie_hors_du_verrou_du_moniteur() {
+    // Revue de l'auditeur du 2026-11-21, point 2 : une commande prend sa copie sous le verrou du moniteur, mais attend
+    // l'écriture après l'avoir rendu. Mesure avec un disque ralenti (800 ms) : avant, le cycle attendait le disque
+    // derrière la commande ; après, il prend le verrou aussitôt, et la commande attend toujours sa copie
+    use crate::politique::{attendre_copies_commande, decision_humaine, regler_delai_ecriture_test};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    regler_delai_ecriture_test(800);
+    let moniteur = Arc::new(Mutex::new(()));
+    // Le « cycle » tente de prendre le verrou du moniteur 100 ms après le début de la commande
+    let cycle = |m: Arc<Mutex<()>>| std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        let t = Instant::now();
+        let _g = m.lock().unwrap();
+        t.elapsed()
+    });
+    // Avant : l'attente se faisait sous le verrou (ancien avec_attente)
+    let c = cycle(moniteur.clone());
+    {
+        let _g = moniteur.lock().unwrap();
+        decision_humaine("point2-avant", None);
+        attendre_copies_commande();
+    }
+    let avant = c.join().unwrap();
+    // Après : copie prise sous le verrou, attente après (canal.rs)
+    let c = cycle(moniteur.clone());
+    let debut = Instant::now();
+    {
+        let _g = moniteur.lock().unwrap();
+        decision_humaine("point2-apres", None);
+    }
+    attendre_copies_commande();
+    let commande = debut.elapsed();
+    let apres = c.join().unwrap();
+    regler_delai_ecriture_test(0);
+    eprintln!("point 2, disque ralenti à 800 ms : le cycle attend le verrou {avant:?} avant, {apres:?} après ; la commande répond en {commande:?}");
+    assert!(avant >= Duration::from_millis(500), "avant : le cycle attendait le disque ({avant:?})");
+    assert!(apres < Duration::from_millis(300), "après : le cycle n'attend plus le disque ({apres:?})");
+    assert!(commande >= Duration::from_millis(700), "la commande attend toujours sa copie ({commande:?})");
+    let canal = include_str!("canal.rs").replace("\r\n", "\n");
+    assert!(canal.contains("let r = moniteur.lock().unwrap().executer(c, partage, prealable);\n"), "verrou rendu à la fin de l'instruction");
+    assert!(canal.contains("crate::politique::attendre_copies_commande();\n                r\n"), "une seule attente, après le verrou");
+    let p = include_str!("politique.rs").replace("\r\n", "\n");
+    let a = &p[p.find("fn avec_attente<R>").unwrap()..];
+    let a = &a[..a.find("\n}\n").unwrap()];
+    assert!(!a.contains("attendre_ecriture("), "plus d'attente sous le verrou du moniteur");
+}
+
 
 #[test]
 fn s230_05_attente_bornee_et_jamais_dans_le_cycle() {
@@ -9108,7 +9157,7 @@ fn s230_05_attente_bornee_et_jamais_dans_le_cycle() {
     let p = include_str!("politique.rs").replace("\r\n", "\n");
     let e = p.find("fn ecrivain()").unwrap();
     let corps = &p[e..];
-    assert!(corps.contains("let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();"), "écriture disque hors du verrou ECRITURE");
+    assert!(corps.contains("let ecrite = deja || ecrire_registre(&h).is_ok();"), "écriture disque hors du verrou ECRITURE");
     assert!(corps.contains("ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);"), "échec signalé");
 }
 

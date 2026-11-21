@@ -671,6 +671,10 @@ fn etat_depuis(l: Lecture) -> Etat {
 
 /// Lecture initiale, hors du verrou : « absent » seulement si Windows dit que le fichier n'existe pas
 fn lecture_initiale() -> (Option<String>, bool) {
+    // Tests : registre vide en mémoire, jamais le fichier du poste (C:\ProgramData\deR4Tizer)
+    if cfg!(test) {
+        return (None, false);
+    }
     let chemin = commun::dossier().join(FICHIER);
     match std::fs::symlink_metadata(&chemin) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, false),
@@ -722,13 +726,30 @@ fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
 
 /// Décision d'un administrateur (commande) : la réponse de la commande ne part qu'une fois sa copie écrite (au plus
 /// 10 s), pour que l'interface et l'administrateur relisent un fichier à jour ; le cycle et le fil des leurres, eux,
-/// n'attendent jamais (régression vue par la CI de #230 : registre relu « Active » juste après une restauration)
+/// n'attendent jamais (régression vue par la CI de #230 : registre relu « Active » juste après une restauration).
+/// L'attente ne se fait plus ici, sous le verrou du moniteur : le numéro de la copie est noté pour le fil de la commande,
+/// qui attend une seule fois après avoir rendu le verrou (`attendre_copies_commande`, canal.rs ; revue de l'auditeur du
+/// 2026-11-21, point 2)
 fn avec_attente<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
     let (r, n) = avec_copie(f);
     if let Some(n) = n {
-        attendre_ecriture(n, std::time::Duration::from_secs(10));
+        A_ATTENDRE.with(|a| a.set(a.get().max(n)));
     }
     r
+}
+
+thread_local! {
+    /// Copie la plus récente prise par la commande en cours sur ce fil (0 : aucune)
+    static A_ATTENDRE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Fin d'une commande d'administrateur, verrou du moniteur rendu : attend une seule fois (10 s au plus, ou l'échec de
+/// l'écriture) la copie la plus récente qu'elle a prise ; rien à attendre si elle n'a rien noté
+pub fn attendre_copies_commande() {
+    let n = A_ATTENDRE.with(|a| a.replace(0));
+    if n > 0 {
+        attendre_ecriture(n, std::time::Duration::from_secs(10));
+    }
 }
 
 fn avec_copie<R>(f: impl FnOnce(&mut Etat) -> R) -> (R, Option<u64>) {
@@ -814,6 +835,27 @@ pub(crate) fn deposer<T>(attente: &mut Option<(u64, T)>, copie: (u64, T)) {
     }
 }
 
+/// Écriture du registre sur le disque. Tests : rien n'est écrit sur le poste, un délai réglable remplace le disque
+/// (disque ralenti, mesure du point 2 de la revue de l'auditeur du 2026-11-21)
+#[cfg(not(test))]
+fn ecrire_registre(h: &Historique) -> Result<(), String> {
+    commun::ecrire(FICHIER, h)
+}
+
+#[cfg(test)]
+static DELAI_ECRITURE_TEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+fn ecrire_registre(_h: &Historique) -> Result<(), String> {
+    std::thread::sleep(std::time::Duration::from_millis(DELAI_ECRITURE_TEST.load(std::sync::atomic::Ordering::SeqCst)));
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn regler_delai_ecriture_test(ms: u64) {
+    DELAI_ECRITURE_TEST.store(ms, std::sync::atomic::Ordering::SeqCst);
+}
+
 fn ecrire_copie(copie: Option<(u64, Historique)>) {
     let Some(c) = copie else { return };
     deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);
@@ -842,7 +884,7 @@ fn ecrivain() {
         // Seul ce fil écrit « dernière » : l'écriture sur le disque se fait sans tenir ECRITURE, pour qu'une commande qui
         // attend ne reste pas bloquée par un disque figé (audit de #230, S230-05)
         let deja = !copie_a_ecrire(n, *ECRITURE.lock().unwrap_or_else(|e| e.into_inner()));
-        let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();
+        let ecrite = deja || ecrire_registre(&h).is_ok();
         {
             let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
             if ecrite {

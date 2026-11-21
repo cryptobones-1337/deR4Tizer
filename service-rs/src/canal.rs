@@ -291,7 +291,12 @@ fn traiter(tube: HANDLE, moniteur: &Arc<Mutex<Moniteur>>, partage: &Arc<Partage>
                 c.auteur = sid;
                 // PowerShell et résolutions DNS du mode panique hors du verrou (PR 6.5)
                 let prealable = crate::moniteur::preparer(&c);
-                moniteur.lock().unwrap().executer(c, partage, prealable)
+                let r = moniteur.lock().unwrap().executer(c, partage, prealable);
+                // Verrou du moniteur rendu à la fin de l'instruction précédente : la réponse attend ici, une seule fois,
+                // la copie de reponses.json que la commande a prise ; le cycle n'attend plus derrière le disque (revue de
+                // l'auditeur du 2026-11-21, point 2)
+                crate::politique::attendre_copies_commande();
+                r
             }
             Err(r) => r,
         };
