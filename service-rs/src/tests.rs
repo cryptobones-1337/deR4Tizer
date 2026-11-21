@@ -6708,6 +6708,59 @@ fn dossiers_de_test() -> crate::vol_donnees::DossiersFermes {
     }
 }
 
+#[test]
+fn textes_du_service_traduits_dans_l_interface_lot1() {
+    // Revue de l'auditeur du 2026-11-21, point 3 (premier lot) : techniques et conseils de mitre.rs traduits par la table
+    // de l'interface (un texte Rust retouché sans sa traduction fait échouer ce test, jamais l'affichage en silence) ;
+    // identifiants de collecte jamais affichés bruts ; plus de « clic droit » ; Sysmon facultatif hors du bandeau
+    let m = include_str!("mitre.rs");
+    let langue = include_str!("../../src/Langue.cs");
+    let re = regex::Regex::new(r#"\(&\[[^\]]*\],\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)"\)"#).unwrap();
+    let mut n = 0;
+    for c in re.captures_iter(m) {
+        for i in [1, 2] {
+            let fr = c[i].replace("\\\\", "\\");
+            // Même échappement côté C# : guillemet et barre oblique inverse
+            let cle = format!("{{ \"{}\", \"", fr.replace('\\', "\\\\").replace('"', "\\\""));
+            assert!(langue.contains(&cle), "sans traduction dans Langue.cs : {fr}");
+        }
+        n += 1;
+    }
+    assert!(n >= 28, "règles de mitre.rs lues : {n}");
+    assert!(!m.contains("clic droit") && !m.contains("onglet "), "conseils de l'ancienne interface");
+    // Clés en double : le dictionnaire de l'interface lèverait une exception au démarrage
+    let cles = regex::Regex::new(r#"\{ "((?:[^"\\]|\\.)*)", ""#).unwrap();
+    let mut vues = std::collections::HashSet::new();
+    for c in cles.captures_iter(langue) {
+        assert!(vues.insert(c[1].to_string()), "clé en double dans Langue.cs : {}", &c[1]);
+    }
+    // Chaque collecte a un nom lisible
+    let commun = include_str!("../../src/Commun.cs");
+    let noms = &commun[commun.find("static readonly Dictionary<string, string> Noms").unwrap()..];
+    let noms = &noms[..noms.find("};").unwrap()];
+    for c in crate::collectes::TOUTES {
+        assert!(noms.contains(&format!("{{ \"{}\", \"", c.id())), "collecte sans nom lisible : {}", c.id());
+    }
+    let f = include_str!("../../src/Fluent.cs");
+    assert!(f.contains("Couverture.Nom(a.Collecte)") && f.contains("L.T(a.Mitre)") && f.contains("L.T(a.Conseil)"));
+    let g = include_str!("../../src/Gui.cs");
+    assert!(g.contains("Couverture.Nom(a.Collecte)") && g.contains("L.T(a.Mitre)") && g.contains("L.T(a.Conseil)"));
+    assert!(include_str!("../../src/Incidents.cs").contains("Sujet = v(Couverture.Nom(c.Id))"));
+    assert!(commun.contains("Decrire(EtatCollecte c)") && commun.contains("return Nom(c.Id) + \" \" + etat"));
+    // Sysmon facultatif : ligne neutre avec la vraie conséquence (WMI partiel, PRC-001 à PRC-005 dégradées), jamais
+    // retiré du bandeau (prérelecture de #238, D1)
+    assert!(commun.contains("SysmonRemplaceParWmi(e, c) ? L.T(\"Sysmon (facultatif) absent : WMI le remplace"), "ligne neutre de Sysmon");
+    assert!(commun.contains("w.Etat == \"Active\" || w.Etat == \"Partielle\""));
+    // Chaque nom de collecte a sa traduction anglaise
+    let valeurs = regex::Regex::new(r#"\{ "[A-Za-z]+", "([^"]+)" \}"#).unwrap();
+    let mut n = 0;
+    for c in valeurs.captures_iter(noms) {
+        assert!(langue.contains(&format!("{{ \"{}\", \"", &c[1])), "nom de collecte sans traduction : {}", &c[1]);
+        n += 1;
+    }
+    assert_eq!(n, crate::collectes::TOUTES.len(), "noms lus");
+}
+
 /// Décision du mainteneur : hors d'un dossier fermé aux comptes standard, jamais « connu »
 #[test]
 fn leurre_connu_seulement_dans_un_dossier_ferme() {

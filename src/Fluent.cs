@@ -224,9 +224,10 @@ namespace DeR4Tizer
             Action<string, string, bool> ajouter = (titre, texte, chasse) => { if (!string.IsNullOrEmpty(texte)) r.Add(new LigneDetail { Titre = L.T(titre), Texte = Canal.Visible(texte), Chasse = chasse }); };
             ajouter("Heure", a.Heure, false);
             ajouter("Destination", string.IsNullOrEmpty(a.Destination) ? null : a.Destination + (a.Port > 0 ? ", port " + a.Port : ""), false);
-            ajouter("Règle", string.IsNullOrEmpty(a.Regle) ? null : a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : " (" + L.T("collecte présumée") + VueEnsembleFluent.DeuxPoints + a.Collecte + ")"), false);
-            ajouter("Technique", a.Mitre, false);
-            ajouter("Que faire", a.Conseil, false);
+            ajouter("Règle", string.IsNullOrEmpty(a.Regle) ? null : a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : " (" + L.T("collecte présumée") + VueEnsembleFluent.DeuxPoints + Couverture.Nom(a.Collecte) + ")"), false);
+            // Technique et conseil : textes fixes du service (mitre.rs), traduits par la table (point 3 de la revue)
+            ajouter("Technique", L.T(a.Mitre), false);
+            ajouter("Que faire", L.T(a.Conseil), false);
             ajouter("Raisons", a.Raisons, false);
             ajouter("Chemin", a.Chemin, true);
             return r;
