@@ -19,7 +19,8 @@ Real screenshots of the current interface (v4.3, 2026-11-21), taken in the test 
 Windows 11 (not activated, hence the watermark), Microsoft Defender on, service installed from the MSI and left
 running for a few minutes, after a harmless demo attack (an encoded PowerShell that only waits, and a command line
 that carries a backup-deletion command without running it). No data from a real computer. Some texts that come from
-the service (rule details, advice, reasons) are still in French in the English interface.
+the service (rule details, advice, reasons) are still in French in the English interface. The 12% of security
+settings applied is the VM's real state: the security baseline was not applied there.
 
 ![Overview: status banner, tiles to watch (alerts, chains, security settings, autostart), Panic button](docs/images/interface-en-vue-d-ensemble.png)
 
