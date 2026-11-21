@@ -195,6 +195,78 @@ Verifier 'curl.exe (Schannel) accepte le serveur local en HTTPS, révocation vé
     $true
 }
 
+# ---------------------------------------------------------------- script de publication exécuté (bloc 0.1, revue
+# externe du 2026-11-21, défaut 2) : verifier-signatures.ps1 sur de vrais paquets signés, avec la clé épinglée dans
+# les binaires de test (même empreinte que le service). Code 1 et message attendu à chaque refus, code 0 seulement
+# pour un paquet signé par la clé épinglée, horodaté, dont la chaîne et la révocation se vérifient
+$verifierSig = Join-Path $PSScriptRoot '..\..\verifier-signatures.ps1'
+# Exécuté par PowerShell 7 (pwsh, celui du workflow) et par Windows PowerShell 5.1 : même code de sortie exigé des
+# deux (audit de #233, S233-02)
+$hotesSig = @('pwsh.exe', 'powershell.exe') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
+# Un hôte absent est dit, jamais écarté en silence (audit de #233, S233-03)
+foreach ($h in @('pwsh.exe', 'powershell.exe') | Where-Object { $_ -notin $hotesSig }) { NonExecute "Publication : script sous $h" "$h absent du runner" }
+function Publication([string]$Cles, [string]$Fichier) {
+    $r = foreach ($h in $hotesSig) {
+        # Par -Command : une chaîne vide passée par -File arrive comme un argument manquant (prérelecture de #233, D1).
+        # Chemins et clés sans apostrophe (clé : 64 caractères hexadécimaux ou vide)
+        $s = & $h -NoProfile -ExecutionPolicy Bypass -Command "& '$verifierSig' -Cles '$Cles' -Fichiers '$Fichier'; exit `$LASTEXITCODE" 2>&1 | Out-String
+        @{ Hote = $h; Code = $LASTEXITCODE; Sortie = $s }
+    }
+    $codes = @($r | ForEach-Object { $_.Code } | Select-Object -Unique)
+    if ($codes.Count -ne 1) { return @{ Code = -1; Sortie = "codes différents selon l'hôte : $(($r | ForEach-Object { "$($_.Hote)=$($_.Code)" }) -join ', ') ; $($r[0].Sortie)" } }
+    @{ Code = $codes[0]; Sortie = (($r | ForEach-Object { $_.Sortie }) -join "`n") }
+}
+function Refus-Publication([string]$Cles, [string]$Fichier, [string]$Motif) {
+    $r = Publication $Cles $Fichier
+    if ($r.Code -ne 1) { return "code $($r.Code) au lieu de 1 : $($r.Sortie)" }
+    if ($r.Sortie -notmatch $Motif) { return "refus sans le motif attendu « $Motif » : $($r.Sortie)" }
+    $true
+}
+Verifier 'Publication : liste de clés vide, refus (code 1)' { Refus-Publication '' (Msi $Nouvelle) 'CLE_SIGNATURE absente ou invalide' }
+Verifier 'Publication : fichier non signé, refus (code 1)' { Refus-Publication $cle $ArtefactCi 'signature NotSigned' }
+Verifier 'Publication : clé épinglée sans horodatage, refus (code 1)' { Refus-Publication $cle (Msi $Nouvelle) 'sans horodatage' }
+# Copies horodatées : seule la signature change (même certificat), l'horodatage vient d'une autorité publique
+$horodates = Join-Path $env:RUNNER_TEMP 'd4t-horodates'
+New-Item -ItemType Directory -Force -Path $horodates | Out-Null
+$signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+$mdpPki = (Get-Content (Join-Path $Pki 'mot-de-passe.txt') -Raw).Trim()
+function Horodate([string]$Nom, [string]$Certificat) {
+    $f = Join-Path $horodates "$Nom.msi"
+    Copy-Item (Msi $Nom) $f -Force
+    $ac = if ($Certificat -eq 'sanscrl') { @('/ac', (Join-Path $Pki 'muette.crt')) } else { @() }
+    foreach ($essai in 1..3) {
+        $null = & $signtool.FullName sign /f (Join-Path $Pki "$Certificat.pfx") /p $mdpPki /fd SHA256 @ac /tr http://timestamp.digicert.com /td SHA256 /d deR4Tizer $f 2>&1
+        if (-not $LASTEXITCODE -and (Get-AuthenticodeSignature $f).TimeStamperCertificate) { return $f }
+        Start-Sleep 5
+    }
+    $null
+}
+$horoEpinglee = Horodate $Nouvelle 'epinglee'
+$horoRevoquee = Horodate "$Nouvelle-revoquee" 'revoquee'
+$horoSansCrl = Horodate "$Nouvelle-sanscrl" 'sanscrl'
+# Copie horodatée aussi pour la clé non épinglée : sans horodatage, le refus « sans horodatage » viendrait avant la
+# comparaison de la clé (prérelecture de #233, D1)
+$horoAutre = Horodate "$Nouvelle-autre" 'autre'
+if (-not ($horoEpinglee -and $horoRevoquee -and $horoSansCrl -and $horoAutre)) {
+    NonExecute 'Publication : paquets horodatés (clé non épinglée, révoqué, CRL muette, accepté)' 'autorité d''horodatage publique injoignable depuis le runner'
+} else {
+    Verifier 'Publication : clé non épinglée, horodatée, refus (code 1)' { Refus-Publication $cle $horoAutre 'non épinglée' }
+    # La révocation est vue dès le contrôle Authenticode (statut non Valid) ou, à défaut, par la chaîne : les deux
+    # motifs sont des refus justes (prérelecture de #233, D1)
+    Verifier 'Publication : certificat révoqué, horodaté, refus (code 1)' { Refus-Publication $cle $horoRevoquee '(?i)revoked|r[ée]voqu|chaîne ou révocation non vérifiée' }
+    Verifier 'Publication : CRL injoignable, horodaté, refus (échec fermé, code 1)' { Refus-Publication $cle $horoSansCrl 'chaîne ou révocation non vérifiée' }
+    Verifier 'Publication : clé épinglée, horodaté, chaîne et révocation vérifiées, accepté (code 0) sans nom de titulaire' {
+        $r = Publication $cle $horoEpinglee
+        if ($r.Code -ne 0) { return "code $($r.Code) : $($r.Sortie)" }
+        if ($r.Sortie -notmatch "clé épinglée $cle") { return "empreinte absente du journal : $($r.Sortie)" }
+        # Le sujet du certificat ne doit jamais être écrit (journal public)
+        $sujet = (Get-AuthenticodeSignature $horoEpinglee).SignerCertificate.GetNameInfo('SimpleName', $false)
+        if ($sujet -and $r.Sortie.Contains($sujet)) { return 'le sujet du certificat est écrit dans le journal' }
+        $true
+    }
+}
+Remove-Item $horodates -Recurse -Force -ErrorAction SilentlyContinue
+
 # ---------------------------------------------------------------- version courante installée, adresse locale
 Publier-Neutre
 $debut = Get-Date

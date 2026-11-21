@@ -8875,7 +8875,28 @@ fn publication_tag_jamais_insere_et_revocation_verifiee() {
     let publier = wf.find("  publier:").unwrap();
     assert!(wf[publier..].contains("environment: publication"), "approbation exigée pour publier");
     let s = include_str!("../../verifier-signatures.ps1");
-    assert!(s.contains("X509RevocationMode]::Online") && s.contains("'RevocationStatusUnknown'") && s.contains("'Revoked'"));
+    assert!(s.contains("X509RevocationMode]::Online") && s.contains("X509RevocationFlag]::EntireChain"));
+}
+
+#[test]
+fn publication_chaine_par_liste_d_acceptation_et_essai_reel() {
+    // Revue externe du 2026-11-21, défaut 1 : seuls NoError et NotTimeValid (signature horodatée) passent ; tout autre
+    // état de la chaîne refuse. Défaut 2 : le script est exécuté dans la CI (maj.ps1) sur de vrais paquets signés
+    let s = include_str!("../../verifier-signatures.ps1");
+    assert!(s.contains("$autres = @($etats | Where-Object { $_ -notin 'NoError', 'NotTimeValid' })"), "liste d'acceptation");
+    assert!(s.contains("if ($autres.Count -or (-not $ok -and -not $seulExpire))"), "échec de construction sans seul « expiré » : refus");
+    assert!(!s.contains("$bloquants"), "plus de liste de refus");
+    assert!(s.contains("$seulExpire = $etats -contains 'NotTimeValid' -and $autres.Count -eq 0"), "Build faux : NotTimeValid exigé (S233-01)");
+    let m = include_str!("../../tests/integration/maj.ps1");
+    assert!(m.contains("@('pwsh.exe', 'powershell.exe')") && m.contains("codes différents selon l'hôte"), "les deux hôtes PowerShell (S233-02)");
+    for cas in ["liste de clés vide, refus", "fichier non signé, refus", "clé non épinglée, horodatée, refus", "clé épinglée sans horodatage, refus",
+        "certificat révoqué, horodaté, refus", "CRL injoignable, horodaté, refus", "clé épinglée, horodaté, chaîne et révocation vérifiées, accepté (code 0)"] {
+        assert!(m.contains(&format!("'Publication : {cas}")), "cas d'essai réel absent : {cas}");
+    }
+    // Par -Command : une liste vide passée par -File arrive comme un argument manquant (prérelecture de #233, D1)
+    assert!(m.contains("-Command \"& '$verifierSig' -Cles '$Cles' -Fichiers '$Fichier'; exit `$LASTEXITCODE\""), "le script lui-même est exécuté");
+    assert!(m.contains("$horoAutre = Horodate \"$Nouvelle-autre\" 'autre'"), "clé non épinglée horodatée : la clé est bien comparée");
+    assert!(m.contains("NonExecute \"Publication : script sous $h\""), "hôte absent dit (S233-03)");
 }
 
 #[test]
