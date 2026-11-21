@@ -13,7 +13,9 @@
 # certificat (et de la suivante, séparées par une virgule), épinglée dans le binaire. Sans certificat, ou avec
 # un certificat dont la clé n'est pas dans CLE_SIGNATURE, ou sans CLE_SIGNATURE, aucune version n'est publiée
 # (plan avant la première version signée, bloc 0.1, 2026-11-21) : tant que la signature se fait sur le poste du
-# mainteneur (Certum, clé dans SimplySign, pas de .pfx), pousser un tag v* échoue à la vérification.
+# mainteneur (Certum, clé dans SimplySign, pas de .pfx), pousser un tag v* échoue à la vérification. La version est
+# alors signée et déposée en brouillon par signer-version.ps1, depuis l'artefact « a-signer » de cette exécution
+# (procédure : docs/publication/signature-locale.md).
 # Limite (audit de #226, S226-02) : cette garde protège contre l'accident, pas contre quelqu'un qui peut pousser un
 # tag (le workflow exécuté est celui du commit tagué) ; les vraies protections sont la règle sur les tags v*
 # (création réservée au mainteneur), l'approbation de l'environnement « publication » sur signer et publier, et la
@@ -62,13 +64,16 @@ jobs:
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
 
+      # Exécutables à clé épinglée, non signés : jamais publiés tels quels. Le job « signer » les reprend, et la
+      # signature locale (signer-version.ps1, bloc 1.1) les télécharge et vérifie leur empreinte avant de les signer ;
+      # gardés 7 jours pour laisser le temps de signer sur le poste du mainteneur
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: executables
+          name: a-signer
           path: |
             bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
-          retention-days: 1
+          retention-days: 7
 
   signer:
     needs: compiler
@@ -85,7 +90,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: executables
+          name: a-signer
           path: bin
 
       - name: WiX 3.14 (licence MS-RL), archive vérifiée
