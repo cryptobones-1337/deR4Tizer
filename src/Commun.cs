@@ -48,6 +48,9 @@ namespace DeR4Tizer
         public string PaniqueEtat { get; set; }
         public Exposition Exposition { get; set; }
         public string ProtectionDonnees { get; set; }   // vide : droits du dossier de données vérifiés
+        // Registre des réponses (reponses.json) : vide = écrit ; « EcritureEnEchec » ou « LectureRefusee » (code du service)
+        public string RegistreReponses { get; set; }
+        public string RegistreReponsesDepuis { get; set; }
         // État des collectes (phase 3.3) : null pour un service plus ancien
         public List<EtatCollecte> Collectes { get; set; }
         public List<string> ReglesSansCollecte { get; set; }

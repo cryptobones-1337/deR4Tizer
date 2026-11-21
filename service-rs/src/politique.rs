@@ -764,6 +764,51 @@ static ECRIT: std::sync::Condvar = std::sync::Condvar::new();
 /// Numéro de la dernière copie dont l'écriture a échoué (u64::MAX : fil d'écriture absent)
 static ECHOUEE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Suivi des écritures de reponses.json (revue de l'auditeur du 2026-11-21, point 1) : le journal ne dit que le premier
+/// échec d'une série et le retour à la normale, pas chaque essai ; l'état est publié dans etat.json (page Santé)
+#[derive(Default)]
+pub(crate) struct SuiviEcriture {
+    /// Début de l'échec en cours (secondes Unix)
+    pub(crate) echec_depuis: Option<u64>,
+}
+
+impl SuiviEcriture {
+    /// Décision pure : ligne de journal après un essai d'écriture, seulement quand l'état change
+    pub(crate) fn apres_essai(&mut self, erreur: Option<&str>, t: u64) -> Option<String> {
+        match (erreur, self.echec_depuis) {
+            (Some(e), None) => {
+                self.echec_depuis = Some(t);
+                Some(format!("{FICHIER} : écriture impossible ({e}) ; nouvel essai toutes les 5 s, l'historique des réponses n'est pas enregistré tant que l'écriture échoue (dit dans la page Santé)"))
+            }
+            (None, Some(d)) => {
+                self.echec_depuis = None;
+                Some(format!("{FICHIER} : écriture rétablie après {} s d'échec", t.saturating_sub(d)))
+            }
+            _ => None,
+        }
+    }
+}
+
+static SUIVI: Mutex<SuiviEcriture> = Mutex::new(SuiviEcriture { echec_depuis: None });
+
+/// Décision pure : code publié dans etat.json (vide : registre écrit normalement) et début de l'échec. Lecture initiale
+/// refusée : le fichier n'est jamais écrasé, donc les échéances de cette session seront perdues au redémarrage
+pub(crate) fn code_registre(lecture_refusee: bool, echec_depuis: Option<u64>) -> (&'static str, Option<u64>) {
+    if lecture_refusee {
+        ("LectureRefusee", None)
+    } else if let Some(d) = echec_depuis {
+        ("EcritureEnEchec", Some(d))
+    } else {
+        ("", None)
+    }
+}
+
+/// État du registre des réponses pour la page Santé : charge l'état si besoin (lecture initiale), n'écrit jamais
+pub fn etat_registre() -> (&'static str, Option<u64>) {
+    let refusee = avec(|e| e.ecriture_suspendue);
+    code_registre(refusee, SUIVI.lock().unwrap_or_else(|e| e.into_inner()).echec_depuis)
+}
+
 /// Décision pure : une commande cesse d'attendre sa copie dès qu'elle est écrite ou que son écriture a échoué
 pub(crate) fn attente_finie(n: u64, ecrite: u64, echouee: u64) -> bool {
     ecrite >= n || echouee >= n
@@ -842,7 +887,14 @@ fn ecrivain() {
         // Seul ce fil écrit « dernière » : l'écriture sur le disque se fait sans tenir ECRITURE, pour qu'une commande qui
         // attend ne reste pas bloquée par un disque figé (audit de #230, S230-05)
         let deja = !copie_a_ecrire(n, *ECRITURE.lock().unwrap_or_else(|e| e.into_inner()));
-        let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();
+        let resultat = if deja { Ok(()) } else { commun::ecrire(FICHIER, &h) };
+        let ecrite = resultat.is_ok();
+        // Premier échec d'une série et retour à la normale seulement (point 1 de la revue de l'auditeur du 2026-11-21)
+        // Ligne prise sous le verrou du suivi, écrite au journal après l'avoir rendu
+        let ligne = SUIVI.lock().unwrap_or_else(|e| e.into_inner()).apres_essai(resultat.as_ref().err().map(String::as_str), maintenant());
+        if let Some(m) = ligne {
+            commun::journal(&m);
+        }
         {
             let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
             if ecrite {

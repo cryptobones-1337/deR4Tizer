@@ -317,6 +317,22 @@ namespace DeR4Tizer
                 Source = "etat.json",
                 Gravite = string.IsNullOrEmpty(e.ProtectionDonnees) ? 0 : 1
             });
+            // Registre des réponses (reponses.json) : code du service, traduit ici (point 1 de la revue de l'auditeur du
+            // 2026-11-21). Service plus ancien : champ absent, ligne « non publié »
+            string reg = e.RegistreReponses;
+            l.Add(new LigneSante
+            {
+                Sujet = L.T("Registre des réponses"),
+                Etat = reg == null ? L.T("non publié") : reg == "" ? L.T("écrit") : reg == "LectureRefusee" ? L.T("lecture refusée") : L.T("en échec"),
+                Date = reg == "EcritureEnEchec" ? v(e.RegistreReponsesDepuis) : v(e.MisAJour),
+                Detail = reg == "LectureRefusee"
+                    ? L.T("reponses.json n'a pas pu être lu au démarrage : il n'est jamais écrasé, la garde et les échéances tiennent en mémoire seulement et seront perdues au redémarrage du service.")
+                    : reg == "EcritureEnEchec"
+                        ? L.T("reponses.json ne peut pas être écrit (nouvel essai toutes les 5 s) : les actions en cours et leurs échéances ne sont pas enregistrées, elles seront perdues au redémarrage si l'écriture ne reprend pas.")
+                        : "",
+                Source = "etat.json",
+                Gravite = string.IsNullOrEmpty(reg) ? 0 : 1
+            });
             l.Add(new LigneSante
             {
                 Sujet = L.T("Interface par session"),
