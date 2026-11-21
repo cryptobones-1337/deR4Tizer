@@ -24,7 +24,20 @@ foreach ($f in $Fichiers) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $cle = -join ($sha.ComputeHash($s.SignerCertificate.PublicKey.EncodedKeyValue.RawData) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
     if ($cle -notin $liste) { $refus += "$f : clé du signataire $cle non épinglée"; continue }
-    Write-Host "$f : signature valide, horodatée, clé épinglée $cle ($($s.SignerCertificate.Subject))"
+    # Révocation vérifiée en ligne sur toute la chaîne ; statut inconnu (liste de révocation injoignable) = refus
+    # (audit de #226, S226-03)
+    $chaine = New-Object Security.Cryptography.X509Certificates.X509Chain
+    try {
+        $chaine.ChainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::Online
+        $chaine.ChainPolicy.RevocationFlag = [Security.Cryptography.X509Certificates.X509RevocationFlag]::EntireChain
+        $ok = $chaine.Build($s.SignerCertificate)
+        $etats = @($chaine.ChainStatus | ForEach-Object { [string]$_.Status })
+    } finally { $chaine.Dispose() }
+    $bloquants = @($etats | Where-Object { $_ -in 'Revoked', 'RevocationStatusUnknown', 'OfflineRevocation', 'NotTrusted', 'UntrustedRoot', 'PartialChain' })
+    if ($bloquants.Count -or (-not $ok -and $etats.Count -eq 0)) { $refus += "$f : chaîne ou révocation non vérifiée ($($etats -join ', '))"; continue }
+    # Seule l'empreinte de la clé est écrite : le sujet du certificat porte le nom du titulaire, et ce journal est
+    # public (décision du 2026-11-11 : le nom dans la signature des binaires seulement, prérelecture de #226)
+    Write-Host "$f : signature valide, horodatée, clé épinglée $cle"
 }
 if ($refus.Count) {
     Write-Host "Publication refusée :"

@@ -8852,3 +8852,28 @@ fn publication_echec_ferme_sans_signature_epinglee() {
     assert!(s.contains("if ($s.Status -ne 'Valid')") && s.contains("TimeStamperCertificate") && s.contains("if ($cle -notin $liste)"));
     assert!(s.contains("PublicKey.EncodedKeyValue.RawData"), "même empreinte que natif::cle_signataire_verifiee");
 }
+
+#[test]
+fn publication_aucun_nom_de_titulaire_dans_le_journal() {
+    // Prérelecture de #226 : le journal de GitHub Actions est public ; le script n'écrit jamais le sujet ni
+    // l'émetteur du certificat (le nom du titulaire), seulement l'empreinte de la clé
+    let s = include_str!("../../verifier-signatures.ps1");
+    for interdit in [".Subject", ".Issuer", "FriendlyName", "GetNameInfo"] {
+        assert!(!s.contains(interdit), "{interdit} dans la sortie possible du script");
+    }
+}
+
+#[test]
+fn publication_tag_jamais_insere_et_revocation_verifiee() {
+    // Audit de #226 : le nom du tag ne passe que par l'environnement et doit être vX.Y(.Z) (S226-01) ; publier exige
+    // l'environnement « publication » (S226-02) ; la révocation est vérifiée en ligne, inconnu = refus (S226-03)
+    let wf = include_str!("../../.github/workflows/publication.yml");
+    let hors_env: Vec<&str> = wf.lines().filter(|l| l.contains("${{ github.ref_name }}") && !l.trim_start().starts_with("REF:")).collect();
+    assert!(hors_env.is_empty(), "nom du tag inséré dans un script : {hors_env:?}");
+    assert!(wf.matches(r"-cnotmatch '^v\d+\.\d+(\.\d+)?$'").count() >= 2, "forme du tag validée avant le manifeste");
+    assert!(wf.contains(r#"[[ "$REF" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]"#), "forme du tag validée dans publier");
+    let publier = wf.find("  publier:").unwrap();
+    assert!(wf[publier..].contains("environment: publication"), "approbation exigée pour publier");
+    let s = include_str!("../../verifier-signatures.ps1");
+    assert!(s.contains("X509RevocationMode]::Online") && s.contains("'RevocationStatusUnknown'") && s.contains("'Revoked'"));
+}
