@@ -78,10 +78,27 @@ if ($a.digest -notmatch '^sha256:([0-9a-f]{64})$') { Arret "empreinte de l'artef
 $attendue = $Matches[1]
 $zip = Join-Path $Travail 'a-signer.zip'
 # Téléchargement en octets (une redirection de PowerShell réencoderait le contenu), jeton de gh jamais affiché
+# Le jeton ne va qu'à api.github.com : la redirection vers le stockage de GitHub est suivie à la main, sans lui
+# (audit de #239, S239-02 : Windows PowerShell 5.1 pourrait garder l'en-tête sur un autre hôte)
+Add-Type -AssemblyName System.Net.Http
 $jeton = gh auth token
+$client = New-Object System.Net.Http.HttpClient((New-Object System.Net.Http.HttpClientHandler -Property @{ AllowAutoRedirect = $false }))
 try {
-    Invoke-WebRequest -Uri "https://api.github.com/repos/$Depot/actions/artifacts/$($a.id)/zip" -Headers @{ Authorization = "Bearer $jeton"; Accept = 'application/vnd.github+json' } -OutFile $zip -UseBasicParsing
-} catch { Arret "téléchargement de l'artefact impossible : $($_.Exception.Message)" } finally { $jeton = $null }
+    $requete = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "https://api.github.com/repos/$Depot/actions/artifacts/$($a.id)/zip")
+    $requete.Headers.Add('Authorization', "Bearer $jeton")
+    $requete.Headers.Add('Accept', 'application/vnd.github+json')
+    $requete.Headers.Add('User-Agent', 'deR4Tizer-signature')
+    $reponse = $client.SendAsync($requete).GetAwaiter().GetResult()
+    $jeton = $null
+    if ([int]$reponse.StatusCode -lt 300 -or [int]$reponse.StatusCode -ge 400 -or -not $reponse.Headers.Location) { Arret "téléchargement de l'artefact : réponse $([int]$reponse.StatusCode) sans redirection" }
+    $stockage = $reponse.Headers.Location.AbsoluteUri
+    if (-not $stockage.StartsWith('https://')) { Arret 'redirection de l''artefact hors HTTPS' }
+    $sansJeton = New-Object System.Net.Http.HttpClient
+    try {
+        $octets = $sansJeton.GetByteArrayAsync($stockage).GetAwaiter().GetResult()
+        [IO.File]::WriteAllBytes($zip, $octets)
+    } finally { $sansJeton.Dispose() }
+} catch { Arret "téléchargement de l'artefact impossible : $($_.Exception.Message)" } finally { $jeton = $null; $client.Dispose() }
 $recue = Sha256 $zip
 if ($recue -ne $attendue) { Arret "empreinte de l'artefact $recue différente de celle de GitHub $attendue" }
 $entree = Join-Path $Travail 'a-signer'
@@ -120,6 +137,7 @@ Expand-Archive $wixZip $wix
 $sources = Join-Path $Travail 'sources'
 git -C $racine worktree add --detach $sources $commitTag 2>&1 | Out-Null
 if ($LASTEXITCODE) { Arret 'copie des sources du tag impossible (git worktree)' }
+$wixAvant = $env:WIX; $certAvant = $env:DER4TIZER_CERT_SHA1
 try {
     New-Item -ItemType Directory -Force -Path (Join-Path $sources 'bin') | Out-Null
     Copy-Item (Join-Path $bin 'deR4Tizer.exe'), (Join-Path $bin 'deR4TizerSvc.exe') (Join-Path $sources 'bin')
@@ -128,7 +146,11 @@ try {
     & (Join-Path $sources 'construire-msi.ps1') -Version $version | Out-Null
     Copy-Item (Join-Path $sources 'bin\deR4Tizer.msi') (Join-Path $bin 'deR4Tizer.msi')
 } finally {
-    git -C $racine worktree remove --force $sources 2>&1 | Out-Null
+    # Session du mainteneur rétablie, copie des sources retirée et contrôlée (audit de #239, S239-01)
+    $env:WIX = $wixAvant; if ($certAvant) { $env:DER4TIZER_CERT_SHA1 = $certAvant }
+    Natif git -C $racine worktree remove --force $sources | Out-Null
+    Natif git -C $racine worktree prune | Out-Null
+    if (Test-Path $sources) { Write-Host "Attention : copie des sources non retirée ($sources) ; git worktree remove --force à faire à la main" -ForegroundColor Yellow }
 }
 Signer @((Join-Path $bin 'deR4Tizer.msi')) @('/d', 'deR4Tizer')
 
@@ -161,9 +183,19 @@ if ($SansPublier) {
     exit 0
 }
 Etape 'Brouillon de version GitHub'
+$empreintes = @{}
+foreach ($n in 'deR4Tizer.msi', 'deR4TizerSvc.exe', 'deR4Tizer.exe', 'manifeste.json') { $empreintes[$n] = Sha256 (Join-Path $bin $n) }
+# Le tag de GitHub pointe sur le commit signé (audit de #239, S239-03)
+$distant = Natif gh api "repos/$Depot/commits/$Tag" --jq .sha
+if ($distant -ne $commitTag) { Arret "le tag $Tag de GitHub pointe sur $distant, pas sur le commit signé $commitTag" }
 Natif gh release view $Tag --repo $Depot | Out-Null
 if (-not $LASTEXITCODE) { Arret "une version $Tag existe déjà sur GitHub : rien n'est remplacé" }
+# Empreintes revérifiées juste avant l'envoi (audit de #239, S239-04)
+foreach ($n in $empreintes.Keys) { if ((Sha256 (Join-Path $bin $n)) -ne $empreintes[$n]) { Arret "$n a changé depuis sa vérification" } }
 gh release create $Tag (Join-Path $bin 'deR4Tizer.msi') (Join-Path $bin 'deR4TizerSvc.exe') (Join-Path $bin 'deR4Tizer.exe') (Join-Path $bin 'manifeste.json') --repo $Depot --draft --verify-tag --title "deR4Tizer $Tag" --generate-notes
 if ($LASTEXITCODE) { Arret 'création du brouillon impossible' }
 Write-Host "Brouillon $Tag créé : relisez-le sur GitHub, puis publiez-le vous-même (Publish release)."
+# Dossier de travail effacé une fois le brouillon créé (exécutables non signés, fichiers signés, WiX) (S239-01)
+Remove-Item -LiteralPath $Travail -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path $Travail) { Write-Host "Attention : dossier de travail non effacé ($Travail)" -ForegroundColor Yellow }
 exit 0

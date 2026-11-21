@@ -9158,6 +9158,12 @@ fn signature_locale_script_unique_echec_ferme() {
     assert!(pos("Signer @((Join-Path $bin 'deR4Tizer.msi'))") < pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))"));
     assert!(pos("Sha256 = (Sha256 (Join-Path $bin 'deR4Tizer.msi'))") < pos("verifier-signatures.ps1') -Cles $cles"));
     assert!(pos("verifier-signatures.ps1') -Cles $cles") < pos("gh release create $Tag"));
+    // Audit de #239 : jeton seulement vers api.github.com (redirection suivie sans lui, S239-02) ; tag distant sur le
+    // commit signé (S239-03) ; empreintes revérifiées avant l'envoi (S239-04) ; nettoyage (S239-01)
+    assert!(s.contains("AllowAutoRedirect = $false") && s.contains("$sansJeton.GetByteArrayAsync($stockage)"));
+    assert!(s.contains("if ($distant -ne $commitTag)"));
+    assert!(pos("a changé depuis sa vérification") < pos("gh release create $Tag"));
+    assert!(s.contains("Remove-Item -LiteralPath $Travail -Recurse -Force") && s.contains("worktree prune") && s.contains("$env:WIX = $wixAvant"));
     // Le nom du titulaire n'est jamais affiché ; le jeton de gh n'est jamais écrit
     for interdit in [".Subject", ".Issuer", "FriendlyName", "GetNameInfo", "Write-Host $jeton", "Write-Host \"$jeton"] {
         assert!(!s.contains(interdit), "{interdit}");
