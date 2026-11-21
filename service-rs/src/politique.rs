@@ -791,11 +791,30 @@ impl SuiviEcriture {
 
 static SUIVI: Mutex<SuiviEcriture> = Mutex::new(SuiviEcriture { echec_depuis: None });
 
-/// Décision pure : code publié dans etat.json (vide : registre écrit normalement) et début de l'échec. Lecture initiale
-/// refusée : le fichier n'est jamais écrasé, donc les échéances de cette session seront perdues au redémarrage
-pub(crate) fn code_registre(lecture_refusee: bool, echec_depuis: Option<u64>) -> (&'static str, Option<u64>) {
-    if lecture_refusee {
+/// Ce qui empêche l'écriture du registre, pour la page Santé
+#[derive(Default)]
+pub(crate) struct Empechements {
+    /// Lecture initiale refusée : le fichier n'est jamais écrasé, les échéances de la session seront perdues au redémarrage
+    pub(crate) lecture_refusee: bool,
+    /// Contenu mal formé : aucune action automatique (REP-002), rien n'est écrit
+    pub(crate) contenu_illisible: bool,
+    /// Protection du dossier de données en échec : aucune copie n'est prise
+    pub(crate) protection_en_echec: bool,
+    /// Fil d'écriture impossible à créer : rien n'est écrit jusqu'au redémarrage
+    pub(crate) fil_absent: bool,
+}
+
+/// Décision pure : code publié dans etat.json (vide : registre écrit normalement) et début de l'échec. Tous les cas où
+/// rien n'est écrit sont dits, jamais « écrit » à tort (prérelecture de #236, D1)
+pub(crate) fn code_registre(e: &Empechements, echec_depuis: Option<u64>) -> (&'static str, Option<u64>) {
+    if e.contenu_illisible {
+        ("ContenuIllisible", None)
+    } else if e.lecture_refusee {
         ("LectureRefusee", None)
+    } else if e.protection_en_echec {
+        ("ProtectionEnEchec", None)
+    } else if e.fil_absent {
+        ("EcritureEnEchec", None)
     } else if let Some(d) = echec_depuis {
         ("EcritureEnEchec", Some(d))
     } else {
@@ -805,8 +824,14 @@ pub(crate) fn code_registre(lecture_refusee: bool, echec_depuis: Option<u64>) ->
 
 /// État du registre des réponses pour la page Santé : charge l'état si besoin (lecture initiale), n'écrit jamais
 pub fn etat_registre() -> (&'static str, Option<u64>) {
-    let refusee = avec(|e| e.ecriture_suspendue);
-    code_registre(refusee, SUIVI.lock().unwrap_or_else(|e| e.into_inner()).echec_depuis)
+    let (lecture_refusee, contenu_illisible) = avec(|e| (e.ecriture_suspendue, e.illisible));
+    let e = Empechements {
+        lecture_refusee,
+        contenu_illisible,
+        protection_en_echec: commun::echec_protection().is_some(),
+        fil_absent: ECHOUEE.load(std::sync::atomic::Ordering::SeqCst) == u64::MAX,
+    };
+    code_registre(&e, SUIVI.lock().unwrap_or_else(|e| e.into_inner()).echec_depuis)
 }
 
 /// Décision pure : une commande cesse d'attendre sa copie dès qu'elle est écrite ou que son écriture a échoué
@@ -891,7 +916,8 @@ fn ecrivain() {
         let ecrite = resultat.is_ok();
         // Premier échec d'une série et retour à la normale seulement (point 1 de la revue de l'auditeur du 2026-11-21)
         // Ligne prise sous le verrou du suivi, écrite au journal après l'avoir rendu
-        let ligne = SUIVI.lock().unwrap_or_else(|e| e.into_inner()).apres_essai(resultat.as_ref().err().map(String::as_str), maintenant());
+        // Copie déjà dépassée par une plus récente : aucun essai d'écriture, le suivi n'en tire rien (audit de #236, S236-01)
+        let ligne = if deja { None } else { SUIVI.lock().unwrap_or_else(|e| e.into_inner()).apres_essai(resultat.as_ref().err().map(String::as_str), maintenant()) };
         if let Some(m) = ligne {
             commun::journal(&m);
         }

@@ -9086,19 +9086,31 @@ fn s113_05_signataire_pris_dans_l_etat_de_la_verification() {
 fn registre_reponses_echec_journalise_une_fois_et_publie() {
     // Revue de l'auditeur du 2026-11-21, point 1 : écriture de reponses.json en échec simulé, une ligne de journal au
     // premier échec et une au retour, rien entre les deux ; constat publié pendant l'échec, retiré au retour
-    use crate::politique::{code_registre, SuiviEcriture};
+    use crate::politique::{code_registre, Empechements, SuiviEcriture};
+    let rien = Empechements::default();
     let mut s = SuiviEcriture::default();
     let premier = s.apres_essai(Some("accès refusé"), 1_000).expect("premier échec journalisé");
     assert!(premier.contains("reponses.json") && premier.contains("accès refusé"));
     assert!(s.apres_essai(Some("accès refusé"), 1_005).is_none(), "essai suivant en échec : rien au journal");
     assert!(s.apres_essai(Some("disque plein"), 1_010).is_none(), "autre raison, même série : rien au journal");
-    assert_eq!(code_registre(false, s.echec_depuis), ("EcritureEnEchec", Some(1_000)), "constat levé pendant l'échec");
+    assert_eq!(code_registre(&rien, s.echec_depuis), ("EcritureEnEchec", Some(1_000)), "constat levé pendant l'échec");
     let retour = s.apres_essai(None, 1_030).expect("retour journalisé");
     assert!(retour.contains("rétablie") && retour.contains("30 s"));
     assert!(s.apres_essai(None, 1_035).is_none(), "écriture normale : rien au journal");
-    assert_eq!(code_registre(false, s.echec_depuis), ("", None), "constat retiré au retour");
-    // Lecture initiale refusée : constat tant que la session dure, même sans échec d'écriture
-    assert_eq!(code_registre(true, None).0, "LectureRefusee");
+    assert_eq!(code_registre(&rien, s.echec_depuis), ("", None), "constat retiré au retour");
+    // Tous les cas où rien n'est écrit sont dits, jamais « écrit » (prérelecture de #236, D1) : lecture initiale refusée,
+    // contenu mal formé, protection du dossier en échec, fil d'écriture absent
+    let e = |f: fn(&mut Empechements)| { let mut x = Empechements::default(); f(&mut x); code_registre(&x, None).0 };
+    assert_eq!(e(|x| x.lecture_refusee = true), "LectureRefusee");
+    assert_eq!(e(|x| x.contenu_illisible = true), "ContenuIllisible");
+    assert_eq!(e(|x| x.protection_en_echec = true), "ProtectionEnEchec");
+    assert_eq!(e(|x| x.fil_absent = true), "EcritureEnEchec");
+    // Copie dépassée : le suivi n'en tire rien (S236-01)
+    assert!(include_str!("politique.rs").contains("let ligne = if deja { None } else {"));
+    let i = include_str!("../../src/Incidents.cs");
+    for code in ["\"LectureRefusee\"", "\"ContenuIllisible\"", "\"ProtectionEnEchec\"", "\"EcritureEnEchec\""] {
+        assert!(i.contains(code), "page Santé : {code}");
+    }
     let src = include_str!("politique.rs").replace("\r\n", "\n");
     let ecr = &src[src.find("fn ecrivain()").unwrap()..];
     assert!(ecr.contains(".apres_essai(") && ecr.contains("commun::journal(&m)"), "le fil d'écriture passe par le suivi");
