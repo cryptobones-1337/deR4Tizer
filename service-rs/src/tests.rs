@@ -8886,7 +8886,9 @@ fn publication_chaine_par_liste_d_acceptation_et_essai_reel() {
     assert!(s.contains("$autres = @($etats | Where-Object { $_ -notin 'NoError', 'NotTimeValid' })"), "liste d'acceptation");
     assert!(s.contains("if ($autres.Count -or (-not $ok -and -not $seulExpire))"), "échec de construction sans seul « expiré » : refus");
     assert!(!s.contains("$bloquants"), "plus de liste de refus");
+    assert!(s.contains("$seulExpire = $etats -contains 'NotTimeValid' -and $autres.Count -eq 0"), "Build faux : NotTimeValid exigé (S233-01)");
     let m = include_str!("../../tests/integration/maj.ps1");
+    assert!(m.contains("@('pwsh.exe', 'powershell.exe')") && m.contains("codes différents selon l'hôte"), "les deux hôtes PowerShell (S233-02)");
     for cas in ["liste de clés vide, refus", "fichier non signé, refus", "clé non épinglée, refus", "clé épinglée sans horodatage, refus",
         "certificat révoqué, horodaté, refus", "CRL injoignable, horodaté, refus", "clé épinglée, horodaté, chaîne et révocation vérifiées, accepté (code 0)"] {
         assert!(m.contains(&format!("'Publication : {cas}")), "cas d'essai réel absent : {cas}");

@@ -200,9 +200,17 @@ Verifier 'curl.exe (Schannel) accepte le serveur local en HTTPS, révocation vé
 # les binaires de test (même empreinte que le service). Code 1 et message attendu à chaque refus, code 0 seulement
 # pour un paquet signé par la clé épinglée, horodaté, dont la chaîne et la révocation se vérifient
 $verifierSig = Join-Path $PSScriptRoot '..\..\verifier-signatures.ps1'
+# Exécuté par PowerShell 7 (pwsh, celui du workflow) et par Windows PowerShell 5.1 : même code de sortie exigé des
+# deux (audit de #233, S233-02)
+$hotesSig = @('pwsh.exe', 'powershell.exe') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
 function Publication([string]$Cles, [string]$Fichier) {
-    $s = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifierSig -Cles $Cles -Fichiers $Fichier 2>&1 | Out-String
-    @{ Code = $LASTEXITCODE; Sortie = $s }
+    $r = foreach ($h in $hotesSig) {
+        $s = & $h -NoProfile -ExecutionPolicy Bypass -File $verifierSig -Cles $Cles -Fichiers $Fichier 2>&1 | Out-String
+        @{ Hote = $h; Code = $LASTEXITCODE; Sortie = $s }
+    }
+    $codes = @($r | ForEach-Object { $_.Code } | Select-Object -Unique)
+    if ($codes.Count -ne 1) { return @{ Code = -1; Sortie = "codes différents selon l'hôte : $(($r | ForEach-Object { "$($_.Hote)=$($_.Code)" }) -join ', ') ; $($r[0].Sortie)" } }
+    @{ Code = $codes[0]; Sortie = (($r | ForEach-Object { $_.Sortie }) -join "`n") }
 }
 function Refus-Publication([string]$Cles, [string]$Fichier, [string]$Motif) {
     $r = Publication $Cles $Fichier

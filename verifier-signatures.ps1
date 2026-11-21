@@ -39,7 +39,8 @@ foreach ($f in $Fichiers) {
     # expiré » (NotTimeValid), admis parce que la signature est horodatée (contrôlé plus haut). Tout autre état refuse,
     # y compris ceux qu'une liste de refus oublierait (NotSignatureValid, NotValidForUsage, ExplicitDistrust...)
     $autres = @($etats | Where-Object { $_ -notin 'NoError', 'NotTimeValid' })
-    $seulExpire = $etats.Count -gt 0 -and $autres.Count -eq 0
+    # Build faux : au moins un NotTimeValid exigé (un NoError seul ne suffit pas ; audit de #233, S233-01)
+    $seulExpire = $etats -contains 'NotTimeValid' -and $autres.Count -eq 0
     if ($autres.Count -or (-not $ok -and -not $seulExpire)) { $refus += "$f : chaîne ou révocation non vérifiée ($($etats -join ', '))"; continue }
     # Seule l'empreinte de la clé est écrite : le sujet du certificat porte le nom du titulaire, et ce journal est
     # public (décision du 2026-11-11 : le nom dans la signature des binaires seulement, prérelecture de #226)
