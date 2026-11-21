@@ -739,6 +739,26 @@ pub fn identite_client_tube(tube: HANDLE) -> (crate::validation::Client, String)
     }
 }
 
+/// Le processus tourne-t-il sous SYSTEM ou avec le groupe Administrateurs actif (jeton élevé) ? None si illisible ; un
+/// administrateur non élevé (groupe en refus seul) n'est pas privilégié (décision du mainteneur du 2026-11-21, S110-14 et
+/// S114-02 : un logiciel « connu » ne l'est que sous un compte qu'un programme du compte de l'utilisateur ne contrôle pas)
+pub fn compte_privilegie(pid: u32) -> Option<bool> {
+    use windows::Win32::Security::{DuplicateToken, SecurityIdentification, TOKEN_DUPLICATE, TOKEN_QUERY};
+    use windows::Win32::System::Threading::OpenProcessToken;
+    let p = ProcessusOuvert::ouvrir(pid, Default::default()).ok()?;
+    unsafe {
+        let mut jeton = HANDLE::default();
+        OpenProcessToken(p.handle(), TOKEN_QUERY | TOKEN_DUPLICATE, &mut jeton).ok()?;
+        let mut emprunt = HANDLE::default();
+        let dup = DuplicateToken(jeton, SecurityIdentification, &mut emprunt);
+        let _ = CloseHandle(jeton);
+        dup.ok()?;
+        let (client, _) = identite_jeton(emprunt);
+        let _ = CloseHandle(emprunt);
+        Some(matches!(client, crate::validation::Client::Systeme | crate::validation::Client::Administrateur))
+    }
+}
+
 /// SYSTEM, administrateur (groupe Administrateurs actif) ou autre, et SID du compte, d'un jeton d'emprunt (niveau
 /// Identification au moins) ouvert avec TOKEN_QUERY
 fn identite_jeton(jeton: HANDLE) -> (crate::validation::Client, String) {

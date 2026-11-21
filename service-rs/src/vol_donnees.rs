@@ -174,9 +174,20 @@ pub(crate) fn leurre_connu(chemin: &str, dossiers: &DossiersFermes, signe: &dyn 
     LEURRES_AUTORISES.iter().any(|(n, e)| exe == *n && signe(e))
 }
 
-/// Logiciel connu (dossier fermé, couple nom et éditeur vérifié) qui peut toucher un leurre sans être un rançongiciel
-pub fn leurre_autorise(chemin: &str) -> bool {
-    leurre_connu(chemin, &dossiers_fermes(), &|e| signe_par(chemin, e))
+/// Décision pure : « connu » seulement si, en plus, le programme et ses dossiers sont fermés en écriture et qu'il tourne
+/// sous SYSTEM ou un administrateur (décision du mainteneur du 2026-11-21, S110-14, S114-01 et S114-02). Les droits ne
+/// sont lus que pour un candidat déjà retenu par le chemin, le nom et l'éditeur
+pub(crate) fn leurre_connu_garanti(chemin: &str, dossiers: &DossiersFermes, signe: &dyn Fn(&[&str]) -> bool, ferme: &dyn Fn(&str) -> bool, privilegie: bool) -> bool {
+    privilegie && leurre_connu(chemin, dossiers, signe) && ferme(chemin)
+}
+
+/// Logiciel connu (dossier fermé, couple nom et éditeur vérifié, droits et compte contrôlés) qui peut toucher un leurre
+/// sans être un rançongiciel
+pub fn leurre_autorise(pid: u32, chemin: &str) -> bool {
+    let d = dossiers_fermes();
+    let racines: Vec<String> = d.arbres.iter().chain(d.directs.iter()).cloned().collect();
+    let privilegie = crate::natif::compte_privilegie(pid) == Some(true);
+    leurre_connu_garanti(chemin, &d, &|e| signe_par(chemin, e), &|c| crate::politique::ferme_en_ecriture(c, &racines), privilegie)
 }
 
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)
@@ -300,7 +311,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     evenements::abonner("Security", "*[System[EventID=4663]]", crate::collectes::Collecte::JournalSecurite, move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
-            let connu = leurre_autorise(&programme);
+            let connu = leurre_autorise(pid, &programme);
             // Sauvegarde, synchronisation, antivirus, indexation : noté sans rien suspendre. Sinon, rundll32,
             // regsvr32, mshta, powershell… sont des binaires Windows par lesquels passent beaucoup de rançongiciels :
             // ils sont suspendus. Seuls les processus critiques (csrss, lsass, svchost…) sont protégés, par
@@ -359,13 +370,17 @@ pub(crate) fn dire_retenue(alerte: &mut Alerte, raison: &str) {
 }
 
 /// Signature illisible ou hors délai : non signé, donc toujours suspendu
-fn genre_leurre(programme: &str) -> crate::politique::Genre {
+fn genre_leurre(pid: u32, programme: &str) -> crate::politique::Genre {
     let dossiers: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"].iter().filter_map(|v| std::env::var(v).ok()).collect();
     if !crate::politique::installe_dans(programme, &dossiers) {
         return crate::politique::Genre::SuspensionSansSeuil;
     }
     let signe = matches!(crate::natif::signataire_a_echeance(programme), Ok(Some(_)));
-    crate::politique::genre_suspension(programme, signe, &dossiers)
+    // Droits et compte lus seulement pour un candidat au seuil (signé, dans Program Files)
+    let candidat = signe && crate::politique::genre_suspension(programme, signe, &dossiers) == crate::politique::Genre::Suspension;
+    let ferme = candidat && crate::politique::ferme_en_ecriture(programme, &dossiers);
+    let privilegie = ferme && crate::natif::compte_privilegie(pid) == Some(true);
+    crate::politique::genre_suspension_garanti(programme, signe, &dossiers, ferme, privilegie)
 }
 
 /// La politique et la garde pour un programme qui touche un leurre : (suspendu, raison de la retenue). Hors du cycle : la
@@ -374,7 +389,7 @@ fn suspension_leurre(pid: u32, programme: &str, attendu: &crate::reponse::Attend
     use crate::politique::{self, Action, Contexte, Decision, Declencheur, Passage, SourceAuto};
     let contexte = Contexte { echec_protection: commun::echec_protection().is_some(), rancongiciel: true, ..Default::default() };
     match politique::decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &contexte) {
-        Decision::Autorisee(a) => match politique::passer(genre_leurre(programme), programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
+        Decision::Autorisee(a) => match politique::passer(genre_leurre(pid, programme), programme, &mut || crate::natif::empreinte_a_echeance(programme).ok().flatten()) {
             Passage::Passe => match crate::execution::suspendre(&a, pid, attendu, true) {
                 Ok(()) => (true, None),
                 Err(e) => {
