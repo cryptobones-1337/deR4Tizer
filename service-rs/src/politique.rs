@@ -761,11 +761,18 @@ fn avec_copie<R>(f: impl FnOnce(&mut Etat) -> R) -> (R, Option<u64>) {
 
 /// Copie écrite (ou dépassée par une plus récente) ; signalé par le fil d'écriture
 static ECRIT: std::sync::Condvar = std::sync::Condvar::new();
+/// Numéro de la dernière copie dont l'écriture a échoué (u64::MAX : fil d'écriture absent)
+static ECHOUEE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Décision pure : une commande cesse d'attendre sa copie dès qu'elle est écrite ou que son écriture a échoué
+pub(crate) fn attente_finie(n: u64, ecrite: u64, echouee: u64) -> bool {
+    ecrite >= n || echouee >= n
+}
 
 fn attendre_ecriture(n: u64, delai: std::time::Duration) {
     let fin = std::time::Instant::now() + delai;
     let mut d = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
-    while *d < n {
+    while !attente_finie(n, *d, ECHOUEE.load(std::sync::atomic::Ordering::SeqCst)) {
         let reste = fin.saturating_duration_since(std::time::Instant::now());
         if reste.is_zero() {
             break;
@@ -815,6 +822,8 @@ fn ecrire_copie(copie: Option<(u64, Historique)>) {
         // Fil impossible à créer (ressources épuisées) : dit au journal, rien n'est écrit pendant la session (S230-04)
         if let Err(e) = std::thread::Builder::new().name("reponses.json".into()).spawn(ecrivain) {
             commun::journal(&format!("{FICHIER} : fil d'écriture non créé ({e}) ; l'historique n'est pas enregistré jusqu'au redémarrage du service"));
+            // Personne n'écrira : les commandes n'attendent pas (S230-05)
+            ECHOUEE.store(u64::MAX, std::sync::atomic::Ordering::SeqCst);
         }
     });
 }
@@ -830,18 +839,22 @@ fn ecrivain() {
             }
             g.take().expect("copie en attente")
         };
-        let ecrite = {
+        // Seul ce fil écrit « dernière » : l'écriture sur le disque se fait sans tenir ECRITURE, pour qu'une commande qui
+        // attend ne reste pas bloquée par un disque figé (audit de #230, S230-05)
+        let deja = !copie_a_ecrire(n, *ECRITURE.lock().unwrap_or_else(|e| e.into_inner()));
+        let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();
+        {
             let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
-            if !copie_a_ecrire(n, *derniere) {
-                true
-            } else if commun::ecrire(FICHIER, &h).is_ok() {
-                *derniere = n;
-                ECRIT.notify_all();
-                true
+            if ecrite {
+                if copie_a_ecrire(n, *derniere) {
+                    *derniere = n;
+                }
             } else {
-                false
+                // Échec signalé : une commande qui attend cette copie repart aussitôt, sans attendre les 10 s (S230-05)
+                ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);
             }
-        };
+            ECRIT.notify_all();
+        }
         if !ecrite {
             {
                 let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
@@ -908,6 +921,15 @@ pub fn ouvrir(sorte: Sorte, cible: &str, pid: Option<u32>, creation: Option<u64>
 
 pub fn clore(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
     avec_attente(|e| {
+        if e.h.clore(sortes, cible, processus, etat) > 0 {
+            enregistrer(e);
+        }
+    })
+}
+
+/// `clore` pour le cycle (levée à échéance) : jamais d'attente du disque (audit de #230, S230-05)
+pub fn clore_sans_attente(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
+    avec(|e| {
         if e.h.clore(sortes, cible, processus, etat) > 0 {
             enregistrer(e);
         }

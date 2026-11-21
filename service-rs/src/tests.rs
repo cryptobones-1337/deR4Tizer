@@ -6386,7 +6386,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(m.matches("politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);").count(), 2, "6.4b : restauration, et repli");
     assert_eq!(m.matches("politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(\"\"), None, None);").count(), 2, "6.4b : blocage d'IP, par « bloquerIp » et par « bloquer » sans domaine");
     assert!(m.contains("politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);"), "6.4b : blocage de domaine");
-    assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
+    assert!(m.contains("clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
     let (hosts_ecrit, manuels_clos) = (m.find("if let Err(e) = blocage::ecrire_bloc_hosts(&[]) {").unwrap(), m.find("politique::clore(&[politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);").unwrap());
     assert!(hosts_ecrit < manuels_clos, "6.4b : tout débloquer, blocages manuels clos après le fichier hosts (audit de #116)");
     assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer, isolations");
@@ -6444,7 +6444,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
     assert!(m.contains("politique::ouvrir(politique::Sorte::Isolation, &chemin, None, None);"), "6.4 : isolation");
-    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);"), "6.4 : libération");
+    assert!(m.contains("clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);"), "6.4 : libération");
     assert!(m.contains("politique::ouvrir(politique::Sorte::Panique, \"poste\", None, None);"), "6.4 : panique");
     assert!(m.contains("politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);"), "6.4 : fin de panique");
     assert!(m.contains("Duration::from_secs(duree_blocage_auto(genre))"), "D6-4 : 24 h pour l'IPS");
@@ -8990,7 +8990,7 @@ fn reponses_json_ecrivain_dedie() {
     assert!(!depot.contains("commun::ecrire("), "le fil appelant n'écrit pas sur le disque");
     assert!(depot.contains("SIGNAL.notify_one();"));
     let e = &src[d + f..];
-    assert!(e.contains("} else if commun::ecrire(FICHIER, &h).is_ok() {"));
+    assert!(e.contains("commun::ecrire(FICHIER, &h).is_ok()"));
     assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
     assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
 }
@@ -9024,7 +9024,27 @@ fn reponses_json_commandes_attendent_leur_ecriture() {
         let d = src.find(f).unwrap_or_else(|| panic!("{f}"));
         assert!(!src[d..d + 400].contains("avec_attente("), "{f} n'attend jamais le disque");
     }
-    assert!(src.contains("*derniere = n;\n                ECRIT.notify_all();"), "le fil d'écriture signale chaque copie écrite");
+    let ecr = &src[src.find("fn ecrivain()").unwrap()..];
+    assert!(ecr.contains("*derniere = n;") && ecr.contains("ECRIT.notify_all();"), "le fil d'écriture signale chaque copie écrite");
     assert!(src.contains("attendre_ecriture(n, std::time::Duration::from_secs(10));"), "attente bornée");
 }
 
+
+#[test]
+fn s230_05_attente_bornee_et_jamais_dans_le_cycle() {
+    // Audit de #230, S230-05 : une commande cesse d'attendre dès que sa copie est écrite ou que l'écriture a échoué ; les
+    // levées faites par le cycle n'attendent jamais ; le fil d'écriture ne tient pas ECRITURE pendant l'écriture disque
+    use crate::politique::attente_finie as f;
+    assert!(f(5, 5, 0) && f(5, 6, 0), "écrite ou dépassée");
+    assert!(f(5, 3, 5) && f(5, 3, u64::MAX), "échec signalé ou fil d'écriture absent");
+    assert!(!f(5, 4, 4), "ni écrite ni échouée : on attend");
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("let r = self.debloquer(&t, &c, false);"), "levée du cycle sans attente");
+    assert!(m.contains("let r = self.debloquer(t, cible, true);"), "levée par commande avec attente");
+    assert!(m.contains("let clore = if commande { politique::clore } else { politique::clore_sans_attente };"));
+    let p = include_str!("politique.rs").replace("\r\n", "\n");
+    let e = p.find("fn ecrivain()").unwrap();
+    let corps = &p[e..];
+    assert!(corps.contains("let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();"), "écriture disque hors du verrou ECRITURE");
+    assert!(corps.contains("ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);"), "échec signalé");
+}

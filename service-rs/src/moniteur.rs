@@ -1270,7 +1270,7 @@ impl Moniteur {
             "debloquer" => {
                 let (t, cible) = (c.type_.as_deref().unwrap_or(""), c.cible.as_deref().unwrap_or(""));
                 let humaine = self.blocages.iter().any(|b| b.type_ == t && b.cible == cible && blocage_pose_automatiquement(b));
-                let r = self.debloquer(t, cible);
+                let r = self.debloquer(t, cible, true);
                 if r.ok && humaine {
                     politique::decision_humaine(cible, None);
                 }
@@ -1901,7 +1901,8 @@ En-tête : Authorization: Bearer {j}"))
             blocages_a_lever(&self.blocages, &maintenant, chargees, |ip| menaces.permet_blocage_auto(ip))
         };
         for (t, c, pourquoi) in a_retirer {
-            let r = self.debloquer(&t, &c);
+            // Levée faite par le cycle : jamais d'attente du disque (audit de #230, S230-05)
+            let r = self.debloquer(&t, &c, false);
             crate::siem::reponse("debloquer", &c, r.ok, &r.message, &format!("automatique : {pourquoi}"));
             commun::journal(&format!("blocage automatique levé : {c} ({pourquoi})"));
         }
@@ -1911,12 +1912,14 @@ En-tête : Authorization: Bearer {j}"))
         self.dernieres_connexions.iter().filter(|c| c.ip == ip).filter(|c| natif::couper(c)).count()
     }
 
-    fn debloquer(&mut self, type_: &str, cible: &str) -> Reponse {
+    /// `commande` : levée demandée par un administrateur (la réponse attend l'écriture du registre) ; sinon le cycle
+    fn debloquer(&mut self, type_: &str, cible: &str, commande: bool) -> Reponse {
+        let clore = if commande { politique::clore } else { politique::clore_sans_attente };
         if type_ == "parefeu" {
             blocage::supprimer_regle(cible);
         }
         if type_ == "programme" {
-            politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
+            clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);
             reponse::liberer_programme(cible);
         }
         // La liste en mémoire ne perd le blocage qu'une fois le fichier hosts réécrit (relecture de #116)
@@ -1931,7 +1934,7 @@ En-tête : Authorization: Bearer {j}"))
         self.blocages = restants;
         let _ = commun::ecrire("blocages.json", &self.blocages);
         // Clos seulement une fois le déblocage fait : un fichier hosts refusé laisse le rappel en place (audit de #116, S116-03)
-        politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
+        clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);
         Reponse::ok(format!("{cible} débloqué."))
     }
 
