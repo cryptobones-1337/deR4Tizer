@@ -8957,3 +8957,15 @@ fn s228_01_liste_d_acceptation_des_droits() {
     assert!(o(Some(&sec("S-1-5-21-1-2-3-1001", defaut.clone()))), "propriétaire utilisateur");
     assert!(o(Some(&sec("", defaut.clone()))), "propriétaire illisible");
 }
+
+#[test]
+fn s113_05_signataire_pris_dans_l_etat_de_la_verification() {
+    // Tri de l'inventaire de la phase 6 (2026-11-21), S113-05 : la confirmation élevée ne relit plus le fichier par son
+    // chemin après WinVerifyTrust (course par oplock, faux éditeur affiché) ; le sujet vient de l'état de la vérification
+    let g = include_str!("../../src/Gui.cs");
+    assert!(!g.contains("X509Certificate(chemin)"), "plus de relecture du fichier par son chemin");
+    assert!(g.contains("Choix = 1, Fichier = p, Etat = 1 }"), "WTD_STATEACTION_VERIFY");
+    assert!(g.contains("string sujet = SujetDeLEtat(donnees.Donnees);"));
+    assert!(g.contains("donnees.Etat = 2;"), "état toujours fermé (WTD_STATEACTION_CLOSE)");
+    assert!(g.contains("WTHelperGetProvSignerFromChain(donnees, 0, false, 0)") && g.contains("WTHelperGetProvCertFromChain(signataire, 0)"));
+}

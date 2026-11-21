@@ -411,6 +411,29 @@ namespace DeR4Tizer
         }
         [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
         static extern int WinVerifyTrust(IntPtr fenetre, ref Guid action, ref WintrustDonnees donnees);
+        [DllImport("wintrust.dll")]
+        static extern IntPtr WTHelperProvDataFromStateData(IntPtr etat);
+        [DllImport("wintrust.dll")]
+        static extern IntPtr WTHelperGetProvSignerFromChain(IntPtr donnees, int signataire, bool contreSignataire, int indexContre);
+        [DllImport("wintrust.dll")]
+        static extern IntPtr WTHelperGetProvCertFromChain(IntPtr signataire, int certificat);
+
+        // Sujet du signataire pris dans l'état de la vérification elle-même (WTD_STATEACTION_VERIFY), jamais en relisant le
+        // fichier par son chemin : entre les deux lectures, un compte standard pouvait échanger le fichier (oplock) et faire
+        // afficher un faux éditeur (audit de #113, S113-05 ; tri de l'inventaire de la phase 6, 2026-11-21)
+        static string SujetDeLEtat(IntPtr etat)
+        {
+            IntPtr donnees = WTHelperProvDataFromStateData(etat);
+            if (donnees == IntPtr.Zero) return null;
+            IntPtr signataire = WTHelperGetProvSignerFromChain(donnees, 0, false, 0);
+            if (signataire == IntPtr.Zero) return null;
+            IntPtr cert = WTHelperGetProvCertFromChain(signataire, 0);
+            if (cert == IntPtr.Zero) return null;
+            // CRYPT_PROVIDER_CERT : cbStruct (DWORD, aligné), puis pCert (PCCERT_CONTEXT)
+            IntPtr contexte = Marshal.ReadIntPtr(cert, IntPtr.Size);
+            if (contexte == IntPtr.Zero) return null;
+            return new System.Security.Cryptography.X509Certificates.X509Certificate(contexte).Subject;
+        }
 
         // Pour un administrateur, le fichier d'un autre programme : jamais sur le réseau (le compte de l'administrateur s'y
         // authentifierait), et sur un autre fil, avec une échéance (verrou, fichier énorme). Le sujet n'est montré que si la
@@ -430,11 +453,22 @@ namespace DeR4Tizer
                 try
                 {
                     Marshal.StructureToPtr(fichier, p, false);
-                    var donnees = new WintrustDonnees { Taille = Marshal.SizeOf(typeof(WintrustDonnees)), Interface = 2, Revocation = 0, Choix = 1, Fichier = p };
+                    // Etat = 1 (WTD_STATEACTION_VERIFY) : l'état de la vérification est gardé pour y lire le signataire,
+                    // puis fermé (Etat = 2, WTD_STATEACTION_CLOSE) dans tous les cas
+                    var donnees = new WintrustDonnees { Taille = Marshal.SizeOf(typeof(WintrustDonnees)), Interface = 2, Revocation = 0, Choix = 1, Fichier = p, Etat = 1 };
                     var action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
-                    if (WinVerifyTrust(new IntPtr(-1), ref action, ref donnees) != 0) return en ? "no valid embedded signature" : "aucune signature intégrée valide";
-                    string sujet = new System.Security.Cryptography.X509Certificates.X509Certificate(chemin).Subject;
-                    return sujet.Length <= 200 ? sujet : sujet.Substring(0, 200) + "…";
+                    try
+                    {
+                        if (WinVerifyTrust(new IntPtr(-1), ref action, ref donnees) != 0) return en ? "no valid embedded signature" : "aucune signature intégrée valide";
+                        string sujet = SujetDeLEtat(donnees.Donnees);
+                        if (string.IsNullOrEmpty(sujet)) return nonLue;
+                        return sujet.Length <= 200 ? sujet : sujet.Substring(0, 200) + "…";
+                    }
+                    finally
+                    {
+                        donnees.Etat = 2;
+                        WinVerifyTrust(new IntPtr(-1), ref action, ref donnees);
+                    }
                 }
                 finally { Marshal.DestroyStructure(p, typeof(WintrustFichier)); Marshal.FreeHGlobal(p); }
             });
