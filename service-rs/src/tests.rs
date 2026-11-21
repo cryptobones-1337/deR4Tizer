@@ -8949,7 +8949,7 @@ fn s228_01_liste_d_acceptation_des_droits() {
     let defaut = vec![ace("S-1-5-18", 0x1f01ff), ace("S-1-5-32-544", 0x1f01ff), ace(ti, 0x1f01ff), ace("S-1-5-32-545", 0x1200a9), ace("S-1-3-0", 0x1000_0000), ace("S-1-15-2-1", 0x1200a9)];
     assert!(!o(Some(&sec(ti, defaut.clone()))), "Program Files par défaut : fermé");
     assert!(!o(Some(&sec("S-1-5-80-123-456", defaut.clone()))), "propriétaire compte de service");
-    for sid in ["S-1-5-21-1-2-3-1001", "S-1-2-0", "S-1-2-1", "S-1-15-2-1", "S-1-5-19", "S-1-5-80-"] {
+    for sid in ["S-1-5-21-1-2-3-1001", "S-1-2-0", "S-1-2-1", "S-1-15-2-1", "S-1-5-19", "S-1-5-80-", "S-1-5-80-0"] {
         let mut a = defaut.clone();
         a.push(ace(sid, 0x2));
         assert!(o(Some(&sec(ti, a))), "écriture pour {sid}");
