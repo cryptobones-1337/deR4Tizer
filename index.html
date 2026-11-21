@@ -423,7 +423,8 @@
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z"/><path d="m9 12 2 2 4-4"/></svg></div>
           <h3>Hardening and health</h3>
           <ul>
-            <li>A security baseline inspired by Microsoft and Intune, applied through local Group Policy, reversible</li>
+            <li>A security baseline inspired by Microsoft and Intune, applied through local Group Policy, reversible: reverting restores the original values (checked rule by rule in a test VM)</li>
+            <li>A Defender rule counts as compliant only when Defender actually applies it; side effects (Remote Desktop, UAC prompts, guest shares) are stated before applying, and Remote Desktop is left on when it is in use</li>
             <li>Health page: every collector, alert forwarding and the interface are monitored</li>
             <li>Syslog (RFC 5424) and a read-only HTTP API for your own SIEM</li>
           </ul>
