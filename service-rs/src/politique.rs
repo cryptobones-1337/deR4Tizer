@@ -762,11 +762,57 @@ pub(crate) fn copie_a_ecrire(numero: u64, derniere: u64) -> bool {
     numero > derniere
 }
 
+/// Dernière copie en attente d'écriture : le fil qui note une action la dépose et repart aussitôt ; un fil d'écriture
+/// dédié l'écrit (audit de #230, S230-01 : le cycle et le fil des leurres n'attendent plus le disque)
+static EN_ATTENTE: Mutex<Option<(u64, Historique)>> = Mutex::new(None);
+static SIGNAL: std::sync::Condvar = std::sync::Condvar::new();
+static ECRIVAIN: std::sync::Once = std::sync::Once::new();
+
 fn ecrire_copie(copie: Option<(u64, Historique)>) {
-    let Some((n, h)) = copie else { return };
-    let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
-    if copie_a_ecrire(n, *derniere) && commun::ecrire(FICHIER, &h).is_ok() {
-        *derniere = n;
+    let Some(c) = copie else { return };
+    {
+        let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
+        if g.as_ref().is_none_or(|(n, _)| copie_a_ecrire(c.0, *n)) {
+            *g = Some(c);
+        }
+    }
+    SIGNAL.notify_one();
+    ECRIVAIN.call_once(|| {
+        let _ = std::thread::Builder::new().name("reponses.json".into()).spawn(ecrivain);
+    });
+}
+
+/// Fil d'écriture : prend la copie la plus récente et l'écrit ; en échec, elle est remise en attente (sauf si une plus
+/// récente est arrivée) et réessayée 5 s plus tard (audit de #230, S230-02)
+fn ecrivain() {
+    loop {
+        let (n, h) = {
+            let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
+            while g.is_none() {
+                g = SIGNAL.wait(g).unwrap_or_else(|e| e.into_inner());
+            }
+            g.take().expect("copie en attente")
+        };
+        let ecrite = {
+            let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+            if !copie_a_ecrire(n, *derniere) {
+                true
+            } else if commun::ecrire(FICHIER, &h).is_ok() {
+                *derniere = n;
+                true
+            } else {
+                false
+            }
+        };
+        if !ecrite {
+            {
+                let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
+                if g.is_none() {
+                    *g = Some((n, h));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
     }
 }
 

@@ -110,8 +110,11 @@ est retenue. Un administrateur peut toujours agir à la main.
   formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
   rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
   en mémoire, sans son historique, et la réponse reste ; le fichier n'est alors jamais écrasé, et le journal du service le
-  dit (S110-13, 2026-11-21). Le fichier est lu et écrit hors du verrou de la garde : un disque lent ne fige ni le cycle ni
-  le fil des leurres, et une copie plus ancienne n'écrase jamais une plus récente (S110-04, S110-16).
+  dit (S110-13, 2026-11-21). Le fichier est lu hors du verrou de la garde, et écrit par un fil dédié qui ne garde que la
+  copie la plus récente : le cycle et le fil des leurres déposent la copie sans attendre le disque, une copie plus ancienne
+  n'écrase jamais une plus récente, et une écriture en échec est réessayée 5 s plus tard (S110-04, S110-16, S230-01,
+  S230-02). Limite : la dernière copie peut être perdue si le service s'arrête avant son écriture ; un fichier refusé à la
+  lecture initiale n'est pas relu avant le prochain démarrage (S230-03).
 
 ## Durées et récupération (phase 6, dans le code)
 

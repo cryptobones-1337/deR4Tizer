@@ -8976,3 +8976,19 @@ fn reponses_json_illisible_jamais_ecrase_et_ecriture_hors_verrou() {
     assert!(!corps.contains("commun::ecrire("), "aucune écriture sous ETAT");
 }
 
+
+#[test]
+fn reponses_json_ecrivain_dedie() {
+    // Audit de #230 : S230-01, le fil qui note une action ne fait que déposer la copie (aucune écriture sur le disque
+    // dans ecrire_copie) ; S230-02, une écriture en échec est remise en attente et réessayée
+    let src = include_str!("politique.rs");
+    let d = src.find("fn ecrire_copie(").unwrap();
+    let f = src[d..].find("fn ecrivain()").unwrap();
+    let depot = &src[d..d + f];
+    assert!(!depot.contains("commun::ecrire("), "le fil appelant n'écrit pas sur le disque");
+    assert!(depot.contains("SIGNAL.notify_one();"));
+    let e = &src[d + f..];
+    assert!(e.contains("} else if commun::ecrire(FICHIER, &h).is_ok() {"));
+    assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
+    assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
+}
