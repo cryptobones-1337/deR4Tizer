@@ -153,19 +153,19 @@ try {
     $e = & $etat @(@('Connexions', 'Indisponible', (& $ilya 5)), @('Sysmon', 'Active', ''))
     $lignes = @(& $appel $vs 'Lignes' @($e, $r, $maintenant))
     Cas 'santé : chaque ligne dit sa source' (@($lignes | Where-Object { -not $_.Source }).Count -eq 0)
-    $li = $lignes | Where-Object Sujet -eq 'Connexions'
+    $li = $lignes | Where-Object Sujet -eq 'Table des connexions'
     Cas 'santé : panne avec conséquence, en tête du détail' ($li.Gravite -eq 1 -and $li.Detail -match '^connexions réseau non vues')
     $ep = & $etat @(@('Persistance', 'Partielle', (& $ilya 5)), @('Sysmon', 'Desactivee', ''))
     $lp = @(& $appel $vs 'Lignes' @($ep, $r, $maintenant))
-    Cas 'santé : collecte partielle à vérifier' ((($lp | Where-Object Sujet -eq 'Persistance').Gravite -eq 1))
-    $sy = $lp | Where-Object Sujet -eq 'Sysmon'
+    Cas 'santé : collecte partielle à vérifier' ((($lp | Where-Object Sujet -eq 'Démarrages automatiques').Gravite -eq 1))
+    $sy = $lp | Where-Object Sujet -eq 'Sysmon (facultatif)'
     Cas 'santé : collecte désactivée : rien à vérifier, pas de séparateur vide' ($sy.Gravite -eq 0 -and $sy.Detail -eq '')
     Cas 'santé : remontée en échec' (@($lignes | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Gravite -eq 1 -and $_.Detail -match 'refus' -and $_.Detail -match '1 en attente' }).Count -eq 1)
     Cas 'santé : interface par session dite non publiée' (@($lignes | Where-Object { $_.Sujet -eq 'Interface par session' -and $_.Etat -eq 'non publié' }).Count -eq 1)
     Cas 'santé : remontée sans dire « active »' (@($lignes | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Etat -eq 'active' }).Count -eq 0)
     $rOk = [Activator]::CreateInstance($remT); $rOk.TeamsConfigure = $true
     Cas 'santé : secrets enregistrés, sans échec' (@(& $appel $vs 'Lignes' @($e, $rOk, $maintenant) | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Etat -eq 'secrets enregistrés' -and $_.Gravite -eq 0 }).Count -eq 1)
-    Cas 'santé : jamais lue, Depuis vide : à vérifier' ((@(& $appel $vs 'Lignes' @((& $demarre 31 @(, @('Connexions', 'Inconnue', ''))), $r, $maintenant)) | Where-Object Sujet -eq 'Connexions').Gravite -eq 1)
+    Cas 'santé : jamais lue, Depuis vide : à vérifier' ((@(& $appel $vs 'Lignes' @((& $demarre 31 @(, @('Connexions', 'Inconnue', ''))), $r, $maintenant)) | Where-Object Sujet -eq 'Table des connexions').Gravite -eq 1)
     Cas 'santé : remontée illisible dite' (@(& $appel $vs 'Lignes' @($e, $null, $maintenant) | Where-Object { $_.Sujet -eq 'Remontée' -and $_.Gravite -eq 1 }).Count -eq 1)
     Cas 'santé : état absent dit' (@(& $appel $vs 'Lignes' @($null, $null, $maintenant))[0].Gravite -eq 1)
     $vieux = @(& $appel $vs 'Lignes' @((& $etat @() (& $ilya 10)), $r, $maintenant))

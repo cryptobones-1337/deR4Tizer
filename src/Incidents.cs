@@ -372,7 +372,7 @@ namespace DeR4Tizer
                 bool partielle = c.Etat == "Partielle";
                 l.Add(new LigneSante
                 {
-                    Sujet = v(c.Id),
+                    Sujet = v(Couverture.Nom(c.Id)),
                     Etat = EtatCollecteTexte(c.Etat),
                     Date = string.IsNullOrEmpty(c.DernierSucces) ? "" : L.T("lue le") + " " + v(c.DernierSucces),
                     // La conséquence d'abord : c'est ce qui compte, et la colonne peut couper la fin

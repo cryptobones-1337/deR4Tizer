@@ -144,3 +144,21 @@ proposé alors, repris dans `CLAUDE.md` :
   la preuve locale en VM tient lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. »
 - Section 5, phase 7 : ajouter « et après la phase « Interface et assistant d'installation » » à sa condition de
   début.
+
+## Textes du service dans l'interface anglaise (revue de l'auditeur du 2026-11-21, point 3)
+
+Décision du mainteneur (2026-11-21) : le service émet des codes stables (règle, technique ATT&CK, identifiant de
+collecte, état) et l'interface les traduit par ses tables, comme pour les sortes de réponse et les états. Les raisons
+des alertes gardent leur texte français : l'empreinte des exceptions (`apprentissage::signature_avec`), `mitre::enrichir`
+et les tests de l'interface sur « MENACE » et « BLOQUÉ » le lisent ; un code et des paramètres viendront s'y ajouter.
+Les techniques de `mitre.rs` entrent dans l'empreinte des exceptions : elles ne doivent pas être retouchées côté service,
+seulement traduites par l'interface.
+
+- **Lot 1 (fait)** : noms lisibles des 25 collectes (bandeau des alertes, détail d'une alerte, page Santé), Sysmon
+  absent remplacé par WMI dit par une ligne neutre avec sa vraie conséquence (WMI partiel : programmes très brefs
+  peut-être manqués, PRC-001 à PRC-005 dégradées) au lieu de « désactivée », conséquences manquantes (Sessions, ConfigDns, FiltrageDns),
+  techniques et conseils de `mitre.rs` traduits par la table (un texte retouché sans sa traduction fait échouer
+  `textes_du_service_traduits_dans_l_interface_lot1`), conseils qui renvoyaient à l'ancienne interface (« clic droit »,
+  « onglet ») corrigés dans les deux langues.
+- **Reste** : raisons des alertes (environ 120 modèles), raisons des collectes (environ 35), destinations fixes (environ
+  30), titres et messages du SIEM (environ 25), constats SAN-*, notifications envoyées au dehors (français seulement).

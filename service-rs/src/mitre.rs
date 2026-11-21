@@ -8,7 +8,7 @@ const REGLES: &[(&[&str], &str, &str)] = &[
     (&["leurre"], "T1486 Chiffrement de données (rançongiciel)",
      "Cliquez sur PANIQUE pour couper Internet, puis éteignez le PC si des fichiers changent d'extension. Ne payez pas : contactez un professionnel et restaurez vos sauvegardes."),
     (&["chaîne d'attaque"], "T1204 Exécution par l'utilisateur",
-     "Tuez la chaîne (clic droit), mettez le dernier programme en quarantaine, puis lancez une analyse hors ligne de Microsoft Defender."),
+     "Tuez la chaîne (bouton « Agir » de l'alerte : tuer le processus et ses enfants), mettez le dernier programme en quarantaine, puis lancez une analyse hors ligne de Microsoft Defender."),
     (&["voleur de données"], "T1555 Identifiants des navigateurs / T1539 Vol de cookies de session",
      "Mettez le programme en quarantaine, puis depuis un AUTRE appareil : changez vos mots de passe importants et déconnectez toutes les sessions (Google, Discord, Telegram, banque)."),
     (&["menace connue"], "T1071 Communication avec un serveur de contrôle",
@@ -22,7 +22,7 @@ const REGLES: &[(&[&str], &str, &str)] = &[
     (&["defender", "coupée"], "T1562.001 Affaiblissement des défenses", "Réactivez la protection en temps réel dans Sécurité Windows."),
     (&["defender a détecté"], "Détection antivirus", "Vérifiez dans Sécurité Windows > Historique de protection que la menace a bien été supprimée ou mise en quarantaine."),
     (&["pilote vulnérable"], "T1068 Élévation de privilèges / BYOVD",
-     "Un pilote connu pour permettre de désactiver les antivirus est présent. Identifiez le logiciel qui l'a installé et désinstallez-le ; activez la règle ASR « pilotes vulnérables » (onglet Baseline)."),
+     "Un pilote connu pour permettre de désactiver les antivirus est présent. Identifiez le logiciel qui l'a installé et désinstallez-le ; activez la règle ASR « pilotes vulnérables » (page Baseline)."),
     (&["prise en main à distance"], "T1219 Logiciel d'accès à distance",
      "Si vous n'avez pas lancé cet outil vous-même (ou si quelqu'un au téléphone vous l'a demandé), cliquez sur PANIQUE : c'est le scénario des arnaques au faux support technique."),
     (&["exposé à internet"], "T1133 Services distants exposés",
@@ -49,9 +49,9 @@ const REGLES: &[(&[&str], &str, &str)] = &[
     // Microsoft recevait la technique T1123 et son conseil (vu sur les captures de l'interface, 2026-11-12)
     (&["utilise le micro"], "T1123 Capture audio", "Si vous ne reconnaissez pas ce programme, fermez-le et mettez-le en quarantaine."),
     (&["fichier hosts"], "T1565 Manipulation de données", "Ouvrez le fichier hosts (C:\\Windows\\System32\\drivers\\etc\\hosts) et retirez les lignes que vous n'avez pas ajoutées."),
-    (&["baseline"], "T1562 Affaiblissement des défenses", "Un réglage de sécurité a été défait. Réappliquez-le depuis l'onglet Baseline et cherchez quel programme l'a modifié."),
+    (&["baseline"], "T1562 Affaiblissement des défenses", "Un réglage de sécurité a été défait. Réappliquez-le depuis la page Baseline et cherchez quel programme l'a modifié."),
     (&["ip directe"], "T1071 Communication sans résolution DNS", "Les malwares contactent souvent une IP en dur. Vérifiez le programme ; isolez-le s'il est inconnu."),
-    (&["non signé"], "T1036 Programme inconnu", "Programme sans signature d'éditeur : vérifiez son origine (onglet Connexions, colonne Raisons)."),
+    (&["non signé"], "T1036 Programme inconnu", "Programme sans signature d'éditeur : vérifiez son origine (page Connexions, raisons de la ligne)."),
 ];
 
 pub fn enrichir(a: &mut Alerte) {

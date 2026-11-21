@@ -46,13 +46,13 @@ try {
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'Connexions' 'Active')))
     Cas 'toutes les détections couvertes : « Aucune alerte. »' ($t -eq 'Aucune alerte.') $t
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'JournalDns' 'Indisponible')) @('DNS-001', 'COR-R1') @{ 'DNS-001' = @('JournalDns', 'Sysmon'); 'COR-R1' = @('JournalSecurite') })
-    Cas 'détections muettes : nombre, conséquence en clair, sources manquantes' ($t -match '^Aucune alerte, mais 2 détections' -and $t -match 'DNS-001 : domaines contactés non vus \(manque JournalDns ou Sysmon\)' -and $t -match 'COR-R1 : ouvertures de session et accès aux fichiers non vus \(manque JournalSecurite\)') $t
+    Cas 'détections muettes : nombre, conséquence en clair, sources manquantes' ($t -match '^Aucune alerte, mais 2 détections' -and $t -match 'DNS-001 : domaines contactés non vus \(manque Journal DNS de Windows ou Sysmon \(facultatif\)\)' -and $t -match 'COR-R1 : ouvertures de session et accès aux fichiers non vus \(manque Journal de sécurité\)') $t
     $eAlarme = Etat @((Collecte 'JournalDns' 'Indisponible')) @('DNS-001') @{ 'DNS-001' = @('JournalDns', 'Sysmon') }
     Cas 'détections muettes par panne : message en jaune' (& $alarme $eAlarme)
     # Réglage voulu (listes de domaines coupées par défaut) : dit, mais en neutre, et pas compté comme une panne
     $e = Etat @((Collecte 'ListesDomaines' 'Desactivee' 'aucune liste activée'), (Collecte 'Connexions' 'Active')) @('DNS-001') @{ 'DNS-001' = @('ListesDomaines') }
     $t = & $appel 'AucuneAlerte' $e
-    Cas 'réglage voulu : « Aucune alerte. » puis la détection coupée, nommée en clair' ($t -eq 'Aucune alerte. Désactivé par réglage : DNS-001 : domaines malveillants connus non reconnus (manque ListesDomaines).') $t
+    Cas 'réglage voulu : « Aucune alerte. » puis la détection coupée, nommée en clair' ($t -eq 'Aucune alerte. Désactivé par réglage : DNS-001 : domaines malveillants connus non reconnus (manque Listes de domaines malveillants).') $t
     Cas 'réglage voulu : pas d''alarme (neutre)' (-not (& $alarme $e))
     Cas 'réglage voulu : pas compté dans les détections en panne' ($couv.GetMethod('ReglesEnPanne').Invoke($null, @(, $e)).Count -eq 0)
     # Panne et réglage mêlés : la panne d'abord, le réglage ensuite
@@ -66,8 +66,16 @@ try {
     Cas 'une détection muette : singulier' ($t -match '^Aucune alerte, mais 1 détection ne peut pas') $t
     # Bandeau de la page Alertes : panne (▲) puis désactivée (○), chacune expliquée ; vide si tout est lu
     $t = & $appel 'Detail' (Etat @((Collecte 'Leurres' 'Indisponible' 'aucun leurre posé'), (Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'Connexions' 'Active')))
-    Cas 'bandeau : panne puis désactivée, état, raison, conséquence' ($t -eq ("▲ Leurres indisponible (aucun leurre posé) : chiffrement par un rançongiciel non repéré par les leurres`n○ Sysmon désactivée (Sysmon absent) : créations de programmes non vues")) $t
+    Cas 'bandeau : panne puis désactivée, état, raison, conséquence' ($t -eq ("▲ Fichiers leurres indisponible (aucun leurre posé) : chiffrement par un rançongiciel non repéré par les leurres`n○ Sysmon (facultatif) désactivée (Sysmon absent) : créations de programmes non vues")) $t
     Cas 'bandeau : rien quand tout est lu' ((& $appel 'Detail' (Etat @((Collecte 'Connexions' 'Active')))) -eq '')
+    # Sysmon facultatif : désactivé alors que WMI voit les démarrages (en production, WMI est toujours « Partielle »), une
+    # ligne neutre dit la vraie conséquence au lieu de « désactivée » (revue de l'auditeur du 2026-11-21, point 3 ;
+    # prérelecture de #238, D1) ; sans WMI, la collecte reste décrite comme désactivée
+    $t = & $appel 'Detail' (Etat @((Collecte 'Sysmon' 'Desactivee' 'Sysmon absent'), (Collecte 'WmiProcessus' 'Partielle' 'WMI : processus brefs manqués'), (Collecte 'Connexions' 'Active')))
+    Cas 'bandeau : Sysmon absent, WMI partiel : ligne neutre avec la conséquence' ($t -eq '○ Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)') $t
+    # Identifiant de collecte jamais affiché brut
+    Cas 'nom lisible : ListesDomaines' ((& $appel 'Nom' 'ListesDomaines') -eq 'Listes de domaines malveillants')
+    Cas 'nom lisible : identifiant inconnu gardé' ((& $appel 'Nom' 'NouvelleSource') -eq 'NouvelleSource')
     # Defender au démarrage du PC : pas encore lu, pas « illisible »
     Cas 'Defender pas encore lu' ([bool](& $appel 'DefenderPasEncoreLu' (Etat @((Collecte 'EtatDefender' 'Inconnue')))))
     Cas 'Defender indisponible : pas « lecture en cours »' (-not [bool](& $appel 'DefenderPasEncoreLu' (Etat @((Collecte 'EtatDefender' 'Indisponible')))))
@@ -84,7 +92,7 @@ try {
     $t = & $appel 'Pastille' (Etat @((Collecte 'Leurres' 'Indisponible')))
     Cas 'pastille : singulier' ($t -eq '1 COLLECTE INDISPONIBLE') $t
     $t = $couv.GetMethod('Decrire').Invoke($null, @((Collecte 'JournalDns' 'Indisponible' 'journal illisible')))
-    Cas 'collecte décrite : état, raison, conséquence' ($t -eq 'JournalDns indisponible (journal illisible) : domaines contactés non vus') $t
+    Cas 'collecte décrite : état, raison, conséquence' ($t -eq 'Journal DNS de Windows indisponible (journal illisible) : domaines contactés non vus') $t
 
     # Caméra et micro : « OFF » seulement si leur collecte est lue
     Cas 'cam/mic : collecte indisponible, pas « OFF »' (-not (& $appel 'CamMicLue' (Etat @((Collecte 'Peripheriques' 'Indisponible')))))
@@ -97,7 +105,7 @@ try {
     $t = & $appel 'AucuneAlerte' (Etat @((Collecte 'Connexions' 'Active')))
     Cas 'anglais : « No alerts. »' ($t -eq 'No alerts.') $t
     $t = & $appel 'AucuneAlerte' (Etat @() @('DNS-001') @{ 'DNS-001' = @('JournalDns', 'Sysmon') })
-    Cas 'anglais : détections muettes' ($t -match '^No alerts, but 1 detection cannot trigger: DNS-001 : contacted domains not seen \(missing JournalDns or Sysmon\)') $t
+    Cas 'anglais : détections muettes' ($t -match '^No alerts, but 1 detection cannot trigger: DNS-001 : contacted domains not seen \(missing Windows DNS log or Sysmon \(optional\)\)') $t
     Cas 'anglais : pastille' ((& $appel 'Pastille' (Etat @((Collecte 'Leurres' 'Indisponible')))) -eq '1 COLLECTION UNAVAILABLE')
     $langue.GetField('En').SetValue($null, $false)
 

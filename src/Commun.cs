@@ -103,6 +103,53 @@ namespace DeR4Tizer
             return id != null && Consequences.TryGetValue(id, out c) ? L.T(c) : L.T("conséquence inconnue");
         }
 
+        // Nom lisible de chaque collecte : l'identifiant interne publié par le service (code) est traduit ici, jamais
+        // montré tel quel (revue de l'auditeur du 2026-11-21, point 3) ; identifiant inconnu (service plus récent) : tel quel
+        static readonly Dictionary<string, string> Noms = new Dictionary<string, string>
+        {
+            { "Connexions", "Table des connexions" },
+            { "Processus", "Liste des programmes" },
+            { "Sysmon", "Sysmon (facultatif)" },
+            { "WmiProcessus", "Démarrages de programmes (WMI)" },
+            { "JournalDns", "Journal DNS de Windows" },
+            { "JournalDefender", "Journal de Microsoft Defender" },
+            { "EtatDefender", "État de Microsoft Defender" },
+            { "JournalSecurite", "Journal de sécurité" },
+            { "AuditDonnees", "Audit des données sensibles" },
+            { "JournalSysteme", "Journal système" },
+            { "JournalParefeu", "Journal du pare-feu" },
+            { "PaquetsParefeu", "Journal des paquets du pare-feu" },
+            { "Persistance", "Démarrages automatiques" },
+            { "Baseline", "Réglages de sécurité" },
+            { "ListesMenaces", "Listes d'adresses malveillantes" },
+            { "ListesDomaines", "Listes de domaines malveillants" },
+            { "Loldrivers", "Liste des pilotes vulnérables" },
+            { "Leurres", "Fichiers leurres" },
+            { "Extensions", "Extensions des navigateurs" },
+            { "Peripheriques", "Caméra et micro" },
+            { "CaptureTrafic", "Capture du trafic" },
+            { "CaptureReseauLocal", "Capture du réseau local" },
+            { "Sessions", "Sessions ouvertes" },
+            { "ConfigDns", "Serveurs DNS des cartes" },
+            { "FiltrageDns", "Filtrage par nom de domaine" },
+        };
+
+        public static string Nom(string id)
+        {
+            string n;
+            return id != null && Noms.TryGetValue(id, out n) ? L.T(n) : (id ?? "");
+        }
+
+        // Sysmon est facultatif : désactivé alors que WMI voit les démarrages de programmes (toujours « Partielle » : les
+        // programmes très brefs peuvent être manqués, PRC-001 à PRC-005 dégradées), il n'est pas dit « désactivé » comme
+        // une collecte coupée : le bandeau donne une ligne neutre avec la vraie conséquence (prérelecture de #238, D1)
+        public static bool SysmonRemplaceParWmi(Etat e, EtatCollecte c)
+        {
+            if (c == null || c.Id != "Sysmon" || c.Etat != "Desactivee") return false;
+            var w = Trouver(e, "WmiProcessus");
+            return w != null && (w.Etat == "Active" || w.Etat == "Partielle");
+        }
+
         static bool EnPanne(EtatCollecte c)
         {
             return c != null && (c.Etat == "Indisponible" || c.Etat == "Inconnue");
@@ -136,7 +183,7 @@ namespace DeR4Tizer
         public static string Decrire(EtatCollecte c)
         {
             string etat = c.Etat == "Inconnue" ? L.T("pas encore lue") : c.Etat == "Desactivee" ? L.T("désactivée") : c.Etat == "Partielle" ? L.T("partielle") : L.T("indisponible");
-            return c.Id + " " + etat + (string.IsNullOrEmpty(c.Raison) ? "" : " (" + c.Raison + ")") + " : " + Consequence(c.Id);
+            return Nom(c.Id) + " " + etat + (string.IsNullOrEmpty(c.Raison) ? "" : " (" + c.Raison + ")") + " : " + Consequence(c.Id);
         }
 
         static List<string> SourcesDe(Etat e, string regle)
@@ -183,7 +230,7 @@ namespace DeR4Tizer
             foreach (var r in regles)
             {
                 var s = SourcesDe(e, r);
-                morceaux.Add(s == null ? r : r + " : " + Consequence(s[0]) + " (" + L.T("manque") + " " + string.Join(L.T(" ou "), s) + ")");
+                morceaux.Add(s == null ? r : r + " : " + Consequence(s[0]) + " (" + L.T("manque") + " " + string.Join(L.T(" ou "), s.ConvertAll(Nom)) + ")");
             }
             return string.Join(" ; ", morceaux);
         }
@@ -224,7 +271,9 @@ namespace DeR4Tizer
             if (e == null || e.Collectes == null) return "";
             var lignes = new List<string>();
             foreach (var c in EnPannes(e)) lignes.Add("▲ " + Decrire(c));
-            foreach (var c in e.Collectes) if (c != null && c.Etat == "Desactivee") lignes.Add("○ " + Decrire(c));
+            foreach (var c in e.Collectes)
+                if (c != null && c.Etat == "Desactivee")
+                    lignes.Add("○ " + (SysmonRemplaceParWmi(e, c) ? L.T("Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)") : Decrire(c)));
             return string.Join("\n", lignes);
         }
 
