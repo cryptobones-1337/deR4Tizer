@@ -632,16 +632,53 @@ struct Etat {
     /// Fichier présent mais illisible : aucune action automatique, alerte seulement (échec fermé). Le fichier n'est pas écrasé
     illisible: bool,
     signale: bool,
+    /// Lecture refusée (fichier présent mais pas lisible : propriétaire non admis, fichier tenu ouvert, protection en
+    /// échec) : la garde repart en mémoire et la réponse reste, mais le fichier n'est jamais écrasé (audit de #110, S110-13)
+    ecriture_suspendue: bool,
+    /// Une écriture est due, faite hors du verrou à la sortie de `avec` (audit de #110, S110-04 et S110-16)
+    a_ecrire: bool,
+    /// Numéro de la dernière copie prise pour l'écriture : une copie plus ancienne n'écrase jamais une plus récente
+    generation: u64,
+}
+
+/// Ce que donne la lecture initiale de `reponses.json`
+pub(crate) enum Lecture<'a> {
+    Absent,
+    Texte(&'a str),
+    Refusee,
 }
 
 /// Décision pure. Seul un contenu mal formé coupe la réponse automatique, et seul un administrateur peut l'écrire. Une
 /// lecture refusée (fichier absent, tenu ouvert par un compte autorisé, protection en échec) ne dit rien du contenu : la
 /// garde repart en mémoire, et la réponse reste (audit de #110, S110-03)
 fn etat_initial(texte: Option<&str>) -> Etat {
-    match texte.map(|t| serde_json::from_str::<Historique>(t.trim_start_matches('\u{feff}'))) {
-        Some(Ok(h)) => Etat { h, illisible: false, signale: false },
-        Some(Err(_)) => Etat { h: Historique::default(), illisible: true, signale: false },
-        None => Etat { h: Historique::default(), illisible: false, signale: false },
+    etat_depuis(texte.map_or(Lecture::Absent, Lecture::Texte))
+}
+
+/// Décision pure : absent, la garde part vide et le fichier sera écrit ; contenu mal formé, réponse automatique coupée
+/// (S110-03) ; lecture refusée, garde vide en mémoire, réponse gardée, fichier jamais écrasé (S110-13)
+fn etat_depuis(l: Lecture) -> Etat {
+    let vide = |illisible, ecriture_suspendue| Etat { h: Historique::default(), illisible, signale: false, ecriture_suspendue, a_ecrire: false, generation: 0 };
+    match l {
+        Lecture::Absent => vide(false, false),
+        Lecture::Refusee => vide(false, true),
+        Lecture::Texte(t) => match serde_json::from_str::<Historique>(t.trim_start_matches('\u{feff}')) {
+            Ok(h) => Etat { h, ..vide(false, false) },
+            Err(_) => vide(true, false),
+        },
+    }
+}
+
+/// Lecture initiale, hors du verrou : « absent » seulement si Windows dit que le fichier n'existe pas
+fn lecture_initiale() -> (Option<String>, bool) {
+    let chemin = commun::dossier().join(FICHIER);
+    match std::fs::symlink_metadata(&chemin) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, false),
+        Err(_) => (None, true),
+        Ok(_) => match commun::lire_fichier(&chemin) {
+            Some(t) => (Some(t), false),
+            None => (None, true),
+        },
     }
 }
 
@@ -674,19 +711,159 @@ pub fn retenue_a_journaliser(vues: &mut std::collections::HashMap<String, u64>, 
 }
 
 static ETAT: Mutex<Option<Etat>> = Mutex::new(None);
+/// Dernière copie écrite : les écritures se suivent sous ce verrou, jamais sous `ETAT`
+static ECRITURE: Mutex<u64> = Mutex::new(0);
 
+/// Le verrou `ETAT` ne couvre que la mémoire : la lecture initiale et les écritures sur le disque (avec `sync_all`) se
+/// font hors de lui, pour qu'un disque lent ne fige ni le cycle ni le fil des leurres (audit de #110, S110-04 et S110-16)
 fn avec<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
-    let mut g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
-    let e = g.get_or_insert_with(|| {
-        let texte = commun::lire_fichier(&commun::dossier().join(FICHIER));
-        etat_initial(texte.as_deref())
-    });
-    f(e)
+    avec_copie(f).0
 }
 
-fn enregistrer(e: &Etat) {
-    if !e.illisible && commun::echec_protection().is_none() {
-        let _ = commun::ecrire(FICHIER, &e.h);
+/// Décision d'un administrateur (commande) : la réponse de la commande ne part qu'une fois sa copie écrite (au plus
+/// 10 s), pour que l'interface et l'administrateur relisent un fichier à jour ; le cycle et le fil des leurres, eux,
+/// n'attendent jamais (régression vue par la CI de #230 : registre relu « Active » juste après une restauration)
+fn avec_attente<R>(f: impl FnOnce(&mut Etat) -> R) -> R {
+    let (r, n) = avec_copie(f);
+    if let Some(n) = n {
+        attendre_ecriture(n, std::time::Duration::from_secs(10));
+    }
+    r
+}
+
+fn avec_copie<R>(f: impl FnOnce(&mut Etat) -> R) -> (R, Option<u64>) {
+    let mut g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        drop(g);
+        let (texte, refusee) = lecture_initiale();
+        let lu = match (&texte, refusee) {
+            (_, true) => Lecture::Refusee,
+            (Some(t), false) => Lecture::Texte(t),
+            (None, false) => Lecture::Absent,
+        };
+        let e = etat_depuis(lu);
+        if e.ecriture_suspendue {
+            commun::journal(&format!("{FICHIER} présent mais illisible : garde en mémoire seulement, fichier gardé tel quel (S110-13)"));
+        }
+        g = ETAT.lock().unwrap_or_else(|e| e.into_inner());
+        if g.is_none() {
+            *g = Some(e);
+        }
+    }
+    let e = g.as_mut().expect("état chargé");
+    let r = f(e);
+    let copie = if std::mem::take(&mut e.a_ecrire) { instantane(e) } else { None };
+    drop(g);
+    let n = copie.as_ref().map(|(n, _)| *n);
+    ecrire_copie(copie);
+    (r, n)
+}
+
+/// Copie écrite (ou dépassée par une plus récente) ; signalé par le fil d'écriture
+static ECRIT: std::sync::Condvar = std::sync::Condvar::new();
+/// Numéro de la dernière copie dont l'écriture a échoué (u64::MAX : fil d'écriture absent)
+static ECHOUEE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Décision pure : une commande cesse d'attendre sa copie dès qu'elle est écrite ou que son écriture a échoué
+pub(crate) fn attente_finie(n: u64, ecrite: u64, echouee: u64) -> bool {
+    ecrite >= n || echouee >= n
+}
+
+fn attendre_ecriture(n: u64, delai: std::time::Duration) {
+    let fin = std::time::Instant::now() + delai;
+    let mut d = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+    while !attente_finie(n, *d, ECHOUEE.load(std::sync::atomic::Ordering::SeqCst)) {
+        let reste = fin.saturating_duration_since(std::time::Instant::now());
+        if reste.is_zero() {
+            break;
+        }
+        d = ECRIT.wait_timeout(d, reste).unwrap_or_else(|e| e.into_inner()).0;
+    }
+}
+
+/// Une écriture est due : faite à la sortie de `avec`, hors du verrou
+fn enregistrer(e: &mut Etat) {
+    e.a_ecrire = true;
+}
+
+/// Décision pure : copie à écrire, numérotée ; aucune si le contenu est illisible ou si la lecture a été refusée
+fn instantane(e: &mut Etat) -> Option<(u64, Historique)> {
+    if e.illisible || e.ecriture_suspendue || commun::echec_protection().is_some() {
+        return None;
+    }
+    e.generation += 1;
+    Some((e.generation, e.h.clone()))
+}
+
+/// Décision pure : une copie n'est écrite que si elle est plus récente que la dernière écrite
+pub(crate) fn copie_a_ecrire(numero: u64, derniere: u64) -> bool {
+    numero > derniere
+}
+
+/// Dernière copie en attente d'écriture : le fil qui note une action la dépose et repart aussitôt ; un fil d'écriture
+/// dédié l'écrit (audit de #230, S230-01 : le cycle et le fil des leurres n'attendent plus le disque)
+static EN_ATTENTE: Mutex<Option<(u64, Historique)>> = Mutex::new(None);
+static SIGNAL: std::sync::Condvar = std::sync::Condvar::new();
+static ECRIVAIN: std::sync::Once = std::sync::Once::new();
+
+/// Décision pure (prérelecture de #230, D1) : deux fils peuvent prendre les copies 5 et 6 sous le verrou puis les
+/// déposer dans l'ordre inverse ; la copie en attente n'est remplacée que par une plus récente
+pub(crate) fn deposer<T>(attente: &mut Option<(u64, T)>, copie: (u64, T)) {
+    if attente.as_ref().is_none_or(|(n, _)| copie_a_ecrire(copie.0, *n)) {
+        *attente = Some(copie);
+    }
+}
+
+fn ecrire_copie(copie: Option<(u64, Historique)>) {
+    let Some(c) = copie else { return };
+    deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);
+    SIGNAL.notify_one();
+    ECRIVAIN.call_once(|| {
+        // Fil impossible à créer (ressources épuisées) : dit au journal, rien n'est écrit pendant la session (S230-04)
+        if let Err(e) = std::thread::Builder::new().name("reponses.json".into()).spawn(ecrivain) {
+            commun::journal(&format!("{FICHIER} : fil d'écriture non créé ({e}) ; l'historique n'est pas enregistré jusqu'au redémarrage du service"));
+            // Personne n'écrira : les commandes n'attendent pas (S230-05)
+            ECHOUEE.store(u64::MAX, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+}
+
+/// Fil d'écriture : prend la copie la plus récente et l'écrit ; en échec, elle est remise en attente (sauf si une plus
+/// récente est arrivée) et réessayée 5 s plus tard (audit de #230, S230-02)
+fn ecrivain() {
+    loop {
+        let (n, h) = {
+            let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
+            while g.is_none() {
+                g = SIGNAL.wait(g).unwrap_or_else(|e| e.into_inner());
+            }
+            g.take().expect("copie en attente")
+        };
+        // Seul ce fil écrit « dernière » : l'écriture sur le disque se fait sans tenir ECRITURE, pour qu'une commande qui
+        // attend ne reste pas bloquée par un disque figé (audit de #230, S230-05)
+        let deja = !copie_a_ecrire(n, *ECRITURE.lock().unwrap_or_else(|e| e.into_inner()));
+        let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();
+        {
+            let mut derniere = ECRITURE.lock().unwrap_or_else(|e| e.into_inner());
+            if ecrite {
+                if copie_a_ecrire(n, *derniere) {
+                    *derniere = n;
+                }
+            } else {
+                // Échec signalé : une commande qui attend cette copie repart aussitôt, sans attendre les 10 s (S230-05)
+                ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);
+            }
+            ECRIT.notify_all();
+        }
+        if !ecrite {
+            {
+                let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
+                if g.is_none() {
+                    *g = Some((n, h));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
     }
 }
 
@@ -736,13 +913,22 @@ pub fn suspendu_automatiquement(chemin: &str) -> bool {
 }
 
 pub fn ouvrir(sorte: Sorte, cible: &str, pid: Option<u32>, creation: Option<u64>) {
-    avec(|e| {
+    avec_attente(|e| {
         e.h.ouvrir(sorte, cible, pid, creation, maintenant());
         enregistrer(e);
     })
 }
 
 pub fn clore(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
+    avec_attente(|e| {
+        if e.h.clore(sortes, cible, processus, etat) > 0 {
+            enregistrer(e);
+        }
+    })
+}
+
+/// `clore` pour le cycle (levée à échéance) : jamais d'attente du disque (audit de #230, S230-05)
+pub fn clore_sans_attente(sortes: &[Sorte], cible: Option<&str>, processus: Option<(u32, u64)>, etat: EtatAction) {
     avec(|e| {
         if e.h.clore(sortes, cible, processus, etat) > 0 {
             enregistrer(e);
@@ -850,10 +1036,20 @@ pub fn regrouper_relances(dues: &[(ActionEnCours, Effet)], t: u64) -> Vec<Alerte
 
 /// Un administrateur a levé ou repris une action automatique
 pub fn decision_humaine(cible: &str, empreinte: Option<String>) {
-    avec(|e| {
+    avec_attente(|e| {
         e.h.decision_humaine(cible, empreinte, maintenant());
         enregistrer(e);
     })
+}
+
+/// (illisible, écriture suspendue, copie prise) pour une lecture donnée, après une action notée
+#[cfg(test)]
+pub(crate) fn lecture_test(l: Lecture) -> (bool, bool, bool) {
+    let mut e = etat_depuis(l);
+    e.h.noter(Genre::Suspension, "c", 1_800_000_000);
+    enregistrer(&mut e);
+    let copie = instantane(&mut e).is_some();
+    (e.illisible, e.ecriture_suspendue, copie)
 }
 
 #[cfg(test)]

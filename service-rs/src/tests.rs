@@ -6386,7 +6386,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert_eq!(m.matches("politique::clore(&[politique::Sorte::Quarantaine], Some(&o), None, politique::EtatAction::Levee);").count(), 2, "6.4b : restauration, et repli");
     assert_eq!(m.matches("politique::ouvrir(politique::Sorte::BlocageManuel, c.ip.as_deref().unwrap_or(\"\"), None, None);").count(), 2, "6.4b : blocage d'IP, par « bloquerIp » et par « bloquer » sans domaine");
     assert!(m.contains("politique::ouvrir(politique::Sorte::BlocageManuel, n, None, None);"), "6.4b : blocage de domaine");
-    assert!(m.contains("politique::clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
+    assert!(m.contains("clore(&[politique::Sorte::BlocageManuel], Some(cible), None, politique::EtatAction::Levee);\n        Reponse::ok(format!(\"{cible} débloqué.\"))"), "6.4b : déblocage, clos après le succès (S116-03)");
     let (hosts_ecrit, manuels_clos) = (m.find("if let Err(e) = blocage::ecrire_bloc_hosts(&[]) {").unwrap(), m.find("politique::clore(&[politique::Sorte::BlocageManuel], None, None, politique::EtatAction::Levee);").unwrap());
     assert!(hosts_ecrit < manuels_clos, "6.4b : tout débloquer, blocages manuels clos après le fichier hosts (audit de #116)");
     assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], None, None, politique::EtatAction::Levee);"), "6.4b : tout débloquer, isolations");
@@ -6444,7 +6444,7 @@ fn structure_aucun_appel_direct_aux_actions() {
     assert!(m.contains("Action::Suspendre => politique::ouvrir(politique::Sorte::Suspension, &chemin, Some(pid), Some(creation)),"), "6.4 : suspension manuelle");
     assert!(m.contains("Action::Reprendre => politique::clore(&suspensions, None, Some((pid, creation)), politique::EtatAction::Levee),"), "6.4 : reprise");
     assert!(m.contains("politique::ouvrir(politique::Sorte::Isolation, &chemin, None, None);"), "6.4 : isolation");
-    assert!(m.contains("politique::clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);"), "6.4 : libération");
+    assert!(m.contains("clore(&[politique::Sorte::Isolation], Some(cible), None, politique::EtatAction::Levee);"), "6.4 : libération");
     assert!(m.contains("politique::ouvrir(politique::Sorte::Panique, \"poste\", None, None);"), "6.4 : panique");
     assert!(m.contains("politique::clore(&[politique::Sorte::Panique], None, None, politique::EtatAction::Levee);"), "6.4 : fin de panique");
     assert!(m.contains("Duration::from_secs(duree_blocage_auto(genre))"), "D6-4 : 24 h pour l'IPS");
@@ -8956,6 +8956,97 @@ fn s228_01_liste_d_acceptation_des_droits() {
     }
     assert!(o(Some(&sec("S-1-5-21-1-2-3-1001", defaut.clone()))), "propriétaire utilisateur");
     assert!(o(Some(&sec("", defaut.clone()))), "propriétaire illisible");
+}
+
+#[test]
+fn reponses_json_illisible_jamais_ecrase_et_ecriture_hors_verrou() {
+    // Tri de l'inventaire de la phase 6 (2026-11-21) : S110-13 (fichier présent mais illisible jamais écrasé), S110-04 et
+    // S110-16 (lecture et écritures hors du verrou ETAT)
+    use crate::politique::{copie_a_ecrire, lecture_test as l, Lecture};
+    assert_eq!(l(Lecture::Absent), (false, false, true), "absent : garde vide, fichier écrit");
+    assert_eq!(l(Lecture::Refusee), (false, true, false), "lecture refusée : réponse gardée, fichier jamais écrasé");
+    assert_eq!(l(Lecture::Texte("{")), (true, false, false), "contenu mal formé : réponse coupée, fichier gardé");
+    assert_eq!(l(Lecture::Texte("{}")), (false, false, true));
+    assert!(copie_a_ecrire(2, 1) && !copie_a_ecrire(1, 2) && !copie_a_ecrire(3, 3), "jamais une copie plus ancienne");
+    let src = include_str!("politique.rs");
+    let a = src.find("fn avec_copie<R>(").unwrap();
+    let corps = &src[a..a + src[a..].find("\n}\n").or_else(|| src[a..].find("\r\n}\r\n")).unwrap()];
+    assert!(corps.contains("drop(g);\n        let (texte, refusee) = lecture_initiale();") || corps.contains("drop(g);\r\n        let (texte, refusee) = lecture_initiale();"), "lecture initiale hors du verrou");
+    let rendu = corps.rfind("drop(g);").expect("verrou rendu");
+    let depot = corps.find("ecrire_copie(copie);").expect("copie déposée");
+    assert!(rendu < depot, "copie déposée après avoir rendu le verrou");
+    assert!(!corps.contains("commun::ecrire("), "aucune écriture sous ETAT");
+}
+
+
+#[test]
+fn reponses_json_ecrivain_dedie() {
+    // Audit de #230 : S230-01, le fil qui note une action ne fait que déposer la copie (aucune écriture sur le disque
+    // dans ecrire_copie) ; S230-02, une écriture en échec est remise en attente et réessayée
+    let src = include_str!("politique.rs");
+    let d = src.find("fn ecrire_copie(").unwrap();
+    let f = src[d..].find("fn ecrivain()").unwrap();
+    let depot = &src[d..d + f];
+    assert!(!depot.contains("commun::ecrire("), "le fil appelant n'écrit pas sur le disque");
+    assert!(depot.contains("SIGNAL.notify_one();"));
+    let e = &src[d + f..];
+    assert!(e.contains("commun::ecrire(FICHIER, &h).is_ok()"));
+    assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
+    assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
+}
+
+#[test]
+fn reponses_json_depot_garde_la_plus_recente() {
+    // Prérelecture de #230, D1 : copies 5 et 6 déposées dans l'ordre inverse, la 6 reste en attente
+    use crate::politique::deposer;
+    let mut a: Option<(u64, &str)> = None;
+    deposer(&mut a, (6, "six"));
+    deposer(&mut a, (5, "cinq"));
+    assert_eq!(a, Some((6, "six")), "une copie plus ancienne ne remplace jamais la plus récente en attente");
+    deposer(&mut a, (6, "six bis"));
+    assert_eq!(a, Some((6, "six")), "même numéro : gardée");
+    deposer(&mut a, (7, "sept"));
+    assert_eq!(a, Some((7, "sept")));
+    let src = include_str!("politique.rs");
+    assert!(src.contains("deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);"), "ecrire_copie passe par deposer");
+}
+
+#[test]
+fn reponses_json_commandes_attendent_leur_ecriture() {
+    // Régression vue par la CI de #230 : une commande d'administrateur (ouvrir, clore, décision humaine) attend que sa
+    // copie soit écrite ; le cycle (noter) et le fil des leurres (noter_suspension) n'attendent jamais
+    let src = include_str!("politique.rs").replace("\r\n", "\n");
+    for f in ["pub fn ouvrir(sorte: Sorte,", "pub fn clore(sortes: &[Sorte],", "pub fn decision_humaine(cible: &str, empreinte: Option<String>) {"] {
+        let d = src.find(f).unwrap_or_else(|| panic!("{f}"));
+        assert!(src[d..d + 200].contains("avec_attente(|e| {"), "{f} attend son écriture");
+    }
+    for f in ["pub fn noter(genre: Genre,", "pub fn noter_suspension(", "pub fn passer("] {
+        let d = src.find(f).unwrap_or_else(|| panic!("{f}"));
+        assert!(!src[d..d + 400].contains("avec_attente("), "{f} n'attend jamais le disque");
+    }
+    let ecr = &src[src.find("fn ecrivain()").unwrap()..];
+    assert!(ecr.contains("*derniere = n;") && ecr.contains("ECRIT.notify_all();"), "le fil d'écriture signale chaque copie écrite");
+    assert!(src.contains("attendre_ecriture(n, std::time::Duration::from_secs(10));"), "attente bornée");
+}
+
+
+#[test]
+fn s230_05_attente_bornee_et_jamais_dans_le_cycle() {
+    // Audit de #230, S230-05 : une commande cesse d'attendre dès que sa copie est écrite ou que l'écriture a échoué ; les
+    // levées faites par le cycle n'attendent jamais ; le fil d'écriture ne tient pas ECRITURE pendant l'écriture disque
+    use crate::politique::attente_finie as f;
+    assert!(f(5, 5, 0) && f(5, 6, 0), "écrite ou dépassée");
+    assert!(f(5, 3, 5) && f(5, 3, u64::MAX), "échec signalé ou fil d'écriture absent");
+    assert!(!f(5, 4, 4), "ni écrite ni échouée : on attend");
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("let r = self.debloquer(&t, &c, false);"), "levée du cycle sans attente");
+    assert!(m.contains("let r = self.debloquer(t, cible, true);"), "levée par commande avec attente");
+    assert!(m.contains("let clore = if commande { politique::clore } else { politique::clore_sans_attente };"));
+    let p = include_str!("politique.rs").replace("\r\n", "\n");
+    let e = p.find("fn ecrivain()").unwrap();
+    let corps = &p[e..];
+    assert!(corps.contains("let ecrite = deja || commun::ecrire(FICHIER, &h).is_ok();"), "écriture disque hors du verrou ECRITURE");
+    assert!(corps.contains("ECHOUEE.fetch_max(n, std::sync::atomic::Ordering::SeqCst);"), "échec signalé");
 }
 
 #[test]
