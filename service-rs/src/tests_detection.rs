@@ -664,6 +664,21 @@ fn attack_lot1_processus_termine_detecte_par_son_4688() {
     assert_eq!(r.creations.lock().unwrap().len(), 1);
 }
 
+/// Prérelecture de #244 : la boucle WMI analyse chaque création, sans filtre selon l'état de l'audit (D1) ; ce test
+/// verrouille le source, la boucle n'étant pas appelable hors de Windows
+#[test]
+fn attack_lot1_boucle_wmi_sans_filtre() {
+    let p = include_str!("processus.rs");
+    let debut = p.find("for evenement in flux.flatten() {").expect("boucle WMI");
+    let fin = p[debut..].find("// Flux terminé").expect("fin de la boucle WMI") + debut;
+    let boucle = &p[debut..fin];
+    assert!(boucle.contains("moi.analyser(pid, &info);"), "la boucle WMI n'analyse plus");
+    assert!(!boucle.contains("audit_analyse") && !boucle.contains("moi.audit"), "filtre de l'audit revenu dans la boucle WMI");
+    let t = &p[p.find("pub(crate) fn traiter_4688").unwrap()..];
+    let t = &t[..t.find("pub fn source_publiee").unwrap()];
+    assert!(t.contains("self.analyser(c.pid, &info);") && !t.contains("audit_analyse"), "filtre de l'audit dans traiter_4688");
+}
+
 #[test]
 fn attack_lot1_une_alerte_par_creation_et_cache_wmi() {
     use crate::processus::{deja_signale, info_depuis_4688, Creation4688, InfoProcessus};

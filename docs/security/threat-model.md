@@ -87,6 +87,11 @@ passer pour le service sur le canal.
 - Risques résiduels : un fichier mis de côté dans `ecartes` reste modifiable par son auteur (jamais lu) ; le
   scénario avec un compte standard connecté à la console n'est pas exécuté (VM) ; la course
   contrôle-création de la restauration n'est pas reproduite.
+- Lignes de commande publiées (couverture ATT&CK, lot 1) : depuis la lecture des 4688, les chaînes de processus de
+  `etat.json` peuvent montrer les 300 premiers caractères de la ligne de commande de processus d'autres comptes, SYSTEM
+  compris, aux comptes lecteurs (ce que la trace WMI permettait déjà pour un processus encore vivant). Un secret passé
+  en argument (mot de passe en ligne de commande) peut y apparaître ; le nombre de nœuds d'une chaîne n'est pas borné
+  (audit de #244).
 - Angles morts publiés (phase 3, état des collectes) : `etat.json` est lisible par les comptes lecteurs, dont le compte
   connecté à la console par défaut. Un programme qui tourne sous ce compte y lit quelles collectes manquent
   (`Collectes`, `ReglesSansCollecte`, `ReglesDegradees` : Sysmon absent, journal illisible, règles PRC dégradées sous
