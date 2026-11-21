@@ -33,9 +33,10 @@ compile, le poste du mainteneur signe. Décisions du mainteneur du 2026-11-21 :
    ```
 
    `-SansPublier` est la répétition générale (bloc 1.2) : tout est fait et vérifié, rien n'est publié. Les fichiers et
-   leurs empreintes SHA-256 sont dans le dossier de travail indiqué à la fin.
+   leurs empreintes SHA-256 sont dans le dossier de travail indiqué à la fin (gardé pour la relecture ; à effacer ensuite).
 4. Même commande sans `-SansPublier` : le script crée le brouillon de version avec les quatre fichiers
-   (`deR4Tizer.msi`, `deR4TizerSvc.exe`, `deR4Tizer.exe`, `manifeste.json`).
+   (`deR4Tizer.msi`, `deR4TizerSvc.exe`, `deR4Tizer.exe`, `manifeste.json`), après avoir vérifié que le tag de GitHub
+   pointe sur le commit signé et revérifié les empreintes juste avant l'envoi ; le dossier de travail est ensuite effacé.
 5. Relire le brouillon sur GitHub (fichiers, empreintes affichées par le script), puis le publier
    (« Publish release »).
 
