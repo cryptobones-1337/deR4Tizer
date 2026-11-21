@@ -466,7 +466,7 @@ et du NDR plus haut (phases 7, 8 et 9, boucle purple team, classe E de la mesure
 changement : règles de la section 2, protocole et relecture de la section 4, passage en VM, état « expérimental » dans
 la matrice tant qu'une mesure ne le justifie pas, et accord du mainteneur pour toute capacité nouvelle.
 
-Couverture ATT&CK démontrée (mainteneur, 2026-11-21) : profil « rançongiciel et intrusion opportuniste, petite
+Travail de couverture ATT&CK (objectif fixé par le mainteneur le 2026-11-21) : profil « rançongiciel et intrusion opportuniste, petite
 structure » de 54 lignes, validé par le mainteneur le 2026-11-21, publié dans `docs/validation/carte-attack.md`. Les
 étapes 1 à 3 (fiabiliser la collecte des processus par les événements 4688, tirer la technique de l'identifiant de
 règle, porter la technique sur chaque fiche, puis consolider et tester ce qui existe) n'ajoutent aucune capacité ; les

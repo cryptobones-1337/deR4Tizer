@@ -22,7 +22,7 @@ de MITRE sur les rançongiciels) ; elle n'a pas été confrontée à leur éditi
 | État | Sens |
 |---|---|
 | **Testé en labo, consolidé** | 10 essais valides dans un rapport de campagne (`CLAUDE.md`) |
-| **Testé en labo** | Détection constatée dans un rapport de campagne, moins de 10 essais : « non consolidé » |
+| **Testé en labo** | Détection constatée dans un rapport de campagne, moins de 10 essais : « non consolidé ». « En partie » : une partie seulement des variantes de la règle a été exercée ; la ligne compte parmi les lignes testées |
 | **Règle, non testée** | Une règle existe, avec ses tests unitaires, jamais exercée en campagne |
 | **Partiel** | Une partie seulement du comportement est vue, ou seulement dans un cas (adresse publique, Sysmon présent) |
 | **Vu sans alerte** | L'événement est collecté, aucune règle ne le lit |
@@ -33,7 +33,8 @@ de MITRE sur les rançongiciels) ; elle n'a pas été confrontée à leur éditi
 Rapports cités (tous dans ce dossier) : S-01, S-09 et S-13 dans `campagne-kali-premier-passage.md` (2026-11-15) ;
 S-07 et S-14 dans `campagne-kali-second-lot.md` (2026-11-15) ; S-02, S-08, S-10, S-11, S-12, S-15, S-16 et S-17 dans
 `campagne-kali-sixieme-lot.md` (2026-11-16) ; S-20 à S-27 dans `campagne-kali-detection-reseau-lot1.md` à `lot5.md`
-(2026-11-16 et 2026-11-17).
+(2026-11-16 et 2026-11-17). Réserve : S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée
+(note du 2026-11-19 dans ces rapports) ; les lignes T1133, T1557.001 et T1557.002 en dépendent.
 
 ## La carte
 
@@ -47,7 +48,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1566.001 Pièce jointe piégée | PRC-001 ; ASR Office (baseline) | Règle, non testée | Scénario de campagne |
 | T1566.002 Lien piégé | DNS-001, filtrage DNS | Partiel : domaine listé testé en labo (S-07, 2026-11-15) | Rien pour un domaine non listé |
 | T1133 Services distants exposés | COR-R9, RES-005, RES-007, VIE-003, UPnP (EXP-NDR-001) | Testé en labo (S-02, S-17, 2026-11-16 ; S-27, 2026-11-16) | 10 essais |
-| T1078.003 Comptes locaux valides | COR-R2, COR-R9 | Partiel (après des échecs, ou depuis une adresse publique) | Connexion réussie sans échec depuis le réseau local |
+| T1078.003 Comptes locaux valides | COR-R2, COR-R9 | Partiel (après des échecs, ou depuis une adresse publique ; S-02, 2026-11-16) | Connexion réussie sans échec depuis le réseau local |
 | T1091 Supports amovibles | Baseline (ASR, exécution automatique) | Prévention seule | Règle sur le branchement et l'exécution depuis une clé |
 
 ### Exécution
@@ -58,7 +59,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1059.003 Invite de commandes | CHA-001 | Partiel | Idem |
 | T1059.005 / .007 VBScript, JScript | PRC-001 ; baseline (WSH, ASR) | Règle, non testée | wscript et cscript absents de PRC-003 |
 | T1204.002 Fichier lancé par l'utilisateur | PRC-001, CHA-001, RES-003 | Règle, non testée | Scénario |
-| T1047 WMI | ASR (profil renforcé) | Prévention seule | Règle sur `wmic process call create` et WmiPrvSE parent |
+| T1047 WMI | PRC-003 (`wmic process call create`) ; ASR (profil renforcé) | Règle, non testée | Scénario ; processus enfants de WmiPrvSE |
 | T1053.005 Tâche planifiée | PER-001 | **Testé en labo (S-09, 2026-11-15)**, configurations A et C | 10 essais |
 | T1569.002 Exécution par service | COR-R5 | Testé en labo, en partie (S-13, 2026-11-15) | Service lancé depuis un dossier système |
 | T1218 Binaires système détournés | PRC-003 (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic) | Règle, non testée | Scénario ; msiexec, installutil absents |
@@ -135,7 +136,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1056.001 Enregistreur de frappe | aucune | Hors portée | Dit comme limite |
 | T1071.001 Protocole web | RES-001, RES-002, RES-003, balise | Testé en labo (S-11, 2026-11-16) | Balise jamais testée ; 10 essais |
 | T1071.004 DNS | DNS-001, EXP-DPI-001 | Partiel (domaine listé) | Tunnel DNS jamais testé |
-| T1105 Téléchargement d'outils | RES-002, PRC-003 | Partiel (connexion vue, contenu non) | Scénario avec certutil, bitsadmin |
+| T1105 Téléchargement d'outils | RES-002, PRC-003 | Partiel (connexion vue, contenu non ; S-11, 2026-11-16) | Scénario avec certutil, bitsadmin |
 | T1219 Outils d'accès à distance | VIE-002 | Règle, non testée | Scénario |
 | T1572, T1090 Tunnel, relais | VIE-002 (ngrok, par le nom du processus) | **Partiel** : ngrok seulement, règle non testée | chisel, plink ; un tunnel renommé |
 
@@ -156,9 +157,9 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | Testé en labo, consolidé | 1 |
 | Testé en labo, non consolidé | 13 |
 | Partiel | 14 |
-| Règle, non testée | 12 |
+| Règle, non testée | 13 |
 | Vu sans alerte | 1 |
-| Prévention seule | 3 |
+| Prévention seule | 2 |
 | Aucune règle | 7 |
 | Hors portée | 2 |
 | Défaut ouvert (T1136.001) | 1 |
@@ -200,7 +201,10 @@ remplacera par une seule table, alignée sur cette carte.
 | T1572, T1090 Tunnel, relais | **Corrigé** : VIE-002 lève une alerte pour un processus nommé `ngrok` (« ngrok (tunnel) », `surveillances.rs`). La ligne passe en « Partiel » |
 | T1567.002 Stockage en ligne | Confirmé |
 
-### Autre correction, d'après un rapport publié
+### Autres corrections
+
+- **T1047 WMI** : la carte de départ disait « Prévention seule ». PRC-003 détecte déjà `wmic process call create`
+  (motif de `processus.rs`) : la ligne passe en « Règle, non testée » (relecture de la PR).
 
 - **T1053.005 Tâche planifiée** : la carte de départ disait « Partiel (témoin négatif N-02 seulement) ». Le premier
   passage (`campagne-kali-premier-passage.md`, 2026-11-15, S-09 « clé Run + tâche planifiée ») a levé deux alertes
@@ -229,7 +233,7 @@ remplacera par une seule table, alignée sur cette carte.
 
 1. Défauts structurels 1, 2 et 3 (lots 1 à 3).
 2. Consolider ce qui est déjà testé en labo : 10 essais valides pour les 13 lignes non consolidées (lot 4).
-3. Tester les 12 lignes « Règle, non testée » : aucune règle à écrire, seulement des scénarios (lot 5).
+3. Tester les 13 lignes « Règle, non testée » : aucune règle à écrire, seulement des scénarios (lot 5).
 4. Fermer les lignes « Partiel » et « Vu sans alerte » qui ne demandent qu'un événement déjà collecté.
 5. Écrire les règles des lignes « Aucune règle ».
 6. Publier la carte, générée depuis les résultats, avec les deux lignes « Hors portée » dites comme telles (lot 6).
