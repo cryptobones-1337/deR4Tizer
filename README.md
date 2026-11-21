@@ -150,7 +150,9 @@ from a first signed version, installed by hand (or by GPO, Intune, IT provider).
 2. set it in the repo variable `CLE_SIGNATURE` (later, together with the next key's);
 3. place the certificate in the GitHub "publication" environment (approval required);
 4. push the `vX.Y` tag matching the code version: CI builds, signs, builds the MSI and publishes the release with its
-   manifest;
+   manifest, but only after checking that the MSI and both executables carry a valid, timestamped signature from a key
+   in `CLE_SIGNATURE` (`verifier-signatures.ps1`); otherwise nothing is published (so, while signing is done on the
+   maintainer's computer, a tag alone publishes nothing);
 5. install this MSI on each machine; later versions can then install on their own (if automatic installation is on),
    this first version's package serving as the rollback.
 

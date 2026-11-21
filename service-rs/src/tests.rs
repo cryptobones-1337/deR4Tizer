@@ -8835,3 +8835,20 @@ fn masquage_s221_toutes_les_formes_de_profil_et_texte_borne() {
     crate::tests::torturer_texte(r"\\?\C:\Users\marie\x", &mut |t| { let _ = masquer_chemin(t); let _ = borner_texte(t, 10); });
 }
 
+
+#[test]
+fn publication_echec_ferme_sans_signature_epinglee() {
+    // Plan avant la première version signée, bloc 0.1 (2026-11-21) : un tag v* ne publie rien si le MSI et les deux
+    // exécutables ne portent pas une signature valide, horodatée, d'une clé de CLE_SIGNATURE
+    let wf = include_str!("../../.github/workflows/publication.yml");
+    let verif = wf.find("./verifier-signatures.ps1 -Cles \"$env:CLES\" -Fichiers bin/deR4Tizer.msi, bin/deR4TizerSvc.exe, bin/deR4Tizer.exe").expect("vérification des signatures");
+    let envoi = wf.find("name: version").expect("artefact transmis à « publier »");
+    assert!(verif < envoi, "vérification avant la transmission des fichiers");
+    assert!(!wf[verif - 300..verif].contains("if:"), "la vérification n'est jamais sautée");
+    let publier = wf.find("  publier:").expect("job publier");
+    assert!(wf[publier..].contains("needs: signer"), "publier dépend de signer");
+    let s = include_str!("../../verifier-signatures.ps1");
+    assert!(s.contains("if ($liste.Count -eq 0 -or $invalides.Count)"), "clés vides ou invalides : refus");
+    assert!(s.contains("if ($s.Status -ne 'Valid')") && s.contains("TimeStamperCertificate") && s.contains("if ($cle -notin $liste)"));
+    assert!(s.contains("PublicKey.EncodedKeyValue.RawData"), "même empreinte que natif::cle_signataire_verifiee");
+}
