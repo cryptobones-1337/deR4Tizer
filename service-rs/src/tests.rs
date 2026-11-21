@@ -8992,3 +8992,19 @@ fn reponses_json_ecrivain_dedie() {
     assert!(e.contains("if g.is_none() {\n                    *g = Some((n, h));") || e.contains("if g.is_none() {\r\n                    *g = Some((n, h));"), "échec : copie remise en attente si aucune plus récente");
     assert!(e.contains("std::thread::sleep(std::time::Duration::from_secs(5));"), "nouvel essai 5 s plus tard");
 }
+
+#[test]
+fn reponses_json_depot_garde_la_plus_recente() {
+    // Prérelecture de #230, D1 : copies 5 et 6 déposées dans l'ordre inverse, la 6 reste en attente
+    use crate::politique::deposer;
+    let mut a: Option<(u64, &str)> = None;
+    deposer(&mut a, (6, "six"));
+    deposer(&mut a, (5, "cinq"));
+    assert_eq!(a, Some((6, "six")), "une copie plus ancienne ne remplace jamais la plus récente en attente");
+    deposer(&mut a, (6, "six bis"));
+    assert_eq!(a, Some((6, "six")), "même numéro : gardée");
+    deposer(&mut a, (7, "sept"));
+    assert_eq!(a, Some((7, "sept")));
+    let src = include_str!("politique.rs");
+    assert!(src.contains("deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);"), "ecrire_copie passe par deposer");
+}

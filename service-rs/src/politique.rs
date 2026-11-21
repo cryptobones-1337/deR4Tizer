@@ -768,17 +768,23 @@ static EN_ATTENTE: Mutex<Option<(u64, Historique)>> = Mutex::new(None);
 static SIGNAL: std::sync::Condvar = std::sync::Condvar::new();
 static ECRIVAIN: std::sync::Once = std::sync::Once::new();
 
+/// Décision pure (prérelecture de #230, D1) : deux fils peuvent prendre les copies 5 et 6 sous le verrou puis les
+/// déposer dans l'ordre inverse ; la copie en attente n'est remplacée que par une plus récente
+pub(crate) fn deposer<T>(attente: &mut Option<(u64, T)>, copie: (u64, T)) {
+    if attente.as_ref().is_none_or(|(n, _)| copie_a_ecrire(copie.0, *n)) {
+        *attente = Some(copie);
+    }
+}
+
 fn ecrire_copie(copie: Option<(u64, Historique)>) {
     let Some(c) = copie else { return };
-    {
-        let mut g = EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner());
-        if g.as_ref().is_none_or(|(n, _)| copie_a_ecrire(c.0, *n)) {
-            *g = Some(c);
-        }
-    }
+    deposer(&mut EN_ATTENTE.lock().unwrap_or_else(|e| e.into_inner()), c);
     SIGNAL.notify_one();
     ECRIVAIN.call_once(|| {
-        let _ = std::thread::Builder::new().name("reponses.json".into()).spawn(ecrivain);
+        // Fil impossible à créer (ressources épuisées) : dit au journal, rien n'est écrit pendant la session (S230-04)
+        if let Err(e) = std::thread::Builder::new().name("reponses.json".into()).spawn(ecrivain) {
+            commun::journal(&format!("{FICHIER} : fil d'écriture non créé ({e}) ; l'historique n'est pas enregistré jusqu'au redémarrage du service"));
+        }
     });
 }
 
