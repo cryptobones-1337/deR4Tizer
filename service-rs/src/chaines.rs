@@ -44,6 +44,16 @@ struct Processus {
     chemin: String,
     ligne: String,
     vu: Instant,
+    /// Présent dans la dernière liste des processus (un 4688 en retard ne remplace jamais un processus vivant)
+    vivant: bool,
+}
+
+/// Ligne de commande gardée dans l'arbre et publiée dans les chaînes (etat.json) : bornée (audit de #244, S244-04, S244-05)
+const LIGNE_GARDEE: usize = 1024;
+const LIGNE_PUBLIEE: usize = 300;
+
+fn borner(s: &str, n: usize) -> String {
+    if s.chars().count() > n { s.chars().take(n).collect::<String>() + "…" } else { s.to_string() }
 }
 
 struct Signal {
@@ -66,14 +76,17 @@ impl Arbre {
         let maintenant = Instant::now();
         for (&pid, p) in liste {
             let e = self.processus.entry(pid).or_insert_with(|| Processus {
-                nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant,
+                nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant, vivant: true,
             });
             if !e.nom.eq_ignore_ascii_case(&p.nom) {
                 // Identifiant réutilisé par un autre programme
-                *e = Processus { nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant };
+                *e = Processus { nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant, vivant: true };
                 self.signaux.remove(&pid);
             }
             e.vu = maintenant;
+        }
+        for (pid, p) in self.processus.iter_mut() {
+            p.vivant = liste.contains_key(pid);
         }
         self.processus.retain(|_, p| p.vu.elapsed() < DUREE_SIGNAL);
         for s in self.signaux.values_mut() {
@@ -89,14 +102,16 @@ impl Arbre {
             }
             if p.ligne.is_empty() {
                 if let Some(l) = ligne {
-                    p.ligne = l.to_string();
+                    p.ligne = borner(l, LIGNE_GARDEE);
                 }
             }
         }
     }
 
     /// Création vue par l'audit (4688) : un processus bref, terminé avant la lecture de la liste, garde sa place dans
-    /// l'arbre et son parent ; PID réutilisé par un autre programme : l'entrée est remplacée et ses signaux effacés
+    /// l'arbre et son parent ; PID réutilisé par un autre programme : l'entrée est remplacée et ses signaux effacés, sauf
+    /// si elle est vivante (dans la dernière liste) : un 4688 en retard, d'un ancien processus de ce PID, ne peut pas
+    /// effacer les signaux du processus qui tourne (audit de #244, S244-01)
     pub fn creation(&mut self, pid: u32, parent: Option<u32>, chemin: &str, ligne: Option<&str>) {
         if pid <= 4 {
             return;
@@ -110,9 +125,10 @@ impl Arbre {
                 }
                 self.completer(pid, chemin, ligne);
             }
+            Some(e) if e.vivant => {}
             _ => {
                 self.processus.insert(pid, Processus {
-                    nom, parent: parent.unwrap_or(0), chemin: chemin.to_string(), ligne: ligne.unwrap_or_default().to_string(), vu: maintenant,
+                    nom, parent: parent.unwrap_or(0), chemin: chemin.to_string(), ligne: borner(ligne.unwrap_or_default(), LIGNE_GARDEE), vu: maintenant, vivant: false,
                 });
                 self.signaux.remove(&pid);
             }
@@ -182,7 +198,7 @@ impl Arbre {
                             pid,
                             nom: self.nom(pid),
                             chemin: p.map(|p| p.chemin.clone()).unwrap_or_default(),
-                            ligne_commande: p.map(|p| p.ligne.clone()).unwrap_or_default(),
+                            ligne_commande: p.map(|p| borner(&p.ligne, LIGNE_PUBLIEE)).unwrap_or_default(),
                             score: s.map(|s| s.iter().map(|x| x.score).sum()).unwrap_or(0),
                             raisons: s.map(|s| s.iter().map(|x| x.raison.clone()).collect::<Vec<_>>().join(" ; ")).unwrap_or_default(),
                         }
