@@ -7,6 +7,19 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Response register (`reponses.json`): an administrator's command waits for its copy to be written only after releasing
+  the monitor lock, so a slow disk no longer delays the monitoring cycle.
+- Canary files: a known, signed backup tool is spared only if its folder can be written to by administrators, SYSTEM,
+  TrustedInstaller or services alone, and it runs as SYSTEM or an elevated administrator; sync clients running under
+  the user's account (OneDrive, Dropbox, Box...) are no longer listed as known and are suspended if they touch a canary
+  file; checked in a test VM with real permissions and tokens.
+- Elevated confirmation: the publisher shown is read from the signature check itself, never by reading the file again;
+  checked in a test VM for a signed and an unsigned program.
+- Release signature check: the certificate chain must build with no error (or only "expired" when timestamped); the
+  check script is run by the CI on real test packages.
+- `reponses.json` that cannot be read is never overwritten; it is written by a dedicated thread.
+- README and project page: real screenshots of the current interface, taken in the test VM, including a critical alert
+  raised by a harmless demo attack.
 - Release workflow: nothing is published unless the MSI and both executables carry a valid, timestamped signature from
   a pinned key; the tag name is validated and never inserted into a script; approval required on publishing.
 - Security baseline review (November 2026): the rollback copy is written and read back before any change; a computer
