@@ -61,16 +61,17 @@ const TOUJOURS_AUTORISES: &[&str] = &[
 /// Logiciels qui lisent, copient ou synchronisent tous les fichiers et peuvent toucher un leurre sans être un
 /// rançongiciel : (nom exact de l'exécutable, sans extension, signataires exacts acceptés). Le couple est vérifié. Décision du
 /// mainteneur, 2026-11-02 : nom exact, pas de début de nom. Noms relevés de mémoire, non vérifiés sur de vraies installations :
-/// un exécutable oublié est suspendu s'il touche un leurre, jusqu'à une reprise par un administrateur
+/// un exécutable oublié est suspendu s'il touche un leurre, jusqu'à une reprise par un administrateur.
+/// Depuis le 2026-11-21 (S110-14), « connu » exige aussi SYSTEM ou un administrateur élevé : les clients de
+/// synchronisation qui tournent sous le compte de l'utilisateur (OneDrive, FileCoAuth, Dropbox, Google Drive, Nextcloud,
+/// ownCloud, Synology Drive, iCloud, MEGA, Box) ne pouvaient plus jamais l'être et sont retirés de la liste (revue
+/// externe du 2026-11-21, défaut 3) : ils sont suspendus s'ils touchent un leurre, comme le dit le README. Restent les
+/// services (SYSTEM) et les outils de sauvegarde qui demandent l'élévation
 const LEURRES_AUTORISES: &[(&str, &[&str])] = &[
     // antivirus, indexation et sauvegarde de Windows
     ("msmpeng", MICROSOFT), ("mpdefendercoreservice", MICROSOFT), ("mssense", MICROSOFT), ("searchindexer", MICROSOFT),
     ("searchprotocolhost", MICROSOFT), ("searchfilterhost", MICROSOFT), ("wbengine", MICROSOFT), ("sdclt", MICROSOFT),
-    ("vssvc", MICROSOFT), ("filehistory", MICROSOFT), ("onedrive", MICROSOFT), ("filecoauth", MICROSOFT),
-    // synchronisation
-    ("dropbox", &["Dropbox, Inc"]), ("googledrivefs", GOOGLE), ("nextcloud", &["Nextcloud GmbH"]), ("owncloud", &["ownCloud GmbH"]),
-    ("synologydriveclient", &["Synology Inc."]), ("icloud", &["Apple Inc."]), ("iclouddrive", &["Apple Inc."]), ("icloudservices", &["Apple Inc."]),
-    ("megasync", &["Mega Limited"]), ("boxsync", &["Box, Inc."]), ("box", &["Box, Inc."]),
+    ("vssvc", MICROSOFT), ("filehistory", MICROSOFT),
     // sauvegarde
     ("veeamagent", &["Veeam Software Group GmbH"]), ("veeam.endpoint.service", &["Veeam Software Group GmbH"]),
     ("trueimage", &["Acronis International GmbH"]), ("trueimagehomeservice", &["Acronis International GmbH"]),

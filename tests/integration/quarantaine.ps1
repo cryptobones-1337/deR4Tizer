@@ -317,6 +317,7 @@ $titresGarde = 'Garde : programme qui touche un leurre suspendu, trace dans repo
 $leurreGarde = if ($compte -and (Get-Variable leurreStd -ErrorAction SilentlyContinue)) { $leurreStd } else { $null }
 if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-Tous $leurreGarde).Count)) {
     foreach ($t in $titresGarde) { NonExecute $t 'aucun leurre audité disponible' }
+    foreach ($t in 'Logiciel connu : signé, dossier fermé, compte privilégié', 'Logiciel connu : dossier ouvert aux utilisateurs', 'Logiciel connu : compte standard') { NonExecute $t 'aucun leurre audité disponible' }
 } else {
     $exeA = Join-Path $script:Commun 'd4t-garde-a.exe'
     $exeB = Join-Path $script:Commun 'd4t-garde-b.exe'
@@ -421,6 +422,81 @@ if (-not ($leurreGarde -and (Test-Path -LiteralPath $leurreGarde) -and @(Audit-T
                 $true
             } finally { & $arreter $pR; Start-Sleep 1; Remove-Item $exeR, $exeR2 -Force -ErrorAction SilentlyContinue }
         }
+    }
+    # Revue externe du 2026-11-21, défaut 4 : « logiciel connu » lu sur le vrai système (droits du dossier, jeton du
+    # processus), pas seulement en décision pure. Copie de powershell.exe nommée veeamagent.exe, signée par un certificat
+    # de test au nom de l'éditeur attendu (« Veeam Software Group GmbH »), racine approuvée sur cette machine jetable
+    # seulement. Trois cas : dossier fermé et compte privilégié (alerte Info, pas de suspension) ; dossier de Program
+    # Files ouvert aux utilisateurs (suspendu) ; même programme fermé lancé par le compte standard (suspendu)
+    $titresConnu = 'Logiciel connu : signé, dossier fermé, compte privilégié : alerte Info, jamais suspendu',
+        'Logiciel connu : même programme dans un dossier ouvert aux utilisateurs : suspendu',
+        'Logiciel connu : même programme fermé, lancé par le compte standard : suspendu'
+    $certConnu = $null
+    try {
+        $certConnu = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Veeam Software Group GmbH' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2)
+        $cer = Join-Path $script:Commun 'd4t-connu.cer'
+        Export-Certificate -Cert $certConnu -FilePath $cer | Out-Null
+        Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    } catch { $certConnu = $null }
+    $dossierFerme = Join-Path $env:ProgramFiles 'd4t-essai-connu'
+    $dossierOuvert = Join-Path $env:ProgramFiles 'd4t-essai-ouvert'
+    $exeFerme = Join-Path $dossierFerme 'veeamagent.exe'
+    $exeOuvert = Join-Path $dossierOuvert 'veeamagent.exe'
+    $prets = $false
+    if ($certConnu) {
+        foreach ($d in $dossierFerme, $dossierOuvert) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+        # Dossier ouvert : Utilisateurs (S-1-5-32-545) en modification, hérité
+        $acl = Get-Acl $dossierOuvert
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'), 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+        Set-Acl $dossierOuvert $acl
+        foreach ($e in $exeFerme, $exeOuvert) {
+            Copy-Item (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $e -Force
+            $null = Set-AuthenticodeSignature -FilePath $e -Certificate $certConnu -HashAlgorithm SHA256
+        }
+        $prets = @($exeFerme, $exeOuvert | Where-Object { (Get-AuthenticodeSignature $_).Status -eq 'Valid' }).Count -eq 2
+    }
+    if (-not $prets) {
+        foreach ($t in $titresConnu) { NonExecute $t 'certificat de test ou signature des copies impossible sur cette machine' }
+    } else {
+        $alerteDe = { param($exe) @((Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ }) |
+            Where-Object { $_.Regle -eq 'LEU-002' -and $_.Chemin -and $_.Chemin.ToLowerInvariant() -eq $exe.ToLowerInvariant() }) }
+        Verifier $titresConnu[0] {
+            $p = & $toucher $exeFerme 50
+            try {
+                $fin = (Get-Date).AddSeconds(90)
+                do { Start-Sleep 3; $a = @(& $alerteDe $exeFerme) } while (-not $a.Count -and (Get-Date) -lt $fin)
+                if (-not $a.Count) { return "aucune alerte LEU-002 en 90 s ; 4663 : $(@(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4663; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'd4t-essai-connu' }).Count) ; journal : $(Journal 'leurre' 3)" }
+                if (@($a | Where-Object { $_.Niveau -ne 'Info' }).Count) { return "alerte non Info : $(($a | ForEach-Object { "$($_.Niveau) $($_.Raisons)" }) -join ' // ')" }
+                Start-Sleep 5
+                if (& $suspendu $p) { return 'suspendu alors qu''il est connu' }
+                if ((& $traces $exeFerme) -ne 0) { return "trace de suspension : $(& $traces $exeFerme)" }
+                $true
+            } finally { & $arreter $p }
+        }
+        Verifier $titresConnu[1] {
+            $p = & $toucher $exeOuvert 51
+            try {
+                if (-not (& $attendreSuspension $exeOuvert 0 $p)) { return "non suspendu en 60 s ; alertes : $((& $alerteDe $exeOuvert | ForEach-Object { "$($_.Niveau) $($_.Raisons)" }) -join ' // ')" }
+                $true
+            } finally { & $arreter $p }
+        }
+        Verifier $titresConnu[2] {
+            # Le compte standard écrit dans son propre leurre ($leurreGarde est dans son profil)
+            $null = En-TantQue $compte "& '$exeFerme' -NoProfile -NonInteractive -Command `"Set-Content -LiteralPath '$leurreGarde' -Value 52; Start-Sleep 120`"" -SansAttendre
+            try {
+                $fin = (Get-Date).AddSeconds(90)
+                do { Start-Sleep 3 } while ((& $traces $exeFerme) -lt 1 -and (Get-Date) -lt $fin)
+                if ((& $traces $exeFerme) -lt 1) { return "non suspendu en 90 s ; alertes : $((& $alerteDe $exeFerme | Select-Object -Last 2 | ForEach-Object { "$($_.Niveau) $($_.Raisons)" }) -join ' // ')" }
+                $p = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -eq $exeFerme } | Select-Object -First 1
+                if ($p -and -not (& $suspendu $p)) { return 'trace de suspension, mais le processus tourne encore' }
+                $true
+            } finally { Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like "$env:ProgramFiles\d4t-essai-*" } | Stop-Process -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Start-Sleep 1
+    Remove-Item $dossierFerme, $dossierOuvert -Recurse -Force -ErrorAction SilentlyContinue
+    if ($certConnu) {
+        Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $certConnu.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue
     }
     # Phase 6, PR 6.4 : registre des actions en cours
     $titreRegistre = 'Registre : suspension inscrite avec son échéance de 2 h, levée à la reprise, terminée quand le processus disparaît'
@@ -759,6 +835,83 @@ Verifier 'Isolation : jonction vers System32 refusée (dossier du chemin qui est
     } finally {
         if (Test-Path $jIso) { cmd.exe /c rmdir "$jIso" | Out-Null }
         Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'deR4Tizer - isole *' } | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------------- confirmation élevée : éditeur lu dans l'état de la vérification
+# Revue externe du 2026-11-21, défaut 4 (S113-05) : SujetDeLEtat lit un pointeur à un décalage fixe d'une structure native ;
+# une erreur ne se voit qu'à l'exécution. La vraie confirmation (--commande-fichier, action « tuer ») est ouverte sur
+# un processus signé par un certificat de test approuvé sur cette machine jetable, puis sur une copie non signée ; le texte
+# est lu par UI Automation, puis la fenêtre est fermée sans rien envoyer. Il faut un bureau (VM), pas le runner de la CI
+$titresConf = 'Confirmation élevée : éditeur d''un programme signé lu et affiché (sujet du certificat)',
+    'Confirmation élevée : programme non signé dit sans signature valide'
+if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
+    foreach ($t in $titresConf) { NonExecute $t 'pas de bureau (session 0) : scénario de VM' }
+} else {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $certConf = $null; $procs = @()
+    $dossierConf = Join-Path $env:ProgramFiles 'd4t-essai-confirmation'
+    try {
+        $certConf = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=deR4Tizer essai editeur' -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddDays(2)
+        $cerConf = Join-Path $script:Commun 'd4t-conf.cer'
+        Export-Certificate -Cert $certConf -FilePath $cerConf | Out-Null
+        Import-Certificate -FilePath $cerConf -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        New-Item -ItemType Directory -Force -Path $dossierConf | Out-Null
+        $exeSigne = Join-Path $dossierConf 'd4t-signe.exe'
+        $exeNonSigne = Join-Path $dossierConf 'd4t-non-signe.exe'
+        Copy-Item (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $exeSigne -Force
+        Copy-Item $exeSigne $exeNonSigne -Force
+        $null = Set-AuthenticodeSignature -FilePath $exeSigne -Certificate $certConf -HashAlgorithm SHA256
+        # Lit le texte de la confirmation pour une action « tuer » sur ce processus, puis ferme la fenêtre (rien n'est envoyé)
+        $confirmation = { param($exe)
+            $p = Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep 300' -WindowStyle Hidden -PassThru
+            $script:procs += $p
+            $dossierCmd = Join-Path $env:TEMP 'deR4Tizer'
+            New-Item -ItemType Directory -Force -Path $dossierCmd | Out-Null
+            $fichier = Join-Path $dossierCmd ('commande-' + [guid]::NewGuid().ToString('N') + '.json')
+            [IO.File]::WriteAllText($fichier, (@{ Action = 'tuer'; Cible = "$($p.Id)" } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false))
+            $ui = Start-Process (Join-Path $script:Programme 'deR4Tizer.exe') -ArgumentList '--commande-fichier', "`"$fichier`"" -PassThru
+            try {
+                $fin = (Get-Date).AddSeconds(30)
+                do { Start-Sleep -Milliseconds 300; $ui.Refresh() } while ($ui.MainWindowHandle -eq [IntPtr]::Zero -and -not $ui.HasExited -and (Get-Date) -lt $fin)
+                if ($ui.MainWindowHandle -eq [IntPtr]::Zero) { return "fenêtre absente (fermée : $($ui.HasExited), code $(if ($ui.HasExited) { $ui.ExitCode }))" }
+                Start-Sleep 2
+                $racine = [Windows.Automation.AutomationElement]::FromHandle($ui.MainWindowHandle)
+                # Zone de texte de la confirmation (TextBox « Texte ») ; sinon tout texte de la fenêtre, pour dire ce qui
+                # s'est ouvert à la place (message d'erreur, autre fenêtre)
+                $tous = $racine.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+                $valeurs = foreach ($el in $tous) {
+                    $v = $null
+                    try { $v = $el.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { }
+                    if ($v) { $v }
+                }
+                $texte = ($valeurs | Where-Object { $_ -match 'deR4Tizer \((administrator|administrateur)\)' }) -join "`n"
+                if ($texte) { return $texte }
+                "fenêtre « $($racine.Current.Name) » sans le texte de confirmation ; contenu : $((@($tous | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) + @($valeurs)) -join ' | ')"
+            } finally {
+                Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
+                Remove-Item $fichier -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Verifier $titresConf[0] {
+            if ((Get-AuthenticodeSignature $exeSigne).Status -ne 'Valid') { return 'copie signée non valide sur cette machine' }
+            $t = & $confirmation $exeSigne
+            if ($t -notmatch 'CN=deR4Tizer essai editeur') { return "éditeur absent du texte : $($t -replace "`r?`n", ' / ')" }
+            $true
+        }
+        Verifier $titresConf[1] {
+            $t = & $confirmation $exeNonSigne
+            if ($t -notmatch 'aucune signature intégrée valide|no valid embedded signature') { return "texte inattendu : $($t -replace "`r?`n", ' / ')" }
+            if ($t -match 'CN=') { return "un sujet est affiché pour un programme non signé : $($t -replace "`r?`n", ' / ')" }
+            $true
+        }
+    } catch {
+        foreach ($t in $titresConf) { NonExecute $t "préparation impossible : $($_.Exception.Message)" }
+    } finally {
+        $procs | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+        Start-Sleep 1
+        Remove-Item $dossierConf -Recurse -Force -ErrorAction SilentlyContinue
+        if ($certConf) { Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $certConf.Thumbprint } | Remove-Item -Force -ErrorAction SilentlyContinue }
     }
 }
 

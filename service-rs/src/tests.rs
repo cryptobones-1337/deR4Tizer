@@ -6732,22 +6732,60 @@ fn leurre_connu_nom_editeur_et_dossier() {
     let lue = std::cell::Cell::new(false);
     let oui = |_: &[&str]| { lue.set(true); true };
     let non = |_: &[&str]| false;
-    assert!(c(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", &d, &oui));
-    assert!(!c(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", &d, &non), "non signé par l'éditeur attendu");
+    assert!(c(r"C:\Program Files\Veeam\VeeamAgent.exe", &d, &oui));
+    assert!(!c(r"C:\Program Files\Veeam\VeeamAgent.exe", &d, &non), "non signé par l'éditeur attendu");
     assert!(!c(r"C:\Program Files\Editeur\autre.exe", &d, &oui), "nom hors de la liste");
     lue.set(false);
-    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui), "copie signée dans un dossier ouvert");
+    assert!(!c(r"C:\Users\x\AppData\Local\Temp\veeamagent.exe", &d, &oui), "copie signée dans un dossier ouvert");
     assert!(!lue.get(), "signature non lue hors d'un dossier fermé");
     // Nom exact (décision du mainteneur) : ni plus long, ni extension différente de sens
-    assert!(!c(r"C:\Program Files\Editeur\boxanything.exe", &d, &oui), "début de nom");
-    assert!(!c(r"C:\Program Files\Editeur\onedrive-x.exe", &d, &oui), "début de nom");
-    assert!(!c(r"C:\Program Files\Editeur\xonedrive.exe", &d, &oui), "fin de nom");
-    assert!(c(r"C:\Program Files\Box\BOX.EXE", &d, &oui), "sans la casse");
+    assert!(!c(r"C:\Program Files\Editeur\arqanything.exe", &d, &oui), "début de nom");
+    assert!(!c(r"C:\Program Files\Editeur\veeamagent-x.exe", &d, &oui), "début de nom");
+    assert!(!c(r"C:\Program Files\Editeur\xveeamagent.exe", &d, &oui), "fin de nom");
+    assert!(c(r"C:\Program Files\Arq\ARQ.EXE", &d, &oui), "sans la casse");
     assert!(c(r"C:\Program Files\Veeam\Veeam.EndPoint.Service.exe", &d, &oui), "nom avec des points");
     // Le couple : l'éditeur attendu est bien celui du nom
-    let dropbox = |e: &[&str]| e.contains(&"Dropbox, Inc");
-    assert!(c(r"C:\Program Files\Dropbox\Dropbox.exe", &d, &dropbox));
-    assert!(!c(r"C:\Program Files\Acronis\acronis.exe", &d, &dropbox));
+    let veeam = |e: &[&str]| e.contains(&"Veeam Software Group GmbH");
+    assert!(c(r"C:\Program Files\Veeam\VeeamAgent.exe", &d, &veeam));
+    assert!(!c(r"C:\Program Files\Acronis\acronis.exe", &d, &veeam));
+}
+
+/// Revue externe du 2026-11-21, défaut 4 : le scénario de VM exerce les droits et le jeton réels (trois cas)
+#[test]
+fn leurre_connu_exerce_en_vm() {
+    let q = include_str!("../../tests/integration/quarantaine.ps1");
+    for t in ["'Logiciel connu : signé, dossier fermé, compte privilégié : alerte Info, jamais suspendu'",
+        "'Logiciel connu : même programme dans un dossier ouvert aux utilisateurs : suspendu'",
+        "'Logiciel connu : même programme fermé, lancé par le compte standard : suspendu'"] {
+        assert!(q.contains(t), "{t}");
+    }
+    assert!(q.contains("-Subject 'CN=Veeam Software Group GmbH'") && q.contains("'veeamagent.exe'"), "nom et éditeur de la liste");
+    assert!(q.contains("Remove-Item -Force -ErrorAction SilentlyContinue"), "racine de test retirée");
+    // S113-05 : la vraie confirmation élevée, signé puis non signé, texte lu par UI Automation, rien envoyé
+    assert!(q.contains("'--commande-fichier'") && q.contains(r"'deR4Tizer \((administrator|administrateur)\)'"), "confirmation élevée lue en VM");
+    assert!(q.contains("'CN=deR4Tizer essai editeur'") && q.contains("aucune signature intégrée valide|no valid embedded signature"));
+}
+
+/// Revue externe du 2026-11-21, défaut 3 : les clients de synchronisation qui tournent sous le compte de l'utilisateur
+/// ne sont plus dans la liste (ils ne pouvaient plus être « connus » depuis S110-14) : la liste ne ment plus
+#[test]
+fn leurre_liste_sans_clients_de_synchronisation_utilisateur() {
+    use crate::vol_donnees::leurre_connu as c;
+    let d = dossiers_de_test();
+    let oui = |_: &[&str]| true;
+    for exe in [r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", r"C:\Program Files\Microsoft OneDrive\FileCoAuth.exe",
+        r"C:\Program Files\Dropbox\Client\Dropbox.exe", r"C:\Program Files\Google\Drive File Stream\GoogleDriveFS.exe",
+        r"C:\Program Files\Nextcloud\nextcloud.exe", r"C:\Program Files\ownCloud\owncloud.exe", r"C:\Program Files\Synology\SynologyDriveClient.exe",
+        r"C:\Program Files\iCloud\iCloud.exe", r"C:\Program Files\iCloud\iCloudDrive.exe", r"C:\Program Files\iCloud\iCloudServices.exe",
+        r"C:\Program Files\MEGAsync\MEGAsync.exe", r"C:\Program Files\Box\Box.exe", r"C:\Program Files\Box\BoxSync.exe"] {
+        assert!(!c(exe, &d, &oui), "{exe} encore dans la liste");
+    }
+    let src = include_str!("vol_donnees.rs");
+    let liste = &src[src.find("const LEURRES_AUTORISES").unwrap()..];
+    let liste = &liste[..liste.find("];").unwrap()];
+    for n in ["\"onedrive\"", "\"dropbox\"", "\"box\"", "\"megasync\""] {
+        assert!(!liste.contains(n), "{n} dans LEURRES_AUTORISES");
+    }
 }
 
 // ------------------------------------------------------------ phase 6, PR 6.4 : registre, échéances, relances
@@ -8940,7 +8978,7 @@ fn s110_14_connu_seulement_garanti() {
     let oui = |_: &[&str]| true;
     let ferme = |_: &str| true;
     let ouvert = |_: &str| false;
-    let p = r"C:\Program Files\Microsoft OneDrive\OneDrive.exe";
+    let p = r"C:\Program Files\Veeam\VeeamAgent.exe";
     let vrai = || true;
     let faux = || false;
     assert!(c(p, &d, &oui, &ferme, &vrai));
@@ -8950,7 +8988,7 @@ fn s110_14_connu_seulement_garanti() {
     let compte = |_: &str| { lus.set(lus.get() + 1); true };
     let jetons = std::cell::Cell::new(0);
     let jeton = || { jetons.set(jetons.get() + 1); true };
-    assert!(!c(r"C:\Users\x\AppData\Local\Temp\onedrive.exe", &d, &oui, &compte, &jeton));
+    assert!(!c(r"C:\Users\x\AppData\Local\Temp\veeamagent.exe", &d, &oui, &compte, &jeton));
     assert_eq!(lus.get(), 0, "droits non lus hors d'un candidat");
     assert_eq!(jetons.get(), 0, "jeton non lu hors d'un candidat (S228-03)");
     let v = include_str!("vol_donnees.rs");
