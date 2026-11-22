@@ -8593,6 +8593,36 @@ fn attack_lot2_empreinte_sur_les_identifiants() {
     assert_ne!(signature_avec(&a, "e"), signature_avec(&c, "e"), "autre règle, autre comportement");
 }
 
+/// Couverture ATT&CK, lot 3 : la ligne « ATT&CK » de chaque fiche de docs/detection/regles.md (sous le titre, ou
+/// dernière colonne d'un tableau) concorde avec la table du code ; la documentation ne peut plus diverger
+#[test]
+fn attack_lot3_fiches_et_table_concordent() {
+    use crate::mitre::{identifiants_du_texte, libelle};
+    use crate::regles::{Techniques, REGLES};
+    let doc = include_str!("../../docs/detection/regles.md");
+    for r in REGLES {
+        let ligne = if let Some(i) = doc.find(&format!("
+### {} : ", r.id)) {
+            let l = doc[i + 1..].lines().nth(1).unwrap_or("");
+            assert!(l.starts_with("- **ATT&CK** : "), "{} : ligne ATT&CK absente sous le titre ({l})", r.id);
+            l["- **ATT&CK** : ".len()..].to_string()
+        } else {
+            let l = doc.lines().find(|l| l.starts_with(&format!("| {} |", r.id))).unwrap_or_else(|| panic!("{} : fiche absente", r.id));
+            l.trim_end().trim_end_matches('|').rsplit('|').next().unwrap_or("").trim().to_string()
+        };
+        match r.techniques {
+            Techniques::Fixes(t) => assert_eq!(identifiants_du_texte(&ligne), t.iter().map(|s| s.to_string()).collect::<Vec<_>>(), "{} : fiche et table divergent", r.id),
+            Techniques::ParLAlerte => {
+                assert!(ligne.starts_with("posée par l'alerte"), "{} : « posée par l'alerte » attendu ({ligne})", r.id);
+                for id in identifiants_du_texte(&ligne) {
+                    assert_ne!(libelle(&id), id, "{} : technique {id} de la fiche sans nom", r.id);
+                }
+            }
+            Techniques::Aucune => assert!(ligne.starts_with("aucune"), "{} : « aucune » attendu ({ligne})", r.id),
+        }
+    }
+}
+
 /// Une chaîne PowerShell puis un outil Windows détourné ne reçoit plus T1204 par défaut : elle porte les techniques de
 /// ses signaux
 #[test]

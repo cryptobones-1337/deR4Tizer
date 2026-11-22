@@ -7,6 +7,9 @@ ses faux positifs attendus, ses tests et son état de mesure.
 **Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle** (champ `Regle`, registre `service-rs/src/regles.rs`). Un test vérifie
 que ce document et le registre listent les mêmes identifiants.
 
+**Ligne « ATT&CK » de chaque fiche (couverture ATT&CK, lot 3)** : tirée de la même table que le code ; un test
+(`attack_lot3_fiches_et_table_concordent`) compare chaque fiche à la table, la documentation ne peut plus diverger.
+
 **Technique ATT&CK (couverture ATT&CK, lot 2)** : elle vient de l'identifiant de règle, par une seule table placée
 dans le registre (`regles.rs`, champ `techniques`, ATT&CK v20.1, d'après `docs/validation/carte-attack.md`), et plus
 jamais de mots du texte de l'alerte. Trois cas : liste fixe ; techniques posées par le code qui produit l'alerte, pour
@@ -132,6 +135,7 @@ modules expérimentaux.
 ## RES : connexions
 
 ### RES-001 : connexion vers une adresse ou un domaine des listes de menaces
+- **ATT&CK** : T1071.001 Communication par protocole web.
 - **Code** : `moniteur.rs` (passage, branche « menace », niveau Critique).
 - **Justification** : un programme du poste parle à une infrastructure malveillante connue (Spamhaus DROP, Feodo
   Tracker, listes de domaines) ; c'est le signe le plus direct d'une infection active.
@@ -147,6 +151,7 @@ modules expérimentaux.
   le blocage de 7 jours), non consolidée.
 
 ### RES-002 : nouvelle connexion au score suspect (≥ 3)
+- **ATT&CK** : T1071.001 Communication par protocole web ; T1041 Exfiltration par le canal de contrôle ; T1105 Téléchargement d'outils.
 - **Code** : `moniteur.rs` (calcul du score des flux, niveau Alerte).
 - **Justification** : réunit des indices faibles qui, ensemble, décrivent un programme malveillant qui sort sur Internet.
 - **Indices** (une seule règle, chaque indice nommé dans `Raisons`) : programme non signé ; dossier temporaire ou
@@ -170,6 +175,7 @@ modules expérimentaux.
   télémétrie (chacun ajoute son poids, comme ceux testés).
 
 ### RES-003 : première connexion à Internet d'un programme
+- **ATT&CK** : T1071.001 Communication par protocole web ; T1204.002 Fichier piégé lancé par l'utilisateur.
 - **Code** : `moniteur.rs` (niveau Info).
 - **Justification** : donne l'historique de « qui parle à Internet » ; utile à l'enquête, pas une alarme.
 - **Télémétrie** : connexions.
@@ -182,6 +188,7 @@ modules expérimentaux.
   `moniteur::premiere_connexion_signalee` (PR 3.8). Exercée en VM (alertes Info du scénario `mesure`).
 
 ### RES-004 : adresse publique directement sur le PC
+- **ATT&CK** : T1133 Services distants exposés.
 - **Code** : `moniteur.rs` (« PC EXPOSÉ À INTERNET : adresse publique directement sur le PC »).
 - **Justification** : un PC sans box ni NAT devant lui est joignable depuis Internet.
 - **Conditions** : contrôle tous les 100 passages du cycle ; l'alerte part quand un réseau public apparaît sur une carte
@@ -209,6 +216,7 @@ modules expérimentaux.
 Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface change : une IPv6 globale seule donne « exposition à surveiller » (orange), plus « PC exposé » (rouge) ; une IPv4 publique reste « PC exposé ». Une redirection UPnP vers ce PC vue seulement par une vérification de plus de 30 min ne donne plus « PC exposé » (non vérifiée, citée dans le constat) ; l'alerte UPnP d'origine n'est pas retirée.
 
 ### RES-005 : paquet entrant venu d'Internet
+- **ATT&CK** : T1133 Services distants exposés.
 - **Code** : `parefeu.rs` (journal du pare-feu, « PC EXPOSÉ À INTERNET : paquet entrant … »).
 - **Justification** : un paquet entrant depuis une adresse publique, surtout accepté, montre un PC exposé.
 - **Télémétrie** : `pfirewall.log` (journalisation des paquets du pare-feu Windows).
@@ -223,6 +231,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 
 ### RES-006 : nouveau port ouvert en écoute sur le réseau
+- **ATT&CK** : aucune.
 - **Code** : `surveillances.rs` (`ports_ouverts`).
 - **Justification** : un programme qui se met à écouter sur le réseau peut être une porte dérobée.
 - **Télémétrie** : table des connexions TCP (ports en écoute), signature du programme.
@@ -237,6 +246,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   rendu testable (chemin d'un PID passé en paramètre, écriture de `ecoutes-connues.json` laissée à l'appelant, PR 3.8).
 
 ### RES-007 : connexion entrante depuis Internet
+- **ATT&CK** : T1133 Services distants exposés.
 - **Code** : `surveillances.rs` (`ports_ouverts`, « CONNEXION ENTRANTE depuis Internet »).
 - **Justification** : quelqu'un d'Internet est connecté à un port en écoute du PC. Distincte de RES-005 : elle vient de
   la table TCP (connexion établie), pas du journal du pare-feu.
@@ -252,6 +262,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## DNS
 
 ### DNS-001 : requête DNS vers un domaine malveillant connu
+- **ATT&CK** : T1071.004 Communication via DNS ; T1566.002 Lien d'hameçonnage.
 - **Code** : `moniteur.rs` (« requête DNS vers un domaine MALVEILLANT connu »).
 - **Justification** : la résolution d'un domaine de commande ou de distribution de malware, même sans connexion.
 - **Télémétrie** : journal DNS-Client (ou Sysmon 22), listes de domaines.
@@ -269,6 +280,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   compté dans les « derniers blocages » de la page « Navigation », sans changer cette alerte.
 
 ### DNS-002 : serveur DNS changé sur une carte du poste
+- **ATT&CK** : T1557 Interception (adversaire au milieu).
 - **Code** : `dns_surveillance.rs` (`releve`, `changements_dns`) ; fil « dns » de `moniteur.rs` (phase 7, PR 7.1).
 - **Justification** : un programme qui règle un serveur DNS statique sur une carte du poste fait passer toutes les
   résolutions par lui (faux site de la banque, faux portail de la mairie) ; le fichier hosts (SYS-001) ne le montre pas.
@@ -301,6 +313,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   carte de la VM, réseau inchangé : alerte) et témoin écarté (retour au DHCP : pas d'alerte).
 
 ### DNS-003 : port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur
+- **ATT&CK** : T1557 Interception (adversaire au milieu).
 - **Code** : `moniteur.rs` (`reprendre_filtrage`, `alerte_port_dns_tenu`) (phase 7, PR 7.5a ; audit de #164, S164-05).
 - **Justification** : filtrage activé, le service redémarre et ne peut pas lier le port 53 de la boucle locale, alors
   qu'une carte pointe encore sur `127.0.0.1` ou `::1` (remise impossible) : le programme qui tient le port peut
@@ -317,6 +330,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## PRC : processus
 
 ### PRC-001 : document bureautique qui lance un interpréteur
+- **ATT&CK** : T1566.001 Pièce jointe piégée ; T1204.002 Fichier piégé lancé par l'utilisateur.
 - **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
 - **Justification** : Word, Excel ou un lecteur PDF qui lance PowerShell, cmd, wscript… est la marque d'une macro ou
   d'un exploit.
@@ -332,6 +346,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   n'est pas un interpréteur) ; décision pure `processus::alerte_processus`. Non exercée en VM : aucun Office dans la VM.
 
 ### PRC-002 : PowerShell obscurci ou qui télécharge du code
+- **ATT&CK** : T1059.001 PowerShell ; T1027 Code obscurci.
 - **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code »).
 - **Justification** : `-EncodedCommand` long, `DownloadString`, `IEX` d'une adresse : chargement de code typique.
 - **Télémétrie** : ligne de commande (Sysmon 1, sinon événement 4688 avec sa ligne de commande, sinon WMI tant que le
@@ -350,6 +365,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   qu'on ne touche pas.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
+- **ATT&CK** : T1218 Binaire système détourné ; T1197 Tâches BITS ; T1105 Téléchargement d'outils ; T1047 WMI détourné.
 - **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
 - **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code.
 - **Télémétrie** : ligne de commande.
@@ -362,6 +378,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   `rundll32 shell32.dll,Control_RunDLL`). Non exercée en VM (comme PRC-002).
 
 ### PRC-004 : navigateur lancé en débogage à distance
+- **ATT&CK** : T1539 Vol de cookies de session.
 - **Code** : `processus.rs` (`--remote-debugging-port` ou `-pipe` sur Chrome, Edge, Brave).
 - **Justification** : technique de vol de cookies qui contourne le chiffrement des navigateurs.
 - **Télémétrie** : ligne de commande.
@@ -374,6 +391,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   Chrome normal) ; existant : `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
 
 ### PRC-005 : suppression des sauvegardes
+- **ATT&CK** : T1490 Suppression des sauvegardes.
 - **Code** : `processus.rs` (`vssadmin delete shadows`, `wbadmin delete`, `bcdedit … recoveryenabled no`,
   `wmic shadowcopy delete`).
 - **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
@@ -393,6 +411,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## CHA : chaînes de processus
 
 ### CHA-001 : chaîne de processus au score cumulé
+- **ATT&CK** : posée par l'alerte : les techniques des signaux de la chaîne, dans leur ordre.
 - **Code** : `chaines.rs` (au moins deux signaux et score au-dessus du seuil).
 - **Justification** : plusieurs actions suspectes d'une même descendance de processus forment une attaque en étapes.
 - **Télémétrie** : arbre des processus (liste des processus, et créations 4688 : un processus bref, terminé avant la
@@ -410,6 +429,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## PER : persistance
 
 ### PER-001 : démarrage automatique nouveau
+- **ATT&CK** : T1547.001 Clés Run et dossier Démarrage ; T1543.003 Service Windows ; T1053.005 Tâche planifiée ; T1546.003 Abonnement WMI.
 - **Code** : `persistance.rs` (« NOUVEAU démarrage automatique »).
 - **Justification** : un malware s'installe presque toujours pour survivre au redémarrage.
 - **Télémétrie** : relevé des démarrages automatiques (clés Run, services, tâches…), toutes les minutes.
@@ -444,6 +464,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   persistance produite juste avant un arrêt », bout en bout). État : réussi en VM de test pour la clé Run (scénario 3a, Defender actif).
 
 ### PER-002 : démarrage automatique modifié
+- **ATT&CK** : T1547.001 Clés Run et dossier Démarrage ; T1112 Registre modifié.
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
 - **Justification** : un démarrage légitime détourné vers une autre commande.
 - **Télémétrie** : comme PER-001.
@@ -472,20 +493,20 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 Les règles DEF-003 à DEF-006 et DEF-010 à DEF-012 supposent un Defender affaibli : elles ne sont **jamais** exercées en
 VM (Defender intouchable) et restent au mieux « testé en labo ».
 
-| Id | Événement ou état | Niveau |
-|---|---|---|
-| DEF-001 | 1116 : menace détectée | Critique |
-| DEF-002 | 1117 : menace traitée | Info |
-| DEF-003 | 5001 : protection en temps réel désactivée | Critique |
-| DEF-004 | 5010 / 5012 : analyse antivirus désactivée | Critique |
-| DEF-005 | 5007 : exclusion ajoutée | Critique |
-| DEF-006 | 5007 : protection affaiblie (temps réel, antispyware, falsification) | Critique |
-| DEF-007 | 1121 / 1122 : règle ASR (blocage / audit) | Alerte / Info |
-| DEF-008 | 1123 / 1124 : accès contrôlé aux dossiers (blocage / audit) | Alerte / Info |
-| DEF-009 | 1125 / 1126 : protection réseau (blocage / audit) | Alerte / Info |
-| DEF-010 | État WMI : protection en temps réel coupée entre deux relevés | Critique |
-| DEF-011 | État WMI : protection contre les falsifications désactivée | Critique |
-| DEF-012 | État WMI : antivirus désactivé | Critique |
+| Id | Événement ou état | Niveau | ATT&CK |
+|---|---|---|---|
+| DEF-001 | 1116 : menace détectée | Critique | aucune |
+| DEF-002 | 1117 : menace traitée | Info | aucune |
+| DEF-003 | 5001 : protection en temps réel désactivée | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-004 | 5010 / 5012 : analyse antivirus désactivée | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-005 | 5007 : exclusion ajoutée | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-006 | 5007 : protection affaiblie (temps réel, antispyware, falsification) | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-007 | 1121 / 1122 : règle ASR (blocage / audit) | Alerte / Info | aucune |
+| DEF-008 | 1123 / 1124 : accès contrôlé aux dossiers (blocage / audit) | Alerte / Info | aucune |
+| DEF-009 | 1125 / 1126 : protection réseau (blocage / audit) | Alerte / Info | aucune |
+| DEF-010 | État WMI : protection en temps réel coupée entre deux relevés | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-011 | État WMI : protection contre les falsifications désactivée | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-012 | État WMI : antivirus désactivé | Critique | T1685 Protections désactivées ou modifiées |
 
 - **Code** : `defender.rs` (`traduire` pour DEF-001 à 009, `ecarts` pour DEF-010 à 012).
 - **Justification** : Defender est la protection de base du poste ; ses détections et toute tentative de l'affaiblir
@@ -517,6 +538,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## LEU : leurres anti-rançongiciel
 
 ### LEU-001 : leurre modifié, supprimé, renommé ou remplacé par un lien
+- **ATT&CK** : T1486 Chiffrement de données (rançongiciel).
 - **Code** : `hygiene.rs` (`verifier_leurres`, empreinte lue par handle vérifié).
 - **Justification** : un fichier que rien ne devrait toucher a changé ou disparu : chiffrement en cours probable.
 - **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console.
@@ -532,6 +554,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   la règle elle-même n'y est pas déclenchée.
 
 ### LEU-002 : leurre touché (audit des accès)
+- **ATT&CK** : T1486 Chiffrement de données (rançongiciel).
 - **Code** : `vol_donnees.rs` (événement 4663 sur un leurre).
 - **Justification** : même raison que LEU-001, au moment de l'accès ; peut suspendre le programme (réponse automatique
   au rançongiciel, niveau 3).
@@ -552,6 +575,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## VOL : vol de données
 
 ### VOL-001 : accès aux secrets d'un logiciel par un autre programme
+- **ATT&CK** : T1555.003 Identifiants des navigateurs ; T1539 Vol de cookies de session.
 - **Code** : `vol_donnees.rs` (« comportement typique d'un VOLEUR DE DONNÉES »).
 - **Justification** : les voleurs d'identifiants lisent les bases de mots de passe et de cookies des navigateurs, les
   jetons de Discord et de Telegram, les portefeuilles de cryptomonnaie (Ledger, Exodus, Electrum, MetaMask).
@@ -573,6 +597,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## SYS : fichier hosts et pare-feu
 
 ### SYS-001 : fichier hosts modifié par un autre programme
+- **ATT&CK** : T1565 Manipulation de données.
 - **Code** : `moniteur.rs` (empreinte du fichier hosts).
 - **Justification** : redirection de domaines vers un serveur de l'attaquant, ou blocage des mises à jour de sécurité.
 - **Télémétrie** : empreinte du fichier hosts.
@@ -597,6 +622,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   exercée en VM (le scénario n'écrit pas dans le fichier hosts).
 
 ### SYS-002 : règle de pare-feu ajoutée ou modifiée
+- **ATT&CK** : T1686.003 Pare-feu de Windows modifié.
 - **Code** : `parefeu.rs` (suivi des modifications du pare-feu).
 - **Justification** : ouvrir un port entrant est un moyen classique de garder un accès au poste.
 - **Variantes** : auteur non signé : Critique ; port entrant ouvert en ligne de commande : Alerte ; autorisation
@@ -609,6 +635,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   `parefeu::traduire` avec des événements synthétiques.
 
 ### SYS-003 : toutes les règles du pare-feu supprimées
+- **ATT&CK** : T1686.003 Pare-feu de Windows modifié.
 - **Code** : `parefeu.rs` (opération « toutes supprimées »).
 - **Justification** : un pare-feu vidé désarme le poste.
 - **Variantes** :
@@ -626,6 +653,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## PIL : pilotes
 
 ### PIL-001 : pilote vulnérable connu présent
+- **ATT&CK** : T1068 Élévation de privilèges par une faille (pilote vulnérable).
 - **Code** : `hygiene.rs` (liste LOLDrivers, une fois par jour).
 - **Justification** : un pilote signé mais vulnérable permet de désactiver les protections (BYOVD).
 - **Télémétrie** : liste LOLDrivers chargée, pilotes du disque.
@@ -639,6 +667,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## EXT : extensions de navigateur
 
 ### EXT-001 : nouvelle extension de navigateur
+- **ATT&CK** : T1176.001 Extension de navigateur.
 - **Code** : `hygiene.rs` (`verifier_extensions`, toutes les 10 min, sauf au premier relevé).
 - **Justification** : une extension malveillante lit tout ce que l'utilisateur fait dans le navigateur.
 - **Télémétrie** : profils des navigateurs.
@@ -652,11 +681,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## VIE : vie privée et accès distant
 
-| Id | Détection | Code | Niveau |
-|---|---|---|---|
-| VIE-001 | Programme qui utilise la caméra ou le micro pour la première fois | `surveillances.rs` | Alerte |
-| VIE-002 | Outil de prise en main à distance en cours d'exécution | `surveillances.rs` | Alerte |
-| VIE-003 | Bureau à distance activé | `surveillances.rs` | Alerte |
+| Id | Détection | Code | Niveau | ATT&CK |
+|---|---|---|---|---|
+| VIE-001 | Programme qui utilise la caméra ou le micro pour la première fois | `surveillances.rs` | Alerte | posée par l'alerte : T1125 Capture vidéo (caméra) ou T1123 Capture audio (micro) |
+| VIE-002 | Outil de prise en main à distance en cours d'exécution | `surveillances.rs` | Alerte | posée par l'alerte : T1219 Outil d'accès à distance, ou T1572 Tunnel de protocole pour ngrok |
+| VIE-003 | Bureau à distance activé | `surveillances.rs` | Alerte | T1021.001 Bureau à distance |
 
 - **Justification** : espionnage par la caméra ou le micro ; arnaques au faux support qui font installer un outil de
   prise en main ; Bureau à distance ouvert par un attaquant.
@@ -680,6 +709,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 ## BAS : baseline
 
 ### BAS-001 : réglage de sécurité de la baseline défait
+- **ATT&CK** : T1685 Protections désactivées ou modifiées ; T1112 Registre modifié.
 - **Code** : `baseline.rs` (`derives`, toutes les 10 min).
 - **Justification** : un réglage de durcissement qui revient en arrière (par un malware, une mise à jour ou une
   personne) rouvre une faiblesse.
@@ -701,19 +731,19 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## COR : corrélations du SIEM
 
-| Id | Corrélation | Niveau | MITRE |
+| Id | Corrélation | Niveau | ATT&CK |
 |---|---|---|---|
-| COR-R1 | Tentatives de mot de passe en série | Alerte | T1110 |
-| COR-R2 | Session ouverte après une série d'échecs | Critique | T1110, T1078.003 |
-| COR-R3 | Nouveau compte administrateur (créé il y a moins de 30 min puis ajouté aux Administrateurs) | Critique | T1136.001 |
-| COR-R3b | Ajout d'un compte existant au groupe Administrateurs | Alerte | T1098 |
-| COR-R4 | Journal d'événements effacé | Critique | T1685.005 |
-| COR-R5 | Service installé depuis un emplacement suspect | Critique | T1543.003, T1569.002 |
+| COR-R1 | Tentatives de mot de passe en série | Alerte | T1110 Force brute |
+| COR-R2 | Session ouverte après une série d'échecs | Critique | T1110 Force brute ; T1078.003 Compte local valide |
+| COR-R3 | Nouveau compte administrateur (créé il y a moins de 30 min puis ajouté aux Administrateurs) | Critique | T1136.001 Compte local créé |
+| COR-R3b | Ajout d'un compte existant au groupe Administrateurs | Alerte | T1098 Manipulation de compte |
+| COR-R4 | Journal d'événements effacé | Critique | T1685.005 Journaux d'événements effacés |
+| COR-R5 | Service installé depuis un emplacement suspect | Critique | T1543.003 Service Windows ; T1569.002 Exécution par un service |
 | COR-R6 | Attaque en plusieurs étapes (3 détections d'un même programme en 10 min) | Critique | aucune |
-| COR-R7 | Protection affaiblie (service de sécurité arrêté, politique d'audit modifiée) | Alerte | selon l'événement : T1685 et T1489 (service de sécurité arrêté), T1685.001 (politique d'audit) |
-| COR-R8 | **Numéro non attribué** : aucune règle R8 dans `siem.rs` à ce jour ; le numéro reste libre, il n'est pas réutilisé pour une autre règle sans décision | — | — |
-| COR-R9 | Session ouverte depuis une adresse publique (Bureau à distance : Critique ; autre : Alerte) | Critique / Alerte | T1133 |
-| COR-R10 | Pilote vulnérable installé (BYOVD) | Critique | T1068 |
+| COR-R7 | Protection affaiblie (service de sécurité arrêté, politique d'audit modifiée) | Alerte | posée par l'alerte : T1685 Protections désactivées ou modifiées et T1489 Arrêt de services (service de sécurité arrêté) ou T1685.001 Journalisation désactivée ou modifiée (politique d'audit modifiée) |
+| COR-R8 | **Numéro non attribué** : aucune règle R8 dans `siem.rs` à ce jour ; le numéro reste libre, il n'est pas réutilisé pour une autre règle sans décision | sans objet | sans objet |
+| COR-R9 | Session ouverte depuis une adresse publique (Bureau à distance : Critique ; autre : Alerte) | Critique / Alerte | T1133 Services distants exposés |
+| COR-R10 | Pilote vulnérable installé (BYOVD) | Critique | T1068 Élévation de privilèges par une faille (pilote vulnérable) |
 
 - **Code** : `siem.rs` (`Correlation`).
 - **Télémétrie** : journaux Sécurité et Système ; audit avancé (profil de baseline « journalisation »).
@@ -744,10 +774,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## INT : intégrité du service
 
-| Id | Détection | Code | Niveau |
-|---|---|---|---|
-| INT-001 | Échec de la protection du dossier de données (échec fermé) | `protection.rs` | Critique |
-| INT-002 | Tube de commandes déjà pris par un autre processus (squat) | `canal.rs` | Critique |
+| Id | Détection | Code | Niveau | ATT&CK |
+|---|---|---|---|---|
+| INT-001 | Échec de la protection du dossier de données (échec fermé) | `protection.rs` | Critique | aucune |
+| INT-002 | Tube de commandes déjà pris par un autre processus (squat) | `canal.rs` | Critique | aucune |
 
 - **Justification** : un dossier de données mal protégé ou un tube squatté donnerait la main sur le service.
 - **Télémétrie** : aucune externe (contrôles du service lui-même).
@@ -757,15 +787,15 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## SAN : santé de deR4Tizer (phase 4)
 
-| Id | Constat | Code | Niveau |
-|---|---|---|---|
-| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, `Persistance` | `sante.rs` | Alerte |
-| SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info |
-| SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique |
-| SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte |
-| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) |
-| SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte |
-| SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique |
+| Id | Constat | Code | Niveau | ATT&CK |
+|---|---|---|---|---|
+| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, `Persistance` | `sante.rs` | Alerte | aucune |
+| SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info | aucune |
+| SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique | aucune |
+| SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte | aucune |
+| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) | aucune |
+| SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte | aucune |
+| SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique | aucune |
 
 - **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
   un poste calme. Couper la vue sur Defender est ce qu'un attaquant gagne le plus à faire (SAN-003).
@@ -810,12 +840,12 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## REP : réponse (phase 6)
 
-| Id | Constat | Code | Niveau |
-|---|---|---|---|
-| REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), quarantaine (30 jours), blocage manuel (90 jours), puis à chaque période. Une alerte par sorte d'action et par heure au plus (24 h pour quarantaine et blocage manuel) : les relances retenues partent, comptées, avec la suivante ; au-delà d'une action, l'alerte dit le nombre et nomme les 5 premières. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation), Info (quarantaine, blocage manuel) |
-| REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé, ou le registre des actions en cours est plein (suspensions automatiques récentes sorties du suivi, une fois par épisode) | `politique.rs` | Critique |
-| REP-003 | Pare-feu muet 5 min de suite (niveau Alerte, une fois par panne : l'état publié peut être ancien) ; ou mode panique non posé (une règle refusée ou inactive, drapeau non écrit : tout est retiré) ou non retiré (une règle reste : drapeau gardé), ou devenu incertain hors d'une commande (règle ou drapeau retiré par un tiers, vu en 30 s au plus). Dit l'état effectif et la récupération | `moniteur.rs`, `reponse.rs` | Critique |
-| REP-004 | Isolation détournée : le chemin isolé mène à un autre programme (dossier remplacé par une jonction, fichier par un lien), constaté au relevé de 5 min, signalé une fois ; ou isolation non vérifiable (chemin illisible 3 relevés de suite, niveau Alerte) ; les règles sont gardées (jamais de levée automatique), la décision est humaine | `moniteur.rs`, `reponse.rs` | Critique (isolation détournée), Alerte (isolation non vérifiable) ; jamais adoucie par l'apprentissage (comme toute REP-*) |
+| Id | Constat | Code | Niveau | ATT&CK |
+|---|---|---|---|---|
+| REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), quarantaine (30 jours), blocage manuel (90 jours), puis à chaque période. Une alerte par sorte d'action et par heure au plus (24 h pour quarantaine et blocage manuel) : les relances retenues partent, comptées, avec la suivante ; au-delà d'une action, l'alerte dit le nombre et nomme les 5 premières. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation), Info (quarantaine, blocage manuel) | aucune |
+| REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé, ou le registre des actions en cours est plein (suspensions automatiques récentes sorties du suivi, une fois par épisode) | `politique.rs` | Critique | aucune |
+| REP-003 | Pare-feu muet 5 min de suite (niveau Alerte, une fois par panne : l'état publié peut être ancien) ; ou mode panique non posé (une règle refusée ou inactive, drapeau non écrit : tout est retiré) ou non retiré (une règle reste : drapeau gardé), ou devenu incertain hors d'une commande (règle ou drapeau retiré par un tiers, vu en 30 s au plus). Dit l'état effectif et la récupération | `moniteur.rs`, `reponse.rs` | Critique | aucune |
+| REP-004 | Isolation détournée : le chemin isolé mène à un autre programme (dossier remplacé par une jonction, fichier par un lien), constaté au relevé de 5 min, signalé une fois ; ou isolation non vérifiable (chemin illisible 3 relevés de suite, niveau Alerte) ; les règles sont gardées (jamais de levée automatique), la décision est humaine | `moniteur.rs`, `reponse.rs` | Critique (isolation détournée), Alerte (isolation non vérifiable) ; jamais adoucie par l'apprentissage (comme toute REP-*) | aucune |
 
 - **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un
   programme ou une adresse actifs, ce que le prestataire doit savoir. L'alerte d'origine part toujours : RES-001 et LEU-002
@@ -829,11 +859,11 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 
 ## EXP : modules expérimentaux (dégelés en novembre 2026, en validation)
 
-| Id | Module | Code |
-|---|---|---|
-| EXP-IDS-001 | IDS (règles au format Suricata) ; niveau selon la priorité de la règle (1 Critique, 2 Alerte, sinon Info), aucune technique ATT&CK posée par le code ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` |
-| EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` |
-| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/NBNS/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` |
+| Id | Module | Code | ATT&CK |
+|---|---|---|---|
+| EXP-IDS-001 | IDS (règles au format Suricata) ; niveau selon la priorité de la règle (1 Critique, 2 Alerte, sinon Info), aucune technique ATT&CK posée par le code ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` | posée par l'alerte : aucune à ce jour (l'identifiant de la règle IDS est dans les raisons) |
+| EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` | posée par l'alerte selon le comportement : T1187, T1021, T1048.003, T1071.001, T1071.004, T1552 |
+| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/NBNS/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` | posée par l'alerte selon le comportement : T1557.002, T1557.001, T1557.003, T1133, T1200 |
 
 - Gelés par `CLAUDE.md` pendant la phase 3 : seule une ligne qui pose l'identifiant de règle a été ajoutée à leurs
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25). Dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).
