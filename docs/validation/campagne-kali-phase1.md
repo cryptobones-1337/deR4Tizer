@@ -139,6 +139,7 @@ négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scé
   deviennent 180 s après le démarrage pour S-22, S-25, S-27, N-12 et N-13.
 - **Capture passive** : ouverte au démarrage sur la carte du labo ; preuve par le journal du service et l'état des
   collectes (7.0).
+- **Précondition ajoutée** (7.0) : filtrage DNS désactivé, état relevé après le redémarrage ; aucun attendu ne change.
 - Rien d'autre ne change.
 
 **Changements de la v1.7 à la v1.6** (2026-11-22, lot 4 de la couverture ATT&CK) :
