@@ -2,9 +2,9 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.6** (S-19 et préparation de « campagne C » réécrits le 2026-11-20 après la relecture de la baseline ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
+| Version de la liste | **1.7** (2026-11-22, pour le lot 4 de la couverture ATT&CK : témoins négatifs N-06 à N-13, fiches complètes de S-20 à S-27 avec délais chiffrés, règle de décision D-3, protocole de répétition des 10 essais ; S-19 et préparation de « campagne C » réécrits en 1.6 ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
 | Date de la version 1.4 | 2026-11-15 |
-| Versions précédentes | 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
+| Versions précédentes | 1.6 du 2026-11-20 ; 1.5 du 2026-11-19 ; 1.4 du 2026-11-15 ; 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
 | Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
@@ -45,6 +45,15 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   3.1), mais la fiche v1.6 n'était pas encore fusionnée sur `main`, contrairement à `CLAUDE.md` (publication avant la
   première exécution) ; écart signalé au mainteneur, qui peut en prendre acte comme pour S-20 à S-27.
 
+- **2026-11-22, version 1.7** : approuvée par l'agent de validation pour le lot 4 de la couverture ATT&CK
+  (consolidation par 10 essais des lignes « testé en labo, non consolidé » de `carte-attack.md`). Ajouts : témoins
+  négatifs N-06 à N-13 (3.2 et 3.2 bis) ; protocole de répétition (3.4) ; règle de décision D-3 (5.6) ; fiches complètes
+  de S-20 à S-27 avec délais maximaux chiffrés (§7). Aucun scénario offensif nouveau, aucune variante nouvelle ; actions
+  et attendus de S-01 à S-19 inchangés. Le service n'est jamais arrêté ni redémarré par le banc (S-18 hors lot) : pour le
+  leurre et l'UPnP, on attend le cycle de 600 s du NDR (décision provisoire du coordinateur du 2026-11-22, en l'absence
+  du mainteneur, à qui la question sera posée). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au
+  mainteneur pour information avant exécution ; publiée sur `main` avant la première exécution d'un essai du lot 4.
+
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
 - Elle ne lève aucune règle : aucun scénario qui toucherait Defender, sortirait du labo, volerait un identifiant réel,
@@ -60,6 +69,11 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
 S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à S-19 ; S-16 avec son option longue (2 h, en
 configuration A). **Ajoutés** : S-18 (DNS-003) en v1.1 ; S-19 (contrôle de la configuration C) en v1.3. Configurations :
 C principale, A comparaison, B collecte Sysmon (3.0, 5.1.2, 5.1.11).
+
+**Retenus en plus (v1.7)** : témoins N-06 à N-13 (3.2, 3.2 bis) ; S-20 à S-27 avec fiches complètes (§7) ; protocole
+de répétition (3.4) et règle D-3 (5.6) pour les séries de 10 essais. **Hors du lot 4, non ajoutés** : dossier Démarrage
+(T1547.001), service lancé depuis un dossier système (T1569.002), balise régulière (T1071.001), responder passif NBNS
+(T1557.001).
 
 **Écartés (v1.1)** : T1567 (D) ; T1055 (non exécuté) ; T1562.001 contre Defender, les journaux de Windows ou deR4Tizer
 (interdit) ; fiches Atomic qui téléchargent, désactivent une protection, lisent la mémoire de LSASS ou effacent un journal réel.
@@ -108,6 +122,16 @@ négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scé
   résolveur local = un nom `.test` de la liste est résolu en adresse nulle et apparaît dans les « derniers blocages »,
   sans alerte. Le témoin **N-05** redevient un **témoin négatif normal** (retour au DHCP sans alerte). Aucune action ni
   nettoyage d'un autre scénario n'est changé.
+
+**Changements de la v1.7 à la v1.6** (2026-11-22, lot 4 de la couverture ATT&CK) :
+- **Témoins négatifs N-06 à N-13** : activité légitime voisine de chaque ligne à consolider qui n'avait pas de témoin
+  (3.2 et 3.2 bis).
+- **Fiches complètes de S-20 à S-27** (§7) : préconditions, action, attendu, délai maximal chiffré, nettoyage et preuves.
+  Le §6 ne donnait que « le délai du cycle du NDR ».
+- **Règle D-3** (5.6) : la PER-001 de la tâche d'exécution du banc est un artefact.
+- **Protocole de répétition** (3.4) : remise à l'instantané à chaque essai sauf S-09, cibles distinctes, apprentissage
+  terminé, niveau vérifié, actions de S-13 hors SYSTEM, service jamais redémarré par le banc.
+- Aucun scénario offensif ajouté, aucune action ni aucun nettoyage de S-01 à S-19 changé.
 
 Document publiable tel quel (`docs/validation/`) : niveau comportement, identifiants ATT&CK, attendus, nettoyage et
 preuves ; aucune commande offensive détaillée ; aucune donnée personnelle, aucun chemin de profil, aucun identifiant de
@@ -661,6 +685,92 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
 | N-03 | téléchargement autorisé depuis Kali par le navigateur | aucune RES-002 ; RES-003 Info admise | identique ; avertissement SmartScreen à l'ouverture du fichier, sans alerte de deR4Tizer |
 | N-04 | une erreur de mot de passe puis réussite en Bureau à distance | aucune COR-R1/R2 ; COR-R9 reste attendue (tout le labo est « public » pour le service) | non exécutable (Bureau à distance refusé) : D en C, mesuré en A |
 | N-05 | réglage DNS rendu au DHCP (après S-06) | témoin négatif : DNS-002 ne se déclenche pas au retour au DHCP (changement donné par le réseau : événement du mini-SIEM, sans alerte) | identique |
+| N-06 (v1.7) | valeur Run vers un programme signé de Program Files, sans argument | PER-001 Info au plus | identique |
+| N-07 (v1.7) | service déclaré vers un programme signé de Program Files, démarrage manuel, jamais démarré | aucune COR-R5 ; 7045 produit ; PER-001 Info au plus | identique |
+| N-08 (v1.7) | compte de test ajouté à un groupe local non administrateur | aucune COR-R3 ni COR-R3b | identique |
+| N-09 (v1.7) | politique d'audit lue par l'administrateur, puis stratégies locales réappliquées par le système | aucune COR-R7, aucune BAS-001 | identique |
+| N-10 (v1.7) | journal dédié au test exporté vers un fichier, sans effacement | aucune COR-R4 ; aucun 104 | identique |
+| N-11 (v1.7) | le programme de test de S-16 écrit dans un fichier ordinaire voisin d'un leurre | aucune LEU-001 ni LEU-002, aucune suspension | écriture refusée possible par l'accès contrôlé aux dossiers : témoin D en C, mesuré en A |
+| N-12 (v1.7) | Kali présent sur le segment du labo, aucun émetteur NDR actif, pendant un cycle complet du leurre | aucune EXP-NDR-001 Alerte ou Critique ; leurre émis, sans réponse | identique |
+| N-13 (v1.7) | box émulée qui annonce une redirection vers une autre adresse du segment, pas vers ce PC | aucune EXP-NDR-001 ; état UPnP « dont 0 vers ce PC » | identique |
+
+### 3.2 bis Fiches des témoins ajoutés en v1.7
+
+Communs : test négatif (activité légitime voisine d'une ligne du lot 4). Un FP est une alerte Alerte ou Critique liée au
+témoin (D-1 et D-3 s'appliquent). Le témoin n'est valide que si l'activité a bien eu lieu, prouvée par l'événement
+indiqué ; sinon D. Les attendus en configuration C sont une HYPOTHÈSE. Preuves communes (3.0) en plus des preuves propres.
+
+**N-06 : valeur Run vers un programme signé (voisin de T1547.001, S-09)**
+- Préconditions : instantané de la configuration ; collecte des démarrages automatiques « Active » ; relevé de référence noté.
+- Action : une valeur Run de l'utilisateur de test, nom distinct par essai, vers un programme signé de Program Files,
+  sans argument.
+- Attendu : PER-001 Info au plus (entrée nouvelle, sans remarque). Délai : 180 s.
+- Nettoyage : valeur supprimée ; disparition constatée au relevé suivant.
+- Preuves : `demarrage.json` avant et après, valeur du registre avant et après.
+- Configuration C : identique.
+
+**N-07 : service signé dans Program Files (voisin de T1543.003 et T1569.002, S-13)**
+- Préconditions : instantané de la configuration ; journal Système lisible.
+- Action : un service, nom distinct par essai, déclaré vers un programme signé de Program Files, en démarrage manuel ;
+  jamais démarré ; aucune ligne de commande d'interpréteur.
+- Attendu : 7045 produit ; aucune COR-R5 ; PER-001 Info au plus. Délai : 120 s après le 7045.
+- Nettoyage : service supprimé ; remise à l'instantané après le témoin.
+- Preuves : 7045, liste des services avant et après.
+- Configuration C : identique.
+
+**N-08 : compte ajouté à un groupe non administrateur (voisin de T1098, S-13)**
+- Préconditions : instantané de la configuration ; audit des comptes et des groupes actif.
+- Action : un compte de test, distinct par essai, créé puis ajouté à un groupe local non administrateur.
+- Attendu : 4720 et 4732 produits ; aucune COR-R3 ni COR-R3b. Délai : 120 s après le 4732.
+- Nettoyage : compte supprimé ; remise à l'instantané.
+- Preuves : 4720, 4732 (groupe visé).
+- Configuration C : identique.
+
+**N-09 : politique d'audit lue, stratégies réappliquées par le système (voisin de T1685.001, S-13)**
+- Préconditions : instantané de la configuration ; politique d'audit relevée.
+- Action : l'administrateur lit la politique d'audit, sans rien changer, puis demande la mise à jour des stratégies
+  locales ; leur application est faite par le système.
+- Attendu : aucune COR-R7 (un 4719 émis par le système n'est pas retenu par le service) ; aucune BAS-001. Délai : 120 s
+  après la mise à jour. Tout 4719 produit est relevé avec son émetteur.
+- Nettoyage : aucun ; politique d'audit comparée avant et après ; remise à l'instantané.
+- Preuves : politique d'audit avant et après, 4719 éventuels.
+- Configuration C : identique.
+
+**N-10 : journal dédié exporté sans effacement (voisin de T1685.005, S-13)**
+- Préconditions : un journal dédié créé pour le témoin, distinct par essai.
+- Action : export du journal dédié vers un fichier, sans effacement.
+- Attendu : aucun 104 ; aucune COR-R4. Délai : 120 s.
+- Nettoyage : export et journal dédié supprimés ; remise à l'instantané.
+- Preuves : liste des journaux, journal Système sur la fenêtre.
+- Configuration C : identique.
+
+**N-11 : fichier ordinaire voisin d'un leurre (voisin de T1486, S-16)**
+- Préconditions : comme S-16 (leurres posés, collecte `Leurres` active).
+- Action : le programme de test de S-16, copie distincte par essai, écrit un octet dans un fichier ordinaire du même
+  dossier qu'un leurre ; aucun leurre n'est touché.
+- Attendu : aucune LEU-001 ni LEU-002, aucune suspension. Délai : 60 s.
+- Nettoyage : fichier et programme supprimés ; remise à l'instantané.
+- Preuves : empreintes des leurres avant et après, `reponses.json`.
+- Configuration C : écriture refusée possible par l'accès contrôlé aux dossiers (1123). L'activité n'a pas lieu : témoin
+  D en C, mesuré en A.
+
+**N-12 : segment sans émetteur (voisin de T1557.001 et T1557.002, S-20 à S-26)**
+- Préconditions : règles communes du §7 ; aucune unité d'émission active côté Kali.
+- Action : aucune ; observation d'un cycle complet du leurre.
+- Attendu : leurre émis sans réponse (`reseau.json`) ; aucune EXP-NDR-001 Alerte ou Critique. Délai : 660 s après la
+  réorientation. Valide seulement si le leurre a été émis dans ce délai.
+- Nettoyage : remise à l'instantané.
+- Preuves : `reseau.json` (heure et résultat du leurre), état des unités côté Kali.
+- Configuration C : identique.
+
+**N-13 : redirection UPnP vers une autre machine (voisin de T1133, S-27)**
+- Préconditions : comme S-27.
+- Action : la box émulée annonce une redirection d'un port vers une autre adresse du segment, pas vers ce PC.
+- Attendu : box découverte ; état « 1 redirection(s) sur la box, dont 0 vers ce PC » ; aucune EXP-NDR-001. Délai : 660 s
+  après le démarrage de la box émulée. Valide seulement si la box est découverte.
+- Nettoyage : comme S-27.
+- Preuves : `reseau.json` (état UPnP), journal de la box émulée.
+- Configuration C : identique.
 
 ### 3.3 Écartés, non exécutés ou en attente
 
@@ -679,6 +789,44 @@ configuration A ou B (sans baseline durcie) est notée « bloqué par Defender �
   écartées d'office.
 
 ---
+
+### 3.4 Protocole de répétition des 10 essais (v1.7, lot 4 de la couverture ATT&CK)
+
+S'applique aux séries de consolidation : S-02, S-09, S-11 (a), S-13, S-14, S-16, S-17, S-20, S-22 (facultatif), S-23,
+S-25, S-26, S-27 et à leurs témoins. Il précise l'exécution sans changer les actions, attendus ni nettoyages des fiches.
+
+1. **Décompte.** 10 essais valides par scénario et par configuration. Un essai invalide (D) est remplacé par un essai
+   supplémentaire. Le rapport donne les essais exécutés, valides, VP, C, FN, D et P, et le nombre de détections. Scores
+   séparés par configuration ; P compté à part ; volets SIMULATION et émulation jamais fusionnés (S-13 noté par volet).
+2. **Remise à l'instantané de la configuration avant chaque essai, sauf S-09.** S-09 enchaîne ses 10 essais dans une
+   même session, avec remise au début et à la fin de la série. Entre deux essais de S-09, le nettoyage est prouvé par
+   le relevé suivant des démarrages automatiques (entrées absentes de `demarrage.json`) avant l'essai d'après.
+3. **Après chaque remise**, avant l'heure de départ : horloge de la VM resynchronisée, fin de la maintenance de Windows
+   constatée, critère D-2 vérifié pour chaque collecte dont dépend une règle du scénario.
+4. **Cibles distinctes à chaque essai** : nom de tâche, nom de valeur Run, nom de service (distinct dans ses 20 premiers
+   caractères), compte de test, journal dédié, copie du programme de test dans un dossier propre à l'essai. La forme de
+   l'action ne change pas : même type de dossier, même interpréteur, même commande bénigne.
+5. **Apprentissage terminé avant le premier essai.** État de l'apprentissage relevé (fin passée) au début de chaque
+   série. Sur une installation neuve, l'apprentissage est terminé par la commande de l'administrateur avant tout essai,
+   et le premier relevé des démarrages automatiques est passé.
+6. **Niveau vérifié.** Un VP exige la règle, le niveau et l'entité attendus. Une alerte de la bonne règle au niveau
+   « Info » avec la mention « mode apprentissage » ou « comportement appris » est notée C ; la série s'arrête jusqu'à ce
+   que la configuration soit expliquée.
+7. **Actions de S-13 hors SYSTEM.** Elles sont faites par le compte administrateur de test, en session élevée.
+   L'émetteur du 4719 est relevé ; un 4719 émis par le système rend l'essai invalide (D).
+8. **Service intact.** Le banc n'arrête ni ne redémarre jamais le service (S-18 hors lot). Pour le leurre et l'UPnP, on
+   attend le cycle de 600 s du NDR (décision provisoire du 2026-11-22, question posée au mainteneur).
+9. **Latence.** Principale : `HeureUtc` de l'alerte moins `TimeCreated` de l'événement déclencheur, lus sur l'horloge de
+   la VM. Pour le NDR : moins l'heure d'émission du leurre ou du relevé UPnP (`reseau.json`), ou moins la première
+   observation dans la VM (double adresse MAC, requête seuil). Secondaire : moins l'heure de départ. Médiane et p95 par
+   scénario et par configuration. Une latence entre machines est corrigée de l'écart d'horloge relevé.
+10. **Fenêtre d'observation.** Délai maximal de la fiche. Dans le lot 4, BAS-001 (25 min) n'est pas attendue :
+    NON ÉVALUÉE, sauf si elle est observée dans la fenêtre. La ligne T1685.001 se juge sur COR-R7.
+11. **Témoins.** Chaque témoin du scénario (N-01 à N-13 selon le cas) est exécuté au moins 3 fois par configuration.
+12. **Versions notées** : commit de `main` du binaire, empreintes SHA-256 du MSI et du service, version de la liste,
+    build de Windows, Sysmon (version et configuration, en B) ou « absent », Atomic Red Team (version, en B ; aucune
+    fiche utilisée) ou « absent », instantané et type de point de contrôle.
+13. **Arrêt.** Des preuves incomplètes ou un environnement non propre arrêtent la série avant l'essai suivant.
 
 ## 4. Prérequis du labo à vérifier avant S-01
 
@@ -846,6 +994,20 @@ testable (5.2) ; N-05 est un témoin négatif normal (3.2). **Il n'y a pas de qu
 point.** Seule prudence maintenue, non bloquante : avant de mesurer, confirmer que le **binaire installé** dans
 l'instantané de test correspond bien à cette source de `main` (empreinte du MSI et version relevées, section 4, point 5).
 
+### 5.6 Règle de décision D-3 (ajoutée en v1.7, tranchée par l'agent de validation)
+
+**D-3 : PER-001 ou PER-002 de la tâche d'exécution du banc, artefact du banc.**
+- Constat de lecture (`persistance.rs`, `tests/vm/lancer.ps1`) : le banc lance son exécuteur par une tâche planifiée
+  (interpréteur, fenêtre cachée), que le relevé des démarrages automatiques voit comme une persistance nouvelle et
+  suspecte.
+- **Règle :** une PER-001 ou PER-002 qui porte sur la tâche d'exécution du banc est étiquetée « artefact du banc » et
+  exclue du décompte des VP comme des FP, y compris dans les témoins. Trois conditions, toutes vérifiées : nom de la
+  tâche identique à celui que le banc a enregistré ; commande identique à celle qu'il a enregistrée ; création
+  antérieure à l'heure de départ de l'essai.
+- Toute autre PER-001 ou PER-002 est investiguée, jamais exclue d'office. Les alertes exclues sont conservées dans les
+  preuves brutes.
+- Aucun correctif produit : sur un poste réel, cette tâche serait une vraie persistance suspecte.
+
 ## 6. Version 1.5 (2026-11-19) : scénarios de détection réseau S-20 à S-27, approuvés après exécution
 
 Ajoutés à la liste approuvée le 2026-11-19 sur décision du mainteneur (« Scénario S20 à S27, il faut les ajouter à la
@@ -868,3 +1030,117 @@ sur le segment de laboratoire (topologie accordée le 2026-11-19).
 Pour chacun : préconditions et nettoyage décrits dans son rapport ; remise à l'instantané avant et après chaque essai ;
 résultat attendu = l'alerte ci-dessus dans le délai du cycle du NDR ; mesures non consolidées tant qu'il n'y a pas 10
 essais valides. Non couverts : responder passif NBNS (non exercé), IDS directionnel et de contenu, mode IPS.
+
+## 7. Version 1.7 (2026-11-22) : fiches complètes de S-20 à S-27
+
+Approuvées par l'agent de validation le 2026-11-22. Elles complètent le tableau du §6 sans changer comportement, règle
+ni niveau attendus. Nature : émulation bénigne et réversible depuis la VM Kali, sur le segment du labo. Les attendus en
+configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure citée.
+
+### 7.0 Règles communes
+
+- Départ : instantané de la configuration. Réorientation réversible de la VM sur le segment du labo (autres cartes
+  désactivées, passerelle posée sur la carte du labo ; topologie accordée le 2026-11-19). **Sans arrêt ni redémarrage du
+  service** (3.4, point 8).
+- Critère D-2 réseau : `reseau.json` réécrit après la réorientation, avec l'adresse du segment du labo comme adresse
+  locale ; sinon D. Pour les scénarios à capture passive (S-21, S-23, S-24, S-26), la capture doit être active sur la
+  carte du labo, d'après l'état des collectes ; sinon D, jamais FN. Qu'elle suive la réorientation sans redémarrage est
+  une HYPOTHÈSE, vérifiée à chaque essai.
+- Côté Kali : unités systemd figées et auditables, droits root bornés à ces unités, aucun mot de passe saisi ; un seul
+  comportement par essai ; journal horodaté.
+- Délai : compté depuis l'événement de référence de la fiche. Une absence d'alerte dans le délai, préconditions tenues,
+  est un FN.
+- Nettoyage commun : unité arrêtée et arrêt prouvé côté Kali ; adresses secondaires de Kali retirées et retrait vérifié ;
+  remise à l'instantané après l'essai.
+- Preuves communes : 3.0 ; `reseau.json` avant et après ; état des collectes ; journal côté Kali ; écart d'horloge entre
+  la VM et Kali.
+- Témoins : N-12 (S-20 à S-26), N-13 (S-27).
+
+**S-20 : usurpation ARP de la passerelle (T1557.002)**
+- Préconditions : 7.0 ; passerelle de la VM tenue par Kali ; table de voisinage de la VM relevée.
+- Action : Kali annonce une adresse inutilisée du segment sous sa propre adresse MAC. Dans la table de voisinage de la
+  VM, deux adresses (la passerelle et l'adresse inutilisée) partagent alors une même MAC.
+- Validité : double MAC observée dans la table de voisinage de la VM ; sinon D.
+- Attendu : EXP-NDR-001 Critique « usurpation ARP probable » (T1557.002). Délai : 120 s après la première observation de
+  la double MAC.
+- Nettoyage : annonces arrêtées ; 7.0.
+- Preuves : table de voisinage horodatée, alerte.
+- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+
+**S-21 : serveur DHCP pirate (T1557.003)** : hors du lot 4, à remesurer après la PR #190.
+- Préconditions : 7.0 ; VM en DHCP avec un bail du serveur DHCP légitime du labo ; serveur DHCP de la carte lu non vide
+  par le service (`reseau.json`), sinon D.
+- Action : un second émetteur du segment envoie des offres DHCP non sollicitées, avec un identifiant de serveur
+  différent de celui du bail.
+- Attendu : EXP-NDR-001 Critique « serveur DHCP pirate » (T1557.003). Délai : 120 s après la première offre capturée.
+  Réserve : l'identifiant de serveur est contrôlé par l'émetteur.
+- Nettoyage : émetteur et serveur légitime arrêtés ; 7.0.
+- Preuves : bail de la VM, offres capturées, alerte.
+- Configuration C : identique.
+
+**S-22 : leurre LLMNR, répondeur sans droits root (T1557.001)** : facultatif dans le lot 4 (S-25 couvre le même chemin).
+- Préconditions : 7.0 ; répondeur LLMNR en espace utilisateur démarré avant l'émission suivante du leurre.
+- Action : le répondeur répond au nom inexistant que le leurre de deR4Tizer interroge.
+- Validité : émission du leurre (`reseau.json`) postérieure au démarrage du répondeur, dans les 660 s ; sinon D (cas du
+  leurre sauté après un échec de liaison, constat du premier lot réseau).
+- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 660 s après le démarrage du
+  répondeur, et 60 s au plus après l'émission du leurre.
+- Nettoyage : répondeur arrêté ; 7.0.
+- Preuves : heure et résultat du leurre, journal du répondeur, alerte.
+- Configuration C : identique (le leurre part du service, quelle que soit la politique LLMNR du client).
+
+**S-23 : responder passif LLMNR, au moins 3 noms (T1557.001)**
+- Préconditions : 7.0 ; unité de réponse active côté Kali.
+- Action : la VM résout, par le client DNS de Windows, au moins 6 noms `.test` inexistants et distincts ; le répondeur
+  répond à chacun.
+- Validité : au moins 3 réponses distinctes du même hôte capturées ; sinon D.
+- Attendu : EXP-NDR-001 Alerte « répond en LLMNR pour au moins 3 noms » (T1557.001). Délai : 120 s après la 3ᵉ réponse
+  capturée.
+- Nettoyage : unité arrêtée ; 7.0.
+- Preuves : requêtes émises (heures), réponses capturées, alerte.
+- Configuration C : **prévenu (P-baseline)** : LLMNR désactivé côté client par la baseline (mesuré le 2026-11-16), aucune
+  requête émise. Compté à part, hors score de détection.
+
+**S-24 : motif de la règle IDS de test intégrée (sid 9000000)** : hors du lot 4.
+- Préconditions : 7.0 ; règles IDS chargées.
+- Action : Kali envoie trois datagrammes portant le motif de la règle de test intégrée.
+- Attendu : EXP-IDS-001 au niveau de la règle (Info). Délai : 60 s après le premier datagramme.
+- Nettoyage : 7.0.
+- Preuves : état de l'IDS (règles chargées), alerte.
+- Configuration C : identique.
+
+**S-25 : leurre LLMNR et NBNS, répondeur root (T1557.001)**
+- Préconditions : 7.0 ; unité de réponse LLMNR et NBNS active côté Kali, sans empoisonnement DHCP ni WPAD, démarrée
+  avant l'émission suivante du leurre.
+- Action : le répondeur répond, en LLMNR et en NBNS, au nom inexistant que le leurre interroge.
+- Validité : comme S-22. Le résultat du leurre doit montrer une réponse sur les deux protocoles ; une réponse sur un
+  seul est notée.
+- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 660 s après le démarrage de l'unité,
+  et 60 s au plus après l'émission du leurre.
+- Nettoyage : unité arrêtée ; 7.0.
+- Preuves : heure et résultat du leurre, journal de l'unité, alerte.
+- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+
+**S-26 : responder passif mDNS, au moins 15 noms (T1557.001)**
+- Préconditions : 7.0 ; unité de réponse mDNS active côté Kali.
+- Action : un programme de test de la VM émet au moins 20 requêtes mDNS de noms distincts, directement sur le réseau,
+  sans passer par le client mDNS de Windows ; le répondeur répond à chacune.
+- Validité : au moins 15 réponses distinctes du même hôte capturées ; sinon D.
+- Attendu : EXP-NDR-001 Alerte « répond en mDNS pour N noms » (T1557.001). Délai : 120 s après la 15ᵉ réponse capturée.
+  S-26 mesure le détecteur, pas la posture mDNS du client.
+- Nettoyage : unité arrêtée, programme de test supprimé ; 7.0.
+- Preuves : requêtes émises (heures), réponses capturées, alerte.
+- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+
+**S-27 : redirection UPnP d'un port vers ce PC (T1133)**
+- Préconditions : 7.0, plus un ré-adressage réversible du segment en 192.168.50.0/24 (VM, et adresse secondaire de
+  Kali) : le module UPnP n'interroge que des adresses privées (topologie accordée le 2026-11-19). Dans cet adressage,
+  COR-R9 et les artefacts D-1 ne sont pas attendus.
+- Action : une box émulée en espace utilisateur, côté Kali, répond à la découverte UPnP et annonce une redirection d'un
+  port vers la VM.
+- Validité : box découverte par le service (état UPnP de `reseau.json`), dans les 660 s ; sinon D.
+- Attendu : EXP-NDR-001 Alerte « la box ouvre le port … vers ce PC » (T1133) ; état « dont 1 vers ce PC ». Délai : 660 s
+  après le démarrage de la box émulée, et 60 s au plus après le relevé UPnP.
+- Nettoyage : box émulée arrêtée ; adresse secondaire de Kali retirée et retrait vérifié ; 7.0.
+- Preuves : état UPnP avant et après, journal de la box émulée, alerte.
+- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
