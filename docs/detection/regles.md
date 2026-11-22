@@ -151,7 +151,7 @@ modules expérimentaux.
   le blocage de 7 jours), non consolidée.
 
 ### RES-002 : nouvelle connexion au score suspect (≥ 3)
-- **ATT&CK** : T1071.001 Communication par protocole web ; T1041 Exfiltration par le canal de contrôle ; T1105 Téléchargement d'outils.
+- **ATT&CK** : T1071.001 Communication par protocole web (la technique observée : une connexion ; l'exfiltration et le téléchargement ne sont pas vus, revue de l'auditeur du 2026-11-22, point 1).
 - **Code** : `moniteur.rs` (calcul du score des flux, niveau Alerte).
 - **Justification** : réunit des indices faibles qui, ensemble, décrivent un programme malveillant qui sort sur Internet.
 - **Indices** (une seule règle, chaque indice nommé dans `Raisons`) : programme non signé ; dossier temporaire ou
@@ -175,7 +175,7 @@ modules expérimentaux.
   télémétrie (chacun ajoute son poids, comme ceux testés).
 
 ### RES-003 : première connexion à Internet d'un programme
-- **ATT&CK** : T1071.001 Communication par protocole web ; T1204.002 Fichier piégé lancé par l'utilisateur.
+- **ATT&CK** : T1071.001 Communication par protocole web (la technique observée ; le lancement par l'utilisateur n'est pas vu).
 - **Code** : `moniteur.rs` (niveau Info).
 - **Justification** : donne l'historique de « qui parle à Internet » ; utile à l'enquête, pas une alarme.
 - **Télémétrie** : connexions.
@@ -262,7 +262,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## DNS
 
 ### DNS-001 : requête DNS vers un domaine malveillant connu
-- **ATT&CK** : T1071.004 Communication via DNS ; T1566.002 Lien d'hameçonnage.
+- **ATT&CK** : T1071.004 Communication via DNS (la technique observée ; le lien d'hameçonnage n'est pas vu).
 - **Code** : `moniteur.rs` (« requête DNS vers un domaine MALVEILLANT connu »).
 - **Justification** : la résolution d'un domaine de commande ou de distribution de malware, même sans connexion.
 - **Télémétrie** : journal DNS-Client (ou Sysmon 22), listes de domaines.
@@ -365,7 +365,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   qu'on ne touche pas.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
-- **ATT&CK** : T1218 Binaire système détourné ; T1197 Tâches BITS ; T1105 Téléchargement d'outils ; T1047 WMI détourné.
+- **ATT&CK** : posée par l'alerte : la technique de l'outil vu (motif qui a correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 T1218 Binaire système détourné, wmic T1047 WMI détourné.
 - **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
 - **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code.
 - **Télémétrie** : ligne de commande.
@@ -429,7 +429,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 ## PER : persistance
 
 ### PER-001 : démarrage automatique nouveau
-- **ATT&CK** : T1547.001 Clés Run et dossier Démarrage ; T1543.003 Service Windows ; T1053.005 Tâche planifiée ; T1546.003 Abonnement WMI.
+- **ATT&CK** : posée par l'alerte : la technique du type d'entrée : clé Run et dossier Démarrage T1547.001, service et pilote T1543.003, tâche planifiée T1053.005, abonnement WMI T1546.003 ; aucune pour Winlogon, IFEO et AppInit (pas encore dans la table).
 - **Code** : `persistance.rs` (« NOUVEAU démarrage automatique »).
 - **Justification** : un malware s'installe presque toujours pour survivre au redémarrage.
 - **Télémétrie** : relevé des démarrages automatiques (clés Run, services, tâches…), toutes les minutes.
@@ -464,7 +464,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   persistance produite juste avant un arrêt », bout en bout). État : réussi en VM de test pour la clé Run (scénario 3a, Defender actif).
 
 ### PER-002 : démarrage automatique modifié
-- **ATT&CK** : T1547.001 Clés Run et dossier Démarrage ; T1112 Registre modifié.
+- **ATT&CK** : posée par l'alerte : la technique du type d'entrée, comme PER-001 (clé Run T1547.001…) ; plus T1112, qui n'était pas observé en propre.
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
 - **Justification** : un démarrage légitime détourné vers une autre commande.
 - **Télémétrie** : comme PER-001.

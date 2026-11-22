@@ -145,6 +145,8 @@ pub(crate) fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
         raisons: format!("{quoi} : {}{}", e.commande, if suspect { format!(" [{}]", e.remarque) } else { String::new() }),
         comportement: format!("{}{}{}", type_entree(&e.categorie), if quoi.contains("DEVENU SUSPECT") { ":devenu-suspect" } else { "" },
             if suspect { ":suspect" } else { "" }),
+        // Technique du type d'entrée vu (revue de l'auditeur du 2026-11-22, point 1) : une clé Run ne porte plus T1546.003
+        mitre: technique_entree(type_entree(&e.categorie)).into(),
         ..Default::default()
     }
 }
@@ -162,6 +164,18 @@ pub(crate) fn type_entree(categorie: &str) -> &'static str {
     else if c == "ifeo" { "ifeo" }
     else if c == "appinit" { "appinit" }
     else { "autre" }
+}
+
+/// Décision pure (testée) : technique ATT&CK d'une alerte PER-001 ou PER-002, celle du type d'entrée ; aucune pour les
+/// types que la table des techniques ne nomme pas encore (Winlogon, IFEO, AppInit, autre), plutôt qu'une technique fausse
+pub(crate) fn technique_entree(type_entree: &str) -> &'static str {
+    match type_entree {
+        "run" | "dossier-demarrage" => "T1547.001",
+        "service" | "pilote" => "T1543.003",
+        "tache" => "T1053.005",
+        "wmi" => "T1546.003",
+        _ => "",
+    }
 }
 
 pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
