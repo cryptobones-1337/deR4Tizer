@@ -351,7 +351,8 @@ Créer à partir du code et des revues déjà faites, sans réaudit complet :
        brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
        résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
      - Inclut les essais reportés de la décision D4-1 (décision du mainteneur, 2026-10-31) : relance de l'interface dans une
-       session Bureau à distance et au changement rapide d'utilisateur. Aucune version publiée avant ces essais.
+       session Bureau à distance et au changement rapide d'utilisateur. Condition levée par le mainteneur le 2026-11-23 :
+       v4.3 publiée avant ces essais, écart inscrit (README, « Known limits ») ; les essais restent à faire.
      - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
        Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
        mainteneur lance lui-même les scénarios.
@@ -480,7 +481,7 @@ aucun des deux n'attend l'autre, et rien de ce travail ne bloque la version.
 
 Claude Code ne les fait pas ; il peut les rappeler.
 
-- Vérifier que tous les postes sont en 4.2 ou plus. Aucune version n'est publiée sur GitHub (vérifié le 2026-11-19 ; mainteneur, le même jour : « La release n'est pas encore disponible et publiée sur GitHub, vu que c'est pas signé »).
+- Vérifier que tous les postes sont en 4.2 ou plus. Première version signée publiée sur GitHub : v4.3, le 2026-11-23 ; les versions 4.2 et 4.3 installées à la main avant elle ne se mettent pas à jour seules.
 - Activer la protection de `main` : pull request obligatoire, CI verte obligatoire, pas de poussée forcée.
 - Protéger les tags `v*` ; exiger une approbation sur l'environnement `publication`.
 - Signer la version : certificat Certum Open Source, choisi par le mainteneur le 2026-11-11 (journal des décisions ; nom du titulaire visible dans la signature des binaires seulement), obtenu, valable jusqu'au 2027-11-17 ; variable `CLE_SIGNATURE` renseignée. La clé reste dans le nuage de Certum (SimplySign) : la signature se fait sur le poste du mainteneur. SignPath Foundation et Azure Trusted Signing sont écartés.

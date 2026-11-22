@@ -84,8 +84,8 @@ rustup toolchain install stable-x86_64-pc-windows-msvc
 
 ### Install
 
-No version has been released yet. Once released: download `deR4Tizer.msi` from the
-[releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) and open it. The service starts immediately; the interface starts on its own, without administrator rights, within the next few minutes (restart task), then at every sign-in; the installer does not start it. It is also in the Start menu. Installer license and texts in French and English. New versions are reported;
+Download `deR4Tizer.msi` from the [releases page](https://github.com/cryptobones-1337/deR4Tizer/releases) (first
+signed release: v4.3, 2026-11-23) and open it. The service starts immediately; the interface starts on its own, without administrator rights, within the next few minutes (restart task), then at every sign-in; the installer does not start it. It is also in the Start menu. Installer license and texts in French and English. New versions are reported;
 automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
@@ -128,9 +128,9 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 ### Automatic updates and signing
 
 > **Known limit.** On versions 4.2 and 4.3 already installed, automatic updates install nothing: the install script,
-> launched without a console, did not run (fixed in `main` by PR #26; no version is published on GitHub yet). An installed 4.2
-> or 4.3 therefore does not update itself: install by hand (`msiexec /i deR4Tizer.msi`) a version that contains this
-> fix; automatic updates then work from that one onward.
+> launched without a console, did not run (fixed by PR #26, included in the signed release v4.3). An installed 4.2 or 4.3 test build
+> therefore does not update itself: install the signed v4.3 by hand (`msiexec /i deR4Tizer.msi`); automatic updates
+> then work from that one onward.
 
 Each `vX.Y` tag triggers the *Publication* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
 GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
@@ -148,7 +148,7 @@ version's package is reinstalled. Without a pinned key, a version is only report
 enough to run a binary as SYSTEM across the fleet. The health check also verifies that the channel's pipe is held by the
 service process (and not by a program that created it while the old version was stopped).
 
-**First deployment.** No version has been released yet, and machines installed before the first signed version have
+**First deployment.** The first signed version is v4.3 (2026-11-23). Machines installed before it have
 neither a pinned key nor a rollback package available: they will never update on their own. The fleet therefore starts
 from a first signed version, installed by hand (or by GPO, Intune, IT provider). Release procedure:
 
@@ -187,7 +187,8 @@ Known, by design. Be aware before relying on it:
 - A PC on a switched network sees only its own traffic, broadcast and multicast: this is not a whole-network NDR (a mirror port would be needed).
 - The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary, because a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
 - IPv4 capture only for now; the country is that of the address-block holder (a CDN may appear in the United States).
-- Executables are not signed yet (the Certum code-signing certificate is held; the release remains to be signed and published); the service recognises its own files by their SHA-256 hash. Until signed, Windows shows "unknown publisher" and automatic updates do not install.
+- Since v4.3 (2026-11-23), the released executables and MSI are signed (Certum). Builds installed by hand before it are unsigned: Windows shows "unknown publisher" for them and they do not update on their own. The service recognises its own files by their SHA-256 hash.
+- v4.3 was published before the deferred D4-1 trials (maintainer's decision, 2026-11-23): restarting the interface in a Remote Desktop session and on fast user switching has not been exercised yet.
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
 - On a managed device (domain, Intune), or when that cannot be checked, the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
@@ -198,8 +199,8 @@ Known, by design. Be aware before relying on it:
 - The MSI accepts an older version (needed to roll back): the service refuses an older version for automatic updates, but an administrator can still install one by hand.
 - Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
   the installed product is not detected (no exclusion, scan and quick scan with no detection, service intact). A
-  signal, not proof on a real machine. No distribution before a green GitHub CI, batch 3d passed on the distributed
-  and signed version, and an independent review.
+  signal, not proof on a real machine. Batch 3d was passed again on the signed v4.3 MSI before its release
+  (2026-11-23: all scenarios passed, no Defender detection).
 - The interface has only been opened in the test VM (the screenshots above), never on a real production computer; the confirmation windows behind its buttons are not exercised by any scenario, and its decisions are tested separately.
 - Known software is not suspended when it touches a canary, and its alert is at Info level. Its folder's permissions are not checked: a Program Files folder left open by a third-party installer, a case found on one machine, lets a standard account drop a signed copy there; a hollowed process started from an allowed binary keeps this status too.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
