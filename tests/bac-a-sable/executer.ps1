@@ -2,7 +2,7 @@
 # de la CI, écrit le tableau et les journaux dans le dossier de sortie monté, relève l'état de Microsoft Defender
 # avant et après (lot 3d), puis éteint le bac à sable, qui est alors effacé. Aussi exécuté dans la VM de test
 # (tests\vm\lancer.ps1, PowerShell Direct) avec -SansArret : la VM est remise à son instantané par le lanceur.
-param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d', 'mesure', 'captures', 'baseline', 's10')] [string]$Scenario, [switch]$SansArret)
+param([Parameter(Mandatory)] [ValidateSet('installation', 'quarantaine', 'maj', 'lot3d', 'mesure', 'captures', 'baseline', 's10', 's09')] [string]$Scenario, [switch]$SansArret)
 $sortie = 'C:\sortie'
 $entree = 'C:\entree'
 New-Item -ItemType Directory -Force -Path $sortie | Out-Null
@@ -33,6 +33,8 @@ try {
         'captures' { & "$entree\vm\captures.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         # VM seulement : S-10 rejoué dix fois sans Sysmon (couverture ATT&CK, lot 1), hors de la preuve des PR
         's10' { & "$entree\vm\s10.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
+        # VM seulement : S-09 rejoué dix fois et témoins N-06, N-02 (couverture ATT&CK, lot 4, liste v1.7)
+        's09' { & "$entree\vm\s09.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         # VM seulement : contrôle de la baseline règle par règle (T3, environ une minute par règle), hors de la preuve des PR
         'baseline' { & "$entree\vm\baseline.ps1" -Msi "$entree\deR4Tizer.msi" -Sortie $sortie }
         'maj' {
