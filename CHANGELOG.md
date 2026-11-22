@@ -7,6 +7,9 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Local signing: before signing, `signer-version.ps1` checks that the certificate's key is one of the keys compiled
+  into the service (the compiled value is joined to the build artifact and found again inside the executable), so a
+  release that installed machines would refuse can no longer be signed.
 - Exception fingerprints no longer depend on ATT&CK techniques or advice: they use the rule and a stable behaviour
   code set by the code that raises the alert (tool seen, startup entry type, connection indicators, IDS rule…), so
   editing the technique tables or moving to a new ATT&CK version no longer voids any exception. Exceptions from the
