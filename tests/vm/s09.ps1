@@ -186,7 +186,8 @@ if ($pret) {
             $depart = Get-Date
             New-ItemProperty -Path $cleRun -Name $nom -Value "`"$signe`"" -PropertyType String -Force | Out-Null
             $vu = Attendre-Vu $nom
-            $r = Attendre-Persistance $nom $depart 120 '*'
+            # Fenêtre de la fiche (180 s depuis la pose), relue après la preuve d'activité : une alerte déjà enregistrée est vue
+            $r = Attendre-Persistance $nom $depart 180 '*'
             $note = if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } elseif ($vu -or $r) { 'conforme' } else { 'D (entrée jamais relevée)' }
             $script:lignes.Add("N-06;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$note")
             Remove-ItemProperty -Path $cleRun -Name $nom -ErrorAction SilentlyContinue
@@ -194,6 +195,7 @@ if ($pret) {
             if ($note -ne 'conforme') { return "$note : $($r.Alerte.Regle) $($r.Alerte.Niveau)" }
             $true
         }
+        if ($script:arret) { NonExecute "N-02, essai $n" "série arrêtée : $($script:arret)"; continue }
         Verifier "N-02, essai $n : tâche vers un programme signé, PER-001 Info au plus" {
             $nom = "d4t-n02-tache-$n"
             $action = New-ScheduledTaskAction -Execute $signe
@@ -201,7 +203,8 @@ if ($pret) {
             $depart = Get-Date
             Register-ScheduledTask -TaskName $nom -Action $action -Trigger $declencheur -Force | Out-Null
             $vu = Attendre-Vu $nom
-            $r = Attendre-Persistance $nom $depart 120 '*'
+            # Fenêtre de la fiche (180 s depuis la pose), relue après la preuve d'activité : une alerte déjà enregistrée est vue
+            $r = Attendre-Persistance $nom $depart 180 '*'
             $note = if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } elseif ($vu -or $r) { 'conforme' } else { 'D (entrée jamais relevée)' }
             $script:lignes.Add("N-02;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$note")
             Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
