@@ -22,7 +22,7 @@ pub enum Techniques {
     Fixes(&'static [&'static str]),
     /// Posées par le code qui produit l'alerte, selon le comportement vu (champ `mitre` de l'alerte, identifiants
     /// séparés par « / ») : CHA-001 (techniques des signaux de la chaîne), COR-R7 (événement), VIE-001 (caméra ou
-    /// micro), EXP-NDR-001, EXP-DPI-001, EXP-IDS-001 (aucune posée à ce jour : l'identifiant de la règle IDS est dans
+    /// micro), VIE-002 (outil d'accès à distance, ou tunnel pour ngrok), EXP-NDR-001, EXP-DPI-001, EXP-IDS-001 (aucune posée à ce jour : l'identifiant de la règle IDS est dans
     /// les raisons)
     ParLAlerte,
     /// Aucune technique : constat de santé, réponse, intégrité, détection générique de Defender, ou comportement sans
@@ -79,7 +79,7 @@ registre! {
     PIL_001 = "PIL-001" : "pilote vulnérable connu présent" => Fixes(&["T1068"]);
     EXT_001 = "EXT-001" : "nouvelle extension de navigateur" => Fixes(&["T1176.001"]);
     VIE_001 = "VIE-001" : "programme qui utilise la caméra ou le micro pour la première fois" => ParLAlerte;
-    VIE_002 = "VIE-002" : "outil de prise en main à distance en cours d'exécution" => Fixes(&["T1219"]);
+    VIE_002 = "VIE-002" : "outil de prise en main à distance en cours d'exécution" => ParLAlerte;
     VIE_003 = "VIE-003" : "Bureau à distance activé" => Fixes(&["T1021.001"]);
     BAS_001 = "BAS-001" : "réglage de sécurité de la baseline défait" => Fixes(&["T1685", "T1112"]);
     COR_R1 = "COR-R1" : "tentatives de mot de passe en série" => Fixes(&["T1110"]);

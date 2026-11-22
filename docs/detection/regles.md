@@ -11,7 +11,8 @@ que ce document et le registre listent les mêmes identifiants.
 dans le registre (`regles.rs`, champ `techniques`, ATT&CK v20.1, d'après `docs/validation/carte-attack.md`), et plus
 jamais de mots du texte de l'alerte. Trois cas : liste fixe ; techniques posées par le code qui produit l'alerte, pour
 les règles à plusieurs comportements (CHA-001 : celles des signaux de la chaîne ; COR-R7 : celle de l'événement ;
-VIE-001 : caméra T1125 ou micro T1123 ; EXP-NDR-001, EXP-DPI-001 ; EXP-IDS-001 n'en pose aucune) ; « aucune », dit
+VIE-001 : caméra T1125 ou micro T1123 ; VIE-002 : T1219, ou T1572 pour ngrok ; EXP-NDR-001, EXP-DPI-001 ; EXP-IDS-001
+n'en pose aucune) ; « aucune », dit
 explicitement (santé, réponse, intégrité, détections génériques de Defender, RES-006, COR-R6). Le conseil « Que faire »
 reste choisi par mots-clés (`mitre.rs`). Décisions sans écart avec la carte, prises en l'absence du mainteneur
 (2026-11-22, journal des décisions) : DNS-002 et DNS-003 T1557 ; VOL-001 T1555.003 et T1539 ; COR-R1 T1110.
@@ -709,7 +710,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | COR-R4 | Journal d'événements effacé | Critique | T1685.005 |
 | COR-R5 | Service installé depuis un emplacement suspect | Critique | T1543.003, T1569.002 |
 | COR-R6 | Attaque en plusieurs étapes (3 détections d'un même programme en 10 min) | Critique | aucune |
-| COR-R7 | Protection affaiblie (service de sécurité arrêté, politique d'audit modifiée) | Alerte | selon l'événement : T1685 (service arrêté), T1685.001 (politique d'audit) |
+| COR-R7 | Protection affaiblie (service de sécurité arrêté, politique d'audit modifiée) | Alerte | selon l'événement : T1685 et T1489 (service de sécurité arrêté), T1685.001 (politique d'audit) |
 | COR-R8 | **Numéro non attribué** : aucune règle R8 dans `siem.rs` à ce jour ; le numéro reste libre, il n'est pas réutilisé pour une autre règle sans décision | — | — |
 | COR-R9 | Session ouverte depuis une adresse publique (Bureau à distance : Critique ; autre : Alerte) | Critique / Alerte | T1133 |
 | COR-R10 | Pilote vulnérable installé (BYOVD) | Critique | T1068 |

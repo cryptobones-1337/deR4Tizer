@@ -668,7 +668,7 @@ pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
 pub(crate) fn alerte_inventaire_tronque(tronquees: usize) -> Alerte {
     commun::journal(&format!("extensions : {tronquees} extension(s) non examinée(s) au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers par profil"));
     alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
-        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176]"))
+        format!("Inventaire des extensions PARTIEL : {tronquees} extension(s) non examinée(s), au-delà de {MAX_EXTENSIONS_PAR_PROFIL} extensions ou {MAX_DOSSIERS_PAR_PROFIL} dossiers dans un même profil (nombre anormal de dossiers d'extension) : vérifiez les profils  [MITRE T1176.001]"))
 }
 
 /// Décision pure (testée, EXT-001) : extensions absentes de l'inventaire précédent, notées connues ; alerte pour
@@ -689,14 +689,14 @@ pub(crate) fn nouvelles_extensions(liste: &mut [Extension], connues: &mut HashMa
                     alertes.push(alerte(crate::regles::EXT_001, if e.dangereuse { "Alerte" } else { "Info" }, if e.dangereuse { 4 } else { 0 }, &e.nom, "",
                         &format!("extension {}", e.navigateur),
                         format!("NOUVELLE extension de navigateur « {} » {}{}", e.nom, e.version,
-                            if e.dangereuse { format!(" avec des permissions sensibles ({}) : vérifiez que vous l'avez installée vous-même  [MITRE T1176]", e.permissions) } else { String::new() })));
+                            if e.dangereuse { format!(" avec des permissions sensibles ({}) : vérifiez que vous l'avez installée vous-même  [MITRE T1176.001]", e.permissions) } else { String::new() })));
                 }
             }
         }
     }
     if en_plus > 0 {
         alertes.push(alerte(crate::regles::EXT_001, "Alerte", 4, "extensions", "", "extensions de navigateur",
-            format!("{en_plus} autre(s) NOUVELLE(S) extension(s) de navigateur au même relevé (au-delà de {MAX_ALERTES_EXTENSIONS} alertes) : vérifiez la liste des extensions  [MITRE T1176]")));
+            format!("{en_plus} autre(s) NOUVELLE(S) extension(s) de navigateur au même relevé (au-delà de {MAX_ALERTES_EXTENSIONS} alertes) : vérifiez la liste des extensions  [MITRE T1176.001]")));
     }
     alertes
 }
