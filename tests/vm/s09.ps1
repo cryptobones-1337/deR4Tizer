@@ -103,13 +103,24 @@ function Noter-Essai($r, [string]$Attendu) {
 $lignes = New-Object System.Collections.Generic.List[string]
 $lignes.Add('serie;essai;nom;regle;niveau;latence_s;note')
 
+# Instantané de campagne (lancer.ps1 -Instantane « campagne A/C … ») : le service y est déjà installé, au binaire de la
+# série ; il n'est ni réinstallé ni désinstallé. Sinon (instantané « propre ») : installation puis désinstallation
+$dejaInstalle = [bool](Get-Service deR4Tizer -ErrorAction SilentlyContinue)
 $installe = $false
-Verifier 'Installation' {
-    $c = Installer $Msi (Join-Path $Journaux 'installation-s09.log')
-    if ($c -ne 0) { return "msiexec a rendu $c" }
-    if (-not (Attendre-Canal)) { return "le service ne répond pas ; journal : $(Journal 'erreur')" }
-    $script:installe = $true
-    $true
+if ($dejaInstalle) {
+    Verifier 'Instantané de campagne : service déjà installé, gardé tel quel' {
+        if (-not (Attendre-Canal)) { return "le service ne répond pas ; journal : $(Journal 'erreur')" }
+        $script:installe = $true
+        $true
+    }
+} else {
+    Verifier 'Installation' {
+        $c = Installer $Msi (Join-Path $Journaux 'installation-s09.log')
+        if ($c -ne 0) { return "msiexec a rendu $c" }
+        if (-not (Attendre-Canal)) { return "le service ne répond pas ; journal : $(Journal 'erreur')" }
+        $script:installe = $true
+        $true
+    }
 }
 
 $pret = $false
@@ -222,9 +233,9 @@ if ($script:arret) { $lignes.Add("arrêt;;;;;;$($script:arret)") }
 $lignes | Set-Content (Join-Path $Sortie 's09-essais.csv') -Encoding UTF8
 Copy-Item $fichierAlertes (Join-Path $Sortie 's09-alertes.json') -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $script:Donnees 'etat.json') (Join-Path $Sortie 's09-etat.json') -ErrorAction SilentlyContinue
-"commit=$(Get-Content (Join-Path (Split-Path $Msi) 'version.txt') -ErrorAction SilentlyContinue) ; windows=$([Environment]::OSVersion.Version) ; build=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR) ; sysmon=$(if (Get-Service Sysmon, Sysmon64 -ErrorAction SilentlyContinue) { 'présent' } else { 'absent' }) ; atomic=absent ; liste=v1.7" | Set-Content (Join-Path $Sortie 's09-versions.txt') -Encoding UTF8
+"commit=$(Get-Content (Join-Path (Split-Path $Msi) 'version.txt') -ErrorAction SilentlyContinue) ; windows=$([Environment]::OSVersion.Version) ; build=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuild).$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR) ; sysmon=$(if (Get-Service Sysmon, Sysmon64 -ErrorAction SilentlyContinue) { 'présent' } else { 'absent' }) ; atomic=$(if (Get-Module -ListAvailable invoke-atomicredteam) { 'présent' } else { 'absent' }) ; liste=v1.7 ; service_sha256=$((Get-FileHash (Join-Path $script:Programme 'deR4TizerSvc.exe') -ErrorAction SilentlyContinue).Hash) ; deja_installe=$dejaInstalle" | Set-Content (Join-Path $Sortie 's09-versions.txt') -Encoding UTF8
 
-if ($installe) {
+if ($installe -and -not $dejaInstalle) {
     Verifier 'Désinstallation' {
         $c = Desinstaller (Join-Path $Journaux 'desinstallation-s09.log')
         if ($c -ne 0) { return "msiexec a rendu $c" }
