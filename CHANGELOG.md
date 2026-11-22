@@ -7,6 +7,9 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Local signing: before signing, `signer-version.ps1` checks that the certificate's key is one of the keys compiled
+  into the service (the compiled value is joined to the build artifact and found again inside the executable), so a
+  release that installed machines would refuse can no longer be signed.
 - ATT&CK technique taken from the detection rule (one table next to the rule registry, ATT&CK v20.1), never from words
   in the alert text; attack chains carry the techniques of their own signals instead of a default one; an alert can
   carry several techniques, each translated in the interface. Exception fingerprints now use the rule, the technique

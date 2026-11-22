@@ -163,7 +163,7 @@ from a first signed version, installed by hand (or by GPO, Intune, IT provider).
    maintainer's computer, a tag alone publishes nothing);
    with the current certificate (Certum, key kept in SimplySign, not exportable), signing is done locally:
    `signer-version.ps1` downloads the CI's unsigned "a-signer" artifact for the tag (its SHA-256 checked against the
-   one GitHub reports), signs both executables, builds and signs the MSI from the tag's sources, writes the manifest,
+   one GitHub reports), checks that the certificate's key is the one compiled into the service, signs both executables, builds and signs the MSI from the tag's sources, writes the manifest,
    runs `verifier-signatures.ps1`, checks the MSI version, then creates a draft release that the maintainer reviews and
    publishes by hand; it stops at the first failed check (`docs/publication/signature-locale.md`);
 5. install this MSI on each machine; later versions can then install on their own (if automatic installation is on),
