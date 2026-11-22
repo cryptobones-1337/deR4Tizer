@@ -184,9 +184,8 @@ Les identifiants de la carte de départ venaient de la mémoire de l'auditeur. C
 | T1219 Remote Access Software | T1219 **Remote Access Tools** | Renommée ; sous-techniques T1219.001 à .003 |
 | T1557.001 LLMNR/NBT-NS Poisoning and SMB Relay | T1557.001 **Name Resolution Poisoning and SMB Relay** | Renommée (couvre aussi mDNS) |
 
-Les autres identifiants sont inchangés. Le code pose encore les anciens identifiants (`mitre.rs` : T1562.001,
-T1562.004, T1176 ; `regles.md` et le SIEM : T1070.001) : le lot 2 (technique tirée de l'identifiant de règle) les
-remplacera par une seule table, alignée sur cette carte.
+Les autres identifiants sont inchangés. Depuis le lot 2 (technique tirée de l'identifiant de règle), le code pose les
+identifiants de la v20.1, par une seule table alignée sur cette carte (`regles.rs`).
 
 ### Lignes « Aucune règle » contre `docs/detection/regles.md`, lu en entier
 

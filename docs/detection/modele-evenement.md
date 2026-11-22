@@ -102,8 +102,8 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   Après une nouvelle mise à niveau, ces alertes repassent en `Modele` 0. Accepté. Dans `apprentissage.json`, la version
   précédente ignore les exceptions et comportements appris mémorisés par empreinte (PR 3.1b) : les alertes concernées
   reviennent au niveau « Alerte » (échec fermé) ; ces entrées comptent quand même dans le plafond de 5000.
-- **Signature d'apprentissage** : son contenu ne change pas pendant la phase 3 (elle dépend du texte `Mitre`, qui ne
-  change pas : `mitre.rs` reste la source) ; seule sa forme mémorisée change avec la PR 3.1b (empreinte, voir plus bas).
+- **Signature d'apprentissage** : son contenu ne change pas pendant la phase 3 (elle dépendait alors du texte `Mitre`) ;
+  depuis la couverture ATT&CK (lot 2), elle lit la règle et les identifiants des techniques, plus leur libellé ; seule sa forme mémorisée change avec la PR 3.1b (empreinte, voir plus bas).
   La clé de déduplication des alertes ne change pas.
 - **Export** : l'export JSON (syslog) et l'API (`/api/v1/alertes`, JSON et NDJSON) sérialisent l'alerte entière : `Modele`
   y apparaît dès la PR 3.1, `Signature` dès la PR 3.1b (alertes de niveau « Alerte »), `Regle` et `Collecte` quand ils

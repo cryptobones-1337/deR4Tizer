@@ -390,7 +390,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             e.type_ = "politique-audit-modifiee".into();
             e.niveau = "Alerte".into();
             e.utilisateur = compte("SubjectDomainName", "SubjectUserName");
-            e.mitre = "T1562.002".into();
+            e.mitre = "T1685.001".into();
             e.message = format!("politique d'audit modifiée par {} ({})", e.utilisateur, v("SubcategoryGuid"));
         }
         4720 | 4722 | 4724 | 4725 | 4726 => {
@@ -438,7 +438,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             e.type_ = "journal-efface".into();
             e.niveau = "Critique".into();
             e.source = if id == 104 { "systeme".into() } else { "securite".into() };
-            e.mitre = "T1070.001".into();
+            e.mitre = "T1685.005".into();
             e.message = if id == 104 { format!("journal « {} » effacé", v("Channel")) } else { "journal Sécurité effacé".into() };
         }
         7036 => {
@@ -454,7 +454,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             let arret = v("param2").to_lowercase().contains("stop") || v("param2").to_lowercase().contains("arr");
             if arret && nom != "deR4Tizer" {
                 e.niveau = "Alerte".into();
-                e.mitre = "T1562.001".into();
+                e.mitre = "T1685".into();
             }
             e.message = format!("service {nom} : {}", v("param2"));
         }
@@ -694,6 +694,8 @@ impl Correlation {
         // compte qui a ouvert la session pour COR-R2 et R9, qui se rejoignent ; le compte pour COR-R3 ; sinon la règle et
         // sa clé. R1, R2 et R9 passent par `entite_bornee`
         let mut incident = |entite: String, regle: &str, titre: &str, niveau: &str, mitre: &str, resume: String, evenements: Vec<String>| {
+            // Technique tirée de la table des règles (couverture ATT&CK, lot 2) ; COR-R7 garde celle de son événement
+            let mitre = crate::mitre::identifiants_de_regle(&regle_correlation(regle), mitre).join(" / ");
             sortie.push(Incident {
                 entite,
                 id: commun::nouvel_id(),
@@ -770,7 +772,7 @@ impl Correlation {
             // R4 : effacement d'un journal
             "journal-efface" => {
                 if self.une_fois(format!("R4|{}", e.message)) {
-                    incident(format!("COR-R4:{}", e.message), "R4", "Journal d'événements effacé", "Critique", "T1070.001",
+                    incident(format!("COR-R4:{}", e.message), "R4", "Journal d'événements effacé", "Critique", "T1685.005",
                         format!("{} : technique classique pour effacer les traces d'une intrusion", e.message), vec![trace(e)]);
                 }
             }

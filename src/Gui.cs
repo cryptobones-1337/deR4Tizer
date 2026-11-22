@@ -2106,7 +2106,7 @@ namespace DeR4Tizer
             var a = lvAlertes.SelectedItems[0].Tag as Alerte;
             if (a == null) return;
             detailAlerte.Text = (string.IsNullOrEmpty(a.Regle) ? "" : L.T("RÈGLE") + " : " + a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : "   (" + L.T("collecte présumée") + " : " + Couverture.Nom(a.Collecte) + ")") + "\n")
-                + (string.IsNullOrEmpty(a.Mitre) ? "" : L.T("TECHNIQUE") + " : " + L.T(a.Mitre) + "\n")
+                + (string.IsNullOrEmpty(a.Mitre) ? "" : L.T("TECHNIQUE") + " : " + L.Mitre(a.Mitre) + "\n")
                 + (string.IsNullOrEmpty(a.Conseil) ? "" : L.T("QUE FAIRE") + " : " + L.T(a.Conseil) + "\n")
                 + a.Raisons;
         }
