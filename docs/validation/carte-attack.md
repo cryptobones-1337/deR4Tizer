@@ -32,7 +32,8 @@ de MITRE sur les rançongiciels) ; elle n'a pas été confrontée à leur éditi
 
 Rapports cités (tous dans ce dossier) : S-01, S-09 et S-13 dans `campagne-kali-premier-passage.md` (2026-11-15) ;
 S-07 et S-14 dans `campagne-kali-second-lot.md` (2026-11-15) ; S-02, S-08, S-10, S-11, S-12, S-15, S-16 et S-17 dans
-`campagne-kali-sixieme-lot.md` (2026-11-16) ; S-20 à S-27 dans `campagne-kali-detection-reseau-lot1.md` à `lot5.md`
+`campagne-kali-sixieme-lot.md` (2026-11-16) ; série de consolidation de S-09 dans `campagne-kali-lot4-consolidation.md`
+(2026-11-22) ; S-20 à S-27 dans `campagne-kali-detection-reseau-lot1.md` à `lot5.md`
 (2026-11-16 et 2026-11-17). Réserve : S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée
 (note du 2026-11-19 dans ces rapports) ; les lignes T1133, T1557.001 et T1557.002 en dépendent.
 
@@ -60,7 +61,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1059.005 / .007 VBScript, JScript | PRC-001 ; baseline (WSH, ASR) | Règle, non testée | wscript et cscript absents de PRC-003 |
 | T1204.002 Fichier lancé par l'utilisateur | PRC-001, CHA-001, RES-003 | Règle, non testée | Scénario |
 | T1047 WMI | PRC-003 (`wmic process call create`) ; ASR (profil renforcé) | Règle, non testée | Scénario ; processus enfants de WmiPrvSE |
-| T1053.005 Tâche planifiée | PER-001 | **Testé en labo (S-09, 2026-11-15)**, configurations A et C | 10 essais |
+| T1053.005 Tâche planifiée | PER-001 | **Testé en labo, consolidé : 10/10 en A, B et C (S-09, campagne Kali, lot 4, 2026-11-22)** | Rien dans la liste ; autres formes de tâche hors liste |
 | T1569.002 Exécution par service | COR-R5 | Testé en labo, en partie (S-13, 2026-11-15) | Service lancé depuis un dossier système |
 | T1218 Binaires système détournés | PRC-003 (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic) | Règle, non testée | Scénario ; msiexec, installutil absents |
 
@@ -68,7 +69,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
-| T1547.001 Clés Run, dossier Démarrage | PER-001, PER-002 | Testé en labo, clé Run (S-09, 2026-11-15) | Dossier Démarrage ; 10 essais |
+| T1547.001 Clés Run, dossier Démarrage | PER-001, PER-002 | **Testé en labo, consolidé, clé Run : 10/10 en A, B et C (S-09, campagne Kali, lot 4, 2026-11-22)** | Dossier Démarrage (hors liste) |
 | T1543.003 Service Windows | PER-001, COR-R5 | Testé en labo, en partie (S-13, 2026-11-15) | 10 essais |
 | T1546.003 Abonnement WMI | PER-001 ; ASR | Règle, non testée | Scénario |
 | T1136.001 Compte local créé | COR-R3 | Défaut ouvert : ne se déclenche pas par le vecteur courant (S-13 donne COR-R3b) | Correctif, puis test |
@@ -154,8 +155,8 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | État | Lignes |
 |---|---|
-| Testé en labo, consolidé | 1 |
-| Testé en labo, non consolidé | 13 |
+| Testé en labo, consolidé | 3 |
+| Testé en labo, non consolidé | 11 |
 | Partiel | 14 |
 | Règle, non testée | 13 |
 | Vu sans alerte | 1 |
@@ -235,7 +236,8 @@ change pour autant : seul un rapport de campagne le fait. S-10 rejoué sans Sysm
 ## Ordre de travail
 
 1. Défauts structurels 1, 2 et 3 (lots 1 à 3, faits).
-2. Consolider ce qui est déjà testé en labo : 10 essais valides pour les 13 lignes non consolidées (lot 4).
+2. Consolider ce qui est déjà testé en labo : 10 essais valides pour les 13 lignes non consolidées (lot 4 ; T1547.001 et
+   T1053.005 faites le 2026-11-22, `campagne-kali-lot4-consolidation.md` ; 11 restent).
 3. Tester les 13 lignes « Règle, non testée » : aucune règle à écrire, seulement des scénarios (lot 5).
 4. Fermer les lignes « Partiel » et « Vu sans alerte » qui ne demandent qu'un événement déjà collecté.
 5. Écrire les règles des lignes « Aucune règle ».
