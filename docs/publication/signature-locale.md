@@ -40,6 +40,41 @@ compile, le poste du mainteneur signe. Décisions du mainteneur du 2026-11-21 :
 5. Relire le brouillon sur GitHub (fichiers, empreintes affichées par le script), puis le publier
    (« Publish release »).
 
+## Répétition sur une copie privée (point 4 de la revue de l'auditeur du 2026-11-22)
+
+Décision du mainteneur : la répétition générale ne consomme aucun numéro de version du dépôt public. Elle se fait sur
+une copie privée, avec `-Depot`, le même script et le même certificat. Le dépôt public ne reçoit ni tag ni brouillon.
+
+1. Créer sur GitHub un dépôt **privé** vide (par exemple `<compte>/deR4Tizer-repetition`). Les minutes d'Actions d'un
+   dépôt privé sont décomptées du quota gratuit du compte.
+2. Y définir la variable de dépôt `CLE_SIGNATURE`, avec la même valeur que sur le dépôt public (Settings > Secrets and
+   variables > Actions > Variables). Aucun secret n'est nécessaire.
+3. Dans un clone à part (jamais la copie de travail du dépôt public, pour que le tag de répétition n'y entre pas) :
+
+   ```powershell
+   git clone https://github.com/cryptobones-1337/deR4Tizer.git deR4Tizer-repetition
+   cd deR4Tizer-repetition
+   git remote add repetition https://github.com/<compte>/deR4Tizer-repetition.git
+   git push repetition main
+   git tag vX.Y    # X.Y : la version du code de main (commun.rs), le tag doit lui être égal
+   git push repetition vX.Y
+   ```
+
+   L'exécution « Publication » de la copie compile et dépose l'artefact « a-signer ». Son job « signer » échoue à la
+   vérification des signatures (aucun certificat dans la CI) : c'est attendu.
+4. Toujours dans ce clone, au commit du tag :
+
+   ```powershell
+   .\signer-version.ps1 -Tag vX.Y -Empreinte <empreinte SHA-1 du certificat> -Depot <compte>/deR4Tizer-repetition -SansPublier
+   ```
+
+   Toutes les vérifications sont faites contre la copie : exécution et artefact, `CLE_SIGNATURE`, clé compilée (`cles-compilees.txt`
+   retrouvé dans le service), signatures, MSI, manifeste (ses adresses pointent vers la copie, ce qui est attendu). Rien n'est
+   publié. Pour répéter aussi l'étape du brouillon, relancer sans `-SansPublier` : le brouillon est créé sur la copie privée,
+   à supprimer ensuite.
+5. Après la répétition : supprimer le tag et le brouillon de la copie (ou la copie entière), effacer le dossier de travail
+   indiqué par le script, et supprimer le clone.
+
 ## Ce que le script vérifie, et où il s'arrête
 
 Il s'arrête à la première vérification en échec, sans rien publier. Après un arrêt, le dossier de travail (indiqué au
