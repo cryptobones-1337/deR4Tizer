@@ -7,6 +7,10 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- PRC-002 (obfuscated or downloading PowerShell) now carries T1027 Obfuscated files or information only when an
+  obfuscation pattern was seen (`-EncodedCommand` with a long payload, `FromBase64String`); a download, a string
+  execution or a hidden window carries T1059.001 PowerShell alone. Its behaviour code names the patterns seen, so an
+  exception set on a PRC-002 alert stops applying, once.
 - When the exceptions file could not be loaded at startup, the Health page says so ("Exceptions", in memory only)
   and setting an exception says it will be lost when the service restarts; a malformed file that could not be set
   aside is never overwritten. The PRC-003 behaviour code names every tool seen, like its techniques (exceptions set
