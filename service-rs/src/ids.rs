@@ -524,6 +524,7 @@ impl Ids {
             port: port_distant,
             raisons: format!("règle {} ({}{}) : {} → {}{}", r.sid, r.fichier, if r.classe.is_empty() { String::new() } else { format!(", {}", r.classe) },
                 d.source, d.destination, if bloquer { " — adresse BLOQUÉE au pare-feu (IPS)" } else { "" }),
+            comportement: format!("sid:{}", r.sid),
             ..Default::default()
         });
         self.detections.push_front(d);

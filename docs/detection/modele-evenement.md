@@ -25,6 +25,7 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
 | `Regle` | texte, omis si vide | « » | identifiant de la règle (`docs/detection/regles.md`), « » si l'alerte n'est rattachée à aucune |
 | `Collecte` | texte, omis si vide | « » | collecte d'où vient l'alerte (identifiant de `etat.json`, `Collectes`), PR 3.3c |
 | `Signature` | texte, omis si vide | « » | empreinte (`sha256:…`) du comportement, calculée sur le texte entier avant le bornage ; posée sur les alertes de niveau « Alerte » avant le filtrage (y compris celles que l'apprentissage baisse en « Info ») ; c'est elle qu'une exception posée depuis l'alerte vise |
+| `Comportement` | texte, omis si vide | « » | code stable du comportement, posé par le code qui produit l'alerte (revue de l'auditeur du 2026-11-22, point 2) : outil vu pour PRC-003 (`PRC-003:certutil`), règles des motifs vus et `document` pour les autres règles de processus, type d'entrée pour PER-* (`run`, `tache`, `service`, `wmi`…, suivi de `:suspect` ou `:devenu-suspect`), indices triés d'une connexion pour RES-* (`balise+non-signe`…), catégorie pour NDR et DPI, `sid:<n>` pour l'IDS, `camera` ou `micro` pour VIE-001, l'outil pour VIE-002. Il entre dans l'empreinte `Signature` ; jamais une technique ATT&CK ni un conseil. ASCII seulement, 120 caractères au plus |
 | `HeureUtc` | texte, omis si vide | « » | heure UTC de création (RFC 3339 à la seconde, « …Z »), phase 4, PR 4.1 ; bornée à 32 caractères |
 | `Seq` | entier, omis si 0 | 0 | numéro d'ordre de création, croissant depuis le démarrage du service (remis à zéro à chaque démarrage), phase 4, PR 4.1 |
 | `Entite` | texte, omis si vide | « » | entité du suivi des incidents, quand le producteur la connaît (phase 4, PR 4.3) : `source:<adresse, ou « compte X » sans adresse>` pour COR-R1 ; `compte:<compte sans domaine>` pour COR-R2 et R9 (le compte qui a ouvert la session ; à défaut, la source) ; `compte:<membre>` pour COR-R3 et R3b ; `COR-R<n>:<clé>` pour les autres corrélations. Au-delà de 10 entités distinctes d'une même règle R1, R2 ou R9 en une heure, les suivantes sont regroupées sous `COR-R<n>:regroupees` : une attaque répartie sur des centaines d'adresses n'ouvre pas des centaines d'incidents. Bornée à 160 caractères |
@@ -103,7 +104,13 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   précédente ignore les exceptions et comportements appris mémorisés par empreinte (PR 3.1b) : les alertes concernées
   reviennent au niveau « Alerte » (échec fermé) ; ces entrées comptent quand même dans le plafond de 5000.
 - **Signature d'apprentissage** : son contenu ne change pas pendant la phase 3 (elle dépendait alors du texte `Mitre`) ;
-  depuis la couverture ATT&CK (lot 2), elle lit la règle et les identifiants des techniques, plus leur libellé ; seule sa forme mémorisée change avec la PR 3.1b (empreinte, voir plus bas).
+  depuis la revue de l'auditeur du 2026-11-22 (point 2, format 3 de `apprentissage.json`), elle lit la règle et le
+  code `Comportement` posé par le producteur (à défaut, le début des raisons), jamais les techniques ATT&CK ni les
+  conseils : retoucher leurs tables ou changer de version d'ATT&CK ne rend plus aucune exception caduque. Les
+  exceptions d'un format précédent (empreintes à sens unique, non convertibles) sont gardées à part et comptées dans
+  `etat.json` (`ExceptionsPerimees`, `ApprisPerimes`) ; la page Santé dit leur nombre (ligne « Exceptions », à
+  reposer) et une ligne du journal le dit à la migration. « Oublier les exceptions » les efface aussi. Seule la
+  forme mémorisée de la signature change avec la PR 3.1b (empreinte, voir plus bas).
   La clé de déduplication des alertes ne change pas.
 - **Export** : l'export JSON (syslog) et l'API (`/api/v1/alertes`, JSON et NDJSON) sérialisent l'alerte entière : `Modele`
   y apparaît dès la PR 3.1, `Signature` dès la PR 3.1b (alertes de niveau « Alerte »), `Regle` et `Collecte` quand ils

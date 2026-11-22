@@ -147,6 +147,7 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),
         raisons: format!("{} : {ligne}", raisons.join(", ")),
         pid: Some(pid),
+        comportement: code_comportement(document, &ids, p.ligne_commande.as_deref().unwrap_or("")),
         ..Default::default()
     })
 }
@@ -283,6 +284,30 @@ fn ligne_commande_reglee() -> bool {
         .open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit")
         .and_then(|k| k.get_value::<u32, _>("ProcessCreationIncludeCmdLine_Enabled"))
         .is_ok_and(|v| v != 0)
+}
+
+/// Outil Windows détourné vu dans une ligne de commande (PRC-003), dans l'ordre du motif ; vide sinon
+pub(crate) fn outil_lolbin(ligne: &str) -> &'static str {
+    let l = ligne.to_lowercase();
+    ["certutil", "bitsadmin", "mshta", "regsvr32", "rundll32", "wmic"].into_iter().find(|o| l.contains(o)).unwrap_or("")
+}
+
+/// Décision pure (testée) : code stable du comportement d'une alerte de processus (empreinte des exceptions) : document
+/// qui lance un interpréteur, règles des motifs vus (triées), et l'outil pour PRC-003
+pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &str) -> String {
+    let mut c: Vec<String> = Vec::new();
+    if document { c.push("document".into()); }
+    let mut r: Vec<&str> = ids.to_vec();
+    r.sort_unstable();
+    r.dedup();
+    for id in r {
+        if id == crate::regles::PRC_003 {
+            c.push(format!("{id}:{}", outil_lolbin(ligne)));
+        } else {
+            c.push(id.to_string());
+        }
+    }
+    c.join("+")
 }
 
 thread_local! {

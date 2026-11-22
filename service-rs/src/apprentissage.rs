@@ -29,8 +29,11 @@ pub struct Exception {
     pub date: String,
 }
 
-/// Format des signatures : un changement de format oublie les comportements appris avec l'ancien
-const FORMAT: u32 = 2;
+/// Format des signatures. Un changement de format rend inapplicables les exceptions et les comportements appris de
+/// l'ancien (empreintes à sens unique, non convertibles) : ils sont comptés, gardés pour les exceptions, et dits dans
+/// la page Santé, jamais perdus en silence (revue de l'auditeur du 2026-11-22, point 2). Format 3 : nature = règle et
+/// code de comportement posé par le producteur, indépendante des techniques ATT&CK et des conseils
+const FORMAT: u32 = 3;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -41,6 +44,34 @@ pub struct Etat {
     pub fin: String,
     pub appris: BTreeSet<String>,
     pub exceptions: Vec<Exception>,
+    /// Exceptions d'un format précédent, qui ne s'appliquent plus : gardées (description, date) pour être reposées
+    pub exceptions_perimees: Vec<Exception>,
+    /// Nombre de comportements appris d'un format précédent, qui ne s'appliquent plus
+    pub appris_perimes: u32,
+}
+
+/// Décision pure (testée) : migration d'un état lu d'un autre format. Les exceptions passent dans les périmées (gardées),
+/// les comportements appris sont comptés puis oubliés ; rend vrai si l'état a changé
+pub fn migrer(e: &mut Etat) -> bool {
+    if e.format == FORMAT {
+        return false;
+    }
+    let n_exceptions = e.exceptions.len();
+    let n_appris = e.appris.len();
+    e.exceptions_perimees.append(&mut e.exceptions);
+    e.appris_perimes = e.appris_perimes.saturating_add(n_appris as u32);
+    e.appris.clear();
+    e.format = FORMAT;
+    if n_exceptions + n_appris > 0 {
+        commun::journal(&format!("empreinte des exceptions au format {FORMAT} : {n_exceptions} exception(s) et {n_appris} comportement(s) appris d'un format précédent ne s'appliquent plus (dit dans la page Santé)"));
+    }
+    true
+}
+
+/// Exceptions et comportements appris d'un format précédent qui ne s'appliquent plus (page Santé)
+pub fn perimes() -> (u32, u32) {
+    let e = etat().lock().unwrap();
+    (e.exceptions_perimees.len() as u32, e.appris_perimes)
 }
 
 fn etat() -> &'static Mutex<Etat> {
@@ -54,11 +85,7 @@ fn etat() -> &'static Mutex<Etat> {
             let deja_en_service = commun::historique_alertes_existe(&commun::noms_du_dossier());
             e.fin = if deja_en_service { e.debut.clone() } else { commun::heure(SystemTime::now() + Duration::from_secs(JOURS_PAR_DEFAUT * 86_400)) };
         }
-        if e.format != FORMAT {
-            e.format = FORMAT;
-            e.appris.clear();
-            e.exceptions.clear();
-        }
+        migrer(&mut e);
         let _ = commun::ecrire(FICHIER, &e);
         Mutex::new(e)
     })
@@ -97,16 +124,17 @@ fn editeur(chemin: &str) -> String {
 
 /// Comportement d'une alerte (fonction pure : l'éditeur est fourni)
 pub fn signature_avec(a: &Alerte, editeur: &str) -> String {
-    // Nature du comportement : la règle, les identifiants de ses techniques et la clé de mots du comportement (codes
-    // stables, couverture ATT&CK, lot 2) ; jamais le libellé affiché, qu'un renommage ou une traduction changerait. La clé
-    // de mots garde le découpage d'avant : deux RES-002 du même programme, l'une « non signé », l'autre « balise », restent
-    // deux comportements (prérelecture de #246, D1 ; audit, S246-01). Ce changement a rendu caduques, une fois, les
-    // exceptions posées avant : leurs alertes reparaissent (sens prudent, jamais un silence). Sans règle (alerte d'un
-    // modèle ancien) : le début des raisons, comme avant
-    let nature = if !a.regle.is_empty() {
-        crate::mitre::cle_comportement(a)
+    // Nature du comportement (format 3, revue de l'auditeur du 2026-11-22, point 2) : l'identifiant de règle et le code de
+    // comportement posé par le code qui produit l'alerte (outil vu, type d'entrée, indices d'une connexion, règle IDS…),
+    // indépendants des techniques ATT&CK et des conseils : retoucher ces tables, ou changer de version d'ATT&CK, ne rend
+    // plus aucune exception caduque. Sans code : le début des raisons, comme avant la couverture ATT&CK
+    let debut_raisons = || a.raisons.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect::<String>();
+    let nature = if a.regle.is_empty() {
+        debut_raisons()
+    } else if !a.comportement.is_empty() {
+        format!("{}#{}", a.regle, a.comportement)
     } else {
-        a.raisons.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect::<String>()
+        format!("{}#{}", a.regle, debut_raisons())
     };
     // Le domaine plutôt que l'adresse ; sans domaine, l'adresse exacte (jamais « n'importe quelle IP »)
     let destination = a.nom_dns.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| a.destination.clone());
@@ -230,8 +258,10 @@ pub fn commande(quoi: &str) -> Result<String, String> {
             format!("Mode apprentissage relancé pour {JOURS_PAR_DEFAUT} jours ; les comportements appris ont été oubliés.")
         }
         "oublier" => {
-            let n = e.exceptions.len();
+            let n = e.exceptions.len() + e.exceptions_perimees.len();
             e.exceptions.clear();
+            e.exceptions_perimees.clear();
+            e.appris_perimes = 0;
             format!("{n} exception(s) supprimée(s).")
         }
         _ => return Err("commande d'apprentissage inconnue".into()),

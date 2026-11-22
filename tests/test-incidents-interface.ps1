@@ -170,6 +170,11 @@ try {
     Cas 'santé : état absent dit' (@(& $appel $vs 'Lignes' @($null, $null, $maintenant))[0].Gravite -eq 1)
     $vieux = @(& $appel $vs 'Lignes' @((& $etat @() (& $ilya 10)), $r, $maintenant))
     Cas 'santé : état ancien dit en première ligne' ($vieux[0].Etat -eq 'état ancien' -and $vieux[0].Gravite -eq 1)
+    # Revue de l'auditeur du 2026-11-22, point 2 : exceptions d'un format précédent dites, jamais perdues en silence
+    Cas 'santé : aucune exception périmée, aucune ligne' (@($lignes | Where-Object Sujet -eq 'Exceptions').Count -eq 0)
+    $per = & { $x = & $etat @(); $x.ExceptionsPerimees = 3; $x.ApprisPerimes = 5; $x }
+    $lper = @(& $appel $vs 'Lignes' @($per, $r, $maintenant) | Where-Object Sujet -eq 'Exceptions')
+    Cas 'santé : exceptions périmées dites avec leur nombre' ($lper.Count -eq 1 -and $lper[0].Gravite -eq 1 -and $lper[0].Detail -match '^3 exception' -and $lper[0].Detail -match '5 comportement') "$($lper.Detail)"
     Cas 'santé : protection en échec dite' (@(& $appel $vs 'Lignes' @((& { $x = & $etat @(); $x.ProtectionDonnees = 'droits'; $x }), $r, $maintenant) | Where-Object { $_.Etat -eq 'en échec' -and $_.Detail -eq 'droits' }).Count -eq 1)
 
     # Confirmation : l'incident et la transition, textes neutralisés ; sans fichier, « inconnu »

@@ -51,6 +51,10 @@ namespace DeR4Tizer
         // Registre des réponses (reponses.json) : vide = écrit ; « EcritureEnEchec » ou « LectureRefusee » (code du service)
         public string RegistreReponses { get; set; }
         public string RegistreReponsesDepuis { get; set; }
+        // Exceptions et comportements appris d'un format d'empreinte précédent, qui ne s'appliquent plus (revue de
+        // l'auditeur du 2026-11-22, point 2) ; service plus ancien : 0
+        public int ExceptionsPerimees { get; set; }
+        public int ApprisPerimes { get; set; }
         // État des collectes (phase 3.3) : null pour un service plus ancien
         public List<EtatCollecte> Collectes { get; set; }
         public List<string> ReglesSansCollecte { get; set; }

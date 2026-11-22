@@ -152,6 +152,7 @@ pub(crate) fn premiers_usages(usages: &[UsagePeripherique], en_cours_avant: &Has
                 // VIE-001 couvre deux comportements : la technique est posée ici (couverture ATT&CK, lot 2)
                 if let Some(a) = alertes.last_mut() {
                     a.mitre = if u.peripherique == "Caméra" { "T1125" } else { "T1123" }.into();
+                    a.comportement = if u.peripherique == "Caméra" { "camera" } else { "micro" }.into();
                 }
             }
         }
@@ -180,6 +181,7 @@ pub(crate) fn outils_distants(outils_vus: &mut HashMap<u32, String>, liste: &Has
                 format!("outil de prise en main à distance en cours d'exécution ({outil})")));
             if let Some(a) = alertes.last_mut() {
                 a.mitre = technique.into();
+                a.comportement = outil.to_lowercase();
             }
             commun::maintenant()
         }).clone();

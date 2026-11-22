@@ -7,11 +7,14 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Exception fingerprints no longer depend on ATT&CK techniques or advice: they use the rule and a stable behaviour
+  code set by the code that raises the alert (tool seen, startup entry type, connection indicators, IDS rule…), so
+  editing the technique tables or moving to a new ATT&CK version no longer voids any exception. Exceptions from the
+  previous fingerprint format cannot be converted: they are kept aside, counted, and shown in the Health page
+  ("Exceptions" line, to set again), never dropped silently.
 - ATT&CK technique taken from the detection rule (one table next to the rule registry, ATT&CK v20.1), never from words
   in the alert text; attack chains carry the techniques of their own signals instead of a default one; an alert can
-  carry several techniques, each translated in the interface. Exception fingerprints now use the rule, the technique
-  identifiers and the behaviour key, never coarser than before: exceptions set before this change no longer apply, once
-  (their alerts come back).
+  carry several techniques, each translated in the interface.
 - Process rules without Sysmon: PRC-001 to PRC-005 and process chains read the Security log's process creation events
   (4688), which carry the command line and the parent even after a short-lived program has exited; WMI is used only
   when this audit is off. New collection "Process creation auditing (4688)" in the Health page (active, partial when

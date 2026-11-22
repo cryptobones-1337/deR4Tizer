@@ -4186,7 +4186,7 @@ fn phase3_alerte_bornee_pire_cas() {
     let x: String = "\u{10FFFF}".repeat(5000);
     let mut a = Alerte { id: x.clone(), heure: x.clone(), niveau: x.clone(), processus: x.clone(), chemin: x.clone(), destination: x.clone(),
         ip: Some(x.clone()), nom_dns: Some(x.clone()), raisons: x.clone(), mitre: x.clone(), conseil: x.clone(), parent: x.clone(),
-        regle: x.clone(), collecte: x.clone(), signature: x.clone(), heure_utc: x.clone(), entite: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX,
+        regle: x.clone(), collecte: x.clone(), signature: x.clone(), heure_utc: x.clone(), entite: x.clone(), comportement: x.clone(), port: 65535, score: i32::MIN, pid: Some(u32::MAX), modele: u32::MAX,
         seq: u64::MAX };
     borner_alerte(&mut a);
     let octets = serde_json::to_vec(&a).unwrap().len();
@@ -8560,8 +8560,7 @@ fn attack_lot2_technique_par_regle_et_non_par_mots() {
     assert_eq!(crate::mitre::identifiants_de_regle("COR-R7", "T1685.001"), ["T1685.001"], "COR-R7 : technique de l'événement");
 }
 
-/// Empreinte des exceptions : la règle et les identifiants de techniques, jamais le libellé (un renommage ou une
-/// traduction ne rend plus une exception caduque)
+/// Empreinte des exceptions : la règle et le code de comportement posé par le producteur, jamais le libellé
 /// Prérelecture de #246, D1 ; audit, S246-01 : deux RES-002 du même programme vers la même destination, l'une « non
 /// signé », l'autre « balise », restent deux comportements : une exception ou un apprentissage sur la première ne tait
 /// pas la seconde ; deux alertes IDS de règles différentes non plus (S246-04)
@@ -8570,16 +8569,100 @@ fn attack_lot2_empreinte_pas_plus_grossiere() {
     use crate::apprentissage::signature_avec;
     use crate::commun::Alerte;
     let base = Alerte { regle: "RES-002".into(), chemin: r"C:\x\a.exe".into(), destination: "203.0.113.5".into(), mitre: "T1071.001 / T1041 / T1105".into(), ..Default::default() };
-    let non_signe = Alerte { raisons: "connexion suspecte : non signé".into(), ..base.clone() };
-    let balise = Alerte { raisons: "connexion suspecte : non signé, balise (connexions régulières)".into(), ..base.clone() };
+    let non_signe = Alerte { raisons: "connexion suspecte : non signé".into(), comportement: "non-signe".into(), ..base.clone() };
+    let balise = Alerte { raisons: "connexion suspecte : non signé, balise (connexions régulières)".into(), comportement: "balise+non-signe".into(), ..base.clone() };
     assert_ne!(signature_avec(&non_signe, "e"), signature_avec(&balise, "e"));
-    let ids1 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000014 : Scanner Nmap".into(), ..Default::default() };
-    let ids2 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000015 : Scanner Nikto".into(), ..Default::default() };
+    let ids1 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000014 : Scanner Nmap".into(), comportement: "sid:9000014".into(), ..Default::default() };
+    let ids2 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000015 : Scanner Nikto".into(), comportement: "sid:9000015".into(), ..Default::default() };
     assert_ne!(signature_avec(&ids1, "e"), signature_avec(&ids2, "e"));
     // VIE-002 : ngrok porte T1572, un autre outil T1219
     let mut v = Alerte { regle: "VIE-002".into(), mitre: "T1572".into(), ..Default::default() };
     crate::mitre::enrichir(&mut v);
     assert_eq!(v.mitre, "T1572 Tunnel de protocole");
+}
+
+/// Revue de l'auditeur du 2026-11-22, point 2 : l'empreinte ne dépend ni des techniques ATT&CK ni des conseils ;
+/// changer une technique, un conseil ou le texte des raisons d'une alerte qui porte un code ne change aucune empreinte
+#[test]
+fn audit_p2_empreinte_independante_des_techniques_et_conseils() {
+    use crate::apprentissage::signature_avec;
+    use crate::commun::Alerte;
+    let a = Alerte { regle: "PRC-003".into(), chemin: r"C:\Windows\System32\certutil.exe".into(),
+        comportement: "PRC-003:certutil".into(), mitre: "T1105 / T1047".into(), conseil: "Vérifiez la commande.".into(),
+        raisons: "outil détourné : certutil -urlcache".into(), ..Default::default() };
+    let s = signature_avec(&a, "Microsoft");
+    for b in [
+        Alerte { mitre: "T1105".into(), ..a.clone() },
+        Alerte { mitre: "T1105 Transfert d'outils / T1218 Exécution par binaire signé".into(), ..a.clone() },
+        Alerte { mitre: String::new(), ..a.clone() },
+        Alerte { conseil: "Autre conseil, réécrit.".into(), ..a.clone() },
+        Alerte { raisons: "LOLBin : certutil (texte retouché)".into(), ..a.clone() },
+    ] {
+        assert_eq!(signature_avec(&b, "Microsoft"), s, "empreinte changée par technique, conseil ou texte");
+    }
+    // Un autre outil vu, ou une autre règle : une autre empreinte
+    assert_ne!(signature_avec(&Alerte { comportement: "PRC-003:bitsadmin".into(), ..a.clone() }, "Microsoft"), s);
+    assert_ne!(signature_avec(&Alerte { regle: "PRC-002".into(), ..a.clone() }, "Microsoft"), s);
+    // Garde statique : le calcul de l'empreinte ne lit ni le module des techniques ni les conseils
+    let src = include_str!("apprentissage.rs");
+    let d = src.find("pub fn signature_avec").expect("signature_avec");
+    let fin = src[d..].find("\n}").expect("fin de signature_avec");
+    let corps = &src[d..d + fin];
+    let code: String = corps.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
+    for interdit in ["mitre", "conseil"] {
+        assert!(!code.contains(interdit), "signature_avec lit « {interdit} »");
+    }
+}
+
+/// Revue de l'auditeur du 2026-11-22, point 2 : migration d'un format d'empreinte précédent, jamais un silence
+#[test]
+fn audit_p2_migration_comptee() {
+    use crate::apprentissage::{migrer, Etat, Exception};
+    let mut e = Etat { format: 2, ..Default::default() };
+    e.exceptions.push(Exception { signature: "sha256:ancienne".into(), description: "a.exe".into(), date: "2026-11-01".into() });
+    e.exceptions.push(Exception { signature: "sha256:autre".into(), description: "b.exe".into(), date: "2026-11-02".into() });
+    for x in ["sha256:x", "sha256:y", "sha256:z"] {
+        e.appris.insert(x.into());
+    }
+    assert!(migrer(&mut e));
+    assert!(e.exceptions.is_empty() && e.appris.is_empty(), "rien d'ancien ne s'applique");
+    assert_eq!(e.exceptions_perimees.len(), 2, "exceptions gardées (description, date)");
+    assert_eq!(e.exceptions_perimees[0].description, "a.exe");
+    assert_eq!(e.appris_perimes, 3);
+    // Déjà au format : rien ne bouge
+    assert!(!migrer(&mut e));
+    assert_eq!((e.exceptions_perimees.len(), e.appris_perimes), (2, 3));
+    // Le nombre est publié dans l'état pour la page Santé
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains("exceptions_perimees: crate::apprentissage::perimes().0"));
+}
+
+/// Revue de l'auditeur du 2026-11-22, point 2 : codes de comportement posés par les producteurs
+#[test]
+fn audit_p2_codes_producteurs() {
+    use crate::processus::{code_comportement, outil_lolbin};
+    use crate::regles::{PRC_001, PRC_003};
+    assert_eq!(outil_lolbin("CertUtil.exe -urlcache -f http://x/y"), "certutil");
+    assert_eq!(outil_lolbin("notepad.exe"), "");
+    assert_eq!(code_comportement(false, &[PRC_003], r"bitsadmin /transfer j http://x c:\y"), "PRC-003:bitsadmin");
+    assert_eq!(code_comportement(true, &[PRC_003, PRC_001, PRC_003], "certutil -decode a b"), format!("document+{PRC_001}+PRC-003:certutil"));
+    use crate::persistance::type_entree;
+    for (c, t) in [("Run (machine)", "run"), ("RunOnce (machine, 32 bits)", "run"), ("Tâche planifiée", "tache"), ("Service", "service"),
+                   ("Pilote", "pilote"), ("WMI", "wmi"), ("Dossier Démarrage", "dossier-demarrage"), ("Winlogon (u)", "winlogon"),
+                   ("IFEO", "ifeo"), ("AppInit", "appinit"), ("Inconnue", "autre")] {
+        assert_eq!(type_entree(c), t, "{c}");
+    }
+    use crate::moniteur::{codes_flux, IndicesFlux};
+    let base = IndicesFlux { menace: None, non_signe: true, dossier_temporaire: false, origine: None, suspicion_ligne: None,
+        nom_dns_connu: true, navigateur_doh: false, application_ip_directe: false, dns_lu: true, preexistant: false, balise: None,
+        port: 443, telemetrie: false, bloque: false };
+    assert_eq!(codes_flux(&base), "non-signe");
+    assert_eq!(codes_flux(&IndicesFlux { balise: Some(60), ..base }), "balise+non-signe");
+    assert_eq!(codes_flux(&IndicesFlux { nom_dns_connu: false, port: 4444, ..base }), "ip-directe+non-signe+port-inhabituel");
+    // Pire cas : le code est borné et ASCII
+    let mut a = crate::commun::Alerte { comportement: format!("é{}", "x".repeat(500)), ..Default::default() };
+    crate::commun::borner_alerte(&mut a);
+    assert!(a.comportement.is_ascii() && a.comportement.len() == 120);
 }
 
 #[test]

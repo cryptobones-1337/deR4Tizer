@@ -339,6 +339,19 @@ namespace DeR4Tizer
                 Source = "etat.json",
                 Gravite = string.IsNullOrEmpty(reg) ? 0 : 1
             });
+            // Exceptions d'un format d'empreinte précédent (revue de l'auditeur du 2026-11-22, point 2) : jamais perdues en
+            // silence ; ligne dite seulement s'il en reste
+            if (e.ExceptionsPerimees > 0 || e.ApprisPerimes > 0)
+                l.Add(new LigneSante
+                {
+                    Sujet = L.T("Exceptions"),
+                    Etat = L.T("à reposer"),
+                    Date = v(e.MisAJour),
+                    Detail = string.Format(L.T("{0} exception(s) d'une version précédente ne s'appliquent plus : leurs alertes reparaissent ; reposez celles qui restent justifiées."), e.ExceptionsPerimees)
+                        + (e.ApprisPerimes > 0 ? " " + string.Format(L.T("{0} comportement(s) appris d'une version précédente sont oubliés."), e.ApprisPerimes) : ""),
+                    Source = "etat.json",
+                    Gravite = 1
+                });
             l.Add(new LigneSante
             {
                 Sujet = L.T("Interface par session"),

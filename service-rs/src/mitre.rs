@@ -152,20 +152,14 @@ const CONSEILS: &[(&[&str], &str)] = &[
 ];
 
 /// Clé de mots du comportement : les mots-clés du premier conseil qui correspond (codes internes, jamais affichés), sinon
-/// le début du texte. Même découpage que l'ancienne attribution de la technique par mots : une empreinte qui la contient
-/// n'est jamais plus grossière qu'avant le lot 2 (prérelecture de #246, D1 ; audit, S246-01, S246-02, S246-04)
+/// le début du texte. Sert aux détections distinctes de COR-R6 (en mémoire) ; l'empreinte des exceptions, elle, ne lit
+/// plus ces mots (code de comportement posé par le producteur, revue de l'auditeur du 2026-11-22, point 2)
 pub fn cle_mots(texte: &str) -> String {
     let t = texte.to_lowercase();
     match CONSEILS.iter().find(|(mots, _)| mots.iter().all(|m| t.contains(m))) {
         Some((mots, _)) => mots.join("+"),
         None => texte.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect(),
     }
-}
-
-/// Clé stable du comportement d'une alerte (empreinte des exceptions et de l'apprentissage) : la règle, les identifiants
-/// de ses techniques et la clé de mots ; jamais un libellé affiché
-pub fn cle_comportement(a: &Alerte) -> String {
-    format!("{}#{}#{}", a.regle, identifiants_du_texte(&a.mitre).join(","), cle_mots(&format!("{} {}", a.raisons, a.destination)))
 }
 
 pub fn enrichir(a: &mut Alerte) {
