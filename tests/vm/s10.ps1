@@ -4,6 +4,12 @@
 # chacun, sous son PID, d'après l'événement 4688. Témoin négatif : un PowerShell ordinaire, sans alerte. La latence notée
 # va du lancement à l'alerte lue dans alertes.json (écriture du fichier comprise). SIMULATION : aucune charge réelle.
 #
+# Chaque essai lance une copie de powershell.exe posée dans son propre dossier : le service ne répète pas pendant 24 h
+# une alerte de même niveau, même programme (chemin), même parent et même début de raison (moniteur.rs, cle_alerte),
+# si bien que dix lancements du même powershell.exe ne laissent qu'une alerte. La détection, elle, ne lit que le nom
+# du programme et la ligne de commande : une copie est détectée comme l'original. Le premier passage (2026-11-22) a
+# montré les deux pièges : alertes.json lu comme un seul objet sous Windows PowerShell 5.1, et alertes regroupées.
+#
 # Lancé dans la VM par tests\vm\lancer.ps1 -Scenario s10 (exécuteur tests\bac-a-sable\executer.ps1).
 param(
     [Parameter(Mandatory)] [string]$Msi,
@@ -19,7 +25,8 @@ $fichierAlertes = Join-Path $script:Donnees 'alertes.json'
 
 function Alertes {
     if (-not (Test-Path $fichierAlertes)) { return @() }
-    try { @(Get-Content $fichierAlertes -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { @() }
+    # Sous Windows PowerShell 5.1, ConvertFrom-Json rend un tableau JSON comme un seul objet : déroulé ici
+    try { @(Get-Content $fichierAlertes -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ }) } catch { @() }
 }
 
 function Collectes {
@@ -79,8 +86,12 @@ if ($pret) {
             # Charge distincte à chaque essai (une alerte identique pourrait être regroupée avec la précédente)
             $commande = "Start-Sleep -Milliseconds $(40 + $n)"
             $code = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commande))
+            $dossier = Join-Path $env:RUNNER_TEMP "s10\essai-$n"
+            New-Item -ItemType Directory -Force -Path $dossier | Out-Null
+            $copie = Join-Path $dossier 'powershell.exe'
+            Copy-Item (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $copie -Force
             $depart = Get-Date
-            $p = Start-Process powershell.exe -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $code" -PassThru -WindowStyle Hidden
+            $p = Start-Process $copie -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $code" -PassThru -WindowStyle Hidden
             $p.WaitForExit()
             $duree = [math]::Round(((Get-Date) - $depart).TotalSeconds, 2)
             $r = Attendre-Alerte $p.Id $depart
