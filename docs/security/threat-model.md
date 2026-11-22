@@ -125,9 +125,9 @@ Veut publier une version malveillante que les postes installeraient.
 - Risques résiduels : un attaquant qui contrôle le compte du mainteneur peut aussi approuver l'environnement de
   publication et faire signer un paquet par le vrai certificat ; seule la protection du compte (double facteur,
   sessions) le couvre. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
-  Windows Sandbox, puis en CI au run 44480286774 (PR #205, `cd36ee4`, 2026-11-19)). Aucune version signée n'est publiée : la mise à jour automatique, inopérante dans les
-  versions 4.2 et 4.3 déjà installées (corrigée par la PR #26 ; aucune version n'est publiée sur GitHub), n'installe rien
-  aujourd'hui.
+  Windows Sandbox, puis en CI au run 44480286774 (PR #205, `cd36ee4`, 2026-11-19)). Première version signée publiée : v4.3 (2026-11-23). La mise à jour automatique,
+  inopérante dans les versions de test 4.2 et 4.3 installées à la main (corrigée par la PR #26, incluse dans la v4.3),
+  ne part que de la v4.3 signée, vers une version suivante.
 - Choix du certificat : l'épinglage repose sur la clé publique. Certificat retenu par le mainteneur le 2026-11-11 :
   Certum Open Source, au nom du mainteneur ; sa clé publique est épinglée (`CLE_SIGNATURE`). L'épinglage accepterait
   aussi un paquet signé par cette même clé pour un autre projet du même titulaire (l'`UpgradeCode` et la version

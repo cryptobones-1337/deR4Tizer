@@ -5,8 +5,9 @@ privileges, weaken Windows or Microsoft Defender settings, or hide an attack. Re
 
 ## Supported versions
 
-No version has been published yet. Until the first signed release, only the current `main` branch is supported, and
-builds of 4.2 and 4.3 installed by hand are test builds: they do not update on their own and are not supported.
+Supported: the signed release v4.3 (first signed release, 2026-11-23) and the current `main` branch. Builds of 4.2
+and 4.3 installed by hand before it are unsigned test builds: they do not update on their own and are not supported;
+install the signed v4.3 instead.
 
 ## Reporting a vulnerability
 

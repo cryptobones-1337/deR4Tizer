@@ -1,11 +1,18 @@
 # Changelog
 
-No version has been published yet. The first signed release will be the first entry below; builds 4.2 and 4.3 were
-test builds, installed by hand and unsigned, and they do not update on their own (see the README, "Known limit").
-
 ## Unreleased
 
-Main changes on `main` since build 4.3, most recent first:
+Nothing yet.
+
+## 4.3 · 2026-11-23
+
+First signed release (tag `v4.3`, commit `46243f7`): executables and MSI signed with the Certum certificate (key
+pinned in the service), then batch 3d passed in the test VM on this signed MSI, with Microsoft Defender fully active
+(all scenarios passed, no detection). Published before the deferred D4-1 trials (interface restart in a Remote Desktop
+session and on fast user switching), which remain to be run (README, "Known limits"). Builds 4.2 and 4.3 installed by
+hand earlier were unsigned test builds and do not update on their own (README, "Known limit").
+
+Main changes since the unsigned test build 4.3, most recent first:
 
 - Local signing: `signer-version.ps1` no longer stops when reading the MSI version (the path built by `Join-Path`
   was refused by the Windows Installer COM call). Found by the signing rehearsal on a private copy; the CI now reads
