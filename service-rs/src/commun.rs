@@ -41,6 +41,9 @@ fn nul_par_defaut<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(d: D
 #[serde(rename_all = "PascalCase", default)]
 pub struct FluxInfo {
     pub cle: String,
+    /// Codes stables des indices du score (comportement de l'alerte : empreinte des exceptions), hors etat.json
+    #[serde(skip)]
+    pub codes: String,
     pub score: i32,
     pub processus: String,
     pub pid: u32,
@@ -86,6 +89,10 @@ pub struct Etat {
     /// redémarrage). Code traduit par l'interface
     pub registre_reponses: String,
     pub registre_reponses_depuis: String,
+    /// Exceptions et comportements appris d'un format d'empreinte précédent, qui ne s'appliquent plus (jamais perdus en
+    /// silence : dits dans la page Santé ; revue de l'auditeur du 2026-11-22, point 2)
+    pub exceptions_perimees: u32,
+    pub appris_perimes: u32,
     /// État de chaque collecte (phase 3.3) et règles dont la télémétrie n'est pas lue (ou ne l'est qu'en partie)
     pub collectes: Vec<crate::collectes::EtatCollecte>,
     pub regles_sans_collecte: Vec<String>,
@@ -502,6 +509,12 @@ pub struct Alerte {
     pub mitre: String,
     #[serde(deserialize_with = "nul_vide")]
     pub conseil: String,
+    /// Code stable du comportement, posé par le code qui produit l'alerte (outil vu, type d'entrée, indices d'une
+    /// connexion, règle IDS…) ; avec l'identifiant de règle, il fait la nature de l'empreinte des exceptions et de
+    /// l'apprentissage, indépendante des techniques ATT&CK et des conseils (revue de l'auditeur du 2026-11-22, point 2).
+    /// Vide : la nature retombe sur le début des raisons
+    #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
+    pub comportement: String,
     /// Chemin du programme parent, s'il est connu (détections de processus)
     #[serde(default, deserialize_with = "nul_vide", skip_serializing_if = "String::is_empty")]
     pub parent: String,
@@ -647,6 +660,10 @@ pub fn borner_alerte(a: &mut Alerte) {
                      (&mut a.id, 64), (&mut a.signature, 80)] {
         borner(s, max);
     }
+    // Code de comportement (revue de l'auditeur du 2026-11-22, point 2) : codes ASCII posés par le producteur ; tout
+    // autre caractère est retiré (la même alerte donne toujours le même code), 120 octets au plus (pire cas, S72-11)
+    a.comportement.retain(|c| c.is_ascii_graphic());
+    a.comportement.truncate(120);
     for o in [&mut a.ip, &mut a.nom_dns] {
         if let Some(s) = o {
             borner(s, MAX_CHAMP_ALERTE);

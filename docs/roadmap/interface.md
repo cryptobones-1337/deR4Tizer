@@ -151,9 +151,11 @@ Décision du mainteneur (2026-11-21) : le service émet des codes stables (règl
 collecte, état) et l'interface les traduit par ses tables, comme pour les sortes de réponse et les états. Les raisons
 des alertes gardent leur texte français : l'empreinte des exceptions (`apprentissage::signature_avec`), `mitre::enrichir`
 et les tests de l'interface sur « MENACE » et « BLOQUÉ » le lisent ; un code et des paramètres viendront s'y ajouter.
-Depuis la couverture ATT&CK (lot 2, 2026-11-22), l'empreinte des exceptions ne lit plus le libellé de la technique,
-seulement la règle et les identifiants ATT&CK : un nom de technique peut être retouché ou traduit sans rendre une
-exception caduque (le changement lui-même a rendu caduques, une fois, les exceptions posées avant). L'interface traduit
+Depuis la revue de l'auditeur du 2026-11-22 (point 2), l'empreinte des exceptions ne lit plus du tout les techniques
+ATT&CK ni les conseils : la règle et un code de comportement posé par le producteur (`Comportement`, voir
+`docs/detection/modele-evenement.md`). Un nom ou un identifiant de technique peut être retouché ou traduit sans rendre
+une exception caduque ; les exceptions d'un format précédent sont comptées et dites dans la page Santé (ligne
+« Exceptions »), jamais perdues en silence. L'interface traduit
 chaque libellé à part (`L.Mitre`), une alerte pouvant porter plusieurs techniques.
 
 - **Lot 1 (fait)** : noms lisibles des 25 collectes (bandeau des alertes, détail d'une alerte, page Santé), Sysmon

@@ -143,8 +143,25 @@ pub(crate) fn alerter(e: &EntreeDemarrage, quoi: &str) -> Alerte {
         chemin: e.cible.clone(),
         destination: format!("{} : {}", e.categorie, e.nom),
         raisons: format!("{quoi} : {}{}", e.commande, if suspect { format!(" [{}]", e.remarque) } else { String::new() }),
+        comportement: format!("{}{}{}", type_entree(&e.categorie), if quoi.contains("DEVENU SUSPECT") { ":devenu-suspect" } else { "" },
+            if suspect { ":suspect" } else { "" }),
         ..Default::default()
     }
+}
+
+/// Décision pure (testée) : type stable d'une entrée de démarrage automatique (code de comportement des alertes PER-*)
+pub(crate) fn type_entree(categorie: &str) -> &'static str {
+    let c = categorie.to_lowercase();
+    if c.starts_with("run") { "run" }
+    else if c.starts_with("tâche") { "tache" }
+    else if c == "service" { "service" }
+    else if c == "pilote" { "pilote" }
+    else if c.starts_with("wmi") { "wmi" }
+    else if c.starts_with("dossier démarrage") { "dossier-demarrage" }
+    else if c.starts_with("winlogon") { "winlogon" }
+    else if c == "ifeo" { "ifeo" }
+    else if c == "appinit" { "appinit" }
+    else { "autre" }
 }
 
 pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {

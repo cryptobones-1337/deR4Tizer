@@ -805,7 +805,7 @@ impl Moniteur {
             };
             let texte_origine = origine_fichier.as_ref().and_then(|o| o.texte());
             let bloque = self.est_bloque(ip, nom.as_deref());
-            let (score, raisons) = score_flux(&IndicesFlux {
+            let indices = IndicesFlux {
                 menace: menace.as_ref().map(|m| m.source.as_str()),
                 // Chemin vide : signataire « ? », jamais vide
                 non_signe: signataire.is_empty(),
@@ -821,10 +821,13 @@ impl Moniteur {
                 port: *port,
                 telemetrie: nom.as_deref().map(est_telemetrie).unwrap_or(false),
                 bloque,
-            });
+            };
+            let (score, raisons) = score_flux(&indices);
+            let codes = codes_flux(&indices);
 
             let f = FluxInfo {
                 cle: cle.clone(),
+                codes,
                 score,
                 processus: nom_processus.clone(),
                 pid: *pid,
@@ -1090,6 +1093,8 @@ impl Moniteur {
                 protection_donnees: commun::echec_protection().unwrap_or_default(),
                 registre_reponses: registre.0.into(),
                 registre_reponses_depuis: registre.1.map(|s| commun::heure_filetime(s * 10_000_000 + 116_444_736_000_000_000)).unwrap_or_default(),
+                exceptions_perimees: crate::apprentissage::perimes().0,
+                appris_perimes: crate::apprentissage::perimes().1,
                 collectes: etats_collectes,
                 regles_sans_collecte,
                 regles_degradees,
@@ -1136,6 +1141,7 @@ impl Moniteur {
             port: f.port,
             raisons,
             pid: Some(f.pid),
+            comportement: f.codes.clone(),
             ..Default::default()
         }, Some(cle))
     }
@@ -2715,6 +2721,23 @@ pub(crate) struct IndicesFlux<'a> {
     pub port: u16,
     pub telemetrie: bool,
     pub bloque: bool,
+}
+
+/// Décision pure (testée) : codes stables des indices d'une connexion, triés, pour le code de comportement des alertes de
+/// connexion (empreinte des exceptions) ; jamais les textes des raisons, qui peuvent être retouchés
+pub(crate) fn codes_flux(i: &IndicesFlux) -> String {
+    let mut c: Vec<&str> = Vec::new();
+    if i.menace.is_some() { c.push("menace"); }
+    if i.non_signe { c.push("non-signe"); }
+    if i.dossier_temporaire { c.push("dossier-temporaire"); }
+    if i.origine.is_some() && i.non_signe { c.push("telecharge"); }
+    if i.suspicion_ligne.is_some() { c.push("ligne-commande"); }
+    if !i.nom_dns_connu && !i.navigateur_doh && !i.application_ip_directe && i.dns_lu && !i.preexistant { c.push("ip-directe"); }
+    if i.balise.is_some() { c.push("balise"); }
+    if !PORTS_COURANTS.contains(&i.port) { c.push("port-inhabituel"); }
+    if i.telemetrie { c.push("telemetrie"); }
+    c.sort_unstable();
+    c.join("+")
 }
 
 /// Décision pure (testée, RES-001 et RES-002) : score et raisons d'une connexion, dans l'ordre affiché

@@ -79,12 +79,14 @@ const MAX_CLES_ALERTES: usize = 100;
 
 impl Interne {
     fn alerter(&mut self, cle: String, niveau: &str, score: i32, destination: String, raisons: String, mitre: &str) {
+        // Code de comportement : la catégorie de la clé (« arp-double », « leurre », « upnp »…), jamais l'adresse
+        let mut comportement = cle.split('|').next().unwrap_or("").to_string();
         // Table bornée, synthèse au-delà (audit du 2026-11-14, A6 ; correction de sûreté, logique de détection
         // inchangée : NDR gelé)
         let (niveau, score, destination, raisons) = match commun::admettre_cle(&mut self.deja, cle, Duration::from_secs(3600), MAX_CLES_ALERTES) {
             commun::Admission::Nouvelle => (niveau.to_string(), score, destination, raisons),
             // Synthèse au niveau de l'alerte qui l'a déclenchée si elle était Critique (information de l'audit v2 de #176)
-            commun::Admission::PlafondAtteint(cat) => (if niveau == "Critique" { "Critique" } else { "Alerte" }.to_string(), if niveau == "Critique" { score.max(6) } else { 6 }, "réseau local".to_string(),
+            commun::Admission::PlafondAtteint(cat) => (if niveau == "Critique" { "Critique" } else { "Alerte" }.to_string(), if niveau == "Critique" { score.max(6) } else { 6 }, { comportement = format!("synthese:{cat}"); "réseau local".to_string() },
                 format!("Plus de {MAX_CLES_ALERTES} alertes distinctes « {cat} » du réseau local en une heure : les suivantes de cette catégorie ne sont plus signalées une à une (inondation probable) ; les autres catégories restent signalées")),
             _ => return,
         };
@@ -98,6 +100,7 @@ impl Interne {
             destination,
             raisons: format!("{raisons}  [MITRE {mitre}]"),
             mitre: mitre.into(),
+            comportement,
             ..Default::default()
         });
     }
