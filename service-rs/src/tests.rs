@@ -9549,7 +9549,7 @@ fn signature_locale_script_unique_echec_ferme() {
     assert!(s.contains("'cles-compilees.txt,deR4Tizer.exe,deR4TizerSvc.exe'"));
     assert!(pos("if ($raisonCles) { Arret $raisonCles }") < pos("Signer @((Join-Path $bin 'deR4Tizer.exe')"));
     let cc = include_str!("../../cles-compilees.ps1");
-    assert!(cc.contains("$texte.Contains($Brut)") && cc.contains("-notin $cles"));
+    assert!(cc.contains("$texte.IndexOf($Brut") && cc.contains("-notmatch '[0-9A-Fa-f]'") && cc.contains("-notin $cles"));
     assert!(include_str!("../../.github/workflows/ci.yml").contains("./tests/test-cles-compilees.ps1"));
     assert!(!wf.contains("name: executables"));
     assert!(include_str!("../../docs/publication/signature-locale.md").contains("signer-version.ps1 -Tag vX.Y"));

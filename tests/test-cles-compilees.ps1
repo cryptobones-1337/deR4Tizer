@@ -16,6 +16,11 @@ Cas 'aucune clé compilée : arrêt' ((Test-ClesCompilees '' (Binaire '') $a) -m
 Cas 'valeur mal formée : arrêt' ((Test-ClesCompilees 'pas-une-cle' (Binaire 'pas-une-cle') $a) -match 'aucune clé compilée')
 # Le fichier joint ne peut pas dire autre chose que le binaire
 Cas 'fichier différent du binaire : arrêt' ((Test-ClesCompilees "$a,$c" (Binaire "$a,$b") $c) -match 'ne correspond pas')
+# Audit de #256, S256-01 : « 0<clé> » compilée (65 caractères hexadécimaux) n'épingle rien ; « <clé> » jointe ne doit pas
+# passer. Une lettre non hexadécimale voisine est admise (chaînes accolées dans le binaire)
+Cas 'clé précédée d''un caractère hexadécimal : arrêt' ((Test-ClesCompilees $a (Binaire "0$a") $a) -match 'ne correspond pas')
+Cas 'clé voisine d''une lettre non hexadécimale : acceptée' ((Test-ClesCompilees $a (Binaire "xyz${a}zz") $a) -eq '')
+Cas 'clé suivie d''un caractère hexadécimal : arrêt' ((Test-ClesCompilees $a (Binaire "${a}0") $a) -match 'ne correspond pas')
 Cas 'même découpage que le service' ((Get-ClesCompilees "$a ; $b`n$c").Count -eq 3)
 
 if ($echecs) { Write-Host "$echecs échec(s)"; exit 1 }

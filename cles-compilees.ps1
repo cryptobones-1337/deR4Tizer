@@ -20,7 +20,18 @@ function Test-ClesCompilees([string]$Brut, [byte[]]$Service, [string]$CleCertifi
     if ($cles.Count -eq 0) { return "aucune clé compilée dans le service (CLE_SIGNATURE vide ou mal formée à la compilation) : il n'installerait aucune mise à jour" }
     # Latin-1 : un octet par caractère, la valeur ASCII se retrouve telle quelle
     $texte = [Text.Encoding]::GetEncoding(28591).GetString($Service)
-    if (-not $texte.Contains($Brut)) { return "cles-compilees.txt ne correspond pas à la valeur compilée dans deR4TizerSvc.exe" }
+    # Occurrence délimitée : ni précédée ni suivie d'un caractère hexadécimal, sinon une valeur compilée « 0<clé> »
+    # (65 caractères, qui n'épingle rien) passerait pour « <clé> » (audit de #256, S256-01). Une autre lettre voisine est
+    # admise : les chaînes constantes du binaire sont accolées les unes aux autres
+    $trouve = $false; $i = $texte.IndexOf($Brut, [StringComparison]::Ordinal)
+    while ($i -ge 0 -and -not $trouve) {
+        $avant = if ($i -gt 0) { $texte[$i - 1] } else { [char]0 }
+        $fin = $i + $Brut.Length
+        $apres = if ($fin -lt $texte.Length) { $texte[$fin] } else { [char]0 }
+        $trouve = ("$avant" -notmatch '[0-9A-Fa-f]') -and ("$apres" -notmatch '[0-9A-Fa-f]')
+        $i = $texte.IndexOf($Brut, $i + 1, [StringComparison]::Ordinal)
+    }
+    if (-not $trouve) { return "cles-compilees.txt ne correspond pas à la valeur compilée dans deR4TizerSvc.exe" }
     if ("$CleCertificat".ToLowerInvariant() -notin $cles) { return "la clé de ce certificat ($CleCertificat) n'est pas celle compilée dans le service ($($cles -join ', ')) : les postes refuseraient cette version" }
     return ''
 }
