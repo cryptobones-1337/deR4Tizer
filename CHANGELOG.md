@@ -7,6 +7,10 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Alerts carry only the ATT&CK technique actually observed: PRC-003 the technique of the tool seen (certutil T1105,
+  bitsadmin T1197, mshta, regsvr32 and rundll32 T1218, wmic T1047), PER-001 and PER-002 the technique of the startup
+  entry type (Run key T1547.001, service T1543.003, scheduled task T1053.005, WMI subscription T1546.003); RES-002 and
+  RES-003 keep T1071.001 and DNS-001 T1071.004 only. The ATT&CK map does not change.
 - Exception fingerprints no longer depend on ATT&CK techniques or advice: they use the rule and a stable behaviour
   code set by the code that raises the alert (tool seen, startup entry type, connection indicators, IDS rule…), so
   editing the technique tables or moving to a new ATT&CK version no longer voids any exception. Exceptions from the

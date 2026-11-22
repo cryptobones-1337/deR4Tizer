@@ -72,7 +72,7 @@ fn regles() -> &'static [(Regex, &'static str, &'static str)] {
         vec![
             (Regex::new(r"(?i)(powershell|pwsh).*(\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|frombase64string|downloadstring|downloadfile|net\.webclient|invoke-expression|\biex\b.*(http|\$)|-w(indowstyle)?\s+h(idden)?.*(http|iex|-enc))").unwrap(),
              "PowerShell obscurci ou qui télécharge du code", crate::regles::PRC_002),
-            (Regex::new(r"(?i)certutil.*(-urlcache|-decode|-f\s+http)|bitsadmin.*/transfer|mshta.*(http|javascript:|vbscript:)|regsvr32.*/i:http|rundll32.*javascript:|wmic.*process\s+call\s+create").unwrap(),
+            (Regex::new(&format!("(?i){}", OUTILS_PRC003.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
              "détournement d'outil Windows (LOLBin)", crate::regles::PRC_003),
             (Regex::new(r#"(?i)(^|[\\/"\s])(chrome|msedge|brave)\.exe"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
              "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)", crate::regles::PRC_004),
@@ -148,6 +148,8 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         raisons: format!("{} : {ligne}", raisons.join(", ")),
         pid: Some(pid),
         comportement: code_comportement(document, &ids, p.ligne_commande.as_deref().unwrap_or("")),
+        // PRC-003 : la technique de l'outil vu (règle à plusieurs comportements, posée par l'alerte)
+        mitre: if regle == crate::regles::PRC_003 { technique_prc003(p.ligne_commande.as_deref().unwrap_or("")).to_string() } else { String::new() },
         ..Default::default()
     })
 }
@@ -286,10 +288,31 @@ fn ligne_commande_reglee() -> bool {
         .is_ok_and(|v| v != 0)
 }
 
-/// Outil Windows détourné vu dans une ligne de commande (PRC-003), dans l'ordre du motif ; vide sinon
+/// PRC-003 : (outil, motif de la ligne de commande, technique ATT&CK de ce que l'outil fait). Le motif de la règle est la
+/// réunion de ces motifs : l'outil et sa technique viennent du motif qui a correspondu, jamais d'un nom vu ailleurs dans
+/// la ligne (revue de l'auditeur du 2026-11-22, point 1 : certutil ne porte plus T1047)
+const OUTILS_PRC003: &[(&str, &str, &str)] = &[
+    ("certutil", r"certutil.*(-urlcache|-decode|-f\s+http)", "T1105"),
+    ("bitsadmin", r"bitsadmin.*/transfer", "T1197"),
+    ("mshta", r"mshta.*(http|javascript:|vbscript:)", "T1218"),
+    ("regsvr32", r"regsvr32.*/i:http", "T1218"),
+    ("rundll32", r"rundll32.*javascript:", "T1218"),
+    ("wmic", r"wmic.*process\s+call\s+create", "T1047"),
+];
+
+fn motifs_outils() -> &'static [(Regex, &'static str, &'static str)] {
+    static M: OnceLock<Vec<(Regex, &'static str, &'static str)>> = OnceLock::new();
+    M.get_or_init(|| OUTILS_PRC003.iter().map(|(o, m, t)| (Regex::new(&format!("(?i){m}")).unwrap(), *o, *t)).collect())
+}
+
+/// Outil Windows détourné dont le motif PRC-003 correspond à la ligne de commande (premier de la table) ; vide sinon
 pub(crate) fn outil_lolbin(ligne: &str) -> &'static str {
-    let l = ligne.to_lowercase();
-    ["certutil", "bitsadmin", "mshta", "regsvr32", "rundll32", "wmic"].into_iter().find(|o| l.contains(o)).unwrap_or("")
+    motifs_outils().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, o, _)| *o).unwrap_or("")
+}
+
+/// Décision pure (testée) : technique ATT&CK d'une alerte PRC-003, celle de l'outil vu ; vide sinon
+pub(crate) fn technique_prc003(ligne: &str) -> &'static str {
+    motifs_outils().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, _, t)| *t).unwrap_or("")
 }
 
 /// Décision pure (testée) : code stable du comportement d'une alerte de processus (empreinte des exceptions) : document

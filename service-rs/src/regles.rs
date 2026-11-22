@@ -41,23 +41,23 @@ macro_rules! registre {
 
 registre! {
     RES_001 = "RES-001" : "connexion vers une adresse ou un domaine des listes de menaces" => Fixes(&["T1071.001"]);
-    RES_002 = "RES-002" : "nouvelle connexion au score suspect" => Fixes(&["T1071.001", "T1041", "T1105"]);
-    RES_003 = "RES-003" : "première connexion à Internet d'un programme" => Fixes(&["T1071.001", "T1204.002"]);
+    RES_002 = "RES-002" : "nouvelle connexion au score suspect" => Fixes(&["T1071.001"]);
+    RES_003 = "RES-003" : "première connexion à Internet d'un programme" => Fixes(&["T1071.001"]);
     RES_004 = "RES-004" : "adresse publique directement sur le PC" => Fixes(&["T1133"]);
     RES_005 = "RES-005" : "paquet entrant venu d'Internet" => Fixes(&["T1133"]);
     RES_006 = "RES-006" : "nouveau port ouvert en écoute sur le réseau" => Aucune;
     RES_007 = "RES-007" : "connexion entrante depuis Internet" => Fixes(&["T1133"]);
-    DNS_001 = "DNS-001" : "requête DNS vers un domaine malveillant connu" => Fixes(&["T1071.004", "T1566.002"]);
+    DNS_001 = "DNS-001" : "requête DNS vers un domaine malveillant connu" => Fixes(&["T1071.004"]);
     DNS_002 = "DNS-002" : "serveur DNS changé sur une carte du poste" => Fixes(&["T1557"]);
     DNS_003 = "DNS-003" : "port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur" => Fixes(&["T1557"]);
     PRC_001 = "PRC-001" : "document bureautique qui lance un interpréteur" => Fixes(&["T1566.001", "T1204.002"]);
     PRC_002 = "PRC-002" : "PowerShell obscurci ou qui télécharge du code" => Fixes(&["T1059.001", "T1027"]);
-    PRC_003 = "PRC-003" : "détournement d'outil Windows (LOLBin)" => Fixes(&["T1218", "T1197", "T1105", "T1047"]);
+    PRC_003 = "PRC-003" : "détournement d'outil Windows (LOLBin)" => ParLAlerte;
     PRC_004 = "PRC-004" : "navigateur lancé en débogage à distance" => Fixes(&["T1539"]);
     PRC_005 = "PRC-005" : "suppression des sauvegardes" => Fixes(&["T1490"]);
     CHA_001 = "CHA-001" : "chaîne de processus au score cumulé" => ParLAlerte;
-    PER_001 = "PER-001" : "démarrage automatique nouveau" => Fixes(&["T1547.001", "T1543.003", "T1053.005", "T1546.003"]);
-    PER_002 = "PER-002" : "démarrage automatique modifié" => Fixes(&["T1547.001", "T1112"]);
+    PER_001 = "PER-001" : "démarrage automatique nouveau" => ParLAlerte;
+    PER_002 = "PER-002" : "démarrage automatique modifié" => ParLAlerte;
     DEF_001 = "DEF-001" : "Defender : menace détectée (1116)" => Aucune;
     DEF_002 = "DEF-002" : "Defender : menace traitée (1117)" => Aucune;
     DEF_003 = "DEF-003" : "Defender : protection en temps réel désactivée (5001)" => Fixes(&["T1685"]);

