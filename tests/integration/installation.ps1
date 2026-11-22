@@ -382,7 +382,13 @@ Verifier 'État des collectes : toutes notées, collectes de la VM actives' {
     $cause = @($e.CausesSansCollecte | Where-Object { $_.Regle -eq 'DNS-001' }) | Select-Object -First 1
     if ($sans -contains 'DNS-001' -and (-not $cause -or @($cause.Collectes) -notcontains 'ListesDomaines')) { return "cause de DNS-001 absente ou fausse : $(if ($cause) { @($cause.Collectes) -join ', ' } else { 'aucune' })" }
     $deg = @($e.ReglesDegradees)
-    if (-not $sysmon -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul) non dégradée : $($deg -join ', ')" }
+    # Sans Sysmon : audit des créations de processus (4688) actif, PRC-002 couverte en entier ; sinon WMI seul, dégradée
+    # (couverture ATT&CK, lot 1)
+    if (-not $sysmon) {
+        $auditActif = $c['AuditProcessus'] -and $c['AuditProcessus'].Etat -eq 'Active'
+        if ($auditActif -and $deg -contains 'PRC-002') { return "PRC-002 dégradée alors que l'audit des 4688 est actif : $($deg -join ', ')" }
+        if (-not $auditActif -and $deg -notcontains 'PRC-002') { return "PRC-002 (WMI seul, audit $($c['AuditProcessus'].Etat)) non dégradée : $($deg -join ', ')" }
+    }
     Write-Host "  collectes : $vu"
     Write-Host "  sans collecte : $($sans -join ', ')"
     $true
