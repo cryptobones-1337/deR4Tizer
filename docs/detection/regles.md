@@ -365,7 +365,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   qu'on ne touche pas.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
-- **ATT&CK** : posée par l'alerte : la technique de l'outil vu (motif qui a correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 T1218 Binaire système détourné, wmic T1047 WMI détourné.
+- **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 T1218 Binaire système détourné, wmic T1047 WMI détourné.
 - **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
 - **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code.
 - **Télémétrie** : ligne de commande.
@@ -464,7 +464,7 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   persistance produite juste avant un arrêt », bout en bout). État : réussi en VM de test pour la clé Run (scénario 3a, Defender actif).
 
 ### PER-002 : démarrage automatique modifié
-- **ATT&CK** : posée par l'alerte : la technique du type d'entrée, comme PER-001 (clé Run T1547.001…) ; plus T1112, qui n'était pas observé en propre.
+- **ATT&CK** : posée par l'alerte : la technique du type d'entrée, comme PER-001 (clé Run T1547.001…) ; sans T1112, qui n'était pas observé en propre.
 - **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
 - **Justification** : un démarrage légitime détourné vers une autre commande.
 - **Télémétrie** : comme PER-001.
