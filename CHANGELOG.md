@@ -7,6 +7,9 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Local signing: `signer-version.ps1` no longer stops when reading the MSI version (the path built by `Join-Path`
+  was refused by the Windows Installer COM call). Found by the signing rehearsal on a private copy; the CI now reads
+  the version of the MSI it builds.
 - PRC-002 (obfuscated or downloading PowerShell) now carries T1027 Obfuscated files or information only when an
   obfuscation pattern was seen (`-EncodedCommand` with a long payload, `FromBase64String`); a download, a string
   execution or a hidden window carries T1059.001 PowerShell alone. Its behaviour code names the patterns seen, so an

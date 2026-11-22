@@ -30,6 +30,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $racine = $PSScriptRoot
 . (Join-Path $racine 'cles-compilees.ps1')
+. (Join-Path $racine 'version-msi.ps1')
 function Etape([string]$t) { Write-Host "== $t" }
 function Arret([string]$t) { Write-Host "ARRÊT : $t" -ForegroundColor Red; exit 1 }
 function Sha256([string]$f) { (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -190,12 +191,8 @@ try {
     Remove-Item Env:\D4T_VERIFIER, Env:\D4T_CLES, Env:\D4T_FICHIERS -ErrorAction SilentlyContinue
 }
 if ($LASTEXITCODE) { Arret 'vérification des signatures en échec' }
-$installeur = New-Object -ComObject WindowsInstaller.Installer
-$base_msi = $installeur.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installeur, @((Join-Path $bin 'deR4Tizer.msi'), 0))
-$vue = $base_msi.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $base_msi, @("SELECT Value FROM Property WHERE Property='ProductVersion'"))
-$vue.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $vue, $null) | Out-Null
-$ligne = $vue.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $vue, $null)
-$versionMsi = $ligne.GetType().InvokeMember('StringData', 'GetProperty', $null, $ligne, 1)
+# version-msi.ps1 (répétition de signature du 2026-11-22 : le chemin venu de Join-Path était refusé par l'appel COM)
+$versionMsi = Get-VersionMsi (Join-Path $bin 'deR4Tizer.msi')
 $attenduMsi = ($version.Split('.') + @('0', '0', '0'))[0..2] -join '.'
 if ($versionMsi -ne $attenduMsi) { Arret "version du MSI $versionMsi différente de $attenduMsi" }
 Write-Host "ProductVersion du MSI : $versionMsi"
