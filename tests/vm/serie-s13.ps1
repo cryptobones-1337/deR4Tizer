@@ -1,6 +1,6 @@
 ﻿# Lot 4 de la couverture ATT&CK : série de consolidation de S-13 (service depuis un dossier inscriptible, compte créé
 # puis ajouté aux Administrateurs, journal dédié effacé, sous-catégorie d'audit désactivée), avec les témoins N-07 à N-10.
-# Lancé sur le poste (hôte Hyper-V), VM de test seulement ; liste v1.7, protocole de répétition (3.4) :
+# Lancé sur le poste (hôte Hyper-V), VM de test seulement ; liste v1.8, protocole de répétition (3.4) :
 #   - remise à l'instantané de la configuration avant chaque essai (et à la fin) ; cibles distinctes par essai ;
 #   - critère D-2 avant l'heure de départ : journaux Sécurité et Système « Active » (sinon D) ;
 #   - actions faites par le compte administrateur de la VM (PowerShell Direct), jamais par SYSTEM ; l'émetteur du 4719 est
@@ -82,6 +82,7 @@ $lignes = New-Object System.Collections.Generic.List[string]
 $lignes.Add('serie;essai;ligne;regle;niveau;latence_s;note;detail')
 Note "série S-13, configuration $Configuration, instantané « $($inst.Name) », $Essais essai(s), $Temoins témoin(s) par témoin"
 
+try {
 for ($n = 1; $n -le $Essais; $n++) {
     $s = Session-Propre
     $pre = Preconditions $s
@@ -109,18 +110,21 @@ for ($n = 1; $n -le $Essais; $n++) {
     }
     Start-Sleep -Seconds $Observation
     # Déclencheurs (TimeCreated, UTC) et émetteur du 4719
-    $ev = Invoke-Command -Session $s -ArgumentList $t0, $n {
-        param($t0, $n)
+    $ev = Invoke-Command -Session $s -ArgumentList $t0, $n, $guidAudit {
+        param($t0, $n, $g)
         $debut = $t0.ToLocalTime()
+        $sidCompte = (Get-LocalUser -Name "d4t_s13_$n" -ErrorAction SilentlyContinue).SID.Value
+        $guidNu = $g.Trim('{}').ToLowerInvariant()
         function Premier($log, $id, $filtre) {
             Get-WinEvent -FilterHashtable @{ LogName = $log; Id = $id; StartTime = $debut } -ErrorAction SilentlyContinue |
                 Where-Object $filtre | Sort-Object TimeCreated | Select-Object -First 1
         }
         $e7045 = Premier 'System' 7045 { $_.Message -match "d4t_s13svc_$n" }
-        # Seul ajout au groupe Administrateurs de l'essai : le premier 4732 après l'heure de départ
-        $e4732 = Premier 'Security' 4732 { $true }
+        # 4732 : groupe Administrateurs (TargetSid, champ 4) et membre = compte de l'essai (MemberSid, champ 1)
+        $e4732 = Premier 'Security' 4732 { "$($_.Properties[4].Value)" -eq 'S-1-5-32-544' -and $sidCompte -and "$($_.Properties[1].Value)" -eq $sidCompte }
         $e104 = Premier 'System' 104 { $_.Message -match "d4t-s13-$n" }
-        $e4719 = Premier 'Security' 4719 { $true }
+        # 4719 : la sous-catégorie visée (SubcategoryGuid, champ 6), quel que soit l'émetteur (relevé ensuite)
+        $e4719 = Premier 'Security' 4719 { "$($_.Properties[6].Value)".Trim('{}').ToLowerInvariant() -eq $guidNu }
         [pscustomobject]@{
             T7045 = $(if ($e7045) { $e7045.TimeCreated.ToUniversalTime() })
             T4732 = $(if ($e4732) { $e4732.TimeCreated.ToUniversalTime() })
@@ -150,8 +154,11 @@ for ($n = 1; $n -le $Temoins; $n++) {
         param($n)
         $f = @{}
         # N-07 : service déclaré vers un programme signé de Program Files, démarrage manuel, jamais démarré
+        $debut = Get-Date
         sc.exe create "d4t_n07svc_$n" binPath= '"C:\Program Files\Windows Defender\MpCmdRun.exe"' start= demand 2>&1 | Out-Null
-        $f.N07 = [bool](Get-Service "d4t_n07svc_$n" -ErrorAction SilentlyContinue)
+        Start-Sleep 3
+        # Preuve : le 7045 du service du témoin
+        $f.N07 = [bool](Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 7045; StartTime = $debut } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match "d4t_n07svc_$n" })
         # N-08 : compte de test ajouté à un groupe local non administrateur
         $mdp = ([guid]::NewGuid().ToString('N') + 'Aa1!') | ConvertTo-SecureString -AsPlainText -Force
         New-LocalUser -Name "d4t_n08_$n" -Password $mdp -AccountNeverExpires | Out-Null
@@ -161,15 +168,23 @@ for ($n = 1; $n -le $Temoins; $n++) {
         Add-LocalGroupMember -SID 'S-1-5-32-573' -Member "d4t_n08_$n" -ErrorAction SilentlyContinue
         $f.N08 = [bool](Get-LocalGroupMember -SID 'S-1-5-32-573' -ErrorAction SilentlyContinue | Where-Object Name -like "*d4t_n08_$n")
         # N-09 : politique d'audit lue, puis stratégies locales réappliquées par le système
-        auditpol.exe /get /category:* 2>&1 | Out-Null
+        # Preuve : gpupdate réussi (code 0) et politique d'audit identique avant et après
+        $avant = (auditpol.exe /get /category:* /r) -join "`n"
         gpupdate.exe /target:computer /force 2>&1 | Out-Null
-        $f.N09 = $true
+        $code = $LASTEXITCODE
+        $apres = (auditpol.exe /get /category:* /r) -join "`n"
+        $f.N09 = ($code -eq 0 -and $avant -eq $apres)
+        $f.N09Detail = "gpupdate code $code ; audit identique : $($avant -eq $apres)"
         # N-10 : journal dédié exporté vers un fichier, sans effacement
         $j = "d4t-n10-$n"
         New-EventLog -LogName $j -Source $j
         Write-EventLog -LogName $j -Source $j -EventId 1 -Message 'témoin exporté'
+        $debut10 = Get-Date
         wevtutil.exe epl $j "C:\Users\Public\$j.evtx" 2>&1 | Out-Null
-        $f.N10 = Test-Path "C:\Users\Public\$j.evtx"
+        Start-Sleep 3
+        # Preuve : export présent et aucun 104 (aucun effacement) pour ce journal
+        $sans104 = -not (Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 104; StartTime = $debut10 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match $j })
+        $f.N10 = (Test-Path "C:\Users\Public\$j.evtx") -and $sans104
         $f
     }
     Start-Sleep 120
@@ -178,14 +193,17 @@ for ($n = 1; $n -le $Temoins; $n++) {
     foreach ($t in @(@('N-07', 'COR-R5', $faits.N07), @('N-08', 'COR-R3|COR-R3b', $faits.N08), @('N-09', 'COR-R7|BAS-001', $faits.N09), @('N-10', 'COR-R4', $faits.N10))) {
         $fp = @($al | Where-Object { $_.Regle -match "^($($t[1]))$" -and $_.Niveau -in 'Alerte', 'Critique' })
         $note = if (-not $t[2]) { 'D (activité non constatée)' } elseif ($fp.Count) { "FP ($($fp[0].Regle) $($fp[0].Niveau))" } else { 'conforme' }
-        $detail = if ($t[0] -eq 'N-09') { "4719 : $e4719" } else { '' }
+        $detail = if ($t[0] -eq 'N-09') { "$($faits.N09Detail) ; 4719 : $e4719" } else { '' }
         $lignes.Add("$($t[0]);$n;;$(($fp | Select-Object -First 1).Regle);$(($fp | Select-Object -First 1).Niveau);;$note;$detail")
         Note "témoin $($t[0]), essai $n : $note $detail"
     }
     Remove-PSSession $s
 }
 
-Restore-VMSnapshot -VMSnapshot $inst -Confirm:$false
+} finally {
+    # Remise à l'instantané de la configuration, même après une erreur
+    Restore-VMSnapshot -VMSnapshot $inst -Confirm:$false
+}
 $lignes | Set-Content (Join-Path $sortie 's13-essais.csv') -Encoding UTF8
 "configuration=$Configuration ; instantane=$($inst.Name) ; liste=v1.8 ; essais=$Essais ; temoins=$Temoins ; service_sha256=$script:empreinte ; sysmon=$script:sysmon" | Set-Content (Join-Path $sortie 's13-versions.txt') -Encoding UTF8
 Note "fin de série ; résultats dans $sortie"
