@@ -290,7 +290,7 @@
 
       <div class="hero-shot">
         <button class="win" type="button" data-zoom="images/interface-en-vue-d-ensemble.png" aria-label="Enlarge the Overview screenshot">
-          <img src="images/interface-en-vue-d-ensemble.png" width="1024" height="720" alt="Overview page of deR4Tizer: a banner reading “Nothing confirmed, 4 points to watch”, tiles for 10 alerts, 1 chain, 12% of security settings applied and 2 autostart entries, and the items in order.">
+          <img src="images/interface-en-vue-d-ensemble.png" width="1024" height="720" alt="Overview page of deR4Tizer: a banner reading “Nothing confirmed, 4 points to watch”, tiles for 11 alerts, 2 chains, 12% of security settings applied and 2 autostart entries, and the items in order, processes read from the Windows audit log (event 4688).">
         </button>
       </div>
     </div>
@@ -311,7 +311,7 @@
     <div class="wrap">
       <p class="eyebrow">The interface</p>
       <h2>Written for the person who is not a security analyst</h2>
-      <p class="section-lead">Real screenshots of the current interface, taken on 2026-11-21 in the test VM (Windows 11, not activated, hence the watermark; Microsoft Defender on; no security baseline applied), after a harmless demo attack. Some texts that come from the service are still in French. Select one to enlarge it.</p>
+      <p class="section-lead">Real screenshots of the current interface, taken on 2026-11-22 in the test VM (Windows 11, not activated, hence the watermark; Microsoft Defender on; only the logging profile of the security baseline, which the service applies by itself), after a harmless demo attack. Some texts that come from the service are still in French. Select one to enlarge it.</p>
 
       <div class="tour">
         <div class="row">
@@ -341,7 +341,7 @@
           <div>
             <p class="n">02 · Alerts</p>
             <h3>An alert says what happened and what to do</h3>
-            <p>Each alert names its rule, the MITRE ATT&amp;CK technique and the reasons behind it, then gives advice in plain words.</p>
+            <p>Each alert names its rule, the MITRE ATT&amp;CK techniques that this rule covers (an attack chain carries those of its own steps) and the reasons behind it, then gives advice in plain words.</p>
             <ul class="ticks">
               <li>Only the responses that apply to this alert are offered.</li>
               <li>Critical alerts go to your IT provider by ntfy, Teams or e-mail.</li>
@@ -394,6 +394,7 @@
           <ul>
             <li>Process tree with a cumulative score per chain</li>
             <li>Obfuscated PowerShell, mapped to MITRE ATT&amp;CK techniques</li>
+            <li>Without Sysmon, process creations are read from the Windows audit log (event 4688), so even short-lived programs are seen with their command line</li>
             <li>Run keys, services, scheduled tasks, WMI and Startup folders: any new or changed entry</li>
           </ul>
         </div>
