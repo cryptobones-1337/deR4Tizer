@@ -189,7 +189,7 @@ if (-not $installe) {
     function Fermer-Notifications {
         $bureau = [Windows.Automation.AutomationElement]::RootElement
         $fenetres = $bureau.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.Name -match '^(New notification|Nouvelle notification)$' }
+            Where-Object { $_.Current.Name -match '^(New notification|Nouvelle notification)' }
         foreach ($f in $fenetres) {
             $boutons = $f.FindAll([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)))
             foreach ($b in @($boutons | Where-Object { $_.Current.Name -match '^(Dismiss|Close|Ignorer|Fermer)' })) {
@@ -302,18 +302,40 @@ if (-not $installe) {
         $lignes = $racine.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)
         if ($lignes.Count -lt 5) { return "trop peu de lignes dans Santé ($($lignes.Count)) pour l'essai" }
         $focalise = { $f = [Windows.Automation.AutomationElement]::FocusedElement; if ($f) { $f.Current.ClassName + ' : ' + $f.Current.Name } else { '(aucun)' } }
-        $lignes[0].SetFocus(); Start-Sleep -Milliseconds 500
-        [Windows.Forms.SendKeys]::SendWait('{ENTER}'); Start-Sleep 1
-        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300
-        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300
-        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep 1
+        # Cause du passage en échec du 2026-11-22 (journal ci-dessous) : le résumé de Microsoft Defender, affiché pendant
+        # l'essai, tenait le focus ; les touches partaient ailleurs. Notifications fermées, puis focus posé et VÉRIFIÉ sur
+        # la première ligne avant toute touche (5 essais) ; sinon l'essai est invalide, pas un échec du produit
+        Fermer-Notifications
+        $premiere = 'Ligne : ' + $lignes[0].Current.Name
+        $pose = $false
+        for ($k = 0; $k -lt 5 -and -not $pose; $k++) {
+            [D4tCapture]::Avant($o.P.MainWindowHandle)
+            try { $lignes[0].SetFocus() } catch { }
+            Start-Sleep -Milliseconds 500
+            $f = & $focalise
+            if ($f -eq $premiere) { $pose = $true }
+            # Notification qui garde le focus (son bouton de fermeture n'est pas toujours exposé) : fermée par Échap, qui
+            # ne s'adresse qu'à elle ; rien d'autre n'est touché (aucun réglage de Defender)
+            elseif ($f -like 'FlexibleToastView*') { [Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep 1 }
+            else { Fermer-Notifications }
+        }
+        if (-not $pose) { return "essai invalide : focus impossible à poser sur la première ligne (tenu par « $(& $focalise) »)" }
+        # Journal du focus après chaque touche, horodaté (échec d'un passage sur six : focus sur « Filters » juste après les
+        # flèches, avant le rafraîchissement ; cause à établir, piste : rafraîchissement de 15 s pendant les touches)
+        $trace = New-Object System.Collections.Generic.List[string]
+        $noter = { param($etape) $trace.Add("$((Get-Date).ToString('HH:mm:ss.fff')) $etape : $(& $focalise)") }
+        & $noter 'focus posé sur la ligne 1'
+        [Windows.Forms.SendKeys]::SendWait('{ENTER}'); Start-Sleep 1; & $noter 'après Entrée'
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300; & $noter 'après flèche 1'
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep -Milliseconds 300; & $noter 'après flèche 2'
+        [Windows.Forms.SendKeys]::SendWait('{DOWN}'); Start-Sleep 1; & $noter 'après flèche 3'
         $attendu = 'Ligne : ' + $lignes[3].Current.Name
         $avant = & $focalise
         Start-Sleep 20
         $apres = & $focalise
         $b = [D4tCapture]::Ecran($o.P.MainWindowHandle)
         if ($b) { try { $b.Save((Join-Path $dossierCaptures 'clavier-sante-apres-rafraichissement.png'), [Drawing.Imaging.ImageFormat]::Png) } finally { $b.Dispose() } }
-        "attendu : $attendu`r`navant le rafraîchissement : $avant`r`naprès 20 s : $apres" | Set-Content (Join-Path $dossierCaptures 'clavier.txt') -Encoding UTF8
+        (@("attendu : $attendu", "avant le rafraîchissement : $avant", "après 20 s : $apres", '', 'journal :') + $trace) | Set-Content (Join-Path $dossierCaptures 'clavier.txt') -Encoding UTF8
         if ($avant -ne $attendu) { return "après trois flèches, focus sur « $avant » au lieu de « $attendu »" }
         if ($apres -ne $avant) { return "après un rafraîchissement, focus passé de « $avant » à « $apres »" }
         $true
