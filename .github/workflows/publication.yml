@@ -63,6 +63,9 @@ jobs:
           cd service-rs; cargo build --release; cd ..
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
+          # Valeur exacte des clés compilées, jointe à l'artefact : signer-version.ps1 la retrouve dans le service et la
+          # compare à la clé du certificat avant de signer (revue de l'auditeur du 2026-11-22, point 3)
+          [IO.File]::WriteAllText("$PWD/bin/cles-compilees.txt", "$env:DER4TIZER_CLES_SIGNATURE", [Text.UTF8Encoding]::new($false))
 
       # Exécutables à clé épinglée, non signés : jamais publiés tels quels. Le job « signer » les reprend, et la
       # signature locale (signer-version.ps1, bloc 1.1) les télécharge et vérifie leur empreinte avant de les signer ;
@@ -73,6 +76,7 @@ jobs:
           path: |
             bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
+            bin/cles-compilees.txt
           retention-days: 7
 
   signer:

@@ -45,6 +45,11 @@ jobs:
         shell: pwsh
         run: ./compiler.ps1 -InterfaceSeulement
 
+      # Signature locale : clé du certificat comparée à la clé compilée (revue de l'auditeur du 2026-11-22, point 3)
+      - name: Clés compilées (signature locale)
+        shell: powershell
+        run: ./tests/test-cles-compilees.ps1
+
       - name: Paquet MSI (WiX 3.14, licence MS-RL)
         shell: pwsh
         run: |

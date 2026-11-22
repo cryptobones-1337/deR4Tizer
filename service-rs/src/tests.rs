@@ -9541,6 +9541,16 @@ fn signature_locale_script_unique_echec_ferme() {
     }
     let wf = include_str!("../../.github/workflows/publication.yml");
     assert!(wf.contains("name: a-signer") && wf.contains("retention-days: 7"), "artefact à signer gardé 7 jours");
+    // Revue de l'auditeur du 2026-11-22, point 3 : la valeur compilée est jointe à l'artefact, et la clé du certificat
+    // lui est comparée (retrouvée dans le service) avant toute signature ; le test de comportement est
+    // tests/test-cles-compilees.ps1, lancé par la CI
+    assert!(wf.contains("bin/cles-compilees.txt") && wf.contains("\"$env:DER4TIZER_CLES_SIGNATURE\""));
+    assert!(s.contains(". (Join-Path $racine 'cles-compilees.ps1')"));
+    assert!(s.contains("'cles-compilees.txt,deR4Tizer.exe,deR4TizerSvc.exe'"));
+    assert!(pos("if ($raisonCles) { Arret $raisonCles }") < pos("Signer @((Join-Path $bin 'deR4Tizer.exe')"));
+    let cc = include_str!("../../cles-compilees.ps1");
+    assert!(cc.contains("$texte.Contains($Brut)") && cc.contains("-notin $cles"));
+    assert!(include_str!("../../.github/workflows/ci.yml").contains("./tests/test-cles-compilees.ps1"));
     assert!(!wf.contains("name: executables"));
     assert!(include_str!("../../docs/publication/signature-locale.md").contains("signer-version.ps1 -Tag vX.Y"));
 }

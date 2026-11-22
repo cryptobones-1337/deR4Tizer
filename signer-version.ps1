@@ -5,7 +5,9 @@
 #   1. le dépôt local est au commit du tag, propre ; le tag a la forme vX.Y(.Z) et la version du code ;
 #   2. l'exécution « Publication » de ce tag est trouvée, sur ce commit, et son job « compiler » a réussi ;
 #   3. l'artefact « a-signer » (exécutables à clé épinglée, jamais publié) est téléchargé, et son empreinte SHA-256
-#      est comparée à celle que GitHub donne pour cet artefact ;
+#      est comparée à celle que GitHub donne pour cet artefact ; la clé du certificat doit être celle compilée dans le
+#      service (cles-compilees.txt de l'artefact, retrouvé dans deR4TizerSvc.exe ; revue de l'auditeur du
+#      2026-11-22, point 3) ;
 #   4. les deux exécutables sont signés (horodatage Certum, DigiCert en repli seulement) ;
 #   5. le MSI est construit avec ces exécutables signés (WiX 3.14, archive vérifiée par son empreinte), puis signé ;
 #   6. le manifeste est écrit d'après le MSI signé ;
@@ -27,6 +29,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $racine = $PSScriptRoot
+. (Join-Path $racine 'cles-compilees.ps1')
 function Etape([string]$t) { Write-Host "== $t" }
 function Arret([string]$t) { Write-Host "ARRÊT : $t" -ForegroundColor Red; exit 1 }
 function Sha256([string]$f) { (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -108,12 +111,18 @@ if ($recue -ne $attendue) { Arret "empreinte de l'artefact $recue différente de
 $entree = Join-Path $Travail 'a-signer'
 Expand-Archive -LiteralPath $zip -DestinationPath $entree
 $noms = @(Get-ChildItem $entree -File | ForEach-Object Name | Sort-Object)
-if (($noms -join ',') -ne 'deR4Tizer.exe,deR4TizerSvc.exe') { Arret "contenu inattendu de l'artefact : $($noms -join ', ')" }
-foreach ($n in $noms) {
+if (($noms -join ',') -ne 'cles-compilees.txt,deR4Tizer.exe,deR4TizerSvc.exe') { Arret "contenu inattendu de l'artefact : $($noms -join ', ')" }
+foreach ($n in 'deR4Tizer.exe', 'deR4TizerSvc.exe') {
     $s = Get-AuthenticodeSignature (Join-Path $entree $n)
     if ($s.Status -ne 'NotSigned') { Arret "$n porte déjà une signature ($($s.Status)) : ce n'est pas un exécutable de la CI à signer" }
 }
 Write-Host "Artefact $($a.id) : SHA-256 $recue, conforme à GitHub"
+# Clé compilée dans le service : celle du certificat, sinon les postes refuseraient cette version (point 3 de la revue
+# de l'auditeur du 2026-11-22 ; CLE_SIGNATURE a pu changer depuis la compilation)
+$brutCompile = [IO.File]::ReadAllText((Join-Path $entree 'cles-compilees.txt'))
+$raisonCles = Test-ClesCompilees $brutCompile ([IO.File]::ReadAllBytes((Join-Path $entree 'deR4TizerSvc.exe'))) $cleCert
+if ($raisonCles) { Arret $raisonCles }
+Write-Host "Clé du certificat $cleCert compilée dans le service"
 
 # ---------------------------------------------------------------- 4. signature des exécutables
 Etape 'Signature des exécutables (SimplySign demande votre code)'
