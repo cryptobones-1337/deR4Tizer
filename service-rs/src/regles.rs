@@ -51,7 +51,7 @@ registre! {
     DNS_002 = "DNS-002" : "serveur DNS changé sur une carte du poste" => Fixes(&["T1557"]);
     DNS_003 = "DNS-003" : "port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur" => Fixes(&["T1557"]);
     PRC_001 = "PRC-001" : "document bureautique qui lance un interpréteur" => Fixes(&["T1566.001", "T1204.002"]);
-    PRC_002 = "PRC-002" : "PowerShell obscurci ou qui télécharge du code" => Fixes(&["T1059.001", "T1027"]);
+    PRC_002 = "PRC-002" : "PowerShell obscurci ou qui télécharge du code" => ParLAlerte;
     PRC_003 = "PRC-003" : "détournement d'outil Windows (LOLBin)" => ParLAlerte;
     PRC_004 = "PRC-004" : "navigateur lancé en débogage à distance" => Fixes(&["T1539"]);
     PRC_005 = "PRC-005" : "suppression des sauvegardes" => Fixes(&["T1490"]);

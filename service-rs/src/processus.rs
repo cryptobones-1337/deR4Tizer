@@ -70,7 +70,7 @@ fn regles() -> &'static [(Regex, &'static str, &'static str)] {
     static R: OnceLock<Vec<(Regex, &'static str, &'static str)>> = OnceLock::new();
     R.get_or_init(|| {
         vec![
-            (Regex::new(r"(?i)(powershell|pwsh).*(\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|frombase64string|downloadstring|downloadfile|net\.webclient|invoke-expression|\biex\b.*(http|\$)|-w(indowstyle)?\s+h(idden)?.*(http|iex|-enc))").unwrap(),
+            (Regex::new(&format!("(?i){INTERPRETEUR_PRC002}({})", MOTIFS_PRC002.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
              "PowerShell obscurci ou qui télécharge du code", crate::regles::PRC_002),
             (Regex::new(&format!("(?i){}", OUTILS_PRC003.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
              "détournement d'outil Windows (LOLBin)", crate::regles::PRC_003),
@@ -148,8 +148,12 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         raisons: format!("{} : {ligne}", raisons.join(", ")),
         pid: Some(pid),
         comportement: code_comportement(document, &ids, p.ligne_commande.as_deref().unwrap_or("")),
-        // PRC-003 : la technique de l'outil vu (règle à plusieurs comportements, posée par l'alerte)
-        mitre: if regle == crate::regles::PRC_003 { technique_prc003(p.ligne_commande.as_deref().unwrap_or("")) } else { String::new() },
+        // PRC-002 et PRC-003 : les techniques des motifs vus (règles à plusieurs comportements, posées par l'alerte)
+        mitre: match regle {
+            crate::regles::PRC_002 => technique_prc002(p.ligne_commande.as_deref().unwrap_or("")),
+            crate::regles::PRC_003 => technique_prc003(p.ligne_commande.as_deref().unwrap_or("")),
+            _ => String::new(),
+        },
         ..Default::default()
     })
 }
@@ -288,6 +292,41 @@ fn ligne_commande_reglee() -> bool {
         .is_ok_and(|v| v != 0)
 }
 
+/// PRC-002 : interpréteur qui précède les motifs (le motif de la règle est cet interpréteur suivi de la réunion des motifs)
+const INTERPRETEUR_PRC002: &str = r"(powershell|pwsh).*";
+
+/// PRC-002 : (code du comportement, motif de la ligne de commande, techniques ATT&CK). T1027 Code obscurci ne vient que
+/// des motifs d'obscurcissement ; un téléchargement, l'exécution d'une chaîne ou une fenêtre cachée portent T1059.001
+/// seul (revue externe du 2026-11-22, point mineur : « code obscurci » sur un simple téléchargement)
+const MOTIFS_PRC002: &[(&str, &str, &[&str])] = &[
+    ("obscurci", r"\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|frombase64string", &["T1059.001", "T1027"]),
+    ("telecharge", r"downloadstring|downloadfile|net\.webclient|invoke-expression|\biex\b.*(http|\$)|-w(indowstyle)?\s+h(idden)?.*(http|iex|-enc)", &["T1059.001"]),
+];
+
+fn motifs_prc002() -> &'static [(Regex, &'static str, &'static [&'static str])] {
+    static M: OnceLock<Vec<(Regex, &'static str, &'static [&'static str])>> = OnceLock::new();
+    M.get_or_init(|| MOTIFS_PRC002.iter().map(|(c, m, t)| (Regex::new(&format!("(?i){INTERPRETEUR_PRC002}(?:{m})")).unwrap(), *c, *t)).collect())
+}
+
+/// Codes des motifs PRC-002 qui correspondent, dans l'ordre de la table (`obscurci`, `telecharge`)
+pub(crate) fn codes_prc002(ligne: &str) -> Vec<&'static str> {
+    motifs_prc002().iter().filter(|(r, _, _)| r.is_match(ligne)).map(|(_, c, _)| *c).collect()
+}
+
+/// Décision pure (testée) : techniques ATT&CK d'une alerte PRC-002, celles de chaque motif qui correspond (sans doublon,
+/// dans l'ordre de la table, séparées par « / ») ; vide sinon
+pub(crate) fn technique_prc002(ligne: &str) -> String {
+    let mut t: Vec<&str> = Vec::new();
+    for (_, _, ids) in motifs_prc002().iter().filter(|(r, _, _)| r.is_match(ligne)) {
+        for id in ids.iter() {
+            if !t.contains(id) {
+                t.push(id);
+            }
+        }
+    }
+    t.join(" / ")
+}
+
 /// PRC-003 : (outil, motif de la ligne de commande, technique ATT&CK de ce que l'outil fait). Le motif de la règle est la
 /// réunion de ces motifs : l'outil et sa technique viennent du motif qui a correspondu, jamais d'un nom vu ailleurs dans
 /// la ligne (revue de l'auditeur du 2026-11-22, point 1 : certutil ne porte plus T1047)
@@ -324,7 +363,7 @@ pub(crate) fn technique_prc003(ligne: &str) -> String {
 }
 
 /// Décision pure (testée) : code stable du comportement d'une alerte de processus (empreinte des exceptions) : document
-/// qui lance un interpréteur, règles des motifs vus (triées), et l'outil pour PRC-003
+/// qui lance un interpréteur, règles des motifs vus (triées), les motifs vus pour PRC-002 et l'outil pour PRC-003
 pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &str) -> String {
     let mut c: Vec<String> = Vec::new();
     if document { c.push("document".into()); }
@@ -334,6 +373,8 @@ pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &st
     for id in r {
         if id == crate::regles::PRC_003 {
             c.push(format!("{id}:{}", outils_lolbin(ligne).join(",")));
+        } else if id == crate::regles::PRC_002 {
+            c.push(format!("{id}:{}", codes_prc002(ligne).join(",")));
         } else {
             c.push(id.to_string());
         }

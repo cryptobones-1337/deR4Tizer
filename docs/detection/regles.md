@@ -346,7 +346,11 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   n'est pas un interpréteur) ; décision pure `processus::alerte_processus`. Non exercée en VM : aucun Office dans la VM.
 
 ### PRC-002 : PowerShell obscurci ou qui télécharge du code
-- **ATT&CK** : T1059.001 PowerShell ; T1027 Code obscurci.
+- **ATT&CK** : posée par l'alerte, d'après les motifs qui ont correspondu : obscurcissement (`-EncodedCommand` d'une
+  charge longue, `FromBase64String`) T1059.001 PowerShell et T1027 Code obscurci ; téléchargement, exécution d'une
+  chaîne ou fenêtre cachée (`DownloadString`, `DownloadFile`, `Net.WebClient`, `Invoke-Expression`, `IEX` d'une adresse,
+  `-WindowStyle Hidden`) T1059.001 seul. Une ligne qui a les deux porte les deux. Code de comportement `obscurci`,
+  `telecharge` ou les deux.
 - **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code »).
 - **Justification** : `-EncodedCommand` long, `DownloadString`, `IEX` d'une adresse : chargement de code typique.
 - **Télémétrie** : ligne de commande (Sysmon 1, sinon événement 4688 avec sa ligne de commande, sinon WMI tant que le
