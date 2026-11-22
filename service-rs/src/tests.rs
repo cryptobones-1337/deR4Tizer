@@ -8637,6 +8637,20 @@ fn audit_p2_migration_comptee() {
     assert!(m.contains("exceptions_perimees: crate::apprentissage::perimes().0"));
 }
 
+/// Audit de #255, S255-05 et S255-06 : une copie de côté n'écrase jamais une copie existante
+#[test]
+fn audit_p2_copie_de_cote_jamais_ecrasee() {
+    use crate::apprentissage::nom_libre;
+    assert_eq!(nom_libre("apprentissage-illisible", "20261122101500", |_| false), "apprentissage-illisible-20261122101500.json");
+    let pris = ["apprentissage-format2-1.json", "apprentissage-format2-1-2.json"];
+    assert_eq!(nom_libre("apprentissage-format2", "1", |n| pris.contains(&n)), "apprentissage-format2-1-3.json");
+    // Le démarrage ne réécrit pas un fichier qu'il n'a pas pu lire, et ne renomme que sur une erreur de format
+    let src = include_str!("apprentissage.rs");
+    assert!(src.contains("None if chemin.exists() => {\n                ecrire_au_demarrage = false;") || src.contains("None if chemin.exists() => {\r\n                ecrire_au_demarrage = false;"));
+    assert!(src.contains("if ecrire_au_demarrage {"));
+    assert!(!src.contains("\"apprentissage-illisible.json\""), "nom fixe");
+}
+
 /// Revue de l'auditeur du 2026-11-22, point 2 : codes de comportement posés par les producteurs
 #[test]
 fn audit_p2_codes_producteurs() {

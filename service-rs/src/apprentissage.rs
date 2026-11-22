@@ -68,6 +68,14 @@ pub fn migrer(e: &mut Etat) -> bool {
     true
 }
 
+/// Décision pure (testée) : nom de fichier libre « prefixe-horodatage.json », suivi de « -2 », « -3 »… s'il existe déjà
+/// (copie de côté jamais écrasée ; audit de #255, S255-05, S255-06)
+pub fn nom_libre(prefixe: &str, horodatage: &str, existe: impl Fn(&str) -> bool) -> String {
+    let base = format!("{prefixe}-{horodatage}");
+    (1..1000).map(|i| if i == 1 { format!("{base}.json") } else { format!("{base}-{i}.json") })
+        .find(|n| !existe(n)).unwrap_or_else(|| format!("{base}-dernier.json"))
+}
+
 /// Exceptions et comportements appris d'un format précédent qui ne s'appliquent plus (page Santé)
 pub fn perimes() -> (u32, u32) {
     let e = etat().lock().unwrap();
@@ -77,20 +85,40 @@ pub fn perimes() -> (u32, u32) {
 fn etat() -> &'static Mutex<Etat> {
     static E: OnceLock<Mutex<Etat>> = OnceLock::new();
     E.get_or_init(|| {
-        let chemin = commun::dossier().join(FICHIER);
-        let lu: Option<Etat> = commun::lire(FICHIER);
-        if lu.is_none() && chemin.is_file() {
-            // Fichier présent mais illisible : gardé de côté, jamais écrasé sans trace (audit de #255, S255-03)
-            let cote = commun::dossier().join("apprentissage-illisible.json");
-            let r = std::fs::rename(&chemin, &cote);
-            commun::journal(&format!("apprentissage.json illisible : gardé sous {} ({}) ; exceptions et apprentissage repartent de zéro",
-                cote.display(), if r.is_ok() { "renommé" } else { "renommage en échec" }));
-        }
+        let dossier = commun::dossier();
+        let chemin = dossier.join(FICHIER);
+        let horodatage: String = commun::maintenant().chars().filter(char::is_ascii_digit).collect();
+        let libre = |prefixe: &str| dossier.join(nom_libre(prefixe, &horodatage, |n| dossier.join(n).exists()));
+        // Écriture au démarrage permise sauf si le fichier existe mais n'a pas pu être lu (droits, protection en échec,
+        // verrou) : il n'est alors jamais écrasé (audit de #255, S255-06)
+        let mut ecrire_au_demarrage = true;
+        let lu: Option<Etat> = match commun::lire_fichier(&chemin) {
+            Some(texte) => match serde_json::from_str::<Etat>(texte.trim_start_matches('\u{feff}')) {
+                Ok(e) => Some(e),
+                Err(_) => {
+                    // Contenu mal formé : gardé de côté sous un nom daté, jamais écrasé (S255-03, réserve 2 de la
+                    // prérelecture) ; si le renommage échoue, rien n'est écrit par-dessus
+                    let cote = libre("apprentissage-illisible");
+                    let r = std::fs::rename(&chemin, &cote);
+                    ecrire_au_demarrage = r.is_ok();
+                    commun::journal(&format!("apprentissage.json mal formé : {} ; exceptions et apprentissage repartent de zéro",
+                        if r.is_ok() { format!("gardé sous {}", cote.display()) } else { "renommage en échec, fichier laissé tel quel".into() }));
+                    None
+                }
+            },
+            None if chemin.exists() => {
+                ecrire_au_demarrage = false;
+                commun::journal("apprentissage.json présent mais illisible (droits ou verrou) : il n'est pas réécrit au démarrage ; exceptions et apprentissage repartent de zéro en mémoire");
+                None
+            }
+            None => None,
+        };
         let mut e: Etat = lu.unwrap_or_default();
         if e.format != FORMAT && (!e.exceptions.is_empty() || !e.appris.is_empty()) {
-            // Copie de côté avant la migration (audit de #255, S255-02) : une version précédente, après un retour arrière,
-            // effacerait les exceptions du format 3 ; cette copie permet de les retrouver
-            let cote = commun::dossier().join(format!("apprentissage-format{}.json", e.format));
+            // Copie de l'état d'avant la migration, sous un nom daté qui n'écrase aucune copie (audit de #255, S255-02,
+            // S255-05) : elle garde les exceptions de l'ancien format. Elle ne protège pas les exceptions posées au format
+            // 3 contre un retour arrière vers une version précédente (limite écrite dans modele-evenement.md)
+            let cote = libre(&format!("apprentissage-format{}", e.format));
             if std::fs::copy(&chemin, &cote).is_ok() {
                 commun::journal(&format!("apprentissage.json au format {} copié sous {} avant la migration", e.format, cote.display()));
             }
@@ -103,7 +131,9 @@ fn etat() -> &'static Mutex<Etat> {
             e.fin = if deja_en_service { e.debut.clone() } else { commun::heure(SystemTime::now() + Duration::from_secs(JOURS_PAR_DEFAUT * 86_400)) };
         }
         migrer(&mut e);
-        let _ = commun::ecrire(FICHIER, &e);
+        if ecrire_au_demarrage {
+            let _ = commun::ecrire(FICHIER, &e);
+        }
         Mutex::new(e)
     })
 }

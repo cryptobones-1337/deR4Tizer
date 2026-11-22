@@ -111,9 +111,11 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   `etat.json` (`ExceptionsPerimees`, `ApprisPerimes`) ; la page Santé dit leur nombre (ligne « Exceptions », à
   reposer) et une ligne du journal le dit à la migration. « Effacer les exceptions d'une version précédente » (réglages)
   n'efface qu'elles ; « Supprimer les exceptions » les efface aussi. Avant la migration, `apprentissage.json` est copié
-  sous `apprentissage-format<N>.json` ; un fichier illisible est gardé sous `apprentissage-illisible.json`, jamais
-  écrasé sans trace. Limite connue : un retour arrière vers une version au format 2 efface les exceptions du format 3
-  (code de l'ancienne version) ; leurs alertes reparaissent, et la copie de côté permet de les retrouver. Seule la
+  sous `apprentissage-format<N>-<date>.json` (l'état d'avant, exceptions de l'ancien format comprises ; jamais une copie
+  écrasée). Un fichier mal formé est gardé sous `apprentissage-illisible-<date>.json` ; un fichier présent mais
+  illisible (droits, verrou) n'est pas réécrit au démarrage. Limite connue : un retour arrière vers une version au
+  format 2 efface les exceptions posées au format 3 (code de l'ancienne version), et aucune copie ne les garde ; leurs
+  alertes reparaissent (sens prudent), il faut les reposer. Seule la
   forme mémorisée de la signature change avec la PR 3.1b (empreinte, voir plus bas).
   La clé de déduplication des alertes ne change pas.
 - **Export** : l'export JSON (syslog) et l'API (`/api/v1/alertes`, JSON et NDJSON) sérialisent l'alerte entière : `Modele`
