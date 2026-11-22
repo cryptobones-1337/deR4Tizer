@@ -149,7 +149,7 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         pid: Some(pid),
         comportement: code_comportement(document, &ids, p.ligne_commande.as_deref().unwrap_or("")),
         // PRC-003 : la technique de l'outil vu (règle à plusieurs comportements, posée par l'alerte)
-        mitre: if regle == crate::regles::PRC_003 { technique_prc003(p.ligne_commande.as_deref().unwrap_or("")).to_string() } else { String::new() },
+        mitre: if regle == crate::regles::PRC_003 { technique_prc003(p.ligne_commande.as_deref().unwrap_or("")) } else { String::new() },
         ..Default::default()
     })
 }
@@ -310,9 +310,16 @@ pub(crate) fn outil_lolbin(ligne: &str) -> &'static str {
     motifs_outils().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, o, _)| *o).unwrap_or("")
 }
 
-/// Décision pure (testée) : technique ATT&CK d'une alerte PRC-003, celle de l'outil vu ; vide sinon
-pub(crate) fn technique_prc003(ligne: &str) -> &'static str {
-    motifs_outils().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, _, t)| *t).unwrap_or("")
+/// Décision pure (testée) : techniques ATT&CK d'une alerte PRC-003, celles de chaque outil dont le motif correspond
+/// (sans doublon, dans l'ordre de la table, séparées par « / ») ; vide sinon (prérelecture de #258, réserve 1)
+pub(crate) fn technique_prc003(ligne: &str) -> String {
+    let mut t: Vec<&str> = Vec::new();
+    for (_, _, id) in motifs_outils().iter().filter(|(r, _, _)| r.is_match(ligne)) {
+        if !t.contains(id) {
+            t.push(id);
+        }
+    }
+    t.join(" / ")
 }
 
 /// Décision pure (testée) : code stable du comportement d'une alerte de processus (empreinte des exceptions) : document
