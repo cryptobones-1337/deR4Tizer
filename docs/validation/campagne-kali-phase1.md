@@ -2,9 +2,9 @@
 
 | Champ | Valeur |
 |---|---|
-| Version de la liste | **1.7** (2026-11-22, pour le lot 4 de la couverture ATT&CK : témoins négatifs N-06 à N-13, fiches complètes de S-20 à S-27 avec délais chiffrés, règle de décision D-3, protocole de répétition des 10 essais ; S-19 et préparation de « campagne C » réécrits en 1.6 ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
+| Version de la liste | **1.8** (2026-11-22 : redémarrage du service par le banc réseau du lot 4, sur décision du mainteneur ; délais de S-22, S-25, S-27, N-12 et N-13 recalculés ; capture passive prouvée après le redémarrage ; témoins N-06 à N-13, fiches complètes de S-20 à S-27, règle D-3 et protocole de répétition ajoutés en 1.7 ; S-19 réécrit en 1.6 ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
 | Date de la version 1.4 | 2026-11-15 |
-| Versions précédentes | 1.6 du 2026-11-20 ; 1.5 du 2026-11-19 ; 1.4 du 2026-11-15 ; 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
+| Versions précédentes | 1.7 du 2026-11-22 ; 1.6 du 2026-11-20 ; 1.5 du 2026-11-19 ; 1.4 du 2026-11-15 ; 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
 | Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
 | Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
 
@@ -53,6 +53,15 @@ campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent
   leurre et l'UPnP, on attend le cycle de 600 s du NDR (décision provisoire du coordinateur du 2026-11-22, en l'absence
   du mainteneur, à qui la question sera posée). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au
   mainteneur pour information avant exécution ; publiée sur `main` avant la première exécution d'un essai du lot 4.
+- **2026-11-22, version 1.8** : approuvée par l'agent de validation. Décision du mainteneur du 2026-11-22, citée telle
+  quelle : à la question « Le banc réseau du lot 4 peut-il redémarrer le service entre deux essais ? », la réponse est
+  « Oui ». La décision provisoire de la v1.7 (jamais de redémarrage, attente du cycle de 600 s) est levée. Changements :
+  point 8 du protocole de répétition (3.4) ; règles communes des fiches réseau (7.0) ; délais de S-22, S-25 et S-27 et
+  des témoins N-12 et N-13 recalculés sur la première itération du NDR après le démarrage (`ndr.rs`) ; capture passive
+  prouvée après le redémarrage. Le redémarrage ne vaut que pour les fiches réseau (S-20 à S-27, N-12, N-13) ; S-18 reste
+  hors lot ; aucun autre scénario, action ni attendu changé. **Ni humaine ni indépendante** ; ne lève aucune règle ;
+  transmise au mainteneur pour information avant exécution ; publiée sur `main` avant la première exécution d'un essai
+  réseau du lot 4.
 
 - **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
   scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
@@ -122,6 +131,15 @@ négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scé
   résolveur local = un nom `.test` de la liste est résolu en adresse nulle et apparaît dans les « derniers blocages »,
   sans alerte. Le témoin **N-05** redevient un **témoin négatif normal** (retour au DHCP sans alerte). Aucune action ni
   nettoyage d'un autre scénario n'est changé.
+
+**Changements de la v1.8 à la v1.7** (2026-11-22, décision du mainteneur citée dans l'entrée de version 1.8) :
+- **Redémarrage du service par le banc réseau** : arrêt puis démarrage par le compte administrateur du banc, après la
+  réorientation des cartes et au plus tard à l'heure de départ de l'essai, avec ses preuves (3.4, point 8 ; 7.0).
+- **Délais recalculés** : le leurre et le relevé UPnP partent à la première itération du NDR après le démarrage ; 660 s
+  deviennent 180 s après le démarrage pour S-22, S-25, S-27, N-12 et N-13.
+- **Capture passive** : ouverte au démarrage sur la carte du labo ; preuve par le journal du service et l'état des
+  collectes (7.0).
+- Rien d'autre ne change.
 
 **Changements de la v1.7 à la v1.6** (2026-11-22, lot 4 de la couverture ATT&CK) :
 - **Témoins négatifs N-06 à N-13** : activité légitime voisine de chaque ligne à consolider qui n'avait pas de témoin
@@ -755,21 +773,21 @@ indiqué ; sinon D. Les attendus en configuration C sont une HYPOTHÈSE. Preuves
   D en C, mesuré en A.
 
 **N-12 : segment sans émetteur (voisin de T1557.001 et T1557.002, S-20 à S-26)**
-- Préconditions : règles communes du §7 ; aucune unité d'émission active côté Kali.
-- Action : aucune ; observation d'un cycle complet du leurre.
-- Attendu : leurre émis sans réponse (`reseau.json`) ; aucune EXP-NDR-001 Alerte ou Critique. Délai : 660 s après la
-  réorientation. Valide seulement si le leurre a été émis dans ce délai.
+- Préconditions : règles communes du §7 (redémarrage compris) ; aucune unité d'émission active côté Kali.
+- Action : aucune ; observation à partir du démarrage du service, qui est l'heure de départ.
+- Attendu : leurre émis sans réponse (`reseau.json`) ; aucune EXP-NDR-001 Alerte ou Critique. Délai : 180 s après le
+  démarrage du service. Valide seulement si le leurre a été émis dans les 120 s qui suivent le démarrage.
 - Nettoyage : remise à l'instantané.
-- Preuves : `reseau.json` (heure et résultat du leurre), état des unités côté Kali.
+- Preuves : preuves du redémarrage (7.0), `reseau.json` (heure et résultat du leurre), état des unités côté Kali.
 - Configuration C : identique.
 
 **N-13 : redirection UPnP vers une autre machine (voisin de T1133, S-27)**
-- Préconditions : comme S-27.
+- Préconditions : comme S-27 (box émulée démarrée avant le redémarrage du service).
 - Action : la box émulée annonce une redirection d'un port vers une autre adresse du segment, pas vers ce PC.
-- Attendu : box découverte ; état « 1 redirection(s) sur la box, dont 0 vers ce PC » ; aucune EXP-NDR-001. Délai : 660 s
-  après le démarrage de la box émulée. Valide seulement si la box est découverte.
+- Attendu : box découverte ; état « 1 redirection(s) sur la box, dont 0 vers ce PC » ; aucune EXP-NDR-001. Délai : 180 s
+  après le démarrage du service. Valide seulement si la box est découverte dans les 120 s qui suivent le démarrage.
 - Nettoyage : comme S-27.
-- Preuves : `reseau.json` (état UPnP), journal de la box émulée.
+- Preuves : preuves du redémarrage (7.0), `reseau.json` (état UPnP), journal de la box émulée.
 - Configuration C : identique.
 
 ### 3.3 Écartés, non exécutés ou en attente
@@ -814,8 +832,11 @@ S-25, S-26, S-27 et à leurs témoins. Il précise l'exécution sans changer les
    que la configuration soit expliquée.
 7. **Actions de S-13 hors SYSTEM.** Elles sont faites par le compte administrateur de test, en session élevée.
    L'émetteur du 4719 est relevé ; un 4719 émis par le système rend l'essai invalide (D).
-8. **Service intact.** Le banc n'arrête ni ne redémarre jamais le service (S-18 hors lot). Pour le leurre et l'UPnP, on
-   attend le cycle de 600 s du NDR (décision provisoire du 2026-11-22, question posée au mainteneur).
+8. **Redémarrage du service : fiches réseau seulement** (décision du mainteneur du 2026-11-22). Pour S-20 à S-27, N-12
+   et N-13, le compte administrateur du banc arrête puis démarre le service deR4Tizer par le gestionnaire de services de
+   Windows, après la réorientation des cartes et au plus tard à l'heure de départ de l'essai, avec les preuves de 7.0.
+   Ailleurs (S-02, S-09, S-11, S-13, S-14, S-16, S-17 et les autres témoins), le banc n'arrête ni ne redémarre jamais le
+   service. Le redémarrage ne remplace pas la remise à l'instantané avant chaque essai. S-18 reste hors lot.
 9. **Latence.** Principale : `HeureUtc` de l'alerte moins `TimeCreated` de l'événement déclencheur, lus sur l'horloge de
    la VM. Pour le NDR : moins l'heure d'émission du leurre ou du relevé UPnP (`reseau.json`), ou moins la première
    observation dans la VM (double adresse MAC, requête seuil). Secondaire : moins l'heure de départ. Médiane et p95 par
@@ -1037,41 +1058,58 @@ Approuvées par l'agent de validation le 2026-11-22. Elles complètent le tablea
 ni niveau attendus. Nature : émulation bénigne et réversible depuis la VM Kali, sur le segment du labo. Les attendus en
 configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure citée.
 
-### 7.0 Règles communes
+### 7.0 Règles communes (révisées en v1.8)
 
 - Départ : instantané de la configuration. Réorientation réversible de la VM sur le segment du labo (autres cartes
-  désactivées, passerelle posée sur la carte du labo ; topologie accordée le 2026-11-19). **Sans arrêt ni redémarrage du
-  service** (3.4, point 8).
-- Critère D-2 réseau : `reseau.json` réécrit après la réorientation, avec l'adresse du segment du labo comme adresse
-  locale ; sinon D. Pour les scénarios à capture passive (S-21, S-23, S-24, S-26), la capture doit être active sur la
-  carte du labo, d'après l'état des collectes ; sinon D, jamais FN. Qu'elle suive la réorientation sans redémarrage est
-  une HYPOTHÈSE, vérifiée à chaque essai.
+  désactivées, passerelle posée sur la carte du labo ; topologie accordée le 2026-11-19).
+- **Redémarrage du service (v1.8, décision du mainteneur du 2026-11-22)** :
+  - Qui et comment : le compte administrateur du banc arrête puis démarre le service deR4Tizer par le gestionnaire de
+    services de Windows.
+  - Quand : après la réorientation, et après le démarrage de l'émetteur côté Kali quand la fiche le demande (S-22, S-25,
+    S-27, N-13). Au plus tard à l'heure de départ de l'essai.
+  - Heure de départ : pour S-22, S-25, S-27, N-12 et N-13, c'est le démarrage du service, puisque le leurre et le relevé
+    UPnP partent à la première itération du NDR (`ndr.rs`). Pour S-20, S-21, S-23, S-24 et S-26, c'est le début de
+    l'action, après les preuves ci-dessous.
+  - Preuves, relevées dans la minute qui suit le démarrage : heures d'arrêt et de démarrage (journal Système et
+    `journal.txt`) ; canal joignable (une demande d'état reçoit une réponse) ; état des collectes noté. Les collectes
+    « capture réseau local » et « capture trafic » doivent être « Active » sur l'adresse du segment du labo, d'après la
+    ligne « capture des paquets (…) active sur <adresse> » du journal du service. Le filtrage DNS doit être désactivé,
+    état relevé ; S-18 reste hors lot.
+  - Échec : service qui ne redémarre pas, canal muet ou capture ouverte sur une autre adresse donnent un essai D, suivi
+    d'une remise à l'instantané.
+  - Alertes annexes : l'arrêt de deR4Tizer est noté au niveau Info (aucune COR-R7 attendue, HYPOTHÈSE de lecture). Une
+    alerte Alerte ou Critique entre l'arrêt et l'heure de départ est notée à part et investiguée ; elle ne compte ni en
+    VP ni en FP du scénario.
+  - Le redémarrage ne remplace pas la remise à l'instantané avant chaque essai.
+- Critère D-2 réseau : `reseau.json` réécrit après le démarrage, avec l'adresse du segment du labo comme adresse locale ;
+  sinon D. Pour S-21, S-23, S-24 et S-26, la capture prouvée active sur la carte du labo, comme ci-dessus, est exigée ;
+  sinon D, jamais FN.
 - Côté Kali : unités systemd figées et auditables, droits root bornés à ces unités, aucun mot de passe saisi ; un seul
   comportement par essai ; journal horodaté.
 - Délai : compté depuis l'événement de référence de la fiche. Une absence d'alerte dans le délai, préconditions tenues,
   est un FN.
 - Nettoyage commun : unité arrêtée et arrêt prouvé côté Kali ; adresses secondaires de Kali retirées et retrait vérifié ;
   remise à l'instantané après l'essai.
-- Preuves communes : 3.0 ; `reseau.json` avant et après ; état des collectes ; journal côté Kali ; écart d'horloge entre
-  la VM et Kali.
+- Preuves communes : 3.0 ; preuves du redémarrage ; `reseau.json` avant et après ; état des collectes ; journal côté
+  Kali ; écart d'horloge entre la VM et Kali.
 - Témoins : N-12 (S-20 à S-26), N-13 (S-27).
 
 **S-20 : usurpation ARP de la passerelle (T1557.002)**
-- Préconditions : 7.0 ; passerelle de la VM tenue par Kali ; table de voisinage de la VM relevée.
-- Action : Kali annonce une adresse inutilisée du segment sous sa propre adresse MAC. Dans la table de voisinage de la
-  VM, deux adresses (la passerelle et l'adresse inutilisée) partagent alors une même MAC.
+- Préconditions : 7.0, redémarrage compris ; passerelle de la VM tenue par Kali ; table de voisinage de la VM relevée.
+- Action : après les preuves du redémarrage, Kali annonce une adresse inutilisée du segment sous sa propre adresse MAC.
+  Dans la table de voisinage de la VM, deux adresses (la passerelle et l'adresse inutilisée) partagent alors une même MAC.
 - Validité : double MAC observée dans la table de voisinage de la VM ; sinon D.
 - Attendu : EXP-NDR-001 Critique « usurpation ARP probable » (T1557.002). Délai : 120 s après la première observation de
-  la double MAC.
+  la double MAC (relevé ARP toutes les 10 s).
 - Nettoyage : annonces arrêtées ; 7.0.
 - Preuves : table de voisinage horodatée, alerte.
 - Configuration C : identique (mesuré le 2026-11-16, non consolidé).
 
 **S-21 : serveur DHCP pirate (T1557.003)** : hors du lot 4, à remesurer après la PR #190.
-- Préconditions : 7.0 ; VM en DHCP avec un bail du serveur DHCP légitime du labo ; serveur DHCP de la carte lu non vide
-  par le service (`reseau.json`), sinon D.
-- Action : un second émetteur du segment envoie des offres DHCP non sollicitées, avec un identifiant de serveur
-  différent de celui du bail.
+- Préconditions : 7.0, redémarrage compris ; VM en DHCP avec un bail du serveur DHCP légitime du labo ; serveur DHCP de
+  la carte lu non vide par le service (`reseau.json`), sinon D.
+- Action : après les preuves du redémarrage, un second émetteur du segment envoie des offres DHCP non sollicitées, avec un
+  identifiant de serveur différent de celui du bail.
 - Attendu : EXP-NDR-001 Critique « serveur DHCP pirate » (T1557.003). Délai : 120 s après la première offre capturée.
   Réserve : l'identifiant de serveur est contrôlé par l'émetteur.
 - Nettoyage : émetteur et serveur légitime arrêtés ; 7.0.
@@ -1079,20 +1117,21 @@ configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure c
 - Configuration C : identique.
 
 **S-22 : leurre LLMNR, répondeur sans droits root (T1557.001)** : facultatif dans le lot 4 (S-25 couvre le même chemin).
-- Préconditions : 7.0 ; répondeur LLMNR en espace utilisateur démarré avant l'émission suivante du leurre.
-- Action : le répondeur répond au nom inexistant que le leurre de deR4Tizer interroge.
-- Validité : émission du leurre (`reseau.json`) postérieure au démarrage du répondeur, dans les 660 s ; sinon D (cas du
+- Préconditions : 7.0 ; répondeur LLMNR en espace utilisateur démarré avant le redémarrage du service.
+- Action : le service démarre ; le répondeur répond au nom inexistant que le leurre interroge à la première itération du
+  NDR.
+- Validité : émission du leurre (`reseau.json`) dans les 120 s qui suivent le démarrage du service ; sinon D (cas du
   leurre sauté après un échec de liaison, constat du premier lot réseau).
-- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 660 s après le démarrage du
-  répondeur, et 60 s au plus après l'émission du leurre.
+- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 180 s après le démarrage du service,
+  et 60 s au plus après l'émission du leurre.
 - Nettoyage : répondeur arrêté ; 7.0.
-- Preuves : heure et résultat du leurre, journal du répondeur, alerte.
+- Preuves : preuves du redémarrage, heure et résultat du leurre, journal du répondeur, alerte.
 - Configuration C : identique (le leurre part du service, quelle que soit la politique LLMNR du client).
 
 **S-23 : responder passif LLMNR, au moins 3 noms (T1557.001)**
-- Préconditions : 7.0 ; unité de réponse active côté Kali.
-- Action : la VM résout, par le client DNS de Windows, au moins 6 noms `.test` inexistants et distincts ; le répondeur
-  répond à chacun.
+- Préconditions : 7.0, redémarrage et capture prouvée compris ; unité de réponse active côté Kali.
+- Action : après les preuves du redémarrage, la VM résout, par le client DNS de Windows, au moins 6 noms `.test`
+  inexistants et distincts ; le répondeur répond à chacun.
 - Validité : au moins 3 réponses distinctes du même hôte capturées ; sinon D.
 - Attendu : EXP-NDR-001 Alerte « répond en LLMNR pour au moins 3 noms » (T1557.001). Délai : 120 s après la 3ᵉ réponse
   capturée.
@@ -1102,29 +1141,30 @@ configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure c
   requête émise. Compté à part, hors score de détection.
 
 **S-24 : motif de la règle IDS de test intégrée (sid 9000000)** : hors du lot 4.
-- Préconditions : 7.0 ; règles IDS chargées.
-- Action : Kali envoie trois datagrammes portant le motif de la règle de test intégrée.
+- Préconditions : 7.0, redémarrage et capture prouvée compris ; règles IDS chargées.
+- Action : après les preuves du redémarrage, Kali envoie trois datagrammes portant le motif de la règle de test intégrée.
 - Attendu : EXP-IDS-001 au niveau de la règle (Info). Délai : 60 s après le premier datagramme.
 - Nettoyage : 7.0.
 - Preuves : état de l'IDS (règles chargées), alerte.
 - Configuration C : identique.
 
 **S-25 : leurre LLMNR et NBNS, répondeur root (T1557.001)**
-- Préconditions : 7.0 ; unité de réponse LLMNR et NBNS active côté Kali, sans empoisonnement DHCP ni WPAD, démarrée
-  avant l'émission suivante du leurre.
-- Action : le répondeur répond, en LLMNR et en NBNS, au nom inexistant que le leurre interroge.
+- Préconditions : 7.0 ; unité de réponse LLMNR et NBNS active côté Kali, sans empoisonnement DHCP ni WPAD, démarrée avant
+  le redémarrage du service.
+- Action : le service démarre ; le répondeur répond, en LLMNR et en NBNS, au nom inexistant que le leurre interroge à la
+  première itération du NDR.
 - Validité : comme S-22. Le résultat du leurre doit montrer une réponse sur les deux protocoles ; une réponse sur un
   seul est notée.
-- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 660 s après le démarrage de l'unité,
+- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 180 s après le démarrage du service,
   et 60 s au plus après l'émission du leurre.
 - Nettoyage : unité arrêtée ; 7.0.
-- Preuves : heure et résultat du leurre, journal de l'unité, alerte.
+- Preuves : preuves du redémarrage, heure et résultat du leurre, journal de l'unité, alerte.
 - Configuration C : identique (mesuré le 2026-11-16, non consolidé).
 
 **S-26 : responder passif mDNS, au moins 15 noms (T1557.001)**
-- Préconditions : 7.0 ; unité de réponse mDNS active côté Kali.
-- Action : un programme de test de la VM émet au moins 20 requêtes mDNS de noms distincts, directement sur le réseau,
-  sans passer par le client mDNS de Windows ; le répondeur répond à chacune.
+- Préconditions : 7.0, redémarrage et capture prouvée compris ; unité de réponse mDNS active côté Kali.
+- Action : après les preuves du redémarrage, un programme de test de la VM émet au moins 20 requêtes mDNS de noms
+  distincts, directement sur le réseau, sans passer par le client mDNS de Windows ; le répondeur répond à chacune.
 - Validité : au moins 15 réponses distinctes du même hôte capturées ; sinon D.
 - Attendu : EXP-NDR-001 Alerte « répond en mDNS pour N noms » (T1557.001). Délai : 120 s après la 15ᵉ réponse capturée.
   S-26 mesure le détecteur, pas la posture mDNS du client.
@@ -1134,13 +1174,14 @@ configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure c
 
 **S-27 : redirection UPnP d'un port vers ce PC (T1133)**
 - Préconditions : 7.0, plus un ré-adressage réversible du segment en 192.168.50.0/24 (VM, et adresse secondaire de
-  Kali) : le module UPnP n'interroge que des adresses privées (topologie accordée le 2026-11-19). Dans cet adressage,
-  COR-R9 et les artefacts D-1 ne sont pas attendus.
-- Action : une box émulée en espace utilisateur, côté Kali, répond à la découverte UPnP et annonce une redirection d'un
-  port vers la VM.
-- Validité : box découverte par le service (état UPnP de `reseau.json`), dans les 660 s ; sinon D.
-- Attendu : EXP-NDR-001 Alerte « la box ouvre le port … vers ce PC » (T1133) ; état « dont 1 vers ce PC ». Délai : 660 s
-  après le démarrage de la box émulée, et 60 s au plus après le relevé UPnP.
+  Kali), fait avant le redémarrage : le module UPnP n'interroge que des adresses privées (topologie accordée le
+  2026-11-19). Dans cet adressage, COR-R9 et les artefacts D-1 ne sont pas attendus. Box émulée en espace utilisateur,
+  côté Kali, démarrée avant le redémarrage du service.
+- Action : le service démarre ; à la première itération du NDR, la box émulée répond à la découverte UPnP et annonce une
+  redirection d'un port vers la VM.
+- Validité : box découverte par le service (état UPnP de `reseau.json`) dans les 120 s qui suivent le démarrage ; sinon D.
+- Attendu : EXP-NDR-001 Alerte « la box ouvre le port … vers ce PC » (T1133) ; état « dont 1 vers ce PC ». Délai : 180 s
+  après le démarrage du service, et 60 s au plus après le relevé UPnP.
 - Nettoyage : box émulée arrêtée ; adresse secondaire de Kali retirée et retrait vérifié ; 7.0.
-- Preuves : état UPnP avant et après, journal de la box émulée, alerte.
+- Preuves : preuves du redémarrage, état UPnP avant et après, journal de la box émulée, alerte.
 - Configuration C : identique (mesuré le 2026-11-16, non consolidé).
