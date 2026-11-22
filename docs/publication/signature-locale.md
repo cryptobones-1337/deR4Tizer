@@ -54,7 +54,7 @@ ensuite.
 - clé du certificat égale à l'une des clés compilées dans le service : `cles-compilees.txt` (valeur de `CLE_SIGNATURE`
   donnée à la compilation) doit se retrouver telle quelle dans `deR4TizerSvc.exe`, et contenir la clé du certificat ;
   sinon les postes refuseraient cette version (revue de l'auditeur du 2026-11-22, point 3 ; `cles-compilees.ps1`,
-  testé par `tests	est-cles-compilees.ps1`) ;
+  testé par `tests\test-cles-compilees.ps1`) ;
 - archive WiX 3.14 vérifiée par son empreinte ; MSI construit depuis une copie des sources du tag (rien n'est écrit
   dans le dépôt) ;
 - `verifier-signatures.ps1` sur les trois fichiers : signature valide, horodatée, clé épinglée, chaîne et révocation ;
