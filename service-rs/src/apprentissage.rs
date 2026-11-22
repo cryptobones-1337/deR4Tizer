@@ -115,6 +115,11 @@ fn etat() -> &'static Mutex<Etat> {
                     let cote = libre("apprentissage-illisible");
                     let r = std::fs::rename(&chemin, &cote);
                     ecrire_au_demarrage = r.is_ok();
+                    // Renommage en échec : le fichier reste en place, aucune écriture ne doit le remplacer ensuite
+                    // (prérelecture de #255, cas restant)
+                    if r.is_err() {
+                        NON_CHARGE.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     commun::journal(&format!("apprentissage.json mal formé : {} ; exceptions et apprentissage repartent de zéro",
                         if r.is_ok() { format!("gardé sous {}", cote.display()) } else { "renommage en échec, fichier laissé tel quel".into() }));
                     None
@@ -302,7 +307,22 @@ pub fn ajouter_exception(a: &Alerte) -> Result<String, String> {
         e.exceptions.push(Exception { signature: sig, description: description.clone(), date: commun::maintenant() });
         enregistrer(&e);
     }
-    Ok(description)
+    Ok(reponse_exception(&description, non_charge()))
+}
+
+/// apprentissage.json n'a pas été chargé au démarrage : les exceptions posées depuis ne survivront pas au redémarrage
+/// (page Santé ; audit de #255, S255-07, suivi)
+pub fn non_charge() -> bool {
+    NON_CHARGE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Décision pure (testée) : réponse à une exception posée ; elle dit quand l'exception ne tient qu'en mémoire
+pub fn reponse_exception(description: &str, non_charge: bool) -> String {
+    if non_charge {
+        format!("{description} (gardée en mémoire seulement : apprentissage.json n'a pas pu être chargé au démarrage, elle sera perdue au redémarrage du service)")
+    } else {
+        description.to_string()
+    }
 }
 
 /// « terminer », « recommencer » (7 jours, comportements appris oubliés), « oublier » (exceptions) ou

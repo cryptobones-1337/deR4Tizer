@@ -93,6 +93,9 @@ pub struct Etat {
     /// silence : dits dans la page Santé ; revue de l'auditeur du 2026-11-22, point 2)
     pub exceptions_perimees: u32,
     pub appris_perimes: u32,
+    /// apprentissage.json présent mais non chargé au démarrage (droits, verrou, contenu mal formé non mis de côté) : les
+    /// exceptions posées depuis tiennent en mémoire seulement (page Santé)
+    pub apprentissage_non_charge: bool,
     /// État de chaque collecte (phase 3.3) et règles dont la télémétrie n'est pas lue (ou ne l'est qu'en partie)
     pub collectes: Vec<crate::collectes::EtatCollecte>,
     pub regles_sans_collecte: Vec<String>,
