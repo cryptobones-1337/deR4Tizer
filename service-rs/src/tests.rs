@@ -8649,6 +8649,9 @@ fn audit_p2_copie_de_cote_jamais_ecrasee() {
     assert!(src.contains("None if chemin.exists() => {\n                ecrire_au_demarrage = false;") || src.contains("None if chemin.exists() => {\r\n                ecrire_au_demarrage = false;"));
     assert!(src.contains("if ecrire_au_demarrage {"));
     assert!(!src.contains("\"apprentissage-illisible.json\""), "nom fixe");
+    // S255-07 : tant que le fichier n'a pas été chargé, aucune écriture ne le remplace (une seule écriture hors démarrage)
+    assert_eq!(src.matches("commun::ecrire(FICHIER").count(), 2, "écritures hors de enregistrer()");
+    assert!(src.contains("if NON_CHARGE.load("));
 }
 
 /// Revue de l'auditeur du 2026-11-22, point 2 : codes de comportement posés par les producteurs

@@ -82,6 +82,20 @@ pub fn perimes() -> (u32, u32) {
     (e.exceptions_perimees.len() as u32, e.appris_perimes)
 }
 
+/// apprentissage.json présent mais illisible au démarrage (droits, verrou) : aucune écriture ne le remplace pendant
+/// cette exécution, les exceptions de la session tiennent en mémoire (audit de #255, S255-07)
+static NON_CHARGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Écriture de l'état, refusée tant que le fichier n'a pas été chargé (S255-07) ; une ligne au journal la première fois
+fn enregistrer(e: &Etat) {
+    if NON_CHARGE.load(std::sync::atomic::Ordering::Relaxed) {
+        static DIT: std::sync::Once = std::sync::Once::new();
+        DIT.call_once(|| commun::journal("apprentissage.json n'a pas été chargé au démarrage : il n'est pas réécrit ; les exceptions posées depuis tiennent en mémoire jusqu'au redémarrage du service"));
+        return;
+    }
+    let _ = commun::ecrire(FICHIER, e);
+}
+
 fn etat() -> &'static Mutex<Etat> {
     static E: OnceLock<Mutex<Etat>> = OnceLock::new();
     E.get_or_init(|| {
@@ -108,6 +122,7 @@ fn etat() -> &'static Mutex<Etat> {
             },
             None if chemin.exists() => {
                 ecrire_au_demarrage = false;
+                NON_CHARGE.store(true, std::sync::atomic::Ordering::Relaxed);
                 commun::journal("apprentissage.json présent mais illisible (droits ou verrou) : il n'est pas réécrit au démarrage ; exceptions et apprentissage repartent de zéro en mémoire");
                 None
             }
@@ -250,7 +265,7 @@ pub fn filtrer(a: &mut Alerte) {
         a.raisons.push_str(mention);
         // Mémorisé par son empreinte : taille fixe, apprentissage.json borné (relecture de #72, R7)
         if memoriser && e.appris.len() < 5000 && e.appris.insert(commun::empreinte_signature(&sig)) {
-            let _ = commun::ecrire(FICHIER, &*e);
+            enregistrer(&e);
         }
     }
 }
@@ -285,7 +300,7 @@ pub fn ajouter_exception(a: &Alerte) -> Result<String, String> {
     let description = format!("{} — {} — {}", a.processus, a.destination, a.raisons.chars().take(120).collect::<String>());
     if !e.exceptions.iter().any(|x| x.signature == sig) {
         e.exceptions.push(Exception { signature: sig, description: description.clone(), date: commun::maintenant() });
-        let _ = commun::ecrire(FICHIER, &*e);
+        enregistrer(&e);
     }
     Ok(description)
 }
@@ -320,6 +335,6 @@ pub fn commande(quoi: &str) -> Result<String, String> {
         }
         _ => return Err("commande d'apprentissage inconnue".into()),
     };
-    let _ = commun::ecrire(FICHIER, &*e);
+    enregistrer(&e);
     Ok(m)
 }
