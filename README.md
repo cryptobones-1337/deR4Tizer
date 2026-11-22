@@ -188,6 +188,7 @@ Known, by design. Be aware before relying on it:
 - The "deR4Tizer capture" firewall rule allows all inbound to the service: it is necessary, because a rule blocking inbound TCP to the service also breaks capture (measured: 3 KB received in 20 s instead of 304 KB). The service listens on no network port, except the optional API, filtered by address and blocked on the Public profile.
 - IPv4 capture only for now; the country is that of the address-block holder (a CDN may appear in the United States).
 - Since v4.3 (2026-11-23), the released executables and MSI are signed (Certum). Builds installed by hand before it are unsigned: Windows shows "unknown publisher" for them and they do not update on their own. The service recognises its own files by their SHA-256 hash.
+- The license text shown by the v4.3 installer still says the binaries are not signed: wrong for v4.3, to be corrected in the next version.
 - v4.3 was published before the deferred D4-1 trials (maintainer's decision, 2026-11-23): restarting the interface in a Remote Desktop session and on fast user switching has not been exercised yet.
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
