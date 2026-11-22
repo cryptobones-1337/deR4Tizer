@@ -55,6 +55,8 @@ namespace DeR4Tizer
         // l'auditeur du 2026-11-22, point 2) ; service plus ancien : 0
         public int ExceptionsPerimees { get; set; }
         public int ApprisPerimes { get; set; }
+        // apprentissage.json non chargé au démarrage : exceptions posées depuis en mémoire seulement (service plus ancien : false)
+        public bool ApprentissageNonCharge { get; set; }
         // État des collectes (phase 3.3) : null pour un service plus ancien
         public List<EtatCollecte> Collectes { get; set; }
         public List<string> ReglesSansCollecte { get; set; }

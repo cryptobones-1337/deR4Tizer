@@ -354,6 +354,17 @@ namespace DeR4Tizer
                     Source = "etat.json",
                     Gravite = 1
                 });
+            // apprentissage.json non chargé au démarrage : les exceptions posées ne survivront pas au redémarrage
+            if (e.ApprentissageNonCharge)
+                l.Add(new LigneSante
+                {
+                    Sujet = L.T("Exceptions"),
+                    Etat = L.T("en mémoire seulement"),
+                    Date = v(e.MisAJour),
+                    Detail = L.T("apprentissage.json n'a pas pu être chargé au démarrage (droits, verrou ou contenu mal formé) : il n'est pas réécrit, et les exceptions posées depuis seront perdues au redémarrage du service. Voir le journal du service."),
+                    Source = "etat.json",
+                    Gravite = 1
+                });
             l.Add(new LigneSante
             {
                 Sujet = L.T("Interface par session"),

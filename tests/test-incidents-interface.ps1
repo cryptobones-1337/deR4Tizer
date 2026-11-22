@@ -178,6 +178,11 @@ try {
     $seulAppris = & { $x = & $etat @(); $x.ApprisPerimes = 2; $x }
     $lsa = @(& $appel $vs 'Lignes' @($seulAppris, $r, $maintenant) | Where-Object Sujet -eq 'Exceptions')
     Cas 'santé : appris seuls, sans « 0 exception »' ($lsa.Count -eq 1 -and $lsa[0].Detail -match '^2 comportement' -and $lsa[0].Detail -notmatch '0 exception') "$($lsa.Detail)"
+    # Suivi de #255 : apprentissage.json non chargé, exceptions en mémoire seulement
+    $nc = & { $x = & $etat @(); $x.ApprentissageNonCharge = $true; $x }
+    $lnc = @(& $appel $vs 'Lignes' @($nc, $r, $maintenant) | Where-Object { $_.Sujet -eq 'Exceptions' -and $_.Etat -eq 'en mémoire seulement' })
+    Cas 'santé : apprentissage non chargé dit' ($lnc.Count -eq 1 -and $lnc[0].Gravite -eq 1)
+    Cas 'santé : apprentissage chargé, aucune ligne' (@($lignes | Where-Object { $_.Etat -eq 'en mémoire seulement' }).Count -eq 0)
     Cas 'santé : protection en échec dite' (@(& $appel $vs 'Lignes' @((& { $x = & $etat @(); $x.ProtectionDonnees = 'droits'; $x }), $r, $maintenant) | Where-Object { $_.Etat -eq 'en échec' -and $_.Detail -eq 'droits' }).Count -eq 1)
 
     # Confirmation : l'incident et la transition, textes neutralisés ; sans fichier, « inconnu »

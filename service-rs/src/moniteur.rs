@@ -1097,6 +1097,7 @@ impl Moniteur {
                 registre_reponses_depuis: registre.1.map(|s| commun::heure_filetime(s * 10_000_000 + 116_444_736_000_000_000)).unwrap_or_default(),
                 exceptions_perimees: crate::apprentissage::perimes().0,
                 appris_perimes: crate::apprentissage::perimes().1,
+                apprentissage_non_charge: crate::apprentissage::non_charge(),
                 collectes: etats_collectes,
                 regles_sans_collecte,
                 regles_degradees,

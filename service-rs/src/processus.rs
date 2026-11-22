@@ -305,9 +305,10 @@ fn motifs_outils() -> &'static [(Regex, &'static str, &'static str)] {
     M.get_or_init(|| OUTILS_PRC003.iter().map(|(o, m, t)| (Regex::new(&format!("(?i){m}")).unwrap(), *o, *t)).collect())
 }
 
-/// Outil Windows détourné dont le motif PRC-003 correspond à la ligne de commande (premier de la table) ; vide sinon
-pub(crate) fn outil_lolbin(ligne: &str) -> &'static str {
-    motifs_outils().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, o, _)| *o).unwrap_or("")
+/// Tous les outils dont le motif PRC-003 correspond, dans l'ordre de la table (prérelecture de #258, remarque : le code
+/// de comportement nomme chaque outil vu, comme les techniques)
+pub(crate) fn outils_lolbin(ligne: &str) -> Vec<&'static str> {
+    motifs_outils().iter().filter(|(r, _, _)| r.is_match(ligne)).map(|(_, o, _)| *o).collect()
 }
 
 /// Décision pure (testée) : techniques ATT&CK d'une alerte PRC-003, celles de chaque outil dont le motif correspond
@@ -332,7 +333,7 @@ pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &st
     r.dedup();
     for id in r {
         if id == crate::regles::PRC_003 {
-            c.push(format!("{id}:{}", outil_lolbin(ligne)));
+            c.push(format!("{id}:{}", outils_lolbin(ligne).join(",")));
         } else {
             c.push(id.to_string());
         }

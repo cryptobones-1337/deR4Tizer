@@ -7,6 +7,10 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- When the exceptions file could not be loaded at startup, the Health page says so ("Exceptions", in memory only)
+  and setting an exception says it will be lost when the service restarts; a malformed file that could not be set
+  aside is never overwritten. The PRC-003 behaviour code names every tool seen, like its techniques (exceptions set
+  on a two-tool alert stop applying, once).
 - Local signing: before signing, `signer-version.ps1` checks that the certificate's key is one of the keys compiled
   into the service (the compiled value is joined to the build artifact and found again inside the executable), so a
   release that installed machines would refuse can no longer be signed.
