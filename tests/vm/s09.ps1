@@ -35,10 +35,10 @@ function Alertes {
 function Demarrage { if (Test-Path $fichierDemarrage) { Get-Content $fichierDemarrage -Raw -Encoding UTF8 } else { '' } }
 
 # Attend une alerte PER-* dont la destination ou les raisons citent ce nom ; rend l'alerte et la latence, ou $null
-function Attendre-Persistance([string]$Nom, [datetime]$Depart, [int]$Secondes = 180) {
+function Attendre-Persistance([string]$Nom, [datetime]$Depart, [int]$Secondes = 180, [string]$Regle = 'PER-001') {
     $fin = $Depart.AddSeconds($Secondes)
     while ((Get-Date) -lt $fin) {
-        $a = Alertes | Where-Object { "$($_.Regle)" -like 'PER-*' -and ("$($_.Destination) $($_.Raisons)" -match [regex]::Escape($Nom)) } | Select-Object -First 1
+        $a = Alertes | Where-Object { "$($_.Regle)" -like $Regle -and ("$($_.Destination) $($_.Raisons)" -match [regex]::Escape($Nom)) } | Select-Object -First 1
         if ($a) {
             $heure = try { [datetime]::Parse($a.HeureUtc).ToUniversalTime() } catch { (Get-Date).ToUniversalTime() }
             return @{ Alerte = $a; Latence = [math]::Round(($heure - $Depart.ToUniversalTime()).TotalSeconds, 1) }
@@ -59,6 +59,32 @@ function Attendre-Nettoyage([string]$Nom, [int]$Secondes = 150) {
     }
     $false
 }
+
+# Preuve que l'activité a eu lieu : le nom figure dans un relevé des démarrages automatiques (3.2 bis : sinon D)
+function Attendre-Vu([string]$Nom, [int]$Secondes = 150) {
+    $fin = (Get-Date).AddSeconds($Secondes)
+    while ((Get-Date) -lt $fin) {
+        if ((Demarrage) -match [regex]::Escape($Nom)) { return $true }
+        Start-Sleep 3
+    }
+    $false
+}
+
+# Critère D-2 : collecte des démarrages automatiques active avant l'essai (sinon l'essai est invalide, jamais un FN)
+function Persistance-Active([int]$Secondes = 120) {
+    $fin = (Get-Date).AddSeconds($Secondes)
+    do {
+        $e = Etat
+        $c = if ($e -and $e.Collectes) { $e.Collectes | Where-Object { $_.Id -eq 'Persistance' } | Select-Object -First 1 }
+        if ($c -and $c.Etat -eq 'Active') { return $true }
+        Start-Sleep 5
+    } while ((Get-Date) -lt $fin)
+    $false
+}
+
+# Arrêt de série (3.4, points 6 et 13) : posé par un nettoyage non constaté, une alerte notée C ou une collecte inactive ;
+# testé avant chaque essai, la raison est écrite dans le CSV
+$script:arret = ''
 
 function Commande-Temoin([int]$n, [string]$quoi) {
     $f = Join-Path $temoinDossier "$quoi-$n.txt"
@@ -108,6 +134,8 @@ $score = @{ run = @{ VP = 0; total = 0 }; tache = @{ VP = 0; total = 0 } }
 if ($pret) {
     for ($i = 1; $i -le $Essais; $i++) {
         $n = $i
+        if ($script:arret) { NonExecute "S-09, essai $n" "série arrêtée : $($script:arret)"; $script:lignes.Add("S-09;$n;;;;;arrêt : $($script:arret)"); continue }
+        if (-not (Persistance-Active)) { $script:arret = 'collecte Persistance inactive (D-2)'; $script:lignes.Add("S-09;$n;;;;;D : $($script:arret)"); NonExecute "S-09, essai $n" $script:arret; continue }
         # (a) valeur Run vers un interpréteur qui écrit un témoin
         Verifier "S-09 (a), essai $n : valeur Run vers un interpréteur, PER-001 Alerte" {
             $nom = "d4t-s09-run-$n"
@@ -119,11 +147,13 @@ if ($pret) {
             $script:score.run.total++
             if ($note -eq 'VP') { $script:score.run.VP++ }
             Remove-ItemProperty -Path $cleRun -Name $nom -ErrorAction SilentlyContinue
-            if (-not (Attendre-Nettoyage $nom)) { return "nettoyage non constaté au relevé suivant ($nom) : série arrêtée" }
+            if ($note -eq 'C') { $script:arret = "alerte notée C sur $nom (apprentissage ou comportement appris)" }
+            if (-not (Attendre-Nettoyage $nom)) { $script:arret = "nettoyage non constaté au relevé suivant ($nom)"; return "$($script:arret) : série arrêtée" }
             if ($note -ne 'VP') { return "$note pour $nom" }
             Write-Host "  $nom : $($r.Alerte.Regle) $($r.Alerte.Niveau) après $($r.Latence) s"
             $true
         }
+        if ($script:arret) { continue }
         # (b) tâche planifiée équivalente
         Verifier "S-09 (b), essai $n : tâche planifiée vers un interpréteur, PER-001 Alerte" {
             $nom = "d4t-s09-tache-$n"
@@ -138,7 +168,8 @@ if ($pret) {
             $script:score.tache.total++
             if ($note -eq 'VP') { $script:score.tache.VP++ }
             Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
-            if (-not (Attendre-Nettoyage $nom)) { return "nettoyage non constaté au relevé suivant ($nom) : série arrêtée" }
+            if ($note -eq 'C') { $script:arret = "alerte notée C sur $nom (apprentissage ou comportement appris)" }
+            if (-not (Attendre-Nettoyage $nom)) { $script:arret = "nettoyage non constaté au relevé suivant ($nom)"; return "$($script:arret) : série arrêtée" }
             if ($note -ne 'VP') { return "$note pour $nom" }
             Write-Host "  $nom : $($r.Alerte.Regle) $($r.Alerte.Niveau) après $($r.Latence) s"
             $true
@@ -149,15 +180,18 @@ if ($pret) {
 
     for ($i = 1; $i -le $Temoins; $i++) {
         $n = $i
+        if ($script:arret) { NonExecute "Témoins, essai $n" "série arrêtée : $($script:arret)"; continue }
         Verifier "N-06, essai $n : valeur Run vers un programme signé, PER-001 Info au plus" {
             $nom = "d4t-n06-run-$n"
             $depart = Get-Date
             New-ItemProperty -Path $cleRun -Name $nom -Value "`"$signe`"" -PropertyType String -Force | Out-Null
-            $r = Attendre-Persistance $nom $depart
-            $script:lignes.Add("N-06;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$(if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } else { 'conforme' })")
+            $vu = Attendre-Vu $nom
+            $r = Attendre-Persistance $nom $depart 120 '*'
+            $note = if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } elseif ($vu -or $r) { 'conforme' } else { 'D (entrée jamais relevée)' }
+            $script:lignes.Add("N-06;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$note")
             Remove-ItemProperty -Path $cleRun -Name $nom -ErrorAction SilentlyContinue
-            $null = Attendre-Nettoyage $nom
-            if ($r -and $r.Alerte.Niveau -ne 'Info') { return "FP : $($r.Alerte.Regle) $($r.Alerte.Niveau)" }
+            if (-not (Attendre-Nettoyage $nom)) { $script:arret = "nettoyage du témoin non constaté ($nom)" }
+            if ($note -ne 'conforme') { return "$note : $($r.Alerte.Regle) $($r.Alerte.Niveau)" }
             $true
         }
         Verifier "N-02, essai $n : tâche vers un programme signé, PER-001 Info au plus" {
@@ -166,11 +200,13 @@ if ($pret) {
             $declencheur = New-ScheduledTaskTrigger -Once -At (Get-Date).AddDays(30)
             $depart = Get-Date
             Register-ScheduledTask -TaskName $nom -Action $action -Trigger $declencheur -Force | Out-Null
-            $r = Attendre-Persistance $nom $depart
-            $script:lignes.Add("N-02;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$(if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } else { 'conforme' })")
+            $vu = Attendre-Vu $nom
+            $r = Attendre-Persistance $nom $depart 120 '*'
+            $note = if ($r -and $r.Alerte.Niveau -ne 'Info') { 'FP' } elseif ($vu -or $r) { 'conforme' } else { 'D (entrée jamais relevée)' }
+            $script:lignes.Add("N-02;$n;$nom;$($r.Alerte.Regle);$($r.Alerte.Niveau);$($r.Latence);$note")
             Unregister-ScheduledTask -TaskName $nom -Confirm:$false -ErrorAction SilentlyContinue
-            $null = Attendre-Nettoyage $nom
-            if ($r -and $r.Alerte.Niveau -ne 'Info') { return "FP : $($r.Alerte.Regle) $($r.Alerte.Niveau)" }
+            if (-not (Attendre-Nettoyage $nom)) { $script:arret = "nettoyage du témoin non constaté ($nom)" }
+            if ($note -ne 'conforme') { return "$note : $($r.Alerte.Regle) $($r.Alerte.Niveau)" }
             $true
         }
     }
@@ -179,6 +215,7 @@ if ($pret) {
 # D-3 : alertes de persistance sur la tâche d'exécution du banc, gardées dans les preuves, jamais comptées
 $artefacts = @(Alertes | Where-Object { "$($_.Regle)" -like 'PER-*' -and "$($_.Destination) $($_.Raisons)" -match 'd4t-executeur' })
 $lignes.Add("D-3;;d4t-executeur;$(@($artefacts).Count) alerte(s);;;artefact du banc, exclu")
+if ($script:arret) { $lignes.Add("arrêt;;;;;;$($script:arret)") }
 $lignes | Set-Content (Join-Path $Sortie 's09-essais.csv') -Encoding UTF8
 Copy-Item $fichierAlertes (Join-Path $Sortie 's09-alertes.json') -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $script:Donnees 'etat.json') (Join-Path $Sortie 's09-etat.json') -ErrorAction SilentlyContinue
