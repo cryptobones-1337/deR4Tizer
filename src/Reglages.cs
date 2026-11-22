@@ -18,7 +18,7 @@ namespace DeR4Tizer
         public static readonly string[] Protocoles = { "UDP", "TCP" };
         public static readonly string[] Formats = { "JSON", "CEF" };
         public static readonly string[] Securites = { "SSL", "STARTTLS" };
-        static readonly string[] OperationsApprentissage = { "terminer", "recommencer", "oublier" };
+        static readonly string[] OperationsApprentissage = { "terminer", "recommencer", "oublier", "oublier-perimees" };
 
         public static string Choix(string valeur, string[] permis) { return Array.IndexOf(permis, valeur) >= 0 ? valeur : permis[0]; }
 

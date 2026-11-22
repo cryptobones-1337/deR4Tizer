@@ -4568,6 +4568,8 @@ namespace DeR4Tizer
             pile.Children.Add(apprentissage);
             pile.Children.Add(Ligne(Bouton("Terminer l'apprentissage", false, () => ActionsReglages.Apprentissage("terminer")),
                 Bouton("Recommencer (7 jours)", false, () => ActionsReglages.Apprentissage("recommencer")), Bouton("Supprimer les exceptions", false, () => ActionsReglages.Apprentissage("oublier"))));
+            // Exceptions d'une version précédente seulement (ligne « Exceptions » de la page Santé ; prérelecture de #255, R1)
+            pile.Children.Add(Ligne(Bouton("Effacer les exceptions d'une version précédente", false, () => ActionsReglages.Apprentissage("oublier-perimees"))));
 
             Section("REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)");
             pile.Children.Add(Note("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation."));

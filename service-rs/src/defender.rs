@@ -127,7 +127,7 @@ pub fn traduire(xml: &str) -> Option<Alerte> {
     let v = |c: &str| d.get(c).cloned().unwrap_or_default();
     let chemin = v("Path").trim_start_matches("file:_").to_string();
     let processus = v("Process Name");
-    Some(match id {
+    let mut a = match id {
         1116 => alerte(crate::regles::DEF_001, "Critique", 10, &fichier(&processus), &processus, &v("Threat Name"),
             format!("Defender a DÉTECTÉ {} ({}) dans {}", v("Threat Name"), v("Category Name"), chemin)),
         1117 => alerte(crate::regles::DEF_002, "Info", 0, &fichier(&processus), &processus, &v("Threat Name"),
@@ -157,7 +157,13 @@ pub fn traduire(xml: &str) -> Option<Alerte> {
         1125 | 1126 => alerte(crate::regles::DEF_009, if id == 1125 { "Alerte" } else { "Info" }, if id == 1125 { 5 } else { 0 }, &fichier(&processus), &processus,
             &v("Path"), format!("protection réseau de Defender {} : {}", if id == 1125 { "a BLOQUÉ" } else { "(audit)" }, v("Path"))),
         _ => return None,
-    })
+    };
+    // Code de comportement (audit de #255, S255-01) : la règle ASR qui a bloqué ; une exception sur l'une ne tait pas
+    // les autres sur le même programme et le même fichier
+    if matches!(id, 1121 | 1122) {
+        a.comportement = format!("asr:{}", v("ID").trim().to_lowercase());
+    }
+    Some(a)
 }
 
 /// S'abonne au journal de Defender ; chaque alerte est déposée dans la file

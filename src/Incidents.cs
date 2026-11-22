@@ -347,8 +347,10 @@ namespace DeR4Tizer
                     Sujet = L.T("Exceptions"),
                     Etat = L.T("à reposer"),
                     Date = v(e.MisAJour),
-                    Detail = string.Format(L.T("{0} exception(s) d'une version précédente ne s'appliquent plus : leurs alertes reparaissent ; reposez celles qui restent justifiées."), e.ExceptionsPerimees)
-                        + (e.ApprisPerimes > 0 ? " " + string.Format(L.T("{0} comportement(s) appris d'une version précédente sont oubliés."), e.ApprisPerimes) : ""),
+                    Detail = string.Join(" ", new[] {
+                        e.ExceptionsPerimees > 0 ? string.Format(L.T("{0} exception(s) d'une version précédente ne s'appliquent plus : leurs alertes reparaissent ; reposez celles qui restent justifiées."), e.ExceptionsPerimees) : "",
+                        e.ApprisPerimes > 0 ? string.Format(L.T("{0} comportement(s) appris d'une version précédente sont oubliés."), e.ApprisPerimes) : "",
+                        L.T("Réglages : « Effacer les exceptions d'une version précédente » retire cette ligne.") }.Where(t => t != "")),
                     Source = "etat.json",
                     Gravite = 1
                 });
