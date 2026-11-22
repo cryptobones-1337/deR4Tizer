@@ -11,7 +11,7 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use wmi::{COMLibrary, Variant, WMIConnection};
@@ -61,6 +61,9 @@ pub struct Processus {
     pub creations: Arc<Mutex<std::collections::VecDeque<Creation4688>>>,
     /// 4688 lus avec et sans ligne de commande depuis le dernier relevé de l'état de l'audit
     lignes: Arc<Mutex<(u32, u32)>>,
+    /// Un 4688 est arrivé alors que l'audit était noté inactif : l'état est relu sans attendre les 5 min (la baseline
+    /// active l'audit juste après l'installation ; la page Santé disait « non activé » jusqu'au relevé suivant)
+    reveil: Arc<AtomicBool>,
 }
 
 fn regles() -> &'static [(Regex, &'static str, &'static str)] {
@@ -325,6 +328,7 @@ impl Processus {
             signales: Arc::new(Mutex::new(HashMap::new())),
             creations: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             lignes: Arc::new(Mutex::new((0, 0))),
+            reveil: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -466,7 +470,15 @@ impl Processus {
                     Note::Desactivee => collectes::desactivee(Collecte::AuditProcessus, &raison),
                     _ => collectes::echec(Collecte::AuditProcessus, &raison),
                 }
-                std::thread::sleep(Duration::from_secs(300));
+                // 5 min, ou plus tôt si un 4688 contredit l'état noté (une relecture par minute au plus : auditpol est un
+                // processus lancé à chaque relevé)
+                let debut = Instant::now();
+                while debut.elapsed() < Duration::from_secs(300) {
+                    std::thread::sleep(Duration::from_secs(5));
+                    if debut.elapsed() >= Duration::from_secs(60) && moi.reveil.swap(false, Ordering::Relaxed) {
+                        break;
+                    }
+                }
             }
         });
     }
@@ -478,6 +490,9 @@ impl Processus {
         {
             let mut l = self.lignes.lock().unwrap();
             if c.ligne_commande.is_some() { l.0 = l.0.saturating_add(1) } else { l.1 = l.1.saturating_add(1) }
+        }
+        if !audit_analyse(self.audit.load(Ordering::Relaxed)) {
+            self.reveil.store(true, Ordering::Relaxed);
         }
         {
             let mut v = self.creations.lock().unwrap();
@@ -501,6 +516,11 @@ impl Processus {
     /// Source publiée dans etat.json : l'audit quand il analyse, sinon la source notée (Sysmon, WMI ou aucune)
     pub fn source_publiee(&self) -> String {
         if audit_analyse(self.audit.load(Ordering::Relaxed)) { "Audit 4688".into() } else { self.source.lock().unwrap().clone() }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reveil_demande_test(&self) -> bool {
+        self.reveil.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]

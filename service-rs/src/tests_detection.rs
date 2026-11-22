@@ -676,7 +676,29 @@ fn attack_lot1_boucle_wmi_sans_filtre() {
     assert!(!boucle.contains("audit_analyse") && !boucle.contains("moi.audit"), "filtre de l'audit revenu dans la boucle WMI");
     let t = &p[p.find("pub(crate) fn traiter_4688").unwrap()..];
     let t = &t[..t.find("pub fn source_publiee").unwrap()];
-    assert!(t.contains("self.analyser(c.pid, &info);") && !t.contains("audit_analyse"), "filtre de l'audit dans traiter_4688");
+    // L'état de l'audit peut y demander une relecture de son état (réveil), jamais empêcher l'analyse : aucun retour
+    // anticipé conditionné par l'audit
+    assert!(t.contains("self.analyser(c.pid, &info);"), "traiter_4688 n'analyse plus");
+    assert!(!regex::Regex::new(r"audit_analyse\([^)]*\)\)\s*\{\s*return").unwrap().is_match(t), "filtre de l'audit dans traiter_4688");
+    assert!(!t.contains("if audit_analyse"), "analyse conditionnée par l'audit dans traiter_4688");
+}
+
+/// Après l'installation, la baseline active l'audit des créations de processus : un 4688 reçu alors que l'audit est noté
+/// inactif demande une relecture de son état (la page Santé ne dit plus « non activé » pendant 5 min) ; audit déjà actif :
+/// aucune relecture demandée
+#[test]
+fn attack_lot1_4688_recu_audit_inactif_relu() {
+    use crate::collectes::Note;
+    use crate::processus::Processus;
+    let x = xml_4688("0x10", r"C:\Windows\notepad.exe", Some("notepad"), "0x4", None);
+    let p = Processus::nouveau();
+    p.regler_audit_test(Note::Desactivee);
+    p.traiter_4688(&x);
+    assert!(p.reveil_demande_test(), "audit noté inactif, 4688 reçu : relecture demandée");
+    let q = Processus::nouveau();
+    q.regler_audit_test(Note::Active);
+    q.traiter_4688(&x);
+    assert!(!q.reveil_demande_test());
 }
 
 #[test]

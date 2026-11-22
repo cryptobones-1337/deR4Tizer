@@ -110,7 +110,7 @@ première lecture réussie (les événements écrits entre-temps ne sont pas rel
 des créations de processus (4688) prend le relais, sinon WMI.
 Créations de processus sans Sysmon (couverture ATT&CK, lot 1) : les règles PRC-001 à PRC-005 et les chaînes lisent les
 événements 4688 du journal Sécurité, qui portent le programme, sa ligne de commande et son parent même pour un
-processus déjà terminé. Collecte `AuditProcessus`, relue toutes les 5 min : « Active » (audit actif, ligne de commande
+processus déjà terminé. Collecte `AuditProcessus`, relue toutes les 5 min, et plus tôt (une fois par minute au plus) quand un 4688 arrive alors que l'audit est noté inactif, ce qui arrive juste après l'installation, quand la baseline active l'audit : « Active » (audit actif, ligne de commande
 réglée et vue) ; « Partielle » (ligne de commande absente : PRC-001 lit le 4688, PRC-002 à PRC-005 prennent la ligne
 de commande dans WMI) ; « Desactivee » (audit jamais activé : la baseline n'est pas appliquée, comme Sysmon absent) ;
 « Indisponible » (audit coupé après avoir été actif, réglage illisible, journal Sécurité illisible). Dans les trois
