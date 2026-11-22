@@ -93,7 +93,8 @@ ensuite.
 - archive WiX 3.14 vérifiée par son empreinte ; MSI construit depuis une copie des sources du tag (rien n'est écrit
   dans le dépôt) ;
 - `verifier-signatures.ps1` sur les trois fichiers : signature valide, horodatée, clé épinglée, chaîne et révocation ;
-- `ProductVersion` du MSI égale à la version du tag ;
+- `ProductVersion` du MSI égale à la version du tag (`version-msi.ps1`, testé par `tests\test-version-msi.ps1` sur le
+  MSI construit par la CI) ;
 - aucune version GitHub de ce nom n'existe déjà.
 
 ## Après la publication
