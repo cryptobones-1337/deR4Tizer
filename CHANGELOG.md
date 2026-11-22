@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-Nothing yet.
+- Installer license: says that released files are signed (Certum certificate) and that only a build you compile
+  yourself shows "unknown publisher"; the v4.3 installer still said the binaries were not signed.
 
 ## 4.3 · 2026-11-23
 
