@@ -212,6 +212,8 @@ namespace DeR4Tizer
             { "{0} exception(s) d'une version précédente ne s'appliquent plus : leurs alertes reparaissent ; reposez celles qui restent justifiées.",
               "{0} exception(s) from a previous version no longer apply: their alerts show again; set again those that are still justified." },
             { "{0} comportement(s) appris d'une version précédente sont oubliés.", "{0} learned behaviour(s) from a previous version are forgotten." },
+            { "Réglages : « Effacer les exceptions d'une version précédente » retire cette ligne.", "Settings: \"Clear exceptions from a previous version\" removes this line." },
+            { "Effacer les exceptions d'une version précédente", "Clear exceptions from a previous version" },
             { "Registre des réponses", "Response register" }, { "écrit", "written" }, { "lecture refusée", "read refused" }, { "contenu illisible", "unreadable content" },
             { "reponses.json est mal formé : aucune action automatique (REP-002) et rien n'est enregistré ; retirez ce fichier du dossier de données puis redémarrez le service. Les échéances de la session seront perdues au redémarrage.",
               "reponses.json is malformed: no automatic action (REP-002) and nothing is recorded; remove this file from the data folder, then restart the service. The session's deadlines will be lost on restart." },

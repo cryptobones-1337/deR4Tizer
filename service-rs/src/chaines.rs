@@ -52,6 +52,24 @@ struct Processus {
 const LIGNE_GARDEE: usize = 1024;
 const LIGNE_PUBLIEE: usize = 300;
 
+/// Décision pure (testée) : code de comportement d'une chaîne (prérelecture de #255, D1) : codes de ses signaux, triés,
+/// sans doublon ; un signal sans code y entre par le début de sa raison. Jamais les techniques. Long ou non ASCII :
+/// remplacé par le début de son empreinte SHA-256 (même code pour les mêmes signaux, 100 caractères au plus)
+pub(crate) fn code_chaine(signaux: &[(&str, &str)]) -> String {
+    let mut codes: Vec<String> = signaux.iter().map(|(code, raison)| {
+        if code.is_empty() { format!("r:{}", raison.chars().take(40).collect::<String>()) } else { code.to_string() }
+    }).collect();
+    codes.sort();
+    codes.dedup();
+    let c = codes.join("+");
+    if c.len() <= 100 && c.chars().all(|x| x.is_ascii_graphic()) {
+        c
+    } else {
+        let e = commun::empreinte_signature(&c);
+        format!("sha:{}", &e["sha256:".len().."sha256:".len() + 16])
+    }
+}
+
 fn borner(s: &str, n: usize) -> String {
     if s.chars().count() > n { s.chars().take(n).collect::<String>() + "…" } else { s.to_string() }
 }
@@ -61,6 +79,8 @@ struct Signal {
     raison: String,
     /// Techniques ATT&CK de l'alerte d'origine (règle de la table, ou posées par son code) : celles de la chaîne
     techniques: Vec<String>,
+    /// Code stable du signal (règle et code de comportement de l'alerte d'origine) : il entre dans le code de la chaîne
+    code: String,
     vu: Instant,
     heure: String,
 }
@@ -145,12 +165,18 @@ impl Arbre {
     /// Ajoute un signal et les techniques de l'alerte qui le porte : la chaîne reçoit celles de ses signaux, jamais une
     /// technique par défaut (couverture ATT&CK, lot 2 : avant, toute chaîne recevait T1204)
     pub fn signaler_avec(&mut self, pid: u32, score: i32, raison: &str, techniques: &[String]) {
+        self.signaler_code(pid, score, raison, techniques, "");
+    }
+
+    /// `signaler_avec` et le code stable du signal (« règle#comportement ») : la chaîne en tire son code de comportement
+    /// (empreinte des exceptions ; prérelecture de #255, D1)
+    pub fn signaler_code(&mut self, pid: u32, score: i32, raison: &str, techniques: &[String], code: &str) {
         if score <= 0 || pid <= 4 {
             return;
         }
         let s = self.signaux.entry(pid).or_default();
         if !s.iter().any(|x| x.raison == raison) {
-            s.push(Signal { score, raison: raison.to_string(), techniques: techniques.to_vec(), vu: Instant::now(), heure: commun::maintenant() });
+            s.push(Signal { score, raison: raison.to_string(), techniques: techniques.to_vec(), code: code.to_string(), vu: Instant::now(), heure: commun::maintenant() });
         }
     }
 
@@ -247,7 +273,9 @@ impl Arbre {
                     techniques.push(t.clone());
                 }
             }
+            let signaux: Vec<&Signal> = c.noeuds.iter().filter_map(|n| self.signaux.get(&n.pid)).flatten().collect();
             a.push(Alerte {
+                comportement: code_chaine(&signaux.iter().map(|s| (s.code.as_str(), s.raison.as_str())).collect::<Vec<_>>()),
                 regle: crate::regles::CHA_001.into(),
                 id: commun::nouvel_id(),
                 heure: commun::maintenant(),

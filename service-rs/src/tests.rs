@@ -9564,3 +9564,47 @@ fn registre_reponses_echec_journalise_une_fois_et_publie() {
     let i = include_str!("../../src/Incidents.cs");
     assert!(i.contains("e.RegistreReponses") && i.contains("perdues au redémarrage"), "ligne de la page Santé");
 }
+
+/// Prérelecture de #255, D1 : deux chaînes aux mêmes processus mais aux signaux différents ont deux empreintes ; les
+/// mêmes signaux, une seule ; le code ne contient jamais de technique
+#[test]
+fn audit_p2_chaine_code_des_signaux() {
+    use crate::apprentissage::signature_avec;
+    use crate::natif::InfoListe;
+    let alerte_chaine = |code: &str, raison: &str| {
+        let mut arbre = crate::chaines::Arbre::default();
+        let liste: std::collections::HashMap<u32, InfoListe> = [(100, ("explorer", 4)), (200, ("powershell", 100)), (300, ("cmd", 200))]
+            .into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
+        arbre.maj(&liste);
+        arbre.signaler_code(200, 6, raison, &["T1059.001".to_string()], code);
+        arbre.signaler_code(300, 6, "second signal", &[], "PRC-005");
+        let mut a = arbre.alertes(&arbre.chaines());
+        assert_eq!(a.len(), 1, "une chaîne");
+        a.remove(0)
+    };
+    let a = alerte_chaine("PRC-002", "PowerShell obscurci");
+    let b = alerte_chaine("PRC-003#PRC-003:certutil", "outil détourné");
+    assert_eq!(a.regle, "CHA-001");
+    assert!(!a.comportement.is_empty() && !a.comportement.contains("T1"), "code : {}", a.comportement);
+    assert_eq!(a.comportement, "PRC-002+PRC-005");
+    assert_ne!(signature_avec(&a, "e"), signature_avec(&b, "e"), "signaux différents, une seule empreinte");
+    assert_eq!(signature_avec(&a, "e"), signature_avec(&alerte_chaine("PRC-002", "PowerShell obscurci"), "e"));
+    // Code long ou non ASCII : empreinte courte, stable
+    use crate::chaines::code_chaine;
+    let long: Vec<(&str, &str)> = (0..20).map(|_| ("", "réseau : connexion très suspecte vers une adresse")).collect();
+    let c = code_chaine(&long);
+    assert!(c.starts_with("sha:") && c.len() == 20 && c == code_chaine(&long), "{c}");
+    assert_eq!(code_chaine(&[("B", ""), ("A", ""), ("B", "")]), "A+B");
+}
+
+/// Audit de #255, S255-01 : deux règles ASR sur le même programme et le même fichier ont deux empreintes
+#[test]
+fn audit_p2_def007_regles_asr_distinctes() {
+    use crate::apprentissage::signature_avec;
+    let xml = |guid: &str| format!(r#"<Event><System><EventID>1121</EventID></System><EventData><Data Name='ID'>{guid}</Data><Data Name='Path'>C:\Users\Public\a.dll</Data><Data Name='Process Name'>C:\Users\Public\x.exe</Data></EventData></Event>"#);
+    let a = crate::defender::traduire(&xml("D4F940AB-401B-4EFC-AADC-AD5F3C50688A")).expect("1121");
+    let b = crate::defender::traduire(&xml("56A863A9-875E-4185-98A7-B882C64B5CE5")).expect("1121");
+    assert_eq!(a.regle, "DEF-007");
+    assert_eq!(a.comportement, "asr:d4f940ab-401b-4efc-aadc-ad5f3c50688a");
+    assert_ne!(signature_avec(&a, "e"), signature_avec(&b, "e"));
+}

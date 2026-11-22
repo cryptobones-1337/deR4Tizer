@@ -11,7 +11,9 @@ Main changes on `main` since build 4.3, most recent first:
   code set by the code that raises the alert (tool seen, startup entry type, connection indicators, IDS rule…), so
   editing the technique tables or moving to a new ATT&CK version no longer voids any exception. Exceptions from the
   previous fingerprint format cannot be converted: they are kept aside, counted, and shown in the Health page
-  ("Exceptions" line, to set again), never dropped silently.
+  ("Exceptions" line, to set again, cleared by "Clear exceptions from a previous version" in the settings), never
+  dropped silently; the old file is copied aside before the migration. Known limit: going back to an older build
+  erases the exceptions set in the new format (their alerts come back).
 - ATT&CK technique taken from the detection rule (one table next to the rule registry, ATT&CK v20.1), never from words
   in the alert text; attack chains carry the techniques of their own signals instead of a default one; an alert can
   carry several techniques, each translated in the interface.

@@ -186,7 +186,7 @@ pub fn valider(c: &Commande) -> Result<(), String> {
         "exception" | "restaurer" | "restaurerRepli" => {
             identifiant_valide(requis(&c.cible, "Cible")?).then_some(()).ok_or_else(|| "identifiant invalide".into())
         }
-        "apprentissage" => matches!(c.valeur.as_deref(), Some("terminer" | "recommencer" | "oublier"))
+        "apprentissage" => matches!(c.valeur.as_deref(), Some("terminer" | "recommencer" | "oublier" | "oublier-perimees"))
             .then_some(()).ok_or_else(|| "commande d'apprentissage inconnue".into()),
         "autoriserLecteur" => {
             let s = requis(&c.valeur, "Valeur")?;

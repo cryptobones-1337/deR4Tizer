@@ -175,6 +175,9 @@ try {
     $per = & { $x = & $etat @(); $x.ExceptionsPerimees = 3; $x.ApprisPerimes = 5; $x }
     $lper = @(& $appel $vs 'Lignes' @($per, $r, $maintenant) | Where-Object Sujet -eq 'Exceptions')
     Cas 'santé : exceptions périmées dites avec leur nombre' ($lper.Count -eq 1 -and $lper[0].Gravite -eq 1 -and $lper[0].Detail -match '^3 exception' -and $lper[0].Detail -match '5 comportement') "$($lper.Detail)"
+    $seulAppris = & { $x = & $etat @(); $x.ApprisPerimes = 2; $x }
+    $lsa = @(& $appel $vs 'Lignes' @($seulAppris, $r, $maintenant) | Where-Object Sujet -eq 'Exceptions')
+    Cas 'santé : appris seuls, sans « 0 exception »' ($lsa.Count -eq 1 -and $lsa[0].Detail -match '^2 comportement' -and $lsa[0].Detail -notmatch '0 exception') "$($lsa.Detail)"
     Cas 'santé : protection en échec dite' (@(& $appel $vs 'Lignes' @((& { $x = & $etat @(); $x.ProtectionDonnees = 'droits'; $x }), $r, $maintenant) | Where-Object { $_.Etat -eq 'en échec' -and $_.Detail -eq 'droits' }).Count -eq 1)
 
     # Confirmation : l'incident et la transition, textes neutralisés ; sans fichier, « inconnu »

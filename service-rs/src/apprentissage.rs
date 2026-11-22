@@ -77,7 +77,24 @@ pub fn perimes() -> (u32, u32) {
 fn etat() -> &'static Mutex<Etat> {
     static E: OnceLock<Mutex<Etat>> = OnceLock::new();
     E.get_or_init(|| {
-        let mut e: Etat = commun::lire(FICHIER).unwrap_or_default();
+        let chemin = commun::dossier().join(FICHIER);
+        let lu: Option<Etat> = commun::lire(FICHIER);
+        if lu.is_none() && chemin.is_file() {
+            // Fichier présent mais illisible : gardé de côté, jamais écrasé sans trace (audit de #255, S255-03)
+            let cote = commun::dossier().join("apprentissage-illisible.json");
+            let r = std::fs::rename(&chemin, &cote);
+            commun::journal(&format!("apprentissage.json illisible : gardé sous {} ({}) ; exceptions et apprentissage repartent de zéro",
+                cote.display(), if r.is_ok() { "renommé" } else { "renommage en échec" }));
+        }
+        let mut e: Etat = lu.unwrap_or_default();
+        if e.format != FORMAT && (!e.exceptions.is_empty() || !e.appris.is_empty()) {
+            // Copie de côté avant la migration (audit de #255, S255-02) : une version précédente, après un retour arrière,
+            // effacerait les exceptions du format 3 ; cette copie permet de les retrouver
+            let cote = commun::dossier().join(format!("apprentissage-format{}.json", e.format));
+            if std::fs::copy(&chemin, &cote).is_ok() {
+                commun::journal(&format!("apprentissage.json au format {} copié sous {} avant la migration", e.format, cote.display()));
+            }
+        }
         if e.debut.is_empty() {
             e.debut = commun::maintenant();
             // Première installation : apprentissage de 7 jours. Poste déjà en service (des alertes existent) : pas
@@ -243,7 +260,8 @@ pub fn ajouter_exception(a: &Alerte) -> Result<String, String> {
     Ok(description)
 }
 
-/// « terminer », « recommencer » (7 jours, comportements appris oubliés) ou « oublier » (exceptions)
+/// « terminer », « recommencer » (7 jours, comportements appris oubliés), « oublier » (exceptions) ou
+/// « oublier-perimees » (exceptions d'un format précédent seulement, prérelecture de #255, R1)
 pub fn commande(quoi: &str) -> Result<String, String> {
     let mut e = etat().lock().unwrap();
     let m = match quoi {
@@ -256,6 +274,12 @@ pub fn commande(quoi: &str) -> Result<String, String> {
             e.fin = commun::heure(SystemTime::now() + Duration::from_secs(JOURS_PAR_DEFAUT * 86_400));
             e.appris.clear();
             format!("Mode apprentissage relancé pour {JOURS_PAR_DEFAUT} jours ; les comportements appris ont été oubliés.")
+        }
+        "oublier-perimees" => {
+            let n = e.exceptions_perimees.len();
+            e.exceptions_perimees.clear();
+            e.appris_perimes = 0;
+            format!("{n} exception(s) d'une version précédente supprimée(s) ; les exceptions actuelles sont gardées.")
         }
         "oublier" => {
             let n = e.exceptions.len() + e.exceptions_perimees.len();
