@@ -8523,7 +8523,7 @@ fn attack_lot2_table_des_techniques_complete() {
         }
     }
     par_l_alerte.sort();
-    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "VIE-001"]);
+    assert_eq!(par_l_alerte, ["CHA-001", "COR-R7", "EXP-DPI-001", "EXP-IDS-001", "EXP-NDR-001", "VIE-001", "VIE-002"]);
     // Toute technique posée par le code (identifiants littéraux) a un nom
     for (nom, source) in [("dpi", include_str!("dpi.rs")), ("ndr", include_str!("ndr.rs")), ("siem", include_str!("siem.rs")),
                           ("parefeu", include_str!("parefeu.rs")), ("surveillances", include_str!("surveillances.rs"))] {
@@ -8562,6 +8562,26 @@ fn attack_lot2_technique_par_regle_et_non_par_mots() {
 
 /// Empreinte des exceptions : la règle et les identifiants de techniques, jamais le libellé (un renommage ou une
 /// traduction ne rend plus une exception caduque)
+/// Prérelecture de #246, D1 ; audit, S246-01 : deux RES-002 du même programme vers la même destination, l'une « non
+/// signé », l'autre « balise », restent deux comportements : une exception ou un apprentissage sur la première ne tait
+/// pas la seconde ; deux alertes IDS de règles différentes non plus (S246-04)
+#[test]
+fn attack_lot2_empreinte_pas_plus_grossiere() {
+    use crate::apprentissage::signature_avec;
+    use crate::commun::Alerte;
+    let base = Alerte { regle: "RES-002".into(), chemin: r"C:\x\a.exe".into(), destination: "203.0.113.5".into(), mitre: "T1071.001 / T1041 / T1105".into(), ..Default::default() };
+    let non_signe = Alerte { raisons: "connexion suspecte : non signé".into(), ..base.clone() };
+    let balise = Alerte { raisons: "connexion suspecte : non signé, balise (connexions régulières)".into(), ..base.clone() };
+    assert_ne!(signature_avec(&non_signe, "e"), signature_avec(&balise, "e"));
+    let ids1 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000014 : Scanner Nmap".into(), ..Default::default() };
+    let ids2 = Alerte { regle: "EXP-IDS-001".into(), raisons: "IDS sid 9000015 : Scanner Nikto".into(), ..Default::default() };
+    assert_ne!(signature_avec(&ids1, "e"), signature_avec(&ids2, "e"));
+    // VIE-002 : ngrok porte T1572, un autre outil T1219
+    let mut v = Alerte { regle: "VIE-002".into(), mitre: "T1572".into(), ..Default::default() };
+    crate::mitre::enrichir(&mut v);
+    assert_eq!(v.mitre, "T1572 Tunnel de protocole");
+}
+
 #[test]
 fn attack_lot2_empreinte_sur_les_identifiants() {
     use crate::apprentissage::signature_avec;

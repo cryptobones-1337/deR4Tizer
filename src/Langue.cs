@@ -77,6 +77,8 @@ namespace DeR4Tizer
             { "Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)", "Sysmon (optional) not installed: WMI replaces it, very short-lived programs may escape monitoring (PRC-001 to PRC-005 degraded)" },
             { "Sysmon (facultatif) absent : l'audit des créations de programmes (4688) le remplace, les programmes brefs sont vus avec leur ligne de commande", "Sysmon (optional) not installed: process creation auditing (4688) replaces it, short-lived programs are seen with their command line" },
             // Noms des techniques ATT&CK (mitre.rs, NOMS ; couverture ATT&CK, lot 2)
+            { "T1489 Arrêt de services", "T1489 Service stop" },
+            { "T1572 Tunnel de protocole", "T1572 Protocol tunneling" },
             { "T1069.001 Découverte des groupes locaux", "T1069.001 Local groups discovery" },
             { "T1021 Services distants", "T1021 Remote Services" },
             { "T1021.001 Bureau à distance", "T1021.001 Remote Desktop Protocol" },

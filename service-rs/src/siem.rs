@@ -454,7 +454,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             let arret = v("param2").to_lowercase().contains("stop") || v("param2").to_lowercase().contains("arr");
             if arret && nom != "deR4Tizer" {
                 e.niveau = "Alerte".into();
-                e.mitre = "T1685".into();
+                e.mitre = "T1685 / T1489".into();
             }
             e.message = format!("service {nom} : {}", v("param2"));
         }
@@ -811,7 +811,9 @@ impl Correlation {
             let cle = e.processus.to_lowercase();
             borner_cles(&mut self.alertes_processus, &cle, |f| f.back().map(|x| x.0));
             let file = self.alertes_processus.entry(cle.clone()).or_default();
-            let detection = if e.mitre.is_empty() { e.message.split(':').next().unwrap_or("").to_string() } else { e.mitre.clone() };
+            // Détection distincte : technique et clé de mots du comportement (couverture ATT&CK, lot 2 : la technique seule
+            // est la même pour toute une règle ; audit de #246, S246-02)
+            let detection = format!("{}#{}", e.mitre, crate::mitre::cle_mots(&format!("{} {}", e.message, e.destination)));
             file.push_back((Instant::now(), detection, trace(e)));
             file.retain(|(t, _, _)| t.elapsed() < Duration::from_secs(600));
             while file.len() > MAX_PAR_CLE {

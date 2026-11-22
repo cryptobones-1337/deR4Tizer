@@ -174,8 +174,13 @@ pub(crate) fn outils_distants(outils_vus: &mut HashMap<u32, String>, liste: &Has
         pids.insert(pid);
         let chemin = chemin_de(pid);
         let depuis = outils_vus.entry(pid).or_insert_with(|| {
+            // VIE-002 : outil d'accès à distance (T1219), ou tunnel de protocole pour ngrok (T1572) ; posé ici
+            let technique = if outil.starts_with("ngrok") { "T1572" } else { "T1219" };
             alertes.push(alerte(crate::regles::VIE_002, "Alerte", 3, &p.nom, &chemin, outil,
                 format!("outil de prise en main à distance en cours d'exécution ({outil})")));
+            if let Some(a) = alertes.last_mut() {
+                a.mitre = technique.into();
+            }
             commun::maintenant()
         }).clone();
         actuels.push(OutilDistant {

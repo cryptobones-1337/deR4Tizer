@@ -97,12 +97,14 @@ fn editeur(chemin: &str) -> String {
 
 /// Comportement d'une alerte (fonction pure : l'éditeur est fourni)
 pub fn signature_avec(a: &Alerte, editeur: &str) -> String {
-    // Nature du comportement : la règle et les identifiants de ses techniques, codes stables (couverture ATT&CK, lot 2) ;
-    // jamais le libellé affiché, qu'un renommage ou une traduction changerait. Ce changement a rendu caduques, une fois,
-    // les exceptions posées avant : leurs alertes reparaissent (sens prudent, jamais un silence). Sans règle (alerte d'un
+    // Nature du comportement : la règle, les identifiants de ses techniques et la clé de mots du comportement (codes
+    // stables, couverture ATT&CK, lot 2) ; jamais le libellé affiché, qu'un renommage ou une traduction changerait. La clé
+    // de mots garde le découpage d'avant : deux RES-002 du même programme, l'une « non signé », l'autre « balise », restent
+    // deux comportements (prérelecture de #246, D1 ; audit, S246-01). Ce changement a rendu caduques, une fois, les
+    // exceptions posées avant : leurs alertes reparaissent (sens prudent, jamais un silence). Sans règle (alerte d'un
     // modèle ancien) : le début des raisons, comme avant
     let nature = if !a.regle.is_empty() {
-        format!("{}#{}", a.regle, crate::mitre::identifiants_du_texte(&a.mitre).join(","))
+        crate::mitre::cle_comportement(a)
     } else {
         a.raisons.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect::<String>()
     };

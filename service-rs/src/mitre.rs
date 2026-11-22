@@ -36,6 +36,7 @@ pub const NOMS: &[(&str, &str)] = &[
     ("T1204.002", "Fichier piégé lancé par l'utilisateur"),
     ("T1218", "Binaire système détourné"),
     ("T1219", "Outil d'accès à distance"),
+    ("T1489", "Arrêt de services"),
     ("T1486", "Chiffrement de données (rançongiciel)"),
     ("T1490", "Suppression des sauvegardes"),
     ("T1539", "Vol de cookies de session"),
@@ -49,6 +50,7 @@ pub const NOMS: &[(&str, &str)] = &[
     ("T1557.002", "Usurpation ARP"),
     ("T1557.003", "Serveur DHCP pirate"),
     ("T1565", "Manipulation de données"),
+    ("T1572", "Tunnel de protocole"),
     ("T1566.001", "Pièce jointe piégée"),
     ("T1566.002", "Lien d'hameçonnage"),
     ("T1569.002", "Exécution par un service"),
@@ -98,7 +100,7 @@ pub fn identifiants_de_regle(regle: &str, mitre: &str) -> Vec<String> {
     }
 }
 
-/// (mots-clés tous présents dans les raisons, conseil) — le premier qui correspond l'emporte. Ne pose plus aucune technique
+/// (mots-clés tous présents dans les raisons, conseil) : le premier qui correspond l'emporte. Ne pose plus aucune technique
 const CONSEILS: &[(&[&str], &str)] = &[
     (&["leurre"],
      "Cliquez sur PANIQUE pour couper Internet, puis éteignez le PC si des fichiers changent d'extension. Ne payez pas : contactez un professionnel et restaurez vos sauvegardes."),
@@ -148,6 +150,23 @@ const CONSEILS: &[(&[&str], &str)] = &[
     (&["ip directe"], "Les malwares contactent souvent une IP en dur. Vérifiez le programme ; isolez-le s'il est inconnu."),
     (&["non signé"], "Programme sans signature d'éditeur : vérifiez son origine (page Connexions, raisons de la ligne)."),
 ];
+
+/// Clé de mots du comportement : les mots-clés du premier conseil qui correspond (codes internes, jamais affichés), sinon
+/// le début du texte. Même découpage que l'ancienne attribution de la technique par mots : une empreinte qui la contient
+/// n'est jamais plus grossière qu'avant le lot 2 (prérelecture de #246, D1 ; audit, S246-01, S246-02, S246-04)
+pub fn cle_mots(texte: &str) -> String {
+    let t = texte.to_lowercase();
+    match CONSEILS.iter().find(|(mots, _)| mots.iter().all(|m| t.contains(m))) {
+        Some((mots, _)) => mots.join("+"),
+        None => texte.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect(),
+    }
+}
+
+/// Clé stable du comportement d'une alerte (empreinte des exceptions et de l'apprentissage) : la règle, les identifiants
+/// de ses techniques et la clé de mots ; jamais un libellé affiché
+pub fn cle_comportement(a: &Alerte) -> String {
+    format!("{}#{}#{}", a.regle, identifiants_du_texte(&a.mitre).join(","), cle_mots(&format!("{} {}", a.raisons, a.destination)))
+}
 
 pub fn enrichir(a: &mut Alerte) {
     a.mitre = identifiants(a).iter().map(|i| libelle(i)).collect::<Vec<_>>().join(" / ");
