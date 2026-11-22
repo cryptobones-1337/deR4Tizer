@@ -113,7 +113,8 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   n'efface qu'elles ; « Supprimer les exceptions » les efface aussi. Avant la migration, `apprentissage.json` est copié
   sous `apprentissage-format<N>-<date>.json` (l'état d'avant, exceptions de l'ancien format comprises ; jamais une copie
   écrasée). Un fichier mal formé est gardé sous `apprentissage-illisible-<date>.json` ; un fichier présent mais
-  illisible (droits, verrou) n'est pas réécrit au démarrage. Limite connue : un retour arrière vers une version au
+  illisible (droits, verrou) n'est réécrit ni au démarrage ni ensuite, jusqu'au redémarrage du service (les exceptions
+  posées entre-temps tiennent en mémoire). Limite connue : un retour arrière vers une version au
   format 2 efface les exceptions posées au format 3 (code de l'ancienne version), et aucune copie ne les garde ; leurs
   alertes reparaissent (sens prudent), il faut les reposer. Seule la
   forme mémorisée de la signature change avec la PR 3.1b (empreinte, voir plus bas).
