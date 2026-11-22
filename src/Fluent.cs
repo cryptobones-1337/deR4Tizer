@@ -226,7 +226,7 @@ namespace DeR4Tizer
             ajouter("Destination", string.IsNullOrEmpty(a.Destination) ? null : a.Destination + (a.Port > 0 ? ", port " + a.Port : ""), false);
             ajouter("Règle", string.IsNullOrEmpty(a.Regle) ? null : a.Regle + (string.IsNullOrEmpty(a.Collecte) ? "" : " (" + L.T("collecte présumée") + VueEnsembleFluent.DeuxPoints + Couverture.Nom(a.Collecte) + ")"), false);
             // Technique et conseil : textes fixes du service (mitre.rs), traduits par la table (point 3 de la revue)
-            ajouter("Technique", L.T(a.Mitre), false);
+            ajouter("Technique", L.Mitre(a.Mitre), false);
             ajouter("Que faire", L.T(a.Conseil), false);
             ajouter("Raisons", a.Raisons, false);
             ajouter("Chemin", a.Chemin, true);

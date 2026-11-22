@@ -14,6 +14,16 @@ namespace DeR4Tizer
             return En && fr != null && Anglais.TryGetValue(fr, out en) ? en : fr;
         }
 
+        // Techniques ATT&CK d'une alerte (« T1059.001 PowerShell / T1027 Code obscurci ») : chaque libellé traduit à part
+        // (couverture ATT&CK, lot 2 : une alerte peut porter plusieurs techniques)
+        public static string Mitre(string m)
+        {
+            if (string.IsNullOrEmpty(m)) return m ?? "";
+            var p = m.Split(new[] { " / " }, System.StringSplitOptions.None);
+            for (int i = 0; i < p.Length; i++) p[i] = T(p[i]);
+            return string.Join(" / ", p);
+        }
+
         static readonly Dictionary<string, string> Anglais = new Dictionary<string, string>
         {
             // Phase 4 : pages Incidents et Santé
@@ -66,6 +76,48 @@ namespace DeR4Tizer
             { "démarré le", "started on" }, { "Protection du dossier de données", "Data folder protection" }, { "vérifiée", "verified" }, { "en échec", "failing" },
             { "Sysmon (facultatif) absent : WMI le remplace, les programmes très brefs peuvent échapper à la surveillance (PRC-001 à PRC-005 dégradées)", "Sysmon (optional) not installed: WMI replaces it, very short-lived programs may escape monitoring (PRC-001 to PRC-005 degraded)" },
             { "Sysmon (facultatif) absent : l'audit des créations de programmes (4688) le remplace, les programmes brefs sont vus avec leur ligne de commande", "Sysmon (optional) not installed: process creation auditing (4688) replaces it, short-lived programs are seen with their command line" },
+            // Noms des techniques ATT&CK (mitre.rs, NOMS ; couverture ATT&CK, lot 2)
+            { "T1069.001 Découverte des groupes locaux", "T1069.001 Local groups discovery" },
+            { "T1021 Services distants", "T1021 Remote Services" },
+            { "T1021.001 Bureau à distance", "T1021.001 Remote Desktop Protocol" },
+            { "T1027 Code obscurci", "T1027 Obfuscated files or information" },
+            { "T1041 Exfiltration par le canal de contrôle", "T1041 Exfiltration over C2 channel" },
+            { "T1047 WMI détourné", "T1047 Windows Management Instrumentation" },
+            { "T1048.003 Exfiltration par un protocole non chiffré", "T1048.003 Exfiltration over unencrypted protocol" },
+            { "T1053.005 Tâche planifiée", "T1053.005 Scheduled task" },
+            { "T1068 Élévation de privilèges par une faille (pilote vulnérable)", "T1068 Exploitation for privilege escalation (vulnerable driver)" },
+            { "T1071.001 Communication par protocole web", "T1071.001 Web protocols" },
+            { "T1071.004 Communication via DNS", "T1071.004 DNS" },
+            { "T1078.003 Compte local valide", "T1078.003 Valid local account" },
+            { "T1098 Manipulation de compte", "T1098 Account manipulation" },
+            { "T1105 Téléchargement d'outils", "T1105 Ingress tool transfer" },
+            { "T1110 Force brute", "T1110 Brute force" },
+            { "T1112 Registre modifié", "T1112 Modify registry" },
+            { "T1136.001 Compte local créé", "T1136.001 Local account created" },
+            { "T1176.001 Extension de navigateur", "T1176.001 Browser extension" },
+            { "T1187 Authentification forcée", "T1187 Forced authentication" },
+            { "T1197 Tâches BITS", "T1197 BITS jobs" },
+            { "T1200 Matériel ajouté", "T1200 Hardware additions" },
+            { "T1204.002 Fichier piégé lancé par l'utilisateur", "T1204.002 Malicious file run by the user" },
+            { "T1218 Binaire système détourné", "T1218 System binary proxy execution" },
+            { "T1219 Outil d'accès à distance", "T1219 Remote access tools" },
+            { "T1539 Vol de cookies de session", "T1539 Steal web session cookie" },
+            { "T1543.003 Service Windows", "T1543.003 Windows service" },
+            { "T1546.003 Abonnement WMI", "T1546.003 WMI event subscription" },
+            { "T1547.001 Clés Run et dossier Démarrage", "T1547.001 Registry Run keys / Startup folder" },
+            { "T1552 Identifiants non protégés", "T1552 Unsecured credentials" },
+            { "T1555.003 Identifiants des navigateurs", "T1555.003 Credentials from web browsers" },
+            { "T1557 Interception (adversaire au milieu)", "T1557 Adversary-in-the-middle" },
+            { "T1557.001 Empoisonnement de la résolution de noms", "T1557.001 Name resolution poisoning" },
+            { "T1557.002 Usurpation ARP", "T1557.002 ARP cache poisoning" },
+            { "T1557.003 Serveur DHCP pirate", "T1557.003 DHCP spoofing" },
+            { "T1566.001 Pièce jointe piégée", "T1566.001 Spearphishing attachment" },
+            { "T1566.002 Lien d'hameçonnage", "T1566.002 Spearphishing link" },
+            { "T1569.002 Exécution par un service", "T1569.002 Service execution" },
+            { "T1685 Protections désactivées ou modifiées", "T1685 Disable or modify tools" },
+            { "T1685.001 Journalisation désactivée ou modifiée", "T1685.001 Disable or modify Windows event log" },
+            { "T1685.005 Journaux d'événements effacés", "T1685.005 Clear Windows event logs" },
+            { "T1686.003 Pare-feu de Windows modifié", "T1686.003 Windows host firewall modified" },
             // Textes fixes du service (mitre.rs : techniques et conseils), noms des collectes, conséquences (revue de l'auditeur du 2026-11-21, point 3)
             { "T1486 Chiffrement de données (rançongiciel)", "T1486 Data encrypted for impact (ransomware)" },
             { "Cliquez sur PANIQUE pour couper Internet, puis éteignez le PC si des fichiers changent d'extension. Ne payez pas : contactez un professionnel et restaurez vos sauvegardes.", "Click PANIC to cut the Internet, then turn the PC off if file extensions are changing. Do not pay: contact a professional and restore your backups." },

@@ -881,7 +881,7 @@ impl Moniteur {
             // Arbre des processus : les signaux réseau de poids (≥ 2) comptent dans la chaîne
             self.arbre.completer(f.pid, &f.chemin, f.ligne_commande.as_deref());
             if f.score >= 2 {
-                self.arbre.signaler(f.pid, f.score, &format!("réseau : {}", f.raisons));
+                self.arbre.signaler_avec(f.pid, f.score, &format!("réseau : {}", f.raisons), &mitre::identifiants_de_regle(crate::regles::RES_002, ""));
             }
             flux.push(f);
         }
@@ -1016,7 +1016,7 @@ impl Moniteur {
         for a in detections.into_iter().chain(dns) {
             if let Some(pid) = a.pid {
                 let raison: String = a.raisons.chars().take(90).collect();
-                self.arbre.signaler(pid, a.score, &raison);
+                self.arbre.signaler_avec(pid, a.score, &raison, &mitre::identifiants(&a));
             }
             let cle = cle_alerte(&a);
             alertes_modifiees |= self.ajouter_alerte_brute(a, Some(cle));

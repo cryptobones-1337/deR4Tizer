@@ -149,6 +149,10 @@ pub(crate) fn premiers_usages(usages: &[UsagePeripherique], en_cours_avant: &Has
                 let quoi = if u.peripherique == "Caméra" { "la caméra" } else { "le micro" };
                 alertes.push(alerte(crate::regles::VIE_001, "Alerte", 3, &u.programme, &u.chemin, &u.peripherique,
                     format!("{} utilise {quoi} pour la première fois", u.programme)));
+                // VIE-001 couvre deux comportements : la technique est posée ici (couverture ATT&CK, lot 2)
+                if let Some(a) = alertes.last_mut() {
+                    a.mitre = if u.peripherique == "Caméra" { "T1125" } else { "T1123" }.into();
+                }
             }
         }
         if connus.insert(cle) {

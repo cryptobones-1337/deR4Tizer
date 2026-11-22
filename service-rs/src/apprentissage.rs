@@ -97,10 +97,14 @@ fn editeur(chemin: &str) -> String {
 
 /// Comportement d'une alerte (fonction pure : l'éditeur est fourni)
 pub fn signature_avec(a: &Alerte, editeur: &str) -> String {
-    let nature = if a.mitre.is_empty() {
-        a.raisons.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect::<String>()
+    // Nature du comportement : la règle et les identifiants de ses techniques, codes stables (couverture ATT&CK, lot 2) ;
+    // jamais le libellé affiché, qu'un renommage ou une traduction changerait. Ce changement a rendu caduques, une fois,
+    // les exceptions posées avant : leurs alertes reparaissent (sens prudent, jamais un silence). Sans règle (alerte d'un
+    // modèle ancien) : le début des raisons, comme avant
+    let nature = if !a.regle.is_empty() {
+        format!("{}#{}", a.regle, crate::mitre::identifiants_du_texte(&a.mitre).join(","))
     } else {
-        a.mitre.clone()
+        a.raisons.split([':', '(', '[']).next().unwrap_or("").trim().chars().take(60).collect::<String>()
     };
     // Le domaine plutôt que l'adresse ; sans domaine, l'adresse exacte (jamais « n'importe quelle IP »)
     let destination = a.nom_dns.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| a.destination.clone());

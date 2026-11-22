@@ -59,6 +59,8 @@ fn borner(s: &str, n: usize) -> String {
 struct Signal {
     score: i32,
     raison: String,
+    /// Techniques ATT&CK de l'alerte d'origine (règle de la table, ou posées par son code) : celles de la chaîne
+    techniques: Vec<String>,
     vu: Instant,
     heure: String,
 }
@@ -135,14 +137,20 @@ impl Arbre {
         }
     }
 
-    /// Ajoute un signal à un processus (une même raison n'est comptée qu'une fois)
+    /// Ajoute un signal à un processus (une même raison n'est comptée qu'une fois), sans technique
     pub fn signaler(&mut self, pid: u32, score: i32, raison: &str) {
+        self.signaler_avec(pid, score, raison, &[]);
+    }
+
+    /// Ajoute un signal et les techniques de l'alerte qui le porte : la chaîne reçoit celles de ses signaux, jamais une
+    /// technique par défaut (couverture ATT&CK, lot 2 : avant, toute chaîne recevait T1204)
+    pub fn signaler_avec(&mut self, pid: u32, score: i32, raison: &str, techniques: &[String]) {
         if score <= 0 || pid <= 4 {
             return;
         }
         let s = self.signaux.entry(pid).or_default();
         if !s.iter().any(|x| x.raison == raison) {
-            s.push(Signal { score, raison: raison.to_string(), vu: Instant::now(), heure: commun::maintenant() });
+            s.push(Signal { score, raison: raison.to_string(), techniques: techniques.to_vec(), vu: Instant::now(), heure: commun::maintenant() });
         }
     }
 
@@ -232,6 +240,13 @@ impl Arbre {
             }
             self.deja_alertees.insert(cle, c.score);
             let dernier = c.noeuds.iter().rev().find(|n| n.score > 0).cloned().unwrap_or_default();
+            // Techniques de la chaîne : celles de ses signaux, dans l'ordre de la chaîne, sans doublon
+            let mut techniques: Vec<String> = Vec::new();
+            for t in c.noeuds.iter().filter_map(|n| self.signaux.get(&n.pid)).flatten().flat_map(|s| s.techniques.iter()) {
+                if !techniques.contains(t) {
+                    techniques.push(t.clone());
+                }
+            }
             a.push(Alerte {
                 regle: crate::regles::CHA_001.into(),
                 id: commun::nouvel_id(),
@@ -247,6 +262,7 @@ impl Arbre {
                     c.noeuds.iter().filter(|n| n.score > 0).map(|n| format!("{} [{}]", n.nom, n.raisons)).collect::<Vec<_>>().join(" → ")
                 ),
                 pid: Some(dernier.pid),
+                mitre: techniques.join(" / "),
                 ..Default::default()
             });
         }
