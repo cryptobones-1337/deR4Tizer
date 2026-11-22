@@ -7,6 +7,9 @@ test builds, installed by hand and unsigned, and they do not update on their own
 
 Main changes on `main` since build 4.3, most recent first:
 
+- Local signing: before signing, `signer-version.ps1` checks that the certificate's key is one of the keys compiled
+  into the service (the compiled value is joined to the build artifact and found again inside the executable), so a
+  release that installed machines would refuse can no longer be signed.
 - Alerts carry only the ATT&CK technique actually observed: PRC-003 the technique of the tool seen (certutil T1105,
   bitsadmin T1197, mshta, regsvr32 and rundll32 T1218, wmic T1047), PER-001 and PER-002 the technique of the startup
   entry type (Run key T1547.001, service T1543.003, scheduled task T1053.005, WMI subscription T1546.003); RES-002 and
