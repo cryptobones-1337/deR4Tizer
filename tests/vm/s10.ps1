@@ -65,6 +65,13 @@ if ($installe) {
         do {
             $c, $e = Collectes
             $a = $c['AuditProcessus']
+            # Version de référence (avant le lot 1) : pas de collecte AuditProcessus ; le rejeu mesure alors l'ancienne
+            # source (WMI), pour la comparaison avant et après
+            if ($c.Count -and -not $a -and $e.SourceProcessus -eq 'WMI') {
+                Write-Host "  version de référence : source $($e.SourceProcessus), sans lecture des 4688"
+                $script:pret = $true
+                return $true
+            }
             if ($a -and $a.Etat -eq 'Active' -and $e.SourceProcessus -eq 'Audit 4688') {
                 Write-Host "  audit : $($a.Etat) ; source : $($e.SourceProcessus) ; WMI : $($c['WmiProcessus'].Etat)"
                 $script:pret = $true
