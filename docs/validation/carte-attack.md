@@ -212,25 +212,29 @@ identifiants de la v20.1, par une seule table alignée sur cette carte (`regles.
 
 ## Trois défauts structurels, à traiter avant d'ajouter des règles
 
-**1. Les règles de processus ne lisent pas les événements 4688.**
+État au 2026-11-22 : les trois sont corrigés (lot 1 : #244 ; lot 2 : #246 ; lot 3 : cette PR). Aucun état de la carte ne
+change pour autant : seul un rapport de campagne le fait. S-10 rejoué sans Sysmon après le lot 1 : 10 détections sur 10
+(mesure en VM du banc `tests/vm/s10.ps1`, commentaire de #244 ; hors campagne Kali, non reporté dans la carte).
+
+**1. Les règles de processus ne lisent pas les événements 4688.** (corrigé par le lot 1, #244)
 - La baseline active l'audit des créations de processus avec la ligne de commande, et le mini-SIEM stocke ces 4688.
 - Les règles PRC-001 à PRC-005 et les chaînes prennent la ligne de commande dans Sysmon s'il est installé, sinon dans
   WMI après coup (`processus.rs`). Un processus bref se termine avant l'interrogation : la détection devient aléatoire
   (S-10, 2026-11-16 : sans Sysmon, non déterministe).
 - Brancher ces règles sur les 4688 rendrait fiables, sans Sysmon, les lignes « Partiel (Sysmon) ».
 
-**2. La technique ATT&CK est attribuée par mots-clés français dans le texte de l'alerte.**
+**2. La technique ATT&CK est attribuée par mots-clés français dans le texte de l'alerte.** (corrigé par le lot 2, #246)
 - `mitre.rs` cherche des mots (« leurre », « chaîne d'attaque », « pare-feu ») dans les raisons ; la première
   correspondance gagne. Toute chaîne reçoit T1204, quel que soit son contenu.
 - Chaque alerte porte déjà un identifiant de règle : la technique doit venir de lui, dans une seule table.
 
-**3. Les fiches de règles ne portent pas la technique.**
+**3. Les fiches de règles ne portent pas la technique.** (corrigé par le lot 3)
 - `docs/detection/regles.md` cite quelques techniques pour une cinquantaine de règles : une ligne « ATT&CK » par fiche,
   tirée de la même table que le code.
 
 ## Ordre de travail
 
-1. Défauts structurels 1, 2 et 3 (lots 1 à 3).
+1. Défauts structurels 1, 2 et 3 (lots 1 à 3, faits).
 2. Consolider ce qui est déjà testé en labo : 10 essais valides pour les 13 lignes non consolidées (lot 4).
 3. Tester les 13 lignes « Règle, non testée » : aucune règle à écrire, seulement des scénarios (lot 5).
 4. Fermer les lignes « Partiel » et « Vu sans alerte » qui ne demandent qu'un événement déjà collecté.
