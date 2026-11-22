@@ -1580,7 +1580,11 @@ Verifier 'Mode panique : une règle retirée hors de deR4Tizer, état « incerta
     try {
         $r = & $commandePanique 'on'
         if (-not $r.Ok) { return "activation refusée : $($r.Message)" }
-        Get-NetFirewallRule -Group 'deR4Tizer' | Where-Object { $_.DisplayName -eq 'deR4Tizer PANIQUE (entrant)' } | Remove-NetFirewallRule
+        # Règle SORTANTE retirée (et non l'entrante) : l'état « incertaine » se déclenche de même (une règle sur deux), et
+        # le runner garde son accès au réseau pendant l'attente de la publication (jusqu'à 2 min). Avec l'entrante retirée,
+        # la règle sortante coupait le runner environ 40 s : GitHub l'annulait par moments (« The operation was canceled »,
+        # deux fois sur #244, 44 s tout juste tenues sur main)
+        Get-NetFirewallRule -Group 'deR4Tizer' | Where-Object { $_.DisplayName -eq 'deR4Tizer PANIQUE (sortant)' } | Remove-NetFirewallRule
         $d = Get-Date
         # Relu par le fil « sante » toutes les 30 s, publié au plus 30 s après
         $fin = (Get-Date).AddSeconds(120); $e = ''
