@@ -394,7 +394,7 @@
           <ul>
             <li>Process tree with a cumulative score per chain</li>
             <li>Obfuscated PowerShell, mapped to MITRE ATT&amp;CK techniques</li>
-            <li>Without Sysmon, process creations are read from the Windows audit log (event 4688), so even short-lived programs are seen with their command line</li>
+            <li>Without Sysmon, process creations are read from the Windows audit log (event 4688) when process creation auditing is on (the service turns it on; otherwise it falls back to WMI, as the Health page says), so even short-lived programs are seen with their command line</li>
             <li>Run keys, services, scheduled tasks, WMI and Startup folders: any new or changed entry</li>
           </ul>
         </div>
