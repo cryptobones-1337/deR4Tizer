@@ -2,8 +2,9 @@
 //! Suricata / Snort : règles intégrées + fichiers *.rules du dossier regles\ (par exemple Emerging Threats
 //! Open). Sous-ensemble pris en charge :
 //!   en-tête   action (alert, drop, reject, pass) proto (tcp, udp, icmp, ip, http, tls, dns…) adresses, ports,
-//!             variables $HOME_NET, $EXTERNAL_NET, $HTTP_PORTS, $SSH_PORTS, $FILE_DATA_PORTS, $ORACLE_PORTS ;
-//!             listes, plages, négations ; une autre variable rend la règle ignorée (second audit, B-4-02)
+//!             variables $HOME_NET, $EXTERNAL_NET, $HTTP_PORTS, $SSH_PORTS, $FILE_DATA_PORTS, $ORACLE_PORTS, et les
+//!             autres variables d'adresses et de ports du suricata.yaml par défaut de Suricata 7 (valeurs par
+//!             défaut) ; listes, plages, négations ; une autre variable rend la règle ignorée (second audit, B-4-02)
 //!   options   msg, content (|hex|, négation), nocase, offset, depth, distance, within, flags, dsize, sid,
 //!             priority, classtype ; flow, metadata, reference, http_* et tampons http.* sont acceptés
 //!             (le contenu est cherché dans toute la charge utile)
@@ -146,8 +147,13 @@ fn adresses(t: &str) -> Option<Adresses> {
     let mut neg = negation;
     for partie in t.split(',') {
         match partie.trim() {
-            "$HOME_NET" => plages.extend(RESEAUX_LOCAUX.iter().filter_map(|r| plage_ip(r))),
-            "$EXTERNAL_NET" | "!$HOME_NET" => {
+            // Valeurs par défaut du suricata.yaml de Suricata 7 (suricata.yaml.in, branche main-7.0.x, vars:
+            // address-groups) : ces serveurs et clients valent "$HOME_NET", AIM_SERVERS vaut "$EXTERNAL_NET"
+            "$HOME_NET" | "$HTTP_SERVERS" | "$SMTP_SERVERS" | "$SQL_SERVERS" | "$DNS_SERVERS" | "$TELNET_SERVERS" | "$DC_SERVERS"
+            | "$DNP3_SERVER" | "$DNP3_CLIENT" | "$MODBUS_SERVER" | "$MODBUS_CLIENT" | "$ENIP_SERVER" | "$ENIP_CLIENT" => {
+                plages.extend(RESEAUX_LOCAUX.iter().filter_map(|r| plage_ip(r)))
+            }
+            "$EXTERNAL_NET" | "!$HOME_NET" | "$AIM_SERVERS" => {
                 plages.extend(RESEAUX_LOCAUX.iter().filter_map(|r| plage_ip(r)));
                 neg = !neg;
             }
@@ -165,6 +171,11 @@ fn ports(t: &str) -> Option<Ports> {
     if t == "any" {
         return Some(Ports::Tous);
     }
+    // SHELLCODE_PORTS vaut "!80" (suricata.yaml.in de Suricata 7) : seul, il se représente (négation du tout) ; dans une
+    // liste, la négation partielle ne se représente pas et la règle est ignorée (branche des variables inconnues)
+    if t.trim() == "$SHELLCODE_PORTS" {
+        return Some(Ports::Liste(vec![(80, 80)], !negation));
+    }
     let mut l = Vec::new();
     for p in t.split(',') {
         let p = p.trim();
@@ -173,6 +184,10 @@ fn ports(t: &str) -> Option<Ports> {
             "$SSH_PORTS" => l.push((22, 22)),
             "$FILE_DATA_PORTS" => l.extend([(80, 80), (110, 110), (143, 143)]),
             "$ORACLE_PORTS" => l.push((1521, 1521)),
+            // Valeurs par défaut du suricata.yaml de Suricata 7 (suricata.yaml.in, branche main-7.0.x, vars: port-groups)
+            "$DNP3_PORTS" => l.push((20000, 20000)),
+            "$MODBUS_PORTS" => l.push((502, 502)),
+            "$FTP_PORTS" => l.push((21, 21)),
             // Variable inconnue : règle ignorée (comptée), jamais « tous les ports » (second audit, B-4-02)
             v if v.starts_with('$') || v.starts_with("!$") => return None,
             v => match v.split_once(':') {
