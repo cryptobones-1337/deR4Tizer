@@ -1184,13 +1184,28 @@ fn nom_outil(v: &str) -> String {
     n.strip_suffix(".exe").map(str::to_string).unwrap_or(n)
 }
 
-/// Outils lancés par un autre (sshpass … ssh -p 22, psexec … cmd) dont les options `/p`, `-p` ou `-P` ne portent pas de
-/// secret : ils deviennent l'outil courant, et leurs options ne sont plus lues comme celles du lanceur
-const OUTILS_SANS_SECRET: &[&str] = &["ssh", "scp", "sftp", "nc", "ncat", "netcat", "telnet", "ftp", "xcopy", "robocopy", "copy",
-    "move", "del", "erase", "findstr", "ping", "tar", "cmd", "powershell", "pwsh"];
+/// Lanceurs dont la commande suit une option : `cmd /c …`, `powershell -c …`. Après cette option, le mot suivant est en tête
+/// de commande
+const LANCEURS_PAR_OPTION: &[(&[&str], &[&str])] = &[
+    (&["cmd"], &["/c", "/k", "/r"]),
+    (&["powershell", "pwsh"], &["-c", "-command", "/c", "/command"]),
+];
 
-fn outil_connu(nom: &str) -> bool {
-    OUTILS_SANS_SECRET.contains(&nom) || OPTIONS_PAR_OUTIL.iter().any(|(outils, _, _)| outils.contains(&nom))
+/// Lanceurs dont la commande est le premier mot qui n'est ni une option, ni la valeur d'une option, ni un poste (`\\srv`),
+/// ni un titre entre guillemets : `start "" ssh …`, `sshpass -p x ssh …`, `psexec \\srv -u a cmd …`
+const LANCEURS_DIRECTS: &[&str] = &["start", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo"];
+
+/// Le mot qui suit `mot` est-il en tête de commande, pour l'outil courant `outil` (décision pure, testée) ?
+pub(crate) fn tete_apres(outil: &str, mot: &str) -> bool {
+    separateur_de_commandes(mot) || mot == ":"
+        || LANCEURS_PAR_OPTION.iter().any(|(outils, options)| outils.contains(&outil) && options.iter().any(|o| mot.eq_ignore_ascii_case(o)))
+}
+
+/// `mot` (précédé de `precedent`) est-il la commande lancée par le lanceur direct `outil` (décision pure, testée) ?
+pub(crate) fn commande_lancee(outil: &str, mot: &str, precedent: &str) -> bool {
+    let option = |m: &str| m.starts_with('-') || m.starts_with('/');
+    LANCEURS_DIRECTS.contains(&outil) && !option(mot) && !mot.starts_with("\\\\") && !mot.starts_with('"') && !mot.starts_with('\'')
+        && !option(precedent) && !mot.is_empty()
 }
 
 /// Ce qu'il faut masquer pour le mot `mot` d'une ligne dont l'outil courant est `outil` (décision pure, testée) :
@@ -1296,17 +1311,31 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
     let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
     // Pour chaque mot : masqué à partir de cet octet du mot
     let mut masques: Vec<Option<usize>> = vec![None; mots.len()];
-    // Outil courant : le dernier outil connu de la commande (remis à zéro à chaque séparateur de commandes)
+    // Outil courant : le mot en tête de commande (premier mot, mot après un séparateur, après « : » qui précède la ligne
+    // dans un message du SIEM ou une raison d'alerte, après `cmd /c` ou `powershell -c`, ou commande d'un lanceur direct),
+    // jamais la valeur d'une option (revue de #269, D2 : `/tr cmd.exe` changeait l'outil). Un outil de `OUTILS_SLASH_P`
+    // garde ses options jusqu'au séparateur suivant
     let mut outil = String::new();
+    let mut tete = true;
     for k in 0..mots.len() {
         let t = texte(k);
         if separateur_de_commandes(t) {
             outil.clear();
+            tete = true;
             continue;
         }
-        let nom = nom_outil(t);
-        if outil_connu(&nom) {
-            outil = nom;
+        let verrou = OUTILS_SLASH_P.contains(&outil.as_str());
+        if tete && !verrou {
+            // Affectation en tête (PGPASSWORD=x psql) : la commande suit
+            if !(t.contains('=') && !t.starts_with('-') && !t.starts_with('/')) {
+                outil = nom_outil(t);
+                tete = false;
+            }
+        } else if !verrou && commande_lancee(&outil, t, if k > 0 { texte(k - 1) } else { "" }) {
+            outil = nom_outil(t);
+        }
+        if !verrou && tete_apres(&outil, t) {
+            tete = true;
         }
         match secret_d_option(&outil, t) {
             Some(Masque::Dans(o)) => masques[k] = Some(o),
