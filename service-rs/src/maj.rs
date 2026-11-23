@@ -199,6 +199,9 @@ const SDDL_TRAVAIL: &str = "O:SYD:PAI(A;OICI;FA;;;SY)";
 /// Prépare le dossier de travail et vérifie propriétaire et droits ; Err : mise à jour refusée (échec fermé)
 pub fn preparer_dossier_travail() -> Result<PathBuf, String> {
     use crate::protection::{verifier, SID_SYSTEME};
+    // Dossier des exécutables lui-même : modifiable par un autre compte (dossier d'installation redirigé), rien n'y est
+    // préparé ni installé (audit du 2026-11-23, A-4-1)
+    crate::protection::verifier_installation().map_err(|e| format!("dossier d'installation non conforme ({e}) : mise à jour refusée"))?;
     let d = dossier_travail();
     if fs::symlink_metadata(&d).is_ok_and(|m| { use std::os::windows::fs::MetadataExt; m.file_attributes() & 0x400 != 0 }) {
         return Err(format!("{} est un lien : mise à jour refusée", d.display()));
@@ -241,7 +244,7 @@ fn proprietaires_verifies(paquets: &[&Path]) -> Result<(), String> {
 
 fn telecharger(url: &str, destination: &Path, taille_max: usize) -> Result<(), String> {
     // -g : pas de motifs (« [1-99] », « {a,b} ») dans l'adresse, un seul transfert (audit de sécurité de #68, S68-03)
-    let sortie = Command::new("curl.exe")
+    let sortie = Command::new(crate::natif::curl_exe())
         .args(["-q", "-g", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", &taille_max.to_string(), "--max-time", "300",
             "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
         .arg(destination)

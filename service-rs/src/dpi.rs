@@ -90,7 +90,7 @@ impl Dpi {
                 let recent = std::fs::metadata(&f).and_then(|m| m.modified())
                     .map(|t| SystemTime::now().duration_since(t).unwrap_or_default() < Duration::from_secs(86_400)).unwrap_or(false);
                 if !recent {
-                    let _ = Command::new("curl.exe")
+                    let _ = Command::new(crate::natif::curl_exe())
                         .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "52428800",
                             "--max-time", "120", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                         .arg(&f).arg(URL_JA3).creation_flags(0x0800_0000).output();

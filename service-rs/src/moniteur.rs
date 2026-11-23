@@ -2212,15 +2212,19 @@ pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: 
             return "deR4Tizer (empreinte vérifiée)".into();
         }
     }
-    let date = fs::metadata(chemin).and_then(|m| m.modified()).map(commun::filetime).unwrap_or(0);
-    let cle = format!("{chemin}|{date}");
-    if let Some(s) = cache.get(&cle) {
+    // Clé qu'un compte standard ne forge pas (identité par handle avec USN, à défaut empreinte), plus la date de
+    // modification qu'il remet à l'identique après avoir remplacé le fichier (audit du 2026-11-23, B-2-01). Illisible :
+    // vérification refaite à chaque appel, rien en cache
+    let cle_sure = natif::cle_signature(chemin);
+    let date = cle_sure.as_deref().map(natif::estampille).unwrap_or(0);
+    let cle = cle_sure.clone().unwrap_or_default();
+    if let Some(s) = cle_sure.as_ref().and_then(|_| cache.get(&cle)) {
         return s.clone();
     }
     // Un échec (signataire vide) n'est gardé que `duree_echec` secondes et tant que le fichier ne change pas. Une seule
     // clé d'échec par chemin, réécrite à chaque échec (relecture de #83, R5-D1 : pas d'accumulation dans le service)
     let cle_echec = format!("{chemin}|échec");
-    if cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant, duree_echec)) {
+    if cle_sure.is_some() && cache.get(&cle_echec).is_some_and(|v| echec_recent(v, date, maintenant, duree_echec)) {
         return String::new();
     }
     // Lecture bloquée (S103-07) : pas de confiance, rien en cache, une seule ligne au journal ; le résultat tardif sera pris au prochain appel
@@ -2249,6 +2253,10 @@ pub(crate) fn signataire_cache_avec(cache: &mut HashMap<String, String>, notre: 
         None => String::new(),
     };
     cache.remove(&cle_delai);
+    // Gardé seulement si le fichier vérifié est encore celui de la clé (pas remplacé pendant la vérification)
+    if cle_sure.is_none() || natif::cle_signature(chemin) != cle_sure {
+        return s;
+    }
     if s.is_empty() {
         cache.insert(cle_echec, format!("{date}|{maintenant}"));
     } else {

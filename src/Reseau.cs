@@ -147,7 +147,7 @@ namespace DeR4Tizer
         public static void OuvrirDossierRegles()
         {
             string d = Path.Combine(Commun.Dossier, "regles");
-            try { Process.Start("explorer.exe", "\"" + d + "\""); } catch { }
+            try { Process.Start(Canal.Explorateur(), "\"" + d + "\""); } catch { }
         }
     }
 

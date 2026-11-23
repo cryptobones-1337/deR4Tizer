@@ -45,6 +45,11 @@ $casses = @([regex]::Matches($rtf, "(?<!\\)'[89a-f][0-9a-f](?!ministr|faibli)") 
 Cas 'Licence : aucun échappement RTF cassé (apostrophe suivie de deux chiffres hexadécimaux sans barre oblique inverse, audit de #155, S155-02)' ($casses.Count -eq 0) ($casses -join ' | ')
 Cas 'Licence : français et anglais, avec les faits attendus (leurres, réponses automatiques et durées, lancement, options de désinstallation, Defender, paquet et programmes publiés signés, éditeur inconnu pour une compilation locale)' ($manquants.Count -eq 0 -and $rtf.StartsWith('{\rtf1\ansi\ansicpg1252') -and -not ($rtf -match '[^\x00-\x7F]')) ($manquants -join ' | ')
 
+# Audit du 2026-11-23, A-4-1 : droits du dossier des programmes posés par le paquet, héritage coupé
+$sddlProgrammes = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
+$composantProgrammes = [regex]::Match($sansCommentaires, '<DirectoryRef Id="INSTALLFOLDER">.*?</DirectoryRef>', 'Singleline').Value
+Cas 'Dossier des programmes (A-4-1) : PermissionEx protégé sur INSTALLFOLDER (SYSTEM et administrateurs contrôle total, Utilisateurs lecture et exécution, propriétaire Administrateurs), composant installé' ($composantProgrammes -match ('<Component Id="DossierProgrammes"[^>]*>\s*<CreateFolder>\s*<PermissionEx Sddl="' + [regex]::Escape($sddlProgrammes) + '" />\s*</CreateFolder>') -and $sansCommentaires.Contains('<ComponentRef Id="DossierProgrammes" />'))
+
 # ---------------- niveau 2 : paquet construit
 if ($Msi) {
     $wi = New-Object -ComObject WindowsInstaller.Installer
@@ -73,6 +78,8 @@ if ($Msi) {
     Cas 'Paquet : aucun DoAction sur la dernière page (ExitDialog)' ($doAction.Count -eq 0) ($doAction -join ' ; ')
     $vise = @($ca | Where-Object { $p = $_.Split("`t"); $p[2] -eq 'InterfaceExe' -or $p[3] -match '(?<!/IM )deR4Tizer\.exe(?!\.)' })
     Cas 'Paquet : aucune action personnalisée ne vise l''interface (deR4Tizer.exe)' ($vise.Count -eq 0) ($vise -join ' ; ')
+    $verrous = @(& $lignes $db 'SELECT `LockObject`,`Table`,`SDDLText` FROM `MsiLockPermissionsEx`' 3)
+    Cas 'Paquet (A-4-1) : MsiLockPermissionsEx porte les droits de INSTALLFOLDER' ($verrous -contains "INSTALLFOLDER`tCreateFolder`t$sddlProgrammes") ($verrous -join ' ; ')
     if ($Reference) {
         $ref = & $ouvrir (Resolve-Path $Reference).Path
         $ecartsTables = New-Object Collections.Generic.List[string]

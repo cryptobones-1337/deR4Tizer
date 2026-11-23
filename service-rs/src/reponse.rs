@@ -40,7 +40,8 @@ pub fn origine_a_garder(o: &Option<Origine>) -> bool {
 
 /// Lit la marque « téléchargé depuis Internet » (flux de données alternatif Zone.Identifier) et l'âge du fichier
 pub fn origine(chemin: &str) -> Option<Origine> {
-    if chemin.is_empty() {
+    // Chemin réseau ou amovible : jamais ouvert par le service, pas même pour sa date (audit du 2026-11-23, A-5-2)
+    if chemin.is_empty() || !natif::lisible_en_systeme(chemin) {
         return None;
     }
     let age_jours = fs::metadata(chemin)
