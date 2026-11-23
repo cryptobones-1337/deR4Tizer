@@ -538,6 +538,54 @@ fn lire_registre(cle: &str, nom: &str) -> Option<String> {
     k.get_value::<u32, _>(nom).map(|n| n.to_string()).or_else(|_| k.get_value::<String, _>(nom)).ok()
 }
 
+/// Lecture d'une valeur de registre qui distingue « introuvable » de toute autre erreur (réaudit de #270, S270-03)
+#[derive(Clone, Debug, PartialEq)]
+pub enum LectureRegistre {
+    Valeur(String),
+    /// Clé ou valeur introuvable
+    Absente,
+    /// Clé illisible, lecture en échec ou type non lu (QWORD, MULTI_SZ…)
+    Illisible(String),
+}
+
+/// Décision pure de lire_registre_etat : seul « introuvable » (clé ou valeur) vaut absente ; une valeur DWORD ou
+/// texte est lue ; toute autre erreur, ou un autre type, est illisible
+pub fn classer_lecture(ouverture: Result<(), std::io::ErrorKind>, dword: Result<u32, std::io::ErrorKind>, texte: Result<String, std::io::ErrorKind>) -> LectureRegistre {
+    use std::io::ErrorKind::NotFound;
+    match ouverture {
+        Ok(()) => {}
+        Err(NotFound) => return LectureRegistre::Absente,
+        Err(e) => return LectureRegistre::Illisible(format!("clé illisible : {e:?}")),
+    }
+    match dword {
+        Ok(n) => return LectureRegistre::Valeur(n.to_string()),
+        Err(NotFound) => return LectureRegistre::Absente,
+        Err(_) => {}
+    }
+    match texte {
+        Ok(s) => LectureRegistre::Valeur(s),
+        Err(NotFound) => LectureRegistre::Absente,
+        Err(e) => LectureRegistre::Illisible(format!("valeur illisible ou d'un type non lu : {e:?}")),
+    }
+}
+
+fn lire_registre_etat(cle: &str, nom: &str) -> LectureRegistre {
+    match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(cle, KEY_READ | KEY_WOW64_64KEY) {
+        Err(e) => classer_lecture(Err(e.kind()), Err(e.kind()), Err(e.kind())),
+        Ok(k) => classer_lecture(Ok(()), k.get_value::<u32, _>(nom).map_err(|e| e.kind()), k.get_value::<String, _>(nom).map_err(|e| e.kind())),
+    }
+}
+
+/// Décision pure : texte des valeurs actuelles illisibles à l'annulation (S270-03) ; au plus 5 citées
+pub fn message_illisibles(illisibles: &[String]) -> String {
+    if illisibles.is_empty() {
+        return String::new();
+    }
+    let citees: Vec<&str> = illisibles.iter().take(5).map(String::as_str).collect();
+    let reste = if illisibles.len() > 5 { format!(" et {} autre(s)", illisibles.len() - 5) } else { String::new() };
+    format!(" Valeur actuelle illisible, stratégie de deR4Tizer gardée et rien de modifié pour : {}{reste}.", citees.join(", "))
+}
+
 fn nom_audit(v: u32) -> &'static str {
     match v {
         1 => "succès",
@@ -1147,6 +1195,8 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Valeurs d'un tiers lues avant l'annulation (clé, nom, valeur ou absente, texte, règle) : rétablies après
     // gpupdate si l'entrée posée de Registry.pol a été retirée (prérelecture de #270, D1)
     let mut tiers: Vec<(String, String, Option<String>, bool, &str)> = Vec::new();
+    // Valeurs actuelles illisibles : rien n'est touché, la règle reste dans la sauvegarde (S270-03)
+    let mut illisibles: Vec<String> = Vec::new();
     let mut audit_modifie = false;
     let mut n = 0;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
@@ -1185,7 +1235,18 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     // par l'origine (A-2-3). Son entrée de Registry.pol est retirée si elle vaut encore la valeur
                     // posée, sans quoi le gpupdate de l'annulation remettrait la valeur posée par-dessus celle du
                     // tiers ; la valeur du tiers lue ici est rétablie après gpupdate (prérelecture de #270, D1)
-                    let actuelle = lire_registre(cle, nom);
+                    // Valeur actuelle illisible (clé illisible, lecture en échec, type non lu) : jamais prise pour
+                    // « absente » ; l'entrée posée reste (ni retrait ni rétablissement), la règle reste dans la
+                    // sauvegarde et c'est dit (réaudit de #270, S270-03)
+                    let actuelle = match lire_registre_etat(cle, nom) {
+                        LectureRegistre::Valeur(v) => Some(v),
+                        LectureRegistre::Absente => None,
+                        LectureRegistre::Illisible(e) => {
+                            remise = false;
+                            illisibles.push(commun::borner_texte(&format!("{} : {cle}\\{nom} ({e})", r.id), 200));
+                            continue;
+                        }
+                    };
                     if decision_annulation(&valeurs_posees(&appliquees, catalogue, cle, nom), valeur.as_deref(), actuelle.as_deref()) == Decision::Laisser {
                         retraits.push(entree(cle, nom, catalogue));
                         tiers.push((cle.to_string(), nom.to_string(), actuelle, texte, r.id));
@@ -1283,7 +1344,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie))));
     etapes.push(("mise à jour de la sauvegarde (sinon les règles annulées restent marquées appliquées)", Box::new(|| ecrire_sauvegarde(&sauvegarde))));
     etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
-    let non_remises_txt = message_non_remises(&non_remises, &etrangeres);
+    let non_remises_txt = format!("{}{}", message_non_remises(&non_remises, &etrangeres), message_illisibles(&illisibles));
     if let Err(e) = executer_etapes(&mut etapes) {
         let e = format!("annulation incomplète : {e}{non_remises_txt}");
         commun::journal(&format!("baseline : {e}"));
@@ -1370,7 +1431,7 @@ fn retablir_valeur(cle: &str, nom: &str, v: Option<&str>, texte: bool) -> bool {
                 },
                 Err(e) => e.kind() == std::io::ErrorKind::NotFound,
             };
-            efface && lire_registre(cle, nom).is_none()
+            efface && lire_registre_etat(cle, nom) == LectureRegistre::Absente
         }
     }
 }
