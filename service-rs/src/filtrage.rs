@@ -277,6 +277,24 @@ pub fn lire_liste(texte: &str, protection: &[u64]) -> ListeLue {
     ListeLue { bloques, exceptions, compte }
 }
 
+/// Nouvelle copie hors de la fenêtre de taille de la copie gardée (moins de la moitié ou plus du double) (pur, testé)
+pub fn hors_fenetre(ancienne: usize, nouvelle: usize) -> bool {
+    ancienne != 0 && (nouvelle.saturating_mul(2) < ancienne || nouvelle > ancienne.saturating_mul(2))
+}
+
+/// Mention publiée d'une copie admise hors de sa fenêtre, après des téléchargements concordants (pure, testée ; revue
+/// de #281) : visible dans `filtrage-etat.json` (page « Navigation »), pas seulement au journal
+pub fn note_remplacement(heure: &str, ancienne: usize, nouvelle: usize) -> String {
+    format!("{heure} : copie remplacée après {CONCORDANTS} téléchargements concordants ({ancienne} → {nouvelle} domaine(s)) ; à vérifier si la baisse ou la hausse n'est pas attendue")
+}
+
+/// Dernière copie admise hors de sa fenêtre, par liste (en mémoire : oubliée au redémarrage du service)
+static REMPLACEMENTS: std::sync::Mutex<Vec<(&'static str, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn remplacement_de(nom: &str) -> String {
+    REMPLACEMENTS.lock().unwrap().iter().find(|(n, _)| *n == nom).map(|(_, m)| m.clone()).unwrap_or_default()
+}
+
 /// Deux tailles à 10 % près (pur)
 fn concordantes(a: usize, b: usize) -> bool {
     a.abs_diff(b).saturating_mul(10) <= a.max(b)
@@ -292,7 +310,7 @@ pub fn remplacement_admis(ancienne: usize, nouvelle: usize, refusees: &[usize]) 
     if nouvelle == 0 || nouvelle > MAX_ENTREES_LISTE {
         return false;
     }
-    if ancienne == 0 || (nouvelle.saturating_mul(2) >= ancienne && nouvelle <= ancienne.saturating_mul(2)) {
+    if !hors_fenetre(ancienne, nouvelle) {
         return true;
     }
     refusees.len() >= CONCORDANTS - 1 && refusees.iter().rev().take(CONCORDANTS - 1).all(|&r| concordantes(r, nouvelle))
@@ -449,6 +467,8 @@ pub struct ListePubliee {
     pub exceptions: usize,
     pub ecartees: usize,
     pub proteges_ignores: usize,
+    /// Copie admise hors de sa fenêtre de taille après des téléchargements concordants (`note_remplacement`) ; vide sinon
+    pub remplacement: String,
 }
 
 /// Une carte, telle que publiée
@@ -510,6 +530,7 @@ pub fn listes_publiees(f: &Filtrage) -> Vec<ListePubliee> {
         ListePubliee {
             nom: nom.clone(), categorie: cat.libelle().into(), licence: s.map(|s| s.licence.to_string()).unwrap_or_default(), mise_a_jour: date,
             entrees: c.entrees, exceptions: c.exceptions, ecartees: c.ecartees, proteges_ignores: c.proteges_ignores,
+            remplacement: remplacement_de(nom),
         }
     }).collect()
 }
@@ -663,7 +684,13 @@ pub fn telecharger(actives: &[Categorie], protection: &[u64]) -> Vec<(String, St
                 let nouvelle = entrees_du_fichier(&tmp, protection);
                 let ancienne = if f.exists() { entrees_du_fichier(&f, protection) } else { 0 };
                 if remplacement_admis(ancienne, nouvelle, &refusees_de(s.nom)) {
-                    let _ = fs::rename(&tmp, &f);
+                    if fs::rename(&tmp, &f).is_ok() && hors_fenetre(ancienne, nouvelle) {
+                        let m = note_remplacement(&commun::maintenant().chars().take(16).collect::<String>(), ancienne, nouvelle);
+                        commun::journal(&format!("filtrage : {} : {m}", s.nom));
+                        let mut l = REMPLACEMENTS.lock().unwrap();
+                        l.retain(|(n, _)| *n != s.nom);
+                        l.push((s.nom, m));
+                    }
                     oublier_refus(s.nom);
                 } else {
                     let m = if nouvelle > MAX_ENTREES_LISTE {
