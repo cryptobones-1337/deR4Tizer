@@ -14,6 +14,12 @@
   former locations are checked again); at most 3 former locations are watched per canary. Canaries
   in a OneDrive-synced folder may be uploaded to the user's cloud storage, and OneDrive is suspended if it writes to or
   deletes one; not yet tried in a VM.
+- Static analysis in CI, batch 3 (documentation only, no product change): GitHub code scanning with CodeQL 2.27.5
+  (default setup, enabled by the maintainer on 23 November 2026: Actions, C#, Python, Rust; default query suite;
+  build mode none on ubuntu-latest). First report on `main`: 6 open alerts (2 critical, 4 high), all triaged as false
+  positives, none dismissed yet (left to the maintainer); C# analysis runs on all 11 files but below CodeQL's quality
+  thresholds without a build. Steps to configure code scanning and dismiss an alert are written in `CLAUDE.md`
+  (section 6). Not an independent review.
 - Service priority (A-8-1): the service process now runs at normal priority instead of below normal; heavy periodic
   threads (startup entries, Defender and baseline checks, threat lists, LOLDrivers download, sensitive-data audit) run
   in background mode, and the canary event thread (4663) and the command pipe thread run above normal. The effect on
