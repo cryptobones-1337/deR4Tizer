@@ -435,8 +435,17 @@ fn audit_api_adresses_autorisees_strictes() {
 /// tout. Écoute locale seule : aucun quota ne départage les clients (limite déclarée). Signal : une fois par fenêtre
 #[test]
 fn audit_a13_api_places_boucle_locale_et_signal() {
-    use crate::api::{admettre, message_refus, Admission, Places, SignalRefus, FENETRE_SIGNAL_REFUS, MAX_CONNEXIONS, MAX_LOCALES};
+    use crate::api::{admettre, connexion_du_poste, message_refus, Admission, Places, SignalRefus, FENETRE_SIGNAL_REFUS, MAX_CONNEXIONS, MAX_LOCALES};
     use std::time::{Duration, Instant};
+    // S295-02 : connexion du poste = boucle locale, ou adresse distante égale à l'adresse locale de la connexion (le poste
+    // vers sa propre adresse réseau, dans un réseau de SIEM autorisé) ; adresse locale illisible : du poste
+    let ip = |t: &str| t.parse::<std::net::IpAddr>().unwrap();
+    assert!(connexion_du_poste(ip("127.0.0.1"), Some(ip("127.0.0.1"))));
+    assert!(connexion_du_poste(ip("127.0.0.5"), Some(ip("127.0.0.1"))), "toute la boucle locale");
+    assert!(connexion_du_poste(ip("::1"), Some(ip("::1"))));
+    assert!(connexion_du_poste(ip("192.168.1.20"), Some(ip("192.168.1.20"))), "le poste vers sa propre adresse réseau");
+    assert!(!connexion_du_poste(ip("192.168.1.30"), Some(ip("192.168.1.20"))), "SIEM du même réseau : distant");
+    assert!(connexion_du_poste(ip("192.168.1.30"), None), "adresse locale illisible : quota le plus strict");
     let prendre = |p: &mut Places, locale: bool, reseau: bool| {
         let a = admettre(*p, locale, true, reseau);
         if a == Admission::Acceptee {
@@ -471,7 +480,7 @@ fn audit_a13_api_places_boucle_locale_et_signal() {
     assert_eq!(s.noter(Admission::QuotaLocal, t0 + FENETRE_SIGNAL_REFUS + Duration::from_secs(1)), Some((7, 5)));
     assert_eq!((s.quota_local, s.plein), (0, 0), "compte remis à zéro");
     let m = message_refus(7, 5);
-    assert!(m.contains("7 venue(s) de la boucle locale") && m.contains("5 avec les 16 places") && m.contains("A-1-3"), "{m}");
+    assert!(m.contains("7 venue(s) du poste") && m.contains("5 avec les 16 places") && m.contains("A-1-3"), "{m}");
 }
 
 /// A-1-3, sur de vraies connexions : 16 connexions muettes de la boucle locale, API ouverte sur le réseau : 4 gardées,
@@ -5101,8 +5110,11 @@ fn audit_a14_tube_sans_creation_d_instance_hors_systeme() {
         let s = crate::natif::securite_de_sddl(&sddl).expect("SDDL du tube valide");
         assert!(!s.ace_inconnue && s.aces.iter().all(|a| a.autorise && !a.heritage_seul), "{sddl}");
         let sids: Vec<&str> = s.aces.iter().map(|a| a.sid.as_str()).collect();
-        let attendus: &[&str] = if console { &["S-1-5-18", "S-1-5-32-544", "S-1-5-11"] } else { &["S-1-5-18", "S-1-5-32-544"] };
+        // S295-01 : entrée OWNER RIGHTS (S-1-3-4), qui remplace les droits implicites du propriétaire (WRITE_DAC)
+        let attendus: &[&str] = if console { &["S-1-5-18", "S-1-5-32-544", "S-1-3-4", "S-1-5-11"] } else { &["S-1-5-18", "S-1-5-32-544", "S-1-3-4"] };
         assert_eq!(sids, attendus, "{sddl}");
+        // Propriétaire SYSTEM en service ; en mode console, aucun (un compte non SYSTEM ne peut pas le donner à SYSTEM)
+        assert_eq!(s.proprietaire, if console { "" } else { "S-1-5-18" }, "{sddl}");
         for a in &s.aces {
             if a.sid == "S-1-5-18" {
                 assert_eq!(a.masque, 0x1000_0000, "SYSTEM : GENERIC_ALL (le service crée les instances)");
@@ -5149,6 +5161,12 @@ fn audit_a14_tube_reel_instance_refusee_client_minimal_servi() {
     // Client qui demande GENERIC_WRITE (donc FILE_CREATE_PIPE_INSTANCE) : refusé
     let large_droits = std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_IDENTIFICATION.0).open(&nom);
     assert_eq!(large_droits.err().and_then(|e| e.raw_os_error()), Some(5), "client GENERIC_READ | GENERIC_WRITE refusé");
+    // S295-01 : ce processus est le PROPRIÉTAIRE du tube (il l'a créé) ; sans l'entrée OWNER RIGHTS, il ouvrait le tube
+    // avec WRITE_DAC (droit implicite du propriétaire), réécrivait la DACL, puis créait une instance. Refusé (code 5)
+    for (essai, droits) in [("WRITE_DAC", 0x0004_0000u32), ("WRITE_OWNER", 0x0008_0000)] {
+        let r = std::fs::OpenOptions::new().access_mode(droits).security_qos_flags(SECURITY_IDENTIFICATION.0).open(&nom);
+        assert_eq!(r.err().and_then(|e| e.raw_os_error()), Some(5), "{essai} accordé au propriétaire du tube");
+    }
     // Client de l'interface et des scripts : lecture et écriture des données seulement
     let n = nom.clone();
     let client = std::thread::spawn(move || {
