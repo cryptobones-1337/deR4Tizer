@@ -1,5 +1,6 @@
 # Intégration continue : tests du service Rust (dont le mini-fuzz des parseurs réseau), compilation du
-# service et de l'interface C#, sur Windows. Les exécutables compilés sont gardés comme artefacts.
+# service et de l'interface C#, sur Windows, et contrôle des dépendances du service (cargo audit, cargo deny). Les
+# exécutables compilés sont gardés comme artefacts.
 name: CI
 
 on:
@@ -16,16 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Rust stable
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+      # Chaîne figée par service-rs/rust-toolchain.toml et Cargo.lock imposé par --locked (A-3-3) : un Cargo.toml
+      # modifié sans son Cargo.lock fait échouer la compilation au lieu de réécrire le verrou en silence
+      - name: Chaîne Rust figée (service-rs/rust-toolchain.toml)
+        working-directory: service-rs
+        run: rustup toolchain install && rustc --version && cargo --version
 
       - name: Tests du service
         working-directory: service-rs
-        run: cargo test --release
+        run: cargo test --release --locked
 
       - name: Compilation du service
         working-directory: service-rs
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Service sans dépendance au runtime Visual C++ (CRT statique)
         shell: pwsh
@@ -76,6 +80,41 @@ jobs:
             bin/deR4TizerSvc.exe
             bin/deR4Tizer.exe
 
+  # Analyse statique, lot 1 (accord du mainteneur du 2026-11-23, CLAUDE.md section 2, règle 1) : dépendances du
+  # service. cargo audit lit service-rs/Cargo.lock entier contre la base RustSec ; cargo deny contrôle avis RustSec,
+  # licences et sources selon service-rs/deny.toml. Outils compilés depuis crates.io à une version figée, avec leur
+  # propre Cargo.lock (--locked) ; aucune action tierce, aucun secret. Les deux contrôles tournent même si l'autre
+  # échoue, pour que chaque passage donne les deux sorties.
+  dependances:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Chaîne Rust figée (service-rs/rust-toolchain.toml)
+        working-directory: service-rs
+        run: rustup toolchain install && rustc --version && cargo --version
+
+      # Versions figées : dernières versions de plus de deux semaines au 2026-11-23 (cargo-audit 0.23.0 du
+      # 2026-11-10, cargo-deny 0.21.0 du 2026-11-16 et 0.22.0 du 2026-11-19 écartées comme trop récentes)
+      - name: Outils (cargo-audit 0.22.2, cargo-deny 0.20.2)
+        id: outils
+        working-directory: service-rs
+        run: |
+          cargo install --locked cargo-audit --version 0.22.2
+          cargo install --locked cargo-deny --version 0.20.2
+          cargo audit --version
+          cargo deny --version
+
+      - name: cargo audit (service-rs/Cargo.lock)
+        working-directory: service-rs
+        run: cargo audit --file Cargo.lock
+
+      - name: cargo deny (avis, licences, sources)
+        if: ${{ !cancelled() && steps.outils.outcome == 'success' }}
+        working-directory: service-rs
+        run: cargo deny --locked check --config deny.toml --show-stats advisories licenses sources
+
   # Lot 3a : tests d'intégration sur un runner jetable, avec le MSI construit ci-dessus (installation, service,
   # droits du dossier de données, compte standard, dossier précréé et pièges, mise à niveau, désinstallations).
   # Le tableau des scénarios (réussi, échoué, non exécuté avec la raison) est dans le résumé du job.
@@ -92,6 +131,8 @@ jobs:
           name: deR4Tizer-${{ github.sha }}
           path: bin
 
+      # Chaîne « stable » gardée ici : elle ne sert qu'à la version ancienne ci-dessous, compilée hors de ce dépôt
+      # (dossier temporaire du runner), où service-rs/rust-toolchain.toml n'existe pas (commit antérieur au fichier)
       - name: Rust stable
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
@@ -106,13 +147,14 @@ jobs:
           "WIX=$wix" >> $env:GITHUB_ENV
 
       # Version plus ancienne : construite depuis un commit figé (celui qui a introduit le MSI), avec un numéro
-      # explicite inférieur à la version courante ; rien ne dépend de ce qui traînerait ailleurs
+      # explicite inférieur à la version courante ; rien ne dépend de ce qui traînerait ailleurs. --locked : le
+      # Cargo.lock de ce commit est cohérent avec son Cargo.toml (vérifié le 2026-11-23, cargo metadata --locked)
       - name: Version plus ancienne (commit 758ff1e, version 4.1.0)
         shell: pwsh
         run: |
           $ancien = Join-Path $env:RUNNER_TEMP 'ancien'
           git worktree add $ancien 758ff1ecae8e6c04a7c8a340c097e284539eb4bf
-          Push-Location (Join-Path $ancien 'service-rs'); cargo build --release; if ($LASTEXITCODE) { throw 'compilation de l''ancienne version' }; Pop-Location
+          Push-Location (Join-Path $ancien 'service-rs'); cargo build --release --locked; if ($LASTEXITCODE) { throw 'compilation de l''ancienne version' }; Pop-Location
           Push-Location $ancien
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
@@ -178,8 +220,9 @@ jobs:
           name: deR4Tizer-${{ github.sha }}
           path: ci-bin
 
-      - name: Rust stable
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Chaîne Rust figée (service-rs/rust-toolchain.toml)
+        working-directory: service-rs
+        run: rustup toolchain install && rustc --version && cargo --version
 
       - name: WiX 3.14, archive vérifiée
         shell: pwsh
@@ -211,7 +254,7 @@ jobs:
           $env:DER4TIZER_CLES_SIGNATURE = (Get-Content "$env:RUNNER_TEMP\d4t-pki\cle-epinglee.txt" -Raw).Trim()
           $ex = Join-Path $env:RUNNER_TEMP 'd4t-executables'
           New-Item -ItemType Directory -Force "$ex\$env:D4T_COURANTE", "$ex\$env:D4T_NOUVELLE" | Out-Null
-          Push-Location service-rs; cargo build --release; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
+          Push-Location service-rs; cargo build --release --locked; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe "$ex\$env:D4T_COURANTE\deR4TizerSvc.exe"
           Copy-Item bin/deR4Tizer.exe "$ex\$env:D4T_COURANTE\deR4Tizer.exe"
@@ -221,7 +264,7 @@ jobs:
           $t2 = $t.Replace("pub const VERSION: &str = `"$env:D4T_COURANTE`"", "pub const VERSION: &str = `"$env:D4T_NOUVELLE`"")
           if ($t2 -eq $t) { throw 'numéro de version introuvable' }
           [IO.File]::WriteAllText((Resolve-Path $f), $t2)
-          Push-Location service-rs; cargo build --release; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
+          Push-Location service-rs; cargo build --release --locked; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location
           Copy-Item service-rs/target/release/der4tizer-svc.exe "$ex\$env:D4T_NOUVELLE\deR4TizerSvc.exe"
           git checkout -- $f
           Remove-Item bin/deR4Tizer.exe -Force

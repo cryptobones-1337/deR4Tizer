@@ -1,0 +1,46 @@
+# Configuration de cargo-deny pour le service (analyse statique, lot 1, audit du 2026-11-23). Lancé par le job
+# `dependances` de .github/workflows/ci.yml : cargo deny --locked check --config deny.toml advisories licenses sources
+# Règle : aucune exclusion ni règle désactivée pour obtenir du vert ; une alerte écartée l'est par une ligne commentée
+# qui dit pourquoi, relue par le mainteneur.
+
+[graph]
+# Seule cible compilée et livrée (MSI x64, chaîne MSVC). Les paquets propres à d'autres plateformes (libc, variantes
+# aarch64, i686, gnu, gnullvm de windows-targets) sortent du graphe de cargo deny ; cargo audit, lui, lit le
+# Cargo.lock entier, ces paquets compris.
+targets = ["x86_64-pc-windows-msvc"]
+all-features = false
+no-default-features = false
+
+[advisories]
+# Base RustSec par défaut. Vulnérabilités : erreur (comportement par défaut, non modifiable). Paquets non maintenus
+# ou « unsound » : erreur pour tout le graphe. Version retirée du registre (yanked) : erreur.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# PROPOSÉE, À VALIDER PAR LE MAINTENEUR : reprend exactement les licences SPDX trouvées dans le graphe x86_64-pc-
+# windows-msvc de service-rs/Cargo.lock au 2026-11-23 (64 paquets, dont le service lui-même, sans champ license) :
+#   MIT OR Apache-2.0 (53 paquets), MIT (4), Apache-2.0 OR MIT (2), Unlicense OR MIT (2), MIT/Apache-2.0 (1),
+#   (MIT OR Apache-2.0) AND Unicode-3.0 (1, unicode-ident).
+# Aucune licence n'est ajoutée au-delà de celles-ci ; le mainteneur décide de la liste définitive.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
+
+[sources]
+# Seul registre admis : crates.io. Aucun dépôt git.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
