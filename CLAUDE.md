@@ -485,6 +485,17 @@ mainteneur pour le lot qui touche la collecte des processus. Ordre de priorité 
 le travail ATT&CK avance pendant que la version suit son cours, quand le mainteneur fait la répétition de signature ;
 aucun des deux n'attend l'autre, et rien de ce travail ne bloque la version.
 
+Phase « blocs de script PowerShell (4104) » : ouverte par le mainteneur le 2026-11-23, par ces mots : « ouvrir la phase
+de lecture des événements 4104 (A-7-4). » Origine : constat A-7-4 de l'audit du 2026-11-23 (la baseline active la
+journalisation des blocs de script, événement 4104 du canal `Microsoft-Windows-PowerShell/Operational`, et aucune règle
+ne le lit) ; seule source qui voit le code PowerShell après décodage, pour T1059.001 et T1027 (`docs/validation/carte-attack.md`).
+Mêmes garde-fous que la phase 7 : dossier de conception d'abord (agent concepteur-fonctionnalites), une PR par étape,
+aucune dépendance nouvelle sans accord, état « testé en labo » dans la matrice tant qu'une mesure en VM ne le justifie
+pas. Contraintes propres : un bloc de script peut contenir des secrets, il passe par le masquage des secrets
+(`commun::masquer_secrets`) avant tout stockage ou export, avec une taille bornée ; lecture seule du journal, aucun
+réglage de PowerShell modifié hors de la baseline existante ; règle nouvelle avec sa fiche dans
+`docs/detection/regles.md`, ses tests positifs et négatifs, et sa mesure de faux positifs.
+
 ## 6. Actions réservées à l'humain
 
 Claude Code ne les fait pas ; il peut les rappeler.
