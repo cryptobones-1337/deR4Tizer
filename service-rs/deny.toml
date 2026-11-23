@@ -20,13 +20,15 @@ yanked = "deny"
 ignore = []
 
 [licenses]
-# PROPOSÉE, À VALIDER PAR LE MAINTENEUR : reprend exactement les licences SPDX trouvées dans le graphe x86_64-pc-
-# windows-msvc de service-rs/Cargo.lock au 2026-11-23 (64 paquets, dont le service lui-même, sans champ license) :
+# Liste validée par le mainteneur le 2026-11-23. Elle reprend exactement les licences SPDX trouvées dans le graphe
+# x86_64-pc-windows-msvc de service-rs/Cargo.lock à cette date (63 dépendances) :
 #   MIT OR Apache-2.0 (53 paquets), MIT (4), Apache-2.0 OR MIT (2), Unlicense OR MIT (2), MIT/Apache-2.0 (1),
-#   (MIT OR Apache-2.0) AND Unicode-3.0 (1, unicode-ident).
-# Aucune licence n'est ajoutée au-delà de celles-ci ; le mainteneur décide de la liste définitive.
+#   (MIT OR Apache-2.0) AND Unicode-3.0 (1, unicode-ident),
+# plus EUPL-1.2, licence du service lui-même (champ license de service-rs/Cargo.toml, fichier LICENSE du dépôt),
+# décision du mainteneur du même jour. Toute licence nouvelle passe par une PR relue par le mainteneur.
 allow = [
     "Apache-2.0",
+    "EUPL-1.2",
     "MIT",
     "Unicode-3.0",
     "Unlicense",
