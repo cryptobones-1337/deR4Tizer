@@ -41,7 +41,8 @@ Suivi des incidents (phase 4, `incidents.rs`) : décisions pures (entité, ratta
 
 Mesure du cycle (phase 1, `mesure.rs`) : durée de chaque étape du cycle de 3 s, attente et tenue du verrou du
 moniteur par la surveillance, durée de chaque commande (verrou tenu), étapes des contrôles de 10 minutes et nombre de
-PowerShell lancés par contexte. Écrite dans `mesures.json` toutes les 200 cycles (environ 10 minutes) : cumul depuis le
+PowerShell lancés par contexte, compteurs nommés (`chaines.alertes_plafonnees` : alertes CHA-001 retenues par le
+plafond de trois par chaîne et par heure, T-1). Écrite dans `mesures.json` toutes les 200 cycles (environ 10 minutes) : cumul depuis le
 démarrage et dernière fenêtre, avec la répartition par classes de durée. Condition préalable à tout découpage de
 `Moniteur` (CLAUDE.md, phase 1) ; aucune décision du service n'en dépend.
 

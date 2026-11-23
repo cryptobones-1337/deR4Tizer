@@ -206,6 +206,8 @@ pub struct Creation4688 {
     /// Processus créateur (champ ProcessId du 4688)
     pub ppid: Option<u32>,
     pub parent_image: Option<String>,
+    /// Heure de création (TimeCreated, FILETIME), pour l'arbre des chaînes (T-1 : un parent n'est retenu que s'il vivait)
+    pub heure: Option<u64>,
 }
 
 /// Longueur gardée d'une ligne de commande (Windows : 32 767 caractères au plus)
@@ -240,6 +242,7 @@ pub(crate) fn lire_4688(d: &HashMap<String, String>) -> Option<Creation4688> {
         ligne_commande: champ(d, "CommandLine").map(|l| if l.chars().count() > LIGNE_MAX { l.chars().take(LIGNE_MAX).collect() } else { l }),
         ppid: d.get("ProcessId").and_then(|p| pid_4688(p)),
         parent_image: champ(d, "ParentProcessName"),
+        heure: None,
     })
 }
 
@@ -642,7 +645,8 @@ impl Processus {
     /// Un 4688 : la création va à l'arbre des chaînes (un processus bref y garde son parent) et elle est analysée (la
     /// trace WMI de la même création, si elle a déjà alerté pour la même règle, est fusionnée)
     pub(crate) fn traiter_4688(&self, xml: &str) {
-        let Some(c) = lire_4688(&evenements::donnees(xml)) else { return };
+        let Some(mut c) = lire_4688(&evenements::donnees(xml)) else { return };
+        c.heure = crate::chaines::heure_4688(xml);
         {
             let mut l = self.lignes.lock().unwrap();
             if c.ligne_commande.is_some() { l.0 = l.0.saturating_add(1) } else { l.1 = l.1.saturating_add(1) }

@@ -901,7 +901,7 @@ fn attack_lot1_une_alerte_par_creation_et_cache_wmi() {
     // Prérelecture de #244, D2 : même PID, même programme, création nouvelle deux minutes plus tard : elle alerte
     assert!(!deja_signale(&mut vus, 50, "powershell.exe", "PRC-002", t + Duration::from_secs(120)), "création nouvelle sous le même PID");
     // Ligne de commande absente du 4688 : reprise du cache WMI du même programme, jamais d'un autre
-    let c = Creation4688 { pid: 9, image: r"C:\W\powershell.exe".into(), ligne_commande: None, ppid: Some(8), parent_image: None };
+    let c = Creation4688 { pid: 9, image: r"C:\W\powershell.exe".into(), ligne_commande: None, ppid: Some(8), parent_image: None, heure: None };
     let wmi = InfoProcessus::pour_test(r"C:\W\powershell.exe", Some("powershell -enc AAAA"), Some(r"C:\W\cmd.exe"));
     let i = info_depuis_4688(&c, Some(&wmi));
     assert_eq!((i.ligne_commande.as_deref(), i.parent_chemin.as_deref()), (Some("powershell -enc AAAA"), Some(r"C:\W\cmd.exe")));
@@ -950,6 +950,262 @@ fn cha_001_negatif() {
     arbre.signaler(400, 7, "connexion vers une adresse inconnue");
     arbre.signaler(500, 7, "connexion vers une adresse inconnue");
     assert!(arbre.alertes(&arbre.chaines()).is_empty(), "racines distinctes");
+}
+
+// ------------------------------------------------------------ CHA-001 : faux positifs du poste (audit du 2026-11-23, T-1)
+// Jeux synthétiques qui reproduisent les motifs observés sur un poste de développement (aucune donnée du poste) : PID
+// de parent réutilisé, entrée périmée gardée une heure, programmes lancés par le service, outil qui relance des
+// centaines de fois la même commande encodée sous le même parent
+
+fn liste_t1(processus: &[(u32, &str, u32)]) -> std::collections::HashMap<u32, crate::natif::InfoListe> {
+    processus.iter().map(|&(pid, nom, parent)| (pid, crate::natif::InfoListe { nom: nom.into(), parent })).collect()
+}
+
+/// Consigne du mainteneur : un PID réutilisé par un processus de même nom, un signal sur chacun des deux processus :
+/// aucune chaîne commune (avant : les deux signaux s'ajoutaient sur le même nœud, 14 points, alerte Critique)
+#[test]
+fn t1_pid_reutilise_meme_nom_aucune_chaine_commune() {
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (200, "bash", 4)], &[]);
+    arbre.creation(300, Some(100), r"C:\P\pwsh.exe", Some("pwsh -c a"));
+    arbre.signaler(300, 7, "premier pwsh");
+    // Le premier pwsh se termine (absent de deux listes), puis le PID 300 est repris par un autre pwsh
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (200, "bash", 4)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (200, "bash", 4)]));
+    arbre.creation(300, Some(200), r"C:\P\pwsh.exe", Some("pwsh -c b"));
+    arbre.signaler(300, 7, "second pwsh");
+    let chaines = arbre.chaines();
+    assert!(chaines.iter().all(|c| c.noeuds.iter().all(|n| !n.raisons.contains("premier"))), "signaux de l'ancien processus effacés");
+    assert!(arbre.alertes(&chaines).is_empty());
+    // Même parent, même nom, deux créations (deux 4688) : deux processus, jamais un seul nœud qui cumule
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4)], &[]);
+    arbre.creation(300, Some(100), r"C:\P\pwsh.exe", Some("pwsh -c a"));
+    arbre.signaler(300, 7, "premier pwsh");
+    arbre.creation(300, Some(100), r"C:\P\pwsh.exe", Some("pwsh -c a"));
+    arbre.signaler(300, 7, "second pwsh");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "même nom, même parent");
+    // Vu par la liste seulement : absent d'une liste (terminé), puis de retour sous le même nom et le même parent :
+    // un autre processus (un processus terminé ne revient pas)
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (300, "pwsh", 100)], &[]);
+    arbre.signaler(300, 7, "premier pwsh");
+    arbre.maj(&liste_t1(&[(100, "outil", 4)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (300, "pwsh", 100)]));
+    arbre.signaler(300, 7, "second pwsh");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "retour dans la liste après sa fin");
+}
+
+/// Suite de 4688 rejouée : cmd (PID 9184) lance pwsh, se termine ; le PID 9184 est repris par git, puis par grep, puis
+/// par un autre grep. pwsh n'est jamais rattaché à grep, né après lui (motif observé : « grep → pwsh », « tail → bash »)
+#[test]
+fn t1_parent_ne_apres_l_enfant_ecarte() {
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4)], &[]);
+    arbre.creation(9184, Some(100), r"C:\W\System32\cmd.exe", Some("cmd /c x"));
+    arbre.creation(23584, Some(9184), r"C:\P\pwsh.exe", Some("pwsh -c x"));
+    arbre.creation(9184, Some(100), r"C:\G\git.exe", None);
+    arbre.creation(9184, Some(100), r"C:\G\grep.exe", None);
+    arbre.creation(9184, Some(100), r"C:\G\grep.exe", None);
+    arbre.signaler(23584, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(9184, 7, "réseau : IP DIRECTE");
+    let chaines = arbre.chaines();
+    assert!(!chaines.iter().any(|c| c.resume.contains("grep → pwsh")), "{:?}", chaines.iter().map(|c| c.resume.clone()).collect::<Vec<_>>());
+    assert!(arbre.alertes(&chaines).is_empty());
+    // Heures de création du journal (TimeCreated) : même décision quand les 4688 arrivent dans le désordre
+    let mut arbre = crate::chaines::Arbre::default();
+    let t = 134_000_000_000_000_000u64;
+    arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
+    arbre.creation_a(9184, Some(100), r"C:\G\grep.exe", None, Some(t + 50_000_000));
+    arbre.creation_a(23584, Some(9184), r"C:\P\pwsh.exe", None, Some(t + 10_000_000));
+    arbre.signaler(23584, 5, "a");
+    arbre.signaler(9184, 7, "b");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "parent né après l'enfant");
+}
+
+/// Parent terminé avant la création de l'enfant (sa création manque, l'enfant n'est vu que par la liste) : l'enfant est
+/// sa propre racine
+#[test]
+fn t1_parent_mort_avant_l_enfant_ecarte() {
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (500, "MpCmdRun", 100)], &[]);
+    arbre.maj(&liste_t1(&[(100, "outil", 4)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (600, "pwsh", 500)]));
+    arbre.signaler(500, 7, "a");
+    arbre.signaler(600, 5, "b");
+    let chaines = arbre.chaines();
+    assert!(!chaines.iter().any(|c| c.resume.contains("MpCmdRun → pwsh")));
+    assert!(arbre.alertes(&chaines).is_empty());
+    // Parent bref connu par son seul 4688 (jamais dans une liste) : absent des listes suivantes, il est terminé ; un
+    // enfant vu ensuite par la liste avec son PID pour parent n'est pas le sien
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4)], &[]);
+    arbre.creation(500, Some(100), r"C:\W\cmd.exe", None);
+    arbre.maj(&liste_t1(&[(100, "outil", 4)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (600, "pwsh", 500)]));
+    arbre.signaler(500, 7, "a");
+    arbre.signaler(600, 5, "b");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "parent connu par son 4688, terminé avant l'enfant");
+    // Parent vivant à la création de l'enfant (même liste) : la chaîne reste
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (500, "MpCmdRun", 100), (600, "pwsh", 500)], &[]);
+    arbre.signaler(500, 7, "a");
+    arbre.signaler(600, 5, "b");
+    assert_eq!(arbre.alertes(&arbre.chaines()).len(), 1);
+}
+
+/// Programmes lancés par le service (auditpol, icacls, powershell et leurs conhost) : hors chaîne, leurs signaux ne
+/// comptent pas. Le service est reconnu par son propre PID (celui du processus qui tourne), jamais par un nom. Puis le
+/// PID d'auditpol est repris par un vrai programme de l'utilisateur : sa chaîne ne remonte pas au service
+#[test]
+fn t1_descendants_du_service_hors_chaine() {
+    let service = std::process::id();
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (service, "deR4TizerSvc", 50), (700, "auditpol", service), (701, "conhost", 700),
+        (710, "icacls", service), (720, "powershell", service)], &[]);
+    arbre.signaler(700, 7, "a");
+    arbre.signaler(701, 5, "b");
+    arbre.signaler(710, 5, "c");
+    arbre.signaler(720, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(service, 5, "d");
+    let chaines = arbre.chaines();
+    assert!(chaines.is_empty(), "{:?}", chaines.iter().map(|c| c.resume.clone()).collect::<Vec<_>>());
+    assert!(arbre.alertes(&chaines).is_empty());
+    // auditpol et conhost se terminent ; le PID 700 est repris par pwsh (lancé par l'outil de l'utilisateur), qui lance git
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (service, "deR4TizerSvc", 50)]));
+    arbre.maj(&liste_t1(&[(100, "outil", 4), (service, "deR4TizerSvc", 50)]));
+    arbre.creation(700, Some(100), r"C:\P\pwsh.exe", None);
+    arbre.creation(702, Some(700), r"C:\G\git.exe", None);
+    arbre.signaler(700, 7, "e");
+    arbre.signaler(702, 5, "f");
+    let chaines = arbre.chaines();
+    assert_eq!(chaines.len(), 1);
+    assert!(!chaines[0].resume.contains("deR4TizerSvc") && chaines[0].resume.contains("outil → pwsh → git"), "{}", chaines[0].resume);
+    assert_eq!(arbre.alertes(&chaines).len(), 1);
+}
+
+/// Motif observé (cause principale) : un outil de développement lance des centaines de fois `cmd /c … pwsh
+/// -EncodedCommand …` sous le même parent ; chaque lancement lève PRC-002 et s'ajoutait à la même chaîne, dont le score
+/// montait sans fin (une alerte Critique toutes les quelques secondes). Le même comportement répété au même endroit de
+/// la chaîne compte une fois ; une alerte au plus par niveau, trois au plus par chaîne et par heure, le surplus compté
+#[test]
+fn t1_comportement_repete_sous_le_meme_parent() {
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (110, "outil", 100)], &[]);
+    arbre.signaler_code(110, 2, "réseau : IP DIRECTE (aucune requête DNS)", &[], "RES-002#ip-directe");
+    let mut alertes = 0;
+    for i in 0..200u32 {
+        let (cmd, pwsh) = (1000 + 2 * i, 1001 + 2 * i);
+        arbre.creation(cmd, Some(110), r"C:\W\System32\cmd.exe", Some("cmd /d /s /c chcp 65001 & pwsh -NoProfile -EncodedCommand QQBB"));
+        arbre.creation(pwsh, Some(cmd), r"C:\P\pwsh.exe", Some("pwsh -NoProfile -NonInteractive -EncodedCommand QQBB"));
+        arbre.signaler_code(cmd, 5, &format!("PowerShell obscurci ou qui télécharge du code : cmd {i}"), &[], "PRC-002#PRC-002:obscurci");
+        arbre.signaler_code(pwsh, 5, &format!("PowerShell obscurci ou qui télécharge du code : pwsh {i}"), &[], "PRC-002#PRC-002:obscurci");
+        alertes += arbre.alertes(&arbre.chaines()).len();
+    }
+    let chaines = arbre.chaines();
+    assert_eq!(chaines.len(), 1);
+    assert_eq!(chaines[0].score, 12, "répétitions comptées une fois");
+    assert_eq!(alertes, 1, "une seule alerte pour 200 répétitions");
+}
+
+/// Plafond : une chaîne qui gagne sans cesse des comportements nouveaux lève trois alertes CHA-001 au plus par heure ;
+/// les suivantes sont comptées (surplus publié dans mesures.json), jamais perdues sans trace
+#[test]
+fn t1_plafond_par_chaine_et_par_heure() {
+    let mut arbre = arbre_de_test();
+    arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+    let mut alertes = 0;
+    for i in 0..10 {
+        arbre.signaler(400, 7, &format!("comportement {i}"));
+        alertes += arbre.alertes(&arbre.chaines()).len();
+    }
+    assert_eq!(alertes, crate::chaines::PLAFOND_ALERTES_PAR_HEURE as usize);
+    assert_eq!(arbre.alertes_plafonnees(), 10 - crate::chaines::PLAFOND_ALERTES_PAR_HEURE as u64);
+}
+
+/// T-3 : l'entité d'incident d'une chaîne est son programme de tête (PID et heure de création), pas le texte de la chaîne :
+/// une chaîne qui grossit reste un seul incident ; une autre chaîne fait un autre incident
+#[test]
+fn t3_entite_stable_quand_la_chaine_grossit() {
+    let mut arbre = arbre_de_test();
+    arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(400, 7, "connexion vers une adresse inconnue");
+    let a1 = arbre.alertes(&arbre.chaines());
+    arbre.creation(450, Some(400), r"C:\W\System32\whoami.exe", None);
+    arbre.signaler(450, 3, "reconnaissance");
+    let a2 = arbre.alertes(&arbre.chaines());
+    assert_eq!((a1.len(), a2.len()), (1, 1));
+    assert_ne!(a1[0].destination, a2[0].destination, "le texte de la chaîne a changé");
+    assert_eq!(crate::incidents::entite(&a1[0]), crate::incidents::entite(&a2[0]));
+    let mut autre = arbre_avec_chemins(&[(100, "explorer", 4), (900, "cmd", 100), (901, "powershell", 900)],
+        &[(100, &format!(r"{}\explorer.exe", crate::natif::dossier_windows()))]);
+    autre.signaler(900, 5, "a");
+    autre.signaler(901, 7, "b");
+    let a3 = autre.alertes(&autre.chaines());
+    assert_ne!(crate::incidents::entite(&a1[0]), crate::incidents::entite(&a3[0]));
+    // Chronologie : les événements du programme de tête sont rattachés (par le nom, signalé comme tel)
+    let i = crate::incidents::IncidentSuivi { entite: crate::incidents::entite(&a1[0]), ..Default::default() };
+    assert!(i.entite.starts_with("chaine:cmd#200@"), "{}", i.entite);
+    let ev = |p: &str| crate::siem::Evenement { processus: p.into(), source: "processus".into(), ..Default::default() };
+    assert_eq!(crate::incidents::lien(&i, &ev("cmd.exe")), Some(crate::incidents::Lien::ParNom));
+    assert_eq!(crate::incidents::lien(&i, &ev("powershell.exe")), None);
+    // Tête au chemin connu : entité « programme: » (même incident que les autres alertes de ce programme)
+    let mut avec_chemin = arbre_de_test();
+    avec_chemin.completer(200, r"C:\W\System32\cmd.exe", None);
+    avec_chemin.signaler(300, 5, "a");
+    avec_chemin.signaler(400, 7, "b");
+    let a4 = avec_chemin.alertes(&avec_chemin.chaines());
+    assert_eq!(crate::incidents::entite(&a4[0]), r"programme:c:\w\system32\cmd.exe");
+}
+
+/// Bornes de `parent_vivait` : né à la même heure que l'enfant (oui), une unité après (non), vu terminé avant la création
+/// de l'enfant (non), à l'heure même de sa fin (oui) ; parent vu d'abord par la liste : marge de 10 s, pas au-delà
+#[test]
+fn t1_parent_vivait_bornes() {
+    use crate::chaines::parent_vivait;
+    let t = 1_000_000_000u64;
+    assert!(parent_vivait(t, true, None, t));
+    assert!(!parent_vivait(t + 1, true, None, t));
+    assert!(parent_vivait(t, true, Some(t + 5), t + 5));
+    assert!(!parent_vivait(t, true, Some(t + 5), t + 6));
+    assert!(parent_vivait(t + 100_000_000, false, None, t));
+    assert!(!parent_vivait(t + 100_000_001, false, None, t));
+}
+
+/// Signal sur un PID inconnu de l'arbre (ni nom ni chemin) : pas de chaîne « PID 12404 » publiée
+#[test]
+fn t1_chaine_sans_nom_non_publiee() {
+    let mut arbre = arbre_de_test();
+    arbre.signaler(12404, 5, "PowerShell obscurci ou qui télécharge du code");
+    assert!(arbre.chaines().is_empty());
+}
+
+/// Heure de création d'un 4688 (TimeCreated SystemTime, au 100 ns près) : parseur sans panique
+#[test]
+fn t1_heure_4688() {
+    use crate::chaines::heure_4688;
+    let xml = "<Event><System><EventID>4688</EventID><TimeCreated SystemTime='2026-11-23T13:56:00.1234567Z'/></System></Event>";
+    let attendu = (crate::commun::secondes_utc("2026-11-23T13:56:00Z").unwrap() as u64 + 11_644_473_600) * 10_000_000 + 1_234_567;
+    assert_eq!(heure_4688(xml), Some(attendu));
+    assert_eq!(heure_4688(&xml.replace(".1234567", "")), Some(attendu - 1_234_567), "sans fraction");
+    assert_eq!(heure_4688(&xml.replace(".1234567", ".5")), Some(attendu - 1_234_567 + 5_000_000), "fraction courte");
+    assert_eq!(heure_4688(&xml.replace('\'', "\"")), Some(attendu), "guillemets doubles");
+    for faux in ["", "<TimeCreated/>", "<TimeCreated SystemTime='2026-13-23T13:56:00Z'/>", "<TimeCreated SystemTime='x'/>",
+        "<TimeCreated SystemTime='2026-11-23T13:56:00.12345678901Z'/>", "<TimeCreated SystemTime='2026-11-23T13:56:00.1é3Z'/>", "SystemTime='2026"] {
+        assert_eq!(heure_4688(faux), None, "{faux}");
+    }
+    crate::tests::torturer_texte(xml, &mut |s| { let _ = heure_4688(s); });
+}
+
+/// Heures de création exactes : un PID repris par un processus de même nom est reconnu (heures différentes), un 4688 en
+/// double (même heure) ne l'est pas, un 4688 en retard d'un ancien processus n'écrase jamais l'entrée plus récente
+#[test]
+fn t1_creation_heures_exactes() {
+    let t = 134_000_000_000_000_000u64;
+    let mut arbre = crate::chaines::Arbre::default();
+    arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
+    arbre.creation_a(300, Some(100), r"C:\P\pwsh.exe", None, Some(t + 1));
+    arbre.signaler(300, 7, "a");
+    arbre.creation_a(300, Some(100), r"C:\P\pwsh.exe", None, Some(t + 1));
+    arbre.signaler(300, 7, "b");
+    assert_eq!(arbre.chaines()[0].score, 14, "même 4688 lu deux fois : même processus");
+    arbre.creation_a(300, Some(100), r"C:\P\pwsh.exe", None, Some(t + 9));
+    assert!(arbre.chaines().is_empty(), "même nom, autre heure : PID repris, signaux effacés");
+    arbre.signaler(300, 7, "c");
+    arbre.creation_a(300, Some(100), r"C:\W\cmd.exe", None, Some(t + 5));
+    assert_eq!(arbre.chaines()[0].noeuds.last().map(|n| n.nom.clone()), Some("pwsh".into()), "4688 en retard d'un ancien processus ignoré");
 }
 
 // ------------------------------------------------------------ RES et DNS : connexions et requêtes DNS (PR 3.8)

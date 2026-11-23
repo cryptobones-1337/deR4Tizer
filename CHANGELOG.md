@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Process chains (CHA-001), false positives found on a developer workstation (audit of 23 November 2026, T-1 and T-3):
+  about a hundred critical alerts in one hour, with impossible chains (`grep → pwsh`, `tail → bash`, the service's own
+  `auditpol` leading to `git`). A finished process is kept one hour in the tree and its process ID is soon reused: a child
+  was attached to whatever process later got its parent's ID. Each process now carries its creation time (TimeCreated of
+  event 4688, to 100 ns; otherwise the time the process list first showed it) and the time it was seen gone; a parent is
+  kept only if it was born before the child and still alive when the child was created, otherwise the child heads its
+  own chain. A reused process ID starts with no signals even under the same name. Programs started by the service (and
+  their children) are left out of chains; the service is recognised by its own process ID, never by a name. The same
+  behaviour repeated at the same place of a chain counts once, so a tool that starts `pwsh -EncodedCommand` hundreds of
+  times no longer raises the score (and an alert) each time; at most 3 CHA-001 alerts per chain and per hour, the rest
+  counted in `mesures.json` (`chaines.alertes_plafonnees`). A signal on an unknown process ID no longer publishes a
+  nameless "PID n" chain. The incident entity of a chain is its first program (its path, or its ID and creation time),
+  no longer the chain text, so a growing chain stays one incident. Tested in the lab, not yet tried in the VM. Still
+  open, for the maintainer to decide: a signed developer tool that encodes its PowerShell commands still raises PRC-002
+  at each start and one chain alert per session.
+
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
