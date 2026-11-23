@@ -16,27 +16,38 @@ Ordre de décision :
    tourne sous un autre compte (compte standard qui tape le mot de passe d'un administrateur) ou une autre élévation :
    sa culture n'est pas celle de l'utilisateur. Le fichier de réglage du compte élevé n'est jamais lu. Valeur hors de
    « fr » et « en » : ignorée. Lancé sans `--langue` (par une version précédente) : config.json puis culture, comme
-   avant.
+   avant. Ses arguments sont fixés : un `--dossier` parmi eux n'est pas une option (`Programme.DossierDemande`, audit de
+   #298, A298-2).
 2. Réglage de l'utilisateur, `%LOCALAPPDATA%\deR4Tizer\langue.txt` : `auto`, `fr` ou `en` (toute autre valeur, ou un
-   fichier de plus de 64 octets, est ignorée). Écrit par l'interface non élevée seulement (jamais en administrateur : le
-   dossier est contrôlé par les programmes non élevés du compte, même règle que le repère des premiers réglages,
-   S151-01). Aucune commande, rien n'est envoyé au service.
+   fichier de plus de 64 octets, est ignorée). Écrit et lu par l'interface non élevée seulement : jamais sous jeton
+   administrateur, ni pour l'écriture ni pour la lecture (le dossier est contrôlé par les programmes non élevés du
+   compte, même règle que le repère des premiers réglages, S151-01 ; audit de #298, A298-1). Une interface élevée suit
+   donc config.json puis la culture. Lu sur un seul handle ouvert sans suivre de point de reparse
+   (`FILE_FLAG_OPEN_REPARSE_POINT`) : lien, jonction ou dossier refusés, 65 octets lus au plus. Aucune commande, rien
+   n'est envoyé au service.
 3. Sans réglage de l'utilisateur : « en » si `config.json` porte `"Langue": "en"`, seul choix explicite qu'une version
    précédente a pu y laisser. « fr » n'y dit pas un choix : c'est aussi la valeur par défaut que le service écrit avec
    n'importe quel réglage (IPS, filtrage, mise à jour…), et elle imposait le français à un Windows anglais.
 4. Sinon, automatique : français pour toute culture d'affichage française de l'utilisateur (`fr-FR`, `fr-CA`…),
    anglais pour toute autre.
 
-Format des données inchangé : `config.json` garde son champ `Langue`, renvoyé tel qu'il a été lu quand la page
-Réglages enregistre le syslog et l'API (`ActionsReglages.Composer`) ; le service le valide comme avant (liste fermée).
+Format des données inchangé : `config.json` garde son champ `Langue`, renvoyé quand la page Réglages enregistre le
+syslog et l'API (`ActionsReglages.Composer`) : « en » gardé, toute autre valeur (null, vide, « EN »…) ramenée à « fr »,
+que le service accepte (liste fermée ; sinon il refuserait chaque enregistrement). La confirmation de cette commande le
+dit « langue gardée dans config.json (sans effet sur la langue affichée) ».
+
+Conséquence : un « Français » choisi par une version précédente sous un Windows non français n'est pas gardé (il est à
+rechoisir dans Réglages).
 
 Page Réglages (WPF et classique) : trois valeurs, « Automatique (Windows : <langue>) », « Français », « English ». La
 valeur active est le réglage en vigueur dans ce processus, jamais la valeur par défaut de `config.json` (constat T-13 :
 « Français » sélectionné dans une interface anglaise). Le libellé « Automatique » dit la langue qu'il donne sur ce
 poste. Sous le choix, la langue affichée est toujours dite ; un choix enregistré depuis est dit à part (« Choix
 enregistré : Français, appliqué au prochain lancement de l'interface ») et, dans la page WPF, son bouton est bordé en
-gris. Le changement ne s'applique pas sans relancer l'interface : les pages sont construites dans la langue du
-démarrage. En administrateur, rien n'est écrit et la page le dit.
+gris. Dans l'interface classique, le choix est écrit à la validation (liste refermée, sortie du champ, Entrée), pas à
+chaque changement de sélection : les flèches parcourent les trois valeurs. Le changement ne s'applique pas sans relancer
+l'interface : les pages sont construites dans la langue du démarrage. En administrateur, rien n'est lu ni écrit et la
+page le dit.
 
 Corrigé dans la même étape (textes de l'interface, pas du service) :
 

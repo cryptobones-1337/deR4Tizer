@@ -706,7 +706,9 @@ namespace DeR4Tizer
                         // forme (S58-02 : un texte long ou inversé pouvait cacher le vrai contenu)
                         string dest = r.Syslog == null ? "" : Visible(r.Syslog.Hote + ":" + r.Syslog.Port + " (" + r.Syslog.Protocole + ", " + r.Syslog.Format + ", minimum " + r.Syslog.NiveauMin + ")");
                         string sys = r.Syslog != null && r.Syslog.Actif ? dest : (en ? "off" : "désactivé") + (r.Syslog != null && !string.IsNullOrEmpty(r.Syslog.Hote) ? " (" + dest + ")" : "");
-                        return (en ? "Change settings\n  • language: " : "Modifier les réglages\n  • langue : ") + Visible(r.Langue) + "\n  • syslog : " + sys + "\n  • API : " + api;
+                        // Langue de config.json renvoyée telle quelle : sans effet sur la langue affichée, réglée par utilisateur
+                        // (constat T-17, prérelecture de #298, D2) ; toujours affichée, comme tout ce qui est appliqué (AUD6-04)
+                        return (en ? "Change settings\n  • language kept in config.json (no effect on the displayed language): " : "Modifier les réglages\n  • langue gardée dans config.json (sans effet sur la langue affichée) : ") + Visible(r.Langue) + "\n  • syslog : " + sys + "\n  • API : " + api;
                     }
                 case "testerSyslog":
                     {
@@ -2805,12 +2807,14 @@ namespace DeR4Tizer
 
         // Langue de ce processus (constat T-17), décidée par L.Choisir et nulle part ailleurs. Assistant élevé : langue passée
         // par l'interface qui l'a lancé (« --langue fr|en ») ; le fichier de réglage du compte élevé n'est jamais lu. Sans
-        // argument (lancement par une version précédente) : config.json, puis culture, comme avant
-        internal static void ChoisirLangue(string[] args, Config cfg, string cheminReglage, System.Globalization.CultureInfo culture)
+        // argument (lancement par une version précédente) : config.json, puis culture, comme avant. Sous jeton
+        // administrateur (assistant ou interface élevée), langue.txt n'est jamais lu : ce dossier est contrôlé par les
+        // programmes non élevés du compte (même règle que l'écriture ; audit de #298, A298-1)
+        internal static void ChoisirLangue(string[] args, Config cfg, string cheminReglage, System.Globalization.CultureInfo culture, bool administrateur)
         {
             bool assistant = Mode(args) == "commande";
             string reglage;
-            L.En = L.Choisir(assistant && args.Length == 4 ? args[3] : null, assistant ? null : L.LireReglage(cheminReglage), cfg != null ? cfg.Langue : null, culture, out reglage);
+            L.En = L.Choisir(assistant && args.Length == 4 ? args[3] : null, assistant || administrateur ? null : L.LireReglage(cheminReglage), cfg != null ? cfg.Langue : null, culture, out reglage);
             L.Reglage = reglage;
         }
 
@@ -2831,6 +2835,16 @@ namespace DeR4Tizer
             foreach (var a in new[] { "--cache", "--relance", "--commande-fichier", "--dossier", "--classique" })
                 if (Array.IndexOf(args, a) >= 0) return false;
             return true;
+        }
+
+        // Dossier de données de test (--dossier <chemin>), jamais pour l'assistant élevé : ses arguments sont fixés
+        // (« --commande-fichier <fichier> [--langue fr|en] ») et un « --dossier » parmi eux n'est pas une option (audit de
+        // #298, A298-2)
+        internal static string DossierDemande(string[] args)
+        {
+            if (Mode(args) == "commande") return null;
+            int i = Array.IndexOf(args, "--dossier");
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
         }
 
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -2959,10 +2973,11 @@ namespace DeR4Tizer
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             int i = Array.IndexOf(args, "--dossier");
-            if (i >= 0 && i + 1 < args.Length) Commun.Dossier = args[i + 1];
+            string dossierDemande = DossierDemande(args);
+            if (dossierDemande != null) Commun.Dossier = dossierDemande;
 
             var cfg = Commun.Lire<Config>("config.json");
-            ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture);
+            ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());
 
             // Finition : les nombres et dates affichés suivent la langue de l'interface (« 1 851 » en français, pas
             // « 1,851 »). Les horodatages stockés gardent leurs séparateurs (format numérique, identiques en fr-FR/en-US).

@@ -1,6 +1,7 @@
 ﻿// Langue de l'interface : le texte français sert de clé, la traduction anglaise est cherchée ici.
 // Un texte absent du dictionnaire reste en français (ajoutez-le ici pour le traduire).
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace DeR4Tizer
 {
@@ -47,15 +48,40 @@ namespace DeR4Tizer
             return System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "langue.txt");
         }
 
-        // « auto », « fr » ou « en » ; null si le fichier est absent, illisible, trop long ou porte une autre valeur
+        [StructLayout(LayoutKind.Sequential)]
+        struct InfoFichier
+        {
+            public uint Attributs, CreationBas, CreationHaut, AccesBas, AccesHaut, EcritureBas, EcritureHaut, Volume, TailleHaute, TailleBasse, Liens, IndexHaut, IndexBas;
+        }
+
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string nom, uint acces, uint partage, System.IntPtr securite, uint creation, uint options, System.IntPtr modele);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out InfoFichier info);
+
+        // « auto », « fr » ou « en » ; null si le fichier est absent, illisible, trop long (plus de 64 octets), point de
+        // reparse (lien, jonction) ou dossier, ou s'il porte une autre valeur. Ouvert une seule fois sans suivre de point de
+        // reparse (FILE_FLAG_OPEN_REPARSE_POINT), nature jugée sur ce handle, 65 octets lus au plus (audit de #298, A298-1)
         public static string LireReglage(string chemin)
         {
             try
             {
-                var f = new System.IO.FileInfo(chemin);
-                if (!f.Exists || f.Length > 64) return null;
-                string v = System.IO.File.ReadAllText(chemin).Trim();
-                return System.Array.IndexOf(Reglages, v) >= 0 ? v : null;
+                // GENERIC_READ, partage lecture/écriture/suppression, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT
+                using (var h = CreateFileW(chemin, 0x80000000, 7, System.IntPtr.Zero, 3, 0x00200000, System.IntPtr.Zero))
+                {
+                    if (h.IsInvalid) return null;
+                    InfoFichier info;
+                    if (!GetFileInformationByHandle(h, out info) || (info.Attributs & 0x410) != 0) return null; // reparse, dossier
+                    var tampon = new byte[65];
+                    int lus = 0;
+                    using (var flux = new System.IO.FileStream(h, System.IO.FileAccess.Read, 1))
+                        for (int n; lus < tampon.Length && (n = flux.Read(tampon, lus, tampon.Length - lus)) > 0; ) lus += n;
+                    if (lus > 64) return null;
+                    string v = System.Text.Encoding.UTF8.GetString(tampon, 0, lus).TrimStart('\uFEFF').Trim();
+                    return System.Array.IndexOf(Reglages, v) >= 0 ? v : null;
+                }
             }
             catch { return null; }
         }
