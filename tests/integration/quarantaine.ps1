@@ -883,7 +883,9 @@ if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
         $confirmation = { param($exe)
             $p = Start-Process $exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep 300' -WindowStyle Hidden -PassThru
             $script:procs += $p
-            $dossierCmd = Join-Path $env:TEMP 'deR4Tizer'
+            # Là où l'interface l'écrit (Canal.Executer) : %LOCALAPPDATA%\deR4Tizer du compte, seul dossier que l'assistant
+            # accepte depuis l'audit du 2026-11-23 (A-1-1) ; %TEMP%\deR4Tizer y est refusé (« Not a deR4Tizer command file »)
+            $dossierCmd = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'deR4Tizer'
             New-Item -ItemType Directory -Force -Path $dossierCmd | Out-Null
             $fichier = Join-Path $dossierCmd ('commande-' + [guid]::NewGuid().ToString('N') + '.json')
             [IO.File]::WriteAllText($fichier, (@{ Action = 'tuer'; Cible = "$($p.Id)" } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false))

@@ -221,6 +221,17 @@ try {
     try {
         Verifier-Fenetre 'A-1-1 : vrai fichier de commande du compte accepté' { $canal.GetMethod('FichierDeCommande').Invoke($null, @($vrai)) }
     } finally { Remove-Item -LiteralPath $vrai -Force -ErrorAction SilentlyContinue }
+    # Même nom de fichier dans %TEMP%\deR4Tizer (dossier qu'employait le scénario de CI quarantaine.ps1 jusqu'à #280) :
+    # refusé ; le scénario écrit désormais là où l'interface écrit
+    $dossierTemp = Join-Path $env:TEMP 'deR4Tizer'
+    New-Item -ItemType Directory -Force -Path $dossierTemp | Out-Null
+    $faux = [string](Join-Path $dossierTemp ('commande-' + [guid]::NewGuid().ToString('N') + '.json'))
+    [IO.File]::WriteAllText($faux, '{}')
+    try {
+        Verifier-Fenetre 'A-1-1 : fichier de commande dans %TEMP%\deR4Tizer refusé' { -not $canal.GetMethod('FichierDeCommande').Invoke($null, @($faux)) }
+    } finally { Remove-Item -LiteralPath $faux -Force -ErrorAction SilentlyContinue }
+    $scenario = [IO.File]::ReadAllText((Join-Path $Depot 'tests\integration\quarantaine.ps1'))
+    Verifier-Fenetre 'A-1-1 : le scénario de CI de la confirmation élevée écrit dans %LOCALAPPDATA%\deR4Tizer, comme l''interface' { $scenario.Contains("`$dossierCmd = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'deR4Tizer'") -and -not $scenario.Contains("Join-Path `$env:TEMP 'deR4Tizer'") }
     Verifier-Fenetre 'A-5-2 : emplacement d''un programme : chemin réseau refusé avant File.Exists' { $principal.Contains('if (Canal.CheminLocalFixe(chemin) && File.Exists(chemin))') -and -not $canal.GetMethod('CheminLocalFixe').Invoke($null, @('\\hote\p\x.exe')) }
 
     # Audit du 2026-11-23, A-5-3 : aucun programme lancé par son nom nu depuis l'interface
