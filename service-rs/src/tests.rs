@@ -197,6 +197,53 @@ fn ids_variable_inconnue_ignoree() {
     }
 }
 
+/// Second audit, B-4-02 (décision du coordinateur) : les variables standard du suricata.yaml par défaut (version 7)
+/// prennent leur valeur par défaut au lieu de rendre la règle ignorée ; une variable inventée reste ignorée
+#[test]
+fn ids_variables_standard_de_suricata() {
+    use crate::capture::Paquet;
+    use crate::ids::{correspond_paquet_test, lire_texte_test};
+    let paquet = |source: [u8; 4], destination: [u8; 4], port_destination: u16| Paquet {
+        entrant: true, proto: 6, source: source.into(), destination: destination.into(), port_source: 50000,
+        port_destination, longueur: 43, drapeaux: 0x18, charge: b"abc",
+    };
+    // $HTTP_SERVERS vaut $HOME_NET : chargée, s'applique au réseau local seulement
+    let r = r#"alert tcp $EXTERNAL_NET any -> $HTTP_SERVERS any (msg:"x"; content:"abc"; sid:1;)"#;
+    assert_eq!(lire_texte_test(r), (1, 0));
+    assert_eq!(correspond_paquet_test(r, &paquet([203, 0, 113, 5], [192, 168, 0, 10], 80)), Some(true), "serveur du réseau local");
+    assert_eq!(correspond_paquet_test(r, &paquet([203, 0, 113, 5], [198, 51, 100, 7], 80)), Some(false), "adresse publique : pas un $HOME_NET");
+    // $AIM_SERVERS vaut $EXTERNAL_NET
+    let r = r#"alert tcp $HOME_NET any -> $AIM_SERVERS any (msg:"x"; content:"abc"; sid:2;)"#;
+    assert_eq!(correspond_paquet_test(r, &paquet([192, 168, 0, 10], [198, 51, 100, 7], 5190)), Some(true));
+    assert_eq!(correspond_paquet_test(r, &paquet([192, 168, 0, 10], [10, 0, 0, 7], 5190)), Some(false));
+    // Ports : $MODBUS_PORTS 502, $SHELLCODE_PORTS tous sauf 80 (et nié : 80 seulement)
+    let r = r#"alert tcp any any -> any $MODBUS_PORTS (msg:"x"; content:"abc"; sid:3;)"#;
+    assert_eq!(correspond_paquet_test(r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], 502)), Some(true));
+    assert_eq!(correspond_paquet_test(r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], 503)), Some(false));
+    let r = r#"alert tcp any any -> any $SHELLCODE_PORTS (msg:"x"; content:"abc"; sid:4;)"#;
+    assert_eq!(correspond_paquet_test(r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], 4444)), Some(true));
+    assert_eq!(correspond_paquet_test(r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], 80)), Some(false));
+    let r = r#"alert tcp any any -> any !$SHELLCODE_PORTS (msg:"x"; content:"abc"; sid:5;)"#;
+    assert_eq!(correspond_paquet_test(r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], 80)), Some(true));
+    // Toutes les variables standard chargées
+    for v in ["$SMTP_SERVERS", "$SQL_SERVERS", "$DNS_SERVERS", "$TELNET_SERVERS", "$DC_SERVERS", "$DNP3_SERVER", "$DNP3_CLIENT",
+              "$MODBUS_SERVER", "$MODBUS_CLIENT", "$ENIP_SERVER", "$ENIP_CLIENT"] {
+        assert_eq!(lire_texte_test(&format!(r#"alert tcp any any -> {v} any (msg:"x"; content:"abc"; sid:6;)"#)), (1, 0), "{v}");
+    }
+    for v in ["$DNP3_PORTS", "$FTP_PORTS", "[$FTP_PORTS,$MODBUS_PORTS]"] {
+        assert_eq!(lire_texte_test(&format!(r#"alert tcp any any -> any {v} (msg:"x"; content:"abc"; sid:7;)"#)), (1, 0), "{v}");
+    }
+    // Négatifs : variable inventée ; $SHELLCODE_PORTS dans une liste (négation partielle, non représentable) ; $GTP_PORTS,
+    // absent du suricata.yaml de la version 7
+    for regle in [
+        r#"alert tcp any any -> $INVENTE_SERVERS any (msg:"x"; content:"abc"; sid:8;)"#,
+        r#"alert tcp any any -> any [21,$SHELLCODE_PORTS] (msg:"x"; content:"abc"; sid:9;)"#,
+        r#"alert udp any any -> any $GTP_PORTS (msg:"x"; content:"abc"; sid:10;)"#,
+    ] {
+        assert_eq!(lire_texte_test(regle), (0, 1), "{regle}");
+    }
+}
+
 /// Second audit, B-4-01 : une règle dont tous les `content` sont niés n'a pas de motif pour la recherche en une passe ;
 /// elle passait par le seul en-tête, sans que ses contenus niés soient évalués. Chemin réel du moteur (`touchees`) : la
 /// règle ne se déclenche que si aucun contenu nié n'est présent

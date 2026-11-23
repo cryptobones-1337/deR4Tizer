@@ -954,11 +954,17 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   des `content` niés) évalue quand même toutes ses conditions : elle ne se déclenche que si aucun de ses contenus niés
   n'est présent, avec leurs options (`offset`, `depth`…) ; avant, elle se déclenchait sur son seul en-tête (protocole,
   adresses, ports). Une variable d'en-tête inconnue rend la règle ignorée et comptée, comme une option non prise en
-  charge ; avant, elle valait « toutes les adresses » ou « tous les ports ». Variables connues, inchangées :
-  `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`, `$ORACLE_PORTS`. Conséquence : une
-  règle Emerging Threats qui cite par exemple `$HTTP_SERVERS` ou `$SMTP_SERVERS` est désormais ignorée (comptée dans
-  `ids.json`, champ `Ignorees`). Testé en labo (`ids_regle_sans_contenu_positif_evalue_ses_negations`,
-  `ids_variable_inconnue_ignoree`) ; à mesurer en VM (compte des règles ignorées sur un jeu ET Open).
+  charge (`ids.json`, champ `Ignorees`) ; avant, elle valait « toutes les adresses » ou « tous les ports ». Variables
+  connues, inchangées : `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`,
+  `$ORACLE_PORTS`. Les autres variables standard prennent leur valeur du `suricata.yaml` par défaut de Suricata 7
+  (`suricata.yaml.in`, branche `main-7.0.x`) : `$HTTP_SERVERS`, `$SMTP_SERVERS`, `$SQL_SERVERS`, `$DNS_SERVERS`,
+  `$TELNET_SERVERS`, `$DC_SERVERS`, `$DNP3_SERVER`, `$DNP3_CLIENT`, `$MODBUS_SERVER`, `$MODBUS_CLIENT`, `$ENIP_SERVER`,
+  `$ENIP_CLIENT` valent `$HOME_NET` ; `$AIM_SERVERS` vaut `$EXTERNAL_NET` ; `$SHELLCODE_PORTS` vaut tous les ports
+  sauf 80 (seul ; dans une liste, la règle est ignorée), `$DNP3_PORTS` 20000, `$MODBUS_PORTS` 502, `$FTP_PORTS` 21.
+  `$GTP_PORTS` (absent du `suricata.yaml` de la version 7), `$GENEVE_PORTS`, `$VXLAN_PORTS`, `$TEREDO_PORTS` et toute
+  autre variable restent inconnus : règle ignorée. Testé en labo (`ids_regle_sans_contenu_positif_evalue_ses_negations`,
+  `ids_variable_inconnue_ignoree`, `ids_variables_standard_de_suricata`) ; à mesurer en VM (compte des règles ignorées
+  sur un jeu ET Open).
 - **Télémétrie** : capture réseau.
 - **Tests** : ceux des modules, plus ceux du second audit pour l'IDS (ci-dessus) ; aucune mesure de faux positifs
   pendant la phase 3.
