@@ -139,7 +139,11 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 > checked yet.
 
 Each `vX.Y` tag triggers the *Publication* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
-GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
+GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`); after a failed read
+they try again after 15 min, then 1 h, then daily (a 404 reads "manifeste introuvable (404)"), and a check failing for
+24 h or more shows as "to check" on the Health page, as does a manifest **older than the installed version** (a replaced
+manifest could freeze updates; it used to read "up to date"; audit of 2026-11-23, A-3-2 and T-12, unit-tested; scenario
+for the older manifest added to the CI update job). The manifest is
 strict (known fields only, 64 KB at most, a single file: the MSI package) and is never authoritative on its own, since
 it is not signed. Automatic installation is off by default; when on, it installs a package only if its hash is the one
 in the manifest, if it is signed by one of the **keys pinned in the binary** (SHA-256 hashes of the public keys, repo
