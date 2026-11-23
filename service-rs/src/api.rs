@@ -14,16 +14,114 @@ use crate::commun::{self, Alerte, ConfigApi};
 use crate::export;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 
 pub const FICHIER_JETON: &str = "api-jeton.txt";
 const NOM_REGLE: &str = "deR4Tizer-API";
-const MAX_CONNEXIONS: usize = 16;
+pub const MAX_CONNEXIONS: usize = 16;
+/// Places de la boucle locale quand l'API écoute aussi sur le réseau (audit du 2026-11-23, A-1-3) : avant, 16 connexions
+/// muettes ouvertes depuis le poste, par n'importe quel compte, prenaient toutes les places et le SIEM distant n'avait
+/// plus rien, sans alerte ; il en garde maintenant 12 au moins
+pub const MAX_LOCALES: usize = 4;
+/// Au plus un signal (SIEM et journal) par fenêtre quand des connexions sont refusées faute de place (A-1-3)
+pub const FENETRE_SIGNAL_REFUS: Duration = Duration::from_secs(600);
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-static CONNEXIONS: AtomicUsize = AtomicUsize::new(0);
+static PLACES: Mutex<Places> = Mutex::new(Places { total: 0, locales: 0 });
+static SIGNAL: Mutex<SignalRefus> = Mutex::new(SignalRefus { dernier: None, quota_local: 0, plein: 0 });
+
+/// Places occupées par les connexions en cours de traitement
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Places {
+    pub total: usize,
+    /// Connexions venues de la boucle locale (127.0.0.0/8, ::1)
+    pub locales: usize,
+}
+
+/// Sort d'une connexion acceptée par le système
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Admission {
+    Acceptee,
+    /// Adresse hors de la liste du SIEM (défense en profondeur, en plus du pare-feu) : fermée sans signal, comme avant
+    AdresseRefusee,
+    /// Boucle locale déjà à MAX_LOCALES places, API ouverte sur le réseau (A-1-3)
+    QuotaLocal,
+    /// Toutes les places prises
+    Plein,
+}
+
+/// Décision pure (A-1-3). Sur le réseau, la boucle locale n'a que MAX_LOCALES places : un programme du poste ne peut plus
+/// prendre celles du SIEM. En écoute locale seule, tous les clients, SIEM compris, viennent de la boucle locale : aucun
+/// quota ne peut les départager (limite déclarée), seul le signal de refus reste
+pub fn admettre(places: Places, locale: bool, autorisee: bool, reseau: bool) -> Admission {
+    if !autorisee {
+        Admission::AdresseRefusee
+    } else if places.total >= MAX_CONNEXIONS {
+        Admission::Plein
+    } else if reseau && locale && places.locales >= MAX_LOCALES {
+        Admission::QuotaLocal
+    } else {
+        Admission::Acceptee
+    }
+}
+
+/// Refus faute de place comptés entre deux signaux
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignalRefus {
+    pub dernier: Option<Instant>,
+    pub quota_local: u64,
+    pub plein: u64,
+}
+
+impl SignalRefus {
+    /// Décision pure : compte le refus ; Some((quota_local, plein)) quand un signal est dû (premier refus, puis premier
+    /// refus après FENETRE_SIGNAL_REFUS), avec les refus comptés depuis le signal précédent, remis à zéro. Une ligne par
+    /// fenêtre, jamais une par connexion
+    pub fn noter(&mut self, refus: Admission, maintenant: Instant) -> Option<(u64, u64)> {
+        match refus {
+            Admission::QuotaLocal => self.quota_local += 1,
+            Admission::Plein => self.plein += 1,
+            Admission::Acceptee | Admission::AdresseRefusee => return None,
+        }
+        if self.dernier.is_some_and(|d| maintenant.saturating_duration_since(d) < FENETRE_SIGNAL_REFUS) {
+            return None;
+        }
+        self.dernier = Some(maintenant);
+        let compte = (self.quota_local, self.plein);
+        (self.quota_local, self.plein) = (0, 0);
+        Some(compte)
+    }
+}
+
+/// Texte du signal de refus (pur)
+pub fn message_refus(quota_local: u64, plein: u64) -> String {
+    format!("API d'export : connexions refusées faute de place depuis le dernier signal : {quota_local} venue(s) de la boucle \
+        locale au-delà de ses {MAX_LOCALES} places, {plein} avec les {MAX_CONNEXIONS} places prises. Un programme du poste \
+        tient peut-être les places de l'API (A-1-3) ; le SIEM peut ne plus recevoir de réponse")
+}
+
+fn verrou<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Place rendue à la fin du traitement de la connexion, quoi qu'il arrive
+struct Place {
+    places: &'static Mutex<Places>,
+    locale: bool,
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        let mut p = verrou(self.places);
+        p.total = p.total.saturating_sub(1);
+        if self.locale {
+            p.locales = p.locales.saturating_sub(1);
+        }
+    }
+}
 
 // ------------------------------------------------------------ jeton
 
@@ -134,24 +232,60 @@ pub fn demarrer(config: &ConfigApi) {
         };
         let _ = ecoute.set_nonblocking(true);
         commun::journal(&format!("API d'export : écoute sur {adresse}"));
-        while GENERATION.load(Ordering::SeqCst) == generation {
-            match ecoute.accept() {
-                Ok((flux, pair)) => {
-                    // Défense en profondeur, en plus de la règle de pare-feu : seulement les adresses du SIEM
-                    if CONNEXIONS.load(Ordering::SeqCst) >= MAX_CONNEXIONS || !autorisee(pair.ip(), &autorisees) {
-                        continue;
-                    }
-                    CONNEXIONS.fetch_add(1, Ordering::SeqCst);
-                    let j = jeton.clone();
-                    std::thread::spawn(move || {
-                        let _ = traiter(flux, &j);
-                        CONNEXIONS.fetch_sub(1, Ordering::SeqCst);
-                    });
-                }
-                Err(_) => std::thread::sleep(Duration::from_millis(250)),
-            }
-        }
+        ecouter(&ecoute, &jeton, &autorisees, reseau, &PLACES, &SIGNAL, &|| GENERATION.load(Ordering::SeqCst) == generation);
     }).unwrap();
+}
+
+/// Boucle d'acceptation, tant que `continuer` (fonction à part pour le test de saturation, A-1-3). Places décidées par
+/// `admettre` ; une connexion refusée est fermée aussitôt, et un refus faute de place est signalé au plus une fois par
+/// fenêtre (`SignalRefus`)
+pub fn ecouter(ecoute: &TcpListener, jeton: &str, autorisees: &[String], reseau: bool, places: &'static Mutex<Places>,
+    signal: &Mutex<SignalRefus>, continuer: &dyn Fn() -> bool) {
+    while continuer() {
+        match ecoute.accept() {
+            Ok((flux, pair)) => {
+                let locale = pair.ip().is_loopback();
+                // Défense en profondeur, en plus de la règle de pare-feu : seulement les adresses du SIEM
+                let admission = {
+                    let mut p = verrou(places);
+                    let a = admettre(*p, locale, autorisee(pair.ip(), autorisees), reseau);
+                    if a == Admission::Acceptee {
+                        p.total += 1;
+                        if locale {
+                            p.locales += 1;
+                        }
+                    }
+                    a
+                };
+                if admission != Admission::Acceptee {
+                    drop(flux);
+                    signaler(signal, admission);
+                    continue;
+                }
+                let place = Place { places, locale };
+                let j = jeton.to_string();
+                // Fil impossible à créer : la fermeture est rendue, la place avec elle (pas de panique)
+                let _ = std::thread::Builder::new().name("api-connexion".into()).spawn(move || {
+                    let _place = place;
+                    let _ = traiter(flux, &j);
+                });
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
+}
+
+/// Signal d'un refus faute de place : journal et SIEM (source « api », type « connexions-refusees »), une fois par fenêtre
+fn signaler(signal: &Mutex<SignalRefus>, refus: Admission) {
+    let du = verrou(signal).noter(refus, Instant::now());
+    if let Some((quota_local, plein)) = du {
+        let m = message_refus(quota_local, plein);
+        commun::journal(&m);
+        crate::siem::enregistrer(crate::siem::Evenement {
+            heure: commun::maintenant(), source: "api".into(), type_: "connexions-refusees".into(), niveau: "Alerte".into(),
+            message: m, ..Default::default()
+        });
+    }
 }
 
 /// Ouvre le port sur le réseau local (profils Domaine et Privé, jamais Public), ou retire la règle

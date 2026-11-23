@@ -1078,6 +1078,27 @@ pub fn lire_securite_handle(f: &std::fs::File) -> Option<Securite> {
     }
 }
 
+/// Entrées d'un SDDL telles que Windows les comprend (tests : droits du tube, A-1-4) ; None si le SDDL est invalide ou
+/// sans DACL
+#[cfg(test)]
+pub fn securite_de_sddl(sddl: &str) -> Option<Securite> {
+    use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{GetSecurityDescriptorDacl, ACL, PSECURITY_DESCRIPTOR, PSID};
+    let s = large(sddl);
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(s.as_ptr()), SDDL_REVISION_1, &mut sd, None).ok()?;
+        let (mut present, mut defaut) = (BOOL::default(), BOOL::default());
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaut).is_err() || !present.as_bool() || dacl.is_null() {
+            let _ = LocalFree(HLOCAL(sd.0));
+            return None;
+        }
+        analyser_descripteur(PSID::default(), dacl, sd)
+    }
+}
+
 /// Propriétaire et entrées d'un descripteur de sécurité rendu par Windows (libéré ici)
 unsafe fn analyser_descripteur(proprietaire: windows::Win32::Security::PSID, dacl: *mut windows::Win32::Security::ACL,
                                sd: windows::Win32::Security::PSECURITY_DESCRIPTOR) -> Option<Securite> {
