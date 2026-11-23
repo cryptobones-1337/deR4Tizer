@@ -9,10 +9,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-/// Processus où s'arrête la remontée : lanceurs du système, pas des maillons d'attaque
+/// Noms des candidats racines : leur chemin est lu par `maj` (le nom seul ne décide rien, voir RACINES_CHEMINS)
 const RACINES: &[&str] = &[
-    "explorer", "services", "svchost", "wininit", "winlogon", "userinit", "system", "smss", "csrss", "sihost", "runtimebroker", "taskhostw",
+    "explorer", "services", "svchost", "wininit", "winlogon", "userinit", "smss", "csrss", "sihost", "runtimebroker", "taskhostw",
 ];
+
+/// Processus où s'arrête la remontée : lanceurs du système, pas des maillons d'attaque, par chemin EXACT relatif au
+/// dossier Windows. Avant, le nom suffisait : un svchost.exe ou taskhostw.exe déposé dans un dossier temporaire coupait
+/// la chaîne et chaque étape restait seule avec son signal (audit du 2026-11-23, A-7-5). Chemin inconnu : pas une racine
+const RACINES_CHEMINS: &[&str] = &[
+    "explorer.exe", r"system32\services.exe", r"system32\svchost.exe", r"system32\wininit.exe", r"system32\winlogon.exe",
+    r"system32\userinit.exe", r"system32\smss.exe", r"system32\csrss.exe", r"system32\sihost.exe", r"system32\runtimebroker.exe",
+    r"system32\taskhostw.exe",
+];
+
+/// Remontée bornée (garde contre une chaîne géante quand des chemins manquent ; l'arbre réel est bien moins profond)
+const PROFONDEUR_MAX: usize = 32;
+
+/// Décision pure (testée) : ce programme est-il une racine des chaînes ? Seulement par son chemin exact sous le dossier
+/// Windows (casse ignorée) ; chemin vide ou ailleurs : non (sens prudent, la chaîne continue)
+pub(crate) fn racine(chemin: &str, dossier_windows: &str) -> bool {
+    crate::reponse::chemin_exact_sous_windows(chemin, dossier_windows, RACINES_CHEMINS)
+}
 const SEUIL_CHAINE: i32 = 12;
 const DUREE_SIGNAL: Duration = Duration::from_secs(3600);
 
@@ -95,6 +113,13 @@ pub struct Arbre {
 impl Arbre {
     /// Met à jour la liste des processus ; garde 1 h les processus terminés pour reconstituer les chaînes
     pub fn maj(&mut self, liste: &HashMap<u32, InfoListe>) {
+        self.maj_avec(liste, &crate::natif::chemin_processus);
+    }
+
+    /// `maj`, avec la lecture du chemin d'un programme vivant (`natif::chemin_processus` ; synthétique dans les tests) :
+    /// le chemin d'un candidat racine (nom de RACINES) est lu tant qu'il manque, car c'est lui seul qui en fait une
+    /// racine (audit du 2026-11-23, A-7-5)
+    pub fn maj_avec(&mut self, liste: &HashMap<u32, InfoListe>, chemin_de: &dyn Fn(u32) -> String) {
         let maintenant = Instant::now();
         for (&pid, p) in liste {
             let e = self.processus.entry(pid).or_insert_with(|| Processus {
@@ -106,6 +131,9 @@ impl Arbre {
                 self.signaux.remove(&pid);
             }
             e.vu = maintenant;
+            if e.chemin.is_empty() && RACINES.iter().any(|r| r.eq_ignore_ascii_case(&e.nom)) {
+                e.chemin = chemin_de(pid);
+            }
         }
         for (pid, p) in self.processus.iter_mut() {
             p.vivant = liste.contains_key(pid);
@@ -186,13 +214,14 @@ impl Arbre {
 
     /// Remonte jusqu'à la racine : liste [racine, …, pid]
     fn ascendance(&self, pid: u32) -> Vec<u32> {
+        let windows = crate::natif::dossier_windows();
         let mut chemin = vec![pid];
         let mut vus = HashSet::from([pid]);
         let mut courant = pid;
         while let Some(p) = self.processus.get(&courant) {
             let parent = p.parent;
             let Some(pp) = self.processus.get(&parent) else { break };
-            if RACINES.contains(&pp.nom.to_lowercase().as_str()) || !vus.insert(parent) || parent <= 4 {
+            if racine(&pp.chemin, &windows) || !vus.insert(parent) || parent <= 4 || chemin.len() >= PROFONDEUR_MAX {
                 break;
             }
             chemin.push(parent);

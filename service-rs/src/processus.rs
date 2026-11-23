@@ -18,10 +18,15 @@ use wmi::{COMLibrary, Variant, WMIConnection};
 
 const JOURNAL_SYSMON: &str = "Microsoft-Windows-Sysmon/Operational";
 
-const BUREAUTIQUE: &[&str] = &["winword", "excel", "powerpnt", "outlook", "onenote", "msaccess", "mspub", "visio", "acrord32", "acrobat", "foxitpdfreader", "hwp"];
+/// Documents (PRC-001). olk : le nouvel Outlook (audit du 2026-11-23, A-7-8)
+const BUREAUTIQUE: &[&str] = &["winword", "excel", "powerpnt", "outlook", "olk", "onenote", "msaccess", "mspub", "visio", "acrord32", "acrobat", "foxitpdfreader", "hwp"];
+/// Programmes qu'un document piégé lance pour exécuter du code (PRC-001). Depuis A-7-8 (audit du 2026-11-23) : aide
+/// compilée (hh), paquet MSI (msiexec), forfiles, cmstp, odbcconf, regasm, regsvcs, msxsl ; conhost n'y est pas
+/// (Windows le crée pour toute console : faux positif Critique), justification de chacun dans la fiche PRC-001
 const INTERPRETEURS: &[&str] = &[
     "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "certutil", "bitsadmin", "msbuild",
-    "installutil", "wmic", "schtasks", "curl", "bash",
+    "installutil", "wmic", "schtasks", "curl", "bash", "hh", "msiexec", "forfiles", "cmstp", "odbcconf", "regasm", "regsvcs",
+    "msxsl",
 ];
 
 #[derive(Clone)]
@@ -31,6 +36,9 @@ pub struct InfoProcessus {
     pub parent: Option<String>,
     /// Chemin complet du programme parent (pour l'apprentissage : le nom seul s'usurpe)
     pub parent_chemin: Option<String>,
+    /// Nom d'origine du fichier (ressource de version), lu dans le champ OriginalFileName de Sysmon 1 : reconnaît une
+    /// copie renommée de PowerShell (audit du 2026-11-23, A-7-1). Absent des 4688 et de WMI
+    pub nom_origine: Option<String>,
     vu: Instant,
 }
 
@@ -43,8 +51,15 @@ impl InfoProcessus {
             ligne_commande: ligne_commande.map(Into::into),
             parent: parent_chemin.map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
             parent_chemin: parent_chemin.map(Into::into),
+            nom_origine: None,
             vu: Instant::now(),
         }
+    }
+
+    /// Même processus, avec le nom d'origine du fichier que Sysmon aurait lu
+    pub(crate) fn avec_nom_origine(mut self, nom: &str) -> InfoProcessus {
+        self.nom_origine = Some(nom.into());
+        self
     }
 }
 
@@ -74,12 +89,34 @@ fn regles() -> &'static [(Regex, &'static str, &'static str)] {
              "PowerShell obscurci ou qui télécharge du code", crate::regles::PRC_002),
             (Regex::new(&format!("(?i){}", OUTILS_PRC003.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
              "détournement d'outil Windows (LOLBin)", crate::regles::PRC_003),
-            (Regex::new(r#"(?i)(^|[\\/"\s])(chrome|msedge|brave)\.exe"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
+            // Navigateurs Chromium (audit du 2026-11-23, A-7-9 : Vivaldi, Opera, Arc, Yandex dont le programme s'appelle
+            // browser.exe, reconnu dans son seul dossier ; Chromium s'appelle chrome.exe). Firefox n'est pas retenu
+            (Regex::new(r#"(?i)((^|[\\/"\s])(chrome|msedge|brave|vivaldi|opera|arc)\.exe|\\yandexbrowser\\application\\browser\.exe)"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
              "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)", crate::regles::PRC_004),
-            (Regex::new(r"(?i)vssadmin.*delete\s+shadows|wbadmin.*delete\s+(catalog|systemstatebackup)|bcdedit.*recoveryenabled\s+no|wmic.*shadowcopy\s+delete").unwrap(),
+            (Regex::new(MOTIF_PRC005).unwrap(),
              "suppression des sauvegardes (typique d'un rançongiciel)", crate::regles::PRC_005),
         ]
     })
+}
+
+/// PRC-005 : suppression des clichés ou des sauvegardes, et démarrage sans récupération. Depuis A-7-3 (audit du
+/// 2026-11-23) : clichés supprimés par WMI ou CIM depuis PowerShell, espace des clichés réduit à moins de 1 000 Mo
+/// (Windows efface alors les clichés ; une taille en Go, en % ou illimitée n'est pas visée), `wbadmin delete backup`,
+/// `bootstatuspolicy ignoreallfailures`, et diskshadow dont la ligne dit `delete shadows` (diskshadow /s seul : le
+/// script n'est pas lu, la ligne ne dit pas s'il supprime)
+const MOTIF_PRC005: &str = r#"(?i)vssadmin.*delete\s+shadows|vssadmin.*resize\s+shadowstorage.*/maxsize=\d{1,3}(?:mb|kb|b)?(?:[\s"]|$)|wbadmin.*delete\s+(?:catalog|systemstatebackup|backup)|bcdedit.*recoveryenabled\s+no|bcdedit.*bootstatuspolicy\s+ignoreallfailures|wmic.*shadowcopy\s+delete|win32_shadowcopy.*(?:remove-(?:wmiobject|ciminstance)|\.delete\(\))|diskshadow.*delete\s+shadows|delete\s+shadows.*diskshadow"#;
+
+/// Noms d'origine (ressource de version, champ OriginalFileName de Sysmon 1) de PowerShell : Windows PowerShell et
+/// PowerShell 7 (pwsh.exe porte le nom d'origine de sa bibliothèque, pwsh.dll)
+const NOMS_ORIGINE_POWERSHELL: &[&str] = &["powershell.exe", "pwsh.dll", "pwsh.exe", "powershell_ise.exe"];
+
+/// Décision pure (testée) : ligne lue par les motifs. Copie renommée de PowerShell reconnue par son nom d'origine
+/// (Sysmon) : la ligne est lue comme celle de PowerShell, préfixée de son nom (PRC-002 cherche l'interpréteur dans la
+/// ligne) ; la ligne montrée dans l'alerte reste la vraie. Sans nom d'origine (4688, WMI) : la ligne seule (A-7-1)
+pub(crate) fn ligne_pour_motifs(p: &InfoProcessus) -> Option<String> {
+    let ligne = p.ligne_commande.as_deref()?;
+    let powershell = p.nom_origine.as_deref().is_some_and(|n| NOMS_ORIGINE_POWERSHELL.iter().any(|x| x.eq_ignore_ascii_case(n.trim())));
+    Some(if powershell { format!("powershell {ligne}") } else { ligne.to_string() })
 }
 
 pub fn suspicion(ligne: &str) -> Option<&'static str> {
@@ -123,7 +160,8 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
             document = true;
         }
     }
-    let motifs = p.ligne_commande.as_deref().map(suspicions_regles).unwrap_or_default();
+    let analysee = ligne_pour_motifs(p).unwrap_or_default();
+    let motifs = suspicions_regles(&analysee);
     raisons.extend(motifs.iter().map(|(r, _)| r.to_string()));
     if raisons.is_empty() {
         return None;
@@ -133,8 +171,9 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
     let ligne = p.ligne_commande.clone().unwrap_or_default();
     let ligne: String = if ligne.chars().count() > 300 { ligne.chars().take(300).collect::<String>() + "…" } else { ligne };
     // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
-    // document bureautique qui lance un interpréteur (macro ou exploit)
-    let fort = document || ids.contains(&crate::regles::PRC_005);
+    // document bureautique qui lance un interpréteur (macro ou exploit), vidage de la mémoire de LSASS par comsvcs.dll
+    // (vol d'identifiants, A-7-7)
+    let fort = document || ids.contains(&crate::regles::PRC_005) || (ids.contains(&crate::regles::PRC_003) && outils_lolbin(&analysee).contains(&"comsvcs"));
     Some(Alerte {
         regle: regle.into(),
         id: commun::nouvel_id(),
@@ -147,11 +186,11 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),
         raisons: format!("{} : {ligne}", raisons.join(", ")),
         pid: Some(pid),
-        comportement: code_comportement(document, &ids, p.ligne_commande.as_deref().unwrap_or("")),
+        comportement: code_comportement(document, &ids, &analysee),
         // PRC-002 et PRC-003 : les techniques des motifs vus (règles à plusieurs comportements, posées par l'alerte)
         mitre: match regle {
-            crate::regles::PRC_002 => technique_prc002(p.ligne_commande.as_deref().unwrap_or("")),
-            crate::regles::PRC_003 => technique_prc003(p.ligne_commande.as_deref().unwrap_or("")),
+            crate::regles::PRC_002 => technique_prc002(&analysee),
+            crate::regles::PRC_003 => technique_prc003(&analysee),
             _ => String::new(),
         },
         ..Default::default()
@@ -230,6 +269,7 @@ pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) 
         ligne_commande: c.ligne_commande.clone().or_else(|| meme.and_then(|i| i.ligne_commande.clone())),
         parent: parent_chemin.as_deref().map(nom_sans_extension).or_else(|| meme.and_then(|i| i.parent.clone())),
         parent_chemin,
+        nom_origine: meme.and_then(|i| i.nom_origine.clone()),
         vu: Instant::now(),
     }
 }
@@ -297,10 +337,19 @@ const INTERPRETEUR_PRC002: &str = r"(powershell|pwsh).*";
 
 /// PRC-002 : (code du comportement, motif de la ligne de commande, techniques ATT&CK). T1027 Code obscurci ne vient que
 /// des motifs d'obscurcissement ; un téléchargement, l'exécution d'une chaîne ou une fenêtre cachée portent T1059.001
-/// seul (revue externe du 2026-11-22, point mineur : « code obscurci » sur un simple téléchargement)
+/// seul (revue externe du 2026-11-22, point mineur : « code obscurci » sur un simple téléchargement).
+/// Audit du 2026-11-23, A-7-1 : `obscurci` reconnaît toute abréviation de -EncodedCommand que PowerShell accepte (-e,
+/// -ec, -en, -enc, -enco…, préfixe « - », « / » ou tiret typographique, charge entre guillemets) ; `telecharge`
+/// reconnaît iex avec un téléchargement dans l'ordre qu'on veut, et irm, iwr, Invoke-WebRequest, Invoke-RestMethod ou
+/// Start-BitsTransfer suivis d'une adresse http(s). Motifs sans imbrication de répétitions (crate regex : temps linéaire)
 const MOTIFS_PRC002: &[(&str, &str, &[&str])] = &[
-    ("obscurci", r"\s-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|frombase64string", &["T1059.001", "T1027"]),
-    ("telecharge", r"downloadstring|downloadfile|net\.webclient|invoke-expression|\biex\b.*(http|\$)|-w(indowstyle)?\s+h(idden)?.*(http|iex|-enc)", &["T1059.001"]),
+    ("obscurci", r#"\s[-/\x{2013}\x{2014}\x{2015}]e(?:c|n[a-z]*)?\s+["']?[A-Za-z0-9+/=]{40,}|frombase64string"#, &["T1059.001", "T1027"]),
+    ("telecharge", concat!(
+        r"downloadstring|downloadfile|net\.webclient|invoke-expression",
+        r"|\biex\b.*(?:http|\$|\b(?:irm|iwr|invoke-webrequest|invoke-restmethod|start-bitstransfer)\b)",
+        r"|(?:https?://|\b(?:irm|iwr|invoke-webrequest|invoke-restmethod|start-bitstransfer)\b).*\biex\b",
+        r"|\b(?:irm|iwr|invoke-webrequest|invoke-restmethod|start-bitstransfer)\b.*https?://",
+        r"|-w(?:indowstyle)?\s+h(?:idden)?.*(?:http|iex|-enc)"), &["T1059.001"]),
 ];
 
 fn motifs_prc002() -> &'static [(Regex, &'static str, &'static [&'static str])] {
@@ -330,12 +379,19 @@ pub(crate) fn technique_prc002(ligne: &str) -> String {
 /// PRC-003 : (outil, motif de la ligne de commande, technique ATT&CK de ce que l'outil fait). Le motif de la règle est la
 /// réunion de ces motifs : l'outil et sa technique viennent du motif qui a correspondu, jamais d'un nom vu ailleurs dans
 /// la ligne (revue de l'auditeur du 2026-11-22, point 1 : certutil ne porte plus T1047)
+/// Audit du 2026-11-23, A-7-7 : certutil qui récupère une adresse par -f ou -verifyctl, mshta et regsvr32 sur un chemin
+/// réseau (UNC) ou avec « -i: », rundll32 d'une DLL d'un dossier où l'utilisateur écrit (T1218.011), vidage de la
+/// mémoire d'un processus par comsvcs.dll (LSASS, T1003.001, signal fort), paquet MSI installé depuis une adresse
+/// http(s) (T1218.007 ; un paquet local ou sur un partage, déploiement ordinaire, n'est pas visé)
 const OUTILS_PRC003: &[(&str, &str, &str)] = &[
-    ("certutil", r"certutil.*(-urlcache|-decode|-f\s+http)", "T1105"),
+    ("certutil", r"certutil.*(?:[-/](?:urlcache|decode)|[-/](?:verifyctl|f)\b.*https?://)", "T1105"),
     ("bitsadmin", r"bitsadmin.*/transfer", "T1197"),
-    ("mshta", r"mshta.*(http|javascript:|vbscript:)", "T1218"),
-    ("regsvr32", r"regsvr32.*/i:http", "T1218"),
+    ("mshta", r"mshta.*(?:http|javascript:|vbscript:|\\\\)", "T1218"),
+    ("regsvr32", r"regsvr32.*[/-]i:\s*(?:http|\\\\)", "T1218"),
     ("rundll32", r"rundll32.*javascript:", "T1218"),
+    ("rundll32_dll", r"rundll32.*(?:\\users\\public\\|\\appdata\\|\\temp\\|\\programdata\\)[^,]*\.dll", "T1218.011"),
+    ("comsvcs", r"comsvcs.*(?:minidump|#\s*\+?0*24\b)", "T1003.001"),
+    ("msiexec", r"msiexec.*https?://", "T1218.007"),
     ("wmic", r"wmic.*process\s+call\s+create", "T1047"),
 ];
 
@@ -480,6 +536,7 @@ impl Processus {
                     ligne_commande: None,
                     parent: None,
                     parent_chemin: None,
+                    nom_origine: None,
                     vu: Instant::now(),
                 });
                 if info.parent.is_none() {
@@ -517,6 +574,7 @@ impl Processus {
             ligne_commande: texte(o, "CommandLine"),
             parent: nombre(o, "ParentProcessId").and_then(nom_de),
             parent_chemin: nombre(o, "ParentProcessId").map(crate::natif::chemin_processus).filter(|c| !c.is_empty()),
+            nom_origine: None,
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());
@@ -537,6 +595,7 @@ impl Processus {
             ligne_commande: d.get("CommandLine").cloned(),
             parent: d.get("ParentImage").map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
             parent_chemin: d.get("ParentImage").cloned(),
+            nom_origine: d.get("OriginalFileName").map(|s| s.trim()).filter(|s| !s.is_empty() && *s != "-").map(String::from),
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());

@@ -96,9 +96,15 @@ const CRITIQUES: &[&str] = &[
 
 /// Chemin d'un processus critique : exactement l'un des CRITIQUES sous le dossier Windows (casse ignorée)
 pub fn chemin_critique(chemin: &str, dossier_windows: &str) -> bool {
+    chemin_exact_sous_windows(chemin, dossier_windows, CRITIQUES)
+}
+
+/// Décision pure : le chemin est exactement l'un des `relatifs` (en minuscules) sous le dossier Windows, casse ignorée
+/// (aussi utilisée par les racines des chaînes, chaines::racine)
+pub fn chemin_exact_sous_windows(chemin: &str, dossier_windows: &str, relatifs: &[&str]) -> bool {
     let c = chemin.to_lowercase();
     let w = dossier_windows.trim_end_matches('\\').to_lowercase();
-    c.strip_prefix(&w).and_then(|r| r.strip_prefix('\\')).is_some_and(|r| CRITIQUES.contains(&r))
+    c.strip_prefix(&w).and_then(|r| r.strip_prefix('\\')).is_some_and(|r| relatifs.contains(&r))
 }
 
 /// Raison de refuser d'agir sur ce processus, s'il y en a une

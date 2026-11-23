@@ -56,14 +56,14 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
-| T1059.001 PowerShell | PRC-002 | Partiel : testé en labo avec Sysmon seulement (S-10, 2026-11-16) | Mesure sans Sysmon (lecture des 4688 faite, défaut structurel 1 traité) ; formes courantes manquées (`irm … \| iex`, `-ec`, `/e`, `iwr -OutFile` : audit du 2026-11-23, A-7-1) ; blocs de script 4104 non lus (A-7-4) |
+| T1059.001 PowerShell | PRC-002 | Partiel : testé en labo avec Sysmon seulement (S-10, 2026-11-16) | Mesure sans Sysmon (lecture des 4688 faite, défaut structurel 1 traité) ; formes courantes (`irm … \| iex`, `-ec`, `/e`, `iwr -OutFile`, copie renommée vue par Sysmon) ajoutées après l'audit du 2026-11-23 (A-7-1, testé en labo, à essayer en VM) ; copie renommée sans Sysmon non vue ; blocs de script 4104 non lus (A-7-4) |
 | T1059.003 Invite de commandes | CHA-001 | Partiel | Idem |
 | T1059.005 / .007 VBScript, JScript | PRC-001 ; baseline (WSH, ASR) | Règle, non testée | wscript et cscript absents de PRC-003 |
 | T1204.002 Fichier lancé par l'utilisateur | PRC-001, CHA-001, RES-003 | Règle, non testée | Scénario |
 | T1047 WMI | PRC-003 (`wmic process call create`) ; ASR (profil renforcé) | Règle, non testée | Scénario ; processus enfants de WmiPrvSE |
 | T1053.005 Tâche planifiée | PER-001 | **Testé en labo, consolidé : 10/10 en A, B et C (S-09, campagne Kali, lot 4, 2026-11-22)** | Rien dans la liste ; autres formes de tâche hors liste |
 | T1569.002 Exécution par service | COR-R5 | Testé en labo, en partie (S-13, 2026-11-15) | Service lancé depuis un dossier système |
-| T1218 Binaires système détournés | PRC-003 (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic) | Règle, non testée | Scénario ; msiexec, installutil absents |
+| T1218 Binaires système détournés | PRC-003 (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic ; depuis A-7-7 : rundll32 d'une DLL d'un dossier inscriptible T1218.011, msiexec depuis une adresse T1218.007, mshta et regsvr32 sur un chemin UNC) ; PRC-001 (cmstp, odbcconf, regasm, regsvcs, msxsl lancés par un document, A-7-8) | Règle, testée en labo (audit du 2026-11-23, A-7-7) | Scénario ; installutil absent de PRC-003 |
 
 ### Persistance
 
@@ -99,7 +99,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
-| T1027 Code obscurci | PRC-002 | Partiel (Sysmon) | Obscurcissement vu sur la ligne de commande seulement ; abréviations de `-EncodedCommand` manquées (A-7-1) ; blocs de script 4104 non lus (A-7-4) |
+| T1027 Code obscurci | PRC-002 | Partiel (Sysmon) | Obscurcissement vu sur la ligne de commande seulement ; toutes les abréviations de `-EncodedCommand` reconnues depuis l'audit du 2026-11-23 (A-7-1, testé en labo) ; blocs de script 4104 non lus (A-7-4) |
 | T1036 Programme déguisé | étiquette « non signé » seulement | Aucune règle | Outil système copié ou renommé (T1036.003) |
 
 ### Vol d'identifiants
@@ -107,8 +107,8 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
 | T1110 Force brute | COR-R1, COR-R2 | **Testé en labo, consolidé : 10 sur 10 (S-01, 2026-11-15)** | Rien : seule mesure consolidée |
-| T1555.003 / T1539 Secrets et cookies des navigateurs | VOL-001, PRC-004 | Testé en labo (S-14, 2026-11-15) | 10 essais |
-| T1003.001 Mémoire de LSASS | ASR (baseline) | Vu sans alerte (S-15, 2026-11-16, Sysmon) | Règle ; audit « Kernel Object » proposé |
+| T1555.003 / T1539 Secrets et cookies des navigateurs | VOL-001, PRC-004 (Chrome, Edge, Brave ; Vivaldi, Opera, Yandex, Arc depuis A-7-9) | Testé en labo (S-14, 2026-11-15) | 10 essais |
+| T1003.001 Mémoire de LSASS | ASR (baseline) ; PRC-003 (comsvcs.dll MiniDump, Critique, depuis l'audit du 2026-11-23, A-7-7) | Vu sans alerte (S-15, 2026-11-16, Sysmon) ; forme comsvcs testée en labo, à remesurer | Règle ; audit « Kernel Object » proposé |
 | T1003.002 Base SAM | aucune | Aucune règle | `reg save` des ruches SAM et SYSTEM |
 | T1557.001 Empoisonnement de la résolution de noms | EXP-NDR-001 | Testé en labo (S-22, S-23, S-25, S-26, 2026-11-16) | 10 essais ; NBNS passif jamais exercé |
 | T1557.002 Usurpation ARP | EXP-NDR-001 | Testé en labo (S-20, 2026-11-16) | 10 essais |
@@ -148,7 +148,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1041 Exfiltration par le canal de contrôle | RES-002 | Partiel (connexion, pas le volume, S-12, 2026-11-16) | Volume par programme (le module Trafic l'a) |
 | T1567.002 Vers un stockage en ligne | aucune | Aucune règle | rclone, MEGA ; volume sortant inhabituel |
 | T1486 Chiffrement des données | LEU-001, LEU-002, suspension | Testé en labo (S-16, 2026-11-16) | 10 essais |
-| T1490 Sauvegardes supprimées | PRC-005 | Règle, non testée | Scénario (commande portée sans être exécutée) |
+| T1490 Sauvegardes supprimées | PRC-005 (formes PowerShell, `resize shadowstorage`, `wbadmin delete backup`, `bootstatuspolicy`, `diskshadow` ajoutées après l'audit du 2026-11-23, A-7-3) | Règle, testée en labo | Scénario (commande portée sans être exécutée) |
 | T1489 Services arrêtés | COR-R7 | Partiel (services de sécurité) | Arrêt en série de services |
 
 ## Bilan

