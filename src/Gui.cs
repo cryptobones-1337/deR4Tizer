@@ -221,8 +221,10 @@ namespace DeR4Tizer
             try
             {
                 // Niveau Identification : le service lit le jeton de la connexion pour identifier le client, sans
-                // pouvoir agir avec (durcissement du canal)
-                using (var tube = new NamedPipeClientStream(".", Commun.NomPipe, PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Identification))
+                // pouvoir agir avec (durcissement du canal). Lecture et écriture des données seulement (audit A-1-4) :
+                // le sens « InOut » demanderait GENERIC_WRITE, que les droits du tube refusent (il donnerait le droit
+                // de créer une instance du tube)
+                using (var tube = new NamedPipeClientStream(".", Commun.NomPipe, PipeAccessRights.ReadData | PipeAccessRights.WriteData, PipeOptions.None, TokenImpersonationLevel.Identification, HandleInheritability.None))
                 {
                     tube.Connect(3000);
                     // Le serveur du tube doit être le processus du service : un programme qui aurait pris le nom du

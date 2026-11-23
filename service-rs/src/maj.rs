@@ -431,12 +431,13 @@ fn lancer_installation(p: &ParametresScript) -> (String, String) {
 /// PowerShell : interrogation du service par son canal, code exact du script de production (testé tel quel
 /// sur un vrai tube). Pid-Service : processus du service `service` ; Lire-Reponse : $null si le tube `tube`
 /// n'est pas tenu par ce processus, sinon la réponse à {"Action":"verification"}. Connexion au niveau Identification :
-/// le service lit le jeton pour identifier le client, sans pouvoir agir avec (durcissement du canal).
+/// le service lit le jeton pour identifier le client, sans pouvoir agir avec (durcissement du canal). Lecture et écriture
+/// des données seulement (A-1-4) : les droits du tube refusent GENERIC_WRITE (sens « InOut ») hors SYSTEM.
 pub fn ps_canal(tube: &str, service: &str) -> String {
     format!(
         "{PS_PID_SERVEUR}; \
          function Pid-Service {{ [uint32](Get-CimInstance Win32_Service -Filter \"Name='{service}'\").ProcessId }}; \
-         function Lire-Reponse {{ $c = New-Object IO.Pipes.NamedPipeClientStream('.', '{tube}', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification); $c.Connect(2000); \
+         function Lire-Reponse {{ $c = New-Object IO.Pipes.NamedPipeClientStream('.', '{tube}', [IO.Pipes.PipeAccessRights]'ReadData, WriteData', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None); $c.Connect(2000); \
            $ps = Pid-Serveur $c; $pv = Pid-Service; if ($pv -eq 0 -or $ps -ne $pv) {{ $c.Dispose(); return $null }}; \
            $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c); \
            $w.WriteLine('{{\"Action\":\"verification\"}}'); $l = $r.ReadLine(); $c.Dispose(); return $l }}"

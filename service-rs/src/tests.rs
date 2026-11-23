@@ -430,6 +430,125 @@ fn audit_api_adresses_autorisees_strictes() {
     assert_eq!(liste_powershell(&[]), "'127.0.0.1'");
 }
 
+/// Audit du 2026-11-23, A-1-3 : décision pure des places de l'API. Saturation simulée : 16 connexions muettes de la boucle
+/// locale, API ouverte sur le réseau : 4 places seulement, puis le SIEM distant est toujours servi, jusqu'à 16 places en
+/// tout. Écoute locale seule : aucun quota ne départage les clients (limite déclarée). Signal : une fois par fenêtre
+#[test]
+fn audit_a13_api_places_boucle_locale_et_signal() {
+    use crate::api::{admettre, message_refus, Admission, Places, SignalRefus, FENETRE_SIGNAL_REFUS, MAX_CONNEXIONS, MAX_LOCALES};
+    use std::time::{Duration, Instant};
+    let prendre = |p: &mut Places, locale: bool, reseau: bool| {
+        let a = admettre(*p, locale, true, reseau);
+        if a == Admission::Acceptee {
+            p.total += 1;
+            p.locales += usize::from(locale);
+        }
+        a
+    };
+    let mut p = Places::default();
+    let locales: Vec<Admission> = (0..16).map(|_| prendre(&mut p, true, true)).collect();
+    assert_eq!(locales.iter().filter(|a| **a == Admission::Acceptee).count(), MAX_LOCALES, "{locales:?}");
+    assert!(locales[MAX_LOCALES..].iter().all(|a| *a == Admission::QuotaLocal), "{locales:?}");
+    assert_eq!(p, Places { total: MAX_LOCALES, locales: MAX_LOCALES });
+    for i in 0..MAX_CONNEXIONS - MAX_LOCALES {
+        assert_eq!(prendre(&mut p, false, true), Admission::Acceptee, "SIEM distant servi malgré la boucle locale ({i})");
+    }
+    assert_eq!(prendre(&mut p, false, true), Admission::Plein, "16 places en tout");
+    assert_eq!(admettre(Places::default(), false, false, true), Admission::AdresseRefusee, "adresse hors liste");
+    // Écoute locale seule : tous les clients viennent de la boucle locale, 16 places
+    let mut l = Places::default();
+    assert!((0..MAX_CONNEXIONS).all(|_| prendre(&mut l, true, false) == Admission::Acceptee));
+    assert_eq!(prendre(&mut l, true, false), Admission::Plein);
+    // Signal : premier refus aussitôt, puis rien dans la fenêtre, puis les refus comptés depuis, après la fenêtre
+    let t0 = Instant::now();
+    let mut s = SignalRefus::default();
+    assert_eq!(s.noter(Admission::Acceptee, t0), None);
+    assert_eq!(s.noter(Admission::AdresseRefusee, t0), None, "adresse hors liste : pas de signal (pare-feu)");
+    assert_eq!(s.noter(Admission::QuotaLocal, t0), Some((1, 0)));
+    for k in 1..=11 {
+        assert_eq!(s.noter(if k % 2 == 0 { Admission::Plein } else { Admission::QuotaLocal }, t0 + Duration::from_secs(k)), None, "une ligne par fenêtre");
+    }
+    assert_eq!(s.noter(Admission::QuotaLocal, t0 + FENETRE_SIGNAL_REFUS + Duration::from_secs(1)), Some((7, 5)));
+    assert_eq!((s.quota_local, s.plein), (0, 0), "compte remis à zéro");
+    let m = message_refus(7, 5);
+    assert!(m.contains("7 venue(s) de la boucle locale") && m.contains("5 avec les 16 places") && m.contains("A-1-3"), "{m}");
+}
+
+/// A-1-3, sur de vraies connexions : 16 connexions muettes de la boucle locale, API ouverte sur le réseau : 4 gardées,
+/// 12 fermées aussitôt, un seul signal ; places rendues quand les clients partent, puis /api/v1/sante servie. Écoute
+/// locale seule : 16 gardées, la 17e fermée (limite déclarée : aucun quota ne départage des clients tous locaux)
+#[test]
+fn audit_a13_api_saturation_boucle_locale() {
+    use crate::api::{ecouter, Places, SignalRefus, MAX_CONNEXIONS, MAX_LOCALES};
+    use std::io::{ErrorKind, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static PLACES_RESEAU: Mutex<Places> = Mutex::new(Places { total: 0, locales: 0 });
+    static PLACES_LOCAL: Mutex<Places> = Mutex::new(Places { total: 0, locales: 0 });
+    static SIGNAL_RESEAU: Mutex<SignalRefus> = Mutex::new(SignalRefus { dernier: None, quota_local: 0, plein: 0 });
+    static SIGNAL_LOCAL: Mutex<SignalRefus> = Mutex::new(SignalRefus { dernier: None, quota_local: 0, plein: 0 });
+    static FIN: AtomicBool = AtomicBool::new(false);
+    let lancer = |reseau: bool, places: &'static Mutex<Places>, signal: &'static Mutex<SignalRefus>| {
+        let ecoute = TcpListener::bind("127.0.0.1:0").unwrap();
+        ecoute.set_nonblocking(true).unwrap();
+        let adresse = ecoute.local_addr().unwrap();
+        let fil = std::thread::spawn(move || ecouter(&ecoute, &"ab".repeat(32), &["192.0.2.10".to_string()], reseau, places, signal, &|| !FIN.load(Ordering::SeqCst)));
+        (adresse, fil)
+    };
+    // Fermée par le serveur : fin de flux ou connexion coupée ; gardée : rien à lire avant l'échéance du client (courte :
+    // le serveur ferme lui-même une connexion muette après 5 s, tout doit être lu avant)
+    let fermee = |c: &mut TcpStream| {
+        c.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        match c.read(&mut [0u8; 16]) {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(e) => !matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+        }
+    };
+    let attendre = |places: &Mutex<Places>, voulu: Places| {
+        let debut = Instant::now();
+        while *places.lock().unwrap() != voulu && debut.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        *places.lock().unwrap()
+    };
+
+    // API ouverte sur le réseau
+    let (adresse, fil_reseau) = lancer(true, &PLACES_RESEAU, &SIGNAL_RESEAU);
+    let mut muettes: Vec<TcpStream> = (0..16).map(|_| TcpStream::connect(adresse).unwrap()).collect();
+    assert_eq!(attendre(&PLACES_RESEAU, Places { total: MAX_LOCALES, locales: MAX_LOCALES }), Places { total: MAX_LOCALES, locales: MAX_LOCALES });
+    std::thread::sleep(Duration::from_millis(600));
+    let fermees = muettes.iter_mut().map(fermee).filter(|f| *f).count();
+    assert_eq!(fermees, 16 - MAX_LOCALES, "boucle locale au-delà de ses places : fermée aussitôt");
+    {
+        let s = SIGNAL_RESEAU.lock().unwrap();
+        assert!(s.dernier.is_some(), "refus signalé");
+        assert_eq!((s.quota_local, s.plein), (16 - MAX_LOCALES as u64 - 1, 0), "un seul signal, les refus suivants comptés");
+    }
+    drop(muettes);
+    assert_eq!(attendre(&PLACES_RESEAU, Places::default()), Places::default(), "places rendues");
+    let mut c = TcpStream::connect(adresse).unwrap();
+    c.write_all(b"GET /api/v1/sante HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut r = String::new();
+    let _ = c.read_to_string(&mut r);
+    assert!(r.starts_with("HTTP/1.1 200") && r.contains("deR4Tizer"), "{r}");
+
+    // Écoute locale seule
+    let (adresse, fil_local) = lancer(false, &PLACES_LOCAL, &SIGNAL_LOCAL);
+    let mut muettes: Vec<TcpStream> = (0..=MAX_CONNEXIONS).map(|_| TcpStream::connect(adresse).unwrap()).collect();
+    assert_eq!(attendre(&PLACES_LOCAL, Places { total: MAX_CONNEXIONS, locales: MAX_CONNEXIONS }).total, MAX_CONNEXIONS);
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(muettes.iter_mut().map(fermee).filter(|f| *f).count(), 1, "17e fermée");
+    assert!(SIGNAL_LOCAL.lock().unwrap().dernier.is_some(), "refus signalé");
+    FIN.store(true, Ordering::SeqCst);
+    drop(muettes);
+    fil_reseau.join().unwrap();
+    fil_local.join().unwrap();
+}
+
 #[test]
 fn reglages_de_l_interface_avec_blocs_nuls() {
     // Ce qu'envoie l'interface tant que config.json n'existe pas (première installation) : blocs non créés,
@@ -4628,6 +4747,98 @@ fn canal_reponse_bornee_client_qui_ne_lit_pas() {
     }
 }
 
+/// Audit du 2026-11-23, A-1-4 : droits du tube lus par Windows sur le SDDL du service (et du mode console). Hors SYSTEM,
+/// aucune entrée n'a FILE_CREATE_PIPE_INSTANCE (0x4, que donnait GENERIC_WRITE) ni droit générique : seulement
+/// FILE_GENERIC_READ | FILE_WRITE_DATA (0x12008B)
+#[test]
+fn audit_a14_tube_sans_creation_d_instance_hors_systeme() {
+    for console in [false, true] {
+        let sddl = crate::canal::descripteur(console);
+        let s = crate::natif::securite_de_sddl(&sddl).expect("SDDL du tube valide");
+        assert!(!s.ace_inconnue && s.aces.iter().all(|a| a.autorise && !a.heritage_seul), "{sddl}");
+        let sids: Vec<&str> = s.aces.iter().map(|a| a.sid.as_str()).collect();
+        let attendus: &[&str] = if console { &["S-1-5-18", "S-1-5-32-544", "S-1-5-11"] } else { &["S-1-5-18", "S-1-5-32-544"] };
+        assert_eq!(sids, attendus, "{sddl}");
+        for a in &s.aces {
+            if a.sid == "S-1-5-18" {
+                assert_eq!(a.masque, 0x1000_0000, "SYSTEM : GENERIC_ALL (le service crée les instances)");
+                continue;
+            }
+            assert_eq!(a.masque & 0x4, 0, "{} : FILE_CREATE_PIPE_INSTANCE ({sddl})", a.sid);
+            assert_eq!(a.masque & 0xF000_0000, 0, "{} : droit générique ({sddl})", a.sid);
+            assert_eq!(a.masque, 0x0012_008B, "{} : FILE_GENERIC_READ | FILE_WRITE_DATA ({sddl})", a.sid);
+        }
+    }
+}
+
+/// A-1-4 sur un vrai tube créé avec le SDDL du mode console (même entrée que les administrateurs, pour les utilisateurs
+/// authentifiés : le test n'a pas besoin d'être élevé ; élevé, l'entrée des administrateurs s'applique aussi) : créer
+/// une instance de plus est refusé ; un client qui demande GENERIC_WRITE aussi ; le client de l'interface et des scripts
+/// (lecture, écriture des données) envoie sa commande, lit la réponse et lit le PID du serveur
+#[test]
+fn audit_a14_tube_reel_instance_refusee_client_minimal_servi() {
+    use std::io::{Read, Write};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::time::Duration;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_WRITE_DATA, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, SECURITY_IDENTIFICATION};
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT};
+    let nom = format!(r"\\.\pipe\d4t-essai-a14-{}", std::process::id());
+    let large: Vec<u16> = nom.encode_utf16().chain(Some(0)).collect();
+    let sddl: Vec<u16> = crate::canal::descripteur(true).encode_utf16().chain(Some(0)).collect();
+    // Instances illimitées : un refus ne peut venir que des droits, jamais du nombre d'instances
+    let creer = |mode| unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None).unwrap();
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let t = CreateNamedPipeW(PCWSTR(large.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, PIPE_UNLIMITED_INSTANCES, 512, 512, 0, Some(&attributs));
+        let code = windows::core::Error::from_win32().code().0 as u32 & 0xFFFF;
+        let _ = LocalFree(HLOCAL(sd.0));
+        (t, code)
+    };
+    let (tube, _) = creer(PIPE_ACCESS_DUPLEX);
+    assert!(!tube.is_invalid(), "première instance");
+    // Client qui demande GENERIC_WRITE (donc FILE_CREATE_PIPE_INSTANCE) : refusé
+    let large_droits = std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_IDENTIFICATION.0).open(&nom);
+    assert_eq!(large_droits.err().and_then(|e| e.raw_os_error()), Some(5), "client GENERIC_READ | GENERIC_WRITE refusé");
+    // Client de l'interface et des scripts : lecture et écriture des données seulement
+    let n = nom.clone();
+    let client = std::thread::spawn(move || {
+        let mut c = std::fs::OpenOptions::new().access_mode(FILE_GENERIC_READ.0 | FILE_WRITE_DATA.0).security_qos_flags(SECURITY_IDENTIFICATION.0).open(&n).unwrap();
+        let mut pid = 0u32;
+        let lu = unsafe { GetNamedPipeServerProcessId(HANDLE(c.as_raw_handle()), &mut pid) }.is_ok();
+        c.write_all(b"{\"Action\":\"verification\"}\n").unwrap();
+        let mut recu = Vec::new();
+        let mut b = [0u8; 64];
+        while !recu.ends_with(b"\n") {
+            let k = c.read(&mut b).unwrap();
+            assert!(k > 0);
+            recu.extend_from_slice(&b[..k]);
+        }
+        (lu, pid, recu)
+    });
+    let _ = unsafe { ConnectNamedPipe(tube, None) };
+    let demande = crate::canal::lire_commande(HANDLE(tube.0), Duration::from_secs(5));
+    assert_eq!(demande, b"{\"Action\":\"verification\"}\n", "commande reçue");
+    assert!(crate::canal::ecrire_reponse(HANDLE(tube.0), b"{\"Ok\":true}\r\n", Duration::from_secs(5)), "réponse lue par le client");
+    let (lu, pid, recu) = client.join().unwrap();
+    assert!(lu && pid == std::process::id(), "PID du serveur lisible par le client (vérification de l'interface)");
+    assert_eq!(recu, b"{\"Ok\":true}\r\n");
+    // Instance de plus, en duplex comme en entrée seule : refusée (avant : accordée par GENERIC_WRITE)
+    for (essai, mode) in [("duplex", PIPE_ACCESS_DUPLEX), ("entrée seule", PIPE_ACCESS_INBOUND)] {
+        let (autre, code) = creer(mode);
+        if !autre.is_invalid() {
+            unsafe { let _ = CloseHandle(autre); }
+        }
+        assert!(autre.is_invalid() && code == 5, "{essai} : instance de plus créée par un client (code {code})");
+    }
+    unsafe { let _ = CloseHandle(tube); }
+}
+
 /// Durcissement du canal (relecture indépendante, accord du mainteneur) : câblage. Clients distants refusés par le tube ;
 /// identité lue sur le jeton de la connexion, après la lecture, jamais plus sur le PID ; réponse écrite en un délai
 /// borné ; clients du service (interface, script de mise à jour) au niveau Identification, avec lecture bornée côté
@@ -4647,20 +4858,36 @@ fn canal_durcissement_cablage() {
     assert!(f.contains("ImpersonateNamedPipeClient(tube)") && f.contains("OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true"), "jeton de la connexion");
     assert!(f.contains("retour_ou_arret(RevertToSelf()"), "retour à soi vérifié");
     assert!(!n.contains("GetNamedPipeClientProcessId"), "plus d'identification par le PID");
-    assert!(include_str!("maj.rs").contains("[IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)"), "script de mise à jour");
+    // A-1-4 : clients en lecture et écriture des données seulement (GENERIC_WRITE, que demande PipeDirection.InOut, est
+    // refusé par les droits du tube)
+    let maj = include_str!("maj.rs");
+    assert!(maj.contains("[IO.Pipes.PipeAccessRights]'ReadData, WriteData', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None)"), "script de mise à jour");
+    assert!(!maj.contains("PipeDirection"), "script de mise à jour sans GENERIC_WRITE");
     let gui = include_str!("../../src/Gui.cs");
-    assert!(gui.contains("PipeOptions.None, TokenImpersonationLevel.Identification)"), "interface au niveau Identification");
+    assert!(gui.contains("PipeAccessRights.ReadData | PipeAccessRights.WriteData, PipeOptions.None, TokenImpersonationLevel.Identification, HandleInheritability.None)"), "interface au niveau Identification");
+    assert!(!gui.contains("PipeDirection.InOut"), "interface sans GENERIC_WRITE");
     assert!(gui.contains("DELAI_REPONSE"), "lecture bornée côté interface");
 }
 
-/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue
+/// Serveur de tube de test : accepte un client, lit une ligne, répond `reponse` ; renvoie la ligne reçue. Tube créé avec
+/// les droits du service en mode console (A-1-4 : le client doit se contenter de lire et d'écrire les données)
 fn serveur_tube(nom: &str, reponse: &'static str) -> std::thread::JoinHandle<String> {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
     use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
     let chemin: Vec<u16> = format!(r"\\.\pipe\{nom}").encode_utf16().chain(Some(0)).collect();
-    let tube = unsafe { CreateNamedPipeW(PCWSTR(chemin.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, None) };
+    let sddl: Vec<u16> = crate::canal::descripteur(true).encode_utf16().chain(Some(0)).collect();
+    let tube = unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None).unwrap();
+        let attributs = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
+        let t = CreateNamedPipeW(PCWSTR(chemin.as_ptr()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 512, 512, 0, Some(&attributs));
+        let _ = LocalFree(HLOCAL(sd.0));
+        t
+    };
     assert!(!tube.is_invalid());
     let brut = tube.0 as usize;
     std::thread::spawn(move || unsafe {
@@ -4703,11 +4930,13 @@ fn lot2_canal_code_de_production_sur_un_vrai_tube() {
     // Tube tenu par le processus attendu (ici le test, à la place du service) : requête exacte et réponse
     let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
     let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]{pid} }}; Write-Output ('REPONSE=' + (Lire-Reponse))", ps_canal(&nom, "Winmgmt")));
+    // Avant la jonction : un client refusé par les droits du tube (A-1-4) laisse le serveur sans client, le test échoue
+    // ici au lieu d'attendre sans fin
+    assert_eq!(sortie, r#"REPONSE={"Ok":true,"Message":"deR4Tizer 4.4"}"#);
     let recu = serveur.join().unwrap();
     assert_eq!(recu, r#"{"Action":"verification"}"#, "requête envoyée au service");
     let c: crate::commun::Commande = serde_json::from_str(&recu).expect("JSON valide pour le service");
     assert_eq!(c.action.as_deref(), Some("verification"));
-    assert_eq!(sortie, r#"REPONSE={"Ok":true,"Message":"deR4Tizer 4.4"}"#);
     // Tube tenu par un autre processus que le service : aucune requête envoyée, réponse nulle
     let serveur = serveur_tube(&nom, r#"{"Ok":true,"Message":"deR4Tizer 4.4"}"#);
     let sortie = powershell_sortie(&format!("{}; function Pid-Service {{ [uint32]1 }}; Write-Output ('NUL=' + ($null -eq (Lire-Reponse)))", ps_canal(&nom, "Winmgmt")));

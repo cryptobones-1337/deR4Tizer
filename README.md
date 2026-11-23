@@ -201,6 +201,7 @@ Known, by design. Be aware before relying on it:
 - IDS rules using `pcre`, `byte_test` and a few other options, or a header variable that is not one of the standard address and port variables of Suricata 7's default `suricata.yaml` (taken with their default values), are ignored and counted rather than mis-applied.
 - Syslog export is sent in cleartext (UDP or TCP, no TLS): keep it to a trusted local network.
 - The export API is plain HTTP: when it is opened to the local network, its token and data travel in cleartext, like syslog.
+- Export API connections (audit of 23 November 2026, A-1-3, tested in the lab, not yet tried in the VM): 16 at most. When the API is opened to the local network, connections from the computer itself get 4 of them only, so a local program can no longer take the SIEM's places; refusals for lack of room are logged and written to the SIEM once every 10 minutes. When the API listens on 127.0.0.1 only, every client, the SIEM included, is local: a program of any account that keeps reopening 16 silent connections still makes the export unavailable (signalled, no leak, no elevation).
 - If the data folder's protection fails at start-up, a critical alert stays local: forwarding secrets are ignored, so your IT provider is not notified.
 - The MSI accepts an older version (needed to roll back): the service refuses an older version for automatic updates, but an administrator can still install one by hand.
 - Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
