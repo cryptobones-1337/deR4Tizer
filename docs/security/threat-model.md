@@ -226,6 +226,12 @@ Opérations privilégiées, audit du 2026-11-23 : la GPO locale est lue en éche
 - Un attaquant déjà administrateur ou SYSTEM : il peut arrêter le service, modifier ses fichiers et ses droits. Depuis la phase 4 (PR 4.4b), quand la remontée est configurée, le battement quotidien cesse : le prestataire peut voir
   qu'un poste ne répond plus, sans savoir pourquoi (service arrêté, poste éteint, réseau coupé).
   deR4Tizer complète Microsoft Defender, il ne le remplace pas.
+  Chaînes de processus (CHA-001, audit du 2026-11-23, T-1) : les programmes que le service lance (auditpol, wevtutil,
+  powershell, curl, icacls, netsh, gpupdate, schtasks, conhost, reconnus par leur chemin exact sous System32) et leurs
+  descendants sortent des chaînes. Un administrateur qui crée un processus avec le service pour parent (T1134.004)
+  n'en sort pas : un enfant du service hors de cette liste reste dans les chaînes et y porte un signal (parent usurpé
+  probable, T1134.004). Limite : s'il choisit pour parent un de ces programmes pendant qu'il tourne (quelques secondes),
+  sa chaîne sort de CHA-001 sans signal.
 - La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Un compte standard qui crée
   des processus en boucle ne chasse plus les jours précédents du SIEM (A-6-3, corrigé en labo) : le fichier du jour
   n'est jamais supprimé, et au-delà de son plafond (1 Go / 30) les événements du jour ne sont plus écrits mais comptés ;

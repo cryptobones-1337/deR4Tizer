@@ -557,30 +557,40 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   programme de l'utilisateur : sa chaîne ne remonte pas au service), `t1_comportement_repete_sous_le_meme_parent`
   (200 `cmd /c … pwsh -EncodedCommand` sous le même parent : score 12, une seule alerte),
   `t1_plafond_par_chaine_et_par_heure`, `t3_entite_stable_quand_la_chaine_grossit`, `t1_chaine_sans_nom_non_publiee`,
-  `t1_heure_4688` (parseur torturé), `t1_creation_heures_exactes`, `t1_parent_vivait_bornes`.
+  `t1_heure_4688` (parseur torturé), `t1_creation_heures_exactes`, `t1_parent_vivait_bornes`, `t1_enfant_du_service_usurpe_signale`
+  (revue de #282 : enfant du service hors de ses programmes, ou auditpol hors de System32 : dans la chaîne, signalé
+  T1134.004 ; chemin inconnu : dans la chaîne, sans signal).
 - **Faux positifs corrigés** (audit du 2026-11-23, T-1 et T-3, fait par Claude, corrigé, testé en labo, à essayer en VM) :
   sur un poste de développement, une centaine d'alertes Critiques en une heure, chaînes impossibles (« grep → pwsh »,
   « tail → bash », « deR4TizerSvc → auditpol → conhost → git »). Causes reproduites sur les événements du poste
   (motifs seulement, aucune donnée du poste dans le dépôt) : un processus terminé reste une heure dans l'arbre et son
   PID est vite repris ; l'enfant gardait le PID de son parent et se trouvait rattaché au processus suivant de ce PID,
-  né après lui (environ un lien sur trois de la chaîne publiée était faux) ; la reprise d'un PID n'était vue que si le
-  nom changeait ; les programmes lancés par le service (auditpol, wevtutil, powershell, curl : près de 1 800 par jour)
+  né après lui (une part notable des liens de la chaîne publiée était fausse) ; la reprise d'un PID n'était vue que si le
+  nom changeait ; les programmes lancés par le service (auditpol, wevtutil, powershell, curl, plusieurs fois par minute)
   entraient dans les chaînes ; enfin un outil qui lance des centaines de fois `pwsh -EncodedCommand` sous le même parent
   (PRC-002 à chaque fois) faisait monter le score sans fin, et chaque hausse levait une alerte. Corrigé : chaque processus
   porte son heure de création (TimeCreated du 4688 au 100 ns près ; à défaut l'heure de la première liste qui l'a vu) et
   la borne de sa fin (première liste où il manquait) ; un parent n'est retenu que s'il est né avant l'enfant et vivait à
   sa création (`chaines::parent_vivait`), sinon l'enfant est sa propre tête de chaîne ; un PID repris (autre nom, autre
   parent, autre heure de création, entrée vue terminée, ou seconde création du même PID) repart sans signaux, même à nom
-  égal (`chaines::meme_processus`) ; les descendants du service, reconnu par son propre PID (le processus qui exécute ce
-  code, jamais un nom), sortent des chaînes, marqués à leur entrée (un PID repris ensuite ne les y fait pas rentrer) ; un
+  égal (`chaines::meme_processus`) ; les programmes que le service lance (enfants directs du service, reconnu par son
+  propre PID, jamais un nom, dont le chemin est exactement celui d'auditpol, wevtutil, powershell, curl, icacls, netsh,
+  gpupdate, schtasks ou conhost sous System32 : `chaines::programme_du_service`) et leurs descendants sortent des
+  chaînes, marqués à leur entrée (un PID repris ensuite ne les y fait pas rentrer) ; un autre enfant du service (parent
+  usurpé, T1134.004) reste dans les chaînes et y porte un signal de 5 (« parent usurpé ? », code
+  `CHA-001#parent-service`) ; un
   même comportement (code du signal) répété au même endroit de la chaîne (même suite de programmes depuis la tête) compte
-  une fois ; trois alertes CHA-001 au plus par chaîne et par heure, le surplus compté (`mesures.json`, compteur
-  `chaines.alertes_plafonnees`) ; un signal sur un PID inconnu de l'arbre ne publie plus de chaîne « PID n ». T-3 : l'entité
-  d'incident d'une chaîne est son programme de tête (son chemin s'il est connu, sinon `chaine:<nom>#<pid>@<heure de
-  création>`), plus le texte de la chaîne : une chaîne qui grossit reste un seul incident. Limites : un parent vu
+  une fois ; trois alertes CHA-001 au plus par chaîne et par heure pour les hausses qui n'apportent rien de nouveau, le
+  surplus compté (`mesures.json`, compteur `chaines.alertes_plafonnees`) ; une alerte qui apporte une technique ATT&CK
+  nouvelle dans la chaîne ou un signal fort (PRC-001, PRC-005, comsvcs, LEU : `chaines::signal_fort`) passe toujours,
+  comptée à part (`chaines.alertes_hors_plafond`) ; toutes les alertes CHA-001 sont Critiques, le niveau ne peut pas
+  monter ; un signal sur un PID inconnu de l'arbre ne publie plus de chaîne « PID n ». T-3 : l'entité
+  d'incident d'une chaîne est son programme de tête (son chemin s'il est connu et n'est pas un interpréteur ou un lanceur
+  générique comme cmd ou powershell, sinon `chaine:<nom>#<pid>@<heure de création>`), plus le texte de la chaîne : une chaîne qui grossit reste un seul incident. Limites : un parent vu
   seulement par la liste (son 4688 manque) garde une marge de 10 s ; la reprise d'un PID par un processus de même nom et
   de même parent, entre deux listes et sans 4688, n'est pas vue (l'heure de création des processus de la liste n'est pas
-  lue). Reste ouvert, décision du mainteneur : un outil de développement signé qui encode ses commandes
+  lue) ; un processus créé avec pour parent un programme du service pendant qu'il tourne (quelques secondes) sort de
+  CHA-001 sans signal (`docs/security/threat-model.md`). Reste ouvert, décision du mainteneur : un outil de développement signé qui encode ses commandes
   (`-EncodedCommand`) lève toujours PRC-002 à chaque lancement et une chaîne CHA-001 par session (une alerte, puis au
   plus trois par heure).
 - **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-5, corrigé, testé en labo, à essayer en VM) :
@@ -589,7 +599,8 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   processus (lu pour les candidats racines), des événements 4688 ou des connexions ; chemin illisible : pas une racine
   (sens prudent, la chaîne continue), remontée bornée à 32 parents.
 - **Faux négatifs connus** : un parent choisi à la création du processus (T1134.004, usurpation du parent) rattache le
-  programme à un vrai lanceur du système : la chaîne est coupée là, comme avant. Non corrigé ici. Si le chemin de
+  programme à un vrai lanceur du système : la chaîne est coupée là, comme avant. Non corrigé ici (parent usurpé vers le
+  service lui-même : signalé depuis T-1, voir plus haut). Si le chemin de
   l'Explorateur était illisible, deux étapes sans lien lancées par lui formeraient une chaîne (faux positif possible, sens
   prudent).
 
