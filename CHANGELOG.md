@@ -11,9 +11,13 @@
   own chain. A reused process ID starts with no signals even under the same name. Programs started by the service (and
   their children) are left out of chains; the service is recognised by its own process ID, never by a name. The same
   behaviour repeated at the same place of a chain counts once, so a tool that starts `pwsh -EncodedCommand` hundreds of
-  times no longer raises the score (and an alert) each time; at most 3 CHA-001 alerts per chain and per hour, the rest
-  counted in `mesures.json` (`chaines.alertes_plafonnees`). A signal on an unknown process ID no longer publishes a
-  nameless "PID n" chain. The incident entity of a chain is its first program (its path, or its ID and creation time),
+  times no longer raises the score (and an alert) each time; at most 3 CHA-001 alerts per chain and per hour when they bring
+  nothing new, the rest counted in `mesures.json` (`chaines.alertes_plafonnees`); an alert that brings a new ATT&CK
+  technique or a strong signal (PRC-001, PRC-005, comsvcs, canary) always goes through (`chaines.alertes_hors_plafond`).
+  Only the programs the service starts (exact path under System32) leave chains; any other child of the service
+  (parent process spoofing, T1134.004) stays in its chain with a signal. A signal on an unknown process ID no longer publishes a
+  nameless "PID n" chain. The incident entity of a chain is its first program (its path, or its ID and creation time when
+  the path is unknown or is a generic interpreter or launcher such as cmd or powershell),
   no longer the chain text, so a growing chain stays one incident. Tested in the lab, not yet tried in the VM. Still
   open, for the maintainer to decide: a signed developer tool that encodes its PowerShell commands still raises PRC-002
   at each start and one chain alert per session.

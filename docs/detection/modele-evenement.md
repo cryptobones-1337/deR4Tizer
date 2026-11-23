@@ -199,7 +199,7 @@ qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations d
 | `Id`, `Ouverture`, `OuvertureUtc` | identifiant, heure d'ouverture (locale et UTC) |
 | `DerniereActiviteUtc` | heure UTC de la dernière alerte jointe |
 | `Niveau` | le plus haut des alertes jointes (Alerte ou Critique) ; ne baisse jamais |
-| `Entite` | l'`Entite` de l'alerte si le producteur l'a posée (corrélations du SIEM, PR 4.3 ; chaînes CHA-001 depuis T-3 : `programme:<chemin du programme de tête>`, ou `chaine:<nom>#<pid>@<heure de création>` si ce chemin manque, jamais le texte de la chaîne) ; sinon `programme:<chemin complet, en minuscules>` si le chemin est connu ; sinon `destination:<destination>` ; sinon `regle:<identifiant>`. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux incidents |
+| `Entite` | l'`Entite` de l'alerte si le producteur l'a posée (corrélations du SIEM, PR 4.3 ; chaînes CHA-001 depuis T-3 : `programme:<chemin du programme de tête>`, ou `chaine:<nom>#<pid>@<heure de création>` si ce chemin manque ou désigne un interpréteur ou un lanceur générique, jamais le texte de la chaîne) ; sinon `programme:<chemin complet, en minuscules>` si le chemin est connu ; sinon `destination:<destination>` ; sinon `regle:<identifiant>`. Jamais un nom de programme seul : deux programmes de même nom à des chemins différents font deux incidents |
 | `Regles` | identifiants distincts des alertes jointes (16 au plus) |
 | `Etat`, `MotifCloture` | `Ouvert`, `PrisEnCharge` ou `Clos` ; motif `Resolu`, `FauxPositif` ou `Accepte` pour un incident clos |
 | `Precedent` | incident clos de la même entité, s'il y en a un (récidive) |
