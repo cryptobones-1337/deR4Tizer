@@ -2,7 +2,9 @@
 //! L'interface envoie une ligne JSON (Commande) et reçoit une ligne JSON (Reponse).
 //! Protection contre l'usurpation du tube : la première instance est créée avec FILE_FLAG_FIRST_PIPE_INSTANCE
 //! (échec si quelqu'un l'a déjà créé), et une instance reste toujours ouverte (la suivante est créée avant de
-//! traiter la connexion en cours) ; créer une instance supplémentaire exige un droit que seul SYSTEM possède.
+//! traiter la connexion en cours) ; créer une instance supplémentaire exige FILE_CREATE_PIPE_INSTANCE (0x4), que seul
+//! SYSTEM possède : les administrateurs n'ont que lecture et écriture des données (DROITS_CLIENT ; avant l'audit du
+//! 2026-11-23, A-1-4, leur GENERIC_WRITE comprenait ce droit et ce commentaire était faux).
 //! L'interface vérifie de son côté que le serveur du tube est bien le processus du service.
 //! Un client qui se connecte puis se tait ne bloque pas le canal : la lecture d'une commande est bornée dans le
 //! temps (DELAI_LECTURE). Si le nom est déjà pris au démarrage (squat), alerte critique locale avec le PID et le
@@ -44,11 +46,20 @@ const DELAI_ECRITURE: Duration = Duration::from_secs(5);
 const DEBIT_MAX: usize = 30;
 const DEBIT_FENETRE: Duration = Duration::from_secs(10);
 
-/// SYSTEM et administrateurs ; en mode console (tests uniquement), tout utilisateur connecté
-fn descripteur(console: bool) -> String {
-    let mut sddl = "D:(A;;GA;;;SY)(A;;GRGW;;;BA)".to_string();
+/// Droits d'un client du tube (audit du 2026-11-23, A-1-4), en hexadécimal dans le SDDL :
+///   FILE_GENERIC_READ 0x120089 (READ_CONTROL 0x20000 | SYNCHRONIZE 0x100000 | FILE_READ_DATA 0x1 | FILE_READ_EA 0x8
+///   | FILE_READ_ATTRIBUTES 0x80) | FILE_WRITE_DATA 0x2 = 0x12008B.
+/// Avant : GRGW. GENERIC_WRITE donne aussi FILE_APPEND_DATA (0x4), qui pour un tube est FILE_CREATE_PIPE_INSTANCE : un
+/// administrateur pouvait créer une instance du tube. Les clients (interface, scripts) demandent ReadData | WriteData,
+/// jamais GENERIC_WRITE, qui leur serait refusé
+pub const DROITS_CLIENT: u32 = 0x0012_008B;
+
+/// SYSTEM (seul à pouvoir créer une instance) et administrateurs ; en mode console (tests uniquement), tout utilisateur
+/// connecté, avec les mêmes droits que les administrateurs
+pub fn descripteur(console: bool) -> String {
+    let mut sddl = format!("D:(A;;GA;;;SY)(A;;0x{DROITS_CLIENT:x};;;BA)");
     if console {
-        sddl.push_str("(A;;GRGW;;;AU)");
+        sddl.push_str(&format!("(A;;0x{DROITS_CLIENT:x};;;AU)"));
     }
     sddl
 }

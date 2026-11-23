@@ -260,7 +260,7 @@ Verifier 'Canal : identité lue sur le jeton de la connexion (administrateur au 
 # IPC-04 : un client qui écrit sa commande puis ne lit jamais la réponse ne bloque plus le canal (réponse écrite en
 # 5 s au plus, puis connexion fermée, noté au journal)
 Verifier 'Canal : un client qui ne lit jamais la réponse ne bloque pas le canal (IPC-04)' {
-    $muet = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
+    $muet = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeAccessRights]'ReadData, WriteData', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None)
     try {
         $muet.Connect(5000)
         $w = New-Object IO.StreamWriter($muet); $w.AutoFlush = $true
@@ -279,7 +279,7 @@ Verifier 'Canal : un client qui ne lit jamais la réponse ne bloque pas le canal
 # Concurrence : huit clients simultanés (fils séparés) reçoivent chacun leur réponse
 Verifier 'Canal : huit clients simultanés reçoivent chacun leur réponse' {
     $code = {
-        $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
+        $c = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeAccessRights]'ReadData, WriteData', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None)
         try {
             $c.Connect(30000)
             $w = New-Object IO.StreamWriter($c); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($c)
@@ -295,6 +295,25 @@ Verifier 'Canal : huit clients simultanés reçoivent chacun leur réponse' {
     } finally { $pool.Close() }
     $ok = @($reponses | Where-Object { $_ -match '"Ok":\s*true' }).Count
     if ($ok -ne 8) { return "$ok réponse(s) sur 8 : $($reponses -join ' | ')" }
+    $true
+}
+# Audit du 2026-11-23, A-1-4 : un administrateur ne peut plus créer d'instance du tube (FILE_CREATE_PIPE_INSTANCE réservé à
+# SYSTEM) ; un client qui demande GENERIC_WRITE (sens InOut) est refusé ; le canal répond toujours ensuite
+Verifier 'Canal : instance du tube refusée à un administrateur, client GENERIC_WRITE refusé (A-1-4)' {
+    if (-not ('D4T.TubeA14' -as [type])) {
+        Add-Type -Namespace D4T -Name TubeA14 -MemberDefinition '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern IntPtr CreateNamedPipeW(string n, uint o, uint m, uint i, uint s, uint r, uint t, IntPtr a); [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);'
+    }
+    # PIPE_ACCESS_DUPLEX (3), octets, instances illimitées (255) : un refus ne peut venir que des droits
+    $h = [D4T.TubeA14]::CreateNamedPipeW('\\.\pipe\deR4Tizer', 3, 0, 255, 512, 512, 0, [IntPtr]::Zero)
+    $erreur = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    if ($h -ne [IntPtr](-1)) { [void][D4T.TubeA14]::CloseHandle($h); return 'instance du tube créée par un administrateur' }
+    if ($erreur -ne 5) { return "création d'instance : code $erreur au lieu de 5 (accès refusé)" }
+    $large = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification)
+    try { $large.Connect(5000); return 'client GENERIC_WRITE accepté' }
+    catch { if ($_.Exception.GetBaseException() -isnot [UnauthorizedAccessException]) { return "client GENERIC_WRITE : $($_.Exception.GetBaseException().GetType().Name)" } }
+    finally { $large.Dispose() }
+    $j = Commande '{"Action":"verification"}' | ConvertFrom-Json
+    if (-not $j.Ok) { return "canal ensuite : $($j.Message)" }
     $true
 }
 $etat1 = Attendre-Etat $debut
