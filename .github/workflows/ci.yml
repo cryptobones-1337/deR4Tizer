@@ -113,7 +113,7 @@ jobs:
       - name: cargo deny (avis, licences, sources)
         if: ${{ !cancelled() && steps.outils.outcome == 'success' }}
         working-directory: service-rs
-        run: cargo deny --locked check --config deny.toml --show-stats advisories licenses sources
+        run: cargo deny --locked --config deny.toml check --show-stats advisories licenses sources
 
   # Lot 3a : tests d'intégration sur un runner jetable, avec le MSI construit ci-dessus (installation, service,
   # droits du dossier de données, compte standard, dossier précréé et pièges, mise à niveau, désinstallations).
