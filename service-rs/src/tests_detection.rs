@@ -1140,18 +1140,18 @@ fn t1_pid_reutilise_meme_nom_aucune_chaine_commune() {
     assert!(arbre.alertes(&arbre.chaines()).is_empty(), "retour dans la liste après sa fin");
 }
 
-/// Suite de 4688 rejouée : cmd (PID 9184) lance pwsh, se termine ; le PID 9184 est repris par git, puis par grep, puis
+/// Suite de 4688 rejouée : cmd (PID 1111) lance pwsh, se termine ; le PID 1111 est repris par git, puis par grep, puis
 /// par un autre grep. pwsh n'est jamais rattaché à grep, né après lui (motif observé : « grep → pwsh », « tail → bash »)
 #[test]
 fn t1_parent_ne_apres_l_enfant_ecarte() {
     let mut arbre = arbre_avec_chemins(&[(100, "outil", 4)], &[]);
-    arbre.creation(9184, Some(100), r"C:\W\System32\cmd.exe", Some("cmd /c x"));
-    arbre.creation(23584, Some(9184), r"C:\P\pwsh.exe", Some("pwsh -c x"));
-    arbre.creation(9184, Some(100), r"C:\G\git.exe", None);
-    arbre.creation(9184, Some(100), r"C:\G\grep.exe", None);
-    arbre.creation(9184, Some(100), r"C:\G\grep.exe", None);
-    arbre.signaler(23584, 5, "PowerShell obscurci ou qui télécharge du code");
-    arbre.signaler(9184, 7, "réseau : IP DIRECTE");
+    arbre.creation(1111, Some(100), r"C:\W\System32\cmd.exe", Some("cmd /c x"));
+    arbre.creation(2222, Some(1111), r"C:\P\pwsh.exe", Some("pwsh -c x"));
+    arbre.creation(1111, Some(100), r"C:\G\git.exe", None);
+    arbre.creation(1111, Some(100), r"C:\G\grep.exe", None);
+    arbre.creation(1111, Some(100), r"C:\G\grep.exe", None);
+    arbre.signaler(2222, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(1111, 7, "réseau : IP DIRECTE");
     let chaines = arbre.chaines();
     assert!(!chaines.iter().any(|c| c.resume.contains("grep → pwsh")), "{:?}", chaines.iter().map(|c| c.resume.clone()).collect::<Vec<_>>());
     assert!(arbre.alertes(&chaines).is_empty());
@@ -1159,10 +1159,10 @@ fn t1_parent_ne_apres_l_enfant_ecarte() {
     let mut arbre = crate::chaines::Arbre::default();
     let t = 134_000_000_000_000_000u64;
     arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
-    arbre.creation_a(9184, Some(100), r"C:\G\grep.exe", None, Some(t + 50_000_000));
-    arbre.creation_a(23584, Some(9184), r"C:\P\pwsh.exe", None, Some(t + 10_000_000));
-    arbre.signaler(23584, 5, "a");
-    arbre.signaler(9184, 7, "b");
+    arbre.creation_a(1111, Some(100), r"C:\G\grep.exe", None, Some(t + 50_000_000));
+    arbre.creation_a(2222, Some(1111), r"C:\P\pwsh.exe", None, Some(t + 10_000_000));
+    arbre.signaler(2222, 5, "a");
+    arbre.signaler(1111, 7, "b");
     assert!(arbre.alertes(&arbre.chaines()).is_empty(), "parent né après l'enfant");
 }
 
@@ -1201,8 +1201,10 @@ fn t1_parent_mort_avant_l_enfant_ecarte() {
 #[test]
 fn t1_descendants_du_service_hors_chaine() {
     let service = std::process::id();
+    let sys = format!(r"{}\System32", crate::natif::dossier_windows());
+    let (auditpol, icacls, powershell) = (format!(r"{sys}\auditpol.exe"), format!(r"{sys}\icacls.exe"), format!(r"{sys}\WindowsPowerShell\v1.0\powershell.exe"));
     let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (service, "deR4TizerSvc", 50), (700, "auditpol", service), (701, "conhost", 700),
-        (710, "icacls", service), (720, "powershell", service)], &[]);
+        (710, "icacls", service), (720, "powershell", service)], &[(700, &auditpol), (710, &icacls), (720, &powershell)]);
     arbre.signaler(700, 7, "a");
     arbre.signaler(701, 5, "b");
     arbre.signaler(710, 5, "c");
@@ -1222,6 +1224,35 @@ fn t1_descendants_du_service_hors_chaine() {
     assert_eq!(chaines.len(), 1);
     assert!(!chaines[0].resume.contains("deR4TizerSvc") && chaines[0].resume.contains("outil → pwsh → git"), "{}", chaines[0].resume);
     assert_eq!(arbre.alertes(&chaines).len(), 1);
+}
+
+/// Revue de #282 (2) : un administrateur qui crée un processus avec le service pour parent (T1134.004) ne le sort pas des
+/// chaînes : un enfant du service qui n'est pas l'un de ses programmes (chemin exact sous System32) reste dans les
+/// chaînes, signalé (parent usurpé probable) ; un auditpol du même nom hors de System32 aussi ; chemin inconnu : dans
+/// les chaînes, sans signal
+#[test]
+fn t1_enfant_du_service_usurpe_signale() {
+    let service = std::process::id();
+    let mut arbre = arbre_avec_chemins(&[(service, "deR4TizerSvc", 50)], &[]);
+    arbre.creation(800, Some(service), r"C:\Users\Public\outil.exe", None);
+    arbre.creation(801, Some(800), r"C:\W\System32\whoami.exe", None);
+    arbre.signaler(801, 7, "reconnaissance");
+    let chaines = arbre.chaines();
+    assert_eq!(chaines.len(), 1);
+    assert!(chaines[0].noeuds.iter().any(|n| n.pid == 800 && n.raisons.contains("parent usurpé")), "{}", chaines[0].resume);
+    let a = arbre.alertes(&chaines);
+    assert_eq!(a.len(), 1);
+    assert!(a[0].mitre.contains("T1134.004"));
+    arbre.creation(810, Some(service), r"C:\Temp\auditpol.exe", None);
+    assert!(arbre.chaines().iter().any(|c| c.noeuds.iter().any(|n| n.pid == 810)), "même nom, autre dossier : pas un programme du service");
+    let mut arbre = arbre_avec_chemins(&[(service, "deR4TizerSvc", 50), (820, "inconnu", service)], &[]);
+    arbre.signaler(820, 5, "a");
+    assert_eq!(arbre.chaines().len(), 1, "chemin inconnu : reste dans les chaînes");
+    assert!(!arbre.chaines()[0].noeuds[0].raisons.contains("parent usurpé"));
+    let windows = crate::natif::dossier_windows();
+    assert!(crate::chaines::programme_du_service(&format!(r"{windows}\SYSTEM32\WevtUtil.exe"), &windows));
+    assert!(!crate::chaines::programme_du_service(&format!(r"{windows}\Temp\wevtutil.exe"), &windows));
+    assert!(!crate::chaines::programme_du_service("", &windows));
 }
 
 /// Motif observé (cause principale) : un outil de développement lance des centaines de fois `cmd /c … pwsh
@@ -1260,6 +1291,18 @@ fn t1_plafond_par_chaine_et_par_heure() {
     }
     assert_eq!(alertes, crate::chaines::PLAFOND_ALERTES_PAR_HEURE as usize);
     assert_eq!(arbre.alertes_plafonnees(), 10 - crate::chaines::PLAFOND_ALERTES_PAR_HEURE as u64);
+    // Revue de #282 (1) : au-delà du plafond, une alerte qui apporte du nouveau passe toujours (comptée à part) : signal
+    // fort (suppression des sauvegardes) puis technique ATT&CK nouvelle ; la même technique ensuite : retenue
+    arbre.signaler_code(400, 9, "suppression des sauvegardes", &["T1490".to_string()], "PRC-005#PRC-005");
+    assert_eq!(arbre.alertes(&arbre.chaines()).len(), 1, "signal fort");
+    arbre.signaler_code(300, 2, "nouvelle technique", &["T1003.001".to_string()], "PRC-003#comsvcs");
+    assert_eq!(arbre.alertes(&arbre.chaines()).len(), 1, "technique nouvelle");
+    arbre.signaler_code(400, 2, "même technique", &["T1003.001".to_string()], "X");
+    assert!(arbre.alertes(&arbre.chaines()).is_empty(), "rien de nouveau : retenue");
+    assert_eq!(arbre.alertes_hors_plafond(), 2);
+    for (code, fort) in [("PRC-005#PRC-005", true), ("PRC-001#x", true), ("LEU-002#x", true), ("PRC-003#comsvcs", true), ("PRC-002#PRC-002:obscurci", false), ("", false)] {
+        assert_eq!(crate::chaines::signal_fort(code), fort, "{code}");
+    }
 }
 
 /// T-3 : l'entité d'incident d'une chaîne est son programme de tête (PID et heure de création), pas le texte de la chaîne :
@@ -1289,12 +1332,25 @@ fn t3_entite_stable_quand_la_chaine_grossit() {
     assert_eq!(crate::incidents::lien(&i, &ev("cmd.exe")), Some(crate::incidents::Lien::ParNom));
     assert_eq!(crate::incidents::lien(&i, &ev("powershell.exe")), None);
     // Tête au chemin connu : entité « programme: » (même incident que les autres alertes de ce programme)
-    let mut avec_chemin = arbre_de_test();
-    avec_chemin.completer(200, r"C:\W\System32\cmd.exe", None);
+    let mut avec_chemin = arbre_avec_chemins(&[(100, "explorer", 4), (200, "outil", 100), (300, "powershell", 200), (400, "certutil", 300)],
+        &[(100, &format!(r"{}\explorer.exe", crate::natif::dossier_windows()))]);
+    avec_chemin.completer(200, r"C:\O\outil.exe", None);
     avec_chemin.signaler(300, 5, "a");
     avec_chemin.signaler(400, 7, "b");
     let a4 = avec_chemin.alertes(&avec_chemin.chaines());
-    assert_eq!(crate::incidents::entite(&a4[0]), r"programme:c:\w\system32\cmd.exe");
+    assert_eq!(crate::incidents::entite(&a4[0]), r"programme:c:\o\outil.exe");
+    // Revue de #282 (3) : tête générique (interpréteur ou lanceur) au chemin connu : PID et heure de création, jamais le
+    // chemin seul (deux chaînes sans lien qui partent de cmd.exe font deux incidents)
+    let entite_cmd = |pid: u32| {
+        let mut a = arbre_avec_chemins(&[(100, "explorer", 4), (pid, "cmd", 100), (pid + 1, "powershell", pid)],
+            &[(100, &format!(r"{}\explorer.exe", crate::natif::dossier_windows()))]);
+        a.completer(pid, r"C:\W\System32\cmd.exe", None);
+        a.signaler(pid, 5, "a");
+        a.signaler(pid + 1, 7, "b");
+        crate::incidents::entite(&a.alertes(&a.chaines())[0])
+    };
+    let (e1, e2) = (entite_cmd(200), entite_cmd(600));
+    assert!(e1.starts_with("chaine:cmd#200@") && e2.starts_with("chaine:cmd#600@"), "{e1} {e2}");
 }
 
 /// Bornes de `parent_vivait` : né à la même heure que l'enfant (oui), une unité après (non), vu terminé avant la création
@@ -1311,11 +1367,11 @@ fn t1_parent_vivait_bornes() {
     assert!(!parent_vivait(t + 100_000_001, false, None, t));
 }
 
-/// Signal sur un PID inconnu de l'arbre (ni nom ni chemin) : pas de chaîne « PID 12404 » publiée
+/// Signal sur un PID inconnu de l'arbre (ni nom ni chemin) : pas de chaîne « PID 3333 » publiée
 #[test]
 fn t1_chaine_sans_nom_non_publiee() {
     let mut arbre = arbre_de_test();
-    arbre.signaler(12404, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(3333, 5, "PowerShell obscurci ou qui télécharge du code");
     assert!(arbre.chaines().is_empty());
 }
 
@@ -1323,14 +1379,14 @@ fn t1_chaine_sans_nom_non_publiee() {
 #[test]
 fn t1_heure_4688() {
     use crate::chaines::heure_4688;
-    let xml = "<Event><System><EventID>4688</EventID><TimeCreated SystemTime='2026-11-23T13:56:00.1234567Z'/></System></Event>";
-    let attendu = (crate::commun::secondes_utc("2026-11-23T13:56:00Z").unwrap() as u64 + 11_644_473_600) * 10_000_000 + 1_234_567;
+    let xml = "<Event><System><EventID>4688</EventID><TimeCreated SystemTime='2020-01-02T03:04:05.1234567Z'/></System></Event>";
+    let attendu = (crate::commun::secondes_utc("2020-01-02T03:04:05Z").unwrap() as u64 + 11_644_473_600) * 10_000_000 + 1_234_567;
     assert_eq!(heure_4688(xml), Some(attendu));
     assert_eq!(heure_4688(&xml.replace(".1234567", "")), Some(attendu - 1_234_567), "sans fraction");
     assert_eq!(heure_4688(&xml.replace(".1234567", ".5")), Some(attendu - 1_234_567 + 5_000_000), "fraction courte");
     assert_eq!(heure_4688(&xml.replace('\'', "\"")), Some(attendu), "guillemets doubles");
-    for faux in ["", "<TimeCreated/>", "<TimeCreated SystemTime='2026-13-23T13:56:00Z'/>", "<TimeCreated SystemTime='x'/>",
-        "<TimeCreated SystemTime='2026-11-23T13:56:00.12345678901Z'/>", "<TimeCreated SystemTime='2026-11-23T13:56:00.1é3Z'/>", "SystemTime='2026"] {
+    for faux in ["", "<TimeCreated/>", "<TimeCreated SystemTime='2020-13-02T03:04:05Z'/>", "<TimeCreated SystemTime='x'/>",
+        "<TimeCreated SystemTime='2020-01-02T03:04:05.12345678901Z'/>", "<TimeCreated SystemTime='2020-01-02T03:04:05.1é3Z'/>", "SystemTime='2020"] {
         assert_eq!(heure_4688(faux), None, "{faux}");
     }
     crate::tests::torturer_texte(xml, &mut |s| { let _ = heure_4688(s); });

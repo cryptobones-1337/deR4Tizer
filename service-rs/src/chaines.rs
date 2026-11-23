@@ -44,6 +44,39 @@ const DUREE_SIGNAL: Duration = Duration::from_secs(3600);
 /// (`alertes_plafonnees`, publié dans mesures.json sous « chaines.alertes_plafonnees »)
 pub const PLAFOND_ALERTES_PAR_HEURE: u32 = 3;
 
+/// Programmes que le service lance lui-même (et la console de ses outils), par chemin EXACT relatif au dossier Windows :
+/// seuls ceux-là, enfants directs du service, sortent des chaînes avec leurs descendants. Un autre enfant du service
+/// (parent choisi à la création, T1134.004, par un administrateur) reste dans les chaînes et y porte un signal
+const PROGRAMMES_DU_SERVICE: &[&str] = &[
+    r"system32\auditpol.exe", r"system32\wevtutil.exe", r"system32\windowspowershell\v1.0\powershell.exe", r"system32\curl.exe",
+    r"system32\icacls.exe", r"system32\netsh.exe", r"system32\gpupdate.exe", r"system32\schtasks.exe", r"system32\conhost.exe",
+];
+
+/// Décision pure (testée) : ce programme, enfant direct du service, est-il l'un de ceux que le service lance ? Par son
+/// chemin exact sous le dossier Windows (règle 5) ; chemin inconnu : non (il reste dans les chaînes)
+pub(crate) fn programme_du_service(chemin: &str, dossier_windows: &str) -> bool {
+    crate::reponse::chemin_exact_sous_windows(chemin, dossier_windows, PROGRAMMES_DU_SERVICE)
+}
+
+/// Signal posé sur un enfant du service qui n'est pas l'un de ses programmes (parent usurpé probable)
+const RAISON_PARENT_SERVICE: &str = "lancé avec le service de deR4Tizer pour parent sans être l'un de ses programmes (parent usurpé ?)";
+const CODE_PARENT_SERVICE: &str = "CHA-001#parent-service";
+
+/// Têtes de chaîne génériques (interpréteurs, lanceurs) : leur chemin ne désigne pas une chaîne précise (deux chaînes sans
+/// lien partent de cmd.exe) ; l'entité d'incident prend alors le PID et l'heure de création (regroupement, jamais une
+/// décision de confiance)
+const TETES_GENERIQUES: &[&str] = &[
+    "cmd", "powershell", "pwsh", "powershell_ise", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "conhost", "bash", "sh",
+    "wsl", "python", "pythonw", "py", "node", "java", "javaw", "wmic", "msiexec", "dllhost", "svchost", "explorer",
+];
+
+/// Décision pure (testée) : un signal fort (document qui lance un interpréteur, suppression des sauvegardes, vidage de
+/// LSASS par comsvcs, leurre touché) : une chaîne qui le reçoit alerte même au-delà du plafond
+pub(crate) fn signal_fort(code: &str) -> bool {
+    let c = code.to_ascii_lowercase();
+    c.starts_with("prc-001") || c.starts_with("prc-005") || c.starts_with("leu-") || c.contains("comsvcs")
+}
+
 /// Unités FILETIME (100 ns) par seconde
 const FT_SECONDE: u64 = 10_000_000;
 
@@ -197,7 +230,10 @@ pub struct Arbre {
     /// Par chaîne (programme de tête, PID et heure de création) : score déjà alerté, et quand
     deja_alertees: HashMap<String, (i32, Instant)>,
     /// Par chaîne : début de la fenêtre d'une heure et alertes levées dans cette fenêtre (plafond)
-    plafond: HashMap<String, (Instant, u32)>,
+    /// et apports déjà alertés (techniques, signaux forts) : une alerte qui en apporte un nouveau passe le plafond
+    plafond: HashMap<String, (Instant, u32, HashSet<String>)>,
+    /// Alertes CHA-001 levées au-delà du plafond parce qu'elles apportaient du nouveau
+    hors_plafond: u64,
     /// Alertes CHA-001 retenues par le plafond depuis le démarrage
     plafonnees: u64,
     /// Heure (FILETIME) de la dernière lecture de la liste, et dernière heure donnée (horloge croissante)
@@ -225,6 +261,24 @@ impl Arbre {
         self.plafonnees
     }
 
+    /// Alertes CHA-001 levées au-delà du plafond (technique nouvelle ou signal fort) depuis le démarrage
+    pub fn alertes_hors_plafond(&self) -> u64 {
+        self.hors_plafond
+    }
+
+    /// Marque à l'entrée : descendant d'un programme du service (hors chaîne) ; enfant direct du service qui n'est pas
+    /// l'un de ses programmes : signalé (parent usurpé probable), jamais exclu en silence
+    fn marquer(&mut self, pid: u32, windows: &str) {
+        let d = self.descend_du_service(pid, windows);
+        let service = self.pid_service();
+        let Some(e) = self.processus.get_mut(&pid) else { return };
+        e.du_service = d;
+        let usurpe = !d && e.parent == service && pid != service && !e.chemin.is_empty() && !programme_du_service(&e.chemin, windows);
+        if usurpe {
+            self.signaler_code(pid, 5, RAISON_PARENT_SERVICE, &["T1134.004".to_string()], CODE_PARENT_SERVICE);
+        }
+    }
+
     /// Met à jour la liste des processus ; garde 1 h les processus terminés pour reconstituer les chaînes
     pub fn maj(&mut self, liste: &HashMap<u32, InfoListe>) {
         self.maj_avec(liste, &crate::natif::chemin_processus);
@@ -238,6 +292,7 @@ impl Arbre {
         let maintenant = Instant::now();
         let heure = self.tic();
         let mut nouveaux: Vec<u32> = Vec::new();
+        let service = self.pid_service();
         for (&pid, p) in liste {
             let neuf = || Processus {
                 nom: p.nom.clone(), parent: p.parent, chemin: String::new(), ligne: String::new(), vu: maintenant, vivant: true,
@@ -258,16 +313,15 @@ impl Arbre {
                 e.parent = p.parent;
             }
             e.vu = maintenant;
-            if e.chemin.is_empty() && RACINES.iter().any(|r| r.eq_ignore_ascii_case(&e.nom)) {
+            // Chemin lu pour un candidat racine, et pour un enfant du service (c'est lui qui le fait sortir des chaînes)
+            if e.chemin.is_empty() && (RACINES.iter().any(|r| r.eq_ignore_ascii_case(&e.nom)) || e.parent == service) {
                 e.chemin = chemin_de(pid);
             }
         }
         // Ascendance figée à l'entrée : descendant du service ou non (parents et enfants d'une même liste, tout ordre)
+        let windows = crate::natif::dossier_windows();
         for pid in nouveaux {
-            let d = self.descend_du_service(pid);
-            if let Some(e) = self.processus.get_mut(&pid) {
-                e.du_service = d;
-            }
+            self.marquer(pid, &windows);
         }
         let precedente = self.derniere_maj;
         for (pid, p) in self.processus.iter_mut() {
@@ -286,7 +340,7 @@ impl Arbre {
         }
         self.signaux.retain(|_, s| !s.is_empty());
         self.deja_alertees.retain(|_, (_, t)| t.elapsed() < DUREE_SIGNAL);
-        self.plafond.retain(|_, (t, _)| t.elapsed() < DUREE_SIGNAL);
+        self.plafond.retain(|_, (t, _, _)| t.elapsed() < DUREE_SIGNAL);
     }
 
     pub fn completer(&mut self, pid: u32, chemin: &str, ligne: Option<&str>) {
@@ -343,10 +397,7 @@ impl Arbre {
                     vu: maintenant, vivant: false, naissance: t, exacte: heure.is_some(), par_4688: true, fin: None, du_service: false,
                 });
                 self.signaux.remove(&pid);
-                let d = self.descend_du_service(pid);
-                if let Some(e) = self.processus.get_mut(&pid) {
-                    e.du_service = d;
-                }
+                self.marquer(pid, &crate::natif::dossier_windows());
             }
         }
     }
@@ -378,10 +429,11 @@ impl Arbre {
         self.processus.get(&pid).map(|p| p.nom.clone()).unwrap_or_else(|| format!("PID {pid}"))
     }
 
-    /// L'ascendance réelle de ce processus passe-t-elle par le service ? Parent suivi seulement s'il vivait à la création
-    /// de l'enfant ; un ancêtre déjà marqué suffit. Le service est reconnu par son propre PID (le processus qui exécute ce
-    /// code), jamais par un nom (règle 5)
-    fn descend_du_service(&self, pid: u32) -> bool {
+    /// L'ascendance réelle de ce processus passe-t-elle par un programme du service ? Parent suivi seulement s'il vivait
+    /// à la création de l'enfant ; un ancêtre déjà marqué suffit. Le service est reconnu par son propre PID (le processus
+    /// qui exécute ce code), jamais par un nom ; son enfant direct doit être l'un de ses programmes, par chemin exact
+    /// (règle 5 : un autre programme créé avec le service pour parent reste dans les chaînes)
+    fn descend_du_service(&self, pid: u32, windows: &str) -> bool {
         let service = self.pid_service();
         let mut courant = pid;
         for _ in 0..PROFONDEUR_MAX {
@@ -392,7 +444,11 @@ impl Arbre {
             if p.du_service {
                 return true;
             }
-            let Some(pp) = self.processus.get(&p.parent) else { return p.parent == service };
+            if p.parent == service {
+                let service_vivait = self.processus.get(&service).is_none_or(|s| parent_vivait(s.naissance, s.exacte || s.par_4688, s.fin, p.naissance));
+                return service_vivait && programme_du_service(&p.chemin, windows);
+            }
+            let Some(pp) = self.processus.get(&p.parent) else { return false };
             if p.parent == courant || !parent_vivait(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance) {
                 return false;
             }
@@ -421,8 +477,9 @@ impl Arbre {
             if !parent_vivait(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance) {
                 break;
             }
+            // Le service n'est jamais un maillon : un enfant direct qui n'est pas l'un de ses programmes est sa propre tête
             if parent == service {
-                return (chemin, true);
+                break;
             }
             if racine(&pp.chemin, &windows) || !vus.insert(parent) || parent <= 4 || chemin.len() >= PROFONDEUR_MAX {
                 break;
@@ -529,17 +586,6 @@ impl Arbre {
                 continue;
             }
             self.deja_alertees.insert(cle.clone(), (c.score, Instant::now()));
-            let fenetre = self.plafond.entry(cle.clone()).or_insert((Instant::now(), 0));
-            if fenetre.0.elapsed() >= DUREE_SIGNAL {
-                *fenetre = (Instant::now(), 0);
-            }
-            if fenetre.1 >= PLAFOND_ALERTES_PAR_HEURE {
-                self.plafonnees += 1;
-                crate::mesure::compter("chaines.alertes_plafonnees");
-                continue;
-            }
-            fenetre.1 += 1;
-            let dernier = c.noeuds.iter().rev().find(|n| n.score > 0).cloned().unwrap_or_default();
             // Techniques de la chaîne : celles de ses signaux, dans l'ordre de la chaîne, sans doublon
             let mut techniques: Vec<String> = Vec::new();
             for t in c.noeuds.iter().filter_map(|n| self.signaux.get(&n.pid)).flatten().flat_map(|s| s.techniques.iter()) {
@@ -548,8 +594,31 @@ impl Arbre {
                 }
             }
             let signaux: Vec<&Signal> = c.noeuds.iter().filter_map(|n| self.signaux.get(&n.pid)).flatten().collect();
+            // Apports de l'alerte : techniques et signaux forts. Le plafond ne retient que l'alerte qui n'apporte rien de
+            // nouveau (une hausse de score par des signaux déjà vus) ; la technique nouvelle ou le signal fort passe, compté
+            let apports: Vec<String> = techniques.iter().map(|t| format!("t:{t}"))
+                .chain(signaux.iter().filter(|s| signal_fort(&s.code)).map(|s| format!("f:{}", s.code))).collect();
+            let fenetre = self.plafond.entry(cle.clone()).or_insert_with(|| (Instant::now(), 0, HashSet::new()));
+            if fenetre.0.elapsed() >= DUREE_SIGNAL {
+                *fenetre = (Instant::now(), 0, HashSet::new());
+            }
+            let nouveau = apports.iter().any(|x| !fenetre.2.contains(x));
+            if fenetre.1 >= PLAFOND_ALERTES_PAR_HEURE {
+                if !nouveau {
+                    self.plafonnees += 1;
+                    crate::mesure::compter("chaines.alertes_plafonnees");
+                    continue;
+                }
+                self.hors_plafond += 1;
+                crate::mesure::compter("chaines.alertes_hors_plafond");
+            }
+            fenetre.1 += 1;
+            fenetre.2.extend(apports);
+            let dernier = c.noeuds.iter().rev().find(|n| n.score > 0).cloned().unwrap_or_default();
             let tete = c.noeuds.first().map(|n| n.chemin.trim()).unwrap_or_default();
-            let entite = if tete.is_empty() { format!("chaine:{cle}") } else { format!("programme:{tete}") };
+            let generique = std::path::Path::new(tete).file_stem().map(|n| n.to_string_lossy().to_lowercase())
+                .is_some_and(|n| TETES_GENERIQUES.contains(&n.as_str()));
+            let entite = if tete.is_empty() || generique { format!("chaine:{cle}") } else { format!("programme:{tete}") };
             a.push(Alerte {
                 comportement: code_chaine(&signaux.iter().map(|s| (s.code.as_str(), s.raison.as_str())).collect::<Vec<_>>()),
                 regle: crate::regles::CHA_001.into(),
