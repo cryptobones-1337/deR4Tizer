@@ -2,6 +2,7 @@
 name = "der4tizer-svc"
 version = "4.3.0"
 edition = "2021"
+license = "EUPL-1.2"
 description = "deR4Tizer : service de surveillance des connexions, de la persistance et de la vie privée"
 
 # Les versions de la bibliothèque Windows sont figées sur celles qui fournissent leurs bibliothèques
