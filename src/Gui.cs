@@ -261,14 +261,14 @@ namespace DeR4Tizer
                 {
                     try { PreparerIdentite(c); }
                     catch (Exception e) { MessageBox.Show(e.Message, "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
-                    using (var fenetre = FenetreConfirmation(Decrire(c), L.En))
+                    using (var fenetre = FenetreConfirmation(TitreConfirmation(c, L.En), Decrire(c), L.En))
                         if (fenetre.ShowDialog() != DialogResult.Yes) return;
                 }
                 // Réglages qui changent la détection ou la réponse automatique : confirmés aussi par un administrateur, comme
                 // le fait la copie élevée pour un compte standard (audit de #152, S152-02)
                 else if (ConfirmeEnAdministrateur(c))
                 {
-                    using (var fenetre = FenetreConfirmation(Decrire(c), L.En))
+                    using (var fenetre = FenetreConfirmation(TitreConfirmation(c, L.En), Decrire(c), L.En))
                         if (fenetre.ShowDialog() != DialogResult.Yes) return;
                 }
                 Afficher(Envoyer(c));
@@ -930,40 +930,300 @@ namespace DeR4Tizer
                       : "⚠ Cette demande ne vient peut-être pas de vous : si vous n'avez rien demandé dans deR4Tizer, annulez.";
         }
 
+        // Titre court de la fenêtre de confirmation (constat T-16) : table fixe par action, choisi par les mêmes conditions que
+        // Decrire, jamais un texte venu de la commande ; ce que fait la commande reste dit par Decrire, dans la zone de texte.
+        // Action inconnue : titre fixe « Commande inconnue ». Décision pure, testée par tests\test-confirmations.ps1
+        public static string TitreConfirmation(Commande c, bool en)
+        {
+            if (c == null) return en ? "Unknown command" : "Commande inconnue";
+            string v = c.Valeur ?? "";
+            switch (c.Action)
+            {
+                case "bloquer": return string.IsNullOrEmpty(c.NomDns) ? (en ? "Block an address" : "Bloquer une adresse") : (en ? "Block a domain" : "Bloquer un domaine");
+                case "bloquerIp": return en ? "Block an address at the firewall" : "Bloquer une adresse au pare-feu";
+                case "debloquer": return en ? "Remove a block" : "Retirer un blocage";
+                case "toutDebloquer": return en ? "Remove all blocks" : "Retirer tous les blocages";
+                case "config": return v == "true" ? (en ? "Turn on a setting" : "Activer un réglage") : (en ? "Turn off a setting" : "Désactiver un réglage");
+                case "majMenaces": return en ? "Update the threat lists" : "Mettre à jour les listes de menaces";
+                case "tuer": return en ? "Kill a process" : "Tuer un processus";
+                case "tuerChaine": return en ? "Kill a process and its descendants" : "Tuer un processus et sa descendance";
+                case "suspendre": return en ? "Suspend a process" : "Suspendre un processus";
+                case "reprendre": return en ? "Resume a process" : "Reprendre un processus";
+                case "quarantaine": return en ? "Quarantine a file" : "Mettre un fichier en quarantaine";
+                case "incident": return en ? "Change the state of an incident" : "Changer l'état d'un incident";
+                case "restaurer": return en ? "Restore from quarantine" : "Sortir de la quarantaine";
+                case "restaurerRepli": return en ? "Restore from quarantine (deR4Tizer folder)" : "Sortir de la quarantaine (dossier de deR4Tizer)";
+                case "isolerProgramme": return en ? "Isolate a program from the network" : "Isoler un programme du réseau";
+                case "panique": return v != "off" ? (en ? "Turn on panic mode" : "Activer le mode panique") : (en ? "Turn off panic mode" : "Désactiver le mode panique");
+                case "baseline": return v == "annuler" ? (en ? "Revert security settings" : "Annuler des réglages de sécurité")
+                    : v == "appliquer" ? (en ? "Apply security settings" : "Appliquer des réglages de sécurité") : (en ? "Re-evaluate the baseline" : "Réévaluer la baseline");
+                case "reglages": return en ? "Change settings" : "Modifier les réglages";
+                case "testerSyslog": return en ? "Send a syslog test message" : "Envoyer un message syslog de test";
+                case "jetonApi": return en ? "Show the export API token" : "Afficher le jeton de l'API d'export";
+                case "nouveauJeton": return en ? "Replace the export API token" : "Remplacer le jeton de l'API d'export";
+                case "notifications": return en ? "Change alert forwarding" : "Modifier la remontée des alertes";
+                case "testerNotifications": return en ? "Send a test notification" : "Envoyer une notification de test";
+                case "exception": return en ? "Add an alert exception" : "Ajouter une exception d'alerte";
+                case "apprentissage": return v == "terminer" ? (en ? "End learning mode" : "Terminer l'apprentissage")
+                    : v == "recommencer" ? (en ? "Restart learning mode" : "Relancer l'apprentissage") : (en ? "Delete all alert exceptions" : "Supprimer les exceptions d'alerte");
+                case "majVerifier": return en ? "Check for an update" : "Rechercher une mise à jour";
+                case "majConfig": return en ? "Change update settings" : "Modifier les réglages de mise à jour";
+                case "autoriserLecteur": return en ? "Allow an account to read the data" : "Autoriser un compte à lire les données";
+                case "filtrage": return v == "on" ? (en ? "Turn on domain filtering" : "Activer le filtrage des domaines") : (en ? "Turn off domain filtering" : "Désactiver le filtrage des domaines");
+                case "filtrageCategories": return en ? "Change the filtering categories" : "Modifier les catégories du filtrage";
+                case "filtrageAmont": return TextesFiltrage.NomTiers(v) != null ? (en ? "Change the upstream resolver" : "Changer de résolveur d'amont") : (en ? "Go back to your network's resolver" : "Revenir au résolveur de votre réseau");
+                case "filtrageAutoriser": return en ? "Allow a domain (filtering)" : "Autoriser un domaine (filtrage)";
+                case "filtrageRetirer": return en ? "Remove an allowed domain (filtering)" : "Retirer un domaine autorisé (filtrage)";
+                default: return en ? "Unknown command" : "Commande inconnue";
+            }
+        }
+
+        // Ligne de la zone de texte de la confirmation : niveau 0 (description), 1 (conséquence) ou 2 (détail, retrait de 6)
+        public sealed class LigneConfirmation
+        {
+            public int Niveau;
+            public bool Puce;
+            public string Texte;
+        }
+
+        // Texte de Decrire mis en liste (constat T-16) : la première ligne est la description, chaque ligne suivante un
+        // élément ; rien n'est retiré ni reformulé, seuls le retrait de tête et la puce « • » de tête deviennent une mise en
+        // forme (« • » au niveau 1, « ◦ » au niveau 2 ; une ligne de niveau 2 sans puce, comme la fin de l'hôte, reste sans).
+        // Chaque ligne passe encore par Visible (« Visible partout », A-1-5) : la mise en page ne fait réapparaître aucun
+        // caractère invisible. Décision pure, testée par tests\test-confirmations.ps1
+        public static List<LigneConfirmation> LignesConfirmation(string texte)
+        {
+            var r = new List<LigneConfirmation>();
+            var lignes = (texte ?? "").Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i < lignes.Length; i++)
+            {
+                if (i == 0) { r.Add(new LigneConfirmation { Niveau = 0, Texte = Visible(lignes[0]) }); continue; }
+                string t = lignes[i].TrimStart(' ');
+                int retrait = lignes[i].Length - t.Length;
+                bool puce = t.StartsWith("• ");
+                if (puce) t = t.Substring(2);
+                int niveau = retrait >= 6 ? 2 : 1;
+                r.Add(new LigneConfirmation { Niveau = niveau, Puce = t.Length > 0 && (puce || niveau == 1), Texte = Visible(t) });
+            }
+            return r;
+        }
+
+        // Texte brut de la zone : une ligne par élément, la puce suivie d'une tabulation (alignement des lignes renvoyées)
+        public static string TexteZoneConfirmation(List<LigneConfirmation> lignes)
+        {
+            return string.Join("\n", lignes.Select(l => (l.Puce ? (l.Niveau == 2 ? "◦\t" : "•\t") : "") + l.Texte));
+        }
+
+        // Hauteur de la zone de texte (constat T-16) : tout le contenu tant que la fenêtre tient dans 70 % de la hauteur de
+        // l'écran, sinon la place qui reste (défilement), jamais moins de 80 px. Décision pure, testée
+        public static int HauteurZoneConfirmation(int contenu, int autour, int ecran)
+        {
+            return Math.Min(contenu, Math.Max(80, ecran * 7 / 10 - autour));
+        }
+
+        // Libellé de « Continuer » : secondes restantes avant l'armement, entre parenthèses (constat T-16)
+        public static string TexteContinuer(bool en, int restant)
+        {
+            string t = en ? "Continue" : "Continuer";
+            return restant > 0 ? t + " (" + restant + ")" : t;
+        }
+
+        // Bouton de la fenêtre de confirmation : un vrai Button (DialogResult, Entrée et Échap inchangés), dessiné au thème
+        sealed class BoutonConfirmation : Button
+        {
+            public bool Accent;
+
+            public BoutonConfirmation()
+            {
+                FlatStyle = FlatStyle.Flat;
+                UseMnemonic = false;
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                g.Clear(Parent != null ? Parent.BackColor : Theme.Panneau);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (var chemin = Theme.Arrondi(new RectangleF(1f, 1f, Width - 3f, Height - 3f), 6f))
+                {
+                    using (var fond = new SolidBrush(Accent ? Theme.Melange(Theme.Panneau, Theme.Cyan, 0.14f) : Theme.Panneau)) g.FillPath(fond, chemin);
+                    using (var trait = new Pen(Accent ? Theme.Cyan : Theme.Bordure, Accent ? 2f : 1f)) g.DrawPath(trait, chemin);
+                }
+                TextRenderer.DrawText(g, Text, Font, ClientRectangle, Enabled ? Theme.Texte : Theme.Melange(Theme.TexteDim, Theme.Panneau, 0.4f),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct FormatParagraphe
+        {
+            public int Taille;
+            public uint Masque;
+            public short Numerotation, Effets;
+            public int RetraitDebut, RetraitDroit, Decalage;
+            public short Alignement, NombreTabulations;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public int[] Tabulations;
+            public int EspaceAvant, EspaceApres, Interligne;
+            public short Style;
+            public byte RegleInterligne, NiveauPlan;
+            public short PoidsTrame, StyleTrame, DebutNumerotation, StyleNumerotation, TabulationNumerotation, EspaceBordure, LargeurBordure, Bordures;
+        }
+
+        [DllImport("user32.dll", EntryPoint = "SendMessage")]
+        static extern IntPtr EnvoyerFormat(IntPtr h, int message, IntPtr w, ref FormatParagraphe f);
+
+        // Espace après les paragraphes de la sélection (EM_SETPARAFORMAT, PFM_SPACEAFTER), en twips ; présentation seule
+        static void EspaceApres(RichTextBox zone, int twips)
+        {
+            var f = new FormatParagraphe { Taille = Marshal.SizeOf(typeof(FormatParagraphe)), Masque = 0x80, EspaceApres = twips, Tabulations = new int[32] };
+            EnvoyerFormat(zone.Handle, 0x0447, IntPtr.Zero, ref f);
+        }
+
         // Fenêtre de confirmation de l'assistant élevé (S60-06/07) : texte entier, renvoyé à la ligne même au milieu d'un mot
         // d'un seul tenant, avec défilement ; rien ne sort de l'écran. « Annuler » par défaut (Entrée, Échap, fermeture).
         // Commande qui affaiblit la protection (Affaiblit), dans l'assistant élevé : tout programme du compte peut le lancer,
-        // la fenêtre le dit en tête et « Continuer » n'est armé qu'après 2 s (audit du 2026-11-23, A-1-2)
-        public static Form FenetreConfirmation(string texte, bool en, bool affaiblit = false)
+        // la fenêtre le dit en tête et « Continuer » n'est armé qu'après 2 s (audit du 2026-11-23, A-1-2).
+        // Présentation (constat T-16, maquettes validées par le mainteneur) : thème sombre et police de l'interface, barre de
+        // titre sombre, icône du produit, titre court d'une table fixe (TitreConfirmation, jamais un texte de la commande),
+        // texte de Decrire dans une zone sombre en lecture seule (sélection et copie possibles ; texte brut, jamais lu comme du
+        // RTF), conséquences en liste, bandeau rouge pour une commande qui affaiblit, secondes restantes sur « Continuer » ;
+        // largeur 600, hauteur ajustée au contenu jusqu'à 70 % de l'écran, défilement au-delà. Délais, « Annuler » par défaut
+        // et texte affiché inchangés
+        public static Form FenetreConfirmation(string titre, string texte, bool en, bool affaiblit = false)
         {
-            if (affaiblit) texte = AvertissementAffaiblit(en) + "\n\n" + texte;
+            const int largeur = 600, marge = 24, xTexte = 88, hautPied = 64;
+            Font corps = Theme.PoliceInterface(10.5f, false), gras = Theme.PoliceInterface(10.5f, true), petit = Theme.PoliceInterface(9f, false),
+                fTitre = Theme.PoliceInterface(14f, true);
             var f = new Form
             {
-                Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", Icon = Theme.IconeApplication(32), StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormBorderStyle.Sizable, MinimizeBox = false, MaximizeBox = true, ShowInTaskbar = true, TopMost = true,
-                ClientSize = new Size(640, 420), MinimumSize = new Size(420, 300), Font = SystemFonts.MessageBoxFont
+                Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", Icon = Theme.IconeApplication(32), StartPosition = FormStartPosition.Manual,
+                FormBorderStyle = FormBorderStyle.FixedSingle, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = true, TopMost = true,
+                ClientSize = new Size(largeur, 400), Font = corps, BackColor = Theme.Panneau, ForeColor = Theme.Texte, AutoScaleMode = AutoScaleMode.None
             };
-            var zone = new TextBox
+            // Barre de titre sombre ; sans effet (ancien Windows, DWM absent), la fenêtre reste utilisable telle quelle
+            f.HandleCreated += (s, e) => Theme.BarreTitreSombre(f.Handle);
+            Func<string, Font, int, int> hauteur = (t, police, l) => TextRenderer.MeasureText(t, police, new Size(l, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height;
+            int y = 0;
+
+            // Bandeau rouge d'une commande qui affaiblit (A-1-2) : la phrase d'AvertissementAffaiblit, son « ⚠ » dessiné à gauche
+            if (affaiblit)
             {
-                Name = "Texte", Multiline = true, ReadOnly = true, WordWrap = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
-                TabStop = false, BackColor = SystemColors.Window,
-                Text = ((en ? "deR4Tizer (administrator) is about to:\n\n" : "deR4Tizer (administrateur) va :\n\n") + texte).Replace("\n", "\r\n")
+                string phrase = Visible(AvertissementAffaiblit(en));
+                if (phrase.StartsWith("⚠ ")) phrase = phrase.Substring(2);
+                int lPhrase = largeur - 56 - marge, hPhrase = hauteur(phrase, gras, lPhrase);
+                var bandeau = new Panel { Name = "Bandeau", BackColor = Theme.FondCritique, Bounds = new Rectangle(0, 0, largeur, hPhrase + 28) };
+                bandeau.Controls.Add(new Label { Name = "Avertissement", Text = phrase, Font = gras, ForeColor = Theme.Texte, BackColor = Theme.FondCritique, UseMnemonic = false, Bounds = new Rectangle(56, 14, lPhrase, hPhrase) });
+                bandeau.Paint += (s, e) =>
+                {
+                    var g = e.Graphics;
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (var b = new SolidBrush(Theme.Rouge)) g.FillRectangle(b, 0, 0, 4, bandeau.Height);
+                    using (var p = new Pen(Theme.Rouge, 1.8f) { LineJoin = LineJoin.Round })
+                    {
+                        g.DrawPolygon(p, new[] { new PointF(31, 15), new PointF(42, 34), new PointF(20, 34) });
+                        g.DrawLine(p, 31, 21.5f, 31, 27.5f);
+                    }
+                    using (var b = new SolidBrush(Theme.Rouge)) g.FillEllipse(b, 30f, 29.6f, 2.2f, 2.2f);
+                };
+                f.Controls.Add(bandeau);
+                y += bandeau.Height;
+            }
+
+            // En-tête : icône du produit, titre court (table fixe), « deR4Tizer (administrateur) va : »
+            string sous = en ? "deR4Tizer (administrator) is about to:" : "deR4Tizer (administrateur) va :", titreVu = Visible(titre);
+            int lEntete = largeur - xTexte - marge, hTitre = hauteur(titreVu, fTitre, lEntete), hSous = hauteur(sous, petit, lEntete);
+            f.Controls.Add(new PictureBox { Name = "Icone", Image = Theme.ImageApplication(48), SizeMode = PictureBoxSizeMode.Zoom, BackColor = Theme.Panneau, Bounds = new Rectangle(marge, y + 20, 48, 48) });
+            f.Controls.Add(new Label { Name = "Titre", Text = titreVu, Font = fTitre, ForeColor = Theme.Texte, BackColor = Theme.Panneau, UseMnemonic = false, Bounds = new Rectangle(xTexte, y + 18, lEntete, hTitre) });
+            f.Controls.Add(new Label { Name = "SousTitre", Text = sous, Font = petit, ForeColor = Theme.TexteDim, BackColor = Theme.Panneau, UseMnemonic = false, Bounds = new Rectangle(xTexte, y + 20 + hTitre, lEntete, hSous) });
+            y += Math.Max(84, 20 + hTitre + hSous + 16);
+
+            // Zone sombre en lecture seule : texte de Decrire, en liste. Texte brut (Text : SF_TEXT), jamais du RTF ; aucune
+            // adresse transformée en lien ; Ctrl+C ou le menu copient, rien ne s'y écrit
+            var lignes = LignesConfirmation(texte);
+            var cadre = new Panel { Name = "Cadre", BackColor = Theme.Fond, Padding = new Padding(12, 10, 4, 10), Bounds = new Rectangle(xTexte, y, largeur - xTexte - marge, 2000) };
+            cadre.Paint += (s, e) => { using (var p = new Pen(Theme.Bordure)) e.Graphics.DrawRectangle(p, 0, 0, cadre.Width - 1, cadre.Height - 1); };
+            var zone = new RichTextBox
+            {
+                Name = "Texte", ReadOnly = true, Multiline = true, WordWrap = true, ScrollBars = RichTextBoxScrollBars.Vertical, DetectUrls = false,
+                BorderStyle = BorderStyle.None, TabStop = false, ShortcutsEnabled = true, EnableAutoDragDrop = false, AllowDrop = false,
+                BackColor = Theme.Fond, ForeColor = Theme.Texte, Font = corps, Dock = DockStyle.Fill
             };
-            var bas = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Padding = new Padding(8) };
-            var annuler = new Button { Name = "Annuler", Text = en ? "Cancel" : "Annuler", DialogResult = DialogResult.Cancel, AutoSize = true };
-            var continuer = new Button { Name = "Continuer", Text = en ? "Continue" : "Continuer", DialogResult = DialogResult.Yes, AutoSize = true };
-            bas.Controls.Add(annuler); bas.Controls.Add(continuer);
-            f.Controls.Add(zone); f.Controls.Add(bas);
+            var menu = new ContextMenuStrip { Renderer = new RenduSombre(), Font = Theme.Petit };
+            menu.Items.Add(en ? "Copy" : "Copier", null, (s, e) => zone.Copy());
+            menu.Items.Add(en ? "Select all" : "Tout sélectionner", null, (s, e) => zone.SelectAll());
+            zone.ContextMenuStrip = menu;
+            cadre.Controls.Add(zone);
+            f.Controls.Add(cadre);
+            // Poignées créées dès la construction : la mise en forme et la mesure du contenu les demandent
+            IntPtr poignee = zone.Handle;
+            zone.Text = TexteZoneConfirmation(lignes);
+            int debut = 0;
+            foreach (var l in lignes)
+            {
+                int longueur = (l.Puce ? 2 : 0) + l.Texte.Length, retrait = l.Niveau == 2 ? 22 : 0;
+                zone.Select(debut, longueur);
+                zone.SelectionFont = l.Niveau == 0 ? gras : l.Niveau == 2 ? petit : corps;
+                zone.SelectionColor = Theme.Texte;
+                zone.SelectionIndent = l.Niveau == 0 ? 0 : l.Puce ? retrait : retrait + 18;
+                zone.SelectionHangingIndent = l.Puce ? 18 : 0;
+                zone.SelectionTabs = new[] { retrait + 18 };
+                EspaceApres(zone, l.Niveau == 0 ? 160 : l.Niveau == 1 ? 80 : 20);
+                if (l.Puce) { zone.Select(debut, 1); zone.SelectionColor = Theme.TexteDim; }
+                debut += longueur + 1;
+            }
+            zone.Select(0, 0);
+            Theme.DefilementSombre(zone);
+
+            // Hauteur du contenu à la largeur de la zone (EM_REQUESTRESIZE), puis hauteur de la fenêtre bornée à 70 % de l'écran
+            int contenu = 0;
+            ContentsResizedEventHandler mesure = (s, e) => contenu = e.NewRectangle.Height;
+            zone.ContentsResized += mesure;
+            Theme.SendMessage(zone.Handle, 0x0441, IntPtr.Zero, IntPtr.Zero);
+            zone.ContentsResized -= mesure;
+            int voulu = (contenu > 0 ? contenu : int.MaxValue / 2) + cadre.Padding.Vertical + 4;
+            int bordures = f.Height - f.ClientSize.Height, ecran = Screen.FromPoint(Control.MousePosition).WorkingArea.Height;
+            int hZone = HauteurZoneConfirmation(voulu, bordures + y + 16 + hautPied, ecran);
+            bool defile = hZone < voulu;
+            cadre.Height = hZone;
+            y += hZone + 16;
+
+            // Pied : trait, « Continuer » et « Annuler » à droite, rappel de défilement à gauche quand tout ne tient pas
+            var pied = new Panel { Name = "Pied", BackColor = Theme.Panneau, Bounds = new Rectangle(0, y, largeur, hautPied) };
+            pied.Controls.Add(new Panel { BackColor = Theme.Bordure, Bounds = new Rectangle(0, 0, largeur, 1) });
+            if (defile) pied.Controls.Add(new Label { Name = "Defiler", Text = en ? "Scroll to read everything." : "Faites défiler pour tout lire.", Font = petit, ForeColor = Theme.TexteDim, BackColor = Theme.Panneau, UseMnemonic = false, Bounds = new Rectangle(marge, 24, 220, 20) });
+            var annuler = new BoutonConfirmation { Name = "Annuler", Text = en ? "Cancel" : "Annuler", DialogResult = DialogResult.Cancel, Accent = true, Font = corps, TabIndex = 0, Bounds = new Rectangle(largeur - marge - 110, 15, 110, 34) };
+            int delai = affaiblit ? 2 : 1;
+            var continuer = new BoutonConfirmation { Name = "Continuer", Text = TexteContinuer(en, delai), DialogResult = DialogResult.Yes, Font = corps, TabIndex = 1, Bounds = new Rectangle(largeur - marge - 110 - 10 - 130, 15, 130, 34) };
+            pied.Controls.Add(annuler); pied.Controls.Add(continuer);
+            f.Controls.Add(pied);
+            f.ClientSize = new Size(largeur, y + hautPied);
             f.AcceptButton = annuler; f.CancelButton = annuler;
+            // Centrée sur l'écran de la souris, comme CenterScreen, une fois sa hauteur connue
+            f.Load += (s, e) =>
+            {
+                var z = Screen.FromPoint(Control.MousePosition).WorkingArea;
+                f.Location = new Point(z.Left + Math.Max(0, (z.Width - f.Width) / 2), z.Top + Math.Max(0, (z.Height - f.Height) / 2));
+            };
             // « Continuer » armé une seconde après l'affichage, et de nouveau après chaque retour au premier plan : un clic
-            // préparé ou une fenêtre posée par-dessus juste avant ne tombe pas sur lui (audit de #69, S69-02, S69-03)
+            // préparé ou une fenêtre posée par-dessus juste avant ne tombe pas sur lui (audit de #69, S69-02, S69-03) ; 2 s
+            // pour une commande qui affaiblit (A-1-2). Secondes restantes affichées sur le bouton (constat T-16)
             continuer.Enabled = false;
-            var armement = new System.Windows.Forms.Timer { Interval = affaiblit ? 2000 : 1000 };
-            armement.Tick += (s, e) => { armement.Stop(); continuer.Enabled = true; };
-            f.Activated += (s, e) => { continuer.Enabled = false; armement.Stop(); armement.Start(); };
-            f.Deactivate += (s, e) => { continuer.Enabled = false; armement.Stop(); };
-            f.FormClosed += (s, e) => armement.Dispose();
-            f.Shown += (s, e) => { annuler.Focus(); zone.SelectionLength = 0; };
+            int restant = delai;
+            var armement = new System.Windows.Forms.Timer { Interval = 1000 };
+            armement.Tick += (s, e) =>
+            {
+                restant--;
+                if (restant > 0) { continuer.Text = TexteContinuer(en, restant); return; }
+                armement.Stop();
+                continuer.Text = TexteContinuer(en, 0);
+                continuer.Enabled = true;
+            };
+            Action desarmer = () => { armement.Stop(); continuer.Enabled = false; restant = delai; continuer.Text = TexteContinuer(en, delai); };
+            f.Activated += (s, e) => { desarmer(); armement.Start(); };
+            f.Deactivate += (s, e) => desarmer();
+            f.FormClosed += (s, e) => { armement.Dispose(); menu.Dispose(); };
+            f.Shown += (s, e) => { annuler.Focus(); zone.Select(0, 0); };
             f.ActiveControl = annuler;
             return f;
         }
@@ -2675,7 +2935,7 @@ namespace DeR4Tizer
                     MessageBox.Show(L.En ? "Command refused: its confirmation would be too long to be read in full." : "Commande refusée : sa confirmation serait trop longue pour être lue en entier.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 1;
                 }
-                using (var fenetre = Canal.FenetreConfirmation(texte, L.En, Canal.Affaiblit(c)))
+                using (var fenetre = Canal.FenetreConfirmation(Canal.TitreConfirmation(c, L.En), texte, L.En, Canal.Affaiblit(c)))
                     if (fenetre.ShowDialog() != DialogResult.Yes) return 1;
                 var r = Canal.Envoyer(c);
                 Canal.Afficher(r);

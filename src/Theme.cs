@@ -74,6 +74,12 @@ namespace DeR4Tizer
             return new Font(FontFamily.GenericSansSerif, taille, style);
         }
 
+        // Police de l'interface (Segoe UI, comme la coquille) à une taille donnée, demi-grasse par Segoe UI Semibold
+        internal static Font PoliceInterface(float taille, bool gras)
+        {
+            return gras ? Police(taille, FontStyle.Regular, "Segoe UI Semibold", "Segoe UI") : Police(taille, FontStyle.Regular, "Segoe UI");
+        }
+
         // Couleur de la barre latérale d'une ligne, selon son fond
         public static Color Accent(Color fond)
         {
@@ -223,6 +229,19 @@ namespace DeR4Tizer
                 DwmSetWindowAttribute(f.Handle, 34, ref bordure, 4);
                 DwmSetWindowAttribute(f.Handle, 36, ref titre, 4);
             };
+        }
+
+        // Barre de titre sombre seule (attribut 20, ou 19 sur les Windows 10 plus anciens), comme la coquille WPF ; vrai si DWM
+        // l'a acceptée. Échec ignoré : la fenêtre reste utilisable avec la barre claire (fenêtre de confirmation, constat T-16)
+        public static bool BarreTitreSombre(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return false;
+            try
+            {
+                int oui = 1;
+                return DwmSetWindowAttribute(h, 20, ref oui, 4) == 0 || DwmSetWindowAttribute(h, 19, ref oui, 4) == 0;
+            }
+            catch (Exception) { return false; }
         }
 
         public static void DefilementSombre(Control c)
