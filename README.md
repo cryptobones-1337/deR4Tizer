@@ -90,7 +90,7 @@ automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
-original security settings restored and data deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
+original security settings restored and data deleted, including files in quarantine (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
 With domain-name filtering on (phase 7), Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
 `::1`), with their original servers as fallback. Turning it off, stopping the service and uninstalling restore their
 original state (recorded in `filtrage-origine.json`, in the data folder). If a card were left on `127.0.0.1` (service
@@ -129,8 +129,10 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 
 > **Known limit.** On versions 4.2 and 4.3 already installed, automatic updates install nothing: the install script,
 > launched without a console, did not run (fixed by PR #26, included in the signed release v4.3). An installed 4.2 or 4.3 test build
-> therefore does not update itself: install the signed v4.3 by hand (`msiexec /i deR4Tizer.msi`); automatic updates
-> then work from that one onward.
+> therefore does not update itself: uninstall the test build first (`GARDER_DONNEES=1` keeps the data), then install the
+> signed v4.3 by hand (`msiexec /i deR4Tizer.msi`); automatic updates then work from that one onward. Both carry version
+> 4.3.0: installing the signed package over a test build may leave the test build's unsigned files in place (not yet
+> checked).
 
 Each `vX.Y` tag triggers the *Publication* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
 GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
@@ -138,7 +140,8 @@ strict (known fields only, 64 KB at most, a single file: the MSI package) and is
 it is not signed. Automatic installation is off by default; when on, it installs a package only if its hash is the one
 in the manifest, if it is signed by one of the **keys pinned in the binary** (SHA-256 hashes of the public keys, repo
 variable `CLE_SIGNATURE`, passed to the build as `DER4TIZER_CLES_SIGNATURE`: the current key and the next one,
-comma-separated, to get through certificate renewal), with revocation checked, and if the **version read from the
+comma-separated, to get through certificate renewal; v4.3 pins only the current key, the next one must be pinned in a
+release published before the certificate expires on 2027-11-17), with revocation checked, and if the **version read from the
 signed package** (`ProductVersion`, with deR4Tizer's `UpgradeCode`) is the one in the manifest and strictly newer than
 the installed version. Before any installation, the service also fetches the package of **its own version**, verified
 the same way, so it can roll back; without it, nothing is installed. The files are kept in `%ProgramFiles%\deR4Tizer\maj`,
@@ -190,6 +193,7 @@ Known, by design. Be aware before relying on it:
 - Since v4.3 (2026-11-23), the released executables and MSI are signed (Certum). Builds installed by hand before it are unsigned: Windows shows "unknown publisher" for them and they do not update on their own. The service recognises its own files by their SHA-256 hash.
 - The license text shown by the v4.3 installer still says the binaries are not signed: wrong for v4.3, to be corrected in the next version.
 - v4.3 was published before the deferred D4-1 trials (maintainer's decision, 2026-11-23): restarting the interface in a Remote Desktop session and on fast user switching has not been exercised yet.
+- v4.3 was also published without an independent review: the reviews of 17 and 21 November 2026 and the audit of 23 November 2026 were done by Claude (another agent, without the development history), which does not meet the project's own condition (a person or organisation other than Claude); and without the planned trial of revocation checking once the certificate has expired (maintainer's decision, 2026-11-23).
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
 - On a managed device (domain, Intune), or when that cannot be checked, the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
@@ -203,21 +207,29 @@ Known, by design. Be aware before relying on it:
   signal, not proof on a real machine. Batch 3d was passed again on the signed v4.3 MSI before its release
   (2026-11-23: all scenarios passed, no Defender detection).
 - The interface has only been opened in the test VM (the screenshots above), never on a real production computer; the confirmation windows behind its buttons are not exercised by any scenario, and its decisions are tested separately.
-- Known software is not suspended when it touches a canary, and its alert is at Info level. Its folder's permissions are not checked: a Program Files folder left open by a third-party installer, a case found on one machine, lets a standard account drop a signed copy there; a hollowed process started from an allowed binary keeps this status too.
+- Known software is not suspended when it touches a canary, and its alert is at Info level. Since 2026-11-21 this also requires that the program and its folders cannot be written by standard accounts and that it runs as SYSTEM or with administrator rights; a hollowed process started from such a binary keeps this status.
+- Canaries are placed in each profile's default `Documents`, `Pictures` and `Desktop` folders: when these folders are redirected (OneDrive folder backup, another drive), no canary is in the folders actually used, so ransomware there triggers neither the canary alert nor the suspension (fix planned). The service runs below normal priority: under heavy load, the suspension may come late (not measured; fix planned).
+- Obfuscated or downloading PowerShell (PRC-002) misses common forms: `irm … | iex`, the `-ec`, `-enco` and `/e` abbreviations of `-EncodedCommand`, `iwr … -OutFile`, `Start-BitsTransfer`, and a renamed copy of `powershell.exe`. Backup deletion (PRC-005) misses PowerShell removal of shadow copies and `vssadmin resize shadowstorage`. Process chains (CHA-001) stop at a parent named like a system launcher (`svchost.exe`, `taskhostw.exe`…) whatever its folder. PowerShell script-block logging (event 4104) is turned on by the baseline but read by no rule. Fixes planned.
+- During the 7-day learning period, behaviours of a program already present are learned and later shown at Info level, with no end date; critical alerts and strong signals are never learned.
+- The SIEM keeps the first 400 characters of every process command line, for all accounts, for 30 days. Accounts allowed to read the data (by default the first account seen at the console) can read them: a password typed as a command argument on this computer can be found there. Masking is planned.
+- Baseline: if the local Group Policy file cannot be read when the baseline is applied, cancelled or removed (file held by another program, format not understood), other local policies in that file may be erased; cancelling restores the original value even if someone has hardened it since (fixes planned).
+- Install to the default folder (Program Files) only: another folder may be writable by standard accounts. On a domain-joined computer, the service may read a program started from a network share with the computer's account (fix planned).
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
 - Panic mode: the machine's DNS servers and the notification servers stay reachable for every program (malware could use
   them to send data out, for example through DNS); prefer a self-hosted ntfy server to ntfy.sh.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion
-  found late may have aged out. No encrypted and complete export exists (`docs/security/threat-model.md`).
+  found late may have aged out. A standard account can also push old days out by generating many events (oldest days go
+  first; events beyond the queue are dropped without a health finding), and the service log keeps about 4 MB. No
+  encrypted and complete export exists (`docs/security/threat-model.md`).
 
 ### Roadmap
 
 1. ✅ Settings, FR/EN language, syslog, export API
 2. ✅ Local mini-SIEM: storage, search, timeline, correlation
 3. ✅ Traffic analysis, per-country geolocation (public RIR data), world map
-4. ✅ Local NDR: ARP spoofing, rogue DHCP server (not yet measured positive in the lab), LLMNR/NBNS/mDNS poisoning
-5. ✅ DPI and IDS/IPS: SNI, DNS, JA3 fingerprints, Suricata-compatible rules
+4. 🧪 Local NDR (experimental, being validated): ARP spoofing, rogue DHCP server (not yet measured positive in the lab), LLMNR/NBNS/mDNS poisoning
+5. 🧪 DPI and IDS/IPS (experimental, being validated): SNI, DNS, JA3 fingerprints, Suricata-compatible rules
 6. ✅ Identified and documented detection rules, collection status (phase 3)
 7. ✅ Incident tracking, timeline, health of collections and interface (phase 4)
 8. ✅ Response bounded by the policy: identity re-checked, loop guard, deadlines (phase 6)

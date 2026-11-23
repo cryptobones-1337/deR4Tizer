@@ -56,7 +56,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
-| T1059.001 PowerShell | PRC-002 | Partiel : testé en labo avec Sysmon seulement (S-10, 2026-11-16) | Lecture des 4688, défaut structurel 1 |
+| T1059.001 PowerShell | PRC-002 | Partiel : testé en labo avec Sysmon seulement (S-10, 2026-11-16) | Mesure sans Sysmon (lecture des 4688 faite, défaut structurel 1 traité) ; formes courantes manquées (`irm … \| iex`, `-ec`, `/e`, `iwr -OutFile` : audit du 2026-11-23, A-7-1) ; blocs de script 4104 non lus (A-7-4) |
 | T1059.003 Invite de commandes | CHA-001 | Partiel | Idem |
 | T1059.005 / .007 VBScript, JScript | PRC-001 ; baseline (WSH, ASR) | Règle, non testée | wscript et cscript absents de PRC-003 |
 | T1204.002 Fichier lancé par l'utilisateur | PRC-001, CHA-001, RES-003 | Règle, non testée | Scénario |
@@ -99,7 +99,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 
 | Technique | Règle | État | Ce qui manque |
 |---|---|---|---|
-| T1027 Code obscurci | PRC-002 | Partiel (Sysmon) | Défaut structurel 1 |
+| T1027 Code obscurci | PRC-002 | Partiel (Sysmon) | Obscurcissement vu sur la ligne de commande seulement ; abréviations de `-EncodedCommand` manquées (A-7-1) ; blocs de script 4104 non lus (A-7-4) |
 | T1036 Programme déguisé | étiquette « non signé » seulement | Aucune règle | Outil système copié ou renommé (T1036.003) |
 
 ### Vol d'identifiants

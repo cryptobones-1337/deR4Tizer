@@ -367,6 +367,11 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   scénarios VM : sans Sysmon, la ligne de
   commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
   qu'on ne touche pas.
+- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-1, essayés sur les motifs, non corrigés) : `irm … | iex` (l'adresse précède
+  `iex`, le motif exige l'inverse), abréviations `-ec`, `-enco` et `/e` de `-EncodedCommand`, `iwr … -OutFile`,
+  `Start-BitsTransfer`, copie renommée de powershell.exe (l'interpréteur est cherché par son nom dans la ligne). Un
+  obscurcissement par concaténation (`&('i'+'ex')`) échappera toujours aux motifs : seul le journal des blocs de script
+  (4104), activé par la baseline et lu par aucune règle (A-7-4), le verrait.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
 - **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 T1218 Binaire système détourné, wmic T1047 WMI détourné.
@@ -411,6 +416,10 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
   (`vssadmin list shadows`, `wbadmin get versions`). Non exercée en VM : sans Sysmon, la ligne de commande d'un processus
   aussi bref est souvent perdue par WMI, le scénario serait instable.
+- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-3, essayés sur le motif, non corrigés) : `Get-WmiObject Win32_ShadowCopy |
+  Remove-WmiObject`, `Get-CimInstance Win32_ShadowCopy | Remove-CimInstance`, `vssadmin resize shadowstorage … /maxsize=…`,
+  `wbadmin delete backup`, `bcdedit /set … bootstatuspolicy ignoreallfailures`, `diskshadow /s`. `wmic` est retiré de
+  Windows 11 24H2.
 
 ## CHA : chaînes de processus
 
@@ -429,6 +438,10 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   Critique, pas de nouvelle alerte au même score, une autre quand le score monte), `cha_001_negatif` (un seul signal,
   même fort ; deux signaux sous le seuil ; deux signaux dans deux descendances distinctes de l'Explorateur, qui est une
   racine). Non exercée en VM (signaux des autres règles nécessaires).
+- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-5, non corrigés) : une racine est reconnue à son nom seul (`svchost`,
+  `taskhostw`, `explorer`…), quel que soit son dossier : un programme d'entrée nommé ainsi dans un dossier temporaire coupe
+  la chaîne, et chaque étape reste seule avec un signal. Un parent choisi à la création du processus (T1134.004) produit
+  le même effet.
 
 ## PER : persistance
 
@@ -545,7 +558,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **ATT&CK** : T1486 Chiffrement de données (rançongiciel).
 - **Code** : `hygiene.rs` (`verifier_leurres`, empreinte lue par handle vérifié).
 - **Justification** : un fichier que rien ne devrait toucher a changé ou disparu : chiffrement en cours probable.
-- **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console.
+- **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console. Ils sont posés
+  dans `Documents`, `Pictures` et `Desktop` à leur emplacement par défaut du profil : avec la sauvegarde OneDrive des
+  dossiers ou une redirection, ils ne sont pas dans les dossiers réellement utilisés, et un échec de création n'est pas
+  journalisé (audit du 2026-11-23, fait par Claude, A-7-2, non corrigé).
 - **Si elle manque** : leurres non posés : la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
@@ -772,7 +788,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   COR-R2, COR-R4, COR-R5, COR-R7 et COR-R9 en VP, non consolidés. Limites connues, non corrigées : COR-R3 ne se
   déclenche pas par le vecteur standard (l'ajout au groupe, événement 4732, porte le SID du membre, rapproché du nom du
   compte créé : on obtient COR-R3b, Alerte) ; COR-R9 par Bureau à distance mesurée en Alerte et non en Critique (ordre
-  des ouvertures de session type 3 puis type 10). Faux positifs
+  des ouvertures de session type 3 puis type 10). Limites de seuil (audit du 2026-11-23, fait par Claude, non corrigées) : une force brute lente (moins
+  de 5 échecs en 5 minutes) n'est vue ni par COR-R1 ni par COR-R2 ; COR-R5 ne retient ni le Bureau ni Documents comme
+  emplacement suspect d'un service ; COR-R6 compte par nom de programme, des étapes sous des noms différents ne
+  s'additionnent pas. Faux positifs
   mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun incident ; la mesure les sous-estime, car
   l'activité n'ouvre aucune session, n'installe aucun service et ne change aucun compte.
 
