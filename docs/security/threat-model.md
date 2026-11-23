@@ -58,7 +58,9 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
     arrêt du service, désinstallation (`--nettoyer`) ; silence de l'amont : cartes rendues, port gardé, rebranchées par
     une sonde toutes les 5 minutes ; réglage en échec à l'activation et remise ratée elle aussi : port gardé (simple
     relais) et remise en attente tant qu'une carte pointe sur la boucle locale (audit du 2026-11-23, B-3-01 ;
-    `activation_remise_ratee_garde_le_port`) ;
+    `activation_remise_ratee_garde_le_port`) ; un registre illisible compte comme « encore sur la boucle » et n'est
+    jamais une remise vérifiée ; origine illisible : rien n'est enregistré ni réglé (audit de #281, S281-02 ;
+    `activation_registre_illisible_sur_la_boucle`) ;
   - seules les cartes Ethernet et Wi-Fi matérielles sont réglées : drapeaux HardwareInterface et ConnectorPresent lus
     dans Windows (`GetIfEntry2`), jamais le nom ; lecture impossible : carte tenue pour virtuelle ; serveurs `fec0::/10`
     et de lien local écartés des amonts et du secours (audit du 2026-11-23, T-9 et T-10 ;
@@ -80,7 +82,10 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   exemple des noms dont le serveur ne répond jamais) : il faut 30 s sans réponse ET l'échec de la sonde du service (un
   nom de la liste de protection, envoyé aux amonts). **Risque restant** : un attaquant qui coupe l'amont sur le réseau
   suspend toujours le filtrage (dégradation ouverte voulue, le DNS du poste reste servi) ; un programme qui occupe les
-  16 places du résolveur retarde les réponses sans suspendre le filtrage (`dns_silence_confirme_par_la_sonde`) ;
+  16 places du résolveur retarde les réponses sans suspendre le filtrage (`dns_silence_confirme_par_la_sonde`). Un
+  compte standard qui occupe les ports UDP de la plage dynamique ne fait plus déclarer le silence : un relais impossible
+  depuis le poste est compté et journalisé à part, et le relais se replie sur un port choisi par Windows après 8 ports
+  tirés (audit de #281, S281-01 ; `dns_echec_local_pas_un_silence`) ;
 - **listes de domaines** (audit du 2026-11-23, C-4, C-11, C-12) : une copie de plus de 500 000 entrées n'est jamais
   gardée ; le garde-fou d'écart de taille n'enferme plus une liste derrière une copie gonflée (refus levé après 3
   téléchargements concordants à 10 % près, compte en mémoire, oublié au redémarrage du service) ; un fichier de plus de

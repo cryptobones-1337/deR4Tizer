@@ -281,28 +281,65 @@ pub fn port_dynamique(alea: u16) -> u16 {
 /// Socket UDP vers l'amont, lié à un port source tiré au hasard ; 8 essais si le port est pris, sinon aucun relais
 /// (jamais de repli sur le port choisi par le système)
 fn socket_amont(amont: IpAddr) -> Option<UdpSocket> {
-    (0..8).find_map(|_| {
-        let ip: IpAddr = if amont.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
-        UdpSocket::bind(SocketAddr::new(ip, port_dynamique(identifiant_aleatoire()?))).ok()
-    })
+    let ip: IpAddr = if amont.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
+    lier_amont(identifiant_aleatoire, |port| UdpSocket::bind(SocketAddr::new(ip, port)).ok())
 }
 
-/// Relais UDP vers un amont : réponse assortie ou None (délai, réponse étrangère ignorée)
-fn relayer_udp(paquet: &[u8], q: &Question, amont: IpAddr) -> Option<Vec<u8>> {
-    let s = socket_amont(amont)?;
+/// Port source du relais (pur, testé) : 8 tirages dans la plage dynamique, puis en dernier recours le port 0, choisi par
+/// Windows (audit de #281, S281-01 : un compte standard qui occupe des ports de la plage faisait échouer les 8 essais) ;
+/// l'identifiant de la requête reste aléatoire
+pub fn lier_amont<T>(mut alea: impl FnMut() -> Option<u16>, mut lier: impl FnMut(u16) -> Option<T>) -> Option<T> {
+    (0..8).find_map(|_| lier(port_dynamique(alea()?))).or_else(|| lier(0))
+}
+
+/// Bilan d'un relais (S281-01) : un échec local (socket impossible à lier, générateur en échec) n'est ni une réponse ni
+/// un silence de l'amont
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bilan {
+    Reponse,
+    Muet,
+    EchecLocal,
+}
+
+/// Bilan des essais auprès des amonts (pur, testé) : une réponse l'emporte ; sinon un amont muet ; sinon (rien que des
+/// échecs locaux) échec local
+pub fn bilan(essais: &[Bilan]) -> Bilan {
+    if essais.contains(&Bilan::Reponse) {
+        Bilan::Reponse
+    } else if essais.contains(&Bilan::Muet) {
+        Bilan::Muet
+    } else {
+        Bilan::EchecLocal
+    }
+}
+
+/// Relais UDP vers un amont : réponse assortie, ou `Muet` (délai, réponse étrangère ignorée), ou `EchecLocal`
+fn relayer_udp(paquet: &[u8], q: &Question, amont: IpAddr) -> Result<Vec<u8>, Bilan> {
+    let (Some(s), Some(id)) = (socket_amont(amont), identifiant_aleatoire()) else { return Err(Bilan::EchecLocal) };
     let cible = SocketAddr::new(amont, 53);
-    let id = identifiant_aleatoire()?;
-    s.send_to(&avec_id(paquet, id), cible).ok()?;
+    s.send_to(&avec_id(paquet, id), cible).map_err(|_| Bilan::Muet)?;
     let fin = Instant::now() + DELAI_AMONT;
     let mut tampon = [0u8; MAX_TCP];
     while let Some(reste) = fin.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
-        s.set_read_timeout(Some(reste)).ok()?;
-        let (n, de) = s.recv_from(&mut tampon).ok()?;
+        s.set_read_timeout(Some(reste)).map_err(|_| Bilan::Muet)?;
+        let (n, de) = s.recv_from(&mut tampon).map_err(|_| Bilan::Muet)?;
         if de == cible && reponse_assortie(&tampon[..n], id, &q.brute) {
-            return Some(tampon[..n].to_vec());
+            return Ok(tampon[..n].to_vec());
         }
     }
-    None
+    Err(Bilan::Muet)
+}
+
+/// Relais vers les amonts dans l'ordre, jusqu'à la première réponse ; bilan des essais
+fn relayer_tous(paquet: &[u8], q: &Question, amonts: &[IpAddr], tcp: bool) -> (Option<Vec<u8>>, Bilan) {
+    let mut essais = Vec::new();
+    for &a in amonts {
+        match if tcp { relayer_tcp(paquet, q, a).ok_or(Bilan::Muet) } else { relayer_udp(paquet, q, a) } {
+            Ok(v) => return (Some(v), Bilan::Reponse),
+            Err(b) => essais.push(b),
+        }
+    }
+    (None, bilan(&essais))
 }
 
 /// Relais TCP vers un amont (requête reçue en TCP)
@@ -358,6 +395,8 @@ struct Essai {
     sur_silence: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Sonde de confirmation du silence en cours (C-7) : une seule à la fois
     sonde_en_cours: AtomicBool,
+    /// Relais impossibles depuis le poste (S281-01)
+    echecs_locaux: AtomicUsize,
 }
 
 static ESSAI: Mutex<Option<Arc<Essai>>> = Mutex::new(None);
@@ -374,14 +413,26 @@ impl Essai {
                 }
                 Action::Relayer => {
                     let amonts = self.amonts.read().unwrap().clone();
-                    let rep = amonts.iter().find_map(|&a| if tcp { relayer_tcp(paquet, &r.question, a) } else { relayer_udp(paquet, &r.question, a) });
+                    let (rep, b) = relayer_tous(paquet, &r.question, &amonts, tcp);
                     let maintenant = self.debut.elapsed().as_secs();
-                    let seuil = self.sante.lock().unwrap().noter(rep.is_some(), maintenant);
-                    // Confirmation par la sonde du service (C-7), une seule à la fois, hors du verrou de la santé
+                    // Échec local (S281-01) : compté et journalisé, jamais noté comme un amont muet
+                    let seuil = if b == Bilan::EchecLocal {
+                        self.noter_echec_local();
+                        false
+                    } else {
+                        self.sante.lock().unwrap().noter(b == Bilan::Reponse, maintenant)
+                    };
+                    // Confirmation par la sonde du service (C-7), une seule à la fois, hors du verrou de la santé ; sonde
+                    // en échec local : pas de silence
                     let silence = seuil && !self.sonde_en_cours.swap(true, Ordering::AcqRel) && {
-                        let repond = sonder(&amonts);
+                        let s = sonder_bilan(&amonts);
                         self.sonde_en_cours.store(false, Ordering::Release);
-                        self.sante.lock().unwrap().confirmer(repond)
+                        if s == Bilan::EchecLocal {
+                            self.noter_echec_local();
+                            false
+                        } else {
+                            self.sante.lock().unwrap().confirmer(s == Bilan::Reponse)
+                        }
                     };
                     if silence {
                         if !self.permanent {
@@ -398,6 +449,14 @@ impl Essai {
                     rep.map(|v| avec_id(&v, r.id))
                 }
             },
+        }
+    }
+
+    /// Échec local du relais (S281-01) : compté, journalisé au premier puis tous les 1000
+    fn noter_echec_local(&self) {
+        let n = self.echecs_locaux.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == 1 || n % 1000 == 0 {
+            crate::commun::journal(&format!("résolveur local : relais impossible depuis le poste ({n} fois : socket ou générateur aléatoire) ; compté à part, jamais comme un silence de l'amont"));
         }
     }
 
@@ -644,10 +703,15 @@ pub fn requete(id: u16, nom: &str, type_: u16) -> Vec<u8> {
 
 /// Sonde : un des amonts répond-il à une requête d'un nom de la liste de protection ?
 pub fn sonder(amonts: &[IpAddr]) -> bool {
-    let Some(id) = identifiant_aleatoire() else { return false };
+    sonder_bilan(amonts) == Bilan::Reponse
+}
+
+/// Sonde avec son bilan : générateur ou socket en échec : `EchecLocal` (S281-01)
+fn sonder_bilan(amonts: &[IpAddr]) -> Bilan {
+    let Some(id) = identifiant_aleatoire() else { return Bilan::EchecLocal };
     let p = requete(id, "www.msftconnecttest.com", TYPE_A);
-    let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return false };
-    amonts.iter().any(|&a| relayer_udp(&p, &r.question, a).is_some())
+    let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return Bilan::Muet };
+    relayer_tous(&p, &r.question, amonts, false).1
 }
 
 /// Le résolveur local répond-il sur 127.0.0.1 ? (contrôle avant de régler les cartes)
@@ -697,6 +761,7 @@ fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: 
         filtrage_actif: AtomicBool::new(filtrage_actif), juge, amonts: std::sync::RwLock::new(amonts.clone()),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
         permanent, silence: AtomicBool::new(false), sur_silence, sonde_en_cours: AtomicBool::new(false),
+        echecs_locaux: AtomicUsize::new(0),
     });
     let mut lances = true;
     for u in [u4, u6] {
@@ -720,8 +785,9 @@ fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: 
             std::thread::sleep(Duration::from_secs(1));
         }
         e2.arret.store(true, Ordering::Relaxed);
-        crate::commun::journal(&format!("résolveur local : {} ({} requête(s) bloquée(s), {} relayée(s))",
-            if e2.permanent { "arrêté" } else { "essai terminé" }, e2.bloquees.load(Ordering::Relaxed), e2.relayees.load(Ordering::Relaxed)));
+        crate::commun::journal(&format!("résolveur local : {} ({} requête(s) bloquée(s), {} relayée(s), {} relais impossible(s) depuis le poste)",
+            if e2.permanent { "arrêté" } else { "essai terminé" }, e2.bloquees.load(Ordering::Relaxed), e2.relayees.load(Ordering::Relaxed),
+            e2.echecs_locaux.load(Ordering::Relaxed)));
     });
     if fin.is_err() {
         e.arret.store(true, Ordering::Relaxed);
