@@ -1,0 +1,8 @@
+# Chaîne Rust figée du service (audit du 2026-11-23, A-3-3) : rustup lit ce fichier dans le dossier courant et ses
+# parents, donc pour toute commande cargo lancée dans service-rs (CI, publication). Version choisie : celle que la CI
+# utilisait déjà sous le nom « stable » au moment du gel (rustc 1.100.0, run 45161806893). Une commande
+# `cargo +<chaîne>` explicite (compiler-rs.ps1, tests du poste) passe avant ce fichier.
+# Mise à jour de la chaîne : une PR qui change ce numéro, avec la CI verte.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
