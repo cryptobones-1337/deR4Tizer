@@ -135,6 +135,11 @@ pub fn retirer_leurre(chemin: &Path) -> bool {
 pub fn empreinte_verifiee(chemin: &Path) -> Option<String> {
     // GENERIC_READ | SYNCHRONIZE, tout partage
     let mut f = crate::natif::ouvrir_verifie(chemin, 0x8000_0000 | 0x0010_0000, 0x7, false).ok()?;
+    empreinte_lue(&mut f)
+}
+
+/// SHA-256 du contenu lu depuis la position courante d'un handle déjà ouvert ; None si une lecture échoue
+fn empreinte_lue(f: &mut impl Read) -> Option<String> {
     let mut h = Sha256::new();
     let mut tampon = [0u8; 65536];
     loop {
@@ -151,6 +156,64 @@ pub fn empreinte_verifiee(chemin: &Path) -> Option<String> {
 fn empreinte_a_echeance(f: &Path) -> Result<Option<String>, crate::natif::HorsDelai> {
     let c = f.to_path_buf();
     crate::natif::lecture_fichier("leurre", &f.to_string_lossy(), move || empreinte_verifiee(&c))
+}
+
+/// Issue de la pose d'un leurre sur un seul handle (S268-04)
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub enum IssuePose {
+    /// Un seul nom : audit tenté (son échec éventuel) et empreinte lue par ce même handle
+    Suivi { empreinte: String, audit: Option<String> },
+    /// Plus d'un nom (lien dur) ou nombre illisible : ni audité ni suivi
+    Liens(Option<u32>),
+    /// Absent, lien, chemin détourné, ou contenu illisible
+    Illisible,
+}
+
+/// Décision pure (testée) : issue d'après le texte rendu par le lecteur à échéance (qui ne transporte que du texte) ;
+/// rien ou un texte inattendu : illisible
+pub fn issue_pose(texte: Option<&str>) -> IssuePose {
+    texte.and_then(|t| serde_json::from_str(t).ok()).unwrap_or(IssuePose::Illisible)
+}
+
+/// Contrôle du nombre de liens, pose de l'audit et lecture de l'empreinte sur UN SEUL handle (S268-04 : un lien dur
+/// glissé entre un premier contrôle et la réouverture par chemin recevait l'audit), à échéance
+fn poser_a_echeance(f: &Path) -> Result<IssuePose, crate::natif::HorsDelai> {
+    use crate::natif::RefusAudit;
+    let c = f.to_path_buf();
+    // Clé distincte de l'empreinte et des liens : le lecteur garde un résultat tardif par quoi, chemin et date
+    let lu = crate::natif::lecture_fichier("pose de leurre", &f.to_string_lossy(), move || {
+        let issue = match crate::natif::poser_audit_par_handle(&c, SDDL_AUDIT_LEURRE,
+            |h| {
+                let n = crate::natif::nombre_de_liens(h);
+                if leurre_existant_admis(n) { Ok(()) } else { Err(n) }
+            },
+            empreinte_lue) {
+            Ok((audit, Some(empreinte))) => IssuePose::Suivi { empreinte, audit: audit.err() },
+            Ok((_, None)) | Err(RefusAudit::Ouverture(_)) => IssuePose::Illisible,
+            Err(RefusAudit::Refuse(n)) => IssuePose::Liens(n),
+        };
+        serde_json::to_string(&issue).ok()
+    })?;
+    Ok(issue_pose(lu.as_deref()))
+}
+
+/// Ancien emplacement : à garder, à oublier sans bruit (absent ou illisible), ou à abandonner (journalisé)
+#[derive(Debug, PartialEq)]
+pub enum SuiteAncien {
+    Garder,
+    Oublier,
+    Abandonner,
+}
+
+/// Décision pure (testée, S268-05) : un leurre d'un ancien emplacement repasse le contrôle des liens ; un seul nom ou
+/// lecture hors délai, gardé ; absent ou illisible, oublié ; plusieurs noms, suivi abandonné
+pub fn suite_ancien(liens: Result<Option<u32>, crate::natif::HorsDelai>) -> SuiteAncien {
+    match liens {
+        Err(_) => SuiteAncien::Garder,
+        Ok(None) => SuiteAncien::Oublier,
+        Ok(l) if leurre_existant_admis(l) => SuiteAncien::Garder,
+        Ok(_) => SuiteAncien::Abandonner,
+    }
 }
 
 /// Texte d'un fichier des profils lu en SYSTEM (audit du 2026-11-14, A3) : sans suivre de lien (chemin final vérifié)
@@ -620,30 +683,26 @@ pub fn poser_leurres() -> Vec<Leurre> {
                     }
                 }
             }
-            // Un seul nom (S268-01) : un lien dur portant le nom du leurre n'est ni audité ni suivi, refus journalisé.
-            // Hors délai : laissé pour le prochain passage, comme l'empreinte
-            match liens_a_echeance(&f) {
-                Ok(l) if leurre_existant_admis(l) => oublier_signalement(&format!("liens {}", f.to_string_lossy().to_lowercase())),
-                Ok(l) => {
+            // Un seul handle (S268-04) : nombre de liens contrôlé (S268-01 : un lien dur portant le nom du leurre n'est
+            // ni audité ni suivi, refus journalisé), puis audit posé dès que le leurre existe (S175-01 : LEU-002 jamais
+            // aveugle sur un leurre neuf), puis empreinte lue, sans réouverture par chemin. Hors délai : laissé pour le
+            // prochain passage, l'entrée précédente gardée
+            let cle_liens = format!("liens {}", f.to_string_lossy().to_lowercase());
+            let e = match poser_a_echeance(&f) {
+                Ok(IssuePose::Suivi { empreinte, audit }) => {
+                    oublier_signalement(&cle_liens);
+                    if let Some(x) = audit {
+                        commun::journal(&sans_profil(&format!("leurres : audit non posé sur {} ({x})", f.display()), profil, &rep, nom));
+                    }
+                    empreinte
+                }
+                Ok(IssuePose::Liens(l)) => {
                     bilan.echecs += 1;
                     let n = l.map_or_else(|| "illisible".to_string(), |n| n.to_string());
-                    journal_une_fois(format!("liens {}", f.to_string_lossy().to_lowercase()),
-                        &sans_profil(&format!("leurres : {} refusé (nombre de liens {n}) : ni audité ni suivi", f.display()), profil, &rep, nom));
+                    journal_une_fois(cle_liens, &sans_profil(&format!("leurres : {} refusé (nombre de liens {n}) : ni audité ni suivi", f.display()), profil, &rep, nom));
                     continue;
                 }
-                Err(_) => {
-                    garder_precedent(&mut liste, &f);
-                    continue;
-                }
-            }
-            // Audit posé dès que le leurre existe, avant le second contrôle (S175-01 : un leurre neuf hors délai au
-            // second contrôle restait sans audit, LEU-002 aveugle)
-            if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
-                commun::journal(&sans_profil(&format!("leurres : audit non posé sur {} ({x})", f.display()), profil, &rep, nom));
-            }
-            let e = match empreinte_a_echeance(&f) {
-                Ok(Some(e)) => e,
-                Ok(None) => continue,
+                Ok(IssuePose::Illisible) => continue,
                 Err(_) => {
                     garder_precedent(&mut liste, &f);
                     continue;
@@ -655,9 +714,17 @@ pub fn poser_leurres() -> Vec<Leurre> {
         bilan.sans_session += usize::from(sans_session);
     }
     // Leurres d'un ancien emplacement (dossier redirigé depuis la pose précédente) : suivis tant qu'ils existent (ou
-    // illisibles à échéance), avec leur empreinte d'origine : modifiés, ils lèvent LEU-001 ; la désinstallation les retire
-    let existants: Vec<Leurre> = precedents_hors_cibles(&precedents, &cibles).into_iter()
-        .filter(|p| !matches!(empreinte_a_echeance(Path::new(&p.chemin)), Ok(None))).collect();
+    // illisibles à échéance), avec leur empreinte d'origine : modifiés, ils lèvent LEU-001 ; la désinstallation les retire.
+    // Ils repassent le contrôle des liens (S268-05) : un ancien leurre devenu lien dur n'est plus suivi (ni retiré : son
+    // nom désigne un autre fichier), journalisé
+    let mut existants = Vec::new();
+    for p in precedents_hors_cibles(&precedents, &cibles) {
+        match suite_ancien(liens_a_echeance(Path::new(&p.chemin))) {
+            SuiteAncien::Garder => existants.push(p),
+            SuiteAncien::Oublier => {}
+            SuiteAncien::Abandonner => commun::journal("leurres : un ancien emplacement a plus d'un nom (lien dur) : suivi abandonné"),
+        }
+    }
     // Au plus ANCIENS_MAX anciens emplacements par profil et par leurre (S268-02) : au-delà, le leurre est retiré par handle
     // (sous l'identité de son propriétaire s'il a une session) et son suivi abandonné, journalisé
     let (gardes, en_trop) = borner_anciens(existants, ANCIENS_MAX);
