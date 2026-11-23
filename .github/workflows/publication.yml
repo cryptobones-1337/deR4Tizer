@@ -46,12 +46,16 @@ jobs:
           $v = (Select-String -Path service-rs/src/commun.rs -Pattern 'pub const VERSION: &str = "([^"]+)"').Matches[0].Groups[1].Value
           if ("v$v" -ne $env:REF) { throw "Tag $env:REF différent de la version du code ($v) : les postes se remettraient à jour en boucle." }
 
-      - name: Rust stable
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+      # Chaîne figée par service-rs/rust-toolchain.toml et Cargo.lock imposé par --locked (A-3-3, comme ci.yml depuis
+      # la PR #284) : un Cargo.toml modifié sans son Cargo.lock fait échouer la compilation au lieu de réécrire le
+      # verrou en silence
+      - name: Chaîne Rust figée (service-rs/rust-toolchain.toml)
+        working-directory: service-rs
+        run: rustup toolchain install && rustc --version && cargo --version
 
       - name: Tests
         working-directory: service-rs
-        run: cargo test --release
+        run: cargo test --release --locked
 
       - name: Compilation
         shell: pwsh
@@ -60,7 +64,7 @@ jobs:
           # versions signées par l'une d'elles (variable de dépôt, non secrète)
           DER4TIZER_CLES_SIGNATURE: ${{ vars.CLE_SIGNATURE }}
         run: |
-          cd service-rs; cargo build --release; cd ..
+          cd service-rs; cargo build --release --locked; cd ..
           ./compiler.ps1 -InterfaceSeulement
           Copy-Item service-rs/target/release/der4tizer-svc.exe bin/deR4TizerSvc.exe
           # Valeur exacte des clés compilées, jointe à l'artefact : signer-version.ps1 la retrouve dans le service et la
