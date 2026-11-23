@@ -2607,20 +2607,45 @@ fn a43_quarantaine_gardee_a_la_desinstallation() {
         assert!(!garde_a_la_racine(n, true), "{n}");
     }
     // Compte rendu : ce qui est gardé, où, comment restaurer et comment supprimer ; ou pourquoi rien n'est gardé
+    use crate::protection::QuarantaineGardee as G;
     let r = r"C:\ProgramData\deR4Tizer";
-    let t = texte_desinstallation(r, &Ok(3));
+    let t = texte_desinstallation(r, &Ok(G { copies: 3, en_clair: 0 }));
     assert!(t.contains(r"3 copie(s) gardée(s) dans C:\ProgramData\deR4Tizer\quarantaine") && t.contains("quarantaine.json"), "{t}");
-    assert!(t.contains("SYSTEM et aux administrateurs") && t.contains("réinstaller") && t.contains("rmdir /s /q"), "{t}");
-    assert!(!texte_desinstallation(r, &Ok(0)).contains("quarantaine"), "rien à garder : rien à dire");
+    assert!(t.contains("SYSTEM et aux administrateurs") && t.contains("réinstaller") && t.contains("rmdir /s /q") && t.contains("contenu encodé"), "{t}");
+    assert!(!texte_desinstallation(r, &Ok(G::default())).contains("quarantaine"), "rien à garder : rien à dire");
     let e = texte_desinstallation(r, &Err("droits refusés".into()));
     assert!(e.contains("quarantaine COMPRISE") && e.contains("droits refusés"), "{e}");
+    // S301-05 : « encodé » n'est dit que si c'est vrai ; une copie d'avant la 4.3 en clair est signalée
+    let c = texte_desinstallation(r, &Ok(G { copies: 3, en_clair: 1 }));
+    assert!(!c.contains("contenu encodé") && c.contains("1 copie(s) d'avant la version 4.3") && c.contains("en clair"), "{c}");
+    // S301-01, S301-03 : jamais de prise de possession ; liens physiques relus sur le handle ; DACL seule posée
+    use crate::protection::{decider_reservation as dr, Reservation};
+    let large = s(SID_SYSTEME, vec![ace(SID_SYSTEME, true, 0x1f01ff), ace("S-1-5-21-1-2-3-1001", true, 0x1200a9)]);
+    assert_eq!(dr(Some(&ok), true, Some(1)), Reservation::Faite);
+    assert_eq!(dr(Some(&ok), false, None), Reservation::Faite, "dossier : liens sans objet");
+    assert_eq!(dr(Some(&large), true, Some(1)), Reservation::PoserDacl);
+    assert!(matches!(dr(Some(&s("S-1-5-21-1-2-3-1001", vec![ace(SID_SYSTEME, true, 0x1f01ff)])), true, Some(1)), Reservation::Refus(_)), "propriétaire standard : refus, pas de prise de possession");
+    assert!(matches!(dr(Some(&s("S-1-5-21-1-2-3-1001", vec![ace(SID_SYSTEME, true, 0x1f01ff)])), false, Some(1)), Reservation::Refus(_)));
+    assert!(matches!(dr(Some(&ok), true, Some(2)), Reservation::Refus(_)) && matches!(dr(Some(&ok), true, None), Reservation::Refus(_)), "lien dur ou nombre illisible");
+    assert!(matches!(dr(None, true, Some(1)), Reservation::Refus(_)), "droits illisibles");
+    let pr = include_str!("protection.rs").replace("\r\n", "\n");
+    let rs = &pr[pr.find("fn reserver(p: &Path, dossier: bool)").unwrap()..];
+    let rs = &rs[..rs.find("\n}\n").unwrap()];
+    assert!(rs.contains("crate::natif::nombre_de_liens(&f)") && !rs.contains("SDDL_QUARANTAINE") && !rs.contains("SDDL_DOSSIER"), "DACL seule, liens lus sur le handle");
+    for d in ["const DACL_GARDE_DOSSIER: &str = \"D:", "const DACL_GARDE_FICHIER: &str = \"D:"] {
+        assert!(pr.contains(d), "{d} : aucun propriétaire dans le SDDL posé");
+    }
+    // S301-02 : non-copies supprimées avant la pose des droits du dossier
+    let gq = &pr[pr.find("fn garder_la_quarantaine(").unwrap()..];
+    let gq = &gq[..gq.find("\n}\n").unwrap()];
+    assert!(gq.find("fs::remove_dir_all(&p)").unwrap() < gq.find("reserver(&q, true)?;").unwrap());
     // Câblage : garde décidée avant la suppression, avec les droits de la racine déjà posés ; dite hors de la sortie
     let p = include_str!("protection.rs").replace("\r\n", "\n");
     let v = &p[p.find("pub fn vider_racine()").unwrap()..];
     let v = &v[..v.find("\n}\n").unwrap()];
     let (droits, garde, vider) = (v.find("poser_droits_handle(&f, SDDL_DOSSIER)").unwrap(), v.find("garder_la_quarantaine(racine)").unwrap(), v.find("vider_contenu(racine, &|nom| garde_a_la_racine(nom, gardee))").unwrap());
     assert!(droits < garde && garde < vider);
-    assert!(v.contains("let gardee = matches!(garde, Ok(n) if n > 0);"));
+    assert!(v.contains("let gardee = matches!(garde, Ok(g) if g.copies > 0);"));
     let m = include_str!("main.rs").replace("\r\n", "\n");
     assert!(m.contains("Ok((texte, true)) => {\n                println!(\"{texte}\");\n                natif::journal_evenements(&texte, false);\n                natif::compte_rendu_systeme(\"deR4Tizer-desinstallation\", &texte);"));
     // Suppression réelle : les seuls noms épargnés restent, la jonction est supprimée seule, le canari est intact
@@ -5645,6 +5670,19 @@ fn a64_retrait_audit_seulement_nos_entrees() {
     assert_eq!(sans("S:AI(AU;IDSAFA;CC;;;WD)(AU;IDSA;CC;;;BU)", &[fichier], &[copie_f]), None);
     // Entrée de forme inattendue : jamais prise pour la nôtre, gardée telle quelle
     assert_eq!(sans("S:(AU;S;CC;;;WD)(AU;SA;CC;;WD)", &[fichier], &[]), None);
+    // S301-04 : entrée conditionnelle (XU) ou attribut de ressource (RA) : la SACL n'est jamais reconstruite, la nôtre
+    // reste (l'élément est compté comme écarté par retirer_sacl)
+    use crate::natif::sacl_simple;
+    let xu = "S:(AU;SA;CC;;;WD)(XU;SA;FA;;;WD;(@User.Projet == \"x\"))";
+    let ra = "S:(AU;SA;CC;;;WD)(RA;CI;;;;S-1-1-0;(\"Secrecy\",TU,0x0,3))";
+    for t in [xu, ra, "S:(XU;SA;FA;;;WD;(Member_of {SID(BA)}))(AU;SA;CC;;;WD)", "S:(AU;SA;CC;;;WD", "S:AU;SA;CC;;;WD)"] {
+        assert!(!sacl_simple(t), "{t}");
+        assert_eq!(sans(t, &[fichier], &[]), None, "{t}");
+    }
+    for t in ["", "S:", "S:AI", "S:AI(AU;IDSA;CC;;;WD)(ML;;NW;;;LW)(AU;SAFA;FA;;;BA)"] {
+        assert!(sacl_simple(t), "{t}");
+    }
+    assert!(include_str!("natif.rs").replace("\r\n", "\n").contains("    if !sacl_simple(&actuelle) {\n        return Err("), "retirer_sacl : élément écarté, rien d'écrit");
     // Résultat relu par Windows : SDDL valide (SACL vide comprise)
     for s in ["S:", "S:AI", "S:AI(AU;IDSAFA;FA;;;BA)"] {
         assert!(texte_sacl_de_sddl(&format!("O:BA{s}")).is_some(), "{s}");
@@ -9809,13 +9847,22 @@ fn a64_comptes_rendus_temp_retires_seulement_a_nous() {
         assert!(!nom(n), "{n}");
     }
     let sy = crate::protection::SID_SYSTEME;
-    assert!(retirer(true, false, Some(sy), Some(1)));
-    assert!(!retirer(false, false, Some(sy), Some(1)), "autre nom");
-    assert!(!retirer(true, true, Some(sy), Some(1)), "lien");
-    assert!(!retirer(true, false, Some("S-1-5-21-1-2-3-1001"), Some(1)), "posé d'avance par un compte standard");
-    assert!(!retirer(true, false, Some(crate::protection::SID_ADMINISTRATEURS), Some(1)), "SYSTEM seul écrit ces comptes rendus");
-    assert!(!retirer(true, false, None, Some(1)), "propriétaire illisible");
-    assert!(!retirer(true, false, Some(sy), Some(2)) && !retirer(true, false, Some(sy), None), "lien dur ou nombre illisible");
+    let vieux = Some(std::time::Duration::from_secs(2 * 3600));
+    assert!(retirer(true, false, Some(sy), Some(1), vieux));
+    assert!(!retirer(false, false, Some(sy), Some(1), vieux), "autre nom");
+    assert!(!retirer(true, true, Some(sy), Some(1), vieux), "lien");
+    assert!(!retirer(true, false, Some("S-1-5-21-1-2-3-1001"), Some(1), vieux), "posé d'avance par un compte standard");
+    assert!(!retirer(true, false, Some(crate::protection::SID_ADMINISTRATEURS), Some(1), vieux), "SYSTEM seul écrit ces comptes rendus");
+    assert!(!retirer(true, false, None, Some(1), vieux), "propriétaire illisible");
+    assert!(!retirer(true, false, Some(sy), Some(2), vieux) && !retirer(true, false, Some(sy), None, vieux), "lien dur ou nombre illisible");
+    // Prérelecture de #301, D1 : le compte rendu « deR4Tizer-arret » de CETTE désinstallation (écrit pendant l'arrêt du
+    // service, quelques secondes avant --nettoyer) n'est pas retiré ; âge illisible ou date future : gardé
+    assert!(!retirer(true, false, Some(sy), Some(1), Some(std::time::Duration::from_secs(20))), "écrit pendant l'arrêt du service");
+    assert!(!retirer(true, false, Some(sy), Some(1), Some(crate::natif::AGE_COMPTE_RENDU_RETIRE - std::time::Duration::from_secs(1))));
+    assert!(retirer(true, false, Some(sy), Some(1), Some(crate::natif::AGE_COMPTE_RENDU_RETIRE)));
+    assert!(!retirer(true, false, Some(sy), Some(1), None), "âge illisible");
+    let n = include_str!("natif.rs").replace("\r\n", "\n");
+    assert!(n.contains("let age = f.metadata().and_then(|m| m.created()).ok()"), "création lue sur le handle ouvert");
     // Les noms que compte_rendu_systeme écrit vraiment sont reconnus (écrit puis supprimé par ce test, propriétaire : le
     // compte du test, donc jamais « à retirer »)
     if let Some(p) = crate::natif::compte_rendu_systeme("deR4Tizer-nettoyage", "essai") {
