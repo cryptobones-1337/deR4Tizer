@@ -28,7 +28,21 @@ cargo test --release
 |---|---|
 | `./compiler.ps1 -InterfaceSeulement` | 2026-10-22, local : code 0, `bin\deR4Tizer.exe` (404 992 octets). |
 | `powershell -File tests\test-msi.ps1 [-Msi bin\deR4Tizer.msi [-Reference <MSI de main>]]` | 2026-11-11, local (U8a) : sources et paquet, tables d'exécution identiques au MSI de main ; les sources de main y échouent (5 cas). |
-| `cargo build --release` (MSVC) puis `./construire-msi.ps1` | Job `windows` de chaque exécution de la CI : `deR4Tizer.msi`, `deR4TizerSvc.exe`, `deR4Tizer.exe` en artefacts. |
+| `cargo build --release` (MSVC) puis `./construire-msi.ps1` | Job `windows` de chaque exécution de la CI : `deR4Tizer.msi`, `deR4TizerSvc.exe`, `deR4Tizer.exe` en artefacts. Depuis la PR #276 : `cargo test --release --locked` et `cargo build --release --locked`, chaîne figée par `service-rs/rust-toolchain.toml` (rustc 1.100.0) ; job `windows` réussi au run 45175958903 (`e2d2991`). |
+| Copie locale de `service-rs`, `Cargo.toml` modifié (version 4.3.0 vers 4.3.1) sans `Cargo.lock` : `cargo build --release --locked` | 2026-11-23, local (chaîne MSVC 1.99.1, copie hors du dépôt, rien poussé) : échec, code 101 (« cannot update the lock file … because --locked was passed »), `Cargo.lock` inchangé. Sans `--locked`, `cargo metadata` réécrit `Cargo.lock` en silence (code 0, seule différence : 4.3.0 vers 4.3.1). Preuve du correctif d'A-3-3. |
+
+## Analyse statique en CI : dépendances du service (lot 1, PR #276)
+
+Job `dependances` de `.github/workflows/ci.yml`, outils installés par `cargo install --locked` à version figée
+(cargo-audit 0.22.2, cargo-deny 0.20.2), chaîne rustc 1.100.0. Configuration de cargo deny : `service-rs/deny.toml`.
+
+| Commande (dans `service-rs`) | Résultat constaté |
+|---|---|
+| `cargo audit --file Cargo.lock` | Run 45175958903 (`e2d2991`, 2026-11-23) : 1562 avis RustSec chargés, 78 paquets du `Cargo.lock` lus, aucune vulnérabilité ni avertissement, code 0. |
+| `cargo deny --locked --config deny.toml check --show-stats advisories licenses sources` | Même run : `advisories ok: 0 errors, 0 warnings, 0 notes` ; `licenses FAILED: 1 errors, 2 warnings, 63 notes` ; `sources ok: 0 errors, 0 warnings, 0 notes`. Seule erreur : `der4tizer-svc = 4.3.0 is unlicensed` (le service lui-même, sans champ `license` dans `Cargo.toml`), décision laissée au mainteneur ; job rouge en attendant. |
+
+Ces contrôles ne voient que les avis publiés (RustSec), les licences déclarées et la provenance des paquets : aucun
+défaut de logique, aucun code du service. Ce n'est pas une relecture indépendante.
 
 ## Intégration (CI, runner Windows jetable, service réel installé par le MSI)
 

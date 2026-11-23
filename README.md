@@ -75,7 +75,7 @@ No kernel driver and nothing extra to install: only Windows APIs (ETW, Event Log
 
 ### Build
 
-Requirements: Windows 10/11, Visual Studio Build Tools 2022 ("Desktop development with C++" workload), [rustup](https://rustup.rs) with the **stable-x86_64-pc-windows-msvc** toolchain, the same as the CI. Tests on a machine use the artifact built by the CI.
+Requirements: Windows 10/11, Visual Studio Build Tools 2022 ("Desktop development with C++" workload), [rustup](https://rustup.rs) with the **stable-x86_64-pc-windows-msvc** toolchain. The CI uses the exact version pinned in `service-rs/rust-toolchain.toml` (1.100.0) and builds with `--locked`; `compiler-rs.ps1` names `stable-x86_64-pc-windows-msvc` explicitly, which takes precedence over that file. Tests on a machine use the artifact built by the CI.
 
 ```powershell
 rustup toolchain install stable-x86_64-pc-windows-msvc
