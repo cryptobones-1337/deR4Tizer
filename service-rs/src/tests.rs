@@ -9389,6 +9389,32 @@ fn activation_amonts_sans_site_local() {
     assert!(a[..a.find("\n}").unwrap()].contains("amont_utilisable"), "mode permanent : même filtre");
 }
 
+/// Audit de #281, S281-02 : un NameServer illisible compte comme « encore sur la boucle » (le port n'est pas relâché) et
+/// n'est jamais une vérification réussie, même pour un retour au DHCP ; origine illisible : rien n'est enregistré
+#[test]
+fn activation_registre_illisible_sur_la_boucle() {
+    use crate::filtrage_cartes::{reglage_verifie, sur_la_boucle_lu};
+    assert!(sur_la_boucle_lu(None, Some("")), "IPv4 illisible");
+    assert!(sur_la_boucle_lu(Some(""), None), "IPv6 illisible");
+    assert!(sur_la_boucle_lu(Some("192.0.2.1,127.0.0.1"), Some("")));
+    assert!(sur_la_boucle_lu(Some(""), Some("::1 2001:db8::1")));
+    assert!(!sur_la_boucle_lu(Some(""), Some("")), "rendue (DHCP, ou clé absente)");
+    assert!(!sur_la_boucle_lu(Some("192.0.2.1"), Some("2001:db8::1")));
+    assert!(reglage_verifie(Some(""), Some(""), "", ""));
+    assert!(!reglage_verifie(None, Some(""), "", ""), "retour au DHCP non vérifiable");
+    assert!(!reglage_verifie(Some(""), None, "", ""));
+    assert!(reglage_verifie(Some("127.0.0.1 192.0.2.1"), Some("::1"), "127.0.0.1,192.0.2.1", "::1"));
+    assert!(!reglage_verifie(Some("192.0.2.1"), Some(""), "127.0.0.1,192.0.2.1", ""));
+    let f = include_str!("filtrage_cartes.rs");
+    let corps = |nom: &str| { let d = f.find(nom).unwrap(); &f[d..d + f[d..].find("\n}").unwrap()] };
+    assert!(corps("pub fn encore_sur_la_boucle(").contains("sur_la_boucle_lu(registre_ns_lu("));
+    assert!(corps("fn regler_et_verifier(").contains("reglage_verifie(lu4.as_deref(), lu6.as_deref()"));
+    let o = corps("pub fn releve_origine(");
+    assert!(o.find("is_none()").unwrap() < o.find("origine_de(").unwrap(), "origine illisible refusée avant d'être enregistrée");
+    let lu = corps("fn registre_ns_lu(");
+    assert!(lu.matches("Err(_) => return None").count() + lu.matches("Err(_) => None").count() == 2, "autre erreur que « absent » : illisible");
+}
+
 /// Constat B-3-01 (audit du 2026-11-23) : réglage des cartes en échec à l'activation et remise ratée elle aussi : tant
 /// qu'une carte pointe sur la boucle locale, le résolveur garde le port (simple relais) et la remise est mise en attente,
 /// jamais « cartes rendues » ; sinon tout est rendu
@@ -9438,7 +9464,7 @@ fn activation_carte_absente() {
     let corps = &f[d..d + f[d..].find("\n}").unwrap()];
     assert!(corps.contains("Remise::Registre) => ecrire_registre(&g") && corps.contains("Remise::Rien) => return Ok(())"));
     assert!(corps.find("let g = guid(&o.id)?").unwrap() < corps.find("regler(&o.id").unwrap(), "GUID validé avant tout appel");
-    assert!(corps.find("remise(").unwrap() < corps.find("registre_ns(").unwrap(), "vérification après la remise choisie");
+    assert!(corps.find("remise(").unwrap() < corps.find("registre_ns_lu(").unwrap(), "vérification après la remise choisie");
 }
 
 /// Refus (D7-5) : suffixe DNS principal (poste joint à un domaine), stratégie DNS ou NRPT
@@ -9680,7 +9706,8 @@ fn dns_alea_echec_ferme() {
     let s = include_str!("dns_local.rs");
     let f = &s[s.find("fn identifiant_aleatoire() -> Option<u16>").expect("identifiant optionnel")..];
     assert!(f[..f.find("\n}").unwrap()].contains(".is_ok()"), "statut du générateur lu");
-    for appel in ["port_dynamique(identifiant_aleatoire()?)", "let id = identifiant_aleatoire()?;", "let Some(id) = identifiant_aleatoire() else { return false };"] {
+    for appel in ["lier_amont(identifiant_aleatoire,", "(socket_amont(amont), identifiant_aleatoire()) else { return Err(Bilan::EchecLocal) }",
+        "let id = identifiant_aleatoire()?;", "let Some(id) = identifiant_aleatoire() else { return false };", "let Some(id) = identifiant_aleatoire() else { return Bilan::EchecLocal };"] {
         assert!(s.contains(appel), "{appel}");
     }
 }
@@ -9728,9 +9755,41 @@ fn dns_silence_confirme_par_la_sonde() {
     let src = include_str!("dns_local.rs");
     let r = &src[src.find("fn repondre(").unwrap()..];
     let r = &r[..r.find("fn prendre(").unwrap()];
-    assert!(r.find("sonder(&amonts)").unwrap() < r.find(".confirmer(repond)").unwrap());
-    assert!(r.find(".confirmer(repond)").unwrap() < r.find("f();").unwrap(), "cartes rendues seulement après la sonde");
-    assert!(r.find(".confirmer(repond)").unwrap() < r.find("self.arret.store(true").unwrap(), "essai arrêté seulement après la sonde");
+    let confirmer = ".confirmer(s == Bilan::Reponse)";
+    assert!(r.find("sonder_bilan(&amonts)").unwrap() < r.find(confirmer).unwrap());
+    assert!(r.find(confirmer).unwrap() < r.find("f();").unwrap(), "cartes rendues seulement après la sonde");
+    assert!(r.find(confirmer).unwrap() < r.find("self.arret.store(true").unwrap(), "essai arrêté seulement après la sonde");
+}
+
+/// Audit de #281, S281-01 : un relais impossible depuis le poste (ports de la plage dynamique occupés par un compte
+/// standard, générateur en échec) n'est ni une réponse ni un silence de l'amont ; dernier recours : le port 0, choisi
+/// par Windows
+#[test]
+fn dns_echec_local_pas_un_silence() {
+    use crate::dns_local::{bilan, lier_amont, Bilan};
+    assert_eq!(bilan(&[Bilan::EchecLocal, Bilan::EchecLocal]), Bilan::EchecLocal);
+    assert_eq!(bilan(&[Bilan::EchecLocal, Bilan::Muet]), Bilan::Muet);
+    assert_eq!(bilan(&[Bilan::Muet, Bilan::Reponse]), Bilan::Reponse);
+    assert_eq!(bilan(&[]), Bilan::EchecLocal);
+    // Plage dynamique occupée : 8 tirages refusés, puis le port 0
+    let mut essais = Vec::new();
+    let mut n = 0u16;
+    let r = lier_amont(|| { n += 1; Some(n) }, |p| { essais.push(p); (p == 0).then_some("socket") });
+    assert_eq!(r, Some("socket"));
+    assert_eq!(essais.len(), 9);
+    assert!(essais[..8].iter().all(|&p| p >= 49152) && essais[8] == 0);
+    let mut essais = Vec::new();
+    assert_eq!(lier_amont(|| None, |p| { essais.push(p); Some(p) }), Some(0), "générateur en échec : port choisi par Windows");
+    assert_eq!(essais, vec![0]);
+    assert_eq!(lier_amont(|| Some(5), |p| Some(p)), Some(crate::dns_local::port_dynamique(5)), "premier tirage libre : gardé");
+    let src = include_str!("dns_local.rs");
+    let r = &src[src.find("fn repondre(").unwrap()..];
+    let r = &r[..r.find("fn noter_echec_local(").unwrap()];
+    let local = &r[r.find("if b == Bilan::EchecLocal {").expect("échec local à part")..];
+    let local = &local[..local.find("} else {").unwrap()];
+    assert!(local.contains("noter_echec_local()") && !local.contains(".noter("), "échec local jamais noté comme amont muet");
+    let sonde = &r[r.find("if s == Bilan::EchecLocal {").expect("sonde en échec local")..];
+    assert!(sonde[..sonde.find("} else {").unwrap()].contains("false"), "sonde en échec local : pas de silence");
 }
 
 /// Parseur et réponses : aucune panique, quelle que soit l'entrée

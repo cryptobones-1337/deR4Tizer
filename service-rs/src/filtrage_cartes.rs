@@ -34,15 +34,37 @@ pub struct OrigineCarte {
     pub dns6: Vec<String>,
 }
 
-fn registre_ns(pile: &str, id: &str) -> String {
+/// NameServer d'une carte : `Some("")` si la clé ou la valeur n'existe pas (carte disparue, DHCP) ; None si la lecture
+/// échoue autrement (droits, registre illisible), jamais confondu avec « aucun serveur » (audit de #281, S281-02)
+fn registre_ns_lu(pile: &str, id: &str) -> Option<String> {
+    use std::io::ErrorKind::NotFound;
     use winreg::enums::HKEY_LOCAL_MACHINE;
-    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey(format!(r"SYSTEM\CurrentControlSet\Services\{pile}\Parameters\Interfaces\{id}"))
-        .ok()
-        .and_then(|k| k.get_value::<String, _>("NameServer").ok())
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    let k = match winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(format!(r"SYSTEM\CurrentControlSet\Services\{pile}\Parameters\Interfaces\{id}")) {
+        Ok(k) => k,
+        Err(e) if e.kind() == NotFound => return Some(String::new()),
+        Err(_) => return None,
+    };
+    match k.get_value::<String, _>("NameServer") {
+        Ok(v) => Some(v.trim().to_string()),
+        Err(e) if e.kind() == NotFound => Some(String::new()),
+        Err(_) => None,
+    }
+}
+
+fn registre_ns(pile: &str, id: &str) -> String {
+    registre_ns_lu(pile, id).unwrap_or_default()
+}
+
+/// Carte encore sur la boucle locale d'après ses NameServer lus (pure, testée) : une lecture impossible (None) compte
+/// comme « encore sur la boucle » : le port n'est jamais relâché sur une lecture ratée (S281-02)
+pub fn sur_la_boucle_lu(ns4: Option<&str>, ns6: Option<&str>) -> bool {
+    ns4.map_or(true, |v| serveurs(v).iter().any(|s| s == "127.0.0.1")) || ns6.map_or(true, |v| serveurs(v).iter().any(|s| s == "::1"))
+}
+
+/// Réglage vérifié d'après les NameServer relus (pure, testée) : une lecture impossible n'est jamais une vérification
+/// réussie, même pour un retour au DHCP (valeur attendue vide) (S281-02)
+pub fn reglage_verifie(lu4: Option<&str>, lu6: Option<&str>, ns4: &str, ns6: &str) -> bool {
+    matches!((lu4, lu6), (Some(a), Some(b)) if meme_liste(a, ns4) && meme_liste(b, ns6))
 }
 
 /// Liste de serveurs d'un NameServer (virgules ou espaces) (pure)
@@ -182,11 +204,12 @@ fn regler_et_verifier(o: &OrigineCarte, ns4: &str, ns6: &str) -> Result<(), Stri
         Ok(Remise::Rien) => return Ok(()),
         Err(()) => return Err(format!("carte « {} » présente mais réglage refusé : {}", o.nom, api.err().unwrap_or_default())),
     }
-    let (lu4, lu6) = (registre_ns("Tcpip", &o.id), registre_ns("Tcpip6", &o.id));
-    if meme_liste(&lu4, ns4) && meme_liste(&lu6, ns6) {
+    let (lu4, lu6) = (registre_ns_lu("Tcpip", &o.id), registre_ns_lu("Tcpip6", &o.id));
+    if reglage_verifie(lu4.as_deref(), lu6.as_deref(), ns4, ns6) {
         Ok(())
     } else {
-        Err(format!("carte « {} » : réglage non vérifié (lu « {lu4} » / « {lu6} », attendu « {ns4} » / « {ns6} »)", o.nom))
+        let lu = |v: &Option<String>| v.clone().unwrap_or_else(|| "illisible".into());
+        Err(format!("carte « {} » : réglage non vérifié (lu « {} » / « {} », attendu « {ns4} » / « {ns6} »)", o.nom, lu(&lu4), lu(&lu6)))
     }
 }
 
@@ -207,9 +230,7 @@ pub fn retirer_boucle(o: &OrigineCarte) -> Result<(), String> {
 
 /// Une carte de la liste pointe-t-elle encore sur la boucle locale ? (relecture du registre)
 pub fn encore_sur_la_boucle(l: &[OrigineCarte]) -> bool {
-    l.iter().any(|o| {
-        serveurs(&registre_ns("Tcpip", &o.id)).iter().any(|s| s == "127.0.0.1") || serveurs(&registre_ns("Tcpip6", &o.id)).iter().any(|s| s == "::1")
-    })
+    l.iter().any(|o| sur_la_boucle_lu(registre_ns_lu("Tcpip", &o.id).as_deref(), registre_ns_lu("Tcpip6", &o.id).as_deref()))
 }
 
 /// Suite d'un réglage des cartes en échec à l'activation (pure, testée ; constat B-3-01 de l'audit du 2026-11-23).
@@ -246,6 +267,11 @@ pub fn appliquer_toutes(l: &[OrigineCarte]) -> Result<(), String> {
 /// Relevé de l'origine des cartes réglables actives (activation, et liste publiée avant l'activation)
 pub fn releve_origine() -> Result<Vec<OrigineCarte>, String> {
     let cartes = crate::dns_surveillance::releve()?;
+    // Origine illisible : rien n'est enregistré ni réglé (une lecture ratée enregistrerait « DHCP ») (S281-02)
+    if let Some(c) = cartes.iter().filter(|c| crate::dns_surveillance::filtrable(c))
+        .find(|c| registre_ns_lu("Tcpip", &c.id).is_none() || registre_ns_lu("Tcpip6", &c.id).is_none()) {
+        return Err(format!("serveurs DNS réglés de la carte « {} » illisibles dans le registre", c.nom));
+    }
     Ok(origine_de(&cartes, &registre_ns))
 }
 

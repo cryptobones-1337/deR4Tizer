@@ -18,6 +18,10 @@
   silent (filtering suspended, cards restored) only when the service's own probe gets no answer either: queries chosen
   by a local program are no longer enough. A random-generator failure now stops relaying instead of using zero values.
   A name with an invalid label is judged as its longest valid parent, so it no longer escapes its domain's block.
+  Review of the change (S281-01, S281-02): a card whose DNS registry values cannot be read counts as still pointing to
+  the resolver (port 53 kept) and is never reported as restored; a relay that fails on the computer itself (busy
+  dynamic UDP ports, random-generator failure) is counted and logged apart and never declares the upstream silent;
+  after 8 random source ports, the relay falls back to a port chosen by Windows (the query ID stays random).
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
