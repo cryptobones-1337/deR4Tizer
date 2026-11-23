@@ -296,21 +296,98 @@ namespace DeR4Tizer
             }
         }
 
-        // Fichier de commande écrit par Executer : %LOCALAPPDATA%\deR4Tizer\commande-<32 hexadécimaux>.json, ni le fichier
-        // ni son dossier n'étant un point d'analyse (lien, jonction)
+        // Fichier de commande écrit par Executer : %LOCALAPPDATA%\deR4Tizer\commande-<32 hexadécimaux>.json de l'utilisateur
+        // qui a lancé l'assistant, aucun dossier du chemin ni le fichier n'étant un point d'analyse (lien, jonction). La
+        // chaîne est jugée seule AVANT tout accès disque : un chemin réseau (\\hôte\…, WebDAV, lecteur mappé) ouvert ici
+        // authentifierait l'administrateur auprès de l'hôte, son NetNTLMv2 étant alors capturable (audit du 2026-11-23, A-1-1)
         public static bool FichierDeCommande(string chemin)
         {
             try
             {
+                if (!CheminDeCommandeAccepte(chemin, DossiersDeCommande(), LecteurFixe)) return false;
+                // Dossiers lus de la racine vers le fichier, sans être suivis, puis le fichier lui-même
+                if (ParentPointAnalyse(chemin)) return false;
                 var f = new FileInfo(chemin);
-                string nom = f.Name;
-                if (!nom.StartsWith("commande-") || !nom.EndsWith(".json") || nom.Length != "commande-".Length + 32 + ".json".Length) return false;
-                foreach (char x in nom.Substring(9, 32)) if (!((x >= '0' && x <= '9') || (x >= 'a' && x <= 'f'))) return false;
-                if (f.Directory == null || !string.Equals(f.Directory.Name, "deR4Tizer", StringComparison.OrdinalIgnoreCase)) return false;
-                if ((f.Attributes & FileAttributes.ReparsePoint) != 0 || (f.Directory.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+                if ((f.Attributes & FileAttributes.ReparsePoint) != 0) return false;
                 return f.Exists;
             }
             catch { return false; }
+        }
+
+        // Décision pure, sur la chaîne seule (aucun accès disque) : lettre de lecteur local fixe, dossier égal à l'un des
+        // dossiers attendus (casse ignorée), nom commande-<32 hexadécimaux>.json. Refusés : \\hôte\…, \\?\…, \\.\…, « / »,
+        // « .. », flux nommé (« : » après la lettre), guillemet, caractère de contrôle
+        public static bool CheminDeCommandeAccepte(string chemin, IEnumerable<string> dossiersAttendus, Func<char, bool> lecteurFixe)
+        {
+            if (!CheminLocalFixeTexte(chemin, lecteurFixe)) return false;
+            int i = chemin.LastIndexOf('\\');
+            string dossier = chemin.Substring(0, i), nom = chemin.Substring(i + 1);
+            if (!nom.StartsWith("commande-", StringComparison.Ordinal) || !nom.EndsWith(".json", StringComparison.Ordinal) || nom.Length != "commande-".Length + 32 + ".json".Length) return false;
+            foreach (char x in nom.Substring(9, 32)) if (!((x >= '0' && x <= '9') || (x >= 'a' && x <= 'f'))) return false;
+            return dossiersAttendus != null && dossiersAttendus.Any(d => !string.IsNullOrEmpty(d) && CheminLocalFixeTexte(d, lecteurFixe)
+                && string.Equals(d.TrimEnd('\\'), dossier, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Chemin « X:\… » sur un lecteur local fixe, jugé sur la chaîne et le type du lecteur (GetDriveType, qui ne contacte
+        // aucun hôte) : ni « \\ » (UNC, \\?\, \\.\, WebDAV), ni lecteur réseau, amovible ou absent, ni « / », « .. », flux
+        // nommé, guillemet ou caractère de contrôle (audit du 2026-11-23, A-1-1 et A-5-2)
+        public static bool CheminLocalFixeTexte(string chemin, Func<char, bool> lecteurFixe)
+        {
+            if (string.IsNullOrEmpty(chemin) || chemin.Length < 4 || chemin.Length > 32000) return false;
+            char l = char.ToUpperInvariant(chemin[0]);
+            if (l < 'A' || l > 'Z' || chemin[1] != ':' || chemin[2] != '\\') return false;
+            if (chemin.IndexOf(':', 2) >= 0 || chemin.IndexOf('/') >= 0 || chemin.IndexOf('"') >= 0 || chemin.Any(char.IsControl)) return false;
+            if (chemin.Substring(3).Split('\\').Any(p => p == ".." || p == ".")) return false;
+            return lecteurFixe != null && lecteurFixe(l);
+        }
+
+        public static bool LecteurFixe(char lettre)
+        {
+            try { return new DriveInfo(lettre + ":\\").DriveType == DriveType.Fixed; } catch { return false; }
+        }
+
+        // Chemin local fixe, lecteur lu ici (EmplacementDe, A-5-2)
+        public static bool CheminLocalFixe(string chemin) { return CheminLocalFixeTexte(chemin, LecteurFixe); }
+
+        // Explorateur par son chemin complet, jamais cherché dans le dossier courant ni le PATH (audit du 2026-11-23, A-5-3)
+        public static string Explorateur() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"); }
+
+        [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool WTSQuerySessionInformationW(IntPtr serveur, int session, int classe, out IntPtr tampon, out int octets);
+        [DllImport("wtsapi32.dll")]
+        static extern void WTSFreeMemory(IntPtr p);
+
+        static string InfoSession(int session, int classe)
+        {
+            IntPtr t; int n;
+            if (!WTSQuerySessionInformationW(IntPtr.Zero, session, classe, out t, out n) || t == IntPtr.Zero) return null;
+            try { return Marshal.PtrToStringUni(t); } finally { WTSFreeMemory(t); }
+        }
+
+        // Dossiers où l'interface écrit un fichier de commande : celui du compte qui exécute l'assistant (administrateur qui
+        // élève sa propre interface), et celui de l'utilisateur de la session (compte standard qui a tapé le mot de passe
+        // d'un autre compte : l'assistant tourne alors sous ce compte, avec son propre profil). Le profil de l'utilisateur
+        // de la session est lu dans le registre (ProfileList), jamais sur le disque ; un %LOCALAPPDATA% redirigé ailleurs que
+        // sous le profil est refusé (échec fermé)
+        public static List<string> DossiersDeCommande()
+        {
+            var d = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer") };
+            try
+            {
+                int session = Process.GetCurrentProcess().SessionId;
+                string nom = InfoSession(session, 5), domaine = InfoSession(session, 7); // WTSUserName, WTSDomainName
+                if (!string.IsNullOrEmpty(nom))
+                {
+                    var sid = (SecurityIdentifier)new NTAccount(domaine ?? "", nom).Translate(typeof(SecurityIdentifier));
+                    using (var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + sid.Value))
+                    {
+                        string profil = k == null ? null : k.GetValue("ProfileImagePath") as string;
+                        if (!string.IsNullOrEmpty(profil)) d.Add(profil.TrimEnd('\\') + @"\AppData\Local\deR4Tizer");
+                    }
+                }
+            }
+            catch { }
+            return d;
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -737,8 +814,28 @@ namespace DeR4Tizer
             // À appliquer à chaque texte venu de la commande ; les retours à la ligne de la mise en page sont ajoutés après
             var b = new System.Text.StringBuilder(s.Length);
             bool espace = false;
-            foreach (char ch in s)
+            // Par point de code, pas par unité UTF-16 : les étiquettes (U+E0001, U+E0020-E007F), les sélecteurs de variante
+            // U+E0100-E01EF et les combinants des plans supplémentaires passaient en deux moitiés (audit du 2026-11-23,
+            // A-1-5). Une moitié isolée vaut « ? », un point de code non attribué ou privé aussi
+            for (int i = 0; i < s.Length; i++)
             {
+                char ch = s[i];
+                if (char.IsSurrogate(ch))
+                {
+                    espace = false;
+                    if (char.IsHighSurrogate(ch) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]))
+                    {
+                        var catP = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(s, i);
+                        if (catP == System.Globalization.UnicodeCategory.Format || catP == System.Globalization.UnicodeCategory.NonSpacingMark
+                            || catP == System.Globalization.UnicodeCategory.EnclosingMark || catP == System.Globalization.UnicodeCategory.SpacingCombiningMark
+                            || catP == System.Globalization.UnicodeCategory.OtherNotAssigned || catP == System.Globalization.UnicodeCategory.PrivateUse)
+                            b.Append('?');
+                        else b.Append(ch).Append(s[i + 1]);
+                        i++;
+                    }
+                    else b.Append('?');
+                    continue;
+                }
                 if (char.IsWhiteSpace(ch) && ch != '\n') { if (!espace) b.Append(' '); espace = true; continue; }
                 espace = false;
                 // Signes combinants (Mn, Me) aussi : empilés, ils débordaient sur les lignes voisines (audit de #69, S69-04)
@@ -799,10 +896,37 @@ namespace DeR4Tizer
             return (en ? "\n      host ends with: " : "\n      l'hôte se termine par : ") + Visible(n.Length <= 2 ? h : n[n.Length - 2] + "." + n[n.Length - 1]);
         }
 
-        // Fenêtre de confirmation de l'assistant élevé (S60-06/07) : texte entier, renvoyé à la ligne même au milieu d'un mot
-        // d'un seul tenant, avec défilement ; rien ne sort de l'écran. « Annuler » par défaut (Entrée, Échap, fermeture)
-        public static Form FenetreConfirmation(string texte, bool en)
+        // Commandes qui affaiblissent la protection : apprentissage relancé (comportements oubliés, alertes apprises 7 jours),
+        // réglage coupé, tous les blocages levés, baseline annulée, filtrage coupé, sortie de quarantaine (audit du
+        // 2026-11-23, A-1-2). Décision pure, testée par tests\test-confirmations.ps1
+        public static bool Affaiblit(Commande c)
         {
+            if (c == null) return false;
+            string v = c.Valeur ?? "";
+            switch (c.Action)
+            {
+                case "apprentissage": return v == "recommencer";
+                case "config": return v != "true";
+                case "toutDebloquer": case "restaurer": case "restaurerRepli": return true;
+                case "baseline": return v == "annuler";
+                case "filtrage": return v != "on";
+                default: return false;
+            }
+        }
+
+        public static string AvertissementAffaiblit(bool en)
+        {
+            return en ? "⚠ This request may not come from you: if you did not ask for anything in deR4Tizer, cancel."
+                      : "⚠ Cette demande ne vient peut-être pas de vous : si vous n'avez rien demandé dans deR4Tizer, annulez.";
+        }
+
+        // Fenêtre de confirmation de l'assistant élevé (S60-06/07) : texte entier, renvoyé à la ligne même au milieu d'un mot
+        // d'un seul tenant, avec défilement ; rien ne sort de l'écran. « Annuler » par défaut (Entrée, Échap, fermeture).
+        // Commande qui affaiblit la protection (Affaiblit), dans l'assistant élevé : tout programme du compte peut le lancer,
+        // la fenêtre le dit en tête et « Continuer » n'est armé qu'après 2 s (audit du 2026-11-23, A-1-2)
+        public static Form FenetreConfirmation(string texte, bool en, bool affaiblit = false)
+        {
+            if (affaiblit) texte = AvertissementAffaiblit(en) + "\n\n" + texte;
             var f = new Form
             {
                 Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", StartPosition = FormStartPosition.CenterScreen,
@@ -824,7 +948,7 @@ namespace DeR4Tizer
             // « Continuer » armé une seconde après l'affichage, et de nouveau après chaque retour au premier plan : un clic
             // préparé ou une fenêtre posée par-dessus juste avant ne tombe pas sur lui (audit de #69, S69-02, S69-03)
             continuer.Enabled = false;
-            var armement = new System.Windows.Forms.Timer { Interval = 1000 };
+            var armement = new System.Windows.Forms.Timer { Interval = affaiblit ? 2000 : 1000 };
             armement.Tick += (s, e) => { armement.Stop(); continuer.Enabled = true; };
             f.Activated += (s, e) => { continuer.Enabled = false; armement.Stop(); armement.Start(); };
             f.Deactivate += (s, e) => { continuer.Enabled = false; armement.Stop(); };
@@ -2302,7 +2426,7 @@ namespace DeR4Tizer
         {
             try
             {
-                var p = Process.Start(new ProcessStartInfo("sc.exe", "start " + Commun.NomService)
+                var p = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), "start " + Commun.NomService)
                 {
                     Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden
                 });
@@ -2323,9 +2447,11 @@ namespace DeR4Tizer
             EmplacementDe(f != null ? f.Chemin : a != null ? a.Chemin : d != null ? d.Cible : n != null ? n.Chemin : null);
         }
 
+        // Chemin venu d'une alerte ou d'une connexion : jugé sur la chaîne avant tout accès (File.Exists, l'Explorateur).
+        // Un chemin réseau ouvert ici authentifierait l'utilisateur auprès de l'hôte (audit du 2026-11-23, A-5-2)
         static void EmplacementDe(string chemin)
         {
-            if (!string.IsNullOrEmpty(chemin) && File.Exists(chemin)) Process.Start("explorer.exe", "/select,\"" + chemin + "\"");
+            if (Canal.CheminLocalFixe(chemin) && File.Exists(chemin)) Process.Start(Canal.Explorateur(), "/select,\"" + chemin + "\"");
         }
 
         static void Copier(ListView lv)
@@ -2339,7 +2465,7 @@ namespace DeR4Tizer
 
         static void Ouvrir(string chemin)
         {
-            if (File.Exists(chemin) || Directory.Exists(chemin)) Process.Start("explorer.exe", "\"" + chemin + "\"");
+            if (File.Exists(chemin) || Directory.Exists(chemin)) Process.Start(Canal.Explorateur(), "\"" + chemin + "\"");
         }
     }
 
@@ -2539,7 +2665,7 @@ namespace DeR4Tizer
                     MessageBox.Show(L.En ? "Command refused: its confirmation would be too long to be read in full." : "Commande refusée : sa confirmation serait trop longue pour être lue en entier.", "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 1;
                 }
-                using (var fenetre = Canal.FenetreConfirmation(texte, L.En))
+                using (var fenetre = Canal.FenetreConfirmation(texte, L.En, Canal.Affaiblit(c)))
                     if (fenetre.ShowDialog() != DialogResult.Yes) return 1;
                 var r = Canal.Envoyer(c);
                 Canal.Afficher(r);

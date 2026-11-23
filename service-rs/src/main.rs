@@ -225,7 +225,7 @@ fn main() {
         let o = reponse::origine(&f.to_string_lossy()).unwrap_or_default();
         println!("origine : zone {} ; {:?}", o.zone, o.texte());
         // Processus de test : suspendre, reprendre, tuer
-        let mut enfant = std::process::Command::new("ping").args(["-n", "60", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+        let mut enfant = std::process::Command::new(natif::systeme32("PING.EXE")).args(["-n", "60", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
         let pid = enfant.id();
         let humain = |action| match politique::decider(action, politique::Declencheur::Humain, &Default::default()) {
             politique::Decision::Autorisee(a) => a,

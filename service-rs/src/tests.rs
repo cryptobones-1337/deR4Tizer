@@ -470,7 +470,7 @@ fn audit_powershell_par_chemin_absolu() {
     // msiexec du script de mise à jour (SYSTEM) : par son chemin absolu, jamais cherché dans le PATH
     assert!(!include_str!("maj.rs").contains(concat!("Start-Process ", "msiexec")), "msiexec cherché dans le PATH");
     // curl : -q en premier argument partout (aucun .curlrc lu ; -q n'agit qu'en premier)
-    let appel = concat!("Command::new(", "\"curl.exe\")");
+    let appel = concat!("Command::new(", "crate::natif::curl_exe())");
     for (nom, source) in [("menaces", include_str!("menaces.rs")), ("maj", include_str!("maj.rs")), ("notifications", include_str!("notifications.rs")),
                           ("dpi", include_str!("dpi.rs")), ("geoip", include_str!("geoip.rs")), ("hygiene", include_str!("hygiene.rs"))] {
         for (i, _) in source.match_indices(appel) {
@@ -1171,6 +1171,34 @@ fn audit_a_2_1_outils_systeme_par_chemin_complet() {
     for o in ["wevtutil.exe", "auditpol.exe", "gpupdate.exe"] {
         assert!(std::path::Path::new(&crate::gpo::outil_systeme(o)).is_file(), "{o} introuvable dans System32");
     }
+}
+
+#[test]
+fn audit_a_2_1_aucun_programme_par_nom_nu_dans_le_service() {
+    // Audit du 2026-11-23, A-2-1 (reste) : tous les fichiers du service (hors fichiers de tests), pas une liste à tenir.
+    // Un littéral sans « \ » passé à Command::new est cherché dans le dossier de l'exécutable puis dans le PATH
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let appel = concat!("Command::new(", "\"");
+    let mut fautes = Vec::new();
+    for entree in std::fs::read_dir(&src).unwrap().flatten() {
+        let nom = entree.file_name().to_string_lossy().to_string();
+        if !nom.ends_with(".rs") || nom.starts_with("tests") {
+            continue;
+        }
+        let source = std::fs::read_to_string(entree.path()).unwrap();
+        for (i, _) in source.match_indices(appel) {
+            let litteral: String = source[i + appel.len()..].chars().take_while(|c| *c != '"').collect();
+            if !litteral.contains('\\') {
+                fautes.push(format!("{nom} : {litteral}"));
+            }
+        }
+    }
+    assert!(fautes.is_empty(), "programmes lancés par leur nom nu : {fautes:?}");
+    for o in ["curl.exe", "icacls.exe", "wevtutil.exe", "netsh.exe", "PING.EXE"] {
+        let p = crate::natif::systeme32(o);
+        assert!(std::path::Path::new(&p).is_absolute() && std::path::Path::new(&p).is_file(), "{p}");
+    }
+    assert_eq!(crate::gpo::outil_systeme("auditpol.exe"), crate::natif::systeme32("auditpol.exe"));
 }
 
 #[test]
@@ -3134,8 +3162,10 @@ fn taches_releve_bloque_apres_30_min() {
     assert!(include_str!("hygiene.rs").contains("lecture_fichier(\"leurre\""), "S104-02 : leurres sans échéance");
     assert!(include_str!("reponse.rs").contains("garde_critique(natif::binaire_windows_lu(chemin))"), "S104-01 : garde sans décision testée");
     let a = include_str!("apprentissage.rs");
-    assert!(a.contains("let Ok(lue) = crate::natif::signataire_a_echeance(chemin) else { return \"non signé\".into() };"), "D2 : hors délai en cache");
-    assert!(include_str!("vol_donnees.rs").contains("let Ok(s) = crate::natif::signataire_a_echeance(chemin) else { return None };"), "D2 : hors délai en cache");
+    assert!(a.contains("let lue = crate::natif::signataire_a_echeance(chemin).ok()?;") && a.contains(".unwrap_or_else(|| \"non signé\".into())"), "D2 : hors délai en cache");
+    assert!(include_str!("vol_donnees.rs").contains("en_cache_de_signature(cache, chemin, || crate::natif::signataire_a_echeance(chemin).ok()).flatten()"), "D2 : hors délai en cache");
+    // en_cache_de_signature : un calcul sans réponse (hors délai) n'est jamais gardé
+    assert!(n.contains("let v = calcul()?;"), "D2 : hors délai en cache");
 }
 
 fn lecture_lente(ms: u64, valeur: &str) -> impl FnOnce() -> Option<String> + Send + 'static {
@@ -3220,6 +3250,117 @@ fn signature_hors_delai_sans_confiance() {
     // Le hors délai n'est pas un échec définitif : la lecture rétablie donne le signataire, malgré un cache d'échec sans limite
     let lue = |_: &str| Ok(Some("Éditeur".to_string()));
     assert_eq!(s(&mut cache, "", &c, 1600, u64::MAX, &lue, &catalogue), "Éditeur");
+}
+
+/// Fichier remplacé en place (même chemin, même taille), date de modification remise à l'identique comme le fait
+/// SetFileTime avec le seul droit d'écrire les attributs
+fn remplacer_en_gardant_la_date(f: &std::path::Path, contenu: &[u8]) {
+    let date = std::fs::metadata(f).unwrap().modified().unwrap();
+    std::fs::write(f, contenu).unwrap();
+    std::fs::OpenOptions::new().write(true).open(f).unwrap().set_modified(date).unwrap();
+    assert_eq!(std::fs::metadata(f).unwrap().modified().unwrap(), date, "date remise à l'identique");
+}
+
+/// Audit du 2026-11-23, B-2-01 : les caches de signature avaient pour clé chemin + date de modification, qu'un compte
+/// standard règle (SetFileTime) : un programme remplacé au même chemin gardait l'éditeur de l'ancien
+#[test]
+fn audit_b_2_01_programme_remplace_meme_date_reverifie() {
+    use crate::moniteur::signataire_cache_avec as s;
+    let d = std::env::temp_dir().join(format!("d4t-b201-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("outil.exe");
+    std::fs::write(&f, b"MZ programme signe d'origine").unwrap();
+    let c = f.to_string_lossy().to_string();
+    let catalogue = |_: &str| Ok(false);
+    let mut cache = std::collections::HashMap::new();
+    let signe = |_: &str| Ok(Some("Éditeur".to_string()));
+    assert_eq!(s(&mut cache, "", &c, 1000, u64::MAX, &signe, &catalogue), "Éditeur");
+    // Même chemin, même taille, même date : autre contenu, que la vérification trouve non signé
+    let cle_avant = crate::natif::cle_signature(&c).expect("clé lisible");
+    remplacer_en_gardant_la_date(&f, b"MZ programme malveillant!!!");
+    let non_signe = |_: &str| Ok(None);
+    assert_eq!(s(&mut cache, "", &c, 1001, u64::MAX, &non_signe, &catalogue), "", "l'éditeur de l'ancien fichier ne doit pas être repris");
+    assert_ne!(crate::natif::cle_signature(&c).unwrap(), cle_avant);
+    // Même décision pour le cache commun de l'apprentissage et du vol de données
+    let cache2 = std::sync::Mutex::new(std::collections::HashMap::new());
+    assert_eq!(crate::natif::en_cache_de_signature(&cache2, &c, || Some("A".to_string())).as_deref(), Some("A"));
+    assert_eq!(crate::natif::en_cache_de_signature(&cache2, &c, || Some("autre".to_string())).as_deref(), Some("A"), "fichier inchangé : repris du cache");
+    remplacer_en_gardant_la_date(&f, b"MZ troisieme contenu, meme..");
+    assert_eq!(crate::natif::en_cache_de_signature(&cache2, &c, || Some("B".to_string())).as_deref(), Some("B"));
+    // Fichier changé PENDANT la vérification : la valeur n'est pas gardée
+    let f2 = f.clone();
+    assert_eq!(crate::natif::en_cache_de_signature(&cache2, &c, || { remplacer_en_gardant_la_date(&f2, b"MZ change pendant la lecture"); Some("C".to_string()) }).as_deref(), Some("B"));
+    remplacer_en_gardant_la_date(&f, b"MZ encore un autre contenu..");
+    let _ = crate::natif::en_cache_de_signature(&cache2, &c, || { remplacer_en_gardant_la_date(&f2, b"MZ et encore pendant le cal."); Some("C".to_string()) });
+    assert_eq!(crate::natif::en_cache_de_signature(&cache2, &c, || Some("D".to_string())).as_deref(), Some("D"), "valeur lue pendant un remplacement : jamais gardée");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// B-2-01, décision pure : même chemin et même date, fichier différent : entrée de cache différente ; sans USN,
+/// l'empreinte du contenu ; ni l'un ni l'autre : rien en cache
+#[test]
+fn audit_b_2_01_cle_de_cache_infalsifiable() {
+    use crate::natif::{cle_signature_avec as cle, usn_de_l_enregistrement, IdentiteFichier};
+    let a = IdentiteFichier { volume: 7, id: [1; 16], usn: 1000, taille: 10, ecriture: 5, changement: 5 };
+    let b = IdentiteFichier { usn: 1001, ..a.clone() };
+    let pas_d_empreinte = || None;
+    assert_ne!(cle("C:\\x.exe", Some(&a), &pas_d_empreinte), cle("C:\\x.exe", Some(&b), &pas_d_empreinte), "même date, autre USN");
+    assert!(cle("C:\\x.exe", Some(&a), &pas_d_empreinte).is_some());
+    let sans_usn = IdentiteFichier { usn: 0, ..a.clone() };
+    assert_eq!(cle("C:\\x.exe", Some(&sans_usn), &|| Some("aa".into())).as_deref(), Some("C:\\x.exe|sha256:aa"));
+    assert_ne!(cle("C:\\x.exe", Some(&sans_usn), &|| Some("aa".into())), cle("C:\\x.exe", Some(&sans_usn), &|| Some("bb".into())), "même date, autre contenu");
+    assert_eq!(cle("C:\\x.exe", Some(&sans_usn), &pas_d_empreinte), None, "ni USN ni empreinte : pas de cache");
+    assert_eq!(cle("C:\\x.exe", None, &pas_d_empreinte), None);
+    // Enregistrements USN : V2 (Usn à l'octet 24), V3 (octet 40), autre version ou trop court : 0
+    let mut v2 = vec![0u8; 64];
+    v2[4] = 2;
+    v2[24..32].copy_from_slice(&77i64.to_le_bytes());
+    assert_eq!(usn_de_l_enregistrement(&v2), 77);
+    let mut v3 = vec![0u8; 80];
+    v3[4] = 3;
+    v3[40..48].copy_from_slice(&88i64.to_le_bytes());
+    assert_eq!(usn_de_l_enregistrement(&v3), 88);
+    assert_eq!(usn_de_l_enregistrement(&v3[..44]), 0);
+    assert_eq!(usn_de_l_enregistrement(&[]), 0);
+    let mut v4 = v2.clone();
+    v4[4] = 4;
+    assert_eq!(usn_de_l_enregistrement(&v4), 0);
+    // Sur disque : identité lue par handle ; le journal du volume système est normalement actif
+    let exe = std::env::current_exe().unwrap().to_string_lossy().to_string();
+    let i = crate::natif::identite_fichier(&exe).expect("identité lisible");
+    assert!(i.taille > 0 && i.id != [0; 16], "{i:?}");
+    println!("USN de l'exécutable de test : {} (0 : journal inactif, l'empreinte prend le relais)", i.usn);
+}
+
+/// Audit du 2026-11-23, A-5-2 : un chemin réseau n'est jamais ouvert par le service (SYSTEM = compte machine, NTLM
+/// relayable) ; lettre de lecteur local fixe seulement
+#[test]
+fn audit_a_5_2_aucun_chemin_reseau_lu_en_systeme() {
+    use crate::natif::lisible_en_systeme_avec as l;
+    // C: fixe, Z: lecteur réseau (mappé), E: amovible, Y: absent pour SYSTEM
+    let types = |r: &str| match r { "C:\\" => 3, "Z:\\" => 4, "E:\\" => 2, _ => 1 };
+    assert!(l(r"C:\Users\a\outil.exe", &types));
+    assert!(l(r"c:\users\a\outil.exe", &types), "casse de la lettre");
+    assert!(l(r"\\?\C:\Users\a\outil.exe", &types), "préfixe long d'un chemin local");
+    for refuse in [r"\\hote\partage\outil.exe", r"\\hote@80\DavWWWRoot\outil.exe", r"\\hote@SSL@443\d\outil.exe", r"\\?\UNC\hote\p\outil.exe",
+                   r"\\.\C:\outil.exe", r"\??\C:\outil.exe", r"Z:\outil.exe", r"E:\outil.exe", r"Y:\outil.exe", "C:outil.exe", "C:", "",
+                   "/hote/partage/outil.exe", r"\outil.exe", r"\\?\Volume{0123}\outil.exe"] {
+        assert!(!l(refuse, &types), "{refuse}");
+    }
+    assert!(crate::natif::lisible_en_systeme(&std::env::current_exe().unwrap().to_string_lossy()));
+    // Lecture à échéance : rien n'est lancé pour un chemin réseau, réponse immédiate « rien lu » (non signé)
+    let lance = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let l2 = lance.clone();
+    let t = std::time::Instant::now();
+    let r = crate::natif::lecture_fichier("signature", r"\\192.0.2.1\p\outil.exe", move || { l2.store(true, std::sync::atomic::Ordering::SeqCst); Some("Éditeur".into()) });
+    assert_eq!(r, Ok(None));
+    assert!(!lance.load(std::sync::atomic::Ordering::SeqCst) && t.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(crate::natif::signataire_a_echeance(r"\\192.0.2.1@80\DavWWWRoot\outil.exe"), Ok(None));
+    assert_eq!(crate::natif::catalogue_a_echeance(r"\\?\UNC\192.0.2.1\p\outil.exe"), Ok(false));
+    assert!(crate::natif::identite_fichier(r"\\192.0.2.1\p\outil.exe").is_none() && crate::natif::cle_signature(r"\\192.0.2.1\p\outil.exe").is_none());
+    assert!(crate::reponse::origine(r"\\192.0.2.1\p\outil.exe").is_none());
+    assert!(t.elapsed() < std::time::Duration::from_secs(2), "aucune tentative de connexion");
 }
 
 /// Un seul fil bloqué à la fois ; la garde se libère quand il finit
@@ -5200,7 +5341,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "SAN-013", "REP-001", "REP-002", "REP-003", "REP-004"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "INT-003", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "SAN-013", "REP-001", "REP-002", "REP-003", "REP-004"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -5411,7 +5552,7 @@ fn phase3_branchements_des_collectes_restantes() {
     let a = e.find("pub fn activer_journal(").unwrap();
     let af = lignes_apres(a, 25);
     // Retenue avant wevtutil (relecture de #79, D1), retirée si la coupure échoue (audit S78-05)
-    assert!(af.find("c.push(canal.to_string());").unwrap() < af.find("let ok = Command::new(\"wevtutil\")").unwrap(), "activer_journal : coupure retenue après wevtutil (course avec le fil de suivi)");
+    assert!(af.find("c.push(canal.to_string());").unwrap() < af.find("let ok = Command::new(crate::natif::systeme32(\"wevtutil.exe\"))").unwrap(), "activer_journal : coupure retenue après wevtutil (course avec le fil de suivi)");
     assert!(af.contains("if actif == ok {\n        // Réactivé, ou coupure refusée : plus rien à retenir\n        oublier_coupe(canal);"), "activer_journal : coupure refusée encore retenue");
     assert!(e.contains("if etat_canal == Some(true) {\n                    oublier_coupe(&canal);"), "abonner : coupure retenue après une réactivation par un autre moyen");
     assert!(e.contains("if !encore_une_fenetre(lecture, dernier, n, debut.elapsed()) {\n                    break lecture;"), "abonner : une seule fenêtre par tour (débit plafonné)");
@@ -7008,6 +7149,39 @@ fn relance_droits_sans_ecriture_de_tiers() {
     assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x2, true)], false), &complets).is_err(), "écriture à un tiers");
     assert!(d(&s(SID_SYSTEME, vec![("S-1-5-11", 0x1f01ff, false)], false), &complets).is_ok(), "refus : sans effet");
     assert!(d(&s(SID_SYSTEME, vec![], true), &complets).is_err(), "entrée inconnue");
+}
+
+/// Audit du 2026-11-23, A-4-1 : dossier d'installation (INSTALLFOLDER, propriété publique du MSI) que seuls SYSTEM, les
+/// administrateurs et TrustedInstaller modifient ; sinon alerte critique INT-003 et mise à jour refusée
+#[test]
+fn audit_a_4_1_dossier_installation_protege() {
+    use crate::natif::{Ace, Securite};
+    use crate::protection::{installation_conforme as d, SID_ADMINISTRATEURS, SID_SYSTEME, SID_TRUSTED_INSTALLER};
+    let s = |proprietaire: &str, aces: Vec<(&str, u32, bool)>, inconnue: bool| Securite {
+        proprietaire: proprietaire.into(), protege: true, ace_inconnue: inconnue,
+        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise }).collect(),
+    };
+    let (lecture, total) = (0x1200a9, 0x1f01ff);
+    // Droits posés par le MSI : SYSTEM et administrateurs contrôle total, Utilisateurs lecture et exécution
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![(SID_SYSTEME, total, true), (SID_ADMINISTRATEURS, total, true), ("S-1-5-32-545", lecture, true)], false)).is_ok());
+    // Héritage de Program Files (installation d'avant) : TrustedInstaller, CREATOR OWNER, paquets d'application en lecture
+    assert!(d(&s(SID_TRUSTED_INSTALLER, vec![(SID_TRUSTED_INSTALLER, total, true), ("S-1-3-0", 0x1000_0000, true), ("S-1-15-2-1", 0xa000_0000, true)], false)).is_ok());
+    assert!(d(&s("S-1-5-21-1-2-3-1001", vec![(SID_SYSTEME, total, true)], false)).is_err(), "propriétaire : un compte standard (dossier créé d'avance)");
+    assert!(d(&s("", vec![], false)).is_err(), "propriétaire illisible");
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-5-32-545", 0x2, true)], false)).is_err(), "Utilisateurs peuvent créer un fichier");
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-5-11", 0x4, true)], false)).is_err(), "Utilisateurs authentifiés peuvent créer un dossier");
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-1-0", 0x4000_0000, true)], false)).is_err(), "Tout le monde en écriture générique");
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-5-21-1-2-3-1001", total, false)], false)).is_ok(), "refus : sans effet");
+    assert!(d(&s(SID_ADMINISTRATEURS, vec![], true)).is_err(), "entrée inconnue");
+    let a = crate::protection::alerte_installation("écriture accordée à S-1-5-32-545");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("INT-003", "Critique"));
+    // Branchements : relu au démarrage du fil de protection, et avant toute mise à jour (échec fermé)
+    let p = include_str!("protection.rs");
+    let i = p.find("pub fn demarrer(").unwrap();
+    assert!(p[i..].find("verifier_installation()").unwrap() < p[i..].find("loop {").unwrap(), "relu avant la boucle");
+    let m = include_str!("maj.rs");
+    let i = m.find("pub fn preparer_dossier_travail(").unwrap();
+    assert!(m[i..].find("verifier_installation()").unwrap() < m[i..].find("creer_dossier_protege").unwrap(), "mise à jour refusée avant toute préparation");
 }
 
 /// La tâche cible notre exécutable, reconnu par son empreinte : pas de remarque de persistance ni d'interpréteur

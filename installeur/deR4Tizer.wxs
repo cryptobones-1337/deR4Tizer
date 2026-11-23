@@ -82,6 +82,16 @@
                     Icon="icone.exe" Description="Surveillance locale : connexions, alertes, réseau local" />
         </File>
       </Component>
+      <!-- Droits du dossier des programmes posés par le paquet (audit du 2026-11-23, A-4-1) : INSTALLFOLDER est une
+           propriété publique, redirigeable vers un dossier qu'un compte standard peut écrire (une DLL ou un programme posé
+           là serait exécuté en SYSTEM). SYSTEM et administrateurs en contrôle total, Utilisateurs en lecture et
+           exécution, propriétaire Administrateurs, héritage coupé ; le service les relit au démarrage (protection.rs,
+           INT-003) et refuse la mise à jour automatique s'ils ont changé -->
+      <Component Id="DossierProgrammes" Guid="5B8E2F14-9C6A-4D37-A1E0-3F7B6C9D2E85" Win64="yes">
+        <CreateFolder>
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+        </CreateFolder>
+      </Component>
       <Component Id="LancementSession" Guid="E2B96D40-5A71-4C1F-B3E8-7D0A4F2C6E19" Win64="yes">
         <Condition>LANCEMENT_SESSION = "1"</Condition>
         <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="deR4Tizer" Type="string"
@@ -104,6 +114,7 @@
     <Feature Id="Principal" Title="deR4Tizer" Level="1">
       <ComponentRef Id="Service" />
       <ComponentRef Id="Interface" />
+      <ComponentRef Id="DossierProgrammes" />
       <ComponentRef Id="LancementSession" />
       <ComponentRef Id="Donnees" />
     </Feature>

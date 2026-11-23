@@ -15,7 +15,7 @@ use windows::Win32::System::EventLog::{
 
 /// Journal activé ? (lu avec wevtutil, qui affiche « enabled: true/false »)
 pub fn journal_actif(canal: &str) -> Option<bool> {
-    let sortie = Command::new("wevtutil").args(["gl", canal]).output().ok()?;
+    let sortie = Command::new(crate::natif::systeme32("wevtutil.exe")).args(["gl", canal]).output().ok()?;
     if !sortie.status.success() {
         return None;
     }
@@ -32,7 +32,7 @@ pub fn activer_journal(canal: &str, actif: bool) -> bool {
         c.retain(|x| !x.eq_ignore_ascii_case(canal));
         c.push(canal.to_string());
     }
-    let ok = Command::new("wevtutil")
+    let ok = Command::new(crate::natif::systeme32("wevtutil.exe"))
         .args(["sl", canal, if actif { "/e:true" } else { "/e:false" }])
         .output()
         .map(|s| s.status.success())

@@ -40,7 +40,7 @@ impl GeoIp {
                 continue;
             }
             let tmp = f.with_extension("tmp");
-            let ok = Command::new("curl.exe")
+            let ok = Command::new(crate::natif::curl_exe())
                 .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600",
                     "--max-time", "300", "-A", &format!("deR4Tizer/{}", commun::VERSION), "-o"])
                 .arg(&tmp)

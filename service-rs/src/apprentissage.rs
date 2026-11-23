@@ -165,28 +165,21 @@ fn editeur(chemin: &str) -> String {
         return String::new();
     }
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    // Clé : chemin et date de modification, pour qu'un exécutable remplacé (AppData) soit revérifié
-    let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(crate::commun::filetime).unwrap_or(0);
-    let cle = format!("{chemin}|{date}");
-    if let Some(e) = cache.lock().unwrap().get(&cle) {
-        return e.clone();
-    }
-    // Hors délai : réponse du moment, pas de cache : la signature d'une alerte ne doit pas changer durablement (relecture de #104, D2)
-    let Ok(lue) = crate::natif::signataire_a_echeance(chemin) else { return "non signé".into() };
-    let e = match lue {
-        Some(s) => s,
-        None => match crate::natif::catalogue_a_echeance(chemin) {
-            Ok(true) => "Windows (catalogue)".to_string(),
-            Ok(false) => "non signé".into(),
-            Err(_) => return "non signé".into(),
-        },
-    };
-    let mut c = cache.lock().unwrap();
-    if c.len() > 2000 {
-        c.clear();
-    }
-    c.insert(cle, e.clone());
-    e
+    // Clé que le compte standard ne forge pas (identité par handle avec USN, à défaut empreinte du contenu) : un exécutable
+    // remplacé au même chemin, date remise à l'identique, est revérifié et n'hérite pas de l'éditeur ni de l'apprentissage
+    // de l'ancien (audit du 2026-11-23, B-2-01). Hors délai : réponse du moment, pas de cache : la signature d'une alerte
+    // ne doit pas changer durablement (relecture de #104, D2)
+    crate::natif::en_cache_de_signature(cache, chemin, || {
+        let lue = crate::natif::signataire_a_echeance(chemin).ok()?;
+        Some(match lue {
+            Some(s) => s,
+            None => match crate::natif::catalogue_a_echeance(chemin).ok()? {
+                true => "Windows (catalogue)".to_string(),
+                false => "non signé".into(),
+            },
+        })
+    })
+    .unwrap_or_else(|| "non signé".into())
 }
 
 /// Comportement d'une alerte (fonction pure : l'éditeur est fourni)
