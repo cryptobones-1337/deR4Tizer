@@ -978,11 +978,11 @@ pub fn sauvegarder_fichiers_gpo_dans(racine: &std::path::Path, dossier: &std::pa
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("sauvegarde d'origine de la GPO locale illisible ({e})")),
     }
-    std::fs::create_dir_all(dossier).map_err(|e| format!("dossier de la sauvegarde d'origine non créé ({e})"))?;
+    crate::commun::creer_dossiers(dossier).map_err(|e| format!("dossier de la sauvegarde d'origine non créé ({e})"))?;
     let copier = || -> Result<(), String> {
         for (src, dst) in FICHIERS_GPO {
             let Some(o) = gpo::lire_ou_absent(&racine.join(src))? else { continue };
-            std::fs::write(dossier.join(dst), &o).map_err(|e| format!("copie de {dst} impossible ({e})"))?;
+            crate::commun::ecrire_fichier(dossier.join(dst), &o).map_err(|e| format!("copie de {dst} impossible ({e})"))?;
             match std::fs::read(dossier.join(dst)) {
                 Ok(relue) if relue == o => {}
                 Ok(_) => return Err(format!("copie de {dst} différente de l'original")),

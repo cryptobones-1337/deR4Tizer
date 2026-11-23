@@ -809,7 +809,7 @@ fn mettre_alertes_de_cote(f: &Path, raison: &str, copie: bool) -> bool {
     };
     // Copie : destination créée neuve (create_new), jamais un fichier ou un lien posé entre-temps (relecture de #72, R4)
     let r = if copie {
-        fs::OpenOptions::new().write(true).create_new(true).open(&dest)
+        ouvrir_pour_ecrire(fs::OpenOptions::new().write(true).create_new(true), &dest)
             .and_then(|mut d| fs::File::open(f).and_then(|mut s| std::io::copy(&mut s, &mut d)).map(|_| ()))
     } else {
         fs::rename(f, &dest)
@@ -1203,6 +1203,49 @@ pub fn dans_le_dossier(f: &Path, racine: &Path) -> bool {
     let bas = |p: &Path| p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect::<Vec<_>>();
     let (f, r) = (bas(f), bas(racine));
     !r.is_empty() && f.get(..r.len()) == Some(&r[..])
+}
+
+/// Décision pure (audit de #287, S287-01) : écriture directe permise sur `f` ? Refusée seulement pour un chemin SOUS la
+/// racine du dossier de données (la racine elle-même exclue : protection.rs la crée par son chemin quand elle est absente,
+/// puis la vérifie par handle) tant que la racine n'est pas sûre
+pub fn ecriture_directe_permise(f: &Path, racine: &Path, sure: bool) -> bool {
+    sure || !dans_le_dossier(f, racine) || dans_le_dossier(racine, f)
+}
+
+/// Garde de toutes les écritures directes (fichier, dossier, ouverture en écriture) dans le dossier de données (S287-01) :
+/// les modules ne passent jamais par std::fs pour écrire dessous, mais par ecrire_fichier, creer_dossiers ou
+/// ouvrir_pour_ecrire (test de structure lot_a_ecritures_directes_par_la_garde)
+pub fn garde_racine(f: &Path) -> std::io::Result<()> {
+    if ecriture_directe_permise(f, dossier(), racine_sure()) {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            format!("{} : racine du dossier de données non vérifiée, rien n'est écrit", f.display())))
+    }
+}
+
+/// `std::fs::write` sous la garde de la racine (S287-01)
+pub fn ecrire_fichier<P: AsRef<Path>, C: AsRef<[u8]>>(f: P, contenu: C) -> std::io::Result<()> {
+    garde_racine(f.as_ref())?;
+    fs::write(f, contenu)
+}
+
+/// `std::fs::create_dir_all` sous la garde de la racine (S287-01)
+pub fn creer_dossiers<P: AsRef<Path>>(d: P) -> std::io::Result<()> {
+    garde_racine(d.as_ref())?;
+    fs::create_dir_all(d)
+}
+
+/// `std::fs::create_dir` (un seul niveau : le parent doit exister) sous la garde de la racine (S287-01)
+pub fn creer_dossier<P: AsRef<Path>>(d: P) -> std::io::Result<()> {
+    garde_racine(d.as_ref())?;
+    fs::create_dir(d)
+}
+
+/// Ouverture en écriture (création, ajout, remplacement) sous la garde de la racine (S287-01)
+pub fn ouvrir_pour_ecrire<P: AsRef<Path>>(options: &fs::OpenOptions, f: P) -> std::io::Result<fs::File> {
+    garde_racine(f.as_ref())?;
+    options.open(f)
 }
 
 /// `ecrire` vers un chemin quelconque (tests, dossiers de travail). Rien sous le dossier de données tant que sa racine

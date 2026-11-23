@@ -242,8 +242,8 @@ fn main() {
     if args.iter().any(|a| a == "--test-reponse") {
         // Faux fichier « téléchargé » : marque Zone.Identifier comme le ferait un navigateur
         let f = commun::dossier().join("faux-telechargement.exe");
-        let _ = std::fs::write(&f, b"MZ test");
-        let _ = std::fs::write(format!("{}:Zone.Identifier", f.display()), "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://exemple.invalid/setup.exe\r\n");
+        let _ = crate::commun::ecrire_fichier(&f, b"MZ test");
+        let _ = crate::commun::ecrire_fichier(format!("{}:Zone.Identifier", f.display()), "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://exemple.invalid/setup.exe\r\n");
         let o = reponse::origine(&f.to_string_lossy()).unwrap_or_default();
         println!("origine : zone {} ; {:?}", o.zone, o.texte());
         // Processus de test : suspendre, reprendre, tuer
@@ -303,9 +303,9 @@ fn main() {
         println!("{n} événements de règles lus");
         // Faux journal pfirewall.log : une IP publique acceptée, une bloquée, une locale (ignorée)
         let f = commun::dossier().join("pfirewall-test.log");
-        let _ = std::fs::write(&f, "#Version: 1.5\r\n#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\r\n");
+        let _ = crate::commun::ecrire_fichier(&f, "#Version: 1.5\r\n#Fields: date time action protocol src-ip dst-ip src-port dst-port size tcpflags tcpsyn tcpack tcpwin icmptype icmpcode info path pid\r\n");
         let mut lecteur = parefeu::LecteurJournal::sur_fichier(f.clone());
-        let _ = std::fs::OpenOptions::new().append(true).open(&f).and_then(|mut x| {
+        let _ = commun::ouvrir_pour_ecrire(std::fs::OpenOptions::new().append(true), &f).and_then(|mut x| {
             use std::io::Write;
             x.write_all(b"2026-01-01 07:00:01 ALLOW TCP 203.0.113.7 192.168.0.10 51515 3389 0 - - - - - - - RECEIVE 1234\r\n\
 2026-01-01 07:00:02 DROP TCP 198.51.100.9 192.168.0.10 40000 445 0 - - - - - - - RECEIVE 0\r\n\
@@ -368,7 +368,7 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--console") {
-        let _ = std::fs::create_dir_all(commun::dossier());
+        let _ = crate::commun::creer_dossiers(commun::dossier());
         initialiser_com();
         println!("deR4Tizer {} (Rust) en mode console, données : {}. Entrée pour arrêter.", commun::VERSION, commun::dossier().display());
         let (moniteur, partage) = moniteur::Moniteur::demarrer(true);

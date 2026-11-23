@@ -119,7 +119,7 @@ pub fn poser() -> Result<(), String> {
     let interface = dossier.join("deR4Tizer.exe");
     let fichier = dossier.join("relance-tache.xml");
     let octets: Vec<u8> = "\u{feff}".encode_utf16().chain(definition_tache(&interface.to_string_lossy()).encode_utf16()).flat_map(u16::to_le_bytes).collect();
-    std::fs::write(&fichier, octets).map_err(|e| format!("{} : {e}", fichier.display()))?;
+    crate::commun::ecrire_fichier(&fichier, octets).map_err(|e| format!("{} : {e}", fichier.display()))?;
     let resultat = schtasks(&["/Create", "/TN", NOM_TACHE, "/XML", &fichier.to_string_lossy()]);
     let _ = std::fs::remove_file(Path::new(&fichier));
     resultat?;

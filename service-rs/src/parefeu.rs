@@ -471,7 +471,7 @@ fn preparer_dossier(fichier: &Path) {
         return;
     }
     let Some(dossier) = fichier.parent() else { return };
-    if !dossier.exists() && fs::create_dir_all(dossier).is_err() {
+    if !dossier.exists() && crate::commun::creer_dossiers(dossier).is_err() {
         return;
     }
     let _ = std::process::Command::new(crate::natif::systeme32("icacls.exe"))

@@ -465,7 +465,7 @@ impl Ids {
         let mut fichiers = vec!["règles intégrées".to_string()];
         let mut sources: Vec<(String, String)> = vec![("intégrées".into(), REGLES_INTEGREES.to_string())];
         let dossier = commun::dossier().join("regles");
-        let _ = std::fs::create_dir_all(&dossier);
+        let _ = crate::commun::creer_dossiers(&dossier);
         if let Ok(l) = std::fs::read_dir(&dossier) {
             for f in l.flatten() {
                 let nom = f.file_name().to_string_lossy().to_string();

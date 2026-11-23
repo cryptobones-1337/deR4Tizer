@@ -281,7 +281,7 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
     }
     let url = url_paquet_version(url_manifeste, commun::VERSION)
         .ok_or("adresse du paquet de la version installée impossible à déduire du manifeste")?;
-    fs::create_dir_all(&dossier).map_err(|e| e.to_string())?;
+    crate::commun::creer_dossiers(&dossier).map_err(|e| e.to_string())?;
     let telechargement = telecharger(&url, &paquet, 52_428_800);
     proprietaire_systeme(travail);
     telechargement.map_err(|e| format!("paquet de la version installée ({}) introuvable : {e}", commun::VERSION))?;
@@ -296,7 +296,7 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
 /// Vérifie et, si tout est en ordre (et si l'installation automatique est permise), installe
 fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
     let dossier = commun::dossier().join("maj");
-    let _ = fs::create_dir_all(&dossier);
+    let _ = crate::commun::creer_dossiers(&dossier);
     let f_manifeste = dossier.join("manifeste.json");
     // config.json relu du disque : l'adresse est revalidée ici, pas seulement à la commande majConfig (B2)
     if !commun::adresse_manifeste_simple(&config.url) {
@@ -344,7 +344,7 @@ fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
         Err(e) => return refus(format!("{e} ; pas d'installation sans retour arrière possible")),
     };
     let cible = travail.join(&m.version);
-    let _ = fs::create_dir_all(&cible);
+    let _ = crate::commun::creer_dossiers(&cible);
     let paquet = cible.join(NOM_PAQUET);
     let telechargement = telecharger(&m.fichiers[0].url, &paquet, 52_428_800);
     proprietaire_systeme(&travail);
