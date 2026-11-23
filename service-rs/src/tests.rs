@@ -971,6 +971,29 @@ fn audit_a_2_3_annulation_respecte_un_durcissement_tiers() {
     assert!(corps.contains("tiers_echecs.push(("), "échec de rétablissement retenu");
     assert!(corps.contains(".chain(tiers_echecs.iter().map(|x| x.1)).collect();"), "règle gardée dans la sauvegarde");
     assert!(corps.contains("valeurs_posees(&appliquees, catalogue, cle, nom)"), "valeurs des règles appliquées : pas « un tiers »");
+    // S270-03 (réaudit de #270) : seul « introuvable » vaut absente ; clé illisible, lecture en échec ou type non lu
+    // (QWORD, MULTI_SZ) : illisible, jamais confondu avec une valeur effacée par un tiers
+    use crate::baseline::{classer_lecture, message_illisibles, LectureRegistre::{Absente, Illisible, Valeur}};
+    use std::io::ErrorKind::{InvalidData, NotFound, PermissionDenied};
+    assert_eq!(classer_lecture(Err(NotFound), Err(NotFound), Err(NotFound)), Absente, "clé introuvable");
+    assert_eq!(classer_lecture(Ok(()), Err(NotFound), Err(NotFound)), Absente, "valeur introuvable");
+    assert!(matches!(classer_lecture(Err(PermissionDenied), Err(PermissionDenied), Err(PermissionDenied)), Illisible(_)), "clé illisible");
+    assert!(matches!(classer_lecture(Ok(()), Err(PermissionDenied), Err(PermissionDenied)), Illisible(_)), "lecture en échec");
+    assert!(matches!(classer_lecture(Ok(()), Err(InvalidData), Err(InvalidData)), Illisible(_)), "type non lu (QWORD)");
+    assert_eq!(classer_lecture(Ok(()), Ok(1), Err(InvalidData)), Valeur("1".into()));
+    assert_eq!(classer_lecture(Ok(()), Err(InvalidData), Ok("2".into())), Valeur("2".into()), "texte (règle ASR)");
+    assert!(message_illisibles(&["r : c\\n".into()]).contains("illisible"));
+    // Câblage : la branche illisible passe avant la décision, ne retire rien, garde la règle et le dit
+    let lecture = corps.find("let actuelle = match lire_registre_etat(cle, nom) {").expect("lecture qui distingue introuvable");
+    let branche = &corps[lecture..];
+    let illisible = &branche[branche.find("LectureRegistre::Illisible(e) => {").unwrap()..];
+    let fin = illisible.find("continue;").unwrap();
+    assert!(illisible[..fin].contains("remise = false;") && illisible[..fin].contains("illisibles.push("), "règle gardée et dite");
+    assert!(!illisible[..fin].contains("retraits.push") && !illisible[..fin].contains("tiers.push"), "ni retrait ni rétablissement");
+    assert!(lecture < decision, "lecture classée avant la décision");
+    assert!(!corps.contains("let actuelle = lire_registre(cle, nom);"), "plus de lecture qui confond absente et illisible");
+    assert!(corps.contains("message_illisibles(&illisibles)"));
+    assert!(src.contains("efface && lire_registre_etat(cle, nom) == LectureRegistre::Absente"), "effacement vérifié sans confondre");
 }
 
 #[test]

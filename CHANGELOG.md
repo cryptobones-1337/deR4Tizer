@@ -9,7 +9,8 @@
   written in one block without changing its permissions, and leftover temporary files from a crash are removed; the
   original copy of the local policy is checked. Cancelling keeps a value changed or deleted outside deR4Tizer since
   it was applied: deR4Tizer's policy entry is removed and that value is set back after the policy update (the rule
-  stays recorded if this fails); a value set by a stricter rule still applied is not reported as someone else's. If
+  stays recorded if this fails); a current value that cannot be read (unreadable key, failed read, unexpected type)
+  is never taken as deleted: nothing is changed for it and the rule stays recorded; a value set by a stricter rule still applied is not reported as someone else's. If
   uninstall cannot cancel the baseline, its rollback backup is still deleted without `GARDER_DONNEES=1` (known limit). `wevtutil`, `auditpol` and `gpupdate` are started from System32 by
   their full path (A-2-1, for the baseline only). To be checked in the VM.
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
