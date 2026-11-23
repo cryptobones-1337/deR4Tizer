@@ -2340,6 +2340,13 @@ fn lot_a_tri_liens_physiques_et_premiere_prise_en_charge() {
     assert!(!premiere_prise_en_charge(None, true));
     assert!(premiere_prise_en_charge(Some(false), true), "démarrage interrompu : reprise de la première prise en charge");
     assert!(!premiere_prise_en_charge(Some(true), false));
+    // « ecartes » : mis de côté à la première prise en charge sans marqueur ; à la reprise (marqueur « à faire »), créé par le
+    // service, jugé sur son propriétaire et gardé (CI de #288 : contenu remis de côté, imbriqué)
+    use crate::protection::ecartes_juge_au_proprietaire;
+    assert!(!ecartes_juge_au_proprietaire(true, None));
+    assert!(ecartes_juge_au_proprietaire(true, Some(false)), "reprise : ecartes du premier passage gardé");
+    assert!(ecartes_juge_au_proprietaire(false, None) && ecartes_juge_au_proprietaire(false, Some(true)));
+    assert!(include_str!("protection.rs").contains("preparer_quarantaine_avec(&quarantaine, if ecartes_juge_au_proprietaire(premiere, marqueur) { proprietaire } else { de_confiance })?;"));
     // Vrai dossier : fichier à deux liens physiques (propriétaire de confiance) écarté, fichier à un lien gardé
     let d = dossier_test("lot-a-tri-liens");
     std::fs::write(d.join("seul.json"), b"1").unwrap();

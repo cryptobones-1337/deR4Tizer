@@ -137,13 +137,12 @@ if ($compte) {
             $true
         }
         Verifier 'C-1 : échec dit au journal d''événements (Application, source deR4Tizer) et dans %SystemRoot%\Temp' {
-            # Source non enregistrée (aucune écriture dans le registre) : texte lu dans les chaînes de l'événement
-            $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'deR4Tizer'; StartTime = $debutJ } -ErrorAction SilentlyContinue |
-                Where-Object { (@($_.Properties | ForEach-Object Value) -join ' ') -match 'ÉCHEC' })
-            if (-not $ev.Count) {
-                $ev = @(Get-EventLog -LogName Application -Source deR4Tizer -After $debutJ -ErrorAction SilentlyContinue | Where-Object { ($_.ReplacementStrings -join ' ') -match 'ÉCHEC' })
-            }
-            if (-not $ev.Count) { return 'aucun événement de la source deR4Tizer depuis le redémarrage' }
+            # Source non enregistrée (aucune écriture dans le registre) : Get-WinEvent -FilterHashtable ProviderName lève
+            # « The parameter is incorrect » pour un fournisseur sans manifeste (constaté en CI, run 45222958564, et sur le
+            # poste) ; l'API classique lit l'entrée, filtrée ici sur sa source et le texte de ses chaînes
+            $ev = @(Get-EventLog -LogName Application -After $debutJ -ErrorAction SilentlyContinue |
+                Where-Object { $_.Source -eq 'deR4Tizer' -and ($_.ReplacementStrings -join ' ') -match 'ÉCHEC' })
+            if (-not $ev.Count) { return 'aucun événement de la source deR4Tizer contenant « ÉCHEC » depuis le redémarrage' }
             $cr = @(Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-protection-*.txt' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $debutJ })
             if (-not $cr.Count) { return 'aucun compte rendu deR4Tizer-protection-*.txt' }
             $true
