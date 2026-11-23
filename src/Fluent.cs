@@ -474,6 +474,7 @@ namespace DeR4Tizer
             base.OnClosing(e);
         }
 
+        [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
         // Barre de titre sombre (accessibilité/finition) : DWMWA_USE_IMMERSIVE_DARK_MODE (20, repli 19 sur Windows ancien).

@@ -462,6 +462,17 @@ public static class RenduConfirmationT16
         }
         $langue.GetField('En').SetValue($null, $false)
     }
+
+    # Audit de #296, S296-02 : chaque DllImport de src\*.cs (interface et assistant élevé, même exécutable) charge sa DLL
+    # depuis System32 seulement, jamais depuis le dossier de l'application ou le répertoire courant
+    $sansSystem32 = foreach ($fichier in Get-ChildItem (Join-Path $src '*.cs')) {
+        $lignesSrc = [IO.File]::ReadAllLines($fichier.FullName)
+        for ($i = 0; $i -lt $lignesSrc.Count; $i++) {
+            if ($lignesSrc[$i] -match '\[(System\.Runtime\.InteropServices\.)?DllImport\(' -and ($i -eq 0 -or $lignesSrc[$i - 1] -notmatch '^\s*\[(System\.Runtime\.InteropServices\.)?DefaultDllImportSearchPaths\((System\.Runtime\.InteropServices\.)?DllImportSearchPath\.System32\)\]\s*$')) { "$($fichier.Name):$($i + 1)" }
+        }
+    }
+    $nbImports = @(foreach ($fichier in Get-ChildItem (Join-Path $src '*.cs')) { [regex]::Matches([IO.File]::ReadAllText($fichier.FullName), '\[(System\.Runtime\.InteropServices\.)?DllImport\(') }).Count
+    Verifier-Fenetre "S296-02 : les $nbImports DllImport de src\*.cs chargent leur DLL depuis System32 seulement" { if (-not $sansSystem32 -and $nbImports -ge 20) { $true } else { "sans l'attribut : $($sansSystem32 -join ', ')" } }
     "bilan fenêtre : $kof échec(s)"
     if ($ko -or $kof) { exit 1 }
 } finally {

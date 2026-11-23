@@ -205,12 +205,15 @@ namespace DeR4Tizer
             return p;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("dwmapi.dll")]
         static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribut, ref int valeur, int taille);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
         static extern int SetWindowTheme(IntPtr hwnd, string appli, string liste);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("user32.dll")]
         public static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr w, IntPtr l);
 

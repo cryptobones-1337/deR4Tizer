@@ -13,6 +13,8 @@ affaiblit la protection, elle dit en tête que la demande ne vient peut-être pa
 qu'après 2 s (A-1-2, corrigé, liste élargie par S277-02 ; testé par `tests\test-confirmations.ps1`, à essayer en VM). L'assistant n'accepte que son
 propre fichier de commande, jugé sur le texte du chemin avant tout accès disque : aucun chemin réseau n'est ouvert avec
 l'identité de l'administrateur (A-1-1, corrigé ; même test).
+Limite connue (audit de #296, S296-01, non corrigée) : les polices de la fenêtre de confirmation sont choisies par leur nom (« Segoe UI »,
+« Segoe UI Semibold ») ; une police installée par l'utilisateur sous ce nom pourrait être employée par l'assistant élevé (déjà vrai pour Segoe UI avant T-16).
 
 ## Frontières de privilège
 
