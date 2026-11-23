@@ -2,9 +2,13 @@
 //! L'interface envoie une ligne JSON (Commande) et reçoit une ligne JSON (Reponse).
 //! Protection contre l'usurpation du tube : la première instance est créée avec FILE_FLAG_FIRST_PIPE_INSTANCE
 //! (échec si quelqu'un l'a déjà créé), et une instance reste toujours ouverte (la suivante est créée avant de
-//! traiter la connexion en cours) ; créer une instance supplémentaire exige FILE_CREATE_PIPE_INSTANCE (0x4), que seul
-//! SYSTEM possède : les administrateurs n'ont que lecture et écriture des données (DROITS_CLIENT ; avant l'audit du
-//! 2026-11-23, A-1-4, leur GENERIC_WRITE comprenait ce droit et ce commentaire était faux).
+//! traiter la connexion en cours) ; créer une instance supplémentaire exige FILE_CREATE_PIPE_INSTANCE (0x4), que seule
+//! l'entrée de SYSTEM accorde : les administrateurs n'ont que lecture et écriture des données (DROITS_CLIENT ; avant
+//! l'audit du 2026-11-23, A-1-4, leur GENERIC_WRITE comprenait ce droit et ce commentaire était faux), le tube appartient
+//! à SYSTEM et une entrée OWNER RIGHTS retire au propriétaire son WRITE_DAC implicite (S295-01) : personne d'autre que
+//! SYSTEM ne peut réécrire la DACL pour s'accorder ce droit. Limite : un administrateur qui active un privilège (prise de
+//! possession, restauration, débogage de SYSTEM) reste maître du poste ; la vérification du serveur par l'interface et
+//! le script de mise à jour reste la protection contre un tube usurpé.
 //! L'interface vérifie de son côté que le serveur du tube est bien le processus du service.
 //! Un client qui se connecte puis se tait ne bloque pas le canal : la lecture d'une commande est bornée dans le
 //! temps (DELAI_LECTURE). Si le nom est déjà pris au démarrage (squat), alerte critique locale avec le PID et le
@@ -55,9 +59,15 @@ const DEBIT_FENETRE: Duration = Duration::from_secs(10);
 pub const DROITS_CLIENT: u32 = 0x0012_008B;
 
 /// SYSTEM (seul à pouvoir créer une instance) et administrateurs ; en mode console (tests uniquement), tout utilisateur
-/// connecté, avec les mêmes droits que les administrateurs
+/// connecté, avec les mêmes droits que les administrateurs.
+/// Propriétaire (relecture de #295, S295-01) : sans « O: », le propriétaire était celui par défaut du jeton SYSTEM, les
+/// Administrateurs ; le propriétaire a WRITE_DAC implicite, un administrateur élevé pouvait réécrire la DACL puis créer
+/// une instance. Désormais « O:SY » (en service seulement : un compte qui n'est pas SYSTEM ne peut pas donner le tube à
+/// SYSTEM, d'où son absence en mode console), et une entrée OWNER RIGHTS (OW) qui remplace les droits implicites du
+/// propriétaire, quel qu'il soit, par DROITS_CLIENT : plus de WRITE_DAC pour personne hors de l'entrée de SYSTEM (GA)
 pub fn descripteur(console: bool) -> String {
-    let mut sddl = format!("D:(A;;GA;;;SY)(A;;0x{DROITS_CLIENT:x};;;BA)");
+    let proprietaire = if console { "" } else { "O:SY" };
+    let mut sddl = format!("{proprietaire}D:(A;;GA;;;SY)(A;;0x{DROITS_CLIENT:x};;;BA)(A;;0x{DROITS_CLIENT:x};;;OW)");
     if console {
         sddl.push_str(&format!("(A;;0x{DROITS_CLIENT:x};;;AU)"));
     }
