@@ -647,8 +647,11 @@ fn borner(s: &mut String, max: usize) {
 /// l'audit de #94, S94-02 ; à la création, APRÈS les décisions prises sur le
 /// texte entier : MITRE, signal fort, apprentissage ; AVANT tout usage : journal, export, notifications, SIEM,
 /// alertes.json). Les champs posés par le code (Mitre, Conseil, Regle, Collecte) sont bornés aussi, pour que la borne
-/// de taille reste vraie quand ils s'allongent (S72-07)
+/// de taille reste vraie quand ils s'allongent (S72-07). Secrets des lignes de commande masqués dans les raisons et la
+/// destination (audit du 2026-11-23, A-6-1) : ici, après les décisions et avant tout usage, alertes relues comprises
 pub fn borner_alerte(a: &mut Alerte) {
+    a.raisons = masquer_secrets(&a.raisons);
+    a.destination = masquer_secrets(&a.destination);
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
@@ -1118,6 +1121,406 @@ pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: 
     Admission::Nouvelle
 }
 
+// ------------------------------------------------------------ secrets des lignes de commande
+
+/// Ce qui remplace une valeur secrète (audit du 2026-11-23, A-6-1)
+pub const MASQUE: &str = "***";
+
+/// Options suivies de leur valeur secrète quel que soit l'outil, comparées sans tenir compte de la casse : --password,
+/// -Password, -Credential et -SecurePassword de PowerShell…
+const OPTIONS_SUIVIES_DU_SECRET: &[&str] = &["--password", "-password", "--pass", "--passwd", "-pwd", "-credential", "-securepassword"];
+
+/// Options dont la valeur secrète est collée, quel que soit l'outil (casse ignorée) : /p:x (xfreerdp, wevtutil), /pass:x
+/// (cmdkey), /password:x (wmic), --password=x (mysql, wget), -Password:x (PowerShell), et les variables d'environnement
+/// qui portent un mot de passe (PGPASSWORD=x psql, set MYSQL_PWD=x, $env:SSHPASS='x')
+const PREFIXES_DU_SECRET: &[&str] = &["/p:", "/pass:", "/password:", "/pwd:", "--password=", "-password=", "--pass=", "--passwd=",
+    "-password:", "--http-password=", "--ftp-password=", "--proxy-password=", "pgpassword=", "mysql_pwd=", "sshpass=",
+    "$env:pgpassword=", "$env:mysql_pwd=", "$env:sshpass="];
+
+/// Où est le secret d'une option : dans le mot suivant (en entier, ou après le séparateur `compte<sep>motdepasse`), ou
+/// collé à l'option
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Forme {
+    Suivie,
+    Collee,
+    CompteSuivi(char),
+    CompteColle(char),
+}
+
+/// Outils Windows d'administration à distance dont `/p <mot de passe>` suit `/s <poste> /u <compte>`
+const OUTILS_SLASH_P: &[&str] = &["schtasks", "gpresult", "systeminfo", "tasklist", "taskkill", "eventcreate", "getmac", "openfiles",
+    "driverquery", "eventtriggers", "waitfor"];
+
+/// Options qui ne portent un secret que pour certains outils (revue de #269) : ailleurs, `/p` est un drapeau sans valeur
+/// (xcopy, del, findstr) et `-p` ou `-P` un port (ssh, scp, nc). Les options en `/` se comparent sans la casse, celles en
+/// `-` avec (sqlcmd -P mot de passe, mais ssh -P port n'est pas listé)
+const OPTIONS_PAR_OUTIL: &[(&[&str], &str, Forme)] = &[
+    (OUTILS_SLASH_P, "/p", Forme::Suivie),
+    (&["schtasks"], "/rp", Forme::Suivie),
+    (&["mysql", "mysqldump", "mysqladmin", "mysqlimport", "mysqlshow", "mariadb", "mariadb-dump"], "-p", Forme::Collee),
+    (&["psexec", "psexec64", "paexec", "sshpass", "rdesktop"], "-p", Forme::Suivie),
+    (&["sshpass"], "-p", Forme::Collee),
+    (&["7z", "7za", "7zr", "7zg", "rar", "winrar", "unrar"], "-p", Forme::Collee),
+    (&["plink", "pscp", "psftp", "putty", "winscp"], "-pw", Forme::Suivie),
+    (&["unzip", "zip", "pkzipc"], "-P", Forme::Suivie),
+    (&["sqlcmd", "osql", "isql", "bcp"], "-P", Forme::Suivie),
+    (&["sqlcmd", "osql", "isql", "bcp"], "-P", Forme::Collee),
+    (&["openssl"], "-pass", Forme::Suivie),
+    (&["openssl"], "-passin", Forme::Suivie),
+    (&["openssl"], "-passout", Forme::Suivie),
+    (&["openssl"], "-k", Forme::Suivie),
+    (&["curl"], "-u", Forme::CompteSuivi(':')),
+    (&["curl"], "--user", Forme::CompteSuivi(':')),
+    (&["curl"], "--proxy-user", Forme::CompteSuivi(':')),
+    (&["curl"], "-u", Forme::CompteColle(':')),
+    (&["smbclient", "rpcclient", "smbmap"], "-U", Forme::CompteSuivi('%')),
+    (&["smbclient", "rpcclient"], "--user", Forme::CompteSuivi('%')),
+];
+
+/// Nom d'outil d'un mot (sans guillemets, chemin ni « .exe », en minuscules)
+fn nom_outil(v: &str) -> String {
+    // `sch^tasks` (échappement de cmd) et `@schtasks` (écho coupé) désignent le même outil
+    let v = v.replace('^', "");
+    let v = v.trim_matches(|c| c == '"' || c == '\'' || c == '(');
+    let v = v.strip_prefix('@').unwrap_or(v);
+    let n = v.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
+    n.strip_suffix(".exe").map(str::to_string).unwrap_or(n)
+}
+
+/// Outil qui porte un secret dans ses options (`OPTIONS_PAR_OUTIL`)
+pub(crate) fn outil_a_secret(nom: &str) -> bool {
+    OPTIONS_PAR_OUTIL.iter().any(|(outils, _, _)| outils.contains(&nom))
+}
+
+/// Lanceurs dont la commande suit une option : `cmd /c …`, `powershell -c …`. Après cette option, le mot suivant est en tête
+/// de commande
+const LANCEURS_PAR_OPTION: &[(&[&str], &[&str])] = &[
+    (&["cmd"], &["/c", "/k", "/r"]),
+    (&["powershell", "pwsh"], &["-c", "-command", "/c", "/command"]),
+];
+
+/// Lanceurs dont la commande est le premier mot qui n'est ni une option, ni la valeur d'une option, ni un poste (`\\srv`),
+/// ni un titre entre guillemets : `start "" ssh …`, `sshpass -p x ssh …`, `psexec \\srv -u a cmd …`
+const LANCEURS_DIRECTS: &[&str] = &["start", "call", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo", "start-process", "saps"];
+
+/// Options d'un lanceur direct suivies d'une valeur (le mot suivant n'est pas la commande) ; les autres options sont des
+/// drapeaux (psexec -d, -s, -i, -h, -accepteula ; start /b, /min, /wait…), sautés
+const OPTIONS_A_VALEUR_DES_LANCEURS: &[(&[&str], &[&str])] = &[
+    (&["psexec", "psexec64", "paexec"], &["-u", "-p", "-w", "-n", "-a", "-cpu", "-r", "-f"]),
+    (&["sshpass"], &["-p", "-f", "-d"]),
+    (&["start"], &["/d", "/node", "/affinity"]),
+    (&["sudo"], &["-u", "-g"]),
+    (&["start-process", "saps"], &["-argumentlist", "-args", "-windowstyle", "-workingdirectory", "-credential", "-verb",
+        "-redirectstandardoutput", "-redirectstandarderror", "-redirectstandardinput"]),
+];
+
+/// Le mot qui suit `mot` est-il en tête de commande, pour l'outil courant `outil` (décision pure, testée) ? Après un
+/// séparateur, après « : » seul ou collé à un mot (« Processus créé: <ligne> », raisons d'une alerte), après `cmd /c` ou
+/// `powershell -c`
+pub(crate) fn tete_apres(outil: &str, mot: &str) -> bool {
+    let fin_de_prefixe = mot == ":" || (mot.ends_with(':') && mot.chars().count() > 2 && !mot.starts_with('-') && !mot.starts_with('/'));
+    separateur_de_commandes(mot) || fin_de_prefixe
+        || LANCEURS_PAR_OPTION.iter().any(|(outils, options)| outils.contains(&outil) && options.iter().any(|o| mot.eq_ignore_ascii_case(o)))
+}
+
+/// `mot` (précédé de `precedent`) est-il la commande lancée par le lanceur direct `outil` (décision pure, testée) ? Ni une
+/// option, ni la valeur d'une option du lanceur, ni un poste (`\\srv`), ni un titre entre guillemets
+pub(crate) fn commande_lancee(outil: &str, mot: &str, precedent: &str) -> bool {
+    let option = |m: &str| m.starts_with('-') || m.starts_with('/');
+    let valeur = OPTIONS_A_VALEUR_DES_LANCEURS.iter()
+        .any(|(lanceurs, options)| lanceurs.contains(&outil) && options.iter().any(|o| precedent.eq_ignore_ascii_case(o)));
+    LANCEURS_DIRECTS.contains(&outil) && !mot.is_empty() && !option(mot) && !mot.starts_with("\\\\") && !mot.starts_with('"')
+        && !mot.starts_with('\'') && !valeur
+}
+
+/// Ce qu'il faut masquer pour le mot `mot` d'une ligne dont l'outil courant est `outil` (décision pure, testée) :
+/// `Dans(o)` masque le mot à partir de l'octet `o` ; `Suivant(None)` le mot suivant en entier ; `Suivant(Some(c))` le mot
+/// suivant après le séparateur `c`
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Masque {
+    Dans(usize),
+    Suivant(Option<char>),
+}
+
+pub(crate) fn secret_d_option(outil: &str, mot: &str) -> Option<Masque> {
+    let commence = |o: &str, casse: bool| mot.len() > o.len() && mot.get(..o.len()).is_some_and(|x| if casse { x == o } else { x.eq_ignore_ascii_case(o) });
+    if let Some(p) = PREFIXES_DU_SECRET.iter().find(|p| commence(p, false)) {
+        return Some(Masque::Dans(p.len()));
+    }
+    if OPTIONS_SUIVIES_DU_SECRET.iter().any(|o| mot.eq_ignore_ascii_case(o)) {
+        return Some(Masque::Suivant(None));
+    }
+    for (outils, option, forme) in OPTIONS_PAR_OUTIL {
+        if !outils.contains(&outil) {
+            continue;
+        }
+        let sans_casse = option.starts_with('/');
+        let egal = if sans_casse { mot.eq_ignore_ascii_case(option) } else { mot == *option };
+        match forme {
+            Forme::Suivie if egal => return Some(Masque::Suivant(None)),
+            Forme::CompteSuivi(c) if egal => return Some(Masque::Suivant(Some(*c))),
+            Forme::Collee if commence(option, !sans_casse) => return Some(Masque::Dans(option.len())),
+            Forme::CompteColle(c) if commence(option, !sans_casse) => {
+                let reste = mot.get(option.len()..).unwrap_or("");
+                if let Some(i) = reste.find(*c).filter(|i| i + 1 < reste.len()) {
+                    return Some(Masque::Dans(option.len() + i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Ligne de commande secrets masqués, pour tout ce qui est stocké ou publié (SIEM, alertes, etat.json, exports) ; jamais pour
+/// la détection, qui analyse la ligne entière (pur, testé ; audit du 2026-11-23, A-6-1). Remplace par `***` : la valeur des
+/// options de `OPTIONS_SUIVIES_DU_SECRET` et `PREFIXES_DU_SECRET` (tout outil), celle des options de `OPTIONS_PAR_OUTIL` pour
+/// leurs seuls outils (`secret_d_option`, revue de #269), la valeur de `ConvertTo-SecureString`, les mots de passe
+/// de `net use` (tout argument qui n'est ni une option, ni un lecteur, ni un chemin réseau, ni `*`) et de `net user <compte>
+/// <mot de passe>`, et le mot de passe d'une adresse `schéma://compte:motdepasse@hôte`. Une valeur entre guillemets est
+/// masquée en entier ; une valeur qui est une expression PowerShell (`$variable`, `(…)`) ne l'est pas. Le texte entre
+/// guillemets est aussi lu comme une ligne (powershell -c "…"). Aucune indexation qui puisse paniquer (règle 4)
+pub fn masquer_secrets(ligne: &str) -> String {
+    masquer_mots(&masquer_urls(ligne), 0, &[])
+}
+
+/// Mots d'une ligne de commande, en octets (début, fin), séparés par des blancs ; un mot entre guillemets doubles (où qu'ils
+/// s'ouvrent) ou simples (ouverts en début de mot, ou après « : », « = », « ( » ou « , ») garde ses blancs. Une virgule qui
+/// suit un guillemet fermant sépare deux mots (tableau PowerShell `@('/p','x')`, revue de #269) ; une virgule dans un mot
+/// nu (`/p pa,ss`) ne sépare rien
+fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
+    let mut mots = Vec::new();
+    let (mut debut, mut guillemet, mut precedent): (Option<usize>, Option<char>, Option<char>) = (None, None, None);
+    for (i, c) in s.char_indices() {
+        match guillemet {
+            Some(q) => {
+                if c == q {
+                    guillemet = None;
+                }
+            }
+            None if c.is_whitespace() => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+            }
+            // Séparateur collé (`echo x&&schtasks`, revue de #269) : un mot à lui seul, hors guillemets
+            None if c == '&' || c == '|' => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+                mots.push((i, i + 1));
+            }
+            None if c == ',' && matches!(precedent, Some('\'' | '"')) => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+            }
+            None => {
+                let d = *debut.get_or_insert(i);
+                if c == '"' || (c == '\'' && (d == i || matches!(precedent, Some(':' | '=' | '(' | ',')))) {
+                    guillemet = Some(c);
+                }
+            }
+        }
+        precedent = Some(c);
+    }
+    if let Some(d) = debut {
+        mots.push((d, s.len()));
+    }
+    mots
+}
+
+/// Partie utile d'un mot, en octets (début, fin) : sans `@(` ou `(` de tête, sans `)`, `,` ou `;` de fin, ni les guillemets
+/// qui l'entourent (`@('/p'` → `/p`, `'x')` → `x`) ; seuls des caractères ASCII sont retirés (bornes de caractère sûres)
+fn interieur(t: &str) -> (usize, usize) {
+    let o = t.as_bytes();
+    let (mut a, mut b) = (0, o.len());
+    if o.first() == Some(&b'@') && o.get(1) == Some(&b'(') {
+        a = 2;
+    } else if o.first() == Some(&b'(') {
+        a = 1;
+    }
+    while b > a && matches!(o.get(b - 1), Some(b')' | b',' | b';')) {
+        b -= 1;
+    }
+    if let Some(&q) = o.get(a).filter(|q| matches!(q, b'\'' | b'"')) {
+        a += 1;
+        if b > a && o.get(b - 1) == Some(&q) {
+            b -= 1;
+        }
+    }
+    (a, b.max(a))
+}
+
+/// Valeur littérale (à masquer) : ni vide, ni une expression PowerShell, ni un séparateur de commandes
+fn valeur_litterale(v: &str) -> bool {
+    !v.is_empty() && !v.starts_with('$') && !v.starts_with('(') && !separateur_de_commandes(v)
+}
+
+fn separateur_de_commandes(v: &str) -> bool {
+    matches!(v, "&" | "&&" | "|" | "||" | ";")
+}
+
+/// `net`, `net1`, avec ou sans chemin ni extension
+fn est_net(v: &str) -> bool {
+    let v = v.trim_matches('"').to_ascii_lowercase();
+    matches!(v.rsplit(['\\', '/']).next().unwrap_or(""), "net" | "net.exe" | "net1" | "net1.exe")
+}
+
+/// `herites` : outils à secret actifs là où ce texte est cité (`Start-Process schtasks -ArgumentList '/p x'`, revue de #269)
+fn masquer_mots(s: &str, profondeur: u8, herites: &[String]) -> String {
+    let mots = mots_de_commande(s);
+    let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
+    // Pour chaque mot : partie masquée (octets du mot, début et fin) ; outils à secret actifs pour un mot entre guillemets
+    let mut masques: Vec<Option<(usize, usize)>> = vec![None; mots.len()];
+    let mut contextes: Vec<Vec<String>> = vec![Vec::new(); mots.len()];
+    // Deux états (revue de #269, D2 et D3). `actifs` : les outils qui portent un secret vus dans la commande ; le passage vers
+    // l'un d'eux est permis sur n'importe quel mot (`start /b schtasks`, `call schtasks`, `psexec … -d schtasks`, « Processus
+    // créé: schtasks ») et reste acquis jusqu'au séparateur suivant (verrou : au pire on masque trop). `outil` : l'outil
+    // courant, qui ne passe à un outil sans secret qu'en tête de commande (premier mot, après un séparateur, après « : »,
+    // après `cmd /c` ou `powershell -c`) ou comme commande d'un lanceur direct, jamais sur la valeur d'une option (`/tr
+    // cmd.exe`). La commande d'un lanceur met fin à ses options : le lanceur quitte `actifs` (`sshpass -p x ssh -p 22`)
+    let mut actifs: Vec<String> = herites.to_vec();
+    let mut outil = String::new();
+    let mut tete = true;
+    for k in 0..mots.len() {
+        let brut = texte(k);
+        // Mot sans parenthèses ni guillemets de tableau (`@('/p'` → `/p`) ; `a` : décalage de sa partie utile
+        let (a, z) = interieur(brut);
+        let t = brut.get(a..z).unwrap_or("");
+        if separateur_de_commandes(brut) {
+            actifs.clear();
+            outil.clear();
+            tete = true;
+            continue;
+        }
+        let nom = nom_outil(t);
+        let precedent = if k > 0 { texte(k - 1).get(interieur(texte(k - 1)).0..interieur(texte(k - 1)).1).unwrap_or("") } else { "" };
+        let lancee = commande_lancee(&outil, brut, precedent);
+        if lancee {
+            actifs.retain(|a| *a != outil);
+        }
+        if outil_a_secret(&nom) {
+            if !actifs.contains(&nom) {
+                actifs.push(nom.clone());
+            }
+            outil = nom;
+            tete = false;
+        } else if tete {
+            // Affectation en tête (PGPASSWORD=x psql) : la commande suit
+            if !(brut.contains('=') && !brut.starts_with('-') && !brut.starts_with('/')) {
+                outil = nom;
+                tete = false;
+            }
+        } else if lancee {
+            outil = nom;
+        }
+        if tete_apres(&outil, t) {
+            tete = true;
+        }
+        if brut.starts_with('"') || brut.starts_with('\'') {
+            contextes[k] = actifs.clone();
+        }
+        let masque = actifs.iter().map(String::as_str).chain([""]).find_map(|o| secret_d_option(o, t));
+        match masque {
+            Some(Masque::Dans(o)) => masques[k] = Some((a + o, z)),
+            Some(Masque::Suivant(separateur)) => {
+                let brut_v = texte(k + 1);
+                let (va, vz) = interieur(brut_v);
+                let v = brut_v.get(va..vz).unwrap_or("");
+                let depuis = match separateur {
+                    None => Some(va),
+                    Some(c) => v.find(c).filter(|i| i + 1 < v.len()).map(|i| va + i + 1),
+                };
+                if let (true, Some(o), Some(m)) = (valeur_litterale(brut_v) && !v.is_empty(), depuis, masques.get_mut(k + 1)) {
+                    *m = Some((o, vz));
+                }
+            }
+            None => {}
+        }
+        if t.trim_start_matches('(').eq_ignore_ascii_case("convertto-securestring") {
+            let j = if texte(k + 1).eq_ignore_ascii_case("-string") { k + 2 } else { k + 1 };
+            if valeur_litterale(texte(j)) && !texte(j).starts_with('-') {
+                if let Some(m) = masques.get_mut(j) {
+                    *m = Some((0, texte(j).len()));
+                }
+            }
+        }
+        if est_net(t) && (texte(k + 1).eq_ignore_ascii_case("use") || texte(k + 1).eq_ignore_ascii_case("user")) {
+            let user = texte(k + 1).eq_ignore_ascii_case("user");
+            let mut positionnels = 0;
+            for j in k + 2..mots.len() {
+                let v = texte(j);
+                if separateur_de_commandes(v) {
+                    break;
+                }
+                if v.starts_with('/') || v == "*" {
+                    continue;
+                }
+                positionnels += 1;
+                let lecteur = v.len() == 2 && v.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && v.ends_with(':');
+                let reseau = v.trim_start_matches('"').starts_with("\\\\") || v.contains("://");
+                // net use : tout sauf le lecteur et le chemin réseau ; net user : le mot de passe suit le nom du compte
+                if (!user && !lecteur && !reseau) || (user && positionnels >= 2) {
+                    masques[j] = Some((0, v.len()));
+                }
+            }
+        }
+    }
+    let mut sortie = String::with_capacity(s.len());
+    let mut position = 0;
+    for (k, &(a, b)) in mots.iter().enumerate() {
+        let remplacement = match masques[k] {
+            Some((o, z)) => Some(format!("{}{MASQUE}{}", s.get(a..a + o).unwrap_or(""), s.get(a + z..b).unwrap_or(""))),
+            None => {
+                // Texte entre guillemets : lu comme une ligne (powershell -c "…"), trois niveaux au plus
+                let t = texte(k);
+                let q = t.chars().next().filter(|c| *c == '"' || *c == '\'');
+                match q {
+                    Some(q) if profondeur < 3 => {
+                        let ferme = t.len() > 1 && t.ends_with(q);
+                        let dedans = t.get(1..if ferme { t.len() - 1 } else { t.len() }).unwrap_or("");
+                        let m = masquer_mots(dedans, profondeur + 1, &contextes[k]);
+                        (m != dedans).then(|| format!("{q}{m}{}", if ferme { q.to_string() } else { String::new() }))
+                    }
+                    _ => None,
+                }
+            }
+        };
+        if let Some(r) = remplacement {
+            sortie.push_str(s.get(position..a).unwrap_or(""));
+            sortie.push_str(&r);
+            position = b;
+        }
+    }
+    sortie.push_str(s.get(position..).unwrap_or(""));
+    sortie
+}
+
+/// Mot de passe d'une adresse `schéma://compte:motdepasse@hôte` masqué
+fn masquer_urls(s: &str) -> String {
+    let mut sortie = String::with_capacity(s.len());
+    let mut reste = s;
+    while let Some(i) = reste.find("://") {
+        let (avant, apres) = (reste.get(..i + 3).unwrap_or(""), reste.get(i + 3..).unwrap_or(""));
+        sortie.push_str(avant);
+        let fin = apres.find(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'').unwrap_or(apres.len());
+        let autorite = apres.get(..fin).unwrap_or("");
+        let compte = autorite.rfind('@').and_then(|at| autorite.get(..at).and_then(|u| u.find(':')).map(|c| (c, at)));
+        match compte {
+            Some((c, at)) if at > c + 1 => {
+                sortie.push_str(autorite.get(..=c).unwrap_or(""));
+                sortie.push_str(MASQUE);
+                sortie.push_str(autorite.get(at..).unwrap_or(""));
+            }
+            _ => sortie.push_str(autorite),
+        }
+        reste = apres.get(fin..).unwrap_or("");
+    }
+    sortie.push_str(reste);
+    sortie
+}
+
 /// Message ramené à une seule ligne de journal (pur, testé)
 pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
@@ -1148,17 +1551,74 @@ pub fn avec_echeance_unique<T: Send + 'static>(garde: &'static std::sync::atomic
     })
 }
 
-pub fn journal(message: &str) {
-    let f = dossier().join("journal.txt");
-    // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)
-    if fs::metadata(&f).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false) {
-        let _ = fs::rename(&f, dossier().join("journal.1.txt"));
+/// Taille au-delà de laquelle journal.txt tourne, et générations gardées : journal.1.txt (la plus récente) à journal.5.txt,
+/// 12 Mo au plus en tout (audit du 2026-11-23, A-8-3 : une seule génération, un bruit provoqué effaçait l'historique en
+/// deux rotations)
+pub const TAILLE_JOURNAL: u64 = 2 * 1024 * 1024;
+pub const GENERATIONS_JOURNAL: usize = 5;
+
+/// Rotation due (pure, testée)
+pub fn rotation_due(taille: u64) -> bool {
+    taille > TAILLE_JOURNAL
+}
+
+/// Heure en tête d'une ligne de journal (« AAAA-MM-JJ HH:MM:SS »), si elle y est
+fn heure_de_ligne(l: &str) -> Option<&str> {
+    let h = l.get(..19)?;
+    h.bytes().enumerate().all(|(i, b)| match i { 4 | 7 => b == b'-', 10 => b == b' ', 13 | 16 => b == b':', _ => b.is_ascii_digit() }).then_some(h)
+}
+
+/// Heures de la première et de la dernière ligne d'un journal, lues au début et à la fin du fichier (jamais les 2 Mo) ;
+/// « inconnu » si elles ne s'y lisent pas
+fn bornes_journal(f: &Path) -> (String, String) {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut debut = None;
+    let mut fin = None;
+    if let Ok(mut fichier) = fs::File::open(f) {
+        let mut tete = [0u8; 64];
+        let n = fichier.read(&mut tete).unwrap_or(0);
+        debut = heure_de_ligne(&String::from_utf8_lossy(tete.get(..n).unwrap_or(&[]))).map(String::from);
+        let taille = fichier.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut queue = Vec::new();
+        if fichier.seek(SeekFrom::Start(taille.saturating_sub(1024))).is_ok() && fichier.take(1024).read_to_end(&mut queue).is_ok() {
+            fin = String::from_utf8_lossy(&queue).lines().rev().find_map(|l| heure_de_ligne(l).map(String::from));
+        }
     }
+    (debut.unwrap_or_else(|| "inconnu".into()), fin.unwrap_or_else(|| "inconnu".into()))
+}
+
+/// Fait tourner journal.txt du dossier `d` : journal.4 → journal.5 (l'ancien journal.5 est remplacé), …, journal.txt →
+/// journal.1 ; rend la ligne qui dit l'intervalle couvert par journal.1, écrite en tête du nouveau journal ; None sans
+/// journal.txt ou si son renommage échoue (testé). Un renommage dans le même dossier garde les droits du fichier, hérités du
+/// dossier de données (lecteurs compris) ; la désinstallation efface le dossier entier
+pub fn tourner_journal(d: &Path) -> Option<String> {
+    let f = d.join("journal.txt");
+    fs::metadata(&f).ok()?;
+    let (debut, fin) = bornes_journal(&f);
+    for g in (1..GENERATIONS_JOURNAL).rev() {
+        let _ = fs::rename(d.join(format!("journal.{g}.txt")), d.join(format!("journal.{}.txt", g + 1)));
+    }
+    fs::rename(&f, d.join("journal.1.txt")).ok()?;
+    Some(format!("journal : rotation au-delà de {} Mo ; journal.1.txt couvre {debut} à {fin} ; générations gardées : journal.1 à journal.{GENERATIONS_JOURNAL}",
+        TAILLE_JOURNAL / (1024 * 1024)))
+}
+
+pub fn journal(message: &str) {
+    // Un seul écrivain à la fois : deux fils ne font jamais tourner le journal deux fois de suite
+    static VERROU: Mutex<()> = Mutex::new(());
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    let d = dossier();
+    let f = d.join("journal.txt");
+    // Rotation : au-delà de 2 Mo, sur 5 générations (un bruit provoqué n'efface pas tout)
+    let rotation = if fs::metadata(&f).map(|m| rotation_due(m.len())).unwrap_or(false) { tourner_journal(&d) } else { None };
     // Une ligne par message : caractères de contrôle et séparateurs de ligne Unicode remplacés par une espace (noms
     // DNS, NBNS, UPnP, lignes de commande venus du poste ou du réseau ajoutaient de fausses lignes horodatées,
     // audit AUD4-05)
     let propre = ligne_de_journal(message);
     if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
+        if let Some(r) = rotation {
+            let _ = writeln!(fichier, "{}  {}\r", maintenant(), r);
+        }
         let _ = writeln!(fichier, "{}  {}\r", maintenant(), propre);
     }
 }

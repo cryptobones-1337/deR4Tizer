@@ -4980,7 +4980,7 @@ namespace DeR4Tizer
         readonly WrapPanel boutons = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
         int etape, enCours, chargement;
         bool lu, etatIllisible, configIllisible, apprentissageIllisible, notificationsIllisibles;
-        Etat etat; Config config; EtatApprentissage apprentissage; EtatNotifications notifications;
+        Etat etat; Config config; EtatApprentissage apprentissage; EtatNotifications notifications; List<Lecteur> lecteurs;
 
         public PageAssistantFluent(ISourceEtat source, Action<string> ouvrir, string repere)
         {
@@ -5014,10 +5014,11 @@ namespace DeR4Tizer
                     bool absentApp, absentNotif;
                     var a = LectureFluent.Lire<EtatApprentissage>("apprentissage.json", out absentApp);
                     var n = LectureFluent.Lire<EtatNotifications>("notifications.json", out absentNotif);
+                    var lect = Commun.Lire<List<Lecteur>>("lecteurs.json");
                     Dispatcher.BeginInvoke((Action)(() =>
                     {
                         if (numero != chargement) return;
-                        lu = true; etat = e; etatIllisible = !absentEtat && e == null; config = c; configIllisible = ci; apprentissage = a; notifications = n;
+                        lu = true; etat = e; etatIllisible = !absentEtat && e == null; config = c; configIllisible = ci; apprentissage = a; notifications = n; lecteurs = lect;
                         apprentissageIllisible = !absentApp && a == null; notificationsIllisibles = !absentNotif && n == null;
                         Afficher();
                     }));
@@ -5119,6 +5120,9 @@ namespace DeR4Tizer
                     contenu.Children.Add(Briques.Titre(en ? "Still to do" : "Reste à faire", 0));
                     if (reste.Count == 0) contenu.Children.Add(Texte(en ? "Nothing reported by these steps." : "Rien de signalé par ces étapes."));
                     foreach (var l in reste) contenu.Children.Add(Texte("· " + l));
+                    // Comptes lecteurs (audit du 2026-11-23, A-6-2) : le premier compte vu à la console l'est d'office
+                    contenu.Children.Add(Briques.Titre(L.T("Comptes autorisés à lire les données"), 8));
+                    contenu.Children.Add(Texte(ActionsReglages.TexteLecteurs(lecteurs)));
                     contenu.Children.Add(Texte(VueAssistantFluent.Avertissement(), true));
                     break;
             }

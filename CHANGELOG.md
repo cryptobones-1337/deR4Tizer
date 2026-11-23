@@ -70,6 +70,17 @@
   is never taken as deleted: nothing is changed for it and the rule stays recorded; a value set by a stricter rule still applied is not reported as someone else's. If
   uninstall cannot cancel the baseline, its rollback backup is still deleted without `GARDER_DONNEES=1` (known limit). `wevtutil`, `auditpol` and `gpupdate` are started from System32 by
   their full path (A-2-1, for the baseline only). To be checked in the VM.
+- Data (audit of 23 November 2026, batch 5): known secret arguments in command lines (`net use` and `net user`
+  passwords, `/pass:`, `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=`
+  and similar variables, `user:password@` in an address, and, for the tools that use them only, `/p` and `/rp`
+  (schtasks and other remote Windows tools), `-p` (mysql, psexec, sshpass, 7-Zip, RAR), `-pw` (PuTTY tools), `-P`
+  (sqlcmd, zip, unzip), `-pass` (openssl), `-u user:password` (curl), `-U user%password` (smbclient)) are masked (`***`) before being stored in the SIEM, in alerts (alert history, syslog
+  and API exports, notifications) and in process chains and connections shown by the interface; detection rules still
+  read the full command line (A-6-1). The SIEM never deletes the current day's file: beyond a daily cap (1 GB / 30),
+  that day's events are counted and not written, the size purge only removes previous days, and a new health finding,
+  SAN-013, reports dropped events, the daily cap and size purges (A-6-3). The service log rotates over 5 files
+  (`journal.1.txt` to `journal.5.txt`) and each rotation writes the time span of the rotated file (A-8-3). Settings and
+  the first-run summary say that reader accounts can read the history of every account (A-6-2).
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms

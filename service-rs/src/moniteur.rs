@@ -596,6 +596,8 @@ impl Moniteur {
                     let (t, etats) = (crate::sante::secondes(), collectes::instantane());
                     let (changements, mut constats) = sante.observer(&etats, non_suivies, t);
                     constats.extend(sante.observer_remontee(crate::notifications::echec_depuis(), t));
+                    // SAN-013 : historique du SIEM incomplet (audit du 2026-11-23, A-6-3)
+                    constats.extend(sante.observer_siem(crate::siem::compteurs(), t));
                     crate::notifications::publier_compteurs(crate::sante::compteurs(&etats, non_clos));
                     for c in &changements {
                         crate::siem::enregistrer(crate::sante::evenement(c));
@@ -847,7 +849,9 @@ impl Moniteur {
                 premiere_vue: self.premieres_vues[&cle].clone(),
                 connexions: groupe.len(),
                 parent: origine.as_ref().and_then(|o| o.parent.clone()).or_else(|| liste.get(pid).and_then(|p| liste.get(&p.parent)).map(|p| p.nom.clone())),
-                ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.clone()),
+                // Publiée dans etat.json : secrets masqués (audit du 2026-11-23, A-6-1) ; l'indice « ligne suspecte » a lu la
+                // ligne entière plus haut
+                ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).map(commun::masquer_secrets),
                 origine: texte_origine,
             };
 
@@ -1032,7 +1036,8 @@ impl Moniteur {
         }
         for a in detections.into_iter().chain(dns) {
             if let Some(pid) = a.pid {
-                let raison: String = a.raisons.chars().take(90).collect();
+                // Raison publiée avec la chaîne (etat.json) : secrets masqués avant d'être bornée (A-6-1)
+                let raison: String = commun::masquer_secrets(&a.raisons).chars().take(90).collect();
                 let code = if a.comportement.is_empty() { a.regle.clone() } else { format!("{}#{}", a.regle, a.comportement) };
                 self.arbre.signaler_code(pid, a.score, &raison, &mitre::identifiants(&a), &code);
             }
@@ -1101,7 +1106,7 @@ impl Moniteur {
                 outils_distants: s.outils.clone(),
                 ecoutes: s.ecoutes.clone(),
                 defender: self.partage.defender.lock().unwrap().clone(),
-                chaines: self.chaines.iter().take(30).cloned().collect(),
+                chaines: chaines_publiees(&self.chaines),
                 panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,
                 panique_etat: reponse::etat_panique().texte().into(),
                 exposition: self.exposition.clone(),
@@ -2035,6 +2040,18 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Chaînes publiées dans etat.json (30 au plus) : ligne de commande et raisons de chaque nœud secrets masqués (pur, testé ;
+/// audit du 2026-11-23, A-6-1). L'arbre garde la ligne entière : seule la copie publiée est masquée
+pub(crate) fn chaines_publiees(chaines: &[Chaine]) -> Vec<Chaine> {
+    chaines.iter().take(30).cloned().map(|mut c| {
+        for n in &mut c.noeuds {
+            n.ligne_commande = commun::masquer_secrets(&n.ligne_commande);
+            n.raisons = commun::masquer_secrets(&n.raisons);
+        }
+        c
+    }).collect()
+}
+
 /// Compte rendu de la désinstallation dans %SystemRoot%\Temp, nom unique, sans écraser ni suivre de lien (audit de #124,
 /// S124-02 ; relecture, R2)
 fn compte_rendu_nettoyage(texte: &str) {

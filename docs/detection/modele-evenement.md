@@ -145,7 +145,7 @@ les 30 s, hors du verrou du moniteur), au changement seulement :
   l'absence constatée après le délai de grâce de 5 min), Info au retour.
 - Plus de 6 changements dans l'heure : collecte « instable », une ligne par heure au plus (le message le dit).
 - Une coupure plus courte que la période du fil (30 s) peut ne pas être vue.
-- Constats SAN-001, SAN-002, SAN-003 et SAN-012 : `docs/detection/regles.md`.
+- Constats SAN-001, SAN-002, SAN-003, SAN-012 et SAN-013 : `docs/detection/regles.md`.
 
 ## Santé de la remontée (phase 4, PR 4.4b)
 

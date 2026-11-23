@@ -99,9 +99,20 @@ passer pour le service sur le canal.
   compris, aux comptes lecteurs (ce que la trace WMI permettait déjà pour un processus encore vivant). Un secret passé
   en argument (mot de passe en ligne de commande) peut y apparaître ; le nombre de nœuds d'une chaîne n'est pas borné
   (audit de #244). Le SIEM garde en plus 400 caractères de la ligne de commande de chaque création de processus (4688),
-  tous comptes, 30 jours, lisibles par les comptes lecteurs, et l'export syslog ou l'API les transmet : un mot de passe
-  d'administrateur tapé en argument peut y être lu par un compte standard (A-6-1, non corrigé ; masquage prévu). Le
-  premier compte vu à la console devient lecteur, sans être affiché ni revu ensuite (A-6-2, non corrigé).
+  tous comptes, 30 jours, lisibles par les comptes lecteurs, et l'export syslog ou l'API les transmet. Depuis l'audit
+  du 2026-11-23 (A-6-1, corrigé en labo), les secrets reconnus sont masqués (`***`) avant tout stockage ou publication :
+  SIEM, alertes (alertes.json, exports, notifications), chaînes et connexions d'`etat.json` ; la détection analyse la
+  ligne entière avant. Le masquage suit des motifs connus : pour tout outil (`net use`, `net user`, `/pass:`,
+  `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=` et variables
+  semblables, `compte:motdepasse@` d'une adresse), et pour les seuls outils qui les emploient ainsi (`/p` et `/rp` de
+  schtasks et des outils Windows à distance, `-p` de mysql, psexec, sshpass, 7-Zip et RAR, `-pw` des outils PuTTY, `-P`
+  de sqlcmd, zip et unzip, `-pass` d'openssl, `-u` de curl, `-U` de smbclient ; liste `OPTIONS_PAR_OUTIL`, revue de
+  #269 : ailleurs `/p` est un drapeau et `-p` un port). Un secret passé sous une autre forme, ou à un outil absent de la
+  liste, reste lisible par les comptes lecteurs, et les fichiers du SIEM écrits avant cette version
+  gardent leurs lignes entières jusqu'à leur purge (30 jours). Le premier compte vu à la console devient lecteur ;
+  depuis A-6-2 (corrigé en labo), la page Réglages et le résumé des premiers réglages affichent les comptes lecteurs et
+  ce qu'ils peuvent lire ; aucune commande ne retire encore un lecteur (à prévoir : ce serait un chemin privilégié
+  nouveau).
 - Angles morts publiés (phase 3, état des collectes) : `etat.json` est lisible par les comptes lecteurs, dont le compte
   connecté à la console par défaut. Un programme qui tourne sous ce compte y lit quelles collectes manquent
   (`Collectes`, `ReglesSansCollecte`, `ReglesDegradees` : Sysmon absent, journal illisible, règles PRC dégradées sous
@@ -189,12 +200,14 @@ Opérations privilégiées, audit du 2026-11-23 : la GPO locale est lue en éche
   n'en sort pas : un enfant du service hors de cette liste reste dans les chaînes et y porte un signal (parent usurpé
   probable, T1134.004). Limite : s'il choisit pour parent un de ces programmes pendant qu'il tourne (quelques secondes),
   sa chaîne sort de CHA-001 sans signal.
-- La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Un compte standard peut
-  aussi chasser l'historique, ce qui relève du modèle et n'est pas corrigé : en créant des processus en boucle, il fait
-  dépasser 1 Go au SIEM (les jours les plus anciens partent, fichier du jour compris) et déborder sa file (événements
-  perdus, sans constat de santé) ; du bruit provoqué remplit le journal du service (A-6-3, A-8-3). Le SIEM (`siem\`, 30 jours
-  et 1 Go au plus : les jours les plus anciens partent d'abord, parfois bien avant 30 jours) et le journal du service
-  (`journal.txt`, 2 Mo, puis un fichier précédent) restent sur la machine surveillée : un administrateur peut les
+- La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Un compte standard qui crée
+  des processus en boucle ne chasse plus les jours précédents du SIEM (A-6-3, corrigé en labo) : le fichier du jour
+  n'est jamais supprimé, et au-delà de son plafond (1 Go / 30) les événements du jour ne sont plus écrits mais comptés ;
+  il peut donc encore rendre muet le SIEM pour le reste du jour, et faire déborder sa file : le constat SAN-013 le dit
+  (première perte, premier plafond, première purge par la taille). Le journal du service tourne sur 5 générations
+  (A-8-3, corrigé en labo) : du bruit provoqué doit écrire plus de 10 Mo pour effacer une ligne. Le SIEM (`siem\`, 30 jours
+  et 1 Go au plus) et le journal du service (`journal.txt`, 2 Mo, puis `journal.1.txt` à `journal.5.txt`, chaque
+  rotation disant l'intervalle couvert) restent sur la machine surveillée : un administrateur peut les
   effacer, et une intrusion plus ancienne que ces limites n'y est plus. Seule une copie déjà partie ailleurs y échappe,
   et aucune n'est complète : l'export syslog, s'il est configuré, n'envoie que les alertes, en clair (sans TLS), sans
   garantie de réception ; la remontée (ntfy, Teams, SMTP), chiffrée en transit, n'envoie que des alertes regroupées et
