@@ -213,7 +213,7 @@ namespace DeR4Tizer
             lvIncidents.Items.Clear();
             foreach (var i in r.Incidents)
             {
-                var item = PageSiem.Item(new[] { i.Heure, i.Niveau, i.Regle, i.Titre, i.Mitre, i.Resume }, i);
+                var item = PageSiem.Item(new[] { i.Heure, L.T(i.Niveau), i.Regle, i.Titre, i.Mitre, i.Resume }, i);
                 Colorer(item, i.Niveau);
                 lvIncidents.Items.Add(item);
             }
@@ -222,7 +222,7 @@ namespace DeR4Tizer
             lvEvenements.Items.Clear();
             foreach (var e in r.Evenements)
             {
-                var item = PageSiem.Item(new[] { e.Heure, e.Niveau, e.Source, e.Type, e.Utilisateur, e.Processus, e.Ip, e.Message }, e);
+                var item = PageSiem.Item(new[] { e.Heure, L.T(e.Niveau), e.Source, e.Type, e.Utilisateur, e.Processus, e.Ip, e.Message }, e);
                 item.ToolTipText = Canal.Visible(e.Message ?? "");
                 Colorer(item, e.Niveau);
                 lvEvenements.Items.Add(item);
@@ -262,7 +262,7 @@ namespace DeR4Tizer
             }
             var e = lv.SelectedItems[0].Tag as Evenement;
             if (e != null)
-                detail.Text = v(e.Heure) + "  [" + v(e.Source) + " / " + v(e.Type) + "]  " + v(e.Niveau) + (string.IsNullOrEmpty(e.Mitre) ? "" : "  " + v(e.Mitre)) + "\n"
+                detail.Text = v(e.Heure) + "  [" + v(e.Source) + " / " + v(e.Type) + "]  " + v(L.T(e.Niveau)) + (string.IsNullOrEmpty(e.Mitre) ? "" : "  " + v(e.Mitre)) + "\n"
                     + (string.IsNullOrEmpty(e.Utilisateur) ? "" : L.T("Utilisateur") + " : " + v(e.Utilisateur) + "   ")
                     + (string.IsNullOrEmpty(e.Processus) ? "" : L.T("Programme") + " : " + v(e.Processus) + (e.Pid.HasValue ? " (PID " + e.Pid + ")" : "") + "   ")
                     + (string.IsNullOrEmpty(e.Ip) ? "" : "IP : " + v(e.Ip) + (e.Port > 0 ? ":" + e.Port : "") + "   ")

@@ -1396,7 +1396,7 @@ namespace DeR4Tizer
             foreach (var x in incidents)
             {
                 string id = x.Id;
-                string sous = Canal.Visible(x.Niveau) + "  ·  " + string.Join(", ", (x.Regles ?? new List<string>()).Select(Canal.Visible)) + "  ·  " + x.NombreAlertes + " " + L.T("alertes") + "  ·  " + Canal.Visible(x.DerniereActiviteUtc);
+                string sous = Canal.Visible(L.T(x.Niveau)) + "  ·  " + string.Join(", ", (x.Regles ?? new List<string>()).Select(Canal.Visible)) + "  ·  " + x.NombreAlertes + " " + L.T("alertes") + "  ·  " + Canal.Visible(x.DerniereActiviteUtc);
                 liste.Children.Add(Briques.Ligne(Canal.Visible(x.Entite), VueIncidents.EtatComplet(x), sous, VueIncidentsFluent.Gravite(x), id == choisi, x.Etat == "Clos", () => { choisi = id; Afficher(); }));
             }
             Detailler(i, c);
@@ -3842,10 +3842,12 @@ namespace DeR4Tizer
             return c.Piste == "adresse_ipv4" || c.Piste == "paquets_acceptes" || c.Piste == "upnp" ? 2 : 1;
         }
 
+        // Résultat du contrôle, pas l'objet contrôlé : « not found » à côté de « Windows Firewall » se lisait « pare-feu
+        // introuvable » quand le service disait le pare-feu actif (« pas_constate » : aucun problème relevé ; constat T-17)
         public static string Etat(ConstatExposition c)
         {
             bool en = L.En;
-            return c.Etat == "constate" ? (en ? "found" : "constaté") : c.Etat == "non_verifie" ? (en ? "not checked" : "non vérifié") : (en ? "not found" : "pas constaté");
+            return c.Etat == "constate" ? (en ? "issue found" : "constaté") : c.Etat == "non_verifie" ? (en ? "not checked" : "non vérifié") : (en ? "no issue found" : "rien relevé");
         }
 
         public static List<LigneEtatFluent> LignesPourquoi(Exposition x)
@@ -4499,6 +4501,9 @@ namespace DeR4Tizer
     {
         readonly string[] valeurs;
         public string Valeur { get; private set; }
+        // Donné : un clic appelle Choisi au lieu de changer la valeur active (choix de la langue, qui ne vaut qu'au prochain
+        // lancement : le bouton actif reste la langue affichée, constat T-17)
+        public Action<string> Choisi;
 
         public ChoixFluent(string[] valeurs, string[] libelles)
         {
@@ -4509,20 +4514,21 @@ namespace DeR4Tizer
                 string v = valeurs[k];
                 var b = new Button { Content = libelles == null ? L.T(v) : libelles[k], Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 4, 0), Cursor = Cursors.Hand, BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte), Tag = v };
                 b.Template = Coquille.ModeleBouton();
-                b.Click += (s, e) => Definir(v);
+                b.Click += (s, e) => { if (Choisi != null) Choisi(v); else Definir(v); };
                 Children.Add(b);
             }
             Definir(valeurs[0]);
         }
 
-        public void Definir(string v)
+        // enAttente : valeur enregistrée qui ne vaut qu'au prochain lancement, bordée en gris clair (dite aussi en texte à part)
+        public void Definir(string v, string enAttente = null)
         {
             Valeur = Array.IndexOf(valeurs, v) >= 0 ? v : valeurs[0];
             foreach (Button b in Children)
             {
-                bool actif = (string)b.Tag == Valeur;
+                bool actif = (string)b.Tag == Valeur, attente = !actif && (string)b.Tag == enAttente;
                 b.Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond);
-                b.BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur);
+                b.BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : attente ? Jetons.TexteSecondaire : Jetons.Separateur);
             }
         }
     }
@@ -4534,7 +4540,9 @@ namespace DeR4Tizer
     {
         readonly StackPanel pile = new StackPanel { MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left };
         readonly TextBlock config = Texte(true), apprentissage = Texte(false), notifEtat = Texte(true), maj = Texte(false), lecteurs = Texte(true);
-        readonly ChoixFluent langue = new ChoixFluent(new[] { "fr", "en" }, new[] { "Français", "English" });
+        // Trois valeurs (constat T-17) : automatique (langue de Windows), français, anglais ; bouton actif = réglage en vigueur
+        readonly ChoixFluent langue = new ChoixFluent(L.Reglages, L.Reglages.Select(r => L.Libelle(r, System.Globalization.CultureInfo.CurrentUICulture)).ToArray());
+        readonly TextBlock langueEtat = Texte(true);
         readonly CheckBox syslog = Case("Envoyer les alertes à un serveur syslog / SIEM"), api = Case("Activer l'API d'export"), reseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)"),
             majAuto = Case("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)"),
             ntfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)"), teams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)"), smtp = Case("E-mail (SMTP chiffré)");
@@ -4556,7 +4564,10 @@ namespace DeR4Tizer
             pile.Children.Add(config);
             Section("LANGUE");
             pile.Children.Add(Ligne(Etiquette("Langue de l'interface"), langue));
-            pile.Children.Add(Note("La langue s'applique au prochain lancement de l'interface."));
+            pile.Children.Add(langueEtat);
+            // Choix écrit pour cet utilisateur, sans commande ni élévation ; affiché à part jusqu'au prochain lancement
+            langue.Choisi = v => { ActionsReglages.ChoisirLangue(v); AfficherLangue(); };
+            AfficherLangue();
 
             Section("MODE APPRENTISSAGE ET EXCEPTIONS");
             pile.Children.Add(Note("Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement »."));
@@ -4646,7 +4657,7 @@ namespace DeR4Tizer
             config.Visibility = illisible ? Visibility.Visible : Visibility.Collapsed;
             var x = c ?? new Config();
             var sl = x.Syslog ?? new ConfigSyslog(); var a = x.Api ?? new ConfigApi(); var n = x.Notifications ?? new ConfigNotifications(); var m = x.Maj ?? new ConfigMaj();
-            langue.Definir(x.Langue == "en" ? "en" : "fr");
+            AfficherLangue();
             syslog.IsChecked = sl.Actif; hote.Text = sl.Hote ?? ""; portSyslog.Text = sl.Port.ToString(); protocole.Definir(sl.Protocole); format.Definir(sl.Format); niveau.Definir(sl.NiveauMin);
             api.IsChecked = a.Actif; portApi.Text = a.Port.ToString(); reseau.IsChecked = a.Reseau; adresses.Text = a.Adresses ?? "";
             majAuto.IsChecked = m.Auto; majUrl.Text = m.Url ?? "";
@@ -4659,6 +4670,13 @@ namespace DeR4Tizer
             notifEtat.Text = ActionsReglages.TexteNotifications(en);
             lecteurs.Text = ActionsReglages.TexteLecteurs(lect);
             rempli = true;
+        }
+
+        // Bouton actif = réglage en vigueur dans ce processus, jamais la valeur par défaut de config.json (constat T-13)
+        void AfficherLangue()
+        {
+            langue.Definir(L.Reglage, L.LireReglage(L.CheminReglage()));
+            langueEtat.Text = ActionsReglages.TexteLangue();
         }
 
         Tuple<ConfigSyslog, ConfigApi> Saisis()
@@ -4677,7 +4695,7 @@ namespace DeR4Tizer
             if (s == null) return;
             bool illisible;
             var lue = ActionsProtection.LireConfig(out illisible);
-            ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, langue.Valeur == "en", s.Item1, s.Item2));
+            ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));
         }
 
         void Notifications(string action)
