@@ -175,7 +175,7 @@ Compte standard contre la suspension sur leurre : un programme nommé comme un l
 
 Compte standard contre les leurres eux-mêmes : ils sont posés dans `Documents`, `Pictures` et `Desktop` à leur emplacement par défaut ; avec la sauvegarde OneDrive des dossiers ou une redirection, un rançongiciel qui chiffre les dossiers réels n'en rencontre aucun (A-7-2, non corrigé). Sous la charge d'un chiffrement, la suspension peut arriver tard (priorité du service, A-8-1, non mesuré).
 
-Opérations privilégiées, constats ouverts de l'audit du 2026-11-23 (non corrigés) : une lecture ratée de la GPO locale vaut « aucune stratégie » et le fichier est réécrit, ce qui peut effacer les stratégies locales d'un tiers (A-2-2) ; sur un poste joint à un domaine, le service lit en SYSTEM l'exécutable d'un programme lancé depuis un partage réseau, donc avec le compte de la machine (A-5-2) ; installé hors de Program Files, le dossier du service n'a pas de droits posés (A-4-1).
+Opérations privilégiées, audit du 2026-11-23 : la GPO locale est lue en échec fermé avant toute écriture (fichier illisible, tronqué ou non compris : refus, rien n'est écrit) et écrite d'un bloc sans changer ses droits ; l'annulation laisse une valeur durcie depuis par un tiers (A-2-2 et A-2-3, corrigés ; testé en labo, à vérifier en VM). Constats ouverts (non corrigés) : sur un poste joint à un domaine, le service lit en SYSTEM l'exécutable d'un programme lancé depuis un partage réseau, donc avec le compte de la machine (A-5-2) ; installé hors de Program Files, le dossier du service n'a pas de droits posés (A-4-1).
 
 ## Hors du modèle
 

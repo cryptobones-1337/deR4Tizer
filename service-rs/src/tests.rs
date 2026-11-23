@@ -660,6 +660,315 @@ pub fn ").map(|i| debut + i).unwrap_or(src.len())];
     assert!(!src.contains("let _ = commun::ecrire(\"baseline-sauvegarde.json\""), "échec d'écriture de la sauvegarde jamais ignoré");
 }
 
+/// Dossier temporaire propre à un test de la GPO locale (jamais la vraie GPO du poste)
+fn dossier_gpo_test(nom: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("d4t-gpo-{nom}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn pol_exemple() -> (Vec<crate::gpo::EntreePol>, Vec<u8>) {
+    use crate::gpo::{serialiser_pol, EntreePol};
+    // Une stratégie d'un autre outil (Windows Update) et une de deR4Tizer
+    let e = vec![
+        EntreePol::dword(r"Software\Policies\Microsoft\Windows\WindowsUpdate\AU", "NoAutoUpdate", 0),
+        EntreePol::texte(r"Software\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules", "d4f940ab-401b-4efc-aadc-ad5f3c50688a", "1"),
+    ];
+    let o = serialiser_pol(&e);
+    (e, o)
+}
+
+#[test]
+fn audit_a_2_2_registry_pol_decode_strict() {
+    // Audit du 2026-11-23, A-2-2 : un Registry.pol tronqué, d'en-tête inconnu ou suivi d'octets en trop est une
+    // erreur, jamais une liste partielle ou vide qui ferait effacer les stratégies d'autres outils à la réécriture
+    use crate::gpo::{decoder_pol, serialiser_pol};
+    let (e, o) = pol_exemple();
+    assert_eq!(decoder_pol(&o), Ok(e.clone()), "relu à l'identique");
+    assert_eq!(serialiser_pol(&decoder_pol(&o).unwrap()), o, "réécrit à l'identique");
+    assert_eq!(decoder_pol(b""), Ok(Vec::new()), "fichier vide : rien");
+    assert_eq!(decoder_pol(b"PReg\x01\0\0\0"), Ok(Vec::new()), "en-tête seul : rien");
+    assert!(decoder_pol(b"XReg\x01\0\0\0").is_err(), "en-tête inconnu");
+    assert!(decoder_pol(b"PReg\x02\0\0\0").is_err(), "version inconnue");
+    assert!(decoder_pol(b"PRe").is_err(), "en-tête tronqué");
+    // Tronqué n'importe où (sauf aux limites d'entrées, qui donnent un fichier valide plus court) : erreur
+    let limite = serialiser_pol(&e[..1]).len();
+    for n in 1..o.len() {
+        if n == 8 || n == limite {
+            continue;
+        }
+        assert!(decoder_pol(&o[..n]).is_err(), "tronqué à {n} octets : jamais partiel");
+    }
+    let mut trop = o.clone();
+    trop.extend(b"x\0");
+    assert!(decoder_pol(&trop).is_err(), "octets en trop après la dernière entrée");
+    let mut separateur = o.clone();
+    separateur[8 + 2 + (e[0].cle.encode_utf16().count() + 1) * 2] = b','; // « ; » après la clé remplacé
+    assert!(decoder_pol(&separateur).is_err(), "séparateur vérifié");
+    // Aucune panique sur des octets abîmés ; une lecture réussie se réécrit à l'identique
+    crate::tests::torturer(&o, &mut |d| {
+        // Fichier vide : rien à lire, réécrit avec son seul en-tête
+        if let (Ok(l), false) = (decoder_pol(d), d.is_empty()) {
+            assert_eq!(serialiser_pol(&l), d, "lecture réussie = fichier entier compris");
+        }
+    });
+}
+
+#[test]
+fn audit_a_2_2_registry_pol_rien_ecrit_si_lecture_refusee() {
+    // A-2-2 : lecture refusée (fichier tenu par un autre programme), tronquée ou d'en-tête inconnu : Err et fichier
+    // inchangé ; absent : créé avec nos seules entrées ; valide avec une entrée étrangère : elle est conservée
+    use crate::gpo::{decoder_pol, lire_pol_de, modifier_pol_de, EntreePol};
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = dossier_gpo_test("pol");
+    let f = d.join("Registry.pol");
+    let notre = EntreePol::dword(r"Software\Policies\Microsoft\Windows\System", "EnableSmartScreen", 1);
+    // Absent : vide, puis créé
+    assert_eq!(lire_pol_de(&f), Ok(Vec::new()));
+    assert_eq!(modifier_pol_de(&f, &[notre.clone()], &[]), Ok(Vec::new()));
+    assert_eq!(decoder_pol(&std::fs::read(&f).unwrap()), Ok(vec![notre.clone()]));
+    // Valide avec une entrée étrangère : conservée, la nôtre ajoutée
+    let (e, o) = pol_exemple();
+    std::fs::write(&f, &o).unwrap();
+    modifier_pol_de(&f, &[notre.clone()], &[]).unwrap();
+    let relu = decoder_pol(&std::fs::read(&f).unwrap()).unwrap();
+    assert!(relu.contains(&e[0]) && relu.contains(&e[1]) && relu.contains(&notre), "{relu:?}");
+    // Lecture refusée : fichier tenu sans partage
+    std::fs::write(&f, &o).unwrap();
+    {
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+        let err = modifier_pol_de(&f, &[notre.clone()], &[]).unwrap_err();
+        assert!(err.contains("illisible"), "{err}");
+    }
+    assert_eq!(std::fs::read(&f).unwrap(), o, "rien n'est écrit après une lecture refusée");
+    // Tronqué, puis en-tête inconnu : Err, fichier inchangé
+    for abime in [o[..o.len() - 3].to_vec(), [b"XReg".as_slice(), &o[4..]].concat()] {
+        std::fs::write(&f, &abime).unwrap();
+        assert!(modifier_pol_de(&f, &[notre.clone()], &[]).is_err());
+        assert_eq!(std::fs::read(&f).unwrap(), abime, "fichier abîmé jamais réécrit");
+    }
+    // Un dossier à la place du fichier : erreur, pas « vide »
+    let f2 = d.join("dossier.pol");
+    std::fs::create_dir_all(&f2).unwrap();
+    assert!(lire_pol_de(&f2).is_err());
+    // Aucun fichier voisin laissé derrière
+    let restes: Vec<_> = std::fs::read_dir(&d).unwrap().filter_map(|x| x.ok()).filter(|x| x.file_name().to_string_lossy().ends_with(".tmp")).collect();
+    assert!(restes.is_empty(), "fichier voisin laissé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn audit_a_2_3_entree_pol_retiree_seulement_si_encore_posee() {
+    // Audit du 2026-11-23, A-2-3 : une entrée de Registry.pol n'est retirée que si elle vaut encore la valeur posée ;
+    // changée par un tiers (règle ASR passée de l'audit au blocage), elle est gardée et signalée
+    use crate::gpo::{fusionner_pol, EntreePol};
+    let cle = r"Software\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules";
+    let posee = EntreePol::texte(cle, "regle", "2");
+    let etrangere = EntreePol::dword(r"Software\Policies\Microsoft\Windows\WindowsUpdate\AU", "NoAutoUpdate", 0);
+    let (r, g) = fusionner_pol(vec![etrangere.clone(), posee.clone()], &[], &[posee.clone()]);
+    assert_eq!((r, g), (vec![etrangere.clone()], vec![]), "encore posée : retirée, l'étrangère reste");
+    let durcie = EntreePol::texte(cle, "REGLE", "1");
+    let (r, g) = fusionner_pol(vec![etrangere.clone(), durcie.clone()], &[], &[posee.clone()]);
+    assert_eq!(r, vec![etrangere.clone(), durcie.clone()], "changée par un tiers : gardée");
+    assert_eq!(g, vec![durcie.clone()], "et signalée");
+    // Un ajout remplace l'entrée de même clé et même nom
+    let (r, _) = fusionner_pol(vec![durcie.clone()], &[posee.clone()], &[]);
+    assert_eq!(r, vec![posee.clone()]);
+}
+
+#[test]
+fn audit_a_2_2_audit_csv_lu_en_echec_ferme() {
+    // A-2-2 : audit.csv est en UTF-8 ([MS-GPAC] 2.2) ; UTF-16, octets non UTF-8, en-tête inconnu ou valeur hors
+    // 0..3 : erreur, jamais « vide » ; les lignes d'options d'audit et d'audit global sont gardées telles quelles
+    use crate::gpo::{decoder_audit, lire_audit_de, serialiser_audit, AuditCsv};
+    use std::os::windows::fs::OpenOptionsExt;
+    let t = "Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value\r\n\
+             ,System,Audit Logon,{0cce9215-69ae-11d9-bed3-505054503030},Success and Failure,,3\r\n\
+             ,System,Option:CrashOnAuditFail,,Disabled,,0\r\n\
+             ,System,FileGlobalSacl,,\"S:(AU;SA;FA;;;WD)\",,\r\n";
+    let a = decoder_audit(t.as_bytes()).unwrap();
+    assert_eq!(a.lignes, vec![("{0CCE9215-69AE-11D9-BED3-505054503030}".to_string(), "Audit Logon".to_string(), 3)]);
+    assert_eq!(a.autres, vec![",System,Option:CrashOnAuditFail,,Disabled,,0", ",System,FileGlobalSacl,,\"S:(AU;SA;FA;;;WD)\",,"]);
+    assert_eq!(decoder_audit(serialiser_audit(&a).as_bytes()), Ok(a.clone()), "réécrit sans rien perdre");
+    assert_eq!(decoder_audit(&[b"\xEF\xBB\xBF".as_slice(), t.as_bytes()].concat()), Ok(a.clone()), "marque UTF-8 admise");
+    assert_eq!(decoder_audit(b""), Ok(AuditCsv::default()), "vide : rien");
+    let utf16: Vec<u8> = [0xFFu8, 0xFE].into_iter().chain(t.encode_utf16().flat_map(|c| c.to_le_bytes())).collect();
+    assert!(decoder_audit(&utf16).unwrap_err().contains("UTF-16"));
+    assert!(decoder_audit(&[t.as_bytes(), b",System,\xE9v\xE9nement,,x,,0\r\n"].concat()).is_err(), "ANSI : erreur");
+    assert!(decoder_audit(b"Nom,Valeur\r\n,System,x,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1\r\n").is_err(), "en-tête inconnu");
+    assert!(decoder_audit(t.replace(",,3", ",,7").as_bytes()).is_err(), "valeur hors 0..3");
+    crate::tests::torturer(t.as_bytes(), &mut |d| { let _ = decoder_audit(d); });
+    // Fichier tenu par un autre programme : erreur ; absent : vide
+    let d = dossier_gpo_test("audit");
+    let f = d.join("audit.csv");
+    assert_eq!(lire_audit_de(&f), Ok(AuditCsv::default()));
+    std::fs::write(&f, t).unwrap();
+    {
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+        assert!(lire_audit_de(&f).is_err());
+    }
+    assert_eq!(lire_audit_de(&f), Ok(a));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn audit_a_2_2_gpt_ini_lu_en_echec_ferme() {
+    // A-2-2 : gpt.ini illisible, pas en UTF-8 ou à version illisible : erreur, rien n'est écrit
+    use crate::gpo::{marquer_gpt_de, maj_gpt};
+    use std::os::windows::fs::OpenOptionsExt;
+    let t = maj_gpt("[General]\r\ngPCUserExtensionNames=[{X}]\r\nVersion=65538\r\n", false).unwrap();
+    assert!(t.contains("Version=65539") && t.contains("gPCUserExtensionNames=[{X}]"), "{t}");
+    assert!(maj_gpt("[General]\r\nVersion=abc\r\n", false).is_err(), "version illisible");
+    assert!(maj_gpt("", true).unwrap().contains("Version=1"), "absent : première version");
+    crate::tests::torturer_texte("[General]\r\ngPCMachineExtensionNames=[{A}{B}]\r\nVersion=65538\r\n", &mut |g| { let _ = maj_gpt(g, true); });
+    let d = dossier_gpo_test("gpt");
+    let f = d.join("gpt.ini");
+    std::fs::write(&f, b"[General]\r\ndisplayName=Strat\xE9gie\r\nVersion=3\r\n").unwrap();
+    assert!(marquer_gpt_de(&f, false).is_err(), "encodage non prévu");
+    assert_eq!(std::fs::read(&f).unwrap(), b"[General]\r\ndisplayName=Strat\xE9gie\r\nVersion=3\r\n");
+    std::fs::write(&f, b"[General]\r\nVersion=3\r\n").unwrap();
+    {
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+        assert!(marquer_gpt_de(&f, false).is_err());
+    }
+    assert_eq!(std::fs::read(&f).unwrap(), b"[General]\r\nVersion=3\r\n", "rien n'est écrit");
+    marquer_gpt_de(&f, false).unwrap();
+    assert!(std::fs::read_to_string(&f).unwrap().contains("Version=4"));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn audit_a_2_2_ecriture_d_un_bloc_sans_changer_les_droits() {
+    // A-2-2 : remplacement d'un bloc seulement si les droits du fichier voisin sont ceux de l'original ; sinon (ou
+    // droits illisibles), réécriture en place qui garde les droits
+    use crate::gpo::{ecrire_d_un_bloc, mode_ecriture, ModeEcriture};
+    use crate::natif::{lire_securite, Ace, Securite};
+    let s = Securite { proprietaire: "S-1-5-32-544".into(), protege: false, aces: vec![Ace { autorise: true, masque: 0x1F01FF, sid: "S-1-5-18".into() }], ace_inconnue: false };
+    assert_eq!(mode_ecriture(Some(&s), Some(&s.clone())), ModeEcriture::Remplacer);
+    assert_eq!(mode_ecriture(None, Some(&s)), ModeEcriture::EnPlace, "droits de l'original illisibles");
+    assert_eq!(mode_ecriture(Some(&s), None), ModeEcriture::EnPlace);
+    let mut autre = s.clone();
+    autre.aces.push(Ace { autorise: true, masque: 0x1200A9, sid: "S-1-5-11".into() });
+    assert_eq!(mode_ecriture(Some(&autre), Some(&s)), ModeEcriture::EnPlace, "DACL différente");
+    let mut protege = s.clone();
+    protege.protege = true;
+    assert_eq!(mode_ecriture(Some(&protege), Some(&s)), ModeEcriture::EnPlace, "héritage coupé sur l'original");
+    let mut proprio = s.clone();
+    proprio.proprietaire = "S-1-5-18".into();
+    assert_eq!(mode_ecriture(Some(&proprio), Some(&s)), ModeEcriture::EnPlace, "propriétaire différent");
+    let mut inconnue = s.clone();
+    inconnue.ace_inconnue = true;
+    assert_eq!(mode_ecriture(Some(&inconnue), Some(&inconnue.clone())), ModeEcriture::EnPlace, "entrée non reconnue");
+    // Sur disque : contenu remplacé, droits inchangés, aucun fichier voisin laissé
+    let d = dossier_gpo_test("bloc");
+    let f = d.join("Registry.pol");
+    ecrire_d_un_bloc(&f, b"un").unwrap();
+    let avant = lire_securite(&f).unwrap();
+    ecrire_d_un_bloc(&f, b"deux").unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), b"deux");
+    let apres = lire_securite(&f).unwrap();
+    assert_eq!((apres.aces, apres.protege), (avant.aces, avant.protege), "droits inchangés");
+    assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "aucun fichier voisin laissé");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn audit_a_2_2_sauvegarde_d_origine_verifiee() {
+    // A-2-2 : copie de l'origine relue et comparée ; original illisible : refus et copie incomplète retirée ;
+    // dossier présent avec un fichier manquant : dit, jamais refait
+    use crate::baseline::sauvegarder_fichiers_gpo_dans;
+    use std::os::windows::fs::OpenOptionsExt;
+    let d = dossier_gpo_test("origine");
+    let racine = d.join("GroupPolicy");
+    let copie = d.join("gpo-origine");
+    std::fs::create_dir_all(racine.join("Machine")).unwrap();
+    std::fs::write(racine.join("gpt.ini"), b"[General]\r\nVersion=1\r\n").unwrap();
+    std::fs::write(racine.join(r"Machine\Registry.pol"), pol_exemple().1).unwrap();
+    // Original tenu par un autre programme : refus, aucune copie gardée
+    {
+        let _tenu = std::fs::OpenOptions::new().read(true).share_mode(0).open(racine.join(r"Machine\Registry.pol")).unwrap();
+        assert!(sauvegarder_fichiers_gpo_dans(&racine, &copie).is_err());
+    }
+    assert!(!copie.exists(), "copie incomplète retirée, reprise la fois suivante");
+    // Copie vérifiée ; audit.csv absent à l'origine : rien à copier
+    assert_eq!(sauvegarder_fichiers_gpo_dans(&racine, &copie), Ok(String::new()));
+    assert_eq!(std::fs::read(copie.join("Registry.pol")).unwrap(), pol_exemple().1);
+    assert!(!copie.join("audit.csv").exists());
+    // Déjà prise : jamais refaite, même si l'original a changé
+    std::fs::write(racine.join("gpt.ini"), b"[General]\r\nVersion=2\r\n").unwrap();
+    assert_eq!(sauvegarder_fichiers_gpo_dans(&racine, &copie), Ok(String::new()));
+    assert_eq!(std::fs::read(copie.join("gpt.ini")).unwrap(), b"[General]\r\nVersion=1\r\n");
+    // Copie qui manque alors que l'original existe : dit, pas refaite
+    std::fs::remove_file(copie.join("gpt.ini")).unwrap();
+    let note = sauvegarder_fichiers_gpo_dans(&racine, &copie).unwrap();
+    assert!(note.contains("gpt.ini") && note.contains("incomplète"), "{note}");
+    assert!(!copie.join("gpt.ini").exists(), "jamais refaite");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn audit_a_2_3_annulation_respecte_un_durcissement_tiers() {
+    // Audit du 2026-11-23, A-2-3 : la valeur actuelle n'est remise (ou supprimée) que si elle est celle posée par
+    // deR4Tizer ou déjà celle d'origine ; sinon elle est laissée, et le message le dit
+    use crate::baseline::{a_remettre, message_laissees, Decision};
+    assert_eq!(a_remettre("2", Some("0"), Some("1")), Decision::Laisser, "règle ASR passée en blocage par un tiers");
+    assert_eq!(a_remettre("1", None, Some("2")), Decision::Laisser, "RunAsPPL posé à 2 par un tiers");
+    assert_eq!(a_remettre("1", Some("0"), Some("1")), Decision::RemettreOrigine, "actuelle = posée : origine remise");
+    assert_eq!(a_remettre("1", Some("0"), Some(" 1 ")), Decision::RemettreOrigine);
+    assert_eq!(a_remettre("1", Some("0"), Some("0")), Decision::RemettreOrigine, "déjà l'origine : remise sans effet");
+    assert_eq!(a_remettre("1", None, Some("1")), Decision::Supprimer, "absente à l'origine et actuelle = posée : suppression");
+    assert_eq!(a_remettre("1", None, None), Decision::Supprimer, "déjà absente");
+    assert_eq!(a_remettre("1", Some("0"), None), Decision::Laisser, "retirée par un tiers : laissée");
+    assert_eq!(message_laissees(&[]), "");
+    let m = message_laissees(&(0..7).map(|i| format!("r{i}")).collect::<Vec<_>>());
+    assert!(m.contains("r4") && !m.contains("r5") && m.contains("et 2 autre(s)"), "{m}");
+    // Câblage : décision prise avant toute écriture du registre, entrée retirée avec sa valeur posée, entrées gardées
+    // de Registry.pol jamais écrasées après gpupdate
+    let src = include_str!("baseline.rs");
+    let d = src.find("pub fn annuler(").unwrap();
+    let corps = &src[d..d + src[d..].find("\npub fn ").unwrap()];
+    let decision = corps.find("== Decision::Laisser").expect("décision dans annuler");
+    assert!(decision < corps.find("k.set_value(nom, &d)").unwrap(), "décision avant l'écriture");
+    assert!(corps.contains("retraits.push(entree(cle, nom, catalogue));"), "retrait avec la valeur posée");
+    assert!(!corps.contains("retraits.push(EntreePol::dword(cle, nom, 0));"));
+    assert!(corps.contains("valeurs_a_remettre.retain(|(c, nm, _, _, _)| !gardees_pol.borrow()"));
+}
+
+#[test]
+fn audit_a_2_2_cablage_lecture_avant_ecriture() {
+    // A-2-2 : appliquer et annuler lisent la GPO en échec fermé avant toute écriture ; plus aucune lecture qui vaut
+    // « vide » sur erreur, plus de copie d'origine ignorée
+    let g = include_str!("gpo.rs");
+    assert!(!g.contains("else { return Vec::new() }"), "lecture en échec = vide");
+    assert!(!g.contains("read_to_string(&f).unwrap_or_default()"));
+    assert!(!g.contains(concat!("fs::", "write(fichier_")), "écriture directe sans fichier voisin");
+    let b = include_str!("baseline.rs");
+    assert!(!b.contains(concat!("let _ = std::fs::", "copy")), "copie d'origine non vérifiée");
+    let d = b.find("pub fn appliquer(").unwrap();
+    let corps = &b[d..d + b[d..].find("\npub fn ").unwrap()];
+    let lecture = corps.find("lire_gpo_avant_ecriture()?").expect("lecture vérifiée dans appliquer");
+    assert!(lecture < corps.find("sauvegarder_fichiers_gpo()").unwrap() && lecture < corps.find("let mut etapes").unwrap());
+    let d = b.find("pub fn annuler(").unwrap();
+    let corps = &b[d..d + b[d..].find("\npub fn ").unwrap()];
+    assert!(corps.find("lire_gpo_avant_ecriture()?").expect("lecture vérifiée dans annuler") < corps.find("set_value").unwrap(), "avant toute écriture du registre");
+}
+
+#[test]
+fn audit_a_2_1_outils_systeme_par_chemin_complet() {
+    // Audit du 2026-11-23, A-2-1 (gpo.rs et baseline.rs) : plus aucun programme lancé par son nom nu, qui serait
+    // d'abord cherché dans le dossier de l'exécutable puis dans le PATH
+    let appel = concat!("Command::new(", "\"");
+    for (nom, source) in [("gpo", include_str!("gpo.rs")), ("baseline", include_str!("baseline.rs"))] {
+        assert!(!source.contains(appel), "{nom}.rs lance un programme par son nom nu");
+    }
+    let p = crate::gpo::outil_systeme("wevtutil.exe");
+    assert!(std::path::Path::new(&p).is_absolute() && p.to_lowercase().ends_with(r"\system32\wevtutil.exe"), "{p}");
+    for o in ["wevtutil.exe", "auditpol.exe", "gpupdate.exe"] {
+        assert!(std::path::Path::new(&crate::gpo::outil_systeme(o)).is_file(), "{o} introuvable dans System32");
+    }
+}
+
 #[test]
 fn baseline_b2_gestion_illisible_vaut_lecture_seule() {
     // Relecture de la baseline du 2026-11-20, B2 : seule une réponse complète vaut « non géré »
@@ -9124,9 +9433,9 @@ fn baseline_t3_annulation_rend_les_valeurs_d_origine_apres_gpupdate() {
     let d = src.find("pub fn annuler(").unwrap();
     let corps = &src[d..];
     let gp = corps.find("etapes.push((\"mise à jour des stratégies (gpupdate)\"").expect("gpupdate");
-    let rm = corps.find("let pas_remises = remettre_valeurs(&a_remettre);").expect("remise après gpupdate");
+    let rm = corps.find("let pas_remises = remettre_valeurs(&valeurs_a_remettre);").expect("remise après gpupdate");
     assert!(rm > gp, "valeurs d'origine remises après gpupdate");
-    assert!(corps.contains("a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
+    assert!(corps.contains("valeurs_a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter()"), "réglage partagé encore utilisé : non remis");
     // S219-05 : une stratégie de taille plus grande que la cible satisfait la règle et n'est jamais abaissée
     assert!(valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("2097152")));
     assert!(!valeur_satisfaite("MaxSize", &Dword(1_048_576), Some("20480")));

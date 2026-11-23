@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Baseline (audit of 23 November 2026, A-2-2 and A-2-3): the local Group Policy files (`Registry.pol`, `audit.csv`,
+  `gpt.ini`) are read fail-closed before anything is written; a file held by another program, truncated or not
+  understood stops applying, cancelling or uninstalling the baseline, and the message says so, instead of erasing the
+  other local policies. Each file is written in one block without changing its permissions; the original copy of the
+  local policy is checked. Cancelling leaves a value that someone has changed since; a `Registry.pol` entry is removed
+  only if it still holds the value set by deR4Tizer. `wevtutil`, `auditpol` and `gpupdate` are started from System32 by
+  their full path (A-2-1, for the baseline only). To be checked in the VM.
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms
