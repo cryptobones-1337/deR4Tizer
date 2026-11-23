@@ -1126,17 +1126,116 @@ pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: 
 /// Ce qui remplace une valeur secrète (audit du 2026-11-23, A-6-1)
 pub const MASQUE: &str = "***";
 
-/// Options suivies de leur valeur secrète, comparées sans tenir compte de la casse : schtasks (/p, /rp), psexec et bien
-/// d'autres (-p), --password, -Password et -Credential de PowerShell. `-p` est aussi le port de quelques outils (ssh -p 22) :
-/// sa valeur est masquée quand même, une information perdue plutôt qu'un secret gardé
-const OPTIONS_SUIVIES_DU_SECRET: &[&str] = &["-p", "/p", "/rp", "--password", "-password", "--pass", "-pass", "--passwd", "-pwd", "/pwd", "-credential"];
+/// Options suivies de leur valeur secrète quel que soit l'outil, comparées sans tenir compte de la casse : --password,
+/// -Password, -Credential et -SecurePassword de PowerShell…
+const OPTIONS_SUIVIES_DU_SECRET: &[&str] = &["--password", "-password", "--pass", "--passwd", "-pwd", "-credential", "-securepassword"];
 
-/// Options dont la valeur secrète est collée : /p:x (mstsc…), /pass:x (cmdkey), /password:x, --password=x, -Password:x
-const PREFIXES_DU_SECRET: &[&str] = &["/p:", "/pass:", "/password:", "/pwd:", "/rp:", "--password=", "-password=", "--pass=", "--passwd=", "-password:"];
+/// Options dont la valeur secrète est collée, quel que soit l'outil (casse ignorée) : /p:x (xfreerdp, wevtutil), /pass:x
+/// (cmdkey), /password:x (wmic), --password=x (mysql, wget), -Password:x (PowerShell), et les variables d'environnement
+/// qui portent un mot de passe (PGPASSWORD=x psql, set MYSQL_PWD=x, $env:SSHPASS='x')
+const PREFIXES_DU_SECRET: &[&str] = &["/p:", "/pass:", "/password:", "/pwd:", "--password=", "-password=", "--pass=", "--passwd=",
+    "-password:", "--http-password=", "--ftp-password=", "--proxy-password=", "pgpassword=", "mysql_pwd=", "sshpass=",
+    "$env:pgpassword=", "$env:mysql_pwd=", "$env:sshpass="];
+
+/// Où est le secret d'une option : dans le mot suivant (en entier, ou après le séparateur `compte<sep>motdepasse`), ou
+/// collé à l'option
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Forme {
+    Suivie,
+    Collee,
+    CompteSuivi(char),
+    CompteColle(char),
+}
+
+/// Outils Windows d'administration à distance dont `/p <mot de passe>` suit `/s <poste> /u <compte>`
+const OUTILS_SLASH_P: &[&str] = &["schtasks", "gpresult", "systeminfo", "tasklist", "taskkill", "eventcreate", "getmac", "openfiles",
+    "driverquery", "eventtriggers", "waitfor"];
+
+/// Options qui ne portent un secret que pour certains outils (revue de #269) : ailleurs, `/p` est un drapeau sans valeur
+/// (xcopy, del, findstr) et `-p` ou `-P` un port (ssh, scp, nc). Les options en `/` se comparent sans la casse, celles en
+/// `-` avec (sqlcmd -P mot de passe, mais ssh -P port n'est pas listé)
+const OPTIONS_PAR_OUTIL: &[(&[&str], &str, Forme)] = &[
+    (OUTILS_SLASH_P, "/p", Forme::Suivie),
+    (&["schtasks"], "/rp", Forme::Suivie),
+    (&["mysql", "mysqldump", "mysqladmin", "mysqlimport", "mysqlshow", "mariadb", "mariadb-dump"], "-p", Forme::Collee),
+    (&["psexec", "psexec64", "paexec", "sshpass", "rdesktop"], "-p", Forme::Suivie),
+    (&["sshpass"], "-p", Forme::Collee),
+    (&["7z", "7za", "7zr", "7zg", "rar", "winrar", "unrar"], "-p", Forme::Collee),
+    (&["plink", "pscp", "psftp", "putty", "winscp"], "-pw", Forme::Suivie),
+    (&["unzip", "zip", "pkzipc"], "-P", Forme::Suivie),
+    (&["sqlcmd", "osql", "isql", "bcp"], "-P", Forme::Suivie),
+    (&["sqlcmd", "osql", "isql", "bcp"], "-P", Forme::Collee),
+    (&["openssl"], "-pass", Forme::Suivie),
+    (&["openssl"], "-passin", Forme::Suivie),
+    (&["openssl"], "-passout", Forme::Suivie),
+    (&["openssl"], "-k", Forme::Suivie),
+    (&["curl"], "-u", Forme::CompteSuivi(':')),
+    (&["curl"], "--user", Forme::CompteSuivi(':')),
+    (&["curl"], "--proxy-user", Forme::CompteSuivi(':')),
+    (&["curl"], "-u", Forme::CompteColle(':')),
+    (&["smbclient", "rpcclient", "smbmap"], "-U", Forme::CompteSuivi('%')),
+    (&["smbclient", "rpcclient"], "--user", Forme::CompteSuivi('%')),
+];
+
+/// Nom d'outil d'un mot (sans guillemets, chemin ni « .exe », en minuscules)
+fn nom_outil(v: &str) -> String {
+    let v = v.trim_matches(|c| c == '"' || c == '\'' || c == '(');
+    let n = v.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
+    n.strip_suffix(".exe").map(str::to_string).unwrap_or(n)
+}
+
+/// Outils lancés par un autre (sshpass … ssh -p 22, psexec … cmd) dont les options `/p`, `-p` ou `-P` ne portent pas de
+/// secret : ils deviennent l'outil courant, et leurs options ne sont plus lues comme celles du lanceur
+const OUTILS_SANS_SECRET: &[&str] = &["ssh", "scp", "sftp", "nc", "ncat", "netcat", "telnet", "ftp", "xcopy", "robocopy", "copy",
+    "move", "del", "erase", "findstr", "ping", "tar", "cmd", "powershell", "pwsh"];
+
+fn outil_connu(nom: &str) -> bool {
+    OUTILS_SANS_SECRET.contains(&nom) || OPTIONS_PAR_OUTIL.iter().any(|(outils, _, _)| outils.contains(&nom))
+}
+
+/// Ce qu'il faut masquer pour le mot `mot` d'une ligne dont l'outil courant est `outil` (décision pure, testée) :
+/// `Dans(o)` masque le mot à partir de l'octet `o` ; `Suivant(None)` le mot suivant en entier ; `Suivant(Some(c))` le mot
+/// suivant après le séparateur `c`
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Masque {
+    Dans(usize),
+    Suivant(Option<char>),
+}
+
+pub(crate) fn secret_d_option(outil: &str, mot: &str) -> Option<Masque> {
+    let commence = |o: &str, casse: bool| mot.len() > o.len() && mot.get(..o.len()).is_some_and(|x| if casse { x == o } else { x.eq_ignore_ascii_case(o) });
+    if let Some(p) = PREFIXES_DU_SECRET.iter().find(|p| commence(p, false)) {
+        return Some(Masque::Dans(p.len()));
+    }
+    if OPTIONS_SUIVIES_DU_SECRET.iter().any(|o| mot.eq_ignore_ascii_case(o)) {
+        return Some(Masque::Suivant(None));
+    }
+    for (outils, option, forme) in OPTIONS_PAR_OUTIL {
+        if !outils.contains(&outil) {
+            continue;
+        }
+        let sans_casse = option.starts_with('/');
+        let egal = if sans_casse { mot.eq_ignore_ascii_case(option) } else { mot == *option };
+        match forme {
+            Forme::Suivie if egal => return Some(Masque::Suivant(None)),
+            Forme::CompteSuivi(c) if egal => return Some(Masque::Suivant(Some(*c))),
+            Forme::Collee if commence(option, !sans_casse) => return Some(Masque::Dans(option.len())),
+            Forme::CompteColle(c) if commence(option, !sans_casse) => {
+                let reste = mot.get(option.len()..).unwrap_or("");
+                if let Some(i) = reste.find(*c).filter(|i| i + 1 < reste.len()) {
+                    return Some(Masque::Dans(option.len() + i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
 
 /// Ligne de commande secrets masqués, pour tout ce qui est stocké ou publié (SIEM, alertes, etat.json, exports) ; jamais pour
 /// la détection, qui analyse la ligne entière (pur, testé ; audit du 2026-11-23, A-6-1). Remplace par `***` : la valeur des
-/// options de `OPTIONS_SUIVIES_DU_SECRET` et `PREFIXES_DU_SECRET`, la valeur de `ConvertTo-SecureString`, les mots de passe
+/// options de `OPTIONS_SUIVIES_DU_SECRET` et `PREFIXES_DU_SECRET` (tout outil), celle des options de `OPTIONS_PAR_OUTIL` pour
+/// leurs seuls outils (`secret_d_option`, revue de #269), la valeur de `ConvertTo-SecureString`, les mots de passe
 /// de `net use` (tout argument qui n'est ni une option, ni un lecteur, ni un chemin réseau, ni `*`) et de `net user <compte>
 /// <mot de passe>`, et le mot de passe d'une adresse `schéma://compte:motdepasse@hôte`. Une valeur entre guillemets est
 /// masquée en entier ; une valeur qui est une expression PowerShell (`$variable`, `(…)`) ne l'est pas. Le texte entre
@@ -1197,15 +1296,31 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
     let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
     // Pour chaque mot : masqué à partir de cet octet du mot
     let mut masques: Vec<Option<usize>> = vec![None; mots.len()];
+    // Outil courant : le dernier outil connu de la commande (remis à zéro à chaque séparateur de commandes)
+    let mut outil = String::new();
     for k in 0..mots.len() {
         let t = texte(k);
-        if let Some(p) = PREFIXES_DU_SECRET.iter().find(|p| t.len() > p.len() && t.get(..p.len()).is_some_and(|x| x.eq_ignore_ascii_case(p))) {
-            masques[k] = Some(p.len());
+        if separateur_de_commandes(t) {
+            outil.clear();
+            continue;
         }
-        if OPTIONS_SUIVIES_DU_SECRET.iter().any(|o| t.eq_ignore_ascii_case(o)) && valeur_litterale(texte(k + 1)) {
-            if let Some(m) = masques.get_mut(k + 1) {
-                *m = Some(0);
+        let nom = nom_outil(t);
+        if outil_connu(&nom) {
+            outil = nom;
+        }
+        match secret_d_option(&outil, t) {
+            Some(Masque::Dans(o)) => masques[k] = Some(o),
+            Some(Masque::Suivant(separateur)) => {
+                let v = texte(k + 1);
+                let depuis = match separateur {
+                    None => Some(0),
+                    Some(c) => v.find(c).filter(|i| i + 1 < v.len()).map(|i| i + 1),
+                };
+                if let (true, Some(o), Some(m)) = (valeur_litterale(v), depuis, masques.get_mut(k + 1)) {
+                    *m = Some(o);
+                }
             }
+            None => {}
         }
         if t.trim_start_matches('(').eq_ignore_ascii_case("convertto-securestring") {
             let j = if texte(k + 1).eq_ignore_ascii_case("-string") { k + 2 } else { k + 1 };
