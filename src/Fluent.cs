@@ -575,37 +575,30 @@ namespace DeR4Tizer
             return b;
         }
 
-        // Logo : tête de rat géométrique (clin d'œil « RAT »), dessin vectoriel autonome (rendu identique en test et en prod)
-        static UIElement LogoRat()
+        // Logo de la barre latérale : l'image de l'icône de l'application elle-même (icone.ps1 → deR4Tizer.ico, source unique
+        // du dessin, constat T-14), jamais un second dessin. Affiché à 32 px depuis l'image de 64 px (ou plus grande sur un
+        // écran à plus de 200 %) : nette à 200 %, réduite en haute qualité à 100 %. Sans la ressource (tests compilés sans
+        // l'icône), le logo reste vide.
+        internal const int TailleLogo = 32;
+        internal static System.Windows.Controls.Image LogoApplication()
         {
-            var cyan = Jetons.Pinceau(Jetons.Accent);
-            var creux = Jetons.Pinceau(Jetons.Carte);
-            var c = new Canvas { Width = 26, Height = 26, VerticalAlignment = VerticalAlignment.Center };
-            Func<double[], System.Windows.Media.Brush, System.Windows.Shapes.Polygon> poly = (pts, b) =>
+            var image = new System.Windows.Controls.Image { Width = TailleLogo, Height = TailleLogo, VerticalAlignment = VerticalAlignment.Center, Stretch = Stretch.Uniform };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+            var png = Theme.OctetsImageApplication(Math.Max(2 * TailleLogo, Theme.TailleImage(TailleLogo)));
+            if (png != null)
             {
-                var p = new System.Windows.Shapes.Polygon { Fill = b };
-                for (int i = 0; i < pts.Length; i += 2) p.Points.Add(new Point(pts[i], pts[i + 1]));
-                return p;
-            };
-            c.Children.Add(poly(new double[] { 4, 9, 9, 2, 12, 10 }, cyan));
-            c.Children.Add(poly(new double[] { 22, 9, 17, 2, 14, 10 }, cyan));
-            var tete = new System.Windows.Shapes.Rectangle { Width = 16, Height = 15, RadiusX = 5, RadiusY = 5, Fill = cyan };
-            Canvas.SetLeft(tete, 5); Canvas.SetTop(tete, 7); c.Children.Add(tete);
-            Action<double, double> croix = (cx, cy) =>
-            {
-                foreach (var d in new[] { new[] { -2.3, -2.3, 2.3, 2.3 }, new[] { 2.3, -2.3, -2.3, 2.3 } })
-                    c.Children.Add(new System.Windows.Shapes.Line { X1 = cx + d[0], Y1 = cy + d[1], X2 = cx + d[2], Y2 = cy + d[3], Stroke = creux, StrokeThickness = 1.7, StrokeStartLineCap = System.Windows.Media.PenLineCap.Round, StrokeEndLineCap = System.Windows.Media.PenLineCap.Round });
-            };
-            croix(10, 13); croix(16, 13);
-            c.Children.Add(poly(new double[] { 13, 16.5, 15, 19, 13, 21.5, 11, 19 }, creux));
-            return c;
+                var source = System.Windows.Media.Imaging.BitmapFrame.Create(new System.IO.MemoryStream(png), System.Windows.Media.Imaging.BitmapCreateOptions.None, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                source.Freeze();
+                image.Source = source;
+            }
+            return image;
         }
         UIElement Navigation()
         {
             var fond = new Border { Background = Jetons.Pinceau(Jetons.Carte) };
             var dock = new DockPanel { Margin = new Thickness(12, 16, 12, 16) };
             var marque = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 20) };
-            marque.Children.Add(LogoRat());
+            marque.Children.Add(LogoApplication());
             marque.Children.Add(new TextBlock { Text = "deR4Tizer", FontFamily = Jetons.PoliceTitre, FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(marque, Dock.Top);
             dock.Children.Add(marque);

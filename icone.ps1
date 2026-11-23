@@ -1,5 +1,7 @@
 ﻿# Génère src\deR4Tizer.ico : une tête de rat stylisée de face (triangles et losanges, deux yeux en croix) en dégradé
 # cyan→bleu, sur un carré arrondi sombre. Clin d'œil aux RAT (Remote Access Trojans). Dessinée à chaque taille pour rester nette en 16 px.
+# Source unique de l'icône (constat T-14) : exécutable, barre de titre, MSI, zone de notification, notifications, fenêtre de
+# l'assistant élevé et logo de la barre latérale (Fluent.cs, LogoApplication) lisent tous les images de ce fichier.
 param([string]$Sortie = (Join-Path $PSScriptRoot 'src\deR4Tizer.ico'), [string]$Apercu)
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'Stop'
@@ -60,7 +62,7 @@ function Dessiner([int]$s) {
 }
 
 # Fichier ICO avec des images PNG (accepté par Windows depuis Vista)
-$tailles = 256, 128, 64, 48, 32, 24, 20, 16
+$tailles = 256, 128, 64, 48, 40, 32, 24, 20, 16
 $images = foreach ($t in $tailles) {
     $b = Dessiner $t; $ms = New-Object IO.MemoryStream; $b.Save($ms, [Drawing.Imaging.ImageFormat]::Png)
     if ($Apercu -and $t -eq 256) { $b.Save($Apercu, [Drawing.Imaging.ImageFormat]::Png) }

@@ -97,9 +97,17 @@ namespace DeR4Tizer
         // Image d'une taille donnée lue dans l'icône (les images y sont en PNG, qu'Icon.ToBitmap ne sait pas convertir)
         public static Image ImageApplication(int taille)
         {
+            var png = OctetsImageApplication(taille);
+            return png != null ? Image.FromStream(new MemoryStream(png)) : SystemIcons.Shield.ToBitmap();
+        }
+
+        // Octets PNG de l'image de cette taille dans l'icône de l'application (icone.ps1 → deR4Tizer.ico, source unique du
+        // dessin, constat T-14) ; null si la ressource ou la taille manque. Lu aussi par le logo WPF de la barre latérale.
+        internal static byte[] OctetsImageApplication(int taille)
+        {
             using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("deR4Tizer.ico"))
             {
-                if (s == null) return SystemIcons.Shield.ToBitmap();
+                if (s == null) return null;
                 var octets = new byte[s.Length];
                 s.Read(octets, 0, octets.Length);
                 int n = BitConverter.ToUInt16(octets, 4);
@@ -108,9 +116,11 @@ namespace DeR4Tizer
                     int e = 6 + 16 * i, l = octets[e] == 0 ? 256 : octets[e];
                     if (l != taille) continue;
                     int longueur = BitConverter.ToInt32(octets, e + 8), position = BitConverter.ToInt32(octets, e + 12);
-                    return Image.FromStream(new MemoryStream(octets, position, longueur));
+                    var png = new byte[longueur];
+                    Array.Copy(octets, position, png, 0, longueur);
+                    return png;
                 }
-                return SystemIcons.Shield.ToBitmap();
+                return null;
             }
         }
 
@@ -130,11 +140,11 @@ namespace DeR4Tizer
             return 96;
         }
 
-        // Plus petite image de l'icône au moins aussi grande que la taille voulue (images de 16, 20, 24, 32, 48…)
-        static int TailleImage(int pointsA96)
+        // Plus petite image de l'icône au moins aussi grande que la taille voulue (images de 16, 20, 24, 32, 40, 48…)
+        internal static int TailleImage(int pointsA96)
         {
             int voulu = (int)Math.Ceiling(pointsA96 * Ppp() / 96.0);
-            foreach (int t in new[] { 16, 20, 24, 32, 48, 64, 128, 256 }) if (t >= voulu) return t;
+            foreach (int t in new[] { 16, 20, 24, 32, 40, 48, 64, 128, 256 }) if (t >= voulu) return t;
             return 256;
         }
 

@@ -939,7 +939,7 @@ namespace DeR4Tizer
             if (affaiblit) texte = AvertissementAffaiblit(en) + "\n\n" + texte;
             var f = new Form
             {
-                Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", StartPosition = FormStartPosition.CenterScreen,
+                Text = en ? "deR4Tizer (administrator)" : "deR4Tizer (administrateur)", Icon = Theme.IconeApplication(32), StartPosition = FormStartPosition.CenterScreen,
                 FormBorderStyle = FormBorderStyle.Sizable, MinimizeBox = false, MaximizeBox = true, ShowInTaskbar = true, TopMost = true,
                 ClientSize = new Size(640, 420), MinimumSize = new Size(420, 300), Font = SystemFonts.MessageBoxFont
             };

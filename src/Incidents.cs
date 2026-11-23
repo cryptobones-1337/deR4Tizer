@@ -437,7 +437,7 @@ namespace DeR4Tizer
         public static bool DemanderCloture(IWin32Window proprietaire, out string motif, out string note)
         {
             motif = null; note = null;
-            using (var f = new Form { Text = L.T("Clore l'incident"), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(460, 190), BackColor = Theme.Fond, ForeColor = Theme.Texte })
+            using (var f = new Form { Text = L.T("Clore l'incident"), Icon = Theme.IconeApplication(32), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(460, 190), BackColor = Theme.Fond, ForeColor = Theme.Texte })
             {
                 var motifs = new[] { "Resolu", "FauxPositif", "Accepte" };
                 var cb = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 14, Top = 34, Width = 430 };
