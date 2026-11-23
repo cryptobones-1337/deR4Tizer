@@ -163,6 +163,12 @@ modules expérimentaux.
   pas compté (PR 3.3b : il suivait l'état du journal au démarrage et pouvait se déclencher à tort) ; un journal DNS coupé
   est réactivé, ou, s'il ne peut l'être, noté indisponible (PR 3.3c, D4), et l'indice tombe 90 s plus tard ; sans ligne
   de commande (WMI), l'indice correspondant manque.
+- **Ligne de commande lue** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : celle du cache
+  d'informations de processus seulement si l'entrée décrit le programme qui tient la connexion (chemin complet
+  identique, casse ignorée), sinon une interrogation WMI du processus vivant, gardée au même contrôle. Avant, une
+  entrée gardée une heure sous un PID réutilisé était prêtée au nouveau programme : une connexion de gh portait
+  « PowerShell obscurci », venu d'un cmd qui avait eu le même PID 25 min plus tôt. Test :
+  `processus_cache_pid_reutilise_jamais_prete`.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
@@ -401,8 +407,19 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
 - **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 (`javascript:`) T1218 Binaire système détourné, rundll32 d'une DLL d'un dossier inscriptible T1218.011 Rundll32 détourné, comsvcs.dll MiniDump T1003.001 Vidage de la mémoire de LSASS, msiexec depuis une adresse T1218.007 Paquet MSI détourné, wmic T1047 WMI détourné.
-- **Code** : `processus.rs` (`OUTILS_PRC003` : certutil, bitsadmin, mshta, regsvr32, rundll32, rundll32_dll, comsvcs,
-  msiexec, wmic ; code de comportement `PRC-003:<outils vus>`).
+- **Code** : `processus.rs` (`MOTIFS_PROGRAMMES`, règle PRC-003 : certutil, bitsadmin, mshta, regsvr32, rundll32,
+  rundll32_dll, comsvcs, msiexec, wmic ; code de comportement `PRC-003:<outils vus>`).
+- **Ce qui est vu** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : chaque motif est lié au
+  programme qui le fait (certutil.exe, bitsadmin.exe, mshta.exe, regsvr32.exe, rundll32.exe pour rundll32, rundll32_dll
+  et comsvcs, msiexec.exe, wmic.exe). Il est lu sur la ligne de ce programme, reconnu par le nom de fichier de son image
+  ou, avec Sysmon, par le nom d'origine du fichier (OriginalFileName, mécanisme de PRC-002) ; et sur la commande que cmd
+  (`/c`, `/k`, `/r`), PowerShell ou pwsh (`-Command` ou une abréviation) lance en tête, ou après un séparateur `&`, `|`,
+  `;` ou une parenthèse (`cmd /c certutil -urlcache …`). Avant, le motif était cherché dans tout texte : bash, git, grep
+  ou echo dont un argument contenait `certutil -urlcache` alertaient (faux positif vu par le mainteneur sur son poste,
+  v4.3). L'outil lancé par un interpréteur crée aussi son propre processus, vu par son événement de création (4688,
+  Sysmon 1 ou WMI) : la lecture de la tête de commande garde le signal quand ce processus bref est manqué (WMI sans
+  audit), au prix d'une seconde alerte, sur l'interpréteur, quand les deux sont vus. Ce n'est pas une décision de
+  confiance (règle 5) : le nom sert à détecter, jamais à accorder.
 - **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code. Ajouts de l'audit du
   2026-11-23 (fait par Claude, A-7-7, corrigé, testé en labo) : `rundll32 …comsvcs.dll, MiniDump <pid> <fichier> full`
   (ou son ordinal `#24`) vide la mémoire d'un processus, en pratique LSASS pour voler les identifiants ; rundll32 d'une
@@ -420,7 +437,15 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Tests** : `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
   `rundll32 shell32.dll,Control_RunDLL`, msiexec d'un paquet local ou sur un partage, regsvr32 d'une DLL installée,
   `certutil -verifyctl` sans adresse, comsvcs.dll sans MiniDump), `prc_003_formes_elargies` (A-7-7 : chaque forme
-  ajoutée, avec l'outil, la technique et le niveau). Non exercée en VM (comme PRC-002).
+  ajoutée, avec l'outil, la technique et le niveau) ; T-2 (communs avec PRC-005) : `prc_003_005_mots_en_argument_negatif`
+  (bash, sh, grep, git, notepad, cmd et PowerShell dont un argument contient les mots du motif : rien),
+  `prc_003_005_outil_en_tete_d_interpreteur` (`cmd /c certutil …`, `pwsh -co "certutil …"`, `pwsh -c rundll32 …comsvcs.dll,
+  MiniDump …` : vus), `prc_003_005_commandes_en_tete` (programmes en tête : chemin entre guillemets, `call`, `start`,
+  rien sans option de commande), `prc_003_005_copie_renommee_par_nom_origine`. Non exercée en VM (comme PRC-002).
+- **Faux négatifs connus** : copie renommée d'un outil (`certutil.exe` copié en `c.exe`) sans Sysmon : les événements
+  4688 et WMI ne portent pas le nom d'origine du fichier (angle mort déclaré, comme pour PowerShell sous PRC-002) ; avec
+  Sysmon, le nom d'origine la reconnaît. Un outil lancé par un autre programme que cmd, PowerShell ou pwsh (bash, un
+  script, `Start-Process` qui passe ses arguments à part) n'est vu que par le processus de l'outil lui-même.
 
 ### PRC-004 : navigateur lancé en débogage à distance
 - **ATT&CK** : T1539 Vol de cookies de session.
@@ -443,10 +468,24 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 
 ### PRC-005 : suppression des sauvegardes
 - **ATT&CK** : T1490 Suppression des sauvegardes.
-- **Code** : `processus.rs` (`MOTIF_PRC005` : `vssadmin delete shadows`, `vssadmin resize shadowstorage` à moins de
-  1 000 Mo, `wbadmin delete catalog|systemstatebackup|backup`, `bcdedit … recoveryenabled no`,
-  `bcdedit … bootstatuspolicy ignoreallfailures`, `wmic shadowcopy delete`, `Win32_ShadowCopy` supprimé par
-  `Remove-WmiObject`, `Remove-CimInstance` ou `.Delete()`, `diskshadow` avec `delete shadows` dans la ligne).
+- **Code** : `processus.rs` (`MOTIFS_PROGRAMMES`, règle PRC-005 : `vssadmin delete shadows`, `vssadmin resize
+  shadowstorage` à moins de 1 000 Mo, `wbadmin delete catalog|systemstatebackup|backup`, `bcdedit … recoveryenabled no`,
+  `bcdedit … bootstatuspolicy ignoreallfailures`, `wmic shadowcopy delete`, `diskshadow … delete shadows` ;
+  `Win32_ShadowCopy` supprimé par `Remove-WmiObject`, `Remove-CimInstance` ou `.Delete()` sur la ligne de PowerShell ;
+  texte `delete shadows` passé à diskshadow lancé après `|` ou `&` sur la ligne de cmd ou de PowerShell).
+- **Ce qui est vu** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : chaque motif est lié au
+  programme lancé : vssadmin.exe, wbadmin.exe, bcdedit.exe, wmic.exe, diskshadow.exe, reconnus par le nom de fichier de
+  l'image ou, avec Sysmon, par le nom d'origine du fichier (OriginalFileName, mécanisme de PRC-002 repris) ; les formes
+  propres à PowerShell (WMI ou CIM) sur une image powershell.exe, pwsh.exe ou powershell_ise.exe, ou une copie renommée
+  de PowerShell reconnue par Sysmon. L'outil lancé en tête de commande par cmd (`/c`, `/k`, `/r`), PowerShell ou pwsh
+  (`-Command` ou une abréviation), ou après un séparateur `&`, `|`, `;` ou une parenthèse, reste vu sur la ligne de
+  l'interpréteur : `cmd /c vssadmin delete shadows /all`, `powershell -c "vssadmin delete shadows"`, `cmd /c call bcdedit
+  …`. Décision : l'outil crée aussi son propre processus, vu par son événement de création (4688, Sysmon 1 ou WMI), mais
+  un processus aussi bref peut être manqué par WMI sans audit ; garder la tête de commande garde le signal, au prix d'une
+  seconde alerte Critique (sur l'interpréteur) quand les deux sont vus. Avant, le motif était cherché dans tout texte :
+  bash, git, grep ou echo dont un argument contenait `vssadmin delete shadows` levaient une alerte Critique (faux positif
+  vu par le mainteneur sur son poste, v4.3). Le nom de fichier sert ici à détecter, jamais à faire confiance (la règle 5
+  ne s'applique pas).
 - **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
@@ -460,7 +499,14 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
   (`vssadmin list shadows`, `wbadmin get versions` ; A-7-3 : lecture des clichés par WMI, `vssadmin list shadowstorage`,
   agrandissement de l'espace des clichés en %, en Go ou illimité, `diskshadow /s` seul, `diskshadow list shadows`,
-  `bootstatuspolicy displayallfailures`) ; les formes ajoutées par A-7-3 sont dans `prc_005_positif`. Non exercée en VM :
+  `bootstatuspolicy displayallfailures`) ; les formes ajoutées par A-7-3 sont dans `prc_005_positif` ; T-2 :
+  `prc_003_005_mots_en_argument_negatif` (`grep "vssadmin delete shadows" notes.txt`, `echo vssadmin delete shadows`,
+  `git commit -m "certutil -urlcache …"`, bash, sh, cmd et PowerShell avec ces mots en argument, `findstr "delete shadows"
+  diskshadow.log` : rien), `prc_003_005_outil_en_tete_d_interpreteur` (`cmd /c vssadmin …`, `cmd /c ""…\vssadmin.exe"
+  …"`, `cmd /c echo o & vssadmin …`, `cmd /k (wbadmin …)`, `powershell -c "vssadmin …"`, `& '…\vssadmin.exe' …`,
+  `… ; wmic shadowcopy delete`, texte passé à diskshadow), `prc_005_formes_powershell_liees_a_l_interpreteur`
+  (PowerShell, pwsh, ISE, copie renommée avec et sans nom d'origine ; cmd, wmic, bash : rien),
+  `prc_003_005_copie_renommee_par_nom_origine` (copie de vssadmin : rien sans nom d'origine, PRC-005 avec). Non exercée en VM :
   sans Sysmon, la ligne de commande d'un processus aussi bref est souvent perdue par WMI, le scénario serait instable.
 - **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-3, corrigé, testé en labo, à essayer en VM) :
   `Get-WmiObject Win32_ShadowCopy | Remove-WmiObject`, `Get-CimInstance Win32_ShadowCopy | Remove-CimInstance`,
@@ -469,7 +515,11 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   `delete shadows` (y compris un script écrit puis passé par `/s` dans la même ligne).
 - **Faux négatifs connus** : `diskshadow /s script.txt` seul n'alerte pas : le script n'est pas lu et la ligne ne dit
   pas s'il supprime (diskshadow sert aussi aux sauvegardes) ; une taille écrite en octets de plus de trois chiffres
-  (`/maxsize=400000000`) non plus. `wmic` est retiré de Windows 11 24H2.
+  (`/maxsize=400000000`) non plus. `wmic` est retiré de Windows 11 24H2. Copie renommée de vssadmin, wbadmin, bcdedit,
+  wmic ou diskshadow (ou de PowerShell pour les formes WMI) sans Sysmon : les événements 4688 et WMI ne portent pas le
+  nom d'origine du fichier (angle mort déclaré, constat T-2) ; avec Sysmon, elle est vue. Un outil lancé par un autre
+  programme que cmd, PowerShell ou pwsh (bash, un script, `Start-Process` qui passe ses arguments à part) n'est vu que
+  par le processus de l'outil lui-même.
 
 ## CHA : chaînes de processus
 
