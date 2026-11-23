@@ -871,6 +871,24 @@ pub fn a_remettre(posee: &str, origine: Option<&str>, actuelle: Option<&str>) ->
     }
 }
 
+/// Valeurs posées par deR4Tizer sur une clé : celle de la règle annulée, puis celles des règles appliquées avant
+/// l'annulation (une règle plus stricte encore appliquée, ou annulée en même temps, n'est pas « un tiers »)
+fn valeurs_posees(appliquees: &[String], catalogue: &Valeur, cle: &str, nom: &str) -> Vec<String> {
+    let mut v = vec![decrire(catalogue)];
+    for r in REGLES.iter().filter(|r| appliquees.iter().any(|a| a == r.id)) {
+        if let Some(x) = mecanisme_de(r, cle, nom) {
+            v.push(decrire(x));
+        }
+    }
+    v
+}
+
+/// Décision pure de l'annulation sur toutes les valeurs posées par deR4Tizer pour cette clé : la valeur actuelle
+/// n'est laissée que si elle n'est aucune d'elles, ni l'origine (A-2-3)
+pub fn decision_annulation(posees: &[String], origine: Option<&str>, actuelle: Option<&str>) -> Decision {
+    posees.iter().map(|p| a_remettre(p, origine, actuelle)).find(|d| *d != Decision::Laisser).unwrap_or(Decision::Laisser)
+}
+
 fn entree(cle: &str, nom: &str, v: &Valeur) -> EntreePol {
     match v {
         Dword(n) => EntreePol::dword(cle, nom, *n),
@@ -1124,6 +1142,11 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     let mut audit = lire_gpo_avant_ecriture()?;
     // Valeurs changées depuis par un tiers, laissées en place et citées dans le message (A-2-3)
     let mut laissees: Vec<String> = Vec::new();
+    // Règles appliquées avant l'annulation : leurs valeurs sont celles posées par deR4Tizer, jamais « un tiers »
+    let appliquees: Vec<String> = sauvegarde.regles.keys().cloned().collect();
+    // Valeurs d'un tiers lues avant l'annulation (clé, nom, valeur ou absente, texte, règle) : rétablies après
+    // gpupdate si l'entrée posée de Registry.pol a été retirée (prérelecture de #270, D1)
+    let mut tiers: Vec<(String, String, Option<String>, bool, &str)> = Vec::new();
     let mut audit_modifie = false;
     let mut n = 0;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
@@ -1158,10 +1181,14 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     };
                     // Type du catalogue : une valeur texte (règle ASR) est remise en texte (audit de #220, S220-02)
                     let texte = matches!(catalogue, Texte(_));
-                    // Valeur changée depuis par un tiers : ni remise ni supprimée, et son entrée de Registry.pol
-                    // reste (A-2-3)
-                    if a_remettre(&decrire(catalogue), valeur.as_deref(), lire_registre(cle, nom).as_deref()) == Decision::Laisser {
-                        laissees.push(commun::borner_texte(&format!("{} : {cle}\\{nom}", r.id), 200));
+                    // Valeur changée depuis par un tiers (ni posée par deR4Tizer, ni d'origine) : jamais remplacée
+                    // par l'origine (A-2-3). Son entrée de Registry.pol est retirée si elle vaut encore la valeur
+                    // posée, sans quoi le gpupdate de l'annulation remettrait la valeur posée par-dessus celle du
+                    // tiers ; la valeur du tiers lue ici est rétablie après gpupdate (prérelecture de #270, D1)
+                    let actuelle = lire_registre(cle, nom);
+                    if decision_annulation(&valeurs_posees(&appliquees, catalogue, cle, nom), valeur.as_deref(), actuelle.as_deref()) == Decision::Laisser {
+                        retraits.push(entree(cle, nom, catalogue));
+                        tiers.push((cle.to_string(), nom.to_string(), actuelle, texte, r.id));
                         continue;
                     }
                     // Entrée de Registry.pol retirée seulement si elle vaut encore la valeur posée (A-2-3)
@@ -1239,6 +1266,8 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
             };
         }
     }
+    // Clé partagée encore utilisée par une règle appliquée : c'est sa valeur qui est posée
+    tiers.retain(|(c, nm, _, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
     if audit_modifie {
         audit.lignes.retain(|l| l.2 != 0);
     }
@@ -1269,12 +1298,27 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         laissees.push(commun::borner_texte(&format!("Registry.pol : {}\\{}", g.cle, g.nom), 200));
     }
     valeurs_a_remettre.retain(|(c, nm, _, _, _)| !gardees_pol.borrow().iter().any(|e| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    // Valeurs d'un tiers : entrée de Registry.pol gardée (déjà citée) ou rétablie telle qu'elle était lue avant
+    // l'annulation, puis relue ; en échec, la règle reste dans la sauvegarde (prérelecture de #270, D1)
+    let mut tiers_echecs: Vec<(String, &str)> = Vec::new();
+    for (c, nm, v, texte, id) in &tiers {
+        if gardees_pol.borrow().iter().any(|e| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)) {
+            continue;
+        }
+        let affiche = v.as_deref().map(commun::masquer_chemin).unwrap_or_else(|| "absente".into());
+        if retablir_valeur(c, nm, v.as_deref(), *texte) {
+            laissees.push(commun::borner_texte(&format!("{id} : {c}\\{nm} = {affiche}"), 200));
+        } else {
+            tiers_echecs.push((commun::borner_texte(&format!("{c}\\{nm} = {affiche}"), 200), *id));
+        }
+    }
     let laissees_txt = message_laissees(&laissees);
     let pas_remises = remettre_valeurs(&valeurs_a_remettre);
-    if !pas_remises.is_empty() {
+    if !pas_remises.is_empty() || !tiers_echecs.is_empty() {
         // Jamais perdue : la règle revient dans la sauvegarde (une nouvelle annulation la réessaie) et la valeur
         // d'origine est dite, pour une remise à la main au besoin (prérelecture de #220, D1)
-        let mut ids: Vec<&str> = pas_remises.iter().map(|x| x.4).collect();
+        let mut ids: Vec<&str> = pas_remises.iter().map(|x| x.4).chain(tiers_echecs.iter().map(|x| x.1)).collect();
+        ids.sort_unstable();
         ids.dedup();
         for id in &ids {
             if let Some(o) = annulees.get(id) {
@@ -1287,7 +1331,15 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         };
         // Valeur d'origine dite pour une remise à la main, chemin de profil masqué (audit de #220, S220-04)
         let detail: Vec<String> = pas_remises.iter().map(|x| format!("{}\\{} = {}", x.0, x.1, commun::masquer_chemin(&x.2))).collect();
-        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {} ; {gardee}.{non_remises_txt}{laissees_txt}", detail.join(", "));
+        let mut quoi = Vec::new();
+        if !detail.is_empty() {
+            quoi.push(format!("valeur d'origine non remise après la mise à jour des stratégies : {}", detail.join(", ")));
+        }
+        if !tiers_echecs.is_empty() {
+            let d: Vec<&str> = tiers_echecs.iter().map(|x| x.0.as_str()).collect();
+            quoi.push(format!("valeur posée hors de deR4Tizer non rétablie après la mise à jour des stratégies : {}", d.join(", ")));
+        }
+        let e = format!("annulation incomplète : {} ; {gardee}.{non_remises_txt}{laissees_txt}", quoi.join(" ; "));
         commun::journal(&format!("baseline : {e}"));
         return Err(e);
     }
@@ -1297,6 +1349,30 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         return Err(e);
     }
     Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées.{laissees_txt}"))
+}
+
+/// Rétablit la valeur d'un tiers lue avant l'annulation (ou la laisse absente) et la relit (prérelecture de #270, D1)
+fn retablir_valeur(cle: &str, nom: &str, v: Option<&str>, texte: bool) -> bool {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    match v {
+        Some(v) => {
+            let ecrit = hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY).ok().map(|(k, _)| match (texte, v.parse::<u32>()) {
+                (false, Ok(d)) => k.set_value(nom, &d).is_ok(),
+                _ => k.set_value(nom, &v.to_string()).is_ok(),
+            }).unwrap_or(false);
+            remise_reussie(ecrit, v, lire_registre(cle, nom).as_deref())
+        }
+        None => {
+            let efface = match hklm.open_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
+                Ok(k) => match k.delete_value(nom) {
+                    Ok(()) => true,
+                    Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+                },
+                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            };
+            efface && lire_registre(cle, nom).is_none()
+        }
+    }
 }
 
 /// Remet des valeurs d'origine dans le registre et les relit ; rend celles qui n'ont pas pu être remises
@@ -1340,7 +1416,7 @@ pub fn message_laissees(laissees: &[String]) -> String {
     }
     let citees: Vec<&str> = laissees.iter().take(5).map(String::as_str).collect();
     let reste = if laissees.len() > 5 { format!(" et {} autre(s)", laissees.len() - 5) } else { String::new() };
-    format!(" Valeur(s) laissée(s) en place, changée(s) depuis l'application par un autre outil ou un administrateur (ni celle posée par deR4Tizer, ni celle d'origine) : {}{reste}.", citees.join(", "))
+    format!(" Valeur(s) changée(s) hors de deR4Tizer depuis l'application (ni posée(s) par deR4Tizer, ni d'origine), gardée(s) telle(s) quelle(s), stratégie de deR4Tizer retirée : {}{reste}.", citees.join(", "))
 }
 
 /// Mécanisme de registre de la règle pour une clé et un nom lus dans la sauvegarde ; None si étranger à la règle

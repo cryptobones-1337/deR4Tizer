@@ -798,6 +798,12 @@ fn audit_a_2_2_audit_csv_lu_en_echec_ferme() {
     assert!(decoder_audit(&[t.as_bytes(), b",System,\xE9v\xE9nement,,x,,0\r\n"].concat()).is_err(), "ANSI : erreur");
     assert!(decoder_audit(b"Nom,Valeur\r\n,System,x,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1\r\n").is_err(), "en-tête inconnu");
     assert!(decoder_audit(t.replace(",,3", ",,7").as_bytes()).is_err(), "valeur hors 0..3");
+    // Prérelecture de #270 : sous-catégorie en double, ou d'une autre forme (gardée telle quelle, elle se
+    // retrouverait en double avec celle écrite par deR4Tizer) : refus
+    let ligne = ",System,Audit Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,,1\r\n";
+    assert!(decoder_audit(format!("{t}{ligne}").as_bytes()).unwrap_err().contains("double"), "en double");
+    assert!(decoder_audit(format!("{t},System,Audit Logon,{{0CCE9215-69AE-11D9-BED3-505054503030}},Success,,1,x\r\n").as_bytes()).is_err(), "8 colonnes");
+    assert!(decoder_audit(format!("{t},Autre,Audit Logon,{{0CCE9215-69AE-11D9-BED3-505054503030}},Success,,1\r\n").as_bytes()).is_err(), "autre cible");
     crate::tests::torturer(t.as_bytes(), &mut |d| { let _ = decoder_audit(d); });
     // Fichier tenu par un autre programme : erreur ; absent : vide
     let d = dossier_gpo_test("audit");
@@ -870,6 +876,18 @@ fn audit_a_2_2_ecriture_d_un_bloc_sans_changer_les_droits() {
     let apres = lire_securite(&f).unwrap();
     assert_eq!((apres.aces, apres.protege), (avant.aces, avant.protege), "droits inchangés");
     assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "aucun fichier voisin laissé");
+    // S270-02 : fichiers voisins orphelins d'un arrêt brutal retirés à l'écriture suivante, motif exact seulement
+    use crate::gpo::est_voisin_orphelin;
+    assert!(est_voisin_orphelin("Registry.pol.d4t-1234.tmp", "Registry.pol"));
+    for n in ["Registry.pol.d4t-.tmp", "Registry.pol.d4t-12a.tmp", "Registry.pol.d4t-1234.tmp.x", "audit.csv.d4t-1.tmp", "xRegistry.pol.d4t-1.tmp", "Registry.pol"] {
+        assert!(!est_voisin_orphelin(n, "Registry.pol"), "{n}");
+    }
+    for n in ["Registry.pol.d4t-99999.tmp", "Registry.pol.d4t-x.tmp", "audit.csv.d4t-1.tmp"] {
+        std::fs::write(d.join(n), b"x").unwrap();
+    }
+    ecrire_d_un_bloc(&f, b"trois").unwrap();
+    assert!(!d.join("Registry.pol.d4t-99999.tmp").exists(), "orphelin retiré");
+    assert!(d.join("Registry.pol.d4t-x.tmp").exists() && d.join("audit.csv.d4t-1.tmp").exists(), "autres fichiers jamais touchés");
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -920,6 +938,14 @@ fn audit_a_2_3_annulation_respecte_un_durcissement_tiers() {
     assert_eq!(a_remettre("1", None, Some("1")), Decision::Supprimer, "absente à l'origine et actuelle = posée : suppression");
     assert_eq!(a_remettre("1", None, None), Decision::Supprimer, "déjà absente");
     assert_eq!(a_remettre("1", Some("0"), None), Decision::Laisser, "retirée par un tiers : laissée");
+    // Prérelecture de #270 : la valeur d'une règle plus stricte encore appliquée (ou annulée en même temps) n'est pas
+    // « un tiers » ; une valeur durcie ou effacée par un tiers l'est
+    use crate::baseline::decision_annulation;
+    let posees = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(decision_annulation(&posees(&["2", "1"]), Some("0"), Some("1")), Decision::RemettreOrigine, "accès contrôlé : blocage encore appliqué");
+    assert_eq!(decision_annulation(&posees(&["2"]), Some("0"), Some("1")), Decision::Laisser, "durcie par un tiers");
+    assert_eq!(decision_annulation(&posees(&["2"]), Some("0"), None), Decision::Laisser, "effacée par un tiers");
+    assert_eq!(decision_annulation(&posees(&["2"]), None, Some("2")), Decision::Supprimer);
     assert_eq!(message_laissees(&[]), "");
     let m = message_laissees(&(0..7).map(|i| format!("r{i}")).collect::<Vec<_>>());
     assert!(m.contains("r4") && !m.contains("r5") && m.contains("et 2 autre(s)"), "{m}");
@@ -933,6 +959,18 @@ fn audit_a_2_3_annulation_respecte_un_durcissement_tiers() {
     assert!(corps.contains("retraits.push(entree(cle, nom, catalogue));"), "retrait avec la valeur posée");
     assert!(!corps.contains("retraits.push(EntreePol::dword(cle, nom, 0));"));
     assert!(corps.contains("valeurs_a_remettre.retain(|(c, nm, _, _, _)| !gardees_pol.borrow()"));
+    // D1 (prérelecture de #270) : valeur d'un tiers (durcie ou effacée directement dans le registre) ; l'entrée posée
+    // de Registry.pol est retirée (sinon gpupdate remettrait la valeur posée), la valeur lue avant l'annulation est
+    // rétablie après gpupdate, et un échec garde la règle dans la sauvegarde
+    let laisser = &corps[decision..];
+    let fin_branche = laisser.find("continue;").unwrap();
+    assert!(laisser[..fin_branche].contains("retraits.push(entree(cle, nom, catalogue));"), "entrée posée retirée aussi pour une valeur d'un tiers");
+    assert!(laisser[..fin_branche].contains("tiers.push((cle.to_string(), nom.to_string(), actuelle, texte, r.id));"), "valeur du tiers gardée pour être rétablie");
+    let gp = corps.find("etapes.push((\"mise à jour des stratégies (gpupdate)\"").unwrap();
+    assert!(corps.find("if retablir_valeur(c, nm, v.as_deref(), *texte) {").expect("rétablie") > gp, "rétablie après gpupdate");
+    assert!(corps.contains("tiers_echecs.push(("), "échec de rétablissement retenu");
+    assert!(corps.contains(".chain(tiers_echecs.iter().map(|x| x.1)).collect();"), "règle gardée dans la sauvegarde");
+    assert!(corps.contains("valeurs_posees(&appliquees, catalogue, cle, nom)"), "valeurs des règles appliquées : pas « un tiers »");
 }
 
 #[test]
