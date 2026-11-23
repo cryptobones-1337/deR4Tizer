@@ -590,7 +590,11 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   seulement par la liste (son 4688 manque) garde une marge de 10 s ; la reprise d'un PID par un processus de même nom et
   de même parent, entre deux listes et sans 4688, n'est pas vue (l'heure de création des processus de la liste n'est pas
   lue) ; un processus créé avec pour parent un programme du service pendant qu'il tourne (quelques secondes) sort de
-  CHA-001 sans signal (`docs/security/threat-model.md`). Reste ouvert, décision du mainteneur : un outil de développement signé qui encode ses commandes
+  CHA-001 sans signal (`docs/security/threat-model.md`) ; réserve de la prérelecture de #282 : un administrateur qui
+  prend le service pour parent en lançant l'un des programmes de la liste (par exemple `powershell.exe` de System32)
+  est traité comme un programme du service, sa chaîne sort de CHA-001 sans signal (la liste dit quels programmes, pas
+  lesquels le service a lancés). Fermeture prévue : le service retiendra les PID qu'il lance lui-même, avec le registre
+  des PowerShell lancés par le service prévu par la phase 4104 (réserve R3 de son dossier) ; non fait ici. Reste ouvert, décision du mainteneur : un outil de développement signé qui encode ses commandes
   (`-EncodedCommand`) lève toujours PRC-002 à chaque lancement et une chaîne CHA-001 par session (une alerte, puis au
   plus trois par heure).
 - **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-5, corrigé, testé en labo, à essayer en VM) :

@@ -153,7 +153,7 @@ fn borner(s: &str, n: usize) -> String {
 }
 
 /// Décision pure (testée, torturée) : heure de création d'un événement du journal (attribut SystemTime de TimeCreated,
-/// « 2026-11-23T13:56:00.1234567Z »), en FILETIME au 100 ns près. Illisible : None (le processus garde alors l'heure
+/// « 2020-01-02T03:04:05.1234567Z »), en FILETIME au 100 ns près. Illisible : None (le processus garde alors l'heure
 /// de son traitement, qui suit sa création)
 pub(crate) fn heure_4688(xml: &str) -> Option<u64> {
     let debut = xml.find("TimeCreated")?;
