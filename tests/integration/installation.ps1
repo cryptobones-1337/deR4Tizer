@@ -53,6 +53,137 @@ Verifier 'Second compte local standard créé (témoin des comptes autorisés)' 
     $true
 }
 
+# ---------------------------------------------------------------- C-1 : jonction à la racine du dossier de données
+# Audit du 2026-11-23, C-1 (essai en VM de la v4.3) : un compte standard pose C:\ProgramData\deR4Tizer comme jonction
+# vers un dossier à lui et la tient ouverte sans partage de suppression ; le service écrivait alors journal, état,
+# alertes, SIEM et secrets dans ce dossier. Attendu : le MSI refuse de s'installer ; le service, s'il trouve la
+# jonction (posée après l'installation), n'écrit rien dessous, le dit au journal d'événements et dans
+# %SystemRoot%\Temp, réessaie chaque minute et reprend la racine une fois la jonction relâchée. Témoin positif : sans
+# la jonction, le service s'installe et répond ; témoin du compte : son contenu ne change jamais.
+$temoinJ = Join-Path $script:Commun 'temoin-jonction'
+$marqueurJ = Join-Path $script:Commun 'jonction-tenue.txt'
+# Pose la jonction sous l'identité du compte standard, vers son témoin, et la tient ouverte (FILE_LIST_DIRECTORY,
+# partage lecture et écriture sans suppression, sur la jonction elle-même) ; renvoie le processus qui la tient
+function Tenir-Jonction($Compte) {
+    Remove-Item -LiteralPath $marqueurJ -Force -ErrorAction SilentlyContinue
+    $p = En-TantQue $Compte @"
+if (-not (Test-Path '$temoinJ')) { New-Item -ItemType Directory -Path '$temoinJ' -ErrorAction Stop | Out-Null; Set-Content -LiteralPath '$temoinJ\temoin.txt' -Value 'temoin du compte' -Encoding Ascii }
+cmd.exe /c mklink /J "$script:Donnees" "$temoinJ" | Out-Null
+Add-Type -Namespace D4tC1 -Name K -MemberDefinition '[DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string n, uint a, uint p, System.IntPtr s, uint d, uint f, System.IntPtr m);'
+`$h = [D4tC1.K]::CreateFileW('$script:Donnees', [uint32]0x00100081, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
+if (-not `$h.IsInvalid) { [IO.File]::WriteAllText('$marqueurJ', 'tenue'); Start-Sleep 900 }
+"@ -SansAttendre
+    $fin = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $fin -and -not (Test-Path $marqueurJ)) { Start-Sleep 1 }
+    $p
+}
+function Est-Jonction { $i = Get-Item -LiteralPath $script:Donnees -Force -ErrorAction SilentlyContinue; [bool]($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) }
+function Relacher-Jonction($p) {
+    if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; [void]$p.WaitForExit(15000) }
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'script-\d+\.ps1' } |
+        Where-Object { (Get-Content -LiteralPath (Join-Path $script:Commun ([regex]::Match($_.CommandLine, 'script-\d+\.ps1').Value)) -Raw -ErrorAction SilentlyContinue) -match 'D4tC1' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+if ($compte) {
+    $tenuJ = $null
+    try {
+        Verifier 'C-1 : jonction posée à la racine par le compte standard vers son dossier, tenue ouverte sans partage de suppression' {
+            if (Test-Path $script:Donnees) { return 'le dossier existe déjà avant le test' }
+            $script:tenuJ = Tenir-Jonction $compte
+            if (-not (Est-Jonction)) { return 'jonction non posée' }
+            if (-not (Test-Path $marqueurJ)) { return 'jonction non tenue (marqueur absent)' }
+            $true
+        }
+        $empreinteJ = Empreinte-Dossier $temoinJ
+        Verifier 'C-1 : installation refusée par le MSI (dossier de données lien), rien écrit dans le témoin' {
+            $journalMsi = Join-Path $Journaux 'installation-jonction.log'
+            $c = Installer $Msi $journalMsi
+            if ($c -eq 0) { return 'msiexec a rendu 0 : installation acceptée sur une jonction' }
+            if (Get-Service deR4Tizer -ErrorAction SilentlyContinue) { return "service installé (msiexec $c)" }
+            $l = Get-Content -LiteralPath $journalMsi -Raw -ErrorAction SilentlyContinue
+            if ($l -notmatch 'est un lien') { return "message de refus absent du journal du MSI (msiexec $c)" }
+            if ((Empreinte-Dossier $temoinJ) -ne $empreinteJ) { return 'témoin du compte modifié' }
+            $true
+        }
+        Relacher-Jonction $tenuJ
+        cmd.exe /c rmdir "$script:Donnees" 2>&1 | Out-Null
+        # Témoin positif : sans la jonction, le paquet s'installe ; puis la jonction est posée service arrêté
+        Verifier 'C-1 : sans jonction, installation acceptée et service en marche (témoin positif)' {
+            if (Est-Jonction) { return 'jonction encore là' }
+            $c = Installer $Msi (Join-Path $Journaux 'installation-avant-jonction.log')
+            if ($c -ne 0) { return "msiexec a rendu $c" }
+            if (-not (Attendre-Canal)) { return 'le service ne répond pas' }
+            $true
+        }
+        $debutJ = Get-Date
+        Verifier 'C-1 : service arrêté, racine retirée, jonction posée et tenue par le compte standard, service redémarré : il tourne sans répondre' {
+            Stop-Service deR4Tizer -Force
+            # secrets\ est réservé à SYSTEM : la racine est retirée en SYSTEM
+            [void](En-TantQueSysteme "Remove-Item -LiteralPath '$script:Donnees' -Recurse -Force")
+            if (Test-Path -LiteralPath $script:Donnees) { return 'racine non retirée' }
+            $script:tenuJ = Tenir-Jonction $compte
+            if (-not (Est-Jonction) -or -not (Test-Path $marqueurJ)) { return 'jonction non posée ou non tenue' }
+            $script:empreinteJ = Empreinte-Dossier $temoinJ
+            Start-Service deR4Tizer
+            Start-Sleep 90
+            if ((Get-Service deR4Tizer).Status -ne 'Running') { return "service $((Get-Service deR4Tizer).Status)" }
+            if (Attendre-Canal 5) { return 'le canal répond : la surveillance a démarré sur une racine non vérifiée' }
+            $true
+        }
+        Verifier 'C-1 : rien écrit dans le dossier du compte (témoin identique, jonction intacte)' {
+            if (-not (Est-Jonction)) { return 'jonction disparue alors qu''elle était tenue' }
+            $e = Empreinte-Dossier $temoinJ
+            if ($e -ne $empreinteJ) { return "témoin modifié : $(@(Get-ChildItem -LiteralPath $temoinJ -Recurse -Force | ForEach-Object Name) -join ', ')" }
+            $true
+        }
+        Verifier 'C-1 : échec dit au journal d''événements (Application, source deR4Tizer) et dans %SystemRoot%\Temp' {
+            # Source non enregistrée (aucune écriture dans le registre) : texte lu dans les chaînes de l'événement
+            $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'deR4Tizer'; StartTime = $debutJ } -ErrorAction SilentlyContinue |
+                Where-Object { (@($_.Properties | ForEach-Object Value) -join ' ') -match 'ÉCHEC' })
+            if (-not $ev.Count) {
+                $ev = @(Get-EventLog -LogName Application -Source deR4Tizer -After $debutJ -ErrorAction SilentlyContinue | Where-Object { ($_.ReplacementStrings -join ' ') -match 'ÉCHEC' })
+            }
+            if (-not $ev.Count) { return 'aucun événement de la source deR4Tizer depuis le redémarrage' }
+            $cr = @(Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-protection-*.txt' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $debutJ })
+            if (-not $cr.Count) { return 'aucun compte rendu deR4Tizer-protection-*.txt' }
+            $true
+        }
+        Relacher-Jonction $tenuJ
+        $debutR = Get-Date
+        Verifier 'C-1 : jonction relâchée : racine reprise en moins de 3 min (jonction supprimée, dossier véritable protégé), service répond, témoin intact' {
+            if (-not (Attendre-Canal 180)) { return "le service ne répond toujours pas ; jonction : $(Est-Jonction)" }
+            if (Est-Jonction) { return 'racine encore une jonction' }
+            $d = Droits $script:Donnees
+            if ($d.Proprietaire -ne 'S-1-5-32-544' -or -not $d.Protege) { return "racine : propriétaire $($d.Proprietaire), protégée $($d.Protege)" }
+            if ((Empreinte-Dossier $temoinJ) -ne $empreinteJ) { return 'témoin modifié' }
+            $true
+        }
+        Verifier 'Désinstallation sans GARDER_DONNEES : racine gardée, vide, à SYSTEM et aux administrateurs (lot A, point 4)' {
+            $c = Desinstaller (Join-Path $Journaux 'desinstallation-jonction.log')
+            if ($c -ne 0) { return "msiexec a rendu $c" }
+            Racine-GardeeVide
+        }
+        Verifier 'Racine gardée : le compte standard ne peut ni la supprimer, ni y créer quoi que ce soit, ni la remplacer par une jonction' {
+            $s = En-TantQue $compte @"
+try { Remove-Item -LiteralPath '$script:Donnees' -Force -ErrorAction Stop; 'SUPPRESSION=OK' } catch { 'SUPPRESSION=refusee' }
+try { New-Item -ItemType File -Path '$script:Donnees\x.txt' -ErrorAction Stop | Out-Null; 'CREATION=OK' } catch { 'CREATION=refusee' }
+"@
+            if ($s -match '=OK') { return "le compte standard a pu : $s" }
+            if (Est-Jonction) { return 'racine devenue jonction' }
+            Racine-GardeeVide
+        }
+    } finally {
+        Relacher-Jonction $tenuJ
+        if (Est-Jonction) { cmd.exe /c rmdir "$script:Donnees" 2>&1 | Out-Null }
+        if (@(Produits).Count) { Desinstaller (Join-Path $Journaux 'desinstallation-jonction-nettoyage.log') | Out-Null }
+        # La suite part d'un dossier de données absent (dossier précréé par le compte standard)
+        if (Test-Path -LiteralPath $script:Donnees) { [void](En-TantQueSysteme "Remove-Item -LiteralPath '$script:Donnees' -Recurse -Force") }
+        Remove-Item -LiteralPath $temoinJ -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    NonExecute 'C-1 : jonction à la racine du dossier de données' 'compte standard indisponible'
+}
+
 # ---------------------------------------------------------------- dossier précréé par le compte standard
 $tenu = $null
 $fLecteurs = Join-Path $script:Donnees 'lecteurs.json'
@@ -246,7 +377,17 @@ if ($compte) {
     } else {
         NonExecute 'Dossier de données : lecture accordée au compte connecté à la console' "aucun compte utilisateur à la console ($console)"
     }
-    Verifier 'Second démarrage : configuration légitime chargée (port témoin ouvert)' {
+    # Première prise en charge (audit du 2026-11-23, C-2) : la configuration de l'administrateur posée dans le dossier
+    # précréé par le compte standard, avant toute prise en charge, est mise de côté avec le reste (rien de ce qui était là
+    # n'est cru, quel qu'en soit le propriétaire) ; posée de nouveau après la prise en charge, elle est chargée
+    Verifier 'Second démarrage : configuration posée avant la première prise en charge mise de côté, jamais chargée (port témoin fermé)' {
+        if (-not (Ecarte 'config.json').Count) { return "config.json absent de ecartes ; journal : $(Journal 'protection des donn')" }
+        if (Port-Ouvert $PortTemoin) { return "port $PortTemoin en écoute" }
+        $true
+    }
+    Verifier 'Second démarrage : configuration légitime posée après la prise en charge, chargée au redémarrage (port témoin ouvert)' {
+        Poser-EnAdministrateur 'config.json' $ConfigLegitime
+        [void](Redemarrer-Service)
         if (-not (Attendre-Port $PortTemoin)) { return "port $PortTemoin fermé ; journal : $(Journal 'API|protection des donn')" }
         $true
     }
@@ -1773,13 +1914,14 @@ try {
 
 # ---------------------------------------------------------------- désinstallation complète
 $regles1 = Reglesparefeu
-Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés' {
+Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés, racine gardée vide et protégée' {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-1.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
     $reste = @()
     if (Get-Service deR4Tizer -ErrorAction SilentlyContinue) { $reste += 'service' }
     if (Test-Path $script:Programme) { $reste += 'Program Files\deR4Tizer' }
-    if (Test-Path $script:Donnees) { $reste += 'données' }
+    $racine = Racine-GardeeVide
+    if ($racine -ne $true) { $reste += $racine }
     if (@(Produits).Count) { $reste += 'entrée « Applications »' }
     if ((Schtasks-Code /Query /TN $tacheRelance) -eq 0) { $reste += 'tâche de relance' }
     if ($reste.Count) { return 'reste : ' + ($reste -join ', ') + ' ; ' + (Restes-Donnees) }

@@ -1006,6 +1006,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte | aucune |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique | aucune |
 | SAN-013 | Historique du mini-SIEM incomplet : événements perdus (file de 20 000 pleine), événements non écrits (fichier du jour au plafond de 1 Go / 30, 34 Mo environ), ou fichier d'un jour précédent supprimé pour la taille totale (1 Go) | `sante.rs`, `siem.rs` | Alerte | aucune |
+| SAN-014 | Configuration présente mais non chargée : `config.json` illisible, refusé (propriétaire, liens physiques) ou mal formé après trois essais ; le service tourne avec la configuration par défaut et ne réécrit pas le fichier | `sante.rs`, `moniteur.rs`, `commun.rs` | Critique | aucune |
 
 - **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
   un poste calme. Couper la vue sur Defender est ce qu'un attaquant gagne le plus à faire (SAN-003).
@@ -1057,6 +1058,17 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   mémoire. **Limite** : un compte standard peut toujours saturer le jour courant (ce qu'il fait ensuite ce jour-là n'est
   plus écrit dans le SIEM, les alertes restent dans `alertes.json`) : c'est ce que SAN-013 dit ; plafond à mesurer en
   VM sur un poste ordinaire. Tests : `siem_purge_par_jour`, `sante_san013_historique_incomplet`.
+- **SAN-014** (audit du 2026-11-23, C-3) : un `config.json` présent mais illisible (verrou, droits, propriétaire refusé,
+  plusieurs liens physiques) ou mal formé passait pour absent : le service tournait avec la configuration par défaut, et
+  la première commande de réglage l'écrivait par-dessus la configuration légitime. Désormais `commun::lire_etat` distingue
+  « absent » de « présent mais non chargé » (trois essais espacés de 100 ms pour une erreur de lecture, aucun pour un
+  contenu mal formé ou un refus) ; non chargé au démarrage, la configuration reste celle par défaut, `config.json` n'est
+  jamais réécrit jusqu'au prochain démarrage, les commandes qui l'écriraient sont refusées avec la raison, la page Santé
+  le dit (ligne « Configuration ») et SAN-014 est levé aussitôt, puis une fois par 24 h au plus tant que l'état dure. Pas
+  de constat en échec de la protection du dossier (INT-001 le dit déjà). La même règle vaut pour tout fichier lu par
+  `commun::lire` (blocages, bases « connues », historique du pare-feu, état du réseau…) : présent mais non chargé, il
+  n'est plus réécrit tant qu'une lecture ne l'a pas chargé ou vu absent. Tests : `lot_a_lecture_absent_distinct_de_illisible`,
+  `lot_a_fichier_non_charge_jamais_reecrit`, `lot_a_configuration_non_chargee_et_san014`. Essai en VM à faire.
 
 ## REP : réponse (phase 6)
 

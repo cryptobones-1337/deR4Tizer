@@ -91,6 +91,9 @@ automatic installation can be turned on in the settings (signed releases).
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted, including files in quarantine (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
+The data folder itself (`C:\ProgramData\deR4Tizer`) stays, empty and reserved to SYSTEM and administrators, so that a
+standard account cannot put a link in its place before a reinstall; delete it as an administrator if you want it gone.
+The installer refuses to install while `C:\ProgramData\deR4Tizer` is a link (junction or symbolic link).
 With domain-name filtering on (phase 7), hardware Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
 `::1`), with their original servers as fallback; virtual cards (Hyper-V switches, WSL, Docker, VPN), recognised from
 flags read from Windows and never from their name, are not changed. Turning it off, stopping the service and uninstalling restore their
@@ -202,7 +205,10 @@ Known, by design. Be aware before relying on it:
 - Syslog export is sent in cleartext (UDP or TCP, no TLS): keep it to a trusted local network.
 - The export API is plain HTTP: when it is opened to the local network, its token and data travel in cleartext, like syslog.
 - If the data folder's protection fails at start-up, a critical alert stays local: forwarding secrets are ignored, so your IT provider is not notified.
+- If the data folder's root is a link that cannot be removed (a junction held open by another account, audit of 2026-11-23, C-1), the service writes nothing in or under it: it says so in the Windows event log (Application log, source `deR4Tizer`, without a registered message file) and in a report in `%SystemRoot%\Temp`, does not start monitoring, and retries every minute. While it waits, the interface cannot reach the service and shows no alert. Tested on the decisions and in a CI scenario; to be replayed in the VM.
+- `config.json` (and any data file read the same way) present but unreadable or malformed is no longer taken for absent (C-3): the default configuration is used, the file is never rewritten until the next start, settings commands are refused, the Health page says so and SAN-014 is raised. Fix or remove the file, then restart the service.
 - The MSI accepts an older version (needed to roll back): the service refuses an older version for automatic updates, but an administrator can still install one by hand.
+- The installer's check that the data folder is not a link is a small read-only JScript action: on a computer where Windows Installer cannot run scripts, installation is refused (fail-closed). The check is done before installing; a link put in place afterwards is handled by the service (see above).
 - Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
   the installed product is not detected (no exclusion, scan and quick scan with no detection, service intact). A
   signal, not proof on a real machine. Batch 3d was passed again on the signed v4.3 MSI before its release

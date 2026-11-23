@@ -8,7 +8,8 @@
     msiexec /i deR4Tizer.msi /qn
   Options :
     LANCEMENT_SESSION=0   ne pas lancer l'interface à l'ouverture de session
-  Désinstallation (retire les blocages, règles de pare-feu, leurres, remet la baseline d'origine, efface les données) :
+  Désinstallation (retire les blocages, règles de pare-feu, leurres, remet la baseline d'origine, efface les données ;
+  le dossier C:\ProgramData\deR4Tizer reste, vide et réservé à SYSTEM et aux administrateurs) :
     msiexec /x deR4Tizer.msi /qn [GARDER_DONNEES=1] [GARDER_BASELINE=1]
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
@@ -54,6 +55,23 @@
     <Condition Message="La réparation de deR4Tizer est réservée aux administrateurs.">
       <![CDATA[NOT Installed OR REMOVE="ALL" OR UPGRADINGPRODUCTCODE OR AdminUser]]>
     </Condition>
+    <!-- Dossier de données point d'analyse (jonction, lien symbolique, audit du 2026-11-23, C-1) : installation, mise à niveau
+         et réparation refusées. Un compte standard peut poser C:\ProgramData\deR4Tizer comme jonction vers un dossier à lui ;
+         le service, lui, n'écrit plus dessous (protection.rs), mais ne surveillerait pas. Échec fermé : seule la valeur « ok »
+         lue par l'action LireDossierDonnees laisse passer ; la désinstallation n'est jamais bloquée -->
+    <Condition Message="Le dossier de données [CommonAppDataFolder]deR4Tizer est un lien (jonction, lien symbolique) ou n'a pas pu être vérifié : installation refusée. Supprimez ce lien en administrateur, puis relancez l'installation.">
+      <![CDATA[REMOVE="ALL" OR DonneesEtat="ok"]]>
+    </Condition>
+    <!-- Lecture seule des attributs du dossier de données, sans rien écrire : fonction JScript (installeur\lire-dossier-donnees.js,
+         table Binary), immédiate, dans les deux séquences avant les conditions de lancement. WiX 3 n'a aucune recherche qui lise l'attribut « point d'analyse »
+         (AppSearch ne voit qu'un dossier présent ou absent) ; une action en script évite d'ajouter une DLL ou un second
+         exécutable au paquet. Script indisponible ou en erreur : l'action échoue (Return="check") ou la valeur reste
+         « inconnu », et l'installation est refusée -->
+    <Binary Id="ScriptDossierDonnees" SourceFile="$(var.Installeur)\lire-dossier-donnees.js" />
+    <CustomAction Id="LireDossierDonnees" BinaryKey="ScriptDossierDonnees" JScriptCall="LireDossierDonnees" Return="check" />
+    <InstallUISequence>
+      <Custom Action="LireDossierDonnees" Before="LaunchConditions" />
+    </InstallUISequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -102,9 +120,11 @@
 
     <!-- Dossier de données créé avec ses droits (SYSTEM et administrateurs, propriétaire Administrateurs, sans
          héritage de ProgramData où les utilisateurs peuvent créer des fichiers). Le service les impose aussi à
-         chaque démarrage (protection.rs), et ajoute la lecture pour les comptes autorisés. -->
+         chaque démarrage (protection.rs), et ajoute la lecture pour les comptes autorisés. Permanent (lot A, point 4) :
+         la désinstallation ne retire pas ce dossier ; l'action SupprimerDonnees le vide et le garde protégé, pour qu'un compte
+         standard ne puisse pas y poser une jonction avant une réinstallation -->
     <DirectoryRef Id="DONNEES">
-      <Component Id="Donnees" Guid="7D2C4A91-3E5B-4F68-A0C7-5B9E1D8F2A63" Win64="yes">
+      <Component Id="Donnees" Guid="7D2C4A91-3E5B-4F68-A0C7-5B9E1D8F2A63" Win64="yes" Permanent="yes">
         <CreateFolder>
           <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
         </CreateFolder>
@@ -130,6 +150,7 @@
     <CustomAction Id="SupprimerDonnees" FileKey="ServiceExe" ExeCommand="--supprimer-donnees" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="FermerInterface" Directory="INSTALLFOLDER" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM deR4Tizer.exe" Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
+      <Custom Action="LireDossierDonnees" Before="LaunchConditions" />
       <Custom Action="PoserRelance" After="InstallFiles"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION="1"]]></Custom>
       <Custom Action="RetirerRelance" After="PoserRelance"><![CDATA[NOT REMOVE="ALL" AND LANCEMENT_SESSION<>"1"]]></Custom>
       <Custom Action="SuspendreRelance" Before="FermerInterface">REMOVE OR UPGRADINGPRODUCTCODE OR WIX_UPGRADE_DETECTED</Custom>
