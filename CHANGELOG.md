@@ -4,7 +4,7 @@
 
 - Privileged operations, audit of 23 November 2026 (A-5-2, A-1-1, A-1-2, A-1-5, A-5-3, A-2-1, A-4-1, B-2-01; tested in
   the lab, not yet tried in the VM). The service never opens a network path (`\\host\...`, WebDAV, `\\?\UNC\...`,
-  `\\.\...`, network, removable or missing drive as seen by SYSTEM) to check a program's signature, catalog, hash or
+  `\\.\...`, network drive, drive of unknown type or missing as seen by SYSTEM) to check a program's signature, catalog, hash or
   download mark: such a program is treated as unsigned (logged once), so the computer account is no longer sent to
   another host. The elevated helper accepts only its own command file, `%LOCALAPPDATA%\deR4Tizer\commande-<hex>.json`
   of the session user or of the elevating account, judged on the path text (local fixed drive, no `..`, no stream)
@@ -20,6 +20,14 @@
   through a handle with its NTFS change journal number (USN), or by the SHA-256 of the content when there is no USN,
   instead of path and modification date: a program replaced at the same path with its date set back is checked again
   and no longer inherits the former publisher; a value read while the file changes is not kept.
+  After the audit of PR #277: the install folder check also reads every parent folder up to the drive root, through
+  handles (renaming the install folder needs "delete child" on its parent; S277-01); more commands count as weakening
+  in the elevated confirmation (alert exception, unblock, resume, panic mode off, filtering domains and categories,
+  syslog and API settings, read access for an account; S277-02); declared drivers and quarantine sources on a network
+  path are not read (S277-03); the file identity and timed reads follow no symbolic link or junction in the path
+  (S277-04). Local drives that are not fixed (USB stick, CD-ROM, RAM disk) are read again: they contact no host, and a
+  signed program on a USB stick was shown unsigned. Without an NTFS change journal, the SHA-256 key is used for files of
+  64 MB at most; a larger file is checked each time, never cached.
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown

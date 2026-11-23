@@ -40,7 +40,7 @@ pub fn origine_a_garder(o: &Option<Origine>) -> bool {
 
 /// Lit la marque « téléchargé depuis Internet » (flux de données alternatif Zone.Identifier) et l'âge du fichier
 pub fn origine(chemin: &str) -> Option<Origine> {
-    // Chemin réseau ou amovible : jamais ouvert par le service, pas même pour sa date (audit du 2026-11-23, A-5-2)
+    // Chemin réseau, sans lettre ou de type inconnu : jamais ouvert par le service, pas même pour sa date (audit du 2026-11-23, A-5-2)
     if chemin.is_empty() || !natif::lisible_en_systeme(chemin) {
         return None;
     }
@@ -488,6 +488,10 @@ fn ecrire_manifeste_service(liste: &[ElementQuarantaine]) -> Result<(), String> 
 
 /// Tue les processus qui exécutent ce fichier, puis le met en quarantaine (copie protégée, inexécutable)
 pub fn mettre_en_quarantaine(chemin: &str, raison: &str) -> Result<String, String> {
+    // Avant tout accès : un chemin réseau ouvert en SYSTEM enverrait le compte de la machine à l'hôte (audit de #277, S277-03)
+    if !natif::lisible_en_systeme(chemin) {
+        return Err(format!("refusé : {chemin} n'est pas sur un lecteur local (réseau, sans lettre ou de type inconnu) ; le service ne l'ouvre pas"));
+    }
     let p = Path::new(chemin);
     if !p.is_file() {
         return Err(format!("fichier introuvable : {chemin}"));
