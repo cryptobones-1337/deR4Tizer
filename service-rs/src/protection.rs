@@ -365,6 +365,16 @@ pub fn premiere_prise_en_charge(marqueur: Option<bool>, etat_ancien: bool) -> bo
     }
 }
 
+/// Décision pure (C-2) : le dossier « ecartes » existant est-il jugé sur son propriétaire (gardé s'il est de confiance) ?
+/// Oui hors première prise en charge, et en REPRISE d'une première prise en charge (marqueur « à faire ») : il a alors été
+/// créé par le service après la pose des droits de la racine, et contient ce qu'un démarrage interrompu a déjà mis de
+/// côté. Non à la première prise en charge sans marqueur : préexistant, il est mis de côté avec le reste. Avant (CI de
+/// #288, run 45222958564) : à la reprise, les éléments déjà écartés étaient remis de côté une seconde fois, imbriqués
+/// dans un « ecartes-suspect-… », hors de la vue de qui les cherche dans ecartes
+pub fn ecartes_juge_au_proprietaire(premiere: bool, marqueur: Option<bool>) -> bool {
+    !premiere || marqueur.is_some()
+}
+
 /// Nom du dossier de données écarté (pur, testé) : date et identifiant unique, pour qu'un compte standard ne puisse pas
 /// poser ce nom d'avance (audit du 2026-11-23)
 pub fn nom_ecarte(date: &str, id: &str) -> String {
@@ -652,7 +662,8 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     let tous_a_ecarter = |_: &Path| Some(false);
     let de_confiance: &dyn Fn(&Path) -> Option<bool> = if premiere { &tous_a_ecarter } else { &crate::natif::proprietaire_de_confiance };
     let quarantaine = racine.join("ecartes");
-    preparer_quarantaine_avec(&quarantaine, de_confiance)?;
+    let proprietaire: &dyn Fn(&Path) -> Option<bool> = &crate::natif::proprietaire_de_confiance;
+    preparer_quarantaine_avec(&quarantaine, if ecartes_juge_au_proprietaire(premiere, marqueur) { proprietaire } else { de_confiance })?;
     if premiere {
         messages.push("première prise en charge de ce dossier : tout son contenu, quel qu'en soit le propriétaire, est mis de côté dans ecartes".into());
     } else {
