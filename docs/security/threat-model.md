@@ -230,8 +230,11 @@ Opérations privilégiées, audit du 2026-11-23 : la GPO locale est lue en éche
   powershell, curl, icacls, netsh, gpupdate, schtasks, conhost, reconnus par leur chemin exact sous System32) et leurs
   descendants sortent des chaînes. Un administrateur qui crée un processus avec le service pour parent (T1134.004)
   n'en sort pas : un enfant du service hors de cette liste reste dans les chaînes et y porte un signal (parent usurpé
-  probable, T1134.004). Limite : s'il choisit pour parent un de ces programmes pendant qu'il tourne (quelques secondes),
-  sa chaîne sort de CHA-001 sans signal.
+  probable, T1134.004). Limites : s'il choisit pour parent un de ces programmes pendant qu'il tourne (quelques secondes),
+  sa chaîne sort de CHA-001 sans signal ; s'il prend le service pour parent en lançant lui-même l'un des programmes de la
+  liste (par exemple `powershell.exe` de System32), ce programme est traité comme un programme du service et sa chaîne
+  sort de CHA-001 sans signal. Fermeture prévue : le service retiendra les PID qu'il lance lui-même (registre des
+  PowerShell lancés par le service, phase 4104, réserve R3) ; non fait.
 - La conservation des traces face à cet attaquant, ou après une intrusion découverte tard. Un compte standard qui crée
   des processus en boucle ne chasse plus les jours précédents du SIEM (A-6-3, corrigé en labo) : le fichier du jour
   n'est jamais supprimé, et au-delà de son plafond (1 Go / 30) les événements du jour ne sont plus écrits mais comptés ;
