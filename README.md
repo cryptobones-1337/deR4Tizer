@@ -130,9 +130,9 @@ curl -H "Authorization: Bearer <token>" "http://127.0.0.1:8642/api/v1/alertes?ni
 > **Known limit.** On versions 4.2 and 4.3 already installed, automatic updates install nothing: the install script,
 > launched without a console, did not run (fixed by PR #26, included in the signed release v4.3). An installed 4.2 or 4.3 test build
 > therefore does not update itself: uninstall the test build first (`GARDER_DONNEES=1` keeps the data), then install the
-> signed v4.3 by hand (`msiexec /i deR4Tizer.msi`); automatic updates then work from that one onward. Both carry version
-> 4.3.0: installing the signed package over a test build may leave the test build's unsigned files in place (not yet
-> checked).
+> signed v4.3 by hand (`msiexec /i deR4Tizer.msi`); automatic updates then work from that one onward. Uninstalling first
+> is a precaution: both carry version 4.3.0, and installing the signed package directly over a test build has not been
+> checked yet.
 
 Each `vX.Y` tag triggers the *Publication* workflow: tests, build, signing, hashes and `manifeste.json` attached to the
 GitHub release. Machines read this manifest once a day (`releases/latest/download/manifeste.json`). The manifest is
@@ -213,6 +213,7 @@ Known, by design. Be aware before relying on it:
 - During the 7-day learning period, behaviours of a program already present are learned and later shown at Info level, with no end date; critical alerts and strong signals are never learned.
 - The SIEM keeps the first 400 characters of every process command line, for all accounts, for 30 days. Accounts allowed to read the data (by default the first account seen at the console) can read them: a password typed as a command argument on this computer can be found there. Masking is planned.
 - Baseline: if the local Group Policy file cannot be read when the baseline is applied, cancelled or removed (file held by another program, format not understood), other local policies in that file may be erased; cancelling restores the original value even if someone has hardened it since (fixes planned).
+- One open finding on the elevated helper and network paths is not detailed until it is fixed (coordinated disclosure): in the elevated confirmation window, confirm only actions you asked for in deR4Tizer.
 - Install to the default folder (Program Files) only: another folder may be writable by standard accounts. On a domain-joined computer, the service may read a program started from a network share with the computer's account (fix planned).
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
