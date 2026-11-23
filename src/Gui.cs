@@ -367,8 +367,11 @@ namespace DeR4Tizer
         // Dossiers où l'interface écrit un fichier de commande : celui du compte qui exécute l'assistant (administrateur qui
         // élève sa propre interface), et celui de l'utilisateur de la session (compte standard qui a tapé le mot de passe
         // d'un autre compte : l'assistant tourne alors sous ce compte, avec son propre profil). Le profil de l'utilisateur
-        // de la session est lu dans le registre (ProfileList), jamais sur le disque ; un %LOCALAPPDATA% redirigé ailleurs que
-        // sous le profil est refusé (échec fermé)
+        // de la session est lu dans le registre (ProfileList), jamais sur le disque, et son dossier attendu est toujours
+        // <profil>\AppData\Local\deR4Tizer : si cet utilisateur a redirigé son %LOCALAPPDATA% ailleurs, son fichier n'est dans
+        // aucun dossier attendu et il est refusé (échec fermé). Le dossier du compte qui exécute l'assistant suit, lui, la
+        // redirection éventuelle (GetFolderPath) ; comme tout dossier attendu, il n'est retenu que sur un lecteur local fixe
+        // (CheminDeCommandeAccepte), jamais sur un chemin réseau
         public static List<string> DossiersDeCommande()
         {
             var d = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer") };
@@ -898,7 +901,11 @@ namespace DeR4Tizer
 
         // Commandes qui affaiblissent la protection : apprentissage relancé (comportements oubliés, alertes apprises 7 jours),
         // réglage coupé, tous les blocages levés, baseline annulée, filtrage coupé, sortie de quarantaine (audit du
-        // 2026-11-23, A-1-2). Décision pure, testée par tests\test-confirmations.ps1
+        // 2026-11-23, A-1-2). Audit de #277 (S277-02) : aussi une exception d'alerte, un blocage levé, un processus repris
+        // (non suspendu automatiquement 7 jours), le mode panique coupé, un domaine autorisé ou retiré, les catégories du
+        // filtrage (l'assistant ne connaît pas les catégories actuelles), un compte autorisé à lire les données, et les
+        // réglages : la commande porte toute la configuration syslog et API (destination des journaux, API ouverte sur le
+        // réseau), dont l'assistant ne connaît pas l'état actuel. Décision pure, testée par tests\test-confirmations.ps1
         public static bool Affaiblit(Commande c)
         {
             if (c == null) return false;
@@ -908,8 +915,11 @@ namespace DeR4Tizer
                 case "apprentissage": return v == "recommencer";
                 case "config": return v != "true";
                 case "toutDebloquer": case "restaurer": case "restaurerRepli": return true;
+                case "exception": case "debloquer": case "reprendre": case "autoriserLecteur": case "reglages": return true;
+                case "filtrageAutoriser": case "filtrageRetirer": case "filtrageCategories": return true;
                 case "baseline": return v == "annuler";
                 case "filtrage": return v != "on";
+                case "panique": return v == "off";
                 default: return false;
             }
         }

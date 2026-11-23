@@ -993,12 +993,12 @@ fn audit_a_2_2_ecriture_d_un_bloc_sans_changer_les_droits() {
     // droits illisibles), réécriture en place qui garde les droits
     use crate::gpo::{ecrire_d_un_bloc, mode_ecriture, ModeEcriture};
     use crate::natif::{lire_securite, Ace, Securite};
-    let s = Securite { proprietaire: "S-1-5-32-544".into(), protege: false, aces: vec![Ace { autorise: true, masque: 0x1F01FF, sid: "S-1-5-18".into() }], ace_inconnue: false };
+    let s = Securite { proprietaire: "S-1-5-32-544".into(), protege: false, aces: vec![Ace { autorise: true, masque: 0x1F01FF, sid: "S-1-5-18".into(), heritage_seul: false }], ace_inconnue: false };
     assert_eq!(mode_ecriture(Some(&s), Some(&s.clone())), ModeEcriture::Remplacer);
     assert_eq!(mode_ecriture(None, Some(&s)), ModeEcriture::EnPlace, "droits de l'original illisibles");
     assert_eq!(mode_ecriture(Some(&s), None), ModeEcriture::EnPlace);
     let mut autre = s.clone();
-    autre.aces.push(Ace { autorise: true, masque: 0x1200A9, sid: "S-1-5-11".into() });
+    autre.aces.push(Ace { autorise: true, masque: 0x1200A9, sid: "S-1-5-11".into(), heritage_seul: false });
     assert_eq!(mode_ecriture(Some(&autre), Some(&s)), ModeEcriture::EnPlace, "DACL différente");
     let mut protege = s.clone();
     protege.protege = true;
@@ -2064,7 +2064,7 @@ fn securite(proprietaire: &str, protege: bool, aces: &[(bool, u32, &str)]) -> cr
     crate::natif::Securite {
         proprietaire: proprietaire.into(),
         protege,
-        aces: aces.iter().map(|&(autorise, masque, sid)| crate::natif::Ace { autorise, masque, sid: sid.into() }).collect(),
+        aces: aces.iter().map(|&(autorise, masque, sid)| crate::natif::Ace { autorise, masque, sid: sid.into(), heritage_seul: false }).collect(),
         ace_inconnue: false,
     }
 }
@@ -3312,6 +3312,16 @@ fn audit_b_2_01_cle_de_cache_infalsifiable() {
     assert_ne!(cle("C:\\x.exe", Some(&sans_usn), &|| Some("aa".into())), cle("C:\\x.exe", Some(&sans_usn), &|| Some("bb".into())), "même date, autre contenu");
     assert_eq!(cle("C:\\x.exe", Some(&sans_usn), &pas_d_empreinte), None, "ni USN ni empreinte : pas de cache");
     assert_eq!(cle("C:\\x.exe", None, &pas_d_empreinte), None);
+    assert_eq!(cle("C:\\x.exe", None, &|| Some("aa".into())), None, "identité illisible : pas de cache, même avec une empreinte");
+    // Relecture de #277 : repli sur l'empreinte borné à 64 Mo ; au-delà, pas de cache (et l'empreinte n'est pas calculée)
+    use crate::natif::TAILLE_MAX_EMPREINTE_CLE as max;
+    let calculee = std::cell::Cell::new(false);
+    let compter = || { calculee.set(true); Some("aa".to_string()) };
+    assert!(cle("C:\\x.exe", Some(&IdentiteFichier { taille: max, ..sans_usn.clone() }), &compter).is_some(), "64 Mo : empreinte");
+    calculee.set(false);
+    assert_eq!(cle("C:\\x.exe", Some(&IdentiteFichier { taille: max + 1, ..sans_usn.clone() }), &compter), None, "au-delà de 64 Mo : pas de cache");
+    assert!(!calculee.get(), "empreinte calculée pour un gros fichier");
+    assert_eq!(cle("C:\\x.exe", Some(&IdentiteFichier { taille: 1 << 40, usn: 5, ..sans_usn.clone() }), &compter).is_some(), true, "avec USN : taille sans effet");
     // Enregistrements USN : V2 (Usn à l'octet 24), V3 (octet 40), autre version ou trop court : 0
     let mut v2 = vec![0u8; 64];
     v2[4] = 2;
@@ -3338,13 +3348,15 @@ fn audit_b_2_01_cle_de_cache_infalsifiable() {
 #[test]
 fn audit_a_5_2_aucun_chemin_reseau_lu_en_systeme() {
     use crate::natif::lisible_en_systeme_avec as l;
-    // C: fixe, Z: lecteur réseau (mappé), E: amovible, Y: absent pour SYSTEM
-    let types = |r: &str| match r { "C:\\" => 3, "Z:\\" => 4, "E:\\" => 2, _ => 1 };
+    // C: fixe, E: amovible, D: CD-ROM, R: disque en mémoire (locaux, admis : relecture de #277) ; Z: lecteur réseau (mappé),
+    // X: type inconnu, Y: absent pour SYSTEM
+    let types = |r: &str| match r { "C:\\" => 3, "Z:\\" => 4, "E:\\" => 2, "D:\\" => 5, "R:\\" => 6, "X:\\" => 0, _ => 1 };
+    assert!(l(r"E:\outil.exe", &types) && l(r"D:\setup.exe", &types) && l(r"R:\outil.exe", &types), "lecteurs locaux non fixes admis");
     assert!(l(r"C:\Users\a\outil.exe", &types));
     assert!(l(r"c:\users\a\outil.exe", &types), "casse de la lettre");
     assert!(l(r"\\?\C:\Users\a\outil.exe", &types), "préfixe long d'un chemin local");
     for refuse in [r"\\hote\partage\outil.exe", r"\\hote@80\DavWWWRoot\outil.exe", r"\\hote@SSL@443\d\outil.exe", r"\\?\UNC\hote\p\outil.exe",
-                   r"\\.\C:\outil.exe", r"\??\C:\outil.exe", r"Z:\outil.exe", r"E:\outil.exe", r"Y:\outil.exe", "C:outil.exe", "C:", "",
+                   r"\\.\C:\outil.exe", r"\??\C:\outil.exe", r"Z:\outil.exe", r"X:\outil.exe", r"Y:\outil.exe", "C:outil.exe", "C:", "",
                    "/hote/partage/outil.exe", r"\outil.exe", r"\\?\Volume{0123}\outil.exe"] {
         assert!(!l(refuse, &types), "{refuse}");
     }
@@ -3360,7 +3372,40 @@ fn audit_a_5_2_aucun_chemin_reseau_lu_en_systeme() {
     assert_eq!(crate::natif::catalogue_a_echeance(r"\\?\UNC\192.0.2.1\p\outil.exe"), Ok(false));
     assert!(crate::natif::identite_fichier(r"\\192.0.2.1\p\outil.exe").is_none() && crate::natif::cle_signature(r"\\192.0.2.1\p\outil.exe").is_none());
     assert!(crate::reponse::origine(r"\\192.0.2.1\p\outil.exe").is_none());
+    // S277-03 : pilotes et quarantaine, refus clair sans accès
+    let e = crate::reponse::mettre_en_quarantaine(r"\\192.0.2.1\p\outil.exe", "essai").unwrap_err();
+    assert!(e.contains("lecteur local"), "{e}");
+    assert!(crate::hygiene::pilote_vulnerable(std::path::Path::new(r"\\192.0.2.1\p\pilote.sys")).is_none());
+    let connus: std::collections::HashSet<String> = ["00".repeat(32)].into();
+    assert!(crate::hygiene::pilotes_vulnerables(vec![r"\\192.0.2.1\p\pilote.sys".into()], &connus, &mut Default::default()).is_empty());
     assert!(t.elapsed() < std::time::Duration::from_secs(2), "aucune tentative de connexion");
+    let h = include_str!("hygiene.rs");
+    let d = h.find("fn pilotes_declares(").unwrap();
+    assert!(h[d..].find("lisible_en_systeme").unwrap() < h[d..].find("p.is_file()").unwrap(), "pilote déclaré testé avant tout accès");
+}
+
+/// Audit de #277, S277-04 : un lien (jonction, lien symbolique) dans le chemin n'est jamais traversé pour lire l'identité
+/// ni pour une lecture à échéance : il pourrait mener à un partage réseau. Jonction locale ici (un lien symbolique vers un
+/// partage demande un privilège que les tests n'ont pas)
+#[test]
+fn audit_s277_04_lien_du_chemin_jamais_traverse() {
+    let d = std::env::temp_dir().join(format!("d4t-s27704-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("vrai")).unwrap();
+    std::fs::write(d.join("vrai").join("outil.exe"), b"MZ essai").unwrap();
+    jonction(&d.join("j"), &d.join("vrai"));
+    let direct = d.join("vrai").join("outil.exe").to_string_lossy().to_string();
+    let par_lien = d.join("j").join("outil.exe").to_string_lossy().to_string();
+    assert!(crate::natif::identite_fichier(&direct).is_some());
+    assert!(crate::natif::identite_fichier(&par_lien).is_none(), "jonction traversée");
+    assert!(crate::natif::cle_signature(&par_lien).is_none());
+    let lance = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let l2 = lance.clone();
+    assert_eq!(crate::natif::lecture_fichier("essai lien", &par_lien, move || { l2.store(true, std::sync::atomic::Ordering::SeqCst); Some("x".into()) }), Ok(None));
+    assert!(!lance.load(std::sync::atomic::Ordering::SeqCst), "lecture lancée à travers le lien");
+    assert_eq!(crate::natif::lecture_fichier("essai direct", &direct, || Some("x".into())), Ok(Some("x".into())));
+    let _ = std::fs::remove_dir(d.join("j"));
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 /// Un seul fil bloqué à la fois ; la garde se libère quand il finit
@@ -7140,7 +7185,7 @@ fn relance_droits_sans_ecriture_de_tiers() {
     let complets = [SID_SYSTEME, SID_ADMINISTRATEURS];
     let s = |proprietaire: &str, aces: Vec<(&str, u32, bool)>, inconnue: bool| Securite {
         proprietaire: proprietaire.into(), protege: true, ace_inconnue: inconnue,
-        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise }).collect(),
+        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise, heritage_seul: false }).collect(),
     };
     let lecture = 0x1200a9;
     assert!(d(&s(SID_SYSTEME, vec![(SID_SYSTEME, 0x1f01ff, true), ("S-1-5-11", lecture, true)], false), &complets).is_ok());
@@ -7159,7 +7204,7 @@ fn audit_a_4_1_dossier_installation_protege() {
     use crate::protection::{installation_conforme as d, SID_ADMINISTRATEURS, SID_SYSTEME, SID_TRUSTED_INSTALLER};
     let s = |proprietaire: &str, aces: Vec<(&str, u32, bool)>, inconnue: bool| Securite {
         proprietaire: proprietaire.into(), protege: true, ace_inconnue: inconnue,
-        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise }).collect(),
+        aces: aces.into_iter().map(|(sid, masque, autorise)| Ace { sid: sid.into(), masque, autorise, heritage_seul: false }).collect(),
     };
     let (lecture, total) = (0x1200a9, 0x1f01ff);
     // Droits posés par le MSI : SYSTEM et administrateurs contrôle total, Utilisateurs lecture et exécution
@@ -7173,12 +7218,44 @@ fn audit_a_4_1_dossier_installation_protege() {
     assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-1-0", 0x4000_0000, true)], false)).is_err(), "Tout le monde en écriture générique");
     assert!(d(&s(SID_ADMINISTRATEURS, vec![("S-1-5-21-1-2-3-1001", total, false)], false)).is_ok(), "refus : sans effet");
     assert!(d(&s(SID_ADMINISTRATEURS, vec![], true)).is_err(), "entrée inconnue");
+    // S277-01 : dossiers parents, jusqu'à la racine du volume (renommer le dossier d'installation demande « supprimer un
+    // enfant » sur son parent) ; entrées héritables seulement ignorées
+    use crate::protection::parent_installation_conforme as pc;
+    let s2 = |proprietaire: &str, aces: Vec<(&str, u32, bool)>| Securite {
+        proprietaire: proprietaire.into(), protege: false, ace_inconnue: false,
+        aces: aces.into_iter().map(|(sid, masque, heritage_seul)| Ace { sid: sid.into(), masque, autorise: true, heritage_seul }).collect(),
+    };
+    let (modifier, ga, grge) = (0x1301bf, 0x1000_0000, 0xa000_0000);
+    let program_files = s2(SID_TRUSTED_INSTALLER, vec![(SID_TRUSTED_INSTALLER, total, false), (SID_TRUSTED_INSTALLER, ga, true), (SID_SYSTEME, modifier, false),
+        (SID_SYSTEME, ga, true), (SID_ADMINISTRATEURS, modifier, false), (SID_ADMINISTRATEURS, ga, true), ("S-1-5-32-545", lecture, false), ("S-1-5-32-545", grge, true),
+        ("S-1-3-0", ga, true), ("S-1-15-2-1", lecture, false), ("S-1-15-2-1", grge, true)]);
+    assert!(pc(&program_files, false).is_ok(), "Program Files hérité : conforme");
+    let racine = s2(SID_SYSTEME, vec![(SID_ADMINISTRATEURS, total, false), (SID_SYSTEME, total, false), ("S-1-5-32-545", lecture, false),
+        ("S-1-5-11", 0x4, false), ("S-1-5-11", modifier, true), ("S-1-3-0", ga, true)]);
+    assert!(pc(&racine, true).is_ok(), "racine C:\\ par défaut : conforme");
+    assert!(pc(&racine, false).is_err(), "création de dossiers tolérée sur la racine seulement");
+    let outils = s2(SID_ADMINISTRATEURS, vec![(SID_ADMINISTRATEURS, total, false), (SID_SYSTEME, total, false), ("S-1-5-11", modifier, false)]);
+    assert!(pc(&outils, false).is_err(), "C:\\Outils hérité de la racine : Modifier pour Utilisateurs authentifiés");
+    assert!(pc(&s2(SID_SYSTEME, vec![("S-1-5-11", 0x40, false)]), true).is_err(), "supprimer un enfant, même sur la racine");
+    for m in [0x1_0000, 0x4_0000, 0x8_0000, 0x4000_0000, 0x2] {
+        assert!(pc(&s2(SID_SYSTEME, vec![("S-1-5-32-545", m, false)]), false).is_err(), "masque {m:#x}");
+    }
+    assert!(pc(&s2("S-1-5-21-1-2-3-1001", vec![]), false).is_err(), "parent possédé par un compte standard : il peut réécrire les droits");
+    assert!(pc(&Securite { ace_inconnue: true, ..s2(SID_SYSTEME, vec![]) }, true).is_err(), "entrée inconnue");
+    // Sur ce poste (information) : racine et Program Files tels que Windows les rend
+    for (chemin, r) in [("C:\\", true), ("C:\\Program Files", false)] {
+        if let Some(s) = crate::natif::lire_securite(std::path::Path::new(chemin)) {
+            println!("{chemin} : {:?} ; propriétaire {}", pc(&s, r), s.proprietaire);
+        }
+    }
     let a = crate::protection::alerte_installation("écriture accordée à S-1-5-32-545");
     assert_eq!((a.regle.as_str(), a.niveau.as_str()), ("INT-003", "Critique"));
     // Branchements : relu au démarrage du fil de protection, et avant toute mise à jour (échec fermé)
     let p = include_str!("protection.rs");
     let i = p.find("pub fn demarrer(").unwrap();
     assert!(p[i..].find("verifier_installation()").unwrap() < p[i..].find("loop {").unwrap(), "relu avant la boucle");
+    let v = &p[p.find("pub fn verifier_installation(").unwrap()..];
+    assert!(v.contains("parent_installation_conforme(&s, racine)") && v.contains("securite_par_handle(p, true)?"), "parents relus par handle, échec fermé");
     let m = include_str!("maj.rs");
     let i = m.find("pub fn preparer_dossier_travail(").unwrap();
     assert!(m[i..].find("verifier_installation()").unwrap() < m[i..].find("creer_dossier_protege").unwrap(), "mise à jour refusée avant toute préparation");
@@ -10481,7 +10558,7 @@ fn s110_14_droits_compte_et_hotes_de_scripts() {
     // Décision du mainteneur du 2026-11-21 (S110-14, S113-10, S114-01, S114-02)
     use crate::natif::{Ace, Securite};
     use crate::politique::{chemins_a_controler, genre_suspension_garanti as g, ouvert_en_ecriture as o, Genre::*};
-    let ace = |sid: &str, masque: u32, autorise: bool| Ace { autorise, masque, sid: sid.into() };
+    let ace = |sid: &str, masque: u32, autorise: bool| Ace { autorise, masque, sid: sid.into(), heritage_seul: false };
     let sec = |aces: Vec<Ace>| Securite { proprietaire: "S-1-5-18".into(), protege: false, aces, ace_inconnue: false };
     // Droits : lecture seule pour Utilisateurs = fermé ; écriture pour Utilisateurs, Utilisateurs authentifiés, Tout le monde = ouvert
     assert!(!o(Some(&sec(vec![ace("S-1-5-32-545", 0x1200a9, true), ace("S-1-5-18", 0x1f01ff, true), ace("S-1-5-32-544", 0x1f01ff, true)]))));
@@ -10542,7 +10619,7 @@ fn s228_01_liste_d_acceptation_des_droits() {
     use crate::natif::{Ace, Securite};
     use crate::politique::ouvert_en_ecriture as o;
     let ti = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
-    let ace = |sid: &str, masque: u32| Ace { autorise: true, masque, sid: sid.into() };
+    let ace = |sid: &str, masque: u32| Ace { autorise: true, masque, sid: sid.into(), heritage_seul: false };
     let sec = |prop: &str, aces: Vec<Ace>| Securite { proprietaire: prop.into(), protege: false, aces, ace_inconnue: false };
     let defaut = vec![ace("S-1-5-18", 0x1f01ff), ace("S-1-5-32-544", 0x1f01ff), ace(ti, 0x1f01ff), ace("S-1-5-32-545", 0x1200a9), ace("S-1-3-0", 0x1000_0000), ace("S-1-15-2-1", 0x1200a9)];
     assert!(!o(Some(&sec(ti, defaut.clone()))), "Program Files par défaut : fermé");
