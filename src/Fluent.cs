@@ -4675,7 +4675,7 @@ namespace DeR4Tizer
         // Bouton actif = réglage en vigueur dans ce processus, jamais la valeur par défaut de config.json (constat T-13)
         void AfficherLangue()
         {
-            langue.Definir(L.Reglage, L.LireReglage(L.CheminReglage()));
+            langue.Definir(L.Reglage, ActionsReglages.LangueEnregistree());
             langueEtat.Text = ActionsReglages.TexteLangue();
         }
 
