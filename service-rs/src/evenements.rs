@@ -173,7 +173,14 @@ fn numero_extreme(canal: &str, dernier: bool) -> Option<u64> {
 /// suivant (`prochain_dernier`). Un journal illisible au départ (erreur passagère au démarrage du PC) est suivi quand
 /// même : le fil cherche son dernier numéro à chaque tour, et le suivi part de là. Rend false seulement si la requête
 /// est mal formée ou si le fil ne démarre pas.
-pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl FnMut(String) + Send + 'static) -> bool {
+pub fn abonner(canal: &str, requete: &str, collecte: Collecte, traiter: impl FnMut(String) + Send + 'static) -> bool {
+    abonner_avec_priorite(canal, requete, collecte, None, traiter)
+}
+
+/// `abonner`, avec la priorité du fil d'abonnement posée à son démarrage (audit du 2026-11-23, A-8-1 : fil des 4663 des
+/// leurres au-dessus de la normale) ; None : priorité normale
+pub fn abonner_avec_priorite(canal: &str, requete: &str, collecte: Collecte, priorite: Option<crate::natif::Priorite>,
+                             mut traiter: impl FnMut(String) + Send + 'static) -> bool {
     let Some(conditions) = requete.trim().strip_prefix("*[System[").and_then(|r| r.strip_suffix("]]")).map(String::from) else { return false };
     let mut depart = dernier_numero(canal);
     match depart {
@@ -186,9 +193,14 @@ pub fn abonner(canal: &str, requete: &str, collecte: Collecte, mut traiter: impl
     let mut perte: Option<(std::time::Instant, u64)> = None;
     // Désactivation du journal déjà écrite dans journal.txt (une ligne par épisode)
     let mut desactivation_signalee = false;
+    let mut priorite = priorite;
     std::thread::Builder::new()
         .name(format!("journal {canal}"))
         .spawn(move || loop {
+            // Priorité posée une fois, au premier tour, avant la première lecture
+            if let Some(p) = priorite.take() {
+                crate::natif::fil_priorite(p);
+            }
             std::thread::sleep(std::time::Duration::from_secs(2));
             let Some(n) = dernier_numero(&canal) else {
                 collectes::echec(collecte, &format!("journal {canal} illisible"));

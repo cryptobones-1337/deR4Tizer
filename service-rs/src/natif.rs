@@ -581,6 +581,36 @@ pub fn vider_cache_dns() {
     }
 }
 
+/// Priorité d'un fil du service (audit du 2026-11-23, A-8-1). Le processus reste en priorité normale ; les fils lourds et
+/// périodiques passent en arrière-plan (processeur, disque et mémoire à basse priorité), les fils de réponse au-dessus
+/// de la normale
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Priorite {
+    /// Mode arrière-plan (THREAD_MODE_BACKGROUND_BEGIN) : inventaires, téléchargements, baseline, pose d'audit
+    Arriere,
+    /// Au-dessus de la normale (THREAD_PRIORITY_ABOVE_NORMAL) : réponse aux leurres touchés, canal de commandes
+    Haute,
+}
+
+/// Règle la priorité du fil appelant (seul endroit du service qui le fait) ; false si Windows refuse, ce qui ne change
+/// rien au travail du fil
+pub fn fil_priorite(p: Priorite) -> bool {
+    // Aucun fil passé en arrière-plan ne fait ensuite autre chose : THREAD_MODE_BACKGROUND_END n'est pas utilisé
+    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN, THREAD_PRIORITY_ABOVE_NORMAL};
+    let niveau = match p {
+        Priorite::Arriere => THREAD_MODE_BACKGROUND_BEGIN,
+        Priorite::Haute => THREAD_PRIORITY_ABOVE_NORMAL,
+    };
+    unsafe { SetThreadPriority(GetCurrentThread(), niveau) }.is_ok()
+}
+
+/// Type d'un lecteur (GetDriveTypeW) d'après sa racine « X:\ » : 3 = DRIVE_FIXED, 2 amovible, 4 réseau, 5 CD, 6 disque
+/// virtuel en mémoire ; 0 ou 1 : inconnu ou absent
+pub fn type_lecteur(racine: &str) -> u32 {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    unsafe { GetDriveTypeW(PCWSTR(large(racine).as_ptr())) }
+}
+
 pub fn dossier_windows() -> String {
     std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())
 }

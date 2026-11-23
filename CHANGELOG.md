@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
+  from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
+  drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
+  variables and `..` are refused (default folder kept, refusal logged). When the user's registry is not loaded (not
+  signed in), the default folder is used as before. Creation failures are logged once and make the `Leurres` collection
+  partial; the health status publishes "n placed out of m expected" (new `Detail` field of the collection). A canary
+  left in a former folder stays watched while it exists and is removed on uninstall, as are canaries in redirected
+  folders. Not yet tried in a VM with a synced OneDrive folder.
+- Service priority (A-8-1): the service process now runs at normal priority instead of below normal; heavy periodic
+  threads (startup entries, Defender and baseline checks, threat lists, LOLDrivers download, sensitive-data audit) run
+  in background mode, and the canary event thread (4663) and the command pipe thread run above normal. The effect on
+  the delay between the canary event and the suspension under load is not measured.
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms
