@@ -377,7 +377,7 @@ fn creer_ecartes(q: &Path) -> Result<(), String> {
     if fs::symlink_metadata(q).is_ok() {
         return Ok(());
     }
-    let ok = if crate::natif::est_systeme() { crate::natif::creer_dossier_protege(q, SDDL_DOSSIER) } else { fs::create_dir(q).is_ok() };
+    let ok = if crate::natif::est_systeme() { crate::natif::creer_dossier_protege(q, SDDL_DOSSIER) } else { commun::creer_dossier(q).is_ok() };
     if ok { Ok(()) } else { Err(format!("création de {} impossible", q.display())) }
 }
 
@@ -554,7 +554,7 @@ fn prendre_racine(racine: &Path, messages: &mut Vec<String>) -> Result<(), Strin
 /// écrit dessous, le service réessaie chaque minute avant de démarrer la surveillance (main.rs)
 pub fn securiser() -> bool {
     if !crate::natif::est_systeme() {
-        let _ = fs::create_dir_all(commun::dossier());
+        let _ = crate::commun::creer_dossiers(commun::dossier());
         return true;
     }
     // Chaque essai est un démarrage : un échec d'un essai précédent ne survit pas à un essai réussi

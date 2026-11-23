@@ -417,7 +417,7 @@ fn ecrire_marque_handle(f: &fs::File, marque: &str) -> Result<(), String> {
 /// Copie protégée et ENCODÉE de `source` dans `dossier`, relue et décodée pour vérification. Renvoie
 /// l'empreinte du contenu d'origine
 fn copier_verifie(dossier: &Path, source: &mut dyn std::io::Read, fichier: &str, sddl: &str) -> Result<String, String> {
-    fs::create_dir_all(dossier).map_err(|e| e.to_string())?;
+    crate::commun::creer_dossiers(dossier).map_err(|e| e.to_string())?;
     let copie = dossier.join(fichier);
     let nonce = nonce_de(fichier);
     let sha = natif::copier_protege_depuis(source, &copie, sddl, &entete_encodage(&nonce), &mut |b, p| encoder_flux(&nonce, p, b))?;
@@ -594,7 +594,7 @@ pub fn creer_sans_lien(cible: &Path) -> Result<fs::File, String> {
         return Err(format!("{} : un élément du chemin est un lien ; restauration refusée", cible.display()));
     }
     if let Some(d) = cible.parent() {
-        fs::create_dir_all(d).map_err(|x| format!("dossier d'origine impossible à créer : {x}"))?;
+        crate::commun::creer_dossiers(d).map_err(|x| format!("dossier d'origine impossible à créer : {x}"))?;
     }
     natif::creer_verifie(cible).map_err(|x| format!("{} : {x} ; restauration refusée", cible.display()))
 }
@@ -653,7 +653,7 @@ pub fn preparer_dossier_repli(base: &Path, id: &str, sddl: &str, echec_protectio
         return Err("identifiant d'élément invalide".into());
     }
     if fs::symlink_metadata(base).is_err() {
-        fs::create_dir(base).map_err(|e| format!("{} impossible à créer : {e}", base.display()))?;
+        crate::commun::creer_dossier(base).map_err(|e| format!("{} impossible à créer : {e}", base.display()))?;
     }
     // READ_CONTROL | SYNCHRONIZE, tout partage
     natif::ouvrir_verifie(base, 0x0002_0000 | 0x0010_0000, 0x7, true).map_err(|e| format!("{} : {e} ; repli refusé", base.display()))?;
@@ -1396,7 +1396,7 @@ pub fn panique(activer: bool, epargnees: &[std::net::Ipv4Addr]) -> Result<String
                 }
             }
         }
-        activer_panique(&pf, &adresses.join(","), &|| fs::write(drapeau_panique(), commun::maintenant()).map_err(|e| format!("drapeau du mode panique non écrit : {e}")))
+        activer_panique(&pf, &adresses.join(","), &|| crate::commun::ecrire_fichier(drapeau_panique(), commun::maintenant()).map_err(|e| format!("drapeau du mode panique non écrit : {e}")))
             .map_err(|e| {
                 unsafe {
                     for profil in &desactives {

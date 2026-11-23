@@ -45,7 +45,7 @@ impl Persistance {
         // Premier démarrage du service Rust : on réapprend en silence (le relevé peut différer de détail de celui du C#)
         let marqueur = commun::dossier().join("demarrage-reference-rust");
         let apprentissage = sauvegarde.is_none() || !marqueur.exists();
-        let _ = fs::write(&marqueur, commun::maintenant());
+        let _ = crate::commun::ecrire_fichier(&marqueur, commun::maintenant());
         let reference = sauvegarde.unwrap_or_default().into_iter().map(|e| (e.cle.clone(), e)).collect();
         Persistance { reference, apprentissage, entrees: Vec::new(), incomplet: false, attente_taches: HashMap::new(), tours_taches: 0, bloque_depuis: None, en_attente: Default::default() }
     }

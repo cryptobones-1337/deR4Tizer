@@ -194,7 +194,7 @@ pub fn reponse(action: &str, cible: &str, ok: bool, message: &str, declencheur: 
 /// Lance l'écriture, la corrélation et l'abonnement aux journaux de Windows
 pub fn demarrer(alertes: Arc<Mutex<Vec<Alerte>>>, journaux_windows: bool) {
     let premiere_fois = !dossier().exists();
-    let _ = fs::create_dir_all(dossier());
+    let _ = crate::commun::creer_dossiers(dossier());
     let (tx, rx) = sync_channel(20_000);
     if FILE.set(Mutex::new(tx)).is_err() {
         return;
@@ -575,8 +575,8 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
         let jour: String = e.heure.chars().filter(|c| c.is_ascii_digit()).take(8).collect();
         if jour.len() == 8 {
             if fichier.as_ref().map(|(j, _, _)| j != &jour).unwrap_or(true) {
-                fichier = fs::OpenOptions::new().create(true).append(true)
-                    .open(dossier().join(format!("evenements-{jour}.ndjson"))).ok()
+                fichier = commun::ouvrir_pour_ecrire(fs::OpenOptions::new().create(true).append(true),
+                    dossier().join(format!("evenements-{jour}.ndjson"))).ok()
                     .map(|f| { let taille = f.metadata().map(|m| m.len()).unwrap_or(0); (jour.clone(), f, taille) });
             }
             if let Some((_, f, taille)) = fichier.as_mut() {

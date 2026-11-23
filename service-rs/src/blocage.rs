@@ -161,12 +161,12 @@ pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
         return Ok(());
     }
     let sauvegardes = commun::dossier().join("sauvegardes");
-    fs::create_dir_all(&sauvegardes)?;
+    crate::commun::creer_dossiers(&sauvegardes)?;
     if !original.is_empty() {
         // Fichier d'origine : gardé à part, hors rotation (sinon effacé après 20 écritures)
         let origine = sauvegardes.join("origine-hosts.bak");
         if !origine.exists() {
-            fs::write(&origine, &original)?;
+            crate::commun::ecrire_fichier(&origine, &original)?;
         }
         // Nom unique : deux écritures dans la même seconde ne s'écrasent pas
         let horodatage = commun::maintenant().replace([':', ' '], "-");
@@ -177,7 +177,7 @@ pub fn ecrire_bloc_hosts(domaines: &[String]) -> std::io::Result<()> {
             nom = sauvegardes.join(format!("hosts-{horodatage}-{n:02}.bak"));
             n += 1;
         }
-        fs::write(&nom, &original)?;
+        crate::commun::ecrire_fichier(&nom, &original)?;
         let mut anciennes: Vec<_> = fs::read_dir(&sauvegardes)?.filter_map(Result::ok)
             .filter(|e| e.file_name().to_string_lossy().starts_with("hosts-")).map(|e| e.path()).collect();
         anciennes.sort();

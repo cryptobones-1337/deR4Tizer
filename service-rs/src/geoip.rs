@@ -31,7 +31,7 @@ pub struct GeoIp {
 impl GeoIp {
     /// Télécharge les fichiers de plus de 7 jours (curl.exe, fourni par Windows)
     pub fn telecharger() {
-        let _ = fs::create_dir_all(dossier());
+        let _ = crate::commun::creer_dossiers(dossier());
         for (nom, url) in SOURCES {
             let f = dossier().join(format!("{nom}.txt"));
             let recent = fs::metadata(&f).and_then(|m| m.modified())

@@ -149,7 +149,7 @@ pub struct Moniteur {
 
 impl Moniteur {
     pub fn demarrer(console: bool) -> (Arc<Mutex<Moniteur>>, Arc<Partage>) {
-        let _ = fs::create_dir_all(commun::dossier().join("sauvegardes"));
+        let _ = crate::commun::creer_dossiers(commun::dossier().join("sauvegardes"));
         let partage = Arc::new(Partage {
             dns: Mutex::new(commun::lire_carte("dns.json").unwrap_or_default()),
             alertes_externes: Arc::new(Mutex::new(Vec::new())),
@@ -2771,7 +2771,7 @@ fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {
 fn demarrer_dns(partage: &Arc<Partage>) -> bool {
     let mut actif = evenements::journal_actif(JOURNAL_DNS).unwrap_or(false);
     if !actif && evenements::activer_journal(JOURNAL_DNS, true) {
-        let _ = fs::write(commun::dossier().join("journal-dns-active-par-deR4Tizer"), commun::maintenant());
+        let _ = crate::commun::ecrire_fichier(commun::dossier().join("journal-dns-active-par-deR4Tizer"), commun::maintenant());
         actif = true;
     }
     if !actif {

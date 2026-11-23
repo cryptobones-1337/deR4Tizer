@@ -841,8 +841,8 @@ fn curl(parametres: &str, corps: &[u8]) -> Result<(), String> {
     let n = commun::nouvel_id();
     let (f_param, f_corps) = (d.join(format!("curl-{n}.txt")), d.join(format!("corps-{n}.bin")));
     let r = (|| {
-        fs::write(&f_corps, corps).map_err(|e| e.to_string())?;
-        fs::write(&f_param, format!("{parametres}\nsilent\nshow-error\nfail\nmax-time = 30\nproto = \"=https,smtps,smtp\"\n")).map_err(|e| e.to_string())?;
+        crate::commun::ecrire_fichier(&f_corps, corps).map_err(|e| e.to_string())?;
+        crate::commun::ecrire_fichier(&f_param, format!("{parametres}\nsilent\nshow-error\nfail\nmax-time = 30\nproto = \"=https,smtps,smtp\"\n")).map_err(|e| e.to_string())?;
         // -q en premier : aucun fichier de réglages de curl lu (.curlrc), seulement le nôtre (-K)
         let sortie = Command::new(crate::natif::curl_exe())
             .arg("-q").arg("-K").arg(&f_param)
@@ -966,7 +966,7 @@ fn courriel_curl(parametres: &str, message: &[u8]) -> Result<(), String> {
     let d = dossier_secrets();
     let f = d.join(format!("curl-{}.txt", commun::nouvel_id()));
     let r = (|| {
-        fs::write(&f, format!("{parametres}\nsilent\nshow-error\nmax-time = 30\n")).map_err(|e| e.to_string())?;
+        crate::commun::ecrire_fichier(&f, format!("{parametres}\nsilent\nshow-error\nmax-time = 30\n")).map_err(|e| e.to_string())?;
         let mut enfant = Command::new(crate::natif::curl_exe())
             .arg("-q").arg("-K").arg(&f)
             .stdin(std::process::Stdio::piped())
