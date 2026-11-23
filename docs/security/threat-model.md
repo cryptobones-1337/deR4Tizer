@@ -44,17 +44,26 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
 - requêtes et réponses bornées (une question, tailles bornées, réponses aux noms bloqués construites, jamais recopiées
   au-delà de la question), sans panique possible : **tenu** (`dns_requete_bornee`, `dns_torturer`) ;
 - débit borné : 16 requêtes en cours dont 4 connexions TCP, 4 s en tout pour qu'une connexion TCP envoie sa requête
-  (S161-01). **Écart** : pas de file de 256 ; au-delà de la borne, la requête est ignorée et le client réessaie. Aucune
+  (S161-01), et 4 s en tout pour un échange TCP avec l'amont : un amont qui goutte un octet à la fois ne tient plus une
+  place (audit du 2026-11-23, C-6 ; `dns_relais_tcp_echeance_totale`). **Écart** : pas de file de 256 ; au-delà de la borne, la requête est ignorée et le client réessaie. Aucune
   résolution pour un autre hôte ;
 - réponses de l'amont acceptées seulement si l'amont, l'identifiant et la question correspondent, identifiant et port
   source aléatoires (port tiré dans la plage dynamique) : **tenu** (`dns_reponse_amont_mal_assortie_ignoree`,
-  `dns_port_source_dynamique`) ;
+  `dns_port_source_dynamique`) ; générateur aléatoire en échec : rien n'est relayé, jamais des valeurs nulles (audit du
+  2026-11-23, C-10 ; `dns_alea_echec_ferme`) ;
 - **préalables à l'activation (7.4)**, du même audit, **tenus** par `filtrage_cartes.rs` et le moniteur (test
   `activation_ordre_des_operations`, cas 3a « Filtrage activé (7.4) ») :
   - jamais de carte réglée sans la liaison exclusive : le résolveur démarre et répond au contrôle avant le réglage ;
   - cartes rendues avant de relâcher le port : désactivation (une carte non rendue garde le résolveur et son port),
     arrêt du service, désinstallation (`--nettoyer`) ; silence de l'amont : cartes rendues, port gardé, rebranchées par
-    une sonde toutes les 5 minutes ;
+    une sonde toutes les 5 minutes ; réglage en échec à l'activation et remise ratée elle aussi : port gardé (simple
+    relais) et remise en attente tant qu'une carte pointe sur la boucle locale (audit du 2026-11-23, B-3-01 ;
+    `activation_remise_ratee_garde_le_port`) ;
+  - seules les cartes Ethernet et Wi-Fi matérielles sont réglées : drapeaux HardwareInterface et ConnectorPresent lus
+    dans Windows (`GetIfEntry2`), jamais le nom ; lecture impossible : carte tenue pour virtuelle ; serveurs `fec0::/10`
+    et de lien local écartés des amonts et du secours (audit du 2026-11-23, T-9 et T-10 ;
+    `activation_cartes_virtuelles_ecartees`, `activation_amonts_sans_site_local`). Limite : hôte Hyper-V avec
+    commutateur externe, aucune carte réglable ;
   - contrôle au démarrage : le port est pris avant toute remise ou tout réglage ; cartes réglées seulement si le
     résolveur répond ; sinon rendues en tenant le port, et rebranchées par la sonde ; port relâché seulement quand
     aucune carte ne pointe plus sur la boucle locale (audit de #164, S164-01).
@@ -66,6 +75,17 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   d'origine en statique), mais s'il échoue aussi, le port est relâché avec la carte sur la boucle locale (S164-02).
   Écrit, non fermé ; depuis la PR 7.5a, ce cas au démarrage lève l'alerte critique DNS-003 avec le PID du programme
   qui tient le port ;
+- **suspension du filtrage** (audit du 2026-11-23, C-7) : le silence de l'amont (cartes rendues, filtrage suspendu
+  pour tout le poste) n'est plus déclaré sur les seules requêtes des clients, qu'un programme du poste choisit (par
+  exemple des noms dont le serveur ne répond jamais) : il faut 30 s sans réponse ET l'échec de la sonde du service (un
+  nom de la liste de protection, envoyé aux amonts). **Risque restant** : un attaquant qui coupe l'amont sur le réseau
+  suspend toujours le filtrage (dégradation ouverte voulue, le DNS du poste reste servi) ; un programme qui occupe les
+  16 places du résolveur retarde les réponses sans suspendre le filtrage (`dns_silence_confirme_par_la_sonde`) ;
+- **listes de domaines** (audit du 2026-11-23, C-4, C-11, C-12) : une copie de plus de 500 000 entrées n'est jamais
+  gardée ; le garde-fou d'écart de taille n'enferme plus une liste derrière une copie gonflée (refus levé après 3
+  téléchargements concordants à 10 % près, compte en mémoire, oublié au redémarrage du service) ; un fichier de plus de
+  32 Mo est refusé avant lecture ; un nom dont une étiquette est invalide est jugé comme son parent valide le plus long.
+  Une source compromise peut toujours remplacer une liste par une autre de taille voisine (pas de signature des listes) ;
 - **résolveur tiers** (PR 7.6) : Quad9 choisi, toutes les requêtes DNS non bloquées du poste lui sont envoyées (en
   clair : pas de DNS chiffré, 7.7 non faite), noms locaux et requêtes inverses d'adresses privées compris ; jamais par
   défaut, dit dans la confirmation et sur la page. La confirmation conseille de garder le résolveur du réseau sur un

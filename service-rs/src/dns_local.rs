@@ -1,7 +1,7 @@
 //! Résolveur local (phase 7, PR 7.3) : écoute UDP et TCP sur `127.0.0.1:53` et `[::1]:53` **seulement**, répond
 //! lui-même pour un nom bloqué par le filtrage (`filtrage.rs`) et relaie le reste vers l'amont. **Non branché sur les
 //! cartes** pendant un essai (commande `filtrageEssai`, 10 minutes au plus). En mode permanent (PR 7.4, activation du
-//! filtrage, `filtrage_cartes.rs`), les cartes physiques sont réglées sur lui ; quand l'amont se tait, les cartes sont
+//! filtrage, `filtrage_cartes.rs`), les cartes matérielles sont réglées sur lui ; quand l'amont se tait, les cartes sont
 //! rendues à leurs serveurs d'origine **sans relâcher le port** (préalable de l'audit de #161, S161-02), puis rebranchées
 //! dès qu'une sonde de l'amont répond.
 //!
@@ -11,13 +11,17 @@
 //!   `use-application-dns.net` : NXDOMAIN quand le filtrage est actif (D7-6 : Firefox ne passe pas de lui-même au DNS
 //!   chiffré).
 //! - Relayé : nouvel identifiant et nouveau port source aléatoires (`BCryptGenRandom`, port tiré dans la plage
-//!   dynamique 49152-65535 : relecture de #161, constat 1 ; MS08-037) ; réponse acceptée
+//!   dynamique 49152-65535 : relecture de #161, constat 1 ; MS08-037 ; générateur en échec : rien n'est relayé, C-10) ;
+//!   réponse acceptée
 //!   seulement si l'adresse de l'amont, l'identifiant et la question correspondent, puis rendue avec l'identifiant
 //!   d'origine. Pas de cache (le client DNS de Windows en a un). Réponse tronquée en UDP : rendue telle quelle, le client
-//!   réessaie en TCP auprès du résolveur, qui relaie alors en TCP. 2 s par amont, puis le suivant.
-//! - Amont : serveurs DNS des cartes physiques au lancement de l'essai (boucle locale exclue).
-//! - Dégradation ouverte : aucun amont ne répond pendant 30 s → l'essai s'arrête (le DNS du poste n'est jamais coupé :
-//!   les cartes ne sont pas réglées sur le résolveur).
+//!   réessaie en TCP auprès du résolveur, qui relaie alors en TCP. 2 s par amont, puis le suivant ; en TCP, 4 s en
+//!   tout pour l'échange avec un amont (C-6).
+//! - Amont : serveurs DNS des cartes matérielles au lancement de l'essai (`amonts` : ni boucle locale, ni `fec0::/10`,
+//!   ni lien local ; IPv4 d'abord).
+//! - Dégradation ouverte : aucun amont ne répond pendant 30 s, et la sonde du service (un nom de la liste de protection)
+//!   non plus → l'essai s'arrête (le DNS du poste n'est jamais coupé : les cartes ne sont pas réglées sur le
+//!   résolveur). Les seules requêtes des clients ne suffisent pas (C-7).
 //! - Bornes : 16 requêtes en cours, dont 4 connexions TCP au plus ; au-delà, la requête est ignorée (le client
 //!   réessaie). Une connexion TCP a 4 s en tout pour envoyer sa requête (audit de #161, S161-01). Ni PowerShell ni
 //!   verrou du moniteur sur le chemin d'une requête.
@@ -39,6 +43,8 @@ pub const MAX_EN_COURS: usize = 16;
 pub const MAX_TCP_EN_COURS: usize = 4;
 /// Échéance totale d'une connexion TCP pour envoyer sa requête, depuis l'acceptation
 const ECHEANCE_TCP: Duration = Duration::from_secs(4);
+/// Échéance totale d'un échange TCP avec un amont (connexion, envoi, réponse complète) : C-6
+pub const ECHEANCE_TCP_AMONT: Duration = Duration::from_secs(4);
 pub const DUREE_ESSAI: Duration = Duration::from_secs(600);
 /// Délai par amont
 const DELAI_AMONT: Duration = Duration::from_secs(2);
@@ -226,29 +232,45 @@ impl Sante {
         let debut = *self.premier_echec.get_or_insert(maintenant_s);
         maintenant_s.saturating_sub(debut) >= SILENCE_AMONT_S
     }
+
+    /// Seuil atteint par `noter` : le silence n'est déclaré que si la sonde propre du service (un nom de la liste de
+    /// protection, `sonder`) ne reçoit pas de réponse non plus (constat C-7 de l'audit du 2026-11-23 : les seules
+    /// requêtes des clients, qu'un programme du poste choisit, par exemple des noms dont le serveur ne répond jamais,
+    /// faisaient rendre les cartes et suspendre le filtrage pour tout le poste). Sonde répondue : fenêtre remise à zéro
+    pub fn confirmer(&mut self, sonde_repond: bool) -> bool {
+        if sonde_repond {
+            self.premier_echec = None;
+        }
+        !sonde_repond
+    }
 }
 
-/// Amonts : serveurs DNS des cartes physiques, sans la boucle locale ni doublon, 4 au plus (pur, testé)
+/// Amonts de l'essai : serveurs DNS des cartes réglables (`dns_surveillance::filtrable`), utilisables
+/// (`filtrage_cartes::amont_utilisable` : ni boucle locale, ni `fec0::/10`, ni lien local), sans doublon, IPv4 d'abord
+/// comme en mode permanent, 4 au plus (pur, testé ; T-9, T-10)
 pub fn amonts(cartes: &[crate::dns_surveillance::CarteDns]) -> Vec<IpAddr> {
     let mut l: Vec<IpAddr> = Vec::new();
-    for c in cartes.iter().filter(|c| crate::dns_surveillance::physique(c.type_carte)) {
-        for d in &c.dns {
-            // Une adresse IPv6 de lien local porte une zone (« %12 ») : écartée, l'amont IPv4 suffit à l'essai
-            if let Ok(ip) = d.parse::<IpAddr>() {
-                if !ip.is_loopback() && !ip.is_unspecified() && !l.contains(&ip) && l.len() < 4 {
-                    l.push(ip);
-                }
-            }
+    let tous = cartes.iter().filter(|c| crate::dns_surveillance::filtrable(c)).flat_map(|c| c.dns.iter()).filter_map(|d| d.parse::<IpAddr>().ok())
+        .filter(crate::filtrage_cartes::amont_utilisable).collect::<Vec<_>>();
+    for ip in tous.iter().filter(|i| i.is_ipv4()).chain(tous.iter().filter(|i| i.is_ipv6())) {
+        if !l.contains(ip) && l.len() < 4 {
+            l.push(*ip);
         }
     }
     l
 }
 
-fn identifiant_aleatoire() -> u16 {
+/// 16 bits aléatoires, seulement si le générateur a réussi (pur, testé ; constat C-10 de l'audit du 2026-11-23, comme
+/// `api::jeton_depuis_alea`) : None, et rien n'est relayé (échec fermé), plutôt qu'un identifiant et un port toujours nuls
+pub fn alea_u16(generateur_ok: bool, octets: [u8; 2]) -> Option<u16> {
+    generateur_ok.then(|| u16::from_ne_bytes(octets))
+}
+
+fn identifiant_aleatoire() -> Option<u16> {
     use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
     let mut o = [0u8; 2];
-    let _ = unsafe { BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut o, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
-    u16::from_ne_bytes(o)
+    let ok = unsafe { BCryptGenRandom(BCRYPT_ALG_HANDLE::default(), &mut o, BCRYPT_USE_SYSTEM_PREFERRED_RNG).is_ok() };
+    alea_u16(ok, o)
 }
 
 /// Port de la plage dynamique (49152-65535) tiré de 16 bits aléatoires (pur, testé)
@@ -261,7 +283,7 @@ pub fn port_dynamique(alea: u16) -> u16 {
 fn socket_amont(amont: IpAddr) -> Option<UdpSocket> {
     (0..8).find_map(|_| {
         let ip: IpAddr = if amont.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
-        UdpSocket::bind(SocketAddr::new(ip, port_dynamique(identifiant_aleatoire()))).ok()
+        UdpSocket::bind(SocketAddr::new(ip, port_dynamique(identifiant_aleatoire()?))).ok()
     })
 }
 
@@ -269,7 +291,7 @@ fn socket_amont(amont: IpAddr) -> Option<UdpSocket> {
 fn relayer_udp(paquet: &[u8], q: &Question, amont: IpAddr) -> Option<Vec<u8>> {
     let s = socket_amont(amont)?;
     let cible = SocketAddr::new(amont, 53);
-    let id = identifiant_aleatoire();
+    let id = identifiant_aleatoire()?;
     s.send_to(&avec_id(paquet, id), cible).ok()?;
     let fin = Instant::now() + DELAI_AMONT;
     let mut tampon = [0u8; MAX_TCP];
@@ -285,17 +307,29 @@ fn relayer_udp(paquet: &[u8], q: &Question, amont: IpAddr) -> Option<Vec<u8>> {
 
 /// Relais TCP vers un amont (requête reçue en TCP)
 fn relayer_tcp(paquet: &[u8], q: &Question, amont: IpAddr) -> Option<Vec<u8>> {
-    let mut s = TcpStream::connect_timeout(&SocketAddr::new(amont, 53), DELAI_AMONT).ok()?;
-    s.set_read_timeout(Some(DELAI_AMONT)).ok()?;
-    s.set_write_timeout(Some(DELAI_AMONT)).ok()?;
-    let id = identifiant_aleatoire();
+    relayer_tcp_vers(paquet, q, SocketAddr::new(amont, 53), ECHEANCE_TCP_AMONT)
+}
+
+/// Échange TCP avec un amont, en tout `duree` au plus depuis la connexion (constat C-6 de l'audit du 2026-11-23 : un
+/// délai par lecture laissait un amont qui envoie un octet toutes les 1,9 s tenir une des 4 places TCP pendant des
+/// heures). Même échéance totale que côté client (`lire_avant`)
+pub(crate) fn relayer_tcp_vers(paquet: &[u8], q: &Question, cible: SocketAddr, duree: Duration) -> Option<Vec<u8>> {
+    let echeance = Instant::now() + duree;
+    let reste = || echeance.checked_duration_since(Instant::now()).filter(|d| !d.is_zero());
+    let mut s = TcpStream::connect_timeout(&cible, reste()?.min(DELAI_AMONT)).ok()?;
+    s.set_write_timeout(Some(reste()?)).ok()?;
+    let id = identifiant_aleatoire()?;
     let p = avec_id(paquet, id);
     s.write_all(&(p.len() as u16).to_be_bytes()).ok()?;
     s.write_all(&p).ok()?;
     let mut l = [0u8; 2];
-    s.read_exact(&mut l).ok()?;
+    if !lire_avant(&mut s, &mut l, echeance) {
+        return None;
+    }
     let mut rep = vec![0u8; u16::from_be_bytes(l) as usize];
-    s.read_exact(&mut rep).ok()?;
+    if !lire_avant(&mut s, &mut rep, echeance) {
+        return None;
+    }
     reponse_assortie(&rep, id, &q.brute).then_some(rep)
 }
 
@@ -322,6 +356,8 @@ struct Essai {
     /// Silence de l'amont constaté (mode permanent) : cartes rendues à leurs serveurs d'origine, en attente de la sonde
     silence: AtomicBool,
     sur_silence: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Sonde de confirmation du silence en cours (C-7) : une seule à la fois
+    sonde_en_cours: AtomicBool,
 }
 
 static ESSAI: Mutex<Option<Arc<Essai>>> = Mutex::new(None);
@@ -340,12 +376,19 @@ impl Essai {
                     let amonts = self.amonts.read().unwrap().clone();
                     let rep = amonts.iter().find_map(|&a| if tcp { relayer_tcp(paquet, &r.question, a) } else { relayer_udp(paquet, &r.question, a) });
                     let maintenant = self.debut.elapsed().as_secs();
-                    if self.sante.lock().unwrap().noter(rep.is_some(), maintenant) {
+                    let seuil = self.sante.lock().unwrap().noter(rep.is_some(), maintenant);
+                    // Confirmation par la sonde du service (C-7), une seule à la fois, hors du verrou de la santé
+                    let silence = seuil && !self.sonde_en_cours.swap(true, Ordering::AcqRel) && {
+                        let repond = sonder(&amonts);
+                        self.sonde_en_cours.store(false, Ordering::Release);
+                        self.sante.lock().unwrap().confirmer(repond)
+                    };
+                    if silence {
                         if !self.permanent {
-                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s, essai arrêté (dégradation ouverte)");
+                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s, sonde du service comprise ; essai arrêté (dégradation ouverte)");
                             self.arret.store(true, Ordering::Relaxed);
                         } else if !self.silence.swap(true, Ordering::AcqRel) {
-                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s ; cartes rendues à leurs serveurs d'origine, port gardé (dégradation ouverte)");
+                            crate::commun::journal("résolveur local : aucun amont ne répond depuis 30 s, sonde du service comprise ; cartes rendues à leurs serveurs d'origine, port gardé (dégradation ouverte)");
                             if let Some(f) = &self.sur_silence {
                                 f();
                             }
@@ -601,14 +644,16 @@ pub fn requete(id: u16, nom: &str, type_: u16) -> Vec<u8> {
 
 /// Sonde : un des amonts répond-il à une requête d'un nom de la liste de protection ?
 pub fn sonder(amonts: &[IpAddr]) -> bool {
-    let p = requete(identifiant_aleatoire(), "www.msftconnecttest.com", TYPE_A);
+    let Some(id) = identifiant_aleatoire() else { return false };
+    let p = requete(id, "www.msftconnecttest.com", TYPE_A);
     let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return false };
     amonts.iter().any(|&a| relayer_udp(&p, &r.question, a).is_some())
 }
 
 /// Le résolveur local répond-il sur 127.0.0.1 ? (contrôle avant de régler les cartes)
 pub fn repond_localement() -> bool {
-    let p = requete(identifiant_aleatoire(), "www.msftconnecttest.com", TYPE_A);
+    let Some(id) = identifiant_aleatoire() else { return false };
+    let p = requete(id, "www.msftconnecttest.com", TYPE_A);
     let Lecture::Requete(r) = lire_requete(&p, MAX_UDP) else { return false };
     let Ok(s) = UdpSocket::bind("127.0.0.1:0") else { return false };
     let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
@@ -651,7 +696,7 @@ fn demarrer(filtrage_actif: bool, juge: Juge, amonts: Vec<IpAddr>, sur_silence: 
         arret: AtomicBool::new(false), en_cours: AtomicUsize::new(0), tcp_en_cours: AtomicUsize::new(0), fils: AtomicUsize::new(0),
         filtrage_actif: AtomicBool::new(filtrage_actif), juge, amonts: std::sync::RwLock::new(amonts.clone()),
         sante: Mutex::new(Sante::default()), debut: Instant::now(), bloquees: AtomicUsize::new(0), relayees: AtomicUsize::new(0),
-        permanent, silence: AtomicBool::new(false), sur_silence,
+        permanent, silence: AtomicBool::new(false), sur_silence, sonde_en_cours: AtomicBool::new(false),
     });
     let mut lances = true;
     for u in [u4, u6] {

@@ -5129,7 +5129,7 @@ fn carte_dns(id: &str, type_carte: u32, passerelle: &str, dns: &[&str], statique
     crate::dns_surveillance::CarteDns {
         id: id.into(), nom: format!("carte {id}"), type_carte,
         passerelles: if passerelle.is_empty() { vec![] } else { vec![passerelle.into()] },
-        dns: dns.iter().map(|s| s.to_string()).collect(), statique,
+        dns: dns.iter().map(|s| s.to_string()).collect(), statique, materielle: true,
     }
 }
 
@@ -9153,6 +9153,32 @@ fn filtrage_parent_bloque() {
     assert_eq!(crate::filtrage::noms_a_chercher("a.b.pub.test"), vec!["a.b.pub.test", "b.pub.test", "pub.test"]);
 }
 
+/// Constat C-12 (audit du 2026-11-23) : un nom dont une étiquette est refusée par `nom_domaine_valide` est jugé comme
+/// son parent valide le plus long : le domaine bloqué le reste, la protection et les autorisations aussi ; sans parent
+/// valide, relayé
+#[test]
+fn filtrage_etiquette_invalide_parent_bloque() {
+    use crate::filtrage::{parent_valide, Categorie, Filtrage, Verdict};
+    let mut f = Filtrage::nouveau(&[]);
+    let l = liste_filtrage("||pub.test^
+", &f);
+    assert!(f.ajouter("Essai", Categorie::Publicite, l));
+    f.autoriser(&["ok.pub.test".to_string()]);
+    let bloque = Verdict::Bloque { categorie: Categorie::Publicite, liste: "Essai".into() };
+    let juge = |n: &str| f.decider(n, &[Categorie::Publicite]);
+    for nom in ["x!y.pub.test", "a\u{FFFD}b.pub.test", "-a.pub.test", "a-.b.pub.test", "a*.pub.test"] {
+        assert_eq!(juge(nom), bloque, "{nom:?}");
+    }
+    assert_eq!(juge(&format!("{}.pub.test", "x".repeat(64))), bloque, "étiquette de plus de 63 caractères");
+    assert_eq!(juge("x!.ok.pub.test"), Verdict::Autorise, "autorisation du parent");
+    assert_eq!(juge("x!.www.msftconnecttest.com"), Verdict::Protege, "protection du parent");
+    assert_eq!(juge("x!.autre.test"), Verdict::Relaye);
+    assert_eq!(juge("pub.t!st"), Verdict::Relaye, "aucun parent valide");
+    assert_eq!(juge("x!.co.uk"), Verdict::Relaye, "suffixe public seul : jamais un domaine");
+    assert_eq!(parent_valide("x!y.a.pub.test").as_deref(), Some("a.pub.test"), "le plus long");
+    assert_eq!(parent_valide("pub.test"), None, "nom sans parent de deux étiquettes");
+}
+
 /// Liste de protection : jamais bloquée, sous-domaines compris, même présente dans une liste (ignorée et comptée) ;
 /// hôtes de la configuration (remontée, mise à jour) protégés aussi
 #[test]
@@ -9225,15 +9251,72 @@ fn filtrage_adblock_sous_ensemble() {
 /// précédente gardée
 #[test]
 fn filtrage_liste_effondree_refusee() {
-    use crate::filtrage::remplacement_admis;
-    assert!(!remplacement_admis(1000, 499), "effondrée");
-    assert!(remplacement_admis(1000, 500));
-    assert!(remplacement_admis(1000, 2000));
-    assert!(!remplacement_admis(1000, 2001), "explosée");
-    assert!(!remplacement_admis(1000, 0), "vide");
-    assert!(!remplacement_admis(0, 0), "vide sans copie précédente");
-    assert!(remplacement_admis(0, 5), "première copie");
-    assert!(remplacement_admis(usize::MAX, usize::MAX), "pas de débordement");
+    use crate::filtrage::{remplacement_admis, MAX_ENTREES_LISTE};
+    assert!(!remplacement_admis(1000, 499, &[]), "effondrée");
+    assert!(remplacement_admis(1000, 500, &[]));
+    assert!(remplacement_admis(1000, 2000, &[]));
+    assert!(!remplacement_admis(1000, 2001, &[]), "explosée");
+    assert!(!remplacement_admis(1000, 0, &[]), "vide");
+    assert!(!remplacement_admis(0, 0, &[]), "vide sans copie précédente");
+    assert!(remplacement_admis(0, 5, &[]), "première copie");
+    assert!(remplacement_admis(MAX_ENTREES_LISTE, MAX_ENTREES_LISTE, &[]), "au plafond");
+    assert!(!remplacement_admis(usize::MAX, usize::MAX, &[usize::MAX, usize::MAX]), "pas de débordement, plafond");
+}
+
+/// Constat C-4 (audit du 2026-11-23) : le garde-fou n'est plus à sens unique. Plafond fixe vérifié avant de garder une
+/// copie, premier téléchargement compris ; une copie gonflée admise n'enferme plus la liste : la liste saine est admise
+/// après `CONCORDANTS` téléchargements refusés de suite qui donnent la même taille (à 10 % près), jamais sur des
+/// tailles qui divergent
+#[test]
+fn filtrage_garde_fou_liste_gonflee() {
+    use crate::filtrage::{remplacement_admis, CONCORDANTS, MAX_ENTREES_LISTE};
+    assert_eq!(CONCORDANTS, 3);
+    assert!(!remplacement_admis(0, MAX_ENTREES_LISTE + 1, &[]), "premier téléchargement gonflé : refusé");
+    assert!(!remplacement_admis(MAX_ENTREES_LISTE, MAX_ENTREES_LISTE + 1, &[MAX_ENTREES_LISTE + 1; 3]), "au-delà du plafond : jamais");
+    // Copie gardée gonflée (4000), liste saine (1000) : refusée deux fois, admise à la troisième
+    assert!(!remplacement_admis(4000, 1000, &[]));
+    assert!(!remplacement_admis(4000, 1010, &[1000]));
+    assert!(remplacement_admis(4000, 990, &[1000, 1010]), "trois téléchargements concordants");
+    assert!(remplacement_admis(4000, 990, &[3000, 1000, 1010]), "les deux derniers refus comptent");
+    // Tailles qui divergent : toujours refusée
+    assert!(!remplacement_admis(4000, 1000, &[1000, 1500]));
+    assert!(!remplacement_admis(4000, 1000, &[700, 1000]));
+    assert!(!remplacement_admis(1000, 5000, &[2600]), "un seul refus ne suffit pas");
+    assert!(remplacement_admis(1000, 5000, &[5200, 4800]), "source vraiment agrandie : admise après trois téléchargements");
+    // État des refus : oublié à la première copie admise, trois tailles au plus
+    let src = include_str!("filtrage.rs");
+    let t = &src[src.find("pub fn telecharger(").unwrap()..];
+    let admis = &t[t.find("if remplacement_admis(ancienne, nouvelle, &refusees_de(s.nom))").expect("refus passés")..];
+    assert!(admis.find("oublier_refus(s.nom)").unwrap() < admis.find("} else {").unwrap(), "refus oubliés à l'admission");
+    assert!(admis.contains("noter_refus(s.nom, nouvelle)"));
+}
+
+/// Constat C-11 (audit du 2026-11-23) : la taille d'un fichier de liste est contrôlée avant de le lire en entier (copie
+/// téléchargée comme copie gardée) ; curl seul ne borne pas un envoi sans longueur annoncée
+#[test]
+fn filtrage_taille_controlee_avant_lecture() {
+    use crate::filtrage::{lire_liste_bornee, taille_admise, MAX_OCTETS};
+    assert!(taille_admise(MAX_OCTETS) && taille_admise(0) && !taille_admise(MAX_OCTETS + 1) && !taille_admise(u64::MAX));
+    let d = std::env::temp_dir().join(format!("d4t-c11-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&d);
+    let petit = d.join("petit.txt");
+    std::fs::write(&petit, "||pub.test^
+").unwrap();
+    assert_eq!(lire_liste_bornee(&petit).as_deref(), Some("||pub.test^
+"), "témoin retenu");
+    let gros = d.join("gros.txt");
+    std::fs::File::create(&gros).unwrap().set_len(MAX_OCTETS + 1).unwrap();
+    assert_eq!(lire_liste_bornee(&gros), None, "témoin écarté sans être lu");
+    assert_eq!(lire_liste_bornee(&d.join("absent.txt")), None, "lecture impossible");
+    let _ = std::fs::remove_dir_all(&d);
+    let src = include_str!("filtrage.rs");
+    let corps = &src[src.find("pub(crate) fn lire_liste_bornee(").unwrap()..];
+    assert!(corps.find("taille_admise(").unwrap() < corps.find("lire_fichier_proprietaire(").unwrap(), "taille avant lecture");
+    for f in ["fn entrees_du_fichier(", "pub fn charger("] {
+        let c = &src[src.find(f).unwrap()..];
+        let c = &c[..c.find("\n}").unwrap_or(c.len())];
+        assert!(c.contains("lire_liste_bornee(") && !c.contains("lire_fichier_proprietaire("), "{f}");
+    }
 }
 
 /// Total borné : une liste qui ferait dépasser `MAX_ENTREES` n'est pas chargée (rien n'est tronqué)
@@ -9321,6 +9404,11 @@ fn filtrage_torturer() {
         }
         let _ = crate::filtrage::lire_liste(t, f.protection());
         let _ = crate::filtrage::noms_a_chercher(t);
+        let _ = f.decider(t, &[crate::filtrage::Categorie::Publicite]);
+    });
+    // C-12 : parent d'un nom invalide
+    torturer_texte("x!\u{FFFD}.a-.b.pub.test.", &mut |t| {
+        let _ = crate::filtrage::parent_valide(t);
         let _ = f.decider(t, &[crate::filtrage::Categorie::Publicite]);
     });
 }
@@ -9473,7 +9561,7 @@ fn activation_valeurs_reglees() {
 fn activation_origine_des_cartes() {
     use crate::dns_surveillance::CarteDns;
     use crate::filtrage_cartes::origine_de;
-    let carte = |id: &str, t: u32, dns: &[&str]| CarteDns { id: id.into(), nom: id.into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let carte = |id: &str, t: u32, dns: &[&str]| CarteDns { id: id.into(), nom: id.into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), materielle: true, ..Default::default() };
     let ns = |pile: &str, id: &str| if pile == "Tcpip" && id == "{S}" { "192.0.2.53".to_string() } else { String::new() };
     let o = origine_de(&[
         carte("{D}", 6, &["192.0.2.1", "127.0.0.1", "fe80::1%12", "2001:db8::1", "::1", "0.0.0.0"]),
@@ -9484,6 +9572,93 @@ fn activation_origine_des_cartes() {
     assert_eq!(o.len(), 2, "carte virtuelle et carte sans identifiant écartées");
     assert_eq!((o[0].ns4.as_str(), o[0].dns4.clone(), o[0].dns6.clone()), ("", vec!["192.0.2.1".to_string()], vec!["2001:db8::1".to_string()]));
     assert_eq!((o[1].ns4.as_str(), o[1].dns4.len()), ("192.0.2.53", 3));
+}
+
+/// Constat T-9 (audit du 2026-11-23) : les cartes virtuelles de type Ethernet (commutateurs Hyper-V « vEthernet », WSL,
+/// Docker, TAP des VPN) ne sont jamais réglées. Critère lu dans Windows (HardwareInterface ET ConnectorPresent de
+/// MIB_IF_ROW2), jamais le nom ; lecture impossible : carte tenue pour virtuelle. Liste publiée avant l'activation par le
+/// même relevé qu'elle
+#[test]
+fn activation_cartes_virtuelles_ecartees() {
+    use crate::dns_surveillance::{filtrable, materielle_selon, CarteDns};
+    assert!(materielle_selon(0b0000_0101), "carte matérielle avec connecteur");
+    assert!(materielle_selon(0xFF));
+    assert!(!materielle_selon(0b0000_0001), "HardwareInterface seul");
+    assert!(!materielle_selon(0b0000_0100), "ConnectorPresent seul");
+    assert!(!materielle_selon(0), "vEthernet, TAP : aucun des deux");
+    assert!(!materielle_selon(0b1111_1010));
+    let carte = |id: &str, nom: &str, t: u32, m: bool| CarteDns { id: id.into(), nom: nom.into(), type_carte: t, materielle: m, dns: vec!["192.0.2.1".into()], ..Default::default() };
+    let cartes = [
+        carte("{P}", "Ethernet", 6, true),
+        carte("{V}", "vEthernet (Default Switch)", 6, false),
+        carte("{A}", "Ethernet 2", 6, false),
+        carte("{W}", "Wi-Fi", 71, true),
+        carte("{T}", "Tunnel", 131, true),
+        carte("", "Ethernet 3", 6, true),
+    ];
+    assert_eq!(cartes.iter().filter(|c| filtrable(c)).map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["{P}", "{W}"]);
+    let o = crate::filtrage_cartes::origine_de(&cartes, &|_: &str, _: &str| String::new());
+    assert_eq!(o.iter().map(|c| c.nom.as_str()).collect::<Vec<_>>(), vec!["Ethernet", "Wi-Fi"], "le nom ne décide rien");
+    assert_eq!(crate::dns_local::amonts(&[carte("{V}", "Ethernet", 6, false)]), Vec::<std::net::IpAddr>::new(), "essai : carte virtuelle écartée");
+    let s = include_str!("dns_surveillance.rs");
+    let r = &s[s.find("pub fn releve()").unwrap()..];
+    assert!(r.contains("drapeaux_interface((*a).Luid).is_some_and(materielle_selon)"), "lu dans Windows, échec : virtuelle");
+    let m = include_str!("moniteur.rs");
+    let e = &m[m.find("fn etat_filtrage(").unwrap()..];
+    let e = &e[..e.find("\n}\n").or_else(|| e.find("\r\n}\r\n")).unwrap()];
+    assert!(e.contains("cartes_a_regler") && e.contains("fc::releve_origine()"), "liste publiée par le relevé de l'activation");
+    let a = &m[m.find("fn activer_filtrage(").unwrap()..];
+    assert!(a.contains("fc::releve_origine()"));
+}
+
+/// Constat T-10 (audit du 2026-11-23) : les adresses site-local par défaut de Windows (`fec0:0:0:ffff::1`, `::2`, `::3`,
+/// et tout `fec0::/10`) et le lien local sans zone ne sont ni amonts ni secours ; l'essai essaie l'IPv4 d'abord, comme
+/// le mode permanent ; une origine enregistrée avant la correction n'en garde rien au réglage
+#[test]
+fn activation_amonts_sans_site_local() {
+    use crate::dns_surveillance::CarteDns;
+    use crate::filtrage_cartes::{amont_utilisable, origine_de, valeurs_activees};
+    let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+    for non in ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3", "feff::1", "fe80::1", "febf::1", "::1", "::", "127.0.0.1", "0.0.0.0", "ff02::fb", "224.0.0.251", "255.255.255.255"] {
+        assert!(!amont_utilisable(&ip(non)), "{non}");
+    }
+    for oui in ["192.168.1.254", "2001:db8::53", "fd00::53", "fc00::1"] {
+        assert!(amont_utilisable(&ip(oui)), "{oui}");
+    }
+    let c = CarteDns { id: "{P}".into(), nom: "Ethernet".into(), type_carte: 6, materielle: true,
+        dns: ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3", "192.168.1.254"].iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let o = origine_de(std::slice::from_ref(&c), &|_: &str, _: &str| String::new());
+    assert_eq!((o[0].dns4.clone(), o[0].dns6.clone()), (vec!["192.168.1.254".to_string()], Vec::<String>::new()));
+    assert_eq!(valeurs_activees(&o[0]), ("127.0.0.1,192.168.1.254".to_string(), "::1".to_string()));
+    assert_eq!(crate::dns_local::amonts(std::slice::from_ref(&c)), vec![ip("192.168.1.254")]);
+    let ancienne = origine_essai(&["192.168.1.254"], &["fec0:0:0:ffff::1", "2001:db8::53"]);
+    assert_eq!(valeurs_activees(&ancienne).1, "::1,2001:db8::53", "origine enregistrée avant la correction");
+    let mixte = CarteDns { dns: ["2001:db8::53", "fec0:0:0:ffff::1", "192.0.2.53"].iter().map(|s| s.to_string()).collect(), ..c };
+    assert_eq!(crate::dns_local::amonts(&[mixte]), vec![ip("192.0.2.53"), ip("2001:db8::53")], "IPv4 d'abord");
+    let m = include_str!("moniteur.rs");
+    let a = &m[m.find("fn amonts_origine(").unwrap()..];
+    assert!(a[..a.find("\n}").unwrap()].contains("amont_utilisable"), "mode permanent : même filtre");
+}
+
+/// Constat B-3-01 (audit du 2026-11-23) : réglage des cartes en échec à l'activation et remise ratée elle aussi : tant
+/// qu'une carte pointe sur la boucle locale, le résolveur garde le port (simple relais) et la remise est mise en attente,
+/// jamais « cartes rendues » ; sinon tout est rendu
+#[test]
+fn activation_remise_ratee_garde_le_port() {
+    use crate::filtrage_cartes::apres_echec_reglage;
+    let (garder, m) = apres_echec_reglage(&["Ethernet".to_string()], "refus de l'API");
+    assert!(garder);
+    assert!(m.contains("remise incomplète") && m.contains("Ethernet") && m.contains("garde le port 53") && m.contains("refus de l'API") && !m.contains("cartes rendues"), "{m}");
+    let (garder, m) = apres_echec_reglage(&[], "refus de l'API");
+    assert!(!garder);
+    assert_eq!(m, "Réglage des cartes en échec, cartes rendues : refus de l'API");
+    let src = include_str!("moniteur.rs");
+    let act = &src[src.find("fn activer_filtrage(").unwrap()..];
+    let echec = &act[act.find("if let Err(e) = fc::appliquer_toutes(&origine)").unwrap()..];
+    let echec = &echec[..echec.find("return Err(m);").expect("message de la décision")];
+    assert!(echec.find("encore_sur_la_boucle").unwrap() < echec.find("apres_echec_reglage").unwrap());
+    let garde = &echec[echec.find("if garder {").unwrap()..echec.find("} else {").unwrap()];
+    assert!(garde.contains("RESTAURATION_EN_ATTENTE.store(true") && !garde.contains("arreter_permanent") && !garde.contains("effacer_origine"), "port et origine gardés");
 }
 
 /// Une carte déjà réglée sur le résolveur local n'est jamais enregistrée comme origine (on la rendrait au résolveur)
@@ -9729,18 +9904,84 @@ fn dns_port_source_dynamique() {
     assert!((0..=u16::MAX).all(|a| port_dynamique(a) >= 49152));
 }
 
-/// Amonts : serveurs des cartes physiques, sans boucle locale, sans doublon, 4 au plus ; carte virtuelle écartée
+/// Amonts : serveurs des cartes physiques, sans boucle locale, sans doublon, IPv4 d'abord, 4 au plus ; carte
+/// virtuelle écartée
 #[test]
 fn dns_amonts_des_cartes_physiques() {
     use crate::dns_surveillance::CarteDns;
-    let carte = |t: u32, dns: &[&str]| CarteDns { id: "{A}".into(), nom: "n".into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let carte = |t: u32, dns: &[&str]| CarteDns { id: "{A}".into(), nom: "n".into(), type_carte: t, dns: dns.iter().map(|s| s.to_string()).collect(), materielle: true, ..Default::default() };
     let l = crate::dns_local::amonts(&[
         carte(6, &["192.0.2.53", "127.0.0.1", "::1", "192.0.2.53", "fe80::1%12"]),
         carte(131, &["198.51.100.1"]),
-        carte(71, &["2001:db8::53", "198.51.100.2", "198.51.100.3", "198.51.100.4"]),
+        carte(71, &["2001:db8::53", "198.51.100.2", "198.51.100.3"]),
     ]);
-    let attendu: Vec<std::net::IpAddr> = ["192.0.2.53", "2001:db8::53", "198.51.100.2", "198.51.100.3"].iter().map(|s| s.parse().unwrap()).collect();
+    let attendu: Vec<std::net::IpAddr> = ["192.0.2.53", "198.51.100.2", "198.51.100.3", "2001:db8::53"].iter().map(|s| s.parse().unwrap()).collect();
     assert_eq!(l, attendu);
+}
+
+/// Constat C-10 (audit du 2026-11-23) : générateur aléatoire en échec → aucun identifiant ni port, rien n'est relayé
+/// (échec fermé, comme `api::jeton_depuis_alea`) ; jamais des valeurs nulles
+#[test]
+fn dns_alea_echec_ferme() {
+    use crate::dns_local::alea_u16;
+    assert_eq!(alea_u16(false, [0, 0]), None);
+    assert_eq!(alea_u16(false, [0x12, 0x34]), None);
+    assert_eq!(alea_u16(true, [0x12, 0x34]), Some(u16::from_ne_bytes([0x12, 0x34])));
+    assert_eq!(alea_u16(true, [0, 0]), Some(0), "un tirage nul reste un tirage");
+    let s = include_str!("dns_local.rs");
+    let f = &s[s.find("fn identifiant_aleatoire() -> Option<u16>").expect("identifiant optionnel")..];
+    assert!(f[..f.find("\n}").unwrap()].contains(".is_ok()"), "statut du générateur lu");
+    for appel in ["port_dynamique(identifiant_aleatoire()?)", "let id = identifiant_aleatoire()?;", "let Some(id) = identifiant_aleatoire() else { return false };"] {
+        assert!(s.contains(appel), "{appel}");
+    }
+}
+
+/// Constat C-6 (audit du 2026-11-23) : relais TCP vers un amont borné par une échéance totale ; un amont qui goutte un
+/// octet à la fois (sous le délai par lecture) ne tient plus sa place au-delà
+#[test]
+fn dns_relais_tcp_echeance_totale() {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let cible = l.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut c, _)) = l.accept() {
+            let mut t = [0u8; 512];
+            let _ = c.read(&mut t);
+            // Longueur annoncée 200, puis un octet toutes les 300 ms : 60 s sans échéance totale
+            for o in [0u8, 200].into_iter().chain(std::iter::repeat(0u8)) {
+                if c.write_all(&[o]).is_err() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+        }
+    });
+    let p = requete_dns(5, "lent.test", 1);
+    let r = requete_lue(&p);
+    let debut = std::time::Instant::now();
+    assert_eq!(crate::dns_local::relayer_tcp_vers(&p, &r.question, cible, crate::dns_local::ECHEANCE_TCP_AMONT), None);
+    let duree = debut.elapsed();
+    assert!(duree < crate::dns_local::ECHEANCE_TCP_AMONT + std::time::Duration::from_secs(2), "échéance totale tenue : {duree:?}");
+}
+
+/// Constat C-7 (audit du 2026-11-23) : 30 s d'échecs sur les seules requêtes des clients ne déclarent pas le silence ;
+/// il faut que la sonde du service échoue aussi. Sonde répondue : fenêtre remise à zéro
+#[test]
+fn dns_silence_confirme_par_la_sonde() {
+    let mut s = crate::dns_local::Sante::default();
+    assert!(!s.noter(false, 100));
+    assert!(s.noter(false, 130), "seuil atteint");
+    assert!(!s.confirmer(true), "sonde répondue : pas de silence");
+    assert!(!s.noter(false, 131), "fenêtre remise à zéro");
+    assert!(!s.noter(false, 160));
+    assert!(s.noter(false, 161));
+    assert!(s.confirmer(false), "sonde muette aussi : silence");
+    let src = include_str!("dns_local.rs");
+    let r = &src[src.find("fn repondre(").unwrap()..];
+    let r = &r[..r.find("fn prendre(").unwrap()];
+    assert!(r.find("sonder(&amonts)").unwrap() < r.find(".confirmer(repond)").unwrap());
+    assert!(r.find(".confirmer(repond)").unwrap() < r.find("f();").unwrap(), "cartes rendues seulement après la sonde");
+    assert!(r.find(".confirmer(repond)").unwrap() < r.find("self.arret.store(true").unwrap(), "essai arrêté seulement après la sonde");
 }
 
 /// Parseur et réponses : aucune panique, quelle que soit l'entrée

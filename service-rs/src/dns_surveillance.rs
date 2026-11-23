@@ -4,7 +4,9 @@
 //! réseau : événement seulement). Relevé toutes les 60 s, hors du verrou du moniteur : serveurs DNS effectifs, passerelles et type de
 //! chaque carte active (`GetAdaptersAddresses`), et serveur statique éventuel (`NameServer` du registre, IPv4 et IPv6).
 //! Lecture seule : rien n'est remis en place (décision D7-10 du dossier, ouverte : proposition « jamais automatique »).
-//! Lecture impossible : collecte `ConfigDns` indisponible, jamais « aucun changement ».
+//! Lecture impossible : collecte `ConfigDns` indisponible, jamais « aucun changement ». Le relevé dit aussi si chaque
+//! carte est matérielle (`materielle_selon`), critère des cartes réglées par le filtrage (`filtrable`) ; DNS-002 garde
+//! le seul type de la carte.
 
 use crate::commun::{self, Alerte};
 
@@ -21,11 +23,44 @@ pub struct CarteDns {
     pub dns: Vec<String>,
     /// Serveur DNS réglé à la main (NameServer non vide), par opposition à celui donné par le DHCP
     pub statique: bool,
+    /// Carte matérielle, lue dans Windows (`materielle_selon`) ; faux si la lecture échoue
+    pub materielle: bool,
 }
 
 /// Carte physique : Ethernet ou Wi-Fi. Les cartes virtuelles et VPN changent de DNS d'elles-mêmes : événement seulement
 pub fn physique(type_carte: u32) -> bool {
     type_carte == 6 || type_carte == 71
+}
+
+/// Drapeaux `InterfaceAndOperStatusFlags` de `MIB_IF_ROW2` (netioapi.h) : bit 0 `HardwareInterface`, bit 2
+/// `ConnectorPresent`
+const HARDWARE_INTERFACE: u8 = 1 << 0;
+const CONNECTOR_PRESENT: u8 = 1 << 2;
+
+/// Carte matérielle d'après Windows (pure, testée ; constat T-9 de l'audit du 2026-11-23) : `HardwareInterface` (« Set if
+/// the network interface is for hardware ») ET `ConnectorPresent` (« Set if a connector is present on the network
+/// interface. This value is set if there is a physical network adapter »), documentation Microsoft de la structure
+/// MIB_IF_ROW2 (https://learn.microsoft.com/windows/win32/api/netioapi/ns-netioapi-mib_if_row2). Les cartes des
+/// commutateurs Hyper-V (« vEthernet »), de WSL, de Docker et les cartes TAP des VPN portent le type Ethernet (6) mais
+/// aucun de ces deux drapeaux. Jamais un critère sur le nom de la carte
+pub fn materielle_selon(drapeaux: u8) -> bool {
+    drapeaux & (HARDWARE_INTERFACE | CONNECTOR_PRESENT) == HARDWARE_INTERFACE | CONNECTOR_PRESENT
+}
+
+/// Carte réglable par le filtrage (pure, testée ; T-9) : Ethernet ou Wi-Fi, matérielle, avec un identifiant. Une carte
+/// virtuelle (Hyper-V, WSL, Docker, VPN) n'est jamais réglée. Limite : sur un hôte Hyper-V dont la carte physique est
+/// liée à un commutateur externe, l'adresse du poste est portée par une carte virtuelle : rien n'est réglé (activation
+/// refusée, « aucune carte »)
+pub fn filtrable(c: &CarteDns) -> bool {
+    physique(c.type_carte) && c.materielle && !c.id.is_empty()
+}
+
+/// Drapeaux `InterfaceAndOperStatusFlags` d'une carte (`GetIfEntry2`), ou None si la lecture échoue
+fn drapeaux_interface(luid: windows::Win32::NetworkManagement::Ndis::NET_LUID_LH) -> Option<u8> {
+    use windows::Win32::NetworkManagement::IpHelper::{GetIfEntry2, MIB_IF_ROW2};
+    let mut ligne = MIB_IF_ROW2 { InterfaceLuid: luid, ..Default::default() };
+    let r = unsafe { GetIfEntry2(&mut ligne) };
+    (r.0 == 0).then_some(ligne.InterfaceAndOperStatusFlags._bitfield)
 }
 
 /// Ce que donne la comparaison de deux relevés
@@ -145,7 +180,9 @@ pub fn releve() -> Result<Vec<CarteDns>, String> {
                     g = (*g).Next;
                 }
                 let st = !id.is_empty() && statique(&id);
-                l.push(CarteDns { id, nom, type_carte: (*a).IfType, passerelles, dns, statique: st });
+                // Lecture impossible : carte tenue pour virtuelle (jamais réglée par le filtrage, échec fermé)
+                let materielle = drapeaux_interface((*a).Luid).is_some_and(materielle_selon);
+                l.push(CarteDns { id, nom, type_carte: (*a).IfType, passerelles, dns, statique: st, materielle });
             }
             a = (*a).Next;
             if l.len() > 64 {
