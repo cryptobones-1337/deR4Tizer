@@ -4,7 +4,8 @@
 
 - IDS (experimental) and incident tracking, second audit (findings B-4-01, B-4-02, B-5-01; tested in the lab, not yet
   tried in the VM). An IDS rule whose `content` options are all negated now evaluates them: it fires only when none of
-  them is present (before: on its header alone). The standard address and port variables of Suricata 7's default
+  them is present (before: on its header alone); as in Suricata, a rule with any `content` never matches a packet
+  without payload (SYN, ACK), so an IPS `drop` rule with negated contents cannot block a plain ACK. The standard address and port variables of Suricata 7's default
   `suricata.yaml` (`$HTTP_SERVERS`, `$SMTP_SERVERS`, `$AIM_SERVERS`, `$SHELLCODE_PORTS`, `$MODBUS_PORTS`…) now take
   their default values; any other header variable makes the rule ignored and counted, instead of meaning "all
   addresses" or "all ports". An incident with more than 20 status changes now still gets its timeline recalculated: the total number of

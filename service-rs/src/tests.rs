@@ -230,8 +230,14 @@ fn ids_variables_standard_de_suricata() {
               "$MODBUS_SERVER", "$MODBUS_CLIENT", "$ENIP_SERVER", "$ENIP_CLIENT"] {
         assert_eq!(lire_texte_test(&format!(r#"alert tcp any any -> {v} any (msg:"x"; content:"abc"; sid:6;)"#)), (1, 0), "{v}");
     }
-    for v in ["$DNP3_PORTS", "$FTP_PORTS", "[$FTP_PORTS,$MODBUS_PORTS]"] {
+    for v in ["$DNP3_PORTS", "$FTP_PORTS", "[$FTP_PORTS,$MODBUS_PORTS]", "$GENEVE_PORTS", "$VXLAN_PORTS", "$TEREDO_PORTS"] {
         assert_eq!(lire_texte_test(&format!(r#"alert tcp any any -> any {v} (msg:"x"; content:"abc"; sid:7;)"#)), (1, 0), "{v}");
+    }
+    // Valeurs de GENEVE (6081), VXLAN (4789) et Teredo (3544)
+    for (v, port) in [("$GENEVE_PORTS", 6081u16), ("$VXLAN_PORTS", 4789), ("$TEREDO_PORTS", 3544)] {
+        let r = format!(r#"alert tcp any any -> any {v} (msg:"x"; content:"abc"; sid:11;)"#);
+        assert_eq!(correspond_paquet_test(&r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], port)), Some(true), "{v}");
+        assert_eq!(correspond_paquet_test(&r, &paquet([10, 0, 0, 1], [10, 0, 0, 2], port + 1)), Some(false), "{v}");
     }
     // Négatifs : variable inventée ; $SHELLCODE_PORTS dans une liste (négation partielle, non représentable) ; $GTP_PORTS,
     // absent du suricata.yaml de la version 7
@@ -268,6 +274,14 @@ fn ids_regle_sans_contenu_positif_evalue_ses_negations() {
     // Règle sans aucun contenu (flags:S seul) : inchangée, l'en-tête suffit
     let syn = Paquet { drapeaux: 0x02, charge: b"", longueur: 40, ..paquet(b"") };
     assert_eq!(sids_declenches_test(r#"alert tcp any any -> any 80 (flags:S; sid:4;)"#, &syn), vec![4]);
+    // Relecture de #273 : comme Suricata, une règle à contenu (nié ou non) ne correspond jamais à un paquet sans charge
+    // utile (SYN, ACK) ; avec l'IPS, une règle drop bloquerait sinon un simple ACK
+    let ack = Paquet { drapeaux: 0x10, charge: b"", longueur: 40, ..paquet(b"") };
+    for regle in [r#"alert tcp any any -> any any (content:!"abc"; sid:1;)"#, r#"drop tcp any any -> any any (content:!"abc"; content:!"def"; sid:3;)"#] {
+        assert_eq!(sids_declenches_test(regle, &ack), Vec::<u64>::new(), "ACK sans charge : {regle}");
+        assert_eq!(sids_declenches_test(regle, &syn), Vec::<u64>::new(), "SYN sans charge : {regle}");
+    }
+    assert_eq!(crate::ids::correspond_test(r#"alert tcp any any -> any any (content:!"abc"; sid:1;)"#, b""), Some(false), "charge vide");
 }
 
 #[test]

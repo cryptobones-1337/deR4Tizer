@@ -188,6 +188,9 @@ fn ports(t: &str) -> Option<Ports> {
             "$DNP3_PORTS" => l.push((20000, 20000)),
             "$MODBUS_PORTS" => l.push((502, 502)),
             "$FTP_PORTS" => l.push((21, 21)),
+            "$GENEVE_PORTS" => l.push((6081, 6081)),
+            "$VXLAN_PORTS" => l.push((4789, 4789)),
+            "$TEREDO_PORTS" => l.push((3544, 3544)),
             // Variable inconnue : règle ignorée (comptée), jamais « tous les ports » (second audit, B-4-02)
             v if v.starts_with('$') || v.starts_with("!$") => return None,
             v => match v.split_once(':') {
@@ -417,6 +420,11 @@ impl Regle {
     }
 
     fn charge(&self, d: &[u8]) -> bool {
+        // Comme Suricata : une règle à contenu (nié ou non) ne correspond jamais à un paquet sans charge utile (SYN,
+        // ACK) ; sinon une règle drop à contenus niés bloquerait, avec l'IPS, un simple ACK (relecture de #273)
+        if d.is_empty() && !self.contenus.is_empty() {
+            return false;
+        }
         let mut fin_precedente = 0usize;
         for c in &self.contenus {
             let relatif = c.distance.is_some() || c.within.is_some();
