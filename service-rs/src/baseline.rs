@@ -393,7 +393,7 @@ pub fn taille_effective(sortie: &str) -> Option<u64> {
 }
 
 fn lire_taille_journal(canal: &str) -> Option<u64> {
-    let o = std::process::Command::new("wevtutil.exe").args(["gl", canal]).output().ok()?;
+    let o = std::process::Command::new(gpo::outil_systeme("wevtutil.exe")).args(["gl", canal]).output().ok()?;
     if !o.status.success() {
         return None;
     }
@@ -833,6 +833,44 @@ fn ecrire_sauvegarde(sauvegarde: &Sauvegarde) -> Result<(), String> {
     }
 }
 
+/// Lecture vérifiée des fichiers de la GPO locale avant toute écriture (audit du 2026-11-23, A-2-2) : Registry.pol,
+/// gpt.ini (version comprise) et audit.csv ; rend la stratégie d'audit. Un fichier présent mais illisible ou non
+/// compris arrête l'opération, et le message le dit
+fn lire_gpo_avant_ecriture() -> Result<gpo::AuditCsv, String> {
+    gpo::lire_pol()
+        .and_then(|_| gpo::lire_gpt())
+        .and_then(|g| gpo::maj_gpt(&g, false))
+        .and_then(|_| gpo::lire_audit())
+        .map_err(|e| format!("GPO locale : {e} : rien n'a été modifié."))
+}
+
+/// Décision de l'annulation pour une valeur de registre
+#[derive(Debug, PartialEq)]
+pub enum Decision {
+    /// Remettre la valeur d'origine
+    RemettreOrigine,
+    /// Valeur absente à l'origine : la supprimer
+    Supprimer,
+    /// Valeur changée depuis par un tiers (ni celle posée, ni celle d'origine) : laissée telle quelle
+    Laisser,
+}
+
+/// Décision pure (audit du 2026-11-23, A-2-3) : l'annulation ne remet l'origine (ou ne supprime la valeur absente à
+/// l'origine) que si la valeur actuelle est celle posée par deR4Tizer ou déjà celle d'origine ; un durcissement posé
+/// depuis par un tiers (règle ASR passée en blocage, RunAsPPL…) est laissé en place
+pub fn a_remettre(posee: &str, origine: Option<&str>, actuelle: Option<&str>) -> Decision {
+    let egal = |a: Option<&str>, b: Option<&str>| match (a, b) {
+        (Some(a), Some(b)) => a.trim() == b.trim(),
+        (None, None) => true,
+        _ => false,
+    };
+    if egal(actuelle, Some(posee)) || egal(actuelle, origine) {
+        if origine.is_some() { Decision::RemettreOrigine } else { Decision::Supprimer }
+    } else {
+        Decision::Laisser
+    }
+}
+
 fn entree(cle: &str, nom: &str, v: &Valeur) -> EntreePol {
     match v {
         Dword(n) => EntreePol::dword(cle, nom, *n),
@@ -840,17 +878,59 @@ fn entree(cle: &str, nom: &str, v: &Valeur) -> EntreePol {
     }
 }
 
-fn sauvegarder_fichiers_gpo() {
-    // Copie unique des fichiers d'origine de la GPO locale, avant toute première modification
-    let dossier = commun::dossier().join(r"sauvegardes\gpo-origine");
-    if dossier.exists() {
-        return;
+/// Fichiers de la GPO locale copiés dans la sauvegarde d'origine : chemin sous la racine de la GPO, nom de la copie
+pub const FICHIERS_GPO: [(&str, &str); 3] =
+    [(r"gpt.ini", "gpt.ini"), (r"Machine\Registry.pol", "Registry.pol"), (r"Machine\Microsoft\Windows NT\Audit\audit.csv", "audit.csv")];
+
+fn sauvegarder_fichiers_gpo() -> Result<String, String> {
+    sauvegarder_fichiers_gpo_dans(&gpo::racine(), &commun::dossier().join(r"sauvegardes\gpo-origine"))
+}
+
+/// Copie unique des fichiers d'origine de la GPO locale, avant toute première modification (audit du 2026-11-23,
+/// A-2-2) : chaque copie est relue et comparée à l'original ; un original illisible (autre qu'introuvable) ou une
+/// copie différente arrête l'application avant toute écriture, et la copie incomplète est retirée pour être reprise
+/// la fois suivante. Le dossier déjà présent n'est jamais refait (l'original a pu être modifié depuis) : un fichier
+/// qui y manque alors que l'original existe est dit dans la note rendue
+pub fn sauvegarder_fichiers_gpo_dans(racine: &std::path::Path, dossier: &std::path::Path) -> Result<String, String> {
+    match std::fs::symlink_metadata(dossier) {
+        Ok(m) if m.file_type().is_dir() => {
+            let mut manquants = Vec::new();
+            for (src, dst) in FICHIERS_GPO {
+                let original = gpo::lire_ou_absent(&racine.join(src)).map(|o| o.is_some()).unwrap_or(true);
+                let copie = !matches!(std::fs::symlink_metadata(dossier.join(dst)), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+                if original && !copie {
+                    manquants.push(dst);
+                }
+            }
+            return Ok(if manquants.is_empty() {
+                String::new()
+            } else {
+                format!(" Sauvegarde d'origine de la GPO locale incomplète : {} absent(s) de la copie alors que l'original existe (copie non refaite : l'original a pu être modifié depuis la première application).", manquants.join(", "))
+            });
+        }
+        Ok(_) => return Err("le chemin de la sauvegarde d'origine de la GPO locale n'est pas un dossier".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("sauvegarde d'origine de la GPO locale illisible ({e})")),
     }
-    let _ = std::fs::create_dir_all(&dossier);
-    let racine = gpo::racine();
-    for (src, dst) in [(r"gpt.ini", "gpt.ini"), (r"Machine\Registry.pol", "Registry.pol"), (r"Machine\Microsoft\Windows NT\Audit\audit.csv", "audit.csv")] {
-        let _ = std::fs::copy(racine.join(src), dossier.join(dst));
-    }
+    std::fs::create_dir_all(dossier).map_err(|e| format!("dossier de la sauvegarde d'origine non créé ({e})"))?;
+    let copier = || -> Result<(), String> {
+        for (src, dst) in FICHIERS_GPO {
+            let Some(o) = gpo::lire_ou_absent(&racine.join(src))? else { continue };
+            std::fs::write(dossier.join(dst), &o).map_err(|e| format!("copie de {dst} impossible ({e})"))?;
+            match std::fs::read(dossier.join(dst)) {
+                Ok(relue) if relue == o => {}
+                Ok(_) => return Err(format!("copie de {dst} différente de l'original")),
+                Err(e) => return Err(format!("copie de {dst} illisible ({e})")),
+            }
+        }
+        Ok(())
+    };
+    copier().map_err(|e| {
+        // Copie incomplète retirée : la suivante reprendra une vraie origine, rien de la GPO n'ayant été modifié
+        let _ = std::fs::remove_dir_all(dossier);
+        format!("sauvegarde d'origine de la GPO locale impossible ({e})")
+    })?;
+    Ok(String::new())
 }
 
 /// Règles d'un profil (ou liste d'identifiants séparés par des virgules)
@@ -910,9 +990,11 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
         return Ok(format!("Aucune règle appliquée.{note}"));
     }
     let regles: &[&Regle] = &regles;
-    sauvegarder_fichiers_gpo();
+    // GPO locale lue en échec fermé avant toute écriture : un fichier présent mais illisible ou non compris arrête
+    // tout, au lieu d'être lu vide puis réécrit sans les stratégies d'autres outils (audit du 2026-11-23, A-2-2)
+    let mut audit = lire_gpo_avant_ecriture()?;
+    note.push_str(&sauvegarder_fichiers_gpo().map_err(|e| format!("{e} : rien n'a été modifié."))?);
     let mut ajouts = Vec::new();
-    let mut audit = gpo::lire_audit();
     let mut audit_modifie = false;
     let mut journaux: Vec<&str> = Vec::new();
     // Valeurs plus strictes qui retiennent une écriture (B3) : celles posées dans le même appel, et celles des règles
@@ -964,9 +1046,9 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
                     let actuel = gpo::audit_effectif(guid).ok_or_else(|| format!("audit « {nom} » illisible : rien n'a été modifié."))?;
                     origine.push((format!("audit|{guid}|{nom}"), Some(actuel.to_string())));
                     let guid_maj = guid.to_uppercase();
-                    match audit.iter_mut().find(|l| l.0 == guid_maj) {
+                    match audit.lignes.iter_mut().find(|l| l.0 == guid_maj) {
                         Some(l) => l.2 |= reglage,
-                        None => audit.push((guid_maj, nom.to_string(), *reglage | actuel)),
+                        None => audit.lignes.push((guid_maj, nom.to_string(), *reglage | actuel)),
                     }
                     audit_modifie = true;
                 }
@@ -982,11 +1064,11 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
     }
     // La sauvegarde du retour arrière d'abord : si elle ne peut pas être écrite et relue, rien n'est modifié
     let mut etapes: Vec<Etape> = vec![("sauvegarde du retour arrière", Box::new(|| ecrire_sauvegarde(&sauvegarde)))];
-    etapes.push(("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &[]).map_err(|e| e.to_string()))));
+    etapes.push(("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &[]).map(|_| ()))));
     if audit_modifie {
-        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit).map_err(|e| e.to_string()))));
+        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit))));
     }
-    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
+    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie))));
     if !journaux.is_empty() {
         etapes.push(("journaux d'événements", Box::new(|| {
             let echecs: Vec<&str> = journaux.iter().copied().filter(|c| !evenements::activer_journal(c, true)).collect();
@@ -1005,7 +1087,7 @@ pub fn appliquer(regles_demandees: &[&Regle]) -> Result<String, String> {
             if let Registre { cle, nom: nom @ "MaxSize", valeur: Dword(ko) } = m {
                 if let Some(canal) = canal_taille(cle, nom) {
                     if !deja_assez_grands.contains(&canal) {
-                        let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                        let _ = std::process::Command::new(gpo::outil_systeme("wevtutil.exe")).args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
                     }
                 }
             }
@@ -1024,7 +1106,7 @@ pub fn forcer_tailles() {
                 if let Some(canal) = canal_taille(cle, nom) {
                     // Jamais de réduction : seulement si la taille effective est plus petite que la cible (S218-02)
                     if lire_taille_journal(canal).map(|t| taille_a_poser(t, *ko)).unwrap_or(false) {
-                        let _ = std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
+                        let _ = std::process::Command::new(gpo::outil_systeme("wevtutil.exe")).args(["sl", canal, &format!("/ms:{}", *ko as u64 * 1024)]).output();
                     }
                 }
             }
@@ -1038,7 +1120,10 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         return Ok("Aucune de ces règles n'a été appliquée par deR4Tizer : rien à annuler.".into());
     }
     let mut retraits = Vec::new();
-    let mut audit = gpo::lire_audit();
+    // Lue avant toute écriture, registre compris (A-2-2)
+    let mut audit = lire_gpo_avant_ecriture()?;
+    // Valeurs changées depuis par un tiers, laissées en place et citées dans le message (A-2-3)
+    let mut laissees: Vec<String> = Vec::new();
     let mut audit_modifie = false;
     let mut n = 0;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
@@ -1050,7 +1135,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     // Valeurs d'origine présentes : remises encore une fois après la mise à jour des stratégies, qui retire la valeur
     // de Registry.pol en l'effaçant du registre (passage T3 en VM du 2026-11-20 : EnableLUA, ConsentPromptBehaviorAdmin
     // et PromptOnSecureDesktop effacés à l'annulation de systeme.uac ; limite S215-05)
-    let mut a_remettre: Vec<(String, String, String, bool, &str)> = Vec::new();
+    let mut valeurs_a_remettre: Vec<(String, String, String, bool, &str)> = Vec::new();
     // Origines des règles annulées, pour les remettre dans la sauvegarde si une remise échoue après gpupdate
     // (prérelecture de #220, D1)
     let mut annulees: HashMap<&str, Vec<(String, Option<String>)>> = HashMap::new();
@@ -1073,9 +1158,16 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     };
                     // Type du catalogue : une valeur texte (règle ASR) est remise en texte (audit de #220, S220-02)
                     let texte = matches!(catalogue, Texte(_));
-                    retraits.push(EntreePol::dword(cle, nom, 0));
+                    // Valeur changée depuis par un tiers : ni remise ni supprimée, et son entrée de Registry.pol
+                    // reste (A-2-3)
+                    if a_remettre(&decrire(catalogue), valeur.as_deref(), lire_registre(cle, nom).as_deref()) == Decision::Laisser {
+                        laissees.push(commun::borner_texte(&format!("{} : {cle}\\{nom}", r.id), 200));
+                        continue;
+                    }
+                    // Entrée de Registry.pol retirée seulement si elle vaut encore la valeur posée (A-2-3)
+                    retraits.push(entree(cle, nom, catalogue));
                     if let Some(v) = &valeur {
-                        a_remettre.push((cle.to_string(), nom.to_string(), v.clone(), texte, r.id));
+                        valeurs_a_remettre.push((cle.to_string(), nom.to_string(), v.clone(), texte, r.id));
                     }
                     // La valeur posée reste dans le registre : on remet celle d'origine (ou on la supprime)
                     let ok = match hklm.create_subkey_with_flags(cle, KEY_ALL_ACCESS | KEY_WOW64_64KEY) {
@@ -1094,10 +1186,10 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                 }
                 ["audit", guid, _] => {
                     let avant: u32 = valeur.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0);
-                    if let Some(l) = audit.iter_mut().find(|l| l.0 == guid.to_uppercase()) {
+                    if let Some(l) = audit.lignes.iter_mut().find(|l| l.0 == guid.to_uppercase()) {
                         l.2 = avant;
                     }
-                    let ok = std::process::Command::new("auditpol.exe")
+                    let ok = std::process::Command::new(gpo::outil_systeme("auditpol.exe"))
                         .args(["/set", &format!("/subcategory:{guid}"),
                             &format!("/success:{}", if avant & 1 != 0 { "enable" } else { "disable" }),
                             &format!("/failure:{}", if avant & 2 != 0 { "enable" } else { "disable" })])
@@ -1116,7 +1208,7 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
                     // Taille effective d'origine remise (B5), seulement pour un canal de la règle elle-même (S218-03)
                     let canal_de_la_regle = r.mecanismes.iter().any(|m| matches!(m, Registre { cle, nom, .. } if canal_taille(cle, nom).map(|c| c.eq_ignore_ascii_case(canal)).unwrap_or(false)));
                     let ok = match valeur.as_deref().and_then(|v| v.parse::<u64>().ok()).filter(|_| canal_de_la_regle) {
-                        Some(t) => std::process::Command::new("wevtutil.exe").args(["sl", canal, &format!("/ms:{t}")]).output()
+                        Some(t) => std::process::Command::new(gpo::outil_systeme("wevtutil.exe")).args(["sl", canal, &format!("/ms:{t}")]).output()
                             .map(|o| o.status.success()).unwrap_or(false),
                         None => false,
                     };
@@ -1148,16 +1240,18 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         }
     }
     if audit_modifie {
-        audit.retain(|l| l.2 != 0);
+        audit.lignes.retain(|l| l.2 != 0);
     }
     // Valeurs d'origine déjà remises dans le registre ci-dessus ; une étape en échec est dite, jamais masquée
     // (relecture de la baseline du 2026-11-20, B1) : si la sauvegarde ne peut pas être mise à jour, les règles
     // annulées restent marquées appliquées et le message le dit
-    let mut etapes: Vec<Etape> = vec![("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &retraits).map_err(|e| e.to_string())))];
+    // Entrées de Registry.pol changées depuis par un tiers : gardées par modifier_pol, ni retirées ni remises (A-2-3)
+    let gardees_pol: std::cell::RefCell<Vec<EntreePol>> = std::cell::RefCell::new(Vec::new());
+    let mut etapes: Vec<Etape> = vec![("Registry.pol", Box::new(|| gpo::modifier_pol(&ajouts, &retraits).map(|g| *gardees_pol.borrow_mut() = g)))];
     if audit_modifie {
-        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit).map_err(|e| e.to_string()))));
+        etapes.push(("audit.csv", Box::new(|| gpo::ecrire_audit(&audit))));
     }
-    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie).map_err(|e| e.to_string()))));
+    etapes.push(("gpt.ini", Box::new(|| gpo::marquer_gpt(audit_modifie))));
     etapes.push(("mise à jour de la sauvegarde (sinon les règles annulées restent marquées appliquées)", Box::new(|| ecrire_sauvegarde(&sauvegarde))));
     etapes.push(("mise à jour des stratégies (gpupdate)", Box::new(gpo::gpupdate)));
     let non_remises_txt = message_non_remises(&non_remises, &etrangeres);
@@ -1169,8 +1263,14 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
     drop(etapes);
     // Après gpupdate : valeurs d'origine remises et relues, sauf celles d'un réglage partagé encore utilisé par une
     // règle appliquée (sa valeur reste posée)
-    a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
-    let pas_remises = remettre_valeurs(&a_remettre);
+    valeurs_a_remettre.retain(|(c, nm, _, _, _)| !ajouts.iter().any(|e: &EntreePol| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    // Entrée de Registry.pol gardée (changée par un tiers) : sa valeur, appliquée par gpupdate, n'est pas écrasée
+    for g in gardees_pol.borrow().iter() {
+        laissees.push(commun::borner_texte(&format!("Registry.pol : {}\\{}", g.cle, g.nom), 200));
+    }
+    valeurs_a_remettre.retain(|(c, nm, _, _, _)| !gardees_pol.borrow().iter().any(|e| e.cle.eq_ignore_ascii_case(c) && e.nom.eq_ignore_ascii_case(nm)));
+    let laissees_txt = message_laissees(&laissees);
+    let pas_remises = remettre_valeurs(&valeurs_a_remettre);
     if !pas_remises.is_empty() {
         // Jamais perdue : la règle revient dans la sauvegarde (une nouvelle annulation la réessaie) et la valeur
         // d'origine est dite, pour une remise à la main au besoin (prérelecture de #220, D1)
@@ -1187,16 +1287,16 @@ pub fn annuler(regles: &[&Regle]) -> Result<String, String> {
         };
         // Valeur d'origine dite pour une remise à la main, chemin de profil masqué (audit de #220, S220-04)
         let detail: Vec<String> = pas_remises.iter().map(|x| format!("{}\\{} = {}", x.0, x.1, commun::masquer_chemin(&x.2))).collect();
-        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {} ; {gardee}.{non_remises_txt}", detail.join(", "));
+        let e = format!("annulation incomplète : valeur d'origine non remise après la mise à jour des stratégies : {} ; {gardee}.{non_remises_txt}{laissees_txt}", detail.join(", "));
         commun::journal(&format!("baseline : {e}"));
         return Err(e);
     }
     if !non_remises.is_empty() {
-        let e = format!("{} règle(s) annulée(s) sur {n}.{non_remises_txt}", n - non_remises.len());
+        let e = format!("{} règle(s) annulée(s) sur {n}.{non_remises_txt}{laissees_txt}", n - non_remises.len());
         commun::journal(&format!("baseline : annulation incomplète : {e}"));
         return Err(e);
     }
-    Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées."))
+    Ok(format!("{n} règle(s) annulée(s) : valeurs d'origine restaurées.{laissees_txt}"))
 }
 
 /// Remet des valeurs d'origine dans le registre et les relit ; rend celles qui n'ont pas pu être remises
@@ -1230,6 +1330,17 @@ pub fn message_non_remises(non_remises: &[&str], etrangeres: &[String]) -> Strin
         t.push_str(&format!(" Entrée(s) de la sauvegarde étrangère(s) à la règle, jamais écrite(s) (à retirer de baseline-sauvegarde.json par un administrateur) : {}{reste}.", citees.join(", ")));
     }
     t
+}
+
+/// Décision pure : texte des valeurs laissées en place parce qu'un tiers les a changées depuis l'application
+/// (A-2-3) ; au plus 5 citées
+pub fn message_laissees(laissees: &[String]) -> String {
+    if laissees.is_empty() {
+        return String::new();
+    }
+    let citees: Vec<&str> = laissees.iter().take(5).map(String::as_str).collect();
+    let reste = if laissees.len() > 5 { format!(" et {} autre(s)", laissees.len() - 5) } else { String::new() };
+    format!(" Valeur(s) laissée(s) en place, changée(s) depuis l'application par un autre outil ou un administrateur (ni celle posée par deR4Tizer, ni celle d'origine) : {}{reste}.", citees.join(", "))
 }
 
 /// Mécanisme de registre de la règle pour une clé et un nom lus dans la sauvegarde ; None si étranger à la règle
