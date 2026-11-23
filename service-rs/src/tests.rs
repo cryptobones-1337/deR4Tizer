@@ -558,6 +558,66 @@ fn audit_a13_api_saturation_boucle_locale() {
     fil_local.join().unwrap();
 }
 
+/// S295-02 (prérelecture de #295) : `ecouter` classe bien ses connexions par `connexion_du_poste`, et non plus par la
+/// seule boucle locale. Structure : la classification de `ecouter` passe par `connexion_du_poste(pair.ip(),
+/// flux.local_addr())`. Vraie connexion : le poste vers sa propre adresse réseau (non bouclée), API ouverte sur le
+/// réseau et cette adresse autorisée : 16 connexions muettes, 4 gardées, 12 fermées. Seulement en CI (GITHUB_ACTIONS) :
+/// écouter sur une adresse réseau fait afficher par le pare-feu de Windows une demande d'autorisation sur un poste de
+/// travail, à laquelle le test ne doit pas exposer l'utilisateur ; sans adresse réseau, ou hors CI, cette partie est
+/// sautée et le dit (la partie de structure s'exécute toujours)
+#[test]
+fn audit_s295_02_ecouter_compte_le_poste_par_son_adresse() {
+    use crate::api::{ecouter, Places, SignalRefus, MAX_LOCALES};
+    use std::io::{ErrorKind, Read};
+    use std::net::{TcpListener, TcpStream, UdpSocket};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    let api = include_str!("api.rs").replace("\r\n", "\n");
+    let e = &api[api.find("pub fn ecouter(").unwrap()..];
+    let e = &e[..e.find("\n}\n").unwrap()];
+    assert!(e.contains("let locale = connexion_du_poste(pair.ip(), flux.local_addr().ok().map(|a| a.ip()));"), "classification par connexion_du_poste");
+    assert!(!e.contains("is_loopback()"), "plus de classification par la seule boucle locale");
+
+    if std::env::var_os("GITHUB_ACTIONS").is_none() {
+        eprintln!("audit_s295_02 : vraie connexion sautée hors CI (demande du pare-feu sur un poste de travail)");
+        return;
+    }
+    // Adresse réseau du poste : celle que choisirait une connexion sortante (aucun paquet envoyé par connect en UDP)
+    let adresse = UdpSocket::bind("0.0.0.0:0").and_then(|u| { u.connect("192.0.2.1:9")?; u.local_addr() }).map(|a| a.ip());
+    let Some(ip) = adresse.ok().filter(|i| !i.is_loopback() && !i.is_unspecified()) else {
+        eprintln!("audit_s295_02 : vraie connexion sautée, le poste n'a pas d'adresse réseau");
+        return;
+    };
+    static PLACES: Mutex<Places> = Mutex::new(Places { total: 0, locales: 0 });
+    static SIGNAL: Mutex<SignalRefus> = Mutex::new(SignalRefus { dernier: None, quota_local: 0, plein: 0 });
+    static FIN: AtomicBool = AtomicBool::new(false);
+    let ecoute = TcpListener::bind((ip, 0)).unwrap();
+    ecoute.set_nonblocking(true).unwrap();
+    let cible = ecoute.local_addr().unwrap();
+    let autorisees = vec![ip.to_string()];
+    let fil = std::thread::spawn(move || ecouter(&ecoute, &"ab".repeat(32), &autorisees, true, &PLACES, &SIGNAL, &|| !FIN.load(Ordering::SeqCst)));
+    let mut muettes: Vec<TcpStream> = (0..16).map(|_| TcpStream::connect(cible).unwrap()).collect();
+    let debut = Instant::now();
+    while *PLACES.lock().unwrap() != (Places { total: MAX_LOCALES, locales: MAX_LOCALES }) && debut.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(*PLACES.lock().unwrap(), Places { total: MAX_LOCALES, locales: MAX_LOCALES }, "connexions du poste par {ip} : comptées du poste");
+    let fermees = muettes.iter_mut().map(|c| {
+        c.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        match c.read(&mut [0u8; 16]) {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(e) => !matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+        }
+    }).filter(|f| *f).count();
+    assert_eq!(fermees, 16 - MAX_LOCALES, "le poste par sa propre adresse : au-delà de ses places, fermé aussitôt");
+    FIN.store(true, Ordering::SeqCst);
+    drop(muettes);
+    fil.join().unwrap();
+}
+
 #[test]
 fn reglages_de_l_interface_avec_blocs_nuls() {
     // Ce qu'envoie l'interface tant que config.json n'existe pas (première installation) : blocs non créés,
