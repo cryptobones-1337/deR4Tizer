@@ -2,7 +2,8 @@
 //! Suricata / Snort : règles intégrées + fichiers *.rules du dossier regles\ (par exemple Emerging Threats
 //! Open). Sous-ensemble pris en charge :
 //!   en-tête   action (alert, drop, reject, pass) proto (tcp, udp, icmp, ip, http, tls, dns…) adresses, ports,
-//!             variables $HOME_NET, $EXTERNAL_NET, $HTTP_PORTS… ; listes, plages, négations
+//!             variables $HOME_NET, $EXTERNAL_NET, $HTTP_PORTS, $SSH_PORTS, $FILE_DATA_PORTS, $ORACLE_PORTS ;
+//!             listes, plages, négations ; une autre variable rend la règle ignorée (second audit, B-4-02)
 //!   options   msg, content (|hex|, négation), nocase, offset, depth, distance, within, flags, dsize, sid,
 //!             priority, classtype ; flow, metadata, reference, http_* et tampons http.* sont acceptés
 //!             (le contenu est cherché dans toute la charge utile)
@@ -150,7 +151,8 @@ fn adresses(t: &str) -> Option<Adresses> {
                 plages.extend(RESEAUX_LOCAUX.iter().filter_map(|r| plage_ip(r)));
                 neg = !neg;
             }
-            p if p.starts_with('$') => return Some(Adresses::Toutes),
+            // Variable inconnue : règle ignorée (comptée), jamais « toutes les adresses » (second audit, B-4-02)
+            p if p.starts_with('$') || p.starts_with("!$") => return None,
             p => plages.push(plage_ip(p)?),
         }
     }
@@ -171,7 +173,8 @@ fn ports(t: &str) -> Option<Ports> {
             "$SSH_PORTS" => l.push((22, 22)),
             "$FILE_DATA_PORTS" => l.extend([(80, 80), (110, 110), (143, 143)]),
             "$ORACLE_PORTS" => l.push((1521, 1521)),
-            v if v.starts_with('$') => return Some(Ports::Tous),
+            // Variable inconnue : règle ignorée (comptée), jamais « tous les ports » (second audit, B-4-02)
+            v if v.starts_with('$') || v.starts_with("!$") => return None,
             v => match v.split_once(':') {
                 Some((a, b)) => l.push((a.parse().unwrap_or(0), b.parse().unwrap_or(u16::MAX))),
                 None => {
@@ -461,21 +464,8 @@ impl Ids {
                 }
             }
         }
-        // Motif le plus long de chaque règle (hors négation) pour la recherche en une passe
-        let mut motifs = Vec::new();
-        let mut motif_regle = Vec::new();
-        let mut sans_contenu = Vec::new();
-        for (i, r) in regles.iter().enumerate() {
-            match r.contenus.iter().filter(|c| !c.negation).max_by_key(|c| c.motif.len()) {
-                Some(c) => {
-                    motifs.push(c.motif.to_ascii_lowercase());
-                    motif_regle.push(i);
-                }
-                None => sans_contenu.push(i),
-            }
-        }
-        let automate = (!motifs.is_empty()).then(|| AhoCorasickBuilder::new().ascii_case_insensitive(true).build(&motifs).ok()).flatten();
-        commun::journal(&format!("IDS : {} règle(s) chargée(s), {ignorees} ignorée(s) (options non prises en charge)", regles.len()));
+        let (sans_contenu, automate, motif_regle) = indexer(&regles);
+        commun::journal(&format!("IDS : {} règle(s) chargée(s), {ignorees} ignorée(s) (options ou variables non prises en charge)", regles.len()));
         Ids {
             regles, sans_contenu, automate, motif_regle, ignorees, fichiers, alertes, blocages,
             detections: VecDeque::new(), deja: HashMap::new(), ips: false, paquets: 0, tics: 0,
@@ -532,24 +522,50 @@ impl Ids {
     }
 }
 
-impl Analyseur for Ids {
-    fn paquet(&mut self, p: &Paquet, contexte: &Contexte) {
-        self.paquets += 1;
-        let mut touchees: Vec<usize> = Vec::new();
-        if !p.charge.is_empty() {
-            if let Some(a) = &self.automate {
-                for m in a.find_overlapping_iter(p.charge) {
-                    let i = self.motif_regle[m.pattern().as_usize()];
+/// Index de la recherche en une passe : motif le plus long de chaque règle (hors négation) dans l'automate ; les règles
+/// sans contenu positif (aucun contenu, ou seulement des contenus niés) sont rangées à part, évaluées à chaque paquet
+fn indexer(regles: &[Regle]) -> (Vec<usize>, Option<AhoCorasick>, Vec<usize>) {
+    let mut motifs = Vec::new();
+    let mut motif_regle = Vec::new();
+    let mut sans_contenu = Vec::new();
+    for (i, r) in regles.iter().enumerate() {
+        match r.contenus.iter().filter(|c| !c.negation).max_by_key(|c| c.motif.len()) {
+            Some(c) => {
+                motifs.push(c.motif.to_ascii_lowercase());
+                motif_regle.push(i);
+            }
+            None => sans_contenu.push(i),
+        }
+    }
+    let automate = (!motifs.is_empty()).then(|| AhoCorasickBuilder::new().ascii_case_insensitive(true).build(&motifs).ok()).flatten();
+    (sans_contenu, automate, motif_regle)
+}
+
+/// Règles qui se déclenchent sur un paquet (pure, testée) : candidates de l'automate et règles sans contenu positif
+fn touchees(regles: &[Regle], sans_contenu: &[usize], automate: Option<&AhoCorasick>, motif_regle: &[usize], p: &Paquet) -> Vec<usize> {
+    let mut touchees: Vec<usize> = Vec::new();
+    if !p.charge.is_empty() {
+        if let Some(a) = automate {
+            for m in a.find_overlapping_iter(p.charge) {
+                if let Some(&i) = motif_regle.get(m.pattern().as_usize()) {
                     if !touchees.contains(&i) {
                         touchees.push(i);
                     }
                 }
             }
         }
-        let candidates: Vec<usize> = touchees.into_iter()
-            .filter(|&i| self.regles[i].entete(p) && self.regles[i].charge(p.charge))
-            .chain(self.sans_contenu.iter().copied().filter(|&i| self.regles[i].entete(p)))
-            .collect();
+    }
+    touchees.into_iter()
+        .filter(|&i| regles[i].entete(p) && regles[i].charge(p.charge))
+        // Sans contenu positif : toutes les conditions quand même, contenus niés compris (second audit, B-4-01)
+        .chain(sans_contenu.iter().copied().filter(|&i| regles[i].entete(p) && regles[i].charge(p.charge)))
+        .collect()
+}
+
+impl Analyseur for Ids {
+    fn paquet(&mut self, p: &Paquet, contexte: &Contexte) {
+        self.paquets += 1;
+        let candidates = touchees(&self.regles, &self.sans_contenu, self.automate.as_ref(), &self.motif_regle, p);
         for i in candidates {
             self.detecter(i, p, contexte);
         }
@@ -595,4 +611,12 @@ pub fn correspond_test(regle: &str, charge: &[u8]) -> Option<bool> {
 #[cfg(test)]
 pub fn correspond_paquet_test(regle: &str, p: &Paquet) -> Option<bool> {
     lire_regle(regle, "test").ok().flatten().map(|r| r.entete(p) && r.charge(p.charge))
+}
+
+/// SID des règles de `texte` qui se déclenchent sur un paquet de test, par le chemin du moteur (index puis `touchees`)
+#[cfg(test)]
+pub fn sids_declenches_test(texte: &str, p: &Paquet) -> Vec<u64> {
+    let regles: Vec<Regle> = texte.lines().filter_map(|l| lire_regle(l, "test").ok().flatten()).filter(|r| r.action != "pass").collect();
+    let (sans_contenu, automate, motif_regle) = indexer(&regles);
+    touchees(&regles, &sans_contenu, automate.as_ref(), &motif_regle, p).into_iter().map(|i| regles[i].sid).collect()
 }
