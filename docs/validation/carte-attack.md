@@ -72,7 +72,7 @@ tactique nouvelle, « Defense Impairment » (TA0112), réunit la neutralisation 
 | T1547.001 Clés Run, dossier Démarrage | PER-001, PER-002 | **Testé en labo, consolidé, clé Run : 10/10 en A, B et C (S-09, campagne Kali, lot 4, 2026-11-22)** | Dossier Démarrage (hors liste) |
 | T1543.003 Service Windows | PER-001, COR-R5 | Testé en labo, en partie (S-13, 2026-11-15) | 10 essais |
 | T1546.003 Abonnement WMI | PER-001 ; ASR | Règle, non testée | Scénario |
-| T1136.001 Compte local créé | COR-R3 | Défaut ouvert : ne se déclenche pas par le vecteur courant (S-13 donne COR-R3b) | Correctif, puis test |
+| T1136.001 Compte local créé | COR-R3 | Défaut corrigé, testé en labo seulement (audit du 2026-11-23, B-5-02 : rapprochement par le SID, `cor_r3_bout_en_bout_par_sid`) ; S-13 donnait COR-R3b avant le correctif | S-13 à remesurer en VM |
 | T1098 Compte ajouté aux administrateurs | COR-R3b | Testé en labo (S-13, 2026-11-15) | 10 essais |
 | T1176.001 Extension de navigateur | EXT-001 | Règle, non testée | Scénario |
 | T1197 Tâches BITS | PRC-003 (bitsadmin) | Partiel | Tâche créée par PowerShell |

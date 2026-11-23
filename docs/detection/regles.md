@@ -171,13 +171,21 @@ modules expérimentaux.
   `processus_cache_pid_reutilise_jamais_prete`. Réserve de la prérelecture de #283 : une connexion dont le chemin du
   programme est illisible (processus protégé, déjà terminé) perd tout ce contexte : aucune ligne de commande n'est
   lue, ni du cache ni de WMI (sens prudent : jamais une ligne empruntée, au prix d'un indice manqué).
+- **Connexions déjà ouvertes au démarrage** (audit du 2026-11-23, B-1-01, corrigé ; testé en labo, à essayer en VM) :
+  elles ne prennent pas l'indice « IP directe » tant qu'elles restent ouvertes ; fermées (table TCP lue sans elles),
+  elles perdent cette marque, et rouvertes plus tard elles sont jugées comme nouvelles (`moniteur::purger_preexistants`).
+  Avant, la table de ces connexions n'était jamais purgée : une connexion rouverte des heures après le démarrage
+  n'avait plus l'indice. Une lecture de la table TCP en échec ne purge rien. Limite : une connexion dont le chemin du
+  programme devient illisible le temps d'un passage change de clé et perd aussi la marque.
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
   mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
 - **Tests** : `res_002_positif` (non signé ; IP directe et port inhabituel ; non signé, téléchargé hier et balise),
   `res_002_negatif` (connexion banale ; origine Internet d'un programme signé ; navigateur sans DNS ; journal DNS non lu ;
-  connexion déjà ouverte au démarrage ; connexion déjà vue ou premier passage) ; existant pour l'indice « IP directe » :
+  connexion déjà ouverte au démarrage ; connexion déjà vue ou premier passage),
+  `res_002_preexistantes_purgees_a_la_fermeture` (marque gardée tant que la connexion est ouverte, purgée à sa
+  fermeture, rien purgé sur une lecture en échec ; câblage) ; existant pour l'indice « IP directe » :
   `ip_directe_editeurs_exacts`. Décision pure `moniteur::score_flux` (PR 3.8) : les indices sont lus dans le cycle, le
   calcul est testé à part. Les indices non couverts un par un : dossier temporaire, ligne de commande suspecte,
   télémétrie (chacun ajoute son poids, comme ceux testés).
@@ -953,11 +961,19 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait. Sauf COR-R6, qui se nourrit des
   alertes du service et non de l'audit.
 - **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire.
+- **Rapprochement de COR-R3** (audit du 2026-11-23, B-5-02, corrigé ; testé en labo, à essayer en VM) : le compte créé
+  (4720) et le compte ajouté aux Administrateurs (4732) sont le même s'ils ont le même SID (`TargetSid`, `MemberSid`),
+  sinon le même nom exact (après le dernier « \ », sans casse) : `siem::meme_compte`. Avant, une sous-chaîne suffisait
+  (« adm » créé, « admin2 » existant ajouté : faux Critique), et le 4732 d'un compte local, sans nom (`MemberName` « - »),
+  ne portait que le SID, qui ne rejoignait jamais le nom du 4720 : COR-R3b au lieu de COR-R3. Le SID n'est gardé qu'en
+  mémoire pour la corrélation, jamais écrit dans les événements du SIEM.
 - **Tests** : `cor_r1_positif` à `cor_r9_negatif` (PR 3.11), sur `siem::Correlation::analyser` avec des événements
   synthétiques déjà traduits :
   - COR-R1 : cinq échecs de la même source ; pas quatre, ni cinq répartis sur deux sources ;
   - COR-R2 : session ouverte après cinq échecs de la même source ; pas après quatre, ni d'une autre source ;
-  - COR-R3 et COR-R3b : compte créé puis ajouté, compte existant ajouté, une fois par heure ;
+  - COR-R3 et COR-R3b : compte créé puis ajouté, compte existant ajouté, une fois par heure ; nom exact et non
+    sous-chaîne, SID qui décide quand les deux sont connus (`cor_r3_compte_exact_pas_sous_chaine`), et du XML des
+    journaux à l'incident pour un compte local rapproché par son SID (`cor_r3_bout_en_bout_par_sid`) ;
   - COR-R4 : effacement d'un journal, une fois par heure ;
   - COR-R5 : service depuis un dossier temporaire, `ProgramData` ou PowerShell ; pas depuis Program Files ni Windows ;
   - COR-R6 : trois détections différentes d'un même programme, sans tenir compte de la casse ; pas deux, ni trois

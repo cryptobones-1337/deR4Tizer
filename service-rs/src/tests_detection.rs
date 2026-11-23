@@ -1483,6 +1483,31 @@ fn res_002_negatif() {
     assert_eq!(regle_flux(false, true, false, 2), None);
 }
 
+/// Audit du 2026-11-23, B-1-01 : la marque « déjà ouverte au démarrage » tombe quand la connexion se ferme (lecture
+/// réussie de la table TCP sans elle) ; rouverte plus tard, elle reprend l'indice « IP DIRECTE ». Une connexion
+/// préexistante toujours ouverte garde sa marque ; une lecture en échec (liste vide) ne purge rien. Câblage : purge
+/// après la boucle des flux, avec l'état de la lecture
+#[test]
+fn res_002_preexistantes_purgees_a_la_fermeture() {
+    use crate::moniteur::{purger_preexistants, score_flux, IndicesFlux};
+    use std::collections::HashSet;
+    let ensemble = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<HashSet<String>>();
+    let mut pre = ensemble(&["a|203.0.113.5|443", "b|203.0.113.6|443"]);
+    purger_preexistants(&mut pre, &ensemble(&["a|203.0.113.5|443", "c|203.0.113.7|443"]), true);
+    assert_eq!(pre, ensemble(&["a|203.0.113.5|443"]), "fermée : purgée ; ouverte : gardée ; jamais ajoutée");
+    purger_preexistants(&mut pre, &HashSet::new(), false);
+    assert_eq!(pre, ensemble(&["a|203.0.113.5|443"]), "lecture de la table TCP en échec : rien purgé");
+    purger_preexistants(&mut pre, &HashSet::new(), true);
+    assert!(pre.is_empty(), "table lue sans connexion : tout purgé");
+    // Rouverte après la purge : plus préexistante, l'IP directe compte
+    assert_eq!(score_flux(&IndicesFlux { nom_dns_connu: false, preexistant: pre.contains("b|203.0.113.6|443"), ..indices_banals() }).0, 2);
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let retenue = m.find("self.premieres_vues.retain(|k, _| cles_vues.contains(k));").expect("oubli des flux fermés");
+    assert!(m[retenue..].starts_with("self.premieres_vues.retain(|k, _| cles_vues.contains(k));\n        purger_preexistants(&mut self.preexistants, &cles_vues, lecture_tcp_ok);"),
+        "purge des préexistantes câblée après la boucle des flux");
+    assert!(m.contains("let lecture_tcp_ok = lecture.is_ok();"), "état de la lecture de la table TCP");
+}
+
 #[test]
 fn res_003_positif() {
     assert!(crate::moniteur::premiere_connexion_signalee(false, false));
@@ -1913,6 +1938,7 @@ pub(crate) fn evenement_siem(type_: &str, champs: &[(&str, &str)]) -> crate::sie
             "niveau" => e.niveau = v.to_string(),
             "source" => e.source = v.to_string(),
             "mitre" => e.mitre = v.to_string(),
+            "sid" => e.sid = v.to_string(),
             _ => panic!("champ {c}"),
         }
     }
@@ -1980,6 +2006,48 @@ fn cor_r3_negatif() {
     assert!(incidents(&[evenement_siem("compte-cree", &[("destination", r"POSTE\nouveau")])]).is_empty());
     let ajout = evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\ancien")]);
     assert_eq!(incidents(&[ajout.clone(), ajout]).len(), 1);
+}
+
+/// Audit du 2026-11-23, B-5-02 : « compte créé » et « ajouté aux Administrateurs » rapprochés par le SID quand les deux
+/// sont connus, sinon par le nom exact normalisé ; plus par sous-chaîne (« adm » créé, « admin2 » ajouté : faux Critique)
+#[test]
+fn cor_r3_compte_exact_pas_sous_chaine() {
+    use crate::siem::meme_compte;
+    // Faux positif d'avant : un compte « adm » créé, un compte existant « admin2 » ajouté : R3b, pas R3
+    let e = [evenement_siem("compte-cree", &[("destination", r"POSTE\adm")]),
+             evenement_siem("ajout-administrateurs", &[("processus", r"POSTE\admin2")])];
+    assert_eq!(incidents(&e), [("R3b".to_string(), "Alerte".to_string())]);
+    // Vrai positif : même nom, casse et domaine près
+    let e = [evenement_siem("compte-cree", &[("destination", r"POSTE\Adm")]),
+             evenement_siem("ajout-administrateurs", &[("processus", r"poste\adm")])];
+    assert_eq!(incidents(&e), [("R3".to_string(), "Critique".to_string())]);
+    // SID des deux côtés : il décide (nom absent du 4732 d'un compte local : MemberName « - », SID à sa place)
+    let sid = "S-1-5-21-1-2-3-1005";
+    let e = [evenement_siem("compte-cree", &[("destination", r"POSTE\nouveau"), ("sid", sid)]),
+             evenement_siem("ajout-administrateurs", &[("processus", sid), ("sid", sid)])];
+    assert_eq!(incidents(&e), [("R3".to_string(), "Critique".to_string())]);
+    assert!(meme_compte((r"POSTE\nouveau", sid), (sid, &sid.to_lowercase())));
+    assert!(!meme_compte((r"POSTE\nouveau", sid), (r"POSTE\nouveau", "S-1-5-21-1-2-3-1006")), "même nom, autre SID : un autre compte");
+    assert!(meme_compte((r"POSTE\nouveau", sid), (r"POSTE\nouveau", "")), "SID d'un seul côté : le nom exact");
+    for (cree, ajoute) in [("adm", "admin2"), ("admin2", "adm"), ("", ""), ("-", "-"), (r"POSTE\", r"AUTRE\"), ("nouveau", "nouveau2")] {
+        assert!(!meme_compte((cree, ""), (ajoute, "")), "{cree:?} / {ajoute:?}");
+    }
+    crate::tests::torturer_texte(r"POSTE\nouveau", &mut |t| { let _ = meme_compte((t, ""), (r"POSTE\nouveau", "")); });
+    crate::tests::torturer_texte(sid, &mut |t| { let _ = meme_compte(("a", t), ("a", sid)); let _ = meme_compte(("a", sid), (t, t)); });
+}
+
+/// B-5-02 de bout en bout : 4720 puis 4732 d'un compte local (MemberName « - », MemberSid) traduits du XML : R3 Critique
+/// par le SID ; un autre compte local ajouté : R3b
+#[test]
+fn cor_r3_bout_en_bout_par_sid() {
+    let sid = "S-1-5-21-1-2-3-1005";
+    let cree = evenement_defender(4720, &[("TargetUserName", "nouveau"), ("TargetDomainName", "POSTE"), ("TargetSid", sid),
+        ("SubjectUserName", "admin"), ("SubjectDomainName", "POSTE")]);
+    let ajout = |membre: &str| evenement_defender(4732, &[("MemberName", "-"), ("MemberSid", membre), ("TargetUserName", "Administrateurs"),
+        ("TargetSid", "S-1-5-32-544"), ("SubjectUserName", "admin"), ("SubjectDomainName", "POSTE")]);
+    let t = |x: &str| crate::siem::traduire(x).expect("événement traduit");
+    assert_eq!(incidents(&[t(&cree), t(&ajout(sid))]), [("R3".to_string(), "Critique".to_string())]);
+    assert_eq!(incidents(&[t(&cree), t(&ajout("S-1-5-21-1-2-3-1006"))]), [("R3b".to_string(), "Alerte".to_string())]);
 }
 
 #[test]

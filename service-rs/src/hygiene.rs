@@ -36,12 +36,12 @@ fn alerte(regle: &str, niveau: &str, score: i32, processus: &str, chemin: &str, 
 const PROFILS_MODELES: &[&str] = &["default", "default user", "public", "all users", "defaultapppool"];
 
 fn profils_modeles() -> Vec<PathBuf> {
-    let racine = format!(r"{}\Users", &crate::natif::dossier_windows()[..2]);
+    let racine = format!(r"{}\Users", crate::natif::lecteur_systeme());
     PROFILS_MODELES.iter().map(|n| Path::new(&racine).join(n)).collect()
 }
 
 fn profils() -> Vec<PathBuf> {
-    let racine = format!(r"{}\Users", &crate::natif::dossier_windows()[..2]);
+    let racine = format!(r"{}\Users", crate::natif::lecteur_systeme());
     fs::read_dir(racine)
         .map(|d| {
             d.map_while(Result::ok)
@@ -76,7 +76,7 @@ pub fn chemin_image_profil(image: &str, lecteur: &str) -> PathBuf {
 /// Le SID sert à agir sous l'identité de l'utilisateur dans ses propres dossiers.
 fn profils_proprietaires() -> Vec<(PathBuf, String)> {
     use winreg::enums::HKEY_LOCAL_MACHINE;
-    let lecteur = crate::natif::dossier_windows()[..2].to_string();
+    let lecteur = crate::natif::lecteur_systeme();
     let Ok(liste) = winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList") else {
         return Vec::new();
     };
@@ -1079,7 +1079,7 @@ pub(crate) fn inventaire_extensions_borne() -> (Vec<Extension>, usize) {
 /// Compare à l'inventaire précédent : alerte sur chaque nouvelle extension (sauf au premier relevé)
 pub fn verifier_extensions() -> (Vec<Extension>, Vec<Alerte>) {
     // Dossier des profils illisible : aucune extension n'est vue, EXT-001 est muette
-    let racine = format!(r"{}\Users", crate::natif::dossier_windows().get(..2).unwrap_or("C:"));
+    let racine = format!(r"{}\Users", crate::natif::lecteur_systeme());
     match fs::read_dir(&racine) {
         Ok(_) => crate::collectes::succes(crate::collectes::Collecte::Extensions),
         Err(_) => crate::collectes::echec(crate::collectes::Collecte::Extensions, "dossier des profils illisible"),

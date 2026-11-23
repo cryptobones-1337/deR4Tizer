@@ -1059,7 +1059,7 @@ fn cible_raccourci(fichier: &str) -> Option<String> {
 fn dossiers_demarrage(l: &mut Vec<EntreeDemarrage>) {
     const RELATIF: &str = r"Microsoft\Windows\Start Menu\Programs\Startup";
     let mut dossiers = vec![format!(r"{}\{RELATIF}", std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into()))];
-    let utilisateurs = format!(r"{}\Users", &natif::dossier_windows()[..2]);
+    let utilisateurs = format!(r"{}\Users", natif::lecteur_systeme());
     if let Ok(u) = fs::read_dir(&utilisateurs) {
         for e in u.map_while(Result::ok) {
             dossiers.push(format!(r"{}\AppData\Roaming\{RELATIF}", e.path().to_string_lossy()));

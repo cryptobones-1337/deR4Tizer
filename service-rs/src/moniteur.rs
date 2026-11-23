@@ -739,6 +739,7 @@ impl Moniteur {
         self.numero_passage += 1;
         let t = Instant::now();
         let (toutes, lecture) = natif::lister_tcp_lu();
+        let lecture_tcp_ok = lecture.is_ok();
         match lecture {
             Ok(()) => collectes::succes(Collecte::Connexions),
             Err(e) => collectes::echec(Collecte::Connexions, &e),
@@ -906,6 +907,7 @@ impl Moniteur {
         let t = mesure::noter("cycle.flux", t);
         // Oublie les flux fermés pour que leur réapparition soit considérée comme nouvelle
         self.premieres_vues.retain(|k, _| cles_vues.contains(k));
+        purger_preexistants(&mut self.preexistants, &cles_vues, lecture_tcp_ok);
         self.dernieres_connexions = connexions.clone();
 
         // Exposition à Internet : paquets entrants venus d'Internet (pfirewall.log), adresses publiques
@@ -2933,6 +2935,15 @@ pub(crate) fn regle_flux(menace: bool, nouveau: bool, premier_passage: bool, sco
         Some(crate::regles::RES_002)
     } else {
         None
+    }
+}
+
+/// Décision pure (testée, audit du 2026-11-23, B-1-01) : une connexion ouverte au démarrage du service ne garde la marque
+/// « préexistante » (sans indice « IP DIRECTE ») que tant qu'elle reste ouverte ; fermée puis rouverte, elle est nouvelle.
+/// Table bornée par les connexions ouvertes ; une lecture de la table TCP en échec (liste vide) ne purge rien
+pub(crate) fn purger_preexistants(preexistants: &mut HashSet<String>, ouvertes: &HashSet<String>, lecture_ok: bool) {
+    if lecture_ok {
+        preexistants.retain(|k| ouvertes.contains(k));
     }
 }
 

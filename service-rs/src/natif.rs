@@ -793,6 +793,20 @@ pub fn dossier_windows() -> String {
     std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())
 }
 
+/// Lecteur de Windows (« C: ») tiré de SystemRoot sans découpe qui panique (audit du 2026-11-23, A-5-1)
+pub fn lecteur_systeme() -> String {
+    lecteur_de(&dossier_windows())
+}
+
+/// Décision pure : « X: » si le dossier commence par une lettre ASCII suivie de « : », sinon « C: » (valeur vide, d'un
+/// octet, partage réseau, caractère de plusieurs octets en tête : plus de `[..2]` qui panique hors d'une frontière UTF-8)
+pub(crate) fn lecteur_de(dossier: &str) -> String {
+    match dossier.as_bytes() {
+        [l, b':', ..] if l.is_ascii_alphabetic() => dossier.get(..2).unwrap_or("C:").to_string(),
+        _ => "C:".into(),
+    }
+}
+
 pub fn dossier_systeme() -> String {
     format!(r"{}\System32", dossier_windows())
 }

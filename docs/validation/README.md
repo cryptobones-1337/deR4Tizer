@@ -57,6 +57,8 @@ section 5, campagne Kali).
   d'EXP-NDR-001 et EXP-IDS-001 dans `docs/detection/regles.md`.
 - **Couverture « responder passif »** : LLMNR (S-23) et mDNS (S-26) exercés ; NBNS passif non exercé (S-25 est la
   jambe NBNS du leurre actif).
-- **Constats ouverts, non corrigés** : COR-R3 (rapprochement par nom au lieu du SID) ; COR-R9 par Bureau à distance en
+- **Constats ouverts, non corrigés** : COR-R9 par Bureau à distance en
   Alerte ; PRC-002 non déterministe sans Sysmon ; leurre actif sauté 10 minutes après un échec de `bind` ; injection de
-  faux positifs DHCP et responder passif. Corrigé : DHCP pirate inerte (PR #190, S-21 à remesurer).
+  faux positifs DHCP et responder passif. Corrigé : DHCP pirate inerte (PR #190, S-21 à remesurer) ; COR-R3 rapproché
+  par le SID du compte, ou son nom exact, au lieu d'une sous-chaîne du nom (audit du 2026-11-23, B-5-02 ; testé en labo,
+  S-13 à remesurer en VM).
