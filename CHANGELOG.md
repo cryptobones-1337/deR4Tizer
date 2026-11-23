@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Static analysis in CI, batch 1 (CI tooling only, no product change): new `dependances` job running
+  cargo-audit 0.22.2 on `service-rs/Cargo.lock` and cargo-deny 0.20.2 (advisories, licenses, sources) with
+  `service-rs/deny.toml`. Rust toolchain pinned to 1.100.0 (`service-rs/rust-toolchain.toml`) and `cargo test` /
+  `cargo build` run with `--locked` in `ci.yml` (audit finding A-3-3, partly fixed: `publication.yml` still lacks
+  `--locked`, change proposed). First measurement (run 45175958903): no RustSec advisory, sources all from crates.io,
+  one license error: the service crate itself declares no license (maintainer's decision). The proposed license allow
+  list (Apache-2.0, MIT, Unicode-3.0, Unlicense) awaits the maintainer's validation. These checks are not an
+  independent review.
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
