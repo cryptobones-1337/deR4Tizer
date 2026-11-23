@@ -8,8 +8,9 @@
     msiexec /i deR4Tizer.msi /qn
   Options :
     LANCEMENT_SESSION=0   ne pas lancer l'interface à l'ouverture de session
-  Désinstallation (retire les blocages, règles de pare-feu, leurres, remet la baseline d'origine, efface les données ;
-  le dossier C:\ProgramData\deR4Tizer reste, vide et réservé à SYSTEM et aux administrateurs) :
+  Désinstallation (retire les blocages, règles de pare-feu, leurres, l'audit de lecture posé dans les profils, remet la
+  baseline d'origine, efface les données ; le dossier C:\ProgramData\deR4Tizer reste, réservé à SYSTEM et aux
+  administrateurs, vide ou avec la seule quarantaine si elle n'est pas vide) :
     msiexec /x deR4Tizer.msi /qn [GARDER_DONNEES=1] [GARDER_BASELINE=1]
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
@@ -122,7 +123,8 @@
          héritage de ProgramData où les utilisateurs peuvent créer des fichiers). Le service les impose aussi à
          chaque démarrage (protection.rs), et ajoute la lecture pour les comptes autorisés. Permanent (lot A, point 4) :
          la désinstallation ne retire pas ce dossier ; l'action SupprimerDonnees le vide et le garde protégé, pour qu'un compte
-         standard ne puisse pas y poser une jonction avant une réinstallation -->
+         standard ne puisse pas y poser une jonction avant une réinstallation. Une quarantaine non vide y reste, réservée à
+         SYSTEM et aux administrateurs (audit du 2026-11-23, A-4-3) -->
     <DirectoryRef Id="DONNEES">
       <Component Id="Donnees" Guid="7D2C4A91-3E5B-4F68-A0C7-5B9E1D8F2A63" Win64="yes" Permanent="yes">
         <CreateFolder>

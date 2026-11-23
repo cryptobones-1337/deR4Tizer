@@ -2577,6 +2577,80 @@ fn lot_a_tri_liens_physiques_et_premiere_prise_en_charge() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Audit du 2026-11-23, A-4-3 : la désinstallation sans GARDER_DONNEES garde une quarantaine non vide (copies, index,
+/// marqueur), réservée à SYSTEM et aux administrateurs, et le dit ; une quarantaine vide, ou dont les droits ne se
+/// vérifient pas, part avec le reste. Décisions pures, puis suppression réelle sur un dossier d'essai (jonction vers un
+/// canari comprise, jamais traversée). La pose des droits en SYSTEM se vérifie dans le scénario 3b (CI) et en VM
+#[test]
+fn a43_quarantaine_gardee_a_la_desinstallation() {
+    use crate::natif::{Ace, Securite};
+    use crate::protection::{copie_a_garder, garde_a_la_racine, reserve_systeme_admins, texte_desinstallation, MARQUEUR, SID_ADMINISTRATEURS, SID_SYSTEME};
+    let ace = |sid: &str, autorise: bool, masque: u32| Ace { autorise, masque, sid: sid.into(), heritage_seul: false };
+    let s = |proprietaire: &str, aces: Vec<Ace>| Securite { proprietaire: proprietaire.into(), protege: true, aces, ace_inconnue: false };
+    let ok = s(SID_SYSTEME, vec![ace(SID_SYSTEME, true, 0x1f01ff), ace(SID_ADMINISTRATEURS, true, 0x1f01ff)]);
+    assert!(reserve_systeme_admins(&ok));
+    assert!(reserve_systeme_admins(&s(SID_ADMINISTRATEURS, vec![ace(SID_SYSTEME, true, 0x1f01ff), ace("S-1-5-11", false, 0x1f01ff)])), "un refus ne donne rien");
+    assert!(!reserve_systeme_admins(&s(SID_SYSTEME, vec![ace(SID_SYSTEME, true, 0x1f01ff), ace("S-1-5-21-1-2-3-1001", true, 0x1200a9)])), "un lecteur, même en lecture seule");
+    assert!(!reserve_systeme_admins(&s("S-1-5-21-1-2-3-1001", vec![ace(SID_SYSTEME, true, 0x1f01ff)])), "propriétaire d'un compte standard");
+    assert!(!reserve_systeme_admins(&Securite { ace_inconnue: true, ..ok.clone() }), "entrée inconnue");
+    assert!(!reserve_systeme_admins(&s(SID_SYSTEME, vec![ace("S-1-1-0", true, 0x1000_0000)])), "DACL absente (accès total à Tout le monde)");
+    // Copie gardée : fichier ordinaire à un seul lien physique ; lien, dossier, lien dur ou nombre illisible : non
+    assert!(copie_a_garder(false, true, Some(1)));
+    assert!(!copie_a_garder(true, true, Some(1)) && !copie_a_garder(false, false, Some(1)));
+    assert!(!copie_a_garder(false, true, Some(2)) && !copie_a_garder(false, true, None));
+    // Noms épargnés à la racine : seulement quand la quarantaine est gardée
+    for n in ["quarantaine", "Quarantaine", "quarantaine.json", MARQUEUR] {
+        assert!(garde_a_la_racine(n, true), "{n}");
+        assert!(!garde_a_la_racine(n, false), "{n}");
+    }
+    for n in ["journal.txt", "secrets", "etat.json", "config.json", "ecartes", "quarantaine.json.tmp", "quarantaine2"] {
+        assert!(!garde_a_la_racine(n, true), "{n}");
+    }
+    // Compte rendu : ce qui est gardé, où, comment restaurer et comment supprimer ; ou pourquoi rien n'est gardé
+    let r = r"C:\ProgramData\deR4Tizer";
+    let t = texte_desinstallation(r, &Ok(3));
+    assert!(t.contains(r"3 copie(s) gardée(s) dans C:\ProgramData\deR4Tizer\quarantaine") && t.contains("quarantaine.json"), "{t}");
+    assert!(t.contains("SYSTEM et aux administrateurs") && t.contains("réinstaller") && t.contains("rmdir /s /q"), "{t}");
+    assert!(!texte_desinstallation(r, &Ok(0)).contains("quarantaine"), "rien à garder : rien à dire");
+    let e = texte_desinstallation(r, &Err("droits refusés".into()));
+    assert!(e.contains("quarantaine COMPRISE") && e.contains("droits refusés"), "{e}");
+    // Câblage : garde décidée avant la suppression, avec les droits de la racine déjà posés ; dite hors de la sortie
+    let p = include_str!("protection.rs").replace("\r\n", "\n");
+    let v = &p[p.find("pub fn vider_racine()").unwrap()..];
+    let v = &v[..v.find("\n}\n").unwrap()];
+    let (droits, garde, vider) = (v.find("poser_droits_handle(&f, SDDL_DOSSIER)").unwrap(), v.find("garder_la_quarantaine(racine)").unwrap(), v.find("vider_contenu(racine, &|nom| garde_a_la_racine(nom, gardee))").unwrap());
+    assert!(droits < garde && garde < vider);
+    assert!(v.contains("let gardee = matches!(garde, Ok(n) if n > 0);"));
+    let m = include_str!("main.rs").replace("\r\n", "\n");
+    assert!(m.contains("Ok((texte, true)) => {\n                println!(\"{texte}\");\n                natif::journal_evenements(&texte, false);\n                natif::compte_rendu_systeme(\"deR4Tizer-desinstallation\", &texte);"));
+    // Suppression réelle : les seuls noms épargnés restent, la jonction est supprimée seule, le canari est intact
+    let d = dossier_test("a43-vider");
+    let canari = dossier_test("a43-canari");
+    std::fs::write(canari.join("temoin.txt"), b"canari").unwrap();
+    std::fs::create_dir_all(d.join("quarantaine")).unwrap();
+    std::fs::write(d.join("quarantaine").join("x.quarantaine"), b"D4TQ").unwrap();
+    for f in ["quarantaine.json", MARQUEUR, "journal.txt", "etat.json"] {
+        std::fs::write(d.join(f), b"[]").unwrap();
+    }
+    std::fs::create_dir_all(d.join("secrets")).unwrap();
+    std::fs::write(d.join("secrets").join("jeton"), b"s").unwrap();
+    let jonction = d.join("lien");
+    let mk = std::process::Command::new("cmd.exe").args(["/c", "mklink", "/J"]).arg(&jonction).arg(&canari).output().unwrap();
+    assert!(mk.status.success(), "{}", String::from_utf8_lossy(&mk.stderr));
+    let restes = crate::protection::vider_contenu(&d, &|n| garde_a_la_racine(n, true));
+    assert!(restes.is_empty(), "{restes:?}");
+    let mut noms: Vec<String> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    noms.sort();
+    assert_eq!(noms, vec![MARQUEUR.to_string(), "quarantaine".to_string(), "quarantaine.json".to_string()]);
+    assert!(d.join("quarantaine").join("x.quarantaine").exists());
+    assert_eq!(std::fs::read(canari.join("temoin.txt")).unwrap(), b"canari", "jonction jamais traversée");
+    // Quarantaine non gardée : tout part
+    assert!(crate::protection::vider_contenu(&d, &|n| garde_a_la_racine(n, false)).is_empty());
+    assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&canari);
+}
+
 #[test]
 fn lot1_echec_du_demarrage_non_leve_par_la_verification_horaire() {
     use crate::protection::combiner;
@@ -5539,6 +5613,68 @@ fn audit_donnees_sacl_completee() {
     assert_eq!(texte_sacl_de_sddl("O:BAS:(AU;SAFA;FA;;;BA)").as_deref(), Some("S:(AU;SAFA;FA;;;BA)"));
     // SACL présente mais nulle : vide aussi (sa forme texte « S:NO_ACCESS_CONTROL » donnerait un SDDL invalide)
     assert_eq!(texte_sacl_de_sddl("O:BAS:NO_ACCESS_CONTROL").as_deref(), Some(""));
+}
+
+/// Audit du 2026-11-23, A-6-4 : la désinstallation retire l'audit de lecture posé dans les profils. Seules partent les
+/// entrées identiques aux nôtres (drapeaux comparés en ensemble, quel que soit leur ordre) ; leurs copies héritées ne
+/// partent que si le parent n'en transmet plus ; règle de l'organisation, autre audit de Tout le monde, étiquette
+/// d'intégrité et entrée héritée d'un autre parent restent. Le retrait réel (privilège, handle, jonction) se vérifie
+/// dans le scénario 3b (CI) et en VM
+#[test]
+fn a64_retrait_audit_seulement_nos_entrees() {
+    use crate::natif::{sacl_sans_entrees as sans, sacl_transmet_audit as transmet, texte_sacl_de_sddl};
+    let (dossier, fichier) = ("AU;OINPIOSA;CC;;;WD", "AU;SA;CC;;;WD");
+    let (copie_f, copie_d) = ("AU;IDSA;CC;;;WD", "AU;OICIIDSA;CC;;;WD");
+    // Rien des nôtres : rien à écrire
+    assert_eq!(sans("", &[dossier], &[]), None);
+    assert_eq!(sans("S:(AU;SAFA;FA;;;BA)", &[dossier], &[copie_f]), None);
+    // Notre entrée seule : SACL vide, drapeaux de contrôle gardés
+    assert_eq!(sans("S:(AU;OINPIOSA;CC;;;WD)", &[dossier], &[]).as_deref(), Some("S:"));
+    assert_eq!(sans("S:AI(AU;OINPIOSA;CC;;;WD)", &[dossier], &[]).as_deref(), Some("S:AI"));
+    // Ordre des drapeaux sans effet (Windows peut écrire « IOOINPSA »)
+    assert_eq!(sans("S:(AU;IOOINPSA;CC;;;WD)", &[dossier], &[]).as_deref(), Some("S:"));
+    // Tierces gardées : organisation (Administrateurs, échecs), Tout le monde en échec, autres droits, étiquette d'intégrité
+    let tierces = "(AU;SAFA;FA;;;BA)(AU;FA;CC;;;WD)(AU;SA;FA;;;WD)(AU;OICIIOSA;CC;;;WD)(ML;;NW;;;LW)";
+    assert_eq!(sans(&format!("S:{tierces}(AU;SA;CC;;;WD)"), &[fichier], &[]).as_deref(), Some(format!("S:{tierces}").as_str()));
+    // Copie héritée : retirée seulement quand elle est passée (parent qui n'en transmet plus)
+    assert_eq!(sans("S:AI(AU;IDSA;CC;;;WD)", &[fichier], &[]), None, "parent qui transmet encore : copie gardée");
+    assert_eq!(sans("S:AI(AU;IDSA;CC;;;WD)(AU;IDSAFA;FA;;;BA)", &[fichier], &[copie_f]).as_deref(), Some("S:AI(AU;IDSAFA;FA;;;BA)"));
+    assert_eq!(sans("S:AI(AU;OICIIDSA;CC;;;WD)(AU;OICIIOSA;CC;;;WD)", &["AU;OICIIOSA;CC;;;WD"], &[copie_d]).as_deref(), Some("S:AI"), "sous-dossier d'une cible récursive");
+    assert_eq!(sans("S:AI(AU;OICIIDSA;CC;;;WD)(AU;OICIIOSA;CC;;;WD)", &[dossier], &[copie_d]).as_deref(), Some("S:AI(AU;OICIIOSA;CC;;;WD)"), "autre forme que la nôtre : gardée");
+    // Copie héritée qui n'est pas la nôtre (autres drapeaux, autre SID) : gardée
+    assert_eq!(sans("S:AI(AU;IDSAFA;CC;;;WD)(AU;IDSA;CC;;;BU)", &[fichier], &[copie_f]), None);
+    // Entrée de forme inattendue : jamais prise pour la nôtre, gardée telle quelle
+    assert_eq!(sans("S:(AU;S;CC;;;WD)(AU;SA;CC;;WD)", &[fichier], &[]), None);
+    // Résultat relu par Windows : SDDL valide (SACL vide comprise)
+    for s in ["S:", "S:AI", "S:AI(AU;IDSAFA;FA;;;BA)"] {
+        assert!(texte_sacl_de_sddl(&format!("O:BA{s}")).is_some(), "{s}");
+    }
+    // Transmission aux fichiers : entrée « OI » de Tout le monde en succès avec nos droits, explicite ou héritée
+    assert!(transmet("S:(AU;OINPIOSA;CC;;;WD)", "CC"));
+    assert!(transmet("S:AI(AU;OICIIDSA;CC;;;WD)", "CC"), "héritée d'un parent plus haut");
+    assert!(!transmet("S:", "CC"));
+    assert!(!transmet("S:(AU;SA;CC;;;WD)(AU;OICIIOSAFA;FA;;;BA)(AU;OIFA;CC;;;WD)", "CC"), "sans OI, autre SID, échecs seuls");
+    // Les entrées passées au retrait sont celles de la pose ; elles se lisent comme Windows les écrit
+    for recursif in [false, true] {
+        let e = crate::vol_donnees::entrees_audit(recursif);
+        for s in [e.dossier, e.fichier, e.copie_dossier, e.copie_fichier] {
+            assert!(texte_sacl_de_sddl(&format!("O:BA{s}")).is_some_and(|t| t.starts_with("S:") && t.len() > 2), "{s}");
+        }
+    }
+    let v = include_str!("vol_donnees.rs").replace("\r\n", "\n");
+    assert!(v.contains("let e = entrees_audit(c.recursif);\n        match crate::natif::poser_audit_arborescence(Path::new(&d), e.dossier, e.fichier,"));
+    assert!(v.contains("crate::natif::retirer_audit_arborescence(Path::new(&d), &entrees_audit(c.recursif), c.recursif, MAXIMUM_PAR_DOSSIER)"));
+    // Câblage : retiré par --nettoyer (désinstallation, jamais à la mise à niveau), dit dans le compte rendu
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let net = &m[m.find("pub fn nettoyer() {").unwrap()..];
+    let net = &net[..net.find("\n}\n").unwrap()];
+    let (retrait, cr) = (net.find("let audit = crate::vol_donnees::retirer_audit();").unwrap(), net.find("compte_rendu_nettoyage(&texte);").unwrap());
+    assert!(retrait < cr && net.contains("let texte = format!(\"{texte}\\r\\n{audit}\");"));
+    // Compte rendu : un échec ou un élément écarté se dit
+    use crate::vol_donnees::texte_retrait_audit as t;
+    assert!(!t(2, 10, 0, 0).contains("échec"));
+    let x = t(2, 10, 1, 3);
+    assert!(x.contains("1 dossier(s) en échec") && x.contains("3 élément(s) écarté(s)") && x.contains("peut rester"), "{x}");
 }
 
 /// Le script d'installation lancé par la commande de production s'exécute vraiment. Avec DETACHED_PROCESS, Windows
@@ -9652,6 +9788,48 @@ fn regles_service_suivies_et_compte_rendu() {
     for p in [p1, p2].into_iter().flatten() {
         let _ = std::fs::remove_file(p);
     }
+}
+
+/// Audit du 2026-11-23, A-6-4 : la désinstallation retire de %SystemRoot%\Temp les comptes rendus laissés par deR4Tizer,
+/// les seuls à lui : nom exact de ses comptes rendus, fichier ordinaire, propriétaire SYSTEM lu, un seul lien physique.
+/// Un compte standard peut créer des fichiers dans ce dossier : un nom posé d'avance (son propriétaire), un lien ou un
+/// lien dur ne sont jamais supprimés. La suppression réelle (SYSTEM) se vérifie en CI et en VM : ce test n'en lance
+/// aucune sur le poste
+#[test]
+fn a64_comptes_rendus_temp_retires_seulement_a_nous() {
+    use crate::natif::{compte_rendu_a_retirer as retirer, nom_compte_rendu_systeme as nom};
+    for n in ["deR4Tizer-nettoyage-20261123101500-4242-0123456789abcdef-0.txt", "deR4Tizer-protection-20261123-1-ffffffffffffffff-4.txt",
+        "deR4Tizer-arret-1-2-0000000000000000-2.txt", "deR4Tizer-desinstallation-20261123101500-4242-0123456789ABCDEF-1.txt"] {
+        assert!(nom(n), "{n}");
+    }
+    for n in ["deR4Tizer-nettoyage.txt", "deR4Tizer-autre-20261123-1-0123456789abcdef-0.txt", "deR4Tizer-nettoyage-2026-1-0123456789abcdef-5.txt",
+        "deR4Tizer-nettoyage-2026-1-0123456789abcde-0.txt", "deR4Tizer-nettoyage-2026-1-0123456789abcdeg-0.txt", "deR4Tizer-nettoyage-2026-1-0123456789abcdef-0.txt.exe",
+        "deR4Tizer-nettoyage-2026-x-0123456789abcdef-0.txt", "deR4Tizer-nettoyage--1-0123456789abcdef-0.txt", "d4t-essai-cr-1-2-0123456789abcdef-0.txt",
+        "deR4Tizer-nettoyage-2026-1-0123456789abcdef-0-x.txt", "", "deR4Tizer-é-1-2-0123456789abcdef-0.txt"] {
+        assert!(!nom(n), "{n}");
+    }
+    let sy = crate::protection::SID_SYSTEME;
+    assert!(retirer(true, false, Some(sy), Some(1)));
+    assert!(!retirer(false, false, Some(sy), Some(1)), "autre nom");
+    assert!(!retirer(true, true, Some(sy), Some(1)), "lien");
+    assert!(!retirer(true, false, Some("S-1-5-21-1-2-3-1001"), Some(1)), "posé d'avance par un compte standard");
+    assert!(!retirer(true, false, Some(crate::protection::SID_ADMINISTRATEURS), Some(1)), "SYSTEM seul écrit ces comptes rendus");
+    assert!(!retirer(true, false, None, Some(1)), "propriétaire illisible");
+    assert!(!retirer(true, false, Some(sy), Some(2)) && !retirer(true, false, Some(sy), None), "lien dur ou nombre illisible");
+    // Les noms que compte_rendu_systeme écrit vraiment sont reconnus (écrit puis supprimé par ce test, propriétaire : le
+    // compte du test, donc jamais « à retirer »)
+    if let Some(p) = crate::natif::compte_rendu_systeme("deR4Tizer-nettoyage", "essai") {
+        let n = p.file_name().unwrap().to_string_lossy().to_string();
+        let proprietaire = crate::natif::lire_securite(&p).map(|s| s.proprietaire);
+        let _ = std::fs::remove_file(&p);
+        assert!(nom(&n), "{n}");
+        assert!(!crate::natif::est_systeme() || proprietaire.as_deref() == Some(sy));
+    }
+    // Câblage : au début de --nettoyer, avant le compte rendu de cette désinstallation
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let net = &m[m.find("pub fn nettoyer() {").unwrap()..];
+    let net = &net[..net.find("\n}\n").unwrap()];
+    assert!(net.find("natif::retirer_comptes_rendus_systeme()").unwrap() < net.find("compte_rendu_nettoyage(&texte);").unwrap());
 }
 
 

@@ -701,8 +701,11 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
 /// jonction posée à sa place recevait les écritures du service réinstallé). Une racine qui est un lien est supprimée
 /// (le lien seul, jamais sa cible) puis recréée vide et protégée ; une racine d'un autre propriétaire n'est pas
 /// touchée (le service la mettra de côté). Rien n'est suivi : chaque élément est supprimé sans traverser de lien.
-/// Plusieurs essais (un fichier peut rester ouvert quelques instants après l'arrêt du service). Ok : compte rendu
-pub fn vider_racine() -> Result<String, String> {
+/// Plusieurs essais (un fichier peut rester ouvert quelques instants après l'arrêt du service). Exception (audit du
+/// 2026-11-23, A-4-3) : une quarantaine non vide est gardée, réservée à SYSTEM et aux administrateurs
+/// (garder_la_quarantaine). Ok : compte rendu (texte_desinstallation) et vrai s'il doit être écrit hors de la sortie
+/// (quarantaine gardée, ou supprimée faute de droits vérifiés)
+pub fn vider_racine() -> Result<(String, bool), String> {
     let racine = commun::dossier();
     if let Ok(m) = fs::symlink_metadata(racine) {
         if est_lien(&m) {
@@ -722,9 +725,14 @@ pub fn vider_racine() -> Result<String, String> {
     }
     // Droits de la racine gardée, par le handle : SYSTEM et administrateurs seulement
     crate::natif::poser_droits_handle(&f, SDDL_DOSSIER).map_err(|e| format!("droits de la racine gardée refusés ({e})"))?;
+    drop(f);
+    // Quarantaine (audit du 2026-11-23, A-4-3) : gardée si elle contient au moins une copie et que tout ce qui est gardé
+    // est vérifié réservé à SYSTEM et aux administrateurs ; sinon supprimée avec le reste (échec fermé)
+    let garde = garder_la_quarantaine(racine);
+    let gardee = matches!(garde, Ok(n) if n > 0);
     let mut restes = Vec::new();
     for essai in 0..10 {
-        restes = vider_contenu(racine);
+        restes = vider_contenu(racine, &|nom| garde_a_la_racine(nom, gardee));
         if restes.is_empty() {
             break;
         }
@@ -735,12 +743,105 @@ pub fn vider_racine() -> Result<String, String> {
     if !restes.is_empty() {
         return Err(format!("suppression du contenu de {} incomplète : {}", racine.display(), restes.into_iter().take(10).collect::<Vec<_>>().join(" ; ")));
     }
-    Ok(format!("Données supprimées ; racine {} gardée, vide, réservée à SYSTEM et aux administrateurs", racine.display()))
+    Ok((texte_desinstallation(&racine.display().to_string(), &garde), garde != Ok(0)))
+}
+
+/// Décision pure (audit du 2026-11-23, A-4-3) : élément gardé à la désinstallation réservé à SYSTEM et aux
+/// administrateurs ? Propriétaire acceptable, aucune entrée de type inconnu, aucune autorisation (même en lecture) pour
+/// un autre compte ; une DACL absente (accès total pour tout le monde) ne passe pas
+pub fn reserve_systeme_admins(s: &crate::natif::Securite) -> bool {
+    proprietaire_acceptable(&s.proprietaire) && !s.ace_inconnue && s.aces.iter().filter(|a| a.autorise).all(|a| proprietaire_acceptable(&a.sid))
+}
+
+/// Décision pure (A-4-3) : un élément de quarantaine\ est-il une copie à garder ? Fichier ordinaire, pas un lien, un seul
+/// lien physique (lu). Le reste (lien, dossier, fichier à plusieurs liens) n'a pas été écrit par le service : supprimé
+/// sans rien traverser
+pub fn copie_a_garder(lien: bool, fichier: bool, liens: Option<u32>) -> bool {
+    !lien && fichier && liens == Some(1)
+}
+
+/// Décision pure (A-4-3) : nom de la racine épargné par la suppression ? Seulement quand la quarantaine est gardée : le
+/// dossier quarantaine, son index, et le marqueur de prise en charge (sans lui, une réinstallation verrait une première
+/// prise en charge et mettrait la quarantaine de côté dans ecartes, hors de la page Quarantaine)
+pub fn garde_a_la_racine(nom: &str, quarantaine_gardee: bool) -> bool {
+    quarantaine_gardee && ["quarantaine", "quarantaine.json", MARQUEUR].iter().any(|n| nom.eq_ignore_ascii_case(n))
+}
+
+/// Compte rendu de la suppression des données (pur, testé) : `garde` vaut le nombre de copies gardées, ou la raison pour
+/// laquelle la quarantaine n'a pas pu l'être
+pub fn texte_desinstallation(racine: &str, garde: &Result<usize, String>) -> String {
+    match garde {
+        Ok(0) => format!("Données supprimées ; racine {racine} gardée, vide, réservée à SYSTEM et aux administrateurs"),
+        Ok(n) => format!("Données supprimées, SAUF la quarantaine : {n} copie(s) gardée(s) dans {racine}\\quarantaine avec leur index \
+            {racine}\\quarantaine.json, réservées à SYSTEM et aux administrateurs (contenu encodé, jamais exécutable tel quel). Restaurer : \
+            réinstaller deR4Tizer (page Quarantaine). Supprimer : dans une invite de commandes d'administrateur, rmdir /s /q \"{racine}\\quarantaine\" \
+            puis del \"{racine}\\quarantaine.json\" \"{racine}\\{MARQUEUR}\". Racine {racine} gardée, réservée à SYSTEM et aux administrateurs"),
+        Err(e) => format!("Données supprimées, quarantaine COMPRISE : ses droits n'ont pas pu être vérifiés réservés à SYSTEM et aux \
+            administrateurs ({e}) ; racine {racine} gardée, vide, réservée à SYSTEM et aux administrateurs"),
+    }
+}
+
+/// Droits réservés à SYSTEM et aux administrateurs sur un élément gardé, par son handle (ouvert sans suivre de lien,
+/// chemin final vérifié) : relus, posés (`sddl`) s'ils ne le sont pas, puis relus. Err : non vérifiables
+fn reserver(p: &Path, dossier: bool, sddl: &str) -> Result<(), String> {
+    let f = crate::natif::ouvrir_verifie(p, ACCES_RACINE, 0x7, dossier).map_err(|e| format!("{} non ouvert sans lien ({e})", p.display()))?;
+    if crate::natif::lire_securite_handle(&f).is_some_and(|s| reserve_systeme_admins(&s)) {
+        return Ok(());
+    }
+    crate::natif::poser_droits_handle(&f, sddl).map_err(|e| format!("{} : droits refusés ({e})", p.display()))?;
+    match crate::natif::lire_securite_handle(&f) {
+        Some(s) if reserve_systeme_admins(&s) => Ok(()),
+        _ => Err(format!("{} : droits relus non réservés à SYSTEM et aux administrateurs", p.display())),
+    }
+}
+
+/// Fichier gardé à la racine (index, marqueur) : absent, ou fichier ordinaire à un seul lien physique, réservé
+fn reserver_fichier_racine(p: &Path) -> Result<(), String> {
+    let Ok(m) = fs::symlink_metadata(p) else { return Ok(()) };
+    let liens = crate::natif::nombre_de_liens_chemin(p);
+    if !copie_a_garder(est_lien(&m), m.is_file(), liens) {
+        return Err(format!("{} n'est pas un fichier ordinaire à un seul lien physique", p.display()));
+    }
+    reserver(p, false, crate::reponse::SDDL_QUARANTAINE)
+}
+
+/// Désinstallation (A-4-3) : prépare la quarantaine à garder et rend le nombre de copies gardées (0 : rien à garder).
+/// Sans rien suivre : liens, dossiers et fichiers à plusieurs liens physiques de quarantaine\ supprimés ; chaque copie,
+/// le dossier, l'index et le marqueur vérifiés réservés à SYSTEM et aux administrateurs (posés par handle au besoin).
+/// Err : quelque chose n'a pas pu l'être, la quarantaine part avec le reste
+fn garder_la_quarantaine(racine: &Path) -> Result<usize, String> {
+    let q = racine.join("quarantaine");
+    let Ok(m) = fs::symlink_metadata(&q) else { return Ok(0) };
+    if est_lien(&m) || !m.is_dir() {
+        return Ok(0);
+    }
+    reserver(&q, true, SDDL_DOSSIER)?;
+    let lecture = fs::read_dir(&q).map_err(|e| format!("contenu de {} illisible ({e})", q.display()))?;
+    let mut copies = 0;
+    for e in lecture {
+        let p = e.map_err(|e| format!("élément de {} illisible ({e})", q.display()))?.path();
+        let m = fs::symlink_metadata(&p).map_err(|e| format!("{} non inspectable ({e})", p.display()))?;
+        let liens = if m.is_file() && !est_lien(&m) { crate::natif::nombre_de_liens_chemin(&p) } else { None };
+        if copie_a_garder(est_lien(&m), m.is_file(), liens) {
+            reserver(&p, false, crate::reponse::SDDL_QUARANTAINE)?;
+            copies += 1;
+        } else {
+            let r = if est_lien(&m) { fs::remove_dir(&p).or_else(|_| fs::remove_file(&p)) } else if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+            r.map_err(|e| format!("{} : suppression impossible ({e})", p.display()))?;
+        }
+    }
+    if copies == 0 {
+        return Ok(0);
+    }
+    reserver_fichier_racine(&racine.join("quarantaine.json"))?;
+    reserver_fichier_racine(&racine.join(MARQUEUR))?;
+    Ok(copies)
 }
 
 /// Supprime chaque élément de `dossier` sans traverser de lien (un lien est supprimé seul ; remove_dir_all ne suit pas
-/// les jonctions) ; renvoie les éléments restés, avec l'erreur
-fn vider_contenu(dossier: &Path) -> Vec<String> {
+/// les jonctions), sauf ceux dont le nom est épargné (`epargne`, quarantaine gardée : A-4-3) ; renvoie les éléments
+/// restés, avec l'erreur
+pub fn vider_contenu(dossier: &Path, epargne: &dyn Fn(&str) -> bool) -> Vec<String> {
     let lecture = match fs::read_dir(dossier) {
         Ok(l) => l,
         Err(e) => return vec![format!("contenu illisible ({e})")],
@@ -754,6 +855,9 @@ fn vider_contenu(dossier: &Path) -> Vec<String> {
                 continue;
             }
         };
+        if p.file_name().is_some_and(|n| epargne(&n.to_string_lossy())) {
+            continue;
+        }
         let r = match fs::symlink_metadata(&p) {
             Ok(m) if est_lien(&m) => fs::remove_dir(&p).or_else(|_| fs::remove_file(&p)),
             Ok(m) if m.is_dir() => fs::remove_dir_all(&p),
