@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
+  from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
+  drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
+  variables and `..` are refused (default folder kept, refusal logged). When the user's registry is not loaded (not
+  signed in), the default folder is used as before. Creation failures are logged once and make the `Leurres` collection
+  partial; the health status publishes "n placed out of m expected" (new `Detail` field of the collection). A canary
+  left in a former folder stays watched while it exists and is removed on uninstall, as are canaries in redirected
+  folders. Not yet tried in a VM with a synced OneDrive folder.
+- Service priority (A-8-1): the service process now runs at normal priority instead of below normal; heavy periodic
+  threads (startup entries, Defender and baseline checks, threat lists, LOLDrivers download, sensitive-data audit) run
+  in background mode, and the canary event thread (4663) and the command pipe thread run above normal. The effect on
+  the delay between the canary event and the suspension under load is not measured.
 - Process detection, audit of 23 November 2026 (findings A-7-1, A-7-3, A-7-5, A-7-7, A-7-8, A-7-9; tested in the lab,
   not yet tried in the VM). PRC-002 now sees `irm … | iex`, every abbreviation of `-EncodedCommand` (`-e`, `-ec`,
   `-enco`, `/e`…), `iwr … -OutFile`, `Start-BitsTransfer`, and a renamed copy of PowerShell when Sysmon gives the

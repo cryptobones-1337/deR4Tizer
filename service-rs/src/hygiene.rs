@@ -1,5 +1,6 @@
 //! Hygiène et pièges :
-//!   - leurres anti-rançongiciel : fichiers cachés placés en tête de Documents, Images et Bureau ;
+//!   - leurres anti-rançongiciel : fichiers cachés placés en tête de Documents, Images et Bureau (leur emplacement réel :
+//!     OneDrive, redirection) ;
 //!     un rançongiciel les chiffre en premier. Audit d'écriture (4663) pour savoir qui les touche ;
 //!   - pilotes vulnérables ou malveillants connus (liste LOLDrivers, technique BYOVD) ;
 //!   - extensions de navigateur : inventaire, permissions dangereuses, nouvelles extensions.
@@ -92,7 +93,8 @@ fn profils_proprietaires() -> Vec<(PathBuf, String)> {
 
 // ------------------------------------------------------------ leurres
 //
-// Les leurres vivent dans Documents, Pictures et Desktop des profils, dossiers que l'utilisateur contrôle : il peut
+// Les leurres vivent dans Documents, Pictures et Desktop des profils (ou leur emplacement réel, A-7-2), dossiers que
+// l'utilisateur contrôle : il peut
 // les remplacer par une jonction (vers un dossier protégé ou vers \RPC Control et ses liens). Aucune opération par
 // chemin : tout passe par un handle ouvert sans suivre de lien, chemin final vérifié (natif::ouvrir_verifie,
 // creer_verifie, supprimer_par_handle), et la création se fait sous l'identité du propriétaire du profil.
@@ -173,16 +175,255 @@ fn retirer_leurre_du_profil(sid: &str, chemin: &Path) -> bool {
     sous_l_identite(sid, || retirer_leurre(chemin)).unwrap_or_else(|| retirer_leurre(chemin))
 }
 
-/// Retire des leurres désignés par leur chemin (nettoyage de la désinstallation) ; renvoie le nombre retiré
-pub fn retirer_leurres(chemins: &[String]) -> usize {
+/// Retire des leurres (nettoyage de la désinstallation) ; renvoie le nombre retiré. Sous l'identité du propriétaire
+/// mémorisée avec le leurre (dossier redirigé hors du profil compris, A-7-2), sinon d'après le dossier du profil (listes
+/// des versions précédentes, sans SID)
+pub fn retirer_leurres(leurres: &[Leurre]) -> usize {
     let profils = profils_proprietaires();
-    chemins.iter().filter(|c| {
-        let p = Path::new(c.as_str());
+    leurres.iter().filter(|l| {
+        let p = Path::new(l.chemin.as_str());
+        if !l.sid.is_empty() && profils.iter().any(|(_, sid)| *sid == l.sid) {
+            return retirer_leurre_du_profil(&l.sid, p);
+        }
         match profils.iter().find(|(profil, _)| p.starts_with(profil)) {
             Some((_, sid)) => retirer_leurre_du_profil(sid, p),
             None => retirer_leurre(p),
         }
     }).count()
+}
+
+// Emplacement réel des dossiers des leurres (audit du 2026-11-23, A-7-2). Avec la sauvegarde OneDrive des dossiers (que
+// Windows 11 propose par défaut) ou une redirection, Documents, Images et Bureau ne sont plus dans le profil : les leurres
+// posés dans profil\Documents ne voyaient rien. L'emplacement est lu dans « User Shell Folders » de la ruche de
+// l'utilisateur (chargée quand il a une session) ; ruche absente ou valeur illisible : dossier par défaut. La valeur
+// est écrite par l'utilisateur : elle n'est admise que sous son profil ou sur un lecteur local fixe, jamais sur un
+// partage réseau, et la création reste par handle, sans suivre de lien, sous son identité.
+
+/// Dossier par défaut des leurres et nom de sa valeur dans « User Shell Folders »
+const DOSSIERS_LEURRES: &[(&str, &str)] = &[("Documents", "Personal"), ("Pictures", "My Pictures"), ("Desktop", "Desktop")];
+const CLE_DOSSIERS: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders";
+
+/// Emplacement d'un dossier des leurres (décision pure `resoudre_dossier`)
+#[derive(Debug, PartialEq, Eq)]
+pub enum DossierLeurre {
+    /// Dossier par défaut du profil (valeur absente, vide ou égale à profil\<dossier>)
+    Defaut,
+    /// Dossier redirigé (OneDrive, autre lecteur…), à faire admettre par `destination_admise`
+    Redirige(PathBuf),
+    /// Valeur refusée : le dossier par défaut est gardé et le refus journalisé
+    Refuse(&'static str),
+}
+
+/// Développe %USERPROFILE% (le profil de CET utilisateur, jamais celui du service) et %OneDrive% (sa ruche Environment,
+/// déjà développée) ; toute autre variable est refusée : rien n'est deviné. Découpage par get() : la valeur vient de
+/// l'utilisateur (règle 4)
+fn developper(valeur: &str, profil: &Path, onedrive: Option<&str>) -> Result<String, &'static str> {
+    let mut sortie = String::new();
+    let mut reste = valeur;
+    while let Some(i) = reste.find('%') {
+        sortie.push_str(reste.get(..i).unwrap_or(""));
+        let apres = reste.get(i + 1..).unwrap_or("");
+        let Some(j) = apres.find('%') else { return Err("variable non terminée") };
+        match apres.get(..j).unwrap_or("").to_ascii_lowercase().as_str() {
+            "userprofile" => sortie.push_str(&profil.to_string_lossy()),
+            "onedrive" => sortie.push_str(onedrive.ok_or("%OneDrive% inconnu ou refusé pour cet utilisateur")?),
+            _ => return Err("variable inconnue"),
+        }
+        reste = apres.get(j + 1..).unwrap_or("");
+    }
+    sortie.push_str(reste);
+    Ok(sortie)
+}
+
+/// Chemin absolu sur un lecteur à lettre (« X:\… »), normalisé ; refusés : partage réseau et préfixes de périphérique
+/// (« \\… »), chemin relatif, « . » ou « .. », flux de données (« : »), jokers, caractères de contrôle
+fn forme_locale(chemin: &str) -> Result<PathBuf, &'static str> {
+    let c = chemin.trim().replace('/', "\\");
+    if c.starts_with(r"\\") {
+        return Err("chemin réseau ou de périphérique");
+    }
+    if c.chars().any(|x| x.is_control() || matches!(x, '*' | '?' | '"' | '<' | '>' | '|')) {
+        return Err("caractère interdit");
+    }
+    let b = c.as_bytes();
+    if !(b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\') {
+        return Err("chemin non absolu");
+    }
+    let reste = c.get(3..).unwrap_or("");
+    if reste.contains(':') {
+        return Err("flux de données");
+    }
+    let morceaux: Vec<&str> = reste.split('\\').filter(|m| !m.is_empty()).collect();
+    if morceaux.iter().any(|m| *m == "." || *m == "..") {
+        return Err("« . » ou « .. »");
+    }
+    Ok(PathBuf::from(format!("{}\\{}", c.get(..2).unwrap_or(""), morceaux.join("\\"))))
+}
+
+/// Même chemin, sans tenir compte de la casse ni d'un séparateur final
+fn meme_dossier(a: &Path, b: &Path) -> bool {
+    let n = |p: &Path| p.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    n(a) == n(b)
+}
+
+/// Dossier `d` égal au profil ou dessous (comparaison par élément entier : C:\Users\marie2 n'est pas sous C:\Users\marie)
+fn sous_profil(d: &Path, profil: &Path) -> bool {
+    let p = profil.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    let d = d.to_string_lossy().to_lowercase();
+    !p.is_empty() && (d.trim_end_matches('\\') == p || d.starts_with(&format!("{p}\\")))
+}
+
+/// Décision pure (testée, A-7-2) : emplacement d'un dossier des leurres d'après la valeur lue dans « User Shell Folders »
+/// (None : ruche non chargée ou valeur absente), le profil de l'utilisateur, le nom du dossier par défaut et la valeur
+/// OneDrive de sa ruche Environment
+pub fn resoudre_dossier(valeur: Option<&str>, profil: &Path, defaut: &str, onedrive: Option<&str>) -> DossierLeurre {
+    let Some(v) = valeur.map(str::trim).filter(|v| !v.is_empty()) else { return DossierLeurre::Defaut };
+    // %OneDrive% lui-même développé (profil seulement) et local, sinon inconnu
+    let od = onedrive.and_then(|o| developper(o.trim(), profil, None).and_then(|o| forme_locale(&o)).ok()).map(|o| o.to_string_lossy().to_string());
+    match developper(v, profil, od.as_deref()).and_then(|c| forme_locale(&c)) {
+        Ok(c) if meme_dossier(&c, &profil.join(defaut)) => DossierLeurre::Defaut,
+        Ok(c) => DossierLeurre::Redirige(c),
+        Err(r) => DossierLeurre::Refuse(r),
+    }
+}
+
+/// Décision pure (testée, A-7-2) : un dossier redirigé est admis sous le profil de l'utilisateur, ou ailleurs sur un
+/// lecteur local fixe (DRIVE_FIXED) ; jamais sur un lecteur amovible, réseau ou inconnu. `type_lecteur` reçoit « X:\ »
+pub fn destination_admise(d: &Path, profil: &Path, type_lecteur: &dyn Fn(&str) -> u32) -> Result<(), &'static str> {
+    if sous_profil(d, profil) {
+        return Ok(());
+    }
+    let texte = d.to_string_lossy();
+    match texte.get(..3) {
+        Some(r) if type_lecteur(r) == 3 => Ok(()),
+        _ => Err("hors du profil et pas sur un lecteur local fixe"),
+    }
+}
+
+/// Valeur texte de la ruche d'un utilisateur (HKU\<SID>) ; None si la ruche n'est pas chargée (pas de session) ou la
+/// valeur absente. REG_EXPAND_SZ rendu tel quel (jamais développé avec l'environnement du service)
+fn valeur_ruche(sid: &str, cle: &str, valeur: &str) -> Option<String> {
+    use winreg::enums::HKEY_USERS;
+    winreg::RegKey::predef(HKEY_USERS).open_subkey(format!(r"{sid}\{cle}")).ok()?.get_value::<String, _>(valeur).ok()
+}
+
+/// Dossier où poser le leurre `dossier` d'un profil : emplacement réel admis, sinon dossier par défaut (refus compté
+/// et journalisé une fois)
+fn dossier_des_leurres(sid: &str, profil: &Path, dossier: &str, onedrive: Option<&str>, bilan: &mut BilanLeurres) -> PathBuf {
+    let defaut = profil.join(dossier);
+    let cle = format!("refus {sid} {dossier}");
+    let Some(nom_valeur) = DOSSIERS_LEURRES.iter().find(|(d, _)| *d == dossier).map(|(_, v)| *v) else { return defaut };
+    let raison = match resoudre_dossier(valeur_ruche(sid, CLE_DOSSIERS, nom_valeur).as_deref(), profil, dossier, onedrive) {
+        DossierLeurre::Defaut => {
+            oublier_signalement(&cle);
+            return defaut;
+        }
+        DossierLeurre::Redirige(r) => match destination_admise(&r, profil, &crate::natif::type_lecteur) {
+            Ok(()) => {
+                oublier_signalement(&cle);
+                return r;
+            }
+            Err(x) => x,
+        },
+        DossierLeurre::Refuse(x) => x,
+    };
+    bilan.refus += 1;
+    journal_une_fois(cle, &format!("leurres : dossier {dossier} redirigé refusé ({raison}) : leurre posé dans le dossier par défaut du profil"));
+    defaut
+}
+
+/// Leurres d'avant (liste mémorisée) hors des emplacements visés par cette pose (décision pure, testée) : dossier
+/// redirigé depuis la pose précédente. Ils restent suivis tant qu'ils existent : un rançongiciel qui les touche est
+/// toujours vu, et la désinstallation les retire
+pub fn precedents_hors_cibles(precedents: &[Leurre], cibles: &[PathBuf]) -> Vec<Leurre> {
+    precedents.iter().filter(|p| !cibles.iter().any(|c| meme_dossier(Path::new(&p.chemin), c))).cloned().collect()
+}
+
+/// Bilan d'une pose des leurres, publié dans l'état de santé (collecte Leurres, champ Detail)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BilanLeurres {
+    /// Leurres posés (ou déjà présents) et suivis aux emplacements visés
+    pub poses: usize,
+    /// Profils d'utilisateur × noms de leurres
+    pub attendus: usize,
+    /// Créations en échec dans un profil ouvert (journalisées)
+    pub echecs: usize,
+    /// Profils sans session dont un leurre manque : posé à leur prochaine connexion
+    pub sans_session: usize,
+    /// Dossiers redirigés refusés (réseau, lecteur non fixe, valeur illisible) : dossier par défaut gardé
+    pub refus: usize,
+}
+
+impl BilanLeurres {
+    /// Note de la collecte (pure, testée) d'après le nombre de leurres suivis : aucun, indisponible ; une création en
+    /// échec dans un profil ouvert, partielle ; sinon active
+    pub fn note(&self, suivis: usize) -> crate::collectes::Note {
+        use crate::collectes::Note;
+        if suivis == 0 {
+            Note::Indisponible
+        } else if self.echecs > 0 {
+            Note::Partielle
+        } else {
+            Note::Active
+        }
+    }
+
+    /// « leurres : n posés sur m attendus », et ce qui manque
+    pub fn texte(&self) -> String {
+        let mut t = format!("leurres : {} posés sur {} attendus", self.poses, self.attendus);
+        if self.echecs > 0 {
+            t.push_str(&format!(", {} en échec (voir journal.txt)", self.echecs));
+        }
+        if self.sans_session > 0 {
+            t.push_str(&format!(", {} profil(s) sans session (pose à la connexion)", self.sans_session));
+        }
+        if self.refus > 0 {
+            t.push_str(&format!(", {} dossier(s) redirigé(s) refusé(s) : dossier par défaut", self.refus));
+        }
+        t
+    }
+}
+
+static BILAN: std::sync::Mutex<BilanLeurres> = std::sync::Mutex::new(BilanLeurres { poses: 0, attendus: 0, echecs: 0, sans_session: 0, refus: 0 });
+
+/// Bilan de la dernière pose
+pub fn bilan_leurres() -> BilanLeurres {
+    *BILAN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Échecs déjà écrits dans journal.txt : une ligne par échec, pas une par pose (toutes les 15 min)
+static SIGNALES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn journal_une_fois(cle: String, message: &str) {
+    let mut s = SIGNALES.lock().unwrap_or_else(|e| e.into_inner());
+    if s.contains(&cle) {
+        return;
+    }
+    if s.len() >= 64 {
+        s.clear();
+    }
+    s.push(cle);
+    drop(s);
+    commun::journal(message);
+}
+
+fn oublier_signalement(cle: &str) {
+    SIGNALES.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c != cle);
+}
+
+/// Texte pour journal.txt sans nom de compte : un dossier redirigé hors du profil devient « <dossier redirigé> », le
+/// profil %USERPROFILE%, puis tout autre chemin de profil est masqué
+fn sans_profil(texte: &str, profil: &Path, dossier: &Path) -> String {
+    let remplacer = |t: &str, motif: &str, par: &str| match Regex::new(&format!("(?i){}", regex::escape(motif))) {
+        Ok(r) if !motif.is_empty() => r.replace_all(t, regex::NoExpand(par)).into_owned(),
+        _ => t.to_string(),
+    };
+    let mut t = texte.to_string();
+    if !sous_profil(dossier, profil) {
+        t = remplacer(&t, &dossier.to_string_lossy(), "<dossier redirigé>");
+    }
+    t = remplacer(&t, &profil.to_string_lossy(), "%USERPROFILE%");
+    commun::masquer_chemin(&t)
 }
 
 /// Anciens noms fixes (publiés dans le code) : retirés et remplacés
@@ -244,6 +485,9 @@ pub fn migrer_leurres() {
 pub struct Leurre {
     pub chemin: String,
     pub empreinte: String,
+    /// SID du propriétaire du profil (A-7-2) : retrait sous son identité, même dans un dossier redirigé hors du profil ;
+    /// vide dans les listes des versions précédentes
+    pub sid: String,
 }
 
 pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
@@ -261,7 +505,8 @@ pub fn empreinte_fichier(chemin: &Path) -> Option<String> {
 }
 
 /// Crée les leurres manquants (cachés) sous l'identité du propriétaire de chaque profil, leur pose un audit
-/// d'écriture par handle, et renvoie la liste. Profil sans session ouverte : aucune création (SYSTEM n'écrit jamais
+/// d'écriture par handle, et renvoie la liste. Dossiers à leur emplacement réel (A-7-2, `dossier_des_leurres`). Profil
+/// sans session ouverte : aucune création (SYSTEM n'écrit jamais
 /// dans les dossiers de l'utilisateur) ; ses leurres déjà présents sont gardés et audités. Rappelée régulièrement
 /// par le moniteur, pour les utilisateurs qui ouvrent une session plus tard.
 pub fn poser_leurres() -> Vec<Leurre> {
@@ -284,9 +529,18 @@ pub fn poser_leurres() -> Vec<Leurre> {
         }
     };
     let mut liste = Vec::new();
+    let mut bilan = BilanLeurres { attendus: profils.len() * noms.len(), ..Default::default() };
+    // Emplacements visés par cette pose : un leurre précédent ailleurs (dossier redirigé depuis) reste suivi plus bas
+    let mut cibles = Vec::new();
     for (profil, sid) in &profils {
+        let mut sans_session = false;
+        // %OneDrive% de CET utilisateur (ruche Environment), jamais celui du service ; ruche non chargée : inconnu
+        let onedrive = valeur_ruche(sid, "Environment", "OneDrive");
         for (dossier, nom) in &noms {
-            let f = profil.join(dossier).join(nom);
+            // Emplacement réel (A-7-2) : OneDrive ou redirection lus dans la ruche de l'utilisateur, sinon par défaut
+            let rep = dossier_des_leurres(sid, profil, dossier, onedrive.as_deref(), &mut bilan);
+            let f = rep.join(nom);
+            cibles.push(f.clone());
             // Empreinte à échéance (audit du 2026-11-14, A8, famille S103-07) : un leurre tenu par un verrou ne fige plus
             // la pose ; hors délai, ce leurre est laissé pour le prochain passage (jamais recréé à l'aveugle)
             let Ok(presente) = empreinte_a_echeance(&f) else {
@@ -294,16 +548,26 @@ pub fn poser_leurres() -> Vec<Leurre> {
                 continue;
             };
             if presente.is_none() {
-                // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi)
+                // Absent (ou détourné : alors la création à travers le lien est refusée elle aussi). Échec journalisé,
+                // une fois par leurre (A-7-2), sans nom de compte
+                let cle = format!("création {}", f.to_string_lossy().to_lowercase());
                 match sous_l_identite(sid, || creer_leurre(&f)) {
-                    Some(Ok(())) => {}
-                    _ => continue,
+                    Some(Ok(())) => oublier_signalement(&cle),
+                    Some(Err(x)) => {
+                        bilan.echecs += 1;
+                        journal_une_fois(cle, &sans_profil(&format!("leurres : création refusée dans {dossier} ({}) : {x}", rep.display()), profil, &rep));
+                        continue;
+                    }
+                    None => {
+                        sans_session = true;
+                        continue;
+                    }
                 }
             }
             // Audit posé dès que le leurre existe, avant le second contrôle (S175-01 : un leurre neuf hors délai au
             // second contrôle restait sans audit, LEU-002 aveugle)
             if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
-                commun::journal(&format!("leurres : audit non posé sur {} ({x})", f.display()));
+                commun::journal(&sans_profil(&format!("leurres : audit non posé sur {} ({x})", f.display()), profil, &rep));
             }
             let e = match empreinte_a_echeance(&f) {
                 Ok(Some(e)) => e,
@@ -313,9 +577,19 @@ pub fn poser_leurres() -> Vec<Leurre> {
                     continue;
                 }
             };
-            liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e });
+            liste.push(Leurre { chemin: f.to_string_lossy().to_string(), empreinte: e, sid: sid.clone() });
+            bilan.poses += 1;
+        }
+        bilan.sans_session += usize::from(sans_session);
+    }
+    // Leurres d'un ancien emplacement (dossier redirigé depuis la pose précédente) : suivis tant qu'ils existent (ou
+    // illisibles à échéance), avec leur empreinte d'origine : modifiés, ils lèvent LEU-001 ; la désinstallation les retire
+    for p in precedents_hors_cibles(&precedents, &cibles) {
+        if !matches!(empreinte_a_echeance(Path::new(&p.chemin)), Ok(None)) {
+            liste.push(p);
         }
     }
+    *BILAN.lock().unwrap_or_else(|e| e.into_inner()) = bilan;
     let _ = commun::ecrire(FICHIER_LEURRES, &liste);
     liste
 }
@@ -439,6 +713,8 @@ pub fn pilote_vulnerable(chemin: &Path) -> Option<String> {
     if perime && !EN_COURS.swap(true, Ordering::SeqCst) {
         let c = cache.clone();
         std::thread::spawn(move || {
+            // Arrière-plan (A-8-1) : téléchargement et lecture de la liste
+            crate::natif::fil_priorite(crate::natif::Priorite::Arriere);
             let nouvelle = Arc::new(liste_loldrivers());
             *c.lock().unwrap() = (Some(Instant::now()), nouvelle);
             EN_COURS.store(false, Ordering::SeqCst);

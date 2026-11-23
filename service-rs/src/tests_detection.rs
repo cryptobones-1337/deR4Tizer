@@ -1193,7 +1193,7 @@ fn leurre_de_test(d: &std::path::Path, nom: &str) -> crate::hygiene::Leurre {
     let f = d.join(nom);
     std::fs::write(&f, b"contenu du leurre").unwrap();
     let empreinte = crate::hygiene::empreinte_verifiee(&f).expect("empreinte");
-    crate::hygiene::Leurre { chemin: f.to_string_lossy().to_string(), empreinte }
+    crate::hygiene::Leurre { chemin: f.to_string_lossy().to_string(), empreinte, ..Default::default() }
 }
 
 #[test]

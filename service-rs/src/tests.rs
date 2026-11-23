@@ -2835,6 +2835,130 @@ fn leurres_aucune_operation_par_chemin() {
     assert_eq!(crate::hygiene::chemin_image_profil(r"D:\Profils\paul", "C:"), std::path::PathBuf::from(r"D:\Profils\paul"));
 }
 
+/// Audit du 2026-11-23, A-7-2 : emplacement réel de Documents, Images et Bureau d'après « User Shell Folders » de
+/// l'utilisateur (sauvegarde OneDrive, redirection) ; variables développées avec le profil de CET utilisateur ; chemin
+/// réseau, variable inconnue, chemin relatif ou « .. » : refusés (dossier par défaut gardé)
+#[test]
+fn a7_2_dossier_reel_des_leurres() {
+    use crate::hygiene::{resoudre_dossier, DossierLeurre::*};
+    use std::path::{Path, PathBuf};
+    let profil = Path::new(r"C:\Users\marie");
+    let od = Some(r"C:\Users\marie\OneDrive");
+    assert_eq!(resoudre_dossier(Some(r"%USERPROFILE%\OneDrive\Documents"), profil, "Documents", None), Redirige(PathBuf::from(r"C:\Users\marie\OneDrive\Documents")));
+    assert_eq!(resoudre_dossier(Some(r"%userprofile%\OneDrive\Bureau"), profil, "Desktop", None), Redirige(PathBuf::from(r"C:\Users\marie\OneDrive\Bureau")));
+    assert_eq!(resoudre_dossier(Some(r"%OneDrive%\Images"), profil, "Pictures", od), Redirige(PathBuf::from(r"C:\Users\marie\OneDrive\Images")));
+    assert!(matches!(resoudre_dossier(Some(r"%OneDrive%\Images"), profil, "Pictures", None), Refuse(_)), "%OneDrive% inconnu : jamais deviné");
+    assert_eq!(resoudre_dossier(Some(r"D:\Mes documents"), profil, "Documents", None), Redirige(PathBuf::from(r"D:\Mes documents")));
+    assert_eq!(resoudre_dossier(Some("D:/Photos/"), profil, "Pictures", None), Redirige(PathBuf::from(r"D:\Photos")));
+    // Valeur absente, vide ou égale au dossier par défaut : dossier par défaut
+    for v in [None, Some(""), Some("   "), Some(r"%USERPROFILE%\Documents"), Some(r"c:\users\MARIE\documents\")] {
+        assert_eq!(resoudre_dossier(v, profil, "Documents", None), Defaut, "{v:?}");
+    }
+    // Refusés : partage réseau (le service SYSTEM n'y lit ni n'y écrit jamais), préfixes de périphérique, variables
+    // inconnues ou non terminées, chemin relatif, « .. »
+    for v in [r"\\serveur\partage\Documents", r"\\?\UNC\serveur\partage\Documents", r"\\?\C:\Users\marie\Documents", r"\\.\C:\Documents",
+              "//serveur/partage/Documents", r"%HOMEDRIVE%%HOMEPATH%\Documents", r"%USERPROFILE\Documents", r"Documents", r"C:Documents",
+              r"C:\Users\marie\..\paul\Documents", r"%USERPROFILE%\..\paul\Documents", "C:\\Users\\marie\\Doc\u{0}uments"] {
+        assert!(matches!(resoudre_dossier(Some(v), profil, "Documents", od), Refuse(_)), "{v}");
+    }
+    // %OneDrive% lui-même réseau : refusé
+    assert!(matches!(resoudre_dossier(Some(r"%OneDrive%\Images"), profil, "Pictures", Some(r"\\nas\onedrive")), Refuse(_)));
+    torturer_texte(r"%USERPROFILE%\OneDrive\%OneDrive%\Documents", &mut |t| { let _ = resoudre_dossier(Some(t), profil, "Documents", od); });
+    torturer_texte(r"%OneDrive%\Documents", &mut |t| { let _ = resoudre_dossier(Some(r"%OneDrive%\Documents"), profil, "Documents", Some(t)); });
+}
+
+/// A-7-2 : destination résolue hors du profil admise seulement sur un lecteur local fixe (DRIVE_FIXED, 3) ; sous le profil,
+/// toujours (la création reste par handle, chemin final vérifié)
+#[test]
+fn a7_2_destination_des_leurres_admise() {
+    use crate::hygiene::destination_admise;
+    use std::path::Path;
+    let profil = Path::new(r"C:\Users\marie");
+    let jamais = |_: &str| -> u32 { panic!("type de lecteur demandé pour un dossier du profil") };
+    assert!(destination_admise(Path::new(r"C:\Users\marie\OneDrive\Documents"), profil, &jamais).is_ok());
+    assert!(destination_admise(Path::new(r"c:\users\MARIE\OneDrive\Documents"), profil, &jamais).is_ok());
+    assert!(destination_admise(Path::new(r"D:\Documents"), profil, &|r: &str| if r.eq_ignore_ascii_case(r"D:\") { 3 } else { 0 }).is_ok());
+    for t in [0, 1, 2, 4, 5, 6] {
+        assert!(destination_admise(Path::new(r"E:\Documents"), profil, &|_: &str| t).is_err(), "type {t}");
+    }
+    // Préfixe trompeur : un autre profil n'est pas « sous le profil »
+    assert!(destination_admise(Path::new(r"C:\Users\marie2\Documents"), profil, &|_: &str| 2).is_err());
+}
+
+/// A-7-2 : bilan de la pose publié dans l'état de santé (« n posés sur m attendus ») ; une création en échec dans un
+/// profil ouvert rend la collecte partielle ; aucun leurre suivi : indisponible ; sinon active (scénario 3a)
+#[test]
+fn a7_2_bilan_des_leurres() {
+    use crate::collectes::Note;
+    use crate::hygiene::BilanLeurres;
+    let b = BilanLeurres { poses: 3, attendus: 3, ..Default::default() };
+    assert_eq!(b.note(1), Note::Active);
+    assert_eq!(b.texte(), "leurres : 3 posés sur 3 attendus");
+    let b = BilanLeurres { poses: 2, attendus: 6, echecs: 1, sans_session: 1, refus: 1 };
+    assert_eq!(b.note(2), Note::Partielle);
+    let t = b.texte();
+    assert!(t.starts_with("leurres : 2 posés sur 6 attendus") && t.contains("1 en échec") && t.contains("1 profil(s) sans session")
+            && t.contains("1 dossier(s) redirigé(s) refusé(s)"), "{t}");
+    assert_eq!(BilanLeurres { poses: 0, attendus: 3, ..Default::default() }.note(0), Note::Indisponible);
+    // Leurres déjà suivis (pose précédente) sans nouvelle pose : la collecte reste lue
+    assert_eq!(BilanLeurres::default().note(3), Note::Active);
+}
+
+/// A-7-2 : un leurre resté dans un ancien dossier (dossier redirigé ensuite) reste suivi tant qu'il existe, donc retiré
+/// à la désinstallation ; le retrait se fait sous l'identité du propriétaire mémorisée avec le leurre
+#[test]
+fn a7_2_anciens_leurres_suivis_et_retires() {
+    use crate::hygiene::{precedents_hors_cibles, Leurre};
+    let l = |c: &str| Leurre { chemin: c.into(), empreinte: "e".into(), sid: "S-1-5-21-1-2-3-1001".into() };
+    let precedents = vec![l(r"C:\Users\marie\Documents\0 Devis 1234.docx"), l(r"C:\Users\marie\OneDrive\Documents\0 Devis 1234.docx")];
+    let cibles = vec![std::path::PathBuf::from(r"c:\users\marie\onedrive\documents\0 devis 1234.docx")];
+    let gardes = precedents_hors_cibles(&precedents, &cibles);
+    assert_eq!(gardes.len(), 1);
+    assert_eq!(gardes[0].chemin, r"C:\Users\marie\Documents\0 Devis 1234.docx");
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let r = &h[h.find("pub fn retirer_leurres(").unwrap()..];
+    let r = &r[..r.find("\n}").unwrap()];
+    assert!(r.contains("retirer_leurre_du_profil(&l.sid"), "désinstallation : identité mémorisée avec le leurre");
+    let m = include_str!("moniteur.rs");
+    assert!(m.contains("hygiene::retirer_leurres(&leurres)"), "désinstallation : leurres des dossiers redirigés compris");
+}
+
+/// Audit du 2026-11-23, A-8-1 : plus de priorité basse pour tout le processus ; fils lourds et périodiques en arrière-plan,
+/// fil des 4663 des leurres et fil du canal de commandes au-dessus de la normale, par une seule fonction
+#[test]
+fn a8_1_priorites_des_fils() {
+    let main = include_str!("main.rs");
+    assert!(!main.contains("priorite_basse") && !main.contains("BELOW_NORMAL") && !main.contains("SetPriorityClass"), "processus en priorité normale");
+    for (f, src) in [("moniteur.rs", include_str!("moniteur.rs")), ("canal.rs", include_str!("canal.rs")), ("vol_donnees.rs", include_str!("vol_donnees.rs")),
+                     ("hygiene.rs", include_str!("hygiene.rs")), ("evenements.rs", include_str!("evenements.rs"))] {
+        assert!(!src.contains("SetThreadPriority") && !src.contains("SetPriorityClass") && !src.contains("BELOW_NORMAL"), "{f} : priorité réglée hors de natif::fil_priorite");
+    }
+    // Fil nommé : l'appel suit sa création, avant toute autre ligne de travail
+    let fil = |src: &str, nom: &str, attendu: &str| {
+        let src = src.replace("\r\n", "\n");
+        let i = src.find(&format!(".name(\"{nom}\".into()).spawn(")).unwrap_or_else(|| panic!("fil {nom} introuvable"));
+        let corps = src[i..].lines().take(3).collect::<Vec<_>>().join("\n");
+        assert!(corps.contains(attendu), "fil {nom} : {attendu} attendu en tête\n{corps}");
+    };
+    let m = include_str!("moniteur.rs");
+    for nom in ["persistance", "contrôles", "listes de menaces"] {
+        fil(m, nom, "natif::fil_priorite(natif::Priorite::Arriere)");
+    }
+    fil(include_str!("vol_donnees.rs"), "audit données sensibles", "natif::fil_priorite(crate::natif::Priorite::Arriere)");
+    fil(include_str!("canal.rs"), "commandes", "natif::fil_priorite(crate::natif::Priorite::Haute)");
+    let v = include_str!("vol_donnees.rs");
+    assert!(v.contains("evenements::abonner_avec_priorite(\"Security\", \"*[System[EventID=4663]]\", crate::collectes::Collecte::JournalSecurite, Some(crate::natif::Priorite::Haute),"),
+            "fil des 4663 des leurres au-dessus de la normale");
+    let e = include_str!("evenements.rs").replace("\r\n", "\n");
+    let a = &e[e.find("pub fn abonner_avec_priorite(").unwrap()..];
+    let a = &a[a.find(".spawn(move ||").unwrap()..];
+    assert!(a[..300].contains("crate::natif::fil_priorite(p)"), "priorité posée au début du fil d'abonnement");
+    // Surveillance (cycle de 3 s) : jamais en arrière-plan
+    let s = m.replace("\r\n", "\n");
+    let s = &s[s.find(".name(\"surveillance\".into())").unwrap()..];
+    assert!(!s[..s.find("}).unwrap();").unwrap()].contains("fil_priorite"), "cycle de surveillance laissé en priorité normale");
+}
+
 fn contenu_dossier(d: &std::path::Path) -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(d).map(|l| l.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
     v.sort();
@@ -4762,7 +4886,8 @@ fn phase3_branchements_des_collectes() {
     assert!(m.contains("collectes::echec(Collecte::JournalDns, \"journal DNS-Client inactif"), "journal DNS impossible à activer non noté");
     assert!(include_str!("siem.rs").contains("crate::collectes::desactivee(c, \"mode console"), "journaux non lus en console non notés");
     let e = include_str!("evenements.rs").replace("\r\n", "\n");
-    let d = e.find("pub fn abonner(").unwrap();
+    // Corps dans abonner_avec_priorite depuis A-8-1 (abonner n'en est que l'appel sans priorité)
+    let d = e.find("pub fn abonner_avec_priorite(").unwrap();
     let f = &e[d..d + e[d..].find("\n}\n").unwrap()];
     assert_eq!(f.matches("collectes::echec(collecte,").count(), 5, "abonner : échec initial, numéro illisible, journal désactivé, délais sans progrès, événements illisibles");
     assert_eq!(f.matches("collectes::succes(collecte)").count(), 1, "abonner : départ (les autres succès passent par noter_lu)");
@@ -4780,7 +4905,8 @@ fn phase3_branchements_des_collectes() {
     for (nom, s, c) in [("defender", include_str!("defender.rs"), "JournalDefender"), ("parefeu", include_str!("parefeu.rs"), "JournalParefeu"),
                         ("vol_donnees", include_str!("vol_donnees.rs"), "JournalSecurite"), ("processus", include_str!("processus.rs"), "Sysmon"),
                         ("moniteur", m, "JournalDns")] {
-        assert!(s.contains(&format!("Collecte::{c}, move |xml|")) || s.contains(&format!("Collecte::{c},\n")) || s.contains(&format!("Collecte::{c}, move")), "{nom} : collecte {c} non passée à abonner");
+        assert!(s.contains(&format!("Collecte::{c}, move |xml|")) || s.contains(&format!("Collecte::{c},\n")) || s.contains(&format!("Collecte::{c}, move"))
+            || s.contains(&format!("Collecte::{c}, Some(crate::natif::Priorite::Haute), move |xml|")), "{nom} : collecte {c} non passée à abonner");
     }
     assert!(include_str!("siem.rs").contains(r#"("Security", securite, crate::collectes::Collecte::JournalSecurite), ("System", systeme, crate::collectes::Collecte::JournalSysteme)"#), "siem : journaux sans leur collecte");
     let p = include_str!("processus.rs");
