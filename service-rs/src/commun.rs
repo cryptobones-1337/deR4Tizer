@@ -1201,7 +1201,7 @@ const LANCEURS_PAR_OPTION: &[(&[&str], &[&str])] = &[
 
 /// Lanceurs dont la commande est le premier mot qui n'est ni une option, ni la valeur d'une option, ni un poste (`\\srv`),
 /// ni un titre entre guillemets : `start "" ssh …`, `sshpass -p x ssh …`, `psexec \\srv -u a cmd …`
-const LANCEURS_DIRECTS: &[&str] = &["start", "call", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo"];
+const LANCEURS_DIRECTS: &[&str] = &["start", "call", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo", "start-process", "saps"];
 
 /// Options d'un lanceur direct suivies d'une valeur (le mot suivant n'est pas la commande) ; les autres options sont des
 /// drapeaux (psexec -d, -s, -i, -h, -accepteula ; start /b, /min, /wait…), sautés
@@ -1210,6 +1210,8 @@ const OPTIONS_A_VALEUR_DES_LANCEURS: &[(&[&str], &[&str])] = &[
     (&["sshpass"], &["-p", "-f", "-d"]),
     (&["start"], &["/d", "/node", "/affinity"]),
     (&["sudo"], &["-u", "-g"]),
+    (&["start-process", "saps"], &["-argumentlist", "-args", "-windowstyle", "-workingdirectory", "-credential", "-verb",
+        "-redirectstandardoutput", "-redirectstandarderror", "-redirectstandardinput"]),
 ];
 
 /// Le mot qui suit `mot` est-il en tête de commande, pour l'outil courant `outil` (décision pure, testée) ? Après un
@@ -1279,11 +1281,13 @@ pub(crate) fn secret_d_option(outil: &str, mot: &str) -> Option<Masque> {
 /// masquée en entier ; une valeur qui est une expression PowerShell (`$variable`, `(…)`) ne l'est pas. Le texte entre
 /// guillemets est aussi lu comme une ligne (powershell -c "…"). Aucune indexation qui puisse paniquer (règle 4)
 pub fn masquer_secrets(ligne: &str) -> String {
-    masquer_mots(&masquer_urls(ligne), 0)
+    masquer_mots(&masquer_urls(ligne), 0, &[])
 }
 
 /// Mots d'une ligne de commande, en octets (début, fin), séparés par des blancs ; un mot entre guillemets doubles (où qu'ils
-/// s'ouvrent) ou simples (ouverts en début de mot, ou après « : » ou « = ») garde ses blancs
+/// s'ouvrent) ou simples (ouverts en début de mot, ou après « : », « = », « ( » ou « , ») garde ses blancs. Une virgule qui
+/// suit un guillemet fermant sépare deux mots (tableau PowerShell `@('/p','x')`, revue de #269) ; une virgule dans un mot
+/// nu (`/p pa,ss`) ne sépare rien
 fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
     let mut mots = Vec::new();
     let (mut debut, mut guillemet, mut precedent): (Option<usize>, Option<char>, Option<char>) = (None, None, None);
@@ -1306,9 +1310,14 @@ fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
                 }
                 mots.push((i, i + 1));
             }
+            None if c == ',' && matches!(precedent, Some('\'' | '"')) => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+            }
             None => {
                 let d = *debut.get_or_insert(i);
-                if c == '"' || (c == '\'' && (d == i || matches!(precedent, Some(':' | '=')))) {
+                if c == '"' || (c == '\'' && (d == i || matches!(precedent, Some(':' | '=' | '(' | ',')))) {
                     guillemet = Some(c);
                 }
             }
@@ -1319,6 +1328,28 @@ fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
         mots.push((d, s.len()));
     }
     mots
+}
+
+/// Partie utile d'un mot, en octets (début, fin) : sans `@(` ou `(` de tête, sans `)`, `,` ou `;` de fin, ni les guillemets
+/// qui l'entourent (`@('/p'` → `/p`, `'x')` → `x`) ; seuls des caractères ASCII sont retirés (bornes de caractère sûres)
+fn interieur(t: &str) -> (usize, usize) {
+    let o = t.as_bytes();
+    let (mut a, mut b) = (0, o.len());
+    if o.first() == Some(&b'@') && o.get(1) == Some(&b'(') {
+        a = 2;
+    } else if o.first() == Some(&b'(') {
+        a = 1;
+    }
+    while b > a && matches!(o.get(b - 1), Some(b')' | b',' | b';')) {
+        b -= 1;
+    }
+    if let Some(&q) = o.get(a).filter(|q| matches!(q, b'\'' | b'"')) {
+        a += 1;
+        if b > a && o.get(b - 1) == Some(&q) {
+            b -= 1;
+        }
+    }
+    (a, b.max(a))
 }
 
 /// Valeur littérale (à masquer) : ni vide, ni une expression PowerShell, ni un séparateur de commandes
@@ -1336,31 +1367,36 @@ fn est_net(v: &str) -> bool {
     matches!(v.rsplit(['\\', '/']).next().unwrap_or(""), "net" | "net.exe" | "net1" | "net1.exe")
 }
 
-fn masquer_mots(s: &str, profondeur: u8) -> String {
+/// `herites` : outils à secret actifs là où ce texte est cité (`Start-Process schtasks -ArgumentList '/p x'`, revue de #269)
+fn masquer_mots(s: &str, profondeur: u8, herites: &[String]) -> String {
     let mots = mots_de_commande(s);
     let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
-    // Pour chaque mot : masqué à partir de cet octet du mot
-    let mut masques: Vec<Option<usize>> = vec![None; mots.len()];
+    // Pour chaque mot : partie masquée (octets du mot, début et fin) ; outils à secret actifs pour un mot entre guillemets
+    let mut masques: Vec<Option<(usize, usize)>> = vec![None; mots.len()];
+    let mut contextes: Vec<Vec<String>> = vec![Vec::new(); mots.len()];
     // Deux états (revue de #269, D2 et D3). `actifs` : les outils qui portent un secret vus dans la commande ; le passage vers
     // l'un d'eux est permis sur n'importe quel mot (`start /b schtasks`, `call schtasks`, `psexec … -d schtasks`, « Processus
     // créé: schtasks ») et reste acquis jusqu'au séparateur suivant (verrou : au pire on masque trop). `outil` : l'outil
     // courant, qui ne passe à un outil sans secret qu'en tête de commande (premier mot, après un séparateur, après « : »,
     // après `cmd /c` ou `powershell -c`) ou comme commande d'un lanceur direct, jamais sur la valeur d'une option (`/tr
     // cmd.exe`). La commande d'un lanceur met fin à ses options : le lanceur quitte `actifs` (`sshpass -p x ssh -p 22`)
-    let mut actifs: Vec<String> = Vec::new();
+    let mut actifs: Vec<String> = herites.to_vec();
     let mut outil = String::new();
     let mut tete = true;
     for k in 0..mots.len() {
-        let t = texte(k);
-        if separateur_de_commandes(t) {
+        let brut = texte(k);
+        // Mot sans parenthèses ni guillemets de tableau (`@('/p'` → `/p`) ; `a` : décalage de sa partie utile
+        let (a, z) = interieur(brut);
+        let t = brut.get(a..z).unwrap_or("");
+        if separateur_de_commandes(brut) {
             actifs.clear();
             outil.clear();
             tete = true;
             continue;
         }
         let nom = nom_outil(t);
-        let precedent = if k > 0 { texte(k - 1) } else { "" };
-        let lancee = commande_lancee(&outil, t, precedent);
+        let precedent = if k > 0 { texte(k - 1).get(interieur(texte(k - 1)).0..interieur(texte(k - 1)).1).unwrap_or("") } else { "" };
+        let lancee = commande_lancee(&outil, brut, precedent);
         if lancee {
             actifs.retain(|a| *a != outil);
         }
@@ -1372,7 +1408,7 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
             tete = false;
         } else if tete {
             // Affectation en tête (PGPASSWORD=x psql) : la commande suit
-            if !(t.contains('=') && !t.starts_with('-') && !t.starts_with('/')) {
+            if !(brut.contains('=') && !brut.starts_with('-') && !brut.starts_with('/')) {
                 outil = nom;
                 tete = false;
             }
@@ -1382,17 +1418,22 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
         if tete_apres(&outil, t) {
             tete = true;
         }
+        if brut.starts_with('"') || brut.starts_with('\'') {
+            contextes[k] = actifs.clone();
+        }
         let masque = actifs.iter().map(String::as_str).chain([""]).find_map(|o| secret_d_option(o, t));
         match masque {
-            Some(Masque::Dans(o)) => masques[k] = Some(o),
+            Some(Masque::Dans(o)) => masques[k] = Some((a + o, z)),
             Some(Masque::Suivant(separateur)) => {
-                let v = texte(k + 1);
+                let brut_v = texte(k + 1);
+                let (va, vz) = interieur(brut_v);
+                let v = brut_v.get(va..vz).unwrap_or("");
                 let depuis = match separateur {
-                    None => Some(0),
-                    Some(c) => v.find(c).filter(|i| i + 1 < v.len()).map(|i| i + 1),
+                    None => Some(va),
+                    Some(c) => v.find(c).filter(|i| i + 1 < v.len()).map(|i| va + i + 1),
                 };
-                if let (true, Some(o), Some(m)) = (valeur_litterale(v), depuis, masques.get_mut(k + 1)) {
-                    *m = Some(o);
+                if let (true, Some(o), Some(m)) = (valeur_litterale(brut_v) && !v.is_empty(), depuis, masques.get_mut(k + 1)) {
+                    *m = Some((o, vz));
                 }
             }
             None => {}
@@ -1401,7 +1442,7 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
             let j = if texte(k + 1).eq_ignore_ascii_case("-string") { k + 2 } else { k + 1 };
             if valeur_litterale(texte(j)) && !texte(j).starts_with('-') {
                 if let Some(m) = masques.get_mut(j) {
-                    *m = Some(0);
+                    *m = Some((0, texte(j).len()));
                 }
             }
         }
@@ -1421,7 +1462,7 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
                 let reseau = v.trim_start_matches('"').starts_with("\\\\") || v.contains("://");
                 // net use : tout sauf le lecteur et le chemin réseau ; net user : le mot de passe suit le nom du compte
                 if (!user && !lecteur && !reseau) || (user && positionnels >= 2) {
-                    masques[j] = Some(0);
+                    masques[j] = Some((0, v.len()));
                 }
             }
         }
@@ -1430,7 +1471,7 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
     let mut position = 0;
     for (k, &(a, b)) in mots.iter().enumerate() {
         let remplacement = match masques[k] {
-            Some(o) => Some(format!("{}{MASQUE}", s.get(a..a + o).unwrap_or(""))),
+            Some((o, z)) => Some(format!("{}{MASQUE}{}", s.get(a..a + o).unwrap_or(""), s.get(a + z..b).unwrap_or(""))),
             None => {
                 // Texte entre guillemets : lu comme une ligne (powershell -c "…"), trois niveaux au plus
                 let t = texte(k);
@@ -1439,7 +1480,7 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
                     Some(q) if profondeur < 3 => {
                         let ferme = t.len() > 1 && t.ends_with(q);
                         let dedans = t.get(1..if ferme { t.len() - 1 } else { t.len() }).unwrap_or("");
-                        let m = masquer_mots(dedans, profondeur + 1);
+                        let m = masquer_mots(dedans, profondeur + 1, &contextes[k]);
                         (m != dedans).then(|| format!("{q}{m}{}", if ferme { q.to_string() } else { String::new() }))
                     }
                     _ => None,

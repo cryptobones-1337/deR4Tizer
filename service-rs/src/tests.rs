@@ -5704,6 +5704,15 @@ fn masquer_secrets_retire_les_valeurs() {
         ("Processus créé: schtasks /create /tn T /tr cmd.exe /s srv /u admin /p S18", "S18", "Processus créé:"),
         // Verrou : « sauvegarde: » remet la tête de commande à zéro, schtasks garde ses options jusqu'au séparateur
         ("schtasks /create /tn sauvegarde: /tr del /s srv /u admin /p S19", "S19", "/tn sauvegarde:"),
+        // Start-Process et saps : les arguments cités (chaîne ou tableau) sont lus comme les options de l'outil lancé
+        ("Start-Process schtasks -ArgumentList '/s srv /u admin /p S30'", "S30", "-ArgumentList '/s srv /u admin /p "),
+        (r#"Start-Process schtasks -ArgumentList "/s srv /u admin /p S31" -Wait"#, "S31", "-Wait"),
+        ("Start-Process schtasks -ArgumentList @('/s','srv','/u','admin','/p','S32')", "S32", "@('/s','srv','/u','admin','/p','***')"),
+        ("saps schtasks -ArgumentList @('/p', 'S33')", "S33", "@('/p', '***')"),
+        ("start-process -FilePath schtasks.exe -ArgumentList '/create','/s','srv','/p','S34' -WindowStyle Hidden", "S34", "-WindowStyle Hidden"),
+        (r#"powershell -c "Start-Process schtasks -ArgumentList '/p S35'""#, "S35", "Start-Process schtasks"),
+        // Virgule dans un mot nu : jamais un séparateur (le mot de passe entier est masqué)
+        ("schtasks /s srv /u admin /p pa,S36ss /f", "S36", "/p *** /f"),
     ];
     for (ligne, secret, garde) in cas {
         let m = masquer_secrets(ligne);
@@ -5725,7 +5734,9 @@ fn masquer_secrets_retire_les_valeurs() {
                   "cmd /c xcopy a b /p", "cmd.exe /k del /p x.txt", r#"start "" ssh -p 22 hote"#,
                   r#"psexec \\srv cmd /c del /p x.txt"#, "powershell -c ssh -p 22 hote", "sshpass -f fichier ssh -p 22 hote",
                   "cmd /c echo x&&ssh -p 22 hote", "start /min /wait ssh -p 22 hote", r"psexec \\srv -accepteula -d ssh -p 22 hote",
-                  "call xcopy a b /p", "echo a|findstr /p motif"] {
+                  "call xcopy a b /p", "echo a|findstr /p motif",
+                  "Start-Process ssh -ArgumentList '-p 22 hote'", "Start-Process notepad -ArgumentList 'a.txt' -WindowStyle Hidden",
+                  "Start-Process xcopy -ArgumentList @('a','b','/p')", "outil /x pa,ss"] {
         assert_eq!(masquer_secrets(ligne), ligne);
     }
     // Non ASCII : le reste intact, le secret retiré
