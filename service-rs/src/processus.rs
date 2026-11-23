@@ -81,30 +81,24 @@ pub struct Processus {
     reveil: Arc<AtomicBool>,
 }
 
-fn regles() -> &'static [(Regex, &'static str, &'static str)] {
-    static R: OnceLock<Vec<(Regex, &'static str, &'static str)>> = OnceLock::new();
+const NOM_PRC002: &str = "PowerShell obscurci ou qui télécharge du code";
+const NOM_PRC003: &str = "détournement d'outil Windows (LOLBin)";
+const NOM_PRC004: &str = "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)";
+const NOM_PRC005: &str = "suppression des sauvegardes (typique d'un rançongiciel)";
+
+/// Motifs lus dans le texte de la ligne : PRC-002 (l'interpréteur PowerShell est cherché dans la ligne) et PRC-004 (le
+/// navigateur est ancré sur son exécutable). PRC-003 et PRC-005 sont liés au programme lancé (`MOTIFS_PROGRAMMES`)
+fn regles_texte() -> &'static (Regex, Regex) {
+    static R: OnceLock<(Regex, Regex)> = OnceLock::new();
     R.get_or_init(|| {
-        vec![
-            (Regex::new(&format!("(?i){INTERPRETEUR_PRC002}({})", MOTIFS_PRC002.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
-             "PowerShell obscurci ou qui télécharge du code", crate::regles::PRC_002),
-            (Regex::new(&format!("(?i){}", OUTILS_PRC003.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
-             "détournement d'outil Windows (LOLBin)", crate::regles::PRC_003),
+        (
+            Regex::new(&format!("(?i){INTERPRETEUR_PRC002}({})", MOTIFS_PRC002.iter().map(|(_, m, _)| *m).collect::<Vec<_>>().join("|"))).unwrap(),
             // Navigateurs Chromium (audit du 2026-11-23, A-7-9 : Vivaldi, Opera, Arc, Yandex dont le programme s'appelle
             // browser.exe, reconnu dans son seul dossier ; Chromium s'appelle chrome.exe). Firefox n'est pas retenu
-            (Regex::new(r#"(?i)((^|[\\/"\s])(chrome|msedge|brave|vivaldi|opera|arc)\.exe|\\yandexbrowser\\application\\browser\.exe)"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
-             "navigateur lancé en débogage à distance : technique de vol de cookies (contourne le chiffrement des navigateurs)", crate::regles::PRC_004),
-            (Regex::new(MOTIF_PRC005).unwrap(),
-             "suppression des sauvegardes (typique d'un rançongiciel)", crate::regles::PRC_005),
-        ]
+            Regex::new(r#"(?i)((^|[\\/"\s])(chrome|msedge|brave|vivaldi|opera|arc)\.exe|\\yandexbrowser\\application\\browser\.exe)"?\s.*--remote-debugging-(port|pipe)"#).unwrap(),
+        )
     })
 }
-
-/// PRC-005 : suppression des clichés ou des sauvegardes, et démarrage sans récupération. Depuis A-7-3 (audit du
-/// 2026-11-23) : clichés supprimés par WMI ou CIM depuis PowerShell, espace des clichés réduit à moins de 1 000 Mo
-/// (Windows efface alors les clichés ; une taille en Go, en % ou illimitée n'est pas visée), `wbadmin delete backup`,
-/// `bootstatuspolicy ignoreallfailures`, et diskshadow dont la ligne dit `delete shadows` (diskshadow /s seul : le
-/// script n'est pas lu, la ligne ne dit pas s'il supprime)
-const MOTIF_PRC005: &str = r#"(?i)vssadmin.*delete\s+shadows|vssadmin.*resize\s+shadowstorage.*/maxsize=\d{1,3}(?:mb|kb|b)?(?:[\s"]|$)|wbadmin.*delete\s+(?:catalog|systemstatebackup|backup)|bcdedit.*recoveryenabled\s+no|bcdedit.*bootstatuspolicy\s+ignoreallfailures|wmic.*shadowcopy\s+delete|win32_shadowcopy.*(?:remove-(?:wmiobject|ciminstance)|\.delete\(\))|diskshadow.*delete\s+shadows|delete\s+shadows.*diskshadow"#;
 
 /// Noms d'origine (ressource de version, champ OriginalFileName de Sysmon 1) de PowerShell : Windows PowerShell et
 /// PowerShell 7 (pwsh.exe porte le nom d'origine de sa bibliothèque, pwsh.dll)
@@ -117,6 +111,15 @@ pub(crate) fn ligne_pour_motifs(p: &InfoProcessus) -> Option<String> {
     let ligne = p.ligne_commande.as_deref()?;
     let powershell = p.nom_origine.as_deref().is_some_and(|n| NOMS_ORIGINE_POWERSHELL.iter().any(|x| x.eq_ignore_ascii_case(n.trim())));
     Some(if powershell { format!("powershell {ligne}") } else { ligne.to_string() })
+}
+
+/// Décision pure (testée) : nom d'un programme d'après un chemin, un mot de ligne de commande ou un nom d'origine :
+/// dernier élément du chemin, sans guillemets, en minuscules, sans « .exe » ni « .dll » (pwsh.dll : nom d'origine de
+/// pwsh.exe). Constat T-2 : les motifs de PRC-003 et PRC-005 sont liés à ce nom
+pub(crate) fn nom_programme(jeton: &str) -> String {
+    let base = jeton.trim().trim_matches(['"', '\'']).rsplit(['\\', '/']).next().unwrap_or("");
+    let base = base.trim_matches(['"', '\'']).to_lowercase();
+    base.strip_suffix(".exe").or_else(|| base.strip_suffix(".dll")).unwrap_or(&base).to_string()
 }
 
 pub fn suspicion(ligne: &str) -> Option<&'static str> {
@@ -136,14 +139,39 @@ pub fn regle_retenue(document_interpreteur: bool, motifs: &[&'static str]) -> &'
     }
 }
 
-/// Premier motif trouvé dans une ligne de commande, avec l'identifiant de sa règle (docs/detection/regles.md)
+/// Premier motif trouvé dans une ligne de commande, avec l'identifiant de sa règle (docs/detection/regles.md). Le
+/// programme lancé est le premier mot de la ligne (commande d'un démarrage automatique, constat T-2)
 pub fn suspicion_regle(ligne: &str) -> Option<(&'static str, &'static str)> {
-    regles().iter().find(|(r, _, _)| r.is_match(ligne)).map(|(_, n, id)| (*n, *id))
+    suspicions_regles(ligne).first().copied()
 }
 
-/// Tous les motifs trouvés dans une ligne de commande, dans l'ordre de la table, avec l'identifiant de leur règle
+/// Tous les motifs trouvés dans une ligne de commande, dans l'ordre de la table, avec l'identifiant de leur règle ; le
+/// programme lancé est le premier mot de la ligne (constat T-2)
 pub fn suspicions_regles(ligne: &str) -> Vec<(&'static str, &'static str)> {
-    regles().iter().filter(|(r, _, _)| r.is_match(ligne)).map(|(_, n, id)| (*n, *id)).collect()
+    suspicions_programme(&programmes_de_la_ligne(ligne), ligne)
+}
+
+/// Décision pure (testée) : motifs vus pour un programme (`programmes` : noms donnés par `nom_programme`, image et nom
+/// d'origine) et sa ligne de commande, dans l'ordre PRC-002, PRC-003, PRC-004, PRC-005. PRC-002 et PRC-004 lisent la
+/// ligne ; PRC-003 et PRC-005 seulement pour le programme visé ou l'outil qu'un interpréteur lance en tête (T-2)
+pub(crate) fn suspicions_programme(programmes: &[String], ligne: &str) -> Vec<(&'static str, &'static str)> {
+    let (prc002, prc004) = regles_texte();
+    let vus = motifs_programme(programmes, ligne);
+    let vu = |id: &str| vus.iter().any(|m| m.regle == id);
+    let mut r = Vec::new();
+    if prc002.is_match(ligne) {
+        r.push((NOM_PRC002, crate::regles::PRC_002));
+    }
+    if vu(crate::regles::PRC_003) {
+        r.push((NOM_PRC003, crate::regles::PRC_003));
+    }
+    if prc004.is_match(ligne) {
+        r.push((NOM_PRC004, crate::regles::PRC_004));
+    }
+    if vu(crate::regles::PRC_005) {
+        r.push((NOM_PRC005, crate::regles::PRC_005));
+    }
+    r
 }
 
 /// Alerte d'un processus qui vient de démarrer (décision pure, testée : docs/detection/regles.md, PRC-001 à PRC-005), ou
@@ -161,7 +189,8 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         }
     }
     let analysee = ligne_pour_motifs(p).unwrap_or_default();
-    let motifs = suspicions_regles(&analysee);
+    let programmes = programmes_du_processus(&p.image, p.nom_origine.as_deref());
+    let motifs = suspicions_programme(&programmes, &analysee);
     raisons.extend(motifs.iter().map(|(r, _)| r.to_string()));
     if raisons.is_empty() {
         return None;
@@ -173,7 +202,7 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
     // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
     // document bureautique qui lance un interpréteur (macro ou exploit), vidage de la mémoire de LSASS par comsvcs.dll
     // (vol d'identifiants, A-7-7)
-    let fort = document || ids.contains(&crate::regles::PRC_005) || (ids.contains(&crate::regles::PRC_003) && outils_lolbin(&analysee).contains(&"comsvcs"));
+    let fort = document || ids.contains(&crate::regles::PRC_005) || (ids.contains(&crate::regles::PRC_003) && outils_programme(&programmes, &analysee).contains(&"comsvcs"));
     Some(Alerte {
         regle: regle.into(),
         id: commun::nouvel_id(),
@@ -186,11 +215,11 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
         destination: format!("lancé par {}", p.parent.as_deref().unwrap_or("?")),
         raisons: format!("{} : {ligne}", raisons.join(", ")),
         pid: Some(pid),
-        comportement: code_comportement(document, &ids, &analysee),
+        comportement: code_comportement_programme(document, &ids, &programmes, &analysee),
         // PRC-002 et PRC-003 : les techniques des motifs vus (règles à plusieurs comportements, posées par l'alerte)
         mitre: match regle {
             crate::regles::PRC_002 => technique_prc002(&analysee),
-            crate::regles::PRC_003 => technique_prc003(&analysee),
+            crate::regles::PRC_003 => technique_prc003_programme(&programmes, &analysee),
             _ => String::new(),
         },
         ..Default::default()
@@ -252,6 +281,13 @@ pub(crate) fn audit_analyse(note_audit: u8) -> bool {
 
 fn nom_fichier_min(chemin: &str) -> String {
     Path::new(chemin).file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+/// Décision pure (testée) : une entrée du cache décrit le programme qui tient la connexion. Chemins complets identiques
+/// (casse ignorée) ; un nom seul (trace WMI sans chemin) ou un chemin vide ne se vérifient pas : faux (constat T-2)
+pub(crate) fn meme_programme(image_du_cache: &str, chemin: &str) -> bool {
+    let (a, b) = (image_du_cache.trim(), chemin.trim());
+    !a.is_empty() && a.contains('\\') && a.eq_ignore_ascii_case(b)
 }
 
 fn nom_sans_extension(chemin: &str) -> String {
@@ -376,51 +412,240 @@ pub(crate) fn technique_prc002(ligne: &str) -> String {
     t.join(" / ")
 }
 
-/// PRC-003 : (outil, motif de la ligne de commande, technique ATT&CK de ce que l'outil fait). Le motif de la règle est la
-/// réunion de ces motifs : l'outil et sa technique viennent du motif qui a correspondu, jamais d'un nom vu ailleurs dans
-/// la ligne (revue de l'auditeur du 2026-11-22, point 1 : certutil ne porte plus T1047)
-/// Audit du 2026-11-23, A-7-7 : certutil qui récupère une adresse par -f ou -verifyctl, mshta et regsvr32 sur un chemin
-/// réseau (UNC) ou avec « -i: », rundll32 d'une DLL d'un dossier où l'utilisateur écrit (T1218.011), vidage de la
-/// mémoire d'un processus par comsvcs.dll (LSASS, T1003.001, signal fort), paquet MSI installé depuis une adresse
-/// http(s) (T1218.007 ; un paquet local ou sur un partage, déploiement ordinaire, n'est pas visé)
-const OUTILS_PRC003: &[(&str, &str, &str)] = &[
-    ("certutil", r"certutil.*(?:[-/](?:urlcache|decode)|[-/](?:verifyctl|f)\b.*https?://)", "T1105"),
-    ("bitsadmin", r"bitsadmin.*/transfer", "T1197"),
-    ("mshta", r"mshta.*(?:http|javascript:|vbscript:|\\\\)", "T1218"),
-    ("regsvr32", r"regsvr32.*[/-]i:\s*(?:http|\\\\)", "T1218"),
-    ("rundll32", r"rundll32.*javascript:", "T1218"),
-    ("rundll32_dll", r"rundll32.*(?:\\users\\public\\|\\appdata\\|\\temp\\|\\programdata\\)[^,]*\.dll", "T1218.011"),
-    ("comsvcs", r"comsvcs.*(?:minidump|#\s*\+?0*24\b)", "T1003.001"),
-    ("msiexec", r"msiexec.*https?://", "T1218.007"),
-    ("wmic", r"wmic.*process\s+call\s+create", "T1047"),
+/// Portée d'un motif de PRC-003 ou PRC-005. Constat T-2 (2026-11-23) : ces motifs se levaient sur tout programme dont
+/// la ligne contenait leurs mots (bash qui lance git, grep ou echo avec « vssadmin delete shadows » en argument)
+#[derive(Clone, Copy, PartialEq)]
+enum Portee {
+    /// Ligne du programme nommé (image, ou nom d'origine du fichier lu par Sysmon), ou commande que cmd, PowerShell ou
+    /// pwsh lance en tête (`commandes_en_tete`)
+    Programme,
+    /// Ligne entière d'un interpréteur nommé : motif propre à cet interpréteur (clichés supprimés par WMI ou CIM depuis
+    /// PowerShell, texte passé à diskshadow par un tube ou un fichier écrit dans la même ligne)
+    Interpreteur,
+}
+
+/// Motif de PRC-003 ou de PRC-005, lié aux programmes qui le font
+pub(crate) struct MotifProgramme {
+    pub regle: &'static str,
+    /// Code de l'outil (PRC-003 : code de comportement `PRC-003:<outils vus>`)
+    pub code: &'static str,
+    /// Noms des programmes (`nom_programme`) dont la ligne est lue
+    programmes: &'static [&'static str],
+    portee: Portee,
+    motif: &'static str,
+    /// Technique ATT&CK de ce que l'outil fait (PRC-003) ; vide pour PRC-005 (T1490, fixée par la règle)
+    pub technique: &'static str,
+}
+
+const fn motif(regle: &'static str, code: &'static str, programmes: &'static [&'static str], portee: Portee, motif: &'static str,
+               technique: &'static str) -> MotifProgramme {
+    MotifProgramme { regle, code, programmes, portee, motif, technique }
+}
+
+const POWERSHELLS: &[&str] = &["powershell", "pwsh", "powershell_ise"];
+
+/// PRC-003 et PRC-005, liés au programme lancé (constat T-2) : le motif n'est lu que sur la ligne de ce programme
+/// (reconnu par le nom de son image, ou par le nom d'origine du fichier que donne Sysmon pour une copie renommée), ou
+/// sur la commande qu'un interpréteur Windows lance en tête ; un texte en argument d'un autre programme n'alerte pas.
+/// La copie renommée d'un outil sans Sysmon (4688, WMI : pas de nom d'origine) est un angle mort déclaré.
+/// PRC-003 : l'outil et sa technique viennent du motif qui a correspondu, jamais d'un nom vu ailleurs dans la ligne
+/// (revue de l'auditeur du 2026-11-22, point 1 : certutil ne porte plus T1047). Audit du 2026-11-23, A-7-7 : certutil
+/// qui récupère une adresse par -f ou -verifyctl, mshta et regsvr32 sur un chemin réseau (UNC) ou avec « -i: »,
+/// rundll32 d'une DLL d'un dossier où l'utilisateur écrit (T1218.011), vidage de la mémoire d'un processus par
+/// comsvcs.dll lancé par rundll32 (LSASS, T1003.001, signal fort), paquet MSI installé depuis une adresse http(s)
+/// (T1218.007 ; un paquet local ou sur un partage, déploiement ordinaire, n'est pas visé).
+/// PRC-005 : suppression des clichés ou des sauvegardes, et démarrage sans récupération. Depuis A-7-3 (audit du
+/// 2026-11-23) : clichés supprimés par WMI ou CIM depuis PowerShell, espace des clichés réduit à moins de 1 000 Mo
+/// (Windows efface alors les clichés ; une taille en Go, en % ou illimitée n'est pas visée), `wbadmin delete backup`,
+/// `bootstatuspolicy ignoreallfailures`, et diskshadow dont la ligne dit `delete shadows` (diskshadow /s seul : le
+/// script n'est pas lu, la ligne ne dit pas s'il supprime)
+const MOTIFS_PROGRAMMES: &[MotifProgramme] = &[
+    motif(crate::regles::PRC_003, "certutil", &["certutil"], Portee::Programme, r"[-/](?:urlcache|decode)|[-/](?:verifyctl|f)\b.*https?://", "T1105"),
+    motif(crate::regles::PRC_003, "bitsadmin", &["bitsadmin"], Portee::Programme, r"/transfer", "T1197"),
+    motif(crate::regles::PRC_003, "mshta", &["mshta"], Portee::Programme, r"http|javascript:|vbscript:|\\\\", "T1218"),
+    motif(crate::regles::PRC_003, "regsvr32", &["regsvr32"], Portee::Programme, r"[/-]i:\s*(?:http|\\\\)", "T1218"),
+    motif(crate::regles::PRC_003, "rundll32", &["rundll32"], Portee::Programme, r"javascript:", "T1218"),
+    motif(crate::regles::PRC_003, "rundll32_dll", &["rundll32"], Portee::Programme, r"(?:\\users\\public\\|\\appdata\\|\\temp\\|\\programdata\\)[^,]*\.dll", "T1218.011"),
+    motif(crate::regles::PRC_003, "comsvcs", &["rundll32"], Portee::Programme, r"comsvcs.*(?:minidump|#\s*\+?0*24\b)", "T1003.001"),
+    motif(crate::regles::PRC_003, "msiexec", &["msiexec"], Portee::Programme, r"https?://", "T1218.007"),
+    motif(crate::regles::PRC_003, "wmic", &["wmic"], Portee::Programme, r"process\s+call\s+create", "T1047"),
+    motif(crate::regles::PRC_005, "vssadmin", &["vssadmin"], Portee::Programme, r"delete\s+shadows", ""),
+    motif(crate::regles::PRC_005, "vssadmin_taille", &["vssadmin"], Portee::Programme, r#"resize\s+shadowstorage.*/maxsize=\d{1,3}(?:mb|kb|b)?(?:[\s"]|$)"#, ""),
+    motif(crate::regles::PRC_005, "wbadmin", &["wbadmin"], Portee::Programme, r"delete\s+(?:catalog|systemstatebackup|backup)", ""),
+    motif(crate::regles::PRC_005, "bcdedit", &["bcdedit"], Portee::Programme, r"recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures", ""),
+    motif(crate::regles::PRC_005, "wmic_cliches", &["wmic"], Portee::Programme, r"shadowcopy\s+delete", ""),
+    motif(crate::regles::PRC_005, "diskshadow", &["diskshadow"], Portee::Programme, r"delete\s+shadows", ""),
+    motif(crate::regles::PRC_005, "powershell_wmi", POWERSHELLS, Portee::Interpreteur, r"win32_shadowcopy.*(?:remove-(?:wmiobject|ciminstance)|\.delete\(\))", ""),
+    // Texte passé à diskshadow lancé après un séparateur (tube, ou script écrit puis lu par /s dans la même ligne)
+    motif(crate::regles::PRC_005, "diskshadow_texte", &["cmd", "powershell", "pwsh"], Portee::Interpreteur,
+          r#"delete\s+shadows.*[|&]\s*["']?(?:[^\s"'|&]*[\\/])?diskshadow(?:\.exe)?(?:[\s"']|$)"#, ""),
 ];
 
-fn motifs_outils() -> &'static [(Regex, &'static str, &'static str)] {
-    static M: OnceLock<Vec<(Regex, &'static str, &'static str)>> = OnceLock::new();
-    M.get_or_init(|| OUTILS_PRC003.iter().map(|(o, m, t)| (Regex::new(&format!("(?i){m}")).unwrap(), *o, *t)).collect())
+fn motifs_programmes() -> &'static [(Regex, &'static MotifProgramme)] {
+    static M: OnceLock<Vec<(Regex, &'static MotifProgramme)>> = OnceLock::new();
+    M.get_or_init(|| MOTIFS_PROGRAMMES.iter().map(|m| (Regex::new(&format!("(?i){}", m.motif)).unwrap(), m)).collect())
+}
+
+/// Noms (`nom_programme`) d'un processus : son image, et le nom d'origine du fichier lu par Sysmon (copie renommée)
+pub(crate) fn programmes_du_processus(image: &str, nom_origine: Option<&str>) -> Vec<String> {
+    let mut v = vec![nom_programme(image)];
+    if let Some(o) = nom_origine.map(nom_programme).filter(|o| !o.is_empty() && !v.contains(o)) {
+        v.push(o);
+    }
+    v
+}
+
+/// Programme d'une ligne de commande seule (commande d'un démarrage automatique, tests) : son premier mot
+fn programmes_de_la_ligne(ligne: &str) -> Vec<String> {
+    programme_en_tete(ligne).map(|(p, _)| vec![p]).unwrap_or_default()
+}
+
+/// Option qui passe une commande à PowerShell : -Command et toutes ses abréviations (-c, -co…), préfixe « - », « / »
+/// ou tiret typographique
+fn option_commande_powershell(jeton: &str) -> bool {
+    let j = jeton.to_lowercase();
+    j.strip_prefix(['-', '/', '\u{2013}', '\u{2014}', '\u{2015}']).is_some_and(|r| !r.is_empty() && "command".starts_with(r))
+}
+
+/// Texte qui suit l'option de commande de l'interpréteur (cmd : /c, /k ou /r, éventuellement collée à un guillemet ;
+/// PowerShell : -Command abrégée ou non), ou rien
+fn apres_option_commande(segment: &str, cmd: bool) -> Option<&str> {
+    let mut reste = segment;
+    loop {
+        let t = reste.trim_start();
+        if t.is_empty() {
+            return None;
+        }
+        let fin = t.find(char::is_whitespace).unwrap_or(t.len());
+        let jeton = t.get(..fin)?;
+        if cmd {
+            let j = jeton.as_bytes();
+            let option = j.first() == Some(&b'/') && j.get(1).is_some_and(|b| matches!(b.to_ascii_lowercase(), b'c' | b'k' | b'r'));
+            if option && (j.len() == 2 || j.get(2) == Some(&b'"')) {
+                return t.get(2..);
+            }
+        } else if option_commande_powershell(jeton) {
+            return t.get(fin..);
+        }
+        reste = t.get(fin..)?;
+    }
+}
+
+/// Programme en tête d'une commande (`nom_programme` de son premier mot, chemin entre guillemets compris) et le texte
+/// de la commande à partir de ce mot ; `call` et `start` (et ses options /x) sont sautés
+fn programme_en_tete(commande: &str) -> Option<(String, &str)> {
+    let mut c = commande;
+    for _ in 0..4 {
+        let t = c.trim_start_matches(|x: char| x.is_whitespace() || matches!(x, '@' | '{' | '"' | '\''));
+        let guillemet = c.get(..c.len() - t.len()).is_some_and(|p| p.contains(['"', '\'']));
+        let fin_mot = t.find(|x: char| x.is_whitespace() || matches!(x, '"' | '\'' | ')')).unwrap_or(t.len());
+        let fin_guillemet = t.find(['"', '\'']).unwrap_or(t.len());
+        // Chemin entre guillemets (avec des espaces) : jusqu'au guillemet s'il nomme un .exe ; sinon (« cmd /c "vssadmin
+        // delete shadows" ») jusqu'au premier blanc
+        let exe = t.get(..fin_guillemet).is_some_and(|e| e.to_ascii_lowercase().ends_with(".exe"));
+        let fin = if guillemet && exe { fin_guillemet } else { fin_mot };
+        let jeton = t.get(..fin).filter(|j| !j.is_empty())?;
+        let suite = t.get(fin..).unwrap_or("");
+        match nom_programme(jeton).as_str() {
+            "call" => c = suite,
+            "start" => {
+                let mut s = suite.trim_start();
+                while s.starts_with('/') {
+                    s = s.get(s.find(char::is_whitespace).unwrap_or(s.len())..).unwrap_or("").trim_start();
+                }
+                c = s;
+            }
+            nom => return Some((nom.to_string(), t)),
+        }
+    }
+    None
+}
+
+/// Décision pure (testée) : commandes qu'un interpréteur Windows lance en tête : le programme (`nom_programme`) et le
+/// texte de sa commande, jusqu'au séparateur suivant. Têtes : après l'option de commande (cmd /c, /k ou /r ; PowerShell
+/// -Command ou une abréviation), puis après chaque séparateur & | ; ( ou fin de ligne. Les guillemets ne sont pas
+/// interprétés : un séparateur entre guillemets coupe aussi (sens prudent : `cmd /c "a & b"` lance bien b)
+pub(crate) fn commandes_en_tete(ligne: &str, cmd: bool) -> Vec<(String, &str)> {
+    let mut tetes = Vec::new();
+    let mut debut = 0;
+    let mut premier = true;
+    for (i, c) in ligne.char_indices().chain(std::iter::once((ligne.len(), '\n'))) {
+        if !matches!(c, '&' | '|' | ';' | '(' | '\n' | '\r') {
+            continue;
+        }
+        let segment = ligne.get(debut..i).unwrap_or("");
+        let commande = if premier { apres_option_commande(segment, cmd) } else { Some(segment) };
+        if let Some(t) = commande.and_then(programme_en_tete) {
+            tetes.push(t);
+        }
+        premier = false;
+        debut = i + c.len_utf8();
+    }
+    tetes
+}
+
+/// Décision pure (testée) : motifs de PRC-003 et PRC-005 vus pour un programme (noms de son image et de son nom
+/// d'origine) et sa ligne, dans l'ordre de la table. Programme visé : sa ligne. cmd, PowerShell ou pwsh : leur ligne
+/// pour leurs motifs propres, et chaque commande lancée en tête pour le motif de son programme (en plus de l'alerte du
+/// processus enfant, que Windows crée aussi : défense en profondeur quand le processus bref est manqué par WMI)
+pub(crate) fn motifs_programme(programmes: &[String], ligne: &str) -> Vec<&'static MotifProgramme> {
+    let est = |noms: &[&str]| programmes.iter().any(|p| noms.contains(&p.as_str()));
+    let tetes = if est(&["cmd"]) {
+        commandes_en_tete(ligne, true)
+    } else if est(&["powershell", "pwsh"]) {
+        commandes_en_tete(ligne, false)
+    } else {
+        Vec::new()
+    };
+    motifs_programmes()
+        .iter()
+        .filter(|(r, m)| {
+            (est(m.programmes) && r.is_match(ligne))
+                || (m.portee == Portee::Programme && tetes.iter().any(|(p, t)| m.programmes.contains(&p.as_str()) && r.is_match(t)))
+        })
+        .map(|(_, m)| *m)
+        .collect()
+}
+
+/// Outils de PRC-003 vus pour un programme et sa ligne, dans l'ordre de la table
+pub(crate) fn outils_programme(programmes: &[String], ligne: &str) -> Vec<&'static str> {
+    motifs_programme(programmes, ligne).iter().filter(|m| m.regle == crate::regles::PRC_003).map(|m| m.code).collect()
 }
 
 /// Tous les outils dont le motif PRC-003 correspond, dans l'ordre de la table (prérelecture de #258, remarque : le code
-/// de comportement nomme chaque outil vu, comme les techniques)
+/// de comportement nomme chaque outil vu, comme les techniques) ; programme : le premier mot de la ligne (T-2)
+#[cfg(test)]
 pub(crate) fn outils_lolbin(ligne: &str) -> Vec<&'static str> {
-    motifs_outils().iter().filter(|(r, _, _)| r.is_match(ligne)).map(|(_, o, _)| *o).collect()
+    outils_programme(&programmes_de_la_ligne(ligne), ligne)
 }
 
 /// Décision pure (testée) : techniques ATT&CK d'une alerte PRC-003, celles de chaque outil dont le motif correspond
 /// (sans doublon, dans l'ordre de la table, séparées par « / ») ; vide sinon (prérelecture de #258, réserve 1)
-pub(crate) fn technique_prc003(ligne: &str) -> String {
+pub(crate) fn technique_prc003_programme(programmes: &[String], ligne: &str) -> String {
     let mut t: Vec<&str> = Vec::new();
-    for (_, _, id) in motifs_outils().iter().filter(|(r, _, _)| r.is_match(ligne)) {
-        if !t.contains(id) {
-            t.push(id);
+    for m in motifs_programme(programmes, ligne).iter().filter(|m| m.regle == crate::regles::PRC_003) {
+        if !t.contains(&m.technique) {
+            t.push(m.technique);
         }
     }
     t.join(" / ")
 }
 
+/// Même décision, le programme étant le premier mot de la ligne
+#[cfg(test)]
+pub(crate) fn technique_prc003(ligne: &str) -> String {
+    technique_prc003_programme(&programmes_de_la_ligne(ligne), ligne)
+}
+
 /// Décision pure (testée) : code stable du comportement d'une alerte de processus (empreinte des exceptions) : document
 /// qui lance un interpréteur, règles des motifs vus (triées), les motifs vus pour PRC-002 et l'outil pour PRC-003
+#[cfg(test)]
 pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &str) -> String {
+    code_comportement_programme(document, ids, &programmes_de_la_ligne(ligne), ligne)
+}
+
+/// Même code, pour un programme connu (image et nom d'origine) : l'outil de PRC-003 vient de ce programme (T-2)
+pub(crate) fn code_comportement_programme(document: bool, ids: &[&'static str], programmes: &[String], ligne: &str) -> String {
     let mut c: Vec<String> = Vec::new();
     if document { c.push("document".into()); }
     let mut r: Vec<&str> = ids.to_vec();
@@ -428,7 +653,7 @@ pub(crate) fn code_comportement(document: bool, ids: &[&'static str], ligne: &st
     r.dedup();
     for id in r {
         if id == crate::regles::PRC_003 {
-            c.push(format!("{id}:{}", outils_lolbin(ligne).join(",")));
+            c.push(format!("{id}:{}", outils_programme(programmes, ligne).join(",")));
         } else if id == crate::regles::PRC_002 {
             c.push(format!("{id}:{}", codes_prc002(ligne).join(",")));
         } else {
@@ -558,12 +783,16 @@ impl Processus {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    /// Infos d'un processus : depuis le cache (Sysmon ou trace), sinon interrogation WMI
-    pub fn infos(&self, pid: u32) -> Option<InfoProcessus> {
-        if let Some(i) = self.infos.lock().unwrap().get(&pid) {
-            return Some(i.clone());
+    /// Infos du processus `pid` dont le programme est `chemin` (chemin complet, celui qui tient la connexion) : depuis le
+    /// cache (Sysmon, 4688 ou trace), sinon interrogation WMI. Une entrée d'un autre programme (PID réutilisé, entrée
+    /// gardée une heure) n'est jamais prêtée ; chemin inconnu : rien (constat T-2, cause établie par T-1 : la ligne
+    /// d'un ancien cmd sous le même PID donnait « PowerShell obscurci » à une connexion de gh)
+    pub fn infos(&self, pid: u32, chemin: &str) -> Option<InfoProcessus> {
+        let cache = self.infos.lock().unwrap().get(&pid).cloned();
+        if let Some(i) = cache.filter(|i| meme_programme(&i.image, chemin)) {
+            return Some(i);
         }
-        self.interroger(pid)
+        self.interroger(pid).filter(|i| meme_programme(&i.image, chemin))
     }
 
     fn interroger(&self, pid: u32) -> Option<InfoProcessus> {

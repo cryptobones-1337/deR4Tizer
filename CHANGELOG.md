@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Process rules PRC-003 and PRC-005 (finding T-2 of 23 November 2026, a false positive seen by the maintainer on v4.3;
+  tested in the lab, not yet tried in the VM): their patterns now apply to the program actually launched, not to any
+  text in a command line. `bash`, `git`, `grep` or `echo` with the words of a pattern in an argument (for example a
+  commit message mentioning `certutil -urlcache`) no longer raise an alert. A pattern is read on the line of its own
+  tool (`vssadmin.exe`, `wbadmin.exe`, `bcdedit.exe`, `certutil.exe`, `bitsadmin.exe`, `mshta.exe`, `regsvr32.exe`,
+  `rundll32.exe`, `wmic.exe`, `msiexec.exe`, `diskshadow.exe`), recognised by the file name of the process image or,
+  with Sysmon, by the original file name (renamed copy); the PowerShell forms of PRC-005 (WMI or CIM) only on a
+  PowerShell process. A tool started at the head of a command by `cmd /c`, `powershell -c` or `pwsh -c` (or after
+  `&`, `|`, `;` or a parenthesis) is still seen on the interpreter's line, in addition to its own process. A renamed
+  copy of a tool without Sysmon is a declared blind spot. The process information cache used to score connections
+  ("suspicious command line" indicator of RES-002) is now used only when its entry describes the program holding the
+  connection (same full path); before, an entry kept for an hour under a reused process ID could lend the command line
+  of an earlier `cmd` running PowerShell to a later program (seen on the maintainer's machine as "obfuscated
+  PowerShell" on a `gh` connection).
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
