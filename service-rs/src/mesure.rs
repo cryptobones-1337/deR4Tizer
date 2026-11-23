@@ -44,6 +44,8 @@ pub struct Mesures {
     pub etapes: BTreeMap<String, Stat>,
     /// PowerShell lancés par le service, par contexte
     pub powershell: BTreeMap<String, u64>,
+    /// Compteurs d'événements nommés (T-1 : « chaines.alertes_plafonnees », alertes CHA-001 retenues par le plafond)
+    pub compteurs: BTreeMap<String, u64>,
 }
 
 impl Mesures {
@@ -93,6 +95,14 @@ pub fn powershell(contexte: &str) {
     if let Ok(mut e) = etat().lock() {
         *e.0.powershell.entry(contexte.to_string()).or_default() += 1;
         *e.1.powershell.entry(contexte.to_string()).or_default() += 1;
+    }
+}
+
+/// Un événement compté (nom fixe, choisi dans le code : la table ne grossit pas)
+pub fn compter(nom: &str) {
+    if let Ok(mut e) = etat().lock() {
+        *e.0.compteurs.entry(nom.to_string()).or_default() += 1;
+        *e.1.compteurs.entry(nom.to_string()).or_default() += 1;
     }
 }
 
