@@ -57,6 +57,7 @@ namespace DeR4Tizer
         public int ApprisPerimes { get; set; }
         // apprentissage.json non chargé au démarrage : exceptions posées depuis en mémoire seulement (service plus ancien : false)
         public bool ApprentissageNonCharge { get; set; }
+        public bool ConfigurationNonChargee { get; set; }   // config.json présent mais non chargé (C-3, SAN-014)
         // État des collectes (phase 3.3) : null pour un service plus ancien
         public List<EtatCollecte> Collectes { get; set; }
         public List<string> ReglesSansCollecte { get; set; }

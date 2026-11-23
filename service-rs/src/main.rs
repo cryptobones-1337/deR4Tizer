@@ -94,8 +94,25 @@ fn service_principal(_arguments: Vec<OsString>) {
     };
     let _ = etat.set_service_status(statut(ServiceState::StartPending, ServiceControlAccept::empty()));
 
-    // Avant toute lecture : propriétaire et droits du dossier de données
-    protection::securiser();
+    // Avant toute lecture : propriétaire et droits du dossier de données. Racine non sûre (lien tenu ouvert par un autre
+    // compte, C-1) : rien n'est écrit dessous et la surveillance ne démarre pas ; nouvel essai chaque minute, l'échec dit au
+    // journal d'événements de Windows et dans %SystemRoot%\Temp
+    if !protection::securiser() {
+        let _ = etat.set_service_status(statut(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN));
+        loop {
+            match arret_rx.recv_timeout(Duration::from_secs(60)) {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if protection::securiser() {
+                        break;
+                    }
+                }
+                _ => {
+                    let _ = etat.set_service_status(statut(ServiceState::Stopped, ServiceControlAccept::empty()));
+                    return;
+                }
+            }
+        }
+    }
     initialiser_com();
     // Processus en priorité normale (audit du 2026-11-23, A-8-1) : la priorité basse pouvait retarder la suspension d'un
     // rançongiciel sous charge (gain à mesurer en VM). Les fils lourds se mettent eux-mêmes en arrière-plan (natif::fil_priorite)
@@ -134,7 +151,12 @@ fn main() {
             commun::definir_dossier(d.into());
         }
     }
-    // Le dossier de données n'est pas créé ici : le service le crée avec ses droits (protection::securiser)
+    // Le dossier de données n'est pas créé ici : le service le crée avec ses droits (protection::securiser). Actions lancées
+    // en SYSTEM hors du service (MSI) : rien n'est écrit sous la racine, journal compris, tant qu'elle n'a pas été vérifiée
+    // par son handle (C-1) ; le service, lui, la reprend dans securiser
+    if natif::est_systeme() && !args.iter().any(|a| a == "--supprimer-donnees") {
+        let _ = protection::verifier_racine();
+    }
 
     // Outils de diagnostic (sans rien modifier)
     if let Some(i) = args.iter().position(|a| a == "--chercher") {
@@ -332,25 +354,13 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--supprimer-donnees") {
-        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets. Plusieurs
-        // essais (un fichier peut rester ouvert quelques instants après l'arrêt du service) ; en cas d'échec, compte
-        // rendu dans %SystemRoot%\Temp : l'action du MSI ignore le code de retour, l'échec ne doit pas passer inaperçu
-        let d = commun::dossier();
-        let mut erreur = None;
-        for essai in 0..10 {
-            match std::fs::remove_dir_all(&d) {
-                Ok(()) => { erreur = None; break }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => { erreur = None; break }
-                Err(e) => erreur = Some(e),
-            }
-            if essai < 9 {
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        }
-        match erreur {
-            None => println!("Données supprimées : {}", d.display()),
-            Some(e) => {
-                let texte = format!("deR4Tizer : suppression de {} incomplète ({e})", d.display());
+        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets ; la racine est
+        // gardée, vide et protégée (lot A, point 4 : protection::vider_racine). En cas d'échec, compte rendu dans
+        // %SystemRoot%\Temp : l'action du MSI ignore le code de retour, l'échec ne doit pas passer inaperçu
+        match protection::vider_racine() {
+            Ok(texte) => println!("{texte}"),
+            Err(e) => {
+                let texte = format!("deR4Tizer : suppression des données incomplète ({e})");
                 println!("{texte}");
                 natif::compte_rendu_systeme("deR4Tizer-desinstallation", &texte);
             }

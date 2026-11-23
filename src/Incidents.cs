@@ -354,6 +354,18 @@ namespace DeR4Tizer
                     Source = "etat.json",
                     Gravite = 1
                 });
+            // config.json présent mais non chargé au démarrage (audit du 2026-11-23, C-3) : configuration par défaut, fichier
+            // jamais réécrit, réglages refusés ; service plus ancien : champ absent, aucune ligne
+            if (e.ConfigurationNonChargee)
+                l.Add(new LigneSante
+                {
+                    Sujet = L.T("Configuration"),
+                    Etat = L.T("présente mais non chargée"),
+                    Date = v(e.MisAJour),
+                    Detail = L.T("config.json est présent mais n'a pas pu être chargé au démarrage (illisible, refusé ou mal formé) : le service tourne avec la configuration par défaut, ne réécrit pas le fichier et refuse les réglages (SAN-014). Voir le journal du service, corriger ou retirer config.json, puis redémarrer le service."),
+                    Source = "etat.json",
+                    Gravite = 1
+                });
             // apprentissage.json non chargé au démarrage : les exceptions posées ne survivront pas au redémarrage
             if (e.ApprentissageNonCharge)
                 l.Add(new LigneSante

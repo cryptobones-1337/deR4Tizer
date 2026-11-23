@@ -96,6 +96,9 @@ pub struct Etat {
     /// apprentissage.json présent mais non chargé au démarrage (droits, verrou, contenu mal formé non mis de côté) : les
     /// exceptions posées depuis tiennent en mémoire seulement (page Santé)
     pub apprentissage_non_charge: bool,
+    /// config.json présent mais non chargé (lecture refusée, impossible ou contenu mal formé ; audit du 2026-11-23, C-3) :
+    /// le service tourne avec la configuration par défaut et ne réécrit jamais le fichier (page Santé, SAN-014)
+    pub configuration_non_chargee: bool,
     /// État de chaque collecte (phase 3.3) et règles dont la télémétrie n'est pas lue (ou ne l'est qu'en partie)
     pub collectes: Vec<crate::collectes::EtatCollecte>,
     pub regles_sans_collecte: Vec<String>,
@@ -729,19 +732,11 @@ pub fn decision_alertes(autorisee: bool, taille: u64, contenu: Option<&[u8]>) ->
     }
 }
 
-/// Lecture contrôlée autorisée (mêmes règles que lire_fichier), sans rien lire
+/// Lecture contrôlée autorisée (mêmes règles que lire_fichier, contrôles faits sur le handle), sans rien lire au-delà
+/// d'un octet
 pub(crate) fn lecture_fichier_autorisee(chemin: &Path) -> bool {
     let relatif = chemin.strip_prefix(dossier()).map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
-    let systeme = crate::natif::est_systeme();
-    let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
-    let existe = fs::symlink_metadata(chemin).is_ok();
-    match lecture_autorisee(systeme, !lisible_en_echec(&relatif), echec_protection().is_some(), existe, proprietaire) {
-        Ok(()) => true,
-        Err(raison) => {
-            signaler_une_fois(chemin, raison);
-            false
-        }
-    }
+    matches!(lire_controle_detail(chemin, !lisible_en_echec(&relatif), 0), Lecture::Absent | Lecture::Octets(_) | Lecture::TropGrand)
 }
 
 /// alertes.json du dossier de données, par la lecture tolérante (decision_alertes). Trop grand, pas en UTF-8 ou pas un
@@ -751,10 +746,15 @@ pub(crate) fn lecture_fichier_autorisee(chemin: &Path) -> bool {
 /// fichiers mis de côté ne sont jamais purgés
 pub fn lire_alertes() -> Vec<Alerte> {
     let f = dossier().join("alertes.json");
-    let Ok(m) = fs::symlink_metadata(&f) else { return Vec::new() };
-    let autorisee = lecture_fichier_autorisee(&f);
-    let contenu = if autorisee && m.len() <= TAILLE_MAX_ALERTES { fs::read(&f).ok() } else { None };
-    match decision_alertes(autorisee, m.len(), contenu.as_deref()) {
+    // Contrôles et contenu par un seul handle (C-8) ; absent à l'ouverture : rien n'est lu
+    let (autorisee, taille, contenu) = match lire_controle_detail(&f, !lisible_en_echec("alertes.json"), TAILLE_MAX_ALERTES) {
+        Lecture::Absent => return Vec::new(),
+        Lecture::Refusee(_) => (false, 0, None),
+        Lecture::TropGrand => (true, TAILLE_MAX_ALERTES + 1, None),
+        Lecture::Erreur(_) => (true, 0, None),
+        Lecture::Octets(o) => (true, o.len() as u64, Some(o)),
+    };
+    match decision_alertes(autorisee, taille, contenu.as_deref()) {
         DecisionAlertes::Rien => Vec::new(),
         DecisionAlertes::MettreDeCote(raison) => {
             if !mettre_alertes_de_cote(&f, raison, false) {
@@ -942,8 +942,10 @@ fn signaler_une_fois(chemin: &Path, raison: &str) {
 /// contrôle. En service : refus tant que la protection du dossier n'est pas vérifiée (si `avec_verrou`), et
 /// refus d'un fichier dont le propriétaire n'est ni SYSTEM ni Administrateurs : posé par un compte standard,
 /// il ne doit jamais être cru. Un propriétaire illisible n'est admis que si le fichier n'existe pas (la
-/// lecture échoue alors d'elle-même).
-pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: bool, existe: bool, proprietaire_ok: Option<bool>) -> Result<(), &'static str> {
+/// lecture échoue alors d'elle-même). Un fichier à plusieurs liens physiques (`liens`, lu sur le handle) est refusé :
+/// un lien dur vers un fichier de SYSTEM pris ailleurs porte le propriétaire de ce fichier (audit du 2026-11-23, C-2) ;
+/// un nombre de liens illisible aussi (échec fermé).
+pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: bool, existe: bool, proprietaire_ok: Option<bool>, liens: Option<u32>) -> Result<(), &'static str> {
     if !systeme {
         return Ok(());
     }
@@ -951,22 +953,88 @@ pub fn lecture_autorisee(systeme: bool, avec_verrou: bool, echec_protection: boo
         return Err("protection du dossier non vérifiée");
     }
     match proprietaire_ok {
-        Some(true) => Ok(()),
-        Some(false) => Err("propriétaire ni SYSTEM ni Administrateurs"),
-        None if existe => Err("propriétaire illisible"),
-        None => Ok(()),
+        Some(true) => {}
+        Some(false) => return Err("propriétaire ni SYSTEM ni Administrateurs"),
+        None if existe => return Err("propriétaire illisible"),
+        None => return Ok(()),
+    }
+    match liens {
+        Some(1) => Ok(()),
+        _ if !existe => Ok(()),
+        Some(_) => Err("plusieurs liens physiques (lien dur)"),
+        None => Err("nombre de liens physiques illisible"),
     }
 }
 
-fn lire_controle(chemin: &Path, avec_verrou: bool) -> Option<String> {
-    let systeme = crate::natif::est_systeme();
-    let proprietaire = if systeme { crate::natif::proprietaire_de_confiance(chemin) } else { None };
-    let existe = fs::symlink_metadata(chemin).is_ok();
-    if let Err(raison) = lecture_autorisee(systeme, avec_verrou, echec_protection().is_some(), existe, proprietaire) {
-        signaler_une_fois(chemin, raison);
-        return None;
+/// Résultat d'une lecture contrôlée d'un fichier du dossier de données (C-3 : absent n'est pas illisible)
+#[derive(Debug, PartialEq)]
+pub enum Lecture {
+    /// Le fichier n'existe pas : rien n'a été lu
+    Absent,
+    /// Présent, lecture refusée par le contrôle (protection, propriétaire, lien, liens physiques)
+    Refusee(&'static str),
+    /// Présent, ouverture ou lecture impossible (verrou, droits)
+    Erreur(String),
+    /// Présent, plus grand que la taille lue au plus (rien n'est rendu)
+    TropGrand,
+    Octets(Vec<u8>),
+}
+
+/// Accès de lecture du handle : GENERIC_READ (READ_CONTROL compris, pour lire le propriétaire sur le même handle)
+const LECTURE_HANDLE: u32 = 0x8000_0000;
+
+/// Lecture contrôlée (audit du 2026-11-23, C-8) : en service, le fichier est ouvert UNE fois, sans suivre de lien, et
+/// propriétaire, nombre de liens physiques et contenu sont lus sur ce même handle ; un fichier absent à l'ouverture n'est
+/// jamais lu (avant : propriétaire lu par le chemin, puis contenu relu par le chemin, deux accès entre lesquels le
+/// fichier pouvait changer). Au plus `max` octets (au-delà : TropGrand). `de_confiance` : règle d'acceptation du
+/// propriétaire (SYSTEM et Administrateurs en service ; fournie par les tests)
+pub fn lire_controle_avec(chemin: &Path, systeme: bool, avec_verrou: bool, echec: bool, max: u64, de_confiance: &dyn Fn(&str) -> bool) -> Lecture {
+    use std::io::Read;
+    let f = if systeme {
+        match crate::natif::ouvrir_sans_lien(chemin, LECTURE_HANDLE, 0x7, false) {
+            Ok(f) => f,
+            Err(crate::natif::ErreurOuverture::Absent) => return Lecture::Absent,
+            Err(crate::natif::ErreurOuverture::Lien) => return Lecture::Refusee("lien (jonction ou lien symbolique)"),
+            Err(e) => return Lecture::Erreur(e.to_string()),
+        }
+    } else {
+        match fs::File::open(chemin) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Lecture::Absent,
+            Err(e) => return Lecture::Erreur(e.to_string()),
+        }
+    };
+    let (proprietaire, liens) = if systeme {
+        (crate::natif::proprietaire_par_handle(&f).map(|s| de_confiance(&s)), crate::natif::nombre_de_liens(&f))
+    } else {
+        (None, None)
+    };
+    if let Err(raison) = lecture_autorisee(systeme, avec_verrou, echec, true, proprietaire, liens) {
+        return Lecture::Refusee(raison);
     }
-    fs::read_to_string(chemin).ok()
+    let mut octets = Vec::new();
+    match (&f).take(max.saturating_add(1)).read_to_end(&mut octets) {
+        Ok(_) if octets.len() as u64 > max => Lecture::TropGrand,
+        Ok(_) => Lecture::Octets(octets),
+        Err(e) => Lecture::Erreur(e.to_string()),
+    }
+}
+
+/// `lire_controle_avec` du service : refus signalés une fois au journal
+fn lire_controle_detail(chemin: &Path, avec_verrou: bool, max: u64) -> Lecture {
+    let l = lire_controle_avec(chemin, crate::natif::est_systeme(), avec_verrou, echec_protection().is_some(), max,
+        &crate::protection::proprietaire_acceptable);
+    if let Lecture::Refusee(raison) = &l {
+        signaler_une_fois(chemin, raison);
+    }
+    l
+}
+
+fn lire_controle(chemin: &Path, avec_verrou: bool) -> Option<String> {
+    match lire_controle_detail(chemin, avec_verrou, u64::MAX) {
+        Lecture::Octets(o) => String::from_utf8(o).ok(),
+        _ => None,
+    }
 }
 
 /// Lecture avec le seul contrôle du propriétaire (lecteurs.json, pour reprendre après un échec)
@@ -997,20 +1065,152 @@ pub fn lire_fichier(chemin: &Path) -> Option<String> {
     lire_controle(chemin, !lisible_en_echec(&relatif))
 }
 
+/// Fichier du dossier de données lu par `lire_etat` (audit du 2026-11-23, C-3) : absent, présent mais non chargé
+/// (lecture refusée, impossible ou contenu mal formé, avec la raison), ou chargé
+#[derive(Debug, PartialEq)]
+pub enum Lu<T> {
+    Absent,
+    NonCharge(String),
+    Valeur(T),
+}
+
+/// Essais de lecture d'un fichier présent mais impossible à lire (verrou passager) avant de le dire non chargé
+pub const ESSAIS_LECTURE: u32 = 3;
+
+/// Décision pure (C-3) à partir des lectures successives d'un même fichier : la première lecture qui aboutit (absent,
+/// refus de contrôle, contenu) décide ; une erreur d'ouverture ou de lecture est réessayée, `ESSAIS_LECTURE` fois en tout.
+/// Contenu mal formé : non chargé, sans nouvel essai
+pub fn lu_de<T: DeserializeOwned>(lire: &mut dyn FnMut() -> Lecture) -> Lu<T> {
+    let mut derniere = String::new();
+    for _ in 0..ESSAIS_LECTURE {
+        match lire() {
+            Lecture::Absent => return Lu::Absent,
+            Lecture::Refusee(r) => return Lu::NonCharge(format!("lecture refusée : {r}")),
+            Lecture::TropGrand => return Lu::NonCharge("trop grand".into()),
+            Lecture::Octets(o) => {
+                return match std::str::from_utf8(&o).map_err(|e| e.to_string())
+                    .and_then(|t| serde_json::from_str(t.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())) {
+                    Ok(v) => Lu::Valeur(v),
+                    Err(e) => Lu::NonCharge(format!("contenu mal formé : {e}")),
+                };
+            }
+            Lecture::Erreur(e) => derniere = format!("lecture impossible : {e}"),
+        }
+    }
+    Lu::NonCharge(derniere)
+}
+
+/// Fichiers présents mais non chargés à leur dernière lecture par `lire_etat` (C-3), en minuscules : jamais réécrits par
+/// `ecrire` tant qu'une lecture ne les a pas chargés ou vus absents. Avant : illisible valait absent, et la première
+/// écriture remplaçait le fichier légitime par les valeurs par défaut (configuration, blocages, bases « connues »)
+static NON_CHARGES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+fn cle_fichier(nom: &str) -> String {
+    nom.replace('/', "\\").to_lowercase()
+}
+
+/// Le fichier `nom` (relatif au dossier de données) était-il présent mais non chargé à sa dernière lecture ?
+pub fn non_charge(nom: &str) -> bool {
+    NON_CHARGES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.contains(&cle_fichier(nom)))
+}
+
+fn noter_lecture(nom: &str, charge_ou_absent: bool) {
+    let mut g = NON_CHARGES.lock().unwrap_or_else(|e| e.into_inner());
+    let s = g.get_or_insert_with(HashSet::new);
+    if charge_ou_absent {
+        s.remove(&cle_fichier(nom));
+    } else {
+        s.insert(cle_fichier(nom));
+    }
+}
+
+/// Lecture d'un fichier JSON du dossier de données qui distingue « absent » de « présent mais non chargé » (C-3) ; un
+/// fichier non chargé n'est plus réécrit (`ecrire`) jusqu'à une lecture qui le charge ou le voit absent
+pub fn lire_etat<T: DeserializeOwned>(nom: &str) -> Lu<T> {
+    lire_etat_de(nom, &dossier().join(nom))
+}
+
+/// `lire_etat` du fichier `chemin`, suivi sous le nom `nom` (tests : dossier de travail)
+pub fn lire_etat_de<T: DeserializeOwned>(nom: &str, chemin: &Path) -> Lu<T> {
+    let relatif = nom.to_string();
+    let mut premiere = true;
+    let lu = lu_de(&mut || {
+        if !premiere {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        premiere = false;
+        lire_controle_detail(chemin, !lisible_en_echec(&relatif), u64::MAX)
+    });
+    match &lu {
+        Lu::NonCharge(raison) => {
+            if !non_charge(nom) {
+                journal(&format!("{nom} présent mais non chargé ({raison}) : il n'est pas réécrit tant qu'il n'a pas été relu"));
+            }
+            noter_lecture(nom, false);
+        }
+        _ => noter_lecture(nom, true),
+    }
+    lu
+}
+
 pub fn lire<T: DeserializeOwned>(nom: &str) -> Option<T> {
-    let texte = lire_fichier(&dossier().join(nom))?;
-    serde_json::from_str(texte.trim_start_matches('\u{feff}')).ok()
+    match lire_etat(nom) {
+        Lu::Valeur(v) => Some(v),
+        _ => None,
+    }
 }
 
 /// Écriture atomique : fichier temporaire synchronisé sur le disque, puis remplacement (écriture immédiate),
 /// pour que l'interface ne lise jamais un fichier à moitié écrit. Erreur si le fichier n'a pas été remplacé :
-/// les appelants pour qui l'écriture fait partie d'une transaction (quarantaine) la vérifient.
+/// les appelants pour qui l'écriture fait partie d'une transaction (quarantaine) la vérifient. Un fichier présent mais
+/// non chargé à sa dernière lecture n'est jamais remplacé (C-3)
 pub fn ecrire<T: Serialize + ?Sized>(nom: &str, donnees: &T) -> Result<(), String> {
-    ecrire_dans(&dossier().join(nom), donnees)
+    ecrire_suivi(nom, &dossier().join(nom), donnees)
 }
 
-/// `ecrire` vers un chemin quelconque (tests, dossiers de travail)
+/// `ecrire` vers `chemin`, suivi sous le nom `nom` (tests : dossier de travail)
+pub fn ecrire_suivi<T: Serialize + ?Sized>(nom: &str, chemin: &Path, donnees: &T) -> Result<(), String> {
+    if non_charge(nom) {
+        return Err(format!("{nom} présent mais non chargé : il n'est pas réécrit"));
+    }
+    ecrire_dans(chemin, donnees)
+}
+
+// ------------------------------------------------------------ racine du dossier de données (C-1)
+
+/// Racine du dossier de données vérifiée par handle (audit du 2026-11-23, C-1) : ouverte sans suivre de lien, chemin final
+/// vérifié, propriétaire et droits relus sur ce handle (protection::securiser au démarrage du service, et toutes les heures ;
+/// protection::verifier_racine pour les actions du MSI lancées en SYSTEM)
+static RACINE_VERIFIEE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn definir_racine_verifiee(v: bool) {
+    RACINE_VERIFIEE.store(v, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Décision pure (C-1), seule réponse à « racine sûre ? » : hors SYSTEM (tests, console), oui ; en SYSTEM, seulement une
+/// racine vérifiée par handle. Une jonction à la racine posée par un compte standard faisait écrire le service, en SYSTEM,
+/// dans le dossier de ce compte (essai en VM du 2026-11-23 : journal, état, alertes, SIEM, secrets, 42 éléments)
+pub fn ecriture_permise(systeme: bool, racine_verifiee: bool) -> bool {
+    !systeme || racine_verifiee
+}
+
+pub fn racine_sure() -> bool {
+    ecriture_permise(crate::natif::est_systeme(), RACINE_VERIFIEE.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+/// Chemin dans le dossier de données (racine comprise), comparé élément par élément sans tenir compte de la casse (pur, testé)
+pub fn dans_le_dossier(f: &Path, racine: &Path) -> bool {
+    let bas = |p: &Path| p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect::<Vec<_>>();
+    let (f, r) = (bas(f), bas(racine));
+    !r.is_empty() && f.get(..r.len()) == Some(&r[..])
+}
+
+/// `ecrire` vers un chemin quelconque (tests, dossiers de travail). Rien sous le dossier de données tant que sa racine
+/// n'est pas sûre (C-1)
 pub fn ecrire_dans<T: Serialize + ?Sized>(f: &Path, donnees: &T) -> Result<(), String> {
+    if dans_le_dossier(f, dossier()) && !racine_sure() {
+        return Err(format!("{} : racine du dossier de données non vérifiée, rien n'est écrit", f.display()));
+    }
     let nom = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let tmp = f.with_file_name(format!("{nom}.tmp"));
     let json = serde_json::to_vec(donnees).map_err(|e| format!("{nom} : {e}"))?;
@@ -1590,7 +1790,7 @@ fn bornes_journal(f: &Path) -> (String, String) {
 /// Fait tourner journal.txt du dossier `d` : journal.4 → journal.5 (l'ancien journal.5 est remplacé), …, journal.txt →
 /// journal.1 ; rend la ligne qui dit l'intervalle couvert par journal.1, écrite en tête du nouveau journal ; None sans
 /// journal.txt ou si son renommage échoue (testé). Un renommage dans le même dossier garde les droits du fichier, hérités du
-/// dossier de données (lecteurs compris) ; la désinstallation efface le dossier entier
+/// dossier de données (lecteurs compris) ; la désinstallation efface tout le contenu du dossier
 pub fn tourner_journal(d: &Path) -> Option<String> {
     let f = d.join("journal.txt");
     fs::metadata(&f).ok()?;
@@ -1607,14 +1807,20 @@ pub fn journal(message: &str) {
     // Un seul écrivain à la fois : deux fils ne font jamais tourner le journal deux fois de suite
     static VERROU: Mutex<()> = Mutex::new(());
     let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
-    let d = dossier();
-    let f = d.join("journal.txt");
-    // Rotation : au-delà de 2 Mo, sur 5 générations (un bruit provoqué n'efface pas tout)
-    let rotation = if fs::metadata(&f).map(|m| rotation_due(m.len())).unwrap_or(false) { tourner_journal(&d) } else { None };
     // Une ligne par message : caractères de contrôle et séparateurs de ligne Unicode remplacés par une espace (noms
     // DNS, NBNS, UPnP, lignes de commande venus du poste ou du réseau ajoutaient de fausses lignes horodatées,
     // audit AUD4-05)
     let propre = ligne_de_journal(message);
+    // Racine du dossier de données non vérifiée (C-1) : rien n'est écrit dessous, la ligne va au journal d'événements de
+    // Windows (journal Application, source « deR4Tizer », sans enregistrement de source)
+    if !racine_sure() {
+        crate::natif::journal_evenements(&propre, false);
+        return;
+    }
+    let d = dossier();
+    let f = d.join("journal.txt");
+    // Rotation : au-delà de 2 Mo, sur 5 générations (un bruit provoqué n'efface pas tout)
+    let rotation = if fs::metadata(&f).map(|m| rotation_due(m.len())).unwrap_or(false) { tourner_journal(&d) } else { None };
     if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
         if let Some(r) = rotation {
             let _ = writeln!(fichier, "{}  {}\r", maintenant(), r);

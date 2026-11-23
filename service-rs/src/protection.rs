@@ -6,10 +6,16 @@
 //!
 //! Au démarrage du service, AVANT toute lecture (securiser) : le dossier est créé avec ses droits dès la
 //! création ; s'il existait déjà sans appartenir à SYSTEM ou aux administrateurs (créé d'avance par un compte
-//! standard, qui pourrait sinon réécrire les droits), il est écarté. Dans le dossier, les liens (jonctions,
-//! liens symboliques) sont supprimés et les fichiers d'un autre propriétaire mis de côté dans « ecartes »,
-//! puis propriétaire et droits sont imposés à tout le contenu. Le paquet MSI crée aussi le dossier avec ces
-//! droits (installeur\deR4Tizer.wxs).
+//! standard, qui pourrait sinon réécrire les droits), il est écarté sous un nom imprévisible. La racine est ensuite
+//! ouverte sans suivre de lien, chemin final vérifié, et ses droits sont posés et relus sur ce handle (audit du
+//! 2026-11-23, C-1) ; tant qu'elle ne l'est pas (lien impossible à supprimer, tenu ouvert par un autre compte), rien
+//! n'est écrit dessous, l'échec est dit au journal d'événements de Windows et dans %SystemRoot%\Temp, et le service
+//! réessaie chaque minute avant de démarrer la surveillance. Dans le dossier, les liens (jonctions, liens symboliques)
+//! sont supprimés et les fichiers d'un autre propriétaire ou à plusieurs liens physiques mis de côté dans « ecartes »
+//! (C-2) ; à la première prise en charge d'un dossier préexistant, tout son contenu l'est (marqueur
+//! prise-en-charge.json). Puis propriétaire et droits sont imposés à tout le contenu. Le paquet MSI crée aussi le
+//! dossier avec ces droits et refuse de s'installer quand il est un lien (installeur\deR4Tizer.wxs) ; la
+//! désinstallation garde la racine, vide et protégée (vider_racine).
 
 use crate::commun;
 use serde::{Deserialize, Serialize};
@@ -240,14 +246,54 @@ pub fn sddl_lecture() -> (String, Vec<String>) {
     (sddl, sids)
 }
 
-/// Pose les droits : SYSTEM et administrateurs en contrôle total, lecteurs en lecture, rien d'autre. La DACL
-/// est remplacée en entier (une entrée posée par quelqu'un d'autre ne survit pas)
-fn appliquer(lecteurs: &[Lecteur]) -> bool {
+/// Accès du handle de la racine : READ_CONTROL, WRITE_DAC, WRITE_OWNER, FILE_READ_ATTRIBUTES
+const ACCES_RACINE: u32 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x80;
+
+/// Ouvre la racine du dossier de données sans suivre de lien, chemin final vérifié (audit du 2026-11-23, C-1) : toute
+/// lecture ou pose de ses droits passe par ce handle. Avant, poser_droits (par le chemin) agissait sur la jonction posée
+/// à la racine, pas sur un dossier à nous
+fn ouvrir_racine() -> Result<fs::File, String> {
+    crate::natif::ouvrir_verifie(commun::dossier(), ACCES_RACINE, 0x7, true)
+        .map_err(|e| format!("racine du dossier de données non ouverte sans lien ({e})"))
+}
+
+/// Décision pure (C-1) : racine ouverte par handle (sans lien, chemin final vérifié) dont les droits relus la gardent à
+/// SYSTEM et aux administrateurs : propriétaire acceptable, héritage coupé, aucune écriture d'un autre compte. Sert aux
+/// actions du MSI lancées en SYSTEM, qui ne posent pas de droits (verifier_racine)
+pub fn racine_conforme(s: &crate::natif::Securite) -> Result<(), String> {
+    if !s.protege {
+        return Err("droits hérités du dossier parent".into());
+    }
+    sans_ecriture_de_tiers(s, &[SID_SYSTEME, SID_ADMINISTRATEURS])
+}
+
+/// Actions lancées en SYSTEM hors du service (MSI : nettoyage, baseline, relance, suppression des données) : la racine
+/// n'est écrite (journal compris) qu'une fois ouverte sans lien et ses droits relus conformes (C-1) ; sinon leurs lignes
+/// vont au journal d'événements de Windows
+pub fn verifier_racine() -> Result<(), String> {
+    let r = ouvrir_racine().and_then(|f| crate::natif::lire_securite_handle(&f).ok_or_else(|| "droits de la racine illisibles".to_string()))
+        .and_then(|s| racine_conforme(&s));
+    commun::definir_racine_verifiee(r.is_ok());
+    r
+}
+
+/// SDDL de la racine : SYSTEM et administrateurs en contrôle total, lecteurs en lecture et parcours
+fn sddl_racine(lecteurs: &[Lecteur]) -> String {
     let mut sddl = SDDL_DOSSIER.to_string();
     for l in lecteurs.iter().filter(|l| sid_valide(&l.sid)) {
         sddl.push_str(&format!("(A;OICI;0x1200a9;;;{})", l.sid)); // lecture et parcours
     }
-    crate::natif::poser_droits(commun::dossier(), &sddl).is_ok()
+    sddl
+}
+
+/// Pose les droits de la racine PAR SON HANDLE (ouverte sans suivre de lien, chemin final vérifié ; C-1), puis les relit
+/// sur ce même handle : SYSTEM et administrateurs en contrôle total, lecteurs en lecture, rien d'autre. La DACL est
+/// remplacée en entier (une entrée posée par quelqu'un d'autre ne survit pas)
+fn appliquer(lecteurs: &[Lecteur]) -> Result<(), String> {
+    let f = ouvrir_racine()?;
+    crate::natif::poser_droits_handle(&f, &sddl_racine(lecteurs)).map_err(|e| format!("pose du propriétaire ou des droits du dossier refusée ({e})"))?;
+    let s = crate::natif::lire_securite_handle(&f).ok_or_else(|| format!("droits de {} illisibles", commun::dossier().display()))?;
+    droits_conformes(&s, &[SID_SYSTEME, SID_ADMINISTRATEURS], &sids_lecteurs(lecteurs)).map_err(|e| format!("{} : {e}", commun::dossier().display()))
 }
 
 /// icacls : avec /C (continuer sur erreur), le code de retour vaut 0 même quand un élément a échoué ;
@@ -278,13 +324,51 @@ pub enum Tri {
 /// illisible (None) ne vaut pas confiance : un compte standard peut le rendre illisible pour SYSTEM (DACL
 /// vide), alors que la prise de possession qui suit le rendrait ensuite « propre ».
 pub fn trier_element(lien: bool, proprietaire_ok: Option<bool>) -> Tri {
+    trier_element_liens(lien, proprietaire_ok, Some(1))
+}
+
+/// `trier_element` avec le nombre de liens physiques du fichier (Some(1) pour un dossier) : un fichier à plusieurs liens
+/// physiques, ou dont le nombre de liens ne se lit pas, est écarté quel que soit son propriétaire (audit du 2026-11-23,
+/// C-2) : un lien dur posé vers un fichier de SYSTEM pris ailleurs porte le propriétaire de ce fichier, et les droits
+/// imposés ensuite (icacls /reset) changeraient ceux du fichier d'origine
+pub fn trier_element_liens(lien: bool, proprietaire_ok: Option<bool>, liens: Option<u32>) -> Tri {
     if lien {
         Tri::SupprimerLien
-    } else if proprietaire_ok == Some(true) {
+    } else if proprietaire_ok == Some(true) && liens == Some(1) {
         Tri::Garder
     } else {
         Tri::Ecarter
     }
+}
+
+/// Marqueur de prise en charge de la racine (C-2), écrit par le service : « Faite » une fois tout le contenu préexistant
+/// mis de côté (ou pour la racine d'une version précédente)
+pub const MARQUEUR: &str = "prise-en-charge.json";
+
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct PriseEnCharge {
+    pub faite: bool,
+    pub version: String,
+    pub date: String,
+}
+
+/// Décision pure (C-2) : première prise en charge de la racine, dont tout le contenu est mis de côté quel qu'en soit le
+/// propriétaire ? `marqueur` : None s'il est absent ou pas de confiance, sinon « faite ». Sans marqueur, un etat.json de
+/// confiance (SYSTEM ou Administrateurs, un seul lien physique) désigne le dossier d'une version précédente, repris sans
+/// tout mettre de côté (sinon une mise à niveau perdrait configuration, secrets et sauvegarde de la baseline) ; un compte
+/// standard ne peut pas en poser un
+pub fn premiere_prise_en_charge(marqueur: Option<bool>, etat_ancien: bool) -> bool {
+    match marqueur {
+        Some(faite) => !faite,
+        None => !etat_ancien,
+    }
+}
+
+/// Nom du dossier de données écarté (pur, testé) : date et identifiant unique, pour qu'un compte standard ne puisse pas
+/// poser ce nom d'avance (audit du 2026-11-23)
+pub fn nom_ecarte(date: &str, id: &str) -> String {
+    format!("deR4Tizer.ecarte-{}-{id}", date.replace([':', ' '], "-"))
 }
 
 /// Crée le dossier « ecartes » s'il n'existe pas : avec ses droits dès la création en service, simplement
@@ -315,16 +399,13 @@ fn deplacer_sans_perte(p: &Path, dest: &Path) -> Result<(), String> {
     Err(erreurs.join(" ; "))
 }
 
-/// Parcourt le contenu sans suivre les liens : liens supprimés, éléments au propriétaire non vérifié mis de
-/// côté dans `quarantaine`. Jamais de suppression : un élément qui ne peut pas être déplacé reste intact
-/// (propriétaire non vérifié, donc jamais lu) et le démarrage passe en échec fermé. Renvoie les chemins
-/// écartés (relatifs), avec « IMPOSSIBLE À ÉCARTER » pour les échecs.
-pub fn trier(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>) {
-    trier_avec(dossier, racine, quarantaine, ecartes, &crate::natif::proprietaire_de_confiance)
-}
-
-/// `trier`, avec la lecture du propriétaire fournie (tests : résultat indépendant du compte qui les lance)
+/// Parcourt le contenu sans suivre les liens : liens supprimés, éléments au propriétaire non vérifié (lu par
+/// `de_confiance` : natif::proprietaire_de_confiance en service, toujours « non » à la première prise en charge, fourni
+/// par les tests) ou à plusieurs liens physiques mis de côté dans `quarantaine`. Jamais de suppression : un élément qui
+/// ne peut pas être déplacé reste intact (propriétaire non vérifié, donc jamais lu) et le démarrage passe en échec
+/// fermé. Renvoie les chemins écartés (relatifs), avec « IMPOSSIBLE À ÉCARTER » pour les échecs.
 pub fn trier_avec(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &mut Vec<String>, de_confiance: &dyn Fn(&Path) -> Option<bool>) {
+    let marqueur = racine.join(MARQUEUR);
     let relatif = |p: &Path| p.strip_prefix(racine).unwrap_or(p).display().to_string();
     // Ce qu'on ne peut pas examiner n'est pas gardé en silence : échec fermé
     let lecture = match fs::read_dir(dossier) {
@@ -340,7 +421,8 @@ pub fn trier_avec(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &m
             }
         };
         let p = e.path();
-        if p == quarantaine {
+        // Le marqueur de prise en charge est écrit par le service avant le tri (C-2)
+        if p == quarantaine || p == marqueur {
             continue;
         }
         let m = match fs::symlink_metadata(&p) {
@@ -350,7 +432,8 @@ pub fn trier_avec(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &m
                 continue;
             }
         };
-        match trier_element(est_lien(&m), de_confiance(&p)) {
+        let liens = if m.is_dir() { Some(1) } else { crate::natif::nombre_de_liens_chemin(&p) };
+        match trier_element_liens(est_lien(&m), de_confiance(&p), liens) {
             Tri::SupprimerLien => {
                 supprimer_lien(&p);
                 let ok = fs::symlink_metadata(&p).is_err();
@@ -374,10 +457,6 @@ pub fn trier_avec(dossier: &Path, racine: &Path, quarantaine: &Path, ecartes: &m
 /// Dossier « ecartes » : lui-même soumis à la règle (un compte standard pourrait l'avoir créé d'avance, ou en
 /// avoir fait un lien). S'il n'est pas sûr, il est mis de côté sous un autre nom, jamais supprimé ; s'il ne
 /// peut pas l'être, échec fermé. Il est ensuite (re)créé avec ses droits au premier élément à écarter.
-pub fn preparer_quarantaine(q: &Path) -> Result<(), String> {
-    preparer_quarantaine_avec(q, &crate::natif::proprietaire_de_confiance)
-}
-
 pub fn preparer_quarantaine_avec(q: &Path, de_confiance: &dyn Fn(&Path) -> Option<bool>) -> Result<(), String> {
     let Ok(m) = fs::symlink_metadata(q) else { return Ok(()) };
     match trier_element(est_lien(&m), de_confiance(q)) {
@@ -425,42 +504,72 @@ pub fn reinitialiser_contenu(dossier: &Path, de_confiance: &dyn Fn(&str) -> bool
     }
 }
 
-/// Démarrage du service, avant toute lecture du dossier de données
-pub fn securiser() {
-    if !crate::natif::est_systeme() {
-        let _ = fs::create_dir_all(commun::dossier());
+/// Racine non sûre (C-1) : dit au journal d'événements de Windows et dans un compte rendu de %SystemRoot%\Temp (nom
+/// unique, créé sans suivre de lien), une fois par raison (le service réessaie chaque minute)
+fn signaler_racine_non_sure(raison: &str) {
+    static DERNIERE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let mut d = DERNIERE.lock().unwrap_or_else(|e| e.into_inner());
+    if d.as_deref() == Some(raison) {
         return;
     }
-    let racine = commun::dossier().clone();
-    let mut messages = Vec::new();
-    let mut echec = None;
-    if let Ok(m) = fs::symlink_metadata(&racine) {
-        match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(&racine)) {
+    *d = Some(raison.to_string());
+    let texte = format!("deR4Tizer : protection des données : ÉCHEC ({raison}). Rien n'est écrit dans {} ni dessous tant que sa racine \
+        n'a pas été vérifiée ; la surveillance ne démarre pas ; nouvel essai chaque minute. Que faire : fermer le programme qui tient \
+        ce chemin (une jonction ou un lien posé par un autre compte), ou le supprimer en administrateur.", commun::dossier().display());
+    crate::natif::journal_evenements(&texte, true);
+    crate::natif::compte_rendu_systeme("deR4Tizer-protection", &texte);
+}
+
+/// Prise de la racine (C-1) : un lien est supprimé, une racine d'un autre propriétaire écartée sous un nom imprévisible,
+/// une racine absente créée avec ses droits ; puis la racine est ouverte sans suivre de lien (chemin final vérifié), ses
+/// propriétaire et droits posés et relus sur ce handle. Err : racine non sûre, rien ne doit être écrit dessous
+fn prendre_racine(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
+    if let Ok(m) = fs::symlink_metadata(racine) {
+        match trier_element(est_lien(&m), crate::natif::proprietaire_de_confiance(racine)) {
             Tri::Garder => {}
             Tri::SupprimerLien => {
-                supprimer_lien(&racine);
-                if fs::symlink_metadata(&racine).is_ok() {
-                    echec = Some("le dossier de données est un lien impossible à supprimer".to_string());
-                } else {
-                    messages.push("le dossier de données était un lien : supprimé".to_string());
+                supprimer_lien(racine);
+                if fs::symlink_metadata(racine).is_ok() {
+                    return Err("le dossier de données est un lien impossible à supprimer".into());
                 }
+                messages.push("le dossier de données était un lien : supprimé".to_string());
             }
             Tri::Ecarter => {
-                let ecarte = racine.with_file_name(format!("deR4Tizer.ecarte-{}", commun::maintenant().replace([':', ' '], "-")));
-                if fs::rename(&racine, &ecarte).is_ok() {
-                    messages.push(format!("le dossier de données n'appartenait pas (de façon vérifiable) à SYSTEM ou aux administrateurs : écarté vers {}", ecarte.display()));
-                } else {
-                    echec = Some("le dossier de données n'appartient pas (de façon vérifiable) à SYSTEM ou aux administrateurs et n'a pas pu être écarté".to_string());
+                let ecarte = racine.with_file_name(nom_ecarte(&commun::maintenant(), &commun::nouvel_id()));
+                if fs::rename(racine, &ecarte).is_err() {
+                    return Err("le dossier de données n'appartient pas (de façon vérifiable) à SYSTEM ou aux administrateurs et n'a pas pu être écarté".into());
                 }
+                messages.push(format!("le dossier de données n'appartenait pas (de façon vérifiable) à SYSTEM ou aux administrateurs : écarté vers {}", ecarte.display()));
             }
         }
     }
-    // Échec fermé : rien n'est imposé sur un dossier qu'on n'a pas pu écarter ni sur un lien (ce serait le
-    // blanchir) ; le service tourne avec ses valeurs par défaut
-    let resultat = match echec {
-        Some(e) => Err(e),
-        None => imposer(&racine, &mut messages),
-    };
+    if fs::symlink_metadata(racine).is_err() && !crate::natif::creer_dossier_protege(racine, SDDL_DOSSIER) {
+        return Err(format!("impossible de créer {} avec ses droits", racine.display()));
+    }
+    // Par le handle : propriétaire puis droits, plus personne d'autre ne peut y créer quoi que ce soit
+    appliquer(&[])
+}
+
+/// Démarrage du service, avant toute lecture du dossier de données. Faux si la racine n'est pas sûre (C-1) : rien n'a été
+/// écrit dessous, le service réessaie chaque minute avant de démarrer la surveillance (main.rs)
+pub fn securiser() -> bool {
+    if !crate::natif::est_systeme() {
+        let _ = fs::create_dir_all(commun::dossier());
+        return true;
+    }
+    // Chaque essai est un démarrage : un échec d'un essai précédent ne survit pas à un essai réussi
+    *ECHEC_DEMARRAGE.lock().unwrap() = None;
+    commun::definir_racine_verifiee(false);
+    let racine = commun::dossier().clone();
+    let mut messages = Vec::new();
+    if let Err(e) = prendre_racine(&racine, &mut messages) {
+        // Racine non sûre : ni journal, ni état, ni droits par le chemin ; l'échec est dit hors du dossier
+        commun::definir_echec_protection(Some(e.clone()));
+        signaler_racine_non_sure(&e);
+        return false;
+    }
+    commun::definir_racine_verifiee(true);
+    let resultat = imposer(&racine, &mut messages);
     // Tout échec du démarrage reste acquis jusqu'au prochain démarrage : la vérification horaire, qui ne revoit
     // que la racine, ne doit pas le lever (le contenu, lui, n'a pas été traité)
     if let Err(e) = &resultat {
@@ -470,6 +579,7 @@ pub fn securiser() {
         commun::journal(&format!("protection des données : {m}"));
     }
     let _ = publier(resultat);
+    true
 }
 
 /// Échec fermé : tant que la protection n'est pas vérifiée, aucun fichier de configuration ou de secret n'est
@@ -516,28 +626,52 @@ pub fn alerte_echec(raison: &str) -> commun::Alerte {
     }
 }
 
+/// Marqueur de prise en charge lu (C-2) : Some(faite) s'il est de confiance (lecture contrôlée : propriétaire, un seul lien
+/// physique) et lisible, None sinon
+fn lire_marqueur(racine: &Path) -> Option<bool> {
+    commun::lire_fichier_proprietaire(&racine.join(MARQUEUR))
+        .and_then(|t| serde_json::from_str::<PriseEnCharge>(t.trim_start_matches('\u{feff}')).ok())
+        .map(|p| p.faite)
+}
+
+fn ecrire_marqueur(faite: bool) -> Result<(), String> {
+    commun::ecrire(MARQUEUR, &PriseEnCharge { faite, version: commun::VERSION.into(), date: commun::maintenant() })
+}
+
+/// Contenu de la racine, une fois ses droits posés par handle (prendre_racine)
 fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
-    if !racine.exists() && !crate::natif::creer_dossier_protege(racine, SDDL_DOSSIER) {
-        return Err(format!("impossible de créer {} avec ses droits", racine.display()));
+    // Première prise en charge (C-2) : décidée et notée AVANT le tri (marqueur « à faire »), pour qu'un démarrage
+    // interrompu la reprenne au lieu de prendre ce que la surveillance a écrit entre-temps pour la preuve d'une version
+    // précédente
+    let marqueur = lire_marqueur(racine);
+    let premiere = premiere_prise_en_charge(marqueur, commun::lire_fichier_proprietaire(&racine.join("etat.json")).is_some());
+    let mut marque = Ok(());
+    if marqueur.is_none() {
+        marque = ecrire_marqueur(!premiere);
     }
-    // D'abord le dossier racine, propriétaire compris (plus personne d'autre ne peut y créer quoi que ce soit),
-    // puis le contenu
-    if !appliquer(&[]) {
-        return Err("pose du propriétaire ou des droits du dossier refusée".into());
-    }
+    let tous_a_ecarter = |_: &Path| Some(false);
+    let de_confiance: &dyn Fn(&Path) -> Option<bool> = if premiere { &tous_a_ecarter } else { &crate::natif::proprietaire_de_confiance };
     let quarantaine = racine.join("ecartes");
-    preparer_quarantaine(&quarantaine)?;
-    // Quarantaine : reprise des transactions interrompues, puis copies d'avant la 4.3 (propriétaire de
-    // l'utilisateur) recopiées avec leurs droits avant le tri, qui sinon les écarterait (restauration impossible)
-    messages.extend(crate::reponse::reprendre_et_migrer_quarantaine_service());
+    preparer_quarantaine_avec(&quarantaine, de_confiance)?;
+    if premiere {
+        messages.push("première prise en charge de ce dossier : tout son contenu, quel qu'en soit le propriétaire, est mis de côté dans ecartes".into());
+    } else {
+        // Quarantaine : reprise des transactions interrompues, puis copies d'avant la 4.3 (propriétaire de
+        // l'utilisateur) recopiées avec leurs droits avant le tri, qui sinon les écarterait (restauration impossible)
+        messages.extend(crate::reponse::reprendre_et_migrer_quarantaine_service());
+    }
     let mut ecartes = Vec::new();
-    trier(racine, racine, &quarantaine, &mut ecartes);
+    trier_avec(racine, racine, &quarantaine, &mut ecartes, de_confiance);
     if !ecartes.is_empty() {
-        messages.push(format!("{} élément(s) d'un autre propriétaire ou lien(s) écarté(s) vers ecartes : {}", ecartes.len(),
+        messages.push(format!("{} élément(s) d'un autre propriétaire, à plusieurs liens physiques ou lien(s) écarté(s) vers ecartes : {}", ecartes.len(),
             ecartes.iter().take(20).cloned().collect::<Vec<_>>().join(", ")));
     }
     if ecartes.iter().any(|e| e.contains("IMPOSSIBLE")) {
         return Err("un élément d'un autre propriétaire n'a pas pu être écarté".into());
+    }
+    marque.map_err(|e| format!("marqueur de prise en charge non écrit ({e})"))?;
+    if premiere {
+        ecrire_marqueur(true).map_err(|e| format!("marqueur de prise en charge non écrit ({e})"))?;
     }
     // Tout ce qui reste appartient à SYSTEM ou aux administrateurs (vérifié par trier). Contenu : droits
     // hérités du dossier, sauf ce qui a reçu ses propres droits à la création (DACL protégée et propriétaire
@@ -546,11 +680,82 @@ fn imposer(racine: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     reinitialiser_contenu(racine, &proprietaire_acceptable);
     crate::notifications::preparer_dossier()?;
     crate::api::proteger_jeton()?;
-    let l = lecteurs();
-    if !appliquer(&l) {
-        return Err("pose des droits des comptes autorisés refusée".into());
+    appliquer(&lecteurs())
+}
+
+/// Désinstallation sans GARDER_DONNEES (lot A, point 4 accordé le 2026-11-23) : le contenu du dossier de données est
+/// supprimé, mais la racine est GARDÉE, vide, à SYSTEM et aux administrateurs (propriétaire Administrateurs, héritage
+/// coupé, sans les comptes lecteurs) : un compte standard ne peut ni la supprimer ni y poser une jonction entre la
+/// désinstallation et une réinstallation (essai en VM du 2026-11-23 : après une désinstallation qui l'effaçait, une
+/// jonction posée à sa place recevait les écritures du service réinstallé). Une racine qui est un lien est supprimée
+/// (le lien seul, jamais sa cible) puis recréée vide et protégée ; une racine d'un autre propriétaire n'est pas
+/// touchée (le service la mettra de côté). Rien n'est suivi : chaque élément est supprimé sans traverser de lien.
+/// Plusieurs essais (un fichier peut rester ouvert quelques instants après l'arrêt du service). Ok : compte rendu
+pub fn vider_racine() -> Result<String, String> {
+    let racine = commun::dossier();
+    if let Ok(m) = fs::symlink_metadata(racine) {
+        if est_lien(&m) {
+            supprimer_lien(racine);
+            if fs::symlink_metadata(racine).is_ok() {
+                return Err(format!("{} est un lien impossible à supprimer : rien n'est supprimé sous lui", racine.display()));
+            }
+        }
     }
-    verifier(racine, &[SID_SYSTEME, SID_ADMINISTRATEURS], &sids_lecteurs(&l))
+    if fs::symlink_metadata(racine).is_err() && !crate::natif::creer_dossier_protege(racine, SDDL_DOSSIER) {
+        return Err(format!("{} : racine vide et protégée impossible à créer", racine.display()));
+    }
+    let f = ouvrir_racine()?;
+    let s = crate::natif::lire_securite_handle(&f).ok_or_else(|| format!("droits de {} illisibles", racine.display()))?;
+    if !proprietaire_acceptable(&s.proprietaire) {
+        return Err(format!("{} appartient à {} : contenu laissé (le service le mettra de côté)", racine.display(), s.proprietaire));
+    }
+    // Droits de la racine gardée, par le handle : SYSTEM et administrateurs seulement
+    crate::natif::poser_droits_handle(&f, SDDL_DOSSIER).map_err(|e| format!("droits de la racine gardée refusés ({e})"))?;
+    let mut restes = Vec::new();
+    for essai in 0..10 {
+        restes = vider_contenu(racine);
+        if restes.is_empty() {
+            break;
+        }
+        if essai < 9 {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+    if !restes.is_empty() {
+        return Err(format!("suppression du contenu de {} incomplète : {}", racine.display(), restes.into_iter().take(10).collect::<Vec<_>>().join(" ; ")));
+    }
+    Ok(format!("Données supprimées ; racine {} gardée, vide, réservée à SYSTEM et aux administrateurs", racine.display()))
+}
+
+/// Supprime chaque élément de `dossier` sans traverser de lien (un lien est supprimé seul ; remove_dir_all ne suit pas
+/// les jonctions) ; renvoie les éléments restés, avec l'erreur
+fn vider_contenu(dossier: &Path) -> Vec<String> {
+    let lecture = match fs::read_dir(dossier) {
+        Ok(l) => l,
+        Err(e) => return vec![format!("contenu illisible ({e})")],
+    };
+    let mut restes = Vec::new();
+    for e in lecture {
+        let p = match e {
+            Ok(e) => e.path(),
+            Err(err) => {
+                restes.push(format!("élément illisible ({err})"));
+                continue;
+            }
+        };
+        let r = match fs::symlink_metadata(&p) {
+            Ok(m) if est_lien(&m) => fs::remove_dir(&p).or_else(|_| fs::remove_file(&p)),
+            Ok(m) if m.is_dir() => fs::remove_dir_all(&p),
+            Ok(_) => fs::remove_file(&p),
+            Err(e) => Err(e),
+        };
+        if let Err(err) = r {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                restes.push(format!("{} ({err})", p.display()));
+            }
+        }
+    }
+    restes
 }
 
 /// Ajoute un compte autorisé (commande de l'interface) ; renvoie son nom
@@ -564,9 +769,7 @@ pub fn autoriser(sid: &str) -> Result<String, String> {
         l.push(Lecteur { sid: sid.into(), nom: if nom.is_empty() { sid.into() } else { nom.clone() } });
         let _ = commun::ecrire("lecteurs.json", &l);
     }
-    if !appliquer(&l) {
-        return Err("pose des droits refusée par Windows".into());
-    }
+    appliquer(&l).map_err(|e| format!("pose des droits refusée par Windows ({e})"))?;
     commun::journal(&format!("protection des données : accès en lecture accordé à {}", if nom.is_empty() { sid } else { &nom }));
     Ok(if nom.is_empty() { sid.into() } else { nom })
 }
@@ -588,11 +791,9 @@ pub fn demarrer(alertes: std::sync::Arc<std::sync::Mutex<Vec<commun::Alerte>>>) 
                     let _ = commun::ecrire("lecteurs.json", &l);
                 }
             }
-            let resultat = if appliquer(&l) {
-                verifier(commun::dossier(), &[SID_SYSTEME, SID_ADMINISTRATEURS], &sids_lecteurs(&l))
-            } else {
-                Err("pose des droits du dossier refusée".into())
-            };
+            // Par le handle de la racine (C-1) ; une racine qui ne s'ouvre plus sans lien arrête toute écriture dessous
+            let resultat = appliquer(&l);
+            commun::definir_racine_verifiee(resultat.is_ok());
             if !l.is_empty() && !annonce && resultat.is_ok() {
                 commun::journal(&format!("protection des données : lecture réservée à SYSTEM, aux administrateurs et à {}",
                     l.iter().map(|x| x.nom.as_str()).collect::<Vec<_>>().join(", ")));

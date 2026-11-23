@@ -2012,6 +2012,31 @@ pub fn nombre_de_liens(f: &std::fs::File) -> Option<u32> {
     Some(info.nNumberOfLinks)
 }
 
+/// Nombre de liens physiques d'un fichier, lu sur un handle ouvert sans suivre de lien (audit du 2026-11-23, C-2) ; None
+/// si illisible, si c'est un lien ou un dossier
+pub fn nombre_de_liens_chemin(chemin: &std::path::Path) -> Option<u32> {
+    nombre_de_liens(&ouvrir_sans_lien(chemin, 0x80, 0x7, false).ok()?)
+}
+
+/// Écrit une ligne au journal d'événements de Windows (journal Application, source « deR4Tizer ») : avertissement, ou
+/// erreur si `erreur`. La source n'est pas enregistrée (aucune écriture dans le registre) : l'Observateur d'événements dit
+/// que la description de l'événement 1 est introuvable, puis montre le texte. Sert quand le dossier de données ne peut pas
+/// être écrit (racine non vérifiée, C-1)
+pub fn journal_evenements(texte: &str, erreur: bool) {
+    use windows::Win32::Security::PSID;
+    use windows::Win32::System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE, EVENTLOG_WARNING_TYPE};
+    let source = large("deR4Tizer");
+    // Le journal d'événements borne une chaîne à 31 839 caractères : texte coupé bien avant, sur un caractère entier
+    let borne: String = texte.chars().take(8000).collect();
+    let t = large(&borne);
+    unsafe {
+        let Ok(h) = RegisterEventSourceW(PCWSTR::null(), PCWSTR(source.as_ptr())) else { return };
+        let chaines = [PCWSTR(t.as_ptr())];
+        let _ = ReportEventW(h, if erreur { EVENTLOG_ERROR_TYPE } else { EVENTLOG_WARNING_TYPE }, 0, 1, PSID::default(), 0, Some(&chaines), None);
+        let _ = DeregisterEventSource(h);
+    }
+}
+
 /// Propriétaire (SID) du fichier ou dossier ouvert
 pub fn proprietaire_par_handle(f: &std::fs::File) -> Option<String> {
     use std::os::windows::io::AsRawHandle;

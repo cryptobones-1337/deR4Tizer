@@ -103,6 +103,7 @@ registre! {
     SAN_011 = "SAN-011" : "interface arrêtée à répétition (3 fois en une heure)" => Aucune;
     SAN_012 = "SAN-012" : "alertes non suivies (plus de 500 incidents non clos)" => Aucune;
     SAN_013 = "SAN-013" : "historique du mini-SIEM incomplet (événements perdus, plafond du jour, purge par la taille)" => Aucune;
+    SAN_014 = "SAN-014" : "configuration présente mais non chargée" => Aucune;
     REP_001 = "REP-001" : "action de réponse toujours en cours : relance, jamais une levée" => Aucune;
     REP_002 = "REP-002" : "boucle d'actions arrêtée : actions automatiques retenues par la garde" => Aucune;
     REP_003 = "REP-003" : "mode panique non posé ou non retiré : état effectif publié, jamais moitié posé" => Aucune;
