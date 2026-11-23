@@ -99,19 +99,61 @@ pub fn installation_conforme(s: &crate::natif::Securite) -> Result<(), String> {
     }
 }
 
-/// Relit propriétaire et droits du dossier de l'exécutable du service et de ses deux programmes ; Err au premier écart ou
-/// droit illisible (échec fermé : la mise à jour automatique est alors refusée)
+/// FILE_ADD_SUBDIRECTORY (AppendData d'un dossier) : création de dossiers, que Windows donne aux Utilisateurs authentifiés
+/// sur la racine du volume ; ne permet ni de renommer ni de supprimer un dossier existant
+const AJOUT_DE_DOSSIER: u32 = 0x4;
+
+/// Décision pure (audit de #277, S277-01) : un dossier PARENT du dossier d'installation, jusqu'à la racine du volume.
+/// Renommer ou supprimer le dossier d'installation demande « supprimer un enfant » (FILE_DELETE_CHILD) sur son parent,
+/// ou DELETE sur lui-même : un compte qui l'obtient y pose un autre dossier avec un service piégé, exécuté en SYSTEM au
+/// redémarrage. Seuls SYSTEM, les administrateurs et TrustedInstaller peuvent écrire, supprimer un enfant, changer les
+/// droits ou le propriétaire, l'un d'eux en étant propriétaire (le propriétaire peut toujours réécrire les droits). Les
+/// entrées qui ne valent que pour les enfants (INHERIT_ONLY_ACE) et CREATOR OWNER ne donnent rien sur le dossier lui-même ;
+/// sur la racine, la création de dossiers est tolérée, jamais la suppression d'un enfant
+pub fn parent_installation_conforme(s: &crate::natif::Securite, racine: bool) -> Result<(), String> {
+    let complets = [SID_SYSTEME, SID_ADMINISTRATEURS, SID_TRUSTED_INSTALLER];
+    if !complets.contains(&s.proprietaire.as_str()) {
+        return Err(format!("propriétaire {}", if s.proprietaire.is_empty() { "illisible" } else { &s.proprietaire }));
+    }
+    if s.ace_inconnue {
+        return Err("entrée de droits d'un type inattendu".into());
+    }
+    let interdits = if racine { DROITS_ECRITURE & !AJOUT_DE_DOSSIER } else { DROITS_ECRITURE };
+    match s.aces.iter().find(|a| a.autorise && !a.heritage_seul && a.masque & interdits != 0 && !complets.contains(&a.sid.as_str()) && a.sid != "S-1-3-0") {
+        Some(a) => Err(format!("écriture, suppression d'un enfant ou changement de droits accordé à {} (masque {:#x})", a.sid, a.masque)),
+        None => Ok(()),
+    }
+}
+
+/// Propriétaire et droits lus par le handle de l'élément ouvert sans suivre de lien (READ_CONTROL) ; un lien ou une
+/// lecture refusée : Err (échec fermé)
+fn securite_par_handle(p: &Path, dossier: bool) -> Result<crate::natif::Securite, String> {
+    let f = crate::natif::ouvrir_sans_lien(p, 0x0002_0000, 0x7, dossier).map_err(|e| format!("{} non ouvert sans lien ({e:?})", p.display()))?;
+    crate::natif::lire_securite_handle(&f).ok_or_else(|| format!("droits de {} illisibles", p.display()))
+}
+
+/// Relit propriétaire et droits du dossier de l'exécutable du service, de ses deux programmes et de chaque dossier
+/// parent jusqu'à la racine du volume ; Err au premier écart ou droit illisible (échec fermé : la mise à jour
+/// automatique est alors refusée)
 pub fn verifier_installation() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("exécutable du service introuvable ({e})"))?;
     let dossier = exe.parent().ok_or("dossier de l'exécutable introuvable")?.to_path_buf();
     let interface = dossier.join("deR4Tizer.exe");
-    let mut chemins = vec![dossier, exe];
-    if interface.exists() {
-        chemins.push(interface);
-    }
-    for p in chemins {
-        let s = crate::natif::lire_securite(&p).ok_or_else(|| format!("droits de {} illisibles", p.display()))?;
+    let s = securite_par_handle(&dossier, true)?;
+    installation_conforme(&s).map_err(|e| format!("{} : {e}", dossier.display()))?;
+    for p in [exe.clone(), interface.clone()] {
+        if p == interface && !interface.exists() {
+            continue;
+        }
+        let s = securite_par_handle(&p, false)?;
         installation_conforme(&s).map_err(|e| format!("{} : {e}", p.display()))?;
+    }
+    let mut parent = dossier.parent();
+    while let Some(p) = parent {
+        let racine = p.parent().is_none();
+        let s = securite_par_handle(p, true)?;
+        parent_installation_conforme(&s, racine).map_err(|e| format!("{} (dossier parent) : {e}", p.display()))?;
+        parent = p.parent();
     }
     Ok(())
 }

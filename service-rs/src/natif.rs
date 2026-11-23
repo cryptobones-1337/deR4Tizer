@@ -425,10 +425,11 @@ impl Lecteur {
     }
 }
 
-/// Décision pure : chemin que le service (SYSTEM) peut ouvrir sans contacter d'hôte. Lettre d'un lecteur local fixe
-/// seulement, le type du lecteur étant celui que voit le service (un lecteur mappé par l'utilisateur n'existe pas pour
-/// SYSTEM) ; `\\?\X:\` admis, mais ni `\\hôte\…` (dont WebDAV `\\hôte@80\…`), ni `\\?\UNC\…`, ni `\\.\…`, ni lecteur
-/// réseau, amovible ou absent. Ouvrir un chemin réseau en SYSTEM authentifie le compte machine auprès de l'hôte (NTLM
+/// Décision pure : chemin que le service (SYSTEM) peut ouvrir sans contacter d'hôte. Lettre d'un lecteur local : fixe,
+/// amovible (clé USB), CD-ROM ou disque en mémoire, aucun ne contactant d'hôte (relecture de #277 : un programme signé sur
+/// une clé USB était lu « non signé ») ; le type du lecteur est celui que voit le service (un lecteur mappé par
+/// l'utilisateur n'existe pas pour SYSTEM). `\\?\X:\` admis, mais ni `\\hôte\…` (dont WebDAV `\\hôte@80\…`), ni
+/// `\\?\UNC\…`, ni `\\.\…`, ni lecteur réseau, de type inconnu ou absent. Ouvrir un chemin réseau en SYSTEM authentifie le compte machine auprès de l'hôte (NTLM
 /// relayable sur un poste en domaine) : audit du 2026-11-23, A-5-2
 pub fn lisible_en_systeme_avec(chemin: &str, type_lecteur: &dyn Fn(&str) -> u32) -> bool {
     let s = chemin.strip_prefix(r"\\?\").unwrap_or(chemin);
@@ -436,36 +437,55 @@ pub fn lisible_en_systeme_avec(chemin: &str, type_lecteur: &dyn Fn(&str) -> u32)
     if b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
         return false;
     }
-    // DRIVE_FIXED (3)
-    type_lecteur(&format!("{}:\\", b[0].to_ascii_uppercase() as char)) == 3
+    // DRIVE_REMOVABLE (2), DRIVE_FIXED (3), DRIVE_CDROM (5), DRIVE_RAMDISK (6) ; jamais DRIVE_REMOTE (4), inconnu (0) ni
+    // absent (1)
+    matches!(type_lecteur(&format!("{}:\\", b[0].to_ascii_uppercase() as char)), 2 | 3 | 5 | 6)
 }
 
 pub fn lisible_en_systeme(chemin: &str) -> bool {
     lisible_en_systeme_avec(chemin, &type_lecteur)
 }
 
-/// Chemin refusé par lisible_en_systeme : une ligne au journal par chemin (au plus 500 retenus), lu comme non signé
+/// Chemin refusé par lisible_en_systeme ou passant par un lien : une ligne au journal par chemin (au plus 500 retenus), lu
+/// comme non signé
 fn noter_chemin_reseau(chemin: &str) {
     static VUS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
     let mut vus = VUS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new())).lock().unwrap_or_else(|e| e.into_inner());
     if vus.len() < 500 && vus.insert(chemin.to_lowercase()) {
-        crate::commun::journal(&format!("{chemin} : chemin réseau, amovible ou sans lettre, jamais ouvert par le service : non signé (réseau)"));
+        crate::commun::journal(&format!("{chemin} : chemin réseau, sans lettre, de type inconnu ou passant par un lien, jamais ouvert par le service : non signé (réseau)"));
     }
 }
 
-/// Lecture d'un fichier à échéance. Un chemin que le service ne doit pas ouvrir (lisible_en_systeme) n'est jamais
-/// touché, rien n'est lu : Ok(None), c'est-à-dire non signé, hors catalogue, empreinte illisible (sens méfiant). La clé
-/// porte l'identité du fichier lue par handle (identite_fichier, que SetFileTime ne règle pas), à défaut sa date : un
-/// résultat tardif ne vaut pas pour un fichier changé depuis
+/// Ouvre le fichier pour lire son identité : chemin admis par lisible_en_systeme, puis descente élément par élément
+/// sans suivre aucun lien (ouvrir_sans_traverser_lien, FILE_READ_ATTRIBUTES) : un lien symbolique ou une jonction du
+/// chemin, qui pourrait mener à un partage réseau, n'est jamais traversé (audit de #277, S277-04)
+fn ouvrir_identite(chemin: &str) -> Result<std::fs::File, ErreurOuverture> {
+    if !lisible_en_systeme(chemin) {
+        return Err(ErreurOuverture::Autre("chemin réseau, sans lettre ou de type inconnu".into()));
+    }
+    ouvrir_sans_traverser_lien(std::path::Path::new(chemin), 0x80)
+}
+
+/// Lecture d'un fichier à échéance. Un chemin que le service ne doit pas ouvrir (lisible_en_systeme) ou qui passe par un
+/// lien (jonction, lien symbolique, vers un partage peut-être) n'est jamais lu : Ok(None), c'est-à-dire non signé, hors
+/// catalogue, empreinte illisible (sens méfiant). La clé porte l'identité du fichier lue par handle (identite_fichier,
+/// que SetFileTime ne règle pas) : un résultat tardif ne vaut pas pour un fichier changé depuis. Limite : la lecture
+/// elle-même (signature, catalogue, empreinte) repasse par le chemin ; un dossier remplacé par un lien entre la descente
+/// et cette lecture serait suivi (course)
 pub fn lecture_fichier(quoi: &str, chemin: &str, f: impl FnOnce() -> Option<String> + Send + 'static) -> Result<Option<String>, HorsDelai> {
     static LECTEUR: std::sync::OnceLock<std::sync::Arc<Lecteur>> = std::sync::OnceLock::new();
     if !lisible_en_systeme(chemin) {
         noter_chemin_reseau(chemin);
         return Ok(None);
     }
-    let id = match identite_fichier(chemin) {
-        Some(i) => i.texte(),
-        None => std::fs::metadata(chemin).and_then(|m| m.modified()).map(crate::commun::filetime).unwrap_or(0).to_string(),
+    // Absent ou illisible : la lecture décide (un leurre absent est dit par elle) ; aucune date lue par le chemin
+    let id = match ouvrir_identite(chemin) {
+        Err(ErreurOuverture::Lien) | Err(ErreurOuverture::Detourne(_)) => {
+            noter_chemin_reseau(chemin);
+            return Ok(None);
+        }
+        Ok(h) => identite_par_handle(&h).map(|i| i.texte()).unwrap_or_default(),
+        Err(_) => String::new(),
     };
     LECTEUR.get_or_init(|| Lecteur::nouveau(8, std::time::Duration::from_secs(8), std::time::Duration::from_secs(16), std::time::Duration::from_secs(60))).lire(&format!("{quoi}|{chemin}|{id}"), f)
 }
@@ -495,45 +515,37 @@ impl IdentiteFichier {
 }
 
 pub fn identite_fichier(chemin: &str) -> Option<IdentiteFichier> {
+    identite_par_handle(&ouvrir_identite(chemin).ok()?)
+}
+
+/// Identité lue sur un handle déjà ouvert (lecture d'attributs suffit)
+pub fn identite_par_handle(f: &std::fs::File) -> Option<IdentiteFichier> {
+    use std::os::windows::io::AsRawHandle;
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FileBasicInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, FILE_BASIC_INFO, FILE_FLAGS_AND_ATTRIBUTES,
-        FILE_ID_INFO, FILE_SHARE_MODE, FILE_STANDARD_INFO, OPEN_EXISTING,
+        FileBasicInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, FILE_BASIC_INFO, FILE_ID_INFO, FILE_STANDARD_INFO,
     };
     use windows::Win32::System::IO::DeviceIoControl;
-    if !lisible_en_systeme(chemin) {
-        return None;
-    }
-    let nom = large(chemin);
-    // FILE_READ_ATTRIBUTES (0x80), tout partagé ; SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION (un tube nommé
-    // n'emprunte pas l'identité du service)
-    let h = unsafe { CreateFileW(PCWSTR(nom.as_ptr()), 0x80, FILE_SHARE_MODE(0x7), None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0x0011_0000), HANDLE::default()) }.ok()?;
-    let lire = || -> Option<IdentiteFichier> {
-        let mut id = FILE_ID_INFO::default();
-        let mut base = FILE_BASIC_INFO::default();
-        let mut std_ = FILE_STANDARD_INFO::default();
-        unsafe {
-            GetFileInformationByHandleEx(h, FileIdInfo, &mut id as *mut _ as *mut c_void, std::mem::size_of::<FILE_ID_INFO>() as u32).ok()?;
-            GetFileInformationByHandleEx(h, FileBasicInfo, &mut base as *mut _ as *mut c_void, std::mem::size_of::<FILE_BASIC_INFO>() as u32).ok()?;
-            GetFileInformationByHandleEx(h, FileStandardInfo, &mut std_ as *mut _ as *mut c_void, std::mem::size_of::<FILE_STANDARD_INFO>() as u32).ok()?;
-        }
-        // FSCTL_READ_FILE_USN_DATA, versions 2 à 3 acceptées (READ_FILE_USN_DATA) ; Usn à l'octet 24 (V2) ou 40 (V3)
-        const FSCTL_READ_FILE_USN_DATA: u32 = 0x0009_00eb;
-        let entree: [u16; 2] = [2, 3];
-        let mut sortie = [0u64; 128];
-        let mut n = 0u32;
-        let ok = unsafe {
-            DeviceIoControl(h, FSCTL_READ_FILE_USN_DATA, Some(entree.as_ptr() as *const c_void), 4, Some(sortie.as_mut_ptr() as *mut c_void),
-                std::mem::size_of_val(&sortie) as u32, Some(&mut n), None)
-        }.is_ok();
-        let octets: Vec<u8> = sortie.iter().flat_map(|m| m.to_le_bytes()).collect();
-        let usn = if ok { usn_de_l_enregistrement(octets.get(..n as usize).unwrap_or(&[])) } else { 0 };
-        Some(IdentiteFichier { volume: id.VolumeSerialNumber, id: id.FileId.Identifier, usn, taille: std_.EndOfFile, ecriture: base.LastWriteTime, changement: base.ChangeTime })
-    };
-    let r = lire();
+    let h = HANDLE(f.as_raw_handle());
+    let mut id = FILE_ID_INFO::default();
+    let mut base = FILE_BASIC_INFO::default();
+    let mut std_ = FILE_STANDARD_INFO::default();
     unsafe {
-        let _ = CloseHandle(h);
+        GetFileInformationByHandleEx(h, FileIdInfo, &mut id as *mut _ as *mut c_void, std::mem::size_of::<FILE_ID_INFO>() as u32).ok()?;
+        GetFileInformationByHandleEx(h, FileBasicInfo, &mut base as *mut _ as *mut c_void, std::mem::size_of::<FILE_BASIC_INFO>() as u32).ok()?;
+        GetFileInformationByHandleEx(h, FileStandardInfo, &mut std_ as *mut _ as *mut c_void, std::mem::size_of::<FILE_STANDARD_INFO>() as u32).ok()?;
     }
-    r
+    // FSCTL_READ_FILE_USN_DATA, versions 2 à 3 acceptées (READ_FILE_USN_DATA) ; Usn à l'octet 24 (V2) ou 40 (V3)
+    const FSCTL_READ_FILE_USN_DATA: u32 = 0x0009_00eb;
+    let entree: [u16; 2] = [2, 3];
+    let mut sortie = [0u64; 128];
+    let mut n = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(h, FSCTL_READ_FILE_USN_DATA, Some(entree.as_ptr() as *const c_void), 4, Some(sortie.as_mut_ptr() as *mut c_void),
+            std::mem::size_of_val(&sortie) as u32, Some(&mut n), None)
+    }.is_ok();
+    let octets: Vec<u8> = sortie.iter().flat_map(|m| m.to_le_bytes()).collect();
+    let usn = if ok { usn_de_l_enregistrement(octets.get(..n as usize).unwrap_or(&[])) } else { 0 };
+    Some(IdentiteFichier { volume: id.VolumeSerialNumber, id: id.FileId.Identifier, usn, taille: std_.EndOfFile, ecriture: base.LastWriteTime, changement: base.ChangeTime })
 }
 
 /// Décision pure : USN d'un enregistrement USN_RECORD_V2 ou V3 (0 si illisible ou négatif)
@@ -548,12 +560,17 @@ pub fn usn_de_l_enregistrement(o: &[u8]) -> i64 {
 }
 
 /// Décision pure : clé d'un cache de signature (B-2-01). Avec un USN, l'identité lue par handle suffit ; sans USN
-/// (journal inactif, FAT), l'empreinte SHA-256 du contenu ; ni l'un ni l'autre : None, rien n'est mis en cache. Jamais
-/// la date de modification seule, qu'un compte standard remet à l'identique après avoir remplacé le fichier
+/// (journal inactif, FAT, exFAT), l'empreinte SHA-256 du contenu, pour un fichier de 64 Mo au plus (au-delà, l'empreinte
+/// à chaque consultation coûterait trop : pas de cache plutôt qu'un cache faux) ; identité illisible, ou ni l'un ni
+/// l'autre : None, rien n'est mis en cache. Jamais la date de modification seule, qu'un compte standard remet à
+/// l'identique après avoir remplacé le fichier
+pub const TAILLE_MAX_EMPREINTE_CLE: i64 = 64 * 1024 * 1024;
+
 pub fn cle_signature_avec(chemin: &str, identite: Option<&IdentiteFichier>, empreinte: &dyn Fn() -> Option<String>) -> Option<String> {
     match identite {
         Some(i) if i.usn > 0 => Some(format!("{chemin}|id:{}", i.texte())),
-        _ => empreinte().map(|h| format!("{chemin}|sha256:{h}")),
+        Some(i) if (0..=TAILLE_MAX_EMPREINTE_CLE).contains(&i.taille) => empreinte().map(|h| format!("{chemin}|sha256:{h}")),
+        _ => None,
     }
 }
 
@@ -995,6 +1012,8 @@ pub struct Ace {
     pub autorise: bool,
     pub masque: u32,
     pub sid: String,
+    /// INHERIT_ONLY_ACE : ne vaut que pour les enfants créés ensuite, aucun droit sur l'objet lui-même
+    pub heritage_seul: bool,
 }
 
 /// Propriétaire et droits d'un fichier ou d'un dossier, tels que Windows les rapporte
@@ -1074,7 +1093,7 @@ unsafe fn analyser_descripteur(proprietaire: windows::Win32::Security::PSID, dac
     }
     if dacl.is_null() {
         // DACL absente : accès total pour tout le monde
-        s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into() });
+        s.aces.push(Ace { autorise: true, masque: 0x1000_0000, sid: "S-1-1-0".into(), heritage_seul: false });
     } else {
         for i in 0..(*dacl).AceCount as u32 {
             let mut p: *mut c_void = std::ptr::null_mut();
@@ -1088,7 +1107,7 @@ unsafe fn analyser_descripteur(proprietaire: windows::Win32::Security::PSID, dac
                 0 | 1 => {
                     let ace = &*(p as *const ACCESS_ALLOWED_ACE);
                     let sid = PSID(&ace.SidStart as *const u32 as *mut c_void);
-                    s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid) });
+                    s.aces.push(Ace { autorise: entete.AceType == 0, masque: ace.Mask, sid: sid_texte(sid), heritage_seul: entete.AceFlags & 0x08 != 0 });
                 }
                 _ => s.ace_inconnue = true,
             }

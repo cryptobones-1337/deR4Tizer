@@ -846,6 +846,10 @@ pub fn chemin_image(image: &str) -> PathBuf {
 /// Pilote connu de LOLDrivers. La liste est gardée en mémoire et rechargée une fois par jour par un fil à part :
 /// l'appelant (le fil de corrélation du SIEM) n'attend jamais un téléchargement.
 pub fn pilote_vulnerable(chemin: &Path) -> Option<String> {
+    // Chemin réseau, sans lettre ou de type inconnu : jamais ouvert en SYSTEM (audit de #277, S277-03)
+    if !crate::natif::lisible_en_systeme(&chemin.to_string_lossy()) {
+        return None;
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
@@ -884,6 +888,11 @@ fn pilotes_declares() -> Vec<PathBuf> {
         }
         if let Ok(image) = k.get_value::<String, _>("ImagePath") {
             let p = chemin_image(&image);
+            // Pilote déclaré sur un chemin réseau, sans lettre ou de type inconnu : ni testé ni lu par SYSTEM (S277-03), journalisé
+            if !crate::natif::lisible_en_systeme(&p.to_string_lossy()) {
+                crate::commun::journal(&format!("pilote {nom} déclaré hors d'un lecteur local ({}) : non lu", p.display()));
+                continue;
+            }
             if p.is_file() {
                 l.push(p);
             }
@@ -913,6 +922,9 @@ pub(crate) fn pilotes_vulnerables(chemins: Vec<PathBuf>, connus: &HashSet<String
     let mut a = Vec::new();
     for p in chemins {
         if p.extension().map(|x| !x.eq_ignore_ascii_case("sys")).unwrap_or(true) {
+            continue;
+        }
+        if !crate::natif::lisible_en_systeme(&p.to_string_lossy()) {
             continue;
         }
         let Some(h) = empreinte_fichier(&p) else { continue };

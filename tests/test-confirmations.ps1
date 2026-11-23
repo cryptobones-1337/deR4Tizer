@@ -153,8 +153,11 @@ try {
 
     # Audit du 2026-11-23, A-1-2 : commande qui affaiblit, phrase en tête et « Continuer » armé après 2 s
     $affaiblit = $canal.GetMethod('Affaiblit')
-    $liste = @(@('apprentissage', 'recommencer'), @('config', 'false'), @('toutDebloquer', ''), @('baseline', 'annuler'), @('filtrage', 'off'), @('restaurer', ''), @('restaurerRepli', ''))
-    $autres = @(@('apprentissage', 'terminer'), @('config', 'true'), @('baseline', 'appliquer'), @('filtrage', 'on'), @('bloquer', ''), @('tuer', ''), @('majMenaces', ''))
+    $liste = @(@('apprentissage', 'recommencer'), @('config', 'false'), @('toutDebloquer', ''), @('baseline', 'annuler'), @('filtrage', 'off'), @('restaurer', ''), @('restaurerRepli', ''),
+        # S277-02
+        @('exception', ''), @('debloquer', ''), @('reprendre', ''), @('panique', 'off'), @('filtrageAutoriser', ''), @('filtrageRetirer', ''),
+        @('filtrageCategories', 'publicite'), @('reglages', '{}'), @('autoriserLecteur', 'S-1-5-21-1-2-3-1001'))
+    $autres = @(@('apprentissage', 'terminer'), @('config', 'true'), @('baseline', 'appliquer'), @('filtrage', 'on'), @('bloquer', ''), @('tuer', ''), @('majMenaces', ''), @('panique', 'on'), @('quarantaine', ''), @('bloquerIp', ''))
     foreach ($en in $false, $true) {
         $langue.GetField('En').SetValue($null, $en)
         $phrase = $canal.GetMethod('AvertissementAffaiblit').Invoke($null, @($en))
