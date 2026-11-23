@@ -168,7 +168,9 @@ modules expérimentaux.
   identique, casse ignorée), sinon une interrogation WMI du processus vivant, gardée au même contrôle. Avant, une
   entrée gardée une heure sous un PID réutilisé était prêtée au nouveau programme : une connexion de gh portait
   « PowerShell obscurci », venu d'un cmd qui avait eu le même PID 25 min plus tôt. Test :
-  `processus_cache_pid_reutilise_jamais_prete`.
+  `processus_cache_pid_reutilise_jamais_prete`. Réserve de la prérelecture de #283 : une connexion dont le chemin du
+  programme est illisible (processus protégé, déjà terminé) perd tout ce contexte : aucune ligne de commande n'est
+  lue, ni du cache ni de WMI (sens prudent : jamais une ligne empruntée, au prix d'un indice manqué).
 - **Niveau** : Alerte.
 - **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
   signés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
@@ -446,6 +448,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   4688 et WMI ne portent pas le nom d'origine du fichier (angle mort déclaré, comme pour PowerShell sous PRC-002) ; avec
   Sysmon, le nom d'origine la reconnaît. Un outil lancé par un autre programme que cmd, PowerShell ou pwsh (bash, un
   script, `Start-Process` qui passe ses arguments à part) n'est vu que par le processus de l'outil lui-même.
+  Nom court 8.3 d'un outil (`BITSAD~1.EXE`, `VSSADM~1.EXE`) dans l'image ou en tête de commande : le nom lu n'est
+  pas celui de l'outil, le motif ne s'applique pas ; non vérifié (à essayer en VM : Windows écrit en principe le nom
+  long dans le 4688 et Sysmon, mais une ligne de commande peut porter le nom court).
 
 ### PRC-004 : navigateur lancé en débogage à distance
 - **ATT&CK** : T1539 Vol de cookies de session.
@@ -519,7 +524,9 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   wmic ou diskshadow (ou de PowerShell pour les formes WMI) sans Sysmon : les événements 4688 et WMI ne portent pas le
   nom d'origine du fichier (angle mort déclaré, constat T-2) ; avec Sysmon, elle est vue. Un outil lancé par un autre
   programme que cmd, PowerShell ou pwsh (bash, un script, `Start-Process` qui passe ses arguments à part) n'est vu que
-  par le processus de l'outil lui-même.
+  par le processus de l'outil lui-même. Nom court 8.3 d'un outil (`BITSAD~1.EXE`, `VSSADM~1.EXE`) dans l'image ou en tête de commande : le nom lu n'est
+  pas celui de l'outil, le motif ne s'applique pas ; non vérifié (à essayer en VM : Windows écrit en principe le nom
+  long dans le 4688 et Sysmon, mais une ligne de commande peut porter le nom court).
 
 ## CHA : chaînes de processus
 
