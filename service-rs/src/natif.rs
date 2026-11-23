@@ -2017,6 +2017,9 @@ fn cle_entree_sacl(e: &str) -> Option<(String, Vec<String>, String, String, Stri
 /// drapeaux de contrôle sont gardés. Limite : une entrée posée par un tiers à l'identique de la nôtre ne s'en distingue
 /// pas (une SACL ne garde pas l'auteur d'une entrée) et part avec elle
 pub fn sacl_sans_entrees(actuelle: &str, nos: &[&str], copies: &[&str]) -> Option<String> {
+    if !sacl_simple(actuelle) {
+        return None;
+    }
     let retirees: Vec<_> = nos.iter().chain(copies).filter_map(|e| cle_entree_sacl(e)).collect();
     let (controle, entrees) = entrees_sacl(actuelle);
     let gardees: Vec<&String> = entrees.iter().filter(|e| cle_entree_sacl(e).map_or(true, |k| !retirees.contains(&k))).collect();
@@ -2024,6 +2027,30 @@ pub fn sacl_sans_entrees(actuelle: &str, nos: &[&str], copies: &[&str]) -> Optio
         return None;
     }
     Some(format!("S:{controle}{}", gardees.iter().map(|e| format!("({e})")).collect::<String>()))
+}
+
+/// Décision pure (audit de #301, S301-04) : SACL que `sacl_sans_entrees` sait reconstruire sans rien perdre ? Chaque
+/// entrée est un « (…) » sans parenthèse imbriquée ni guillemet, de six champs exactement, d'un type autre que les
+/// entrées conditionnelles (XA, XD, XU, ZA) ou les attributs de ressource (RA), dont le texte porte une expression.
+/// Sinon la SACL n'est jamais réécrite : notre entrée y reste et l'élément est compté comme écarté (compte rendu)
+pub fn sacl_simple(t: &str) -> bool {
+    let t = t.strip_prefix("S:").unwrap_or(t);
+    let mut profondeur = 0u32;
+    for c in t.chars() {
+        match c {
+            '(' if profondeur > 0 => return false,
+            '(' => profondeur = 1,
+            ')' if profondeur == 0 => return false,
+            ')' => profondeur = 0,
+            '"' => return false,
+            _ => {}
+        }
+    }
+    profondeur == 0
+        && entrees_sacl(t).1.iter().all(|e| {
+            let c: Vec<&str> = e.split(';').collect();
+            c.len() == 6 && !["XA", "XD", "XU", "ZA", "RA"].contains(&c[0])
+        })
 }
 
 /// Décision pure (A-6-4) : la SACL d'un dossier transmet-elle encore à ses fichiers un audit de Tout le monde, en
@@ -2050,6 +2077,9 @@ fn retirer_sacl(f: &std::fs::File, decision: impl Fn(&str) -> Option<String>, bi
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Security::{SetKernelObjectSecurity, SACL_SECURITY_INFORMATION};
     let actuelle = sacl_du_handle(f).ok_or("SACL actuelle illisible")?;
+    if !sacl_simple(&actuelle) {
+        return Err("SACL à entrée conditionnelle ou d'attribut : laissée telle quelle".into());
+    }
     let Some(nouvelle) = decision(&actuelle) else {
         bilan.deja += 1;
         return Ok(actuelle);
@@ -2128,10 +2158,16 @@ pub fn nom_compte_rendu_systeme(nom: &str) -> bool {
 /// Décision pure (A-6-4) : un compte rendu de %SystemRoot%\Temp est-il à nous, donc à retirer ? Fichier ordinaire (pas
 /// un lien), au nom de nos comptes rendus, propriétaire LU et égal à SYSTEM (qui seul les écrit), un seul lien physique.
 /// Un compte standard peut créer des fichiers dans ce dossier : un nom posé d'avance (son propriétaire), un lien ou un
-/// lien physique vers un fichier d'ailleurs ne sont jamais supprimés
-pub fn compte_rendu_a_retirer(nom_ok: bool, lien: bool, proprietaire: Option<&str>, liens: Option<u32>) -> bool {
-    nom_ok && !lien && proprietaire == Some(crate::protection::SID_SYSTEME) && liens == Some(1)
+/// lien physique vers un fichier d'ailleurs ne sont jamais supprimés. Âge (création lue sur le handle) d'au moins
+/// `AGE_COMPTE_RENDU_RETIRE` : le compte rendu écrit par CETTE désinstallation (« deR4Tizer-arret », écrit pendant
+/// l'arrêt du service juste avant --nettoyer, relecture de #125, R1) reste à lire (prérelecture de #301, D1) ; âge
+/// illisible ou date future : gardé
+pub fn compte_rendu_a_retirer(nom_ok: bool, lien: bool, proprietaire: Option<&str>, liens: Option<u32>, age: Option<std::time::Duration>) -> bool {
+    nom_ok && !lien && proprietaire == Some(crate::protection::SID_SYSTEME) && liens == Some(1) && age.is_some_and(|a| a >= AGE_COMPTE_RENDU_RETIRE)
 }
+
+/// Âge minimal d'un compte rendu retiré de %SystemRoot%\Temp : une heure
+pub const AGE_COMPTE_RENDU_RETIRE: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Désinstallation (A-6-4) : retire de %SystemRoot%\Temp les comptes rendus laissés par deR4Tizer (`compte_rendu_a_retirer`),
 /// chacun ouvert sans suivre de lien, chemin final vérifié, propriétaire et nombre de liens lus et supprimé par ce même
@@ -2151,7 +2187,8 @@ pub fn retirer_comptes_rendus_systeme() -> (usize, usize) {
         let ouvert = if lien { None } else { ouvrir_verifie(&e.path(), ACCES, 0x7, false).ok() };
         let ok = ouvert.as_ref().is_some_and(|f| {
             let proprietaire = lire_securite_handle(f).map(|s| s.proprietaire);
-            compte_rendu_a_retirer(true, lien, proprietaire.as_deref(), nombre_de_liens(f)) && supprimer_par_handle(f).is_ok()
+            let age = f.metadata().and_then(|m| m.created()).ok().and_then(|c| std::time::SystemTime::now().duration_since(c).ok());
+            compte_rendu_a_retirer(true, lien, proprietaire.as_deref(), nombre_de_liens(f), age) && supprimer_par_handle(f).is_ok()
         });
         if ok { retires += 1 } else { laisses += 1 }
     }
