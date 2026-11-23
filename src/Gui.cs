@@ -1045,11 +1045,12 @@ namespace DeR4Tizer
             return restant > 0 ? t + " (" + restant + ")" : t;
         }
 
-        // Bouton de la fenêtre de confirmation : un vrai Button (DialogResult, Entrée et Échap inchangés), dessiné au thème
+        // Bouton de la fenêtre de confirmation : un vrai Button (DialogResult, Entrée et Échap inchangés), dessiné au thème.
+        // L'accent suit le bouton que l'Entrée active (IsDefault) : « Annuler » à l'ouverture (AcceptButton) ; si
+        // l'utilisateur passe sur « Continuer » par Tab, WinForms en fait le bouton par défaut, comme avec les boutons
+        // standard d'avant, et l'accent passe sur lui (prérelecture de #296). Repère de focus quand le clavier sert
         sealed class BoutonConfirmation : Button
         {
-            public bool Accent;
-
             public BoutonConfirmation()
             {
                 FlatStyle = FlatStyle.Flat;
@@ -1057,17 +1058,31 @@ namespace DeR4Tizer
                 SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             }
 
+            // Vrai pour le bouton que l'Entrée active
+            public bool Accent { get { return IsDefault; } }
+
             protected override void OnPaint(PaintEventArgs e)
             {
-                var g = e.Graphics;
-                g.Clear(Parent != null ? Parent.BackColor : Theme.Panneau);
+                Dessiner(e.Graphics, ClientRectangle, Text, Font, Enabled, Accent, Focused && ShowFocusCues, Parent != null ? Parent.BackColor : Theme.Panneau);
+            }
+
+            // Dessin seul, testé : accent (bordure et fond bleutés) pour le bouton visé par l'Entrée, repère de focus en
+            // pointillés à l'intérieur, texte grisé tant que le bouton est désarmé
+            public static void Dessiner(Graphics g, Rectangle r, string texte, Font police, bool actif, bool accent, bool focus, Color fondParent)
+            {
+                g.Clear(fondParent);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using (var chemin = Theme.Arrondi(new RectangleF(1f, 1f, Width - 3f, Height - 3f), 6f))
+                using (var chemin = Theme.Arrondi(new RectangleF(r.X + 1f, r.Y + 1f, r.Width - 3f, r.Height - 3f), 6f))
                 {
-                    using (var fond = new SolidBrush(Accent ? Theme.Melange(Theme.Panneau, Theme.Cyan, 0.14f) : Theme.Panneau)) g.FillPath(fond, chemin);
-                    using (var trait = new Pen(Accent ? Theme.Cyan : Theme.Bordure, Accent ? 2f : 1f)) g.DrawPath(trait, chemin);
+                    using (var fond = new SolidBrush(accent ? Theme.Melange(Theme.Panneau, Theme.Cyan, 0.14f) : Theme.Panneau)) g.FillPath(fond, chemin);
+                    using (var trait = new Pen(accent ? Theme.Cyan : Theme.Bordure, accent ? 2f : 1f)) g.DrawPath(trait, chemin);
                 }
-                TextRenderer.DrawText(g, Text, Font, ClientRectangle, Enabled ? Theme.Texte : Theme.Melange(Theme.TexteDim, Theme.Panneau, 0.4f),
+                if (focus)
+                {
+                    g.SmoothingMode = SmoothingMode.None;
+                    using (var p = new Pen(Theme.Texte, 1f) { DashStyle = DashStyle.Dot }) g.DrawRectangle(p, r.X + 5, r.Y + 5, r.Width - 11, r.Height - 11);
+                }
+                TextRenderer.DrawText(g, texte, police, r, actif ? Theme.Texte : Theme.Melange(Theme.TexteDim, Theme.Panneau, 0.4f),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
             }
         }
@@ -1210,7 +1225,7 @@ namespace DeR4Tizer
             var pied = new Panel { Name = "Pied", BackColor = Theme.Panneau, Bounds = new Rectangle(0, y, largeur, hautPied) };
             pied.Controls.Add(new Panel { BackColor = Theme.Bordure, Bounds = new Rectangle(0, 0, largeur, 1) });
             if (defile) pied.Controls.Add(new Label { Name = "Defiler", Text = en ? "Scroll to read everything." : "Faites défiler pour tout lire.", Font = petit, ForeColor = Theme.TexteDim, BackColor = Theme.Panneau, UseMnemonic = false, Bounds = new Rectangle(marge, 24, 220, 20) });
-            var annuler = new BoutonConfirmation { Name = "Annuler", Text = en ? "Cancel" : "Annuler", DialogResult = DialogResult.Cancel, Accent = true, Font = corps, TabIndex = 0, Bounds = new Rectangle(largeur - marge - 110, 15, 110, 34) };
+            var annuler = new BoutonConfirmation { Name = "Annuler", Text = en ? "Cancel" : "Annuler", DialogResult = DialogResult.Cancel, Font = corps, TabIndex = 0, Bounds = new Rectangle(largeur - marge - 110, 15, 110, 34) };
             int delai = affaiblit ? 2 : 1;
             var continuer = new BoutonConfirmation { Name = "Continuer", Text = TexteContinuer(en, delai), DialogResult = DialogResult.Yes, Font = corps, TabIndex = 1, Bounds = new Rectangle(largeur - marge - 110 - 10 - 130, 15, 130, 34) };
             pied.Controls.Add(annuler); pied.Controls.Add(continuer);
