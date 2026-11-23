@@ -116,6 +116,38 @@ après les paquets de test, `F7D7CFA1122C417D9C9250B8C0F3EFBC27B076090F75155049E
 
 Tableaux en commentaire des PR #43, #44, #45, #46.
 
+## Analyse statique en CI : CodeQL (lot 3)
+
+Code scanning de GitHub en « default setup », activé par le mainteneur le 2026-11-23 (réglage du dépôt, marche à
+suivre à la section 6 de `CLAUDE.md`) : CodeQL 2.27.5, suite de requêtes « default », runner `ubuntu-latest`
+(image ubuntu-26.04), build mode `none`, à chaque poussée et PR vers `main` et chaque semaine. Aucun fichier de
+workflow dans le dépôt : l'exécution est le workflow dynamique « CodeQL » de GitHub.
+
+| Langage | Analyse sur `main` (`edc2639`, run 45181833445, 2026-11-23) | Règles | Alertes | Extraction |
+|---|---|---|---|---|
+| Rust | 2229920801 | 27 | 5 | 49 fichiers sur 49, dont 4 extraits avec erreurs : `commun.rs` (« expected an item » aux lignes 1 et 2, fichier qui commence par un BOM), `main.rs` (macro `define_windows_service` non développée), `natif.rs` et `reponse.rs` (macros `windows::core::s` et `w` non développées) |
+| C# | 2229883658 | 52 | 0 | 11 fichiers sur 11 ; aucun projet ni solution trouvé, références prises dans les assemblages .NET de CodeQL (203), « WPF usage detected: False » ; diagnostic « Low C# analysis quality » : 65 % des appels avec cible connue (seuil 85 %), 77 % des expressions de type connu (seuil 85 %) |
+| Python | 2229881103 | 43 | 1 | 1 fichier sur 1 (`tests/integration/serveur-maj.py`) |
+| Actions | 2229879240 | 17 | 0 | workflows de `.github/workflows` |
+
+Tri des 6 alertes ouvertes sur `main` (détail, raison et scénario dans la PR du lot 3) : aucun défaut réel ;
+6 faux positifs, à faire écarter par le mainteneur avec leur raison.
+
+| N° | Règle (gravité) | Emplacement | Classement |
+|---|---|---|---|
+| 5 | `rust/hard-coded-cryptographic-value` (critique) | `service-rs/src/reponse.rs:280` | Faux positif : tampon `[0u8; 16]` entièrement recopié depuis SHA-256 du nom de la copie ; l'encodage de quarantaine n'est pas un chiffrement (clé publique, documenté) |
+| 6 | `rust/hard-coded-cryptographic-value` (critique) | `service-rs/src/reponse.rs:319` | Faux positif : même tampon, rempli par les 16 octets lus dans l'en-tête de la copie |
+| 2 | `rust/access-invalid-pointer` (haute) | `service-rs/src/ndr.rs:250` | Faux positif : pointeur rempli par `GetIpNetTable2`, retour d'erreur et pointeur nul écartés juste avant |
+| 3, 4 | `rust/access-invalid-pointer` (haute) | `service-rs/src/natif.rs:918`, `:922` | Faux positifs : pointeur rendu par `GetAce`, erreur et pointeur nul écartés juste avant, DACL rendue par Windows |
+| 1 | `py/insecure-protocol` (haute) | `tests/integration/serveur-maj.py:40` | Faux positif, code de test : serveur local du lot 3c sur 127.0.0.1, runner jetable ; `PROTOCOL_TLS_SERVER` refuse déjà TLS 1.0 et 1.1 depuis Python 3.10 |
+
+Alerte n° 7 (`rust/cleartext-logging`, haute) : seulement sur les PR #269 et #278 (`service-rs/src/tests.rs`),
+pas sur `main` ; faux positif (message d'un `assert!` de test qui affiche le texte déjà passé par
+`masquer_secrets`). Aucune alerte écartée à ce jour.
+
+CodeQL ne voit ni les défauts de logique, ni les décisions de confiance propres au produit ; l'analyse C# sans
+compilation reste partielle (seuils de qualité non atteints). Ce n'est pas une relecture indépendante.
+
 ## Non couvert
 
 - Exécution avec Microsoft Defender actif (lot 3d) sur un poste réel : le lot ne tourne que dans la VM de test, et reste exigé sur la version distribuée.
