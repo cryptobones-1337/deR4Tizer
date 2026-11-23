@@ -5677,6 +5677,19 @@ fn masquer_secrets_retire_les_valeurs() {
         ("smbclient //srv/c -U admin%Secr3tSmb", "Secr3tSmb", "-U admin%"),
         ("gpresult /s srv /u admin /p Secr3tGp /r", "Secr3tGp", "/u admin"),
         ("wmic /node:srv /user:admin /password:Secr3tWmic process list", "Secr3tWmic", "process list"),
+        // Revue de #269, D2 : la valeur d'une option qui porte le nom d'un outil ne change pas l'outil courant
+        ("schtasks /create /tn T /tr cmd.exe /s srv /u admin /p Sonde1 /f", "Sonde1", "/tr cmd.exe"),
+        ("schtasks /create /tn T /tr powershell.exe /s srv /u admin /p Sonde2", "Sonde2", "/tr powershell.exe"),
+        ("schtasks /s srv /u admin /p Sonde6 /create /tn T /tr cmd.exe", "Sonde6", "/tr cmd.exe"),
+        ("schtasks /create /tn ssh /tr del /s srv /u admin /p Sonde3", "Sonde3", "/tn ssh /tr del"),
+        ("schtasks /create /tn xcopy /tr xcopy /ru admin /rp Sonde4", "Sonde4", "/tn xcopy"),
+        ("mysql -u ssh -pSonde7 base", "Sonde7", "-u ssh"),
+        ("plink -l del -pw Sonde10 srv", "Sonde10", "-l del"),
+        ("cmd /c schtasks /create /tn T /tr del /s srv /u a /p Sonde8", "Sonde8", "cmd /c schtasks"),
+        (r#"psexec \\srv -u admin -p Sonde5 xcopy a b /p"#, "Sonde5", "xcopy a b /p"),
+        // Message d'un 4688 et raisons d'une alerte : la ligne suit « : »
+        ("schtasks.exe lancé par cmd.exe : schtasks /create /tn T /tr cmd.exe /s srv /u admin /p Sonde9", "Sonde9", "lancé par cmd.exe"),
+        ("tâche planifiée créée à distance : schtasks /create /tn T /tr del /s srv /u admin /p Sonde11", "Sonde11", "/tr del"),
     ];
     for (ligne, secret, garde) in cas {
         let m = masquer_secrets(ligne);
@@ -5693,7 +5706,10 @@ fn masquer_secrets_retire_les_valeurs() {
                   // Revue de #269 : /p drapeau sans valeur, -p ou -P port ; mysql -p seul demande le mot de passe
                   "xcopy a b /p", "del /p x.txt", "findstr /p motif fichier.txt", "robocopy a b /e /mir",
                   "ssh -p 22 hote", "scp -P 2222 f h:", "nc -p 4444 -l", "mysql -p base", "7z x -p archive.7z",
-                  "curl -u admin https://exemple.test/", "tasklist /v", "xcopy a b /p & ssh -p 22 hote"] {
+                  "curl -u admin https://exemple.test/", "tasklist /v", "xcopy a b /p & ssh -p 22 hote",
+                  // Lanceurs : la commande lancée devient l'outil courant
+                  "cmd /c xcopy a b /p", "cmd.exe /k del /p x.txt", r#"start "" ssh -p 22 hote"#,
+                  r#"psexec \\srv cmd /c del /p x.txt"#, "powershell -c ssh -p 22 hote", "sshpass -f fichier ssh -p 22 hote"] {
         assert_eq!(masquer_secrets(ligne), ligne);
     }
     // Non ASCII : le reste intact, le secret retiré
@@ -5727,6 +5743,13 @@ fn masquer_secrets_options_par_outil() {
     assert_eq!(secret_d_option("curl", "-ua:b"), Some(Masque::Dans(4)));
     assert_eq!(secret_d_option("curl", "-ua"), None);
     assert_eq!(secret_d_option("ssh", "--password=x"), Some(Masque::Dans(11)), "formes globales pour tout outil");
+    // Tête de commande (revue de #269, D2) : après un séparateur, « : », `cmd /c`, `powershell -c` ; commande d'un lanceur
+    // direct : ni option, ni valeur d'option, ni poste, ni titre entre guillemets
+    use crate::commun::{commande_lancee, tete_apres};
+    assert!(tete_apres("cmd", "/C") && tete_apres("powershell", "-Command") && tete_apres("schtasks", "&&") && tete_apres("x", ":"));
+    assert!(!tete_apres("schtasks", "/c") && !tete_apres("cmd", "cmd.exe"));
+    assert!(commande_lancee("sshpass", "ssh", "Secret") && commande_lancee("start", "ssh", "\"\""));
+    assert!(!commande_lancee("sshpass", "Secret", "-p") && !commande_lancee("psexec", r"\\srv", "psexec") && !commande_lancee("schtasks", "cmd.exe", "/tr"));
     let m = crate::commun::masquer_secrets("sqlcmd -P Secr3t & ssh -P 2222 h");
     assert!(!m.contains("Secr3t") && m.ends_with("ssh -P 2222 h"), "{m}");
 }
