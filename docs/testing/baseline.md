@@ -39,7 +39,8 @@ Job `dependances` de `.github/workflows/ci.yml`, outils installés par `cargo in
 | Commande (dans `service-rs`) | Résultat constaté |
 |---|---|
 | `cargo audit --file Cargo.lock` | Run 45175958903 (`e2d2991`, 2026-11-23) : 1562 avis RustSec chargés, 78 paquets du `Cargo.lock` lus, aucune vulnérabilité ni avertissement, code 0. |
-| `cargo deny --locked --config deny.toml check --show-stats advisories licenses sources` | Même run : `advisories ok: 0 errors, 0 warnings, 0 notes` ; `licenses FAILED: 1 errors, 2 warnings, 63 notes` ; `sources ok: 0 errors, 0 warnings, 0 notes`. Seule erreur : `der4tizer-svc = 4.3.0 is unlicensed` (le service lui-même, sans champ `license` dans `Cargo.toml`), décision laissée au mainteneur ; job rouge en attendant. |
+| `cargo deny --locked --config deny.toml check --show-stats advisories licenses sources` | Même run : `advisories ok: 0 errors, 0 warnings, 0 notes` ; `licenses FAILED: 1 errors, 2 warnings, 63 notes` ; `sources ok: 0 errors, 0 warnings, 0 notes`. Seule erreur : `der4tizer-svc = 4.3.0 is unlicensed` (le service lui-même, sans champ `license` dans `Cargo.toml`). |
+| Même commande, après les décisions du mainteneur du 2026-11-23 (`license = "EUPL-1.2"` dans `Cargo.toml`, liste des licences validée, EUPL-1.2 ajoutée) | Run 45184585387 (`28eab0a`) : `advisories ok: 0 errors, 0 warnings, 0 notes` ; `licenses ok: 0 errors, 0 warnings, 64 notes` ; `sources ok: 0 errors, 0 warnings, 0 notes` ; job `dependances` réussi. cargo audit : 1562 avis, 78 paquets, aucune alerte. Job `windows` au même run : 565 tests réussis, 0 échoué (`--locked`). |
 
 Ces contrôles ne voient que les avis publiés (RustSec), les licences déclarées et la provenance des paquets : aucun
 défaut de logique, aucun code du service. Ce n'est pas une relecture indépendante.
