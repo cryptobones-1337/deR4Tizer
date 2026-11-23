@@ -688,7 +688,9 @@ namespace DeR4Tizer
     {
         public string Debut { get; set; } public string Fin { get; set; } public List<string> Appris { get; set; } public List<ExceptionApprise> Exceptions { get; set; }
     }
-    public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } public bool CleEpinglee { get; set; } }
+    public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } public bool CleEpinglee { get; set; }
+        // Code du contrôle pour la page Santé (maj.rs, code_controle ; audit du 2026-11-23, A-3-2 et T-12) ; null : service plus ancien
+        public string Controle { get; set; } public string EchecDepuis { get; set; } }
     public class ConfigMaj
     {
         public ConfigMaj() { Auto = false; Url = "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json"; }

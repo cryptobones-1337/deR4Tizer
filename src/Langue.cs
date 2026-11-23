@@ -247,6 +247,14 @@ namespace DeR4Tizer
             { "Aucun incident enregistré, mais {0} collecte(s) en panne : des détections ne peuvent pas se déclencher.", "No incident recorded, but {0} collection(s) failing: some detections cannot fire." },
             { "Aucun incident enregistré.", "No incident recorded." }, { "ÉTAT ILLISIBLE : SERVICE OU DROITS DU COMPTE À VÉRIFIER", "UNREADABLE STATE: CHECK THE SERVICE OR ACCOUNT RIGHTS" },
             { "secrets enregistrés", "secrets recorded" }, { "sans secret enregistré", "no secret recorded" },
+            // Ligne « Mise à jour » de la page Santé (audit du 2026-11-23, A-3-2 et T-12)
+            { "pas encore vérifiée", "not checked yet" }, { "contrôlée", "checked" }, { "manifeste plus ancien", "older manifest" },
+            { "dernier contrôle en échec", "last check failed" }, { "en échec depuis plus de 24 h", "failing for more than 24 h" },
+            { "maj.json absent ou illisible : premier contrôle 10 min après le démarrage du service.", "maj.json missing or unreadable: first check 10 min after the service starts." },
+            { "Le manifeste publié annonce la version {0}, plus ancienne que la version installée ({1}) : un manifeste remplacé peut geler les mises à jour ; vérifiez la page des versions du projet.",
+              "The published manifest announces version {0}, older than the installed version ({1}): a replaced manifest can freeze updates; check the project's releases page." },
+            { "nouvel essai dans 15 min, puis 1 h, puis chaque jour", "new attempt in 15 min, then 1 h, then daily" },
+            { "aucune mise à jour ne peut être vue ni installée tant que le manifeste ne se lit pas.", "no update can be seen or installed until the manifest can be read." },
             // Navigation et pages
             { "Connexions", "Connections" }, { "Alertes", "Alerts" }, { "Chaînes", "Chains" }, { "Vie privée", "Privacy" },
             { "Pare-feu", "Firewall" }, { "Navigation", "Browsing" }, { "Démarrage auto", "Autostart" }, { "Baseline", "Baseline" }, { "Extensions", "Extensions" },

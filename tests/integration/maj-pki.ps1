@@ -5,6 +5,10 @@
 #   autre       clé K2 (non épinglée), valide
 #   revoquee    clé K, révoqué dans la CRL
 #   sanscrl     clé K, adresse de CRL qui ne répond pas, émis par une autorité intermédiaire à part (« muette »)
+#   seconde     clé K3, valide, épinglée elle aussi dans les binaires de test (passage à une seconde clé épinglée,
+#               audit du 2026-11-23, A-3-4)
+# Le certificat de clé K qui expire pendant le job (certificat expiré horodaté, A-3-4) est émis par maj.ps1 au moment
+# de signer, avec la configuration et l'autorité de ce dossier (openssl.cnf, racine.key).
 # Les trois certificats de la clé K sont distincts : seule la révocation change. Le certificat sanscrl n'est pas
 # émis par la racine : Windows vérifie la révocation avec toute CRL valide de l'émetteur, quelle que soit son
 # adresse ; la CRL de la racine, téléchargée pour les autres cas, couvrirait aussi ce certificat et le scénario
@@ -117,7 +121,7 @@ O req -x509 -config $cfg -newkey rsa:3072 -nodes -keyout "$d/racine.key" -out "$
 $r = New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $Dossier 'racine.crt'))
 if (@($r.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.31' }).Count) { throw 'la racine de test a une adresse de CRL' }
 # Clés : K (épinglée), K2 (non épinglée), TLS
-foreach ($k in 'k', 'k2', 'tls', 'muette') { O genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$d/$k.key" }
+foreach ($k in 'k', 'k2', 'k3', 'tls', 'muette') { O genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$d/$k.key" }
 
 # Certificat émis par la racine (ou par l'autorité `$Autorite) : nom, clé, extensions
 function Emettre([string]$Nom, [string]$Cle, [string]$Extensions, [string]$Cn, [string]$Autorite = 'ca_test') {
@@ -129,6 +133,7 @@ Emettre 'epinglee' 'k' 'ext_signature' 'deR4Tizer signature de test (cle epingle
 Emettre 'autre' 'k2' 'ext_signature' 'deR4Tizer signature de test (cle non epinglee)'
 Emettre 'revoquee' 'k' 'ext_signature' 'deR4Tizer signature de test (revoque)'
 Emettre 'sanscrl' 'k' 'ext_signature_muet' 'deR4Tizer signature de test (CRL muette)' 'ca_muette'
+Emettre 'seconde' 'k3' 'ext_signature' 'deR4Tizer signature de test (seconde cle epinglee)'
 Emettre 'tls' 'tls' 'ext_tls' $Hote
 
 # Révocation, puis CRL (DER) : produite une fois, avant tout usage
@@ -137,8 +142,8 @@ O ca -config $cfg -gencrl -out "$d/racine.crl.pem"
 O crl -in "$d/racine.crl.pem" -outform DER -out "$d/racine.crl"
 
 # Fichiers PFX pour signtool (chaîne comprise)
-foreach ($n in 'epinglee', 'autre', 'revoquee', 'sanscrl') {
-    $cle = if ($n -eq 'autre') { 'k2' } else { 'k' }
+foreach ($n in 'epinglee', 'autre', 'revoquee', 'sanscrl', 'seconde') {
+    $cle = if ($n -eq 'autre') { 'k2' } elseif ($n -eq 'seconde') { 'k3' } else { 'k' }
     # Chaîne : l'intermédiaire puis la racine pour sanscrl, la racine seule pour les autres
     $chaine = "$d/chaine-$n.pem"
     $pems = if ($n -eq 'sanscrl') { @("$Dossier\muette.crt", "$Dossier\racine.crt") } else { @("$Dossier\racine.crt") }
@@ -156,6 +161,9 @@ function Empreinte([string]$Crt) {
 $k = Empreinte "$Dossier\epinglee.crt"
 foreach ($n in 'revoquee', 'sanscrl') { if ((Empreinte "$Dossier\$n.crt") -ne $k) { throw "$n n'a pas la clé épinglée" } }
 if ((Empreinte "$Dossier\autre.crt") -eq $k) { throw 'la clé non épinglée est égale à la clé épinglée' }
+$k3 = Empreinte "$Dossier\seconde.crt"
+if ($k3 -eq $k -or $k3 -eq (Empreinte "$Dossier\autre.crt")) { throw 'la seconde clé épinglée est égale à une autre clé' }
 [IO.File]::WriteAllText("$Dossier\cle-epinglee.txt", $k)
+[IO.File]::WriteAllText("$Dossier\cle-seconde.txt", $k3)
 [IO.File]::WriteAllText("$Dossier\cle-autre.txt", (Empreinte "$Dossier\autre.crt"))
 "PKI de test prête : clé épinglée $k"

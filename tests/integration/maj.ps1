@@ -3,6 +3,9 @@
 # GitHub. Scénarios : paquet de retour refusé (clé non épinglée, version précédente), manifeste falsifié, empreinte
 # fausse, clé non épinglée, certificat révoqué, CRL injoignable, paquet cassé, service qui répond mal (retour à une
 # version plus ancienne), mise à jour réussie. Dossier de travail Program Files\deR4Tizer\maj contrôlé en SYSTEM.
+# Audit du 2026-11-23, A-3-4 : manifeste plus ancien que la version installée (statut distinct, A-3-2), paquet signé par
+# la seconde clé épinglée, certificat expiré pendant le job (horodaté : accepté ; non horodaté : refusé, témoin). Le cas
+# « tube tenu par un autre processus » (A-8-2) reste déclaré non exécuté.
 # Chaque requête attendue est exigée dans le journal du serveur, scénario par scénario.
 param(
     [Parameter(Mandatory)] [string]$Pki,
@@ -25,6 +28,7 @@ $Travail = Join-Path $script:Programme 'maj'
 $DonneesMaj = Join-Path $script:Donnees 'maj'
 $Toleres = @{ $script:Programme = @($script:SidTrustedInstaller) }
 $cle = (Get-Content (Join-Path $Pki 'cle-epinglee.txt') -Raw).Trim()
+$cleSeconde = (Get-Content (Join-Path $Pki 'cle-seconde.txt') -Raw).Trim()
 $serveur = $null
 
 function Msi([string]$Nom) { Join-Path $Paquets "$Nom.msi" }
@@ -169,9 +173,10 @@ function Garder-Journaux([string]$Scenario) {
 # ---------------------------------------------------------------- isolement de la clé de test
 Verifier 'Clé de test : absente de l''exécutable du job windows, présente dans celui compilé pour ce test' {
     $ci = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($ArtefactCi))
-    if ($ci.IndexOf($cle, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'empreinte de test trouvée dans l''artefact du job windows' }
+    foreach ($k in $cle, $cleSeconde) { if ($ci.IndexOf($k, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'empreinte de test trouvée dans l''artefact du job windows' } }
     $test = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $Executables "$Courante\deR4TizerSvc.exe")))
     if ($test.IndexOf($cle, [StringComparison]::OrdinalIgnoreCase) -lt 0) { return 'empreinte de test absente de l''exécutable de test (témoin)' }
+    if ($test.IndexOf($cleSeconde, [StringComparison]::OrdinalIgnoreCase) -lt 0) { return 'seconde clé de test absente de l''exécutable de test (A-3-4)' }
     $true
 }
 
@@ -267,6 +272,48 @@ if (-not ($horoEpinglee -and $horoRevoquee -and $horoSansCrl -and $horoAutre)) {
 }
 Remove-Item $horodates -Recurse -Force -ErrorAction SilentlyContinue
 
+# ---------------------------------------------------------------- certificat qui expire pendant le job (audit du
+# 2026-11-23, A-3-4 ; question A-3-H1) : clé épinglée K, émis maintenant par la racine de test, valable 4 minutes. Deux
+# copies du paquet $Nouvelle signées pendant sa validité : l'une horodatée par une autorité publique, l'autre sans
+# horodatage (témoin). Les scénarios qui s'en servent attendent l'expiration.
+$expires = Join-Path $env:RUNNER_TEMP 'd4t-expires'
+New-Item -ItemType Directory -Force -Path $expires | Out-Null
+$openssl = 'C:\Program Files\Git\mingw64\bin\openssl.exe'
+if (-not (Test-Path $openssl)) { $openssl = (Get-Command openssl.exe -ErrorAction SilentlyContinue).Source }
+function Openssl {
+    # openssl écrit sur stderr même quand tout va bien : seul le code de retour fait foi
+    $ErrorActionPreference = 'Continue'
+    $null = & $openssl @args 2>&1
+    if ($LASTEXITCODE) { throw "openssl $($args[0]) : code $LASTEXITCODE" }
+}
+$finExpire = $null; $expireHorodate = $null; $expireNu = $null
+try {
+    $p = (Resolve-Path $Pki).Path -replace '\\', '/'
+    $debutUtc = (Get-Date).ToUniversalTime().AddMinutes(-2)
+    $finUtc = (Get-Date).ToUniversalTime().AddMinutes(4)
+    Openssl req -new -config "$p/openssl.cnf" -key "$p/k.key" -subj '/CN=deR4Tizer signature de test (expire pendant le job)' -out "$p/expire.csr"
+    Openssl ca -batch -config "$p/openssl.cnf" -name ca_test -extensions ext_signature -notext -startdate ($debutUtc.ToString('yyMMddHHmmss') + 'Z') -enddate ($finUtc.ToString('yyMMddHHmmss') + 'Z') -in "$p/expire.csr" -out "$p/expire.crt"
+    Openssl pkcs12 -export -inkey "$p/k.key" -in "$p/expire.crt" -certfile "$p/chaine-epinglee.pem" -out "$p/expire.pfx" -passout "pass:$mdpPki" -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256
+    $finExpire = (New-Object Security.Cryptography.X509Certificates.X509Certificate2((Join-Path $Pki 'expire.crt'))).NotAfter.ToUniversalTime()
+    $fNu = Join-Path $expires "$Nouvelle-expire-nu.msi"
+    Copy-Item (Msi $Nouvelle) $fNu -Force
+    $null = & $signtool.FullName sign /f (Join-Path $Pki 'expire.pfx') /p $mdpPki /fd SHA256 /d deR4Tizer $fNu 2>&1
+    if (-not $LASTEXITCODE) { $expireNu = $fNu }
+    $fHoro = Join-Path $expires "$Nouvelle-expire-horodate.msi"
+    foreach ($essai in 1..3) {
+        Copy-Item (Msi $Nouvelle) $fHoro -Force
+        $null = & $signtool.FullName sign /f (Join-Path $Pki 'expire.pfx') /p $mdpPki /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d deR4Tizer $fHoro 2>&1
+        if (-not $LASTEXITCODE -and (Get-AuthenticodeSignature $fHoro).TimeStamperCertificate) { $expireHorodate = $fHoro; break }
+        Start-Sleep 5
+    }
+} catch { "certificat expirant : $_" }
+# Attend la fin de validité (marge de 30 s) ; faux si le certificat n'a pas pu être émis
+function Attendre-Expiration {
+    if (-not $finExpire) { return $false }
+    while ((Get-Date).ToUniversalTime() -lt $finExpire.AddSeconds(30)) { Start-Sleep 5 }
+    $true
+}
+
 # ---------------------------------------------------------------- version courante installée, adresse locale
 Publier-Neutre
 $debut = Get-Date
@@ -288,6 +335,8 @@ Verifier 'majConfig : adresse du manifeste locale, installation automatique' {
 Verifier 'Témoin : manifeste de la version installée, « à jour », clé épinglée signalée' {
     $v = Verification
     if ($v.Etat.Statut -ne 'à jour') { return "statut : $($v.Etat.Statut)" }
+    # Code de la page Santé : rien à signaler (A-3-2, T-12)
+    if ($v.Etat.Controle -ne '') { return "code de contrôle : « $($v.Etat.Controle) » au lieu de vide" }
     if (-not $v.Etat.CleEpinglee) { return 'clé épinglée non signalée' }
     Requetes-Attendues $v @('latest/download/manifeste.json') @("download/v$Courante/deR4Tizer.msi")
 }
@@ -330,6 +379,46 @@ Publier $Nouvelle (Msi "$Nouvelle-sanscrl") (Msi $Courante)
 Verifier 'Certificat dont la CRL ne répond pas (même clé épinglée) : refusé (échec fermé), rien installé' {
     Refus 'signature absente, invalide ou révoquée' @('latest/download/manifeste.json', "download/v$Nouvelle/deR4Tizer.msi")
 }
+
+# ---------------------------------------------------------------- audit du 2026-11-23, A-3-4
+# Manifeste plus ancien que la version installée (A-3-2) : statut distinct, code « ManifesteAncien » pour la page Santé,
+# aucun paquet demandé, rien installé
+Publier $Precedente (Msi $Precedente) (Msi $Courante)
+Verifier "Manifeste plus ancien ($Precedente sous $Courante) : statut « manifeste plus ancien », code ManifesteAncien, rien demandé ni installé" {
+    $v = Verification
+    if ($v.Etat.Statut -notmatch [regex]::Escape("manifeste plus ancien que la version installée (manifeste $Precedente, installée $Courante)")) { return "statut : $($v.Etat.Statut)" }
+    if ($v.Etat.Controle -ne 'ManifesteAncien') { return "code de contrôle : $($v.Etat.Controle)" }
+    if ($v.Etat.VersionDisponible -ne $Precedente) { return "version disponible : $($v.Etat.VersionDisponible)" }
+    $r = Requetes-Attendues $v @('latest/download/manifeste.json') @("download/v$Precedente/deR4Tizer.msi", "download/v$Courante/deR4Tizer.msi")
+    if ($r -ne $true) { return $r }
+    Rien-Installe
+}
+# Seconde clé épinglée (passage de clé) : manifeste qui annonce $falsifiee pour le paquet $Nouvelle signé par la clé K3.
+# Les propriétés du paquet ne sont lues qu'après une signature acceptée : le refus « version différente » prouve que la
+# clé K3 est acceptée (témoin : la clé non épinglée K2 est refusée plus haut, « signé par une autre clé »)
+Publier $falsifiee (Msi "$Nouvelle-seconde") (Msi $Courante)
+Verifier "Paquet signé par la seconde clé épinglée : signature acceptée (refus suivant : version $falsifiee attendue), rien installé" {
+    Refus "différente de celle attendue ($falsifiee)" @('latest/download/manifeste.json', "download/v$falsifiee/deR4Tizer.msi")
+}
+# Certificat expiré : même preuve par la version annoncée $falsifiee. Horodaté pendant sa validité : signature acceptée ;
+# sans horodatage : refusée (témoin : le certificat est bien expiré au moment du contrôle)
+if (-not $expireNu -or -not (Attendre-Expiration)) {
+    NonExecute 'Certificat expiré, sans horodatage : refusé (témoin)' 'certificat expirant non émis ou paquet non signé dans le job'
+} else {
+    Publier $falsifiee $expireNu (Msi $Courante)
+    Verifier 'Certificat expiré, sans horodatage : signature refusée (témoin), rien installé' {
+        Refus 'signature absente, invalide ou révoquée' @('latest/download/manifeste.json', "download/v$falsifiee/deR4Tizer.msi")
+    }
+}
+if (-not $expireHorodate -or -not (Attendre-Expiration)) {
+    NonExecute 'Certificat expiré, horodaté pendant sa validité : accepté' 'autorité d''horodatage publique injoignable depuis le runner, ou certificat expirant non émis'
+} else {
+    Publier $falsifiee $expireHorodate (Msi $Courante)
+    Verifier "Certificat expiré, horodaté pendant sa validité : signature acceptée (refus suivant : version $falsifiee attendue), rien installé" {
+        Refus "différente de celle attendue ($falsifiee)" @('latest/download/manifeste.json', "download/v$falsifiee/deR4Tizer.msi")
+    }
+}
+Remove-Item $expires -Recurse -Force -ErrorAction SilentlyContinue
 Publier-Neutre
 
 # ---------------------------------------------------------------- installations avec retour arrière
@@ -352,7 +441,7 @@ foreach ($cas in @(
         $true
     }
 }
-NonExecute 'Service muet après l''installation (tube absent ou tenu par un autre processus)' 'couvert seulement par le mode simulation de script_installation (tests unitaires)'
+NonExecute 'Service muet après l''installation (tube absent ou tenu par un autre processus)' 'couvert seulement par le mode simulation de script_installation (tests unitaires) ; essai réel prévu avec A-8-2, hors du lot 6 de l''audit du 2026-11-23'
 
 # ---------------------------------------------------------------- mise à jour réussie
 Remettre-Courante

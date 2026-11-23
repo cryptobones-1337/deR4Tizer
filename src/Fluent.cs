@@ -1669,6 +1669,7 @@ namespace DeR4Tizer
                 try
                 {
                     var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
+                    VueSante.AjouterMaj(l, Commun.Lire<EtatMaj>("maj.json"));
                     Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lignes = l; lu = true; vu = null; Briques.GarderFocus(Afficher, liste); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
