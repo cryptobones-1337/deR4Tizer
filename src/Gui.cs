@@ -181,14 +181,19 @@ namespace DeR4Tizer
             return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool GetNamedPipeServerProcessId(IntPtr tube, out uint pid);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern IntPtr OpenSCManager(string machine, string base_, uint acces);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern IntPtr OpenService(IntPtr gestionnaire, string nom, uint acces);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("advapi32.dll", SetLastError = true)]
         static extern bool QueryServiceStatusEx(IntPtr service, int niveau, byte[] tampon, int taille, out int requis);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("advapi32.dll")]
         static extern bool CloseServiceHandle(IntPtr h);
 
@@ -352,8 +357,10 @@ namespace DeR4Tizer
         // Explorateur par son chemin complet, jamais cherché dans le dossier courant ni le PATH (audit du 2026-11-23, A-5-3)
         public static string Explorateur() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"); }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool WTSQuerySessionInformationW(IntPtr serveur, int session, int classe, out IntPtr tampon, out int octets);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wtsapi32.dll")]
         static extern void WTSFreeMemory(IntPtr p);
 
@@ -393,12 +400,16 @@ namespace DeR4Tizer
             return d;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern IntPtr OpenProcess(uint acces, bool heriter, int pid);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool GetProcessTimes(IntPtr h, out long creation, out long fin, out long noyau, out long utilisateur);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern bool QueryFullProcessImageName(IntPtr h, int drapeaux, StringBuilder chemin, ref int taille);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool CloseHandle(IntPtr h);
 
@@ -489,12 +500,16 @@ namespace DeR4Tizer
             public int Taille; public IntPtr Politique; public IntPtr Sip; public int Interface; public int Revocation; public int Choix;
             public IntPtr Fichier; public int Etat; public IntPtr Donnees; public IntPtr Url; public int Fournisseur; public int Contexte;
         }
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
         static extern int WinVerifyTrust(IntPtr fenetre, ref Guid action, ref WintrustDonnees donnees);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wintrust.dll")]
         static extern IntPtr WTHelperProvDataFromStateData(IntPtr etat);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wintrust.dll")]
         static extern IntPtr WTHelperGetProvSignerFromChain(IntPtr donnees, int signataire, bool contreSignataire, int indexContre);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("wintrust.dll")]
         static extern IntPtr WTHelperGetProvCertFromChain(IntPtr signataire, int certificat);
 
@@ -556,8 +571,10 @@ namespace DeR4Tizer
             catch { return nonLue; }
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern IntPtr CreateFileW(string nom, uint acces, uint partage, IntPtr securite, uint creation, uint drapeaux, IntPtr modele);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern int GetFinalPathNameByHandleW(IntPtr h, StringBuilder chemin, int taille, int drapeaux);
 
@@ -1070,6 +1087,7 @@ namespace DeR4Tizer
             public short PoidsTrame, StyleTrame, DebutNumerotation, StyleNumerotation, TabulationNumerotation, EspaceBordure, LargeurBordure, Bordures;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("user32.dll", EntryPoint = "SendMessage")]
         static extern IntPtr EnvoyerFormat(IntPtr h, int message, IntPtr w, ref FormatParagraphe f);
 
@@ -2190,6 +2208,7 @@ namespace DeR4Tizer
             public IntPtr IconeNotification;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         static extern bool Shell_NotifyIcon(int message, ref DonneesIcone donnees);
 
@@ -2770,6 +2789,7 @@ namespace DeR4Tizer
             return true;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
 
         static void SignalerInstance()
