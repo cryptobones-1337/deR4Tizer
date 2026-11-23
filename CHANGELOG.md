@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Privileged operations, audit of 23 November 2026 (A-5-2, A-1-1, A-1-2, A-1-5, A-5-3, A-2-1, A-4-1, B-2-01; tested in
+  the lab, not yet tried in the VM). The service never opens a network path (`\\host\...`, WebDAV, `\\?\UNC\...`,
+  `\\.\...`, network, removable or missing drive as seen by SYSTEM) to check a program's signature, catalog, hash or
+  download mark: such a program is treated as unsigned (logged once), so the computer account is no longer sent to
+  another host. The elevated helper accepts only its own command file, `%LOCALAPPDATA%\deR4Tizer\commande-<hex>.json`
+  of the session user or of the elevating account, judged on the path text (local fixed drive, no `..`, no stream)
+  before any disk access, so an administrator's credentials are no longer sent to a share; "Open file location" in
+  the interface skips network paths too. For a command that weakens protection, the elevated confirmation says at the
+  top that the request may not come from you and keeps "Continue" disabled for 2 seconds. Confirmation texts are
+  cleaned per code point (tags, variation selectors and combining marks beyond U+FFFF, lone surrogates). `sc.exe`,
+  `explorer.exe`, `curl.exe`, `icacls.exe`, `wevtutil.exe`, `netsh.exe` and `ping.exe` are started by their full path
+  (a structure test reads every service source file). The installer sets the permissions of the program folder
+  (SYSTEM and Administrators full control, Users read and execute, inheritance cut); the service checks the folder and
+  its programs at start, raises the new critical local alert INT-003 if another account can write there, and refuses
+  automatic updates. The signature caches (connections, learning, VOL-001) are now keyed by the file identity read
+  through a handle with its NTFS change journal number (USN), or by the SHA-256 of the content when there is no USN,
+  instead of path and modification date: a program replaced at the same path with its date set back is checked again
+  and no longer inherits the former publisher; a value read while the file changes is not kept.
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
@@ -41,7 +59,7 @@
   stays recorded if this fails); a current value that cannot be read (unreadable key, failed read, unexpected type)
   is never taken as deleted: nothing is changed for it and the rule stays recorded; a value set by a stricter rule still applied is not reported as someone else's. If
   uninstall cannot cancel the baseline, its rollback backup is still deleted without `GARDER_DONNEES=1` (known limit). `wevtutil`, `auditpol` and `gpupdate` are started from System32 by
-  their full path (A-2-1, for the baseline only). To be checked in the VM.
+  their full path (A-2-1, baseline first; the rest of the service in the entry above). To be checked in the VM.
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms

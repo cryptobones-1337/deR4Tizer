@@ -95,24 +95,15 @@ pub fn editeur_correspond(signataire: &str, attendus: &[&str]) -> bool {
     !s.is_empty() && attendus.iter().any(|a| normaliser(a) == s)
 }
 
-/// Signataire d'un exécutable, mis en cache par chemin et date de modification
+/// Signataire d'un exécutable, mis en cache sous une clé qu'un compte standard ne forge pas (natif::cle_signature) :
+/// un programme remplacé au même chemin, date remise à l'identique, ne garde pas l'éditeur de l'ancien et ne lit pas les
+/// données d'un navigateur sans alerte VOL-001 (audit du 2026-11-23, B-2-01). Hors délai : pas de cache (relecture de
+/// #104, D2)
 fn signataire(chemin: &str) -> Option<String> {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    let date = std::fs::metadata(chemin).and_then(|m| m.modified()).map(commun::filetime).unwrap_or(0);
-    let cle = format!("{chemin}|{date}");
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(s) = cache.lock().unwrap().get(&cle) {
-        return s.clone();
-    }
-    // Hors délai : pas de cache (relecture de #104, D2)
-    let Ok(s) = crate::natif::signataire_a_echeance(chemin) else { return None };
-    let mut c = cache.lock().unwrap();
-    if c.len() > 2000 {
-        c.clear();
-    }
-    c.insert(cle, s.clone());
-    s
+    crate::natif::en_cache_de_signature(cache, chemin, || crate::natif::signataire_a_echeance(chemin).ok()).flatten()
 }
 
 fn signe_par(chemin: &str, editeurs: &[&str]) -> bool {

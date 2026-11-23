@@ -474,7 +474,7 @@ fn preparer_dossier(fichier: &Path) {
     if !dossier.exists() && fs::create_dir_all(dossier).is_err() {
         return;
     }
-    let _ = std::process::Command::new("icacls.exe")
+    let _ = std::process::Command::new(crate::natif::systeme32("icacls.exe"))
         .arg(dossier)
         .args(["/grant", r"NT SERVICE\mpssvc:(OI)(CI)M"])
         .creation_flags(0x0800_0000)
@@ -551,7 +551,7 @@ pub fn plage_dynamique(sortie: &str) -> Option<(u16, u16)> {
 /// Plage dynamique UDP du poste (netsh), défaut de Windows si illisible
 pub fn plage_dynamique_udp() -> (u16, u16) {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("netsh.exe").args(["int", "ipv4", "show", "dynamicport", "udp"])
+    std::process::Command::new(crate::natif::systeme32("netsh.exe")).args(["int", "ipv4", "show", "dynamicport", "udp"])
         .creation_flags(0x0800_0000).output().ok()
         .and_then(|s| plage_dynamique(&String::from_utf8_lossy(&s.stdout)))
         .unwrap_or((49152, 65535))

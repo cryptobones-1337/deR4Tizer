@@ -51,7 +51,7 @@ pastille jaune compte les collectes en panne. Correspondance règle → sources 
 (Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
 domaines, LOLDrivers, relevé des démarrages automatiques, audit des créations de processus (4688), baseline, leurres, audit des données (SACL), `pfirewall.log`,
 extensions, magasin des consentements (caméra, micro), capture du trafic et du réseau local. Ne suivent aucune
-source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, et les constats de santé SAN-* (qui portent sur les
+source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, INT-003, et les constats de santé SAN-* (qui portent sur les
 collectes elles-mêmes). Par défaut, les listes de domaines sont toutes à licence
 restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « sans collecte ».
 
@@ -685,6 +685,10 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   en 24 h, `vol_donnees::premiere_en_24h`, PR 3.9) ; décision `vol_donnees::analyser` sur des événements 4663
   synthétiques. Non exercée dans les scénarios VM ; campagne Kali (`campagne-kali-second-lot.md`, 2026-11-15, simulation
   sur un compte de test vide) : VP Critique en configurations A et C ; non consolidée.
+- **Signataire du programme** (second audit du 2026-11-23, B-2-01, corrigé) : gardé en cache sous l'identité du fichier lue
+  par handle avec son numéro USN (à défaut, l'empreinte SHA-256 du contenu), et non plus sous le chemin et la date de
+  modification, qu'un compte standard remet à l'identique après avoir remplacé un programme autorisé : le remplaçant est
+  revérifié et alerte. Test : `audit_b_2_01_programme_remplace_meme_date_reverifie` (labo).
 
 ## SYS : fichier hosts et pare-feu
 
@@ -873,12 +877,15 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 |---|---|---|---|---|
 | INT-001 | Échec de la protection du dossier de données (échec fermé) | `protection.rs` | Critique | aucune |
 | INT-002 | Tube de commandes déjà pris par un autre processus (squat) | `canal.rs` | Critique | aucune |
+| INT-003 | Dossier d'installation modifiable par un autre compte (audit du 2026-11-23, A-4-1) | `protection.rs` | Critique | aucune |
 
-- **Justification** : un dossier de données mal protégé ou un tube squatté donnerait la main sur le service.
+- **Justification** : un dossier de données mal protégé ou un tube squatté donnerait la main sur le service ; un dossier
+  d'installation modifiable par un autre compte y ferait exécuter un programme ou une DLL en SYSTEM.
 - **Télémétrie** : aucune externe (contrôles du service lui-même).
 - **Faux positifs attendus** : aucun connu.
 - **Tests** : existants : `lot1_alerte_critique_locale_en_echec` (INT-001), `lot5_canal_squat_pid_et_alerte_critique`
-  (INT-002) ; 3a (premier démarrage en échec fermé) pour INT-001.
+  (INT-002), `audit_a_4_1_dossier_installation_protege` (INT-003, décision et branchements) ; 3a (premier démarrage en
+  échec fermé) pour INT-001. INT-003 sur une vraie installation redirigée : à mesurer en VM.
 
 ## SAN : santé de deR4Tizer (phase 4)
 

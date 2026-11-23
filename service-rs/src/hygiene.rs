@@ -800,7 +800,7 @@ pub fn liste_loldrivers() -> HashSet<String> {
     let recent = fs::metadata(&f).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs() < 86400).unwrap_or(false);
     if !recent {
         let _ = fs::create_dir_all(commun::dossier().join("menaces"));
-        let _ = Command::new("curl.exe")
+        let _ = Command::new(crate::natif::curl_exe())
             .args(["-q", "-sSL", "--fail", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "104857600", "--max-time", "300", "-o"])
             .arg(f.with_extension("tmp"))
             .arg("https://www.loldrivers.io/api/drivers.json")

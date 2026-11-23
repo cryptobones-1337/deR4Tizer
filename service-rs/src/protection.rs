@@ -77,6 +77,63 @@ pub fn sans_ecriture_de_tiers(s: &crate::natif::Securite, complets: &[&str]) -> 
     }
 }
 
+/// NT SERVICE\TrustedInstaller : contrôle total hérité de Program Files sur une installation d'avant le droit posé par le MSI
+pub const SID_TRUSTED_INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+/// Décision pure (audit du 2026-11-23, A-4-1) : dossier de l'exécutable du service, ou l'un de ses programmes, que seuls
+/// SYSTEM, les administrateurs et TrustedInstaller peuvent modifier, l'un d'eux en étant propriétaire. L'entrée CREATOR
+/// OWNER (S-1-3-0) ne donne aucun droit sur l'objet lui-même. Un dossier d'installation redirigé (INSTALLFOLDER est une
+/// propriété publique du MSI) dans un dossier qu'un compte standard peut écrire y ferait charger une DLL ou remplacer un
+/// programme exécuté en SYSTEM
+pub fn installation_conforme(s: &crate::natif::Securite) -> Result<(), String> {
+    let complets = [SID_SYSTEME, SID_ADMINISTRATEURS, SID_TRUSTED_INSTALLER];
+    if !complets.contains(&s.proprietaire.as_str()) {
+        return Err(format!("propriétaire {}", if s.proprietaire.is_empty() { "illisible" } else { &s.proprietaire }));
+    }
+    if s.ace_inconnue {
+        return Err("entrée de droits d'un type inattendu".into());
+    }
+    match s.aces.iter().find(|a| a.autorise && a.masque & DROITS_ECRITURE != 0 && !complets.contains(&a.sid.as_str()) && a.sid != "S-1-3-0") {
+        Some(a) => Err(format!("écriture accordée à {} (masque {:#x})", a.sid, a.masque)),
+        None => Ok(()),
+    }
+}
+
+/// Relit propriétaire et droits du dossier de l'exécutable du service et de ses deux programmes ; Err au premier écart ou
+/// droit illisible (échec fermé : la mise à jour automatique est alors refusée)
+pub fn verifier_installation() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("exécutable du service introuvable ({e})"))?;
+    let dossier = exe.parent().ok_or("dossier de l'exécutable introuvable")?.to_path_buf();
+    let interface = dossier.join("deR4Tizer.exe");
+    let mut chemins = vec![dossier, exe];
+    if interface.exists() {
+        chemins.push(interface);
+    }
+    for p in chemins {
+        let s = crate::natif::lire_securite(&p).ok_or_else(|| format!("droits de {} illisibles", p.display()))?;
+        installation_conforme(&s).map_err(|e| format!("{} : {e}", p.display()))?;
+    }
+    Ok(())
+}
+
+/// INT-003 : dossier d'installation modifiable par un autre compte, alerte critique locale au démarrage (A-4-1)
+pub fn alerte_installation(raison: &str) -> commun::Alerte {
+    commun::Alerte {
+        regle: crate::regles::INT_003.into(),
+        id: commun::nouvel_id(),
+        heure: commun::maintenant(),
+        niveau: "Critique".into(),
+        score: 10,
+        processus: "deR4Tizer".into(),
+        chemin: std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.display().to_string())).unwrap_or_default(),
+        destination: "dossier d'installation".into(),
+        raisons: format!("DOSSIER D'INSTALLATION DE DER4TIZER MODIFIABLE PAR UN AUTRE COMPTE : {raison}. Un programme ou une DLL posé là \
+            serait exécuté en SYSTEM ; la mise à jour automatique est refusée. Que faire : réinstaller deR4Tizer dans son dossier par \
+            défaut (Program Files), dont le paquet pose les droits."),
+        ..Default::default()
+    }
+}
+
 /// Relit les droits d'un chemin et les compare à l'attendu
 pub fn verifier(chemin: &Path, complets: &[&str], lecteurs: &[&str]) -> Result<(), String> {
     let s = crate::natif::lire_securite(chemin).ok_or_else(|| format!("droits de {} illisibles", chemin.display()))?;
@@ -154,7 +211,7 @@ fn appliquer(lecteurs: &[Lecteur]) -> bool {
 /// icacls : avec /C (continuer sur erreur), le code de retour vaut 0 même quand un élément a échoué ;
 /// ne jamais s'en servir comme preuve, relire les droits
 pub fn icacls(args: &[&str]) -> bool {
-    Command::new("icacls.exe").args(args).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
+    Command::new(crate::natif::systeme32("icacls.exe")).args(args).creation_flags(0x0800_0000).output().map(|s| s.status.success()).unwrap_or(false)
 }
 
 fn est_lien(m: &fs::Metadata) -> bool {
@@ -474,6 +531,11 @@ pub fn autoriser(sid: &str) -> Result<String, String> {
 
 pub fn demarrer(alertes: std::sync::Arc<std::sync::Mutex<Vec<commun::Alerte>>>) {
     std::thread::Builder::new().name("protection".into()).spawn(move || {
+        // Dossier d'installation (A-4-1) : relu une fois au démarrage, alerte critique locale s'il est modifiable par un autre compte
+        if let Err(e) = verifier_installation() {
+            commun::journal(&format!("dossier d'installation non conforme : {e} ; mise à jour automatique refusée"));
+            alertes.lock().unwrap().push(alerte_installation(&e));
+        }
         let mut annonce = false;
         let mut en_echec = false;
         loop {

@@ -94,6 +94,7 @@ registre! {
     COR_R10 = "COR-R10" : "pilote vulnérable installé (BYOVD)" => Fixes(&["T1068"]);
     INT_001 = "INT-001" : "échec de la protection du dossier de données" => Aucune;
     INT_002 = "INT-002" : "tube de commandes déjà pris par un autre processus" => Aucune;
+    INT_003 = "INT-003" : "dossier d'installation modifiable par un autre compte" => Aucune;
     SAN_001 = "SAN-001" : "collecte critique indisponible plus de 30 min" => Aucune;
     SAN_002 = "SAN-002" : "collecte rétablie" => Aucune;
     SAN_003 = "SAN-003" : "Defender (journal et état) illisible plus de 30 min" => Aucune;

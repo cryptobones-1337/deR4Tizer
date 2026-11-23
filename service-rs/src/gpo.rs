@@ -42,7 +42,7 @@ fn fichier_gpt() -> PathBuf {
 /// Programme de System32 par son chemin complet : un nom nu est d'abord cherché dans le dossier de l'exécutable du
 /// service, puis dans le PATH (audit du 2026-11-23, A-2-1)
 pub fn outil_systeme(nom: &str) -> String {
-    format!(r"{}\{nom}", crate::natif::dossier_systeme())
+    crate::natif::systeme32(nom)
 }
 
 #[derive(Clone, Debug, PartialEq)]
