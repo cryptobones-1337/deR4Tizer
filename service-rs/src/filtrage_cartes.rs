@@ -1,7 +1,8 @@
 //! Activation du filtrage sur les cartes réseau (phase 7, PR 7.4, accord explicite du mainteneur du 2026-11-12) :
-//! cartes Ethernet et Wi-Fi physiques actives réglées sur le résolveur local (`127.0.0.1` puis leurs serveurs d'origine
-//! en secours ; `::1` puis les serveurs IPv6 d'origine), état d'origine enregistré avant toute modification, vérifié
-//! après, restauré à l'identique (DHCP redevient DHCP).
+//! cartes Ethernet et Wi-Fi matérielles actives (`dns_surveillance::filtrable`, jamais une carte virtuelle) réglées
+//! sur le résolveur local (`127.0.0.1` puis leurs serveurs d'origine en secours ; `::1` puis les serveurs IPv6
+//! d'origine), état d'origine enregistré avant toute modification, vérifié après, restauré à l'identique (DHCP redevient
+//! DHCP).
 //!
 //! Préalables de l'audit de #161 (S161-02, threat-model) :
 //! - jamais de carte réglée sans la liaison exclusive du port 53 tenue par le service (le résolveur démarre et répond
@@ -49,12 +50,27 @@ pub fn serveurs(ns: &str) -> Vec<String> {
     ns.split([',', ' ']).map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
-/// Origine des cartes physiques actives (pure à partir du relevé et des NameServer lus) ; IPv6 de lien local (avec une
-/// zone) et boucle locale écartées des serveurs effectifs
+/// Serveur DNS utilisable comme amont ou comme secours (pur, testé ; constat T-10 de l'audit du 2026-11-23) : ni la
+/// boucle locale, ni l'adresse nulle, ni une adresse de diffusion groupée, ni une adresse IPv6 de site local (`fec0::/10`,
+/// dépréciée par la RFC 3879 : Windows met `fec0:0:0:ffff::1`, `::2` et `::3` par défaut sur une carte IPv6 sans serveur
+/// annoncé, et aucun serveur n'y répond), ni une adresse IPv6 de lien local (`fe80::/10` : le relevé ne garde pas sa
+/// zone, elle serait injoignable)
+pub fn amont_utilisable(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v) => !v.is_loopback() && !v.is_unspecified() && !v.is_multicast() && !v.is_broadcast(),
+        std::net::IpAddr::V6(v) => {
+            let tete = v.segments()[0] & 0xffc0;
+            !v.is_loopback() && !v.is_unspecified() && !v.is_multicast() && tete != 0xfec0 && tete != 0xfe80
+        }
+    }
+}
+
+/// Origine des cartes réglables actives (`dns_surveillance::filtrable` : Ethernet ou Wi-Fi matérielles) (pure à partir
+/// du relevé et des NameServer lus) ; serveurs effectifs filtrés par `amont_utilisable`
 pub fn origine_de(cartes: &[crate::dns_surveillance::CarteDns], ns: &dyn Fn(&str, &str) -> String) -> Vec<OrigineCarte> {
     use std::net::IpAddr;
-    cartes.iter().filter(|c| crate::dns_surveillance::physique(c.type_carte) && !c.id.is_empty()).map(|c| {
-        let ips: Vec<IpAddr> = c.dns.iter().filter_map(|d| d.parse::<IpAddr>().ok()).filter(|i| !i.is_loopback() && !i.is_unspecified()).collect();
+    cartes.iter().filter(|c| crate::dns_surveillance::filtrable(c)).map(|c| {
+        let ips: Vec<IpAddr> = c.dns.iter().filter_map(|d| d.parse::<IpAddr>().ok()).filter(amont_utilisable).collect();
         OrigineCarte {
             id: c.id.clone(), nom: c.nom.clone(), ns4: ns("Tcpip", &c.id), ns6: ns("Tcpip6", &c.id),
             dns4: ips.iter().filter(|i| i.is_ipv4()).map(IpAddr::to_string).take(3).collect(),
@@ -63,10 +79,16 @@ pub fn origine_de(cartes: &[crate::dns_surveillance::CarteDns], ns: &dyn Fn(&str
     }).collect()
 }
 
-/// Valeurs réglées à l'activation (pure, testée) : résolveur local d'abord, serveurs d'origine en secours
+/// Serveurs d'une liste enregistrée encore utilisables (une origine enregistrée avant le constat T-10 peut garder
+/// `fec0:0:0:ffff::1`)
+fn utilisables(l: &[String]) -> impl Iterator<Item = String> + '_ {
+    l.iter().filter(|s| s.parse::<std::net::IpAddr>().is_ok_and(|i| amont_utilisable(&i))).cloned()
+}
+
+/// Valeurs réglées à l'activation (pure, testée) : résolveur local d'abord, serveurs d'origine utilisables en secours
 pub fn valeurs_activees(o: &OrigineCarte) -> (String, String) {
-    let quatre: Vec<String> = std::iter::once("127.0.0.1".to_string()).chain(o.dns4.iter().cloned()).collect();
-    let six: Vec<String> = std::iter::once("::1".to_string()).chain(o.dns6.iter().cloned()).collect();
+    let quatre: Vec<String> = std::iter::once("127.0.0.1".to_string()).chain(utilisables(&o.dns4)).collect();
+    let six: Vec<String> = std::iter::once("::1".to_string()).chain(utilisables(&o.dns6)).collect();
     (quatre.join(","), six.join(","))
 }
 
@@ -190,6 +212,20 @@ pub fn encore_sur_la_boucle(l: &[OrigineCarte]) -> bool {
     })
 }
 
+/// Suite d'un réglage des cartes en échec à l'activation (pure, testée ; constat B-3-01 de l'audit du 2026-11-23).
+/// `sur_la_boucle` : cartes qui pointent encore sur la boucle locale après la remise (`encore_sur_la_boucle`). Vrai :
+/// le résolveur garde le port 53 en simple relais et la remise est mise en attente (la sonde réessaie toutes les 5
+/// minutes), comme à la désactivation, au démarrage et à l'arrêt ; faux : tout est rendu, résolveur arrêté et origine
+/// effacée. Rend aussi le message de l'erreur
+pub fn apres_echec_reglage(sur_la_boucle: &[String], erreur: &str) -> (bool, String) {
+    if sur_la_boucle.is_empty() {
+        (false, format!("Réglage des cartes en échec, cartes rendues : {erreur}"))
+    } else {
+        (true, format!("Réglage des cartes en échec, remise incomplète : la carte {} pointe encore sur le résolveur local, qui garde le port 53 en simple relais (rien n'est bloqué) ; remise en attente, nouvel essai toutes les 5 minutes, ou désactivez le filtrage : {erreur}",
+            sur_la_boucle.join(", ")))
+    }
+}
+
 /// Rend toutes les cartes ; erreurs réunies (aucune n'arrête les suivantes)
 pub fn restaurer_toutes(l: &[OrigineCarte]) -> Result<(), String> {
     let e: Vec<String> = l.iter().filter_map(|o| restaurer(o).err()).collect();
@@ -207,7 +243,7 @@ pub fn appliquer_toutes(l: &[OrigineCarte]) -> Result<(), String> {
     Ok(())
 }
 
-/// Relevé de l'origine des cartes physiques actives
+/// Relevé de l'origine des cartes réglables actives (activation, et liste publiée avant l'activation)
 pub fn releve_origine() -> Result<Vec<OrigineCarte>, String> {
     let cartes = crate::dns_surveillance::releve()?;
     Ok(origine_de(&cartes, &registre_ns))

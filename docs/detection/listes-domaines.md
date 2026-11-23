@@ -37,8 +37,9 @@ documentaire du 2026-10-25).
 Commande `filtrage` (`on` ou `off`, administrateurs ; dans l'interface depuis 7.5b, page « Navigation »). Activation : refus si le poste a un
 suffixe DNS principal (poste joint à un domaine) ou une stratégie DNS ou NRPT (D7-5, recommandation appliquée) ;
 origine des cartes enregistrée dans `filtrage-origine.json` avant toute modification ; résolveur permanent lancé et
-contrôlé ; cartes Ethernet et Wi-Fi physiques actives réglées (`127.0.0.1` puis leurs serveurs, `::1` puis leurs
-serveurs IPv6) et vérifiées ; au moindre écart, tout est rendu. Repris au démarrage du service. Écarts au dossier :
+contrôlé ; cartes Ethernet et Wi-Fi matérielles actives réglées (drapeaux HardwareInterface et ConnectorPresent lus
+dans Windows, jamais une carte virtuelle : audit du 2026-11-23, T-9 ; `127.0.0.1` puis leurs serveurs, `::1` puis leurs
+serveurs IPv6, sans `fec0::/10` ni lien local : T-10) et vérifiées ; au moindre écart, tout est rendu. Repris au démarrage du service. Écarts au dossier :
 la collecte `FiltrageDns` et l'affichage sont venus avec 7.5 (plus bas) ; une carte branchée après l'activation n'est
 pas réglée (réactiver) ; la restauration avant une mise à jour se fait à l'arrêt du service par msiexec, pour toute
 mise à jour, pas seulement un retour arrière.

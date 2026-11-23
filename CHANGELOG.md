@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Domain-name filtering, audit of 23 November 2026 (findings T-9, T-10, B-3-01, C-4, C-6, C-7, C-10, C-11, C-12;
+  tested in the lab, not yet tried in the VM). Only hardware Ethernet and Wi-Fi cards are set when filtering is turned
+  on: the service reads the HardwareInterface and ConnectorPresent flags of each card from Windows (`GetIfEntry2`),
+  never its name, so Hyper-V switch cards ("vEthernet"), WSL, Docker and VPN TAP cards are left alone; a card whose
+  flags cannot be read is treated as virtual. The cards that would be set are published before activation
+  (`CartesARegler` in `filtrage-etat.json`); the confirmation window does not show them yet. Windows' default
+  site-local IPv6 DNS servers (`fec0:0:0:ffff::1` to `::3`, and all of `fec0::/10`) and link-local addresses are no
+  longer used as upstream or fallback, and the 10-minute trial tries IPv4 servers first. If setting a card fails and
+  restoring it fails too, the resolver keeps port 53 (relay only) and the restore is retried every 5 minutes, instead
+  of stopping and reporting "cards restored". The list guard is no longer one-way: a copy above 500,000 entries is
+  always refused (first download included), and a list refused for its size is accepted after 3 downloads in a row give
+  the same size (within 10%), so an inflated copy no longer locks out the healthy list. A list file larger than 32 MB is
+  refused before being read. A TCP exchange with the upstream now has a 4 s overall deadline. The upstream is declared
+  silent (filtering suspended, cards restored) only when the service's own probe gets no answer either: queries chosen
+  by a local program are no longer enough. A random-generator failure now stops relaying instead of using zero values.
+  A name with an invalid label is judged as its longest valid parent, so it no longer escapes its domain's block.
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
