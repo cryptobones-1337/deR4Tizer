@@ -1179,9 +1179,17 @@ const OPTIONS_PAR_OUTIL: &[(&[&str], &str, Forme)] = &[
 
 /// Nom d'outil d'un mot (sans guillemets, chemin ni « .exe », en minuscules)
 fn nom_outil(v: &str) -> String {
+    // `sch^tasks` (échappement de cmd) et `@schtasks` (écho coupé) désignent le même outil
+    let v = v.replace('^', "");
     let v = v.trim_matches(|c| c == '"' || c == '\'' || c == '(');
+    let v = v.strip_prefix('@').unwrap_or(v);
     let n = v.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
     n.strip_suffix(".exe").map(str::to_string).unwrap_or(n)
+}
+
+/// Outil qui porte un secret dans ses options (`OPTIONS_PAR_OUTIL`)
+pub(crate) fn outil_a_secret(nom: &str) -> bool {
+    OPTIONS_PAR_OUTIL.iter().any(|(outils, _, _)| outils.contains(&nom))
 }
 
 /// Lanceurs dont la commande suit une option : `cmd /c …`, `powershell -c …`. Après cette option, le mot suivant est en tête
@@ -1193,19 +1201,34 @@ const LANCEURS_PAR_OPTION: &[(&[&str], &[&str])] = &[
 
 /// Lanceurs dont la commande est le premier mot qui n'est ni une option, ni la valeur d'une option, ni un poste (`\\srv`),
 /// ni un titre entre guillemets : `start "" ssh …`, `sshpass -p x ssh …`, `psexec \\srv -u a cmd …`
-const LANCEURS_DIRECTS: &[&str] = &["start", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo"];
+const LANCEURS_DIRECTS: &[&str] = &["start", "call", "sshpass", "psexec", "psexec64", "paexec", "runas", "nohup", "sudo"];
 
-/// Le mot qui suit `mot` est-il en tête de commande, pour l'outil courant `outil` (décision pure, testée) ?
+/// Options d'un lanceur direct suivies d'une valeur (le mot suivant n'est pas la commande) ; les autres options sont des
+/// drapeaux (psexec -d, -s, -i, -h, -accepteula ; start /b, /min, /wait…), sautés
+const OPTIONS_A_VALEUR_DES_LANCEURS: &[(&[&str], &[&str])] = &[
+    (&["psexec", "psexec64", "paexec"], &["-u", "-p", "-w", "-n", "-a", "-cpu", "-r", "-f"]),
+    (&["sshpass"], &["-p", "-f", "-d"]),
+    (&["start"], &["/d", "/node", "/affinity"]),
+    (&["sudo"], &["-u", "-g"]),
+];
+
+/// Le mot qui suit `mot` est-il en tête de commande, pour l'outil courant `outil` (décision pure, testée) ? Après un
+/// séparateur, après « : » seul ou collé à un mot (« Processus créé: <ligne> », raisons d'une alerte), après `cmd /c` ou
+/// `powershell -c`
 pub(crate) fn tete_apres(outil: &str, mot: &str) -> bool {
-    separateur_de_commandes(mot) || mot == ":"
+    let fin_de_prefixe = mot == ":" || (mot.ends_with(':') && mot.chars().count() > 2 && !mot.starts_with('-') && !mot.starts_with('/'));
+    separateur_de_commandes(mot) || fin_de_prefixe
         || LANCEURS_PAR_OPTION.iter().any(|(outils, options)| outils.contains(&outil) && options.iter().any(|o| mot.eq_ignore_ascii_case(o)))
 }
 
-/// `mot` (précédé de `precedent`) est-il la commande lancée par le lanceur direct `outil` (décision pure, testée) ?
+/// `mot` (précédé de `precedent`) est-il la commande lancée par le lanceur direct `outil` (décision pure, testée) ? Ni une
+/// option, ni la valeur d'une option du lanceur, ni un poste (`\\srv`), ni un titre entre guillemets
 pub(crate) fn commande_lancee(outil: &str, mot: &str, precedent: &str) -> bool {
     let option = |m: &str| m.starts_with('-') || m.starts_with('/');
-    LANCEURS_DIRECTS.contains(&outil) && !option(mot) && !mot.starts_with("\\\\") && !mot.starts_with('"') && !mot.starts_with('\'')
-        && !option(precedent) && !mot.is_empty()
+    let valeur = OPTIONS_A_VALEUR_DES_LANCEURS.iter()
+        .any(|(lanceurs, options)| lanceurs.contains(&outil) && options.iter().any(|o| precedent.eq_ignore_ascii_case(o)));
+    LANCEURS_DIRECTS.contains(&outil) && !mot.is_empty() && !option(mot) && !mot.starts_with("\\\\") && !mot.starts_with('"')
+        && !mot.starts_with('\'') && !valeur
 }
 
 /// Ce qu'il faut masquer pour le mot `mot` d'une ligne dont l'outil courant est `outil` (décision pure, testée) :
@@ -1276,6 +1299,13 @@ fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
                     mots.push((d, i));
                 }
             }
+            // Séparateur collé (`echo x&&schtasks`, revue de #269) : un mot à lui seul, hors guillemets
+            None if c == '&' || c == '|' => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+                mots.push((i, i + 1));
+            }
             None => {
                 let d = *debut.get_or_insert(i);
                 if c == '"' || (c == '\'' && (d == i || matches!(precedent, Some(':' | '=')))) {
@@ -1311,33 +1341,49 @@ fn masquer_mots(s: &str, profondeur: u8) -> String {
     let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
     // Pour chaque mot : masqué à partir de cet octet du mot
     let mut masques: Vec<Option<usize>> = vec![None; mots.len()];
-    // Outil courant : le mot en tête de commande (premier mot, mot après un séparateur, après « : » qui précède la ligne
-    // dans un message du SIEM ou une raison d'alerte, après `cmd /c` ou `powershell -c`, ou commande d'un lanceur direct),
-    // jamais la valeur d'une option (revue de #269, D2 : `/tr cmd.exe` changeait l'outil). Un outil de `OUTILS_SLASH_P`
-    // garde ses options jusqu'au séparateur suivant
+    // Deux états (revue de #269, D2 et D3). `actifs` : les outils qui portent un secret vus dans la commande ; le passage vers
+    // l'un d'eux est permis sur n'importe quel mot (`start /b schtasks`, `call schtasks`, `psexec … -d schtasks`, « Processus
+    // créé: schtasks ») et reste acquis jusqu'au séparateur suivant (verrou : au pire on masque trop). `outil` : l'outil
+    // courant, qui ne passe à un outil sans secret qu'en tête de commande (premier mot, après un séparateur, après « : »,
+    // après `cmd /c` ou `powershell -c`) ou comme commande d'un lanceur direct, jamais sur la valeur d'une option (`/tr
+    // cmd.exe`). La commande d'un lanceur met fin à ses options : le lanceur quitte `actifs` (`sshpass -p x ssh -p 22`)
+    let mut actifs: Vec<String> = Vec::new();
     let mut outil = String::new();
     let mut tete = true;
     for k in 0..mots.len() {
         let t = texte(k);
         if separateur_de_commandes(t) {
+            actifs.clear();
             outil.clear();
             tete = true;
             continue;
         }
-        let verrou = OUTILS_SLASH_P.contains(&outil.as_str());
-        if tete && !verrou {
+        let nom = nom_outil(t);
+        let precedent = if k > 0 { texte(k - 1) } else { "" };
+        let lancee = commande_lancee(&outil, t, precedent);
+        if lancee {
+            actifs.retain(|a| *a != outil);
+        }
+        if outil_a_secret(&nom) {
+            if !actifs.contains(&nom) {
+                actifs.push(nom.clone());
+            }
+            outil = nom;
+            tete = false;
+        } else if tete {
             // Affectation en tête (PGPASSWORD=x psql) : la commande suit
             if !(t.contains('=') && !t.starts_with('-') && !t.starts_with('/')) {
-                outil = nom_outil(t);
+                outil = nom;
                 tete = false;
             }
-        } else if !verrou && commande_lancee(&outil, t, if k > 0 { texte(k - 1) } else { "" }) {
-            outil = nom_outil(t);
+        } else if lancee {
+            outil = nom;
         }
-        if !verrou && tete_apres(&outil, t) {
+        if tete_apres(&outil, t) {
             tete = true;
         }
-        match secret_d_option(&outil, t) {
+        let masque = actifs.iter().map(String::as_str).chain([""]).find_map(|o| secret_d_option(o, t));
+        match masque {
             Some(Masque::Dans(o)) => masques[k] = Some(o),
             Some(Masque::Suivant(separateur)) => {
                 let v = texte(k + 1);

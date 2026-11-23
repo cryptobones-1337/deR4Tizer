@@ -5690,6 +5690,20 @@ fn masquer_secrets_retire_les_valeurs() {
         // Message d'un 4688 et raisons d'une alerte : la ligne suit « : »
         ("schtasks.exe lancé par cmd.exe : schtasks /create /tn T /tr cmd.exe /s srv /u admin /p Sonde9", "Sonde9", "lancé par cmd.exe"),
         ("tâche planifiée créée à distance : schtasks /create /tn T /tr del /s srv /u admin /p Sonde11", "Sonde11", "/tr del"),
+        // Revue de #269, D3 : séparateur collé, lanceurs (start, call, psexec et ses drapeaux), échappement ^, @ de tête,
+        // deux-points collé ; un outil à secret est reconnu sur n'importe quel mot, puis verrouillé jusqu'au séparateur
+        ("cmd /c echo x&&schtasks /s srv /u admin /p S15", "S15", "echo x&&schtasks"),
+        ("echo x|schtasks /s srv /u admin /p S20", "S20", "echo x|schtasks"),
+        ("start /b schtasks /create /tn T /tr cmd.exe /s srv /u admin /p S11", "S11", "start /b schtasks"),
+        ("start /min /wait schtasks /s srv /u admin /p S12", "S12", "/min /wait"),
+        ("call schtasks /s srv /u admin /p S04", "S04", "call schtasks"),
+        ("sch^tasks /s srv /u admin /p S05", "S05", "sch^tasks"),
+        ("@schtasks /s srv /u admin /p S24", "S24", "@schtasks"),
+        (r"psexec \\srv -u admin -p S13 -d schtasks /s srv2 /u admin /p S14", "S13", "-d schtasks"),
+        (r"psexec \\srv -u admin -p S13 -d schtasks /s srv2 /u admin /p S14", "S14", "/u admin"),
+        ("Processus créé: schtasks /create /tn T /tr cmd.exe /s srv /u admin /p S18", "S18", "Processus créé:"),
+        // Verrou : « sauvegarde: » remet la tête de commande à zéro, schtasks garde ses options jusqu'au séparateur
+        ("schtasks /create /tn sauvegarde: /tr del /s srv /u admin /p S19", "S19", "/tn sauvegarde:"),
     ];
     for (ligne, secret, garde) in cas {
         let m = masquer_secrets(ligne);
@@ -5709,7 +5723,9 @@ fn masquer_secrets_retire_les_valeurs() {
                   "curl -u admin https://exemple.test/", "tasklist /v", "xcopy a b /p & ssh -p 22 hote",
                   // Lanceurs : la commande lancée devient l'outil courant
                   "cmd /c xcopy a b /p", "cmd.exe /k del /p x.txt", r#"start "" ssh -p 22 hote"#,
-                  r#"psexec \\srv cmd /c del /p x.txt"#, "powershell -c ssh -p 22 hote", "sshpass -f fichier ssh -p 22 hote"] {
+                  r#"psexec \\srv cmd /c del /p x.txt"#, "powershell -c ssh -p 22 hote", "sshpass -f fichier ssh -p 22 hote",
+                  "cmd /c echo x&&ssh -p 22 hote", "start /min /wait ssh -p 22 hote", r"psexec \\srv -accepteula -d ssh -p 22 hote",
+                  "call xcopy a b /p", "echo a|findstr /p motif"] {
         assert_eq!(masquer_secrets(ligne), ligne);
     }
     // Non ASCII : le reste intact, le secret retiré
@@ -5750,6 +5766,11 @@ fn masquer_secrets_options_par_outil() {
     assert!(!tete_apres("schtasks", "/c") && !tete_apres("cmd", "cmd.exe"));
     assert!(commande_lancee("sshpass", "ssh", "Secret") && commande_lancee("start", "ssh", "\"\""));
     assert!(!commande_lancee("sshpass", "Secret", "-p") && !commande_lancee("psexec", r"\\srv", "psexec") && !commande_lancee("schtasks", "cmd.exe", "/tr"));
+    // D3 : drapeaux de psexec et options de start sautés, valeurs d'options non ; « : » collé ; outils à secret
+    assert!(commande_lancee("psexec", "schtasks", "-d") && commande_lancee("start", "ssh", "/wait") && commande_lancee("call", "x", "call"));
+    assert!(!commande_lancee("psexec", "admin", "-u") && !commande_lancee("start", r"C:\dossier", "/d"));
+    assert!(tete_apres("x", "créé:") && !tete_apres("x", "/user:") && !tete_apres("x", "C:"));
+    assert!(crate::commun::outil_a_secret("schtasks") && crate::commun::outil_a_secret("plink") && !crate::commun::outil_a_secret("ssh"));
     let m = crate::commun::masquer_secrets("sqlcmd -P Secr3t & ssh -P 2222 h");
     assert!(!m.contains("Secr3t") && m.ends_with("ssh -P 2222 h"), "{m}");
 }
