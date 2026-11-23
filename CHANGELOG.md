@@ -18,6 +18,13 @@
   threads (startup entries, Defender and baseline checks, threat lists, LOLDrivers download, sensitive-data audit) run
   in background mode, and the canary event thread (4663) and the command pipe thread run above normal. The effect on
   the delay between the canary event and the suspension under load is not measured.
+- IDS (experimental) and incident tracking, second audit (findings B-4-01, B-4-02, B-5-01; tested in the lab, not yet
+  tried in the VM). An IDS rule whose `content` options are all negated now evaluates them: it fires only when none of
+  them is present (before: on its header alone). An unknown header variable (other than `$HOME_NET`, `$EXTERNAL_NET`,
+  `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`, `$ORACLE_PORTS`) now makes the rule ignored and counted, instead of
+  meaning "all addresses" or "all ports"; Emerging Threats rules that use `$HTTP_SERVERS` and the like are therefore
+  ignored. An incident with more than 20 status changes now still gets its timeline recalculated: the total number of
+  changes is counted (`NombreTransitions`), while only the last 20 are kept.
 - Process detection, audit of 23 November 2026 (findings A-7-1, A-7-3, A-7-5, A-7-7, A-7-8, A-7-9; tested in the lab,
   not yet tried in the VM). PRC-002 now sees `irm … | iex`, every abbreviation of `-EncodedCommand` (`-e`, `-ec`,
   `-enco`, `/e`…), `iwr … -OutFile`, `Start-BitsTransfer`, and a renamed copy of PowerShell when Sysmon gives the
