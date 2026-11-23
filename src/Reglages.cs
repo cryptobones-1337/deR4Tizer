@@ -486,7 +486,7 @@ namespace DeR4Tizer
         // Autorise un compte local à lire les données (nom saisi, converti en identifiant de sécurité)
         void AutoriserCompte()
         {
-            using (var f = new Form { Text = "deR4Tizer", Size = new Size(420, 150), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, BackColor = Theme.Fond, ForeColor = Theme.Texte, Font = Theme.Petit })
+            using (var f = new Form { Text = "deR4Tizer", Icon = Theme.IconeApplication(32), Size = new Size(420, 150), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, BackColor = Theme.Fond, ForeColor = Theme.Texte, Font = Theme.Petit })
             {
                 var t = Saisie(360);
                 t.Location = new Point(16, 36);

@@ -1,6 +1,6 @@
 ﻿# Rendu hors écran de la coquille du pilote WPF (U1, docs/roadmap/interface.md) : compile l'interface, construit la
 # coquille sans l'afficher ni la montrer à l'écran (aucune capture d'écran, aucun service, aucune donnée), puis la rend
-# en PNG par RenderTargetBitmap à 100, 125 et 150 %, en français et en anglais. Les pages WinForms hébergées ne sont pas
+# en PNG par RenderTargetBitmap à 100, 125, 150 et 200 %, en français et en anglais. Les pages WinForms hébergées ne sont pas
 # rendues ainsi (fenêtres Win32) : leur zone reste vide, les captures réelles en VM les montrent (tests\vm\captures.ps1).
 # Contrôle aussi les décisions pures du pilote : contrastes des jetons, navigation complète.
 # Usage (Windows PowerShell 5.1) : powershell -File tests\rendu-pilote.ps1 [-Depot <racine>] [-Sortie <dossier des PNG>]
@@ -19,7 +19,7 @@ try {
     $out = Join-Path $travail 'interface.exe'
     $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     $wpf = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\WPF'
-    & $csc /nologo /platform:anycpu /codepage:65001 /target:winexe /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" /r:System.Xaml.dll "/out:$out" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "$src\Fluent.cs" "/resource:$src\carte-pays.txt,carte-pays.txt"
+    & $csc /nologo /platform:anycpu /codepage:65001 /target:winexe /r:System.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:System.ServiceProcess.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll "/r:$wpf\PresentationFramework.dll" "/r:$wpf\PresentationCore.dll" "/r:$wpf\WindowsBase.dll" /r:System.Xaml.dll "/out:$out" "$src\Commun.cs" "$src\Langue.cs" "$src\Theme.cs" "$src\Gui.cs" "$src\Reglages.cs" "$src\Siem.cs" "$src\Incidents.cs" "$src\Reponses.cs" "$src\Trafic.cs" "$src\Reseau.cs" "$src\Fluent.cs" "/resource:$src\carte-pays.txt,carte-pays.txt" "/resource:$src\deR4Tizer.ico,deR4Tizer.ico"
     if ($LASTEXITCODE) { throw 'compilation' }
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
     $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($out))
@@ -122,6 +122,39 @@ public class SourceSimulee : RealProxy
         $fen = $coquille.GetConstructor([Type[]]@((& $t 'ISourceEtat'))).Invoke([object[]]@($src))
         $null = $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fen, @("Vue d'ensemble")); $fen }
     $fen = & $nouvelleCoquille 0
+    # Icône unique (constat T-14) : icone.ps1 est la seule source du dessin. L'icône du dépôt est sa sortie exacte, porte
+    # toutes les tailles, et le logo de la barre latérale affiche une de ses images ; plus aucun second dessin.
+    $icoDepot = [IO.File]::ReadAllBytes("$src\deR4Tizer.ico")
+    $icoNeuve = Join-Path $travail 'icone-regeneree.ico'
+    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Depot 'icone.ps1') -Sortie $icoNeuve
+    Cas 'icône (T-14) : src\deR4Tizer.ico est exactement la sortie de icone.ps1' ((Test-Path $icoNeuve) -and [Convert]::ToBase64String($icoDepot) -eq [Convert]::ToBase64String([IO.File]::ReadAllBytes($icoNeuve)))
+    $imagesIco = @{}
+    for ($i = 0; $i -lt [BitConverter]::ToUInt16($icoDepot, 4); $i++) {
+        $e = 6 + 16 * $i; $l = if ($icoDepot[$e] -eq 0) { 256 } else { [int]$icoDepot[$e] }
+        $imagesIco[$l] = [byte[]]$icoDepot[([BitConverter]::ToInt32($icoDepot, $e + 12))..([BitConverter]::ToInt32($icoDepot, $e + 12) + [BitConverter]::ToInt32($icoDepot, $e + 8) - 1)]
+    }
+    $manque = @(16, 20, 24, 32, 40, 48, 64, 256 | Where-Object { -not $imagesIco.ContainsKey($_) })
+    Cas 'icône (T-14) : images de 16, 20, 24, 32, 40, 48, 64 et 256 px' ($manque.Count -eq 0) "manquent : $($manque -join ', ')"
+    $sourcesCs = (Get-ChildItem "$src\*.cs" | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+    Cas 'icône (T-14) : plus de second dessin du logo (LogoRat) dans l''interface' (-not $sourcesCs.Contains('LogoRat'))
+    $pileL = New-Object Collections.Stack; $pileL.Push($fen.Content); $logos = New-Object Collections.Generic.List[object]
+    while ($pileL.Count) { $n = $pileL.Pop(); if ($n -is [Windows.Controls.Image] -and $n.Parent -is [Windows.Controls.StackPanel] -and @($n.Parent.Children | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -eq 'deR4Tizer' }).Count) { $logos.Add($n) }; if ($n -is [Windows.DependencyObject]) { foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pileL.Push($e) } } }
+    $pixels = { param($bs) $c = New-Object Windows.Media.Imaging.FormatConvertedBitmap $bs, ([Windows.Media.PixelFormats]::Pbgra32), $null, 0; $p = New-Object byte[] ($c.PixelWidth * $c.PixelHeight * 4); $c.CopyPixels($p, $c.PixelWidth * 4, 0); [Convert]::ToBase64String($p) }
+    $logoOk = $false; $detailLogo = "$($logos.Count) logo(s) à côté du nom"
+    if ($logos.Count -eq 1 -and $logos[0].Source) {
+        $lw = $logos[0].Source.PixelWidth; $detailLogo = "image de $lw px affichée à $($logos[0].Width)"
+        if ($imagesIco.ContainsKey($lw)) {
+            $attendue = [Windows.Media.Imaging.BitmapFrame]::Create((New-Object IO.MemoryStream (, $imagesIco[$lw])), 'None', 'OnLoad')
+            $logoOk = $lw -ge 2 * $logos[0].Width -and (& $pixels $logos[0].Source) -eq (& $pixels $attendue)
+        }
+    }
+    Cas 'icône (T-14) : le logo de la barre latérale est une image de deR4Tizer.ico, au moins deux fois sa taille affichée' $logoOk $detailLogo
+    $sansIcone = @([regex]::Matches($sourcesCs, 'new Form\s*(\(\s*\))?\s*\{[^}]*') | Where-Object { -not $_.Value.Contains('Icon = Theme.IconeApplication(') })
+    Cas 'icône (T-14) : chaque fenêtre WinForms créée porte l''icône de l''application' ($sansIcone.Count -eq 0 -and $sourcesCs.Contains('Icon = Theme.IconeApplication(32);')) "$($sansIcone.Count) sans icône"
+    $confirmation = $asm.GetType('DeR4Tizer.Canal').GetMethod('FenetreConfirmation').Invoke($null, @('essai', $false, $false))
+    $iconeParDefaut = (New-Object Windows.Forms.Form).Icon
+    Cas 'icône (T-14) : fenêtre de l''assistant élevé avec l''icône de l''application, pas celle de WinForms' (-not [object]::ReferenceEquals($confirmation.Icon, $iconeParDefaut) -and $confirmation.Icon.Width -eq 32)
+    $confirmation.Dispose()
     $zoneV = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fen).Content
     $tb = & $textesDe $zoneV
     $orange = @($tb | Where-Object { $_.Text -eq 'Defender (falsification off)' })
@@ -809,7 +842,7 @@ $visible = [Windows.Forms.Control].GetMethod('GetState', [Reflection.BindingFlag
             $cadre = New-Object Windows.Controls.Border -Property @{ Background = $fen.Background; Child = $contenu }
             [Windows.Documents.TextElement]::SetFontFamily($cadre, $fen.FontFamily); [Windows.Documents.TextElement]::SetFontSize($cadre, $fen.FontSize)
             [Windows.Documents.TextElement]::SetForeground($cadre, $fen.Foreground)
-            foreach ($echelle in 100, 125, 150) {
+            foreach ($echelle in 100, 125, 150, 200) {
                 $taille = New-Object Windows.Size 1200, 780
                 $cadre.Measure($taille); $cadre.Arrange((New-Object Windows.Rect $taille)); $cadre.UpdateLayout()
                 $f = $echelle / 100.0
