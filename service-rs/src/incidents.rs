@@ -380,7 +380,7 @@ fn mettre_de_cote(f: &std::path::Path, raison: &str, copier: bool) -> bool {
         .map(|n| f.with_file_name(if n == 0 { format!("suivi-incidents-{raison}-{horodatage}.json") } else { format!("suivi-incidents-{raison}-{horodatage}-{n}.json") }))
         .find(|d| std::fs::symlink_metadata(d).is_err()) else { return false };
     if copier {
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&cote)
+        commun::ouvrir_pour_ecrire(std::fs::OpenOptions::new().write(true).create_new(true), &cote)
             .and_then(|mut d| std::fs::File::open(f).and_then(|mut s| std::io::copy(&mut s, &mut d)).map(|_| ()))
             .is_ok()
     } else {

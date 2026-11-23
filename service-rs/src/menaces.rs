@@ -197,7 +197,7 @@ impl Menaces {
     /// demande), en HTTPS uniquement et 100 Mo au plus ; une liste vide ou qui s'effondre est rejetée et la copie
     /// précédente est gardée
     pub fn telecharger(forcer: bool) -> HashMap<String, String> {
-        let _ = fs::create_dir_all(dossier());
+        let _ = crate::commun::creer_dossiers(dossier());
         let mut statuts = HashMap::new();
         let restreintes = commun::lire::<commun::Config>("config.json").map(|c| c.listes_restreintes).unwrap_or(false);
         for s in SOURCES {

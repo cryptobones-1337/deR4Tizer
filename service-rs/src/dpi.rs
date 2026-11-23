@@ -86,7 +86,7 @@ impl Dpi {
             let j = ja3.clone();
             std::thread::Builder::new().name("ja3".into()).spawn(move || loop {
                 let f = commun::dossier().join("menaces").join("ja3-sslbl.csv");
-                let _ = std::fs::create_dir_all(commun::dossier().join("menaces"));
+                let _ = crate::commun::creer_dossiers(commun::dossier().join("menaces"));
                 let recent = std::fs::metadata(&f).and_then(|m| m.modified())
                     .map(|t| SystemTime::now().duration_since(t).unwrap_or_default() < Duration::from_secs(86_400)).unwrap_or(false);
                 if !recent {

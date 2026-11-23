@@ -109,7 +109,7 @@ pub fn mode_ecriture(original: Option<&crate::natif::Securite>, voisin: Option<&
 pub fn ecrire_d_un_bloc(chemin: &Path, contenu: &[u8]) -> Result<(), String> {
     let nom = nom_court(chemin);
     let dossier = chemin.parent().ok_or_else(|| format!("{nom} : dossier introuvable"))?;
-    fs::create_dir_all(dossier).map_err(|e| format!("{nom} : dossier non créé ({e})"))?;
+    crate::commun::creer_dossiers(dossier).map_err(|e| format!("{nom} : dossier non créé ({e})"))?;
     let existe = match fs::symlink_metadata(chemin) {
         Ok(m) if m.file_type().is_file() => true,
         Ok(_) => return Err(format!("{nom} n'est pas un fichier ordinaire : rien n'est écrit")),

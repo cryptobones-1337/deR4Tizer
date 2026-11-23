@@ -2248,6 +2248,48 @@ fn lot_a_racine_non_verifiee_aucune_ecriture() {
     assert!(protection.contains("crate::natif::poser_droits_handle(&f, &sddl_racine(lecteurs))"));
 }
 
+/// Audit de #287, S287-01 : toute écriture directe passe par la garde de la racine (commun::ecrire_fichier,
+/// creer_dossiers, ouvrir_pour_ecrire ; natif::ecrire_fichier_protege, copier_protege_depuis et creer_dossier_protege la
+/// consultent aussi). Structure : aucun module n'écrit par std::fs, sauf la liste justifiée ci-dessous (hors du dossier
+/// de données) ; commun.rs et natif.rs portent la garde elle-même
+#[test]
+fn lot_a_ecritures_directes_par_la_garde() {
+    use crate::commun::ecriture_directe_permise;
+    let r = std::path::Path::new(r"C:\ProgramData\deR4Tizer");
+    assert!(!ecriture_directe_permise(std::path::Path::new(r"C:\ProgramData\deR4Tizer\sauvegardes\hosts-1.bak"), r, false), "sous la racine non sûre : refusé");
+    assert!(ecriture_directe_permise(std::path::Path::new(r"C:\ProgramData\deR4Tizer\sauvegardes\hosts-1.bak"), r, true));
+    assert!(ecriture_directe_permise(r, r, false), "la racine elle-même (création par protection.rs, vérifiée ensuite par handle)");
+    assert!(ecriture_directe_permise(std::path::Path::new(r"C:\Windows\System32\drivers\etc\hosts"), r, false), "hors du dossier");
+    // Écritures directes admises : hors du dossier de données
+    let admis: &[(&str, &str)] = &[
+        ("blocage.rs", "fs::File::create(&tmp)"),                        // fichier hosts, System32\drivers\etc
+        ("gpo.rs", "fs::OpenOptions::new().write(true).create_new(true).open(&voisin)"), // GPO locale, System32\GroupPolicy
+        ("gpo.rs", "fs::OpenOptions::new().write(true).truncate(true).open(chemin)"),    // idem
+    ];
+    let dossier = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut ecarts = Vec::new();
+    for e in std::fs::read_dir(&dossier).unwrap().flatten() {
+        let nom = e.file_name().to_string_lossy().to_string();
+        if !nom.ends_with(".rs") || ["commun.rs", "natif.rs", "tests.rs", "tests_detection.rs"].contains(&nom.as_str()) {
+            continue;
+        }
+        let source = std::fs::read_to_string(e.path()).unwrap().replace("\r\n", "\n");
+        for (i, ligne) in source.lines().enumerate() {
+            let suite: String = source.lines().skip(i).take(2).collect::<Vec<_>>().join(" ");
+            let ecrit = ligne.contains("fs::write(") || ligne.contains("create_dir_all(") || ligne.contains("fs::create_dir(")
+                || ligne.contains("File::create(")
+                || (ligne.contains("OpenOptions::new()") && !ligne.contains("ouvrir_pour_ecrire(")
+                    && (suite.contains(".write(true)") || suite.contains(".append(true)") || suite.contains(".create(true)")));
+            if ecrit && !admis.iter().any(|(f, motif)| *f == nom && ligne.contains(motif)) {
+                ecarts.push(format!("{nom}:{} : {}", i + 1, ligne.trim()));
+            }
+        }
+    }
+    assert!(ecarts.is_empty(), "écritures directes hors de la garde : {ecarts:#?}");
+    let natif = include_str!("natif.rs");
+    assert_eq!(natif.matches("crate::commun::garde_racine(").count(), 3, "ecrire_fichier_protege, copier_protege_depuis, creer_dossier_protege");
+}
+
 /// Nom du dossier écarté imprévisible (audit du 2026-11-23) : date et identifiant unique
 #[test]
 fn lot_a_nom_du_dossier_ecarte_imprevisible() {

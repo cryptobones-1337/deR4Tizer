@@ -1169,6 +1169,8 @@ pub fn proprietaire_de_confiance(chemin: &std::path::Path) -> Option<bool> {
 /// puis remplacement atomique : les droits explicites et protégés suivent le fichier). Aucune fenêtre où le
 /// contenu serait lisible avec les droits hérités.
 pub fn ecrire_fichier_protege(chemin: &std::path::Path, contenu: &[u8], sddl: &str) -> Result<(), String> {
+    // Garde de la racine du dossier de données (audit de #287, S287-01)
+    crate::commun::garde_racine(chemin).map_err(|e| e.to_string())?;
     use windows::Win32::Foundation::{HLOCAL, LocalFree, GENERIC_WRITE};
     use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
@@ -1202,6 +1204,10 @@ pub fn ecrire_fichier_protege(chemin: &std::path::Path, contenu: &[u8], sddl: &s
 /// Crée un dossier avec son descripteur de sécurité dès la création (SDDL), sans fenêtre où il hériterait
 /// des droits de son parent
 pub fn creer_dossier_protege(chemin: &std::path::Path, sddl: &str) -> bool {
+    // Garde de la racine (S287-01) : la racine elle-même reste créable par son chemin (protection.rs la vérifie ensuite par handle)
+    if crate::commun::garde_racine(chemin).is_err() {
+        return false;
+    }
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
@@ -1360,6 +1366,7 @@ pub fn copier_protege_avec(source: &std::path::Path, destination: &std::path::Pa
 /// `copier_protege_avec`, depuis un flux déjà ouvert (handle vérifié de l'original, par exemple)
 pub fn copier_protege_depuis(entree: &mut dyn std::io::Read, destination: &std::path::Path, sddl: &str, entete: &[u8],
                              transformer: &mut dyn FnMut(&mut [u8], u64)) -> Result<String, String> {
+    crate::commun::garde_racine(destination).map_err(|e| e.to_string())?;
     use sha2::{Digest, Sha256};
     use std::io::Write;
     use std::os::windows::io::FromRawHandle;

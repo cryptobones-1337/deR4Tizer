@@ -577,7 +577,7 @@ pub fn telecharger(actives: &[Categorie], protection: &[u64]) -> Vec<(String, St
     if actives.is_empty() {
         return statuts;
     }
-    let _ = fs::create_dir_all(dossier());
+    let _ = crate::commun::creer_dossiers(dossier());
     for s in SOURCES.iter().filter(|s| actives.contains(&s.categorie)) {
         let f = fichier(s);
         let recent = fs::metadata(&f).and_then(|m| m.modified())
