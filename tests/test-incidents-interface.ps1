@@ -183,6 +183,27 @@ try {
     $lnc = @(& $appel $vs 'Lignes' @($nc, $r, $maintenant) | Where-Object { $_.Sujet -eq 'Exceptions' -and $_.Etat -eq 'en mémoire seulement' })
     Cas 'santé : apprentissage non chargé dit' ($lnc.Count -eq 1 -and $lnc[0].Gravite -eq 1)
     Cas 'santé : apprentissage chargé, aucune ligne' (@($lignes | Where-Object { $_.Etat -eq 'en mémoire seulement' }).Count -eq 0)
+    # Audit du 2026-11-23, A-3-2 et T-12 : ligne « Mise à jour » d'après le code publié dans maj.json (lu tel que le service l'écrit)
+    $maj = { param($texte) & $lire 'EtatMaj' $texte }
+    $lm = { param($m) $vs.GetMethod('LigneMaj').Invoke($null, @(, $m)) }
+    $ancienM = & $lm (& $maj '{"VerifieLe":"2026-11-23 10:00:00","VersionInstallee":"4.3","VersionDisponible":"4.2","Statut":"manifeste plus ancien que la version installée (manifeste 4.2, installée 4.3) : un manifeste remplacé peut geler les mises à jour","CleEpinglee":true,"Controle":"ManifesteAncien","EchecDepuis":"","EchecDepuisS":0}')
+    Cas 'santé : manifeste plus ancien, à vérifier' ($ancienM.Sujet -eq 'Mise à jour' -and $ancienM.Etat -eq 'manifeste plus ancien' -and $ancienM.Gravite -eq 1 -and $ancienM.Detail -match 'version 4\.2, plus ancienne que la version installée \(4\.3\)' -and $ancienM.Source -eq 'maj.json') "$($ancienM.Etat) / $($ancienM.Detail)"
+    $ajour = & $lm (& $maj '{"VerifieLe":"2026-11-23 10:00:00","VersionInstallee":"4.3","VersionDisponible":"4.3","Statut":"à jour","Controle":""}')
+    Cas 'santé : mise à jour à jour, rien à vérifier' ($ajour.Etat -eq 'contrôlée' -and $ajour.Gravite -eq 0 -and $ajour.Detail -eq 'à jour')
+    $recent = & $lm (& $maj '{"VerifieLe":"2026-11-23 10:00:00","Statut":"manifeste introuvable (404)","Controle":"EchecRecent","EchecDepuis":"2026-11-23 09:45:00","EchecDepuisS":1}')
+    Cas 'santé : échec récent dit, sans alerte' ($recent.Etat -eq 'dernier contrôle en échec' -and $recent.Gravite -eq 0 -and $recent.Detail -match '^manifeste introuvable \(404\)' -and $recent.Detail -match '2026-11-23 09:45:00') "$($recent.Detail)"
+    $long = & $lm (& $maj '{"VerifieLe":"2026-11-23 23:14:00","Statut":"manifeste introuvable (404)","Controle":"EchecProlonge","EchecDepuis":"2026-11-22 22:59:24","EchecDepuisS":1}')
+    Cas 'santé : échec depuis plus de 24 h, à vérifier' ($long.Etat -eq 'en échec depuis plus de 24 h' -and $long.Gravite -eq 1 -and $long.Detail -match '2026-11-22 22:59:24' -and $long.Detail -match '404') "$($long.Detail)"
+    $inconnu = & $lm (& $maj '{"Statut":"x","Controle":"CodeFutur"}')
+    Cas 'santé : code inconnu, à vérifier, jamais « contrôlée »' ($inconnu.Etat -eq 'en échec' -and $inconnu.Gravite -eq 1)
+    $vieuxSvc = & $lm (& $maj '{"VerifieLe":"2026-11-23 10:00:00","Statut":"à jour"}')
+    Cas 'santé : service plus ancien (sans code), statut repris' ($vieuxSvc.Etat -eq 'contrôlée' -and $vieuxSvc.Detail -eq 'à jour')
+    Cas 'santé : maj.json absent dit' ((& $lm $null).Etat -eq 'pas encore vérifiée')
+    $avecMaj = $vs.GetMethod('Lignes').Invoke($null, @($e, $r, $maintenant))
+    [void]$vs.GetMethod('AjouterMaj').Invoke($null, @($avecMaj, (& $maj '{"Statut":"à jour","Controle":"ManifesteAncien"}')))
+    $iRem = -1; for ($k = 0; $k -lt $avecMaj.Count; $k++) { if ($avecMaj[$k].Sujet -eq 'Remontée') { $iRem = $k } }
+    Cas 'santé : ligne Mise à jour juste après Remontée' ($iRem -ge 0 -and $avecMaj[$iRem + 1].Sujet -eq 'Mise à jour' -and @($avecMaj | Where-Object Sujet -eq 'Mise à jour').Count -eq 1)
+    Cas 'santé : ligne Mise à jour branchée sur les deux pages' (([regex]::Matches((Get-Content (Join-Path $src 'Fluent.cs') -Raw -Encoding UTF8) + (Get-Content (Join-Path $src 'Incidents.cs') -Raw -Encoding UTF8), 'VueSante\.AjouterMaj\(l, Commun\.Lire<EtatMaj>\("maj\.json"\)\)')).Count -eq 2)
     Cas 'santé : protection en échec dite' (@(& $appel $vs 'Lignes' @((& { $x = & $etat @(); $x.ProtectionDonnees = 'droits'; $x }), $r, $maintenant) | Where-Object { $_.Etat -eq 'en échec' -and $_.Detail -eq 'droits' }).Count -eq 1)
 
     # Confirmation : l'incident et la transition, textes neutralisés ; sans fichier, « inconnu »

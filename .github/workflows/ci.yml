@@ -250,8 +250,10 @@ jobs:
       - name: Compilation avec la clé de test épinglée (versions courante et suivante)
         shell: pwsh
         run: |
-          # La clé de test n'est définie que dans cette étape, jamais au niveau du workflow ni du job
-          $env:DER4TIZER_CLES_SIGNATURE = (Get-Content "$env:RUNNER_TEMP\d4t-pki\cle-epinglee.txt" -Raw).Trim()
+          # Les clés de test ne sont définies que dans cette étape, jamais au niveau du workflow ni du job. Deux clés épinglées,
+          # comme la publication peut le faire (clé actuelle et suivante) : passage à la seconde clé (audit du 2026-11-23, A-3-4)
+          $pki = "$env:RUNNER_TEMP\d4t-pki"
+          $env:DER4TIZER_CLES_SIGNATURE = (Get-Content "$pki\cle-epinglee.txt" -Raw).Trim() + "," + (Get-Content "$pki\cle-seconde.txt" -Raw).Trim()
           $ex = Join-Path $env:RUNNER_TEMP 'd4t-executables'
           New-Item -ItemType Directory -Force "$ex\$env:D4T_COURANTE", "$ex\$env:D4T_NOUVELLE" | Out-Null
           Push-Location service-rs; cargo build --release --locked; if ($LASTEXITCODE) { throw 'compilation' }; Pop-Location

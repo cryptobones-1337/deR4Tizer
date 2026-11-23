@@ -4132,6 +4132,95 @@ fn lot2_adresse_du_paquet_de_retour() {
     assert!(url_paquet_version("https://github.com/x/releases/latest/download/manifeste.json", "4.3/../x").is_none());
 }
 
+/// Audit du 2026-11-23, A-3-2 : un manifeste plus ancien que la version installée n'est plus rapporté « à jour » (un
+/// manifeste remplacé par un vieux gelait les mises à jour sans aucun signe) ; égalité : à jour ; plus récent : la
+/// vérification du paquet continue
+#[test]
+fn audit_a32_manifeste_plus_ancien_distinct() {
+    use crate::maj::{comparer_versions, statut_comparaison, Comparaison, Issue};
+    assert_eq!(comparer_versions("4.2", "4.3"), Comparaison::PlusAncienne);
+    assert_eq!(comparer_versions("4.9", "4.10"), Comparaison::PlusAncienne);
+    assert_eq!(comparer_versions("4.3", "4.3"), Comparaison::Egale);
+    assert_eq!(comparer_versions("4.3.0", "4.3"), Comparaison::Egale);
+    assert_eq!(comparer_versions("4.4", "4.3"), Comparaison::PlusRecente);
+    let (statut, issue) = statut_comparaison("4.2", "4.3").expect("4.2 sous 4.3 : statut attendu");
+    assert_eq!(issue, Issue::ManifesteAncien);
+    assert!(statut.starts_with("manifeste plus ancien que la version installée") && statut.contains("manifeste 4.2") && statut.contains("installée 4.3"), "{statut}");
+    assert_ne!(statut, "à jour");
+    assert_eq!(statut_comparaison("4.3", "4.3"), Some(("à jour".to_string(), Issue::Lu)));
+    assert_eq!(statut_comparaison("4.3.0", "4.3"), Some(("à jour".to_string(), Issue::Lu)));
+    assert_eq!(statut_comparaison("4.4", "4.3"), None);
+}
+
+/// Audit du 2026-11-23, T-12 : après un manifeste non obtenu, nouveaux essais à 15 min puis 1 h (au lieu de 24 h), un 404
+/// dit « manifeste introuvable (404) », et une série d'échecs de 24 h ou plus devient « à vérifier » en page Santé
+#[test]
+fn audit_t12_essais_apres_echec_et_sante() {
+    use crate::maj::{code_controle, debut_echecs, delai_avant_controle, texte_echec_manifeste, Issue, ECHEC_PROLONGE_S, PERIODE_S};
+    // Calendrier
+    assert_eq!(PERIODE_S, 86_400);
+    assert_eq!(delai_avant_controle(0), PERIODE_S);
+    assert_eq!(delai_avant_controle(1), 900);
+    assert_eq!(delai_avant_controle(2), 3_600);
+    assert_eq!(delai_avant_controle(3), PERIODE_S);
+    assert_eq!(delai_avant_controle(u32::MAX), PERIODE_S);
+    // Texte d'un 404 ; les autres erreurs gardent le texte de curl
+    assert_eq!(texte_echec_manifeste("curl: (22) The requested URL returned error: 404"), "manifeste introuvable (404)");
+    for autre in ["curl: (22) The requested URL returned error: 500", "curl: (22) The requested URL returned error: 4040", "curl: (6) Could not resolve host: github.com", "", "returned error: "] {
+        let t = texte_echec_manifeste(autre);
+        assert!(t.starts_with("manifeste illisible (") && t.contains(autre), "{autre} : {t}");
+    }
+    torturer_texte("curl: (22) The requested URL returned error: 404", &mut |t| {
+        let _ = texte_echec_manifeste(t);
+    });
+    // Début de la série d'échecs : gardé tant que les contrôles échouent, effacé au premier manifeste lu
+    let t = 1_800_000_000;
+    assert_eq!(debut_echecs(Issue::Echec, 0, t), t);
+    assert_eq!(debut_echecs(Issue::Echec, t - 100, t), t - 100);
+    assert_eq!(debut_echecs(Issue::Echec, t + 100, t), t, "date future : la série repart de maintenant");
+    assert_eq!(debut_echecs(Issue::Echec, -5, t), t);
+    assert_eq!(debut_echecs(Issue::Lu, t - 100, t), 0);
+    assert_eq!(debut_echecs(Issue::ManifesteAncien, t - 100, t), 0);
+    // Codes de la page Santé
+    assert_eq!(code_controle(Issue::Lu, 0, t), "");
+    assert_eq!(code_controle(Issue::ManifesteAncien, 0, t), "ManifesteAncien");
+    assert_eq!(code_controle(Issue::Echec, t, t), "EchecRecent");
+    assert_eq!(code_controle(Issue::Echec, t - ECHEC_PROLONGE_S + 1, t), "EchecRecent");
+    assert_eq!(code_controle(Issue::Echec, t - ECHEC_PROLONGE_S, t), "EchecProlonge");
+    // Scénario T-12 rejoué : 404 à t0 et ensuite, sans redémarrage. Contrôles à t0, +15 min, +1 h 15, puis +25 h 15 : ce
+    // dernier est le premier à 24 h ou plus, et il dit « EchecProlonge »
+    let t0 = t;
+    let (mut heure, mut depuis, mut echecs) = (t0, 0i64, 0u32);
+    let mut vus = Vec::new();
+    for _ in 0..4 {
+        depuis = debut_echecs(Issue::Echec, depuis, heure);
+        echecs += 1;
+        vus.push((heure - t0, code_controle(Issue::Echec, depuis, heure)));
+        heure += delai_avant_controle(echecs) as i64;
+    }
+    assert_eq!(vus, vec![(0, "EchecRecent"), (900, "EchecRecent"), (4_500, "EchecRecent"), (4_500 + 86_400, "EchecProlonge")]);
+    // Manifeste de nouveau lu : série close, période normale
+    assert_eq!(debut_echecs(Issue::Lu, depuis, heure), 0);
+    assert_eq!(delai_avant_controle(0), PERIODE_S);
+}
+
+/// Audit du 2026-11-23, A-3-4 : scénarios réels de la mise à jour (CI, job integration-maj) ajoutés et branchés ; le cas
+/// du tube tenu par un autre processus (A-8-2) reste déclaré non exécuté
+#[test]
+fn audit_a34_scenarios_maj_declares() {
+    let m = include_str!("../../tests/integration/maj.ps1");
+    for cas in ["Verifier \"Manifeste plus ancien ($Precedente sous $Courante)", "Verifier \"Paquet signé par la seconde clé épinglée : signature acceptée",
+        "Verifier 'Certificat expiré, sans horodatage : signature refusée (témoin)", "Verifier \"Certificat expiré, horodaté pendant sa validité : signature acceptée"] {
+        assert!(m.contains(cas), "scénario absent : {cas}");
+    }
+    assert!(m.contains("$v.Etat.Controle -ne 'ManifesteAncien'"), "code de la page Santé contrôlé en réel");
+    assert!(m.contains("NonExecute 'Service muet après l''installation (tube absent ou tenu par un autre processus)'"), "A-8-2 déclaré non exécuté");
+    let pki = include_str!("../../tests/integration/maj-pki.ps1");
+    assert!(pki.contains("cle-seconde.txt") && include_str!("../../tests/integration/maj-paquets.ps1").contains("Paquet \"$Nouvelle-seconde\""));
+    let ci = include_str!("../../.github/workflows/ci.yml");
+    assert!(ci.contains("(Get-Content \"$pki\\cle-epinglee.txt\" -Raw).Trim() + \",\" + (Get-Content \"$pki\\cle-seconde.txt\" -Raw).Trim()"), "deux clés épinglées dans les binaires de test");
+}
+
 #[test]
 fn lot2_proprietes_lues_dans_le_paquet() {
     use crate::natif::proprietes_msi;

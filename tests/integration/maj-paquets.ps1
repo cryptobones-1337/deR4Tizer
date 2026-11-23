@@ -6,6 +6,7 @@
 #   <nouvelle>-autre.msi    version suivante, clé non épinglée
 #   <nouvelle>-revoquee.msi version suivante, certificat révoqué (même clé épinglée)
 #   <nouvelle>-sanscrl.msi  version suivante, certificat dont la CRL ne répond pas (même clé épinglée)
+#   <nouvelle>-seconde.msi  version suivante, seconde clé épinglée (K3)
 #   <nouvelle>-casse.msi    version suivante dont l'exécutable du service n'en est pas un (installation en échec)
 #   <nouvelle>-ancien.msi   version suivante contenant l'exécutable de la version courante (répond mal)
 #   <courante>-autre.msi    version courante, clé non épinglée (paquet de retour refusé)
@@ -53,6 +54,7 @@ Paquet $Nouvelle $Nouvelle $svcNouvelle 'epinglee'
 Paquet "$Nouvelle-autre" $Nouvelle $svcNouvelle 'autre'
 Paquet "$Nouvelle-revoquee" $Nouvelle $svcNouvelle 'revoquee'
 Paquet "$Nouvelle-sanscrl" $Nouvelle $svcNouvelle 'sanscrl'
+Paquet "$Nouvelle-seconde" $Nouvelle $svcNouvelle 'seconde'
 Paquet "$Nouvelle-casse" $Nouvelle $invalide 'epinglee'
 Paquet "$Nouvelle-ancien" $Nouvelle $svcCourante 'epinglee'
 Paquet "$Courante-autre" $Courante $svcCourante 'autre'

@@ -1,4 +1,5 @@
-//! Mise à jour automatique du service et de l'interface. Une fois par jour : lecture du manifeste de la
+//! Mise à jour automatique du service et de l'interface. Une fois par jour (après un manifeste non obtenu : nouvel
+//! essai à 15 min, puis 1 h ; série d'échecs de 24 h ou plus dite en page Santé) : lecture du manifeste de la
 //! dernière version publiée (HTTPS), téléchargement du paquet MSI, contrôle de l'empreinte SHA-256, puis de la
 //! signature Authenticode AVEC contrôle de révocation, comparaison de la clé publique du signataire aux clés
 //! ÉPINGLÉES dans ce binaire à la compilation (variable DER4TIZER_CLES_SIGNATURE, fournie par la CI de
@@ -56,15 +57,120 @@ pub struct Manifeste {
     pub fichiers: Vec<Fichier>,
 }
 
-/// État lisible par l'interface (maj.json)
-#[derive(Serialize, Default)]
-#[serde(rename_all = "PascalCase")]
+/// État lisible par l'interface (maj.json). Relu par le service au contrôle suivant pour le seul début de la série
+/// d'échecs (`EchecDepuisS`), borné par `debut_echecs` : un fichier modifié ne peut que décaler l'avertissement de la
+/// page Santé, rien d'autre
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase", default)]
 struct Etat {
     verifie_le: String,
     version_installee: String,
     version_disponible: String,
     statut: String,
     cle_epinglee: bool,
+    /// Code du contrôle pour la page Santé (`code_controle`), traduit par l'interface
+    controle: String,
+    /// Début de la série de contrôles en échec (vide, ou date lisible), et le même en secondes Unix (0 : aucun échec)
+    echec_depuis: String,
+    echec_depuis_s: i64,
+}
+
+// ------------------------------------------------------------ calendrier et issue des contrôles (audit du 2026-11-23,
+// A-3-2 et T-12). Décisions pures, testées (tests.rs, audit_a32_*, audit_t12_*)
+
+/// Période normale des contrôles : une fois par jour
+pub const PERIODE_S: u64 = 86_400;
+/// Nouveaux essais après un manifeste non obtenu : 15 min, puis 1 h, puis de nouveau la période normale. Une coupure
+/// passagère (réseau au démarrage, DNS, version en cours de publication dont le manifeste n'est pas encore joint) est
+/// rattrapée dans l'heure au lieu de 24 h ; une panne qui dure ne coûte que deux requêtes de plus par jour, et
+/// l'avertissement de la page Santé (ECHEC_PROLONGE_S) prend le relais
+pub const RELANCES_S: [u64; 2] = [900, 3_600];
+/// Série de contrôles en échec depuis 24 h ou plus : dite en page Santé (« à vérifier »)
+pub const ECHEC_PROLONGE_S: i64 = 86_400;
+
+/// Comparaison de la version du manifeste à la version installée
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Comparaison {
+    PlusRecente,
+    Egale,
+    PlusAncienne,
+}
+
+/// Issue d'un contrôle : calendrier des essais et code de la page Santé
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Issue {
+    /// Manifeste lu (à jour, version disponible, installation lancée ou refusée après lecture)
+    Lu,
+    /// Manifeste lu, mais plus ancien que la version installée : un manifeste remplacé peut geler les mises à jour
+    ManifesteAncien,
+    /// Manifeste non obtenu ou refusé (adresse refusée, téléchargement en échec, contenu invalide)
+    Echec,
+}
+
+/// Décision pure : « 4.3 » et « 4.3.0 » sont égales, « 4.10 » plus récente que « 4.9 »
+pub fn comparer_versions(manifeste: &str, installee: &str) -> Comparaison {
+    if plus_recente(manifeste, installee) {
+        Comparaison::PlusRecente
+    } else if plus_recente(installee, manifeste) {
+        Comparaison::PlusAncienne
+    } else {
+        Comparaison::Egale
+    }
+}
+
+/// Décision pure (A-3-2) : statut et issue d'un manifeste lu qui n'annonce pas de version plus récente ; None : version
+/// plus récente, la vérification du paquet continue. Un manifeste plus ancien n'est plus « à jour »
+pub fn statut_comparaison(manifeste: &str, installee: &str) -> Option<(String, Issue)> {
+    match comparer_versions(manifeste, installee) {
+        Comparaison::PlusRecente => None,
+        Comparaison::Egale => Some(("à jour".into(), Issue::Lu)),
+        Comparaison::PlusAncienne => Some((
+            format!("manifeste plus ancien que la version installée (manifeste {manifeste}, installée {installee}) : un manifeste remplacé peut geler les mises à jour"),
+            Issue::ManifesteAncien,
+        )),
+    }
+}
+
+/// Décision pure (T-12) : texte d'un manifeste non téléchargé. curl --fail écrit « curl: (22) The requested URL
+/// returned error: 404 » : dit « manifeste introuvable (404) » ; le reste garde le texte de curl (200 caractères au plus)
+pub fn texte_echec_manifeste(erreur_curl: &str) -> String {
+    let code: String = erreur_curl
+        .split("returned error: ")
+        .nth(1)
+        .map(|r| r.chars().take_while(|c| c.is_ascii_digit()).collect())
+        .unwrap_or_default();
+    if code == "404" { "manifeste introuvable (404)".into() } else { format!("manifeste illisible ({erreur_curl})") }
+}
+
+/// Décision pure (T-12) : délai avant le prochain contrôle, selon le nombre de contrôles en échec d'affilée (manifeste
+/// non obtenu ou refusé)
+pub fn delai_avant_controle(echecs_consecutifs: u32) -> u64 {
+    match echecs_consecutifs {
+        0 => PERIODE_S,
+        n => RELANCES_S.get(n as usize - 1).copied().unwrap_or(PERIODE_S),
+    }
+}
+
+/// Décision pure (T-12) : début de la série d'échecs (secondes Unix, 0 : aucun) après un contrôle d'issue `issue` à
+/// l'heure `t`, `precedent` étant le début publié au contrôle d'avant. Gardé au-delà des redémarrages ; une date future
+/// (horloge changée, fichier modifié) repart de `t`
+pub fn debut_echecs(issue: Issue, precedent: i64, t: i64) -> i64 {
+    match issue {
+        Issue::Echec if precedent > 0 && precedent <= t => precedent,
+        Issue::Echec => t,
+        Issue::Lu | Issue::ManifesteAncien => 0,
+    }
+}
+
+/// Décision pure (A-3-2, T-12) : code du contrôle pour la page Santé, traduit par l'interface. "" : rien à signaler ;
+/// « ManifesteAncien » et « EchecProlonge » : à vérifier ; « EchecRecent » : dernier contrôle en échec, essai rapproché
+pub fn code_controle(issue: Issue, echec_depuis: i64, t: i64) -> &'static str {
+    match issue {
+        Issue::Lu => "",
+        Issue::ManifesteAncien => "ManifesteAncien",
+        Issue::Echec if echec_depuis > 0 && t - echec_depuis >= ECHEC_PROLONGE_S => "EchecProlonge",
+        Issue::Echec => "EchecRecent",
+    }
 }
 
 /// Numéro de version valide (sert aussi de nom de dossier) : chiffres séparés par des points
@@ -293,28 +399,36 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
     Ok((paquet, a.sha256))
 }
 
-/// Vérifie et, si tout est en ordre (et si l'installation automatique est permise), installe
-fn verifier(config: &ConfigMaj, installer: bool) -> (String, String) {
+/// Vérifie et, si tout est en ordre (et si l'installation automatique est permise), installe. Rend la version du
+/// manifeste, le statut et l'issue du contrôle (calendrier des essais, page Santé)
+fn verifier(config: &ConfigMaj, installer: bool) -> (String, String, Issue) {
     let dossier = commun::dossier().join("maj");
     let _ = fs::create_dir_all(&dossier);
     let f_manifeste = dossier.join("manifeste.json");
     // config.json relu du disque : l'adresse est revalidée ici, pas seulement à la commande majConfig (B2)
     if !commun::adresse_manifeste_simple(&config.url) {
-        return (String::new(), "adresse du manifeste refusée (config.json) : aucune vérification".into());
+        return (String::new(), "adresse du manifeste refusée (config.json) : aucune vérification".into(), Issue::Echec);
     }
     if let Err(e) = telecharger(&config.url, &f_manifeste, TAILLE_MAX_MANIFESTE) {
-        return (String::new(), format!("manifeste illisible ({e})"));
+        return (String::new(), texte_echec_manifeste(&e), Issue::Echec);
     }
     // Lu avec le contrôle du propriétaire, comme tout fichier du dossier de données (la confiance vient de
     // toute façon du paquet signé)
     let lu = commun::lire_fichier(&f_manifeste).ok_or_else(|| "manifeste illisible ou protection du dossier non vérifiée".to_string());
     let m = match lu.and_then(|t| lire_manifeste(t.as_bytes())) {
         Ok(m) => m,
-        Err(e) => return (String::new(), e),
+        Err(e) => return (String::new(), e, Issue::Echec),
     };
-    if !plus_recente(&m.version, commun::VERSION) {
-        return (m.version, "à jour".into());
+    // Égale : à jour ; plus ancienne : statut distinct (A-3-2) ; plus récente : vérification du paquet
+    if let Some((statut, issue)) = statut_comparaison(&m.version, commun::VERSION) {
+        return (m.version, statut, issue);
     }
+    let (v, s) = installer_version(config, &m, installer, &dossier);
+    (v, s, Issue::Lu)
+}
+
+/// Version plus récente annoncée par un manifeste lu : signalée, ou vérifiée puis installée si c'est permis
+fn installer_version(config: &ConfigMaj, m: &Manifeste, installer: bool, dossier: &Path) -> (String, String) {
     if !installer {
         return (m.version.clone(), format!("version {} disponible (installation automatique désactivée)", m.version));
     }
@@ -489,18 +603,25 @@ pub fn script_installation(p: &ParametresScript) -> String {
     )
 }
 
-fn publier(disponible: String, mut statut: String) {
+fn publier(disponible: String, mut statut: String, issue: Issue) {
     // Écrit par le script en UTF-8 avec BOM (PowerShell 5) ; sans -Encoding, il l'était en Windows-1252 et sa
     // lecture échouait : l'échec n'apparaissait jamais dans l'interface
     if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
         statut = format!("{statut} · {}", e.trim_start_matches('\u{feff}').trim());
     }
+    // Début de la série d'échecs : repris du maj.json précédent (illisible : la série repart de maintenant)
+    let t = crate::sante::secondes();
+    let precedent: Etat = commun::lire("maj.json").unwrap_or_default();
+    let depuis = debut_echecs(issue, precedent.echec_depuis_s, t);
     let _ = commun::ecrire("maj.json", &Etat {
         verifie_le: commun::maintenant(),
         version_installee: commun::VERSION.into(),
         version_disponible: disponible,
         statut,
         cle_epinglee: !cles_epinglees(CLES_EPINGLEES).is_empty(),
+        controle: code_controle(issue, depuis, t).into(),
+        echec_depuis: if depuis > 0 { commun::heure(std::time::UNIX_EPOCH + Duration::from_secs(depuis as u64)) } else { String::new() },
+        echec_depuis_s: depuis,
     });
 }
 
@@ -508,22 +629,27 @@ fn publier(disponible: String, mut statut: String) {
 /// téléchargement
 pub fn verifier_maintenant(config: ConfigMaj) {
     std::thread::spawn(move || {
-        let (v, s) = verifier(&config, config.auto);
-        publier(v, s);
+        let (v, s, issue) = verifier(&config, config.auto);
+        publier(v, s, issue);
     });
 }
 
-/// Vérification quotidienne, à partir de 10 minutes après le démarrage
+/// Vérification quotidienne, à partir de 10 minutes après le démarrage ; après un manifeste non obtenu ou refusé,
+/// nouveaux essais à 15 min puis 1 h (delai_avant_controle, T-12)
 pub fn demarrer() {
     std::thread::Builder::new().name("mise à jour".into()).spawn(|| {
         std::thread::sleep(Duration::from_secs(600));
+        let mut echecs: u32 = 0;
         loop {
             let config: commun::Config = commun::lire("config.json").unwrap_or_default();
-            if !config.maj.url.is_empty() {
-                let (v, s) = verifier(&config.maj, config.maj.auto);
-                publier(v, s);
+            if config.maj.url.is_empty() {
+                echecs = 0;
+            } else {
+                let (v, s, issue) = verifier(&config.maj, config.maj.auto);
+                echecs = if issue == Issue::Echec { echecs.saturating_add(1) } else { 0 };
+                publier(v, s, issue);
             }
-            std::thread::sleep(Duration::from_secs(86_400));
+            std::thread::sleep(Duration::from_secs(delai_avant_controle(echecs)));
         }
     }).unwrap();
 }

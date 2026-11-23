@@ -409,6 +409,49 @@ namespace DeR4Tizer
             }
             return l;
         }
+
+        // Ligne « Mise à jour » (audit du 2026-11-23, A-3-2 et T-12), d'après le code publié par le service dans maj.json
+        // (maj.rs, code_controle), traduit ici : manifeste plus ancien que la version installée (gel possible des mises à
+        // jour) et contrôle en échec depuis 24 h ou plus : à vérifier. Code inconnu (service plus récent) : « en échec »,
+        // à vérifier, jamais « contrôlée »
+        public static LigneSante LigneMaj(EtatMaj m)
+        {
+            Func<string, string> v = Canal.Visible;
+            if (m == null)
+                return new LigneSante { Sujet = L.T("Mise à jour"), Etat = L.T("pas encore vérifiée"), Date = "", Detail = L.T("maj.json absent ou illisible : premier contrôle 10 min après le démarrage du service."), Source = "maj.json", Gravite = 0 };
+            string c = m.Controle;
+            string statut = v(m.Statut);
+            var x = new LigneSante { Sujet = L.T("Mise à jour"), Date = v(m.VerifieLe), Source = "maj.json" };
+            if (string.IsNullOrEmpty(c)) { x.Etat = L.T("contrôlée"); x.Detail = statut; x.Gravite = 0; }
+            else if (c == "ManifesteAncien")
+            {
+                x.Etat = L.T("manifeste plus ancien");
+                x.Detail = string.Format(L.T("Le manifeste publié annonce la version {0}, plus ancienne que la version installée ({1}) : un manifeste remplacé peut geler les mises à jour ; vérifiez la page des versions du projet."), v(m.VersionDisponible), v(m.VersionInstallee));
+                x.Gravite = 1;
+            }
+            else if (c == "EchecRecent")
+            {
+                x.Etat = L.T("dernier contrôle en échec");
+                x.Detail = statut + " ; " + L.T("nouvel essai dans 15 min, puis 1 h, puis chaque jour") + (string.IsNullOrEmpty(m.EchecDepuis) ? "" : " ; " + L.T("échec depuis") + " " + v(m.EchecDepuis));
+                x.Gravite = 0;
+            }
+            else if (c == "EchecProlonge")
+            {
+                x.Etat = L.T("en échec depuis plus de 24 h");
+                x.Detail = (string.IsNullOrEmpty(m.EchecDepuis) ? "" : L.T("échec depuis") + " " + v(m.EchecDepuis) + " ; ") + statut + " ; " + L.T("aucune mise à jour ne peut être vue ni installée tant que le manifeste ne se lit pas.");
+                x.Gravite = 1;
+            }
+            else { x.Etat = L.T("en échec"); x.Detail = statut; x.Gravite = 1; }
+            return x;
+        }
+
+        // Insère la ligne « Mise à jour » après la ligne « Remontée » (à la fin, sans elle)
+        public static void AjouterMaj(List<LigneSante> l, EtatMaj m)
+        {
+            if (l == null) return;
+            int i = l.FindIndex(x => x.Sujet == L.T("Remontée"));
+            l.Insert(i < 0 ? l.Count : i + 1, LigneMaj(m));
+        }
     }
 
     // Actions sur un incident, communes à la page d'aujourd'hui et à celle de la coquille (U2c) : même commande, même
@@ -630,6 +673,7 @@ namespace DeR4Tizer
                 try
                 {
                     var l = VueSante.Lignes(Commun.Lire<Etat>("etat.json"), Commun.Lire<EtatRemontee>("notifications.json"), DateTime.Now);
+                    VueSante.AjouterMaj(l, Commun.Lire<EtatMaj>("maj.json"));
                     if (!IsHandleCreated) return;
                     try { BeginInvoke((Action)(() => { if (numero == chargement) Afficher(l); })); } catch (InvalidOperationException) { }
                 }
