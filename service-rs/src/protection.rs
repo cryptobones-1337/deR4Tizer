@@ -729,7 +729,7 @@ pub fn vider_racine() -> Result<(String, bool), String> {
     // Quarantaine (audit du 2026-11-23, A-4-3) : gardée si elle contient au moins une copie et que tout ce qui est gardé
     // est vérifié réservé à SYSTEM et aux administrateurs ; sinon supprimée avec le reste (échec fermé)
     let garde = garder_la_quarantaine(racine);
-    let gardee = matches!(garde, Ok(n) if n > 0);
+    let gardee = matches!(garde, Ok(g) if g.copies > 0);
     let mut restes = Vec::new();
     for essai in 0..10 {
         restes = vider_contenu(racine, &|nom| garde_a_la_racine(nom, gardee));
@@ -743,7 +743,7 @@ pub fn vider_racine() -> Result<(String, bool), String> {
     if !restes.is_empty() {
         return Err(format!("suppression du contenu de {} incomplète : {}", racine.display(), restes.into_iter().take(10).collect::<Vec<_>>().join(" ; ")));
     }
-    Ok((texte_desinstallation(&racine.display().to_string(), &garde), garde != Ok(0)))
+    Ok((texte_desinstallation(&racine.display().to_string(), &garde), garde != Ok(QuarantaineGardee::default())))
 }
 
 /// Décision pure (audit du 2026-11-23, A-4-3) : élément gardé à la désinstallation réservé à SYSTEM et aux
@@ -767,75 +767,132 @@ pub fn garde_a_la_racine(nom: &str, quarantaine_gardee: bool) -> bool {
     quarantaine_gardee && ["quarantaine", "quarantaine.json", MARQUEUR].iter().any(|n| nom.eq_ignore_ascii_case(n))
 }
 
-/// Compte rendu de la suppression des données (pur, testé) : `garde` vaut le nombre de copies gardées, ou la raison pour
-/// laquelle la quarantaine n'a pas pu l'être
-pub fn texte_desinstallation(racine: &str, garde: &Result<usize, String>) -> String {
+/// Quarantaine gardée à la désinstallation (A-4-3) : nombre de copies, dont combien en clair (copies d'avant la 4.3
+/// jamais migrées : pas d'en-tête d'encodage)
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct QuarantaineGardee {
+    pub copies: usize,
+    pub en_clair: usize,
+}
+
+/// Compte rendu de la suppression des données (pur, testé) : `garde` dit ce qui est gardé de la quarantaine, ou la raison
+/// pour laquelle elle n'a pas pu l'être. « Encodé » n'est dit que si toutes les copies le sont (audit de #301, S301-05)
+pub fn texte_desinstallation(racine: &str, garde: &Result<QuarantaineGardee, String>) -> String {
     match garde {
-        Ok(0) => format!("Données supprimées ; racine {racine} gardée, vide, réservée à SYSTEM et aux administrateurs"),
-        Ok(n) => format!("Données supprimées, SAUF la quarantaine : {n} copie(s) gardée(s) dans {racine}\\quarantaine avec leur index \
-            {racine}\\quarantaine.json, réservées à SYSTEM et aux administrateurs (contenu encodé, jamais exécutable tel quel). Restaurer : \
-            réinstaller deR4Tizer (page Quarantaine). Supprimer : dans une invite de commandes d'administrateur, rmdir /s /q \"{racine}\\quarantaine\" \
-            puis del \"{racine}\\quarantaine.json\" \"{racine}\\{MARQUEUR}\". Racine {racine} gardée, réservée à SYSTEM et aux administrateurs"),
+        Ok(QuarantaineGardee { copies: 0, .. }) => format!("Données supprimées ; racine {racine} gardée, vide, réservée à SYSTEM et aux administrateurs"),
+        Ok(g) => {
+            let contenu = if g.en_clair == 0 {
+                "contenu encodé, jamais exécutable tel quel".to_string()
+            } else {
+                format!("ATTENTION : {} copie(s) d'avant la version 4.3, jamais migrée(s), en clair : un programme malveillant mis de côté peut s'y trouver tel quel ; ne pas l'ouvrir", g.en_clair)
+            };
+            format!("Données supprimées, SAUF la quarantaine : {} copie(s) gardée(s) dans {racine}\\quarantaine avec leur index \
+                {racine}\\quarantaine.json, réservées à SYSTEM et aux administrateurs ({contenu}). Restaurer : \
+                réinstaller deR4Tizer (page Quarantaine). Supprimer : dans une invite de commandes d'administrateur, rmdir /s /q \"{racine}\\quarantaine\" \
+                puis del \"{racine}\\quarantaine.json\" \"{racine}\\{MARQUEUR}\". Racine {racine} gardée, réservée à SYSTEM et aux administrateurs", g.copies)
+        }
         Err(e) => format!("Données supprimées, quarantaine COMPRISE : ses droits n'ont pas pu être vérifiés réservés à SYSTEM et aux \
             administrateurs ({e}) ; racine {racine} gardée, vide, réservée à SYSTEM et aux administrateurs"),
     }
 }
 
-/// Droits réservés à SYSTEM et aux administrateurs sur un élément gardé, par son handle (ouvert sans suivre de lien,
-/// chemin final vérifié) : relus, posés (`sddl`) s'ils ne le sont pas, puis relus. Err : non vérifiables
-fn reserver(p: &Path, dossier: bool, sddl: &str) -> Result<(), String> {
-    let f = crate::natif::ouvrir_verifie(p, ACCES_RACINE, 0x7, dossier).map_err(|e| format!("{} non ouvert sans lien ({e})", p.display()))?;
-    if crate::natif::lire_securite_handle(&f).is_some_and(|s| reserve_systeme_admins(&s)) {
-        return Ok(());
+/// DACL seules (sans propriétaire : jamais de prise de possession, audit de #301, S301-01) posées sur un élément gardé
+const DACL_GARDE_DOSSIER: &str = "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+const DACL_GARDE_FICHIER: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
+
+/// Décision pour un élément gardé à la désinstallation (A-4-3)
+#[derive(Debug, PartialEq)]
+pub enum Reservation {
+    /// Déjà réservé à SYSTEM et aux administrateurs
+    Faite,
+    /// Propriétaire de confiance, droits trop larges : DACL seule à poser
+    PoserDacl,
+    /// À ne pas garder : la quarantaine part avec le reste
+    Refus(&'static str),
+}
+
+/// Décision pure (audit de #301, S301-01, S301-03), sur ce qui est lu par le handle : droits illisibles, fichier à
+/// plusieurs liens physiques (ou nombre illisible) ou propriétaire qui n'est ni SYSTEM ni les administrateurs : refus.
+/// JAMAIS de prise de possession (comme deplacer_sans_perte) : un index au propriétaire « blanchi » serait cru à la
+/// réinstallation, puisque le marqueur est gardé avec lui
+pub fn decider_reservation(s: Option<&crate::natif::Securite>, fichier: bool, liens: Option<u32>) -> Reservation {
+    let Some(s) = s else { return Reservation::Refus("droits illisibles") };
+    if fichier && liens != Some(1) {
+        return Reservation::Refus("plusieurs liens physiques, ou nombre illisible");
     }
-    crate::natif::poser_droits_handle(&f, sddl).map_err(|e| format!("{} : droits refusés ({e})", p.display()))?;
-    match crate::natif::lire_securite_handle(&f) {
-        Some(s) if reserve_systeme_admins(&s) => Ok(()),
+    if !proprietaire_acceptable(&s.proprietaire) {
+        return Reservation::Refus("propriétaire ni SYSTEM ni les administrateurs");
+    }
+    if reserve_systeme_admins(s) { Reservation::Faite } else { Reservation::PoserDacl }
+}
+
+/// Droits réservés à SYSTEM et aux administrateurs sur un élément gardé, par son handle (ouvert sans suivre de lien,
+/// chemin final vérifié) : propriétaire, liens physiques et droits relus sur ce handle (decider_reservation), DACL seule
+/// posée s'il le faut, puis relue. Err : à ne pas garder
+fn reserver(p: &Path, dossier: bool) -> Result<(), String> {
+    let f = crate::natif::ouvrir_verifie(p, ACCES_RACINE, 0x7, dossier).map_err(|e| format!("{} non ouvert sans lien ({e})", p.display()))?;
+    let liens = if dossier { Some(1) } else { crate::natif::nombre_de_liens(&f) };
+    match decider_reservation(crate::natif::lire_securite_handle(&f).as_ref(), !dossier, liens) {
+        Reservation::Faite => return Ok(()),
+        Reservation::Refus(r) => return Err(format!("{} : {r}", p.display())),
+        Reservation::PoserDacl => {}
+    }
+    let dacl = if dossier { DACL_GARDE_DOSSIER } else { DACL_GARDE_FICHIER };
+    crate::natif::poser_droits_handle(&f, dacl).map_err(|e| format!("{} : droits refusés ({e})", p.display()))?;
+    match decider_reservation(crate::natif::lire_securite_handle(&f).as_ref(), !dossier, liens) {
+        Reservation::Faite => Ok(()),
         _ => Err(format!("{} : droits relus non réservés à SYSTEM et aux administrateurs", p.display())),
     }
 }
 
-/// Fichier gardé à la racine (index, marqueur) : absent, ou fichier ordinaire à un seul lien physique, réservé
+/// Fichier gardé à la racine (index, marqueur) : absent, ou fichier ordinaire réservé (liens relus sur le handle)
 fn reserver_fichier_racine(p: &Path) -> Result<(), String> {
     let Ok(m) = fs::symlink_metadata(p) else { return Ok(()) };
-    let liens = crate::natif::nombre_de_liens_chemin(p);
-    if !copie_a_garder(est_lien(&m), m.is_file(), liens) {
-        return Err(format!("{} n'est pas un fichier ordinaire à un seul lien physique", p.display()));
+    if est_lien(&m) || !m.is_file() {
+        return Err(format!("{} n'est pas un fichier ordinaire", p.display()));
     }
-    reserver(p, false, crate::reponse::SDDL_QUARANTAINE)
+    reserver(p, false)
 }
 
-/// Désinstallation (A-4-3) : prépare la quarantaine à garder et rend le nombre de copies gardées (0 : rien à garder).
-/// Sans rien suivre : liens, dossiers et fichiers à plusieurs liens physiques de quarantaine\ supprimés ; chaque copie,
-/// le dossier, l'index et le marqueur vérifiés réservés à SYSTEM et aux administrateurs (posés par handle au besoin).
-/// Err : quelque chose n'a pas pu l'être, la quarantaine part avec le reste
-fn garder_la_quarantaine(racine: &Path) -> Result<usize, String> {
+/// Désinstallation (A-4-3) : prépare la quarantaine à garder (copies : 0, rien à garder). D'abord, sans rien suivre,
+/// liens, dossiers et fichiers à plusieurs liens physiques de quarantaine\ supprimés, AVANT toute pose de droits (audit de
+/// #301, S301-02 : la pose sur le dossier se propage à ses enfants) ; puis le dossier, chaque copie, l'index et le
+/// marqueur réservés à SYSTEM et aux administrateurs (reserver). Err : quelque chose n'a pas pu l'être, la quarantaine
+/// part avec le reste
+fn garder_la_quarantaine(racine: &Path) -> Result<QuarantaineGardee, String> {
     let q = racine.join("quarantaine");
-    let Ok(m) = fs::symlink_metadata(&q) else { return Ok(0) };
+    let Ok(m) = fs::symlink_metadata(&q) else { return Ok(QuarantaineGardee::default()) };
     if est_lien(&m) || !m.is_dir() {
-        return Ok(0);
+        return Ok(QuarantaineGardee::default());
     }
-    reserver(&q, true, SDDL_DOSSIER)?;
     let lecture = fs::read_dir(&q).map_err(|e| format!("contenu de {} illisible ({e})", q.display()))?;
-    let mut copies = 0;
+    let mut candidates = Vec::new();
     for e in lecture {
         let p = e.map_err(|e| format!("élément de {} illisible ({e})", q.display()))?.path();
         let m = fs::symlink_metadata(&p).map_err(|e| format!("{} non inspectable ({e})", p.display()))?;
         let liens = if m.is_file() && !est_lien(&m) { crate::natif::nombre_de_liens_chemin(&p) } else { None };
         if copie_a_garder(est_lien(&m), m.is_file(), liens) {
-            reserver(&p, false, crate::reponse::SDDL_QUARANTAINE)?;
-            copies += 1;
+            candidates.push(p);
         } else {
             let r = if est_lien(&m) { fs::remove_dir(&p).or_else(|_| fs::remove_file(&p)) } else if m.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
             r.map_err(|e| format!("{} : suppression impossible ({e})", p.display()))?;
         }
     }
-    if copies == 0 {
-        return Ok(0);
+    if candidates.is_empty() {
+        return Ok(QuarantaineGardee::default());
+    }
+    reserver(&q, true)?;
+    let mut g = QuarantaineGardee::default();
+    for p in &candidates {
+        reserver(p, false)?;
+        g.copies += 1;
+        if !crate::reponse::est_encodee(p) {
+            g.en_clair += 1;
+        }
     }
     reserver_fichier_racine(&racine.join("quarantaine.json"))?;
     reserver_fichier_racine(&racine.join(MARQUEUR))?;
-    Ok(copies)
+    Ok(g)
 }
 
 /// Supprime chaque élément de `dossier` sans traverser de lien (un lien est supprimé seul ; remove_dir_all ne suit pas
