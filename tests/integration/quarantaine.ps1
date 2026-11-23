@@ -940,10 +940,21 @@ Verifier 'Droits de chaque élément après les scénarios (données, Program Fi
 }
 
 # ---------------------------------------------------------------- désinstallation complète
-Verifier 'Désinstallation sans GARDER_DONNEES : données retirées, racine gardée vide et protégée, canaris intacts (jonction de ecartes comprise)' {
+# Quarantaine gardée (audit du 2026-11-23, A-4-3) : les copies présentes avant la désinstallation restent, identiques,
+# réservées à SYSTEM et aux administrateurs, avec leur index et le marqueur ; tout le reste part
+$copiesAvant = Copies-Quarantaine
+# Retrait de l'audit (A-6-4) : un fichier créé dans le dossier témoin après la pose hérite de l'entrée du dossier (copie
+# « ID ») ; il doit la porter avant la désinstallation, sinon le contrôle ne prouverait rien
+$auditTemoin = $false; $copieHeritee = $false
+if ($edge -and (Test-Path -LiteralPath "$edge\Local State") -and @(Audit-Tous $edge).Count) {
+    $auditTemoin = $true
+    Set-Content -LiteralPath "$edge\apres-pose.dat" -Value 'x'
+    $copieHeritee = [bool]@(Audit-Tous "$edge\apres-pose.dat" | Where-Object { $_.IsInherited }).Count
+}
+Verifier "Désinstallation sans GARDER_DONNEES : données retirées, racine gardée et protégée ($($copiesAvant.Count) copie(s) de quarantaine gardée(s)), canaris intacts (jonction de ecartes comprise)" {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-3b.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
-    $racine = Racine-GardeeVide
+    $racine = Racine-GardeeApresDesinstallation $copiesAvant
     if ($racine -ne $true) { return $racine }
     $mod = @()
     if ((Empreinte-Dossier $canariEcartes) -ne $empreinteEcartes) { $mod += 'ecartes' }
@@ -951,6 +962,24 @@ Verifier 'Désinstallation sans GARDER_DONNEES : données retirées, racine gard
     if ((Empreinte-Dossier $canariE) -ne $empreinteE) { $mod += 'quarantaine' }
     if ($mod.Count) { return 'canaris modifiés : ' + ($mod -join ', ') }
     $true
+}
+$titreRetraitAudit = 'Désinstallation : audit de lecture de deR4Tizer retiré du dossier témoin et de ses fichiers (copie héritée comprise), règle tierce et étiquette d''intégrité gardées, canari de la jonction inchangé (A-6-4)'
+if ($auditTemoin) {
+    Verifier $titreRetraitAudit {
+        if (-not $copieHeritee) { return "témoin : le fichier créé après la pose ne portait pas de copie héritée ($((Get-Acl -LiteralPath "$edge\apres-pose.dat" -Audit).Sddl))" }
+        foreach ($x in $edge, "$edge\Local State", "$edge\temoin-integrite-basse.dat", "$edge\apres-pose.dat") {
+            if (@(Audit-Tous $x).Count) { return "audit de Tout le monde resté sur $x : $((Get-Acl -LiteralPath $x -Audit).Sddl)" }
+        }
+        $tierce = @((Get-Acl -LiteralPath $edge -Audit).Audit | Where-Object {
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544' -and $_.AuditFlags -eq 'Failure' })
+        if (-not $tierce.Count) { return "règle d'audit tierce effacée par le retrait" }
+        $e = Etiquette $fichierLow
+        if ($e -notmatch '\(ML;[^)]*;LW\)') { return "étiquette d'intégrité perdue au retrait : $e" }
+        if ((Descripteurs $canariAudit) -ne $descripteursAvant) { return 'descripteurs du canari modifiés à travers la jonction' }
+        $true
+    }
+} else {
+    NonExecute $titreRetraitAudit 'audit jamais posé sur le dossier témoin (profil du compte standard absent ou pose en échec : voir plus haut)'
 }
 
 Bilan 'Lot 3b : quarantaine, restauration, jonctions, dossier mis de côté'

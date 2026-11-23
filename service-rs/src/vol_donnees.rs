@@ -209,8 +209,48 @@ fn sddl_audit_dossier(recursif: bool) -> &'static str {
 /// Audit de lecture sur un fichier déjà présent (les nouveaux héritent de l'entrée du dossier)
 const SDDL_AUDIT_FICHIER: &str = "S:(AU;SA;0x1;;;WD)";
 
+/// Formes héritées (« ID ») que Windows recopie de l'entrée d'un dossier audité : sur ses fichiers (cibles récursives
+/// ou non), et sur ses sous-dossiers (cibles récursives)
+const SDDL_COPIE_FICHIER: &str = "S:(AU;IDSA;0x1;;;WD)";
+const SDDL_COPIE_DOSSIER: &str = "S:(AU;OICIIDSA;0x1;;;WD)";
+
 /// Éléments parcourus au plus par dossier (profil de navigateur) et par passage
 const MAXIMUM_PAR_DOSSIER: usize = 20_000;
+
+/// Entrées d'audit de deR4Tizer pour une cible : la pose et le retrait les partagent (celles qu'on retire sont
+/// exactement celles qu'on pose)
+pub fn entrees_audit(recursif: bool) -> crate::natif::EntreesAudit<'static> {
+    crate::natif::EntreesAudit { dossier: sddl_audit_dossier(recursif), fichier: SDDL_AUDIT_FICHIER, copie_dossier: SDDL_COPIE_DOSSIER, copie_fichier: SDDL_COPIE_FICHIER }
+}
+
+/// Désinstallation (audit du 2026-11-23, A-6-4) : retire l'audit de lecture posé dans les profils (sinon, avec
+/// GARDER_BASELINE=1, l'audit « Système de fichiers » reste actif et Windows continue d'écrire des 4663 sur ces
+/// fichiers). Par handle, comme la pose (natif::retirer_audit_arborescence) : seules les entrées identiques aux nôtres
+/// partent. Rend un compte rendu d'une ligne
+pub fn retirer_audit() -> String {
+    let (mut n, mut retraits, mut echecs, mut ecartes) = (0, 0, 0, 0);
+    for (d, c) in dossiers_presents() {
+        match crate::natif::retirer_audit_arborescence(Path::new(&d), &entrees_audit(c.recursif), c.recursif, MAXIMUM_PAR_DOSSIER) {
+            Ok(b) => {
+                n += 1;
+                retraits += b.poses;
+                ecartes += b.ecartes + usize::from(b.tronque);
+            }
+            Err(_) => echecs += 1,
+        }
+    }
+    texte_retrait_audit(n, retraits, echecs, ecartes)
+}
+
+/// Compte rendu du retrait de l'audit (pur, testé) : un échec ou un élément écarté se dit, avec ce qu'il reste à faire
+pub fn texte_retrait_audit(dossiers: usize, retraits: usize, echecs: usize, ecartes: usize) -> String {
+    let mut t = format!("Audit de lecture des données sensibles : retiré de {retraits} élément(s) dans {dossiers} dossier(s) de profil.");
+    if echecs > 0 || ecartes > 0 {
+        t.push_str(&format!(" {echecs} dossier(s) en échec, {ecartes} élément(s) écarté(s) (liens, illisibles ou au-delà du maximum) : \
+            leur audit de lecture pour Tout le monde peut rester (Propriétés, Sécurité, Avancé, Audit)."));
+    }
+    t
+}
 
 /// Pose (ou repose) l'audit de lecture sur les dossiers. En SYSTEM dans les profils des utilisateurs : tout par
 /// handle (natif::poser_audit_arborescence), jamais par chemin ni par PowerShell : une jonction posée par
@@ -220,7 +260,8 @@ const MAXIMUM_PAR_DOSSIER: usize = 20_000;
 pub fn poser_audit() -> (usize, usize) {
     let (mut n, mut echecs) = (0, 0);
     for (d, c) in dossiers_presents() {
-        match crate::natif::poser_audit_arborescence(Path::new(&d), sddl_audit_dossier(c.recursif), SDDL_AUDIT_FICHIER, c.recursif, MAXIMUM_PAR_DOSSIER) {
+        let e = entrees_audit(c.recursif);
+        match crate::natif::poser_audit_arborescence(Path::new(&d), e.dossier, e.fichier, c.recursif, MAXIMUM_PAR_DOSSIER) {
             Ok(b) => {
                 n += 1;
                 if b.ecartes > 0 || b.tronque {

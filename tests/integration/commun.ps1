@@ -574,16 +574,51 @@ while (`$pile.Count) {
 # propriétaire) et processus deR4Tizer encore présents
 # Désinstallation sans GARDER_DONNEES (lot A, point 4) : la racine reste, vide, dossier véritable (pas un lien),
 # propriétaire Administrateurs, héritage coupé, entrées pour SYSTEM et les administrateurs seulement. $true ou l'écart
-function Racine-GardeeVide {
-    if (-not (Test-Path -LiteralPath $script:Donnees)) { return 'racine absente (attendue gardée, vide et protégée)' }
+function Racine-GardeeVide { Racine-GardeeApresDesinstallation @{} }
+
+# Copies de la quarantaine (nom → empreinte), relevées avant une désinstallation (audit du 2026-11-23, A-4-3)
+function Copies-Quarantaine {
+    $q = Join-Path $script:Donnees 'quarantaine'
+    $h = @{}
+    foreach ($f in @(Get-ChildItem -LiteralPath $q -File -Force -ErrorAction SilentlyContinue)) { $h[$f.Name] = Sha256 $f.FullName }
+    $h
+}
+
+# Désinstallation sans GARDER_DONNEES (lot A, point 4 ; A-4-3) : racine véritable gardée, propriétaire Administrateurs,
+# héritage coupé, SYSTEM et administrateurs seulement. Sans copie en quarantaine avant ($CopiesAvant vide) : racine vide.
+# Avec des copies : il ne reste que quarantaine\ (les mêmes copies, mêmes empreintes), quarantaine.json et le marqueur de
+# prise en charge, chacun au propriétaire de confiance et sans autorisation pour un autre compte, même en lecture ; et le
+# compte rendu de %SystemRoot%\Temp le dit. $true ou l'écart
+function Racine-GardeeApresDesinstallation([hashtable]$CopiesAvant) {
+    if (-not (Test-Path -LiteralPath $script:Donnees)) { return 'racine absente (attendue gardée et protégée)' }
     $i = Get-Item -LiteralPath $script:Donnees -Force
     if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'racine : lien' }
-    $contenu = @(Get-ChildItem -LiteralPath $script:Donnees -Force -ErrorAction SilentlyContinue)
-    if ($contenu.Count) { return "données restantes : $(Restes-Donnees)" }
     $d = Droits $script:Donnees
     if ($d.Proprietaire -ne 'S-1-5-32-544' -or -not $d.Protege) { return "racine : propriétaire $($d.Proprietaire), protégée $($d.Protege)" }
     $autres = @($d.Entrees | Where-Object { $_.Autorise -and $_.Sid -notin $script:SidsConfiance })
     if ($autres.Count) { return "racine : entrées pour $(($autres | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
+    $contenu = @(Get-ChildItem -LiteralPath $script:Donnees -Force -ErrorAction SilentlyContinue)
+    if (-not $CopiesAvant.Count) {
+        if ($contenu.Count) { return "données restantes : $(Restes-Donnees)" }
+        return $true
+    }
+    $permis = 'quarantaine', 'quarantaine.json', 'prise-en-charge.json'
+    $hors = @($contenu | Where-Object { $_.Name -notin $permis })
+    if ($hors.Count) { return "données restantes hors de la quarantaine gardée : $(Restes-Donnees)" }
+    if (-not (Test-Path -LiteralPath (Join-Path $script:Donnees 'quarantaine.json'))) { return 'index quarantaine.json non gardé' }
+    $apres = Copies-Quarantaine
+    $diff = @($CopiesAvant.Keys | Where-Object { $apres[$_] -ne $CopiesAvant[$_] }) + @($apres.Keys | Where-Object { -not $CopiesAvant.ContainsKey($_) })
+    if ($diff.Count) { return "copies perdues, changées ou ajoutées : $($diff -join ', ')" }
+    $elements = @(Get-Item -LiteralPath (Join-Path $script:Donnees 'quarantaine') -Force) + @(Get-ChildItem -LiteralPath $script:Donnees -Recurse -Force)
+    foreach ($e in $elements) {
+        if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { return "lien gardé : $($e.FullName)" }
+        $x = Droits $e.FullName
+        if ($x.Proprietaire -notin $script:SidsConfiance) { return "$($e.FullName) : propriétaire $($x.Proprietaire)" }
+        $a = @($x.Entrees | Where-Object { $_.Autorise -and $_.Sid -notin $script:SidsConfiance })
+        if ($a.Count) { return "$($e.FullName) : entrées pour $(($a | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
+    }
+    $cr = Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-desinstallation-*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if (-not $cr -or (Get-Content -LiteralPath $cr.FullName -Raw) -notmatch 'SAUF la quarantaine') { return "compte rendu de la quarantaine gardée absent de %SystemRoot%\Temp" }
     $true
 }
 
