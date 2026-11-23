@@ -362,7 +362,7 @@ try {
             $tArme = $chrono.ElapsedMilliseconds; $tFin = $k.Text
             $attendus = @($cas.D..1 | ForEach-Object { "$base ($_)" })
             Verifier-Fenetre "$nomC : secondes restantes sur le bouton, puis « $base » armé" { if ($t0 -eq "$base ($($cas.D))" -and (($vus -join '|') -eq ($attendus -join '|')) -and $tFin -eq $base -and $k.Enabled -and $tArme -ge ($cas.D * 1000 - 100)) { $true } else { "départ « $t0 », vus « $($vus -join '|') », fin « $tFin » après $tArme ms" } }
-            Verifier-Fenetre "$nomC : « Annuler » reste le bouton par défaut une fois armé" { $f.AcceptButton -eq $a -and $f.CancelButton -eq $a -and $a.DialogResult -eq 'Cancel' -and $a.GetType().GetField('Accent').GetValue($a) -and -not $k.GetType().GetField('Accent').GetValue($k) -and $a.TabIndex -lt $k.TabIndex }
+            Verifier-Fenetre "$nomC : « Annuler » reste le bouton par défaut une fois armé" { $f.AcceptButton -eq $a -and $f.CancelButton -eq $a -and $a.DialogResult -eq 'Cancel' -and $a.GetType().GetProperty('Accent').GetValue($a, $null) -and -not $k.GetType().GetProperty('Accent').GetValue($k, $null) -and $a.TabIndex -lt $k.TabIndex }
             & $desactiverF $f
             Verifier-Fenetre "$nomC : hors du premier plan, désarmé et compte remis à $($cas.D)" { -not $k.Enabled -and $k.Text -eq "$base ($($cas.D))" }
             $sousTitre = $f.Controls.Find('SousTitre', $true)[0].Text
@@ -473,6 +473,57 @@ public static class RenduConfirmationT16
     }
     $nbImports = @(foreach ($fichier in Get-ChildItem (Join-Path $src '*.cs')) { [regex]::Matches([IO.File]::ReadAllText($fichier.FullName), '\[(System\.Runtime\.InteropServices\.)?DllImport\(') }).Count
     Verifier-Fenetre "S296-02 : les $nbImports DllImport de src\*.cs chargent leur DLL depuis System32 seulement" { if (-not $sansSystem32 -and $nbImports -ge 20) { $true } else { "sans l'attribut : $($sansSystem32 -join ', ')" } }
+
+    # Prérelecture de #296 (1) : réarmement complet après la perte du premier plan, commande qui affaiblit : le compte repart
+    # de 2 (jamais armé avant 1,9 s), que la fenêtre ait été armée ou perdue à mi-compte
+    foreach ($momentPerte in 'armée', 'à mi-compte') {
+        $f = & $fenetre 'x' 'essai' $false $true
+        try {
+            $k = $f.Controls.Find('Continuer', $true)[0]
+            & $activerF $f
+            $chrono = [Diagnostics.Stopwatch]::StartNew()
+            if ($momentPerte -eq 'armée') { while (-not $k.Enabled -and $chrono.ElapsedMilliseconds -lt 6000) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10 } }
+            else { while ($k.Text -ne 'Continuer (1)' -and $chrono.ElapsedMilliseconds -lt 6000) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10 } }
+            $avant = "$($k.Text), actif : $($k.Enabled)"
+            & $desactiverF $f
+            & $activerF $f
+            $texteRetour = $k.Text; $actifRetour = $k.Enabled
+            $chrono = [Diagnostics.Stopwatch]::StartNew()
+            while (-not $k.Enabled -and $chrono.ElapsedMilliseconds -lt 6000) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10 }
+            $tRearme = if ($k.Enabled) { [int]$chrono.ElapsedMilliseconds } else { -1 }
+            Verifier-Fenetre "Prérelecture #296 : perte du premier plan $momentPerte puis retour, commande qui affaiblit : le compte repart de 2, réarmé après 2 s" { if ($texteRetour -eq 'Continuer (2)' -and -not $actifRetour -and $tRearme -ge 1900) { $true } else { "avant : $avant ; au retour : $texteRetour, actif : $actifRetour ; réarmé après $tRearme ms" } }
+        } finally { $f.Dispose() }
+    }
+
+    # Prérelecture de #296 (2) : l'accent suit le bouton que l'Entrée active (IsDefault). À l'ouverture, « Annuler » ; après
+    # une tabulation vers « Continuer », WinForms fait de lui le bouton par défaut (NotifyDefault, ce qu'appelle la fenêtre
+    # quand le focus arrive sur un bouton) et l'accent passe sur lui. Contrôlé sur le dessin réel du bouton
+    $accentDe = { param($b) [bool]$b.GetType().GetProperty('Accent').GetValue($b, $null) }
+    $boutonT = $canal.GetNestedType('BoutonConfirmation', [Reflection.BindingFlags]'NonPublic')
+    $cyan = $theme.GetField('Cyan').GetValue($null); $bordure = $theme.GetField('Bordure').GetValue($null); $texteC = $theme.GetField('Texte').GetValue($null)
+    $proche = { param($p, $c) [Math]::Abs($p.R - $c.R) + [Math]::Abs($p.G - $c.G) + [Math]::Abs($p.B - $c.B) -lt 60 }
+    # Couleur du bord haut d'un bouton dessiné (deuxième ligne de pixels, au milieu)
+    $bordDe = { param($b) $img = New-Object Drawing.Bitmap $b.Width, $b.Height; $b.DrawToBitmap($img, (New-Object Drawing.Rectangle 0, 0, $b.Width, $b.Height)); $p = $img.GetPixel([int]($b.Width / 2), 1); $img.Dispose(); $p }
+    $f = & $fenetre 'x' 'essai' $false $false
+    try {
+        $a = $f.Controls.Find('Annuler', $true)[0]; $k = $f.Controls.Find('Continuer', $true)[0]
+        $d0 = (& $proche (& $bordDe $a) $cyan) -and (& $proche (& $bordDe $k) $bordure) -and (& $accentDe $a) -and -not (& $accentDe $k)
+        ([Windows.Forms.IButtonControl]$a).NotifyDefault($false); ([Windows.Forms.IButtonControl]$k).NotifyDefault($true)
+        $d1 = (& $proche (& $bordDe $k) $cyan) -and (& $proche (& $bordDe $a) $bordure) -and (& $accentDe $k) -and -not (& $accentDe $a)
+        Verifier-Fenetre 'Prérelecture #296 : accent dessiné sur le bouton que l''Entrée active (« Annuler » à l''ouverture, « Continuer » s''il devient le bouton par défaut)' { if ($d0 -and $d1) { $true } else { "ouverture : $d0 ; après tabulation : $d1" } }
+    } finally { $f.Dispose() }
+    # Repère de focus : pointillés à l'intérieur du bouton quand il a le focus au clavier, aucun sinon
+    $dessiner = $boutonT.GetMethod('Dessiner')
+    $repere = {
+        param($focus)
+        $img = New-Object Drawing.Bitmap 130, 34; $g = [Drawing.Graphics]::FromImage($img)
+        $dessiner.Invoke($null, [object[]]@($g, [Drawing.Rectangle]::new(0, 0, 130, 34), '', [Drawing.Font]::new('Segoe UI', 10), $true, $false, [bool]$focus, $bordure)) | Out-Null
+        $g.Dispose(); $n = @(10..118 | Where-Object { & $proche ($img.GetPixel($_, 5)) $texteC }).Count; $img.Dispose(); $n
+    }
+    $avecFocus = & $repere $true; $sansFocus = & $repere $false
+    Verifier-Fenetre 'Prérelecture #296 : repère de focus visible sur le bouton qui a le focus au clavier' { if ($avecFocus -ge 20 -and $sansFocus -eq 0) { $true } else { "pixels du repère : avec focus $avecFocus, sans $sansFocus" } }
+    $principal296 = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs'))
+    Verifier-Fenetre 'Prérelecture #296 : le bouton dessine l''accent selon IsDefault et le repère selon le focus au clavier' { $principal296.Contains('public bool Accent { get { return IsDefault; } }') -and $principal296.Contains('Dessiner(e.Graphics, ClientRectangle, Text, Font, Enabled, Accent, Focused && ShowFocusCues,') }
     "bilan fenêtre : $kof échec(s)"
     if ($ko -or $kof) { exit 1 }
 } finally {
