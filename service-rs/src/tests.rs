@@ -2116,17 +2116,148 @@ fn lot1_droits_conformes() {
 fn lot1_lecture_echec_ferme() {
     use crate::commun::lecture_autorisee;
     // Hors service : pas de contrôle (tests, mode console)
-    assert!(lecture_autorisee(false, true, true, true, Some(false)).is_ok());
+    assert!(lecture_autorisee(false, true, true, true, Some(false), None).is_ok());
     // En service
-    assert!(lecture_autorisee(true, true, false, true, Some(true)).is_ok());
-    assert!(lecture_autorisee(true, true, false, false, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
-    assert!(lecture_autorisee(true, true, false, true, None).is_err(), "fichier présent au propriétaire illisible (DACL vide)");
-    assert!(lecture_autorisee(true, true, false, true, Some(false)).is_err(), "propriétaire : compte standard");
-    assert!(lecture_autorisee(true, true, true, true, Some(true)).is_err(), "protection non vérifiée : rien n'est chargé");
+    assert!(lecture_autorisee(true, true, false, true, Some(true), Some(1)).is_ok());
+    assert!(lecture_autorisee(true, true, false, false, None, None).is_ok(), "fichier absent : la lecture échoue d'elle-même");
+    assert!(lecture_autorisee(true, true, false, true, None, Some(1)).is_err(), "fichier présent au propriétaire illisible (DACL vide)");
+    assert!(lecture_autorisee(true, true, false, true, Some(false), Some(1)).is_err(), "propriétaire : compte standard");
+    assert!(lecture_autorisee(true, true, true, true, Some(true), Some(1)).is_err(), "protection non vérifiée : rien n'est chargé");
     // lecteurs.json (sans le verrou) : seul le propriétaire compte
-    assert!(lecture_autorisee(true, false, true, true, Some(true)).is_ok());
-    assert!(lecture_autorisee(true, false, true, true, Some(false)).is_err());
-    assert!(lecture_autorisee(true, false, true, true, None).is_err());
+    assert!(lecture_autorisee(true, false, true, true, Some(true), Some(1)).is_ok());
+    assert!(lecture_autorisee(true, false, true, true, Some(false), Some(1)).is_err());
+    assert!(lecture_autorisee(true, false, true, true, None, Some(1)).is_err());
+}
+
+#[test]
+fn lot_a_lecture_refusee_a_plusieurs_liens_physiques() {
+    use crate::commun::lecture_autorisee;
+    // Audit du 2026-11-23, C-2 : un lien dur vers un fichier de SYSTEM porte le propriétaire de ce fichier
+    assert!(lecture_autorisee(true, false, false, true, Some(true), Some(2)).is_err(), "deux liens physiques");
+    assert!(lecture_autorisee(true, false, false, true, Some(true), None).is_err(), "nombre de liens illisible : refus");
+    assert!(lecture_autorisee(true, false, false, true, Some(true), Some(1)).is_ok());
+    assert!(lecture_autorisee(false, false, false, true, None, Some(2)).is_ok(), "hors service : pas de contrôle");
+}
+
+/// Lecture contrôlée par un seul handle (C-8), avec les règles du service (systeme = vrai) et le compte qui lance les tests
+/// pris pour propriétaire de confiance : absent rendu sans lecture, fichier à deux liens physiques refusé, lien refusé
+#[test]
+fn lot_a_lecture_controlee_par_un_seul_handle() {
+    use crate::commun::{lire_controle_avec, Lecture};
+    let d = dossier_test("lot-a-lecture-handle");
+    let f = d.join("config.json");
+    let tous = |_: &str| true;
+    assert_eq!(lire_controle_avec(&f, true, false, false, 1024, &tous), Lecture::Absent, "absent : rien n'est lu");
+    std::fs::write(&f, b"{}").unwrap();
+    assert_eq!(lire_controle_avec(&f, true, false, false, 1024, &tous), Lecture::Octets(b"{}".to_vec()));
+    assert_eq!(lire_controle_avec(&f, true, false, false, 1, &tous), Lecture::TropGrand);
+    let personne = |_: &str| false;
+    assert!(matches!(lire_controle_avec(&f, true, false, false, 1024, &personne), Lecture::Refusee(_)), "propriétaire refusé, lu sur le handle");
+    std::fs::hard_link(&f, d.join("second-nom.json")).unwrap();
+    assert!(matches!(lire_controle_avec(&f, true, false, false, 1024, &tous), Lecture::Refusee(r) if r.contains("liens physiques")),
+        "fichier à deux liens physiques");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// C-3 : absent n'est pas illisible ; contenu mal formé ou lecture refusée : non chargé ; erreur passagère : nouvel essai
+/// borné (ESSAIS_LECTURE)
+#[test]
+fn lot_a_lecture_absent_distinct_de_illisible() {
+    use crate::commun::{lu_de, Lecture, Lu, ESSAIS_LECTURE};
+    assert_eq!(lu_de::<Vec<u32>>(&mut || Lecture::Absent), Lu::Absent);
+    assert_eq!(lu_de::<Vec<u32>>(&mut || Lecture::Octets(b"[1,2]".to_vec())), Lu::Valeur(vec![1, 2]));
+    assert!(matches!(lu_de::<Vec<u32>>(&mut || Lecture::Octets(b"{".to_vec())), Lu::NonCharge(_)), "mal formé");
+    assert!(matches!(lu_de::<Vec<u32>>(&mut || Lecture::Refusee("propriétaire")), Lu::NonCharge(_)), "refusé");
+    assert!(matches!(lu_de::<Vec<u32>>(&mut || Lecture::TropGrand), Lu::NonCharge(_)), "trop grand");
+    let mut n = 0;
+    assert!(matches!(lu_de::<Vec<u32>>(&mut || { n += 1; Lecture::Erreur("verrou".into()) }), Lu::NonCharge(_)));
+    assert_eq!(n, ESSAIS_LECTURE, "nouvel essai borné");
+    let mut n = 0;
+    let lu = lu_de::<Vec<u32>>(&mut || { n += 1; if n < 2 { Lecture::Erreur("verrou".into()) } else { Lecture::Octets(b"[3]".to_vec()) } });
+    assert_eq!(lu, Lu::Valeur(vec![3]), "verrou passager");
+}
+
+/// C-3 : un fichier présent mais non chargé n'est pas remplacé par `ecrire` tant qu'une lecture ne l'a pas chargé ou vu
+/// absent (avant : la première écriture y mettait les valeurs par défaut)
+#[test]
+fn lot_a_fichier_non_charge_jamais_reecrit() {
+    use crate::commun::{ecrire_suivi, lire_etat_de, non_charge, Lu};
+    let d = dossier_test("lot-a-non-charge");
+    let nom = "lot-a-non-charge.json";
+    let f = d.join(nom);
+    assert_eq!(lire_etat_de::<Vec<u32>>(nom, &f), Lu::Absent);
+    assert!(!non_charge(nom));
+    std::fs::write(&f, b"{ mal forme").unwrap();
+    assert!(matches!(lire_etat_de::<Vec<u32>>(nom, &f), Lu::NonCharge(_)));
+    assert!(non_charge(nom));
+    assert!(ecrire_suivi(nom, &f, &vec![0u32]).is_err(), "réécriture refusée");
+    assert_eq!(std::fs::read(&f).unwrap(), b"{ mal forme", "fichier légitime intact");
+    std::fs::write(&f, b"[5]").unwrap();
+    assert_eq!(lire_etat_de::<Vec<u32>>(nom, &f), Lu::Valeur(vec![5]));
+    assert!(!non_charge(nom), "chargé : de nouveau inscriptible");
+    assert!(ecrire_suivi(nom, &f, &vec![6u32]).is_ok());
+    assert_eq!(std::fs::read(&f).unwrap(), b"[6]");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn lot_a_configuration_non_chargee_et_san014() {
+    use crate::moniteur::configuration_non_chargee_selon;
+    assert!(configuration_non_chargee_selon(true, false));
+    assert!(!configuration_non_chargee_selon(true, true), "en échec de la protection, INT-001 le dit déjà");
+    assert!(!configuration_non_chargee_selon(false, false));
+    let mut s = crate::sante::Sante::default();
+    assert!(s.observer_config(false, 0).is_none());
+    let a = s.observer_config(true, 10).expect("constat dès l'état vu");
+    assert_eq!(a.regle, crate::regles::SAN_014);
+    assert!(s.observer_config(true, 100).is_none(), "pas avant 24 h");
+    assert!(s.observer_config(true, 10 + crate::sante::RAPPEL_S).is_some(), "rappel après 24 h");
+    assert!(s.observer_config(false, 200_000).is_none());
+    assert!(s.observer_config(true, 200_010).is_some(), "nouvel épisode aussitôt");
+    // Les commandes qui réécrivent config.json refusent (structure : chaque garde d'échec de la protection en a une)
+    let source = include_str!("moniteur.rs");
+    assert_eq!(source.matches("if let Some(r) = refus_config_non_chargee() {").count(), 9);
+    assert!(source.contains("config: charger_config(),"));
+    assert!(source.contains("if configuration_non_chargee() {\n        return Err(CONFIG_NON_CHARGEE.into());")
+        || source.contains("if configuration_non_chargee() {\r\n        return Err(CONFIG_NON_CHARGEE.into());"));
+}
+
+/// C-1 : décision unique « racine sûre ? » ; en service, rien n'est écrit sous une racine non vérifiée
+#[test]
+fn lot_a_racine_non_verifiee_aucune_ecriture() {
+    use crate::commun::{dans_le_dossier, ecriture_permise};
+    assert!(ecriture_permise(false, false), "hors service (tests, console) : pas de contrôle");
+    assert!(!ecriture_permise(true, false), "service, racine non vérifiée : rien");
+    assert!(ecriture_permise(true, true));
+    let r = std::path::Path::new(r"C:\ProgramData\deR4Tizer");
+    assert!(dans_le_dossier(r, r));
+    assert!(dans_le_dossier(std::path::Path::new(r"c:\programdata\DER4TIZER\siem\x.jsonl"), r));
+    assert!(!dans_le_dossier(std::path::Path::new(r"C:\ProgramData\deR4Tizer.ecarte-x\a"), r));
+    assert!(!dans_le_dossier(std::path::Path::new(r"C:\ProgramData"), r));
+    // Journal et écritures passent par cette décision ; le service ne démarre la surveillance qu'une racine sûre
+    let commun = include_str!("commun.rs");
+    assert!(commun.contains("if !racine_sure() {\r\n        crate::natif::journal_evenements(&propre, false);")
+        || commun.contains("if !racine_sure() {\n        crate::natif::journal_evenements(&propre, false);"));
+    assert!(commun.contains("if dans_le_dossier(f, dossier()) && !racine_sure() {"));
+    let main = include_str!("main.rs");
+    assert!(main.contains("if !protection::securiser() {"));
+    let i = main.find("if !protection::securiser() {").unwrap();
+    assert!(main.find("moniteur::Moniteur::demarrer(false)").unwrap() > i, "surveillance démarrée après une racine sûre");
+    let protection = include_str!("protection.rs");
+    assert!(!protection.contains("poser_droits(commun::dossier()"), "plus de pose de droits de la racine par le chemin");
+    assert!(protection.contains("crate::natif::poser_droits_handle(&f, &sddl_racine(lecteurs))"));
+}
+
+/// Nom du dossier écarté imprévisible (audit du 2026-11-23) : date et identifiant unique
+#[test]
+fn lot_a_nom_du_dossier_ecarte_imprevisible() {
+    use crate::protection::nom_ecarte;
+    let a = nom_ecarte("2026-11-23 10:00:00", &crate::commun::nouvel_id());
+    let b = nom_ecarte("2026-11-23 10:00:00", &crate::commun::nouvel_id());
+    assert_ne!(a, b, "deux écarts à la même seconde : deux noms");
+    assert!(a.starts_with("deR4Tizer.ecarte-2026-11-23-10-00-00-"), "{a}");
+    assert!(!a.contains(':') && !a.contains(' '));
+    assert!(include_str!("protection.rs").contains("nom_ecarte(&commun::maintenant(), &commun::nouvel_id())"));
 }
 
 #[test]
@@ -2140,6 +2271,39 @@ fn lot1_tri_au_demarrage_proprietaire_non_verifie_ecarte() {
     for p in [Some(true), Some(false), None] {
         assert_eq!(trier_element(true, p), Tri::SupprimerLien, "un lien est supprimé quel que soit son propriétaire");
     }
+}
+
+/// C-2 : au tri, un fichier à plusieurs liens physiques est écarté quel que soit son propriétaire ; première prise en
+/// charge : tout est mis de côté
+#[test]
+fn lot_a_tri_liens_physiques_et_premiere_prise_en_charge() {
+    use crate::protection::{premiere_prise_en_charge, trier_element_liens, Tri};
+    assert_eq!(trier_element_liens(false, Some(true), Some(1)), Tri::Garder);
+    assert_eq!(trier_element_liens(false, Some(true), Some(2)), Tri::Ecarter, "lien dur");
+    assert_eq!(trier_element_liens(false, Some(true), None), Tri::Ecarter, "nombre de liens illisible");
+    assert_eq!(trier_element_liens(true, Some(true), Some(2)), Tri::SupprimerLien);
+    // Marqueur absent : etat.json de confiance (version précédente) : reprise ; sinon première prise en charge
+    assert!(premiere_prise_en_charge(None, false));
+    assert!(!premiere_prise_en_charge(None, true));
+    assert!(premiere_prise_en_charge(Some(false), true), "démarrage interrompu : reprise de la première prise en charge");
+    assert!(!premiere_prise_en_charge(Some(true), false));
+    // Vrai dossier : fichier à deux liens physiques (propriétaire de confiance) écarté, fichier à un lien gardé
+    let d = dossier_test("lot-a-tri-liens");
+    std::fs::write(d.join("seul.json"), b"1").unwrap();
+    std::fs::write(d.join("double.json"), b"2").unwrap();
+    std::fs::hard_link(d.join("double.json"), d.join("autre-nom.json")).unwrap();
+    let mut ecartes = Vec::new();
+    crate::protection::trier_avec(&d, &d, &d.join("ecartes"), &mut ecartes, &|_| Some(true));
+    assert!(d.join("seul.json").exists(), "{ecartes:?}");
+    assert!(!d.join("double.json").exists() && !d.join("autre-nom.json").exists(), "{ecartes:?}");
+    assert_eq!(ecartes.iter().filter(|e| !e.contains("IMPOSSIBLE")).count(), 2, "{ecartes:?}");
+    // Le marqueur de prise en charge n'est jamais trié
+    std::fs::write(d.join(crate::protection::MARQUEUR), b"{}").unwrap();
+    let mut ecartes = Vec::new();
+    crate::protection::trier_avec(&d, &d, &d.join("ecartes"), &mut ecartes, &|_| Some(false));
+    assert!(d.join(crate::protection::MARQUEUR).exists(), "{ecartes:?}");
+    assert!(!d.join("seul.json").exists(), "première prise en charge : tout le reste mis de côté");
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -5386,7 +5550,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "INT-003", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "SAN-013", "REP-001", "REP-002", "REP-003", "REP-004"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "INT-003", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "SAN-013", "SAN-014", "REP-001", "REP-002", "REP-003", "REP-004"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -8873,7 +9037,8 @@ fn pare_feu_muet_alerte_et_nettoyage_a_echeance() {
     assert!(include_str!("api.rs").contains("crate::blocage::powershell_regles(\"api\", &script);"), "API suivie");
     assert!(include_str!("capture.rs").contains("crate::blocage::powershell_regles(\"capture\", &script);"), "capture suivie");
     let principal = include_str!("main.rs").replace("\r\n", "\n");
-    let (attente, arrete) = (principal.find("crate::blocage::REGLES_SERVICE.arreter(Duration::from_secs(15))").unwrap(), principal.find("statut(ServiceState::Stopped").unwrap());
+    // Dernier « arrêté » : le premier est celui de l'attente d'une racine sûre (C-1), avant tout PowerShell de règles
+    let (attente, arrete) = (principal.find("crate::blocage::REGLES_SERVICE.arreter(Duration::from_secs(15))").unwrap(), principal.rfind("statut(ServiceState::Stopped").unwrap());
     assert!(attente < arrete, "attendus avant de se dire arrêté");
     assert!(principal.contains("let n = crate::blocage::terminer_powershell_regles();") && principal.contains("natif::compte_rendu_systeme(\"deR4Tizer-arret\", &texte);"), "R1 : dépassement, arrêtés et dit");
     assert!(principal.contains("wait_hint: Duration::from_secs(30), ..statut(ServiceState::StopPending"), "R2 : délai annoncé");

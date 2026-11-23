@@ -31,6 +31,17 @@ $attendues = @("($fr) AND $miroir", "($fr) AND NOT ($miroir)", "NOT ($fr) AND $m
 $ecarts = @(for ($k = 0; $k -lt [Math]::Min(4, $textes.Count); $k++) { if ($textes[$k].Condition -cne $attendues[$k]) { "$($textes[$k].Action) : $($textes[$k].Condition)" } })
 Cas 'Dernière page : condition de lancement miroir exact de la séquence d''exécution, quatre cas disjoints' ($execution -ne '' -and $textes.Count -eq 4 -and $ecarts.Count -eq 0) ($ecarts -join ' ; ')
 
+# Dossier de données point d'analyse (audit du 2026-11-23, C-1) : condition de lancement en échec fermé (seule la valeur
+# « ok » passe, la désinstallation jamais bloquée), posée par une fonction JScript en lecture seule dans les deux séquences
+# avant les conditions ; dossier de données permanent (la désinstallation le garde, vide et protégé : lot A, point 4)
+$conditionLien = [regex]::Match($sansCommentaires, '<Condition Message="Le dossier de données \[CommonAppDataFolder\]deR4Tizer est un lien[^"]*">\s*<!\[CDATA\[(.*?)\]\]>\s*</Condition>').Groups[1].Value
+$sequences = @([regex]::Matches($sansCommentaires, '<Custom Action="LireDossierDonnees" Before="LaunchConditions" />')).Count
+Cas 'Dossier de données lien : condition de lancement en échec fermé (« ok » seulement), action de lecture avant les conditions dans les deux séquences' ($conditionLien -ceq 'REMOVE="ALL" OR DonneesEtat="ok"' -and $sequences -eq 2 -and $sansCommentaires.Contains('<CustomAction Id="LireDossierDonnees" BinaryKey="ScriptDossierDonnees" JScriptCall="LireDossierDonnees" Return="check" />')) "condition « $conditionLien », $sequences séquence(s)"
+$js = [IO.File]::ReadAllText((Join-Path $Depot 'installeur\lire-dossier-donnees.js'))
+$ecritures = @([regex]::Matches($js, '(?i)\.(Create\w*|Delete\w*|Move\w*|Copy\w*|Write\w*|OpenTextFile|Run|Exec)\s*\(|WScript\.Shell|Shell\.Application') | ForEach-Object Value)
+Cas 'Dossier de données lien : script en lecture seule (aucune création, suppression, écriture ni lancement), en ASCII, « ok » posé seulement hors point d''analyse' ($ecritures.Count -eq 0 -and -not ($js -match '[^\x00-\x7F]') -and $js.Contains('(element.Attributes & 1024) !== 0 ? "lien" : "ok"') -and $js.Contains('Session.Property("DonneesEtat") = "inconnu";')) ($ecritures -join ', ')
+Cas 'Dossier de données : composant permanent (racine gardée à la désinstallation)' ($sansCommentaires -match '<Component Id="Donnees" Guid="[^"]+" Win64="yes" Permanent="yes">')
+
 # Licence : RTF ANSI 1252 décodé
 $rtf = [IO.File]::ReadAllText((Join-Path $Depot 'installeur\licence.rtf'))
 $licence = [regex]::Replace($rtf, "\\'([0-9a-f]{2})", { param($m) [Text.Encoding]::GetEncoding(1252).GetString([byte[]]@([Convert]::ToByte($m.Groups[1].Value, 16))) })

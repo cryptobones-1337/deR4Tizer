@@ -940,10 +940,11 @@ Verifier 'Droits de chaque élément après les scénarios (données, Program Fi
 }
 
 # ---------------------------------------------------------------- désinstallation complète
-Verifier 'Désinstallation sans GARDER_DONNEES : données retirées, canaris intacts (jonction de ecartes comprise)' {
+Verifier 'Désinstallation sans GARDER_DONNEES : données retirées, racine gardée vide et protégée, canaris intacts (jonction de ecartes comprise)' {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-3b.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
-    if (Test-Path $script:Donnees) { return "données restantes : $(Restes-Donnees)" }
+    $racine = Racine-GardeeVide
+    if ($racine -ne $true) { return $racine }
     $mod = @()
     if ((Empreinte-Dossier $canariEcartes) -ne $empreinteEcartes) { $mod += 'ecartes' }
     if ((Empreinte-Dossier $canariD) -ne $empreinteD) { $mod += 'restauration' }

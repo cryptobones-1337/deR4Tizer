@@ -572,6 +572,21 @@ while (`$pile.Count) {
 
 # Diagnostic d'une suppression incomplète du dossier de données : éléments restants (chemin relatif, attributs,
 # propriétaire) et processus deR4Tizer encore présents
+# Désinstallation sans GARDER_DONNEES (lot A, point 4) : la racine reste, vide, dossier véritable (pas un lien),
+# propriétaire Administrateurs, héritage coupé, entrées pour SYSTEM et les administrateurs seulement. $true ou l'écart
+function Racine-GardeeVide {
+    if (-not (Test-Path -LiteralPath $script:Donnees)) { return 'racine absente (attendue gardée, vide et protégée)' }
+    $i = Get-Item -LiteralPath $script:Donnees -Force
+    if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'racine : lien' }
+    $contenu = @(Get-ChildItem -LiteralPath $script:Donnees -Force -ErrorAction SilentlyContinue)
+    if ($contenu.Count) { return "données restantes : $(Restes-Donnees)" }
+    $d = Droits $script:Donnees
+    if ($d.Proprietaire -ne 'S-1-5-32-544' -or -not $d.Protege) { return "racine : propriétaire $($d.Proprietaire), protégée $($d.Protege)" }
+    $autres = @($d.Entrees | Where-Object { $_.Autorise -and $_.Sid -notin $script:SidsConfiance })
+    if ($autres.Count) { return "racine : entrées pour $(($autres | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
+    $true
+}
+
 function Restes-Donnees([int]$Nombre = 40) {
     if (-not (Test-Path -LiteralPath $script:Donnees)) { return '(dossier absent)' }
     $e = @(Get-ChildItem -LiteralPath $script:Donnees -Recurse -Force -ErrorAction SilentlyContinue)

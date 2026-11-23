@@ -1,5 +1,5 @@
 //! Santé des collectes (phase 4, PR 4.4a) : historique des changements d'état des collectes dans le SIEM (source
-//! « sante ») et constats SAN-001, SAN-002, SAN-003, SAN-012 et SAN-013. La décision (`Sante::observer`) est pure et testée ;
+//! « sante ») et constats SAN-001, SAN-002, SAN-003, SAN-012, SAN-013 et SAN-014. La décision (`Sante::observer`) est pure et testée ;
 //! le fil « sante » du moniteur l'applique toutes les 30 s, hors du verrou du moniteur, qu'il ne prend que pour lire le
 //! compteur des alertes non suivies.
 
@@ -65,6 +65,8 @@ pub struct Sante {
     /// SAN-013 : compteurs du SIEM déjà signalés, et heure du dernier constat
     siem_signale: crate::siem::CompteursSiem,
     san013: Option<i64>,
+    /// SAN-014 : heure du dernier constat de la configuration non chargée
+    san014: Option<i64>,
 }
 
 /// Remontée en échec depuis plus d'une heure : constat SAN-004
@@ -223,6 +225,25 @@ impl Sante {
         }
         Some(constat(regles::SAN_013, "Alerte", "mini-SIEM",
             format!("historique du mini-SIEM incomplet depuis le démarrage : {} ; une inondation d'événements peut masquer une attaque (les alertes restent dans la liste des alertes)", parties.join(" ; "))))
+    }
+}
+
+impl Sante {
+    /// SAN-014 (pure, testée ; audit du 2026-11-23, C-3) : config.json présent mais non chargé (illisible, refusé ou mal
+    /// formé) : le service tourne avec la configuration par défaut et ne la réécrit pas. Constat dès que l'état est vu, puis
+    /// une fois par 24 h au plus tant qu'il dure ; revenu à la normale, un nouvel épisode est signalé aussitôt
+    pub fn observer_config(&mut self, non_chargee: bool, t: i64) -> Option<Alerte> {
+        if !non_chargee {
+            self.san014 = None;
+            return None;
+        }
+        if self.san014.is_some_and(|x| t - x < RAPPEL_S) {
+            return None;
+        }
+        self.san014 = Some(t);
+        Some(constat(regles::SAN_014, "Critique", "configuration",
+            "config.json est présent mais n'a pas pu être chargé (illisible, refusé ou mal formé) : deR4Tizer tourne avec la configuration par défaut \
+             (réglages, remontée, filtrage) et ne réécrit pas le fichier ; les réglages sont refusés. Voir le journal, corriger ou retirer config.json, puis redémarrer le service".into()))
     }
 }
 

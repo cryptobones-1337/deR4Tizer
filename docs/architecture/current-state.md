@@ -9,7 +9,7 @@ est, pas d'une cible.
 |---|---|---|---|
 | `deR4TizerSvc.exe` (`service-rs/`) | Rust (chaîne MSVC pour les binaires livrés) | SYSTEM | Surveillance, détection, réponse, export, mise à jour, protection du dossier de données. |
 | `deR4Tizer.exe` (`src/`) | C#, .NET Framework 4.8 (WPF pour l'interface par défaut, `src/Fluent.cs` ; WinForms pour l'interface d'avant, `--classique`, et la fenêtre cachée qui porte la zone de notification) | Utilisateur, sans droits d'administrateur | Affichage de l'état ; actions envoyées au service par le canal, avec l'UAC (`runas`). |
-| `deR4Tizer.msi` (`installeur/deR4Tizer.wxs`, `construire-msi.ps1`) | WiX 3.14 | Administrateur | Installation du service (démarrage automatique, redémarrage sur échec), du dossier de données avec ses droits, mise à niveau (`MajorUpgrade`, `AllowDowngrades`), désinstallation (`--nettoyer`, `--supprimer-donnees` sauf `GARDER_DONNEES=1`). |
+| `deR4Tizer.msi` (`installeur/deR4Tizer.wxs`, `construire-msi.ps1`) | WiX 3.14 | Administrateur | Installation du service (démarrage automatique, redémarrage sur échec), du dossier de données avec ses droits, mise à niveau (`MajorUpgrade`, `AllowDowngrades`), désinstallation (`--nettoyer`, `--supprimer-donnees` sauf `GARDER_DONNEES=1` : contenu supprimé, racine gardée vide et protégée, composant permanent). Refus d'installer, de mettre à niveau ou de réparer quand le dossier de données est un lien (action JScript en lecture seule `installeur/lire-dossier-donnees.js`, condition de lancement en échec fermé ; audit du 2026-11-23, C-1). |
 
 Aucun pilote noyau. API Windows utilisées : journaux d'événements, ETW, WMI, pare-feu (COM), IP Helper,
 sockets brutes (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, sécurité NTFS.
