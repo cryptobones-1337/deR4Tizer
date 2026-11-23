@@ -287,7 +287,9 @@ namespace DeR4Tizer
             {
                 Directory.CreateDirectory(dossier);
                 File.WriteAllText(fichier, Commun.Json().Serialize(c), new UTF8Encoding(false));
-                var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--commande-fichier \"" + fichier + "\"")
+                // Langue de cette interface passée à l'assistant élevé : il tourne sous un autre compte ou une autre élévation,
+                // dont la culture n'est pas celle de l'utilisateur (constat T-17)
+                var p = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--commande-fichier \"" + fichier + "\" --langue " + (L.En ? "en" : "fr"))
                 {
                     Verb = "runas", UseShellExecute = true
                 });
@@ -2172,7 +2174,7 @@ namespace DeR4Tizer
             {
                 var item = new ListViewItem(new[]
                 {
-                    a.Heure, a.Niveau.ToUpperInvariant(), a.Processus, a.Destination, a.Port > 0 ? a.Port.ToString() : "", a.Raisons, a.Chemin
+                    a.Heure, L.T(a.Niveau).ToUpperInvariant(), a.Processus, a.Destination, a.Port > 0 ? a.Port.ToString() : "", a.Raisons, a.Chemin
                 }) { Tag = a, ToolTipText = a.Raisons };
                 bool nonLue = string.CompareOrdinal(a.Heure, derniereLue) > 0;
                 if (a.Niveau == "Critique") Colorer(item, Theme.FondCritique, Theme.Rouge, nonLue);
@@ -2184,7 +2186,7 @@ namespace DeR4Tizer
             int nonLues = alertes.Count(a => string.CompareOrdinal(a.Heure, derniereLue) > 0);
             navAlertes.Badge = nonLues;
             navAlertes.CouleurBadge = alertes.Any(a => a.Niveau == "Critique" && string.CompareOrdinal(a.Heure, derniereLue) > 0) ? Theme.Rouge : Theme.Magenta;
-            icone.Text = nonLues > 0 ? "deR4Tizer : " + nonLues + " alerte(s) non lue(s)" : "deR4Tizer";
+            icone.Text = TexteIcone(nonLues);
             icone.Icon = nonLues > 0 ? iconeAlerte : iconeNormale;
         }
 
@@ -2194,14 +2196,28 @@ namespace DeR4Tizer
             var nouvelles = alertes.Where(a => !idsConnus.Contains(a.Id)).ToList();
             foreach (var a in nouvelles) idsConnus.Add(a.Id);
             var graves = nouvelles.Where(a => a.Niveau == "Alerte" || a.Niveau == "Critique").ToList();
+            var t = TexteNotification(graves);
+            if (t != null) Notifier(t[0], t[1], graves.Any(a => a.Niveau == "Critique") ? ToolTipIcon.Error : ToolTipIcon.Warning);
+        }
+
+        // Titre et texte d'une notification locale, dans la langue de l'interface (constat T-17) ; null sans alerte grave.
+        // Processus, destination et raisons viennent du service, en français (docs/architecture/langue.md, étape 2)
+        internal static string[] TexteNotification(List<Alerte> graves)
+        {
+            if (graves == null || graves.Count == 0) return null;
             // La gravité ouvre le titre : l'icône de deR4Tizer ne la porte plus (avant : icône d'erreur ou d'avertissement)
             bool critique = graves.Any(a => a.Niveau == "Critique");
             string niveau = critique ? (L.En ? "Critical" : "Critique") : (L.En ? "Alert" : "Alerte");
-            var repli = critique ? ToolTipIcon.Error : ToolTipIcon.Warning;
-            if (graves.Count == 1)
-                Notifier(niveau + " : deR4Tizer : " + graves[0].Processus, graves[0].Destination + " : " + graves[0].Raisons, repli);
-            else if (graves.Count > 1)
-                Notifier(niveau + " : deR4Tizer", graves.Count + " nouvelles alertes", repli);
+            string dp = L.En ? ": " : " : ";
+            if (graves.Count == 1) return new[] { niveau + dp + "deR4Tizer" + dp + graves[0].Processus, graves[0].Destination + dp + graves[0].Raisons };
+            return new[] { niveau + dp + "deR4Tizer", graves.Count + (L.En ? " new alerts" : " nouvelles alertes") };
+        }
+
+        // Bulle de l'icône près de l'horloge
+        internal static string TexteIcone(int nonLues)
+        {
+            if (nonLues <= 0) return "deR4Tizer";
+            return L.En ? "deR4Tizer: " + nonLues + " unread alert(s)" : "deR4Tizer : " + nonLues + " alerte(s) non lue(s)";
         }
 
         // Notification Windows avec l'icône de deR4Tizer (NIIF_USER), envoyée sur la fenêtre et l'identifiant de
@@ -2782,9 +2798,20 @@ namespace DeR4Tizer
         // la campagne Kali) ; « coquille » : coquille WPF, l'interface par défaut (--fluent reste accepté, sans effet)
         internal static string Mode(string[] args)
         {
-            if (args.Length == 2 && args[0] == "--commande-fichier") return "commande";
+            if (args.Length >= 2 && args[0] == "--commande-fichier" && (args.Length == 2 || (args.Length == 4 && args[2] == "--langue"))) return "commande";
             if (Array.IndexOf(args, "--classique") >= 0) return "classique";
             return "coquille";
+        }
+
+        // Langue de ce processus (constat T-17), décidée par L.Choisir et nulle part ailleurs. Assistant élevé : langue passée
+        // par l'interface qui l'a lancé (« --langue fr|en ») ; le fichier de réglage du compte élevé n'est jamais lu. Sans
+        // argument (lancement par une version précédente) : config.json, puis culture, comme avant
+        internal static void ChoisirLangue(string[] args, Config cfg, string cheminReglage, System.Globalization.CultureInfo culture)
+        {
+            bool assistant = Mode(args) == "commande";
+            string reglage;
+            L.En = L.Choisir(assistant && args.Length == 4 ? args[3] : null, assistant ? null : L.LireReglage(cheminReglage), cfg != null ? cfg.Langue : null, culture, out reglage);
+            L.Reglage = reglage;
         }
 
         // Vrai dès que l'application WPF tourne : un plantage après ce point n'est pas rattrapé (pas d'attrape-tout, question 6
@@ -2935,7 +2962,7 @@ namespace DeR4Tizer
             if (i >= 0 && i + 1 < args.Length) Commun.Dossier = args[i + 1];
 
             var cfg = Commun.Lire<Config>("config.json");
-            L.En = cfg != null ? cfg.Langue == "en" : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName != "fr";
+            ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture);
 
             // Finition : les nombres et dates affichés suivent la langue de l'interface (« 1 851 » en français, pas
             // « 1,851 »). Les horodatages stockés gardent leurs séparateurs (format numérique, identiques en fr-FR/en-US).
@@ -2952,7 +2979,7 @@ namespace DeR4Tizer
             // rien (l'interface qui l'a lancé efface le fichier) et ne lit qu'un fichier de commande de deR4Tizer :
             // sinon n'importe quel programme pouvait, derrière l'invite UAC, faire effacer en administrateur un fichier
             // de son choix (audit, AUD6-01).
-            if (args.Length == 2 && args[0] == "--commande-fichier")
+            if (Mode(args) == "commande")
             {
                 Commande c;
                 try
