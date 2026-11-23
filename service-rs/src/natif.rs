@@ -2008,6 +2008,170 @@ pub fn poser_audit_arborescence(racine: &std::path::Path, sddl_dossier: &str, sd
     })?
 }
 
+/// Entrée d'une SACL en SDDL (« AU;OINPIOSA;CC;;;WD »), rendue comparable : type, drapeaux en ensemble trié (leur
+/// ordre dans le texte n'a pas de sens), droits, GUID d'objet, GUID hérité, SID. None : forme inattendue (jamais
+/// prise pour une entrée de deR4Tizer). Sans indexation de chaîne (règle 4) : la SACL vient de l'objet de l'utilisateur
+fn cle_entree_sacl(e: &str) -> Option<(String, Vec<String>, String, String, String, String)> {
+    let c: Vec<&str> = e.split(';').collect();
+    let [genre, drapeaux, droits, objet, herite, sid] = c.as_slice() else { return None };
+    let octets = drapeaux.as_bytes();
+    if octets.len() % 2 != 0 || !octets.iter().all(|o| o.is_ascii_uppercase()) {
+        return None;
+    }
+    let mut d: Vec<String> = octets.chunks(2).map(|p| String::from_utf8_lossy(p).into_owned()).collect();
+    d.sort();
+    Some((genre.to_string(), d, droits.to_string(), objet.to_string(), herite.to_string(), sid.to_string()))
+}
+
+/// Décision pure (audit du 2026-11-23, A-6-4) : SACL privée des entrées posées par deR4Tizer, ou None s'il n'y a rien
+/// à retirer. Seules partent les entrées IDENTIQUES (type, drapeaux, droits, SID) à `nos` (entrées explicites que la
+/// pose écrit) ou à `copies` (leurs copies héritées, « ID », que Windows a recopiées d'un dossier audité sur ses
+/// enfants ; l'appelant ne les passe que quand le parent n'en transmet plus aucune) ; toute autre entrée (règle d'audit
+/// de l'organisation, autre audit de Tout le monde, étiquette d'intégrité, entrée héritée d'un autre parent) et les
+/// drapeaux de contrôle sont gardés. Limite : une entrée posée par un tiers à l'identique de la nôtre ne s'en distingue
+/// pas (une SACL ne garde pas l'auteur d'une entrée) et part avec elle
+pub fn sacl_sans_entrees(actuelle: &str, nos: &[&str], copies: &[&str]) -> Option<String> {
+    let retirees: Vec<_> = nos.iter().chain(copies).filter_map(|e| cle_entree_sacl(e)).collect();
+    let (controle, entrees) = entrees_sacl(actuelle);
+    let gardees: Vec<&String> = entrees.iter().filter(|e| cle_entree_sacl(e).map_or(true, |k| !retirees.contains(&k))).collect();
+    if gardees.len() == entrees.len() {
+        return None;
+    }
+    Some(format!("S:{controle}{}", gardees.iter().map(|e| format!("({e})")).collect::<String>()))
+}
+
+/// Décision pure (A-6-4) : la SACL d'un dossier transmet-elle encore à ses fichiers un audit de Tout le monde, en
+/// succès, avec les droits `droits` (entrée « OI », explicite ou héritée) ? Si oui, les copies héritées que portent ses
+/// enfants peuvent venir d'elle et sont gardées
+pub fn sacl_transmet_audit(sacl: &str, droits: &str) -> bool {
+    entrees_sacl(sacl).1.iter().filter_map(|e| cle_entree_sacl(e)).any(|(genre, d, r, objet, herite, sid)| {
+        genre == "AU" && sid == "WD" && r == droits && objet.is_empty() && herite.is_empty() && d.iter().any(|x| x == "SA") && d.iter().any(|x| x == "OI")
+    })
+}
+
+/// Entrées d'audit que la pose écrit (SDDL d'une seule entrée chacun) : sur le dossier, sur un fichier déjà présent, et
+/// les formes héritées que Windows en recopie sur un sous-dossier et sur un fichier
+pub struct EntreesAudit<'a> {
+    pub dossier: &'a str,
+    pub fichier: &'a str,
+    pub copie_dossier: &'a str,
+    pub copie_fichier: &'a str,
+}
+
+/// Remplace la SACL de l'objet ouvert si `decision` en rend une nouvelle (SetKernelObjectSecurity : cet objet seul, SACL
+/// seule, comme la pose). SACL actuelle illisible : rien n'est écrit. Rend la SACL de l'objet après coup
+fn retirer_sacl(f: &std::fs::File, decision: impl Fn(&str) -> Option<String>, bilan: &mut BilanAudit) -> Result<String, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{SetKernelObjectSecurity, SACL_SECURITY_INFORMATION};
+    let actuelle = sacl_du_handle(f).ok_or("SACL actuelle illisible")?;
+    let Some(nouvelle) = decision(&actuelle) else {
+        bilan.deja += 1;
+        return Ok(actuelle);
+    };
+    let sd = DescripteurSddl::depuis(&nouvelle)?;
+    unsafe { SetKernelObjectSecurity(HANDLE(f.as_raw_handle()), SACL_SECURITY_INFORMATION, sd.0) }.map_err(|e| e.to_string())?;
+    bilan.poses += 1;
+    Ok(nouvelle)
+}
+
+/// Désinstallation (audit du 2026-11-23, A-6-4) : retire l'audit posé par `poser_audit_arborescence` sur la même
+/// arborescence, avec les mêmes garanties (SYSTEM, SeSecurityPrivilege sur ce fil le temps du parcours, chaque élément
+/// ouvert sans suivre de lien et son chemin final vérifié, liens écartés et jamais suivis, SACL seule réécrite et
+/// seulement si elle change, même nombre maximal d'éléments). Sur chaque élément, seules partent les entrées identiques
+/// aux nôtres (`sacl_sans_entrees`) ; les copies héritées ne partent que sous un dossier qui n'en transmet plus
+/// (`sacl_transmet_audit`). Bilan : `poses` = éléments dont une entrée a été retirée, `deja` = rien à retirer
+pub fn retirer_audit_arborescence(racine: &std::path::Path, entrees: &EntreesAudit, recursif: bool, maximum: usize) -> Result<BilanAudit, String> {
+    const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
+    let (nos_dossier, nos_fichier) = (entree_normalisee(entrees.dossier)?, entree_normalisee(entrees.fichier)?);
+    let (copie_dossier, copie_fichier) = (entree_normalisee(entrees.copie_dossier)?, entree_normalisee(entrees.copie_fichier)?);
+    let droits = cle_entree_sacl(&nos_fichier).map(|k| k.2).unwrap_or_default();
+    avec_privilege("SeSecurityPrivilege", || {
+        let mut bilan = BilanAudit::default();
+        let ouverte = ouvrir_verifie(racine, ACCES, 0x7, true).map_err(|e| format!("{} : {e}", racine.display()))?;
+        // Racine : ses copies héritées viennent du profil, jamais de nous ; seule notre entrée explicite part
+        let apres = retirer_sacl(&ouverte, |s| sacl_sans_entrees(s, &[&nos_dossier], &[]), &mut bilan).map_err(|e| format!("{} : {e}", racine.display()))?;
+        drop(ouverte);
+        let mut a_parcourir = vec![(racine.to_path_buf(), !sacl_transmet_audit(&apres, &droits))];
+        let mut vus = 0usize;
+        while let Some((dossier, copies_perimees)) = a_parcourir.pop() {
+            let Ok(liste) = std::fs::read_dir(&dossier) else { bilan.ecartes += 1; continue };
+            for e in liste.flatten() {
+                vus += 1;
+                if vus > maximum {
+                    bilan.tronque = true;
+                    return Ok(bilan);
+                }
+                let Ok(t) = e.file_type() else { bilan.ecartes += 1; continue };
+                if t.is_symlink() {
+                    bilan.ecartes += 1;
+                    continue;
+                }
+                if t.is_dir() && !recursif {
+                    continue;
+                }
+                let chemin = e.path();
+                let (nos, copie) = if t.is_dir() { (&nos_dossier, &copie_dossier) } else { (&nos_fichier, &copie_fichier) };
+                let copies: Vec<&str> = if copies_perimees { vec![copie.as_str()] } else { Vec::new() };
+                match ouvrir_verifie(&chemin, ACCES, 0x7, t.is_dir()) {
+                    Ok(f) => match retirer_sacl(&f, |s| sacl_sans_entrees(s, &[nos.as_str()], &copies), &mut bilan) {
+                        Ok(apres) if t.is_dir() => a_parcourir.push((chemin, !sacl_transmet_audit(&apres, &droits))),
+                        Ok(_) => {}
+                        Err(_) => bilan.ecartes += 1,
+                    },
+                    Err(_) => bilan.ecartes += 1,
+                }
+            }
+        }
+        Ok(bilan)
+    })?
+}
+
+/// Décision pure (audit du 2026-11-23, A-6-4) : nom d'un compte rendu que deR4Tizer écrit dans %SystemRoot%\Temp
+/// (`compte_rendu_systeme`) : « deR4Tizer-<sujet>-<chiffres>-<pid>-<16 hexadécimaux>-<essai 0 à 4>.txt », pour les seuls
+/// sujets écrits par le service. Tout autre nom (même commençant par « deR4Tizer ») n'est jamais retiré
+pub fn nom_compte_rendu_systeme(nom: &str) -> bool {
+    const SUJETS: &[&str] = &["protection", "arret", "nettoyage", "desinstallation"];
+    let Some(reste) = nom.strip_prefix("deR4Tizer-").and_then(|r| r.strip_suffix(".txt")) else { return false };
+    let c: Vec<&str> = reste.split('-').collect();
+    let [sujet, heure, pid, alea, essai] = c.as_slice() else { return false };
+    let chiffres = |s: &str| !s.is_empty() && s.bytes().all(|o| o.is_ascii_digit());
+    SUJETS.contains(sujet) && chiffres(heure) && chiffres(pid) && alea.len() == 16 && alea.bytes().all(|o| o.is_ascii_hexdigit())
+        && matches!(*essai, "0" | "1" | "2" | "3" | "4")
+}
+
+/// Décision pure (A-6-4) : un compte rendu de %SystemRoot%\Temp est-il à nous, donc à retirer ? Fichier ordinaire (pas
+/// un lien), au nom de nos comptes rendus, propriétaire LU et égal à SYSTEM (qui seul les écrit), un seul lien physique.
+/// Un compte standard peut créer des fichiers dans ce dossier : un nom posé d'avance (son propriétaire), un lien ou un
+/// lien physique vers un fichier d'ailleurs ne sont jamais supprimés
+pub fn compte_rendu_a_retirer(nom_ok: bool, lien: bool, proprietaire: Option<&str>, liens: Option<u32>) -> bool {
+    nom_ok && !lien && proprietaire == Some(crate::protection::SID_SYSTEME) && liens == Some(1)
+}
+
+/// Désinstallation (A-6-4) : retire de %SystemRoot%\Temp les comptes rendus laissés par deR4Tizer (`compte_rendu_a_retirer`),
+/// chacun ouvert sans suivre de lien, chemin final vérifié, propriétaire et nombre de liens lus et supprimé par ce même
+/// handle. Rend (retirés, laissés)
+pub fn retirer_comptes_rendus_systeme() -> (usize, usize) {
+    // DELETE | READ_CONTROL | FILE_READ_ATTRIBUTES
+    const ACCES: u32 = 0x0001_0000 | 0x0002_0000 | 0x80;
+    let temp = std::path::PathBuf::from(dossier_systeme()).parent().unwrap_or(std::path::Path::new(r"C:\Windows")).join("Temp");
+    let Ok(liste) = std::fs::read_dir(&temp) else { return (0, 0) };
+    let (mut retires, mut laisses) = (0, 0);
+    for e in liste.flatten() {
+        let nom = e.file_name().to_string_lossy().to_string();
+        if !nom_compte_rendu_systeme(&nom) {
+            continue;
+        }
+        let lien = e.file_type().map(|t| t.is_symlink() || !t.is_file()).unwrap_or(true);
+        let ouvert = if lien { None } else { ouvrir_verifie(&e.path(), ACCES, 0x7, false).ok() };
+        let ok = ouvert.as_ref().is_some_and(|f| {
+            let proprietaire = lire_securite_handle(f).map(|s| s.proprietaire);
+            compte_rendu_a_retirer(true, lien, proprietaire.as_deref(), nombre_de_liens(f)) && supprimer_par_handle(f).is_ok()
+        });
+        if ok { retires += 1 } else { laisses += 1 }
+    }
+    (retires, laisses)
+}
+
 /// Ouvre un flux de données alternatif (« :Zone.Identifier ») du fichier ouvert, par rapport à son handle et
 /// sans repasser par le chemin. Lecture : None si le flux n'existe pas. Écriture : flux créé ou remplacé.
 pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Option<std::fs::File>, String> {

@@ -1950,6 +1950,14 @@ try {
 
 # ---------------------------------------------------------------- désinstallation complète
 $regles1 = Reglesparefeu
+# Comptes rendus de %SystemRoot%\Temp (audit du 2026-11-23, A-6-4) : ceux des passages précédents, écrits par SYSTEM (jonction
+# de C-1, désinstallations plus haut), sont retirés par la désinstallation ; un fichier au même genre de nom posé d'avance par
+# le compte standard (son propriétaire) reste
+$tempSysteme = Join-Path $env:SystemRoot 'Temp'
+$anciensCr = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-*.txt' -Force -ErrorAction SilentlyContinue | Where-Object { (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | ForEach-Object FullName)
+$crPose = Join-Path $tempSysteme 'deR4Tizer-nettoyage-20260101000000-1-0123456789abcdef-0.txt'
+$sCrPose = En-TantQue $script:compte "Set-Content -LiteralPath '$crPose' -Value 'pose' -Encoding Ascii; 'POSE'"
+$crPoseOk = (Test-Path -LiteralPath $crPose) -and (Droits $crPose).Proprietaire -eq $script:compte.Sid
 Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés, racine gardée vide et protégée' {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-1.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
@@ -1976,6 +1984,21 @@ if ($regles1) {
 } else {
     NonExecute 'Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées' 'aucune règle du groupe deR4Tizer avant la désinstallation (rien à prouver)'
 }
+$titreCr = 'Désinstallation : comptes rendus deR4Tizer des passages précédents retirés de %SystemRoot%\Temp, celui du compte standard gardé, celui de cette désinstallation écrit (A-6-4)'
+if ($anciensCr.Count -and $crPoseOk) {
+    Verifier $titreCr {
+        $restes = @($anciensCr | Where-Object { Test-Path -LiteralPath $_ })
+        if ($restes.Count) { return "anciens comptes rendus de SYSTEM restés : $($restes -join ', ')" }
+        if (-not (Test-Path -LiteralPath $crPose)) { return 'fichier posé par le compte standard supprimé' }
+        $nouveaux = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-nettoyage-*.txt' -Force | Where-Object { $_.FullName -ne $crPose -and (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | Sort-Object LastWriteTime)
+        if (-not $nouveaux.Count) { return 'compte rendu de cette désinstallation absent' }
+        if ((Get-Content -LiteralPath $nouveaux[-1].FullName -Raw) -notmatch 'Audit de lecture des données sensibles') { return "compte rendu sans la ligne du retrait de l'audit : $(Get-Content -LiteralPath $nouveaux[-1].FullName -Raw)" }
+        $true
+    }
+} else {
+    NonExecute $titreCr "rien à prouver : $($anciensCr.Count) ancien(s) compte(s) rendu(s) de SYSTEM, fichier du compte standard posé : $crPoseOk ($sCrPose)"
+}
+Remove-Item -LiteralPath $crPose -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------- phase 4, PR 4.5b : tâche de relance, cas de pose
 # Audit de #101, S101-01 : le nom est public, un compte standard a pu créer la tâche avant l'installation

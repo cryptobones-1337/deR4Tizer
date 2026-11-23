@@ -3030,6 +3030,11 @@ fn noter_dns(p: &Arc<Partage>, nom: &str, resultats: &str) {
 
 /// Désinstallation : retire tous les blocages et désactive le journal DNS s'il l'avait activé
 pub fn nettoyer() {
+    // Comptes rendus laissés dans %SystemRoot%\Temp par les versions et passages précédents (audit du 2026-11-23,
+    // A-6-4) : les seuls à nous (nom, propriétaire SYSTEM, un lien physique, par handle) ; celui de cette
+    // désinstallation est écrit plus bas et reste à lire
+    let (retires, laisses) = natif::retirer_comptes_rendus_systeme();
+    println!("Comptes rendus deR4Tizer de %SystemRoot%\\Temp : {retires} retiré(s), {laisses} laissé(s) (propriétaire ou nature non vérifiés).");
     // Filtrage (PR 7.4) : cartes rendues à leur état d'origine (le service est arrêté : il les a normalement déjà rendues)
     if let Some(o) = crate::filtrage_cartes::lire_origine() {
         match crate::filtrage_cartes::restaurer_toutes(&o) {
@@ -3058,6 +3063,10 @@ pub fn nettoyer() {
         None => "Règles de pare-feu : le pare-feu ne répond pas en 60 s ; les règles du groupe deR4Tizer sont à retirer à la main (Pare-feu Windows avancé).".into(),
     };
     println!("{texte}");
+    // Audit de lecture posé dans les profils (A-6-4) : retiré par handle, nos seules entrées ; dit dans le même compte rendu
+    let audit = crate::vol_donnees::retirer_audit();
+    println!("{audit}");
+    let texte = format!("{texte}\r\n{audit}");
     // L'action du MSI ignore la sortie : une règle restée, peut-être celle du mode panique, est écrite là où elle se lit
     // (audit de #124, S124-02)
     compte_rendu_nettoyage(&texte);

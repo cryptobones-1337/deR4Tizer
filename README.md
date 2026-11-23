@@ -89,10 +89,20 @@ signed release: v4.3, 2026-11-23) and open it. The service starts immediately; t
 automatic installation can be turned on in the settings (signed releases).
 
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
-launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
-original security settings restored and data deleted, including files in quarantine (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
-The data folder itself (`C:\ProgramData\deR4Tizer`) stays, empty and reserved to SYSTEM and administrators, so that a
-standard account cannot put a link in its place before a reinstall; delete it as an administrator if you want it gone.
+launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules, canaries and the read
+auditing set on browser and wallet folders in user profiles are removed, original security settings restored and data
+deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them), except a quarantine that is not empty: the quarantined
+copies (`C:\ProgramData\deR4Tizer\quarantaine\`, encoded, never runnable as they are), their index `quarantaine.json`
+and the marker `prise-en-charge.json` are kept, reserved to SYSTEM and administrators, because they may be the only copy
+of a file you want back: reinstall deR4Tizer to restore them from the Quarantine page. The uninstall says so in
+`%SystemRoot%\Temp\deR4Tizer-desinstallation-*.txt` and in the Application event log. To delete them, in an
+administrator command prompt: `rmdir /s /q "C:\ProgramData\deR4Tizer\quarantaine"`, then
+`del "C:\ProgramData\deR4Tizer\quarantaine.json" "C:\ProgramData\deR4Tizer\prise-en-charge.json"`. If their
+permissions cannot be checked as reserved to SYSTEM and administrators, they are deleted with the rest, and the report
+says so (audit of 2026-11-23, A-4-3).
+The data folder itself (`C:\ProgramData\deR4Tizer`) stays, reserved to SYSTEM and administrators (empty, or with the
+kept quarantine only), so that a standard account cannot put a link in its place before a reinstall; delete it as an
+administrator if you want it gone.
 The installer refuses to install while `C:\ProgramData\deR4Tizer` is a link (junction or symbolic link).
 With domain-name filtering on (phase 7), hardware Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
 `::1`), with their original servers as fallback; virtual cards (Hyper-V switches, WSL, Docker, VPN), recognised from
@@ -212,6 +222,17 @@ Known, by design. Be aware before relying on it:
 - If the data folder's protection fails at start-up, a critical alert stays local: forwarding secrets are ignored, so your IT provider is not notified.
 - If the data folder's root is a link that cannot be removed (a junction held open by another account, audit of 2026-11-23, C-1), the service writes nothing in or under it: it says so in the Windows event log (Application log, source `deR4Tizer`, without a registered message file) and in a report in `%SystemRoot%\Temp`, does not start monitoring, and retries every minute. While it waits, the interface cannot reach the service and shows no alert. Tested on the decisions and in a CI scenario; to be replayed in the VM.
 - `config.json` (and any data file read the same way) present but unreadable or malformed is no longer taken for absent (C-3): the default configuration is used, the file is never rewritten until the next start, settings commands are refused, the Health page says so and SAN-014 is raised. Fix or remove the file, then restart the service.
+- Uninstall leftovers (audit of 2026-11-23, A-4-3 and A-6-4; tested on the decisions and in CI scenarios, to be tried in
+  the VM): a quarantine that is not empty is kept (see Install). The read auditing set on profile folders is removed
+  through handles that follow no link, entry by entry: only entries identical to deR4Tizer's (Everyone, success, read
+  data, same inheritance flags) go, so an identical entry set by someone else on the same folders goes too (an audit
+  list does not record who added an entry), and every other entry stays; items that cannot be opened (links,
+  unreadable, beyond 20,000 per folder) keep it, and the uninstall report gives their number. Left on purpose: the
+  report of the uninstall itself (`%SystemRoot%\Temp\deR4Tizer-nettoyage-*.txt`, plus
+  `deR4Tizer-desinstallation-*.txt` when the quarantine is kept or a deletion failed; older deR4Tizer reports there are
+  removed, only those written by SYSTEM with a single name), and any `C:\ProgramData\deR4Tizer.ecarte-*` folder, where
+  the service moved a data folder that did not belong to SYSTEM or administrators: its content belongs to another
+  account and may be evidence, so it is never deleted; check it and delete it yourself.
 - The MSI accepts an older version (needed to roll back): the service refuses an older version for automatic updates, but an administrator can still install one by hand.
 - The installer's check that the data folder is not a link is a small read-only JScript action: on a computer where Windows Installer cannot run scripts, installation is refused (fail-closed). The check is done before installing; a link put in place afterwards is handled by the service (see above).
 - Batch 3d was measured in a test VM with Microsoft Defender fully active (with and without the hardened baseline):
