@@ -960,7 +960,9 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Télémétrie** : journaux Sécurité et Système ; audit avancé (profil de baseline « journalisation »).
 - **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait. Sauf COR-R6, qui se nourrit des
   alertes du service et non de l'audit.
-- **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire.
+- **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire ; COR-R3
+  (Critique) pour tout compte local créé puis ajouté aux Administrateurs dans les 30 minutes, y compris par un
+  administrateur ou un installeur légitime (avant B-5-02, ce cas donnait COR-R3b, Alerte).
 - **Rapprochement de COR-R3** (audit du 2026-11-23, B-5-02, corrigé ; testé en labo, à essayer en VM) : le compte créé
   (4720) et le compte ajouté aux Administrateurs (4732) sont le même s'ils ont le même SID (`TargetSid`, `MemberSid`),
   sinon le même nom exact (après le dernier « \ », sans casse) : `siem::meme_compte`. Avant, une sous-chaîne suffisait
