@@ -1,5 +1,5 @@
 # Configuration de cargo-deny pour le service (analyse statique, lot 1, audit du 2026-11-23). Lancé par le job
-# `dependances` de .github/workflows/ci.yml : cargo deny --locked check --config deny.toml advisories licenses sources
+# `dependances` de .github/workflows/ci.yml : cargo deny --locked --config deny.toml check --show-stats advisories licenses sources
 # Règle : aucune exclusion ni règle désactivée pour obtenir du vert ; une alerte écartée l'est par une ligne commentée
 # qui dit pourquoi, relue par le mainteneur.
 
