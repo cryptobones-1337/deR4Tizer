@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
+  recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
+  certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms
+  missed by PRC-002 and PRC-005, process chains, SIEM command lines, local Group Policy, install folder, domain-joined
+  computers); threat model updated (date, signing workstation, service restart, pipe availability); NDR, DPI and IDS/IPS
+  marked experimental in the roadmap; uninstall the 4.3 test build before installing the signed v4.3.
 - Installer license: says that the released installer and programs are signed (Certum certificate) and that only a build you compile
   yourself shows "unknown publisher"; the v4.3 installer still said the binaries were not signed.
 

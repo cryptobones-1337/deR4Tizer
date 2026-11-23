@@ -132,9 +132,13 @@ Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par un
 
 Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM sur la version distribuée et signée (mainteneur, 2026-11-19 : « A5 lot 3D, il fallait bien rejouer sur la version distribuée et signée »), que les binaires ne sont pas signés et qu'une relecture indépendante (personne ou organisme autre que Claude) n'a pas été faite.
 Bilan à la publication de la v4.3 (2026-11-23) : CI verte sur main au commit du tag (run 45072779823, 46243f7), lot 3d réussi en VM sur
-le MSI signé publié, binaires et MSI signés (Certum), relectures externes du 2026-11-17 et du 2026-11-21 retenues par le
-mainteneur comme relecture indépendante (2026-11-23). Écart décidé par le mainteneur : publiée avant les essais D4-1
-(section 5, campagne de fin de phase 7).
+le MSI signé publié, binaires et MSI signés (Certum). Trois conditions non tenues, écarts décidés par le mainteneur :
+- relecture indépendante : les relectures du 2026-11-17 et du 2026-11-21 ont été faites par un autre agent Claude (Claude
+  Fable), sans l'historique du développement ; elles ne remplissent pas la condition ci-dessus (écart inscrit le
+  2026-11-23, la condition reste entière). L'audit par passes du 2026-11-23, fait par Claude, ne la remplit pas non plus ;
+- essais D4-1 (section 5, campagne de fin de phase 7) ;
+- essai de la révocation avec le vrai certificat expiré et une signature horodatée (`docs/security/threat-model.md`,
+  « Compte GitHub compromis ») : non fait (écart inscrit le 2026-11-23).
 
 ## 5. File de travail (dans cet ordre)
 
