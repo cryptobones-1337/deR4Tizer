@@ -287,17 +287,72 @@ pub fn resoudre_dossier(valeur: Option<&str>, profil: &Path, defaut: &str, onedr
     }
 }
 
-/// Décision pure (testée, A-7-2) : un dossier redirigé est admis sous le profil de l'utilisateur, ou ailleurs sur un
-/// lecteur local fixe (DRIVE_FIXED) ; jamais sur un lecteur amovible, réseau ou inconnu. `type_lecteur` reçoit « X:\ »
-pub fn destination_admise(d: &Path, profil: &Path, type_lecteur: &dyn Fn(&str) -> u32) -> Result<(), &'static str> {
+/// Décision pure (testée, A-7-2, S268-01) : un dossier redirigé est admis sous le profil de l'utilisateur, ou ailleurs
+/// sur un lecteur local fixe (DRIVE_FIXED) dans un dossier dont l'utilisateur `sid` est le propriétaire (lu par handle) ;
+/// jamais sur un lecteur amovible, réseau ou inconnu, ni dans un dossier d'un autre propriétaire (un dossier partagé
+/// inscriptible ferait poser par SYSTEM un audit sur un fichier choisi par l'utilisateur, ou sur tout volume fixe).
+/// `type_lecteur` reçoit « X:\ » et juge la lettre dans l'espace de noms de SYSTEM (`natif::type_lecteur`) : un lecteur
+/// mappé ou une lettre SUBST propre à la session de l'utilisateur n'y existe pas (inconnu : refusé) ; une lettre globale
+/// qui différerait de celle de sa session ne fait rien écrire ailleurs, la création sous son identité vérifiant le
+/// chemin final (`creer_verifie`). Lettre inconnue ou non fixe pour SYSTEM : refus
+pub fn destination_admise(d: &Path, profil: &Path, sid: &str, type_lecteur: &dyn Fn(&str) -> u32, proprietaire: &dyn Fn(&Path) -> Option<String>)
+    -> Result<(), &'static str> {
     if sous_profil(d, profil) {
         return Ok(());
     }
     let texte = d.to_string_lossy();
     match texte.get(..3) {
-        Some(r) if type_lecteur(r) == 3 => Ok(()),
-        _ => Err("hors du profil et pas sur un lecteur local fixe"),
+        Some(r) if type_lecteur(r) == 3 => {}
+        _ => return Err("hors du profil et pas sur un lecteur local fixe"),
     }
+    match proprietaire(d) {
+        Some(p) if !sid.is_empty() && p.eq_ignore_ascii_case(sid) => Ok(()),
+        _ => Err("hors du profil, dossier dont l'utilisateur n'est pas propriétaire"),
+    }
+}
+
+/// Propriétaire (SID) d'un dossier, lu par un handle ouvert sans suivre de lien, chemin final vérifié ; None s'il est
+/// absent, illisible ou détourné
+fn proprietaire_dossier(d: &Path) -> Option<String> {
+    // READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE, tout partage
+    let f = crate::natif::ouvrir_verifie(d, 0x0002_0000 | 0x80 | 0x0010_0000, 0x7, true).ok()?;
+    crate::natif::proprietaire_par_handle(&f)
+}
+
+/// Décision pure (testée, S268-01) : un leurre n'est audité et suivi que s'il a un seul nom (nombre de liens lu par son
+/// handle vérifié). Un lien dur portant le nom d'un leurre désigne un autre fichier : SYSTEM y poserait un audit
+/// d'écriture et lèverait de fausses LEU-001 à chaque changement de ce fichier. Nombre illisible : refusé
+pub fn leurre_existant_admis(liens: Option<u32>) -> bool {
+    liens == Some(1)
+}
+
+/// Nombre de liens d'un leurre, lu par son handle (sans suivre de lien, chemin final vérifié), à échéance
+fn liens_a_echeance(f: &Path) -> Result<Option<u32>, crate::natif::HorsDelai> {
+    let c = f.to_path_buf();
+    // Clé distincte de l'empreinte (« leurre ») : le lecteur à échéance garde ses résultats par quoi, chemin et date
+    crate::natif::lecture_fichier("liens de leurre", &f.to_string_lossy(), move || {
+        // FILE_READ_ATTRIBUTES | SYNCHRONIZE, tout partage
+        let h = crate::natif::ouvrir_verifie(&c, 0x80 | 0x0010_0000, 0x7, false).ok()?;
+        crate::natif::nombre_de_liens(&h).map(|n| n.to_string())
+    }).map(|l| l.and_then(|n| n.parse().ok()))
+}
+
+/// Anciens emplacements suivis au plus, par profil et par leurre (S268-02)
+pub const ANCIENS_MAX: usize = 3;
+
+/// Décision pure (testée, S268-02) : anciens leurres gardés, au plus `max` par profil (SID) et par nom de leurre, dans
+/// l'ordre de la liste (le plus récent d'abord : chaque pose écrit les emplacements visés, puis les anciens) ; renvoie
+/// (gardés, en trop). Sans borne, chaque redirection ajoutait une entrée à leurres.json pour toujours
+pub fn borner_anciens(anciens: Vec<Leurre>, max: usize) -> (Vec<Leurre>, Vec<Leurre>) {
+    let mut comptes: HashMap<(String, String), usize> = HashMap::new();
+    let (mut gardes, mut en_trop) = (Vec::new(), Vec::new());
+    for l in anciens {
+        let nom = Path::new(&l.chemin).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let n = comptes.entry((l.sid.to_lowercase(), nom)).or_insert(0);
+        *n += 1;
+        if *n <= max { gardes.push(l) } else { en_trop.push(l) }
+    }
+    (gardes, en_trop)
 }
 
 /// Valeur texte de la ruche d'un utilisateur (HKU\<SID>) ; None si la ruche n'est pas chargée (pas de session) ou la
@@ -318,7 +373,7 @@ fn dossier_des_leurres(sid: &str, profil: &Path, dossier: &str, onedrive: Option
             oublier_signalement(&cle);
             return defaut;
         }
-        DossierLeurre::Redirige(r) => match destination_admise(&r, profil, &crate::natif::type_lecteur) {
+        DossierLeurre::Redirige(r) => match destination_admise(&r, profil, sid, &crate::natif::type_lecteur, &proprietaire_dossier) {
             Ok(()) => {
                 oublier_signalement(&cle);
                 return r;
@@ -411,14 +466,15 @@ fn oublier_signalement(cle: &str) {
     SIGNALES.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c != cle);
 }
 
-/// Texte pour journal.txt sans nom de compte : un dossier redirigé hors du profil devient « <dossier redirigé> », le
-/// profil %USERPROFILE%, puis tout autre chemin de profil est masqué
-fn sans_profil(texte: &str, profil: &Path, dossier: &Path) -> String {
+/// Texte pour journal.txt sans nom de compte ni nom de leurre (les noms sont secrets : rangés dans secrets\, pour qu'un
+/// rançongiciel lancé sous le compte connecté ne les évite pas) : le nom du leurre devient « <leurre> », un dossier
+/// redirigé hors du profil « <dossier redirigé> », le profil %USERPROFILE%, puis tout autre chemin de profil est masqué
+pub(crate) fn sans_profil(texte: &str, profil: &Path, dossier: &Path, nom: &str) -> String {
     let remplacer = |t: &str, motif: &str, par: &str| match Regex::new(&format!("(?i){}", regex::escape(motif))) {
         Ok(r) if !motif.is_empty() => r.replace_all(t, regex::NoExpand(par)).into_owned(),
         _ => t.to_string(),
     };
-    let mut t = texte.to_string();
+    let mut t = remplacer(texte, nom, "<leurre>");
     if !sous_profil(dossier, profil) {
         t = remplacer(&t, &dossier.to_string_lossy(), "<dossier redirigé>");
     }
@@ -555,7 +611,7 @@ pub fn poser_leurres() -> Vec<Leurre> {
                     Some(Ok(())) => oublier_signalement(&cle),
                     Some(Err(x)) => {
                         bilan.echecs += 1;
-                        journal_une_fois(cle, &sans_profil(&format!("leurres : création refusée dans {dossier} ({}) : {x}", rep.display()), profil, &rep));
+                        journal_une_fois(cle, &sans_profil(&format!("leurres : création refusée dans {dossier} ({}) : {x}", rep.display()), profil, &rep, nom));
                         continue;
                     }
                     None => {
@@ -564,10 +620,26 @@ pub fn poser_leurres() -> Vec<Leurre> {
                     }
                 }
             }
+            // Un seul nom (S268-01) : un lien dur portant le nom du leurre n'est ni audité ni suivi, refus journalisé.
+            // Hors délai : laissé pour le prochain passage, comme l'empreinte
+            match liens_a_echeance(&f) {
+                Ok(l) if leurre_existant_admis(l) => oublier_signalement(&format!("liens {}", f.to_string_lossy().to_lowercase())),
+                Ok(l) => {
+                    bilan.echecs += 1;
+                    let n = l.map_or_else(|| "illisible".to_string(), |n| n.to_string());
+                    journal_une_fois(format!("liens {}", f.to_string_lossy().to_lowercase()),
+                        &sans_profil(&format!("leurres : {} refusé (nombre de liens {n}) : ni audité ni suivi", f.display()), profil, &rep, nom));
+                    continue;
+                }
+                Err(_) => {
+                    garder_precedent(&mut liste, &f);
+                    continue;
+                }
+            }
             // Audit posé dès que le leurre existe, avant le second contrôle (S175-01 : un leurre neuf hors délai au
             // second contrôle restait sans audit, LEU-002 aveugle)
             if let Err(x) = crate::natif::poser_audit_verifie(&f, SDDL_AUDIT_LEURRE) {
-                commun::journal(&sans_profil(&format!("leurres : audit non posé sur {} ({x})", f.display()), profil, &rep));
+                commun::journal(&sans_profil(&format!("leurres : audit non posé sur {} ({x})", f.display()), profil, &rep, nom));
             }
             let e = match empreinte_a_echeance(&f) {
                 Ok(Some(e)) => e,
@@ -584,10 +656,17 @@ pub fn poser_leurres() -> Vec<Leurre> {
     }
     // Leurres d'un ancien emplacement (dossier redirigé depuis la pose précédente) : suivis tant qu'ils existent (ou
     // illisibles à échéance), avec leur empreinte d'origine : modifiés, ils lèvent LEU-001 ; la désinstallation les retire
-    for p in precedents_hors_cibles(&precedents, &cibles) {
-        if !matches!(empreinte_a_echeance(Path::new(&p.chemin)), Ok(None)) {
-            liste.push(p);
-        }
+    let existants: Vec<Leurre> = precedents_hors_cibles(&precedents, &cibles).into_iter()
+        .filter(|p| !matches!(empreinte_a_echeance(Path::new(&p.chemin)), Ok(None))).collect();
+    // Au plus ANCIENS_MAX anciens emplacements par profil et par leurre (S268-02) : au-delà, le leurre est retiré par handle
+    // (sous l'identité de son propriétaire s'il a une session) et son suivi abandonné, journalisé
+    let (gardes, en_trop) = borner_anciens(existants, ANCIENS_MAX);
+    liste.extend(gardes);
+    for p in en_trop {
+        let chemin = Path::new(&p.chemin);
+        let retire = if p.sid.is_empty() { retirer_leurre(chemin) } else { retirer_leurre_du_profil(&p.sid, chemin) };
+        commun::journal(&format!("leurres : un ancien emplacement au-delà de {ANCIENS_MAX} pour le même leurre : {}, suivi abandonné",
+            if retire { "leurre retiré" } else { "retrait impossible" }));
     }
     *BILAN.lock().unwrap_or_else(|e| e.into_inner()) = bilan;
     let _ = commun::ecrire(FICHIER_LEURRES, &liste);

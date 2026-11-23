@@ -2867,22 +2867,76 @@ fn a7_2_dossier_reel_des_leurres() {
     torturer_texte(r"%OneDrive%\Documents", &mut |t| { let _ = resoudre_dossier(Some(r"%OneDrive%\Documents"), profil, "Documents", Some(t)); });
 }
 
-/// A-7-2 : destination résolue hors du profil admise seulement sur un lecteur local fixe (DRIVE_FIXED, 3) ; sous le profil,
-/// toujours (la création reste par handle, chemin final vérifié)
+/// A-7-2 et S268-01 : destination résolue hors du profil admise seulement sur un lecteur local fixe (DRIVE_FIXED, 3) jugé
+/// par SYSTEM (lettre inconnue pour lui : refus) et dans un dossier dont l'utilisateur est propriétaire ; sous le
+/// profil, toujours (la création reste par handle, chemin final vérifié)
 #[test]
 fn a7_2_destination_des_leurres_admise() {
     use crate::hygiene::destination_admise;
     use std::path::Path;
     let profil = Path::new(r"C:\Users\marie");
+    let sid = "S-1-5-21-1-2-3-1001";
     let jamais = |_: &str| -> u32 { panic!("type de lecteur demandé pour un dossier du profil") };
-    assert!(destination_admise(Path::new(r"C:\Users\marie\OneDrive\Documents"), profil, &jamais).is_ok());
-    assert!(destination_admise(Path::new(r"c:\users\MARIE\OneDrive\Documents"), profil, &jamais).is_ok());
-    assert!(destination_admise(Path::new(r"D:\Documents"), profil, &|r: &str| if r.eq_ignore_ascii_case(r"D:\") { 3 } else { 0 }).is_ok());
+    let personne = |_: &Path| -> Option<String> { panic!("propriétaire demandé pour un dossier du profil") };
+    let a_elle = |_: &Path| Some("s-1-5-21-1-2-3-1001".to_string());
+    assert!(destination_admise(Path::new(r"C:\Users\marie\OneDrive\Documents"), profil, sid, &jamais, &personne).is_ok());
+    assert!(destination_admise(Path::new(r"c:\users\MARIE\OneDrive\Documents"), profil, sid, &jamais, &personne).is_ok());
+    let fixe_d = |r: &str| if r.eq_ignore_ascii_case(r"D:\") { 3 } else { 0 };
+    assert!(destination_admise(Path::new(r"D:\Documents"), profil, sid, &fixe_d, &a_elle).is_ok());
+    // Lecteur fixe, mais dossier d'un autre propriétaire (dossier partagé inscriptible), propriétaire illisible, SID vide
+    for p in [Some("S-1-5-32-544"), Some("S-1-5-21-1-2-3-1002"), None] {
+        assert!(destination_admise(Path::new(r"D:\Commun"), profil, sid, &fixe_d, &|_: &Path| p.map(String::from)).is_err(), "{p:?}");
+    }
+    assert!(destination_admise(Path::new(r"D:\Documents"), profil, "", &fixe_d, &|_: &Path| Some(String::new())).is_err());
+    // Lettre inconnue pour SYSTEM (lecteur mappé ou SUBST de la session : 1), amovible, réseau, CD, disque en mémoire
     for t in [0, 1, 2, 4, 5, 6] {
-        assert!(destination_admise(Path::new(r"E:\Documents"), profil, &|_: &str| t).is_err(), "type {t}");
+        assert!(destination_admise(Path::new(r"E:\Documents"), profil, sid, &|_: &str| t, &a_elle).is_err(), "type {t}");
     }
     // Préfixe trompeur : un autre profil n'est pas « sous le profil »
-    assert!(destination_admise(Path::new(r"C:\Users\marie2\Documents"), profil, &|_: &str| 2).is_err());
+    assert!(destination_admise(Path::new(r"C:\Users\marie2\Documents"), profil, sid, &|_: &str| 2, &a_elle).is_err());
+}
+
+/// S268-01 : un leurre existant qui a plus d'un nom (lien dur vers un autre fichier) n'est ni audité ni suivi ; nombre
+/// de liens lu par handle (essai sur un vrai lien dur) ; aucun nom de leurre dans journal.txt
+#[test]
+fn s268_01_leurre_lien_dur_refuse() {
+    use crate::hygiene::leurre_existant_admis;
+    assert!(leurre_existant_admis(Some(1)));
+    for l in [None, Some(0), Some(2), Some(1024)] {
+        assert!(!leurre_existant_admis(l), "{l:?}");
+    }
+    let d = dossier_test("leurre-lien-dur");
+    let cible = d.join("cible.log");
+    std::fs::write(&cible, b"fichier vise").unwrap();
+    let leurre = d.join("0 Factures 1234.docx");
+    let lire = |p: &std::path::Path| crate::natif::ouvrir_verifie(p, 0x80 | 0x0010_0000, 0x7, false).ok().and_then(|f| crate::natif::nombre_de_liens(&f));
+    assert_eq!(lire(&cible), Some(1));
+    std::fs::hard_link(&cible, &leurre).unwrap();
+    assert_eq!(lire(&leurre), Some(2));
+    assert!(!leurre_existant_admis(lire(&leurre)), "lien dur au nom d'un leurre : refusé");
+    let _ = std::fs::remove_dir_all(&d);
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
+    assert!(p.find("leurre_existant_admis(l)").unwrap() < p.find("poser_audit_verifie").unwrap(), "liens contrôlés avant l'audit");
+    let t = crate::hygiene::sans_profil(r"leurres : C:\Users\marie\OneDrive\Documents\0 Factures 1234.docx refusé (D:\Marie\0 FACTURES 1234.docx)",
+        std::path::Path::new(r"C:\Users\marie"), std::path::Path::new(r"D:\Marie"), "0 Factures 1234.docx");
+    assert!(!t.to_lowercase().contains("factures") && !t.to_lowercase().contains("marie"), "{t}");
+}
+
+/// S268-02 : au plus ANCIENS_MAX anciens emplacements suivis par profil et par leurre, les plus récents (en tête de liste)
+#[test]
+fn s268_02_anciens_emplacements_bornes() {
+    use crate::hygiene::{borner_anciens, Leurre, ANCIENS_MAX};
+    let l = |sid: &str, c: &str| Leurre { chemin: c.into(), empreinte: "e".into(), sid: sid.into() };
+    let mut anciens: Vec<Leurre> = (0..5).map(|i| l("S-1-5-21-1", &format!(r"C:\D{i}\0 Devis 1234.docx"))).collect();
+    anciens.push(l("S-1-5-21-1", r"C:\D9\0 IMG_5555.jpg"));
+    anciens.push(l("S-1-5-21-2", r"C:\D9\0 Devis 1234.docx"));
+    let (gardes, en_trop) = borner_anciens(anciens, ANCIENS_MAX);
+    assert_eq!(ANCIENS_MAX, 3);
+    assert_eq!(gardes.len(), 5, "3 du même leurre, plus un autre leurre et un autre profil");
+    assert_eq!(en_trop.iter().map(|x| x.chemin.as_str()).collect::<Vec<_>>(), [r"C:\D3\0 Devis 1234.docx", r"C:\D4\0 Devis 1234.docx"]);
+    assert!(gardes.iter().any(|x| x.chemin == r"C:\D0\0 Devis 1234.docx"), "le plus récent gardé");
 }
 
 /// A-7-2 : bilan de la pose publié dans l'état de santé (« n posés sur m attendus ») ; une création en échec dans un
@@ -9048,7 +9102,7 @@ fn audit_s175_01_02_cablage() {
     let h = include_str!("hygiene.rs").replace("\r\n", "\n");
     let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
     let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
-    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 2, "leurre hors délai gardé (S175-01)");
+    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 3, "leurre hors délai gardé (S175-01 ; empreinte avant et après, nombre de liens S268-01)");
     assert!(p.find("poser_audit_verifie").unwrap() < p.find("let e = match empreinte_a_echeance(&f)").unwrap(), "audit avant le second contrôle (S175-01)");
     let m = include_str!("moniteur.rs");
     assert!(!m.contains("self.origines.entry(chemin.clone()).or_insert_with"), "origine hors délai jamais en cache (S175-02)");

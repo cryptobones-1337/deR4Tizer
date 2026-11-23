@@ -564,11 +564,16 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   fait par Claude, A-7-2, corrigé : tests `a7_2_dossier_reel_des_leurres`, `a7_2_destination_des_leurres_admise`,
   `a7_2_bilan_des_leurres`, `a7_2_anciens_leurres_suivis_et_retires`). Reste : ruche non chargée (utilisateur sans
   session) ou dossier redirigé vers un partage réseau ou un lecteur amovible : leurre dans le dossier par défaut du
-  profil (refus journalisé). Chaque échec de création est journalisé (une fois) et rend la collecte `Leurres`
+  profil (refus journalisé). Hors du profil, seul un dossier d'un lecteur local fixe (vu par SYSTEM : un lecteur mappé
+  ou une lettre SUBST de la session est inconnu, donc refusé) dont l'utilisateur est propriétaire est admis ; un leurre
+  qui a plus d'un nom (lien dur) n'est ni audité ni suivi, refus journalisé (S268-01, `s268_01_leurre_lien_dur_refuse`).
+  Au plus 3 anciens emplacements suivis par profil et par leurre, au-delà retirés (S268-02). Chaque échec de création est journalisé (une fois) et rend la collecte `Leurres`
   partielle ; l'état de santé publie « leurres : n posés sur m attendus » (champ `Detail` de la collecte). Un leurre
-  resté dans un ancien dossier reste suivi tant qu'il existe et est retiré à la désinstallation. Non essayé en VM :
-  leurres dans un dossier OneDrive synchronisé (OneDrive, sous le compte de l'utilisateur, est suspendu s'il écrit dans
-  un leurre ou le supprime : à vérifier pendant un usage normal).
+  resté dans un ancien dossier reste suivi tant qu'il existe et est retiré à la désinstallation. Leurres dans un
+  dossier synchronisé par OneDrive : ils peuvent être téléversés dans le stockage en ligne de l'utilisateur et
+  apparaître sur ses autres appareils ; OneDrive, qui tourne sous le compte de l'utilisateur, est suspendu s'il écrit
+  dans un leurre ou le supprime (libération d'espace de Fichiers à la demande, conflit de synchronisation), ce qui
+  arrête la synchronisation jusqu'à la reprise. Rien de cela n'est encore essayé en VM (il faut un compte Microsoft).
 - **Si elle manque** : leurres non posés : la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
