@@ -310,13 +310,17 @@ Verifier 'Canal : tube à SYSTEM, WRITE_DAC et instance refusés à un administr
     if ($h -ne [IntPtr](-1)) { [void][D4T.TubeA14]::CloseHandle($h); return 'tube ouvert avec WRITE_DAC par un administrateur' }
     if ($erreur -ne 5) { return "ouverture avec WRITE_DAC : code $erreur au lieu de 5 (accès refusé)" }
     $lecteur = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeAccessRights]'ReadData, WriteData, ReadPermissions', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None)
+    # Chaque attente est bornée : connexion 5 s, réponse 30 s (sans réponse, le tube est fermé et le scénario échoue)
+    $repondu = $false
     try {
         $lecteur.Connect(5000)
         $proprietaire = $lecteur.GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
         $w = New-Object IO.StreamWriter($lecteur); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($lecteur)
-        $w.WriteLine('{"Action":"verification"}'); [void]$r.ReadLine()
+        $w.WriteLine('{"Action":"verification"}')
+        $repondu = $r.ReadLineAsync().Wait(30000)
     } finally { $lecteur.Dispose() }
     if ($proprietaire -ne 'S-1-5-18') { return "propriétaire du tube : $proprietaire au lieu de SYSTEM" }
+    if (-not $repondu) { return 'canal : pas de réponse en 30 s au client qui lit le propriétaire' }
     # PIPE_ACCESS_DUPLEX (3), octets, instances illimitées (255) : un refus ne peut venir que des droits
     $h = [D4T.TubeA14]::CreateNamedPipeW('\\.\pipe\deR4Tizer', 3, 0, 255, 512, 512, 0, [IntPtr]::Zero)
     $erreur = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
