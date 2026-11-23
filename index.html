@@ -562,7 +562,7 @@
           </div>
           <div class="guard">
             <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>Reversible</h3>
-            <p>Uninstalling removes blocks, firewall rules and canaries, restores the original security settings and deletes the data.</p>
+            <p>Uninstalling removes blocks, firewall rules and canaries, restores the original security settings and deletes the data, including files in quarantine.</p>
           </div>
           <div class="guard">
             <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Fails closed</h3>
@@ -580,7 +580,8 @@
           <ul>
             <li><b>Not an antivirus</b> and not a replacement for Microsoft Defender.</li>
             <li><b>Not an enterprise EDR.</b> An attacker with administrator rights can stop the service.</li>
-            <li><b>Not formally audited.</b> External code reviews were done in November 2026; no certification or full audit.</li>
+            <li><b>Not independently reviewed.</b> The code reviews of November 2026 were done by Claude, the AI that helps write the code: useful, but not an independent review. No certification or human audit.</li>
+            <li><b>Known gaps being fixed.</b> An audit on 23 November 2026 found no way for a standard account to take over the computer on a default install, but listed weaknesses now declared in the README: canary files miss folders moved to OneDrive, some common PowerShell forms are not flagged, the event log keeps every account's command lines.</li>
             <li><b>Installer text out of date.</b> The license shown by the v4.3 installer still says the binaries are not signed; they are. Fixed for the next version.</li>
             <li><b>Not tested everywhere.</b> Restarting the interface in a Remote Desktop session or on fast user switching has not been exercised yet.</li>
             <li><b>Not proven in the field.</b> It has been tested in a lab and a VM, never on real production machines.</li>
@@ -622,10 +623,10 @@
           <p>Published on 23 November 2026.</p>
           <ul>
             <li><b>Signed binaries</b>Executables and installer signed with a Certum code-signing certificate.</li>
-            <li><b>Independent review</b>External code reviews in November 2026.</li>
+            <li><b>Independent review: not done</b>The November 2026 reviews were done by Claude. Published without it, by the maintainer's decision.</li>
             <li><b>Green CI on the release</b>Full integration suite on the tagged commit.</li>
             <li><b>Defender check on that build</b>Passed in the test VM on the signed installer, no detection.</li>
-            <li><b>Still to do</b>Interface restart in Remote Desktop and fast user switching, published before these trials.</li>
+            <li><b>Still to do</b>Interface restart in Remote Desktop and fast user switching; revocation check once the certificate has expired. Published before these trials.</li>
           </ul>
         </div>
         <div class="col">
@@ -661,7 +662,7 @@
     <div class="foot">
       <div>
         <h4>deR4Tizer</h4>
-        <p>A local, complementary defence layer for Windows, for small organisations without a SOC. Open source under the EUPL-1.2. Proof of concept, not formally audited.</p>
+        <p>A local, complementary defence layer for Windows, for small organisations without a SOC. Open source under the EUPL-1.2. Proof of concept, not independently reviewed.</p>
       </div>
       <div class="links">
         <h4>Project</h4>
