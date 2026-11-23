@@ -1,5 +1,5 @@
 //! Santé des collectes (phase 4, PR 4.4a) : historique des changements d'état des collectes dans le SIEM (source
-//! « sante ») et constats SAN-001, SAN-002, SAN-003 et SAN-012. La décision (`Sante::observer`) est pure et testée ;
+//! « sante ») et constats SAN-001, SAN-002, SAN-003, SAN-012 et SAN-013. La décision (`Sante::observer`) est pure et testée ;
 //! le fil « sante » du moniteur l'applique toutes les 30 s, hors du verrou du moniteur, qu'il ne prend que pour lire le
 //! compteur des alertes non suivies.
 
@@ -62,6 +62,9 @@ pub struct Sante {
     san012: Option<i64>,
     non_suivies_signalees: u64,
     san004: Option<i64>,
+    /// SAN-013 : compteurs du SIEM déjà signalés, et heure du dernier constat
+    siem_signale: crate::siem::CompteursSiem,
+    san013: Option<i64>,
 }
 
 /// Remontée en échec depuis plus d'une heure : constat SAN-004
@@ -191,6 +194,35 @@ impl Sante {
         self.san004 = Some(t);
         Some(constat(regles::SAN_004, "Alerte", "remontée des alertes",
             format!("les alertes ne parviennent plus au prestataire depuis {} min (voir la page Santé) : elles restent dans la liste des alertes", minutes(t - d))))
+    }
+}
+
+impl Sante {
+    /// SAN-013 (pure, testée ; audit du 2026-11-23, A-6-3) : historique du SIEM incomplet. Constat à la première perte
+    /// d'événements (file pleine), au premier événement non écrit faute de place dans le fichier du jour, et à la première
+    /// suppression d'un jour précédent pour la taille totale, chacun aussitôt ; une hausse d'un compteur déjà signalé : une
+    /// fois par 24 h au plus. Une inondation d'événements qui masquerait une attaque est donc dite, jamais tue
+    pub fn observer_siem(&mut self, c: crate::siem::CompteursSiem, t: i64) -> Option<Alerte> {
+        let s = self.siem_signale;
+        let premiere = (c.pertes > 0 && s.pertes == 0) || (c.plafonnes > 0 && s.plafonnes == 0) || (c.purges_taille > 0 && s.purges_taille == 0);
+        let hausse = c.pertes > s.pertes || c.plafonnes > s.plafonnes || c.purges_taille > s.purges_taille;
+        if !premiere && !(hausse && self.san013.is_none_or(|x| t - x >= RAPPEL_S)) {
+            return None;
+        }
+        self.san013 = Some(t);
+        self.siem_signale = c;
+        let mut parties = Vec::new();
+        if c.pertes > 0 {
+            parties.push(format!("{} événement(s) perdu(s), file pleine", c.pertes));
+        }
+        if c.plafonnes > 0 {
+            parties.push(format!("{} événement(s) non écrit(s), plafond du jour atteint ({} Mo)", c.plafonnes, crate::siem::PLAFOND_JOUR / (1024 * 1024)));
+        }
+        if c.purges_taille > 0 {
+            parties.push(format!("{} fichier(s) d'un jour précédent supprimé(s) pour la taille totale (1 Go)", c.purges_taille));
+        }
+        Some(constat(regles::SAN_013, "Alerte", "mini-SIEM",
+            format!("historique du mini-SIEM incomplet depuis le démarrage : {} ; une inondation d'événements peut masquer une attaque (les alertes restent dans la liste des alertes)", parties.join(" ; "))))
     }
 }
 
