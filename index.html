@@ -286,7 +286,7 @@
         </a>
         <a class="btn" href="#product">See the interface</a>
       </div>
-      <p class="fine">Windows 10 and 11. No download yet: <a href="#status">see where the project stands</a>.</p>
+      <p class="fine">Windows 10 and 11. First signed release: <a href="https://github.com/cryptobones-1337/deR4Tizer/releases/tag/v4.3" target="_blank" rel="noopener">v4.3</a> (23 November 2026). <a href="#status">See where the project stands</a>.</p>
 
       <div class="hero-shot">
         <button class="win" type="button" data-zoom="images/interface-en-vue-d-ensemble.png" aria-label="Enlarge the Overview screenshot">
@@ -580,8 +580,9 @@
           <ul>
             <li><b>Not an antivirus</b> and not a replacement for Microsoft Defender.</li>
             <li><b>Not an enterprise EDR.</b> An attacker with administrator rights can stop the service.</li>
-            <li><b>Not audited.</b> No independent security review has been done yet.</li>
-            <li><b>Not signed yet.</b> Windows shows “unknown publisher” until a certificate is obtained.</li>
+            <li><b>Not formally audited.</b> External code reviews were done in November 2026; no certification or full audit.</li>
+            <li><b>Installer text out of date.</b> The license shown by the v4.3 installer still says the binaries are not signed; they are. Fixed for the next version.</li>
+            <li><b>Not tested everywhere.</b> Restarting the interface in a Remote Desktop session or on fast user switching has not been exercised yet.</li>
             <li><b>Not proven in the field.</b> It has been tested in a lab and a VM, never on real production machines.</li>
           </ul>
           <a class="more" href="https://github.com/cryptobones-1337/deR4Tizer#readme" target="_blank" rel="noopener">All known limits in the README →</a>
@@ -595,7 +596,7 @@
     <div class="wrap">
       <p class="eyebrow">Status</p>
       <h2>Where the project stands</h2>
-      <p class="section-lead">“Built” means delivered in the code and tested in the lab, not validated for production. There is no version to download and no release date.</p>
+      <p class="section-lead">“Built” means delivered in the code and tested in the lab, not validated for production. The first signed release, v4.3, can be downloaded from GitHub.</p>
       <div class="board">
         <div class="col done">
           <h3><i></i>Built</h3>
@@ -617,13 +618,14 @@
           </ul>
         </div>
         <div class="col gate">
-          <h3><i></i>Before any release</h3>
-          <p>All four are required.</p>
+          <h3><i></i>First release: v4.3</h3>
+          <p>Published on 23 November 2026.</p>
           <ul>
-            <li><b>Signed binaries</b>A code-signing certificate is being obtained.</li>
-            <li><b>Independent review</b>By a person or body other than the authors.</li>
-            <li><b>Green CI on the release</b>Full integration suite on the build that ships.</li>
-            <li><b>Defender check on that build</b>Run again on the signed, distributed version.</li>
+            <li><b>Signed binaries</b>Executables and installer signed with a Certum code-signing certificate.</li>
+            <li><b>Independent review</b>External code reviews in November 2026.</li>
+            <li><b>Green CI on the release</b>Full integration suite on the tagged commit.</li>
+            <li><b>Defender check on that build</b>Passed in the test VM on the signed installer, no detection.</li>
+            <li><b>Still to do</b>Interface restart in Remote Desktop and fast user switching, published before these trials.</li>
           </ul>
         </div>
         <div class="col">
@@ -659,7 +661,7 @@
     <div class="foot">
       <div>
         <h4>deR4Tizer</h4>
-        <p>A local, complementary defence layer for Windows, for small organisations without a SOC. Open source under the EUPL-1.2. Proof of concept, not audited.</p>
+        <p>A local, complementary defence layer for Windows, for small organisations without a SOC. Open source under the EUPL-1.2. Proof of concept, not formally audited.</p>
       </div>
       <div class="links">
         <h4>Project</h4>
