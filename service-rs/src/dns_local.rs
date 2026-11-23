@@ -278,8 +278,8 @@ pub fn port_dynamique(alea: u16) -> u16 {
     49152 + alea % 16384
 }
 
-/// Socket UDP vers l'amont, lié à un port source tiré au hasard ; 8 essais si le port est pris, sinon aucun relais
-/// (jamais de repli sur le port choisi par le système)
+/// Socket UDP vers l'amont, lié à un port source tiré au hasard ; 8 essais si le port est pris, puis repli sur le port
+/// choisi par Windows (`lier_amont`, S281-01)
 fn socket_amont(amont: IpAddr) -> Option<UdpSocket> {
     let ip: IpAddr = if amont.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
     lier_amont(identifiant_aleatoire, |port| UdpSocket::bind(SocketAddr::new(ip, port)).ok())

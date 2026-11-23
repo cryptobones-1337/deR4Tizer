@@ -39,7 +39,9 @@
   restoring it fails too, the resolver keeps port 53 (relay only) and the restore is retried every 5 minutes, instead
   of stopping and reporting "cards restored". The list guard is no longer one-way: a copy above 500,000 entries is
   always refused (first download included), and a list refused for its size is accepted after 3 downloads in a row give
-  the same size (within 10%), so an inflated copy no longer locks out the healthy list. A list file larger than 32 MB is
+  the same size (within 10%), so an inflated copy no longer locks out the healthy list; such a replacement is shown in
+  the published filtering state (`Remplacement` field of the list in `filtrage-etat.json`, kept until the service
+  restarts), not only in the log. A list file larger than 32 MB is
   refused before being read. A TCP exchange with the upstream now has a 4 s overall deadline. The upstream is declared
   silent (filtering suspended, cards restored) only when the service's own probe gets no answer either: queries chosen
   by a local program are no longer enough. A random-generator failure now stops relaying instead of using zero values.
