@@ -162,6 +162,12 @@ pub fn debut_echecs(issue: Issue, precedent: i64, t: i64) -> i64 {
     }
 }
 
+/// Décision pure (S294-01) : `EchecDepuisS` du maj.json précédent (texte lu tel quel) ; absent, mal formé ou de mauvais
+/// type : 0 (aucune série en cours)
+pub fn echec_depuis_publie(texte: Option<&str>) -> i64 {
+    texte.and_then(|t| serde_json::from_str::<Etat>(t.trim_start_matches('\u{feff}')).ok()).map_or(0, |e| e.echec_depuis_s)
+}
+
 /// Décision pure (A-3-2, T-12) : code du contrôle pour la page Santé, traduit par l'interface. "" : rien à signaler ;
 /// « ManifesteAncien » et « EchecProlonge » : à vérifier ; « EchecRecent » : dernier contrôle en échec, essai rapproché
 pub fn code_controle(issue: Issue, echec_depuis: i64, t: i64) -> &'static str {
@@ -609,11 +615,19 @@ fn publier(disponible: String, mut statut: String, issue: Issue) {
     if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
         statut = format!("{statut} · {}", e.trim_start_matches('\u{feff}').trim());
     }
-    // Début de la série d'échecs : repris du maj.json précédent (illisible : la série repart de maintenant)
-    let t = crate::sante::secondes();
-    let precedent: Etat = commun::lire("maj.json").unwrap_or_default();
-    let depuis = debut_echecs(issue, precedent.echec_depuis_s, t);
-    let _ = commun::ecrire("maj.json", &Etat {
+    let _ = publier_vers("maj.json", &commun::dossier().join("maj.json"), disponible, statut, issue, crate::sante::secondes());
+}
+
+/// Écrit l'état du contrôle dans `chemin` (suivi sous le nom `nom` ; tests : dossier de travail). Le début de la série
+/// d'échecs est repris du fichier précédent par une lecture contrôlée brute (`lire_fichier` : propriétaire, liens
+/// physiques et lien vérifiés sur le handle), SANS `lire`/`lire_etat` : ceux-ci marquent un fichier mal formé « non
+/// chargé », et `ecrire` refuse ensuite de le remplacer ; le statut restait alors figé alors que les contrôles suivants
+/// échouaient (audit de #294, S294-01). Illisible, refusé ou mal formé : la série repart de `t`, et le fichier est
+/// réécrit. Aucune confiance n'est portée par maj.json : seul `EchecDepuisS` est repris, borné par `debut_echecs`
+pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String, issue: Issue, t: i64) -> Result<(), String> {
+    let precedent = echec_depuis_publie(commun::lire_fichier(chemin).as_deref());
+    let depuis = debut_echecs(issue, precedent, t);
+    commun::ecrire_suivi(nom, chemin, &Etat {
         verifie_le: commun::maintenant(),
         version_installee: commun::VERSION.into(),
         version_disponible: disponible,
@@ -622,7 +636,7 @@ fn publier(disponible: String, mut statut: String, issue: Issue) {
         controle: code_controle(issue, depuis, t).into(),
         echec_depuis: if depuis > 0 { commun::heure(std::time::UNIX_EPOCH + Duration::from_secs(depuis as u64)) } else { String::new() },
         echec_depuis_s: depuis,
-    });
+    })
 }
 
 /// Vérification à la demande (bouton de l'interface), dans un fil : la surveillance continue pendant le
