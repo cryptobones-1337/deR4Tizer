@@ -324,7 +324,9 @@ impl Moniteur {
         // le cycle, qui reprend les alertes produites ici
         {
             let p = partage.clone();
+            // Arrière-plan (A-8-1) : relevé lourd (signatures), sans urgence
             std::thread::Builder::new().name("persistance".into()).spawn(move || {
+                natif::fil_priorite(natif::Priorite::Arriere);
                 let mut persistance = Persistance::nouvelle();
                 let mut cache = HashMap::new();
                 let notre = std::env::current_exe().ok().and_then(|x| x.parent().map(|d| d.to_string_lossy().to_lowercase())).unwrap_or_default();
@@ -364,7 +366,9 @@ impl Moniteur {
         // Contrôles toutes les 10 minutes : état de Defender et conformité de la baseline
         {
             let p = partage.clone();
+            // Arrière-plan (A-8-1) : Defender, baseline, extensions et pilotes, toutes les 10 min
             std::thread::Builder::new().name("contrôles".into()).spawn(move || {
+                natif::fil_priorite(natif::Priorite::Arriere);
                 let _com = wmi::COMLibrary::without_security();
                 let mut baseline_avant: Option<baseline::EtatBaseline> = None;
                 let mut premier = true;
@@ -455,6 +459,7 @@ impl Moniteur {
         // fichiers du SIEM et écriture de chronologies\<id>.json)
         {
             let (m, p) = (m.clone(), partage.clone());
+            // Priorité normale : ce fil prend le verrou du Moniteur, qu'un fil en arrière-plan retiendrait sous charge
             std::thread::Builder::new().name("chronologies".into()).spawn(move || {
                 let mut calcules = std::collections::HashMap::new();
                 while !p.arret.load(Ordering::Relaxed) {
@@ -648,7 +653,9 @@ impl Moniteur {
         // Listes de menaces : vérifie toutes les heures, télécharge ce qui a plus de 12 h
         {
             let p = partage.clone();
+            // Arrière-plan (A-8-1) : téléchargement et chargement des listes
             std::thread::Builder::new().name("listes de menaces".into()).spawn(move || {
+                natif::fil_priorite(natif::Priorite::Arriere);
                 while !p.arret.load(Ordering::Relaxed) {
                     mettre_a_jour_menaces(&p, false);
                     for _ in 0..3600 {
@@ -952,11 +959,17 @@ impl Moniteur {
         }
         if self.pose_leurres.is_some() {
             // Aucun leurre suivi (pose refusée partout, ou leurres déjà signalés et pas encore reposés) : LEU-001 muette
+            // Création en échec dans un profil ouvert : partielle (A-7-2) ; le bilan « n posés sur m attendus » est publié
+            // dans tous les cas (champ Detail de la collecte)
+            let bilan = hygiene::bilan_leurres();
             if self.leurres.is_empty() {
                 collectes::echec(Collecte::Leurres, "aucun leurre posé");
+            } else if bilan.note(self.leurres.len()) == collectes::Note::Partielle {
+                collectes::partielle(Collecte::Leurres, &bilan.texte());
             } else {
                 collectes::succes(Collecte::Leurres);
             }
+            collectes::detail(Collecte::Leurres, &bilan.texte());
         }
         self.balises.retain(|_, (_, t)| t.last().map(|x| x.elapsed() < Duration::from_secs(3600)).unwrap_or(false));
 
@@ -2638,7 +2651,10 @@ fn mettre_a_jour_menaces(p: &Arc<Partage>, forcer: bool) {
     let i = &nouvelles.infos;
     let actives = |t: &str| i.sources.iter().filter(|s| s.type_ == t && !s.statut.starts_with("désactivée")).count();
     collectes::noter_listes(actives("IP"), i.total_ip + i.total_reseaux, actives("Domaines"), i.total_domaines);
-    *p.menaces.write().unwrap() = nouvelles;
+    // Anciennes listes libérées hors du verrou d'écriture (le fil des listes tourne en arrière-plan, A-8-1 : il ne
+    // retient pas les lecteurs pendant la libération)
+    let anciennes = std::mem::replace(&mut *p.menaces.write().unwrap(), nouvelles);
+    drop(anciennes);
 }
 
 // ------------------------------------------------------------ DNS
@@ -2938,7 +2954,8 @@ pub fn nettoyer() {
     let mut leurres: Vec<hygiene::Leurre> = commun::lire(hygiene::FICHIER_LEURRES).unwrap_or_default();
     leurres.extend(commun::lire::<Vec<hygiene::Leurre>>("leurres.json").unwrap_or_default());
     // Par handle, sans suivre de lien, sous l'identité du propriétaire du profil quand il a une session
-    let n = hygiene::retirer_leurres(&leurres.iter().map(|l| l.chemin.clone()).collect::<Vec<_>>());
+    // Dossiers redirigés (OneDrive, A-7-2) compris : chaque leurre garde le SID de son propriétaire
+    let n = hygiene::retirer_leurres(&leurres);
     println!("Fichiers leurres supprimés : {n}.");
     // Pare-feu muet : le retrait est tenté quand même, avec une échéance (D6-7 ; audit de #122). Avec le retrait des
     // règles plus haut, à échéance lui aussi, aucun appel au pare-feu ne bloque la désinstallation : 100 s au pire

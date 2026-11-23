@@ -617,9 +617,16 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 - **Code** : `hygiene.rs` (`verifier_leurres`, empreinte lue par handle vérifié).
 - **Justification** : un fichier que rien ne devrait toucher a changé ou disparu : chiffrement en cours probable.
 - **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console. Ils sont posés
-  dans `Documents`, `Pictures` et `Desktop` à leur emplacement par défaut du profil : avec la sauvegarde OneDrive des
-  dossiers ou une redirection, ils ne sont pas dans les dossiers réellement utilisés, et un échec de création n'est pas
-  journalisé (audit du 2026-11-23, fait par Claude, A-7-2, non corrigé).
+  dans `Documents`, `Pictures` et `Desktop` à leur emplacement réel, lu dans « User Shell Folders » de la ruche de
+  l'utilisateur (sauvegarde OneDrive des dossiers, redirection vers un autre lecteur local fixe ; audit du 2026-11-23,
+  fait par Claude, A-7-2, corrigé : tests `a7_2_dossier_reel_des_leurres`, `a7_2_destination_des_leurres_admise`,
+  `a7_2_bilan_des_leurres`, `a7_2_anciens_leurres_suivis_et_retires`). Reste : ruche non chargée (utilisateur sans
+  session) ou dossier redirigé vers un partage réseau ou un lecteur amovible : leurre dans le dossier par défaut du
+  profil (refus journalisé). Chaque échec de création est journalisé (une fois) et rend la collecte `Leurres`
+  partielle ; l'état de santé publie « leurres : n posés sur m attendus » (champ `Detail` de la collecte). Un leurre
+  resté dans un ancien dossier reste suivi tant qu'il existe et est retiré à la désinstallation. Non essayé en VM :
+  leurres dans un dossier OneDrive synchronisé (OneDrive, sous le compte de l'utilisateur, est suspendu s'il écrit dans
+  un leurre ou le supprime : à vérifier pendant un usage normal).
 - **Si elle manque** : leurres non posés : la règle se tait.
 - **Niveau** : Critique.
 - **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.

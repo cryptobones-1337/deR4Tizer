@@ -371,6 +371,8 @@ struct Case {
     tus: AtomicU32,
     /// Muette (plus de trois intervalles sans lecture réussie) au dernier relevé publié
     muette: AtomicBool,
+    /// Précision publiée quel que soit l'état (Leurres : « n posés sur m attendus », A-7-2) ; vide en général
+    detail: Mutex<String>,
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
@@ -382,6 +384,7 @@ const CASE: Case = Case {
     journal: AtomicU64::new(0),
     tus: AtomicU32::new(0),
     muette: AtomicBool::new(false),
+    detail: Mutex::new(String::new()),
 };
 static CASES: [Case; TOUTES.len()] = [CASE; TOUTES.len()];
 
@@ -473,6 +476,16 @@ pub fn partielle(c: Collecte, raison: &str) {
     noter(c, Note::Partielle, raison, true);
 }
 
+/// Précision publiée avec l'état (champ « Detail » d'etat.json), bornée et sans nom de compte comme une raison ; ne
+/// change ni l'état ni la couverture des règles
+pub fn detail(c: Collecte, texte: &str) {
+    let texte = borner(texte);
+    let mut d = CASES[c.index()].detail.lock().unwrap_or_else(|e| e.into_inner());
+    if *d != texte {
+        *d = texte;
+    }
+}
+
 fn etat_a(c: Collecte, t: u64) -> EtatPublie {
     let case = &CASES[c.index()];
     let note = Note::depuis_u8(case.note.load(Ordering::Relaxed));
@@ -500,6 +513,8 @@ pub struct EtatCollecte {
     pub depuis: String,
     pub dernier_succes: String,
     pub raison: String,
+    /// Précision publiée quel que soit l'état (vide en général)
+    pub detail: String,
 }
 
 /// Publication dans etat.json : l'état de chaque collecte, les règles sans collecte, les règles dégradées, et la
@@ -532,6 +547,7 @@ pub fn publier() -> (Vec<EtatCollecte>, Vec<String>, Vec<String>, Vec<CauseSansC
                 depuis: heure(depuis),
                 dernier_succes: heure(succes),
                 raison: e.raison().to_string(),
+                detail: case.detail.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             }
         })
         .collect();

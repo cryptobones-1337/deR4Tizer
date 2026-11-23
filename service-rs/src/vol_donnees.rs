@@ -293,7 +293,9 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     let dossiers = Arc::new(Mutex::new(dossiers_presents()));
     {
         let dossiers = dossiers.clone();
+        // Arrière-plan (A-8-1) : pose de l'audit sur les dossiers, toutes les heures
         let _ = std::thread::Builder::new().name("audit données sensibles".into()).spawn(move || loop {
+            crate::natif::fil_priorite(crate::natif::Priorite::Arriere);
             let (n, echecs) = poser_audit();
             commun::journal(&format!("audit de lecture posé sur {n} dossier(s) de données sensibles{}", if echecs > 0 { format!(", {echecs} en échec") } else { String::new() }));
             let utilisateurs = format!(r"{}\Users", crate::natif::dossier_windows().get(..2).unwrap_or("C:"));
@@ -309,7 +311,9 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
     }
     let mut vues: HashMap<String, Instant> = HashMap::new();
     let mut suspendus: HashMap<u32, (u64, Instant)> = HashMap::new();
-    evenements::abonner("Security", "*[System[EventID=4663]]", crate::collectes::Collecte::JournalSecurite, move |xml| {
+    // Fil des 4663 au-dessus de la normale (A-8-1) : la suspension d'un programme qui touche un leurre passe avant les
+    // fils lourds du service. Gain à mesurer en VM (délai entre le 4663 et la suspension sous charge)
+    evenements::abonner_avec_priorite("Security", "*[System[EventID=4663]]", crate::collectes::Collecte::JournalSecurite, Some(crate::natif::Priorite::Haute), move |xml| {
         // Fichier leurre modifié ou supprimé : rançongiciel probable, on suspend aussitôt le programme
         if let Some((pid, programme, objet)) = crate::hygiene::pid_touchant_leurre(&xml) {
             let connu = leurre_autorise(pid, &programme);

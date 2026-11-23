@@ -90,7 +90,9 @@ fn creer(console: bool, premiere: bool) -> Result<HANDLE, (String, u32)> {
 }
 
 pub fn servir(moniteur: Arc<Mutex<Moniteur>>, partage: Arc<Partage>, console: bool) {
+    // Au-dessus de la normale (A-8-1) : panique, suspension et blocage demandés par l'interface passent avant les fils lourds
     std::thread::Builder::new().name("commandes".into()).spawn(move || {
+        crate::natif::fil_priorite(crate::natif::Priorite::Haute);
         let mut derniere_erreur = String::new();
         let mut debit = Debit::new(DEBIT_MAX, DEBIT_FENETRE);
         while !partage.arret.load(Ordering::Relaxed) {

@@ -72,13 +72,6 @@ fn initialiser_com() {
     let _ = wmi::COMLibrary::new();
 }
 
-fn priorite_basse() {
-    use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS};
-    unsafe {
-        let _ = SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
-    }
-}
-
 fn service_principal(_arguments: Vec<OsString>) {
     let (arret_tx, arret_rx) = mpsc::channel();
     let gestionnaire = move |controle| match controle {
@@ -104,7 +97,8 @@ fn service_principal(_arguments: Vec<OsString>) {
     // Avant toute lecture : propriétaire et droits du dossier de données
     protection::securiser();
     initialiser_com();
-    priorite_basse();
+    // Processus en priorité normale (audit du 2026-11-23, A-8-1) : la priorité basse pouvait retarder la suspension d'un
+    // rançongiciel sous charge (gain à mesurer en VM). Les fils lourds se mettent eux-mêmes en arrière-plan (natif::fil_priorite)
     let (moniteur, partage) = moniteur::Moniteur::demarrer(false);
     canal::servir(moniteur.clone(), partage, false);
     let _ = etat.set_service_status(statut(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN));
@@ -366,7 +360,6 @@ fn main() {
     if args.iter().any(|a| a == "--console") {
         let _ = std::fs::create_dir_all(commun::dossier());
         initialiser_com();
-        priorite_basse();
         println!("deR4Tizer {} (Rust) en mode console, données : {}. Entrée pour arrêter.", commun::VERSION, commun::dossier().display());
         let (moniteur, partage) = moniteur::Moniteur::demarrer(true);
         canal::servir(moniteur.clone(), partage, true);
