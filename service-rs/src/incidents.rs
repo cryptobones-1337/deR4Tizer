@@ -79,6 +79,9 @@ pub struct IncidentSuivi {
     pub alertes: Vec<ResumeAlerte>,
     pub nombre_alertes: u32,
     pub transitions: Vec<Transition>,
+    /// Transitions depuis l'ouverture, y compris celles sorties de l'historique gardé (MAX_TRANSITIONS) : le repère de la
+    /// chronologie en dépend (second audit, B-5-01). Absent d'un suivi plus ancien : 0, compté depuis `transitions`
+    pub nombre_transitions: u32,
 }
 
 /// Entité d'une alerte (pure, testée) : chemin complet du programme s'il est connu ; sinon la destination ; sinon la
@@ -251,6 +254,8 @@ pub fn transition(i: &mut IncidentSuivi, vers: EtatIncident, motif: &str, note: 
     if note.chars().count() > MAX_NOTE || note.chars().any(|c| c.is_control() || crate::siem::mise_en_forme(c)) {
         return Err(format!("note refusée : {MAX_NOTE} caractères au plus, sans caractère de contrôle ni de mise en forme"));
     }
+    // Compte total, même quand la plus ancienne sort de l'historique gardé (B-5-01)
+    i.nombre_transitions = transitions_totales(i).saturating_add(1);
     if i.transitions.len() >= MAX_TRANSITIONS {
         i.transitions.remove(0);
     }
@@ -584,9 +589,16 @@ pub fn construire(i: &IncidentSuivi, evenements: &[crate::siem::Evenement], pert
     }
 }
 
-/// Repère d'un incident pour savoir si sa chronologie est à recalculer : sa dernière activité et ses transitions
+/// Transitions depuis l'ouverture : le compteur, ou la liste gardée pour un suivi écrit avant le compteur
+fn transitions_totales(i: &IncidentSuivi) -> u32 {
+    i.nombre_transitions.max(u32::try_from(i.transitions.len()).unwrap_or(u32::MAX))
+}
+
+/// Repère d'un incident pour savoir si sa chronologie est à recalculer : sa dernière activité, le nombre total de ses
+/// transitions (pas la liste gardée, bornée à MAX_TRANSITIONS : au-delà, le repère ne changeait plus, second audit,
+/// B-5-01) et le nombre de ses alertes. Même forme qu'avant : un suivi ancien garde son repère, rien n'est recalculé
 pub fn repere(i: &IncidentSuivi) -> String {
-    format!("{}|{}|{}", i.derniere_activite_utc, i.transitions.len(), i.nombre_alertes)
+    format!("{}|{}|{}", i.derniere_activite_utc, transitions_totales(i), i.nombre_alertes)
 }
 
 /// Incidents dont la chronologie est à (re)calculer (pure, testée) : repère changé depuis le dernier calcul ; `max` au

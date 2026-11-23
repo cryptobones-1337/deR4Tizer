@@ -169,6 +169,60 @@ fn regles_non_prises_en_charge_ignorees() {
     assert_eq!((n, ignorees), (0, 2));
 }
 
+/// Second audit, B-4-02 : une variable inconnue dans l'en-tête ne vaut plus « toutes les adresses » ni « tous les
+/// ports » ; la règle est ignorée et comptée, comme une option non prise en charge. Les variables connues gardent leur
+/// sens ($HOME_NET, $EXTERNAL_NET, $HTTP_PORTS…)
+#[test]
+fn ids_variable_inconnue_ignoree() {
+    use crate::ids::lire_texte_test;
+    // Négatifs : variables inconnues, seules, niées ou dans une liste, côté adresses et côté ports
+    for regle in [
+        r#"alert tcp $FOO_NET any -> any any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any any -> !$FOO_NET any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp [$HOME_NET,$FOO_NET] any -> any any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any any -> any $FOO_PORTS (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any [80,$FOO_PORTS] -> any any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any any -> any !$FOO_PORTS (msg:"x"; content:"abc"; sid:1;)"#,
+    ] {
+        assert_eq!(lire_texte_test(regle), (0, 1), "variable inconnue : règle ignorée et comptée : {regle}");
+    }
+    // Positifs : variables connues, inchangées
+    for regle in [
+        r#"alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp !$HOME_NET any -> [$HOME_NET,192.0.2.0/24] any (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any any -> any $HTTP_PORTS (msg:"x"; content:"abc"; sid:1;)"#,
+        r#"alert tcp any [$SSH_PORTS,$ORACLE_PORTS] -> any !$FILE_DATA_PORTS (msg:"x"; content:"abc"; sid:1;)"#,
+    ] {
+        assert_eq!(lire_texte_test(regle), (1, 0), "variable connue : règle prise en charge : {regle}");
+    }
+}
+
+/// Second audit, B-4-01 : une règle dont tous les `content` sont niés n'a pas de motif pour la recherche en une passe ;
+/// elle passait par le seul en-tête, sans que ses contenus niés soient évalués. Chemin réel du moteur (`touchees`) : la
+/// règle ne se déclenche que si aucun contenu nié n'est présent
+#[test]
+fn ids_regle_sans_contenu_positif_evalue_ses_negations() {
+    use crate::capture::Paquet;
+    use crate::ids::sids_declenches_test;
+    let paquet = |charge: &'static [u8]| Paquet {
+        entrant: true, proto: 6, source: [203, 0, 113, 5].into(), destination: [192, 168, 0, 10].into(), port_source: 50000,
+        port_destination: 80, longueur: 40 + charge.len(), drapeaux: 0x18, charge,
+    };
+    let regle = r#"alert tcp any any -> any any (content:!"abc"; sid:1;)"#;
+    assert_eq!(sids_declenches_test(regle, &paquet(b"xx abc yy")), Vec::<u64>::new(), "contenu nié présent : pas de déclenchement");
+    assert_eq!(sids_declenches_test(regle, &paquet(b"xx abd yy")), vec![1], "contenu nié absent : déclenchement");
+    // Options du contenu nié évaluées aussi (depth) ; deux négations : aucune des deux ne doit être présente
+    let regle = r#"alert tcp any any -> any any (content:!"GET"; depth:3; sid:2;)"#;
+    assert_eq!(sids_declenches_test(regle, &paquet(b"GET /")), Vec::<u64>::new());
+    assert_eq!(sids_declenches_test(regle, &paquet(b"POST /GET")), vec![2], "GET hors des 3 premiers octets");
+    let regle = r#"alert tcp any any -> any any (content:!"abc"; content:!"def"; sid:3;)"#;
+    assert_eq!(sids_declenches_test(regle, &paquet(b"..def..")), Vec::<u64>::new());
+    assert_eq!(sids_declenches_test(regle, &paquet(b"..xyz..")), vec![3]);
+    // Règle sans aucun contenu (flags:S seul) : inchangée, l'en-tête suffit
+    let syn = Paquet { drapeaux: 0x02, charge: b"", longueur: 40, ..paquet(b"") };
+    assert_eq!(sids_declenches_test(r#"alert tcp any any -> any 80 (flags:S; sid:4;)"#, &syn), vec![4]);
+}
+
 #[test]
 fn regles_sans_panique() {
     let base = br#"alert tcp $EXTERNAL_NET any -> $HOME_NET [80,8080:8090] (msg:"x"; content:"|41 42|"; offset:2; depth:5; dsize:>3; flags:S; sid:7;)"#;
@@ -5377,6 +5431,38 @@ fn chronologie_a_recalculer_au_changement() {
     let many: Vec<_> = (0..80).map(|k| crate::incidents::IncidentSuivi { id: format!("i{k}"), ..Default::default() }).collect();
     let pris = a_recalculer(&many, &std::collections::HashMap::new(), 50);
     assert_eq!((pris.len(), pris[0].id.as_str()), (50, "i79"), "50 au plus, les plus récents d'abord");
+}
+
+/// Second audit, B-5-01 : au-delà de 20 transitions (plafond de l'historique gardé), le repère changeait plus et la
+/// chronologie n'était plus recalculée. Le repère suit le nombre total de transitions ; la liste gardée reste bornée
+#[test]
+fn chronologie_recalculee_au_dela_de_20_transitions() {
+    use crate::incidents::{a_recalculer, borner_incident, repere, transition, EtatIncident};
+    let mut i = incident_chrono("regle:DNS-001");
+    let mut calcules = std::collections::HashMap::new();
+    for k in 1..=25u32 {
+        calcules.insert(i.id.clone(), repere(&i));
+        let (vers, motif) = if i.etat == EtatIncident::Clos { (EtatIncident::Ouvert, "") } else { (EtatIncident::Clos, "Resolu") };
+        transition(&mut i, vers, motif, &format!("t{k}"), "S-1-5-32-544", "h", "2026-10-27T07:45:00Z").unwrap();
+        assert_eq!(a_recalculer(std::slice::from_ref(&i), &calcules, 50).len(), 1, "transition {k} : chronologie à recalculer");
+        assert!(i.transitions.len() <= 20, "historique gardé borné");
+    }
+    assert_eq!((i.transitions.len(), i.nombre_transitions), (20, 25));
+    assert_eq!(i.transitions[19].note, "t25", "les dernières gardées");
+    // Relu (fichier) : le compteur est gardé, le repère est le même
+    let mut relu = i.clone();
+    borner_incident(&mut relu);
+    assert_eq!(repere(&relu), repere(&i));
+    // Suivi écrit avant la correction (compteur absent, 20 transitions gardées) : même repère qu'avant, pas de
+    // recalcul inutile au démarrage ; la transition suivante le change
+    let mut ancien = i.clone();
+    ancien.nombre_transitions = 0;
+    assert_eq!(repere(&ancien), format!("{}|20|{}", ancien.derniere_activite_utc, ancien.nombre_alertes));
+    let avant = repere(&ancien);
+    let vers = if ancien.etat == EtatIncident::Clos { EtatIncident::Ouvert } else { EtatIncident::PrisEnCharge };
+    transition(&mut ancien, vers, "", "", "S-1-5-32-544", "h", "2026-10-27T07:46:00Z").unwrap();
+    assert_ne!(repere(&ancien), avant);
+    assert_eq!(ancien.nombre_transitions, 21);
 }
 
 // ------------------------------------------------------------ phase 4, PR 4.4a : santé des collectes

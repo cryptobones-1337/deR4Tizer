@@ -205,6 +205,7 @@ qu'`alertes.json` et après chaque transition. `incidents.json` (corrélations d
 | `Precedent` | incident clos de la même entité, s'il y en a un (récidive) |
 | `Alertes`, `NombreAlertes` | résumés des 5 premières et des 5 dernières alertes jointes (chemin 260, processus 64, destination 128 et raisons 200 caractères au plus, sans caractère de contrôle ni de mise en forme), et leur nombre |
 | `Transitions` | 20 au plus : heure locale et UTC, état de départ et d'arrivée, motif, auteur (SID lu sur le jeton du client du tube, jamais pris dans la commande ; une transition sans auteur connu est refusée), note (300 caractères au plus, sans caractère de contrôle ni de mise en forme) |
+| `NombreTransitions` | transitions depuis l'ouverture, y compris celles sorties des 20 gardées (second audit, B-5-01) ; absent d'un suivi plus ancien : 0, et le nombre de `Transitions` en tient lieu |
 
 - **Rattachement** : une alerte « Info » ne crée rien ; une alerte « Alerte » ou « Critique » rejoint l'incident non
   clos de la même entité dont la dernière activité date de moins de 24 h ; sinon elle ouvre un incident. Un incident
@@ -258,7 +259,11 @@ fichiers des incidents qui ne sont plus suivis sont effacés.
   placés ; `PertesSiem` dit combien d'événements la file du SIEM a perdus depuis le démarrage : des étapes peuvent
   manquer.
 - **Après un redémarrage** : une chronologie déjà écrite pour le même état de l'incident (`Repere` : dernière activité,
-  transitions, alertes) est gardée telle quelle, pas recalculée. Quand l'incident change, elle est recalculée sur ce que
+  nombre total de transitions, nombre d'alertes) est gardée telle quelle, pas recalculée. Le repère suit le nombre
+  total de transitions (`NombreTransitions`), pas la liste gardée : avant la correction du second audit (B-5-01),
+  au-delà de 20 transitions il ne changeait plus et la chronologie n'était plus recalculée ; testé en labo
+  (`chronologie_recalculee_au_dela_de_20_transitions`). Un suivi écrit avant garde le même repère : rien n'est
+  recalculé pour autant au démarrage. Quand l'incident change, elle est recalculée sur ce que
   le SIEM a encore (30 jours de fichiers) : au-delà restent les résumés et les transitions de l'incident.
 
 ## Règles de stabilité

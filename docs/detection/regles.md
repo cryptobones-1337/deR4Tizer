@@ -950,5 +950,15 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25). Dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).
 - Un identifiant par module (PR 3.2) : chacun de ces modules produit ses alertes à un seul endroit, et la règle précise
   (sid de l'IDS, motif du DPI ou du NDR) reste dans les raisons. Un découpage plus fin reste à faire dans leur validation.
+- **IDS, second audit (B-4-01 et B-4-02, corrigés)** : une règle sans contenu positif (aucun `content`, ou seulement
+  des `content` niés) évalue quand même toutes ses conditions : elle ne se déclenche que si aucun de ses contenus niés
+  n'est présent, avec leurs options (`offset`, `depth`…) ; avant, elle se déclenchait sur son seul en-tête (protocole,
+  adresses, ports). Une variable d'en-tête inconnue rend la règle ignorée et comptée, comme une option non prise en
+  charge ; avant, elle valait « toutes les adresses » ou « tous les ports ». Variables connues, inchangées :
+  `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`, `$ORACLE_PORTS`. Conséquence : une
+  règle Emerging Threats qui cite par exemple `$HTTP_SERVERS` ou `$SMTP_SERVERS` est désormais ignorée (comptée dans
+  `ids.json`, champ `Ignorees`). Testé en labo (`ids_regle_sans_contenu_positif_evalue_ses_negations`,
+  `ids_variable_inconnue_ignoree`) ; à mesurer en VM (compte des règles ignorées sur un jeu ET Open).
 - **Télémétrie** : capture réseau.
-- **Tests** : ceux des modules, inchangés ; aucune mesure de faux positifs pendant la phase 3.
+- **Tests** : ceux des modules, plus ceux du second audit pour l'IDS (ci-dessus) ; aucune mesure de faux positifs
+  pendant la phase 3.
