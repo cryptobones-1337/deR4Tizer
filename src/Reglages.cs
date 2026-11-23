@@ -191,8 +191,21 @@ namespace DeR4Tizer
         public static string TexteLecteurs(List<Lecteur> lecteurs)
         {
             var l = (lecteurs ?? new List<Lecteur>()).Where(x => x != null).ToList();
+            // Audit du 2026-11-23, A-6-2 : le premier compte vu à la console devient lecteur d'office ; la liste dit ce qu'il lit
             return L.T("Les événements, sessions, alertes et appareils du réseau ne sont lisibles que par SYSTEM, les administrateurs et ces comptes :")
-                + " " + (l.Count == 0 ? "—" : string.Join(", ", l.Select(x => Canal.Visible(x.Nom))));
+                + " " + (l.Count == 0 ? "—" : string.Join(", ", l.Select(x => Canal.Visible(NomLecteur(x)))))
+                + ". " + L.T("Ces comptes peuvent lire l'historique de tous les comptes (alertes, événements, lignes de commande masquées).");
+        }
+
+        // Nom du compte plutôt que son SID : le service écrit le SID quand il n'a pas pu traduire le nom ; nouvel essai ici,
+        // le SID sinon (lecture seule, aucune décision n'en dépend)
+        public static string NomLecteur(Lecteur x)
+        {
+            string nom = x.Nom ?? "";
+            if (nom.Length > 0 && !nom.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)) return nom;
+            string sid = string.IsNullOrEmpty(x.Sid) ? nom : x.Sid;
+            try { return new System.Security.Principal.SecurityIdentifier(sid).Translate(typeof(System.Security.Principal.NTAccount)).Value; }
+            catch { return sid; }
         }
     }
 

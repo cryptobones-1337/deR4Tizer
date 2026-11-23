@@ -1,5 +1,5 @@
 //! Mini-SIEM local : événements normalisés, stockés un fichier NDJSON par jour (siem\evenements-AAAAMMJJ.ndjson,
-//! 30 jours, 1 Go au plus), et corrélation de règles sur fenêtres de temps, qui produit des incidents
+//! 30 jours, 1 Go au plus, 1 Go / 30 par jour), et corrélation de règles sur fenêtres de temps, qui produit des incidents
 //! (incidents.json) et des alertes.
 //!
 //! Sources : alertes de deR4Tizer, nouvelles connexions sortantes, changements de règles du pare-feu,
@@ -17,7 +17,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const JOURS_CONSERVES: u64 = 30;
-const TAILLE_MAX: u64 = 1024 * 1024 * 1024;
+pub(crate) const TAILLE_MAX: u64 = 1024 * 1024 * 1024;
+/// Plafond d'un jour (audit du 2026-11-23, A-6-3) : la part d'un jour dans 1 Go sur 30 jours (34 Mo environ). Au-delà, les
+/// événements du jour ne sont plus écrits (comptés, SAN-013) : une inondation d'un jour ne chasse plus les jours précédents,
+/// et 30 jours pleins tiennent dans 1 Go. Un jour ordinaire en écrit bien moins (à mesurer en VM)
+pub(crate) const PLAFOND_JOUR: u64 = TAILLE_MAX / JOURS_CONSERVES;
 const SID_ADMINISTRATEURS: &str = "S-1-5-32-544";
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -92,8 +96,12 @@ pub fn dossier() -> PathBuf {
 /// Événements perdus parce que la file était pleine, depuis le démarrage (phase 4, PR 4.1 : avant, perte silencieuse)
 static PERTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Ajoute un événement (perdu si la file est pleine : la surveillance passe avant ; la perte est comptée)
+/// Ajoute un événement (perdu si la file est pleine : la surveillance passe avant ; la perte est comptée). Point d'entrée
+/// unique du SIEM : secrets des lignes de commande masqués dans le message et la destination (audit du 2026-11-23, A-6-1),
+/// avant le stockage, la recherche, l'API et la corrélation (qui ne lit aucune valeur secrète)
 pub fn enregistrer(mut e: Evenement) {
+    e.message = commun::masquer_secrets(&e.message);
+    e.destination = commun::masquer_secrets(&e.destination);
     if e.modele == 0 {
         e.modele = commun::MODELE_ALERTE;
     }
@@ -125,6 +133,24 @@ pub(crate) fn puissance_de_dix(mut n: u64) -> bool {
 /// Événements perdus depuis le démarrage (file pleine)
 pub fn pertes() -> u64 {
     PERTES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Événements non écrits parce que le fichier du jour avait atteint `PLAFOND_JOUR`, et fichiers d'un jour précédent supprimés
+/// parce que le total dépassait 1 Go, depuis le démarrage (audit du 2026-11-23, A-6-3)
+static PLAFONNES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PURGES_TAILLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Compteurs d'un historique incomplet, lus par le fil « sante » (SAN-013)
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct CompteursSiem {
+    pub pertes: u64,
+    pub plafonnes: u64,
+    pub purges_taille: u64,
+}
+
+pub fn compteurs() -> CompteursSiem {
+    use std::sync::atomic::Ordering::Relaxed;
+    CompteursSiem { pertes: pertes(), plafonnes: PLAFONNES.load(Relaxed), purges_taille: PURGES_TAILLE.load(Relaxed) }
 }
 
 /// Actions de réponse journalisées dans le SIEM (phase 4, PR 4.1) : les commandes qui agissent sur le poste
@@ -370,7 +396,9 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             e.utilisateur = if compte_systeme(&v("SubjectUserSid"), &v("SubjectUserName")) { String::new() } else { compte("SubjectDomainName", "SubjectUserName") };
             e.processus = nom_fichier(&v("NewProcessName"));
             e.pid = u32::from_str_radix(v("NewProcessId").trim_start_matches("0x"), 16).ok();
-            let ligne = v("CommandLine");
+            // Secrets masqués avant d'être bornés (audit du 2026-11-23, A-6-1) : les règles PRC lisent la ligne entière
+            // ailleurs (processus.rs), jamais ce message
+            let ligne = commun::masquer_secrets(&v("CommandLine"));
             e.message = format!("{} lancé par {}{}", e.processus, nom_fichier(&v("ParentProcessName")),
                 if ligne.is_empty() { String::new() } else { format!(" : {}", ligne.chars().take(400).collect::<String>()) });
         }
@@ -533,7 +561,8 @@ pub fn rechercher(f: &Filtre) -> Vec<Evenement> {
 fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
     let mut correlation = Correlation::default();
     let mut incidents: Vec<Incident> = commun::lire("incidents.json").unwrap_or_default();
-    let mut fichier: Option<(String, fs::File)> = None;
+    // Fichier du jour ouvert, et sa taille (plafond du jour, A-6-3)
+    let mut fichier: Option<(String, fs::File, u64)> = None;
     // Jamais de soustraction qui panique, quelle que soit l'origine d'Instant (audit du 2026-11-14, A1)
     let mut dernier_menage = Instant::now().checked_sub(Duration::from_secs(86_400)).unwrap_or_else(Instant::now);
     let mut ecrits = 0u64;
@@ -545,13 +574,23 @@ fn boucle(rx: Receiver<Evenement>, alertes: Arc<Mutex<Vec<Alerte>>>) {
         // Fichier du jour de l'événement (AAAAMMJJ)
         let jour: String = e.heure.chars().filter(|c| c.is_ascii_digit()).take(8).collect();
         if jour.len() == 8 {
-            if fichier.as_ref().map(|(j, _)| j != &jour).unwrap_or(true) {
+            if fichier.as_ref().map(|(j, _, _)| j != &jour).unwrap_or(true) {
                 fichier = fs::OpenOptions::new().create(true).append(true)
-                    .open(dossier().join(format!("evenements-{jour}.ndjson"))).ok().map(|f| (jour.clone(), f));
+                    .open(dossier().join(format!("evenements-{jour}.ndjson"))).ok()
+                    .map(|f| { let taille = f.metadata().map(|m| m.len()).unwrap_or(0); (jour.clone(), f, taille) });
             }
-            if let Some((_, f)) = fichier.as_mut() {
+            if let Some((_, f, taille)) = fichier.as_mut() {
                 if let Ok(ligne) = serde_json::to_string(&e) {
-                    let _ = writeln!(f, "{ligne}");
+                    if !place_du_jour(*taille, ligne.len()) {
+                        // Plafond du jour atteint : l'événement n'est pas écrit (compté ; une ligne de journal à la 1re, 10e,
+                        // 100e…) ; la corrélation le voit quand même
+                        let n = PLAFONNES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if puissance_de_dix(n) {
+                            commun::journal(&format!("mini-SIEM : plafond du jour atteint ({} Mo), {n} événement(s) non écrit(s) depuis le démarrage", PLAFOND_JOUR / (1024 * 1024)));
+                        }
+                    } else if writeln!(f, "{ligne}").is_ok() {
+                        *taille = taille.saturating_add(ligne.len() as u64 + 1);
+                    }
                 }
             }
         }
@@ -593,10 +632,44 @@ pub(crate) fn alerte_de_correlation(i: &Incident) -> Alerte {
     }
 }
 
-/// Supprime les fichiers de plus de 30 jours, puis les plus anciens au-delà de 1 Go
+/// Place pour une ligne de `ligne` octets (plus la fin de ligne) dans le fichier du jour qui en a `taille_jour` (pure, testée)
+pub(crate) fn place_du_jour(taille_jour: u64, ligne: usize) -> bool {
+    taille_jour.saturating_add(ligne as u64).saturating_add(1) <= PLAFOND_JOUR
+}
+
+/// Fichiers à supprimer (décision pure, testée ; audit du 2026-11-23, A-6-3) parmi `fichiers` (jour AAAAMMJJ, taille) :
+/// ceux d'avant `limite` (30 jours), puis, tant que le total dépasse 1 Go, les plus anciens. Le fichier du jour
+/// (`aujourdhui`, et tout jour daté d'après) n'est jamais supprimé : un jour en excès est borné par `PLAFOND_JOUR` à
+/// l'écriture et ne chasse plus les autres. Rend (indice dans `fichiers`, supprimé pour la taille), du plus ancien au plus récent
+pub(crate) fn a_supprimer(fichiers: &[(String, u64)], limite: &str, aujourdhui: &str) -> Vec<(usize, bool)> {
+    let mut ordre: Vec<usize> = (0..fichiers.len()).collect();
+    ordre.sort_by(|&a, &b| fichiers[a].0.cmp(&fichiers[b].0));
+    // Le jour courant compte pour sa part bornée : un fichier du jour gonflé (écrit avant le plafond) ne chasse rien
+    let mut total: u64 = fichiers.iter().fold(0u64, |t, f| t.saturating_add(if f.0.as_str() >= aujourdhui { f.1.min(PLAFOND_JOUR) } else { f.1 }));
+    let mut sortie = Vec::new();
+    for i in ordre {
+        let (jour, taille) = (&fichiers[i].0, fichiers[i].1);
+        if jour.as_str() >= aujourdhui {
+            continue;
+        }
+        let vieux = jour.as_str() < limite;
+        if vieux || total > TAILLE_MAX {
+            sortie.push((i, !vieux));
+            total = total.saturating_sub(taille);
+        }
+    }
+    sortie
+}
+
+/// Jour AAAAMMJJ d'un instant (heure locale, comme les noms des fichiers)
+fn jour_de(t: std::time::SystemTime) -> String {
+    commun::heure(t).chars().filter(|c| c.is_ascii_digit()).take(8).collect()
+}
+
+/// Supprime les fichiers de plus de 30 jours, puis les plus anciens au-delà de 1 Go, jamais celui du jour (`a_supprimer`)
 fn menage() {
     let Ok(lecture) = fs::read_dir(dossier()) else { return };
-    let mut fichiers: Vec<(String, u64, PathBuf)> = lecture
+    let fichiers: Vec<(String, u64, PathBuf)> = lecture
         .flatten()
         .filter_map(|f| {
             let nom = f.file_name().to_string_lossy().to_string();
@@ -604,17 +677,14 @@ fn menage() {
             Some((jour, f.metadata().ok()?.len(), f.path()))
         })
         .collect();
-    fichiers.sort();
-    let limite: String = {
-        let t = std::time::SystemTime::now() - Duration::from_secs(JOURS_CONSERVES * 86_400);
-        commun::heure(t).chars().filter(|c| c.is_ascii_digit()).take(8).collect()
-    };
-    let mut total: u64 = fichiers.iter().map(|f| f.1).sum();
-    for (jour, taille, chemin) in &fichiers {
-        if jour.as_str() < limite.as_str() || total > TAILLE_MAX {
-            if fs::remove_file(chemin).is_ok() {
-                total -= taille;
-            }
+    let maintenant = std::time::SystemTime::now();
+    let limite = maintenant.checked_sub(Duration::from_secs(JOURS_CONSERVES * 86_400)).map(jour_de).unwrap_or_default();
+    let tailles: Vec<(String, u64)> = fichiers.iter().map(|(j, t, _)| (j.clone(), *t)).collect();
+    for (i, par_taille) in a_supprimer(&tailles, &limite, &jour_de(maintenant)) {
+        let Some((jour, _, chemin)) = fichiers.get(i) else { continue };
+        if fs::remove_file(chemin).is_ok() && par_taille {
+            let n = PURGES_TAILLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            commun::journal(&format!("mini-SIEM : evenements-{jour}.ndjson supprimé pour la taille totale (1 Go) ; {n} fichier(s) depuis le démarrage"));
         }
     }
 }

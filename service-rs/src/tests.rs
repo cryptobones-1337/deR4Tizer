@@ -375,6 +375,34 @@ fn audit_journal_une_seule_ligne_par_message() {
     assert_eq!(crate::commun::ligne_de_journal("é ordinaire"), "é ordinaire");
 }
 
+/// Audit du 2026-11-23, A-8-3 : rotation du journal sur 5 générations (journal.1 à journal.5) ; la plus ancienne seule
+/// est remplacée ; une ligne dit l'intervalle couvert par la génération qui vient de tourner
+#[test]
+fn journal_rotation_cinq_generations() {
+    use crate::commun::{rotation_due, tourner_journal, GENERATIONS_JOURNAL, TAILLE_JOURNAL};
+    assert_eq!(GENERATIONS_JOURNAL, 5);
+    assert!(!rotation_due(TAILLE_JOURNAL) && rotation_due(TAILLE_JOURNAL + 1) && !rotation_due(0));
+    let d = dossier_test("journal-rotation");
+    let journal = d.join("journal.txt");
+    for n in 1..=7 {
+        std::fs::write(&journal, format!("2026-11-{n:02} 08:00:00  premier {n}\r\n2026-11-{n:02} 18:30:00  dernier {n}\r\n")).unwrap();
+        let ligne = tourner_journal(&d).expect("rotation faite");
+        assert!(ligne.contains(&format!("2026-11-{n:02} 08:00:00")) && ligne.contains(&format!("2026-11-{n:02} 18:30:00")) && ligne.contains("journal.1.txt"), "{ligne}");
+        assert!(!journal.exists(), "journal.txt repart à vide");
+    }
+    // Sept rotations : générations 1 à 5 gardées, la plus récente en 1 ; rien au-delà de 5
+    for (g, n) in (1..=5).zip((3..=7).rev()) {
+        let contenu = std::fs::read_to_string(d.join(format!("journal.{g}.txt"))).unwrap();
+        assert!(contenu.contains(&format!("premier {n}")), "journal.{g}.txt : {contenu}");
+    }
+    assert!(!d.join("journal.6.txt").exists());
+    // Contenu sans heure lisible (ou vide, non UTF-8) : rotation quand même, intervalle « inconnu », jamais de panique
+    std::fs::write(&journal, [0xFFu8, 0xFE, b'x']).unwrap();
+    assert!(tourner_journal(&d).expect("rotation").contains("inconnu"));
+    assert!(tourner_journal(&d).is_none(), "pas de journal : rien à tourner");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn chemins_des_pilotes() {
     let w = crate::natif::dossier_windows();
@@ -4456,7 +4484,7 @@ fn phase3_collecte_inconnue_ne_vaut_pas_rien_de_suspect() {
 #[test]
 fn phase3_chaque_regle_a_sa_telemetrie() {
     use crate::collectes::{besoins, Collecte::*};
-    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "REP-001", "REP-002", "REP-003", "REP-004"];
+    let sans = ["RES-004", "SYS-001", "VIE-003", "COR-R6", "INT-001", "INT-002", "SAN-001", "SAN-002", "SAN-003", "SAN-004", "SAN-012", "SAN-013", "REP-001", "REP-002", "REP-003", "REP-004"];
     for r in crate::regles::REGLES {
         assert_eq!(besoins(r.id).is_empty(), sans.contains(&r.id), "{}", r.id);
     }
@@ -4884,6 +4912,133 @@ fn siem_pertes_comptees() {
     use crate::siem::puissance_de_dix;
     assert!([1, 10, 100, 1000, 10_000_000].iter().all(|&n| puissance_de_dix(n)));
     assert!([0, 2, 11, 110, 111, 101, 20, 1001].iter().all(|&n| !puissance_de_dix(n)));
+}
+
+/// Audit du 2026-11-23, A-6-1 : lignes de commande portant un secret ; la valeur secrète n'est plus dans le résultat, le
+/// reste de la ligne (programme, options, compte) est gardé
+#[test]
+fn masquer_secrets_retire_les_valeurs() {
+    use crate::commun::masquer_secrets;
+    let cas: &[(&str, &str, &str)] = &[
+        (r"net use \\srv\c$ Secr3tNet /user:POSTE\admin", "Secr3tNet", r"/user:POSTE\admin"),
+        (r"net use Z: \\srv\partage /user:dom\u Secr3tApres /persistent:no", "Secr3tApres", "/persistent:no"),
+        (r#"schtasks /create /tn maj /tr "c:\x.exe" /ru admin /rp Secr3tTache"#, "Secr3tTache", "/ru admin"),
+        ("schtasks /create /s srv /u admin /p Secr3tP /tn t", "Secr3tP", "/u admin"),
+        ("cmdkey /add:srv /user:admin /pass:Secr3tCmdkey", "Secr3tCmdkey", "/user:admin"),
+        ("psexec \\\\srv -u admin -p Secr3tPsexec cmd", "Secr3tPsexec", "-u admin"),
+        ("mysql --password=Secr3tEgal -h db", "Secr3tEgal", "-h db"),
+        ("outil --password Secr3tEspace --verbose", "Secr3tEspace", "--verbose"),
+        ("New-LocalUser -Name x -Password Secr3tPs", "Secr3tPs", "-Name x"),
+        (r#"powershell -c "$s = ConvertTo-SecureString 'Secr3t Guillemets' -AsPlainText -Force""#, "Guillemets", "-AsPlainText"),
+        ("ConvertTo-SecureString -String Secr3tString -AsPlainText -Force", "Secr3tString", "-AsPlainText"),
+        ("Invoke-Command -ComputerName srv -Credential Secr3tCred -ScriptBlock {}", "Secr3tCred", "-ComputerName srv"),
+        ("mstsc /v:srv /p:Secr3tDeuxPoints", "Secr3tDeuxPoints", "/v:srv"),
+        ("outil /password:Secr3tLong /x", "Secr3tLong", "/x"),
+        (r#"curl https://admin:Secr3tUrl@exemple.test/chemin"#, "Secr3tUrl", "https://admin:"),
+        (r#"outil -Password "Secr3t avec espaces" -Force"#, "avec espaces", "-Force"),
+        ("ROBOCOPY a b & net use * \\\\srv\\c Secr3tSuite", "Secr3tSuite", "ROBOCOPY a b"),
+    ];
+    for (ligne, secret, garde) in cas {
+        let m = masquer_secrets(ligne);
+        assert!(!m.contains(secret), "secret encore présent : {ligne} → {m}");
+        assert!(m.contains(garde), "contexte perdu : {ligne} → {m}");
+        assert!(m.contains(crate::commun::MASQUE), "{m}");
+        assert_eq!(masquer_secrets(&m), m, "masquage stable : {m}");
+    }
+    // Lignes ordinaires : inchangées
+    for ligne in [r#""C:\Program Files\Mozilla Firefox\firefox.exe" -contentproc --channel=1234 -parentBuildID 2026"#,
+                  r"C:\Windows\system32\svchost.exe -k netsvcs -s Schedule",
+                  "net use", r"net use Z: \\srv\partage /persistent:yes", "runas /savecred /user:admin cmd.exe",
+                  r#"powershell -NoProfile -Command "Get-ChildItem 'C:\Users' -Recurse""#, "https://exemple.test/a@b"] {
+        assert_eq!(masquer_secrets(ligne), ligne);
+    }
+    // Non ASCII : le reste intact, le secret retiré
+    let m = masquer_secrets("outil-été /pass:Mötdepässe日本 «fin» \u{1F600}");
+    assert!(!m.contains("Mötdepässe") && m.contains("outil-été") && m.contains("«fin» \u{1F600}"), "{m}");
+    // Règle 4 : jamais de panique, quelle que soit l'entrée
+    torturer_texte("net use \\\\s\\c x /user:a -p 'b c' --password=d https://u:p@h", &mut |s| {
+        let _ = masquer_secrets(s);
+    });
+    for bord in ["", " ", "-p", "/p:", "--password=", "\"", "'", "-Password '", "net use", "net", "https://", "a://b:@", "://:@",
+                 "ConvertTo-SecureString", "-Credential", "/rp \"", "é-p", "-pé"] {
+        let _ = masquer_secrets(bord);
+    }
+}
+
+/// A-6-1 : les alertes (alertes.json, journal, export syslog et API, notifications, SIEM) passent par `borner_alerte`, qui
+/// masque les secrets des raisons et de la destination ; la décision a déjà été prise sur le texte entier
+#[test]
+fn alerte_bornee_secrets_masques() {
+    let mut a = crate::commun::Alerte {
+        raisons: "PowerShell qui télécharge du code : powershell -c New-LocalUser x -Password Hunter2Secret".into(),
+        destination: "lancé par cmdkey /pass:AutreSecret9".into(),
+        ..Default::default()
+    };
+    crate::commun::borner_alerte(&mut a);
+    assert!(!a.raisons.contains("Hunter2Secret") && a.raisons.contains("PowerShell qui télécharge du code"), "{}", a.raisons);
+    assert!(!a.destination.contains("AutreSecret9"), "{}", a.destination);
+}
+
+/// A-6-1 : chaînes de processus publiées dans etat.json : ligne de commande et raisons masquées dans la copie publiée ;
+/// l'arbre (et l'analyse) garde la ligne entière
+#[test]
+fn chaines_publiees_secrets_masques() {
+    let c = crate::chaines::Chaine {
+        noeuds: vec![crate::chaines::NoeudChaine { ligne_commande: "net use \\\\s\\c MotSecretChaine /user:a".into(),
+            raisons: "motif : schtasks /rp SecretRaison".into(), ..Default::default() }],
+        ..Default::default()
+    };
+    let publiees = crate::moniteur::chaines_publiees(&vec![c.clone(); 40]);
+    assert_eq!(publiees.len(), 30, "30 chaînes au plus");
+    assert!(!publiees[0].noeuds[0].ligne_commande.contains("MotSecretChaine") && !publiees[0].noeuds[0].raisons.contains("SecretRaison"));
+    assert!(c.noeuds[0].ligne_commande.contains("MotSecretChaine"), "l'original n'est pas touché");
+}
+
+/// A-6-1, contrôle du source : la ligne d'un 4688 passe par `masquer_secrets` avant d'être bornée et mise dans le message ;
+/// tout événement enregistré aussi (point d'entrée unique du SIEM) ; les règles PRC analysent la ligne non masquée
+/// (processus.rs ne masque rien, le masquage vient après la décision, dans borner_alerte)
+#[test]
+fn structure_4688_et_siem_masques() {
+    let siem = include_str!("siem.rs");
+    let debut = siem.find("        4688 => {").expect("branche 4688");
+    let branche = &siem[debut..debut + siem[debut..].find("        4697 | 7045").expect("branche suivante")];
+    assert!(branche.contains(r#"let ligne = commun::masquer_secrets(&v("CommandLine"));"#), "{branche}");
+    let enregistrer = &siem[siem.find("pub fn enregistrer(").unwrap()..];
+    let enregistrer = &enregistrer[..enregistrer.find("\n}").unwrap()];
+    assert!(enregistrer.contains("masquer_secrets(&e.message)"), "{enregistrer}");
+    assert!(!include_str!("processus.rs").contains("masquer_secrets"), "les règles PRC voient la ligne entière");
+    let moniteur = include_str!("moniteur.rs");
+    let brute = &moniteur[moniteur.find("fn ajouter_alerte_brute(").unwrap()..];
+    let (decisions, bornage) = (brute.find("mitre::enrichir(&mut a)").unwrap(), brute.find("commun::borner_alerte(&mut a)").unwrap());
+    assert!(decisions < bornage && brute.find("apprentissage::signature(&a)").unwrap() < bornage, "décisions avant le masquage");
+    assert!(bornage < brute.find("crate::export::alerte(&a)").unwrap() && bornage < brute.find("crate::siem::depuis_alerte(&a)").unwrap());
+    assert!(moniteur.contains("chaines: chaines_publiees(&self.chaines)"));
+    assert!(moniteur.contains("ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).map(commun::masquer_secrets)"));
+}
+
+/// Audit du 2026-11-23, A-6-3 : purge du SIEM. 30 fichiers dont le dernier (celui du jour) dépasse le plafond : les 29
+/// autres restent ; le fichier du jour n'est jamais supprimé, ni par l'âge ni par la taille ; au-delà de 30 jours, supprimé
+#[test]
+fn siem_purge_par_jour() {
+    use crate::siem::{a_supprimer, PLAFOND_JOUR, TAILLE_MAX};
+    let jours: Vec<String> = (1..=30).map(|j| format!("202611{j:02}")).collect();
+    let mut fichiers: Vec<(String, u64)> = jours.iter().map(|j| (j.clone(), 10 * 1024 * 1024)).collect();
+    fichiers[29].1 = 3 * TAILLE_MAX;
+    assert!(a_supprimer(&fichiers, "20261024", "20261130").is_empty(), "le jour en excès ne chasse pas les autres");
+    // Total au-delà de 1 Go sans le jour courant : les plus anciens partent, jamais le jour courant
+    let gros: Vec<(String, u64)> = jours.iter().map(|j| (j.clone(), TAILLE_MAX / 10)).collect();
+    let s = a_supprimer(&gros, "20261024", "20261130");
+    assert!(!s.is_empty() && s.iter().all(|(i, taille)| *taille && *i < 29), "{s:?}");
+    assert_eq!(s.iter().map(|x| x.0).collect::<Vec<_>>(), (0..s.len()).collect::<Vec<_>>(), "les plus anciens d'abord");
+    // Âge : avant la limite, supprimé (pas « par la taille »), le jour courant jamais, même daté d'avant la limite
+    let vieux = vec![("20261001".to_string(), 1), ("20261124".to_string(), 1), ("20261130".to_string(), 1)];
+    assert_eq!(a_supprimer(&vieux, "20261101", "20261130"), [(0, false)]);
+    assert!(a_supprimer(&[("20261001".to_string(), 1)], "20261101", "20261001").is_empty(), "jour courant gardé");
+    // Plafond par jour : 1 Go / 30
+    use crate::siem::place_du_jour;
+    assert_eq!(PLAFOND_JOUR, TAILLE_MAX / 30);
+    assert!(place_du_jour(0, 100) && place_du_jour(PLAFOND_JOUR - 101, 100));
+    assert!(!place_du_jour(PLAFOND_JOUR - 100, 100) && !place_du_jour(u64::MAX, 1), "plafond atteint, sans dépassement d'entier");
 }
 
 /// Actions de réponse dans le SIEM, pour la chronologie : l'événement porte l'action, la cible, le résultat et le
@@ -5436,6 +5591,26 @@ fn sante_rappel_remis_a_zero_au_retablissement() {
 
 fn sante_regles(a: &[crate::commun::Alerte]) -> Vec<(String, String, String)> {
     a.iter().map(|x| (x.regle.clone(), x.niveau.clone(), x.destination.clone())).collect()
+}
+
+/// Audit du 2026-11-23, A-6-3 : SAN-013 à la première perte d'événements du SIEM, au premier plafond du jour atteint et à
+/// la première purge par la taille ; une hausse d'un compteur déjà signalé : une fois par 24 h au plus
+#[test]
+fn sante_san013_historique_incomplet() {
+    use crate::siem::CompteursSiem;
+    let mut s = crate::sante::Sante::default();
+    let t0 = 1_000_000;
+    assert!(s.observer_siem(CompteursSiem::default(), t0).is_none(), "rien de perdu : rien");
+    let a = s.observer_siem(CompteursSiem { pertes: 1, ..Default::default() }, t0).expect("première perte");
+    assert_eq!(sante_regles(&[a.clone()]), [("SAN-013".to_string(), "Alerte".to_string(), "mini-SIEM".to_string())]);
+    assert!(a.raisons.contains("1 événement(s) perdu(s)"), "{}", a.raisons);
+    assert!(s.observer_siem(CompteursSiem { pertes: 50, ..Default::default() }, t0 + 60).is_none(), "hausse : pas avant 24 h");
+    let b = s.observer_siem(CompteursSiem { pertes: 50, plafonnes: 3, ..Default::default() }, t0 + 120).expect("premier plafond, même dans les 24 h");
+    assert!(b.raisons.contains("plafond du jour") && b.raisons.contains("3 événement(s)"), "{}", b.raisons);
+    let c = s.observer_siem(CompteursSiem { pertes: 50, plafonnes: 3, purges_taille: 1 }, t0 + 180).expect("première purge par la taille");
+    assert!(c.raisons.contains("supprimé(s) pour la taille"), "{}", c.raisons);
+    assert!(s.observer_siem(CompteursSiem { pertes: 50, plafonnes: 3, purges_taille: 1 }, t0 + 200_000).is_none(), "rien de nouveau");
+    assert!(s.observer_siem(CompteursSiem { pertes: 51, plafonnes: 3, purges_taille: 1 }, t0 + 200_000).is_some(), "hausse après 24 h");
 }
 
 #[test]

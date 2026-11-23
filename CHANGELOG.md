@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Data (audit of 23 November 2026, batch 5): known secret arguments in command lines (`net use` and `net user`
+  passwords, `/p`, `/rp`, `/pass:`, `-p`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`,
+  `user:password@` in an address) are masked (`***`) before being stored in the SIEM, in alerts (alert history, syslog
+  and API exports, notifications) and in process chains and connections shown by the interface; detection rules still
+  read the full command line (A-6-1). The SIEM never deletes the current day's file: beyond a daily cap (1 GB / 30),
+  that day's events are counted and not written, the size purge only removes previous days, and a new health finding,
+  SAN-013, reports dropped events, the daily cap and size purges (A-6-3). The service log rotates over 5 files
+  (`journal.1.txt` to `journal.5.txt`) and each rotation writes the time span of the rotated file (A-8-3). Settings and
+  the first-run summary say that reader accounts can read the history of every account (A-6-2).
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms
