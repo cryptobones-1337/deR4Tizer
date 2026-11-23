@@ -2918,7 +2918,7 @@ fn s268_01_leurre_lien_dur_refuse() {
     let h = include_str!("hygiene.rs").replace("\r\n", "\n");
     let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
     let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
-    assert!(p.find("leurre_existant_admis(l)").unwrap() < p.find("poser_audit_verifie").unwrap(), "liens contrôlés avant l'audit");
+    assert!(p.contains("let e = match poser_a_echeance(&f)") && !p.contains("poser_audit_verifie"), "liens contrôlés dans la pose sur un seul handle");
     let t = crate::hygiene::sans_profil(r"leurres : C:\Users\marie\OneDrive\Documents\0 Factures 1234.docx refusé (D:\Marie\0 FACTURES 1234.docx)",
         std::path::Path::new(r"C:\Users\marie"), std::path::Path::new(r"D:\Marie"), "0 Factures 1234.docx");
     assert!(!t.to_lowercase().contains("factures") && !t.to_lowercase().contains("marie"), "{t}");
@@ -2937,6 +2937,59 @@ fn s268_02_anciens_emplacements_bornes() {
     assert_eq!(gardes.len(), 5, "3 du même leurre, plus un autre leurre et un autre profil");
     assert_eq!(en_trop.iter().map(|x| x.chemin.as_str()).collect::<Vec<_>>(), [r"C:\D3\0 Devis 1234.docx", r"C:\D4\0 Devis 1234.docx"]);
     assert!(gardes.iter().any(|x| x.chemin == r"C:\D0\0 Devis 1234.docx"), "le plus récent gardé");
+}
+
+/// S268-04 : nombre de liens, audit et empreinte sur UN SEUL handle (aucune réouverture par chemin entre le contrôle et
+/// la pose de la SACL) ; issue transportée en texte par le lecteur à échéance, texte inattendu = illisible
+#[test]
+fn s268_04_pose_sur_un_seul_handle() {
+    use crate::hygiene::{issue_pose, IssuePose};
+    for i in [IssuePose::Suivi { empreinte: "ab".into(), audit: None }, IssuePose::Suivi { empreinte: "ab".into(), audit: Some("refus".into()) },
+              IssuePose::Liens(Some(2)), IssuePose::Liens(None), IssuePose::Illisible] {
+        let t = serde_json::to_string(&i).unwrap();
+        assert_eq!(issue_pose(Some(&t)), i);
+    }
+    for t in [None, Some(""), Some("{"), Some(r#"{"Suivi":{"empreinte":3}}"#), Some("\"Autre\"")] {
+        assert_eq!(issue_pose(t), IssuePose::Illisible, "{t:?}");
+    }
+    torturer_texte(r#"{"Suivi":{"empreinte":"ab","audit":null}}"#, &mut |t| { let _ = issue_pose(Some(t)); });
+    // Câblage : la pose n'ouvre le leurre qu'une fois (poser_audit_par_handle) ; le contrôle des liens et l'empreinte
+    // passent par ce handle
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let q = &h[h.find("fn poser_a_echeance(").unwrap()..];
+    let q = &q[..q.find("\n}\n").unwrap()];
+    assert_eq!(q.matches("poser_audit_par_handle(").count(), 1);
+    assert!(q.contains("crate::natif::nombre_de_liens(h)") && q.contains("leurre_existant_admis(n)") && q.contains("empreinte_lue"), "{q}");
+    assert!(!q.contains("ouvrir_verifie") && !q.contains("empreinte_verifiee") && !q.contains("liens_a_echeance"), "réouverture par chemin");
+    let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
+    let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
+    let boucle = &p[..p.find("// Leurres d'un ancien emplacement").unwrap()];
+    assert!(!boucle.contains("poser_audit_verifie") && !boucle.contains("liens_a_echeance(&f)") && boucle.matches("empreinte_a_echeance(&f)").count() == 1,
+            "un seul contrôle de présence, puis la pose sur un seul handle");
+    let n = include_str!("natif.rs").replace("\r\n", "\n");
+    let a = &n[n.find("pub fn poser_audit_par_handle<").unwrap()..];
+    let a = &a[..a.find("\n}\n").unwrap()];
+    assert_eq!(a.matches("ouvrir_verifie(").count(), 1, "une seule ouverture");
+    assert!(a.find("avant(&f)").unwrap() < a.find("poser_sacl(&f").unwrap() && a.find("poser_sacl(&f").unwrap() < a.find("apres(&mut f)").unwrap(),
+            "contrôle, puis audit, puis lecture, sur le même handle");
+}
+
+/// S268-05 : un ancien emplacement repasse le contrôle des liens (un seul nom ou lecture hors délai : gardé ; absent :
+/// oublié ; plusieurs noms : suivi abandonné, journalisé)
+#[test]
+fn s268_05_anciens_emplacements_controle_des_liens() {
+    use crate::hygiene::{suite_ancien, SuiteAncien};
+    use crate::natif::HorsDelai;
+    assert_eq!(suite_ancien(Ok(Some(1))), SuiteAncien::Garder);
+    assert_eq!(suite_ancien(Err(HorsDelai)), SuiteAncien::Garder);
+    assert_eq!(suite_ancien(Ok(None)), SuiteAncien::Oublier);
+    for n in [0, 2, 7] {
+        assert_eq!(suite_ancien(Ok(Some(n))), SuiteAncien::Abandonner, "{n}");
+    }
+    let h = include_str!("hygiene.rs").replace("\r\n", "\n");
+    let p = &h[h.find("// Leurres d'un ancien emplacement").unwrap()..];
+    let p = &p[..p.find("borner_anciens(").unwrap()];
+    assert!(p.contains("suite_ancien(liens_a_echeance(Path::new(&p.chemin)))") && p.contains("SuiteAncien::Abandonner => commun::journal("));
 }
 
 /// A-7-2 : bilan de la pose publié dans l'état de santé (« n posés sur m attendus ») ; une création en échec dans un
@@ -9102,8 +9155,13 @@ fn audit_s175_01_02_cablage() {
     let h = include_str!("hygiene.rs").replace("\r\n", "\n");
     let p = &h[h.find("let noms = noms_leurres();").unwrap()..];
     let p = &p[..p.find("FICHIER_LEURRES, &liste").unwrap()];
-    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 3, "leurre hors délai gardé (S175-01 ; empreinte avant et après, nombre de liens S268-01)");
-    assert!(p.find("poser_audit_verifie").unwrap() < p.find("let e = match empreinte_a_echeance(&f)").unwrap(), "audit avant le second contrôle (S175-01)");
+    assert!(p.contains("commun::lire(FICHIER_LEURRES)") && p.matches("garder_precedent(&mut liste, &f)").count() == 2, "leurre hors délai gardé (S175-01 ; empreinte avant, pose sur un seul handle S268-04)");
+    // S175-01 : l'audit est posé dans la même ouverture que la lecture de l'empreinte (S268-04), jamais après elle
+    let q = &h[h.find("fn poser_a_echeance(").unwrap()..];
+    let q = &q[..q.find("
+}
+").unwrap()];
+    assert!(q.contains("poser_audit_par_handle(") && q.contains("empreinte_lue") && p.contains("let e = match poser_a_echeance(&f)"), "audit avant la lecture de l'empreinte (S175-01)");
     let m = include_str!("moniteur.rs");
     assert!(!m.contains("self.origines.entry(chemin.clone()).or_insert_with"), "origine hors délai jamais en cache (S175-02)");
     assert!(m.contains("if reponse::origine_a_garder(&o) {"), "origine hors délai jamais en cache (S175-02)");

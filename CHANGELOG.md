@@ -10,7 +10,8 @@
   partial; the health status publishes "n placed out of m expected" (new `Detail` field of the collection). A canary
   left in a former folder stays watched while it exists and is removed on uninstall, as are canaries in redirected
   folders. Outside the profile, only a folder on a local fixed drive owned by the user is accepted, and a canary with more
-  than one name (hard link) is neither audited nor watched; at most 3 former locations are watched per canary. Canaries
+  than one name (hard link) is neither audited nor watched (link count, audit and hash read through a single handle;
+  former locations are checked again); at most 3 former locations are watched per canary. Canaries
   in a OneDrive-synced folder may be uploaded to the user's cloud storage, and OneDrive is suspended if it writes to or
   deletes one; not yet tried in a VM.
 - Service priority (A-8-1): the service process now runs at normal priority instead of below normal; heavy periodic

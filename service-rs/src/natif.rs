@@ -1550,19 +1550,34 @@ fn avec_privilege<T>(nom: &str, f: impl FnOnce() -> T) -> Result<T, String> {
     }
 }
 
+/// Refus d'une pose d'audit par handle : ouverture impossible (absent, lien, chemin détourné…) ou refus de `avant`
+#[derive(Debug, PartialEq)]
+pub enum RefusAudit<E> {
+    Ouverture(String),
+    Refuse(E),
+}
+
 /// Pose l'audit (SACL) d'un fichier par son handle, ouvert sans suivre de lien et chemin final vérifié, avec
 /// SeSecurityPrivilege actif sur ce fil pour ce seul appel ; `sddl` décrit une seule entrée d'audit (« S:(AU;…) »).
 /// SACL complétée par SetKernelObjectSecurity (poser_sacl, comme l'audit des données sensibles) : SetSecurityInfo
 /// relit aussi le descripteur de l'objet et échouait (« Access is denied ») avec un handle ouvert pour la seule SACL
 /// (constaté sur un poste réel : leurres jamais audités ; les scénarios d'intégration n'ont pas de session).
-pub fn poser_audit_verifie(chemin: &std::path::Path, sddl: &str) -> Result<(), String> {
-    // ACCESS_SYSTEM_SECURITY | SYNCHRONIZE, tout partage
-    const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
-    let voulue = entree_normalisee(sddl)?;
+///
+/// Pose d'audit sur UN SEUL handle (audit de #268, S268-04) : ouvert sans suivre de lien, chemin final vérifié, avec
+/// lecture et ACCESS_SYSTEM_SECURITY ; `avant` juge ce handle (nombre de liens…) avant la pose de la SACL, `apres` lit
+/// le fichier par ce même handle. Rien ne peut être glissé entre le contrôle, l'audit et la lecture. Renvoie l'issue de
+/// la pose de la SACL (un échec n'empêche pas la lecture) et le résultat de `apres`
+pub fn poser_audit_par_handle<E, T>(chemin: &std::path::Path, sddl: &str, avant: impl FnOnce(&std::fs::File) -> Result<(), E>,
+                                    apres: impl FnOnce(&mut std::fs::File) -> T) -> Result<(Result<(), String>, T), RefusAudit<E>> {
+    // ACCESS_SYSTEM_SECURITY | GENERIC_READ | SYNCHRONIZE, tout partage
+    const ACCES: u32 = 0x0100_0000 | 0x8000_0000 | 0x0010_0000;
+    let voulue = entree_normalisee(sddl).map_err(RefusAudit::Ouverture)?;
     avec_privilege("SeSecurityPrivilege", || {
-        let f = ouvrir_verifie(chemin, ACCES, 0x7, false).map_err(|e| format!("{} : {e}", chemin.display()))?;
-        poser_sacl(&f, &voulue, false, &mut BilanAudit::default()).map_err(|e| format!("audit : {e}"))
-    })?
+        let mut f = ouvrir_verifie(chemin, ACCES, 0x7, false).map_err(|e| RefusAudit::Ouverture(e.to_string()))?;
+        avant(&f).map_err(RefusAudit::Refuse)?;
+        let audit = poser_sacl(&f, &voulue, false, &mut BilanAudit::default()).map_err(|e| format!("audit : {e}"));
+        Ok((audit, apres(&mut f)))
+    }).map_err(RefusAudit::Ouverture)?
 }
 
 /// Bilan d'une pose d'audit sur une arborescence

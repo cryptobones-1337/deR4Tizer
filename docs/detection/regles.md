@@ -566,7 +566,9 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   session) ou dossier redirigé vers un partage réseau ou un lecteur amovible : leurre dans le dossier par défaut du
   profil (refus journalisé). Hors du profil, seul un dossier d'un lecteur local fixe (vu par SYSTEM : un lecteur mappé
   ou une lettre SUBST de la session est inconnu, donc refusé) dont l'utilisateur est propriétaire est admis ; un leurre
-  qui a plus d'un nom (lien dur) n'est ni audité ni suivi, refus journalisé (S268-01, `s268_01_leurre_lien_dur_refuse`).
+  qui a plus d'un nom (lien dur) n'est ni audité ni suivi, refus journalisé (S268-01, `s268_01_leurre_lien_dur_refuse`) ;
+  nombre de liens, audit et empreinte sont lus sur un seul handle (S268-04, `s268_04_pose_sur_un_seul_handle`), et les
+  anciens emplacements repassent ce contrôle (S268-05).
   Au plus 3 anciens emplacements suivis par profil et par leurre, au-delà retirés (S268-02). Chaque échec de création est journalisé (une fois) et rend la collecte `Leurres`
   partielle ; l'état de santé publie « leurres : n posés sur m attendus » (champ `Detail` de la collecte). Un leurre
   resté dans un ancien dossier reste suivi tant qu'il existe et est retiré à la désinstallation. Leurres dans un
