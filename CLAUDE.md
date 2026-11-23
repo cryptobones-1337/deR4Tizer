@@ -10,7 +10,7 @@ Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise
 
 ## 2. Règles non négociables
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : la phase « Interface et assistant d'installation » et les phases 7, 8 et 9 (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337, et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
+1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : la phase « Interface et assistant d'installation », les phases 7, 8 et 9 et la phase « blocs de script PowerShell (4104) » (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337 (pour la phase 4104, condition de départ propre écrite à la section 5), et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
 2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
 3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
 4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
@@ -489,10 +489,13 @@ Phase « blocs de script PowerShell (4104) » : ouverte par le mainteneur le 202
 de lecture des événements 4104 (A-7-4). » Origine : constat A-7-4 de l'audit du 2026-11-23 (la baseline active la
 journalisation des blocs de script, événement 4104 du canal `Microsoft-Windows-PowerShell/Operational`, et aucune règle
 ne le lit) ; seule source qui voit le code PowerShell après décodage, pour T1059.001 et T1027 (`docs/validation/carte-attack.md`).
-Mêmes garde-fous que la phase 7 : dossier de conception d'abord (agent concepteur-fonctionnalites), une PR par étape,
-aucune dépendance nouvelle sans accord, état « testé en labo » dans la matrice tant qu'une mesure en VM ne le justifie
-pas. Contraintes propres : un bloc de script peut contenir des secrets, il passe par le masquage des secrets
-(`commun::masquer_secrets`) avant tout stockage ou export, avec une taille bornée ; lecture seule du journal, aucun
+Condition de départ : la décision n'en fixe pas ; le dossier de conception est préparé tout de suite, le code commence
+après sa relecture et après la fusion de la PR #269 (masquage des secrets, ci-dessous), en parallèle des corrections de
+l'audit. Mêmes garde-fous que la phase 7 : dossier de conception d'abord (agent concepteur-fonctionnalites), une PR par
+étape, aucune dépendance nouvelle sans accord ; état « implémenté non vérifié » dans la matrice avant tout test, « testé
+en labo » ensuite, tant qu'une mesure en VM ne justifie pas mieux. Contraintes propres : un bloc de script peut contenir
+des secrets, il passe par le masquage des secrets de l'A-6-1 (`commun::masquer_secrets`, PR #269) avant tout stockage ou
+export, avec une taille bornée, et aucun bloc de script n'est stocké avant la fusion de cette PR ; lecture seule du journal, aucun
 réglage de PowerShell modifié hors de la baseline existante ; règle nouvelle avec sa fiche dans
 `docs/detection/regles.md`, ses tests positifs et négatifs, et sa mesure de faux positifs.
 
