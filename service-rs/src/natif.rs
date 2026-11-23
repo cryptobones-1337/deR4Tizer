@@ -1802,6 +1802,15 @@ pub fn ouvrir_flux(f: &std::fs::File, flux: &str, ecriture: bool) -> Result<Opti
     Ok(Some(unsafe { std::fs::File::from_raw_handle(h.0 as _) }))
 }
 
+/// Nombre de noms (liens durs) du fichier ouvert (GetFileInformationByHandle, nNumberOfLinks) ; None si illisible
+pub fn nombre_de_liens(f: &std::fs::File) -> Option<u32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) }.ok()?;
+    Some(info.nNumberOfLinks)
+}
+
 /// Propriétaire (SID) du fichier ou dossier ouvert
 pub fn proprietaire_par_handle(f: &std::fs::File) -> Option<String> {
     use std::os::windows::io::AsRawHandle;
