@@ -92,14 +92,16 @@ Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LA
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules, canaries and the read
 auditing set on browser and wallet folders in user profiles are removed, original security settings restored and data
 deleted (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them), except a quarantine that is not empty: the quarantined
-copies (`C:\ProgramData\deR4Tizer\quarantaine\`, encoded, never runnable as they are), their index `quarantaine.json`
+copies (`C:\ProgramData\deR4Tizer\quarantaine\`, encoded, never runnable as they are, except copies made before
+v4.3 and never converted since, which the report then names as stored in clear), their index `quarantaine.json`
 and the marker `prise-en-charge.json` are kept, reserved to SYSTEM and administrators, because they may be the only copy
 of a file you want back: reinstall deR4Tizer to restore them from the Quarantine page. The uninstall says so in
 `%SystemRoot%\Temp\deR4Tizer-desinstallation-*.txt` and in the Application event log. To delete them, in an
 administrator command prompt: `rmdir /s /q "C:\ProgramData\deR4Tizer\quarantaine"`, then
-`del "C:\ProgramData\deR4Tizer\quarantaine.json" "C:\ProgramData\deR4Tizer\prise-en-charge.json"`. If their
-permissions cannot be checked as reserved to SYSTEM and administrators, they are deleted with the rest, and the report
-says so (audit of 2026-11-23, A-4-3).
+`del "C:\ProgramData\deR4Tizer\quarantaine.json" "C:\ProgramData\deR4Tizer\prise-en-charge.json"`. If one of them
+is not owned by SYSTEM or Administrators (it is never taken over), has more than one name (hard link), or its
+permissions cannot be made and checked reserved to SYSTEM and administrators, they are all deleted with the rest, and
+the report says so (audit of 2026-11-23, A-4-3).
 The data folder itself (`C:\ProgramData\deR4Tizer`) stays, reserved to SYSTEM and administrators (empty, or with the
 kept quarantine only), so that a standard account cannot put a link in its place before a reinstall; delete it as an
 administrator if you want it gone.
@@ -227,10 +229,11 @@ Known, by design. Be aware before relying on it:
   through handles that follow no link, entry by entry: only entries identical to deR4Tizer's (Everyone, success, read
   data, same inheritance flags) go, so an identical entry set by someone else on the same folders goes too (an audit
   list does not record who added an entry), and every other entry stays; items that cannot be opened (links,
-  unreadable, beyond 20,000 per folder) keep it, and the uninstall report gives their number. Left on purpose: the
-  report of the uninstall itself (`%SystemRoot%\Temp\deR4Tizer-nettoyage-*.txt`, plus
-  `deR4Tizer-desinstallation-*.txt` when the quarantine is kept or a deletion failed; older deR4Tizer reports there are
-  removed, only those written by SYSTEM with a single name), and any `C:\ProgramData\deR4Tizer.ecarte-*` folder, where
+  unreadable, beyond 20,000 per folder) or whose audit list holds a conditional or resource-attribute entry (never
+  rewritten) keep it, and the uninstall report gives their number. Left on purpose: the reports of the uninstall
+  itself (`%SystemRoot%\Temp\deR4Tizer-nettoyage-*.txt`, `deR4Tizer-arret-*.txt` if stopping the service was slow,
+  and `deR4Tizer-desinstallation-*.txt` when the quarantine is kept or a deletion failed; older deR4Tizer reports
+  there are removed, only those written by SYSTEM, with a single name and at least one hour old), and any `C:\ProgramData\deR4Tizer.ecarte-*` folder, where
   the service moved a data folder that did not belong to SYSTEM or administrators: its content belongs to another
   account and may be evidence, so it is never deleted; check it and delete it yourself.
 - The MSI accepts an older version (needed to roll back): the service refuses an older version for automatic updates, but an administrator can still install one by hand.

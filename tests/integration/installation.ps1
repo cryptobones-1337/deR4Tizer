@@ -1954,10 +1954,23 @@ $regles1 = Reglesparefeu
 # de C-1, désinstallations plus haut), sont retirés par la désinstallation ; un fichier au même genre de nom posé d'avance par
 # le compte standard (son propriétaire) reste
 $tempSysteme = Join-Path $env:SystemRoot 'Temp'
-$anciensCr = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-*.txt' -Force -ErrorAction SilentlyContinue | Where-Object { (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | ForEach-Object FullName)
+$crSysteme = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-*.txt' -Force -ErrorAction SilentlyContinue | Where-Object { (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | Sort-Object LastWriteTime | ForEach-Object FullName)
+# Seuls ceux d'une heure au moins sont retirés (prérelecture de #301, D1 : le compte rendu d'arrêt de CETTE désinstallation
+# reste) : les passages précédents de ce script ont moins d'une heure, leur date de création est donc reculée de deux
+# heures ; le plus récent, s'il y en a au moins deux, est daté de maintenant et doit rester (témoin « récent »)
+$crRecent = $null
+if ($crSysteme.Count -ge 2) {
+    $crRecent = $crSysteme[-1]
+    [IO.File]::SetCreationTimeUtc($crRecent, [DateTime]::UtcNow)
+    $crSysteme = @($crSysteme | Select-Object -First ($crSysteme.Count - 1))
+}
+foreach ($f in $crSysteme) { [IO.File]::SetCreationTimeUtc($f, [DateTime]::UtcNow.AddHours(-2)) }
+$anciensCr = $crSysteme
 $crPose = Join-Path $tempSysteme 'deR4Tizer-nettoyage-20260101000000-1-0123456789abcdef-0.txt'
 $sCrPose = En-TantQue $script:compte "Set-Content -LiteralPath '$crPose' -Value 'pose' -Encoding Ascii; 'POSE'"
 $crPoseOk = (Test-Path -LiteralPath $crPose) -and (Droits $crPose).Proprietaire -eq $script:compte.Sid
+# Reculé de deux heures lui aussi : il ne doit rester que par son propriétaire, pas par son âge
+if ($crPoseOk) { try { [IO.File]::SetCreationTimeUtc($crPose, [DateTime]::UtcNow.AddHours(-2)) } catch { $crPoseOk = $false; $sCrPose = "date non reculée : $($_.Exception.Message)" } }
 Verifier 'Désinstallation sans GARDER_DONNEES : service, programme et données retirés, racine gardée vide et protégée' {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-1.log')
     if ($c -ne 0) { return "msiexec a rendu $c" }
@@ -1984,11 +1997,12 @@ if ($regles1) {
 } else {
     NonExecute 'Désinstallation sans GARDER_DONNEES : règles de pare-feu retirées' 'aucune règle du groupe deR4Tizer avant la désinstallation (rien à prouver)'
 }
-$titreCr = 'Désinstallation : comptes rendus deR4Tizer des passages précédents retirés de %SystemRoot%\Temp, celui du compte standard gardé, celui de cette désinstallation écrit (A-6-4)'
+$titreCr = 'Désinstallation : comptes rendus deR4Tizer de SYSTEM vieux d''une heure retirés de %SystemRoot%\Temp, un récent et celui du compte standard gardés, celui de cette désinstallation écrit (A-6-4, D1 de #301)'
 if ($anciensCr.Count -and $crPoseOk) {
     Verifier $titreCr {
         $restes = @($anciensCr | Where-Object { Test-Path -LiteralPath $_ })
         if ($restes.Count) { return "anciens comptes rendus de SYSTEM restés : $($restes -join ', ')" }
+        if ($crRecent -and -not (Test-Path -LiteralPath $crRecent)) { return "compte rendu récent (moins d'une heure) supprimé : $crRecent" }
         if (-not (Test-Path -LiteralPath $crPose)) { return 'fichier posé par le compte standard supprimé' }
         $nouveaux = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-nettoyage-*.txt' -Force | Where-Object { $_.FullName -ne $crPose -and (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | Sort-Object LastWriteTime)
         if (-not $nouveaux.Count) { return 'compte rendu de cette désinstallation absent' }
