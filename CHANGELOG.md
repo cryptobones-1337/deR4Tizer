@@ -28,15 +28,6 @@
   (S277-04). Local drives that are not fixed (USB stick, CD-ROM, RAM disk) are read again: they contact no host, and a
   signed program on a USB stick was shown unsigned. Without an NTFS change journal, the SHA-256 key is used for files of
   64 MB at most; a larger file is checked each time, never cached.
-- Static analysis in CI, batch 1 (CI tooling only, no product change): new `dependances` job running
-  cargo-audit 0.22.2 on `service-rs/Cargo.lock` and cargo-deny 0.20.2 (advisories, licenses, sources) with
-  `service-rs/deny.toml`. Rust toolchain pinned to 1.100.0 (`service-rs/rust-toolchain.toml`) and `cargo test` /
-  `cargo build` run with `--locked` in `ci.yml` (audit finding A-3-3, partly fixed: `publication.yml` still lacks
-  `--locked`, change proposed). First measurement (run 45175958903): no RustSec advisory, sources all from crates.io,
-  one license error: the service crate itself declared no license. Following the maintainer's decisions of
-  23 November 2026, the service now declares `license = "EUPL-1.2"` and the license allow list is validated
-  (Apache-2.0, EUPL-1.2, MIT, Unicode-3.0, Unlicense); the job is green (run 45184585387). These checks are not an
-  independent review.
 - Canaries in the real folders (audit of 23 November 2026, A-7-2): `Documents`, `Pictures` and `Desktop` are resolved
   from the user's own "User Shell Folders" registry values (OneDrive folder backup, redirection to another local fixed
   drive), with `%USERPROFILE%` and `%OneDrive%` expanded for that user; network shares, removable drives, unknown
