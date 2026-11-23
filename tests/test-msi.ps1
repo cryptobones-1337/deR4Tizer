@@ -41,6 +41,13 @@ $js = [IO.File]::ReadAllText((Join-Path $Depot 'installeur\lire-dossier-donnees.
 $ecritures = @([regex]::Matches($js, '(?i)\.(Create\w*|Delete\w*|Move\w*|Copy\w*|Write\w*|OpenTextFile|Run|Exec)\s*\(|WScript\.Shell|Shell\.Application') | ForEach-Object Value)
 Cas 'Dossier de données lien : script en lecture seule (aucune création, suppression, écriture ni lancement), en ASCII, « ok » posé seulement hors point d''analyse' ($ecritures.Count -eq 0 -and -not ($js -match '[^\x00-\x7F]') -and $js.Contains('(element.Attributes & 1024) !== 0 ? "lien" : "ok"') -and $js.Contains('Session.Property("DonneesEtat") = "inconnu";')) ($ecritures -join ', ')
 Cas 'Dossier de données : composant permanent (racine gardée à la désinstallation)' ($sansCommentaires -match '<Component Id="Donnees" Guid="[^"]+" Win64="yes" Permanent="yes">')
+# Audit du 2026-11-23, A-6-4 : l'audit de lecture posé dans les profils et les anciens comptes rendus de %SystemRoot%\Temp
+# sont retirés par --nettoyer, lancé en SYSTEM après l'arrêt du service à toute désinstallation, quels que soient
+# GARDER_DONNEES et GARDER_BASELINE (avec GARDER_BASELINE=1 l'audit « Système de fichiers » reste actif), jamais à une mise
+# à niveau ; puis la suppression des données (A-4-3 : quarantaine non vide gardée) après la remise de la baseline
+$nettoyer = '<Custom Action="Nettoyer" After="StopServices"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE]]></Custom>'
+$supprimer = '<Custom Action="SupprimerDonnees" After="AnnulerBaseline"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND GARDER_DONNEES<>"1"]]></Custom>'
+Cas 'Désinstallation : --nettoyer en SYSTEM après l''arrêt du service, sans condition GARDER_*, jamais à une mise à niveau ; suppression des données ensuite (A-6-4, A-4-3)' ($sansCommentaires.Contains($nettoyer) -and $sansCommentaires.Contains($supprimer) -and $sansCommentaires.Contains('<CustomAction Id="Nettoyer" FileKey="ServiceExe" ExeCommand="--nettoyer" Execute="deferred" Impersonate="no" Return="ignore" />'))
 
 # Licence : RTF ANSI 1252 décodé
 $rtf = [IO.File]::ReadAllText((Join-Path $Depot 'installeur\licence.rtf'))

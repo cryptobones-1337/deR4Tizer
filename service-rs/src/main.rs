@@ -354,11 +354,17 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--supprimer-donnees") {
-        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, quarantaine, secrets ; la racine est
-        // gardée, vide et protégée (lot A, point 4 : protection::vider_racine). En cas d'échec, compte rendu dans
-        // %SystemRoot%\Temp : l'action du MSI ignore le code de retour, l'échec ne doit pas passer inaperçu
+        // Désinstallation complète (MSI sans GARDER_DONNEES=1) : alertes, journal, secrets ; la racine est gardée,
+        // protégée (lot A, point 4 : protection::vider_racine), avec la quarantaine si elle n'est pas vide (audit du
+        // 2026-11-23, A-4-3). En cas d'échec, ou de quarantaine gardée ou supprimée faute de droits vérifiés, compte
+        // rendu dans %SystemRoot%\Temp et au journal d'événements : l'action du MSI ignore code de retour et sortie
         match protection::vider_racine() {
-            Ok(texte) => println!("{texte}"),
+            Ok((texte, true)) => {
+                println!("{texte}");
+                natif::journal_evenements(&texte, false);
+                natif::compte_rendu_systeme("deR4Tizer-desinstallation", &texte);
+            }
+            Ok((texte, false)) => println!("{texte}"),
             Err(e) => {
                 let texte = format!("deR4Tizer : suppression des données incomplète ({e})");
                 println!("{texte}");
