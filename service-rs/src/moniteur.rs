@@ -2317,6 +2317,8 @@ fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filt
     let resolveur = crate::dns_local::permanent_actif();
     let silence = crate::dns_local::en_silence();
     let contournees: Vec<String> = if resolveur && !silence { cartes.iter().filter(|c| !c.reglee).map(|c| c.nom.clone()).collect() } else { Vec::new() };
+    // Cartes que l'activation réglerait (T-9), par le même relevé qu'elle : publiées tant que le résolveur ne tourne pas
+    let cartes_a_regler: Vec<String> = if resolveur { Vec::new() } else { fc::releve_origine().map(|l| l.into_iter().map(|o| o.nom).collect()).unwrap_or_default() };
     let f = partage.filtrage.read().unwrap();
     let mut st = partage.stats_filtrage.lock().unwrap();
     crate::filtrage::EtatFiltrage {
@@ -2324,6 +2326,7 @@ fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filt
         etat: crate::filtrage::libelle_etat(config.filtrage.actif, RESTAURATION_EN_ATTENTE.load(Ordering::Acquire), resolveur, silence, &contournees),
         categories: crate::filtrage::categories_actives(config).iter().map(|c| c.libelle().to_string()).collect(),
         cartes,
+        cartes_a_regler,
         amonts: crate::dns_local::amonts_en_cours().iter().map(|a| a.to_string()).collect(),
         listes: crate::filtrage::listes_publiees(&f),
         par_categorie: st.par_categorie.clone(),
@@ -2392,7 +2395,7 @@ fn amonts_voulus(config: &commun::Config, origine: &[crate::filtrage_cartes::Ori
 /// Amonts du résolveur permanent : serveurs d'origine des cartes (boucle locale exclue), sans doublon, 4 au plus
 fn amonts_origine(o: &[crate::filtrage_cartes::OrigineCarte]) -> Vec<std::net::IpAddr> {
     let mut l: Vec<std::net::IpAddr> = Vec::new();
-    for ip in o.iter().flat_map(|c| c.dns4.iter().chain(c.dns6.iter())).filter_map(|s| s.parse().ok()) {
+    for ip in o.iter().flat_map(|c| c.dns4.iter().chain(c.dns6.iter())).filter_map(|s| s.parse().ok()).filter(crate::filtrage_cartes::amont_utilisable) {
         if !l.contains(&ip) && l.len() < 4 {
             l.push(ip);
         }
@@ -2427,7 +2430,7 @@ fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<S
     }
     let origine = fc::releve_origine().map_err(|e| format!("Cartes réseau illisibles : {e}"))?;
     if origine.is_empty() {
-        return Err("Aucune carte Ethernet ou Wi-Fi active : rien à régler.".into());
+        return Err("Aucune carte Ethernet ou Wi-Fi matérielle active (les cartes virtuelles, Hyper-V, WSL, Docker ou VPN, ne sont jamais réglées) : rien à régler.".into());
     }
     if let Some(o) = origine.iter().find(|o| fc::deja_reglee(o)) {
         return Err(format!("La carte « {} » est déjà réglée sur le résolveur local (activation précédente non rendue) : désactivez d'abord, ou rendez-la à la main (voir le README).", o.nom));
@@ -2450,9 +2453,17 @@ fn activer_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> Result<S
         return Err(format!("Le résolveur local ne répond pas au contrôle{tiers} : rien n'est modifié."));
     }
     if let Err(e) = fc::appliquer_toutes(&origine) {
-        crate::dns_local::arreter_permanent();
-        fc::effacer_origine();
-        return Err(format!("Réglage des cartes en échec, cartes rendues : {e}"));
+        // Remise ratée elle aussi (B-3-01) : port et origine gardés tant qu'une carte pointe sur la boucle locale
+        let sur_la_boucle: Vec<String> = origine.iter().filter(|o| fc::encore_sur_la_boucle(std::slice::from_ref(o))).map(|o| o.nom.clone()).collect();
+        let (garder, m) = fc::apres_echec_reglage(&sur_la_boucle, &e);
+        if garder {
+            crate::dns_local::regler_filtrage_actif(false);
+            RESTAURATION_EN_ATTENTE.store(true, Ordering::Release);
+        } else {
+            crate::dns_local::arreter_permanent();
+            fc::effacer_origine();
+        }
+        return Err(m);
     }
     let noms: Vec<&str> = origine.iter().map(|o| o.nom.as_str()).collect();
     let amont = match crate::filtrage::amont_tiers(&config.filtrage.amont) {

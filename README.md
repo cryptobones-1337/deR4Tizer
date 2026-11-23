@@ -91,8 +91,9 @@ automatic installation can be turned on in the settings (signed releases).
 Fleet deployment (GPO, Intune, IT provider): `msiexec /i deR4Tizer.msi /qn` (`LANCEMENT_SESSION=0`, kept across updates, to skip the scheduled task that restarts the interface and the logon
 launch). Uninstall from "Apps" or with `msiexec /x deR4Tizer.msi /qn`: blocks, firewall rules and canaries are removed,
 original security settings restored and data deleted, including files in quarantine (`GARDER_BASELINE=1`, `GARDER_DONNEES=1` keep them).
-With domain-name filtering on (phase 7), Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
-`::1`), with their original servers as fallback. Turning it off, stopping the service and uninstalling restore their
+With domain-name filtering on (phase 7), hardware Ethernet and Wi-Fi cards point to the deR4Tizer resolver (`127.0.0.1`,
+`::1`), with their original servers as fallback; virtual cards (Hyper-V switches, WSL, Docker, VPN), recognised from
+flags read from Windows and never from their name, are not changed. Turning it off, stopping the service and uninstalling restore their
 original state (recorded in `filtrage-origine.json`, in the data folder). If a card were left on `127.0.0.1` (service
 killed, manual rollback to a version without filtering), DNS still works through the fallback servers; to restore it by
 hand, as administrator: `netsh interface ip set dns "<card>" dhcp` and `netsh interface ipv6 set dns "<card>" dhcp` (or
@@ -217,6 +218,13 @@ Known, by design. Be aware before relying on it:
 - Install folder check (A-4-1, S277-01): the installer sets the permissions of the program folder (SYSTEM and Administrators full control, Users read and execute, inheritance cut). At start, the service reads, through handles that follow no link, the owner and permissions of that folder, of its two programs and of every parent folder up to the drive root: only SYSTEM, Administrators and TrustedInstaller may write, delete a child, or change permissions or owner (on the drive root, creating folders is allowed, as Windows does for Authenticated Users). Otherwise (for example a folder under `C:\Tools` that standard accounts can rename), or if the permissions cannot be read, it raises a critical local alert (INT-003) and refuses automatic updates. The default folder (Program Files) passes. Tested in the lab; an install redirected to another folder is to be tried in the VM.
 - A standard account can reach the cap of 30 blocks per hour by connecting to 31 listed addresses: list blocking then stops
   for an hour, alerts remain. An IPS alert (experimental) says "blocked" even if the guard then holds the block back.
+- Domain-name filtering (audit of 23 November 2026, tested in the lab, not yet tried in the VM): on a Hyper-V host whose
+  physical card is bound to an external virtual switch, the computer's address is on a virtual card, so filtering
+  cannot be turned on ("no hardware card"). The confirmation window does not list the cards that will be set yet (the
+  service publishes the list, the window will show it in a later change). The resolution delay saved by no longer
+  trying Windows' default `fec0:0:0:ffff::1` to `::3` servers has not been measured. Filtering is still suspended
+  (cards restored) when the upstream really stops answering, including when an attacker cuts it on the network: this
+  fail-open choice keeps DNS working; queries chosen by a local program alone no longer trigger it.
 - Panic mode: the machine's DNS servers and the notification servers stay reachable for every program (malware could use
   them to send data out, for example through DNS); prefer a self-hosted ntfy server to ntfy.sh.
 - Traces stay on the monitored machine (SIEM: 30 days and 1 GB at most): an administrator can erase them, and an intrusion

@@ -69,8 +69,13 @@ pub const MAX_ENTREES: usize = 1_000_000;
 pub const MAX_AUTORISES: usize = 1000;
 /// Recherches par requête, au plus (le nom lui-même et ses parents les plus courts)
 pub const MAX_RECHERCHES: usize = 10;
-/// Taille d'une liste téléchargée, au plus
-const MAX_OCTETS: u64 = 32 * 1024 * 1024;
+/// Taille d'une liste téléchargée, au plus ; contrôlée aussi avant toute lecture d'une copie (C-11)
+pub const MAX_OCTETS: u64 = 32 * 1024 * 1024;
+/// Entrées d'une seule liste, au plus, contrôlées avant de garder une copie (C-4) : la moitié du total, les deux listes
+/// tiennent toujours ensemble
+pub const MAX_ENTREES_LISTE: usize = MAX_ENTREES / 2;
+/// Téléchargements concordants (à 10 % près) qui lèvent le garde-fou d'écart de taille (C-4)
+pub const CONCORDANTS: usize = 3;
 
 /// Liste de protection compilée : jamais bloquée, quelle que soit la liste, et ses sous-domaines non plus. Établie
 /// d'après la documentation de Microsoft (points de terminaison de Windows Update, de Defender, du test de
@@ -156,6 +161,21 @@ pub fn noms_a_chercher(nom: &str) -> Vec<&str> {
     let mut l = vec![nom];
     l.extend_from_slice(&suffixes[suffixes.len() - garder..]);
     l
+}
+
+/// Parent valide le plus long d'un nom refusé par `normaliser` (pur, testé, torturé ; constat C-12 de l'audit du
+/// 2026-11-23) : `x!y.pub.ex.fr` → `pub.ex.fr`. Une étiquette refusée par `validation::nom_domaine_valide` (caractère
+/// hors `[a-z0-9_-]`, plus de 63 caractères) ne fait plus échapper le nom au blocage de son domaine. Aucun parent valide
+/// (domaine de premier niveau invalide, suffixe public seul) : None, le nom est relayé et ne se résout pas
+pub fn parent_valide(nom: &str) -> Option<String> {
+    let mut reste = nom.trim();
+    while let Some((_, apres)) = reste.split_once('.') {
+        if let Some(n) = normaliser(apres) {
+            return Some(n);
+        }
+        reste = apres;
+    }
+    None
 }
 
 /// Ce que donne une ligne de liste
@@ -257,10 +277,25 @@ pub fn lire_liste(texte: &str, protection: &[u64]) -> ListeLue {
     ListeLue { bloques, exceptions, compte }
 }
 
-/// Garde-fou du remplacement (pur, testé) : une nouvelle copie vide, qui s'effondre (moins de la moitié de la
-/// précédente) ou qui explose (plus du double) est refusée, et la copie précédente est gardée
-pub fn remplacement_admis(ancienne: usize, nouvelle: usize) -> bool {
-    nouvelle > 0 && (ancienne == 0 || (nouvelle.saturating_mul(2) >= ancienne && nouvelle <= ancienne.saturating_mul(2)))
+/// Deux tailles à 10 % près (pur)
+fn concordantes(a: usize, b: usize) -> bool {
+    a.abs_diff(b).saturating_mul(10) <= a.max(b)
+}
+
+/// Garde-fou du remplacement (pur, testé). Toujours refusée : une copie vide, ou de plus de `MAX_ENTREES_LISTE`
+/// entrées (plafond fixe, même au premier téléchargement). Sinon admise si elle ne s'effondre pas (moins de la moitié
+/// de la copie gardée) et n'explose pas (plus du double). Écart persistant (constat C-4 de l'audit du 2026-11-23 : une
+/// copie gonflée admise, la liste saine était ensuite refusée pour toujours comme « effondrée ») : admise quand
+/// `CONCORDANTS - 1` téléchargements refusés de suite (`refusees`, du plus ancien au plus récent) donnaient la même
+/// taille à 10 % près ; la source a changé, la référence n'est plus la seule copie gardée
+pub fn remplacement_admis(ancienne: usize, nouvelle: usize, refusees: &[usize]) -> bool {
+    if nouvelle == 0 || nouvelle > MAX_ENTREES_LISTE {
+        return false;
+    }
+    if ancienne == 0 || (nouvelle.saturating_mul(2) >= ancienne && nouvelle <= ancienne.saturating_mul(2)) {
+        return true;
+    }
+    refusees.len() >= CONCORDANTS - 1 && refusees.iter().rev().take(CONCORDANTS - 1).all(|&r| concordantes(r, nouvelle))
 }
 
 /// Verdict pour un nom demandé
@@ -329,9 +364,10 @@ impl Filtrage {
         self.autorises = empreintes(noms.iter().map(String::as_str));
     }
 
-    /// Décision (pure, testée) : voir l'en-tête du module
+    /// Décision (pure, testée) : voir l'en-tête du module. Nom invalide : jugé comme son parent valide le plus long
+    /// (`parent_valide`)
     pub fn decider(&self, nom: &str, actives: &[Categorie]) -> Verdict {
-        let Some(n) = normaliser(nom) else { return Verdict::Relaye };
+        let Some(n) = normaliser(nom).or_else(|| parent_valide(nom)) else { return Verdict::Relaye };
         let h: Vec<u64> = noms_a_chercher(&n).iter().map(|x| empreinte(x)).collect();
         let dans = |t: &[u64]| h.iter().any(|x| t.binary_search(x).is_ok());
         if dans(&self.protection) {
@@ -434,6 +470,9 @@ pub struct EtatFiltrage {
     pub etat: String,
     pub categories: Vec<String>,
     pub cartes: Vec<CartePubliee>,
+    /// Cartes que l'activation réglerait, relevées comme elle (`filtrage_cartes::releve_origine`) ; vide quand le
+    /// résolveur tourne. Pour la confirmation de l'activation (constat T-9)
+    pub cartes_a_regler: Vec<String>,
     pub amonts: Vec<String>,
     pub listes: Vec<ListePubliee>,
     pub par_categorie: std::collections::BTreeMap<String, u64>,
@@ -548,17 +587,49 @@ fn dossier() -> PathBuf {
 }
 
 /// Dernier refus par liste : une copie refusée (vide, effondrée, explosée) n'est retéléchargée qu'après 12 h, comme
-/// une copie acceptée, et non à chaque passage horaire (relecture de #160, R46)
-static REFUS: std::sync::Mutex<Vec<(&'static str, SystemTime)>> = std::sync::Mutex::new(Vec::new());
+/// une copie acceptée, et non à chaque passage horaire (relecture de #160, R46). Avec les tailles des copies refusées
+/// de suite (C-4, `remplacement_admis`), oubliées à la première copie admise ; en mémoire seulement (un redémarrage du
+/// service les oublie)
+static REFUS: std::sync::Mutex<Vec<(&'static str, SystemTime, Vec<usize>)>> = std::sync::Mutex::new(Vec::new());
 
 fn refusee_recemment(nom: &str) -> bool {
-    REFUS.lock().unwrap().iter().any(|(n, t)| *n == nom && SystemTime::now().duration_since(*t).unwrap_or_default() < Duration::from_secs(12 * 3600))
+    REFUS.lock().unwrap().iter().any(|(n, t, _)| *n == nom && SystemTime::now().duration_since(*t).unwrap_or_default() < Duration::from_secs(12 * 3600))
 }
 
-fn noter_refus(nom: &'static str) {
+fn refusees_de(nom: &str) -> Vec<usize> {
+    REFUS.lock().unwrap().iter().find(|(n, _, _)| *n == nom).map(|(_, _, l)| l.clone()).unwrap_or_default()
+}
+
+fn noter_refus(nom: &'static str, taille: usize) {
     let mut l = REFUS.lock().unwrap();
-    l.retain(|(n, _)| *n != nom);
-    l.push((nom, SystemTime::now()));
+    let mut tailles = l.iter().find(|(n, _, _)| *n == nom).map(|(_, _, t)| t.clone()).unwrap_or_default();
+    tailles.push(taille);
+    if tailles.len() > CONCORDANTS {
+        tailles.remove(0);
+    }
+    l.retain(|(n, _, _)| *n != nom);
+    l.push((nom, SystemTime::now(), tailles));
+}
+
+fn oublier_refus(nom: &str) {
+    REFUS.lock().unwrap().retain(|(n, _, _)| *n != nom);
+}
+
+/// Taille d'un fichier de liste admise avant de le lire en entier (pure, testée ; constat C-11 de l'audit du
+/// 2026-11-23 : `--max-filesize` de curl ne borne pas toujours un envoi sans longueur annoncée)
+pub fn taille_admise(octets: u64) -> bool {
+    octets <= MAX_OCTETS
+}
+
+/// Texte d'un fichier de liste : propriétaire contrôlé, taille contrôlée AVANT la lecture ; None au-delà de
+/// `MAX_OCTETS` (C-11)
+pub(crate) fn lire_liste_bornee(f: &Path) -> Option<String> {
+    let octets = fs::metadata(f).ok()?.len();
+    if !taille_admise(octets) {
+        commun::journal(&format!("filtrage : {} écarté : {octets} octets, plus de {MAX_OCTETS}", f.display()));
+        return None;
+    }
+    commun::lire_fichier_proprietaire(f)
 }
 
 fn fichier(s: &Source) -> PathBuf {
@@ -566,7 +637,7 @@ fn fichier(s: &Source) -> PathBuf {
 }
 
 fn entrees_du_fichier(f: &Path, protection: &[u64]) -> usize {
-    commun::lire_fichier_proprietaire(f).map(|t| lire_liste(&t, protection).compte.entrees).unwrap_or(0)
+    lire_liste_bornee(f).map(|t| lire_liste(&t, protection).compte.entrees).unwrap_or(0)
 }
 
 /// Télécharge, pour les catégories actives seulement, les listes de plus de 12 h ; la copie précédente est gardée si
@@ -591,12 +662,17 @@ pub fn telecharger(actives: &[Categorie], protection: &[u64]) -> Vec<(String, St
             Ok(()) => {
                 let nouvelle = entrees_du_fichier(&tmp, protection);
                 let ancienne = if f.exists() { entrees_du_fichier(&f, protection) } else { 0 };
-                if remplacement_admis(ancienne, nouvelle) {
+                if remplacement_admis(ancienne, nouvelle, &refusees_de(s.nom)) {
                     let _ = fs::rename(&tmp, &f);
+                    oublier_refus(s.nom);
                 } else {
-                    let m = format!("liste refusée : {nouvelle} domaine(s) contre {ancienne} dans la copie précédente, gardée");
+                    let m = if nouvelle > MAX_ENTREES_LISTE {
+                        format!("liste refusée : {nouvelle} domaine(s), plus que le plafond de {MAX_ENTREES_LISTE} ; copie précédente gardée")
+                    } else {
+                        format!("liste refusée : {nouvelle} domaine(s) contre {ancienne} dans la copie précédente, gardée ; admise si {CONCORDANTS} téléchargements de suite donnent la même taille")
+                    };
                     commun::journal(&format!("filtrage : {} : {m} ; nouvel essai dans 12 h", s.nom));
-                    noter_refus(s.nom);
+                    noter_refus(s.nom, nouvelle);
                     statuts.push((s.nom.to_string(), m));
                     let _ = fs::remove_file(&tmp);
                 }
@@ -621,7 +697,7 @@ pub fn charger(config: &commun::Config, echec_protection: bool) -> Filtrage {
     }
     let actives = categories_actives(config);
     for s in SOURCES.iter().filter(|s| actives.contains(&s.categorie)) {
-        let Some(texte) = commun::lire_fichier_proprietaire(&fichier(s)) else { continue };
+        let Some(texte) = lire_liste_bornee(&fichier(s)) else { continue };
         let l = lire_liste(&texte, f.protection());
         if !f.ajouter(s.nom, s.categorie, l) {
             commun::journal(&format!("filtrage : {} non chargée : plus de {MAX_ENTREES} entrées au total", s.nom));
