@@ -8,6 +8,7 @@ use crate::regles::{self, Techniques};
 /// Nom affiché de chaque technique posée par le service (ATT&CK v20.1) : « T1059.001 PowerShell ». L'interface traduit
 /// chaque nom (Langue.cs, un test le vérifie) ; un identifiant absent de la table est affiché seul
 pub const NOMS: &[(&str, &str)] = &[
+    ("T1003.001", "Vidage de la mémoire de LSASS"),
     ("T1021", "Services distants"),
     ("T1021.001", "Bureau à distance"),
     ("T1027", "Code obscurci"),
@@ -35,6 +36,8 @@ pub const NOMS: &[(&str, &str)] = &[
     ("T1200", "Matériel ajouté"),
     ("T1204.002", "Fichier piégé lancé par l'utilisateur"),
     ("T1218", "Binaire système détourné"),
+    ("T1218.007", "Paquet MSI détourné"),
+    ("T1218.011", "Rundll32 détourné"),
     ("T1219", "Outil d'accès à distance"),
     ("T1489", "Arrêt de services"),
     ("T1486", "Chiffrement de données (rançongiciel)"),

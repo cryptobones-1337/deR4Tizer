@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Process detection, audit of 23 November 2026 (findings A-7-1, A-7-3, A-7-5, A-7-7, A-7-8, A-7-9; tested in the lab,
+  not yet tried in the VM). PRC-002 now sees `irm … | iex`, every abbreviation of `-EncodedCommand` (`-e`, `-ec`,
+  `-enco`, `/e`…), `iwr … -OutFile`, `Start-BitsTransfer`, and a renamed copy of PowerShell when Sysmon gives the
+  program's original file name (not without Sysmon); a command-line download to an http(s) address alerts even without
+  `iex`. PRC-005 sees shadow copies removed from PowerShell (WMI or CIM), `vssadmin resize shadowstorage` below
+  1,000 MB, `wbadmin delete backup`, `bcdedit … bootstatuspolicy ignoreallfailures` and `diskshadow … delete shadows`.
+  PRC-003 sees an LSASS memory dump through comsvcs.dll (Critical, T1003.001), rundll32 on a DLL from a user-writable
+  folder (T1218.011), msiexec from an http(s) address (T1218.007), mshta and regsvr32 on a UNC path, `regsvr32 -i:` and
+  `certutil -verifyctl -f … http`. PRC-001 counts hh, msiexec, forfiles, cmstp, odbcconf, regasm, regsvcs and msxsl as
+  interpreters and the new Outlook (olk.exe) as a document. PRC-004 covers Vivaldi, Opera, Yandex and Arc. Process
+  chains (CHA-001) stop only at a system launcher identified by its exact path under the Windows folder, no longer by
+  its name: a fake `svchost.exe` in a temporary folder no longer cuts the chain. Still not seen: a parent chosen at
+  process creation (parent process spoofing).
 - Documentation after the audit of 23 November 2026 (done by Claude, so not an independent review): v4.3 is now
   recorded as published with three unmet conditions (no independent review, D4-1 trials, revocation trial after
   certificate expiry); open findings declared as known limits (canaries and OneDrive folder backup, PowerShell forms

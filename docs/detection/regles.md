@@ -333,7 +333,13 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **ATT&CK** : T1566.001 Pièce jointe piégée ; T1204.002 Fichier piégé lancé par l'utilisateur.
 - **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
 - **Justification** : Word, Excel ou un lecteur PDF qui lance PowerShell, cmd, wscript… est la marque d'une macro ou
-  d'un exploit.
+  d'un exploit. Ajouts de l'audit du 2026-11-23 (fait par Claude, A-7-8, corrigé, testé en labo) : document `olk` (nom
+  du programme du nouvel Outlook, olk.exe) ; interpréteurs `hh` (aide compilée .chm, qui exécute un script),
+  `msiexec` (paquet MSI qui exécute des actions), `forfiles` (lance une commande pour chaque fichier), `cmstp`
+  (profil de connexion qui exécute un script, T1218.003), `odbcconf` (charge une DLL), `regasm` et `regsvcs` (exécutent
+  le code d'un assembly .NET), `msxsl` (feuille de style XSL qui porte un script) : aucun n'a de raison d'être lancé par
+  un document. `conhost` n'est pas retenu : Windows le crée pour toute console, un complément d'Office qui en ouvre une
+  donnerait un faux positif Critique, et l'enfant d'un `conhost --headless` reste vu par les autres règles.
 - **Télémétrie** : création de processus avec le parent (Sysmon 1, sinon événement 4688 du journal Sécurité, sinon WMI).
 - **Si elle manque** : sans Sysmon ni audit des créations de processus, flux WMI arrêté : la source reste affichée « WMI »
   et la règle se tait.
@@ -343,52 +349,86 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_001_positif` (Word qui lance PowerShell, avec ou sans ligne de commande, et avec un motif PowerShell en
   plus : PRC-001 l'emporte), `prc_001_negatif` (PowerShell lancé par l'Explorateur ; Word qui lance un programme qui
-  n'est pas un interpréteur) ; décision pure `processus::alerte_processus`. Non exercée en VM : aucun Office dans la VM.
+  n'est pas un interpréteur), `prc_001_interpreteurs_elargis` (A-7-8 : chacun des interpréteurs ajoutés lancé par Word,
+  PowerShell lancé par le nouvel Outlook ; conhost lancé par Word : rien) ; décision pure `processus::alerte_processus`.
+  Non exercée en VM : aucun Office dans la VM.
 
 ### PRC-002 : PowerShell obscurci ou qui télécharge du code
-- **ATT&CK** : posée par l'alerte, d'après les motifs qui ont correspondu : obscurcissement (`-EncodedCommand` d'une
-  charge longue, `FromBase64String`) T1059.001 PowerShell et T1027 Code obscurci ; téléchargement, exécution d'une
-  chaîne ou fenêtre cachée (`DownloadString`, `DownloadFile`, `Net.WebClient`, `Invoke-Expression`, `IEX` d'une adresse,
-  `-WindowStyle Hidden`) T1059.001 seul. Une ligne qui a les deux porte les deux. Code de comportement `obscurci`,
-  `telecharge` ou les deux.
-- **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code »).
+- **ATT&CK** : posée par l'alerte, d'après les motifs qui ont correspondu : obscurcissement (`-EncodedCommand` ou l'une
+  de ses abréviations d'une charge longue, `FromBase64String`) T1059.001 PowerShell et T1027 Code obscurci ;
+  téléchargement, exécution d'une chaîne ou fenêtre cachée (`DownloadString`, `DownloadFile`, `Net.WebClient`,
+  `Invoke-Expression`, `IEX` avec un téléchargement, `irm`, `iwr`, `Invoke-WebRequest`, `Invoke-RestMethod` ou
+  `Start-BitsTransfer` vers une adresse http(s), `-WindowStyle Hidden`) T1059.001 seul. Une ligne qui a les deux porte
+  les deux. Code de comportement `obscurci`, `telecharge` ou les deux.
+- **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code », `MOTIFS_PRC002`,
+  `ligne_pour_motifs`).
 - **Justification** : `-EncodedCommand` long, `DownloadString`, `IEX` d'une adresse : chargement de code typique.
 - **Télémétrie** : ligne de commande (Sysmon 1, sinon événement 4688 avec sa ligne de commande, sinon WMI tant que le
   processus vit).
 - **Si elle manque** : sans Sysmon ni 4688 portant la ligne de commande, processus terminé avant la lecture WMI : ligne
   de commande absente, la règle se tait.
 - **Niveau** : Alerte.
-- **Faux positifs attendus** : scripts d'administration ou d'installation encodés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+- **Faux positifs attendus** : scripts d'administration ou d'installation encodés ; depuis A-7-1, un téléchargement en
+  ligne de commande vers une adresse http(s), même vers un intranet et sans `iex`
+  (`powershell -c "Invoke-WebRequest https://intranet/… -OutFile …"`). Choix : il alerte, parce qu'il est rare sur un
+  poste personnel et qu'il est le premier geste d'un chargement de code ; il reste au niveau Alerte (jamais Critique),
+  et une exception sur son code de comportement (`PRC-002:telecharge`) le fait taire. Un script lancé par `-File` ne
+  l'est pas (son contenu n'est pas lu). Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_002_positif` (`-enc` d'une charge de plus de 40 caractères ; `IEX` d'un `DownloadString`),
-  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court). Campagne Kali (`campagne-kali-sixieme-lot.md`,
+  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court ; `Get-Help Invoke-WebRequest` ; adresse
+  affichée sans téléchargement ; `-ExecutionPolicy` suivi d'un long texte ; script `-File` avec une adresse en argument),
+  `prc_002_formes_elargies` (A-7-1 : `irm … | iex`, `-ec`, `-enco`, `/e`, `-e "…"`, `-EncodedCommand` de pwsh,
+  `iwr … -OutFile`, `Start-BitsTransfer`, `Invoke-RestMethod … | Invoke-Expression`, `iwr` puis `iex`, téléchargement
+  vers un intranet, avec le code de comportement de chacun), `prc_002_copie_renommee_par_nom_origine` (copie renommée
+  reconnue par le nom d'origine `PowerShell.EXE` ou `pwsh.dll`, ligne montrée telle quelle ; sans nom d'origine ou avec
+  celui d'un autre programme : rien). Campagne Kali (`campagne-kali-sixieme-lot.md`,
   2026-11-16) : VP avec Sysmon (configuration B), non déterministe sans Sysmon ; non consolidée. Non exercée dans les
   scénarios VM : sans Sysmon, la ligne de
   commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
   qu'on ne touche pas.
-- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-1, essayés sur les motifs, non corrigés) : `irm … | iex` (l'adresse précède
-  `iex`, le motif exige l'inverse), abréviations `-ec`, `-enco` et `/e` de `-EncodedCommand`, `iwr … -OutFile`,
-  `Start-BitsTransfer`, copie renommée de powershell.exe (l'interpréteur est cherché par son nom dans la ligne). Un
-  obscurcissement par concaténation (`&('i'+'ex')`) échappera toujours aux motifs : seul le journal des blocs de script
-  (4104), activé par la baseline et lu par aucune règle (A-7-4), le verrait.
+- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-1, corrigé, testé en labo, à essayer en VM) :
+  `irm … | iex`, abréviations de `-EncodedCommand` (`-e`, `-ec`, `-en`, `-enc`, `-enco`…, préfixe `-`, `/` ou tiret
+  typographique, charge entre guillemets), `iwr … -OutFile`, `Start-BitsTransfer`, copie renommée de powershell.exe
+  quand Sysmon donne le nom d'origine du fichier (champ OriginalFileName de l'événement 1, lu dans la ressource de
+  version du programme : `PowerShell.EXE`, `pwsh.dll`).
+- **Faux négatifs connus** : copie renommée de powershell.exe sans Sysmon : les événements 4688 et WMI ne portent pas le
+  nom d'origine, et le service ne lit pas la ressource de version des programmes lancés (il faudrait l'ouvrir à chaque
+  création de processus, alors qu'il a peut-être déjà disparu) ; l'interpréteur reste cherché par son nom dans la
+  ligne. Un obscurcissement par concaténation (`&('i'+'ex')`) échappera toujours aux motifs : seul le journal des blocs
+  de script (4104), activé par la baseline et lu par aucune règle (A-7-4), le verrait.
 
 ### PRC-003 : détournement d'outil Windows (LOLBin)
-- **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 T1218 Binaire système détourné, wmic T1047 WMI détourné.
-- **Code** : `processus.rs` (certutil, bitsadmin, mshta, regsvr32, rundll32, wmic).
-- **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code.
+- **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 (`javascript:`) T1218 Binaire système détourné, rundll32 d'une DLL d'un dossier inscriptible T1218.011 Rundll32 détourné, comsvcs.dll MiniDump T1003.001 Vidage de la mémoire de LSASS, msiexec depuis une adresse T1218.007 Paquet MSI détourné, wmic T1047 WMI détourné.
+- **Code** : `processus.rs` (`OUTILS_PRC003` : certutil, bitsadmin, mshta, regsvr32, rundll32, rundll32_dll, comsvcs,
+  msiexec, wmic ; code de comportement `PRC-003:<outils vus>`).
+- **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code. Ajouts de l'audit du
+  2026-11-23 (fait par Claude, A-7-7, corrigé, testé en labo) : `rundll32 …comsvcs.dll, MiniDump <pid> <fichier> full`
+  (ou son ordinal `#24`) vide la mémoire d'un processus, en pratique LSASS pour voler les identifiants ; rundll32 d'une
+  DLL de `Users\Public`, `AppData`, `Temp` ou `ProgramData` (dossiers où l'utilisateur écrit) ; `msiexec … http(s)://`
+  installe un paquet distant ; mshta et regsvr32 sur un chemin réseau (UNC `\\hôte\partage`), `regsvr32 -i:` avec un
+  tiret ; certutil qui récupère une adresse par `-f` ou `-verifyctl`. Un paquet MSI local ou sur un partage de
+  déploiement n'est pas visé (installation ordinaire).
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
+- **Niveau** : Alerte ; Critique (signal fort, jamais adouci) quand comsvcs.dll vide la mémoire d'un processus (A-7-7).
+- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration ; un installeur qui lance rundll32
+  sur une DLL déposée dans `Temp` ou `ProgramData`. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
-  `rundll32 shell32.dll,Control_RunDLL`). Non exercée en VM (comme PRC-002).
+  `rundll32 shell32.dll,Control_RunDLL`, msiexec d'un paquet local ou sur un partage, regsvr32 d'une DLL installée,
+  `certutil -verifyctl` sans adresse, comsvcs.dll sans MiniDump), `prc_003_formes_elargies` (A-7-7 : chaque forme
+  ajoutée, avec l'outil, la technique et le niveau). Non exercée en VM (comme PRC-002).
 
 ### PRC-004 : navigateur lancé en débogage à distance
 - **ATT&CK** : T1539 Vol de cookies de session.
-- **Code** : `processus.rs` (`--remote-debugging-port` ou `-pipe` sur Chrome, Edge, Brave).
+- **Code** : `processus.rs` (`--remote-debugging-port` ou `-pipe` sur Chrome et Chromium, Edge, Brave, Vivaldi, Opera,
+  Arc, et Yandex dont le programme `browser.exe` n'est reconnu que dans son dossier `YandexBrowser\Application`, le nom
+  seul étant trop commun). Ajouts de l'audit du 2026-11-23 (fait par Claude, A-7-9, corrigé, testé en labo). Firefox
+  n'est pas retenu : ses cookies se lisent dans son profil sans passer par le débogage (VOL-001 surveille ces fichiers),
+  et son débogage à distance sert surtout aux outils de test.
 - **Justification** : technique de vol de cookies qui contourne le chiffrement des navigateurs.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
@@ -397,12 +437,16 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_004_positif` (Chrome avec `--remote-debugging-port`), `prc_004_negatif` (WebView2 en débogage ;
-  Chrome normal) ; existant : `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
+  Chrome normal ; A-7-9 : Firefox en débogage, `browser.exe` hors du dossier de Yandex, Vivaldi normal),
+  `prc_004_navigateurs_chromium` (Vivaldi, Opera, Yandex, Arc, Chromium en débogage) ; existant :
+  `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
 
 ### PRC-005 : suppression des sauvegardes
 - **ATT&CK** : T1490 Suppression des sauvegardes.
-- **Code** : `processus.rs` (`vssadmin delete shadows`, `wbadmin delete`, `bcdedit … recoveryenabled no`,
-  `wmic shadowcopy delete`).
+- **Code** : `processus.rs` (`MOTIF_PRC005` : `vssadmin delete shadows`, `vssadmin resize shadowstorage` à moins de
+  1 000 Mo, `wbadmin delete catalog|systemstatebackup|backup`, `bcdedit … recoveryenabled no`,
+  `bcdedit … bootstatuspolicy ignoreallfailures`, `wmic shadowcopy delete`, `Win32_ShadowCopy` supprimé par
+  `Remove-WmiObject`, `Remove-CimInstance` ou `.Delete()`, `diskshadow` avec `delete shadows` dans la ligne).
 - **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
 - **Télémétrie** : ligne de commande.
 - **Si elle manque** : comme PRC-002.
@@ -414,12 +458,18 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
   et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
 - **Tests** : `prc_005_positif` (`vssadmin delete shadows`, `bcdedit … recoveryenabled No`, et la ligne qui télécharge du
   code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
-  (`vssadmin list shadows`, `wbadmin get versions`). Non exercée en VM : sans Sysmon, la ligne de commande d'un processus
-  aussi bref est souvent perdue par WMI, le scénario serait instable.
-- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-3, essayés sur le motif, non corrigés) : `Get-WmiObject Win32_ShadowCopy |
-  Remove-WmiObject`, `Get-CimInstance Win32_ShadowCopy | Remove-CimInstance`, `vssadmin resize shadowstorage … /maxsize=…`,
-  `wbadmin delete backup`, `bcdedit /set … bootstatuspolicy ignoreallfailures`, `diskshadow /s`. `wmic` est retiré de
-  Windows 11 24H2.
+  (`vssadmin list shadows`, `wbadmin get versions` ; A-7-3 : lecture des clichés par WMI, `vssadmin list shadowstorage`,
+  agrandissement de l'espace des clichés en %, en Go ou illimité, `diskshadow /s` seul, `diskshadow list shadows`,
+  `bootstatuspolicy displayallfailures`) ; les formes ajoutées par A-7-3 sont dans `prc_005_positif`. Non exercée en VM :
+  sans Sysmon, la ligne de commande d'un processus aussi bref est souvent perdue par WMI, le scénario serait instable.
+- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-3, corrigé, testé en labo, à essayer en VM) :
+  `Get-WmiObject Win32_ShadowCopy | Remove-WmiObject`, `Get-CimInstance Win32_ShadowCopy | Remove-CimInstance`,
+  `vssadmin resize shadowstorage … /maxsize=401MB` (une taille de moins de 1 000 Mo efface les clichés),
+  `wbadmin delete backup`, `bcdedit /set … bootstatuspolicy ignoreallfailures`, `diskshadow` dont la ligne dit
+  `delete shadows` (y compris un script écrit puis passé par `/s` dans la même ligne).
+- **Faux négatifs connus** : `diskshadow /s script.txt` seul n'alerte pas : le script n'est pas lu et la ligne ne dit
+  pas s'il supprime (diskshadow sert aussi aux sauvegardes) ; une taille écrite en octets de plus de trois chiffres
+  (`/maxsize=400000000`) non plus. `wmic` est retiré de Windows 11 24H2.
 
 ## CHA : chaînes de processus
 
@@ -437,11 +487,19 @@ Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface
 - **Tests** : `cha_001_positif` (deux signaux dans la même descendance, score cumulé au seuil de 12 : une alerte
   Critique, pas de nouvelle alerte au même score, une autre quand le score monte), `cha_001_negatif` (un seul signal,
   même fort ; deux signaux sous le seuil ; deux signaux dans deux descendances distinctes de l'Explorateur, qui est une
-  racine). Non exercée en VM (signaux des autres règles nécessaires).
-- **Faux négatifs connus** (audit du 2026-11-23, fait par Claude, A-7-5, non corrigés) : une racine est reconnue à son nom seul (`svchost`,
-  `taskhostw`, `explorer`…), quel que soit son dossier : un programme d'entrée nommé ainsi dans un dossier temporaire coupe
-  la chaîne, et chaque étape reste seule avec un signal. Un parent choisi à la création du processus (T1134.004) produit
-  le même effet.
+  racine), `cha_001_racine_par_chemin` (A-7-5 : `svchost.exe` dans `AppData\Local\Temp` ou `taskhostw.exe` dans
+  `Users\Public` qui lance deux étapes signalées : une chaîne, une alerte Critique ; le vrai svchost et l'Explorateur
+  réel sous le dossier Windows restent des racines ; `svchost.exe` dans `Windows\Tasks` n'en est pas une ; chemin
+  illisible : pas une racine). Non exercée en VM (signaux des autres règles nécessaires).
+- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-5, corrigé, testé en labo, à essayer en VM) :
+  une racine était reconnue à son nom seul ; elle l'est maintenant par le chemin exact du programme système sous le
+  dossier Windows (`chaines::racine`, même comparaison que `reponse::chemin_critique`). Le chemin vient de la liste des
+  processus (lu pour les candidats racines), des événements 4688 ou des connexions ; chemin illisible : pas une racine
+  (sens prudent, la chaîne continue), remontée bornée à 32 parents.
+- **Faux négatifs connus** : un parent choisi à la création du processus (T1134.004, usurpation du parent) rattache le
+  programme à un vrai lanceur du système : la chaîne est coupée là, comme avant. Non corrigé ici. Si le chemin de
+  l'Explorateur était illisible, deux étapes sans lien lancées par lui formeraient une chaîne (faux positif possible, sens
+  prudent).
 
 ## PER : persistance
 
