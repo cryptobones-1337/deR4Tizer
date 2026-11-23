@@ -891,6 +891,7 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
 | SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) | aucune |
 | SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte | aucune |
 | SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique | aucune |
+| SAN-013 | Historique du mini-SIEM incomplet : événements perdus (file de 20 000 pleine), événements non écrits (fichier du jour au plafond de 1 Go / 30, 34 Mo environ), ou fichier d'un jour précédent supprimé pour la taille totale (1 Go) | `sante.rs`, `siem.rs` | Alerte | aucune |
 
 - **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
   un poste calme. Couper la vue sur Defender est ce qu'un attaquant gagne le plus à faire (SAN-003).
@@ -932,6 +933,16 @@ VM (Defender intouchable) et restent au mieux « testé en labo ».
   ferme l'interface ; session Bureau à distance sans bureau. Tests : `sante_interface_absente_15_min`,
   `sante_grace_ouverture_session`, `sante_interface_trois_disparitions`, `sante_interface_deux_disparitions`,
   `sante_interface_retour_et_session_fermee`.
+- **SAN-013** (audit du 2026-11-23, A-6-3) : un compte standard qui crée des processus en boucle remplissait le SIEM ;
+  la purge par la taille chassait les jours les plus anciens, fichier du jour compris, et la file débordait en silence.
+  Désormais le fichier du jour n'est jamais supprimé ; au-delà de son plafond (1 Go / 30 : 30 jours pleins tiennent dans
+  1 Go, une inondation d'un jour ne chasse plus les autres), les événements du jour ne sont plus écrits mais comptés (la
+  corrélation les voit quand même) ; la purge par la taille ne touche que les jours précédents (le jour courant compte
+  pour sa part bornée). Constat à la première perte, au premier événement non écrit et à la première purge par la taille,
+  chacun aussitôt ; une hausse d'un compteur déjà signalé, une fois par 24 h au plus. Compteurs depuis le démarrage, en
+  mémoire. **Limite** : un compte standard peut toujours saturer le jour courant (ce qu'il fait ensuite ce jour-là n'est
+  plus écrit dans le SIEM, les alertes restent dans `alertes.json`) : c'est ce que SAN-013 dit ; plafond à mesurer en
+  VM sur un poste ordinaire. Tests : `siem_purge_par_jour`, `sante_san013_historique_incomplet`.
 
 ## REP : réponse (phase 6)
 

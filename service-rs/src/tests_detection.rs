@@ -1622,6 +1622,19 @@ fn cor_bout_en_bout() {
     assert!(crate::siem::traduire(&service).is_none());
 }
 
+/// Audit du 2026-11-23, A-6-1 : la ligne de commande d'un 4688 est stockée dans le SIEM (30 jours, lisible par les comptes
+/// lecteurs, exportée par l'API) secrets masqués ; le reste de la ligne est gardé
+#[test]
+fn siem_4688_ligne_de_commande_masquee() {
+    let xml = evenement_defender(4688, &[("SubjectUserName", "essai"), ("SubjectDomainName", "POSTE"), ("SubjectUserSid", "S-1-5-21-1-2-3-1001"),
+        ("NewProcessName", r"C:\Windows\System32\net.exe"), ("NewProcessId", "0x1a4"), ("ParentProcessName", r"C:\Windows\System32\cmd.exe"),
+        ("CommandLine", r"net use \\serveur\partage MotDePasseSecret1 /user:POSTE\essai")]);
+    let e = crate::siem::traduire(&xml).expect("4688 traduit");
+    assert_eq!(e.type_, "processus-cree");
+    assert!(!e.message.contains("MotDePasseSecret1"), "secret stocké : {}", e.message);
+    assert!(e.message.contains(r"net use \\serveur\partage") && e.message.contains(r"/user:POSTE\essai"), "{}", e.message);
+}
+
 // ------------------------------------------------------------ VIE et BAS : vie privée, accès distant, baseline (PR 3.12)
 // Décisions surveillances::premiers_usages, surveillances::outils_distants (chemin d'un PID passé en paramètre),
 // surveillances::alerte_bureau_a_distance et baseline::derives, sans registre ni fichier de données.

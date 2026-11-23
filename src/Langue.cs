@@ -349,6 +349,9 @@ namespace DeR4Tizer
             { "ACCÈS AUX DONNÉES", "DATA ACCESS" }, { "Autoriser un autre compte…", "Authorise another account…" }, { "Autoriser", "Authorise" },
             { "Les événements, sessions, alertes et appareils du réseau ne sont lisibles que par SYSTEM, les administrateurs et ces comptes :",
               "Events, sessions, alerts and network devices can only be read by SYSTEM, administrators and these accounts:" },
+            { "Ces comptes peuvent lire l'historique de tous les comptes (alertes, événements, lignes de commande masquées).",
+              "These accounts can read the history of every account (alerts, events, masked command lines)." },
+            { "Comptes autorisés à lire les données", "Accounts allowed to read the data" },
             { "Nom du compte (par exemple : PC-ACCUEIL\\marie)", "Account name (for example: FRONT-DESK\\marie)" }, { "Compte introuvable.", "Account not found." },
 
             // Revue : listes, démarrage, colonnes

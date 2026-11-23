@@ -647,8 +647,11 @@ fn borner(s: &mut String, max: usize) {
 /// l'audit de #94, S94-02 ; à la création, APRÈS les décisions prises sur le
 /// texte entier : MITRE, signal fort, apprentissage ; AVANT tout usage : journal, export, notifications, SIEM,
 /// alertes.json). Les champs posés par le code (Mitre, Conseil, Regle, Collecte) sont bornés aussi, pour que la borne
-/// de taille reste vraie quand ils s'allongent (S72-07)
+/// de taille reste vraie quand ils s'allongent (S72-07). Secrets des lignes de commande masqués dans les raisons et la
+/// destination (audit du 2026-11-23, A-6-1) : ici, après les décisions et avant tout usage, alertes relues comprises
 pub fn borner_alerte(a: &mut Alerte) {
+    a.raisons = masquer_secrets(&a.raisons);
+    a.destination = masquer_secrets(&a.destination);
     borner(&mut a.raisons, MAX_RAISONS_ALERTE);
     borner(&mut a.chemin, MAX_CHEMIN_ALERTE);
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
@@ -1118,6 +1121,175 @@ pub(crate) fn admettre_cle(deja: &mut HashMap<String, std::time::Instant>, cle: 
     Admission::Nouvelle
 }
 
+// ------------------------------------------------------------ secrets des lignes de commande
+
+/// Ce qui remplace une valeur secrète (audit du 2026-11-23, A-6-1)
+pub const MASQUE: &str = "***";
+
+/// Options suivies de leur valeur secrète, comparées sans tenir compte de la casse : schtasks (/p, /rp), psexec et bien
+/// d'autres (-p), --password, -Password et -Credential de PowerShell. `-p` est aussi le port de quelques outils (ssh -p 22) :
+/// sa valeur est masquée quand même, une information perdue plutôt qu'un secret gardé
+const OPTIONS_SUIVIES_DU_SECRET: &[&str] = &["-p", "/p", "/rp", "--password", "-password", "--pass", "-pass", "--passwd", "-pwd", "/pwd", "-credential"];
+
+/// Options dont la valeur secrète est collée : /p:x (mstsc…), /pass:x (cmdkey), /password:x, --password=x, -Password:x
+const PREFIXES_DU_SECRET: &[&str] = &["/p:", "/pass:", "/password:", "/pwd:", "/rp:", "--password=", "-password=", "--pass=", "--passwd=", "-password:"];
+
+/// Ligne de commande secrets masqués, pour tout ce qui est stocké ou publié (SIEM, alertes, etat.json, exports) ; jamais pour
+/// la détection, qui analyse la ligne entière (pur, testé ; audit du 2026-11-23, A-6-1). Remplace par `***` : la valeur des
+/// options de `OPTIONS_SUIVIES_DU_SECRET` et `PREFIXES_DU_SECRET`, la valeur de `ConvertTo-SecureString`, les mots de passe
+/// de `net use` (tout argument qui n'est ni une option, ni un lecteur, ni un chemin réseau, ni `*`) et de `net user <compte>
+/// <mot de passe>`, et le mot de passe d'une adresse `schéma://compte:motdepasse@hôte`. Une valeur entre guillemets est
+/// masquée en entier ; une valeur qui est une expression PowerShell (`$variable`, `(…)`) ne l'est pas. Le texte entre
+/// guillemets est aussi lu comme une ligne (powershell -c "…"). Aucune indexation qui puisse paniquer (règle 4)
+pub fn masquer_secrets(ligne: &str) -> String {
+    masquer_mots(&masquer_urls(ligne), 0)
+}
+
+/// Mots d'une ligne de commande, en octets (début, fin), séparés par des blancs ; un mot entre guillemets doubles (où qu'ils
+/// s'ouvrent) ou simples (ouverts en début de mot, ou après « : » ou « = ») garde ses blancs
+fn mots_de_commande(s: &str) -> Vec<(usize, usize)> {
+    let mut mots = Vec::new();
+    let (mut debut, mut guillemet, mut precedent): (Option<usize>, Option<char>, Option<char>) = (None, None, None);
+    for (i, c) in s.char_indices() {
+        match guillemet {
+            Some(q) => {
+                if c == q {
+                    guillemet = None;
+                }
+            }
+            None if c.is_whitespace() => {
+                if let Some(d) = debut.take() {
+                    mots.push((d, i));
+                }
+            }
+            None => {
+                let d = *debut.get_or_insert(i);
+                if c == '"' || (c == '\'' && (d == i || matches!(precedent, Some(':' | '=')))) {
+                    guillemet = Some(c);
+                }
+            }
+        }
+        precedent = Some(c);
+    }
+    if let Some(d) = debut {
+        mots.push((d, s.len()));
+    }
+    mots
+}
+
+/// Valeur littérale (à masquer) : ni vide, ni une expression PowerShell, ni un séparateur de commandes
+fn valeur_litterale(v: &str) -> bool {
+    !v.is_empty() && !v.starts_with('$') && !v.starts_with('(') && !separateur_de_commandes(v)
+}
+
+fn separateur_de_commandes(v: &str) -> bool {
+    matches!(v, "&" | "&&" | "|" | "||" | ";")
+}
+
+/// `net`, `net1`, avec ou sans chemin ni extension
+fn est_net(v: &str) -> bool {
+    let v = v.trim_matches('"').to_ascii_lowercase();
+    matches!(v.rsplit(['\\', '/']).next().unwrap_or(""), "net" | "net.exe" | "net1" | "net1.exe")
+}
+
+fn masquer_mots(s: &str, profondeur: u8) -> String {
+    let mots = mots_de_commande(s);
+    let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
+    // Pour chaque mot : masqué à partir de cet octet du mot
+    let mut masques: Vec<Option<usize>> = vec![None; mots.len()];
+    for k in 0..mots.len() {
+        let t = texte(k);
+        if let Some(p) = PREFIXES_DU_SECRET.iter().find(|p| t.len() > p.len() && t.get(..p.len()).is_some_and(|x| x.eq_ignore_ascii_case(p))) {
+            masques[k] = Some(p.len());
+        }
+        if OPTIONS_SUIVIES_DU_SECRET.iter().any(|o| t.eq_ignore_ascii_case(o)) && valeur_litterale(texte(k + 1)) {
+            if let Some(m) = masques.get_mut(k + 1) {
+                *m = Some(0);
+            }
+        }
+        if t.trim_start_matches('(').eq_ignore_ascii_case("convertto-securestring") {
+            let j = if texte(k + 1).eq_ignore_ascii_case("-string") { k + 2 } else { k + 1 };
+            if valeur_litterale(texte(j)) && !texte(j).starts_with('-') {
+                if let Some(m) = masques.get_mut(j) {
+                    *m = Some(0);
+                }
+            }
+        }
+        if est_net(t) && (texte(k + 1).eq_ignore_ascii_case("use") || texte(k + 1).eq_ignore_ascii_case("user")) {
+            let user = texte(k + 1).eq_ignore_ascii_case("user");
+            let mut positionnels = 0;
+            for j in k + 2..mots.len() {
+                let v = texte(j);
+                if separateur_de_commandes(v) {
+                    break;
+                }
+                if v.starts_with('/') || v == "*" {
+                    continue;
+                }
+                positionnels += 1;
+                let lecteur = v.len() == 2 && v.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && v.ends_with(':');
+                let reseau = v.trim_start_matches('"').starts_with("\\\\") || v.contains("://");
+                // net use : tout sauf le lecteur et le chemin réseau ; net user : le mot de passe suit le nom du compte
+                if (!user && !lecteur && !reseau) || (user && positionnels >= 2) {
+                    masques[j] = Some(0);
+                }
+            }
+        }
+    }
+    let mut sortie = String::with_capacity(s.len());
+    let mut position = 0;
+    for (k, &(a, b)) in mots.iter().enumerate() {
+        let remplacement = match masques[k] {
+            Some(o) => Some(format!("{}{MASQUE}", s.get(a..a + o).unwrap_or(""))),
+            None => {
+                // Texte entre guillemets : lu comme une ligne (powershell -c "…"), trois niveaux au plus
+                let t = texte(k);
+                let q = t.chars().next().filter(|c| *c == '"' || *c == '\'');
+                match q {
+                    Some(q) if profondeur < 3 => {
+                        let ferme = t.len() > 1 && t.ends_with(q);
+                        let dedans = t.get(1..if ferme { t.len() - 1 } else { t.len() }).unwrap_or("");
+                        let m = masquer_mots(dedans, profondeur + 1);
+                        (m != dedans).then(|| format!("{q}{m}{}", if ferme { q.to_string() } else { String::new() }))
+                    }
+                    _ => None,
+                }
+            }
+        };
+        if let Some(r) = remplacement {
+            sortie.push_str(s.get(position..a).unwrap_or(""));
+            sortie.push_str(&r);
+            position = b;
+        }
+    }
+    sortie.push_str(s.get(position..).unwrap_or(""));
+    sortie
+}
+
+/// Mot de passe d'une adresse `schéma://compte:motdepasse@hôte` masqué
+fn masquer_urls(s: &str) -> String {
+    let mut sortie = String::with_capacity(s.len());
+    let mut reste = s;
+    while let Some(i) = reste.find("://") {
+        let (avant, apres) = (reste.get(..i + 3).unwrap_or(""), reste.get(i + 3..).unwrap_or(""));
+        sortie.push_str(avant);
+        let fin = apres.find(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'').unwrap_or(apres.len());
+        let autorite = apres.get(..fin).unwrap_or("");
+        let compte = autorite.rfind('@').and_then(|at| autorite.get(..at).and_then(|u| u.find(':')).map(|c| (c, at)));
+        match compte {
+            Some((c, at)) if at > c + 1 => {
+                sortie.push_str(autorite.get(..=c).unwrap_or(""));
+                sortie.push_str(MASQUE);
+                sortie.push_str(autorite.get(at..).unwrap_or(""));
+            }
+            _ => sortie.push_str(autorite),
+        }
+        reste = apres.get(fin..).unwrap_or("");
+    }
+    sortie.push_str(reste);
+    sortie
+}
+
 /// Message ramené à une seule ligne de journal (pur, testé)
 pub fn ligne_de_journal(message: &str) -> String {
     message.chars().map(|c| if c.is_control() || c == '\u{2028}' || c == '\u{2029}' { ' ' } else { c }).collect()
@@ -1148,17 +1320,74 @@ pub fn avec_echeance_unique<T: Send + 'static>(garde: &'static std::sync::atomic
     })
 }
 
-pub fn journal(message: &str) {
-    let f = dossier().join("journal.txt");
-    // Rotation : au-delà de 2 Mo, l'ancien journal devient journal.1.txt (un bruit provoqué n'efface pas tout)
-    if fs::metadata(&f).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false) {
-        let _ = fs::rename(&f, dossier().join("journal.1.txt"));
+/// Taille au-delà de laquelle journal.txt tourne, et générations gardées : journal.1.txt (la plus récente) à journal.5.txt,
+/// 12 Mo au plus en tout (audit du 2026-11-23, A-8-3 : une seule génération, un bruit provoqué effaçait l'historique en
+/// deux rotations)
+pub const TAILLE_JOURNAL: u64 = 2 * 1024 * 1024;
+pub const GENERATIONS_JOURNAL: usize = 5;
+
+/// Rotation due (pure, testée)
+pub fn rotation_due(taille: u64) -> bool {
+    taille > TAILLE_JOURNAL
+}
+
+/// Heure en tête d'une ligne de journal (« AAAA-MM-JJ HH:MM:SS »), si elle y est
+fn heure_de_ligne(l: &str) -> Option<&str> {
+    let h = l.get(..19)?;
+    h.bytes().enumerate().all(|(i, b)| match i { 4 | 7 => b == b'-', 10 => b == b' ', 13 | 16 => b == b':', _ => b.is_ascii_digit() }).then_some(h)
+}
+
+/// Heures de la première et de la dernière ligne d'un journal, lues au début et à la fin du fichier (jamais les 2 Mo) ;
+/// « inconnu » si elles ne s'y lisent pas
+fn bornes_journal(f: &Path) -> (String, String) {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut debut = None;
+    let mut fin = None;
+    if let Ok(mut fichier) = fs::File::open(f) {
+        let mut tete = [0u8; 64];
+        let n = fichier.read(&mut tete).unwrap_or(0);
+        debut = heure_de_ligne(&String::from_utf8_lossy(tete.get(..n).unwrap_or(&[]))).map(String::from);
+        let taille = fichier.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut queue = Vec::new();
+        if fichier.seek(SeekFrom::Start(taille.saturating_sub(1024))).is_ok() && fichier.take(1024).read_to_end(&mut queue).is_ok() {
+            fin = String::from_utf8_lossy(&queue).lines().rev().find_map(|l| heure_de_ligne(l).map(String::from));
+        }
     }
+    (debut.unwrap_or_else(|| "inconnu".into()), fin.unwrap_or_else(|| "inconnu".into()))
+}
+
+/// Fait tourner journal.txt du dossier `d` : journal.4 → journal.5 (l'ancien journal.5 est remplacé), …, journal.txt →
+/// journal.1 ; rend la ligne qui dit l'intervalle couvert par journal.1, écrite en tête du nouveau journal ; None sans
+/// journal.txt ou si son renommage échoue (testé). Un renommage dans le même dossier garde les droits du fichier, hérités du
+/// dossier de données (lecteurs compris) ; la désinstallation efface le dossier entier
+pub fn tourner_journal(d: &Path) -> Option<String> {
+    let f = d.join("journal.txt");
+    fs::metadata(&f).ok()?;
+    let (debut, fin) = bornes_journal(&f);
+    for g in (1..GENERATIONS_JOURNAL).rev() {
+        let _ = fs::rename(d.join(format!("journal.{g}.txt")), d.join(format!("journal.{}.txt", g + 1)));
+    }
+    fs::rename(&f, d.join("journal.1.txt")).ok()?;
+    Some(format!("journal : rotation au-delà de {} Mo ; journal.1.txt couvre {debut} à {fin} ; générations gardées : journal.1 à journal.{GENERATIONS_JOURNAL}",
+        TAILLE_JOURNAL / (1024 * 1024)))
+}
+
+pub fn journal(message: &str) {
+    // Un seul écrivain à la fois : deux fils ne font jamais tourner le journal deux fois de suite
+    static VERROU: Mutex<()> = Mutex::new(());
+    let _garde = VERROU.lock().unwrap_or_else(|e| e.into_inner());
+    let d = dossier();
+    let f = d.join("journal.txt");
+    // Rotation : au-delà de 2 Mo, sur 5 générations (un bruit provoqué n'efface pas tout)
+    let rotation = if fs::metadata(&f).map(|m| rotation_due(m.len())).unwrap_or(false) { tourner_journal(&d) } else { None };
     // Une ligne par message : caractères de contrôle et séparateurs de ligne Unicode remplacés par une espace (noms
     // DNS, NBNS, UPnP, lignes de commande venus du poste ou du réseau ajoutaient de fausses lignes horodatées,
     // audit AUD4-05)
     let propre = ligne_de_journal(message);
     if let Ok(mut fichier) = fs::OpenOptions::new().create(true).append(true).open(&f) {
+        if let Some(r) = rotation {
+            let _ = writeln!(fichier, "{}  {}\r", maintenant(), r);
+        }
         let _ = writeln!(fichier, "{}  {}\r", maintenant(), propre);
     }
 }
