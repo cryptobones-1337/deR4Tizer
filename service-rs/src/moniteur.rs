@@ -794,7 +794,7 @@ impl Moniteur {
                     self.preexistants.insert(cle.clone());
                 }
             }
-            let origine = if *pid > 4 { self.processus.infos(*pid) } else { None };
+            let origine = if *pid > 4 { self.processus.infos(*pid, &chemin) } else { None };
 
             let menace = {
                 let m = self.partage.menaces.read().unwrap();

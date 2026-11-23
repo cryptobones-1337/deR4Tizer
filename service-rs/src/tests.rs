@@ -1877,6 +1877,17 @@ fn fonctions_texte_sans_panique() {
     torturer_texte("4.10.2", &mut |t| { let _ = crate::maj::version_valide(t); let _ = crate::maj::plus_recente(t, "4.1"); });
     torturer_texte(r"\SystemRoot\System32\drivers\x.sys", &mut |t| { let _ = crate::hygiene::chemin_image(t); });
     torturer_texte(r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222"#, &mut |t| { let _ = crate::processus::suspicion(t); });
+    // Constat T-2 : commandes lancées en tête par un interpréteur (guillemets, séparateurs, call, start et ses options)
+    torturer_texte(r#"cmd /c ""C:\Program Files\x\y.exe" a & start /b /wait call 'z.exe' | (w -co "v") ; @{u} –c t"#, &mut |t| {
+        let _ = crate::processus::suspicion(t);
+        let _ = crate::processus::nom_programme(t);
+        for cmd in [true, false] {
+            let _ = crate::processus::commandes_en_tete(t, cmd);
+        }
+        for p in ["cmd", "pwsh", "y"] {
+            let _ = crate::processus::motifs_programme(&[p.to_string()], t);
+        }
+    });
 }
 
 /// Lot 3c : un certificat dont la CRL ne répond pas était accepté (WinVerifyTrust tolère la révocation hors
