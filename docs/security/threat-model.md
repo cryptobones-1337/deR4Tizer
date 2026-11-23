@@ -180,10 +180,12 @@ Veut publier une version malveillante que les postes installeraient.
   CI ; il ne le fait signer que si le mainteneur signe cet artefact. Poste de signature : frontière de confiance à part
   entière. Les exécutables attendent dans un dossier temporaire du compte du mainteneur entre le contrôle d'empreinte et
   la signature, et un programme de ce compte pendant la session SimplySign peut faire signer ce qu'il veut : seule
-  l'hygiène de ce poste le couvre. Aucune reconstruction indépendante. A-3-3 corrigé en partie (PR #284) : chaîne Rust figée
-  (`service-rs/rust-toolchain.toml`, 1.100.0, lue aussi par `publication.yml` qui compile dans `service-rs`) et `cargo`
-  en `--locked` dans `ci.yml` (preuve : essai local d'un `Cargo.toml` modifié sans `Cargo.lock`, refusé, voir
-  `docs/testing/baseline.md`) ; `publication.yml` reste sans `--locked` (changement autorisé par le mainteneur le 2026-11-23, PR séparée à venir). MSI construit sur le poste du mainteneur. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
+  l'hygiène de ce poste le couvre. Aucune reconstruction indépendante. A-3-3 corrigé (PR #284 pour `ci.yml`, PR
+  séparée pour `publication.yml`, autorisée par le mainteneur le 2026-11-23) : chaîne Rust figée
+  (`service-rs/rust-toolchain.toml`, 1.100.0, installée explicitement par les deux workflows) et `cargo test` et
+  `cargo build` en `--locked` dans `ci.yml` et `publication.yml` (preuve : essai local d'un `Cargo.toml` modifié sans
+  `Cargo.lock`, refusé, voir `docs/testing/baseline.md` ; `publication.yml` ne tourne que sur un tag `v*` : son
+  changement n'est pas encore passé en exécution réelle). MSI construit sur le poste du mainteneur. Une liste de révocation injoignable fait refuser la signature (PR #12 ; prouvé par le 3c en
   Windows Sandbox, puis en CI au run 44480286774 (PR #205, `cd36ee4`, 2026-11-19)). Première version signée publiée : v4.3 (2026-11-23). La mise à jour automatique,
   inopérante dans les versions de test 4.2 et 4.3 installées à la main (corrigée par la PR #26, incluse dans la v4.3),
   ne part que de la v4.3 signée, vers une version suivante.
