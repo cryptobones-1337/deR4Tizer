@@ -84,7 +84,8 @@ facultative, et le premier analyseur de requêtes et de réponses DNS non fiable
   tirés (audit de #281, S281-01 ; `dns_echec_local_pas_un_silence`) ;
 - **listes de domaines** (audit du 2026-11-23, C-4, C-11, C-12) : une copie de plus de 500 000 entrées n'est jamais
   gardée ; le garde-fou d'écart de taille n'enferme plus une liste derrière une copie gonflée (refus levé après 3
-  téléchargements concordants à 10 % près, compte en mémoire, oublié au redémarrage du service) ; un fichier de plus de
+  téléchargements concordants à 10 % près, compte en mémoire, oublié au redémarrage du service ; un tel remplacement
+  est publié dans `filtrage-etat.json`, champ `Remplacement` de la liste) ; un fichier de plus de
   32 Mo est refusé avant lecture ; un nom dont une étiquette est invalide est jugé comme son parent valide le plus long.
   Une source compromise peut toujours remplacer une liste par une autre de taille voisine (pas de signature des listes) ;
 - **résolveur tiers** (PR 7.6) : Quad9 choisi, toutes les requêtes DNS non bloquées du poste lui sont envoyées (en

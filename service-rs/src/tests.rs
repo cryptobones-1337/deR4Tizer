@@ -9038,6 +9038,15 @@ fn filtrage_garde_fou_liste_gonflee() {
     let admis = &t[t.find("if remplacement_admis(ancienne, nouvelle, &refusees_de(s.nom))").expect("refus passés")..];
     assert!(admis.find("oublier_refus(s.nom)").unwrap() < admis.find("} else {").unwrap(), "refus oubliés à l'admission");
     assert!(admis.contains("noter_refus(s.nom, nouvelle)"));
+    // Revue de #281 : une copie admise hors de sa fenêtre est publiée dans l'état du filtrage, pas seulement journalisée
+    use crate::filtrage::{hors_fenetre, note_remplacement};
+    assert!(hors_fenetre(4000, 990) && hors_fenetre(1000, 2001) && !hors_fenetre(1000, 500) && !hors_fenetre(1000, 2000) && !hors_fenetre(0, 5));
+    let m = note_remplacement("2026-11-23 10:00", 4000, 990);
+    assert!(m.contains("4000 → 990") && m.contains("3 téléchargements concordants") && m.starts_with("2026-11-23 10:00"), "{m}");
+    let ok = &admis[..admis.find("} else {").unwrap()];
+    assert!(ok.contains("hors_fenetre(ancienne, nouvelle)") && ok.contains("REMPLACEMENTS") && ok.contains("note_remplacement("));
+    let p = &src[src.find("pub fn listes_publiees(").unwrap()..];
+    assert!(p[..p.find("\n}").unwrap()].contains("remplacement: remplacement_de(nom)"), "publié dans filtrage-etat.json");
 }
 
 /// Constat C-11 (audit du 2026-11-23) : la taille d'un fichier de liste est contrôlée avant de le lire en entier (copie
@@ -9371,16 +9380,16 @@ fn activation_amonts_sans_site_local() {
     for non in ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3", "feff::1", "fe80::1", "febf::1", "::1", "::", "127.0.0.1", "0.0.0.0", "ff02::fb", "224.0.0.251", "255.255.255.255"] {
         assert!(!amont_utilisable(&ip(non)), "{non}");
     }
-    for oui in ["192.168.1.254", "2001:db8::53", "fd00::53", "fc00::1"] {
+    for oui in ["192.0.2.254", "2001:db8::53", "fd00::53", "fc00::1"] {
         assert!(amont_utilisable(&ip(oui)), "{oui}");
     }
     let c = CarteDns { id: "{P}".into(), nom: "Ethernet".into(), type_carte: 6, materielle: true,
-        dns: ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3", "192.168.1.254"].iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        dns: ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3", "192.0.2.254"].iter().map(|s| s.to_string()).collect(), ..Default::default() };
     let o = origine_de(std::slice::from_ref(&c), &|_: &str, _: &str| String::new());
-    assert_eq!((o[0].dns4.clone(), o[0].dns6.clone()), (vec!["192.168.1.254".to_string()], Vec::<String>::new()));
-    assert_eq!(valeurs_activees(&o[0]), ("127.0.0.1,192.168.1.254".to_string(), "::1".to_string()));
-    assert_eq!(crate::dns_local::amonts(std::slice::from_ref(&c)), vec![ip("192.168.1.254")]);
-    let ancienne = origine_essai(&["192.168.1.254"], &["fec0:0:0:ffff::1", "2001:db8::53"]);
+    assert_eq!((o[0].dns4.clone(), o[0].dns6.clone()), (vec!["192.0.2.254".to_string()], Vec::<String>::new()));
+    assert_eq!(valeurs_activees(&o[0]), ("127.0.0.1,192.0.2.254".to_string(), "::1".to_string()));
+    assert_eq!(crate::dns_local::amonts(std::slice::from_ref(&c)), vec![ip("192.0.2.254")]);
+    let ancienne = origine_essai(&["192.0.2.254"], &["fec0:0:0:ffff::1", "2001:db8::53"]);
     assert_eq!(valeurs_activees(&ancienne).1, "::1,2001:db8::53", "origine enregistrée avant la correction");
     let mixte = CarteDns { dns: ["2001:db8::53", "fec0:0:0:ffff::1", "192.0.2.53"].iter().map(|s| s.to_string()).collect(), ..c };
     assert_eq!(crate::dns_local::amonts(&[mixte]), vec![ip("192.0.2.53"), ip("2001:db8::53")], "IPv4 d'abord");
