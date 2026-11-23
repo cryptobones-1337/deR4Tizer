@@ -116,6 +116,15 @@ pub fn ecrire_d_un_bloc(chemin: &Path, contenu: &[u8]) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => return Err(format!("{nom} illisible ({e}) : rien n'est écrit")),
     };
+    // Fichiers voisins laissés par un arrêt brutal (même motif exact, autre PID) : retirés avant l'écriture (S270-02)
+    if let Ok(l) = fs::read_dir(dossier) {
+        for x in l.flatten() {
+            let n = x.file_name().to_string_lossy().into_owned();
+            if est_voisin_orphelin(&n, &nom) && fs::symlink_metadata(x.path()).map(|m| m.file_type().is_file()).unwrap_or(false) {
+                let _ = fs::remove_file(x.path());
+            }
+        }
+    }
     let voisin = dossier.join(format!("{nom}.d4t-{}.tmp", std::process::id()));
     let _ = fs::remove_file(&voisin);
     let ecrit = (|| -> std::io::Result<()> {
@@ -148,6 +157,16 @@ pub fn ecrire_d_un_bloc(chemin: &Path, contenu: &[u8]) -> Result<(), String> {
             r.map_err(|e| e.to_string()).and_then(|_| relire_identique(chemin, contenu)).map_err(|e| format!("{nom} : réécriture en place en échec ({e})"))
         }
     }
+}
+
+/// Décision pure : nom d'un fichier voisin de deR4Tizer pour ce fichier, motif exact « <nom>.d4t-<chiffres>.tmp »
+pub fn est_voisin_orphelin(fichier: &str, nom: &str) -> bool {
+    fichier
+        .strip_prefix(nom)
+        .and_then(|r| r.strip_prefix(".d4t-"))
+        .and_then(|r| r.strip_suffix(".tmp"))
+        .map(|pid| !pid.is_empty() && pid.len() <= 10 && pid.bytes().all(|b| b.is_ascii_digit()))
+        .unwrap_or(false)
 }
 
 fn relire_identique(chemin: &Path, contenu: &[u8]) -> Result<(), String> {
@@ -360,7 +379,16 @@ pub fn decoder_audit(o: &[u8]) -> Result<AuditCsv, String> {
         let c: Vec<&str> = l.split(',').collect();
         if c.len() == 7 && c[1].trim().eq_ignore_ascii_case("System") && est_guid(c[3].trim()) {
             let v: u32 = c[6].trim().parse().ok().filter(|v| *v <= 3).ok_or_else(|| format!("valeur d'audit invalide pour {}", c[3].trim()))?;
-            a.lignes.push((c[3].trim().to_uppercase(), c[2].to_string(), v));
+            let guid = c[3].trim().to_uppercase();
+            // Sous-catégorie en double : laquelle fait foi n'est pas sûr, refus (prérelecture de #270)
+            if a.lignes.iter().any(|x| x.0 == guid) {
+                return Err(format!("sous-catégorie {guid} en double"));
+            }
+            a.lignes.push((guid, c[2].to_string(), v));
+        } else if c.iter().any(|x| est_guid(x.trim())) {
+            // Ligne de sous-catégorie d'une autre forme (colonnes en plus ou en moins, autre cible) : gardée telle
+            // quelle, elle pourrait se retrouver en double avec celle que deR4Tizer écrit ; refus (prérelecture de #270)
+            return Err("ligne de sous-catégorie d'une forme non prévue".into());
         } else {
             a.autres.push(l.to_string());
         }
