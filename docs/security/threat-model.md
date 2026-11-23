@@ -102,9 +102,13 @@ passer pour le service sur le canal.
   tous comptes, 30 jours, lisibles par les comptes lecteurs, et l'export syslog ou l'API les transmet. Depuis l'audit
   du 2026-11-23 (A-6-1, corrigé en labo), les secrets reconnus sont masqués (`***`) avant tout stockage ou publication :
   SIEM, alertes (alertes.json, exports, notifications), chaînes et connexions d'`etat.json` ; la détection analyse la
-  ligne entière avant. Le masquage suit des motifs connus (`net use`, `net user`, `/p`, `/rp`, `/pass:`, `-p`,
-  `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `compte:motdepasse@` d'une adresse) : un secret
-  passé sous une autre forme reste lisible par les comptes lecteurs, et les fichiers du SIEM écrits avant cette version
+  ligne entière avant. Le masquage suit des motifs connus : pour tout outil (`net use`, `net user`, `/pass:`,
+  `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=` et variables
+  semblables, `compte:motdepasse@` d'une adresse), et pour les seuls outils qui les emploient ainsi (`/p` et `/rp` de
+  schtasks et des outils Windows à distance, `-p` de mysql, psexec, sshpass, 7-Zip et RAR, `-pw` des outils PuTTY, `-P`
+  de sqlcmd, zip et unzip, `-pass` d'openssl, `-u` de curl, `-U` de smbclient ; liste `OPTIONS_PAR_OUTIL`, revue de
+  #269 : ailleurs `/p` est un drapeau et `-p` un port). Un secret passé sous une autre forme, ou à un outil absent de la
+  liste, reste lisible par les comptes lecteurs, et les fichiers du SIEM écrits avant cette version
   gardent leurs lignes entières jusqu'à leur purge (30 jours). Le premier compte vu à la console devient lecteur ;
   depuis A-6-2 (corrigé en labo), la page Réglages et le résumé des premiers réglages affichent les comptes lecteurs et
   ce qu'ils peuvent lire ; aucune commande ne retire encore un lecteur (à prévoir : ce serait un chemin privilégié

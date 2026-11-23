@@ -3,8 +3,10 @@
 ## Unreleased
 
 - Data (audit of 23 November 2026, batch 5): known secret arguments in command lines (`net use` and `net user`
-  passwords, `/p`, `/rp`, `/pass:`, `-p`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`,
-  `user:password@` in an address) are masked (`***`) before being stored in the SIEM, in alerts (alert history, syslog
+  passwords, `/pass:`, `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=`
+  and similar variables, `user:password@` in an address, and, for the tools that use them only, `/p` and `/rp`
+  (schtasks and other remote Windows tools), `-p` (mysql, psexec, sshpass, 7-Zip, RAR), `-pw` (PuTTY tools), `-P`
+  (sqlcmd, zip, unzip), `-pass` (openssl), `-u user:password` (curl), `-U user%password` (smbclient)) are masked (`***`) before being stored in the SIEM, in alerts (alert history, syslog
   and API exports, notifications) and in process chains and connections shown by the interface; detection rules still
   read the full command line (A-6-1). The SIEM never deletes the current day's file: beyond a daily cap (1 GB / 30),
   that day's events are counted and not written, the size purge only removes previous days, and a new health finding,

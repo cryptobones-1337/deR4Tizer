@@ -4937,6 +4937,28 @@ fn masquer_secrets_retire_les_valeurs() {
         (r#"curl https://admin:Secr3tUrl@exemple.test/chemin"#, "Secr3tUrl", "https://admin:"),
         (r#"outil -Password "Secr3t avec espaces" -Force"#, "avec espaces", "-Force"),
         ("ROBOCOPY a b & net use * \\\\srv\\c Secr3tSuite", "Secr3tSuite", "ROBOCOPY a b"),
+        // Revue de #269 : formes ajoutées
+        ("plink -ssh admin@srv -pw Secr3tPlink -batch", "Secr3tPlink", "-batch"),
+        (r"C:\Outils\pscp.exe -pw Secr3tPscp f.txt admin@srv:/tmp", "Secr3tPscp", "f.txt"),
+        ("mysql -u root -pSecr3tColle base", "Secr3tColle", "-u root"),
+        ("mysqldump --user=root --password=Secr3tDump base", "Secr3tDump", "--user=root"),
+        ("cmd /c set PGPASSWORD=Secr3tPg&& psql -U postgres", "Secr3tPg", "psql -U postgres"),
+        ("PGPASSWORD=Secr3tPg2 psql -h db", "Secr3tPg2", "psql -h db"),
+        ("sqlcmd -S srv -U sa -P Secr3tSql -Q x", "Secr3tSql", "-U sa"),
+        ("sqlcmd -S srv -U sa -PSecr3tSqlColle", "Secr3tSqlColle", "-U sa"),
+        ("curl -u admin:Secr3tCurl https://exemple.test/", "Secr3tCurl", "-u admin:"),
+        ("curl.exe -uadmin:Secr3tCurlColle https://exemple.test/", "Secr3tCurlColle", "-uadmin:"),
+        ("wget --password=Secr3tWget https://exemple.test/f", "Secr3tWget", "https://exemple.test/f"),
+        ("wget --http-password=Secr3tHttp https://exemple.test/f", "Secr3tHttp", "wget"),
+        ("7z a -pSecr3t7z -mhe=on a.7z dossier", "Secr3t7z", "-mhe=on"),
+        ("rar a -pSecr3tRar a.rar dossier", "Secr3tRar", "a.rar"),
+        ("unzip -P Secr3tUnzip a.zip", "Secr3tUnzip", "a.zip"),
+        ("zip -P Secr3tZip a.zip f", "Secr3tZip", "a.zip"),
+        ("openssl enc -aes-256-cbc -in a -out b -pass pass:Secr3tSsl", "Secr3tSsl", "-out b"),
+        ("sshpass -p Secr3tSshpass ssh -p 22 admin@srv", "Secr3tSshpass", "ssh -p 22"),
+        ("smbclient //srv/c -U admin%Secr3tSmb", "Secr3tSmb", "-U admin%"),
+        ("gpresult /s srv /u admin /p Secr3tGp /r", "Secr3tGp", "/u admin"),
+        ("wmic /node:srv /user:admin /password:Secr3tWmic process list", "Secr3tWmic", "process list"),
     ];
     for (ligne, secret, garde) in cas {
         let m = masquer_secrets(ligne);
@@ -4949,7 +4971,11 @@ fn masquer_secrets_retire_les_valeurs() {
     for ligne in [r#""C:\Program Files\Mozilla Firefox\firefox.exe" -contentproc --channel=1234 -parentBuildID 2026"#,
                   r"C:\Windows\system32\svchost.exe -k netsvcs -s Schedule",
                   "net use", r"net use Z: \\srv\partage /persistent:yes", "runas /savecred /user:admin cmd.exe",
-                  r#"powershell -NoProfile -Command "Get-ChildItem 'C:\Users' -Recurse""#, "https://exemple.test/a@b"] {
+                  r#"powershell -NoProfile -Command "Get-ChildItem 'C:\Users' -Recurse""#, "https://exemple.test/a@b",
+                  // Revue de #269 : /p drapeau sans valeur, -p ou -P port ; mysql -p seul demande le mot de passe
+                  "xcopy a b /p", "del /p x.txt", "findstr /p motif fichier.txt", "robocopy a b /e /mir",
+                  "ssh -p 22 hote", "scp -P 2222 f h:", "nc -p 4444 -l", "mysql -p base", "7z x -p archive.7z",
+                  "curl -u admin https://exemple.test/", "tasklist /v", "xcopy a b /p & ssh -p 22 hote"] {
         assert_eq!(masquer_secrets(ligne), ligne);
     }
     // Non ASCII : le reste intact, le secret retiré
@@ -4963,6 +4989,28 @@ fn masquer_secrets_retire_les_valeurs() {
                  "ConvertTo-SecureString", "-Credential", "/rp \"", "é-p", "-pé"] {
         let _ = masquer_secrets(bord);
     }
+}
+
+/// Revue de #269 : `/p`, `/rp`, `-p`, `-P`, `-pw`, `-u` ne portent un secret que pour les outils listés (décision pure) ;
+/// l'outil courant est remis à zéro par un séparateur de commandes
+#[test]
+fn masquer_secrets_options_par_outil() {
+    use crate::commun::{secret_d_option, Masque};
+    assert_eq!(secret_d_option("schtasks", "/P"), Some(Masque::Suivant(None)));
+    assert_eq!(secret_d_option("xcopy", "/p"), None);
+    assert_eq!(secret_d_option("", "/p"), None);
+    assert_eq!(secret_d_option("ssh", "-p"), None);
+    assert_eq!(secret_d_option("scp", "-P"), None);
+    assert_eq!(secret_d_option("psexec", "-p"), Some(Masque::Suivant(None)));
+    assert_eq!(secret_d_option("mysql", "-p"), None, "-p seul : invite");
+    assert_eq!(secret_d_option("mysql", "-pX"), Some(Masque::Dans(2)));
+    assert_eq!(secret_d_option("sqlcmd", "-p"), None, "casse exacte : -p n'est pas -P");
+    assert_eq!(secret_d_option("curl", "-u"), Some(Masque::Suivant(Some(':'))));
+    assert_eq!(secret_d_option("curl", "-ua:b"), Some(Masque::Dans(4)));
+    assert_eq!(secret_d_option("curl", "-ua"), None);
+    assert_eq!(secret_d_option("ssh", "--password=x"), Some(Masque::Dans(11)), "formes globales pour tout outil");
+    let m = crate::commun::masquer_secrets("sqlcmd -P Secr3t & ssh -P 2222 h");
+    assert!(!m.contains("Secr3t") && m.ends_with("ssh -P 2222 h"), "{m}");
 }
 
 /// A-6-1 : les alertes (alertes.json, journal, export syslog et API, notifications, SIEM) passent par `borner_alerte`, qui
