@@ -524,6 +524,14 @@ pub fn lien(i: &IncidentSuivi, e: &crate::siem::Evenement) -> Option<Lien> {
     if let Some(r) = i.entite.strip_prefix("regle:") {
         return exact(!r.is_empty() && e.regle.eq_ignore_ascii_case(r));
     }
+    // Chaîne de processus sans chemin connu (CHA-001, T-3 : « chaine:<programme de tête>#<pid>@<heure> ») : les
+    // événements de ce programme, par le nom seul (signalé dans la chronologie)
+    if let Some(c) = i.entite.strip_prefix("chaine:") {
+        let nom = c.split('#').next().unwrap_or_default();
+        let proc_ = e.processus.to_lowercase();
+        let proc_ = proc_.strip_suffix(".exe").unwrap_or(&proc_);
+        return (!nom.is_empty() && proc_ == nom).then_some(Lien::ParNom);
+    }
     None
 }
 

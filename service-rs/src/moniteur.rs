@@ -754,7 +754,7 @@ impl Moniteur {
         // Créations vues par l'audit (4688) : un processus déjà terminé garde son parent dans l'arbre des chaînes
         let creations: std::collections::VecDeque<crate::processus::Creation4688> = std::mem::take(&mut *self.processus.creations.lock().unwrap());
         for c in &creations {
-            self.arbre.creation(c.pid, c.ppid, &c.image, c.ligne_commande.as_deref());
+            self.arbre.creation_a(c.pid, c.ppid, &c.image, c.ligne_commande.as_deref(), c.heure);
         }
         self.arbre.maj(&liste);
         let t = mesure::noter("cycle.connexions_et_processus", t);
