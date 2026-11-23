@@ -197,7 +197,7 @@ Known, by design. Be aware before relying on it:
 - deR4Tizer complements Microsoft Defender, it does not replace it: an administrator-level attacker can stop the service.
 - Data-theft detection relies on the identity of the program reading the files: it does not see code injection inside the browser. Launching a browser in remote-debugging mode (`--remote-debugging-port`, a common cookie-theft technique) is, however, flagged.
 - On a managed device (domain, Intune), or when that cannot be checked, the baseline is read-only; if the organisation does not enable file-system auditing, a badge signals that data theft is not monitored.
-- IDS rules using `pcre`, `byte_test` and a few other options, or a header variable other than `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS` and `$ORACLE_PORTS` (for example `$HTTP_SERVERS`), are ignored and counted rather than mis-applied.
+- IDS rules using `pcre`, `byte_test` and a few other options, or a header variable that is not one of the standard address and port variables of Suricata 7's default `suricata.yaml` (taken with their default values), are ignored and counted rather than mis-applied.
 - Syslog export is sent in cleartext (UDP or TCP, no TLS): keep it to a trusted local network.
 - The export API is plain HTTP: when it is opened to the local network, its token and data travel in cleartext, like syslog.
 - If the data folder's protection fails at start-up, a critical alert stays local: forwarding secrets are ignored, so your IT provider is not notified.
