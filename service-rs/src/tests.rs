@@ -558,13 +558,33 @@ fn audit_a13_api_saturation_boucle_locale() {
     fil_local.join().unwrap();
 }
 
+/// Décision pure de la partie « vraie connexion » de S295-02 : Ok(true) la faire, Ok(false) la sauter (hors CI : demande
+/// du pare-feu sur un poste de travail), Err en CI sans adresse réseau (un saut silencieux y rendrait « ok » sans preuve)
+fn partie_reseau_s295_02(en_ci: bool, adresse: bool) -> Result<bool, &'static str> {
+    match (en_ci, adresse) {
+        (false, _) => Ok(false),
+        (true, true) => Ok(true),
+        (true, false) => Err("audit_s295_02 : en CI, le poste n'a pas d'adresse réseau ; la vraie connexion ne peut pas être faite"),
+    }
+}
+
+/// Suivi de #297 : en CI (GITHUB_ACTIONS), la partie « vraie connexion » de S295-02 échoue si elle ne peut pas se faire
+#[test]
+fn audit_s295_02_en_ci_sans_adresse_echoue() {
+    assert_eq!(partie_reseau_s295_02(false, false), Ok(false));
+    assert_eq!(partie_reseau_s295_02(false, true), Ok(false), "hors CI : toujours sautée");
+    assert_eq!(partie_reseau_s295_02(true, true), Ok(true));
+    assert!(partie_reseau_s295_02(true, false).is_err(), "en CI sans adresse : échec, pas un saut");
+}
+
 /// S295-02 (prérelecture de #295) : `ecouter` classe bien ses connexions par `connexion_du_poste`, et non plus par la
 /// seule boucle locale. Structure : la classification de `ecouter` passe par `connexion_du_poste(pair.ip(),
 /// flux.local_addr())`. Vraie connexion : le poste vers sa propre adresse réseau (non bouclée), API ouverte sur le
 /// réseau et cette adresse autorisée : 16 connexions muettes, 4 gardées, 12 fermées. Seulement en CI (GITHUB_ACTIONS) :
 /// écouter sur une adresse réseau fait afficher par le pare-feu de Windows une demande d'autorisation sur un poste de
-/// travail, à laquelle le test ne doit pas exposer l'utilisateur ; sans adresse réseau, ou hors CI, cette partie est
-/// sautée et le dit (la partie de structure s'exécute toujours)
+/// travail, à laquelle le test ne doit pas exposer l'utilisateur ; hors CI, cette partie est sautée et le dit (la partie
+/// de structure s'exécute toujours). En CI, sans adresse réseau, le test échoue au lieu de réussir sans rien prouver
+/// (suivi de #297, `partie_reseau_s295_02`)
 #[test]
 fn audit_s295_02_ecouter_compte_le_poste_par_son_adresse() {
     use crate::api::{ecouter, Places, SignalRefus, MAX_LOCALES};
@@ -579,15 +599,18 @@ fn audit_s295_02_ecouter_compte_le_poste_par_son_adresse() {
     assert!(e.contains("let locale = connexion_du_poste(pair.ip(), flux.local_addr().ok().map(|a| a.ip()));"), "classification par connexion_du_poste");
     assert!(!e.contains("is_loopback()"), "plus de classification par la seule boucle locale");
 
-    if std::env::var_os("GITHUB_ACTIONS").is_none() {
+    let en_ci = std::env::var_os("GITHUB_ACTIONS").is_some();
+    if !en_ci {
         eprintln!("audit_s295_02 : vraie connexion sautée hors CI (demande du pare-feu sur un poste de travail)");
         return;
     }
     // Adresse réseau du poste : celle que choisirait une connexion sortante (aucun paquet envoyé par connect en UDP)
     let adresse = UdpSocket::bind("0.0.0.0:0").and_then(|u| { u.connect("192.0.2.1:9")?; u.local_addr() }).map(|a| a.ip());
-    let Some(ip) = adresse.ok().filter(|i| !i.is_loopback() && !i.is_unspecified()) else {
-        eprintln!("audit_s295_02 : vraie connexion sautée, le poste n'a pas d'adresse réseau");
-        return;
+    let adresse = adresse.ok().filter(|i| !i.is_loopback() && !i.is_unspecified());
+    let ip = match (partie_reseau_s295_02(en_ci, adresse.is_some()), adresse) {
+        (Ok(true), Some(ip)) => ip,
+        (Ok(_), _) => return,
+        (Err(m), _) => panic!("{m}"),
     };
     static PLACES: Mutex<Places> = Mutex::new(Places { total: 0, locales: 0 });
     static SIGNAL: Mutex<SignalRefus> = Mutex::new(SignalRefus { dernier: None, quota_local: 0, plein: 0 });
@@ -3753,6 +3776,26 @@ fn audit_b_2_01_cle_de_cache_infalsifiable() {
     let i = crate::natif::identite_fichier(&exe).expect("identité lisible");
     assert!(i.taille > 0 && i.id != [0; 16], "{i:?}");
     println!("USN de l'exécutable de test : {} (0 : journal inactif, l'empreinte prend le relais)", i.usn);
+}
+
+/// Audit du 2026-11-23, A-5-1 : lecteur de Windows tiré de SystemRoot sans `[..2]` qui panique (valeur vide, d'un octet,
+/// caractère de plusieurs octets en tête) ; plus aucune découpe de `dossier_windows()` dans le service
+#[test]
+fn audit_a_5_1_lecteur_systeme_sans_panique() {
+    use crate::natif::lecteur_de;
+    assert_eq!(lecteur_de(r"D:\Windows"), "D:");
+    assert_eq!(lecteur_de(r"c:\windows"), "c:");
+    for repli in ["", "C", "€", r"€:\Windows", "é:", r"\\serveur\Windows", r"\Windows", "1:", ":"] {
+        assert_eq!(lecteur_de(repli), "C:", "{repli:?}");
+    }
+    torturer_texte(r"C:\Windows", &mut |t| { let _ = lecteur_de(t); });
+    assert_eq!(crate::natif::lecteur_systeme().len(), 2);
+    for (nom, source) in [("hygiene.rs", include_str!("hygiene.rs")), ("persistance.rs", include_str!("persistance.rs")),
+                          ("vol_donnees.rs", include_str!("vol_donnees.rs")), ("natif.rs", include_str!("natif.rs"))] {
+        let s = source.replace(char::is_whitespace, "");
+        assert!(!s.contains("dossier_windows()[..") && !s.contains("dossier_windows().get(..") && !s.contains("systeme[..2]"),
+            "{nom} : découpe du dossier de Windows au lieu de natif::lecteur_systeme()");
+    }
 }
 
 /// Audit du 2026-11-23, A-5-2 : un chemin réseau n'est jamais ouvert par le service (SYSTEM = compte machine, NTLM

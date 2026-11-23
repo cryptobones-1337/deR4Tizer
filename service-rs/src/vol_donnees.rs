@@ -184,8 +184,7 @@ pub fn leurre_autorise(pid: u32, chemin: &str) -> bool {
 
 /// Dossiers réellement présents sur ce PC : (chemin complet, cible)
 pub fn dossiers_presents() -> Vec<(String, &'static Cible)> {
-    let systeme = crate::natif::dossier_windows();
-    let utilisateurs = format!(r"{}\Users", &systeme[..2]);
+    let utilisateurs = format!(r"{}\Users", crate::natif::lecteur_systeme());
     let mut l = Vec::new();
     let Ok(profils) = std::fs::read_dir(&utilisateurs) else { return l };
     for p in profils.map_while(Result::ok) {
@@ -289,7 +288,7 @@ pub fn surveiller(file: Arc<Mutex<Vec<Alerte>>>) {
             crate::natif::fil_priorite(crate::natif::Priorite::Arriere);
             let (n, echecs) = poser_audit();
             commun::journal(&format!("audit de lecture posé sur {n} dossier(s) de données sensibles{}", if echecs > 0 { format!(", {echecs} en échec") } else { String::new() }));
-            let utilisateurs = format!(r"{}\Users", crate::natif::dossier_windows().get(..2).unwrap_or("C:"));
+            let utilisateurs = format!(r"{}\Users", crate::natif::lecteur_systeme());
             if std::fs::read_dir(&utilisateurs).is_err() {
                 // Aucun dossier trouvé parce que les profils sont illisibles : pas « rien à auditer »
                 crate::collectes::echec(crate::collectes::Collecte::AuditDonnees, "dossier des profils illisible");

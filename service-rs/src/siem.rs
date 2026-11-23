@@ -60,6 +60,10 @@ pub struct Evenement {
     pub heure_utc: String,
     #[serde(skip_serializing_if = "est_nul")]
     pub seq: u64,
+    /// SID du compte visé (4720 : TargetSid ; 4728, 4732, 4756 : MemberSid), pour la corrélation COR-R3 seulement :
+    /// jamais écrit ni relu (audit du 2026-11-23, B-5-02)
+    #[serde(skip)]
+    pub sid: String,
 }
 
 fn est_nul(n: &u64) -> bool {
@@ -428,6 +432,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             e.destination = compte("TargetDomainName", "TargetUserName");
             if id == 4720 {
                 e.mitre = "T1136.001".into();
+                e.sid = v("TargetSid");
             }
             e.message = format!("{} : {} (par {})", e.type_.replace('-', " "), e.destination, e.utilisateur);
         }
@@ -444,6 +449,7 @@ pub(crate) fn traduire(xml: &str) -> Option<Evenement> {
             e.message = format!("{membre} ajouté au groupe {} (par {})", e.destination, e.utilisateur);
             e.ip = String::new();
             e.processus = membre;
+            e.sid = v("MemberSid");
         }
         4740 => {
             e.type_ = "compte-verrouille".into();
@@ -689,11 +695,24 @@ fn menage() {
     }
 }
 
+/// Décision pure (testée, audit du 2026-11-23, B-5-02) : « compte créé » (nom, SID) et « ajouté aux Administrateurs »
+/// (nom, SID) désignent le même compte. SID connus des deux côtés : ils décident ; sinon noms égaux après le dernier
+/// « \ », sans casse. Jamais une sous-chaîne (« adm » créé n'est pas « admin2 » ajouté) ; nom vide ou « - » : non
+pub(crate) fn meme_compte(cree: (&str, &str), ajoute: (&str, &str)) -> bool {
+    let sid = |s: &str| Some(s.trim()).filter(|s| s.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("S-"))).map(str::to_ascii_uppercase);
+    if let (Some(a), Some(b)) = (sid(cree.1), sid(ajoute.1)) {
+        return a == b;
+    }
+    let nom = |s: &str| Some(s.rsplit('\\').next().unwrap_or("").trim().to_lowercase()).filter(|n| !n.is_empty() && n != "-");
+    matches!((nom(cree.0), nom(ajoute.0)), (Some(a), Some(b)) if a == b)
+}
+
 /// Moteur de corrélation : règles à fenêtre de temps, chaque incident n'est levé qu'une fois par clé et par heure
 #[derive(Default)]
 pub(crate) struct Correlation {
     echecs: HashMap<String, VecDeque<(Instant, String)>>,
-    comptes_crees: HashMap<String, Instant>,
+    /// Comptes créés depuis moins de 30 minutes : (nom, SID) → heure
+    comptes_crees: HashMap<(String, String), Instant>,
     alertes_processus: HashMap<String, VecDeque<(Instant, String, String)>>,
     deja: HashMap<String, Instant>,
     /// Entités récentes de chaque règle (une heure), pour `entite_bornee`
@@ -825,11 +844,11 @@ impl Correlation {
             // R3 : compte créé puis ajouté aux administrateurs
             "compte-cree" => {
                 self.comptes_crees.retain(|_, t| t.elapsed() < Duration::from_secs(1800));
-                self.comptes_crees.insert(e.destination.rsplit('\\').next().unwrap_or("").to_lowercase(), Instant::now());
+                self.comptes_crees.insert((e.destination.clone(), e.sid.clone()), Instant::now());
             }
             "ajout-administrateurs" => {
                 let membre = e.processus.rsplit('\\').next().unwrap_or("").to_lowercase();
-                let nouveau = self.comptes_crees.keys().any(|c| !c.is_empty() && membre.contains(c.as_str()));
+                let nouveau = self.comptes_crees.keys().any(|(nom, sid)| meme_compte((nom, sid), (&e.processus, &e.sid)));
                 if self.une_fois(format!("R3|{membre}")) {
                     if nouveau {
                         incident(format!("compte:{membre}"), "R3", "Nouveau compte administrateur", "Critique", "T1136.001",
