@@ -4417,6 +4417,48 @@ fn audit_t12_essais_apres_echec_et_sante() {
     assert_eq!(delai_avant_controle(0), PERIODE_S);
 }
 
+/// Audit de #294, S294-01 : un maj.json mal formé n'était plus jamais réécrit (relu par `lire`, marqué « non chargé »,
+/// donc refusé par `ecrire`) : le statut restait figé alors que les contrôles suivants échouaient. Il est réécrit au
+/// contrôle suivant ; la série d'échecs repart alors de ce contrôle, puis se poursuit normalement
+#[test]
+fn s294_01_maj_json_mal_forme_reecrit_au_controle_suivant() {
+    use crate::maj::{publier_vers, Issue};
+    let d = std::env::temp_dir().join(format!("d4t-s294-01-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("maj.json");
+    let nom = "essai-s294-01\\maj.json";
+    let lire = |f: &std::path::Path| -> serde_json::Value { serde_json::from_str(&std::fs::read_to_string(f).unwrap()).expect("maj.json réécrit en JSON valide") };
+    let t = 1_800_000_000i64;
+    for mal in ["{\"Statut\":\"à jour\"", "pas du json", "\u{feff}[1,2]", "{\"EchecDepuisS\":\"texte\"}"] {
+        std::fs::write(&f, mal).unwrap();
+        publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), Issue::Echec, t).expect("maj.json mal formé : réécrit au contrôle suivant");
+        let v = lire(&f);
+        assert_eq!(v["Statut"], "manifeste introuvable (404)", "{mal}");
+        assert_eq!(v["Controle"], "EchecRecent", "{mal}");
+        assert_eq!(v["EchecDepuisS"], t, "{mal} : la série repart de ce contrôle");
+    }
+    // Contrôle suivant, 24 h plus tard : série reprise du fichier réécrit
+    publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), Issue::Echec, t + 86_400).unwrap();
+    let v = lire(&f);
+    assert_eq!((v["EchecDepuisS"].as_i64(), v["Controle"].as_str()), (Some(t), Some("EchecProlonge")));
+    // Manifeste de nouveau lu : série close
+    publier_vers(nom, &f, "4.3".into(), "à jour".into(), Issue::Lu, t + 86_500).unwrap();
+    let v = lire(&f);
+    assert_eq!((v["EchecDepuisS"].as_i64(), v["Controle"].as_str(), v["Statut"].as_str()), (Some(0), Some(""), Some("à jour")));
+    let _ = std::fs::remove_dir_all(&d);
+    // Lecture pure de l'état précédent : seul EchecDepuisS, 0 pour tout le reste
+    use crate::maj::echec_depuis_publie as e;
+    assert_eq!(e(Some("{\"EchecDepuisS\":1799999000,\"Statut\":\"x\"}")), 1_799_999_000);
+    assert_eq!(e(Some("\u{feff}{\"EchecDepuisS\":5}")), 5);
+    for mal in [None, Some(""), Some("pas du json"), Some("{\"EchecDepuisS\":\"5\"}"), Some("[1]"), Some("{\"EchecDepuisS\":1e99}")] {
+        assert_eq!(e(mal), 0, "{mal:?}");
+    }
+    torturer_texte("{\"EchecDepuisS\":1799999000,\"Controle\":\"EchecRecent\"}", &mut |t| {
+        let _ = e(Some(t));
+    });
+}
+
 /// Audit du 2026-11-23, A-3-4 : scénarios réels de la mise à jour (CI, job integration-maj) ajoutés et branchés ; le cas
 /// du tube tenu par un autre processus (A-8-2) reste déclaré non exécuté
 #[test]
