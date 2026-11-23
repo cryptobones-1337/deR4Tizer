@@ -52,6 +52,44 @@ try {
     [IO.File]::WriteAllText($chemin, 'english'); $l2 = $lire.Invoke($null, @($chemin))
     [IO.File]::WriteAllText($chemin, ('a' * 100)); $l3 = $lire.Invoke($null, @($chemin))
     Cas 'réglage relu : espaces tolérés, autre valeur ou fichier trop long → null' ($l1 -eq 'en' -and $null -eq $l2 -and $null -eq $l3) "$l1|$l2|$l3"
+    # Audit de #298, A298-1 : 64 octets au plus, lus sur un seul handle ; point de reparse et dossier refusés
+    [IO.File]::WriteAllText($chemin, 'fr' + (' ' * 62)); $l4 = $lire.Invoke($null, @($chemin))
+    [IO.File]::WriteAllText($chemin, 'fr' + (' ' * 63)); $l5 = $lire.Invoke($null, @($chemin))
+    Cas 'réglage de 64 octets lu, de 65 octets refusé' ($l4 -eq 'fr' -and $null -eq $l5) "$l4|$l5"
+    $profilTest = Split-Path $chemin
+    $cibleJ = Join-Path $travail 'cible-jonction'; New-Item -ItemType Directory -Path $cibleJ | Out-Null
+    Remove-Item $chemin -Force
+    cmd.exe /c mklink /J "$chemin" "$cibleJ" | Out-Null
+    $estReparse = (Test-Path $chemin) -and (([IO.File]::GetAttributes($chemin) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+    $l6 = $lire.Invoke($null, @($chemin))
+    cmd.exe /c rmdir "$chemin" | Out-Null
+    Cas 'réglage : point de reparse (jonction nommée langue.txt) refusé sans être suivi' ($estReparse -and $null -eq $l6) "$estReparse|$l6"
+    New-Item -ItemType Directory -Path $chemin | Out-Null; $l7 = $lire.Invoke($null, @($chemin)); Remove-Item $chemin -Force
+    # Lien symbolique de fichier vers un fichier qui porte « en » : jamais suivi (création possible en mode développeur ou
+    # en administrateur ; sinon cas non exécuté, dit)
+    $cibleL = Join-Path $travail 'cible-lien.txt'; [IO.File]::WriteAllText($cibleL, 'en')
+    # mklink : Windows PowerShell 5.1 (New-Item) n'emploie pas le droit du mode développeur
+    cmd.exe /c mklink "$chemin" "$cibleL" 2>&1 | Out-Null
+    $lienOk = (Test-Path $chemin) -and (([IO.File]::GetAttributes($chemin) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+    if ($lienOk) { $l8 = $lire.Invoke($null, @($chemin)); Remove-Item $chemin -Force; Cas 'réglage : lien symbolique vers un fichier « en » jamais suivi' ($null -eq $l8) "$l8" }
+    else { 'NON EXÉCUTÉ  réglage : lien symbolique de fichier (création refusée : ni mode développeur ni administrateur)' }
+    Cas 'réglage : dossier nommé langue.txt refusé' ($null -eq $l7)
+    $lSrc = [IO.File]::ReadAllText((Join-Path $src 'Langue.cs')); $lSrc = $lSrc.Substring($lSrc.IndexOf('public static string LireReglage('), 1500)
+    Cas 'réglage : ouvert une fois sans suivre de point de reparse, jamais relu par chemin' ($lSrc.Contains('0x00200000') -and $lSrc.Contains('GetFileInformationByHandle(h, out info)') -and $lSrc.Contains('(info.Attributs & 0x410) != 0') -and $lSrc.Contains('new byte[65]') -and -not $lSrc.Contains('ReadAllText') -and -not $lSrc.Contains('FileInfo('))
+    # Sous jeton administrateur (interface élevée), langue.txt n'est pas lu : --langue, sinon config.json et culture
+    [IO.File]::WriteAllText($chemin, 'fr')
+    $prog = & $t 'Programme'; $cl = $prog.GetMethod('ChoisirLangue', [Reflection.BindingFlags]'Static,NonPublic')
+    $aucun = [string[]]::new(0)
+    $cl.Invoke($null, [object[]]@($aucun, $null, $chemin, $us, $true)); $adm = "$($langue.GetField('En').GetValue($null))/$($langue.GetField('Reglage').GetValue($null))"
+    $cl.Invoke($null, [object[]]@($aucun, $null, $chemin, $us, $false)); $std = "$($langue.GetField('En').GetValue($null))/$($langue.GetField('Reglage').GetValue($null))"
+    $langue.GetField('En').SetValue($null, $false); $langue.GetField('Reglage').SetValue($null, 'auto')
+    Cas 'interface élevée : langue.txt jamais lu (culture en-US → anglais) ; sans élévation, « fr » lu' ($adm -eq 'True/auto' -and $std -eq 'False/fr') "$adm|$std"
+    # Audit de #298, A298-2 : --dossier n'est jamais une option de l'assistant élevé
+    $dd = $prog.GetMethod('DossierDemande', [Reflection.BindingFlags]'Static,NonPublic')
+    $dos = { param([string[]]$a) $dd.Invoke($null, [object[]]@(, $a)) }
+    Cas 'assistant élevé : « --dossier » parmi ses arguments ignoré ; interface : --dossier appliqué' ($null -eq (& $dos @('--commande-fichier', '--dossier', '--langue', 'en')) -and $null -eq (& $dos @('--commande-fichier', 'x.json', '--langue', '--dossier')) -and $null -eq (& $dos @('--commande-fichier', '--dossier')) -and (& $dos @('--dossier', 'C:\essai')) -eq 'C:\essai' -and (& $dos @('--cache', '--dossier', 'C:\essai')) -eq 'C:\essai' -and $null -eq (& $dos @('--dossier')))
+    $gSrc = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs'))
+    Cas 'Main : Commun.Dossier posé par DossierDemande seulement' ($gSrc.Contains('string dossierDemande = DossierDemande(args);') -and $gSrc.Contains('if (dossierDemande != null) Commun.Dossier = dossierDemande;') -and -not $gSrc.Contains('Commun.Dossier = args['))
 
     # ---------------------------------------------------------------- ce que la page Réglages dit
     $langue.GetField('En').SetValue($null, $true)
@@ -77,9 +115,9 @@ try {
     $g = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs')); $fl = [IO.File]::ReadAllText((Join-Path $src 'Fluent.cs')); $rg = [IO.File]::ReadAllText((Join-Path $src 'Reglages.cs'))
     Cas 'une seule affectation de L.En dans l''interface (Programme.ChoisirLangue)' (([regex]::Matches($tous, '\bL\.En\s*=[^=]')).Count -eq 1 -and $g.Contains('L.En = L.Choisir(')) "$(([regex]::Matches($tous, '\bL\.En\s*=[^=]')).Count)"
     Cas 'culture de Windows lue par L.CultureAnglaise seulement' (([regex]::Matches($tous, 'TwoLetterISOLanguageName')).Count -eq 1)
-    Cas 'Main : langue choisie avant l''assistant élevé et avant toute fenêtre' ($g.IndexOf('ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture);') -ge 0 -and $g.IndexOf('ChoisirLangue(args, cfg,') -lt $g.IndexOf('if (Mode(args) == "commande")'))
+    Cas 'Main : langue choisie avant l''assistant élevé et avant toute fenêtre, réglage jamais lu sous jeton administrateur' ($g.IndexOf('ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());') -ge 0 -and $g.IndexOf('ChoisirLangue(args, cfg,') -lt $g.IndexOf('Commande c;'))
     Cas 'assistant élevé lancé avec la langue de l''interface (--langue)' ($g.Contains('"--commande-fichier \"" + fichier + "\" --langue " + (L.En ? "en" : "fr")'))
-    Cas 'pages Réglages : bouton actif = réglage en vigueur, jamais la langue de config.json ; la langue ne part plus avec les réglages' (-not ($fl -match '[xc]\.Langue\b') -and -not ($rg -match 'config\.Langue|lue\.Langue') -and $fl.Contains('langue.Definir(L.Reglage, L.LireReglage(L.CheminReglage()));') -and $rg.Contains('cbLangue.SelectedIndex = Math.Max(0, Array.IndexOf(L.Reglages, L.Reglage));'))
+    Cas 'pages Réglages : bouton actif = réglage en vigueur, jamais la langue de config.json ; la langue ne part plus avec les réglages' (-not ($fl -match '[xc]\.Langue\b') -and -not ($rg -match 'config\.Langue|anglais \? "en"') -and $fl.Contains('langue.Definir(L.Reglage, ActionsReglages.LangueEnregistree());') -and $rg.Contains('return Canal.EstAdmin() ? null : L.LireReglage(L.CheminReglage());') -and ([regex]::Matches($tous, 'L\.LireReglage\(')).Count -eq 2 -and $rg.Contains('cbLangue.SelectedIndex = Math.Max(0, Array.IndexOf(L.Reglages, L.Reglage));'))
 
     # Niveaux d'incident, d'événement et de détection (codes « Critique », « Alerte », « Info ») : traduits comme ceux des alertes
     $inc = [IO.File]::ReadAllText((Join-Path $src 'Incidents.cs')); $siem = [IO.File]::ReadAllText((Join-Path $src 'Siem.cs')); $res = [IO.File]::ReadAllText((Join-Path $src 'Reseau.cs'))
@@ -89,6 +127,18 @@ try {
     $niv = @('Critique', 'Alerte', 'Info') | ForEach-Object { [string]$langue.GetMethod('T').Invoke($null, @([string]$_)) }
     $langue.GetField('En').SetValue($null, $false)
     Cas 'niveaux au dictionnaire : Critical, Alert, Info' (($niv -join '|') -eq 'Critical|Alert|Info') ($niv -join '|')
+
+    # Prérelecture de #298, D3 : langue de config.json renvoyée normalisée (« en » gardé, le reste « fr »)
+    $ar = & $t 'ActionsReglages'; $cfgT = & $t 'Config'
+    $norm = foreach ($v in 'en', 'fr', $null, '', 'EN', 'de') { $c0 = [Activator]::CreateInstance($cfgT); $c0.Langue = $v; $r0 = $ar.GetMethod('Composer').Invoke($null, [object[]]@($c0, $null, $null)); [string]$r0.Langue }
+    Cas 'Composer : langue « en » gardée, null, vide, « EN » ou autre ramené à « fr » (refusé sinon par le service)' (($norm -join '|') -eq 'en|fr|fr|fr|fr|fr') ($norm -join '|')
+    # D2 : confirmation de « reglages » : la langue de config.json dite gardée, sans effet sur l'affichage
+    $canalT = & $t 'Canal'; $cmdR = [Activator]::CreateInstance((& $t 'Commande')); $cmdR.Action = 'reglages'; $cmdR.Valeur = '{"Langue":"fr","Syslog":{"Actif":false,"Hote":"","Port":514,"Protocole":"UDP","Format":"JSON","NiveauMin":"Alerte"},"Api":{"Actif":false,"Port":8642,"Reseau":false,"Adresses":""}}'
+    $langue.GetField('En').SetValue($null, $true); $dEn = [string]$canalT.GetMethod('Decrire').Invoke($null, @($cmdR))
+    $langue.GetField('En').SetValue($null, $false); $dFr = [string]$canalT.GetMethod('Decrire').Invoke($null, @($cmdR))
+    Cas 'confirmation des réglages : langue de config.json dite gardée, sans effet sur la langue affichée' ($dEn.Contains('language kept in config.json (no effect on the displayed language): fr') -and $dFr.Contains('langue gardée dans config.json (sans effet sur la langue affichée) : fr')) "$dEn | $dFr"
+    # D4 : liste classique enregistrée à la validation seulement
+    Cas 'interface classique : choix de langue écrit à la validation (liste refermée, sortie, Entrée), jamais à chaque changement de sélection' (-not $rg.Contains('cbLangue.SelectedIndexChanged += (s, e) => ChoisirLangue();') -and $rg.Contains('cbLangue.SelectedIndexChanged += (s, e) => { if (!langueEnCours) langueModifiee = true; };') -and $rg.Contains('cbLangue.DropDownClosed +=') -and $rg.Contains('cbLangue.Leave += (s, e) => ChoisirLangue();') -and $rg.Contains('if (langueEnCours || !langueModifiee || cbLangue.SelectedIndex < 0) return;'))
 
     # ---------------------------------------------------------------- un processus par culture : chaque surface
     $sonde = Join-Path $travail 'sonde-langue.ps1'
@@ -108,7 +158,7 @@ $commun.GetField('Dossier').SetValue($null, $Dossier)
 if (Test-Path (Join-Path $Dossier 'config.json')) { throw 'config.json présent' }
 $arg = [string[]]::new(0); if ($Arguments) { $arg = [string[]]($Arguments.Split('|')) }
 # Réglage de l'utilisateur absent (fichier inexistant du dossier de test) ; config.json absent : null
-(& $t 'Programme').GetMethod('ChoisirLangue', $sp).Invoke($null, [object[]]@($arg, $null, ([string](Join-Path $Dossier 'langue-absente.txt')), [Globalization.CultureInfo]::CurrentUICulture))
+(& $t 'Programme').GetMethod('ChoisirLangue', $sp).Invoke($null, [object[]]@($arg, $null, ([string](Join-Path $Dossier 'langue-absente.txt')), [Globalization.CultureInfo]::CurrentUICulture, $false))
 $en = [bool]$langue.GetField('En').GetValue($null)
 "EN=$en"; "REGLAGE=$($langue.GetField('Reglage').GetValue($null))"
 function Png($fichier) { if ($Rendus) { Join-Path $Rendus "$Nom-$fichier.png" } }

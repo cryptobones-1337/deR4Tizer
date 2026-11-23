@@ -45,10 +45,13 @@ namespace DeR4Tizer
         }
 
         // Réglages à enregistrer : la configuration lue, avec le syslog et l'API saisis ; null si elle est illisible. La langue
-        // lue est renvoyée telle quelle : elle se règle par utilisateur, sans commande (L.EcrireReglage, constat T-17)
+        // se règle par utilisateur, sans commande (L.EcrireReglage, constat T-17) : celle de config.json est renvoyée, « en »
+        // gardé, toute autre valeur (null, vide, « EN »…) ramenée à « fr », que le service accepte (liste fermée ;
+        // prérelecture de #298, D3)
         public static Config Composer(Config lue, ConfigSyslog syslog, ConfigApi api)
         {
             if (lue == null) return null;
+            lue.Langue = lue.Langue == "en" ? "en" : "fr";
             lue.Syslog = syslog;
             lue.Api = api;
             return lue;
@@ -61,10 +64,16 @@ namespace DeR4Tizer
             return L.EcrireReglage(L.CheminReglage(), valeur, Canal.EstAdmin());
         }
 
+        // Choix enregistré pour le prochain lancement ; jamais lu sous jeton administrateur (audit de #298, A298-1)
+        public static string LangueEnregistree()
+        {
+            return Canal.EstAdmin() ? null : L.LireReglage(L.CheminReglage());
+        }
+
         // Ce que la page dit sous le choix de la langue : langue affichée, choix en attente, refus en administrateur
         public static string TexteLangue()
         {
-            return L.EtatReglage(L.Reglage, L.LireReglage(L.CheminReglage()), Canal.EstAdmin(), System.Globalization.CultureInfo.CurrentUICulture);
+            return L.EtatReglage(L.Reglage, LangueEnregistree(), Canal.EstAdmin(), System.Globalization.CultureInfo.CurrentUICulture);
         }
 
         public static bool Enregistrer(Config c)
@@ -228,7 +237,7 @@ namespace DeR4Tizer
         // vigueur, un choix enregistré depuis est dit à part (lblLangue) et vaut au prochain lancement
         readonly ComboBox cbLangue = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Width = 260, Margin = new Padding(0, 3, 14, 3) };
         readonly Label lblLangue = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 2, 0, 6) };
-        bool langueEnCours;
+        bool langueEnCours, langueModifiee;
         readonly CheckBox chkSyslog = Case("Envoyer les alertes à un serveur syslog / SIEM");
         readonly TextBox txtHote = Saisie(220), txtPortSyslog = Saisie(70);
         readonly ComboBox cbProtocole = Liste("UDP", "TCP"), cbFormat = Liste("JSON", "CEF"), cbNiveau = Liste("Info", "Alerte", "Critique");
@@ -276,7 +285,12 @@ namespace DeR4Tizer
             // ---------------- Langue
             pile.Controls.Add(Section("LANGUE"));
             foreach (var r in L.Reglages) cbLangue.Items.Add(L.Libelle(r, System.Globalization.CultureInfo.CurrentUICulture));
-            cbLangue.SelectedIndexChanged += (s, e) => ChoisirLangue();
+            // Enregistré à la validation (liste refermée, sortie du champ, Entrée), jamais à chaque changement de sélection :
+            // les flèches parcourent les trois valeurs sans rien écrire (prérelecture de #298, D4)
+            cbLangue.SelectedIndexChanged += (s, e) => { if (!langueEnCours) langueModifiee = true; };
+            cbLangue.DropDownClosed += (s, e) => { if (cbLangue.IsHandleCreated) cbLangue.BeginInvoke((Action)ChoisirLangue); };
+            cbLangue.Leave += (s, e) => ChoisirLangue();
+            cbLangue.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) ChoisirLangue(); };
             pile.Controls.Add(Ligne(Etiquette("Langue de l'interface"), cbLangue));
             pile.Controls.Add(lblLangue);
 
@@ -492,7 +506,8 @@ namespace DeR4Tizer
 
         void ChoisirLangue()
         {
-            if (langueEnCours || cbLangue.SelectedIndex < 0) return;
+            if (langueEnCours || !langueModifiee || cbLangue.SelectedIndex < 0) return;
+            langueModifiee = false;
             ActionsReglages.ChoisirLangue(L.Reglages[cbLangue.SelectedIndex]);
             AfficherLangue();
         }
