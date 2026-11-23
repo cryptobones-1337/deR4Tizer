@@ -44,14 +44,27 @@ namespace DeR4Tizer
             return L.En ? "Invalid number (messages per hour: 1-1000, port: 1-65535)." : "Nombre invalide (messages par heure : 1 à 1000, port : 1 à 65535).";
         }
 
-        // Réglages à enregistrer : la configuration lue, avec la langue, le syslog et l'API saisis ; null si elle est illisible
-        public static Config Composer(Config lue, bool anglais, ConfigSyslog syslog, ConfigApi api)
+        // Réglages à enregistrer : la configuration lue, avec le syslog et l'API saisis ; null si elle est illisible. La langue
+        // lue est renvoyée telle quelle : elle se règle par utilisateur, sans commande (L.EcrireReglage, constat T-17)
+        public static Config Composer(Config lue, ConfigSyslog syslog, ConfigApi api)
         {
             if (lue == null) return null;
-            lue.Langue = anglais ? "en" : "fr";
             lue.Syslog = syslog;
             lue.Api = api;
             return lue;
+        }
+
+        // Langue choisie dans la page Réglages : écrite pour cet utilisateur, sans commande ni élévation ; vaut au prochain
+        // lancement de l'interface (constat T-17). Faux si rien n'est écrit (interface élevée, valeur hors liste, échec)
+        public static bool ChoisirLangue(string valeur)
+        {
+            return L.EcrireReglage(L.CheminReglage(), valeur, Canal.EstAdmin());
+        }
+
+        // Ce que la page dit sous le choix de la langue : langue affichée, choix en attente, refus en administrateur
+        public static string TexteLangue()
+        {
+            return L.EtatReglage(L.Reglage, L.LireReglage(L.CheminReglage()), Canal.EstAdmin(), System.Globalization.CultureInfo.CurrentUICulture);
         }
 
         public static bool Enregistrer(Config c)
@@ -211,7 +224,11 @@ namespace DeR4Tizer
 
     class PageReglages : Panel
     {
-        readonly ComboBox cbLangue = Liste("Français", "English");
+        // Trois valeurs (constat T-17) : automatique (langue de Windows), français, anglais ; l'élément choisi est le réglage en
+        // vigueur, un choix enregistré depuis est dit à part (lblLangue) et vaut au prochain lancement
+        readonly ComboBox cbLangue = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Theme.Panneau2, ForeColor = Theme.Texte, Font = Theme.Petit, Width = 260, Margin = new Padding(0, 3, 14, 3) };
+        readonly Label lblLangue = new Label { AutoSize = true, ForeColor = Theme.TexteDim, Font = Theme.Petit, MaximumSize = new Size(900, 0), Margin = new Padding(0, 2, 0, 6) };
+        bool langueEnCours;
         readonly CheckBox chkSyslog = Case("Envoyer les alertes à un serveur syslog / SIEM");
         readonly TextBox txtHote = Saisie(220), txtPortSyslog = Saisie(70);
         readonly ComboBox cbProtocole = Liste("UDP", "TCP"), cbFormat = Liste("JSON", "CEF"), cbNiveau = Liste("Info", "Alerte", "Critique");
@@ -258,8 +275,10 @@ namespace DeR4Tizer
 
             // ---------------- Langue
             pile.Controls.Add(Section("LANGUE"));
+            foreach (var r in L.Reglages) cbLangue.Items.Add(L.Libelle(r, System.Globalization.CultureInfo.CurrentUICulture));
+            cbLangue.SelectedIndexChanged += (s, e) => ChoisirLangue();
             pile.Controls.Add(Ligne(Etiquette("Langue de l'interface"), cbLangue));
-            pile.Controls.Add(Note("La langue s'applique au prochain lancement de l'interface."));
+            pile.Controls.Add(lblLangue);
 
             // ---------------- Mode apprentissage et exceptions
             pile.Controls.Add(Section("MODE APPRENTISSAGE ET EXCEPTIONS"));
@@ -415,7 +434,7 @@ namespace DeR4Tizer
             lblLecteurs.Text = ActionsReglages.TexteLecteurs(Commun.Lire<List<Lecteur>>("lecteurs.json"));
             if (config.Syslog == null) config.Syslog = new ConfigSyslog();
             if (config.Api == null) config.Api = new ConfigApi();
-            cbLangue.SelectedIndex = config.Langue == "en" ? 1 : 0;
+            AfficherLangue();
             chkSyslog.Checked = config.Syslog.Actif;
             txtHote.Text = config.Syslog.Hote;
             txtPortSyslog.Text = config.Syslog.Port.ToString();
@@ -462,6 +481,22 @@ namespace DeR4Tizer
             Charger();
         }
 
+        // Élément choisi = réglage en vigueur dans ce processus, jamais la valeur par défaut de config.json (constat T-13)
+        void AfficherLangue()
+        {
+            langueEnCours = true;
+            cbLangue.SelectedIndex = Math.Max(0, Array.IndexOf(L.Reglages, L.Reglage));
+            langueEnCours = false;
+            lblLangue.Text = ActionsReglages.TexteLangue();
+        }
+
+        void ChoisirLangue()
+        {
+            if (langueEnCours || cbLangue.SelectedIndex < 0) return;
+            ActionsReglages.ChoisirLangue(L.Reglages[cbLangue.SelectedIndex]);
+            AfficherLangue();
+        }
+
         // Syslog et API saisis, ou null (avec un message) si un port est invalide
         Tuple<ConfigSyslog, ConfigApi> Saisis()
         {
@@ -480,7 +515,7 @@ namespace DeR4Tizer
             if (saisis == null) return;
             bool illisible;
             var lue = ActionsProtection.LireConfig(out illisible);
-            if (ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, cbLangue.SelectedIndex == 1, saisis.Item1, saisis.Item2))) Charger();
+            if (ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, saisis.Item1, saisis.Item2))) Charger();
         }
 
         // Autorise un compte local à lire les données (nom saisi, converti en identifiant de sécurité)

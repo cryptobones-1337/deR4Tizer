@@ -195,7 +195,7 @@ namespace DeR4Tizer
                 case 0:
                     Vider("Heure", 150, "Niveau", 80, "Règle", 70, "Message", 380, "Source", 170, "Destination", 170, "Programme", 130, "Bloqué", 70);
                     foreach (var d in ids.Detections ?? new List<DetectionIds>())
-                        Ligne(new[] { d.Heure, d.Niveau, d.Sid.ToString(), d.Message, d.Source, d.Destination, d.Programme, d.Bloque ? L.T("oui") : "" }, d.Niveau);
+                        Ligne(new[] { d.Heure, L.T(d.Niveau), d.Sid.ToString(), d.Message, d.Source, d.Destination, d.Programme, d.Bloque ? L.T("oui") : "" }, d.Niveau);
                     break;
                 case 1:
                     Vider("Heure", 150, "Programme", 130, "Site (SNI)", 300, "IP", 140, "Port", 55, "JA3", 250, "Remarque", 300);

@@ -176,13 +176,13 @@ namespace DeR4Tizer
         {
             Func<string, string> v = Canal.Visible;
             var s = new StringBuilder();
-            s.AppendLine(EtatComplet(i) + " — " + v(i.Niveau) + " — " + v(i.Entite));
+            s.AppendLine(EtatComplet(i) + " — " + v(L.T(i.Niveau)) + " — " + v(i.Entite));
             s.AppendLine(L.T("Ouvert le") + " " + v(i.Ouverture) + " ; " + L.T("règles") + " : " + string.Join(", ", (i.Regles ?? new List<string>()).Select(v)) + " ; " + L.T("alertes") + " : " + i.NombreAlertes);
             if (!string.IsNullOrEmpty(i.Precedent)) s.AppendLine(L.T("Récidive : incident clos précédent") + " " + v(i.Precedent));
             s.AppendLine();
             s.AppendLine("-- " + L.T("Alertes"));
             foreach (var a in i.Alertes ?? new List<ResumeAlerteIncident>())
-                s.AppendLine(v(a.Heure) + "  " + v(a.Niveau) + "  " + v(a.Regle) + "  " + v(a.Processus) + "  " + v(a.Destination) + "  " + v(a.Raisons));
+                s.AppendLine(v(a.Heure) + "  " + v(L.T(a.Niveau)) + "  " + v(a.Regle) + "  " + v(a.Processus) + "  " + v(a.Destination) + "  " + v(a.Raisons));
             if (i.NombreAlertes > (i.Alertes == null ? 0 : i.Alertes.Count))
                 s.AppendLine(string.Format(L.T("(alertes gardées ici : {0} sur {1})"), i.Alertes == null ? 0 : i.Alertes.Count, i.NombreAlertes));
             s.AppendLine();
@@ -594,7 +594,7 @@ namespace DeR4Tizer
             liste.Items.Clear();
             foreach (var i in l)
             {
-                var it = new ListViewItem(new[] { VueIncidents.EtatComplet(i), Canal.Visible(i.Niveau), Canal.Visible(i.Entite), string.Join(", ", (i.Regles ?? new List<string>()).Select(Canal.Visible)), i.NombreAlertes.ToString(), Canal.Visible(i.DerniereActiviteUtc) }) { Tag = i };
+                var it = new ListViewItem(new[] { VueIncidents.EtatComplet(i), Canal.Visible(L.T(i.Niveau)), Canal.Visible(i.Entite), string.Join(", ", (i.Regles ?? new List<string>()).Select(Canal.Visible)), i.NombreAlertes.ToString(), Canal.Visible(i.DerniereActiviteUtc) }) { Tag = i };
                 it.ForeColor = i.Etat == "Clos" ? Theme.TexteDim : VueIncidents.RisqueConfirme(i) ? Theme.Rouge : i.Niveau == "Critique" ? Theme.Jaune : Theme.Texte;
                 liste.Items.Add(it);
                 if (i.Id == idAvant) it.Selected = true;

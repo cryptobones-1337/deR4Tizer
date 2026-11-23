@@ -8,6 +8,96 @@ namespace DeR4Tizer
     {
         public static bool En;
 
+        // Réglage de langue en vigueur pour ce processus (« auto », « fr » ou « en »), fixé au démarrage avec En ; la page
+        // Réglages le montre comme valeur active, un choix enregistré depuis ne vaut qu'au prochain lancement (constat T-17)
+        public static string Reglage = "auto";
+
+        public static readonly string[] Reglages = { "auto", "fr", "en" };
+
+        // Langue de Windows de l'utilisateur : français pour toute culture française, anglais sinon
+        public static bool CultureAnglaise(System.Globalization.CultureInfo culture)
+        {
+            return culture == null || culture.TwoLetterISOLanguageName != "fr";
+        }
+
+        // Réglage en vigueur (constat T-17) : celui de l'utilisateur s'il est lu (« auto », « fr », « en ») ; sinon « en » si
+        // config.json le porte, seul choix explicite qu'il peut garder d'une version précédente (« fr » y est aussi la valeur
+        // par défaut que le service écrit avec n'importe quel réglage : il ne dit pas un choix) ; sinon « auto »
+        public static string ReglageEnVigueur(string utilisateur, string config)
+        {
+            if (System.Array.IndexOf(Reglages, utilisateur) >= 0) return utilisateur;
+            return config == "en" ? "en" : "auto";
+        }
+
+        // Seule décision de la langue affichée (interface WPF, interface classique, assistant élevé, notifications locales ;
+        // constat T-17). argument : langue passée par l'interface qui lance l'assistant élevé (« fr » ou « en »), qui prime :
+        // l'assistant tourne sous un autre compte ou une autre élévation, dont la culture n'est pas celle de l'utilisateur.
+        // Toute autre valeur est ignorée
+        public static bool Choisir(string argument, string utilisateur, string config, System.Globalization.CultureInfo culture, out string reglage)
+        {
+            reglage = ReglageEnVigueur(utilisateur, config);
+            if (argument == "fr" || argument == "en") return argument == "en";
+            return reglage == "auto" ? CultureAnglaise(culture) : reglage == "en";
+        }
+
+        // Fichier du réglage par utilisateur, écrit par l'interface non élevée : jamais une donnée de sécurité, jamais envoyé
+        // au service (aucune commande)
+        public static string CheminReglage()
+        {
+            return System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "langue.txt");
+        }
+
+        // « auto », « fr » ou « en » ; null si le fichier est absent, illisible, trop long ou porte une autre valeur
+        public static string LireReglage(string chemin)
+        {
+            try
+            {
+                var f = new System.IO.FileInfo(chemin);
+                if (!f.Exists || f.Length > 64) return null;
+                string v = System.IO.File.ReadAllText(chemin).Trim();
+                return System.Array.IndexOf(Reglages, v) >= 0 ? v : null;
+            }
+            catch { return null; }
+        }
+
+        // Jamais en administrateur : ce dossier est contrôlé par les programmes non élevés du compte (jonction, lien ; même
+        // règle que le repère des premiers réglages, S151-01). Valeur hors liste : rien n'est écrit
+        public static bool EcrireReglage(string chemin, string valeur, bool administrateur)
+        {
+            if (administrateur || System.Array.IndexOf(Reglages, valeur) < 0) return false;
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(chemin));
+                System.IO.File.WriteAllText(chemin, valeur);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Libellé d'un réglage ; « auto » dit la langue qu'il donne sur ce poste (le bouton actif montre la langue affichée)
+        public static string Libelle(string reglage, System.Globalization.CultureInfo culture)
+        {
+            if (reglage == "fr") return "Français";
+            if (reglage == "en") return "English";
+            string donne = CultureAnglaise(culture) ? "English" : "Français";
+            return En ? "Automatic (Windows: " + donne + ")" : "Automatique (Windows : " + donne + ")";
+        }
+
+        // Ce que la page Réglages dit sous le choix : langue affichée, et le choix enregistré s'il ne vaut qu'au prochain
+        // lancement (enregistre : réglage lu dans le fichier de l'utilisateur, null s'il n'y en a pas)
+        public static string EtatReglage(string enVigueur, string enregistre, bool administrateur, System.Globalization.CultureInfo culture)
+        {
+            string texte = En ? "Displayed language: English." : "Langue affichée : français.";
+            if (enregistre != null && enregistre != enVigueur)
+                texte += " " + (En ? "Choice saved: " : "Choix enregistré : ") + Libelle(enregistre, culture)
+                    + (En ? ", applied the next time the interface starts (Quit from the icon near the clock, then open deR4Tizer again)."
+                          : ", appliqué au prochain lancement de l'interface (Quitter depuis l'icône près de l'horloge, puis rouvrir deR4Tizer).");
+            if (administrateur)
+                texte += " " + (En ? "The language can only be changed from the interface run without administrator rights."
+                                   : "La langue ne se change que depuis l'interface lancée sans droits d'administrateur.");
+            return texte;
+        }
+
         public static string T(string fr)
         {
             string en;
