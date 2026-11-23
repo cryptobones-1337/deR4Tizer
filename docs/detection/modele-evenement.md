@@ -51,8 +51,8 @@ tirée des 4663, est notée `Leurres`. Elle reste vide, et n'est pas écrite, po
   d'administrateur » ou « automatique : … »). Cible, message et déclencheur sont bornés à 300 caractères et nettoyés
   (caractères de contrôle et de mise en forme remplacés par « ? », audit de #94, S94-01). La logique des actions ne
   change pas. Seule action qui n'y passe pas : la levée du mode panique au nettoyage de la désinstallation.
-- **Places de l'API d'export** (audit du 2026-11-23, A-1-3) : une connexion refusée faute de place (boucle locale au-delà
-  de ses 4 places quand l'API écoute sur le réseau, ou 16 places prises) produit au plus un événement par 10 minutes :
+- **Places de l'API d'export** (audit du 2026-11-23, A-1-3) : une connexion refusée faute de place (connexions du poste,
+  boucle locale ou adresse de la connexion, au-delà de leurs 4 places quand l'API écoute sur le réseau, ou 16 places prises) produit au plus un événement par 10 minutes :
   `Source` « api », `Type` « connexions-refusees », niveau « Alerte », message avec le nombre de refus de chaque sorte
   depuis l'événement précédent ; la même ligne va au journal du service. Une adresse hors de la liste du SIEM est fermée
   sans événement (pare-feu).

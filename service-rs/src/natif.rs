@@ -1084,7 +1084,7 @@ pub fn lire_securite_handle(f: &std::fs::File) -> Option<Securite> {
 pub fn securite_de_sddl(sddl: &str) -> Option<Securite> {
     use windows::Win32::Foundation::{BOOL, HLOCAL, LocalFree};
     use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
-    use windows::Win32::Security::{GetSecurityDescriptorDacl, ACL, PSECURITY_DESCRIPTOR, PSID};
+    use windows::Win32::Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, ACL, PSECURITY_DESCRIPTOR, PSID};
     let s = large(sddl);
     unsafe {
         let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -1095,7 +1095,10 @@ pub fn securite_de_sddl(sddl: &str) -> Option<Securite> {
             let _ = LocalFree(HLOCAL(sd.0));
             return None;
         }
-        analyser_descripteur(PSID::default(), dacl, sd)
+        // Propriétaire absent du SDDL : PSID nul, propriétaire vide
+        let mut proprietaire = PSID::default();
+        let _ = GetSecurityDescriptorOwner(sd, &mut proprietaire, &mut defaut);
+        analyser_descripteur(proprietaire, dacl, sd)
     }
 }
 

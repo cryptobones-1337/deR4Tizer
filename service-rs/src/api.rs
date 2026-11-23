@@ -22,9 +22,11 @@ use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_ALG_HANDLE,
 pub const FICHIER_JETON: &str = "api-jeton.txt";
 const NOM_REGLE: &str = "deR4Tizer-API";
 pub const MAX_CONNEXIONS: usize = 16;
-/// Places de la boucle locale quand l'API écoute aussi sur le réseau (audit du 2026-11-23, A-1-3) : avant, 16 connexions
-/// muettes ouvertes depuis le poste, par n'importe quel compte, prenaient toutes les places et le SIEM distant n'avait
-/// plus rien, sans alerte ; il en garde maintenant 12 au moins
+/// Places des connexions venues du poste quand l'API écoute aussi sur le réseau (audit du 2026-11-23, A-1-3) : avant, 16
+/// connexions muettes ouvertes depuis le poste, par n'importe quel compte, prenaient toutes les places et le SIEM distant
+/// n'avait plus rien, sans alerte. Est comptée « du poste » une connexion de la boucle locale ou dont l'adresse distante est
+/// l'adresse locale de la connexion (le poste vers sa propre adresse réseau, S295-02). Limite : une connexion du poste
+/// vers une autre de ses adresses (poste à plusieurs cartes, adresse source choisie) n'est pas reconnue
 pub const MAX_LOCALES: usize = 4;
 /// Au plus un signal (SIEM et journal) par fenêtre quand des connexions sont refusées faute de place (A-1-3)
 pub const FENETRE_SIGNAL_REFUS: Duration = Duration::from_secs(600);
@@ -53,9 +55,17 @@ pub enum Admission {
     Plein,
 }
 
-/// Décision pure (A-1-3). Sur le réseau, la boucle locale n'a que MAX_LOCALES places : un programme du poste ne peut plus
-/// prendre celles du SIEM. En écoute locale seule, tous les clients, SIEM compris, viennent de la boucle locale : aucun
-/// quota ne peut les départager (limite déclarée), seul le signal de refus reste
+/// Décision pure (S295-02) : connexion venue du poste ? Boucle locale, ou adresse distante égale à l'adresse locale de la
+/// connexion (le poste qui se connecte à sa propre adresse réseau, dans un réseau de SIEM autorisé). Adresse locale
+/// illisible : comptée du poste (le quota le plus strict)
+pub fn connexion_du_poste(distante: std::net::IpAddr, locale: Option<std::net::IpAddr>) -> bool {
+    distante.is_loopback() || locale.is_none_or(|l| l == distante)
+}
+
+/// Décision pure (A-1-3). Sur le réseau, les connexions du poste (`connexion_du_poste`) n'ont que MAX_LOCALES places : un
+/// programme du poste qui se connecte par la boucle locale ou par l'adresse de la connexion ne peut plus prendre celles
+/// du SIEM (limite : par une autre adresse du poste, voir MAX_LOCALES). En écoute locale seule, tous les clients, SIEM
+/// compris, viennent de la boucle locale : aucun quota ne peut les départager (limite déclarée), seul le signal reste
 pub fn admettre(places: Places, locale: bool, autorisee: bool, reseau: bool) -> Admission {
     if !autorisee {
         Admission::AdresseRefusee
@@ -98,8 +108,8 @@ impl SignalRefus {
 
 /// Texte du signal de refus (pur)
 pub fn message_refus(quota_local: u64, plein: u64) -> String {
-    format!("API d'export : connexions refusées faute de place depuis le dernier signal : {quota_local} venue(s) de la boucle \
-        locale au-delà de ses {MAX_LOCALES} places, {plein} avec les {MAX_CONNEXIONS} places prises. Un programme du poste \
+    format!("API d'export : connexions refusées faute de place depuis le dernier signal : {quota_local} venue(s) du poste \
+        (boucle locale ou adresse de la connexion) au-delà de leurs {MAX_LOCALES} places, {plein} avec les {MAX_CONNEXIONS} places prises. Un programme du poste \
         tient peut-être les places de l'API (A-1-3) ; le SIEM peut ne plus recevoir de réponse")
 }
 
@@ -244,7 +254,7 @@ pub fn ecouter(ecoute: &TcpListener, jeton: &str, autorisees: &[String], reseau:
     while continuer() {
         match ecoute.accept() {
             Ok((flux, pair)) => {
-                let locale = pair.ip().is_loopback();
+                let locale = connexion_du_poste(pair.ip(), flux.local_addr().ok().map(|a| a.ip()));
                 // Défense en profondeur, en plus de la règle de pare-feu : seulement les adresses du SIEM
                 let admission = {
                     let mut p = verrou(places);

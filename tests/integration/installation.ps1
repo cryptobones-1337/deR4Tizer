@@ -299,10 +299,24 @@ Verifier 'Canal : huit clients simultanés reçoivent chacun leur réponse' {
 }
 # Audit du 2026-11-23, A-1-4 : un administrateur ne peut plus créer d'instance du tube (FILE_CREATE_PIPE_INSTANCE réservé à
 # SYSTEM) ; un client qui demande GENERIC_WRITE (sens InOut) est refusé ; le canal répond toujours ensuite
-Verifier 'Canal : instance du tube refusée à un administrateur, client GENERIC_WRITE refusé (A-1-4)' {
+Verifier 'Canal : tube à SYSTEM, WRITE_DAC et instance refusés à un administrateur, client GENERIC_WRITE refusé (A-1-4, S295-01)' {
     if (-not ('D4T.TubeA14' -as [type])) {
-        Add-Type -Namespace D4T -Name TubeA14 -MemberDefinition '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern IntPtr CreateNamedPipeW(string n, uint o, uint m, uint i, uint s, uint r, uint t, IntPtr a); [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);'
+        Add-Type -Namespace D4T -Name TubeA14 -MemberDefinition '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern IntPtr CreateNamedPipeW(string n, uint o, uint m, uint i, uint s, uint r, uint t, IntPtr a); [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern IntPtr CreateFileW(string n, uint d, uint s, IntPtr a, uint c, uint f, IntPtr t); [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);'
     }
+    # S295-01 : le tube appartient à SYSTEM, et l'entrée OWNER RIGHTS retire au propriétaire son WRITE_DAC implicite ;
+    # un administrateur ne peut pas ouvrir le tube avec WRITE_DAC (0x40000) pour réécrire sa DACL (OPEN_EXISTING : 3)
+    $h = [D4T.TubeA14]::CreateFileW('\\.\pipe\deR4Tizer', 0x40000, 0, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+    $erreur = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    if ($h -ne [IntPtr](-1)) { [void][D4T.TubeA14]::CloseHandle($h); return 'tube ouvert avec WRITE_DAC par un administrateur' }
+    if ($erreur -ne 5) { return "ouverture avec WRITE_DAC : code $erreur au lieu de 5 (accès refusé)" }
+    $lecteur = New-Object IO.Pipes.NamedPipeClientStream('.', 'deR4Tizer', [IO.Pipes.PipeAccessRights]'ReadData, WriteData, ReadPermissions', [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification, [IO.HandleInheritability]::None)
+    try {
+        $lecteur.Connect(5000)
+        $proprietaire = $lecteur.GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
+        $w = New-Object IO.StreamWriter($lecteur); $w.AutoFlush = $true; $r = New-Object IO.StreamReader($lecteur)
+        $w.WriteLine('{"Action":"verification"}'); [void]$r.ReadLine()
+    } finally { $lecteur.Dispose() }
+    if ($proprietaire -ne 'S-1-5-18') { return "propriétaire du tube : $proprietaire au lieu de SYSTEM" }
     # PIPE_ACCESS_DUPLEX (3), octets, instances illimitées (255) : un refus ne peut venir que des droits
     $h = [D4T.TubeA14]::CreateNamedPipeW('\\.\pipe\deR4Tizer', 3, 0, 255, 512, 512, 0, [IntPtr]::Zero)
     $erreur = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
