@@ -44,7 +44,7 @@ below. The active decoy remains the **most reliable signal** of the NDR.
 
 **S-23 (passive LLMNR responder).** The target sends 6 LLMNR queries for distinct names; the responder answers
 each one; the capture sees ≥ 3 distinct answers from the same host → `EXP-NDR-001` **Alert** "répond en LLMNR pour
-≥ 3 noms" (T1557.001). **VP in A.** **In C: P-baseline (prevention)**: the reinforced baseline **disables LLMNR
+≥ 3 noms" (T1557.001). **VP in A.** **In C: P-baseline (prevention)**: the hardened baseline **disables LLMNR
 on the client side** (`EnableMulticast(Policy) = 0`, checked in the VM): the target no longer sends LLMNR queries, so
 passive poisoning is **prevented upstream**. This is not a detection defect: it is defence in
 depth at work (and the **active decoy**, for its part, keeps watching even in C, see S-25). Passive detection
