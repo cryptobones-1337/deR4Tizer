@@ -350,7 +350,9 @@ aucun réglage) ; champs absents des fichiers écrits avant, relus vides (`serde
 | `PaysSignales` | liste de codes pays | pays des connexions signalées au dernier relevé du moniteur, au même seuil que l'onglet « Suspectes » de Connexions (score au seuil d'alerte, ou menace connue) ; triés, sans doublon ; 50 au plus (`MAX_PAYS_SIGNALES`) ; adresses IPv4 seulement, 500 au plus (`moniteur::ips_signalees`) |
 
 `ProgrammesVolumes` et `DestinationsPrincipales` ne sont remplis que pour les 30 pays les plus gros
-(`MAX_PAYS_DETAILLES`), vides au-delà : au pire quelques dizaines de Ko. Décision pure `trafic::lignes_pays`.
+(`MAX_PAYS_DETAILLES`), vides au-delà. Taille de la liste `Pays` : moins d'1 Mo au pire (noms DNS et de programmes de plus de 250 caractères,
+250 pays, liste `Programmes` existante comprise : environ 880 Ko mesurés par l'audit de #311, S311-01), quelques
+dizaines de Ko en pratique. Décision pure `trafic::lignes_pays`.
 Limites : chaque destination garde le premier programme nommé qui l'a jointe (comme `Destinations`) ; deux programmes
 qui joignent la même adresse sont comptés sous le premier. Le pays est celui du titulaire du bloc (registres
 Internet régionaux), pas un lieu. Une adresse retirée de la table (élagage au-delà de 5 000 destinations, ou plafond
