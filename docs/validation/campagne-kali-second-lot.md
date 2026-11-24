@@ -8,14 +8,14 @@ not routable. Extends the report of the first pass (`campagne-kali-premier-passa
 that were noted there (browser profile for VOL-001, active threat lists for DNS-001/RES-001).
 
 **Reservation (latencies)**: as in the first pass, the VM clock is offset in the raw results; the
-VP verdicts rest on the presence of rule/level/entity, not on the time. Self-validated preconditions (see below).
+TP verdicts rest on the presence of rule/level/entity, not on the time. Self-validated preconditions (see below).
 
 ## Credential theft (VOL-001)
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-14 (reading of a browser credential database by an unexpected program) | C (baseline 100%) | **VP (Critical)** | An **unsigned** program, with a neutral name, launched from a **temporary location**, opens **for reading** the credentials file of a decoy browser profile (created for the trial, without any secret) → **1 VOL-001 Critical alert** (score 10, T1555 / T1539). No password read, no copy, no exfiltration. |
-| S-14 | A (without baseline) | **VP (Critical)** | Identical. The required read audit ("File System") is set by the service itself, so the detection does not depend on the baseline. |
+| S-14 (reading of a browser credential database by an unexpected program) | C (baseline 100%) | **TP (Critical)** | An **unsigned** program, with a neutral name, launched from a **temporary location**, opens **for reading** the credentials file of a decoy browser profile (created for the trial, without any secret) → **1 VOL-001 Critical alert** (score 10, T1555 / T1539). No password read, no copy, no exfiltration. |
+| S-14 | A (without baseline) | **TP (Critical)** | Identical. The required read audit ("File System") is set by the service itself, so the detection does not depend on the baseline. |
 
 **Self-validated precondition**: the trial is kept only if the service has actually set the read audit on the
 monitored folder **and** a read audit event is produced on the targeted file; otherwise the trial is declared
@@ -26,8 +26,8 @@ sensitive data folders present, read event produced).
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-07 (known malicious domain + known threat IP) | C | **VP (DNS-001 + RES-001 + 7-day block)** | **DNS-001**: a DNS query to a **domain of the threat list** → **Critical alert** "domaine malveillant connu". **RES-001**: a connection to an **IP of a high-confidence list** → **Critical alert** "menace connue" **and automatic firewall block, expiring after 7 days** (recorded in the block log). |
-| S-07 | A | **VP (DNS-001 + RES-001 + 7-day block)** | Identical. The threat lists and the DNS client log are active independently of the baseline. |
+| S-07 (known malicious domain + known threat IP) | C | **TP (DNS-001 + RES-001 + 7-day block)** | **DNS-001**: a DNS query to a **domain of the threat list** → **Critical alert** "domaine malveillant connu". **RES-001**: a connection to an **IP of a high-confidence list** → **Critical alert** "menace connue" **and automatic firewall block, expiring after 7 days** (recorded in the block log). |
+| S-07 | A | **TP (DNS-001 + RES-001 + 7-day block)** | Identical. The threat lists and the DNS client log are active independently of the baseline. |
 
 **Self-validated precondition**: the synthetic lists (one documentation entry each: a `.test` domain, an IP
 in the RFC 5737 range) are supplied to the service as inputs of the corresponding sources, with a **controlled file
@@ -40,9 +40,9 @@ the IP source and for the domain source); both configurations confirmed it.
 
 | Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
-| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
-| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **TP (Critical)** | **TP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **TP (Critical)** | **TP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **TP (Critical + 7-day block)** | **TP (Critical + 7-day block)** |
 
 With the first pass (measurement chain, RDP/SMB brute force, persistence, system correlations), the campaign now
 covers, as measured true positives: **clean negative control, hardening, brute force (RDP, SMB), persistence,

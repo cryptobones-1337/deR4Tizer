@@ -21,14 +21,14 @@ No lasting modification. The IGD is **emulated in user space, without root** (SS
 
 | Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-27**: UPnP redirection to this PC | **VP** | **VP** | `EXP-NDR-001` **Alert**, T1133 | the emulated IGD answers the M-SEARCH and announces a redirection of port 3389/TCP **to the target** → "la box ouvre le port 3389 (TCP) d'Internet vers ce PC" |
+| **S-27**: UPnP redirection to this PC | **TP** | **TP** | `EXP-NDR-001` **Alert**, T1133 | the emulated IGD answers the M-SEARCH and announces a redirection of port 3389/TCP **to the target** → "la box ouvre le port 3389 (TCP) d'Internet vers ce PC" |
 
 **S-27 (UPnP).** At the first iteration after startup (like the decoy), `verifier_upnp` sends an SSDP M-SEARCH;
 the emulated IGD returns a `LOCATION`, deR4Tizer fetches the description, finds the `WANIPConnection` service, then
 reads the redirections over SOAP (`GetGenericPortMappingEntry`). The first redirection designates the target
 (`NewInternalClient = 192.168.50.10`, `NewExternalPort = 3389`, active); since `client == locale`, deR4Tizer raises
 `EXP-NDR-001` **Alert** "le PC est joignable depuis Internet sur ce port" (T1133). The status field confirms the
-discovery: "1 redirection(s) sur la box, dont 1 vers ce PC". **VP in A and C**: the check is **active**
+discovery: "1 redirection(s) sur la box, dont 1 vers ce PC". **TP in A and C**: the check is **active**
 (driven by the service), independent of the baseline configuration. **Precondition D-2** checked: without
 discovery of an IGD (`Upnp` field), the trial would be D, never a false negative.
 
@@ -44,8 +44,8 @@ discovery of an IGD (`Upnp` field), the trial would be D, never a false negative
 
 ## 3. Assessment of the "network detection" phase
 
-Detections **measured as VP** (configurations A and C unless stated otherwise): active LLMNR decoy (S-22, Critical),
-active NBNS decoy (S-25, Critical), ARP spoofing (S-20, Critical), passive LLMNR responder (S-23, Alert, VP A /
+Detections **measured as TP** (configurations A and C unless stated otherwise): active LLMNR decoy (S-22, Critical),
+active NBNS decoy (S-25, Critical), ARP spoofing (S-20, Critical), passive LLMNR responder (S-23, Alert, TP A /
 P-baseline C), passive mDNS responder (S-26, Alert), **UPnP redirection (S-27, Alert, T1133)**, and the test IDS
 signature (S-24). The NDR coverage reachable through user-space emulation is **complete**. The
 rogue DHCP and the directional IDS (documented infrastructure constraints), and the hardening of the code (audit), remain.

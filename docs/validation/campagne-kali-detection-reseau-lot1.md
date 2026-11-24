@@ -23,8 +23,8 @@ right**: an LLMNR responder and a UDP sender in user space (unprivileged ports),
 
 | Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-22**: active LLMNR decoy (Responder-type poisoner) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.001 | an LLMNR responder **without root** on the lab segment answers the decoy's probe → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
-| **S-24**: IDS signature (built-in test rule) | **VP** | **VP** | `EXP-IDS-001`, sid 9000000 | 3 UDP datagrams carrying the test pattern captured → chain **capture (`SIO_RCVALL`) → IDS → alert** |
+| **S-22**: active LLMNR decoy (Responder-type poisoner) | **TP** | **TP** | `EXP-NDR-001` **Critical**, T1557.001 | an LLMNR responder **without root** on the lab segment answers the decoy's probe → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
+| **S-24**: IDS signature (built-in test rule) | **TP** | **TP** | `EXP-IDS-001`, sid 9000000 | 3 UDP datagrams carrying the test pattern captured → chain **capture (`SIO_RCVALL`) → IDS → alert** |
 
 **S-22 (LLMNR decoy).** At service startup, the NDR sends an LLMNR question for a **random
 non-existent name**; the lab responder answers it (30-byte answer received on the attacker side), which triggers
@@ -46,7 +46,7 @@ root or Defender risk** (benign payload).
    returns early if `UdpSocket::bind(locale)` fails. So if the interface is **transiently unavailable** at the
    first iteration of the NDR (slow startup, resume from sleep, VPN reconnection, network change), the decoy
    is **silently skipped for 10 minutes**. *(Discovered while measuring: the first S-22 trial was D/limite
-   for this reason; stabilising the interface before arming gave the VP.)* Candidate fix: only set
+   for this reason; stabilising the interface before arming gave the TP.)* Candidate fix: only set
    `leurre_fait = true` if the decoy actually ran, or retry earlier after a failure.
 2. **Injection of false positives (code review, to be measured when root is available).** Two passive detections
    rest on a **spoofable source**: the **rogue DHCP** identifies the server by **option 54,
@@ -67,7 +67,7 @@ root or Defender risk** (benign payload).
 - **Passive responder** (≥ 3 names): not exercised (a single decoy probe); next leg.
 - **Lab exposure artefacts (decision D-1).** In config C (firewall logging active), the decoy's NBNS
   (port 137) raises a Critical "PC EXPOSÉ À INTERNET" because `203.0.113.x` is outside RFC 1918 →
-  **RFC 5737 addressing artefact**, excluded from the VP/FP.
+  **RFC 5737 addressing artefact**, excluded from the TP/FP.
 - **Harness.** **Reversible** redirection (undone by the snapshot), deliberately single-LAN. The capture follows the
   **default route** (reliable after setting a metric 1 gateway on the lab adapter); the NDR
   (`adresse_lan`, choice by enumeration of the adapters) remains to be watched.
@@ -77,6 +77,6 @@ root or Defender risk** (benign payload).
 Snapshots "campagne A" (without baseline) and "campagne C" (hardened baseline), 2026-11-14. Reversible
 redirection, responder/sender **without root** (Python, unprivileged ports), reset to the snapshot **before and
 after** each trial, VM put back to sleep at the end. Defender **never** modified by hand. Single VM ⇒ trials
-**strictly in series**. Decision D-1 (lab exposure artefacts excluded from the VP/FP) applied. Never the
+**strictly in series**. Decision D-1 (lab exposure artefacts excluded from the TP/FP) applied. Never the
 password of the attacking machine (SSH key access). Benign test programs (a signature string, an
 LLMNR answer), reversible, no hostile payload, no real infrastructure contacted.

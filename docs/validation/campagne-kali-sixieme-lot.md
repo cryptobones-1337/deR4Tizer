@@ -2,7 +2,7 @@
 
 Date: 2026-11-16. List of scenarios: v1.4 (`campagne-kali-phase1.md`). Raw results outside the repository.
 
-> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): (1) "This lot completes the v1.4 scenarios not yet executed" is inaccurate: N-03, N-04, S-18, S-05 (a) and (b), S-10 (b), S-11 (b) and (c), the long option of S-16, "Unblock" of S-07 and the success part of S-03 remain without a result (list in `README.md` of this folder). (2) Grid of §5: N-02 "RÉUSSI" in configuration C and SAN-010 in C are hypotheses ("taken as identical"): not evaluated; the rows encoded PowerShell (PRC-002, VP with Sysmon) and limited access to LSASS (B2) are measurements of configuration B, not of A or C. (3) "IDS/DPI/NDR frozen" holds at the date of the lot; unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph). (4) No number of trials is given: measurements not consolidated.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): (1) "This lot completes the v1.4 scenarios not yet executed" is inaccurate: N-03, N-04, S-18, S-05 (a) and (b), S-10 (b), S-11 (b) and (c), the long option of S-16, "Unblock" of S-07 and the success part of S-03 remain without a result (list in `README.md` of this folder). (2) Grid of §5: N-02 "RÉUSSI" in configuration C and SAN-010 in C are hypotheses ("taken as identical"): not evaluated; the rows encoded PowerShell (PRC-002, TP with Sysmon) and limited access to LSASS (B2) are measurements of configuration B, not of A or C. (3) "IDS/DPI/NDR frozen" holds at the date of the lot; unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph). (4) No number of trials is given: measurements not consolidated.
 No personal data, no workstation name, no password. Lab addresses: documentation ranges
 (RFC 5737); test names in `.test` (RFC 2606). This lot completes the v1.4 scenarios not yet executed.
 
@@ -19,9 +19,9 @@ the snapshot. The password of the attacking VM is never typed (key access only).
 
 | Scenario | Config A | Config C | Rule measured |
 |---|---|---|---|
-| S-17: remote administrative session on an admin share (T1021.002) | **VP** | **VP** | COR-R9 Alert "Session ouverte depuis Internet"; 4672 present (admin token); 5140 produced but not read (B2) |
-| S-04: remote connection to the command channel (IPC-03) | **VP** | **VP** | COR-R9 Alert; remote `deR4Tizer` pipe **rejected** (`STATUS_ACCESS_DENIED`, `PIPE_REJECT_REMOTE_CLIENTS`), no command executed |
-| S-02: RDP brute force **followed by a success** (T1110.001/T1078.003/T1133) | **VP** | **P-baseline** | COR-R1 Alert + **COR-R2 Critical** (≥ 5 failures) + COR-R9 Alert (success) |
+| S-17: remote administrative session on an admin share (T1021.002) | **TP** | **TP** | COR-R9 Alert "Session ouverte depuis Internet"; 4672 present (admin token); 5140 produced but not read (B2) |
+| S-04: remote connection to the command channel (IPC-03) | **TP** | **TP** | COR-R9 Alert; remote `deR4Tizer` pipe **rejected** (`STATUS_ACCESS_DENIED`, `PIPE_REJECT_REMOTE_CLIENTS`), no command executed |
+| S-02: RDP brute force **followed by a success** (T1110.001/T1078.003/T1133) | **TP** | **P-baseline** | COR-R1 Alert + **COR-R2 Critical** (≥ 5 failures) + COR-R9 Alert (success) |
 
 **First measurement of COR-R2 (Critical) and of the "success" part of COR-R9** in the whole campaign (postponed at the first
 pass). In configuration C, Remote Desktop is refused by the hardened baseline (3389 not listening): prevention
@@ -39,8 +39,8 @@ in phase 6, not in this validation lot.
 
 | Scenario | Config A | Config C | Rule measured |
 |---|---|---|---|
-| S-11: simulated HTTP C2 + transfer of a benign file (T1071.001/T1105) | **VP** | **VP** | RES-002 Alert (outbound flow of the unsigned program) + RES-003 (first connection) |
-| S-12: exfiltration of a canary file (T1041) | **VP** | **VP** | RES-002 Alert (outbound exfil flow) + RES-003; volume/content = **E** (DPI frozen) |
+| S-11: simulated HTTP C2 + transfer of a benign file (T1071.001/T1105) | **TP** | **TP** | RES-002 Alert (outbound flow of the unsigned program) + RES-003 (first connection) |
+| S-12: exfiltration of a canary file (T1041) | **TP** | **TP** | RES-002 Alert (outbound exfil flow) + RES-003; volume/content = **E** (DPI frozen) |
 | S-08: port scan (T1046) | **GAP** | **GAP** | *no scan rule* |
 
 S-11 and S-12: an **unsigned** test program, launched from a temporary folder, opens an outbound connection
@@ -51,20 +51,20 @@ content** are not measured (IDS/DPI/NDR frozen): known limit (class E), not a fa
 
 **S-08 (scan) = accepted architecture gap.** There is **no scan detection rule** (`parefeu.rs`);
 the only strong alerts are RES-004 (public IPv4 self-exposure of the VM) and RES-005 (refused packets of the scan),
-**all in the lab range** → exposure artefacts (decision D-1), excluded from the VP/FP. To be classified **C/E** (known missing
+**all in the lab range** → exposure artefacts (decision D-1), excluded from the TP/FP. To be classified **C/E** (known missing
 coverage), **never a false negative**, never 0.
 
 ## 3. Execution and simulations
 
 | Scenario | Verdict | Detail |
 |---|---|---|
-| S-10: encoded PowerShell (T1059.001/T1027), benign payload | **VP (Sysmon)** | PRC-002 Alert on the `-EncodedCommand` command |
+| S-10: encoded PowerShell (T1059.001/T1027), benign payload | **TP (Sysmon)** | PRC-002 Alert on the `-EncodedCommand` command |
 | S-15: limited access to LSASS (T1003.001, SIMULATION) | **B2** | Sysmon 10 (ProcessAccess) present; **no deR4Tizer rule** consumes the process access |
-| S-16: anti-ransomware decoy touched (T1486, SIMULATION) | **VP (A) / P-Defender (C)** | LEU-002 Critical + automatic suspension of the process (A); controlled folder access refuses the write (C) |
+| S-16: anti-ransomware decoy touched (T1486, SIMULATION) | **TP (A) / P-Defender (C)** | LEU-002 Critical + automatic suspension of the process (A); controlled folder access refuses the write (C) |
 
 **S-10: PRC-002 reliable with Sysmon; non-deterministic without Sysmon (honest finding).** The source of the command
 line of PRC-002 is **Sysmon if installed, otherwise WMI** (`processus.rs`): deR4Tizer does **not** read the 4688 log.
-In configuration B (Sysmon), the capture happens at process creation: PRC-002 fires **reliably** (VP). Without
+In configuration B (Sysmon), the capture happens at process creation: PRC-002 fires **reliably** (TP). Without
 Sysmon (WMI, by PID after the fact), a **short** encoded `powershell` may end before the WMI query, which then loses
 the command line: the detection is **non-deterministic** (measured: two trials, one with PRC-002, the other
 without). **This is not a false negative** but a known collection limit. Possible product improvement (also read the
@@ -103,15 +103,15 @@ or a second console remains a manual check in a VM.
 
 | Domain / technique | Rule | Config A | Config C |
 |---|---|---|---|
-| Browser credential theft (T1555/T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
-| Threat list domain / IP (T1071) | DNS-001 / RES-001 + 7-day block | **VP (Critical)** | **VP (Critical)** |
-| DNS server change (T1557); DNS filtering | DNS-002; filtering | **VP** | **VP** |
-| Fully active Defender does not flag the product | lot 3d | **VP** | **VP** |
-| RDP/SMB brute force + correlations | COR-R1/R2/R9 | **VP** | VP (SMB) / P-baseline (RDP) |
-| Remote admin session; remote command channel | COR-R9; pipe refusal | **VP** | **VP** |
-| HTTP C2 / exfiltration (connection) | RES-002 | **VP** | **VP** |
-| Encoded PowerShell | PRC-002 | **VP (Sysmon)** | VP (Sysmon); non-deterministic without Sysmon |
-| Anti-ransomware decoy | LEU-002 + suspension | **VP** | P-Defender |
+| Browser credential theft (T1555/T1539) | VOL-001 | **TP (Critical)** | **TP (Critical)** |
+| Threat list domain / IP (T1071) | DNS-001 / RES-001 + 7-day block | **TP (Critical)** | **TP (Critical)** |
+| DNS server change (T1557); DNS filtering | DNS-002; filtering | **TP** | **TP** |
+| Fully active Defender does not flag the product | lot 3d | **TP** | **TP** |
+| RDP/SMB brute force + correlations | COR-R1/R2/R9 | **TP** | TP (SMB) / P-baseline (RDP) |
+| Remote admin session; remote command channel | COR-R9; pipe refusal | **TP** | **TP** |
+| HTTP C2 / exfiltration (connection) | RES-002 | **TP** | **TP** |
+| Encoded PowerShell | PRC-002 | **TP (Sysmon)** | TP (Sysmon); non-deterministic without Sysmon |
+| Anti-ransomware decoy | LEU-002 + suspension | **TP** | P-Defender |
 | Port scan | *none* | **GAP (C/E)** | **GAP (C/E)** |
 | Limited access to LSASS | *none* | **B2** | **B2** |
 | Legitimate session; benign scheduled task | N-01; N-02 | **"RÉUSSI"** | **"RÉUSSI"** |
@@ -120,7 +120,7 @@ or a second console remains a manual check in a VM.
 
 Snapshots "campagne A" (without baseline), "campagne B" (+ Sysmon + Atomic Red Team), "campagne C" (baseline at
 100%). Reset to the snapshot before and after each trial, VM put back to sleep at the end. Defender never modified by
-hand. Single VM ⇒ scenarios strictly in series. Decisions D-1 (lab exposure artefacts excluded from the VP/FP) and
+hand. Single VM ⇒ scenarios strictly in series. Decisions D-1 (lab exposure artefacts excluded from the TP/FP) and
 D-2 (collection of a rule = Active at the start, otherwise invalid trial) applied. The test programs are benign,
 reversible, unsigned, launched from a temporary folder; no hostile payload, no real infrastructure
 contacted.

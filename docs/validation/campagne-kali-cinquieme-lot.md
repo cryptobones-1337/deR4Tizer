@@ -19,8 +19,8 @@ in the lab. Defender is **never** modified.
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| lot 3d (formal Defender) | C (hardened baseline) | **VP** | Real-time protection **and** behaviour monitoring **and** antivirus active; **no exclusion** covers deR4Tizer; custom scan of the installation folder + `C:\ProgramData\deR4Tizer` then quick scan **completed**; **zero detections** (`Get-MpThreatDetection`/`Get-MpThreat`); binary **intact** (not quarantined); service **Running**. |
-| lot 3d (formal Defender) | A (without baseline) | **VP** | Identical, Defender active without hardening. |
+| lot 3d (formal Defender) | C (hardened baseline) | **TP** | Real-time protection **and** behaviour monitoring **and** antivirus active; **no exclusion** covers deR4Tizer; custom scan of the installation folder + `C:\ProgramData\deR4Tizer` then quick scan **completed**; **zero detections** (`Get-MpThreatDetection`/`Get-MpThreat`); binary **intact** (not quarantined); service **Running**. |
+| lot 3d (formal Defender) | A (without baseline) | **TP** | Identical, Defender active without hardening. |
 
 **Self-validated precondition**: the trial is kept only if (1) Defender is **fully active** (real time +
 behaviour + antivirus) and (2) **no exclusion** covers a deR4Tizer path or process; otherwise the trial is
@@ -55,12 +55,12 @@ DNS-002; this behaviour was exercised during the restoration of the third lot (S
 
 | Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
-| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
-| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
-| DNS server change on an adapter (T1557) | DNS-002 | **VP (Alert)** | **VP (Alert)** |
-| DNS filtering: listed name blocked (null address) | filtering by local resolver | **VP** | **VP** |
-| Fully active Defender does not flag the product | lot 3d (non-detection) | **VP** | **VP** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **TP (Critical)** | **TP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **TP (Critical)** | **TP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **TP (Critical + 7-day block)** | **TP (Critical + 7-day block)** |
+| DNS server change on an adapter (T1557) | DNS-002 | **TP (Alert)** | **TP (Alert)** |
+| DNS filtering: listed name blocked (null address) | filtering by local resolver | **TP** | **TP** |
+| Fully active Defender does not flag the product | lot 3d (non-detection) | **TP** | **TP** |
 | Legitimate session: no strong alert | N-01 (specificity) | **"RÉUSSI"** | **"RÉUSSI"** |
 | Benign scheduled task: Info at most | N-02 (specificity) | **"RÉUSSI"** | · ("identical" hypothesis) |
 
