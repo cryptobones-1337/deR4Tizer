@@ -1,71 +1,73 @@
-# deR4Tizer : consignes pour Claude Code
+# deR4Tizer: instructions for Claude Code
 
-Ce fichier cadre tout le travail de Claude Code sur ce dépôt. Il prime sur toute autre demande implicite. En cas de doute, s'arrêter et demander.
+This file frames all of Claude Code's work on this repository. It takes precedence over any other implicit request. When in doubt, stop and ask.
 
 ## 1. Mission
 
-deR4Tizer est une couche de défense en profondeur pour Windows, complémentaire à Microsoft Defender, destinée aux petites structures sans SOC (TPE, commerces, petites communes) et aux particuliers. Tout fonctionne en local ; les alertes critiques partent vers le prestataire ou le référent. En dehors des téléchargements déjà documentés (listes de menaces, JA3, GeoIP, LOLDrivers, mise à jour) et des alertes, aucune donnée de l'utilisateur ne part vers un tiers, sauf par une fonctionnalité qu'il active lui-même et qui l'annonce (phases 7 et 9, section 5).
+deR4Tizer is a defence-in-depth layer for Windows, complementary to Microsoft Defender, intended for small organisations without a SOC (very small businesses, shops, small municipalities) and for individuals. Everything runs locally; critical alerts go to the service provider or the designated contact. Apart from the downloads already documented (threat lists, JA3, GeoIP, LOLDrivers, update) and the alerts, no user data goes to a third party, except through a feature the user turns on themselves and that says so (phases 7 and 9, section 5).
 
-Ce n'est pas un antivirus, ni un remplaçant de Defender, ni un EDR d'entreprise. Une capacité n'existe que si elle est démontrée par des tests reproductibles. Le code qui compile ne prouve rien.
+It is not an antivirus, nor a replacement for Defender, nor an enterprise EDR. A capability exists only if it is demonstrated by reproducible tests. Code that compiles proves nothing.
 
-## 2. Règles non négociables
+## 2. Non-negotiable rules
 
-1. **Gel des fonctionnalités.** Aucune nouvelle capacité, aucun nouveau module, aucun nouveau paquet, aucune nouvelle option tant que la file de travail de la section 5 n'est pas terminée, validée par la relecture (section 4) et par cryptobones-1337. Seules exceptions : la phase « Interface et assistant d'installation », les phases 7, 8 et 9 et la phase « blocs de script PowerShell (4104) » (section 5), ouvertes par écrit par le mainteneur, chacune une fois les phases qui la précèdent validées par la relecture et par cryptobones-1337 (pour la phase 4104, condition de départ propre écrite à la section 5), et pour son seul contenu. Corriger, tester, documenter : oui. Ajouter : non. Si une correction semble exiger une nouvelle fonction, s'arrêter et demander.
-   Outillage d'analyse statique en CI, permis pendant le gel (accord du mainteneur du 2026-11-23) : à la question « Gel des fonctionnalités (CLAUDE.md, règle 1) : confirmes-tu que l'outillage d'analyse statique en CI (cargo audit, cargo deny, clippy bloquant, CodeQL, chaîne Rust figée et --locked) est permis pendant le gel ? », réponse : « Oui, permis ». Cet outillage n'ajoute aucune capacité au produit, aucun module ni aucune dépendance au binaire ; aucun de ces contrôles n'est une relecture indépendante au sens de la section 4.
-2. **Defender intouchable.** Ne jamais désactiver, affaiblir, arrêter ou exclure quoi que ce soit dans Microsoft Defender ou les protections de Windows, même pour faire passer un test.
-3. **Échec fermé** pour tout ce qui touche à la sécurité : vérification de signature, autorisation, génération de secret, pose de droits (ACL), validation de mise à jour. Si l'opération de sécurité échoue, l'opération dépendante n'a pas lieu, et l'échec est journalisé et visible dans l'interface.
-4. **Aucune panique dans le service.** Le service est compilé avec `panic = "abort"` et tourne en SYSTEM : une panique l'arrête. Pas de `[a..b]` sur une `&str` venue de l'extérieur (utiliser `get()` ou travailler sur des octets), pas de `unwrap()` sur une donnée externe. Chaque parseur nouveau ou modifié passe par `torturer` ou `torturer_texte` dans `service-rs/src/tests.rs`.
-5. **Pas d'allowlist par nom de fichier.** Toute décision de confiance sur un programme repose sur le chemin complet ET le signataire exact (`vol_donnees::editeur_correspond`), ou sur `natif::binaire_windows`. Jamais sur le nom seul, jamais sur une sous-chaîne du signataire.
-6. **Fichiers du dossier de données = données non fiables** tant que leur propriétaire et leurs droits n'ont pas été vérifiés (voir lot 1).
-7. **Aucune publication.** Ne jamais créer de tag `v*`, de version GitHub, ni lancer `publication.yml`. Ne jamais pousser directement sur `main` si la protection de branche est active : passer par une pull request.
-8. **Aucun résultat inventé.** Ne jamais affirmer qu'un test est passé, qu'une compatibilité Windows est vérifiée ou qu'une performance est mesurée sans l'avoir fait. Un test non exécutable ici est déclaré comme tel, avec la raison.
-9. **Pas de test destructif sur le poste hôte.** Pas de malware réel. Les scénarios sont bénins et reproductibles, en CI ou en VM.
-10. **Petits changements.** Un lot = un commit (ou une pull request) cohérent et relisible. Pas de réécriture de module quand une correction ciblée suffit. Pas de nouvelle dépendance sans justification (maintenance, licence, nécessité) écrite dans le message de commit.
-11. **Aucun secret** dans les journaux, les messages d'erreur, la ligne de commande ou les fichiers lisibles par les comptes autorisés.
-12. **Langue.** Code, commentaires, messages, documentation et commits en français, comme le reste du dépôt. Exception (décision du mainteneur du 2026-11-18, confirmée le 2026-11-19 par ces mots : « C'est moi qui ai demandé anglais seul le 18 du 11 ») : le README et la page de présentation (GitHub Pages) sont en anglais, pour une portée internationale ; l'interface de l'application reste bilingue français/anglais.
-13. **Données personnelles.** Aucune donnée personnelle dans le dépôt ni sur GitHub (commits, PR, commentaires, captures),
-    contrôlé par la garde PII. Seule exception, décidée par le mainteneur le 2026-11-19 : son nom, affiché sur son profil
-    GitHub parce qu'il en a besoin pour le certificat de signature à son nom (Certum), et repris par GitHub comme auteur
-    ou commiteur des fusions faites sur GitHub (depuis le 2026-11-12) ; l'historique n'est pas réécrit. Par ces mots :
+1. **Feature freeze.** No new capability, no new module, no new package, no new option until the work queue in section 5 is finished, validated by the review (section 4) and by cryptobones-1337. Only exceptions: the « Interface and installation assistant » phase, phases 7, 8 and 9 and the « PowerShell script blocks (4104) » phase (section 5), opened in writing by the maintainer, each one once the phases before it have been validated by the review and by cryptobones-1337 (for the 4104 phase, its own start condition written in section 5), and for its own content only. Fix, test, document: yes. Add: no. If a fix seems to require a new function, stop and ask.
+   Static analysis tooling in CI, permitted during the freeze (maintainer agreement of 2026-11-23): to the question « Gel des fonctionnalités (CLAUDE.md, règle 1) : confirmes-tu que l'outillage d'analyse statique en CI (cargo audit, cargo deny, clippy bloquant, CodeQL, chaîne Rust figée et --locked) est permis pendant le gel ? » (Feature freeze (CLAUDE.md, rule 1): do you confirm that static analysis tooling in CI (cargo audit, cargo deny, blocking clippy, CodeQL, pinned Rust toolchain and --locked) is permitted during the freeze?), the answer: « Oui, permis » (Yes, permitted). This tooling adds no capability to the product, no module and no dependency to the binary; none of these checks is an independent review in the sense of section 4.
+2. **Defender is untouchable.** Never disable, weaken, stop or exclude anything in Microsoft Defender or in the Windows protections, not even to make a test pass.
+3. **Fail closed** for everything that touches security: signature verification, authorisation, secret generation, setting permissions (ACL), update validation. If the security operation fails, the dependent operation does not take place, and the failure is logged and visible in the interface.
+4. **No panic in the service.** The service is compiled with `panic = "abort"` and runs as SYSTEM: a panic stops it. No `[a..b]` on a `&str` that comes from outside (use `get()` or work on bytes), no `unwrap()` on external data. Every new or modified parser goes through `torturer` or `torturer_texte` in `service-rs/src/tests.rs`.
+5. **No allowlist by file name.** Every trust decision about a program rests on the full path AND the exact signer (`vol_donnees::editeur_correspond`), or on `natif::binaire_windows`. Never on the name alone, never on a substring of the signer.
+6. **Files in the data folder = untrusted data** as long as their owner and their permissions have not been checked (see lot 1).
+7. **No release.** Never create a `v*` tag or a GitHub release, nor run `publication.yml`. Never push directly to `main` if branch protection is active: go through a pull request.
+8. **No invented results.** Never state that a test passed, that Windows compatibility is verified or that a performance is measured without having done it. A test that cannot be run here is declared as such, with the reason.
+9. **No destructive test on the host machine.** No real malware. Scenarios are benign and reproducible, in CI or in a VM.
+10. **Small changes.** One lot = one coherent, reviewable commit (or pull request). No module rewrite when a targeted fix is enough. No new dependency without a justification (maintenance, licence, necessity) written in the commit message.
+11. **No secret** in logs, error messages, the command line or files readable by the authorised accounts.
+12. **Language.** Code, code comments, messages and commit messages in French, like the rest of the repository. Documentation (README, `docs/`, CHANGELOG, capability matrix, threat model, all `.md` files) in English since 2026-11-24 (maintainer decision, decision log outside the repository: « Oui, tout en anglais » (Yes, everything in English)). Before that date, the exception was (maintainer decision of 2026-11-18, confirmed on 2026-11-19 with these words: « C'est moi qui ai demandé anglais seul le 18 du 11 » (I am the one who asked for English only on 18/11)): the README and the presentation page (GitHub Pages) in English, for international reach. The application interface remains bilingual French/English.
+13. **Personal data.** No personal data in the repository or on GitHub (commits, PRs, comments, screenshots),
+    checked by the PII guard. Only exception, decided by the maintainer on 2026-11-19: his name, shown on his GitHub
+    profile because he needs it for the signing certificate in his name (Certum), and picked up by GitHub as author
+    or committer of the merges made on GitHub (since 2026-11-12); the history is not rewritten. With these words:
     « je dois laisser mon nom sur le profil GitHub. Donc ça, tu peux l'ajouter. C'est le seul P2I qui sera conservé
-    parce que j'en ai besoin pour récupérer mon certificat signé à mon nom » et « Réécrire l'historique. Non, c'est pas
-    nécessaire. » Les commits écrits par Claude Code restent sous l'identité `cryptobones-1337` ; le nom figure aussi dans
-    la signature des binaires (décision du 2026-11-11), jamais dans les fichiers du dépôt.
+    parce que j'en ai besoin pour récupérer mon certificat signé à mon nom » (I have to leave my name on the GitHub
+    profile. So that, you can add it. It is the only PII that will be kept because I need it to get my certificate
+    signed in my name) and « Réécrire l'historique. Non, c'est pas nécessaire. » (Rewrite the history. No, it is not
+    necessary.) Commits written by Claude Code stay under the `cryptobones-1337` identity; the name also appears in
+    the signature of the binaries (decision of 2026-11-11), never in the files of the repository.
 
-## 3. Repères d'architecture
+## 3. Architecture landmarks
 
-- `service-rs/` : service Windows en Rust, compte SYSTEM. Point d'entrée `main.rs`, cœur `moniteur.rs`, commandes reçues par `canal.rs` (tube `\\.\pipe\deR4Tizer`), fichiers partagés `commun.rs`, mise à jour `maj.rs`, protection du dossier de données `protection.rs`.
-- `src/` : interface C# (.NET Framework 4.8), sans droits admin ; les actions passent par une instance élevée (`--commande-fichier`) qui affiche la commande en clair avant envoi.
-- `installeur/deR4Tizer.wxs` + `construire-msi.ps1` : paquet MSI (WiX 3.14).
-- `C:\ProgramData\deR4Tizer` : état et données ; `secrets\` réservé à SYSTEM et aux administrateurs.
-- Tests : `cargo test --release` dans `service-rs` ; CI dans `.github/workflows/ci.yml` (runner `windows-latest`, administrateur et jetable).
+- `service-rs/`: Windows service in Rust, SYSTEM account. Entry point `main.rs`, core `moniteur.rs`, commands received by `canal.rs` (pipe `\\.\pipe\deR4Tizer`), shared files `commun.rs`, update `maj.rs`, protection of the data folder `protection.rs`.
+- `src/`: C# interface (.NET Framework 4.8), without admin rights; actions go through an elevated instance (`--commande-fichier`) that shows the command in plain text before sending it.
+- `installeur/deR4Tizer.wxs` + `construire-msi.ps1`: MSI package (WiX 3.14).
+- `C:\ProgramData\deR4Tizer`: state and data; `secrets\` reserved to SYSTEM and to administrators.
+- Tests: `cargo test --release` in `service-rs`; CI in `.github/workflows/ci.yml` (runner `windows-latest`, administrator and disposable).
 
-## 4. Protocole de travail
+## 4. Working protocol
 
-### Avant chaque lot
+### Before each lot
 
-1. Lire le code concerné, ses appelants et ses tests. Ne pas se fier au README.
-2. Écrire un plan court dans la conversation : fichiers touchés, comportement actuel, comportement visé, tests à ajouter, risques de régression.
-3. Si le lot modifie un comportement privilégié, le modèle de confiance des mises à jour, ou une action irréversible : attendre l'accord explicite.
+1. Read the code concerned, its callers and its tests. Do not rely on the README.
+2. Write a short plan in the conversation: files touched, current behaviour, target behaviour, tests to add, regression risks.
+3. If the lot changes a privileged behaviour, the trust model of updates, or an irreversible action: wait for explicit agreement.
 
-### Pendant
+### During
 
-- Écrire d'abord le test qui échoue sur le code actuel quand c'est possible, puis la correction. Pour tout test
-  ajouté ou modifié, avant la PR : le test échoue quand on retire le correctif (ou sous une mutation du correctif),
-  puis réussit quand on le remet, chaque variante recompilée dans son propre dossier de compilation. Un test qui n'a
-  jamais échoué ne prouve pas qu'il attrape le défaut.
-- Aucune affirmation « corrigé », « réussi » ou « vert » sans une sortie fraîche de la commande qui le prouve, sur le
-  commit et l'arbre annoncés ; le rapport d'un agent n'est pas une preuve : relire le diff ou le tableau.
-- Une cause reste une hypothèse, et se dit comme telle, tant qu'un essai ne l'a pas confirmée ; relever l'état (journal,
-  registre, valeurs) avant de corriger, et avant toute remise à l'instantané qui l'effacerait (passage bloqué compris).
-- Un contrôle qui n'a rien eu à vérifier (zéro événement, zéro fichier, lecture impossible) ne vaut pas réussite :
-  prévoir un témoin qui doit être retenu et un témoin qui doit être écarté, et faire échouer une lecture impossible.
-- Lancer `cargo test --release` et la compilation de l'interface quand l'environnement le permet.
-- Relire son propre diff : régressions, changements hors sujet, secrets, découpages de chaînes.
+- First write the test that fails on the current code when possible, then the fix. For every test
+  added or modified, before the PR: the test fails when the fix is removed (or under a mutation of the fix),
+  then passes when it is put back, each variant recompiled in its own build folder. A test that has
+  never failed does not prove that it catches the defect.
+- No « fixed », « passed » or « green » claim without fresh output from the command that proves it, on the
+  announced commit and tree; an agent's report is not proof: reread the diff or the table.
+- A cause remains a hypothesis, and is stated as such, until a test has confirmed it; record the state (log,
+  registry, values) before fixing, and before any snapshot restore that would erase it (blocked pass included).
+- A check that had nothing to verify (zero events, zero files, unreadable input) is not a success:
+  provide a witness that must be kept and a witness that must be rejected, and make an unreadable input fail.
+- Run `cargo test --release` and the interface build when the environment allows it.
+- Reread your own diff: regressions, off-topic changes, secrets, string slicing.
 
-### Après chaque lot
+### After each lot
 
-Rapport dans la conversation ET dans le message de commit :
+Report in the conversation AND in the commit message (in French, like commit messages):
 
 ```
 Lot N : <titre>
@@ -85,439 +87,406 @@ Risques restants
 - <limite connue, ou « aucun identifié »>
 ```
 
-Puis s'arrêter : chaque PR est relue avant que le lot suivant commence.
+Then stop: each PR is reviewed before the next lot starts.
 
-### Relecture des PR (depuis le 2026-10-24)
+### Review of PRs (since 2026-10-24)
 
-Sur décision de cryptobones-1337, la relecture des PR est faite par un agent de relecture Claude Code, à la place du
-relecteur externe :
-1. Sans l'historique de la session qui a écrit le code, mais sur une consigne rédigée par elle ; aucune écriture dans
-   le dépôt ni sur GitHub (ni poussée, ni fusion, ni commentaire), les fusions de contrôle se faisant dans un clone
-   temporaire ; sur les têtes des PR lues sur GitHub.
-2. Contrôles : arbre intégré reproduit et égal à l'arbre de la preuve ; pas d'empilement ; fusion sans conflit ;
-   `cargo test --release` (MSVC) et, pour chaque correctif, un test qui échoue sans lui ; documentation et règles de
-   ce fichier ; données personnelles ; description exacte.
-3. Verdict par PR : « Go » ou « Pas go » motivé ; sans preuve de passage sur l'arbre annoncé (CI verte depuis le
-   2026-11-19 ; avant, VM de test ou Windows Sandbox, section « Exception temporaire »), « Go sous réserve du passage ».
-4. Le verdict ne remplace ni ce passage ni la décision de fusion, qui reste à cryptobones-1337.
+By decision of cryptobones-1337, PRs are reviewed by a Claude Code review agent, instead of the
+external reviewer:
+1. Without the history of the session that wrote the code, but on an instruction written by it; no write to
+   the repository or to GitHub (no push, no merge, no comment), check merges being done in a temporary
+   clone; on the PR heads read on GitHub.
+2. Checks: integrated tree reproduced and equal to the tree of the proof; no stacking; merge without conflict;
+   `cargo test --release` (MSVC) and, for each fix, a test that fails without it; documentation and rules of
+   this file; personal data; accurate description.
+3. Verdict per PR: « Go » or « Pas go » (No go), with reasons; without proof of a pass on the announced tree (green CI since
+   2026-11-19; before that, test VM or Windows Sandbox, « Temporary exception » section), « Go sous réserve du passage » (Go subject to the pass).
+4. The verdict replaces neither this pass nor the merge decision, which remains with cryptobones-1337.
 
-Limite : l'agent est le même modèle que l'auteur des changements ; leurs angles morts peuvent coïncider. Cette
-relecture n'est donc pas une relecture indépendante, et rien ne doit la présenter comme telle (README, matrice,
+Limit: the agent is the same model as the author of the changes; their blind spots may coincide. This
+review is therefore not an independent review, and nothing may present it as such (README, matrix,
 publications).
 
-### Exception temporaire : GitHub Actions désactivé sur le dépôt (du 2026-10-22 au 2026-11-17)
+### Temporary exception: GitHub Actions disabled on the repository (from 2026-10-22 to 2026-11-17)
 
-Fin de l'exception : la CI GitHub a été rallumée le 2026-11-17, sur le choix du mainteneur (« Rallumer la CI », pour
-fusionner la PR #190). Depuis le 2026-11-19, par sa réponse « CI seule suffit » à la question « la preuve en VM
-reste-t-elle exigée en plus de la CI pour fusionner une PR de code ? » : la CI verte (`windows`,
-`integration-installation`, `integration-quarantaine`, `integration-maj`) fait la preuve de fusion d'une PR de code ;
-la VM de test reste pour ce que la CI ne couvre pas (essais au clavier en session ouverte, lot 3d avec Defender actif,
-campagne Kali). Point 5 ci-dessous : les vérifications obligatoires ne sont pas encore rétablies sur `main` (vérifié le
-2026-11-19 : branche sans protection ; réglage réservé au mainteneur, section 6). La suite décrit le régime de
-l'exception, gardé pour l'historique et comme secours si la CI redevient indisponible.
+End of the exception: GitHub CI was turned back on on 2026-11-17, by the maintainer's choice (« Rallumer la CI » (Turn the CI back on), to
+merge PR #190). Since 2026-11-19, by his answer « CI seule suffit » (CI alone is enough) to the question « la preuve en VM
+reste-t-elle exigée en plus de la CI pour fusionner une PR de code ? » (is the VM proof still required in addition to the CI to merge a code PR?): green CI (`windows`,
+`integration-installation`, `integration-quarantaine`, `integration-maj`) is the merge proof for a code PR;
+the test VM remains for what the CI does not cover (keyboard tests in an open session, lot 3d with Defender active,
+Kali campaign). Point 5 below: required checks are not yet restored on `main` (checked on
+2026-11-19: branch without protection; setting reserved to the maintainer, section 6). What follows describes the regime of
+the exception, kept for the record and as a fallback if the CI becomes unavailable again.
 
-Tant que GitHub Actions est désactivé, la CI obligatoire est remplacée par une preuve locale, avec l'accord de cryptobones-1337 :
-1. Les PR relues sont fusionnées, dans l'ordre fixé, sur une branche d'intégration locale partie de main.
-2. Sur ce commit : cargo test --release (MSVC), MSI construit depuis ce commit, scénarios 3a, 3b et 3c dans la VM Hyper-V de test, remise à son instantané « propre » avant et après chaque scénario (tests/vm/lancer.ps1 ; instantané pris avec Microsoft Defender actif et sans exclusion : son état est relevé à chaque scénario, et n'est exigé « pleinement actif » que par le lot 3d, tests/vm/lot3d.ps1 ; compte standard connecté à la console avec -SessionStandard, sinon la session de l'instantané). Windows Sandbox (tests/bac-a-sable/lancer.ps1) reste un secours, signalé comme tel dans la preuve. Passage complet : tests/bac-a-sable/passage-complet.ps1. Aucun ÉCHOUÉ ; seuls les NON EXÉCUTÉ déjà connus et justifiés. Un passage dans la VM ne vaut pas, à lui seul, réussite du lot 3d.
-   Tout passage est surveillé par une vigie (tests/bac-a-sable/vigie.ps1, une vérification par minute) qui signale chaque scénario terminé, tout blocage (bac à sable jamais ouvert ou fermé sans résultat, VM arrêtée, aucun fichier de travail du scénario écrit pendant 30 minutes) et la fin. Un passage bloqué est arrêté, nettoyé (bac à sable fermé, clés de test effacées, VM remise à son instantané) et relancé ; il ne compte jamais comme preuve.
-   Dispense (mainteneur, 2026-10-25 : « No vm for documentation », en réponse à la proposition « exempt PRs that touch only *.md files outside src/ and service-rs/ ») : une PR qui ne modifie que des fichiers Markdown (`*.md`) hors de `src/` et de `service-rs/` n'a pas de passage VM. Relecture et contrôle des données personnelles restent obligatoires ; le verdict est « Go » (sans réserve de passage) ; la preuve en commentaire le dit (« documentation seule : passage non requis », liste des fichiers modifiés, arbre relu). Barrière d'arbre : le commit relu tient lieu de commit testé (`git diff <commit relu> main` vide après la fusion). Une PR qui touche aussi un autre fichier, même un script de test ou un .md sous `src/` ou `service-rs/`, a son passage. Une PR de documentation fusionnée entre le passage d'une PR de code et sa fusion change main : elle passe avant le passage, ou le passage est refait.
-   Accélération (mainteneur, 2026-10-25, par ces mots : « I want all 6 », puis « Sorry not 6 », en réponse à six propositions numérotées ; la sixième, une seconde VM de test, est donc écartée) :
-   - (1) avant toute demande de relecture, l'auteur applique lui-même la liste du relecteur : une mutation par ligne de code changée, chacune compilée à part, et chaque phrase de documentation comparée à la preuve ;
-   - (2) un même passage VM peut couvrir plusieurs PR qui ne modifient pas les mêmes fichiers, fusionnées dans l'ordre sur la branche d'intégration ; s'il échoue, aucune n'est fusionnée ;
-   - (3) le scénario de mesure du cycle (`tests/vm/mesure.ps1`) n'est lancé que pour une PR qui touche le cycle de surveillance (`moniteur.rs` ou un module appelé par le cycle) ;
-   - (4) le dossier de conception des phases suivantes (4, 6, 7) peut être préparé avant la validation de la phase en cours, en documents seulement, tenus hors du dépôt : aucun code d'une phase avant qu'elle commence (conditions de la section 5 et de la règle 1 de la section 2) ; c'est une exception, pour les seuls documents, à « une phase à la fois » (section 5) ;
-   - (5) pendant les allers-retours d'une PR, un passage réduit aux scénarios concernés (`tests/bac-a-sable/scenarios-concernes.ps1`) suffit ; le passage complet reste exigé sur l'arbre intégré, avant chaque fusion.
-3. Preuve en commentaire de chaque PR concernée : hash du commit et de l'arbre testés, SHA-256 du MSI, version de Windows, tableaux complets.
-4. Les PR sont fusionnées dans le même ordre, sans modification après le test ; ensuite, git diff <commit testé> main doit être vide, sinon nouveau test.
-5. Au retour de GitHub Actions : vérifications obligatoires rétablies par cryptobones-1337, CI complète relancée sur main, tout échec corrigé avant tout autre travail.
+As long as GitHub Actions is disabled, the required CI is replaced by a local proof, with the agreement of cryptobones-1337:
+1. The reviewed PRs are merged, in the set order, onto a local integration branch started from main.
+2. On that commit: cargo test --release (MSVC), MSI built from that commit, scenarios 3a, 3b and 3c in the Hyper-V test VM, restored to its « propre » (clean) snapshot before and after each scenario (tests/vm/lancer.ps1; snapshot taken with Microsoft Defender active and without exclusion: its state is recorded at each scenario, and is required to be « fully active » only by lot 3d, tests/vm/lot3d.ps1; standard account logged on at the console with -SessionStandard, otherwise the snapshot's session). Windows Sandbox (tests/bac-a-sable/lancer.ps1) remains a fallback, flagged as such in the proof. Full pass: tests/bac-a-sable/passage-complet.ps1. No ÉCHOUÉ (FAILED); only the NON EXÉCUTÉ (NOT RUN) results already known and justified. A pass in the VM is not, on its own, a success of lot 3d.
+   Every pass is watched by a watchdog (tests/bac-a-sable/vigie.ps1, one check per minute) that reports each finished scenario, any blockage (sandbox never opened or closed without a result, VM stopped, no working file of the scenario written for 30 minutes) and the end. A blocked pass is stopped, cleaned up (sandbox closed, test keys erased, VM restored to its snapshot) and restarted; it never counts as proof.
+   Exemption (maintainer, 2026-10-25: « No vm for documentation », in reply to the proposal « exempt PRs that touch only *.md files outside src/ and service-rs/ »): a PR that changes only Markdown files (`*.md`) outside `src/` and `service-rs/` has no VM pass. Review and the personal data check remain mandatory; the verdict is « Go » (without a pass reservation); the proof in a comment says so (« documentation seule : passage non requis » (documentation only: pass not required), list of the modified files, tree reviewed). Tree barrier: the reviewed commit stands in for the tested commit (`git diff <reviewed commit> main` empty after the merge). A PR that also touches another file, even a test script or a .md under `src/` or `service-rs/`, has its pass. A documentation PR merged between the pass of a code PR and its merge changes main: it goes before the pass, or the pass is redone.
+   Acceleration (maintainer, 2026-10-25, with these words: « I want all 6 », then « Sorry not 6 », in reply to six numbered proposals; the sixth, a second test VM, is therefore set aside):
+   - (1) before any review request, the author applies the reviewer's list himself: one mutation per changed line of code, each compiled separately, and each documentation sentence compared with the proof;
+   - (2) a single VM pass can cover several PRs that do not modify the same files, merged in order onto the integration branch; if it fails, none is merged;
+   - (3) the cycle measurement scenario (`tests/vm/mesure.ps1`) is run only for a PR that touches the monitoring cycle (`moniteur.rs` or a module called by the cycle);
+   - (4) the design file of the following phases (4, 6, 7) can be prepared before the validation of the current phase, as documents only, kept outside the repository: no code of a phase before it starts (conditions of section 5 and of rule 1 of section 2); this is an exception, for documents only, to « one phase at a time » (section 5);
+   - (5) during the back-and-forth of a PR, a pass reduced to the relevant scenarios (`tests/bac-a-sable/scenarios-concernes.ps1`) is enough; the full pass remains required on the integrated tree, before each merge.
+3. Proof in a comment on each PR concerned: hash of the tested commit and tree, SHA-256 of the MSI, Windows version, full tables.
+4. The PRs are merged in the same order, without modification after the test; then, git diff <tested commit> main must be empty, otherwise a new test.
+5. When GitHub Actions returns: required checks restored by cryptobones-1337, full CI rerun on main, every failure fixed before any other work.
 
-Aucune distribution tant que la CI GitHub n'est pas verte sur main, que le lot 3d n'a pas réussi en VM sur la version distribuée et signée (mainteneur, 2026-11-19 : « A5 lot 3D, il fallait bien rejouer sur la version distribuée et signée »), que les binaires ne sont pas signés et qu'une relecture indépendante (personne ou organisme autre que Claude) n'a pas été faite.
-Bilan à la publication de la v4.3 (2026-11-23) : CI verte sur main au commit du tag (run 45072779823, 46243f7), lot 3d réussi en VM sur
-le MSI signé publié, binaires et MSI signés (Certum). Trois conditions non tenues, écarts décidés par le mainteneur :
-- relecture indépendante : les relectures du 2026-11-17 et du 2026-11-21 ont été faites par un autre agent Claude (Claude
-  Fable), sans l'historique du développement ; elles ne remplissent pas la condition ci-dessus (écart inscrit le
-  2026-11-23, la condition reste entière). L'audit par passes du 2026-11-23, fait par Claude, ne la remplit pas non plus ;
-- essais D4-1 (section 5, campagne de fin de phase 7) ;
-- essai de la révocation avec le vrai certificat expiré et une signature horodatée (`docs/security/threat-model.md`,
-  « Compte GitHub compromis ») : non fait (écart inscrit le 2026-11-23).
+No distribution as long as GitHub CI is not green on main, lot 3d has not succeeded in a VM on the distributed and signed version (maintainer, 2026-11-19: « A5 lot 3D, il fallait bien rejouer sur la version distribuée et signée » (A5 lot 3D, it did have to be replayed on the distributed and signed version)), the binaries are not signed and an independent review (a person or organisation other than Claude) has not been done.
+Assessment at the release of v4.3 (2026-11-23): green CI on main at the tag commit (run 45072779823, 46243f7), lot 3d succeeded in a VM on
+the published signed MSI, binaries and MSI signed (Certum). Three conditions not met, deviations decided by the maintainer:
+- independent review: the reviews of 2026-11-17 and 2026-11-21 were done by another Claude agent (Claude
+  Fable), without the development history; they do not meet the condition above (deviation recorded on
+  2026-11-23, the condition remains in full). The audit by passes of 2026-11-23, done by Claude, does not meet it either;
+- tests D4-1 (section 5, end of phase 7 campaign);
+- test of revocation with the real expired certificate and a timestamped signature (`docs/security/threat-model.md`,
+  « Compte GitHub compromis » (Compromised GitHub account)): not done (deviation recorded on 2026-11-23).
 
-## 5. File de travail (dans cet ordre)
+## 5. Work queue (in this order)
 
-### Lot 1 : propriété et droits du dossier de données (bloquant, élévation de privilèges)
+### Lot 1: ownership and permissions of the data folder (blocking, privilege escalation)
 
-**Constat :** le MSI ne crée pas `C:\ProgramData\deR4Tizer` ; le service le crée avec les droits hérités de `ProgramData` (`Utilisateurs` peut y créer fichiers et dossiers) ; `protection.rs` ne pose les droits qu'après l'ouverture d'une session et ne change jamais le propriétaire. Un compte standard qui crée le dossier (ou `maj\`) avant le service en reste propriétaire, donc peut toujours réécrire ses droits. Il peut alors remplacer `maj\<version>\deR4Tizer.msi` entre la vérification et `msiexec` (SYSTEM), ou `maj\sauvegarde\*.exe` copié par le retour arrière dans `Program Files`.
+**Finding:** the MSI does not create `C:\ProgramData\deR4Tizer`; the service creates it with the permissions inherited from `ProgramData` (`Users` can create files and folders in it); `protection.rs` sets the permissions only after a session is opened and never changes the owner. A standard account that creates the folder (or `maj\`) before the service remains its owner, and can therefore always rewrite its permissions. It can then replace `maj\<version>\deR4Tizer.msi` between the verification and `msiexec` (SYSTEM), or `maj\sauvegarde\*.exe` copied by the rollback into `Program Files`.
 
-**À faire :**
+**To do:**
 
-- MSI : créer le dossier (`CreateFolder` + `util:PermissionEx`), SYSTEM et Administrateurs en contrôle total, sans héritage.
-- Service, au démarrage et avant toute lecture de fichier de données : imposer le propriétaire Administrateurs (`S-1-5-32-544`) sur le dossier et tout son contenu, poser les droits protégés (SYSTEM, Administrateurs, lecteurs autorisés en lecture), sans attendre de session ouverte. Vérifier le résultat ; en cas d'échec, journaliser, signaler dans l'interface et ne charger aucun fichier de configuration ou de secret (valeurs par défaut sûres).
-- `commun::lire` (et la lecture des secrets) : refuser un fichier dont le propriétaire n'est ni SYSTEM ni Administrateurs. Décision pure testable séparément de l'appel Windows.
-- `maj.rs` : préparer l'installation dans un dossier de travail réservé à SYSTEM sous `%ProgramFiles%\deR4Tizer` (créé par le service, propriétaire vérifié) ; y copier les fichiers vérifiés ; revérifier empreinte et signature dans ce dossier ; y garder aussi la sauvegarde du retour arrière.
-- `api.rs` et `notifications.rs` : créer jeton et secrets avec leurs droits dès la création (pas d'écriture puis `icacls`), et traiter l'échec d'`icacls` comme un échec.
+- MSI: create the folder (`CreateFolder` + `util:PermissionEx`), SYSTEM and Administrators with full control, without inheritance.
+- Service, at start-up and before any read of a data file: force the Administrators owner (`S-1-5-32-544`) on the folder and all its contents, set the protected permissions (SYSTEM, Administrators, authorised readers with read access), without waiting for an open session. Check the result; on failure, log, report in the interface and load no configuration or secret file (safe default values).
+- `commun::lire` (and the reading of secrets): reject a file whose owner is neither SYSTEM nor Administrators. Pure decision, testable separately from the Windows call.
+- `maj.rs`: prepare the installation in a working folder reserved to SYSTEM under `%ProgramFiles%\deR4Tizer` (created by the service, owner checked); copy the verified files there; recheck hash and signature in that folder; also keep the rollback backup there.
+- `api.rs` and `notifications.rs`: create token and secrets with their permissions at creation time (not a write followed by `icacls`), and treat a failure of `icacls` as a failure.
 
-**Critères d'acceptation :**
+**Acceptance criteria:**
 
-- Après installation MSI : propriétaire Administrateurs, aucun droit d'écriture pour `Utilisateurs`, `Utilisateurs authentifiés` ni le compte connecté (vérifié par `Get-Acl`).
-- Un compte standard ne peut créer aucun fichier ni dossier dans `C:\ProgramData\deR4Tizer`, ni avant ni après la première ouverture de session.
-- Dossier précréé par un compte standard avant l'installation : après installation, propriétaire Administrateurs et plus aucun accès en écriture pour ce compte.
-- Un fichier de configuration appartenant à un compte standard est ignoré et signalé.
-- Tests unitaires de la décision « propriétaire acceptable » ; test d'intégration CI (lot 3) couvrant les trois scénarios.
+- After MSI installation: Administrators owner, no write permission for `Users`, `Authenticated Users` or the logged-on account (checked with `Get-Acl`).
+- A standard account cannot create any file or folder in `C:\ProgramData\deR4Tizer`, neither before nor after the first logon.
+- Folder pre-created by a standard account before installation: after installation, Administrators owner and no more write access for that account.
+- A configuration file owned by a standard account is ignored and reported.
+- Unit tests of the « acceptable owner » decision; CI integration test (lot 3) covering the three scenarios.
 
-### Lot 1 bis : quarantaine et mise à l'écart sans perte de données
+### Lot 1 bis: quarantine and set-aside without data loss
 
-**Constat :** `protection.rs:trier` supprime un élément quand sa mise à l'écart échoue ; et `reponse.rs:mettre_en_quarantaine` déplace le fichier par `fs::rename`, qui conserve le propriétaire d'origine (le compte de l'utilisateur). Au démarrage suivant, le fichier quarantainé est donc écarté (restauration impossible) ou supprimé (perte du fichier d'un faux positif).
+**Finding:** `protection.rs:trier` deletes an item when setting it aside fails; and `reponse.rs:mettre_en_quarantaine` moves the file with `fs::rename`, which keeps the original owner (the user's account). At the next start-up, the quarantined file is therefore set aside (restore impossible) or deleted (loss of the file of a false positive).
 
-**À faire :**
+**To do:**
 
-- `trier` : jamais de suppression ; déplacement impossible = élément intact, échec journalisé, démarrage en échec fermé.
-- Quarantaine : copie vers un fichier créé par le service avec ses droits (propriétaire SYSTEM), SHA-256 enregistré dans `quarantaine.json`, puis suppression de l'original ; empreinte vérifiée à la restauration.
-- Migration : fichiers de `quarantaine\` présents dans `quarantaine.json` recopiés ainsi au démarrage, pas écartés.
+- `trier`: never delete; move impossible = item intact, failure logged, start-up fails closed.
+- Quarantine: copy to a file created by the service with its permissions (SYSTEM owner), SHA-256 recorded in `quarantaine.json`, then deletion of the original; hash checked at restore.
+- Migration: files in `quarantaine\` present in `quarantaine.json` copied again this way at start-up, not set aside.
 
-**Critères :** tests « quarantaine, redémarrage, restauration », « ancien fichier quarantainé migré sans perte », « déplacement impossible : intact et échec fermé », « création de ecartes impossible : intact et échec fermé ». Scénario « quarantaine, redémarrage, restauration » ajouté au lot 3.
+**Criteria:** tests « quarantine, restart, restore », « old quarantined file migrated without loss », « move impossible: intact and fail closed », « creation of ecartes impossible: intact and fail closed ». Scenario « quarantine, restart, restore » added to lot 3.
 
-### Lot 1 ter : opérations de fichiers SYSTEM sur des chemins de l'utilisateur
+### Lot 1 ter: SYSTEM file operations on user paths
 
-**Constat :** plusieurs opérations du service, en SYSTEM, portent sur des chemins choisis ou contrôlés par
-l'utilisateur, avec un contrôle puis une opération par chemin. Une jonction ou un lien posé entre les deux
-redirige l'opération vers un dossier système (élévation de privilèges) :
-- `reponse.rs`, restauration : écriture du fichier et de sa marque Internet à `chemin_origine` ;
-- `reponse.rs`, mise en quarantaine : lecture puis suppression de l'original (pause de 500 ms entre l'arrêt
-  des processus et la copie) ;
-- `reponse.rs`, reprise au démarrage : lecture de l'empreinte de `chemin_origine` à chaque démarrage.
+**Finding:** several operations of the service, as SYSTEM, act on paths chosen or controlled by
+the user, with a check and then an operation by path. A junction or a link placed between the two
+redirects the operation to a system folder (privilege escalation):
+- `reponse.rs`, restore: write of the file and of its Internet mark to `chemin_origine`;
+- `reponse.rs`, quarantine: read then deletion of the original (500 ms pause between stopping
+  the processes and the copy);
+- `reponse.rs`, resumption at start-up: read of the hash of `chemin_origine` at each start-up.
 
-**À faire :**
+**To do:**
 
-- Quarantaine : ouvrir l'original une seule fois par handle sans suivre les liens
-  (`FILE_FLAG_OPEN_REPARSE_POINT`), vérifier son chemin final (`GetFinalPathNameByHandle`) contre le chemin
-  attendu, lire le contenu et la marque Internet, puis supprimer par ce même handle (`FileDispositionInfo`) ;
-  aucune opération par chemin après le contrôle.
-- Restauration : écrire le fichier et sa marque en empruntant le jeton de l'utilisateur propriétaire de
-  l'emplacement (session ouverte), pour que les droits de Windows s'appliquent à lui et pas à SYSTEM ; si
-  aucune session de cet utilisateur n'est ouverte, refuser et proposer une restauration dans un dossier créé
-  par le service.
-- Reprise au démarrage : lire l'empreinte de l'original par handle sans suivre les liens, avec vérification
-  du chemin final ; un élément de chemin qui est un lien = original « différent » (la copie est gardée).
-- Outillage : compilation locale alignée sur la CI (chaîne MSVC) dans `compiler-rs.ps1` et le README ; les
-  tests sur un poste se font avec l'artefact de la CI, jamais avec une compilation locale GNU.
+- Quarantine: open the original only once by handle without following links
+  (`FILE_FLAG_OPEN_REPARSE_POINT`), check its final path (`GetFinalPathNameByHandle`) against the expected
+  path, read the content and the Internet mark, then delete through that same handle (`FileDispositionInfo`);
+  no operation by path after the check.
+- Restore: write the file and its mark by borrowing the token of the user who owns the
+  location (open session), so that Windows permissions apply to that user and not to SYSTEM; if
+  no session of that user is open, refuse and offer a restore into a folder created
+  by the service.
+- Resumption at start-up: read the hash of the original by handle without following links, with a check
+  of the final path; a path element that is a link = original « different » (the copy is kept).
+- Tooling: local build aligned with the CI (MSVC toolchain) in `compiler-rs.ps1` and the README; the
+  tests on a machine are done with the CI artefact, never with a local GNU build.
 
-**Critères d'acceptation :**
+**Acceptance criteria:**
 
-- Test « jonction posée avant restauration » : rien n'est écrit hors du dossier d'origine.
-- Test « jonction posée pendant la quarantaine » : rien n'est lu ni supprimé hors du fichier visé.
-- Test « lien dans le chemin d'origine au démarrage » : la copie est gardée, rien n'est lu hors du chemin.
-- Restauration sans session de l'utilisateur : refusée ou dirigée vers le dossier du service, jamais écrite
-  en SYSTEM à l'emplacement d'origine.
-- Scénarios correspondants ajoutés au lot 3.
+- Test « junction placed before restore »: nothing is written outside the original folder.
+- Test « junction placed during quarantine »: nothing is read or deleted outside the targeted file.
+- Test « link in the original path at start-up »: the copy is kept, nothing is read outside the path.
+- Restore without a session of the user: refused or directed to the service folder, never written
+  as SYSTEM at the original location.
+- Corresponding scenarios added to lot 3.
 
-### Lot 2 : mise à jour, retour en arrière par manifeste et transaction
+### Lot 2: update, rollback through the manifest, and transaction
 
-**Constat :** la version n'est lue que dans le manifeste, qui n'est pas signé. Un manifeste falsifié annonçant « 99.0 » peut faire installer une ancienne version signée par la bonne clé mais vulnérable. Depuis la v4.3, le MSI porte `AllowDowngrades="yes"` (pour le retour arrière) : le refus d'installer une version plus ancienne, seule barrière restante, a disparu. Le lot 2 doit lire la version dans l'artefact signé avant toute installation, ou rétablir ce refus et faire le retour arrière autrement.
+**Finding:** the version is read only from the manifest, which is not signed. A forged manifest announcing « 99.0 » can get an old version installed that is signed with the right key but vulnerable. Since v4.3, the MSI carries `AllowDowngrades="yes"` (for the rollback): the refusal to install an older version, the only remaining barrier, has gone. Lot 2 must read the version from the signed artefact before any installation, or restore that refusal and do the rollback in another way.
 
-**À faire :**
+**To do:**
 
-- Lire la version réelle dans l'artefact après vérification de signature : ressource de version de l'exécutable, `ProductVersion` du MSI. Exiger : version de l'artefact = version du manifeste, et strictement plus récente que la version installée. Sinon refuser.
-- Manifeste strict : champs connus seulement, pas de doublon de fichier, liste attendue complète (MSI obligatoire, exécutables cohérents), taille bornée.
-- Santé après installation : envoyer la commande `{"Action":"verification"}` dans le tube et exiger une réponse JSON valide du service, pas seulement l'existence du tube. En cas d'échec : réinstaller le MSI précédent conservé dans le dossier de travail (pas une copie d'exécutables qui laisse la base Windows Installer incohérente).
-- Clés épinglées : liste (clé actuelle et clé suivante) dans `DER4TIZER_CLES_SIGNATURE`, chaque entrée de 64 caractères hexadécimaux ; l'interface n'affiche « clé épinglée » que si au moins une entrée est valide.
+- Read the real version from the artefact after signature verification: version resource of the executable, `ProductVersion` of the MSI. Require: artefact version = manifest version, and strictly newer than the installed version. Otherwise refuse.
+- Strict manifest: known fields only, no duplicate file, complete expected list (MSI mandatory, consistent executables), bounded size.
+- Health after installation: send the command `{"Action":"verification"}` through the pipe and require a valid JSON response from the service, not only the existence of the pipe. On failure: reinstall the previous MSI kept in the working folder (not a copy of executables that leaves the Windows Installer database inconsistent).
+- Pinned keys: list (current key and next key) in `DER4TIZER_CLES_SIGNATURE`, each entry of 64 hexadecimal characters; the interface shows « pinned key » only if at least one entry is valid.
 
-**Critères d'acceptation :** tests unitaires sur la décision d'installation couvrant : version artefact ≠ manifeste, version égale ou plus ancienne, fichier manquant, fichier en double, fichier inattendu, empreinte fausse, signature absente, clé inattendue, liste de clés vide ou mal formée. Retour arrière décrit et testé au moins par simulation (service qui ne répond pas).
+**Acceptance criteria:** unit tests on the installation decision covering: artefact version ≠ manifest, equal or older version, missing file, duplicate file, unexpected file, wrong hash, missing signature, unexpected key, empty or malformed key list. Rollback described and tested at least by simulation (service that does not respond).
 
-### Lot 3 : CI d'intégration et chaîne de publication
+### Lot 3: integration CI and release chain
 
-- Nouveau job CI sur `windows-latest` qui, avec le MSI construit : installe ; vérifie service (compte, démarrage, reprise), droits du dossier (lot 1) ; crée un compte local standard et vérifie depuis ce compte (`Start-Process -Credential`) que le tube refuse ses commandes et qu'il ne peut rien écrire dans le dossier de données ; scénario du dossier précréé, y compris avec des fichiers à DACL vide (`D:P`, propriétaire illisible pour SYSTEM) comme `config.json`, `lecteurs.json` ou `apprentissage.json` : ils doivent être écartés et jamais chargés ; fichier piégé tenu ouvert (sans partage de suppression) pendant le démarrage du service, puis redémarrage : jamais chargé, ni au premier ni au second démarrage ; quarantaine d'un fichier, redémarrage du service, restauration : fichier restauré à l'identique ; lot 1 ter avec le service réel : jonction posée avant une restauration (rien d'écrit hors du dossier d'origine), jonction posée pendant une mise en quarantaine (rien de lu ni de supprimé hors du fichier visé), lien dans le chemin d'origine au démarrage (copie gardée), restauration sans session du propriétaire (refusée, repli dans le dossier du service, jamais d'écriture en SYSTEM à l'emplacement d'origine), restauration avec session (fichier créé sous l'identité de l'utilisateur) ; mise à niveau depuis le MSI de la version précédente ; désinstallation avec et sans `GARDER_DONNEES=1`.
-- Scénario d'exécution avec Microsoft Defender actif, avec l'artefact MSVC de la CI : installation,
-  mise en quarantaine d'un fichier de test bénin, redémarrage, restauration. Aucune détection.
-  Tant que ce scénario n'a pas réussi, aucune distribution, même à un testeur.
-- WiX : vérifier l'empreinte SHA-256 de `wix314-binaries.zip` (valeur figée dans le workflow) dans `ci.yml` et `publication.yml`.
-- `publication.yml` : séparer compilation (sans secret) et signature (reçoit seulement les artefacts, environnement `publication`). Aucune compilation ni script de dépendance dans le job qui détient le certificat.
+- New CI job on `windows-latest` that, with the built MSI: installs; checks the service (account, start-up, recovery) and the folder permissions (lot 1); creates a standard local account and checks from that account (`Start-Process -Credential`) that the pipe refuses its commands and that it cannot write anything in the data folder; pre-created folder scenario, including with files with an empty DACL (`D:P`, owner unreadable for SYSTEM) such as `config.json`, `lecteurs.json` or `apprentissage.json`: they must be set aside and never loaded; trapped file held open (without delete sharing) during the start-up of the service, then restart: never loaded, neither at the first nor at the second start-up; quarantine of a file, restart of the service, restore: file restored identically; lot 1 ter with the real service: junction placed before a restore (nothing written outside the original folder), junction placed during a quarantine (nothing read or deleted outside the targeted file), link in the original path at start-up (copy kept), restore without a session of the owner (refused, fallback to the service folder, never a write as SYSTEM at the original location), restore with a session (file created under the user's identity); upgrade from the MSI of the previous version; uninstallation with and without `GARDER_DONNEES=1`.
+- Run scenario with Microsoft Defender active, with the MSVC artefact of the CI: installation,
+  quarantine of a benign test file, restart, restore. No detection.
+  As long as this scenario has not succeeded, no distribution, not even to a tester.
+- WiX: check the SHA-256 hash of `wix314-binaries.zip` (value pinned in the workflow) in `ci.yml` and `publication.yml`.
+- `publication.yml`: separate build (without secret) and signing (receives only the artefacts, `publication` environment). No build and no dependency script in the job that holds the certificate.
 
-**Critère :** tous ces contrôles s'exécutent à chaque pull request et échouent bruyamment.
+**Criterion:** all these checks run on every pull request and fail loudly.
 
-### Lot 4 : état des lieux documenté (phase 0, une journée au plus)
+### Lot 4: documented inventory (phase 0, one day at most)
 
-Créer à partir du code et des revues déjà faites, sans réaudit complet :
+Create from the code and the reviews already done, without a full re-audit:
 
-- `docs/roadmap/capability-matrix.md` : chaque capacité avec un état parmi « prévu », « implémenté non vérifié », « testé en labo », « validé sur Windows », « prêt pour la production » ; fichiers sources ; prérequis Windows ; tests existants ; limites. L'IDS, le DPI et le NDR sont classés expérimentaux. Limite connue à y inscrire : en échec de la protection du dossier de données, l'alerte critique reste locale (les secrets de remontée sont ignorés), le prestataire n'est pas prévenu. Risque résiduel à y inscrire : le MSI accepte une version plus ancienne (`AllowDowngrades`, nécessaire au retour arrière) ; le refus d'une version plus ancienne est assuré par le service, sur la version lue dans le paquet signé, et un administrateur peut toujours installer une version plus ancienne à la main. Limite à y inscrire : l'export syslog (`export.rs`) part en clair (UDP ou TCP, sans TLS) ; à réserver à un réseau local de confiance.
-- `docs/security/threat-model.md` : frontières de privilège (service SYSTEM, interface, tube, API, mise à jour, dossier de données, capture réseau), attaquants considérés (compte standard local, appareil du LAN, compte GitHub compromis, liste de menaces corrompue), mesures et risques résiduels.
-- `docs/architecture/current-state.md` et `docs/testing/baseline.md` (commandes de compilation et de test réellement exécutées, résultats).
-- `docs/reponse/politique.md` : niveaux de réponse 0 à 3. Seules actions de niveau 3 (automatiques) autorisées : blocage des IP Spamhaus DROP et Feodo Tracker, suspension du programme qui touche un leurre. Tout le reste, IPS compris, au niveau 2 au plus (désactivé par défaut ou confirmation).
-- README aligné sur la matrice : aucune affirmation plus forte que l'état réel.
+- `docs/roadmap/capability-matrix.md`: each capability with a state among « planned » (« prévu »), « implemented, not verified » (« implémenté non vérifié »), « lab-tested » (« testé en labo »), « validated on Windows » (« validé sur Windows »), « production-ready » (« prêt pour la production »); source files; Windows prerequisites; existing tests; limits. The IDS, the DPI and the NDR are classified as experimental. Known limit to record there: when the protection of the data folder fails, the critical alert stays local (the forwarding secrets are ignored), the service provider is not notified. Residual risk to record there: the MSI accepts an older version (`AllowDowngrades`, needed for the rollback); the refusal of an older version is ensured by the service, on the version read from the signed package, and an administrator can always install an older version by hand. Limit to record there: the syslog export (`export.rs`) is sent in plain text (UDP or TCP, without TLS); to be kept to a trusted local network.
+- `docs/security/threat-model.md`: privilege boundaries (SYSTEM service, interface, pipe, API, update, data folder, network capture), attackers considered (local standard account, LAN device, compromised GitHub account, corrupted threat list), measures and residual risks.
+- `docs/architecture/current-state.md` and `docs/testing/baseline.md` (build and test commands actually run, results).
+- `docs/reponse/politique.md`: response levels 0 to 3. Only level 3 (automatic) actions allowed: blocking of the Spamhaus DROP and Feodo Tracker IPs, suspension of the program that touches a decoy. Everything else, IPS included, at level 2 at most (disabled by default or confirmation).
+- README aligned with the matrix: no claim stronger than the real state.
 
-### Lot 5 : correctifs non bloquants des revues
+### Lot 5: non-blocking fixes from the reviews
 
-- `apprentissage.rs`, `editeur()` : clé de cache = chemin + date de modification.
-- `api.rs`, `nouveau_jeton()` : le résultat de `BCryptGenRandom` est ignoré ; en cas d'échec, un jeton nul serait accepté. Échouer fermé : pas d'API sans jeton valide.
-- `api.rs`, `/api/v1/sante` : ne plus renvoyer le nom de la machine sans jeton.
-- `canal.rs` : délai maximal de lecture d'une commande (un client admin silencieux bloque aujourd'hui tout le canal) et taille maximale déjà bornée, à tester.
-- Documenter dans le README que `msiexec /fa` (réparation) par un compte standard arrête puis relance brièvement le service.
-- Lectures du dossier de données hors de `commun::lire_fichier` (menaces.rs, ids.rs `regles\`, hygiene.rs
-  `loldrivers.json`, dpi.rs JA3, siem.rs) : propriétaire contrôlé partout ; en échec fermé, aucune réponse
-  automatique alimentée par ces fichiers (blocage automatique, IPS).
-- `commun::lisible_en_echec` : retirer `dns.json`.
-- `natif::avec_privilege_restauration` : si `RevertToSelf` échoue, arrêter le service.
-- canal.rs : tube occupé par un autre processus au démarrage (squat) : alerte critique locale
-  avec le PID et le chemin du processus qui le détient, plutôt qu'une simple ligne de journal.
+- `apprentissage.rs`, `editeur()`: cache key = path + modification date.
+- `api.rs`, `nouveau_jeton()`: the result of `BCryptGenRandom` is ignored; on failure, a null token would be accepted. Fail closed: no API without a valid token.
+- `api.rs`, `/api/v1/sante`: no longer return the machine name without a token.
+- `canal.rs`: maximum read time for a command (a silent admin client blocks the whole channel today) and maximum size already bounded, to be tested.
+- Document in the README that `msiexec /fa` (repair) by a standard account briefly stops and restarts the service.
+- Reads of the data folder outside `commun::lire_fichier` (menaces.rs, ids.rs `regles\`, hygiene.rs
+  `loldrivers.json`, dpi.rs JA3, siem.rs): owner checked everywhere; when failing closed, no automatic
+  response fed by these files (automatic blocking, IPS).
+- `commun::lisible_en_echec`: remove `dns.json`.
+- `natif::avec_privilege_restauration`: if `RevertToSelf` fails, stop the service.
+- canal.rs: pipe occupied by another process at start-up (squatting): local critical alert
+  with the PID and the path of the process that holds it, rather than a mere log line.
 
-### Ensuite (après validation des lots 1 à 5, une phase à la fois, avec accord)
+### Next (after validation of lots 1 to 5, one phase at a time, with agreement)
 
-1. Phase 1 complète : autorisation vérifiée par commande, validation de chaque champ reçu, limites de débit et de concurrence, tests de messages malformés, tronqués, silencieux.
-   Architecture, dans la même phase (à faire après la fusion des PR ouvertes, qui touchent ces fichiers) :
-   - Condition préalable : mesure du cycle de surveillance (durée de chaque étape, PowerShell lancés pendant le cycle, temps passé sous le verrou). Sans ces chiffres, ni découpage de `Moniteur` ni optimisation.
-   - `Moniteur` (moniteur.rs), une fois la mesure faite et seulement là où elle le justifie : les actions longues (quarantaine, restauration, baseline, panique) faites hors du verrou `Arc<Mutex<Moniteur>>`, pris seulement pour enregistrer le résultat : une quarantaine ne doit plus aveugler la surveillance, ni un cycle lent bloquer l'interface ; `executer()` (28 commandes dans un seul `match`) découpé en un gestionnaire par domaine (réponse, blocages, configuration, mise à jour, protection) ; `passage()` (cycle de 3 s) découpé en étapes, chacune avec sa minuterie.
-   - Pas de découpage de `natif.rs` pour lui-même : du seul déplacement de code, en conflit avec toutes les PR ouvertes. Seulement si une mesure ou une correction le justifie, au moment de celle-ci.
+1. Full phase 1: authorisation checked per command, validation of every field received, rate and concurrency limits, tests of malformed, truncated, silent messages.
+   Architecture, in the same phase (to be done after the merge of the open PRs, which touch these files):
+   - Precondition: measurement of the monitoring cycle (duration of each step, PowerShell processes launched during the cycle, time spent under the lock). Without these figures, neither splitting of `Moniteur` nor optimisation.
+   - `Moniteur` (moniteur.rs), once the measurement is done and only where it justifies it: the long actions (quarantine, restore, baseline, panic) done outside the `Arc<Mutex<Moniteur>>` lock, taken only to record the result: a quarantine must no longer blind the monitoring, nor a slow cycle block the interface; `executer()` (28 commands in a single `match`) split into one handler per domain (response, blocks, configuration, update, protection); `passage()` (3 s cycle) split into steps, each with its own timer.
+   - No splitting of `natif.rs` for its own sake: mere code moves, in conflict with all the open PRs. Only if a measurement or a fix justifies it, at the time of that measurement or fix.
 
-   Validation par le mainteneur, le 2026-10-25, par ces mots : « Yes: once the remaining Phase 1 fixes are merged with a clean VM pass, I validate Phase 1, and Phase 3 can open with the local VM proof replacing GitHub CI. Record it in CLAUDE.md. »
-   - Derniers correctifs de la phase 1, ceux qui lui avaient été présentés :
-     - #64 : outillage de test ;
-     - #65 : files d'alertes reprises à l'arrêt du service ;
-     - texte des confirmations de l'assistant élevé passé par `Visible()` partout ;
-     - fenêtre de confirmation qui renvoie à la ligne et défile, et montre le domaine enregistrable (S60-06/07).
-   - Une fois ces correctifs fusionnés, chacun relu et couvert par un passage VM sans ÉCHOUÉ sur l'arbre intégré, la phase 1 est validée par cryptobones-1337.
-   - Validation confirmée par le mainteneur le 2026-11-19, par ces mots : « Phase 1 est validée. »
-   - La phase 3 s'ouvre alors. Pour son ouverture et pour ses PR, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub.
-   - Le 2026-10-25, le mainteneur a levé, pour l'ouverture de la phase 3, la condition du lot 3d, par ces mots : « Phase 3 can open ». Le lot 3d était alors « non exécuté » dans `docs/roadmap/capability-matrix.md` (réussi en VM depuis, 12 sur 12 aux passages complets verts de novembre 2026), alors que cet en-tête pose la condition « après validation des lots 1 à 5 ». La phase 3 s'ouvre donc à la validation de la phase 1 (puce précédente), sans attendre le lot 3d.
-   - Rien ne change pour la distribution : la règle de la section 4 reste entière (CI GitHub verte, lot 3d réussi, binaires signés, relecture indépendante).
-2. Phase 3 : un modèle d'événement versionné ; chaque règle de détection avec identifiant, justification, télémétrie requise, test positif, test négatif, faux positifs attendus. Distinguer « rien de suspect » de « collecte indisponible ».
-   Validée par le mainteneur le 2026-11-19, par ces mots : « Phase 3 validée. »
-3. Phase 4 : cycle de vie des incidents, chronologie reconstituable, santé des collecteurs visible.
-   Validée par le mainteneur le 2026-11-19, par sa réponse « Oui, validée » à la question « Phase 4 (incidents,
-   chronologie, santé) : tu n'en as pas parlé. Est-elle validée ? ».
-   Santé de l'interface, dans la même phase : l'interface (deR4Tizer.exe) tourne sous le compte de l'utilisateur, qui peut l'arrêter, comme tout programme lancé sous ce compte. Le service (SYSTEM) repère qu'elle a disparu d'une session ouverte et, au choix à trancher, la relance dans cette session ou lève une alerte remontée au prestataire. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le service continuent.
-4. Phase 6 : application de `docs/reponse/politique.md` dans le code, revalidation de l'identité du processus juste avant chaque action, protection contre les boucles d'actions. Chaque action de réponse a une durée maximale et une procédure de récupération testée ; à l'échéance, jamais de reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée vers le prestataire, la récupération est une action humaine.
-   Validée par le mainteneur le 2026-11-03, par ces mots : « Je valide », en réponse à la question « Valides-tu la phase 6 :
-   « oui » ou « pas encore » ? », une fois ses PR fusionnées (#108 à #128, hors #111, corrections comprises ; chacune
-   relue ; celles qui touchent le code, prouvées en VM sans échec, #117 en deux passages). Le reste de l'inventaire des constats
-   d'audit de la phase 6 est gardé pour l'étape d'avant distribution.
-5. Phase « Interface et assistant d'installation », avant la phase 7. Ouverte par le mainteneur le 2026-11-03, par ces
-   mots : « fais la refonte avant la phase 7 ». Commence une fois les corrections de la phase 6 fusionnées et ce point
-   inscrit ; la phase 7 commence une fois celle-ci validée par la relecture et par cryptobones-1337. Décisions,
-   découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6, la preuve locale en VM tient
-   lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. Inscrit le 2026-11-03 sur l'autorisation du
-   mainteneur (« Ok pour modifier Claude. Md je t'autorise »).
-   La phase 7 a commencé avant la validation de cette phase (et avant celle des phases 1, 3 et 4, validées elles aussi
-   le 2026-11-19), sur la consigne du mainteneur du 2026-11-11 : « commence la phase 7 sans poser la question »
-   (journal des décisions, hors dépôt), interprétée comme : finir le MSI U8 et la bascule B1, déjà engagés, puis
-   ouvrir la phase 7 sans demander la validation de la phase Interface. Validée ensuite par le mainteneur le 2026-11-19, par ces mots : « Tu as mon accord pour la
-   validation. La phase interface maintenant, vu qu'elle a été revue par un externe », puis sa réponse « Validée
-   maintenant ». Restent à faire, après cette validation : B3, B4 et U8b (`docs/roadmap/interface.md`).
-6. Phase 7 : filtrage par nom de domaine (DNS, publicités, pistage). Ouverte par le mainteneur le 2026-10-25, par ces
-   mots : « Open a phase for the feature > do it like your example », l'exemple proposé étant « Phase 7: domain-name
-   filtering (DNS, ads, tracking) ». Commence une fois les phases 1, 3, 4 et 6 validées par la relecture et par
-   cryptobones-1337, et après la phase « Interface et assistant d'installation » ; c'est l'une des exceptions au gel (section 2, règle 1), avec les phases 8 et 9.
-   - Contenu : navigation sécurisée par le DNS (domaines malveillants des listes de menaces, changement de serveur DNS
-     détecté, DNS chiffré si le dossier de conception le justifie) et blocage des domaines de publicité et de pistage,
-     par un même mécanisme.
-   - Pour toute la phase : dossier de conception d'abord (agent concepteur-fonctionnalites), puis une PR par étape ;
-     désactivé par défaut ; retour arrière garanti (désinstallation, panne du service) ; aucun pilote noyau ; aucune
-     dépendance nouvelle sans accord ; lignes de l'utilisateur du fichier hosts jamais réécrites ; jamais d'exclusion
-     ni d'affaiblissement de Defender (règle 2) : si Defender signale le mécanisme, on en change ; effets sur les VPN,
-     les réseaux d'entreprise et les portails captifs traités dans le dossier ; un résolveur DNS tiers n'est utilisé que
-     si l'utilisateur le choisit, et il est nommé dans l'interface.
-   - L'IDS, le DPI et le NDR restent gelés pendant la phase 7 : elle ne les dégèle pas. (Ils sont dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).)
-   - Fin de phase 7 : campagne d'attaque complète depuis la VM Kali de test (`d4t-kali`, déjà déployée par le
-     mainteneur), demandée par le mainteneur le 2026-10-27 (« I propose to do a full test after phase 7, add it to
-     claude.md »). Elle vise la VM `deR4Tizer-test-26H2` et exerce ensemble la détection, les incidents et leur
-     chronologie (phase 4), la réponse et ses durées maximales (phase 6) et le filtrage DNS (phase 7).
-     - Démarrage : premiers essais le 2026-11-15, après la fusion des PR 7.1 à 7.6 (dernière le 2026-11-14, #167).
-       Le mainteneur, le 2026-11-19 : « Considère que la campagne Kali a démarré après la phase 7. »
-     - Scénarios S-20 à S-27 (détection réseau) : exécutés du 2026-11-16 au 2026-11-17 avant d'être inscrits dans la
-       liste approuvée ; ajoutés à la liste approuvée (version 1.5), décidé le 2026-11-19 par ces mots du
-       mainteneur : « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » La liste
-       (`campagne-kali-phase1.md`, §6) et les rapports disent que c'est une approbation après coup.
-     - Topologie : deux écarts à la règle « Réseau » ci-dessous, accordés par le mainteneur le 2026-11-19 (« Ok pour la
-       topologie du labo ») : la VM cible a deux cartes, dont une sur le réseau du poste, désactivée de façon
-       réversible pendant les essais réseau (`campagne-kali-detection-reseau-lot1.md`) ; le segment de laboratoire est
-       ré-adressé en 192.168.50.0/24 (RFC 1918) pour les essais UPnP et IDS directionnel, de façon réversible par
-       l'instantané (`campagne-kali-detection-reseau-lot4.md`).
-     - Réseau : commutateur virtuel interne entre les deux VM seulement, jamais le réseau du poste ni Internet ; VM
-       adressées dans une plage de documentation (RFC 5737, par exemple 203.0.113.0/24), jamais une plage publique
-       réelle, pour que COR-R9 (session depuis une adresse publique) puisse se déclencher. Seule exception, choisie
-       par le mainteneur le 2026-11-14 (« Lien d'admin SSH ») : un lien d'administration sur un commutateur séparé,
-       entre le poste et Kali seulement, dans une autre plage de documentation (198.51.100.0/24), sans routage vers
-       la VM de test, le réseau local ni Internet, et ne servant qu'à SSH, ouvert depuis le poste vers Kali (clé,
-       connexion par mot de passe refusée). La VM de test, elle, est pilotée sans réseau (PowerShell Direct). Mises
-       à jour de Kali : hors campagne seulement, par une carte temporaire retirée ensuite.
-     - VM cible partie de l'un de ses trois instantanés de campagne, préparés hors campagne : « campagne A » (sans
-       Sysmon), « campagne B » (avec Sysmon et Atomic Red Team, voir les dépendances ci-dessous) et « campagne C » (configuration principale, décrite plus bas). Chacun contient
-       deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo (Bureau à distance
-       activé pour la force brute, etc.). Leurs noms ne commencent jamais par « propre », pour que les passages
-       complets (`tests/vm/lancer.ps1`, qui prend le plus récent instantané « propre… ») n'en partent jamais. VM
-       remise à son instantané « propre » après la campagne.
-     - Troisième instantané, « campagne C », configuration principale de mesure, décidée par le mainteneur le
-       2026-11-14 (« pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait ») : « campagne A » plus la baseline de deR4Tizer appliquée par le service lui-même
-       (`baseline appliquer`, profils journalisation, recommandé et renforcé en une commande, puis
-       `reseau.bureau-distance` seule, depuis la liste v1.6 du 2026-11-20 : appliquée avec le profil, cette règle est
-       laissée de côté quand le Bureau à distance est activé, ce qu'il est dans « campagne A » ; l'appliquer seule garde
-       la baseline à 100 % voulue par le mainteneur), puis un redémarrage. A reste la comparaison sans baseline, B la
-       collecte Sysmon. En C, la baseline refuse le Bureau à distance : la force brute par Bureau à distance et les
-       essais D4-1 se font en configuration A.
-     - Defender reste intact pendant la campagne (règle 2) : un outil de la campagne détecté par Defender est un
-       résultat, jamais un obstacle à contourner. En configuration C, Defender ne change que par la baseline de
-       deR4Tizer, jamais à la main, et jamais en l'affaiblissant : son état est relevé avant et après (scénario
-       S-19) ; un réglage plus faible qu'avant, ou une exclusion, arrête la configuration C, l'instantané n'est pas
-       pris et l'écart remonte au mainteneur comme un défaut du produit.
-     - Scénarios écrits avant la campagne, chacun avec les alertes, incidents et actions attendus (par exemple force
-       brute RDP et SMB pour COR-R1, R2 et R9, balayage de ports, connexions vers des adresses et domaines bloqués) ;
-       résultats inscrits dans la matrice des capacités, écarts traités comme des défauts.
-     - Inclut les essais reportés de la décision D4-1 (décision du mainteneur, 2026-10-31) : relance de l'interface dans une
-       session Bureau à distance et au changement rapide d'utilisateur. Condition levée par le mainteneur le 2026-11-23 :
-       v4.3 publiée avant ces essais, écart inscrit (README, « Known limits ») ; les essais restent à faire.
-     - Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les journaux ni les preuves publiées ;
-       Claude Code ne saisit pas de mot de passe : l'accès se fait par une clé SSH que le mainteneur pose, ou le
-       mainteneur lance lui-même les scénarios.
-     - Boucle continue de validation (purple team), décidée par le mainteneur le 2026-11-14 : la campagne n'est pas
-       un essai unique mais un cycle répété, audit → test → collecte → mesure → analyse → correctif proposé →
-       non-régression → rapport, sur un corpus versionné fondé sur MITRE ATT&CK (PowerShell obfusqué, persistance,
-       commande et contrôle, exfiltration, mouvement latéral dans le labo, et les scénarios ci-dessus).
-       - Rôles : un agent de validation (`.claude/agents/purple-team.md`, local) conçoit les scénarios, la
-         cartographie (technique → comportement → capteur → événement → règle → alerte) et les mesures, analyse les
-         résultats et rédige les rapports, en lecture seule. Claude Code seul exécute (clé SSH sur un lien
-         d'administration hôte ↔ Kali réservé à SSH ; PowerShell Direct vers la VM de test).
-       - Mesure honnête : classes A (détection confirmée), B (événement collecté sans alerte), C (alerte incorrecte
-         ou trop générique), D (non exécuté ou invalide, « non évalué », jamais 0), E (non testable avec
-         l'architecture actuelle, NDR, IDS et DPI gelés à l'écriture de cette règle, dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »)) ; simulations et émulations jamais fusionnées dans un même
-         score ; 10 répétitions valides avant une mesure consolidée ; tests négatifs (activité légitime) pour les
-         faux positifs ; aucune hypothèse présentée comme un résultat.
-       - Vol d'identifiants, injection et contournement des défenses : simulations inoffensives et réversibles
-         seulement, marquées SIMULATION ; aucun outil de vol d'identifiants, aucune charge destructive.
-       - Dépendances acceptées par le mainteneur le 2026-11-14 (« J ACCEPTE LES DEUX DEPENDANCES »), dans la VM de
-         test seulement : Atomic Red Team (MIT ; fiches Windows lues avant usage : prérequis, commande, nettoyage ;
-         toute fiche qui télécharge une charge, désactive une protection ou n'est pas réversible est écartée) et
-         Sysmon (licence Sysinternals, propriétaire : aucun binaire dans le dépôt), pour la collecte indépendante
-         avec les journaux natifs de Windows. Installées hors campagne (Internet seulement à ce moment-là), versions
-         figées et notées dans chaque rapport, **sans aucune exclusion Defender**, même pour le dossier des fiches,
-         contrairement à ce que conseille la documentation d'Atomic Red Team : un fichier mis en quarantaine est un
-         résultat. Seul l'instantané « campagne B » les contient ; « campagne A », « campagne C » et l'instantané « propre » des
-         passages complets restent sans eux.
-       - Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution (décision du
-         mainteneur, 2026-11-14 : « Je préfère que la liste soit de scénario soit b gérer par agent », puis « L'agent
-         apprpuve », cités tels quels). Les scénarios sont documentés dans le dépôt (demande du mainteneur, 2026-11-14
-         : « Il faudra bien mettre à jour les fichiers md et documenter les scénarios dans le github »)
-         (`docs/validation/`, en Markdown : technique ATT&CK, SIMULATION ou émulation, préconditions, résultat
-         attendu, délai maximal, nettoyage, preuves attendues, au niveau du comportement, sans commande offensive
-         détaillée), avec l'approbation écrite (date, version), après la garde PII ; un scénario est publié (fusionné
-         sur `main`) avant sa première exécution, et chaque rapport note la version de la liste exécutée ; chaque
-         ajout ou changement de scénario est approuvé de même avant d'être exécuté, et chaque version approuvée est
-         transmise au mainteneur, pour information, avant exécution. Cette approbation n'est ni humaine ni
-         indépendante (même modèle que celui qui exécute) et n'est jamais présentée comme telle. Elle ne lève aucune
-         des règles de cette section : un scénario qui en sortirait (Defender touché, réseau hors labo, vol
-         d'identifiants réel, charge destructive, saisie de mot de passe) ne peut pas être approuvé par l'agent ; s'il
-         n'est pas clairement sûr, réversible et confiné au laboratoire, il remonte au mainteneur. Le mainteneur peut
-         retirer un scénario ou reprendre l'approbation à tout moment. Les correctifs issus de la campagne suivent le
-         circuit habituel (relecture, audit de sécurité pour un chemin privilégié, passage complet en VM, validateur
-         de fusion) et restent dans le cadre des phases ouvertes : ils ne dégèlent ni l'IDS, ni le DPI, ni le NDR.
-         Aucune fusion par l'agent de validation ; la fusion reste décidée par cryptobones-1337. Résultats bruts
-         gardés hors du dépôt ; rapports de campagne (`docs/validation/`), matrice des capacités et README mis à jour
-         dans le dépôt, après la garde PII ; la matrice et le README disent « testé en labo (campagne Kali, date) »
-         avec les classes A à E, jamais « validé ». L'agent de validation est un fichier local, hors de Git : sa
-         consigne de lecture seule est une consigne, pas une limite de ses outils ; ce qui fait foi est cette section.
-       - Campagne RedWidow en toute fin de boucle (après la boucle purple team, jamais pendant), décidée par le
-         mainteneur le 2026-11-17 (réseau : « le réseau: OK » ; dépendance : « La dépendance: j'accèpte », en réponse
-         à la proposition d'une passerelle limitée au seul fournisseur de modèles et d'accepter RedWidow comme
-         troisième dépendance). RedWidow (extension VS Code pilotant un agent IA dans un conteneur Exegol ou Kali,
-         licence MIT, version figée et notée dans le rapport) attaque la VM de test `deR4Tizer-test-26H2` depuis la VM
-         Kali, en complément de la boucle, pour un regard extérieur que celle-ci n'a pas (l'agent qui conçoit et celui
-         qui exécute y sont le même modèle).
-         - Hors score consolidé : c'est un essai de fin de parcours, pas l'une des 10 répétitions valides ; ses
-           résultats sont rapportés à part, jamais fusionnés avec les mesures de la boucle.
-         - Réseau : exception à la règle « jamais Internet » de la campagne, pour cette campagne seulement. Une
-           passerelle temporaire, nommée, ouverte depuis la VM Kali vers le seul fournisseur de modèles de RedWidow,
-           jamais vers la VM de test, le réseau local ni le reste d'Internet ; fermée hors campagne. La VM de test
-           reste pilotée sans réseau (PowerShell Direct) et sur le commutateur interne de documentation (RFC 5737).
-         - Dépendance : RedWidow accepté dans la VM Kali seulement, version figée, installé hors campagne (passerelle
-           ouverte à ce moment-là). N'entre pas dans la VM de test ni dans le dépôt.
-         - Defender intact (règle 2) : un outil de RedWidow mis en quarantaine ou détecté est un résultat, jamais un
-           obstacle à contourner ; aucune exclusion.
-         - Mode « Bypass » de RedWidow interdit : chaque action sensible passe par sa carte d'autorisation (tenue par
-           le mainteneur ou par Claude Code) ; jamais d'agent qui agit sans confirmation pendant une durée choisie.
-         - Vol d'identifiants, injection, contournement des défenses : simulations inoffensives et réversibles
-           seulement, marquées SIMULATION ; aucun outil de vol d'identifiants réel, aucune charge destructive, comme
-           pour le reste de la boucle.
-         - L'archive d'audit de RedWidow (fil de mission, journaux, empreintes SHA-256) et l'état de deR4Tizer sont
-           gardés hors du dépôt ; seuls les écarts, traités comme des défauts par le circuit habituel (relecture,
-           audit de sécurité pour un chemin privilégié, passage complet en VM, validateur de fusion), entrent dans
-           `docs/validation/`, la matrice des capacités et le README, après la garde PII.
-         - RedWidow pilote un agent du même modèle que Claude Code : cette campagne n'est pas une relecture
-           indépendante au sens de la section 4, et rien ne doit la présenter comme telle.
-         - L'IDS, le NDR et le DPI sont dégelés par ailleurs (paragraphe « Dégel de l'IDS, du NDR et du DPI », fin de la
-           section 5) ; cette campagne n'y change rien. Aucune fusion par RedWidow ni par son agent ; la fusion reste
-           décidée par cryptobones-1337. Les identifiants de la VM Kali ne figurent nulle part dans le dépôt, les
-           journaux ni les preuves publiées ; Claude Code ne saisit pas de mot de passe (accès par clé SSH posée par
-           le mainteneur, comme pour la campagne Kali).
-7. Phase 8 : configuration standard (utilisateurs finaux) et avancée (utilisateurs techniques). Ouverte par le mainteneur
-   le 2026-10-25 (« Add the phases », en réponse à la proposition « Phase 8: standard/advanced settings »). Commence
-   une fois la phase 7 validée par la relecture et par cryptobones-1337. Le mode ne change que ce que l'interface
-   montre, jamais les droits ni la validation du service ; mode standard par défaut ; bascule visible et réversible ;
-   aucune option du mode avancé n'affaiblit la protection. Mêmes garde-fous que la phase 7 (dossier de
-   conception d'abord, une PR par étape, aucune dépendance nouvelle sans accord).
-8. Phase 9 : surveillance des fuites de données. Ouverte par le mainteneur le 2026-10-25 (« Add the phases », en réponse
-   à la proposition « Phase 9: breach monitoring »), avec cette condition : « Breach monitoring > ok to rely on third
-   party as long as it's free ». Commence une fois la phase 8 validée par la relecture et par cryptobones-1337. Pour des
-   adresses de courriel indiquées par l'utilisateur, par un service tiers gratuit seulement (sans service gratuit qui
-   convienne, la fonctionnalité n'est pas faite), jamais par la lecture de fichiers de données volées ; propriété de
-   l'adresse vérifiée par le service tiers ou par un code envoyé à l'adresse (à trancher dans le dossier, qui nomme
-   alors le serveur d'envoi) ; adresse jamais journalisée ni envoyée ailleurs qu'à ce service (et au serveur d'envoi du
-   code, s'il est retenu) ; désactivée par défaut ; service tiers nommé dans l'interface. Mêmes garde-fous que la phase
+   Validation by the maintainer, on 2026-10-25, with these words: « Yes: once the remaining Phase 1 fixes are merged with a clean VM pass, I validate Phase 1, and Phase 3 can open with the local VM proof replacing GitHub CI. Record it in CLAUDE.md. »
+   - Last fixes of phase 1, those that had been presented to him:
+     - #64: test tooling;
+     - #65: alert queues resumed when the service stops;
+     - text of the elevated assistant's confirmations passed through `Visible()` everywhere;
+     - confirmation window that wraps lines and scrolls, and shows the registrable domain (S60-06/07).
+   - Once these fixes are merged, each reviewed and covered by a VM pass without ÉCHOUÉ (FAILED) on the integrated tree, phase 1 is validated by cryptobones-1337.
+   - Validation confirmed by the maintainer on 2026-11-19, with these words: « Phase 1 est validée. » (Phase 1 is validated.)
+   - Phase 3 then opens. For its opening and for its PRs, the local VM proof (section 4, « Temporary exception ») stands in for GitHub CI.
+   - On 2026-10-25, the maintainer lifted, for the opening of phase 3, the lot 3d condition, with these words: « Phase 3 can open ». Lot 3d was then « not run » in `docs/roadmap/capability-matrix.md` (succeeded in a VM since, 12 out of 12 in the green full passes of November 2026), whereas this heading sets the condition « after validation of lots 1 to 5 ». Phase 3 therefore opens at the validation of phase 1 (previous bullet), without waiting for lot 3d.
+   - Nothing changes for distribution: the rule of section 4 remains in full (green GitHub CI, lot 3d succeeded, signed binaries, independent review).
+2. Phase 3: a versioned event model; each detection rule with an identifier, a justification, the required telemetry, a positive test, a negative test, the expected false positives. Distinguish « nothing suspicious » from « collection unavailable ».
+   Validated by the maintainer on 2026-11-19, with these words: « Phase 3 validée. » (Phase 3 validated.)
+3. Phase 4: incident life cycle, reconstructable timeline, visible collector health.
+   Validated by the maintainer on 2026-11-19, by his answer « Oui, validée » (Yes, validated) to the question « Phase 4 (incidents,
+   chronologie, santé) : tu n'en as pas parlé. Est-elle validée ? » (Phase 4 (incidents, timeline, health): you have not mentioned it. Is it validated?).
+   Health of the interface, in the same phase: the interface (deR4Tizer.exe) runs under the user's account, who can stop it, like any program launched under that account. The service (SYSTEM) detects that it has disappeared from an open session and, as a choice still to be made, restarts it in that session or raises an alert forwarded to the service provider. Local notifications no longer appear without it; detection and forwarding by the service continue.
+4. Phase 6: application of `docs/reponse/politique.md` in the code, revalidation of the identity of the process just before each action, protection against action loops. Each response action has a maximum duration and a tested recovery procedure; when it expires, never an automatic resumption of a suspended process nor an automatic lifting of an isolation: the alert is sent again to the service provider, recovery is a human action.
+   Validated by the maintainer on 2026-11-03, with these words: « Je valide » (I validate), in reply to the question « Valides-tu la phase 6 :
+   « oui » ou « pas encore » ? » (Do you validate phase 6: « yes » or « not yet »?), once its PRs were merged (#108 to #128, except #111, fixes included; each
+   reviewed; those that touch the code proven in a VM without failure, #117 in two passes). The rest of the inventory of
+   phase 6 audit findings is kept for the pre-distribution step.
+5. « Interface and installation assistant » phase, before phase 7. Opened by the maintainer on 2026-11-03, with these
+   words: « fais la refonte avant la phase 7 » (do the redesign before phase 7). Starts once the phase 6 fixes are merged and this point
+   recorded; phase 7 starts once this phase is validated by the review and by cryptobones-1337. Decisions,
+   breakdown and safeguards: `docs/roadmap/interface.md`. As for phases 3, 4 and 6, the local VM proof stands
+   in for GitHub CI for its PRs; nothing changes for distribution. Recorded on 2026-11-03 with the authorisation of the
+   maintainer (« Ok pour modifier Claude. Md je t'autorise » (OK to modify Claude.md, I authorise you)).
+   Phase 7 started before the validation of this phase (and before that of phases 1, 3 and 4, also validated
+   on 2026-11-19), on the maintainer's instruction of 2026-11-11: « commence la phase 7 sans poser la question » (start phase 7 without asking the question)
+   (decision log, outside the repository), interpreted as: finish the MSI U8 and the B1 switchover, already under way, then
+   open phase 7 without asking for the validation of the Interface phase. Validated afterwards by the maintainer on 2026-11-19, with these words: « Tu as mon accord pour la
+   validation. La phase interface maintenant, vu qu'elle a été revue par un externe » (You have my agreement for the validation. The interface phase now, since it has been reviewed by an outsider), then his answer « Validée
+   maintenant » (Validated now). Remaining to do, after this validation: B3, B4 and U8b (`docs/roadmap/interface.md`).
+6. Phase 7: filtering by domain name (DNS, ads, tracking). Opened by the maintainer on 2026-10-25, with these
+   words: « Open a phase for the feature > do it like your example », the proposed example being « Phase 7: domain-name
+   filtering (DNS, ads, tracking) ». Starts once phases 1, 3, 4 and 6 are validated by the review and by
+   cryptobones-1337, and after the « Interface and installation assistant » phase; it is one of the exceptions to the freeze (section 2, rule 1), with phases 8 and 9.
+   - Content: safe browsing through DNS (malicious domains from the threat lists, change of DNS server
+     detected, encrypted DNS if the design file justifies it) and blocking of advertising and tracking domains,
+     by one and the same mechanism.
+   - For the whole phase: design file first (concepteur-fonctionnalites agent), then one PR per step;
+     disabled by default; guaranteed rollback (uninstallation, service failure); no kernel driver; no
+     new dependency without agreement; the user's lines in the hosts file never rewritten; never an exclusion
+     or weakening of Defender (rule 2): if Defender flags the mechanism, the mechanism is changed; effects on VPNs,
+     corporate networks and captive portals dealt with in the design file; a third-party DNS resolver is used only
+     if the user chooses it, and it is named in the interface.
+   - The IDS, the DPI and the NDR stay frozen during phase 7: it does not unfreeze them. (They have been unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph).)
+   - End of phase 7: full attack campaign from the Kali test VM (`d4t-kali`, already deployed by the
+     maintainer), requested by the maintainer on 2026-10-27 (« I propose to do a full test after phase 7, add it to
+     claude.md »). It targets the VM `deR4Tizer-test-26H2` and exercises together detection, incidents and their
+     timeline (phase 4), response and its maximum durations (phase 6) and DNS filtering (phase 7).
+     - Start: first tests on 2026-11-15, after the merge of PRs 7.1 to 7.6 (last one on 2026-11-14, #167).
+       The maintainer, on 2026-11-19: « Considère que la campagne Kali a démarré après la phase 7. » (Consider that the Kali campaign started after phase 7.)
+     - Scenarios S-20 to S-27 (network detection): run from 2026-11-16 to 2026-11-17 before being recorded in the
+       approved list; added to the approved list (version 1.5), decided on 2026-11-19 with these words of the
+       maintainer: « Scénario S20 à S27, il faut les ajouter à la liste approuvée. » (Scenarios S20 to S27 must be added to the approved list.) The list
+       (`campagne-kali-phase1.md`, §6) and the reports say that this is an approval after the fact.
+     - Topology: two deviations from the « Network » rule below, granted by the maintainer on 2026-11-19 (« Ok pour la
+       topologie du labo » (OK for the lab topology)): the target VM has two network adapters, one of them on the host machine's network, disabled in a
+       reversible way during the network tests (`campagne-kali-detection-reseau-lot1.md`); the lab segment is
+       readdressed in 192.168.50.0/24 (RFC 1918) for the UPnP and directional IDS tests, reversibly through
+       the snapshot (`campagne-kali-detection-reseau-lot4.md`).
+     - Network: internal virtual switch between the two VMs only, never the host machine's network nor the Internet; VMs
+       addressed in a documentation range (RFC 5737, for example 203.0.113.0/24), never a real public
+       range, so that COR-R9 (session from a public address) can trigger. Only exception, chosen
+       by the maintainer on 2026-11-14 (« Lien d'admin SSH » (SSH admin link)): an administration link on a separate switch,
+       between the host machine and Kali only, in another documentation range (198.51.100.0/24), without routing to
+       the test VM, the local network or the Internet, and used only for SSH, opened from the host machine to Kali (key,
+       password login refused). The test VM, for its part, is driven without network (PowerShell Direct). Updates
+       of Kali: outside the campaign only, through a temporary network adapter removed afterwards.
+     - Target VM started from one of its three campaign snapshots, prepared outside the campaign: « campagne A » (without
+       Sysmon), « campagne B » (with Sysmon and Atomic Red Team, see the dependencies below) and « campagne C » (main configuration, described further down). Each contains
+       deR4Tizer installed, learning finished, the test accounts and the lab settings (Remote Desktop
+       enabled for brute force, etc.). Their names never start with « propre », so that full
+       passes (`tests/vm/lancer.ps1`, which takes the most recent « propre… » snapshot) never start from them. VM
+       restored to its « propre » snapshot after the campaign.
+     - Third snapshot, « campagne C », main measurement configuration, decided by the maintainer on
+       2026-11-14 (« pour les tests kali, tu as bien pris en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit » (for the Kali tests, did you take into account having the baseline at 100%? It is one of the points of the product), then « ok parfait » (ok perfect)): « campagne A » plus the deR4Tizer baseline applied by the service itself
+       (`baseline appliquer`, logging, recommended and hardened profiles in one command, then
+       `reseau.bureau-distance` alone, since list v1.6 of 2026-11-20: applied with the profile, this rule is
+       left aside when Remote Desktop is enabled, which it is in « campagne A »; applying it alone keeps
+       the baseline at 100 % as wanted by the maintainer), then a restart. A remains the comparison without baseline, B the
+       Sysmon collection. In C, the baseline refuses Remote Desktop: brute force through Remote Desktop and the
+       D4-1 tests are done in configuration A.
+     - Defender stays intact during the campaign (rule 2): a campaign tool detected by Defender is a
+       result, never an obstacle to get around. In configuration C, Defender changes only through the deR4Tizer
+       baseline, never by hand, and never by weakening it: its state is recorded before and after (scenario
+       S-19); a setting weaker than before, or an exclusion, stops configuration C, the snapshot is not
+       taken and the deviation is reported to the maintainer as a product defect.
+     - Scenarios written before the campaign, each with the expected alerts, incidents and actions (for example RDP and SMB brute
+       force for COR-R1, R2 and R9, port scanning, connections to blocked addresses and domains);
+       results recorded in the capability matrix, deviations treated as defects.
+     - Includes the tests postponed by decision D4-1 (maintainer decision, 2026-10-31): restart of the interface in a
+       Remote Desktop session and on fast user switching. Condition lifted by the maintainer on 2026-11-23:
+       v4.3 released before these tests, deviation recorded (README, « Known limits »); the tests remain to be done.
+     - The credentials of the Kali VM appear nowhere in the repository, the logs or the published proofs;
+       Claude Code does not type any password: access is through an SSH key that the maintainer sets up, or the
+       maintainer runs the scenarios himself.
+     - Continuous validation loop (purple team), decided by the maintainer on 2026-11-14: the campaign is not
+       a one-off test but a repeated cycle, audit → test → collection → measurement → analysis → proposed fix →
+       non-regression → report, on a versioned corpus based on MITRE ATT&CK (obfuscated PowerShell, persistence,
+       command and control, exfiltration, lateral movement within the lab, and the scenarios above).
+       - Roles: a validation agent (`.claude/agents/purple-team.md`, local) designs the scenarios, the
+         mapping (technique → behaviour → sensor → event → rule → alert) and the measurements, analyses the
+         results and writes the reports, read-only. Claude Code alone executes (SSH key on an
+         administration link host ↔ Kali reserved for SSH; PowerShell Direct to the test VM).
+       - Honest measurement: classes A (confirmed detection), B (event collected without an alert), C (incorrect
+         or too generic alert), D (not run or invalid, « not evaluated », never 0), E (not testable with
+         the current architecture, NDR, IDS and DPI frozen when this rule was written, unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph)); simulations and emulations never merged into a single
+         score; 10 valid repetitions before a consolidated measurement; negative tests (legitimate activity) for
+         false positives; no hypothesis presented as a result.
+       - Credential theft, injection and defence evasion: harmless and reversible simulations
+         only, marked SIMULATION; no credential theft tool, no destructive payload.
+       - Dependencies accepted by the maintainer on 2026-11-14 (« J ACCEPTE LES DEUX DEPENDANCES » (I ACCEPT BOTH DEPENDENCIES)), in the test
+         VM only: Atomic Red Team (MIT; Windows tests read before use: prerequisites, command, cleanup;
+         any test that downloads a payload, disables a protection or is not reversible is set aside) and
+         Sysmon (Sysinternals licence, proprietary: no binary in the repository), for independent collection
+         alongside the native Windows logs. Installed outside the campaign (Internet only at that time), versions
+         pinned and noted in each report, **without any Defender exclusion**, not even for the folder of the tests,
+         contrary to what the Atomic Red Team documentation advises: a quarantined file is a
+         result. Only the « campagne B » snapshot contains them; « campagne A », « campagne C » and the « propre » snapshot of the
+         full passes remain without them.
+       - Closed list of scenarios written and approved by the validation agent before any execution (decision of the
+         maintainer, 2026-11-14: « Je préfère que la liste soit de scénario soit b gérer par agent », then « L'agent
+         apprpuve », quoted as is (I prefer the list of scenarios to be managed by the agent; The agent approves)). The scenarios are documented in the repository (request of the maintainer, 2026-11-14:
+         « Il faudra bien mettre à jour les fichiers md et documenter les scénarios dans le github » (The md files will have to be updated and the scenarios documented in GitHub))
+         (`docs/validation/`, in Markdown: ATT&CK technique, SIMULATION or emulation, preconditions, expected
+         result, maximum delay, cleanup, expected evidence, at the level of behaviour, without a detailed offensive
+         command), with the written approval (date, version), after the PII guard; a scenario is published (merged
+         into `main`) before its first execution, and each report notes the version of the list that was run; each
+         addition or change of a scenario is approved in the same way before being run, and each approved version is
+         sent to the maintainer, for information, before execution. This approval is neither human nor
+         independent (same model as the one that executes) and is never presented as such. It lifts none
+         of the rules of this section: a scenario that would go outside them (Defender touched, network outside the lab, real credential
+         theft, destructive payload, password entry) cannot be approved by the agent; if it
+         is not clearly safe, reversible and confined to the lab, it goes up to the maintainer. The maintainer can
+         withdraw a scenario or take back the approval at any time. The fixes resulting from the campaign follow the
+         usual circuit (review, security audit for a privileged path, full pass in a VM, merge
+         validator) and stay within the scope of the open phases: they unfreeze neither the IDS, nor the DPI, nor the NDR.
+         No merge by the validation agent; the merge remains decided by cryptobones-1337. Raw results
+         kept outside the repository; campaign reports (`docs/validation/`), capability matrix and README updated
+         in the repository, after the PII guard; the matrix and the README say « lab-tested (Kali campaign, date) »
+         with classes A to E, never « validated ». The validation agent is a local file, outside Git: its
+         read-only instruction is an instruction, not a limit of its tools; what is authoritative is this section.
+7. Phase 8: standard settings (end users) and advanced settings (technical users). Opened by the maintainer
+   on 2026-10-25 (« Add the phases », in reply to the proposal « Phase 8: standard/advanced settings »). Starts
+   once phase 7 is validated by the review and by cryptobones-1337. The mode changes only what the interface
+   shows, never the rights nor the validation of the service; standard mode by default; visible and reversible switch;
+   no option of the advanced mode weakens the protection. Same safeguards as phase 7 (design
+   file first, one PR per step, no new dependency without agreement).
+8. Phase 9: data breach monitoring. Opened by the maintainer on 2026-10-25 (« Add the phases », in reply
+   to the proposal « Phase 9: breach monitoring »), with this condition: « Breach monitoring > ok to rely on third
+   party as long as it's free ». Starts once phase 8 is validated by the review and by cryptobones-1337. For
+   email addresses given by the user, through a free third-party service only (without a suitable free service,
+   the feature is not built), never by reading files of stolen data; ownership of
+   the address verified by the third-party service or by a code sent to the address (to be decided in the design file, which then names
+   the sending server); address never logged nor sent anywhere other than to that service (and to the sending server of the
+   code, if it is chosen); disabled by default; third-party service named in the interface. Same safeguards as phase
    7.
-   L'IDS, le DPI et le NDR restent gelés pendant les phases 8 et 9. (Ils sont dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).)
+   The IDS, the DPI and the NDR stay frozen during phases 8 and 9. (They have been unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph).)
 
-L'IDS, le DPI et le NDR sont restés gelés en l'état (corrections de sûreté uniquement) jusqu'aux dégels des 2026-11-16
-et 2026-11-18 (paragraphe « Dégel de l'IDS, du NDR et du DPI » ci-dessous).
-Seule exception, pour la phase 3 (mainteneur, 2026-10-25, par ces mots : « Yes: add the rule identifier line to IDS, DPI and NDR alerts, with no other change to their logic. They stay frozen otherwise. ») : une ligne qui pose l'identifiant de règle (`EXP-*`, `docs/detection/regles.md`) dans leurs alertes, sans autre changement de leur logique.
+The IDS, the DPI and the NDR remained frozen as they were (safety fixes only) until the unfreezings of 2026-11-16
+and 2026-11-18 (« Unfreezing of the IDS, NDR and DPI » paragraph below).
+Only exception, for phase 3 (maintainer, 2026-10-25, with these words: « Yes: add the rule identifier line to IDS, DPI and NDR alerts, with no other change to their logic. They stay frozen otherwise. »): a line that sets the rule identifier (`EXP-*`, `docs/detection/regles.md`) in their alerts, without any other change to their logic.
 
-Dégel de l'IDS, du NDR et du DPI : phase « détection réseau » ouverte par le mainteneur le 2026-11-16 (ouverture
-consignée dans `docs/validation/campagne-kali-detection-reseau-lot1.md`), par ces mots, notés au journal des décisions
-hors dépôt : « Ok dégel repasse en boucle de déploiement autonome » ; confirmée le 2026-11-17 : « NDR/IDS sont bien
-dégelés. »
-Le DPI est dégelé à son tour le 2026-11-18, avec le NDR et l'IDS, confirmé le 2026-11-19 par ces mots : « Tout reste
-dégelé ». L'IDS (`ids.rs`), le NDR (`ndr.rs`) et le DPI (`dpi.rs`) entrent en validation dans la campagne Kali :
-corrections, durcissements et validation de leurs détections. Ce dégel prime sur les mentions de gel de l'IDS, du DPI
-et du NDR plus haut (phases 7, 8 et 9, boucle purple team, classe E de la mesure). Le reste s'applique sans
-changement : règles de la section 2, protocole et relecture de la section 4, passage en VM, état « expérimental » dans
-la matrice tant qu'une mesure ne le justifie pas, et accord du mainteneur pour toute capacité nouvelle.
+Unfreezing of the IDS, NDR and DPI: « network detection » phase opened by the maintainer on 2026-11-16 (opening
+recorded in `docs/validation/campagne-kali-detection-reseau-lot1.md`), with these words, noted in the decision log
+outside the repository: « Ok dégel repasse en boucle de déploiement autonome » (OK unfreeze, go back to the autonomous deployment loop); confirmed on 2026-11-17: « NDR/IDS sont bien
+dégelés. » (NDR/IDS are indeed unfrozen.)
+The DPI is unfrozen in turn on 2026-11-18, with the NDR and the IDS, confirmed on 2026-11-19 with these words: « Tout reste
+dégelé » (Everything stays unfrozen). The IDS (`ids.rs`), the NDR (`ndr.rs`) and the DPI (`dpi.rs`) enter validation in the Kali campaign:
+fixes, hardening and validation of their detections. This unfreezing takes precedence over the mentions of the freeze of the IDS, the DPI
+and the NDR above (phases 7, 8 and 9, purple team loop, class E of the measurement). The rest applies without
+change: rules of section 2, protocol and review of section 4, VM pass, « experimental » state in
+the matrix as long as a measurement does not justify otherwise, and maintainer agreement for any new capability.
 
-Travail de couverture ATT&CK (objectif fixé par le mainteneur le 2026-11-21) : profil « rançongiciel et intrusion opportuniste, petite
-structure » de 54 lignes, validé par le mainteneur le 2026-11-21, publié dans `docs/validation/carte-attack.md`. Les
-étapes 1 à 3 (fiabiliser la collecte des processus par les événements 4688, tirer la technique de l'identifiant de
-règle, porter la technique sur chaque fiche, puis consolider et tester ce qui existe) n'ajoutent aucune capacité ; les
-lignes « Aucune règle » et « Partiel » attendent une phase ouverte par écrit. Un lot par PR, accord explicite du
-mainteneur pour le lot qui touche la collecte des processus. Ordre de priorité avec la première version signée (bloc
-1.1, procédure de signature locale), décidé le 2026-11-21 par la réponse « In parallel » à la question de cet ordre :
-le travail ATT&CK avance pendant que la version suit son cours, quand le mainteneur fait la répétition de signature ;
-aucun des deux n'attend l'autre, et rien de ce travail ne bloque la version.
+ATT&CK coverage work (objective set by the maintainer on 2026-11-21): « ransomware and opportunistic intrusion, small
+organisation » profile of 54 rows, validated by the maintainer on 2026-11-21, published in `docs/validation/carte-attack.md`. Steps
+1 to 3 (make process collection through 4688 events reliable, derive the technique from the rule
+identifier, carry the technique on each rule sheet, then consolidate and test what exists) add no capability; the
+« Aucune règle » (No rule) and « Partiel » (Partial) rows wait for a phase opened in writing. One lot per PR, explicit agreement of the
+maintainer for the lot that touches process collection. Order of priority with the first signed version (block
+1.1, local signing procedure), decided on 2026-11-21 by the answer « In parallel » to the question of that order:
+the ATT&CK work moves forward while the version follows its course, when the maintainer does the signing rehearsal;
+neither waits for the other, and nothing in this work blocks the version.
 
-Phase « blocs de script PowerShell (4104) » : ouverte par le mainteneur le 2026-11-23, par ces mots : « ouvrir la phase
-de lecture des événements 4104 (A-7-4). » Origine : constat A-7-4 de l'audit du 2026-11-23 (la baseline active la
-journalisation des blocs de script, événement 4104 du canal `Microsoft-Windows-PowerShell/Operational`, et aucune règle
-ne le lit) ; seule source qui voit le code PowerShell après décodage, pour T1059.001 et T1027 (`docs/validation/carte-attack.md`).
-Condition de départ : la décision n'en fixe pas ; le dossier de conception est préparé tout de suite, le code commence
-après sa relecture et après la fusion de la PR #269 (masquage des secrets, ci-dessous), en parallèle des corrections de
-l'audit. Mêmes garde-fous que la phase 7 : dossier de conception d'abord (agent concepteur-fonctionnalites), une PR par
-étape, aucune dépendance nouvelle sans accord ; état « implémenté non vérifié » dans la matrice avant tout test, « testé
-en labo » ensuite, tant qu'une mesure en VM ne justifie pas mieux. Contraintes propres : un bloc de script peut contenir
-des secrets, il passe par le masquage des secrets de l'A-6-1 (`commun::masquer_secrets`, PR #269) avant tout stockage ou
-export, avec une taille bornée, et aucun bloc de script n'est stocké avant la fusion de cette PR ; lecture seule du journal, aucun
-réglage de PowerShell modifié hors de la baseline existante ; règle nouvelle avec sa fiche dans
-`docs/detection/regles.md`, ses tests positifs et négatifs, et sa mesure de faux positifs.
+« PowerShell script blocks (4104) » phase: opened by the maintainer on 2026-11-23, with these words: « ouvrir la phase
+de lecture des événements 4104 (A-7-4). » (open the phase of reading 4104 events (A-7-4).) Origin: finding A-7-4 of the audit of 2026-11-23 (the baseline enables
+script block logging, event 4104 of the `Microsoft-Windows-PowerShell/Operational` channel, and no rule
+reads it); the only source that sees PowerShell code after decoding, for T1059.001 and T1027 (`docs/validation/carte-attack.md`).
+Start condition: the decision does not set one; the design file is prepared straight away, the code starts
+after its review and after the merge of PR #269 (secret masking, below), in parallel with the fixes from
+the audit. Same safeguards as phase 7: design file first (concepteur-fonctionnalites agent), one PR per
+step, no new dependency without agreement; « implemented, not verified » state in the matrix before any test, « lab-tested »
+afterwards, as long as a measurement in a VM does not justify better. Specific constraints: a script block can contain
+secrets, it goes through the secret masking of A-6-1 (`commun::masquer_secrets`, PR #269) before any storage or
+export, with a bounded size, and no script block is stored before the merge of that PR; read-only access to the log, no
+PowerShell setting modified outside the existing baseline; new rule with its sheet in
+`docs/detection/regles.md`, its positive and negative tests, and its false positive measurement.
 
-## 6. Actions réservées à l'humain
+## 6. Actions reserved to the human
 
-Claude Code ne les fait pas ; il peut les rappeler.
+Claude Code does not do them; it can remind of them.
 
-- Vérifier que tous les postes sont en 4.2 ou plus. Première version signée publiée sur GitHub : v4.3, le 2026-11-23 ; les versions 4.2 et 4.3 installées à la main avant elle ne se mettent pas à jour seules.
-- Activer la protection de `main` : pull request obligatoire, CI verte obligatoire, pas de poussée forcée.
-- Protéger les tags `v*` ; exiger une approbation sur l'environnement `publication`.
-- Signer la version : certificat Certum Open Source, choisi par le mainteneur le 2026-11-11 (journal des décisions ; nom du titulaire visible dans la signature des binaires seulement), obtenu, valable jusqu'au 2027-11-17 ; variable `CLE_SIGNATURE` renseignée. La clé reste dans le nuage de Certum (SimplySign) : la signature se fait sur le poste du mainteneur. SignPath Foundation et Azure Trusted Signing sont écartés.
-- Code scanning CodeQL : activé par le mainteneur le 2026-11-23 en « default setup » (réglage du dépôt, aucun fichier de workflow). Marche à suivre : page du dépôt › **Settings** › section « Security and quality » de la barre latérale › **Advanced Security** › sous « Code Security », ligne « CodeQL analysis » › **Set up** › **Default** › **Edit** : langages GitHub Actions, C#, Python, Rust cochés, suite de requêtes « Default » › **Enable CodeQL**. Vérification : `gh api repos/cryptobones-1337/deR4Tizer/code-scanning/default-setup` rend `state: configured`, les quatre langages, `query_suite: default`. Analyses constatées : runner hébergé `ubuntu-latest`, build mode `none` pour C# et Rust, à chaque poussée et PR vers `main` et chaque semaine. Écarter une alerte (le mainteneur seul, après le tri écrit dans une PR) : page du dépôt › **Security and quality** › **Code scanning** › l'alerte › **Dismiss alert** › raison (faux positif, utilisé dans les tests, ne sera pas corrigé) et commentaire qui dit pourquoi, avec le numéro de la PR de tri ; équivalent en ligne de commande : `gh api -X PATCH repos/cryptobones-1337/deR4Tizer/code-scanning/alerts/<n> -f state=dismissed -f dismissed_reason="false positive" -f dismissed_comment="<raison, PR>"` (`dismissed_reason` : `false positive`, `used in tests` ou `won't fix`). Jamais de règle désactivée, de suite réduite ni de chemin exclu pour obtenir un rapport vide. Pages lues : docs.github.com, « Configuring default setup for code scanning » et « Resolving code scanning alerts ».
-- Décider de toute publication.
+- Check that all machines are on 4.2 or later. First signed version published on GitHub: v4.3, on 2026-11-23; versions 4.2 and 4.3 installed by hand before it do not update themselves.
+- Turn on the protection of `main`: pull request required, green CI required, no force push.
+- Protect the `v*` tags; require an approval on the `publication` environment.
+- Sign the version: Certum Open Source certificate, chosen by the maintainer on 2026-11-11 (decision log; name of the holder visible in the signature of the binaries only), obtained, valid until 2027-11-17; `CLE_SIGNATURE` variable set. The key stays in the Certum cloud (SimplySign): signing is done on the maintainer's machine. SignPath Foundation and Azure Trusted Signing are set aside.
+- CodeQL code scanning: turned on by the maintainer on 2026-11-23 in « default setup » (repository setting, no workflow file). Steps: repository page › **Settings** › « Security and quality » section of the sidebar › **Advanced Security** › under « Code Security », « CodeQL analysis » row › **Set up** › **Default** › **Edit**: languages GitHub Actions, C#, Python, Rust ticked, « Default » query suite › **Enable CodeQL**. Check: `gh api repos/cryptobones-1337/deR4Tizer/code-scanning/default-setup` returns `state: configured`, the four languages, `query_suite: default`. Analyses observed: hosted runner `ubuntu-latest`, build mode `none` for C# and Rust, on each push and PR to `main` and every week. Dismissing an alert (the maintainer only, after the written triage in a PR): repository page › **Security and quality** › **Code scanning** › the alert › **Dismiss alert** › reason (false positive, used in tests, won't fix) and a comment that says why, with the number of the triage PR; command-line equivalent: `gh api -X PATCH repos/cryptobones-1337/deR4Tizer/code-scanning/alerts/<n> -f state=dismissed -f dismissed_reason="false positive" -f dismissed_comment="<reason, PR>"` (`dismissed_reason`: `false positive`, `used in tests` or `won't fix`). Never a disabled rule, a reduced suite or an excluded path to get an empty report. Pages read: docs.github.com, « Configuring default setup for code scanning » and « Resolving code scanning alerts ».
+- Decide on any release.
 
-## 7. Définition de « terminé »
+## 7. Definition of « done »
 
-Un changement n'est terminé que si :
+A change is done only if:
 
-- son comportement est documenté ;
-- ses modes d'échec ont été examinés, et ceux qui touchent la sécurité échouent fermés ;
-- des tests positifs, négatifs et aux limites existent et ont été exécutés, ou leur non-exécution est déclarée ;
-- aucun secret ne fuit dans les journaux ni sur la ligne de commande ;
-- la matrice des capacités et le README reflètent l'état démontré, pas l'état espéré ;
-- le rapport de lot (section 4) est écrit, la relecture a rendu « Go » et cryptobones-1337 a donné son accord pour fusionner.
+- its behaviour is documented;
+- its failure modes have been examined, and those that touch security fail closed;
+- positive, negative and boundary tests exist and have been run, or their non-execution is declared;
+- no secret leaks into the logs or onto the command line;
+- the capability matrix and the README reflect the demonstrated state, not the hoped-for state;
+- the lot report (section 4) is written, the review has returned « Go » and cryptobones-1337 has agreed to the merge.
