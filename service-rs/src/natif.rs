@@ -1876,6 +1876,16 @@ pub fn texte_sacl_de_sddl(sddl: &str) -> Option<String> {
     texte_sacl(DescripteurSddl::depuis(sddl).ok()?.0)
 }
 
+/// SACL d'un fichier ou d'un dossier, en SDDL (tests : SeSecurityPrivilege sur ce fil, ouverture sans suivre de lien).
+/// Err : privilège absent (session non élevée) ou objet illisible
+#[cfg(test)]
+pub fn sacl_de_chemin(chemin: &std::path::Path, dossier: bool) -> Result<String, String> {
+    avec_privilege("SeSecurityPrivilege", || {
+        let f = ouvrir_verifie(chemin, 0x0100_0000 | 0x0010_0000, 0x7, dossier).map_err(|e| e.to_string())?;
+        sacl_du_handle(&f).ok_or_else(|| "SACL illisible".to_string())
+    })?
+}
+
 /// Entrée d'audit voulue, en SDDL normalisé par Windows (« AU;OINPIOSA;CC;;;WD »), tirée d'un SDDL « S:(…) » d'une
 /// seule entrée
 fn entree_normalisee(sddl: &str) -> Result<String, String> {
@@ -2083,6 +2093,10 @@ pub struct EntreesAudit<'a> {
     pub fichier: &'a str,
     pub copie_dossier: &'a str,
     pub copie_fichier: &'a str,
+    /// Copie sur un sous-dossier SANS « ID » : la SACL posée par SetKernelObjectSecurity ne porte pas « AI », et Windows
+    /// recopie alors l'entrée héritable sans le drapeau « ID » (constaté en Windows Sandbox, 2026-11-24 : un sous-dossier
+    /// créé après la pose reçoit « (AU;OICISA;CC;;;WD) », un fichier « (AU;SA;CC;;;WD) », forme de notre entrée de fichier)
+    pub copie_dossier_sans_id: &'a str,
 }
 
 /// Remplace la SACL de l'objet ouvert si `decision` en rend une nouvelle (SetKernelObjectSecurity : cet objet seul, SACL
@@ -2114,6 +2128,7 @@ pub fn retirer_audit_arborescence(racine: &std::path::Path, entrees: &EntreesAud
     const ACCES: u32 = 0x0100_0000 | 0x0010_0000;
     let (nos_dossier, nos_fichier) = (entree_normalisee(entrees.dossier)?, entree_normalisee(entrees.fichier)?);
     let (copie_dossier, copie_fichier) = (entree_normalisee(entrees.copie_dossier)?, entree_normalisee(entrees.copie_fichier)?);
+    let copie_dossier_sans_id = entree_normalisee(entrees.copie_dossier_sans_id)?;
     let droits = cle_entree_sacl(&nos_fichier).map(|k| k.2).unwrap_or_default();
     avec_privilege("SeSecurityPrivilege", || {
         let mut bilan = BilanAudit::default();
@@ -2140,8 +2155,12 @@ pub fn retirer_audit_arborescence(racine: &std::path::Path, entrees: &EntreesAud
                     continue;
                 }
                 let chemin = e.path();
-                let (nos, copie) = if t.is_dir() { (&nos_dossier, &copie_dossier) } else { (&nos_fichier, &copie_fichier) };
-                let copies: Vec<&str> = if copies_perimees { vec![copie.as_str()] } else { Vec::new() };
+                let nos = if t.is_dir() { &nos_dossier } else { &nos_fichier };
+                let copies: Vec<&str> = match (copies_perimees, t.is_dir()) {
+                    (false, _) => Vec::new(),
+                    (true, true) => vec![copie_dossier.as_str(), copie_dossier_sans_id.as_str()],
+                    (true, false) => vec![copie_fichier.as_str()],
+                };
                 match ouvrir_verifie(&chemin, ACCES, 0x7, t.is_dir()) {
                     Ok(f) => match retirer_sacl(&f, |s| sacl_sans_entrees(s, &[nos.as_str()], &copies), &mut bilan) {
                         Ok(apres) if t.is_dir() => a_parcourir.push((chemin, !sacl_transmet_audit(&apres, &droits))),

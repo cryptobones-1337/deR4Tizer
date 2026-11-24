@@ -213,6 +213,8 @@ const SDDL_AUDIT_FICHIER: &str = "S:(AU;SA;0x1;;;WD)";
 /// ou non), et sur ses sous-dossiers (cibles récursives)
 const SDDL_COPIE_FICHIER: &str = "S:(AU;IDSA;0x1;;;WD)";
 const SDDL_COPIE_DOSSIER: &str = "S:(AU;OICIIDSA;0x1;;;WD)";
+/// Copie sans « ID » sur un sous-dossier créé après la pose (dossier audité sans « AI » : SetKernelObjectSecurity)
+const SDDL_COPIE_DOSSIER_SANS_ID: &str = "S:(AU;OICISA;0x1;;;WD)";
 
 /// Éléments parcourus au plus par dossier (profil de navigateur) et par passage
 const MAXIMUM_PAR_DOSSIER: usize = 20_000;
@@ -220,7 +222,8 @@ const MAXIMUM_PAR_DOSSIER: usize = 20_000;
 /// Entrées d'audit de deR4Tizer pour une cible : la pose et le retrait les partagent (celles qu'on retire sont
 /// exactement celles qu'on pose)
 pub fn entrees_audit(recursif: bool) -> crate::natif::EntreesAudit<'static> {
-    crate::natif::EntreesAudit { dossier: sddl_audit_dossier(recursif), fichier: SDDL_AUDIT_FICHIER, copie_dossier: SDDL_COPIE_DOSSIER, copie_fichier: SDDL_COPIE_FICHIER }
+    crate::natif::EntreesAudit { dossier: sddl_audit_dossier(recursif), fichier: SDDL_AUDIT_FICHIER, copie_dossier: SDDL_COPIE_DOSSIER, copie_fichier: SDDL_COPIE_FICHIER,
+        copie_dossier_sans_id: SDDL_COPIE_DOSSIER_SANS_ID }
 }
 
 /// Désinstallation (audit du 2026-11-23, A-6-4) : retire l'audit de lecture posé dans les profils (sinon, avec
