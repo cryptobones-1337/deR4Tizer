@@ -986,10 +986,12 @@ VM (Defender is untouchable) and remain at best "tested in the lab".
   The time windows (5 min, 30 min, 10 min, one hour) are not exercised: the engine reads the clock itself.
   COR-R10 is not tested: its check downloads the LOLDrivers list. None is exercised in the VM scenarios;
   the Kali campaign measures several of them (`campagne-kali-premier-passage.md` and `campagne-kali-sixieme-lot.md`): COR-R1,
-  COR-R2, COR-R4, COR-R5, COR-R7 and COR-R9 as TP, not consolidated. Known limits, not fixed: COR-R3 does not
-  trigger through the standard vector (the addition to the group, event 4732, carries the SID of the member, matched against the name of the
-  created account: one gets COR-R3b, Alert); COR-R9 through Remote Desktop measured as Alert and not as Critical (order
-  of logons type 3 then type 10). Threshold limits (audit of 2026-11-23, done by Claude, not fixed): a slow brute force (fewer
+  COR-R2, COR-R4, COR-R5, COR-R7 and COR-R9 as TP, not consolidated. Known limit, not fixed: COR-R9 through
+  Remote Desktop measured as Alert and not as Critical (order of logons type 3 then type 10). COR-R3 was measured as
+  COR-R3b (Alert) in the first pass of the campaign (S-13: the 4732 carried only the SID of the member, compared with the
+  name of the created account); fixed since then by B-5-02 (PR #300, `siem::meme_compte`, see "Matching of COR-R3"
+  above): tested in the lab, S-13 to be measured again in a VM. Threshold limits (audit of 2026-11-23, done by Claude, not
+  fixed): a slow brute force (fewer
   than 5 failures in 5 minutes) is seen neither by COR-R1 nor by COR-R2; COR-R5 retains neither the Desktop nor Documents as a
   suspicious location for a service; COR-R6 counts by program name, steps under different names do not
   add up. False positives

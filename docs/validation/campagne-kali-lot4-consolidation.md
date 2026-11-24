@@ -30,7 +30,7 @@ Bench `tests/vm/s09.ps1` (#248, #250), launched by `tests/vm/lancer.ps1 -Scenari
 - (a) user Run value pointing to an interpreter that writes a marker file; (b) equivalent scheduled task;
   distinct name at each trial;
 - learning finished before the first trial;
-- VP: PER-001 at level Alert naming the entry; C: learning Info or learned behaviour Info; FN: nothing within
+- TP: PER-001 at level Alert naming the entry; C: learning Info or learned behaviour Info; FN: nothing within
   180 s;
 - cleanup proven by the next reading of the automatic startups before the following trial; Persistance collection
   "Active" before each trial (D-2);
@@ -41,7 +41,7 @@ Bench `tests/vm/s09.ps1` (#248, #250), launched by `tests/vm/lancer.ps1 -Scenari
 
 ## Results
 
-| Row | Scenario | Config. | Executed | Valid | VP | C | FN | D | Detection | Median / max latency (s) | Control: trials, FP |
+| Row | Scenario | Config. | Executed | Valid | TP | C | FN | D | Detection | Median / max latency (s) | Control: trials, FP |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | T1547.001 | S-09 (a) | A | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.8 / 62.2 | N-06: 3, 0 |
 | T1547.001 | S-09 (a) | B | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.7 / 62.2 | N-06: 3, 0 |

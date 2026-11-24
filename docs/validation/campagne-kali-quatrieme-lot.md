@@ -9,14 +9,14 @@ executes **the filtering leg (b) of S-06**, after the DNS-002 leg (a) of the thi
 full**. It also documents why **DNS-003 (S-18)** cannot be measured end to end in the laboratory.
 
 **Reservation (latencies)**: as in the previous passes, the VM clock is offset in the raw results; the
-VP verdict rests on the presence of the expected behaviour, not on the time. Self-validated preconditions (below).
+TP verdict rests on the presence of the expected behaviour, not on the time. Self-validated preconditions (below).
 
 ## Filtering leg of S-06 (a name of the list is blocked by the local resolver)
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-06 leg (b) (filtering by local resolver) | C (baseline 100%) | **VP** | A synthetic filtering list (a single `.test` name, controlled file owner) is loaded into an active category; after activation of the local resolver on the adapter, a query for that name is **resolved to the null address** (0.0.0.0) and the block **appears in the "derniers blocages"** (name, list, category). A **non-listed** name is **not** blocked (negative control). |
-| S-06 leg (b) | A (without baseline) | **VP** | Identical. Filtering is a function of the service itself, independent of the baseline. |
+| S-06 leg (b) (filtering by local resolver) | C (baseline 100%) | **TP** | A synthetic filtering list (a single `.test` name, controlled file owner) is loaded into an active category; after activation of the local resolver on the adapter, a query for that name is **resolved to the null address** (0.0.0.0) and the block **appears in the "derniers blocages"** (name, list, category). A **non-listed** name is **not** blocked (negative control). |
+| S-06 leg (b) | A (without baseline) | **TP** | Identical. Filtering is a function of the service itself, independent of the baseline. |
 
 **Self-validated precondition**: the trial is kept only if (1) the synthetic list is **actually loaded**
 (at least one entry, seen in the filtering status) and (2) the **activation of the resolver on the adapter succeeds**; otherwise
@@ -29,11 +29,11 @@ of the filtering + reset to the snapshot).
 
 | Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
-| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
-| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
-| DNS server change on an adapter (T1557) | DNS-002 | **VP (Alert)** | **VP (Alert)** |
-| DNS filtering: listed name blocked (null address) | filtering by local resolver | **VP** | **VP** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **TP (Critical)** | **TP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **TP (Critical)** | **TP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **TP (Critical + 7-day block)** | **TP (Critical + 7-day block)** |
+| DNS server change on an adapter (T1557) | DNS-002 | **TP (Alert)** | **TP (Alert)** |
+| DNS filtering: listed name blocked (null address) | filtering by local resolver | **TP** | **TP** |
 
 **S-06 is now covered in full**: leg (a) DNS-002 (third lot) and leg (b) filtering (this lot), in
 configurations A and C.

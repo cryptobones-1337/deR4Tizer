@@ -10,7 +10,7 @@ not routable.
 
 **Reservation (latencies)**: no latency is reported at this stage. The VM clock is ~9 h behind the host's
 in the raw results; the latencies will be measured in phase 4, after normalisation to UTC from the recorded clock
-offset (precondition 4.3). The VP verdicts rest on the presence of rule/level/entity, not on the time.
+offset (precondition 4.3). The TP verdicts rest on the presence of rule/level/entity, not on the time.
 
 ## Measurement chain validated
 
@@ -27,7 +27,7 @@ works, in both configurations, before any consolidated offensive measurement.
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-01 (RDP brute force, failures only) | A | VP | Series of RDP authentication failures (wrong passwords, no access obtained) → 6× event 4625 all from the source → COR-R1 **Alert** on the entity `source:<Kali>` ("5 échecs d'ouverture de session en 5 minutes") within the delay → 1 incident opened. Accepted side alerts: RES-004 (Alert) and RES-005 (Critical), classified as "lab exposure artefact" (lab address, excluded from the VP and FP counts). **Consolidation: 10 trials out of 10 = VP** (0 FN, 0 FP, 0 invalid; 6× 4625 and 1 COR-R1 per trial): deterministic detection. |
+| S-01 (RDP brute force, failures only) | A | TP | Series of RDP authentication failures (wrong passwords, no access obtained) → 6× event 4625 all from the source → COR-R1 **Alert** on the entity `source:<Kali>` ("5 échecs d'ouverture de session en 5 minutes") within the delay → 1 incident opened. Accepted side alerts: RES-004 (Alert) and RES-005 (Critical), classified as "lab exposure artefact" (lab address, excluded from the TP and FP counts). **Consolidation: 10 trials out of 10 = TP** (0 FN, 0 FP, 0 invalid; 6× 4625 and 1 COR-R1 per trial): deterministic detection. |
 
 In configuration C, S-01 is **prevented** (Remote Desktop refused by the baseline): the COR-R1 detection is measured in A
 (S-01); in C, COR-R1 **is measured** through a non-RDP logon vector (S-03, SMB), provided that
@@ -37,8 +37,8 @@ SMB sharing is allowed: detection confirmed in that case (see the SMB row of the
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-09 (persistence: Run key + scheduled task) | C | VP | Two new startup entries launched by an interpreter → **2 PER-001 alerts (Alert)**, one per mechanism; event 4698 (task creation) produced. Detected under the hardened baseline; no ASR rule gets in the way. |
-| S-09 (persistence: Run key + scheduled task) | A | VP | Identical (2 PER-001 Alert, 4698 produced). Persistence detected in both configurations. |
+| S-09 (persistence: Run key + scheduled task) | C | TP | Two new startup entries launched by an interpreter → **2 PER-001 alerts (Alert)**, one per mechanism; event 4698 (task creation) produced. Detected under the hardened baseline; no ASR rule gets in the way. |
+| S-09 (persistence: Run key + scheduled task) | A | TP | Identical (2 PER-001 Alert, 4698 produced). Persistence detected in both configurations. |
 
 ## System correlations (service, account, logs, audit)
 
@@ -69,12 +69,12 @@ match the **MemberSid** of the 4732.
 |---|---|---|---|
 | Legitimate activity (control) | · | "RÉUSSI" (0 FP) | "RÉUSSI" (0 FP) |
 | Check of the hardening | · (S-19) | n/a | "RÉUSSI" (Defender 0 weakened; D-BAS-01 confirmed) |
-| RDP brute force (T1110.001) | COR-R1 | **VP 10/10** | prevented (RDP refused); COR-R1 measured in C through S-03 |
-| SMB brute force (T1110.001, T1021.002) | COR-R1 | **VP** (source IP present in the 4625) | **prevention** (baseline blocks SMB by default) **+ VP detection** if SMB allowed; COR-R2/R9 postponed (success part) |
-| Persistence (T1547.001, T1053.005) | PER-001 ×2 | **VP** | **VP** |
-| Service from a suspicious folder (T1543.003) | COR-R5 | **VP (Critical)** | **VP (Critical)** |
-| Log clearing (T1070.001) | COR-R4 | **VP (Critical)** | **VP (Critical)** |
-| Weakened protection / audit (T1562.002) | COR-R7 + BAS-001 | **VP (Alert + BAS-001)** | **VP (Alert + BAS-001)** |
+| RDP brute force (T1110.001) | COR-R1 | **TP 10/10** | prevented (RDP refused); COR-R1 measured in C through S-03 |
+| SMB brute force (T1110.001, T1021.002) | COR-R1 | **TP** (source IP present in the 4625) | **prevention** (baseline blocks SMB by default) **+ TP detection** if SMB allowed; COR-R2/R9 postponed (success part) |
+| Persistence (T1547.001, T1053.005) | PER-001 ×2 | **TP** | **TP** |
+| Service from a suspicious folder (T1543.003) | COR-R5 | **TP (Critical)** | **TP (Critical)** |
+| Log clearing (T1070.001) | COR-R4 | **TP (Critical)** | **TP (Critical)** |
+| Weakened protection / audit (T1562.002) | COR-R7 + BAS-001 | **TP (Alert + BAS-001)** | **TP (Alert + BAS-001)** |
 | Account created then promoted admin (T1136.001) | COR-R3 | **finding: R3 unreachable, degrades into R3b** | **finding: R3 unreachable, degrades into R3b** |
 
 No cell is marked "0": not evaluated ≠ failure.
@@ -98,7 +98,7 @@ to be enabled for S-03. To be included in the snapshots for S-03/S-04.
 ## Open points (to be decided by the purple team agent, for list v1.4)
 
 1. RES-004 / RES-005 ("PC exposé à Internet") on the lab address (decision D-1): classified as "lab exposure
-   artefact" (documentation range, not routable) and **excluded from the VP count as well as from the FP count in all
+   artefact" (documentation range, not routable) and **excluded from the TP count as well as from the FP count in all
    scenarios**, including the negative tests. No product fix: on a real workstation with a real public
    address, these alerts would be true exposure positives; filtering them would degrade a legitimate detection.
 2. Collection criterion of N-01 (decision D-2): a long-cycle collection may appear "Indisponible" just after a

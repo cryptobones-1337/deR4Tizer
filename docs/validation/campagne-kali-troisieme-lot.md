@@ -11,14 +11,14 @@ this lot executes **the DNS-002 leg of S-06** (DNS server change). List v1.4 def
 a next lot (see "Scope of this lot").
 
 **Reservation (latencies)**: as in the previous passes, the VM clock is offset in the raw results; the
-VP verdict rests on the presence of rule/level/entity, not on the time. Self-validated precondition (see below).
+TP verdict rests on the presence of rule/level/entity, not on the time. Self-validated precondition (see below).
 
 ## DNS server change on an adapter (DNS-002)
 
 | Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-06 (a program sets a static DNS server on a physical adapter) | C (baseline 100%) | **VP (Alert)** | Setting a **static DNS server** (documentation address) on the active **physical adapter** makes its resolutions go through that server. The service detects it at the periodic reading of the adapters: **1 DNS-002 alert** (level Alert, score 3) "serveur DNS réglé à la main", naming the adapter and the new server. |
-| S-06 | A (without baseline) | **VP (Alert)** | Identical. The detection rests on the reading of the adapters by the service itself (ConfigDns collection), independent of the baseline. |
+| S-06 (a program sets a static DNS server on a physical adapter) | C (baseline 100%) | **TP (Alert)** | Setting a **static DNS server** (documentation address) on the active **physical adapter** makes its resolutions go through that server. The service detects it at the periodic reading of the adapters: **1 DNS-002 alert** (level Alert, score 3) "serveur DNS réglé à la main", naming the adapter and the new server. |
+| S-06 | A (without baseline) | **TP (Alert)** | Identical. The detection rests on the reading of the adapters by the service itself (ConfigDns collection), independent of the baseline. |
 
 **Self-validated precondition**: the trial is kept only if (1) the **ConfigDns** collection is "Active" (the service does
 read the adapters), (2) the adapter chosen is **physical** (Ethernet or Wi-Fi) and (3) its DNS server was **not already
@@ -44,10 +44,10 @@ orchestration, planned for a next lot.
 
 | Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
-| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
-| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
-| DNS server change on an adapter (T1557 / resolution hijacking) | DNS-002 | **VP (Alert)** | **VP (Alert)** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **TP (Critical)** | **TP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **TP (Critical)** | **TP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **TP (Critical + 7-day block)** | **TP (Critical + 7-day block)** |
+| DNS server change on an adapter (T1557 / resolution hijacking) | DNS-002 | **TP (Alert)** | **TP (Alert)** |
 
 With the first two lots, the campaign now covers, as measured true positives: **clean negative control,
 hardening, brute force (RDP, SMB), persistence, system correlations, credential theft, threat

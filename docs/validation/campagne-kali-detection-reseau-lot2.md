@@ -23,28 +23,28 @@ attacker on the same network) remains the realistic case of an ordinary workstat
 
 | Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-20**: ARP spoofing (man in the middle) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.002 | the target's neighbour table sees two IPs (a dummy address + the gateway) on the **same MAC** → "USURPATION ARP probable : la MAC de la passerelle est aussi annoncée par un autre appareil" |
-| **S-25**: real NBNS (NBNS leg of the active decoy) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.001 | the root responder answers the decoy on **NBNS (137)** *and* **LLMNR (5355)** → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
-| **S-23**: passive LLMNR responder (≥ 3 names) | **VP** | **P-baseline** | `EXP-NDR-001` **Alert**, T1557.001 | the target queries several names, the responder answers each one → "répond en LLMNR pour ≥ 3 noms"; **in C, the baseline disables LLMNR on the client side** → attack **prevented upstream** |
+| **S-20**: ARP spoofing (man in the middle) | **TP** | **TP** | `EXP-NDR-001` **Critical**, T1557.002 | the target's neighbour table sees two IPs (a dummy address + the gateway) on the **same MAC** → "USURPATION ARP probable : la MAC de la passerelle est aussi annoncée par un autre appareil" |
+| **S-25**: real NBNS (NBNS leg of the active decoy) | **TP** | **TP** | `EXP-NDR-001` **Critical**, T1557.001 | the root responder answers the decoy on **NBNS (137)** *and* **LLMNR (5355)** → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
+| **S-23**: passive LLMNR responder (≥ 3 names) | **TP** | **P-baseline** | `EXP-NDR-001` **Alert**, T1557.001 | the target queries several names, the responder answers each one → "répond en LLMNR pour ≥ 3 noms"; **in C, the baseline disables LLMNR on the client side** → attack **prevented upstream** |
 
 **S-20 (ARP spoofing).** After redirection, the target's gateway is the attacking machine. The
 `arpspoof` unit announces a dummy address (`203.0.113.1`) at the **attacker's MAC**. **Precondition D-2 checked**:
 the harness first confirms that `203.0.113.1` **and** the gateway carry the **same MAC** in the target's neighbour
 table (otherwise: D). `analyser_arp` (10 s cycle, through `GetIpNetTable2`) then raises `EXP-NDR-001`
 **Critical** "USURPATION ARP probable … le trafic peut être intercepté (homme du milieu)" (T1557.002). Identical
-VP in A and C (the detection is independent of the baseline).
+TP in A and C (the detection is independent of the baseline).
 
 **S-25 (real NBNS).** This scenario **completes S-22**: in the first lot, the decoy had only been tested on
 **LLMNR** (Python responder without root, unprivileged port). With the root responder (privileged port 137), the
 deR4Tizer active decoy (question **LLMNR (224.0.0.252:5355) *and* NBNS (137)** for a random non-existent name)
 receives an answer **on both protocols**: `resultat_leurre = « RÉPONSE … 203.0.113.20 (LLMNR),
-203.0.113.20 (NBNS) »`, and `EXP-NDR-001` **Critical** "EMPOISONNEMENT LLMNR/NBNS" (T1557.001). **VP in A and C**:
+203.0.113.20 (NBNS) »`, and `EXP-NDR-001` **Critical** "EMPOISONNEMENT LLMNR/NBNS" (T1557.001). **TP in A and C**:
 the decoy leaves **from the service side** whatever the client's LLMNR policy, unlike the passive responder
 below. The active decoy remains the **most reliable signal** of the NDR.
 
 **S-23 (passive LLMNR responder).** The target sends 6 LLMNR queries for distinct names; the responder answers
 each one; the capture sees ≥ 3 distinct answers from the same host → `EXP-NDR-001` **Alert** "répond en LLMNR pour
-≥ 3 noms" (T1557.001). **VP in A.** **In C: P-baseline (prevention)**: the hardened baseline **disables LLMNR
+≥ 3 noms" (T1557.001). **TP in A.** **In C: P-baseline (prevention)**: the hardened baseline **disables LLMNR
 on the client side** (`EnableMulticast(Policy) = 0`, checked in the VM): the target no longer sends LLMNR queries, so
 passive poisoning is **prevented upstream**. This is not a detection defect: it is defence in
 depth at work (and the **active decoy**, for its part, keeps watching even in C, see S-25). Passive detection
@@ -58,7 +58,7 @@ privilege reason. In `ndr.rs`, an observed DHCP server is judged rogue if `serve
 IP** → `dhcp_interface` is **empty** → **every** DHCP server is judged legitimate, no alert. And if the target
 switches to DHCP with the attacker as its **only** server, it takes its lease from the attacker → `dhcp_interface ==`
 attacker → legitimate as well. **This is not a defect**: one cannot qualify as "rogue" the **only** DHCP
-server present. A faithful VP requires a **legitimate server *and* a rogue one** on the segment (two servers), a setup to
+server present. A faithful TP requires a **legitimate server *and* a rogue one** on the segment (two servers), a setup to
 prepare. The detection logic (reading of **option 54**, table bounded to ≤ 50 servers) is, for its part, correct on
 review.
 

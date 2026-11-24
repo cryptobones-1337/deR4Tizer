@@ -12,7 +12,7 @@ data, no workstation name, no password. Root bounded by the same auditable syste
 
 | Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-26**: passive mDNS responder (≥ 15 names) | **VP** | **VP** | `EXP-NDR-001` **Alert**, T1557.001 | the target sends ≥ 20 distinct mDNS queries, the root responder answers each one → the capture sees ≥ 15 distinct mDNS answers from the same host → "répond en mDNS pour N noms" |
+| **S-26**: passive mDNS responder (≥ 15 names) | **TP** | **TP** | `EXP-NDR-001` **Alert**, T1557.001 | the target sends ≥ 20 distinct mDNS queries, the root responder answers each one → the capture sees ≥ 15 distinct mDNS answers from the same host → "répond en mDNS pour N noms" |
 
 **S-26 (passive mDNS responder).** The code applies a **higher threshold for mDNS (15 names, against 3 for
 LLMNR/NBNS)**, because a legitimate mDNS device often announces several services; this threshold reduces false positives.
@@ -26,7 +26,7 @@ not on the display.
 
 To guarantee the emission independently of the configuration, the target sends **raw** mDNS queries (UDP
 socket to `224.0.0.251:5353`), and **not** through the Windows mDNS client. S-26 therefore tests the **detection path**
-(capture → engine → rule → alert), and the VP in **A and C** confirms that this path works in both
+(capture → engine → rule → alert), and the TP in **A and C** confirms that this path works in both
 configurations. On the other hand, S-26 **does not measure** the **client-side** mDNS posture of the hardened baseline: that is
 a separate question (unlike S-23, where the emission went through the Windows LLMNR client, which revealed
 the client-side prevention, `EnableMulticast = 0`, and gave a P-baseline). In other words: S-26 validates the
@@ -34,8 +34,8 @@ detector, not the prevention.
 
 ## 3. Assessment
 
-With this lot, **passive responder** detection is covered on its three protocols: **LLMNR** (S-23, Alert, VP A /
-P-baseline C), **NBNS** (through the active decoy, S-25) and **mDNS** (S-26, Alert, VP A+C). Combined with the active decoy
+With this lot, **passive responder** detection is covered on its three protocols: **LLMNR** (S-23, Alert, TP A /
+P-baseline C), **NBNS** (through the active decoy, S-25) and **mDNS** (S-26, Alert, TP A+C). Combined with the active decoy
 (S-22/S-25, Critical) and ARP spoofing (S-20, Critical), the NDR coverage without an additional setup is
 complete. What remains, each requiring an **RFC 1918 re-addressing** of the laboratory (the `locale()` guard of the
 UPnP module only accepts private addresses; the directional IDS rules rely on `$HOME_NET`/`$EXTERNAL_NET`):
