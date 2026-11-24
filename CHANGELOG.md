@@ -2,6 +2,131 @@
 
 ## Unreleased
 
+- Correlation COR-R3 (new administrator account) now matches the created account and the account added to Administrators
+  by SID when both are known, otherwise by exact name; it no longer matches on a substring ("adm" vs "admin2"), and it
+  now fires for local accounts, whose group-membership event carries only the SID (audit of 2026-11-23, B-5-02; Kali
+  scenario S-13 to be re-measured in the VM). (#300)
+- Connections already open when the service starts lose their "pre-existing" mark once they close, so a later
+  reconnection gets the "direct IP" indicator again (audit of 2026-11-23, B-1-01). (#300)
+- The Windows drive letter is derived from SystemRoot without a slice that could panic on an empty, one-byte or
+  multi-byte value (audit of 2026-11-23, A-5-1). (#300)
+- Test S295-02 now fails in CI when it cannot make its real network connection, instead of passing silently. (#300)
+- Interface: language decided in one place for the interface, the classic interface, the elevated helper and the
+  notifications; per-user setting with three values (automatic, French, English), applied at the next launch; a
+  "Français" chosen by an earlier version under a non-French Windows has to be chosen again; the elevated helper follows
+  the language of the interface that starts it; Firewall page: "no issue found" instead of "not found"; levels and
+  notifications translated; inventory of the service's texts (finding T-17, step 1). (#299)
+- Export API (audit A-1-3): when the API is opened to the local network, connections from the computer itself get at
+  most 4 of the 16 places, so a local program can no longer starve the SIEM; refusals for lack of room are logged and
+  written to the SIEM (source `api`, type `connexions-refusees`) at most once every 10 minutes. API listening on
+  127.0.0.1 only: no quota can tell clients apart (declared limit), the signal still applies. (#297)
+- Command pipe (audit A-1-4): administrators get FILE_GENERIC_READ | FILE_WRITE_DATA (0x12008B) instead of generic read
+  and write, so only SYSTEM can create a pipe instance; the interface, the update script, `mettre-a-jour.ps1` and test
+  scripts now open the pipe with ReadData | WriteData (a client asking for GENERIC_WRITE is refused). (#297)
+- Interface: the confirmation window of the elevated helper takes the dark theme and the icon of the interface. It shows
+  a short title taken from a fixed table, the command text in a read-only area with the consequences as a list, a red
+  banner for commands that weaken protection, and the remaining seconds on "Continue". Its height follows the text up to
+  70% of the screen, then the area scrolls (finding T-16). What is shown and sent, the delays and "Cancel" as the
+  default are unchanged. (#296)
+- Automatic updates: a manifest older than the installed version is no longer reported as "up to date": it now reads
+  "older manifest than the installed version" and shows as "to check" on the Health page (audit of 2026-11-23, A-3-2).
+  (#294)
+- Automatic updates: after a failed manifest read, new attempts after 15 min, then 1 h, then daily (was: 24 h); a 404
+  reads "manifeste introuvable (404)"; a check failing for 24 h or more (kept across restarts) shows as "to check" on
+  the Health page (T-12). (#294)
+- CI update job: older manifest, package signed by a second pinned key, certificate expired after a timestamped
+  signature (expected accepted) and without timestamp (refused, control) (A-3-4). Pipe held by another process (A-8-2)
+  still declared not run. (#294)
+- Interface: a single icon (finding T-14). The sidebar logo is the image of the application icon, produced by
+  `icone.ps1`, like the executable, the title bar, the MSI, the notification area and the notifications; the elevated
+  helper window and two dialogs also carry this icon; 40 px image added. (#291)
+- Data folder root (audit of 23 November 2026, C-1, confirmed in the test VM on the signed v4.3: a junction placed at
+  `C:\ProgramData\deR4Tizer` by a standard account and held open made the service write its log, state, alerts, SIEM
+  and secrets into that account's folder): until the root has been opened without following links, its final path
+  checked and its owner and rights set and read back through that handle, the service writes nothing in or under it
+  (one "root safe?" decision for the log and every data file), reports the failure in the Windows event log
+  (Application, source `deR4Tizer`, no registry write) and in `%SystemRoot%\Temp`, does not start monitoring and
+  retries every minute; the hourly check uses the same handle. The root's rights are no longer set by path. The
+  installer refuses to install, upgrade or repair while the data folder is a link (read-only JScript action, fail-closed
+  launch condition). Uninstalling without `GARDER_DONNEES=1` now keeps the root, empty and reserved to SYSTEM and
+  administrators (the MSI component is permanent), so that no junction can be placed there before a reinstall; a root
+  that is a link is removed (the link only) and recreated. A root set aside gets an unpredictable name (date and unique
+  id). Unit tests and a CI scenario (`installation.ps1`, "C-1"); to be replayed in the VM. (#288)
+- Data folder content (C-2): on the first take-over of a pre-existing folder (marker `prise-en-charge.json`; a folder
+  from an earlier version, recognised by a trusted `etat.json`, is kept), everything is set aside in `ecartes`
+  whatever its owner; a file with more than one hard link is set aside at sorting time and refused when read. (#288)
+- Data files read once (C-8): owner, hard-link count and content are read through the same handle, and a file absent at
+  the check is not read. (#288)
+- Present but unreadable data files (C-3): `commun::lire` tells "absent" from "present but not loaded" (bounded retry);
+  a file not loaded is never rewritten until it is read again (configuration, blocks, "known" baselines, firewall
+  history…). `config.json` not loaded at start: default configuration, no rewrite until the next start, settings
+  commands refused, new Health line and SAN-014. (#288)
+- CI: `publication.yml` uses the pinned Rust toolchain of `service-rs/rust-toolchain.toml` (1.100.0) and `--locked` on
+  `cargo test` and `cargo build`, like `ci.yml` (A-3-3, follow-up of PR #284). (#290)
+- Process chains (CHA-001), false positives found on a developer workstation (audit of 23 November 2026, T-1 and T-3):
+  about a hundred critical alerts in one hour, with impossible chains (`grep → pwsh`, `tail → bash`, the service's own
+  `auditpol` leading to `git`). A finished process is kept one hour in the tree and its process ID is soon reused: a child
+  was attached to whatever process later got its parent's ID. Each process now carries its creation time (TimeCreated of
+  event 4688, to 100 ns; otherwise the time the process list first showed it) and the time it was seen gone; a parent is
+  kept only if it was born before the child and still alive when the child was created, otherwise the child heads its
+  own chain. A reused process ID starts with no signals even under the same name. Programs started by the service (and
+  their children) are left out of chains; the service is recognised by its own process ID, never by a name. The same
+  behaviour repeated at the same place of a chain counts once, so a tool that starts `pwsh -EncodedCommand` hundreds of
+  times no longer raises the score (and an alert) each time; at most 3 CHA-001 alerts per chain and per hour when they bring
+  nothing new, the rest counted in `mesures.json` (`chaines.alertes_plafonnees`); an alert that brings a new ATT&CK
+  technique or a strong signal (PRC-001, PRC-005, comsvcs, canary) always goes through (`chaines.alertes_hors_plafond`).
+  Only the programs the service starts (exact path under System32) leave chains; any other child of the service
+  (parent process spoofing, T1134.004) stays in its chain with a signal. A signal on an unknown process ID no longer publishes a
+  nameless "PID n" chain. The incident entity of a chain is its first program (its path, or its ID and creation time when
+  the path is unknown or is a generic interpreter or launcher such as cmd or powershell),
+  no longer the chain text, so a growing chain stays one incident. Tested in the lab, not yet tried in the VM. Still
+  open, for the maintainer to decide: a signed developer tool that encodes its PowerShell commands still raises PRC-002
+  on each launch (proposals in the PR, not implemented). (#289)
+- Static analysis in CI, batch 1 (CI tooling only, no product change): new `dependances` job running
+  cargo-audit 0.22.2 on `service-rs/Cargo.lock` and cargo-deny 0.20.2 (advisories, licenses, sources) with
+  `service-rs/deny.toml`. Rust toolchain pinned to 1.100.0 (`service-rs/rust-toolchain.toml`) and `cargo test` /
+  `cargo build` run with `--locked` in `ci.yml` (audit finding A-3-3, partly fixed: `publication.yml` still lacks
+  `--locked`, change proposed). First measurement (run 45175958903): no RustSec advisory, sources all from crates.io,
+  one license error: the service crate itself declared no license. Following the maintainer's decisions of
+  23 November 2026, the service now declares `license = "EUPL-1.2"` and the license allow list is validated
+  (Apache-2.0, EUPL-1.2, MIT, Unicode-3.0, Unlicense); the job is green (run 45184585387). These checks are not an
+  independent review. (#284)
+- Process rules PRC-003 and PRC-005 (finding T-2 of 23 November 2026, a false positive seen by the maintainer on v4.3;
+  tested in the lab, not yet tried in the VM): their patterns now apply to the program actually launched, not to any
+  text in a command line. `bash`, `git`, `grep` or `echo` with the words of a pattern in an argument (for example a
+  commit message mentioning `certutil -urlcache`) no longer raise an alert. A pattern is read on the line of its own
+  tool (`vssadmin.exe`, `wbadmin.exe`, `bcdedit.exe`, `certutil.exe`, `bitsadmin.exe`, `mshta.exe`, `regsvr32.exe`,
+  `rundll32.exe`, `wmic.exe`, `msiexec.exe`, `diskshadow.exe`), recognised by the file name of the process image or,
+  with Sysmon, by the original file name (renamed copy); the PowerShell forms of PRC-005 (WMI or CIM) only on a
+  PowerShell process. A tool started at the head of a command by `cmd /c`, `powershell -c` or `pwsh -c` (or after
+  `&`, `|`, `;` or a parenthesis) is still seen on the interpreter's line, in addition to its own process. A renamed
+  copy of a tool without Sysmon is a declared blind spot. The process information cache used to score connections
+  ("suspicious command line" indicator of RES-002) is now used only when its entry describes the program holding the
+  connection (same full path); before, an entry kept for an hour under a reused process ID could lend the command line
+  of an earlier `cmd` running PowerShell to a later program (seen on the maintainer's machine as "obfuscated
+  PowerShell" on a `gh` connection). (#286)
+- Domain-name filtering, audit of 23 November 2026 (findings T-9, T-10, B-3-01, C-4, C-6, C-7, C-10, C-11, C-12;
+  tested in the lab, not yet tried in the VM). Only hardware Ethernet and Wi-Fi cards are set when filtering is turned
+  on: the service reads the HardwareInterface and ConnectorPresent flags of each card from Windows (`GetIfEntry2`),
+  never its name, so Hyper-V switch cards ("vEthernet"), WSL, Docker and VPN TAP cards are left alone; a card whose
+  flags cannot be read is treated as virtual. The cards that would be set are published before activation
+  (`CartesARegler` in `filtrage-etat.json`); the confirmation window does not show them yet. Windows' default
+  site-local IPv6 DNS servers (`fec0:0:0:ffff::1` to `::3`, and all of `fec0::/10`) and link-local addresses are no
+  longer used as upstream or fallback, and the 10-minute trial tries IPv4 servers first. If setting a card fails and
+  restoring it fails too, the resolver keeps port 53 (relay only) and the restore is retried every 5 minutes, instead
+  of stopping and reporting "cards restored". The list guard is no longer one-way: a copy above 500,000 entries is
+  always refused (first download included), and a list refused for its size is accepted after 3 downloads in a row give
+  the same size (within 10%), so an inflated copy no longer locks out the healthy list; such a replacement is shown in
+  the published filtering state (`Remplacement` field of the list in `filtrage-etat.json`, kept until the service
+  restarts), not only in the log. A list file larger than 32 MB is
+  refused before being read. A TCP exchange with the upstream now has a 4 s overall deadline. The upstream is declared
+  silent (filtering suspended, cards restored) only when the service's own probe gets no answer either: queries chosen
+  by a local program are no longer enough. A random-generator failure now stops relaying instead of using zero values.
+  A name with an invalid label is judged as its longest valid parent, so it no longer escapes its domain's block.
+  Review of the change (S281-01, S281-02): a card whose DNS registry values cannot be read counts as still pointing to
+  the resolver (port 53 kept) and is never reported as restored; a relay that fails on the computer itself (busy
+  dynamic UDP ports, random-generator failure) is counted and logged apart and never declares the upstream silent;
+  after 8 random source ports, the relay falls back to a port chosen by Windows (the query ID stays random). (#285)
 - Privileged operations, audit of 23 November 2026 (A-5-2, A-1-1, A-1-2, A-1-5, A-5-3, A-2-1, A-4-1, B-2-01; tested in
   the lab, not yet tried in the VM). The service never opens a network path (`\\host\...`, WebDAV, `\\?\UNC\...`,
   `\\.\...`, network drive, drive of unknown type or missing as seen by SYSTEM) to check a program's signature, catalog, hash or
