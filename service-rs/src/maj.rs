@@ -80,6 +80,9 @@ struct Etat {
     auto_applique: bool,
     /// Version plus récente que le service installerait (`installable`) : annoncée et clé épinglée, ou installation lancée
     installable: bool,
+    /// Installation précédente en échec (maj\echec.txt présent, son texte est ajouté à `statut`) ; indépendant de
+    /// `statut_code` (audit de #308, S308-03)
+    echec_installation_precedente: bool,
 }
 
 /// Issue d'un contrôle en code stable (T-18), publiée dans maj.json (`StatutCode`) et traduite par l'interface
@@ -681,10 +684,23 @@ pub fn script_installation(p: &ParametresScript) -> String {
 fn publier(disponible: String, mut statut: String, code: StatutMaj, auto: bool) {
     // Écrit par le script en UTF-8 avec BOM (PowerShell 5) ; sans -Encoding, il l'était en Windows-1252 et sa
     // lecture échouait : l'échec n'apparaissait jamais dans l'interface
-    if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
+    let echec_precedent = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt"));
+    if let Some(e) = &echec_precedent {
         statut = format!("{statut} · {}", e.trim_start_matches('\u{feff}').trim());
     }
-    let _ = publier_vers("maj.json", &commun::dossier().join("maj.json"), disponible, statut, code, auto, crate::sante::secondes());
+    let controle = Controle { code, auto, echec_precedent: echec_precedent.is_some() };
+    let _ = publier_vers("maj.json", &commun::dossier().join("maj.json"), disponible, statut, controle, crate::sante::secondes());
+}
+
+/// Issue d'un contrôle telle que publiée (T-18) : code du contrôle, installation automatique appliquée, et échec de
+/// l'installation précédente (maj\echec.txt présent, écrit par le script : paquet modifié ou retour arrière ; effacé au
+/// lancement d'une nouvelle installation). L'échec précédent est à part du code : un contrôle « AJour » peut suivre une
+/// installation échouée (audit de #308, S308-03)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Controle {
+    pub code: StatutMaj,
+    pub auto: bool,
+    pub echec_precedent: bool,
 }
 
 /// Écrit l'état du contrôle dans `chemin` (suivi sous le nom `nom` ; tests : dossier de travail). Le début de la série
@@ -693,8 +709,9 @@ fn publier(disponible: String, mut statut: String, code: StatutMaj, auto: bool) 
 /// chargé », et `ecrire` refuse ensuite de le remplacer ; le statut restait alors figé alors que les contrôles suivants
 /// échouaient (audit de #294, S294-01). Illisible, refusé ou mal formé : la série repart de `t`, et le fichier est
 /// réécrit. Aucune confiance n'est portée par maj.json : seul `EchecDepuisS` est repris, borné par `debut_echecs`.
-/// `code` : issue du contrôle (`StatutMaj`) ; `auto` : installation automatique appliquée par ce contrôle (T-18)
-pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String, code: StatutMaj, auto: bool, t: i64) -> Result<(), String> {
+/// `controle` : issue du contrôle, installation automatique appliquée, échec de l'installation précédente (T-18)
+pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String, controle: Controle, t: i64) -> Result<(), String> {
+    let Controle { code, auto, echec_precedent } = controle;
     let issue = code.issue();
     let precedent = echec_depuis_publie(commun::lire_fichier(chemin).as_deref());
     let depuis = debut_echecs(issue, precedent, t);
@@ -711,6 +728,7 @@ pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String
         statut_code: code.code().into(),
         auto_applique: auto,
         installable: installable(code, cle_epinglee),
+        echec_installation_precedente: echec_precedent,
     })
 }
 

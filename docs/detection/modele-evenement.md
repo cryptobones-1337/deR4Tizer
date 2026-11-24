@@ -292,13 +292,19 @@ l'interface ; les textes français existants restent à côté.
   pas encore lue), puis une source jamais lue « NonVerifiable », puis une source partielle « Partiel ». Blocage : aucune
   des trois listes du niveau 3 (Spamhaus DROP IPv4 et IPv6, Feodo Tracker) chargée, « SansEffet » ; une partie,
   « Partiel » ; protection du dossier en échec, « SansEffet » (la suspension sur leurre, elle, reste : D6-10).
+- Registre des réponses mal formé (`RegistreReponses` « ContenuIllisible ») : toute action automatique est retenue
+  (`Etat::passage`), donc « SansEffet » pour les deux réponses tant que le fichier n'est pas retiré et le service
+  redémarré (audit de #308, S308-01).
+- Limite : le blocage par les listes ne modélise pas l'effet réel quand le pare-feu de Windows est coupé ou qu'une
+  règle est refusée ; « Actif » dit que la politique et les sources permettent le blocage, pas que la règle agit.
 - Réglages lus : ceux du moniteur (`config.json` chargé, mis à jour par les commandes). La suspension sur leurre relit
   `config.json` à chaque événement : les deux ne diffèrent que si le fichier est modifié hors du service.
 - Syslog : « Joignable » seulement en TCP (message écrit sur une connexion établie). En UDP, un datagramme émis n'est
   jamais confirmé : « NonVerifiable ». Aucun envoi tant qu'aucune alerte du niveau choisi n'est levée : « NonVerifiable ».
   Le bouton « Tester » n'y compte pas.
-- API : « Joignable » dit que le service a ouvert son port ; l'accès depuis le SIEM (pare-feu, réseau, adresses
-  autorisées) n'est pas vérifié. Jeton non créé ou port non obtenu : « EnEchec ».
+- API : « Joignable » dit que le service a ouvert son port (l'interface le traduit par « port ouvert ») ; l'accès
+  depuis le SIEM (pare-feu, réseau, adresses autorisées) n'est pas vérifié. Jeton non créé, port non obtenu, ou fil
+  d'écoute terminé alors que ses réglages sont toujours en vigueur : « EnEchec » (audit de #308, S308-02).
 
 `maj.json` :
 
@@ -308,6 +314,7 @@ l'interface ; les textes français existants restent à côté.
 | `StatutCode` | texte | « AdresseRefusee », « ManifesteNonObtenu », « ManifesteInvalide », « AJour », « ManifesteAncien », « Disponible », « SansCleEpinglee », « InstallationRefusee », « InstallationLancee », « InstallationImpossible » (`maj::StatutMaj`) ; le texte de `Statut` dit le détail |
 | `AutoApplique` | booléen | installation automatique appliquée par ce contrôle (réglage lu au moment du contrôle) |
 | `Installable` | booléen | vrai pour « Disponible » si ce binaire a une clé épinglée, et pour « InstallationLancee » (`maj::installable`) |
+| `EchecInstallationPrecedente` | booléen | `maj\echec.txt` présent : le script de l'installation précédente a échoué (paquet modifié, ou retour arrière) ; son texte est ajouté à `Statut`. Indépendant de `StatutMaj` : un contrôle « AJour » peut suivre une installation échouée ; effacé au lancement d'une nouvelle installation (audit de #308, S308-03) |
 
 `filtrage-etat.json` (jamais `etat.json` ni l'API) : `EtatCode`, mêmes cas que `Etat` : « Inactif »,
 « RemiseEnAttente », « SuspenduResolveur », « SuspenduAmont », « Contourne », « Actif », plus « ActifSansCategorie »

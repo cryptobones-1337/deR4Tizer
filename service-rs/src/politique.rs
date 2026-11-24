@@ -121,6 +121,13 @@ pub fn decider(action: Action, declencheur: Declencheur, c: &Contexte) -> Decisi
 
 // ------------------------------------------------------------ états effectifs publiés (T-18), décisions pures testées
 
+/// Décision pure : le code publié du registre des réponses (`etat_registre`, `code_registre`) dit-il que reponses.json
+/// est mal formé ? Alors `Etat::passage` retient toute action automatique (audit de #308, S308-01). « ContenuIllisible »
+/// est le premier cas de `code_registre` : il n'est jamais masqué par un autre
+pub fn registre_illisible(code: &str) -> bool {
+    code == "ContenuIllisible"
+}
+
 /// État commun de sources de télémétrie dont une réponse automatique a besoin : une source indisponible ou désactivée
 /// (« SansEffet ») l'emporte sur une source pas encore lue (« NonVerifiable »), puis sur une source partielle
 /// (« Partiel ») ; toutes actives : « Actif »
@@ -140,10 +147,15 @@ fn etat_des_sources(sources: &[&crate::collectes::EtatPublie]) -> &'static str {
 /// Décision pure (T-18) : état effectif de la réponse automatique aux rançongiciels, publié dans etat.json
 /// (`ReponsesAuto.Rancongiciel`). Réglage coupé : « Desactive ». Sinon la politique (`decider`, suspension sur leurre)
 /// et les deux sources dont la suspension dépend : les leurres posés et suivis (collecte Leurres) et le journal Sécurité
-/// qui porte leurs 4663 (collecte JournalSecurite)
-pub fn etat_rancongiciel(reglage: bool, leurres: &crate::collectes::EtatPublie, journal_securite: &crate::collectes::EtatPublie) -> &'static str {
+/// qui porte leurs 4663 (collecte JournalSecurite). `registre_illisible` : reponses.json mal formé (`registre_illisible`),
+/// toute action automatique retenue : « SansEffet »
+pub fn etat_rancongiciel(reglage: bool, registre_illisible: bool, leurres: &crate::collectes::EtatPublie, journal_securite: &crate::collectes::EtatPublie) -> &'static str {
     if !reglage {
         return "Desactive";
+    }
+    // Registre des réponses mal formé : `Etat::passage` retient toute action automatique (audit de #308, S308-01)
+    if registre_illisible {
+        return "SansEffet";
     }
     let c = Contexte { rancongiciel: true, ..Default::default() };
     if !matches!(decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &c), Decision::Autorisee(_)) {
@@ -155,10 +167,14 @@ pub fn etat_rancongiciel(reglage: bool, leurres: &crate::collectes::EtatPublie, 
 /// Décision pure (T-18) : état effectif du blocage automatique par les listes (`ReponsesAuto.BlocageListes`). Réglage
 /// coupé : « Desactive ». Sinon la politique (`decider`, liste du niveau 3 : refusée en échec de la protection du dossier
 /// de données, « SansEffet »), les listes du niveau 3 chargées (`niveau3` : chargées, attendues ; aucune : « SansEffet »,
-/// une partie : « Partiel ») et la table des connexions, où le blocage est décidé (collecte Connexions)
-pub fn etat_blocage_listes(reglage: bool, echec_protection: bool, niveau3: (usize, usize), connexions: &crate::collectes::EtatPublie) -> &'static str {
+/// une partie : « Partiel ») et la table des connexions, où le blocage est décidé (collecte Connexions). Registre des
+/// réponses mal formé : « SansEffet », comme pour le rançongiciel
+pub fn etat_blocage_listes(reglage: bool, echec_protection: bool, registre_illisible: bool, niveau3: (usize, usize), connexions: &crate::collectes::EtatPublie) -> &'static str {
     if !reglage {
         return "Desactive";
+    }
+    if registre_illisible {
+        return "SansEffet";
     }
     let c = Contexte { blocage_menaces: true, echec_protection, ..Default::default() };
     if !matches!(decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Liste { niveau3: true }), &c), Decision::Autorisee(_)) {

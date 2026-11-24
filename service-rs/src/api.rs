@@ -221,9 +221,16 @@ static ECOUTE: Mutex<(u64, EtatEcoute)> = Mutex::new((0, EtatEcoute::EnCours));
 
 fn noter_ecoute(generation: u64, e: EtatEcoute) {
     let mut g = verrou(&ECOUTE);
-    if generation >= g.0 && generation == GENERATION.load(Ordering::SeqCst) {
+    if ecoute_notable(generation, g.0, GENERATION.load(Ordering::SeqCst)) {
         *g = (generation, e);
     }
+}
+
+/// Décision pure : un fil d'écoute ne note son état que pour la génération en cours, jamais par-dessus une plus récente.
+/// Un fil arrêté par une génération suivante (arrêt normal) ne note donc rien ; un fil sorti alors que sa génération
+/// est encore la courante note « Echec » (audit de #308, S308-02)
+pub fn ecoute_notable(generation: u64, notee: u64, courante: u64) -> bool {
+    generation >= notee && generation == courante
 }
 
 /// Décision pure (T-18) : état effectif de l'API d'export publié dans etat.json. « Desactive » ; « Joignable » (port
@@ -287,6 +294,9 @@ pub fn demarrer(config: &ConfigApi) {
         commun::journal(&format!("API d'export : écoute sur {adresse}"));
         noter_ecoute(generation, EtatEcoute::Ouverte);
         ecouter(&ecoute, &jeton, &autorisees, reseau, &PLACES, &SIGNAL, &|| GENERATION.load(Ordering::SeqCst) == generation);
+        // Écoute terminée : si cette génération est encore la courante, le port n'est plus tenu (« Joignable » ne doit pas
+        // rester ; audit de #308, S308-02) ; arrêt normal par une génération suivante : ignoré par noter_ecoute
+        noter_ecoute(generation, EtatEcoute::Echec);
     }).unwrap();
 }
 
