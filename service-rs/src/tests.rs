@@ -127,11 +127,11 @@ fn t19_trafic_pays_programmes_destinations_bornes() {
         ip: Ipv4Addr::from(ip), nom, pays, programme, entrant: e, sortant: s, recent: (0, 0), active: false,
     };
     let vues = vec![
-        v([1, 1, 1, 1], "a.example.com", "US", "msedge.exe", 100, 10),
-        v([1, 1, 1, 2], "", "US", "msedge.exe", 50, 5),
-        v([1, 1, 1, 3], "b.example.net", "US", "Teams.exe", 300, 0),
-        v([2, 2, 2, 2], "c.example.org", "DE", "?", 7, 1),
-        v([3, 3, 3, 3], "sans-pays.example", "", "msedge.exe", 999, 999),
+        v([198, 51, 100, 1], "a.example.com", "US", "msedge.exe", 100, 10),
+        v([198, 51, 100, 2], "", "US", "msedge.exe", 50, 5),
+        v([198, 51, 100, 3], "b.example.net", "US", "Teams.exe", 300, 0),
+        v([203, 0, 113, 2], "c.example.org", "DE", "?", 7, 1),
+        v([192, 0, 2, 3], "sans-pays.example", "", "msedge.exe", 999, 999),
     ];
     let l = lignes_pays(&vues, Duration::from_secs(10));
     assert_eq!(l.iter().map(|p| p.code.as_str()).collect::<Vec<_>>(), ["US", "DE"], "pays sans code omis, le plus gros d'abord");
@@ -140,12 +140,12 @@ fn t19_trafic_pays_programmes_destinations_bornes() {
     let pv: Vec<(&str, u64, u64)> = us.programmes_volumes.iter().map(|p| (p.nom.as_str(), p.entrant, p.sortant)).collect();
     assert_eq!(pv, [("Teams.exe", 300, 0), ("msedge.exe", 150, 15)], "volumes par programme additionnés, le plus gros d'abord");
     let dp: Vec<(String, &str, &str, u64)> = us.destinations_principales.iter().map(|d| (d.ip.clone(), d.nom.as_str(), d.programme.as_str(), d.entrant + d.sortant)).collect();
-    assert_eq!(dp, [("1.1.1.3".to_string(), "b.example.net", "Teams.exe", 300), ("1.1.1.1".to_string(), "a.example.com", "msedge.exe", 110),
-        ("1.1.1.2".to_string(), "", "msedge.exe", 55)], "adresse et nom comme dans Destinations");
+    assert_eq!(dp, [("198.51.100.3".to_string(), "b.example.net", "Teams.exe", 300), ("198.51.100.1".to_string(), "a.example.com", "msedge.exe", 110),
+        ("198.51.100.2".to_string(), "", "msedge.exe", 55)], "adresse et nom de même nature que Destinations");
     assert_eq!(l[1].programmes_volumes[0].nom, "?", "programme désigné comme dans les listes existantes");
     assert_eq!(serde_json::to_string(&us.programmes_volumes[0]).unwrap(), r#"{"Nom":"Teams.exe","Entrant":300,"Sortant":0}"#);
     assert_eq!(serde_json::to_string(&us.destinations_principales[2]).unwrap(),
-        r#"{"Ip":"1.1.1.2","Nom":"","Programme":"msedge.exe","Entrant":50,"Sortant":5}"#);
+        r#"{"Ip":"198.51.100.2","Nom":"","Programme":"msedge.exe","Entrant":50,"Sortant":5}"#);
 
     // Bornes : programmes et destinations par pays, nombre de pays détaillés, nombre de pays
     let noms: Vec<String> = (0..40).map(|i| format!("p{i}.exe")).collect();
@@ -171,7 +171,7 @@ fn t19_trafic_pays_programmes_destinations_bornes() {
         "détail réservé aux pays les plus gros");
     assert!(serde_json::to_string(&l).unwrap().len() < 200_000, "trafic.json reste petit");
     // Volumes saturés, jamais de dépassement
-    let max = [v([9, 9, 9, 9], "", "FR", "x", u64::MAX, u64::MAX), v([9, 9, 9, 8], "", "FR", "x", u64::MAX, 1)];
+    let max = [v([192, 0, 2, 9], "", "FR", "x", u64::MAX, u64::MAX), v([192, 0, 2, 8], "", "FR", "x", u64::MAX, 1)];
     let l = lignes_pays(&max, Duration::from_secs(10));
     assert_eq!((l[0].entrant, l[0].sortant), (u64::MAX, u64::MAX));
     assert_eq!(l[0].programmes_volumes[0].entrant, u64::MAX);
@@ -196,7 +196,7 @@ fn t19_trafic_debit_recent() {
     assert_eq!(decaler_cliches(&mut c, (160, 30)), (0, 0), "rien de récent : débit nul");
     assert_eq!(decaler_cliches(&mut c, (5, 5)), (0, 0), "compteur plus petit (jour nouveau) : jamais négatif");
     // Somme par pays
-    let d = |pays: &'static str, recent: (u64, u64)| VueDestination { ip: Ipv4Addr::new(1, 2, 3, 4), nom: "", pays, programme: "a", entrant: 1, sortant: 1, recent, active: true };
+    let d = |pays: &'static str, recent: (u64, u64)| VueDestination { ip: Ipv4Addr::new(192, 0, 2, 4), nom: "", pays, programme: "a", entrant: 1, sortant: 1, recent, active: true };
     let l = lignes_pays(&[d("US", (8_000, 2_000)), d("US", (2_000, 0)), d("JP", (0, 50))], Duration::from_secs(10));
     assert_eq!((l[0].code.as_str(), l[0].debit_entrant_recent, l[0].debit_sortant_recent), ("US", 1_000, 200));
     assert_eq!((l[1].code.as_str(), l[1].debit_entrant_recent, l[1].debit_sortant_recent), ("JP", 0, 5));
@@ -218,19 +218,19 @@ fn t19_pays_des_connexions_signalees() {
     use crate::trafic::{pays_signales, MAX_PAYS_SIGNALES};
     let f = |ip: &str, score: i32, raisons: &str| FluxInfo { ip: ip.into(), score, raisons: raisons.into(), ..Default::default() };
     let flux = vec![
-        f("5.5.5.5", crate::commun::SEUIL_ALERTE, "NON SIGNÉ"),
-        f("6.6.6.6", crate::commun::SEUIL_ALERTE - 1, "IP DIRECTE"),
-        f("7.7.7.7", 0, "MENACE CONNUE (liste)"),
-        f("5.5.5.5", 9, "doublon"),
+        f("192.0.2.5", crate::commun::SEUIL_ALERTE, "NON SIGNÉ"),
+        f("192.0.2.6", crate::commun::SEUIL_ALERTE - 1, "IP DIRECTE"),
+        f("192.0.2.7", 0, "MENACE CONNUE (liste)"),
+        f("192.0.2.5", 9, "doublon"),
         f("2001:db8::1", 9, "IPv6 : hors de la carte (IPv4 seulement)"),
         f("pas une adresse", 9, ""),
     ];
-    assert_eq!(ips_signalees(&flux), [Ipv4Addr::new(5, 5, 5, 5), Ipv4Addr::new(7, 7, 7, 7)]);
-    let beaucoup: Vec<FluxInfo> = (0..2_000u32).map(|i| f(&Ipv4Addr::from(0x0100_0000 + i).to_string(), 5, "")).collect();
+    assert_eq!(ips_signalees(&flux), [Ipv4Addr::new(192, 0, 2, 5), Ipv4Addr::new(192, 0, 2, 7)]);
+    let beaucoup: Vec<FluxInfo> = (0..768u32).map(|i| f(&Ipv4Addr::from([0xC000_0200u32, 0xC633_6400, 0xCB00_7100][(i / 256) as usize] + i % 256).to_string(), 5, "")).collect();
     assert_eq!(ips_signalees(&beaucoup).len(), MAX_IPS_SIGNALEES, "borné");
 
-    let pays = |ip: Ipv4Addr| match ip.octets()[0] { 5 => Some("RU".to_string()), 7 => Some("CN".to_string()), 8 => Some(String::new()), _ => None };
-    let ips = [Ipv4Addr::new(7, 0, 0, 1), Ipv4Addr::new(5, 0, 0, 1), Ipv4Addr::new(5, 0, 0, 2), Ipv4Addr::new(8, 0, 0, 1), Ipv4Addr::new(9, 0, 0, 1)];
+    let pays = |ip: Ipv4Addr| match ip.octets()[3] { 1 | 2 => Some("RU".to_string()), 10 => Some("CN".to_string()), 20 => Some(String::new()), _ => None };
+    let ips = [Ipv4Addr::new(192, 0, 2, 10), Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(192, 0, 2, 2), Ipv4Addr::new(192, 0, 2, 20), Ipv4Addr::new(192, 0, 2, 30)];
     assert_eq!(pays_signales(&ips, pays), ["CN", "RU"], "triés, sans doublon, sans pays inconnu");
     let tous: Vec<Ipv4Addr> = (0..1_000u32).map(Ipv4Addr::from).collect();
     assert_eq!(pays_signales(&tous, |ip| Some(format!("{:03}", u32::from(ip)))).len(), MAX_PAYS_SIGNALES, "borné");

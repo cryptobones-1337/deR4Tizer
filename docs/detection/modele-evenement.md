@@ -345,14 +345,14 @@ aucun réglage) ; champs absents des fichiers écrits avant, relus vides (`serde
 |---|---|---|
 | `Pays[]` | liste | existante ; désormais 250 pays au plus (`MAX_PAYS`), seulement ceux qui ont du trafic, le plus gros d'abord ; `Programmes` (noms seuls, 8 au plus) gardé tel quel |
 | `Pays[].ProgrammesVolumes` | liste de `{ Nom, Entrant, Sortant }` | octets depuis minuit par programme dans ce pays, le plus gros d'abord ; 10 au plus (`MAX_PROGRAMMES_PAYS`) ; nom comme dans `Applications` (nom, « System », « PID n », « ? ») |
-| `Pays[].DestinationsPrincipales` | liste de `{ Ip, Nom, Programme, Entrant, Sortant }` | destinations du pays, la plus grosse d'abord ; 10 au plus (`MAX_DESTINATIONS_PAYS`) ; mêmes champs que `Destinations` : adresse publique distante, nom tiré du cache DNS du service ou vide, programme comme dans `Applications` |
+| `Pays[].DestinationsPrincipales` | liste de `{ Ip, Nom, Programme, Entrant, Sortant }` | destinations du pays, la plus grosse d'abord ; 10 au plus (`MAX_DESTINATIONS_PAYS`) ; de même nature que `Destinations` (mêmes champs), jusqu'à 300 adresses en tout (30 pays × 10), au-delà des 100 lignes de `Destinations` : adresse publique distante, nom tiré du cache DNS du service ou vide, programme comme dans `Applications` |
 | `Pays[].DebitEntrantRecent`, `Pays[].DebitSortantRecent` | entier (octets par seconde) | débit du pays depuis l'avant-dernière écriture du fichier (10 s environ, durée mesurée), pour l'épaisseur des arcs (`trafic::debit_recent`, `trafic::decaler_cliches`) |
 | `PaysSignales` | liste de codes pays | pays des connexions signalées au dernier relevé du moniteur, au même seuil que l'onglet « Suspectes » de Connexions (score au seuil d'alerte, ou menace connue) ; triés, sans doublon ; 50 au plus (`MAX_PAYS_SIGNALES`) ; adresses IPv4 seulement, 500 au plus (`moniteur::ips_signalees`) |
 
 `ProgrammesVolumes` et `DestinationsPrincipales` ne sont remplis que pour les 30 pays les plus gros
-(`MAX_PAYS_DETAILLES`), vides au-delà. Taille de la liste `Pays` : moins d'1 Mo au pire (noms DNS et de programmes de plus de 250 caractères,
-250 pays, liste `Programmes` existante comprise : environ 880 Ko mesurés par l'audit de #311, S311-01), quelques
-dizaines de Ko en pratique. Décision pure `trafic::lignes_pays`.
+(`MAX_PAYS_DETAILLES`), vides au-delà. Taille de la liste `Pays` au pire (250 pays, noms de plus de 250 caractères, liste `Programmes` existante
+comprise) : environ 880 Ko mesurés avec des noms ASCII (audit de #311, S311-01) ; davantage avec des noms non ASCII
+(longueur des noms DNS et des programmes non bornée) ; quelques dizaines de Ko en pratique. Décision pure `trafic::lignes_pays`.
 Limites : chaque destination garde le premier programme nommé qui l'a jointe (comme `Destinations`) ; deux programmes
 qui joignent la même adresse sont comptés sous le premier. Le pays est celui du titulaire du bloc (registres
 Internet régionaux), pas un lieu. Une adresse retirée de la table (élagage au-delà de 5 000 destinations, ou plafond
