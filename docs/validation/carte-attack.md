@@ -145,7 +145,7 @@ new tactic, "Defense Impairment" (TA0112), groups the neutralisation of protecti
 
 | Technique | Rule | Status | What is missing |
 |---|---|---|---|
-| T1041 Exfiltration over the control channel | RES-002 | Partial (connection, not the volume, S-12, 2026-11-16) | Volume per program (the Trafic module has it) |
+| T1041 Exfiltration over the control channel | RES-002 | Partial (connection, not the volume, S-12, 2026-11-16) | Volume per program (the `trafic.rs` module has it) |
 | T1567.002 To online storage | none | No rule | rclone, MEGA; unusual outbound volume |
 | T1486 Data encryption | LEU-001, LEU-002, suspension | Lab-tested (S-16, 2026-11-16) | 10 trials |
 | T1490 Backups deleted | PRC-005 (PowerShell forms, `resize shadowstorage`, `wbadmin delete backup`, `bootstatuspolicy`, `diskshadow` added after the audit of 2026-11-23, A-7-3) | Rule, lab-tested | Scenario (command carried without being executed) |

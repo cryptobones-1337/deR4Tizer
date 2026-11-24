@@ -74,7 +74,7 @@ root or Defender risk** (benign payload).
 
 ## 4. Method
 
-Snapshots "campagne A" (without baseline) and "campagne C" (reinforced baseline), 2026-11-14. Reversible
+Snapshots "campagne A" (without baseline) and "campagne C" (hardened baseline), 2026-11-14. Reversible
 redirection, responder/sender **without root** (Python, unprivileged ports), reset to the snapshot **before and
 after** each trial, VM put back to sleep at the end. Defender **never** modified by hand. Single VM ⇒ trials
 **strictly in series**. Decision D-1 (lab exposure artefacts excluded from the VP/FP) applied. Never the

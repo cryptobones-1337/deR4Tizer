@@ -76,7 +76,7 @@ at once, no memory read. The telemetry (Sysmon 10) exists, but no deR4Tizer rule
 
 **S-16: detection + automatic response, prevented under the baseline.** An unsigned program appends **a single byte** to a
 decoy (reversible SIMULATION). In configuration A: **LEU-002 Critical** + **automatic suspension** of the process
-(NtSuspendProcess, suspended threads checked). In configuration C: the controlled folder access of the reinforced
+(NtSuspendProcess, suspended threads checked). In configuration C: the controlled folder access of the hardened
 baseline **refuses the write** (decoy intact, Defender event 1123) → **P-Defender** (prevention). Both count,
 not merged.
 

@@ -21,7 +21,7 @@ works, in both configurations, before any consolidated offensive measurement.
 |---|---|---|---|
 | N-01 (chain control, negative) | A (without baseline) | "RÉUSSI" | Legitimate activity: 0 Alert/Critical alerts, logon seen, no degraded collection. |
 | N-01 (chain control, negative) | C (baseline 100%) | "RÉUSSI" | Identical under the hardened baseline: control and collection of the proofs operational (UAC secure desktop, ASR rules). |
-| S-19 (check of configuration C) | C | "RÉUSSI" | Baseline compliant (logging 100, reinforced 100, recommended 96 = expected D-BAS-01 gap). Defender: 27 settings compared with the reference, **none weakened, no exclusion**. Remote Desktop refused (port 3389 closed). LSA protection effective. Firewall active on the three profiles. 0 alerts in 25 min. The recommended score of 96 turns D-BAS-01 from a reading hypothesis into a **measured finding** (supports the fix planned in phase 6). |
+| S-19 (check of configuration C) | C | "RÉUSSI" | Baseline compliant (logging 100, hardened 100, recommended 96 = expected D-BAS-01 gap). Defender: 27 settings compared with the reference, **none weakened, no exclusion**. Remote Desktop refused (port 3389 closed). LSA protection effective. Firewall active on the three profiles. 0 alerts in 25 min. The recommended score of 96 turns D-BAS-01 from a reading hypothesis into a **measured finding** (supports the fix planned in phase 6). |
 
 ## Brute force detection (COR-R1)
 
