@@ -144,12 +144,25 @@ fn etat_des_sources(sources: &[&crate::collectes::EtatPublie]) -> &'static str {
     }
 }
 
+/// Décision pure (prérelecture de #308, D1) : la sous-catégorie d'audit « Système de fichiers », dont dépend tout 4663,
+/// vue comme une source : « non conforme » indisponible, « conforme » active, « inconnu » ou pas encore évaluée (« »)
+/// jamais lue
+pub fn source_audit_fichiers(etat: &str) -> crate::collectes::EtatPublie {
+    use crate::collectes::EtatPublie as E;
+    match etat {
+        "conforme" => E::Active,
+        "non conforme" => E::Indisponible("audit Système de fichiers désactivé".into()),
+        _ => E::Inconnue,
+    }
+}
+
 /// Décision pure (T-18) : état effectif de la réponse automatique aux rançongiciels, publié dans etat.json
 /// (`ReponsesAuto.Rancongiciel`). Réglage coupé : « Desactive ». Sinon la politique (`decider`, suspension sur leurre)
 /// et les deux sources dont la suspension dépend : les leurres posés et suivis (collecte Leurres) et le journal Sécurité
 /// qui porte leurs 4663 (collecte JournalSecurite). `registre_illisible` : reponses.json mal formé (`registre_illisible`),
-/// toute action automatique retenue : « SansEffet »
-pub fn etat_rancongiciel(reglage: bool, registre_illisible: bool, leurres: &crate::collectes::EtatPublie, journal_securite: &crate::collectes::EtatPublie) -> &'static str {
+/// toute action automatique retenue : « SansEffet ». `audit_fichiers` : dernier état de la règle `audit.fichiers` de la
+/// baseline (`baseline::etat_audit_fichiers`) : sans audit « Système de fichiers », aucun 4663 (`source_audit_fichiers`)
+pub fn etat_rancongiciel(reglage: bool, registre_illisible: bool, audit_fichiers: &str, leurres: &crate::collectes::EtatPublie, journal_securite: &crate::collectes::EtatPublie) -> &'static str {
     if !reglage {
         return "Desactive";
     }
@@ -161,7 +174,7 @@ pub fn etat_rancongiciel(reglage: bool, registre_illisible: bool, leurres: &crat
     if !matches!(decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &c), Decision::Autorisee(_)) {
         return "SansEffet";
     }
-    etat_des_sources(&[leurres, journal_securite])
+    etat_des_sources(&[leurres, journal_securite, &source_audit_fichiers(audit_fichiers)])
 }
 
 /// Décision pure (T-18) : état effectif du blocage automatique par les listes (`ReponsesAuto.BlocageListes`). Réglage

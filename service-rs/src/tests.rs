@@ -8591,18 +8591,18 @@ fn t18_etats_effectifs_reponses_auto() {
     // Rançongiciel : leurres (collecte Leurres) et 4663 (collecte JournalSecurite)
     for x in [&a, &p, &i, &d, &n] {
         for y in [&a, &p, &i, &d, &n] {
-            assert_eq!(rc(false, false, x, y), "Desactive", "{x:?} {y:?}");
+            assert_eq!(rc(false, false, "conforme", x, y), "Desactive", "{x:?} {y:?}");
         }
     }
-    assert_eq!(rc(true, false, &a, &a), "Actif");
-    assert_eq!(rc(true, false, &p, &a), "Partiel", "une partie des leurres posés");
-    assert_eq!(rc(true, false, &a, &p), "Partiel");
-    assert_eq!(rc(true, false, &i, &a), "SansEffet", "aucun leurre posé");
-    assert_eq!(rc(true, false, &d, &a), "SansEffet", "mode console : leurres non posés");
-    assert_eq!(rc(true, false, &a, &i), "SansEffet", "journal Sécurité non lu : aucun 4663");
-    assert_eq!(rc(true, false, &n, &a), "NonVerifiable", "leurres pas encore posés");
-    assert_eq!(rc(true, false, &n, &i), "SansEffet", "une source indisponible l'emporte sur une source pas encore lue");
-    assert_eq!(rc(true, false, &p, &n), "NonVerifiable");
+    assert_eq!(rc(true, false, "conforme", &a, &a), "Actif");
+    assert_eq!(rc(true, false, "conforme", &p, &a), "Partiel", "une partie des leurres posés");
+    assert_eq!(rc(true, false, "conforme", &a, &p), "Partiel");
+    assert_eq!(rc(true, false, "conforme", &i, &a), "SansEffet", "aucun leurre posé");
+    assert_eq!(rc(true, false, "conforme", &d, &a), "SansEffet", "mode console : leurres non posés");
+    assert_eq!(rc(true, false, "conforme", &a, &i), "SansEffet", "journal Sécurité non lu : aucun 4663");
+    assert_eq!(rc(true, false, "conforme", &n, &a), "NonVerifiable", "leurres pas encore posés");
+    assert_eq!(rc(true, false, "conforme", &n, &i), "SansEffet", "une source indisponible l'emporte sur une source pas encore lue");
+    assert_eq!(rc(true, false, "conforme", &p, &n), "NonVerifiable");
     // Blocage par les listes : politique (protection du dossier), listes du niveau 3 chargées, table des connexions
     for protection in [false, true] {
         for c in [&a, &i, &n] {
@@ -8626,7 +8626,7 @@ fn t18_etats_effectifs_reponses_auto() {
     // Assemblage du moniteur : réglages en vigueur, collectes de l'instantané (absente : inconnue), sans croiser les sources
     use crate::commun::Config;
     let r = |config: &Config, echec: bool, niveau3: (usize, usize), v: &[(Collecte, E, bool)]| {
-        let e = crate::moniteur::etat_reponses_auto(config, echec, false, niveau3, v);
+        let e = crate::moniteur::etat_reponses_auto(config, echec, false, "conforme", niveau3, v);
         (e.rancongiciel, e.blocage_listes)
     };
     let defaut = Config::default();
@@ -8652,12 +8652,34 @@ fn t18_etats_effectifs_reponses_auto() {
     for autre in ["", "LectureRefusee", "ProtectionEnEchec", "EcritureEnEchec"] {
         assert!(!crate::politique::registre_illisible(autre), "{autre}");
     }
-    assert_eq!(rc(true, true, &a, &a), "SansEffet");
+    assert_eq!(rc(true, true, "conforme", &a, &a), "SansEffet");
     assert_eq!(bl(true, false, true, (3, 3), &a), "SansEffet");
-    assert_eq!(rc(false, true, &a, &a), "Desactive");
+    assert_eq!(rc(false, true, "conforme", &a, &a), "Desactive");
     assert_eq!(bl(false, false, true, (3, 3), &a), "Desactive");
-    let e = crate::moniteur::etat_reponses_auto(&defaut, false, true, (3, 3), &vu(a.clone(), a.clone(), a.clone()));
+    let e = crate::moniteur::etat_reponses_auto(&defaut, false, true, "conforme", (3, 3), &vu(a.clone(), a.clone(), a.clone()));
     assert_eq!((e.rancongiciel.as_str(), e.blocage_listes.as_str()), ("SansEffet", "SansEffet"));
+    // Prérelecture de #308, D1 : tout 4663 exige l'audit « Système de fichiers » (baseline audit.fichiers) ; non
+    // conforme : « SansEffet » ; inconnu ou pas encore évalué : « NonVerifiable » ; le blocage par les listes n'en dépend pas
+    assert_eq!(rc(true, false, "non conforme", &a, &a), "SansEffet");
+    assert_eq!(rc(true, false, "inconnu", &a, &a), "NonVerifiable");
+    assert_eq!(rc(true, false, "", &a, &a), "NonVerifiable", "pas encore évalué depuis le démarrage");
+    assert_eq!(rc(true, false, "non conforme", &n, &a), "SansEffet", "indisponible l'emporte");
+    assert_eq!(rc(false, false, "non conforme", &a, &a), "Desactive");
+    let e = crate::moniteur::etat_reponses_auto(&defaut, false, false, "non conforme", (3, 3), &vu(a.clone(), a.clone(), a.clone()));
+    assert_eq!((e.rancongiciel.as_str(), e.blocage_listes.as_str()), ("SansEffet", "Actif"));
+    let e = crate::moniteur::etat_reponses_auto(&defaut, false, false, "", (3, 3), &vu(a.clone(), a.clone(), a.clone()));
+    assert_eq!(e.rancongiciel, "NonVerifiable");
+    use crate::politique::source_audit_fichiers as sa;
+    assert_eq!((sa("conforme"), sa("inconnu"), sa("")), (E::Active, E::Inconnue, E::Inconnue));
+    assert!(matches!(sa("non conforme"), E::Indisponible(_)));
+    // Règle de la baseline : la bonne sous-catégorie, notée à chaque évaluation, jamais relue de baseline.json
+    let r = crate::baseline::REGLES.iter().find(|r| r.id == "audit.fichiers").expect("règle audit.fichiers");
+    assert!(r.mecanismes.iter().any(|m| matches!(m, crate::baseline::Mecanisme::Audit { guid, .. } if guid.contains("0CCE921D"))));
+    let bs = include_str!("baseline.rs").replace("\r\n", "\n");
+    let ev = &bs[bs.find("pub fn evaluer() -> EtatBaseline {").unwrap()..];
+    let ev = &ev[..ev.find("\n}\n").unwrap()];
+    assert!(ev.contains("noter_audit_fichiers(regles.iter().find(|r| r.id == \"audit.fichiers\").map_or(\"inconnu\", |r| r.etat.as_str()));"));
+    assert_eq!(crate::baseline::etat_audit_fichiers().is_empty() || ["conforme", "non conforme", "inconnu"].contains(&crate::baseline::etat_audit_fichiers()), true);
     // etat.json : noms lus par l'interface ; un etat.json écrit avant se relit avec des états vides
     let e = crate::commun::Etat { reponses_auto: crate::commun::EtatReponsesAuto { rancongiciel: "Actif".into(), blocage_listes: "Partiel".into() }, ..Default::default() };
     let j = serde_json::to_string(&e).unwrap();
@@ -8668,7 +8690,7 @@ fn t18_etats_effectifs_reponses_auto() {
     assert_eq!((ancien.reponses_auto, ancien.syslog, ancien.api), Default::default());
     // Câblage dans l'écriture d'etat.json
     let m = include_str!("moniteur.rs").replace("\r\n", "\n");
-    assert!(m.contains("let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(), politique::registre_illisible(registre.0),\n                crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());"));
+    assert!(m.contains("let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(), politique::registre_illisible(registre.0),\n                crate::baseline::etat_audit_fichiers(),\n                crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());"));
     let w = &m[m.find(r#"commun::ecrire("etat.json", &Etat {"#).unwrap()..];
     let w = &w[..w.find("});").unwrap()];
     assert!(w.contains("                reponses_auto,\n"), "états des réponses publiés");
