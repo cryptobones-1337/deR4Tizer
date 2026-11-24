@@ -4614,7 +4614,7 @@ namespace DeR4Tizer
             int jour, total;
             switch (section)
             {
-                case 0: x.Texte = L.En ? "English" : "Français"; break;
+                case 0: x = EtatLangue(L.Reglage, null); break;
                 case 1:
                     if (app == null) x.Texte = "";
                     else if (JourApprentissage(app, maintenant, out jour, out total)) x.Texte = string.Format(T("Jour {0}/{1}", "Day {0}/{1}"), jour, total);
@@ -4641,6 +4641,14 @@ namespace DeR4Tizer
                 case 6: x.Texte = string.Format(T("{0} lecteur(s)", "{0} reader(s)"), (lecteurs ?? new List<Lecteur>()).Count(l => l != null)); break;
             }
             return x;
+        }
+
+        // État « Langue » de la navigation : le réglage en vigueur (automatique, français, anglais), ou « en attente » si un
+        // autre choix est enregistré pour le prochain lancement (prérelecture de #305, N2)
+        public static PointEtat EtatLangue(string reglage, string enregistre)
+        {
+            if (enregistre != null && enregistre != reglage) return new PointEtat { Texte = T("en attente", "pending"), Gravite = 0 };
+            return new PointEtat { Texte = reglage == "fr" ? "Français" : reglage == "en" ? "English" : T("Automatique", "Automatic"), Gravite = 0 };
         }
 
         // Bandeau de la remontée : aucun canal (personne n'est prévenu), canal sans adresse enregistrée, envois en échec, ou
@@ -4762,6 +4770,7 @@ namespace DeR4Tizer
         readonly Grid avancementApp = new Grid { Height = 6, Width = 420, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 0) };
         readonly TextBlock notifEtat = Texte(true), exceptions = new TextBlock { TextWrapping = TextWrapping.Wrap }, aideManifeste = Texte(true);
         readonly WrapPanel lecteurs = new WrapPanel();
+        readonly Grid champsSmtp;
         int enCours, chargement;
         bool rempli;            // aucune action avant la première lecture : des champs vides ne partent jamais comme réglages
         public Action Revoir;   // ouvre « Premiers réglages » (donné par la coquille)
@@ -4770,7 +4779,7 @@ namespace DeR4Tizer
         {
             ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             ColumnDefinitions.Add(new ColumnDefinition());
-            var nav = new StackPanel { Width = 240, Margin = new Thickness(0, 0, 24, 0) };
+            var nav = new StackPanel { Width = 256, Margin = new Thickness(0, 0, 24, 0) };
             for (int i = 0; i < panneaux.Length; i++) { nav.Children.Add(Entree(i)); panneaux[i] = new StackPanel(); }
             Children.Add(nav);
             var defile = new ScrollViewer { Content = contenu, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -4822,13 +4831,13 @@ namespace DeR4Tizer
                     Large(Note(L.T("Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique).")), Jetons.Attention))));
             panneaux[2].Children.Add(CarteCanal(teams, T("Webhook d'un flux de travail « publier dans un canal ».", "\"Post to a channel\" workflow webhook."),
                 Grille(Large(Champ(L.T("Adresse du webhook"), Masque(teamsUrl, indiceTeamsUrl))))));
-            panneaux[2].Children.Add(CarteCanal(smtp, T("SMTP chiffré.", "Encrypted SMTP."),
-                Grille(Champ(L.T("Serveur"), smtpServeur), Champ(L.T("Port"), smtpPort, errSmtpPort, T("1 à 65535.", "1 to 65535.")),
+            champsSmtp = Grille(Champ(L.T("Serveur"), smtpServeur), Champ(L.T("Port"), smtpPort, errSmtpPort, T("1 à 65535.", "1 to 65535.")),
                     Champ(L.T("Sécurité"), securite), Champ(L.T("Utilisateur"), smtpUtilisateur),
                     Champ(L.T("Mot de passe"), Masque(smtpMdp, indiceSmtpMdp)), Champ(L.T("Expéditeur"), expediteur),
-                    Large(Champ(L.T("Destinataires"), destinataires)))));
+                    Large(Champ(L.T("Destinataires"), destinataires)));
+            panneaux[2].Children.Add(CarteCanal(smtp, T("SMTP chiffré.", "Encrypted SMTP."), champsSmtp));
             panneaux[2].Children.Add(Carte(T("Enregistrer et tester", "Save and test"), L.T("Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer."), null,
-                Pile(notifEtat), new UIElement[] { Bouton("Enregistrer les notifications", true, () => Notifications("notifications")), Bouton("Envoyer un message de test", false, () => Notifications("testerNotifications")) },
+                Pile(notifEtat), new UIElement[] { BoutonValide("Enregistrer les notifications", true, () => Notifications("notifications")), BoutonValide("Envoyer un message de test", false, () => Notifications("testerNotifications")) },
                 null, null, errNotif));
 
             // ---------------- Syslog ; « Enregistrer » envoie le syslog et l'API ensemble (une seule commande « reglages »)
@@ -4837,7 +4846,7 @@ namespace DeR4Tizer
             panneaux[3].Children.Add(Carte("Syslog / SIEM", L.T("JSON : en-tête RFC 5424 et détail en JSON. CEF : reconnu par la plupart des SIEM (Splunk, QRadar, Sentinel, Wazuh, Graylog…)."), syslog,
                 Grille(Champ(L.T("Serveur"), hote), Champ(L.T("Port"), portSyslog, errPortSyslog, T("1 à 65535.", "1 to 65535.")),
                     Champ(L.T("Protocole"), protocole), Champ(L.T("Format"), format), Champ(L.T("Niveau minimal"), niveau)),
-                new UIElement[] { Bouton("Enregistrer", true, Enregistrer), Bouton("Tester l'envoi", false, () => { var x = Saisis(); if (x != null) ActionsReglages.TesterSyslog(x.Item1); }) },
+                new UIElement[] { BoutonValide("Enregistrer", true, Enregistrer), BoutonValide("Tester l'envoi", false, () => { var x = Saisis(); if (x == null) return false; ActionsReglages.TesterSyslog(x.Item1); return true; }) },
                 null, null, Pile(errSyslog, Note(ensemble))));
 
             // ---------------- API d'export
@@ -4846,7 +4855,7 @@ namespace DeR4Tizer
                 routes.Children.Add(new TextBlock { Text = route, FontFamily = Briques.Chasse, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 14, 2) });
             panneaux[4].Children.Add(Carte(VueReglagesFluent.Nom(4), T("HTTP en lecture seule ; chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ».", "Read-only HTTP; every request must carry the \"Authorization: Bearer <token>\" header."), api,
                 Grille(Champ(L.T("Port"), portApi, errPortApi, T("1024 à 65535.", "1024 to 65535.")), Large(reseau), Large(Champ(L.T("Adresses autorisées (SIEM)"), adresses)), Large(routes)),
-                new UIElement[] { Bouton("Enregistrer", true, Enregistrer) }, null, null, Pile(errApi, Note(ensemble))));
+                new UIElement[] { BoutonValide("Enregistrer", true, Enregistrer) }, null, null, Pile(errApi, Note(ensemble))));
             panneaux[4].Children.Add(Carte(T("Jeton d'accès", "Access token"), T("Les outils qui lisent l'API utilisent ce jeton.", "Tools that read the API use this token."), null, null,
                 new UIElement[] { Bouton("Afficher le jeton", false, ActionsReglages.AfficherJeton) },
                 new UIElement[] { Destructif(L.T("Nouveau jeton"), () => ActionsReglages.NouveauJeton()) },
@@ -4865,7 +4874,7 @@ namespace DeR4Tizer
                 Pile(new TextBlock { Text = T("Lecteurs en plus de SYSTEM et des administrateurs", "Readers besides SYSTEM and administrators"), FontSize = 13, Margin = new Thickness(0, 0, 0, 8) }, lecteurs,
                     Couleur(Note(L.T("Ces comptes peuvent lire l'historique de tous les comptes (alertes, événements, lignes de commande masquées).")), Jetons.Attention),
                     Champ(L.T("Nom du compte (par exemple : PC-ACCUEIL\\marie)"), compte, errCompte)),
-                new UIElement[] { Bouton("Autoriser", true, Autoriser) }));
+                new UIElement[] { BoutonValide("Autoriser", true, Autoriser) }));
             panneaux[6].Children.Add(Carte(T("Export des journaux", "Log export"), T("Alertes en JSON ou en CSV (sans formule pour le tableur), journal du service en texte.", "Alerts as JSON or CSV (no spreadsheet formulas), service log as text."), null, null,
                 new UIElement[] { Bouton("Exporter les alertes…", true, ExporterAlertes), Bouton("Exporter le journal du service…", false, ExporterJournal) }));
 
@@ -4946,7 +4955,7 @@ namespace DeR4Tizer
             if (av >= 0) { avancementApp.ColumnDefinitions[0].Width = new GridLength(av, GridUnitType.Star); avancementApp.ColumnDefinitions[1].Width = new GridLength(1 - av, GridUnitType.Star); }
             var bm = VueReglagesFluent.BandeauMaj(em);
             bandeauMajTitre.Text = bm.Titre; bandeauMajDetail.Text = bm.Detail; Teinter(bandeauMaj, bm.Gravite);
-            for (int i = 0; i < etatsEntrees.Length; i++)
+            for (int i = 1; i < etatsEntrees.Length; i++)
             {
                 var p = VueReglagesFluent.EtatSection(i, illisible ? null : x, illisible, app, em, r, lect, maintenant);
                 etatsEntrees[i].Text = p.Texte;
@@ -4971,6 +4980,9 @@ namespace DeR4Tizer
         {
             langue.Definir(L.Reglage, ActionsReglages.LangueEnregistree());
             langueEtat.Text = ActionsReglages.TexteLangue();
+            var p = VueReglagesFluent.EtatLangue(L.Reglage, ActionsReglages.LangueEnregistree());
+            etatsEntrees[0].Text = p.Texte;
+            System.Windows.Automation.AutomationProperties.SetName(entrees[0], VueReglagesFluent.Nom(0) + ", " + p.Texte);
         }
 
         static void DireErreur(TextBlock t, string texte)
@@ -4996,13 +5008,13 @@ namespace DeR4Tizer
         }
 
         // config.json relu au moment d'enregistrer : illisible, rien n'est écrit (S139-02 étendu)
-        void Enregistrer()
+        bool Enregistrer()
         {
             var s = Saisis();
-            if (s == null) return;
+            if (s == null) return false;
             bool illisible;
             var lue = ActionsProtection.LireConfig(out illisible);
-            ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));
+            return ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));
         }
 
         // Réglages de remontée saisis, ou null si un nombre est invalide (même validation qu'avant,
@@ -5014,7 +5026,10 @@ namespace DeR4Tizer
             var defaut = VueReglagesFluent.NotificationsEnDefaut(maxHeure.Text, smtpPort.Text);
             DireErreur(errMaxHeure, erreur != null && defaut[0] ? T("Nombre invalide.", "Invalid number.") : null);
             DireErreur(errSmtpPort, erreur != null && defaut[1] ? T("Port invalide.", "Invalid port.") : null);
-            DireErreur(errNotif, erreur == null ? null : erreur + (defaut[1] && smtp.IsChecked != true ? " " + T("Port SMTP : carte « E-mail ».", "SMTP port: \"E-mail\" card.") : ""));
+            // Canal e-mail éteint : son port reste validé comme avant ; champs dépliés pour le corriger (prérelecture de #305, N5)
+            bool deplier = erreur != null && defaut[1] && smtp.IsChecked != true;
+            if (deplier) champsSmtp.Visibility = Visibility.Visible;
+            DireErreur(errNotif, erreur == null ? null : erreur + (deplier ? " " + T("Port SMTP : carte « E-mail », champs dépliés.", "SMTP port: \"E-mail\" card, fields shown.") : ""));
             if (erreur != null) return null;
             return new ConfigNotifications
             {
@@ -5023,21 +5038,23 @@ namespace DeR4Tizer
             };
         }
 
-        void Notifications(string action)
+        bool Notifications(string action)
         {
             var c = SaisieNotifications();
-            if (c == null) return;
+            if (c == null) return false;
             ActionsReglages.Notifications(action, c, ntfyUrl.Password, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
+            return true;
         }
 
-        void Autoriser()
+        bool Autoriser()
         {
             DireErreur(errCompte, null);
-            if (string.IsNullOrWhiteSpace(compte.Text)) return;
+            if (string.IsNullOrWhiteSpace(compte.Text)) return false;
             string sid = ActionsReglages.Sid(compte.Text);
-            if (sid == null) { DireErreur(errCompte, L.T("Compte introuvable.")); return; }
+            if (sid == null) { DireErreur(errCompte, L.T("Compte introuvable.")); return false; }
             ActionsReglages.AutoriserLecteur(sid);
             compte.Text = "";
+            return true;
         }
 
         void ExporterAlertes()
@@ -5341,9 +5358,13 @@ namespace DeR4Tizer
             return g;
         }
 
-        Button Bouton(string texte, bool fort, Action action)
+        Button Bouton(string texte, bool fort, Action action) { return BoutonValide(texte, fort, () => { action(); return true; }); }
+
+        // Action qui valide une saisie : faux = refusée, rien n'est parti ; pas de relecture alors, la saisie fautive et son
+        // erreur restent à l'écran (prérelecture de #305, D1)
+        Button BoutonValide(string texte, bool fort, Func<bool> action)
         {
-            var b = Briques.Action(L.T(texte), fort, (s, e) => { if (!rempli) return; action(); Charger(); });
+            var b = Briques.Action(L.T(texte), fort, (s, e) => { if (!rempli) return; if (action()) Charger(); });
             b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
             return b;
         }

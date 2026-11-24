@@ -663,7 +663,7 @@ public class SourceSimulee : RealProxy
     Cas 'Réglages : statut de mise à jour, erreur d''envoi (réponse d''un serveur) et noms de comptes neutralisés' (-not ($txtRg -match "[\u202E\r\n]") -and $txtRg.Contains('dernière erreur : 550')) $txtRg
     $reglagesSrc = [IO.File]::ReadAllText("$src\Reglages.cs")
     Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return null;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return null;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
-    Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; action(); Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
+    Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; if (action()) Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
     # Page Réglages refaite (constat T-15, maquettes validées le 2026-11-23) : sections, une carte par bloc, secrets jamais
     # réaffichés, envois inchangés (mêmes commandes, mêmes champs, mêmes validations), erreurs sous le champ
     $vr = & $t 'VueReglagesFluent'; $prT = & $t 'PageReglagesFluent'; $eaT = & $t 'EtatApprentissage'; $cnT = & $t 'ConfigNotifications'
@@ -673,8 +673,9 @@ public class SourceSimulee : RealProxy
     $envois = (@('AfficherJeton', 'Apprentissage', 'AutoriserLecteur', 'ChoisirLangue', 'Enregistrer', 'MajConfig', 'MajVerifier', 'Notifications', 'NouveauJeton', 'TesterSyslog') | ForEach-Object { "$_=$($appels[$_])" }) -join ','
     $ops = (@([regex]::Matches($blocPr, 'ActionsReglages\.Apprentissage\("([^"]+)"\)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)) -join ','
     Cas 'Réglages (T-15) : mêmes envois qu''avant, un appel par action (jeton, apprentissage en quatre opérations, lecteur, langue, réglages, mise à jour, notifications, test syslog), rien d''autre' ($envois -eq 'AfficherJeton=1,Apprentissage=4,AutoriserLecteur=1,ChoisirLangue=1,Enregistrer=1,MajConfig=1,MajVerifier=1,Notifications=1,NouveauJeton=1,TesterSyslog=1' -and $ops -eq 'oublier,oublier-perimees,recommencer,terminer' -and -not $blocPr.Contains('Canal.Executer(') -and -not $blocPr.Contains('new Commande') -and -not ($blocPr -match 'WriteAllText|File\.Write|EcrireReglage')) "$envois | $ops"
-    Cas 'Réglages (T-15) : les deux « Enregistrer » (syslog, API) appellent la même méthode, qui relit config.json et envoie langue gardée, syslog et API ensemble' (([regex]::Matches($blocPr, 'Bouton\("Enregistrer", true, Enregistrer\)')).Count -eq 2 -and $blocPr.Contains('ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));') -and $blocPr.Contains('"« Enregistrer » envoie ensemble le syslog et l''API d''export'))
+    Cas 'Réglages (T-15) : les deux « Enregistrer » (syslog, API) appellent la même méthode, qui relit config.json et envoie langue gardée, syslog et API ensemble' (([regex]::Matches($blocPr, 'BoutonValide\("Enregistrer", true, Enregistrer\)')).Count -eq 2 -and $blocPr.Contains('ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));') -and $blocPr.Contains('"« Enregistrer » envoie ensemble le syslog et l''API d''export'))
     Cas 'Réglages (T-15) : secrets jamais relus ni réaffichés (seule affectation : vide), indice d''après notifications.json' (([regex]::Matches($blocPr, '\.Password\s*=\s*""')).Count -eq 4 -and ([regex]::Matches($blocPr, '\.Password\s*=')).Count -eq 4 -and $blocPr.Contains('indiceNtfyUrl.Text = Enregistre(en == null ? (bool?)null : en.NtfyConfigure);'))
+    Cas 'Réglages (T-15) : secrets passés dans l''ordre de la commande (adresse ntfy, jeton ntfy, webhook Teams, mot de passe SMTP), par l''envoi réel' ($blocPr.Contains('ActionsReglages.Notifications(action, c, ntfyUrl.Password, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);') -and ([regex]::Matches($blocPr, 'ActionsReglages\.Notifications\(')).Count -eq 1)
     Cas 'Réglages (T-15) : compteur des exceptions périmées lu dans etat.json' ($blocPr.Contains('var etat = Commun.Lire<Etat>("etat.json");') -and $blocPr.Contains('exceptions.Text = VueReglagesFluent.TexteExceptions(app, etat);'))
     if (-not $vr -or -not $prT.GetMethod('Afficher', $ipT)) { Cas 'Réglages (T-15) : décisions pures et navigation des sections présentes' $false 'VueReglagesFluent ou Afficher absent' }
     else {
@@ -750,6 +751,31 @@ public class SourceSimulee : RealProxy
             $okErr = $okErr -and $null -eq $nNul -and (& $pw 'errMaxHeure').Visibility -eq 'Visible' -and (& $pw 'errSmtpPort').Visibility -ne 'Visible' -and (& $pw 'errNotif').Text -eq [string]$ar.GetMethod('NotificationsInvalides').Invoke($null, [object[]]@('0', '465', 0, 0))
             $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
             Cas "Réglages (T-15) $code : saisie invalide, rien n'est rendu à envoyer ; erreur sous le champ fautif seul, message de la validation d'aujourd'hui sous les boutons (et section du champ dite dans l'autre carte) ; effacée à la lecture suivante" ($okErr -and (& $pw 'errPortSyslog').Visibility -ne 'Visible' -and (& $pw 'errNotif').Visibility -ne 'Visible') "$okErr $((& $pw 'errApi').Text)"
+            # Clic réel sur les boutons (prérelecture de #305, D1) : saisie refusée, rien n'est parti, donc pas de relecture ;
+            # l'erreur et la saisie fautive restent après que le Dispatcher a tourné (dossier de données vide et temporaire)
+            $communT = & $t 'Commun'; $dossierAvant = $communT.GetField('Dossier').GetValue($null)
+            $vide = Join-Path $travail ("donnees-vides-" + $code); New-Item -ItemType Directory -Force -Path $vide | Out-Null
+            $communT.GetField('Dossier').SetValue($null, $vide)
+            try {
+                $boutonDe = { param($panneau, $texte) $tous.Clear(); & $parcourir $panneau; @($tous | Where-Object { $_ -is [Windows.Controls.Button] -and [string]$_.Content -eq $texte })[0] }
+                $cliquer = { param($bouton) $bouton.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) }
+                $pomper = { $cadreD = New-Object Windows.Threading.DispatcherFrame; $minut = New-Object Windows.Threading.DispatcherTimer; $minut.Interval = [TimeSpan]::FromMilliseconds(1500); $minut.add_Tick({ $cadreD.Continue = $false; $minut.Stop() }.GetNewClosure()); $minut.Start(); [Windows.Threading.Dispatcher]::PushFrame($cadreD) }
+                (& $pw 'portSyslog').Text = '70000'
+                & $cliquer (& $boutonDe $panneaux[3] ([string]$langue.GetMethod('T').Invoke($null, @("Tester l'envoi"))))
+                (& $pw 'maxHeure').Text = '0'
+                & $cliquer (& $boutonDe $panneaux[2] ([string]$langue.GetMethod('T').Invoke($null, @('Enregistrer les notifications'))))
+                (& $pw 'compte').Text = 'PC-INEXISTANT-T15\personne-fictive'
+                & $cliquer (& $boutonDe $panneaux[6] ([string]$langue.GetMethod('T').Invoke($null, @('Autoriser'))))
+                & $pomper
+                $garde = @((& $pw 'errPortSyslog').Visibility, (& $pw 'portSyslog').Text, (& $pw 'errMaxHeure').Visibility, (& $pw 'maxHeure').Text, (& $pw 'errCompte').Visibility, (& $pw 'compte').Text) -join '|'
+            } finally { $communT.GetField('Dossier').SetValue($null, $dossierAvant) }
+            Cas "Réglages (T-15) $code : clic réel sur « Tester l'envoi », « Enregistrer les notifications » et « Autoriser » avec une saisie refusée : rien ne part, pas de relecture, erreur et saisie fautive gardées après le passage du Dispatcher" ($garde -eq 'Visible|70000|Visible|0|Visible|PC-INEXISTANT-T15\personne-fictive') $garde
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
+            # Canal e-mail éteint, port SMTP invalide : champs dépliés pour le corriger (N5)
+            $smtpB = & $pw 'smtp'; $smtpB.IsChecked = $false; (& $pw 'smtpPort').Text = '70000'
+            $null = $prT.GetMethod('SaisieNotifications', $ipT).Invoke($pg, @())
+            Cas "Réglages (T-15) $code : canal e-mail éteint et port SMTP invalide, champs de la carte dépliés et message qui le dit" ($null -ne $prT.GetField('champsSmtp', $ipT) -and (& $pw 'champsSmtp').Visibility -eq 'Visible' -and (& $pw 'errSmtpPort').Visibility -eq 'Visible') "$((& $pw 'errNotif').Text)"
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
         }
         $langue.GetField('En').SetValue($null, $false)
         # États de la navigation et bandeaux (décisions pures)
@@ -762,6 +788,8 @@ public class SourceSimulee : RealProxy
             (& $etS 5 $null $false $null $null $null), (& $etS 5 $null $false $null (& $mj '') $null), (& $etS 5 $null $false $null (& $mj 'EchecRecent') $null), (& $etS 5 $null $false $null (& $mj 'EchecProlonge') $null),
             (& $etS 5 $null $false $null (& $mj 'ManifesteAncien') $null), (& $etS 5 $null $false $null (& $mj 'Inconnu') $null)) -join '|'
         Cas 'Réglages (T-15) : états de la navigation (jour 3/7, aucun canal à surveiller, configuration illisible « ? », code d''état de maj.json : contrôlée, échec récent à surveiller, échec prolongé, manifeste ancien et code inconnu à traiter)' ($etats -eq 'Jour 3/7~0|Aucun~1|?~1|?~1|pas vérifiée~0|contrôlée~0|en échec~1|en échec~2|à vérifier~2|en échec~2') $etats
+        $eL = @(@('auto', $null), @('auto', 'en'), @('en', $null), @('fr', 'fr')) | ForEach-Object { $x = $vr.GetMethod('EtatLangue').Invoke($null, [object[]]@($_[0], $_[1])); $x.Texte }
+        Cas 'Réglages (T-15) : état « Langue » de la navigation = réglage en vigueur, « en attente » si un autre choix vaut au prochain lancement' (($eL -join '|') -eq 'Automatique|en attente|English|Français') ($eL -join '|')
         $rmT = & $t 'EtatRemontee'
         $bR = { param($n, $r) $b = $vr.GetMethod('BandeauRemontee').Invoke($null, [object[]]@($n, $false, $r)); "$($b.Gravite)~$($b.Titre)" }
         $nN = & $nouv $cnT @{ Ntfy = $true; NiveauMin = 'Critique' }
