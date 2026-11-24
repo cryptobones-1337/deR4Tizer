@@ -662,7 +662,7 @@ public class SourceSimulee : RealProxy
     $txtRg = ([string]$ar.GetMethod('TexteMaj').Invoke($null, @((& $nouv $emT @{ VerifieLe = 'h'; Statut = "ok`r`n" + [char]0x202E; CleEpinglee = $true })))) + '|' + ([string]$ar.GetMethod('TexteNotifications').Invoke($null, @((& $nouv $enT2 @{ DerniereErreur = '550 ' + [char]0x202E + "`r`nX"; Envoyes = [long]1 })))) + '|' + ([string]$ar.GetMethod('TexteLecteurs').Invoke($null, [object[]](, $llc.PSObject.BaseObject)))
     Cas 'Réglages : statut de mise à jour, erreur d''envoi (réponse d''un serveur) et noms de comptes neutralisés' (-not ($txtRg -match "[\u202E\r\n]") -and $txtRg.Contains('dernière erreur : 550')) $txtRg
     $reglagesSrc = [IO.File]::ReadAllText("$src\Reglages.cs")
-    Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return null;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return null;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
+    Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return null;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return null;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 1 -and ([regex]::Matches($reglagesSrc, '\bEnvoyer\(')).Count -eq 10 -and ($reglagesSrc -replace "`r`n", "`n").Contains("            if (test != null) { test(c); return; }`n            Canal.Executer(c);") -and -not $fluentSrc.Contains('Canal.Executer('))
     Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; if (action()) Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
     # Page Réglages refaite (constat T-15, maquettes validées le 2026-11-23) : sections, une carte par bloc, secrets jamais
     # réaffichés, envois inchangés (mêmes commandes, mêmes champs, mêmes validations), erreurs sous le champ
@@ -756,7 +756,18 @@ public class SourceSimulee : RealProxy
             $communT = & $t 'Commun'; $dossierAvant = $communT.GetField('Dossier').GetValue($null)
             $vide = Join-Path $travail ("donnees-vides-" + $code); New-Item -ItemType Directory -Force -Path $vide | Out-Null
             $communT.GetField('Dossier').SetValue($null, $vide)
-            try {
+            # Aucun envoi possible pendant ce test : point d'interception d'ActionsReglages posé (toute commande y est retenue,
+            # rien ne part vers le canal ni vers le service installé) ; absent, aucun clic n'est fait
+            $crochet = $ar.GetField('EnvoiDeTest', [Reflection.BindingFlags]'Static,NonPublic')
+            $envoisTest = New-Object Collections.Generic.List[string]
+            $garde = 'point d''interception absent : aucun clic'
+            if ($crochet) { $crochet.SetValue($null, [Management.Automation.LanguagePrimitives]::ConvertTo({ param($cm) $envoisTest.Add([string]$cm.Action) }.GetNewClosure(), $crochet.FieldType)) }
+            # Témoin : le crochet retient bien une commande (« majVerifier ») ; lancé seulement si la source montre que l'envoi
+            # passe par le crochet avant le canal, sinon il pourrait partir vraiment
+            $routage = ($reglagesSrc -replace "`r`n", "`n").Contains("            if (test != null) { test(c); return; }`n            Canal.Executer(c);")
+            $temoin = 'non lancé'
+            if ($crochet -and $null -ne $crochet.GetValue($null)) { try {
+                if ($routage) { $ar.GetMethod('MajVerifier').Invoke($null, @()); $temoin = $envoisTest -join ','; $envoisTest.Clear() }
                 $boutonDe = { param($panneau, $texte) $tous.Clear(); & $parcourir $panneau; @($tous | Where-Object { $_ -is [Windows.Controls.Button] -and [string]$_.Content -eq $texte })[0] }
                 $cliquer = { param($bouton) $bouton.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) }
                 $pomper = { $cadreD = New-Object Windows.Threading.DispatcherFrame; $minut = New-Object Windows.Threading.DispatcherTimer; $minut.Interval = [TimeSpan]::FromMilliseconds(1500); $minut.add_Tick({ $cadreD.Continue = $false; $minut.Stop() }.GetNewClosure()); $minut.Start(); [Windows.Threading.Dispatcher]::PushFrame($cadreD) }
@@ -767,9 +778,10 @@ public class SourceSimulee : RealProxy
                 (& $pw 'compte').Text = 'PC-INEXISTANT-T15\personne-fictive'
                 & $cliquer (& $boutonDe $panneaux[6] ([string]$langue.GetMethod('T').Invoke($null, @('Autoriser'))))
                 & $pomper
-                $garde = @((& $pw 'errPortSyslog').Visibility, (& $pw 'portSyslog').Text, (& $pw 'errMaxHeure').Visibility, (& $pw 'maxHeure').Text, (& $pw 'errCompte').Visibility, (& $pw 'compte').Text) -join '|'
-            } finally { $communT.GetField('Dossier').SetValue($null, $dossierAvant) }
-            Cas "Réglages (T-15) $code : clic réel sur « Tester l'envoi », « Enregistrer les notifications » et « Autoriser » avec une saisie refusée : rien ne part, pas de relecture, erreur et saisie fautive gardées après le passage du Dispatcher" ($garde -eq 'Visible|70000|Visible|0|Visible|PC-INEXISTANT-T15\personne-fictive') $garde
+                $garde = @((& $pw 'errPortSyslog').Visibility, (& $pw 'portSyslog').Text, (& $pw 'errMaxHeure').Visibility, (& $pw 'maxHeure').Text, (& $pw 'errCompte').Visibility, (& $pw 'compte').Text, "envois=$($envoisTest.Count)") -join '|'
+            } finally { $crochet.SetValue($null, $null); $communT.GetField('Dossier').SetValue($null, $dossierAvant) } }
+            $communT.GetField('Dossier').SetValue($null, $dossierAvant)
+            Cas "Réglages (T-15) $code : clic réel sur « Tester l'envoi », « Enregistrer les notifications » et « Autoriser » avec une saisie refusée et l'envoi intercepté : aucun envoi, pas de relecture, erreur et saisie fautive gardées après le passage du Dispatcher" ($garde -eq 'Visible|70000|Visible|0|Visible|PC-INEXISTANT-T15\personne-fictive|envois=0' -and $temoin -eq 'majVerifier' -and $crochet -and $null -eq $crochet.GetValue($null)) "$garde | témoin : $temoin"
             $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
             # Canal e-mail éteint, port SMTP invalide : champs dépliés pour le corriger (N5)
             $smtpB = & $pw 'smtp'; $smtpB.IsChecked = $false; (& $pw 'smtpPort').Text = '70000'

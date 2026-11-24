@@ -20,6 +20,19 @@ namespace DeR4Tizer
         public static readonly string[] Securites = { "SSL", "STARTTLS" };
         static readonly string[] OperationsApprentissage = { "terminer", "recommencer", "oublier", "oublier-perimees" };
 
+        // Point d'interception des tests d'interface (tests\rendu-pilote.ps1, clic réel sur la page Réglages) : posé, il
+        // reçoit la commande à la place du canal, et rien ne part vers le service. Jamais posé par l'interface (null) ;
+        // interne à l'assemblage, atteint seulement par réflexion depuis un test (relecture de #305)
+        internal static Action<Commande> EnvoiDeTest;
+
+        // Seul envoi des actions de la page Réglages : le canal (assistant élevé, confirmation), sauf pendant un test
+        static void Envoyer(Commande c)
+        {
+            var test = EnvoiDeTest;
+            if (test != null) { test(c); return; }
+            Canal.Executer(c);
+        }
+
         public static string Choix(string valeur, string[] permis) { return Array.IndexOf(permis, valeur) >= 0 ? valeur : permis[0]; }
 
         public static string ConfigIllisible()
@@ -79,11 +92,11 @@ namespace DeR4Tizer
         public static bool Enregistrer(Config c)
         {
             if (c == null) { MessageBox.Show(ConfigIllisible(), "deR4Tizer", MessageBoxButtons.OK, MessageBoxIcon.Warning); return false; }
-            Canal.Executer(new Commande { Action = "reglages", Valeur = Commun.Json().Serialize(c) });
+            Envoyer(new Commande { Action = "reglages", Valeur = Commun.Json().Serialize(c) });
             return true;
         }
 
-        public static void TesterSyslog(ConfigSyslog s) { if (s != null) Canal.Executer(new Commande { Action = "testerSyslog", Valeur = Commun.Json().Serialize(s) }); }
+        public static void TesterSyslog(ConfigSyslog s) { if (s != null) Envoyer(new Commande { Action = "testerSyslog", Valeur = Commun.Json().Serialize(s) }); }
 
         // Commande d'apprentissage, liste fermée ; la même sert à la confirmation de l'assistant (audit de #152, S152-01)
         public static Commande CommandeApprentissage(string operation)
@@ -95,21 +108,21 @@ namespace DeR4Tizer
         public static void Apprentissage(string operation)
         {
             var c = CommandeApprentissage(operation);
-            if (c != null) Canal.Executer(c);
+            if (c != null) Envoyer(c);
         }
 
-        public static void AfficherJeton() { Canal.Executer(new Commande { Action = "jetonApi" }); }
+        public static void AfficherJeton() { Envoyer(new Commande { Action = "jetonApi" }); }
 
         public static bool NouveauJeton()
         {
             if (MessageBox.Show(L.T("Remplacer le jeton ? Les outils qui utilisent l'ancien devront être mis à jour."), "deR4Tizer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return false;
-            Canal.Executer(new Commande { Action = "nouveauJeton" });
+            Envoyer(new Commande { Action = "nouveauJeton" });
             return true;
         }
 
-        public static void MajConfig(bool auto, string url) { Canal.Executer(new Commande { Action = "majConfig", Valeur = Commun.Json().Serialize(new ConfigMaj { Auto = auto, Url = (url ?? "").Trim() }) }); }
+        public static void MajConfig(bool auto, string url) { Envoyer(new Commande { Action = "majConfig", Valeur = Commun.Json().Serialize(new ConfigMaj { Auto = auto, Url = (url ?? "").Trim() }) }); }
 
-        public static void MajVerifier() { Canal.Executer(new Commande { Action = "majVerifier" }); }
+        public static void MajVerifier() { Envoyer(new Commande { Action = "majVerifier" }); }
 
         // Notifications : « notifications » enregistre, « testerNotifications » envoie un message de test ; rien d'autre
         // Commande des notifications, deux actions seulement ; secrets vides : le service garde ceux qu'il a. La même sert au
@@ -128,7 +141,7 @@ namespace DeR4Tizer
         public static void Notifications(string action, ConfigNotifications c, string ntfyUrl, string ntfyJeton, string teamsUrl, string smtpMotDePasse)
         {
             var commande = CommandeNotifications(action, c, ntfyUrl, ntfyJeton, teamsUrl, smtpMotDePasse);
-            if (commande != null) Canal.Executer(commande);
+            if (commande != null) Envoyer(commande);
         }
 
         // Identifiant de sécurité d'un compte local saisi, ou null s'il est introuvable
@@ -139,7 +152,7 @@ namespace DeR4Tizer
             catch { return null; }
         }
 
-        public static void AutoriserLecteur(string sid) { if (!string.IsNullOrEmpty(sid)) Canal.Executer(new Commande { Action = "autoriserLecteur", Valeur = sid }); }
+        public static void AutoriserLecteur(string sid) { if (!string.IsNullOrEmpty(sid)) Envoyer(new Commande { Action = "autoriserLecteur", Valeur = sid }); }
 
         // Champ CSV : une valeur qui commence par =, +, -, @, une tabulation ou un retour chariot serait prise pour une formule
         // par un tableur (un nom de programme ou un chemin vient d'un programme) : préfixée d'une apostrophe (U6c). Le premier
