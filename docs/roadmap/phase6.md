@@ -9,7 +9,7 @@ maintainer on 2026-11-03 (`CLAUDE.md`, section 5, point 4): the state of each it
 
 A response action cuts off or modifies something on a computer with no IT person on site. Four gaps:
 
-1. **Level 3 overflows**: with the "listes restreintes" setting, automatic blocking extends to FireHOL level 1 and
+1. **Level 3 overflows**: with the "restricted lists" setting, automatic blocking extends to FireHOL level 1 and
    to ThreatView, which the policy does not allow.
 2. **Identity is not revalidated**: between the decision and the action, a reused PID can designate another program.
 3. **Nothing bounds repetition**: an address unblocked by hand is blocked again as soon as a connection to it reappears, and a program
@@ -41,10 +41,10 @@ merge. Those that touch the same file go one after the other.
 | 6.5 | Transactional panic mode, effective state, PowerShell outside the lock; first, two leftovers from the audit of #116 (`tout_debloquer`, in-memory list) |
 | 6.6 | Isolation on the final path, read through a handle; first, two remarks from #117 (unreadable profile, panic command in progress) |
 | 6.7a | Prerequisites from #118 on the service side: critical binary name refused, parent folders read without following a link, REP-003 at the first reading |
-| 6.7b | Interface: "Réponses en cours" page, scope and rollback of the panic mode, effective state in the header, real path in the isolation confirmation (S118-02) |
-| 6.8 | Prerequisites from #119 and #120: link tags through the "name surrogate" bit, unverifiable isolation stated (REP-004), "Reprendre" refused only on a time read and different, unreadable register distinguished from an empty register |
+| 6.7b | Interface: "Ongoing responses" page, scope and rollback of the panic mode, effective state in the header, real path in the isolation confirmation (S118-02) |
+| 6.8 | Prerequisites from #119 and #120: link tags through the "name surrogate" bit, unverifiable isolation stated (REP-004), "Resume" refused only on a time read and different, unreadable register distinguished from an empty register |
 | 6.9 | Prerequisites from #116 and #117: reminders capped per kind and per duration (S116-01), reading of the firewall with a deadline on the "sante" thread (S117-02) |
-| 6.10 | Silent firewall stated after 5 min (REP-003, Alerte); removal of the panic mode with a deadline during uninstallation (D6-7; the other firewall calls of the uninstallation stay without deadline) |
+| 6.10 | Silent firewall stated after 5 min (REP-003, "Alert"); removal of the panic mode with a deadline during uninstallation (D6-7; the other firewall calls of the uninstallation stay without deadline) |
 | 6.11 | Uninstallation: removal of the firewall rules with a deadline (review of #123, D1); matrix: "incertaine" state displayed since 6.7b |
 | 6.12 | Service rule PowerShell processes (API, capture) tracked and waited for at stop; uninstallation report with a unique name, without overwriting or following a link, with the code and the remaining rules |
 | 6.13 | Isolation: path walked down element by element through handles, without race or traversed link; name of a program shipped with Windows refused outside the Windows folder |

@@ -100,7 +100,7 @@ scenarios 3a and 3b SHA-256 `6F63CE69B91596A13BCECE69891BDDF5404EB3BE01CF2551CC1
 | 3b | 24 | 0 | 3 (same reasons) |
 | 3c | 19 | 0 | 1 (same reason) |
 
-New compared with the previous pass: decoy already present in a profile without an audited session (3b);
+New compared with the previous pass: decoy already present in a profile without a session, audited (3b);
 uninstallation without `GARDER_DONNEES` that does remove the data (3a, 3b). Tables in comments on PRs #31 to #35.
 
 2026-10-24, tree `67978e1f8a2d8fc42b55c2c8624761ff50826949`, that of `main` `b72874f` after the merge of PRs #36,
