@@ -31,9 +31,8 @@ settings applied is the VM's real state: the security baseline was not applied t
 ### Features (v4.3)
 
 Actual state of each capability (validated on Windows by the CI, checked in a test VM, lab-tested, or implemented without verification; the CI was disabled from 2026-10-22 to 2026-11-17):
-[capability matrix](docs/roadmap/capability-matrix.md) (in French). None is production-ready yet; NDR, DPI and
-IDS/IPS are experimental and under validation in the Kali lab campaign (reports in [docs/validation/](docs/validation/),
-in French).
+[capability matrix](docs/roadmap/capability-matrix.md). None is production-ready yet; NDR, DPI and
+IDS/IPS are experimental and under validation in the Kali lab campaign (reports in [docs/validation/](docs/validation/)).
 
 | Area | What deR4Tizer does |
 |---|---|
@@ -50,7 +49,7 @@ in French).
 | **Mini-SIEM** | Normalised events (logons, accounts, groups, processes, services, connections, firewall, alerts) kept 30 days, search, timeline, correlation incidents (brute force, logon after failures, new administrator, log cleared, suspicious service, weakened protection, multi-stage attack, access from the Internet) |
 | **Incident tracking** | Alerts attached to incidents: open, in progress, closed with a reason, never closed automatically; timeline per incident (alerts, events, response actions, collection gaps); Incidents page in the interface |
 | **Health** | Collections, alert forwarding, interface and the response register (`reponses.json`: write failing, or unreadable at startup so the session's deadlines would be lost on restart) monitored, with a finding when one stops; forwarding, when configured, retried after a failure; interface restarted by a scheduled task; Health page and header indicator |
-| **Detection rules** | Each rule has an identifier and an entry in `docs/detection/regles.md` (in French); most have a sheet: rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
+| **Detection rules** | Each rule has an identifier and an entry in `docs/detection/regles.md`; most have a sheet: rationale, telemetry, expected false positives; "nothing suspicious" is told apart from "collection unavailable" |
 | **Traffic analysis** | Passive packet capture (Windows raw sockets, no driver): throughput, programs, destinations, ports and countries (regional Internet registries), live world map |
 | **Local NDR** (experimental; lab-tested in the Kali campaign, except the rogue DHCP server, to be measured again after a fix) | Gateway ARP spoofing, new devices, rogue DHCP server, LLMNR/NBNS/mDNS poisoning (Responder) with an active decoy; also works behind a VPN |
 | **DPI** (experimental, not yet measured in the campaign) | TLS site names (SNI) and JA3 fingerprints (SSLBL list), cleartext HTTP (credentials sent unencrypted), DNS (DNS tunnelling), SMB/Telnet/FTP to the Internet, names checked against threat lists |
