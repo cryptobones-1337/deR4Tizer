@@ -17,7 +17,7 @@ remain are listed below.
 ## Only level 3 actions allowed
 
 1. **Blocking of the IP addresses of Spamhaus DROP and Feodo Tracker** at the firewall (high-confidence lists,
-   free to use), identified in the binary, whatever the "listes restreintes" setting: any other list
+   free to use), identified in the binary, whatever the "restricted lists" setting: any other list
    gives an alert only. The block is lifted when the address leaves these lists, if all three are loaded, or on expiry (7 days).
    Feodo Tracker publishes server addresses: a network that appeared in it is discarded. A list whose coverage
    is aberrant (more than 2^27 IPv4 addresses, or 2^48 IPv6 /64 networks or more, that is a /16) is rejected entirely (PR 6.15).
@@ -31,10 +31,10 @@ Everything else, IPS included, is at level 2 at most.
 ## Domain name filtering (phase 7, in the code)
 
 Filtering is in the code: engine (PR 7.2, `filtrage.rs`), local resolver (PR 7.3, `dns_local.rs`), activation
-on the adapters (PR 7.4), "Navigation" page and log of blocks (PR 7.5), third-party resolver Quad9 as an option (PR 7.6).
+on the adapters (PR 7.4), "Browsing" page and log of blocks (PR 7.5), third-party resolver Quad9 as an option (PR 7.6).
 Blocking a domain name through filtering is an **automatic level 2 action**: disabled by default,
-knowingly enabled by an administrator, categories enabled separately ("Navigation sécurisée", "Publicités et
-pistage"). It does not add to level 3.
+knowingly enabled by an administrator, categories enabled separately ("Safe browsing", "Ads and
+tracking"). It does not add to level 3.
 
 The rows marked "D7-x" refer to the phase 7 design file. D7-8 (Quad9) was settled by the maintainer on
 2026-11-14; D7-1 (local resolver) is an applied recommendation of the file, put into service on the adapters with the maintainer's explicit agreement for 7.4 (2026-11-12);
@@ -79,9 +79,9 @@ is held back. An administrator can always act by hand.
 
 | Guard | Threshold | Effect |
 |---|---|---|
-| Same automatic block on the same address | 3 times per 24 h | then, alert only and "Critique" alert of a stopped loop (REP-002) |
-| Suspension of a signed program installed in Program Files, interpreters excluded, closed to writing (only SYSTEM, Administrators, TrustedInstaller or a specific service write there or own it) and launched under SYSTEM or an administrator | 3 times per 24 h | then, alert only and "Critique" alert of a stopped loop (REP-002) |
-| IP blocks by the lists, all targets | 30 per hour | beyond, stopped for 1 h, "Critique" alert once |
+| Same automatic block on the same address | 3 times per 24 h | then, alert only and "Critical" alert of a stopped loop (REP-002) |
+| Suspension of a signed program installed in Program Files, interpreters excluded, closed to writing (only SYSTEM, Administrators, TrustedInstaller or a specific service write there or own it) and launched under SYSTEM or an administrator | 3 times per 24 h | then, alert only and "Critical" alert of a stopped loop (REP-002) |
+| IP blocks by the lists, all targets | 30 per hour | beyond, stopped for 1 h, "Critical" alert once |
 | Distinct addresses by the IPS (counter separate from the lists) | 50 per hour | beyond, alert only |
 | Contrary human decision (unblocking, resume) | 7 days | no automatic action on this target, alert only |
 
@@ -95,7 +95,7 @@ is held back. An administrator can always act by hand.
   until an administrator resumes or stops it. The Program Files threshold remains usable by a signed program
   already installed that would touch the decoys three times: the alert remains.
 - **Limit of the list cap**: a standard account can reach it by connecting to 31 listed addresses. Blocks
-  by the lists then stop for one hour, renewable; the "Critique" alerts remain. The cap protects
+  by the lists then stop for one hour, renewable; the "Critical" alerts remain. The cap protects
   against a corrupted list.
 - **Limit of the IPS**: `ids.rs`, not fixed to date, writes "bloquée" in its alert as soon as it detects, even if the action is then
   held back; the SIEM and the log state that it was held back.
@@ -120,7 +120,7 @@ is held back. An administrator can always act by hand.
   S230-02). Limit: the last copy can be lost if the service stops before it is written; a file refused at the
   initial read is not reread before the next start (S230-03). Since the auditor's review of 2026-11-21
   (point 1): the service log only states the first write failure of a series and the return to normal, and
-  the Health page shows a "Registre des réponses" line as failed as long as the file is not written, or when the
+  the Health page shows a "Response register" line as failed as long as the file is not written, or when the
   initial read was refused (the session's deadlines will then be lost at restart); the service publishes a
   code in etat.json (`RegistreReponses`: empty, `EcritureEnEchec` with `RegistreReponsesDepuis`, `LectureRefusee`,
   `ContenuIllisible` or `ProtectionEnEchec`: all the cases where nothing is written), translated by the interface.
@@ -148,7 +148,7 @@ RuntimeBroker.exe…, PR 6.13) outside the Windows folder (quarantine is better 
 named svchost.exe in a user folder therefore cannot be isolated, only quarantined; nor can a legitimate
 tool that bears the name of a Windows program (curl.exe or tar.exe shipped with Git, for example); a
 program named like a piece of software of Program Files or of a Windows subfolder (browser, WmiPrvSE.exe…) remains
-isolable, and a junction placed afterwards could make the real one cut off, until the human decision that
+isolable, and a junction placed afterwards could get the real one cut off, until the human decision that
 REP-004 asks for. Every 5 minutes, each isolation is checked again by the same walk down, folder by folder
 without following a link (only the tags that redirect the path count, "name surrogate" bit: junctions, symbolic
 links…, not OneDrive on-demand files or folders, PR 6.13; a path unreadable for 3 readings in a row
@@ -157,12 +157,12 @@ is stated by REP-004). The path is never handed back to Windows as a whole, neit
 automatically, and can then cut off the network of the targeted program: the decision remains human. Limit: an isolated program copied
 elsewhere is no longer cut off from the network (the rule targets a path, not a file).
 
-**Interface (PR 6.7b).** The "Réponses en cours" page shows each active action: what, on what, trigger,
-since when, reminder deadline, state ("relance en attente" in yellow, panic mode in red, always written out in
-full), recovery procedure, service stopped included. Its button ("Reprendre", "Libérer",
-"Débloquer", "Rétablir Internet", "Restaurer") sends the command over the channel: for a non-administrator account,
+**Interface (PR 6.7b).** The "Ongoing responses" page shows each active action: what, on what, trigger,
+since when, reminder deadline, state ("reminder due" in yellow, panic mode in red, always written out in
+full), recovery procedure, service stopped included. Its button ("Resume", "Release",
+"Unblock", "Restore Internet", "Restore") sends the command over the channel: for a non-administrator account,
 through the elevated assistant and its confirmation; for an administrator, after the page's confirmation (and that of
-the assistant for "Reprendre"). "Reprendre" refuses a reused PID (creation time compared). The confirmation of the panic mode states
+the assistant for "Resume"). "Resume" refuses a reused PID (creation time compared). The confirmation of the panic mode states
 its scope (all of the Internet, IPv4 and IPv6; open IPv6 connections not cut; local network, DNS and notification
 servers reachable), the reminder at 4 h and the rollback; the header shows the effective state published by the
 service. The confirmation of an isolation shows the real path that will be isolated, also to an administrator, when it is on a
@@ -177,7 +177,7 @@ quarantines and manual blocks leave the tracking first, then the most recent aut
 often the real program followed by throwaway ones, stays tracked; the number of what leaves is stated once by REP-002
 "registre plein", until it is back under the bound (PR 6.14). Limit: an attacker who keeps 500 throwaway programs
 suspended before launching the real payload makes it leave the tracking as soon as it enters; its LEU-002 Critical alert goes out
-anyway, but neither reminder nor row on the "Réponses en cours" page. What leaves stays suspended, and its original alert remains. A panic mode, an
+anyway, but neither reminder nor row on the "Ongoing responses" page. What leaves stays suspended, and its original alert remains. A panic mode, an
 isolation or a manual suspension always stay tracked. The real state of the threads of a suspended process is not reread: the reminder says
 that it may have been resumed outside deR4Tizer.
 
@@ -185,10 +185,10 @@ that it may have been resumed outside deR4Tizer.
 |---|---|---|---|
 | Level 3 IP block (Spamhaus DROP, Feodo Tracker) | 7 days | lifted; earlier if the address leaves the list | done |
 | IP block by the IPS | 24 h | lifted | done (PR 6.4) |
-| Automatic suspension (decoy) | 2 h | stays suspended; "Critique" reminder, then every 24 h | done (PR 6.4) |
-| Manual suspension | 24 h | stays suspended; "Alerte" reminder, then every 24 h | done (PR 6.4) |
-| Isolation of a program | 7 days | stays isolated; "Alerte" reminder, then every 7 days | done (PR 6.4) |
-| Panic mode | 4 h | stays active; "Critique" reminder, then every 24 h | done (PR 6.4) |
+| Automatic suspension (decoy) | 2 h | stays suspended; "Critical" reminder, then every 24 h | done (PR 6.4) |
+| Manual suspension | 24 h | stays suspended; "Alert" reminder, then every 24 h | done (PR 6.4) |
+| Isolation of a program | 7 days | stays isolated; "Alert" reminder, then every 7 days | done (PR 6.4) |
+| Panic mode | 4 h | stays active; "Critical" reminder, then every 24 h | done (PR 6.4) |
 | Quarantine | 30 days | stays in quarantine, never deleted; "Info" reminder, then every 30 days; closed by a restore | done (PR 6.4b) |
 | Manual block (hosts, IP) | 90 days | stays blocked; "Info" reminder, then every 90 days; closed by an unblocking | done (PR 6.4b) |
 | Kill, kill a chain | not applicable | irreversible, logged | n/a |
@@ -200,11 +200,11 @@ An automatic block whose deadline was not written gets one at the next check: 24
 
 | Action | With the service | Service stopped or failed | After uninstallation |
 |---|---|---|---|
-| Suspension | "Reprendre" (identity revalidated) or "Tuer" | Windows Resource Monitor (`resmon`, "Reprendre le processus"), or termination of the process in Task Manager | the process stays suspended until it is stopped or until restart: restart the computer |
-| Isolation | "Libérer" (on the final path; exercised in a VM in scenario 3b) | Windows Defender Firewall with Advanced Security: delete the rules "deR4Tizer - isole …" (group `deR4Tizer`) | `--nettoyer` removes the group, to be checked for the isolation rules |
-| Panic mode | "Rétablir Internet"; also safe in the "incertain" state (VM signal, PR 6.5) | delete the rules "deR4Tizer PANIQUE" in the firewall, then the `panique-active` file of the data folder | `--nettoyer`, based on the rules and not only on the flag |
-| IP block | "Débloquer" | "deR4Tizer" rules of the firewall | `--nettoyer` |
-| Quarantine | "Restaurer" or fallback | none (encoded copy in the data folder) | with `GARDER_DONNEES=1`: reinstall then restore; without: lost, to be checked |
+| Suspension | "Resume" (identity revalidated) or "Kill the process" | Windows Resource Monitor (`resmon`, "Resume process"), or termination of the process in Task Manager | the process stays suspended until it is stopped or until restart: restart the computer |
+| Isolation | "Release" (on the final path; exercised in a VM in scenario 3b) | Windows Defender Firewall with Advanced Security: delete the rules "deR4Tizer - isole …" (group `deR4Tizer`) | `--nettoyer` removes the group, to be checked for the isolation rules |
+| Panic mode | "Restore Internet"; also safe in the "incertain" state (VM signal, PR 6.5) | delete the rules "deR4Tizer PANIQUE" in the firewall, then the `panique-active` file of the data folder | `--nettoyer`, based on the rules and not only on the flag |
+| IP block | "Unblock" | "deR4Tizer" rules of the firewall | `--nettoyer` |
+| Quarantine | "Restore" or fallback | none (encoded copy in the data folder) | with `GARDER_DONNEES=1`: reinstall then restore; without: lost, to be checked |
 
 ## Gaps between the current code (4.3) and this policy
 
