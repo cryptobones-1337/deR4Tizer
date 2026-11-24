@@ -2113,8 +2113,12 @@ namespace DeR4Tizer
         public ComptesVue Comptes()
         {
             var a = alertesAffichees ?? new List<Alerte>();
+            var pc = protectionsCourantes;
+            string majDepuis = "";
+            bool majEchec = pc != null && VueEnsembleFluent.MajEnEchec(pc.Maj, pc.Etat, DateTime.Now, out majDepuis);
             return new ComptesVue
             {
+                MajEnEchec = majEchec, MajDepuis = majDepuis,
                 AlertesNonLues = a.Count(x => x != null && VueAlertesFluent.NonLue(x, derniereLue)),
                 AlertesCritiquesNonLues = a.Count(x => x != null && x.Niveau == "Critique" && VueAlertesFluent.NonLue(x, derniereLue)),
                 IncidentsOuverts = incidentsOuverts, IncidentsCritiques = incidentsCritiques, IncidentsIllisibles = incidentsIllisibles
