@@ -746,7 +746,8 @@ namespace DeR4Tizer
             // Réglages en WPF (U6c) : la dernière page hébergée ; plus aucune page WinForms dans la coquille
             if (cle == "Réglages") { var pr = new PageReglagesFluent(); pr.Revoir = () => Ouvrir(VueAssistantFluent.Cle); zone.Content = pr; return; }
             // Premiers réglages (U7a), hors de la navigation : lecture seule, renvois vers les pages
-            if (cle == VueAssistantFluent.Cle) { zone.Content = new PageAssistantFluent(source, Ouvrir, VueAssistantFluent.CheminRepere()); return; }
+            // Chemin du repère jamais calculé sous jeton administrateur (S307-01) : EcrireRepere refuse alors d'écrire
+            if (cle == VueAssistantFluent.Cle) { zone.Content = new PageAssistantFluent(source, Ouvrir, Canal.EstAdmin() ? null : VueAssistantFluent.CheminRepere()); return; }
             zone.Content = new TextBlock { Text = L.T("Page introuvable."), Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) };
         }
 

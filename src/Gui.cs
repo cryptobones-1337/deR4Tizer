@@ -385,7 +385,9 @@ namespace DeR4Tizer
         // (CheminDeCommandeAccepte), jamais sur un chemin réseau
         public static List<string> DossiersDeCommande()
         {
-            var d = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer") };
+            // DoNotVerify : le dossier n'est pas interrogé pour calculer son nom (audit de #307, S307-01 : sans cette option,
+            // GetFolderPath vérifie l'existence du dossier, que HKCU peut rediriger vers un partage sans élévation)
+            var d = new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "deR4Tizer") };
             try
             {
                 int session = Process.GetCurrentProcess().SessionId;
@@ -739,17 +741,18 @@ namespace DeR4Tizer
                         // et mot de passe (nouveau, effacé ou inchangé) ; un serveur, un port, un compte ou une sécurité changés sans nouveau mot de passe effacent
                         // l'ancien côté service, jamais envoyé à un autre serveur
                         Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? Visible(conf[k].ToString()) : "";
-                        // Mot de passe présent dans la commande (jamais sa valeur) : « nouveau » ou « effacé », null s'il est absent
-                        string mdpCommande = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
-                            ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau")) : null;
-                        // Canal e-mail éteint : le mot de passe tapé part quand même avec la commande, il est donc dit aussi
-                        // (relecture de #305, A305-1)
-                        if (!actif("Smtp") && mdpCommande != null)
-                            canaux.Add((en ? "e-mail (off): SMTP password " : "e-mail (désactivé) : mot de passe SMTP ") + mdpCommande);
+                        // Mot de passe de la commande (jamais sa valeur), rogné comme le rogne le service (notifications.rs,
+                        // enregistrer_secrets et le compte changé : prérelecture de #307, S307-02) : « nouveau », « effacé » pour
+                        // « - », sinon inchangé, effacé par le service si le serveur, le port, le compte ou la sécurité change
+                        string mdpBrut = d.TryGetValue("SmtpMotDePasse", out o) ? (o as string ?? "").Trim() : "";
+                        string mdp = mdpBrut.Length == 0 ? (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)")
+                            : mdpBrut == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau");
+                        // Canal e-mail éteint : le mot de passe tapé part quand même avec la commande, et les champs du serveur
+                        // aussi (un serveur changé efface le mot de passe gardé) : dit aussi (relecture de #305, A305-1 ; S307-02)
+                        if (!actif("Smtp") && (conf != null || mdpBrut.Length > 0))
+                            canaux.Add((en ? "e-mail (off): SMTP password " : "e-mail (désactivé) : mot de passe SMTP ") + mdp);
                         if (actif("Smtp"))
                         {
-                            string mdp = mdpCommande
-                                ?? (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
                             canaux.Add((en ? "e-mail via " : "e-mail par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
                                 + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
                                 + (en ? ", password " : ", mot de passe ") + mdp + ")" + (en ? ", recipients " : ", destinataires ")
@@ -773,9 +776,10 @@ namespace DeR4Tizer
                                                      : "Relancer le mode apprentissage pour 7 jours (oublier les comportements appris)\nPendant 7 jours, toute alerte non critique sans signal fort est notée en information et mémorisée, y compris celle d'un programme malveillant actif à ce moment : seulement sur un poste que l'on sait sain.")
                         // Texte exact par valeur, fidèle à apprentissage::commande (relecture de #304) : « oublier-perimees » ne
                         // supprime que les exceptions d'une version précédente ; une valeur inconnue est dite inconnue, jamais
-                        // présentée par un texte rassurant
-                        : v == "oublier" ? (en ? "DELETE all alert exceptions, current ones and those from a previous version\nThe behaviours concerned will raise alerts again."
-                                               : "SUPPRIMER toutes les exceptions d'alerte, actuelles et d'une version précédente\nLes comportements concernés seront de nouveau signalés par une alerte.")
+                        // présentée par un texte rassurant. « oublier » : pendant un apprentissage en cours, un comportement sans
+                        // exception est noté en information et mémorisé, pas forcément en alerte (prérelecture de #307, S307-03)
+                        : v == "oublier" ? (en ? "DELETE all alert exceptions, current ones and those from a previous version\nThe behaviours concerned will no longer be covered by an exception: an alert, or information that is learned while learning mode is on."
+                                               : "SUPPRIMER toutes les exceptions d'alerte, actuelles et d'une version précédente\nLes comportements concernés ne seront plus couverts par une exception : alerte, ou information mémorisée tant que le mode apprentissage est en cours.")
                         : v == "oublier-perimees" ? (en ? "DELETE only the alert exceptions from a previous version (they no longer apply)\nCurrent exceptions are kept."
                                                         : "SUPPRIMER seulement les exceptions d'alerte d'une version précédente (elles ne s'appliquent plus)\nLes exceptions actuelles sont gardées.")
                         : (en ? "Unknown learning-mode command: " : "Commande d'apprentissage inconnue : ") + Visible(v)
@@ -943,7 +947,8 @@ namespace DeR4Tizer
         // filtrage (l'assistant ne connaît pas les catégories actuelles), un compte autorisé à lire les données, et les
         // réglages : la commande porte toute la configuration syslog et API (destination des journaux, API ouverte sur le
         // réseau), dont l'assistant ne connaît pas l'état actuel. « apprentissage » « oublier » et « oublier-perimees »
-        // n'affaiblissent pas (relecture de #304) : supprimer une exception rend son comportement de nouveau signalé, et celles
+        // n'affaiblissent pas (relecture de #304) : supprimer une exception rend son comportement signalé comme sans exception
+        // (alerte, ou information mémorisée pendant un apprentissage en cours : autant ou plus, jamais moins), et celles
         // d'une version précédente ne s'appliquent déjà plus ; une valeur inconnue est refusée par le service (validation.rs)
         // et dite inconnue par Decrire. Décision pure, testée par tests\test-confirmations.ps1
         public static bool Affaiblit(Commande c)
@@ -1399,7 +1404,9 @@ namespace DeR4Tizer
 
     class Fenetre : Form, ISourceEtat, ISourceAlertes, ISourceReponses
     {
-        readonly string fichierLecture = Path.Combine(
+        // Jamais calculé ni lu sous jeton administrateur (audit de #307, S307-01) : dossier contrôlé par les programmes non
+        // élevés du compte (redirection par HKCU, lien) ; la dernière alerte lue reste alors en mémoire, comme à l'écriture
+        readonly string fichierLecture = Canal.EstAdmin() ? null : Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer", "derniere-alerte-lue.txt");
 
         readonly Entete entete = new Entete();
@@ -1468,7 +1475,7 @@ namespace DeR4Tizer
             StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.Petit;
             Theme.FenetreSombre(this);
-            try { derniereLue = File.ReadAllText(fichierLecture).Trim(); } catch { }
+            if (fichierLecture != null) try { derniereLue = File.ReadAllText(fichierLecture).Trim(); } catch { }
             var rendu = new RenduSombre();
 
             // ---------------- Connexions
@@ -3007,7 +3014,8 @@ namespace DeR4Tizer
             dossierDeTest = dossierDemande != null;
 
             var cfg = Commun.Lire<Config>("config.json");
-            ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());
+            // Chemin de langue.txt calculé seulement hors administrateur et hors assistant, seuls cas où il est lu (audit de #307)
+            ChoisirLangue(args, cfg, Canal.EstAdmin() || Mode(args) == "commande" ? null : L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());
 
             // Finition : les nombres et dates affichés suivent la langue de l'interface (« 1 851 » en français, pas
             // « 1,851 »). Les horodatages stockés gardent leurs séparateurs (format numérique, identiques en fr-FR/en-US).
