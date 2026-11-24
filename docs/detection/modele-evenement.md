@@ -171,7 +171,7 @@ Each change of state of a collection (`collectes::instantane`) is written to the
   hour, in one batch. **In memory** (D4-8): a restart empties it; the alerts stay in `alertes.json`.
 - **SAN-004**: reporting failing for more than an hour; local finding, never reported or queued.
 - **Heartbeat** (D4-6): when reporting is configured, one message per day from 09:00 local time, level
-  "Info", outside the ceiling and the minimum level: open incidents, active and unavailable collections (identifiers
+  "Info", outside the ceiling and the minimum level: incidents not closed, active and unavailable collections (identifiers
   of the unavailable critical collections), pending alerts. Counters only: no account name, program name
   or command line. If it monitors the absence of the heartbeat, the provider can infer that the service is
   stopped, the computer off or reporting cut.
@@ -212,15 +212,15 @@ as `alertes.json` and after each transition. `incidents.json` (SIEM correlations
 | `Transitions` | 20 at most: local and UTC time, start and end state, reason, author (SID read from the token of the pipe client, never taken from the command; a transition without a known author is refused), note (300 characters at most, without control or formatting characters) |
 | `NombreTransitions` | transitions since opening, including those that fell out of the 20 kept (second audit, B-5-01); absent from an older tracking file: 0, and the number of `Transitions` stands in for it |
 
-- **Attachment**: an "Info" alert creates nothing; an "Alerte" or "Critique" alert joins the open
-  incident of the same entity whose last activity is less than 24 h old; otherwise it opens an incident. A closed
+- **Attachment**: an "Info" alert creates nothing; an "Alerte" or "Critique" alert joins the incident not
+  closed of the same entity whose last activity is less than 24 h old; otherwise it opens an incident. A closed
   incident is never silently reopened: the recurrence opens a new incident, which names the previous one.
 - **Transitions** (`incident` command, administrators only: `Cible` = identifier, `Valeur` = target state,
   `Type` = reason, `Raison` = note): Ouvert to PrisEnCharge or Clos; PrisEnCharge to Clos; Clos to Ouvert
   (explicit reopening, reason cleared, history kept). Any other transition is refused, without writing anything. Closing
   with "FauxPositif" sets no exception (D4-10). No automatic closing (D4-3).
-- **Bounds**: 500 incidents at most. Beyond that, the oldest closed ones leave first; an open incident is
-  never removed. If there are only open incidents, an alert from a new entity is not tracked: it is
+- **Bounds**: 500 incidents at most. Beyond that, the oldest closed ones leave first; an incident not closed is
+  never removed. If there are only incidents not closed, an alert from a new entity is not tracked: it is
   counted (health finding SAN-012, PR 4.4) and stays in `alertes.json`.
 - **Reading** (`incidents::decision_suivi`): owner checked, element by element (an unreadable element is
   discarded and counted, the others are kept and capped to the same bounds as at creation).

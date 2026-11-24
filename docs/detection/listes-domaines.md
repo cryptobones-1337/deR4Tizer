@@ -83,7 +83,7 @@ update, not only a rollback.
   itself (audit of #167, S167-03); on a company network, keep "Your network's resolver".
 - **Fallback at a captive portal** (`amont_tiers_repli`, pure): Quad9 silent and the network's DNS answering → fallback to the network's
   DNS, displayed; Quad9 answering again → it becomes the upstream again. Probes every 5 minutes. Before the
-  fallback, up to 30 s may pass (fail-open: adapters restored, without filtering) then up to 5 minutes of probing
+  fallback, 30 s may pass (fail-open: adapters restored, without filtering) then up to 5 minutes of probing
   (review of #167, R2).
 - Quad9 already chosen and unreachable when turning filtering on (captive portal): activation is refused, with a
   message that names it; choose "Your network's resolver" then turn it on again (R1).
