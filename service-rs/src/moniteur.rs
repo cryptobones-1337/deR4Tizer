@@ -1097,6 +1097,7 @@ impl Moniteur {
             // la revue de l'auditeur du 2026-11-21)
             let registre = politique::etat_registre();
             let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(), politique::registre_illisible(registre.0),
+                crate::baseline::etat_audit_fichiers(),
                 crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
@@ -2346,13 +2347,14 @@ fn juge_filtrage(partage: &Arc<Partage>, actives: Vec<crate::filtrage::Categorie
 }
 
 /// États effectifs des réponses automatiques publiés dans etat.json (T-18), pur et testé : réglages en vigueur, échec de
-/// la protection du dossier de données, registre des réponses mal formé (S308-01), listes du niveau 3 chargées (`menaces::niveau3_charges`) et état des collectes
+/// la protection du dossier de données, registre des réponses mal formé (S308-01), dernier état de l'audit « Système de
+/// fichiers » (`baseline::etat_audit_fichiers`, D1), listes du niveau 3 chargées (`menaces::niveau3_charges`) et état des collectes
 /// (`collectes::instantane`, sans effet). Une collecte absente de l'instantané compte comme « Inconnue »
-pub(crate) fn etat_reponses_auto(config: &commun::Config, echec_protection: bool, registre_illisible: bool, niveau3: (usize, usize),
+pub(crate) fn etat_reponses_auto(config: &commun::Config, echec_protection: bool, registre_illisible: bool, audit_fichiers: &str, niveau3: (usize, usize),
     etats: &[(Collecte, collectes::EtatPublie, bool)]) -> commun::EtatReponsesAuto {
     let etat = |c: Collecte| etats.iter().find(|(x, _, _)| *x == c).map(|(_, e, _)| e.clone()).unwrap_or(collectes::EtatPublie::Inconnue);
     commun::EtatReponsesAuto {
-        rancongiciel: politique::etat_rancongiciel(config.reponse_auto_rancongiciel, registre_illisible, &etat(Collecte::Leurres), &etat(Collecte::JournalSecurite)).into(),
+        rancongiciel: politique::etat_rancongiciel(config.reponse_auto_rancongiciel, registre_illisible, audit_fichiers, &etat(Collecte::Leurres), &etat(Collecte::JournalSecurite)).into(),
         blocage_listes: politique::etat_blocage_listes(config.blocage_auto_menaces, echec_protection, registre_illisible, niveau3, &etat(Collecte::Connexions)).into(),
     }
 }

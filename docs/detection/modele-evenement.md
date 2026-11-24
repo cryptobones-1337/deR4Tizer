@@ -283,7 +283,7 @@ l'interface ; les textes français existants restent à côté.
 
 | Champ | Type | Valeurs | D'où |
 |---|---|---|---|
-| `ReponsesAuto.Rancongiciel` | texte | « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » | réglage `ReponseAutoRancongiciel`, politique (`decider`, suspension sur leurre), collectes `Leurres` et `JournalSecurite` (`politique::etat_rancongiciel`) |
+| `ReponsesAuto.Rancongiciel` | texte | « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » | réglage `ReponseAutoRancongiciel`, politique (`decider`, suspension sur leurre), collectes `Leurres` et `JournalSecurite`, et dernier état de la règle `audit.fichiers` de la baseline (sous-catégorie d'audit « Système de fichiers », sans laquelle aucun 4663 n'est écrit : `baseline::etat_audit_fichiers`, noté en mémoire à chaque évaluation, toutes les 10 min) ; non conforme : « SansEffet », inconnu ou pas encore évalué : « NonVerifiable » (`politique::etat_rancongiciel`, prérelecture de #308, D1) |
 | `ReponsesAuto.BlocageListes` | texte | « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » | réglage `BlocageAutoMenaces`, politique (refus en échec de la protection du dossier de données), listes du niveau 3 chargées (`menaces::niveau3_charges`), collecte `Connexions` (`politique::etat_blocage_listes`) |
 | `Syslog.Actif`, `Syslog.Etat` | booléen, texte | « Desactive », « Joignable », « EnEchec », « NonVerifiable » | réglage, et issue du dernier envoi d'une alerte depuis le démarrage ou le dernier réglage (`export::etat_syslog`) |
 | `Api.Actif`, `Api.Etat` | booléen, texte | « Desactive », « Joignable », « EnEchec », « NonVerifiable » | réglage, et ouverture de l'écoute par le service (`api::etat_api`) |
@@ -299,9 +299,14 @@ l'interface ; les textes français existants restent à côté.
   règle est refusée ; « Actif » dit que la politique et les sources permettent le blocage, pas que la règle agit.
 - Réglages lus : ceux du moniteur (`config.json` chargé, mis à jour par les commandes). La suspension sur leurre relit
   `config.json` à chaque événement : les deux ne diffèrent que si le fichier est modifié hors du service.
-- Syslog : « Joignable » seulement en TCP (message écrit sur une connexion établie). En UDP, un datagramme émis n'est
-  jamais confirmé : « NonVerifiable ». Aucun envoi tant qu'aucune alerte du niveau choisi n'est levée : « NonVerifiable ».
-  Le bouton « Tester » n'y compte pas.
+- Syslog : « Joignable » seulement en TCP, et veut dire « dernier envoi accepté par Windows sur une connexion
+  établie » (`write_all` réussi), pas « reçu par le collecteur ». En UDP, un datagramme émis n'est jamais confirmé :
+  « NonVerifiable ». Aucun envoi tant qu'aucune alerte du niveau choisi n'est levée : « NonVerifiable ». Le bouton
+  « Tester » n'y compte pas. Limite : les réglages passent au fil d'envoi par la même file que les alertes
+  (`try_send`, 2 000 messages) ; file pleine, un nouveau réglage est perdu, le fil garde l'ancienne destination et
+  l'état publié reste celui de l'ancienne destination jusqu'au réglage suivant ou au redémarrage.
+- Le blocage par les listes ne dépend d'aucune sous-catégorie d'audit : il est décidé sur la table des connexions
+  (collecte `Connexions`) et posé au pare-feu (limite ci-dessus).
 - API : « Joignable » dit que le service a ouvert son port (l'interface le traduit par « port ouvert ») ; l'accès
   depuis le SIEM (pare-feu, réseau, adresses autorisées) n'est pas vérifié. Jeton non créé, port non obtenu, ou fil
   d'écoute terminé alors que ses réglages sont toujours en vigueur : « EnEchec » (audit de #308, S308-02).
@@ -314,7 +319,7 @@ l'interface ; les textes français existants restent à côté.
 | `StatutCode` | texte | « AdresseRefusee », « ManifesteNonObtenu », « ManifesteInvalide », « AJour », « ManifesteAncien », « Disponible », « SansCleEpinglee », « InstallationRefusee », « InstallationLancee », « InstallationImpossible » (`maj::StatutMaj`) ; le texte de `Statut` dit le détail |
 | `AutoApplique` | booléen | installation automatique appliquée par ce contrôle (réglage lu au moment du contrôle) |
 | `Installable` | booléen | vrai pour « Disponible » si ce binaire a une clé épinglée, et pour « InstallationLancee » (`maj::installable`) |
-| `EchecInstallationPrecedente` | booléen | `maj\echec.txt` présent : le script de l'installation précédente a échoué (paquet modifié, ou retour arrière) ; son texte est ajouté à `Statut`. Indépendant de `StatutMaj` : un contrôle « AJour » peut suivre une installation échouée ; effacé au lancement d'une nouvelle installation (audit de #308, S308-03) |
+| `EchecInstallationPrecedente` | booléen | **hors de la liste acceptée le 2026-11-23, soumis à l'accord du mainteneur (retiré s'il le refuse)** ; `maj\echec.txt` présent : le script de l'installation précédente a échoué (paquet modifié, ou retour arrière) ; son texte est ajouté à `Statut`. Indépendant de `StatutMaj` : un contrôle « AJour » peut suivre une installation échouée ; effacé au lancement d'une nouvelle installation (audit de #308, S308-03) |
 
 `filtrage-etat.json` (jamais `etat.json` ni l'API) : `EtatCode`, mêmes cas que `Etat` : « Inactif »,
 « RemiseEnAttente », « SuspenduResolveur », « SuspenduAmont », « Contourne », « Actif », plus « ActifSansCategorie »
@@ -322,11 +327,14 @@ quand le filtrage tourne sans aucune catégorie active (`filtrage::code_etat`).
 
 `trafic.json` : `NonAttribue`, liste de `{ Raison, Entrant, Sortant }` (octets depuis minuit, même périmètre que
 `Applications` : trafic public seulement), raisons sans octet omises, la plus grosse d'abord (`trafic::lignes_non_attribuees`).
-Raisons (`capture::attribuer`) : « HorsTcpUdp » (ni TCP ni UDP : ICMP, IPsec…), « SansPort » (fragment IP qui n'est pas
-le premier), « SansProprietaire » (port local absent des tables de Windows, même relues : connexion fermée avant la
-relecture, ou paquet d'aucun programme du poste, machine virtuelle, Windows Sandbox, partage de connexion) ; leur somme
-est la ligne « ? » des programmes. « ProcessusTermine » (port tenu par un PID absent de la liste des processus relue en
-même temps) est la somme des lignes « PID n ». Limite : « fermée avant la relecture » et « aucun programme du poste »
+Raisons (`capture::attribuer`) : « HorsTcpUdp » (ni TCP ni UDP : ICMP, IPsec…) ; « SansPort » (port local 0 : fragment
+IP qui n'est pas le premier, en-tête TCP ou UDP tronqué, ou port 0 forgé par l'émetteur) ; « SansProprietaire » (port
+local absent des tables de Windows, même relues : connexion fermée avant la relecture, paquet d'aucun programme du
+poste, machine virtuelle, Windows Sandbox, partage de connexion, paquet entrant non sollicité vers un port où rien
+n'écoute, balayage compris, et réponses de la pile de Windows elle-même, RST par exemple) ; leur somme est la ligne
+« ? » des programmes. « ProcessusTermine » (port tenu par un PID absent de la liste des processus relue en même temps :
+processus terminé entre les deux lectures, ou, si l'instantané des processus échoue, tous les PID de ce relevé) est la
+somme des lignes « PID n ». Limite : « fermée avant la relecture » et « aucun programme du poste »
 ne se distinguent pas sans collecte nouvelle.
 
 ## Règles de stabilité

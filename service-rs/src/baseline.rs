@@ -782,7 +782,33 @@ pub fn evaluer() -> EtatBaseline {
         });
     }
     let scores = totaux.into_iter().map(|(p, (ok, n))| (p.to_string(), if n == 0 { 0 } else { ok * 100 / n })).collect();
+    noter_audit_fichiers(regles.iter().find(|r| r.id == "audit.fichiers").map_or("inconnu", |r| r.etat.as_str()));
     EtatBaseline { mis_a_jour: commun::maintenant(), regles, scores, message: gestion().unwrap_or_default() }
+}
+
+/// Dernier état évalué de la règle `audit.fichiers` (sous-catégorie « Système de fichiers », 0CCE921D), en mémoire : 0
+/// pas encore évalué, 1 conforme, 2 non conforme, 3 inconnu. Sans elle, aucun 4663, donc aucune suspension sur leurre
+/// (T-18, prérelecture de #308, D1). Noté par chaque `evaluer` (fil « contrôles », toutes les 10 min, et opérations de
+/// l'interface) ; baseline.json n'est jamais relu pour cela
+static AUDIT_FICHIERS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn noter_audit_fichiers(etat: &str) {
+    let n = match etat {
+        "conforme" => 1,
+        "non conforme" => 2,
+        _ => 3,
+    };
+    AUDIT_FICHIERS.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// « conforme », « non conforme », « inconnu », ou « » (pas encore évalué depuis le démarrage)
+pub fn etat_audit_fichiers() -> &'static str {
+    match AUDIT_FICHIERS.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => "conforme",
+        2 => "non conforme",
+        3 => "inconnu",
+        _ => "",
+    }
 }
 
 /// Lecture WMI d'un Defender bloqué : jamais plus de 30 s pendant que le drapeau de la baseline est tenu ; une
