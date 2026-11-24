@@ -1,168 +1,168 @@
-# Phase « Interface et assistant d'installation »
+# "Interface and installation assistant" phase
 
-Décidée par le mainteneur le 2026-11-03, par ces mots : « fais la refonte avant la phase 7 », en réponse au dossier de
-conception de l'interface du 2026-11-03 (revue UI/UX après la phase 6, conservé hors dépôt). Elle commence une fois les
-corrections de la phase 6 fusionnées **et la phase inscrite dans `CLAUDE.md`** (section 2, règle 1 ; inscrite le
-2026-11-03 sur l'autorisation du mainteneur). La phase 7 commence une fois
-celle-ci validée. Ce document fixe le périmètre,
-le découpage et les décisions de la phase. Écrit avant le code ; la plupart des PR sont depuis livrées (tableau plus bas) : l'état
-de chaque élément est celui de la matrice (`docs/roadmap/capability-matrix.md`).
+Decided by the maintainer on 2026-11-03, in these words: « fais la refonte avant la phase 7 » (do the redesign before phase 7), in reply to the interface
+design file of 2026-11-03 (UI/UX review after phase 6, kept outside the repository). It starts once the
+fixes of phase 6 are merged **and the phase is written into `CLAUDE.md`** (section 2, rule 1; written on
+2026-11-03 with the maintainer's authorization). Phase 7 starts once
+this one is validated. This document sets the scope,
+the split and the decisions of the phase. Written before the code; most PRs have since been delivered (table below): the state
+of each item is the one in the matrix (`docs/roadmap/capability-matrix.md`).
 
-## Besoin
+## Need
 
-L'interface WinForms d'aujourd'hui est fonctionnelle mais datée : esthétique « néon », capitales forcées, contraste
-insuffisant du texte secondaire, navigation à plat, pages denses. La revue UX externe du 2026-10-25 et la revue faite
-après la phase 6 vont dans le même sens : un utilisateur sans informaticien doit comprendre d'un coup d'œil ce qui va,
-ce qui ne va pas et ce qu'il peut faire. L'installation se limite aux dialogues standard de Windows Installer, et rien
-n'explique les premiers réglages.
+Today's WinForms interface is functional but dated: "neon" look, forced capitals, insufficient contrast
+of secondary text, flat navigation, dense pages. The external UX review of 2026-10-25 and the review made
+after phase 6 point the same way: a user without an IT person must understand at a glance what is fine,
+what is not and what they can do. Installation is limited to the standard Windows Installer dialogs, and nothing
+explains the first settings.
 
-## Décisions du mainteneur (2026-11-03)
+## Decisions of the maintainer (2026-11-03)
 
-| Question du dossier | Réponse |
+| Question of the file | Answer |
 |---|---|
-| Technologie | WPF sur .NET Framework 4.8, sans bibliothèque de style (aucune dépendance nouvelle). **Confirmé par le mainteneur le 2026-11-09** sur les captures réelles du pilote en VM (« Continuer en WPF ») : le repli WebView2 est abandonné |
-| Palette | Neutre, à un seul accent ; le cyan reste la couleur du logo |
-| Polices et icônes | Segoe UI (Variable) et icônes Segoe Fluent ou MDL2, livrées avec Windows ; rien d'ajouté |
-| Assistant d'installation | MSI WiX sobre (images et textes revus) ; l'assistant de premier lancement est dans l'interface |
-| Ordre | Avant la phase 7 |
+| Technology | WPF on .NET Framework 4.8, without a style library (no new dependency). **Confirmed by the maintainer on 2026-11-09** on the real screenshots of the pilot in a VM (« Continuer en WPF » (Continue with WPF)): the WebView2 fallback is abandoned |
+| Palette | Neutral, with a single accent; cyan remains the color of the logo |
+| Fonts and icons | Segoe UI (Variable) and Segoe Fluent or MDL2 icons, shipped with Windows; nothing added |
+| Installation assistant | Plain WiX MSI (images and texts reworked); the first-run assistant is in the interface |
+| Order | Before phase 7 |
 
-## Points non tranchés (défaut retenu, à confirmer par le mainteneur)
+## Points not settled (default chosen, to be confirmed by the maintainer)
 
-| Point | Défaut retenu |
+| Point | Default chosen |
 |---|---|
-| Diagnostic « PC exposé » (il touche le service) | Dans cette phase, en U5, comme le proposait le dossier ; confirmé par le mainteneur le 2026-11-10 (« Oui », question Q1) ; fait (U5c-1, U5c-2) |
-| Étape « Réponses automatiques » de l'assistant | Le réglage d'aujourd'hui est gardé : blocage automatique du niveau 3 activé par défaut. Le dossier proposait « désactivées par défaut » ; ce changement de défaut n'a pas été décidé |
+| "PC exposé" diagnostic (it touches the service) | In this phase, in U5, as the file proposed; confirmed by the maintainer on 2026-11-10 (« Oui » (Yes), question Q1); done (U5c-1, U5c-2) |
+| "Réponses automatiques" step of the assistant | Today's setting is kept: automatic level 3 blocking enabled by default. The file proposed "disabled by default"; this change of default was not decided |
 
-## Direction visuelle
+## Visual direction
 
-Contrastes calculés selon WCAG (4,5:1 au moins pour le texte) :
+Contrasts computed according to WCAG (at least 4.5:1 for text):
 
-| Jeton | Valeur | Emploi |
+| Token | Value | Use |
 |---|---|---|
-| Fond | `#141518` | fenêtre |
-| Carte | `#1E2024` | panneaux |
-| Surface | `#262A30` | champs, lignes survolées |
-| Texte | `#E6E8EB` | texte courant |
-| Texte secondaire | `#9AA3AF` | remplace `#6B7A90`, trop pâle |
-| Accent | `#3BA7F0` | un seul accent, texte foncé dessus |
-| Danger | `#F0605A` | risque confirmé et actions destructrices |
-| Attention | `#F2A93B` | à surveiller |
-| Succès | `#2FBF71` | avec parcimonie |
+| Background | `#141518` | window |
+| Card | `#1E2024` | panels |
+| Surface | `#262A30` | fields, hovered rows |
+| Text | `#E6E8EB` | body text |
+| Secondary text | `#9AA3AF` | replaces `#6B7A90`, too pale |
+| Accent | `#3BA7F0` | a single accent, dark text on it |
+| Danger | `#F0605A` | confirmed risk and destructive actions |
+| Warning | `#F2A93B` | to watch |
+| Success | `#2FBF71` | sparingly |
 
-- Segoe UI partout ; chasse fixe réservée aux chemins et aux empreintes ; fin des capitales forcées. Écart provisoire
-  (relecture de #133, R2) : dans le pilote, les pages d'aujourd'hui hébergées sont entièrement en Segoe UI, chemins et
-  empreintes compris (leur police unique `Theme.Mono` sert aussi aux tableaux) ; la chasse fixe revient avec leur
-  réécriture (U3 à U6).
-- Coins de 6 à 8 px ; transitions de 100 à 200 ms, coupées si Windows désactive les animations ; plus de balayage ni
-  d'effet « glitch » ; un seul clignotement à la fois.
-- Navigation : « Vue d'ensemble », puis Surveillance, Protection, Système et confidentialité ; Réponses en cours, Santé
-  et Réglages toujours visibles. Panneau de détails à droite, avec des boutons explicites.
+- Segoe UI everywhere; monospace reserved for paths and hashes; end of forced capitals. Temporary gap
+  (review of #133, R2): in the pilot, today's hosted pages are entirely in Segoe UI, paths and
+  hashes included (their single font `Theme.Mono` also serves the tables); monospace comes back with their
+  rewrite (U3 to U6).
+- Corners of 6 to 8 px; transitions of 100 to 200 ms, cut if Windows disables animations; no more sweeping nor
+  "glitch" effect; a single blink at a time.
+- Navigation: "Overview", then Monitoring, Protection, System and privacy; Ongoing responses, Health
+  and Settings always visible. Details panel on the right, with explicit buttons.
 
-## Découpage
+## Split
 
-| PR | Contenu |
+| PR | Content |
 |---|---|
-| U0 | Script de captures réelles en VM ; captures de référence ; corrections WinForms bon marché (textes par `L.T`, contraste) — **fait** : `tests/vm/captures.ps1` (`tests\vm\lancer.ps1 -Scenario captures`), 19 pages en français et en anglais à 96 ppp, capturées en VM avant les corrections qui suivent (les captures après correction attendaient la levée d'une détection de `deR4TizerSvc.exe` par Defender en VM, le 2026-11-03 : faux positif heuristique `Wacatac`, installation refusée ; captures faites depuis, celles du README) ; texte secondaire `#9AA3AF` ; en-tête et barre d'état traduits ; pastilles jamais sous le titre, coupées par gravité (« +N » de la couleur de la plus grave cachée) |
-| U1 | **Fait** (pilote ouvert d'abord par `--fluent`, interface par défaut depuis B1) : `src/Fluent.cs`, C# pur compilé par `csc` (aucun XAML compilé, aucune dépendance : assemblys WPF de .NET Framework 4.8) ; jetons, navigation regroupée, pages d'aujourd'hui hébergées par `WindowsFormsHost` ; `tests/rendu-pilote.ps1` (contrastes, navigation, rendu hors écran à 100, 125 et 150 %, assistant élevé sans WPF). Captures réelles du pilote en VM (`tests/vm/captures.ps1`, 20 pages, français et anglais). Rendu logiciel imposé (le rendu matériel laissait la coquille blanche dans la VM Hyper-V) ; fenêtre ramenée à la zone de travail ; en mode pilote, les pages d'aujourd'hui prennent la palette et la police de la coquille (`Theme.cs`), sans titre « // » en double. **WPF confirmé par le mainteneur (2026-11-09).** Reste à mesurer : mémoire en zone de notification, démarrage par la tâche de relance, netteté à 125 et 150 % en VM |
-| U2a | **Fait (#134)** : Vue d'ensemble native dans le pilote : faits de l'en-tête d'aujourd'hui (mêmes règles, mêmes textes, remis en casse de phrase) rangés par gravité, compteurs colorés de la navigation « à surveiller » au plus, phrase de tête sans promesse (« État inconnu » si rien n'est publié), bouton panique par le même chemin et la même confirmation qu'aujourd'hui, ligne d'état du service ; compteurs dans la navigation ; la zone de notification (ouvrir, double-clic, clic sur une notification) montre la coquille ; fermer la coquille la cache, seul « Quitter » l'arrête (relecture de #133, R3) |
-| U2b | **Fait (#136)** : page Alertes réécrite en WPF : filtres par niveau avec leur nombre, liste des plus récentes (500 au plus), non lues marquées, panneau de détails à droite (heure, destination, règle, technique, que faire, raisons, chemin en chasse fixe) avec des boutons explicites, offerts selon ce que l'alerte permet (bloquer, ne plus alerter sauf pour une critique, isoler, suspendre, tuer, quarantaine, ouvrir l'emplacement) et passant par les mêmes méthodes et les mêmes questions que le menu d'aujourd'hui ; textes du service neutralisés ; lecture des alertes marquée depuis la coquille |
-| U2c | **Fait (#137)** : Incidents et Réponses en cours réécrites en WPF, même panneau de détails : liste triée comme aujourd'hui, état toujours écrit, « Lecture en cours… » avant la première lecture (jamais un vide rassurant), dernière liste gardée si le fichier devient illisible ; boutons par les mêmes actions que les pages d'aujourd'hui (`ActionsIncidents`, `ActionsReponses` : même commande, même dialogue de clôture, mêmes contrôles de récupération, même confirmation élevée). Préalables de la relecture de #136 : niveau d'alerte neutralisé ; suspendre ou tuer depuis une alerte refusé si le processus qui porte ce PID a été lancé après l'alerte, les deux heures dites sinon (une alerte ne garde pas l'heure de création du processus) |
-| U3a | **Fait (#138)** : Santé et Détection en WPF : mêmes lignes que la page Santé d'aujourd'hui (source et date de chaque ligne), « Lecture en cours… » avant la première lecture ; Détection en cinq vues (IDS, TLS, HTTP, DNS, JA3), textes du réseau et des règles neutralisés (la page d'aujourd'hui aussi), IPS réglé par la même commande et la même confirmation élevée, bouton caché tant que son état n'est pas lu. Préalables de #137 : sorte de réponse inconnue neutralisée, limites de la garde sur le PID écrites dans la matrice |
-| U3b | **Fait (#139)** : Événements en WPF : même recherche que la page d'aujourd'hui (`RechercheSiem`, extraite sans changement de logique, lecture seule hors du fil de l'interface), mêmes filtres (période, niveau, source), chronologie en 48 tranches cliquables, incidents de corrélation puis événements (500 affichés au plus), panneau de détails ; textes neutralisés, la page d'aujourd'hui aussi. Préalables de #138 : état de l'IPS « inconnu » si config.json est illisible (aucun bouton, case grisée) ; « Copier » rend la valeur d'origine, caractères de contrôle et de mise en forme échappés (audit de #139, S139-01) |
-| U4a | **Fait (#140)** : Connexions et Chaînes en WPF : lues dans etat.json hors du fil de l'interface, « Lecture en cours… » avant la première lecture, dernière liste gardée et dite si l'état devient illisible, collecte en panne dite (liste incomplète) ; Connexions : filtres (toutes, suspectes, menaces), plus graves d'abord, 500 au plus ; Chaînes : arbre « qui a lancé quoi » dans le panneau, seuil de 12 ; boutons par les mêmes méthodes et les mêmes questions que les menus d'aujourd'hui ; textes neutralisés, les pages d'aujourd'hui aussi ; « Copier » échappé. U4 coupée en U4a et U4b |
-| U4b | **Fait (#141)** : Trafic en WPF : même fichier que la page d'aujourd'hui (trafic.json, lu hors du fil de l'interface et seulement quand il change), résumé du débit et des totaux, carte des pays (échelle logarithmique, bulle par pays, arcs fixes vers les échanges des 10 dernières secondes, aucune animation continue), courbe des 10 dernières minutes avec son maximum, puis programmes, pays ou destinations et leur détail ; « Lecture en cours… » avant la première lecture, rien de conclu sans fichier, dernier affichage gardé et dit s'il devient illisible ; textes neutralisés, page d'aujourd'hui comprise |
-| U5a | **Fait (#142)** : Blocages, Quarantaine et Menaces en WPF : mêmes fichiers, lus hors du fil de l'interface (absent : rien d'enregistré ; illisible : rien de conclu, dernier affichage gardé et dit) ; mêmes commandes et mêmes questions dans les deux interfaces (`ActionsProtection`) ; réglages des réponses automatiques offerts seulement quand config.json est lu (audit de #139, S139-02) ; textes neutralisés, pages d'aujourd'hui comprises ; légende de la carte du Trafic coupée proprement. U5 coupée en U5a, U5b et U5c |
-| U5b | **Fait (#143)** : Baseline et Pare-feu en WPF : Baseline par profil (journalisation, recommandé, renforcé) avec son score, mêmes boutons et mêmes questions qu'aujourd'hui (`ActionsProtection.Baseline`), appliquer ou annuler une règle depuis son panneau ; Pare-feu en deux vues (exposition à Internet, changements de règles), lecture seule, journal des paquets inactif dit ; « Lecture en cours… », absent et illisible distingués ; textes neutralisés, pages d'aujourd'hui comprises |
-| U5c-0 | **Fait (#144)** : interface seule. Sans exposition relevée, chaque contrôle est dit vu ou non vérifié, et le verdict dit sur quoi il repose ; « contrôles incomplets » si le journal des paquets est inactif ou si UPnP n'est pas vérifié ; jamais « aucune exposition ». Constat C1 du dossier de conception de U5c |
-| U5c-1 | **Fait (#148)** : service. Diagnostic par contrôle publié dans etat.json (Exposition.Diagnostic) : IPv4 publique, IPv6 globale, connexions acceptées, sources bloquées, UPnP (vérifié d'après le texte et la fraîcheur de reseau.json, NDR alors gelé), état du pare-feu de Windows (lecture INetFwPolicy2) ; verdict à quatre valeurs, jamais « protégé » ; lecture seule, aucune requête vers un tiers ni vers la box ; `Exposee` inchangé. Décidé par le mainteneur le 2026-11-10 (« Oui » : dans cette phase) |
-| U5c-2 | **Fait (#149)** : `Exposee` suit le verdict du diagnostic ; IPv6 globale seule et sources bloquées seules en « exposition à surveiller » (orange, sans clignoter) plutôt qu'en « PC exposé », décidé par le mainteneur le 2026-11-10 (« Oui ») ; page Pare-feu : vue « Pourquoi » (constat, état, que faire), bilan titré selon le verdict dans les deux interfaces ; ancien service sans diagnostic : constat de U5c-0 |
-| U6a | **Fait (#145)** : Démarrage auto, Extensions et Vie privée en WPF : mêmes fichiers, lus hors du fil de l'interface ; Démarrage avec le même filtre (Microsoft et Windows masqués sauf remarque), remarques d'abord, quarantaine de la cible par la même question ; Extensions, permissions sensibles d'abord, lecture seule ; Vie privée en trois vues (caméra et micro, prise en main à distance, ports ouverts), collecte en panne dite ; textes neutralisés, pages d'aujourd'hui comprises. U6 coupée en U6a et U6b |
-| U6b | **Fait (#146)** : Réseau local en WPF (reseau.json, lecture seule, quatre vues, leurre et DHCP pirate dits, textes neutralisés, page d'aujourd'hui comprise) ; questions des boutons d'aujourd'hui traduites (relecture de #143, constat 5), question de blocage neutralisée. U6 coupée encore : Réglages et retrait de `WindowsFormsHost` en U6c |
-| U6c | **Fait (#147)** : Réglages en WPF : mêmes réglages, mêmes contrôles et mêmes commandes que la page d'aujourd'hui (`ActionsReglages`, partagée) ; choix par boutons (pas de liste déroulante claire), secrets en champs masqués jamais réaffichés ; config.json illisible : dit, rien n'est enregistré (les deux interfaces) ; export CSV sans formule ; textes neutralisés ; aucune action avant la première lecture. Retrait de `WindowsFormsHost` : toutes les pages de la coquille sont natives. Préalable de #146 : test des emplacements {0} {1} sur toute la table des traductions |
-| U7-0 | **Fait (#150)** : préalables des relectures. Restes de l'hébergement WinForms retirés (paramètre `pages` de la coquille, `Fenetre.PageDe`, référence `WindowsFormsIntegration.dll` des compilations, relecture de #147) ; lecture du pare-feu de Windows hors du verrou du moniteur (relecture de #148) ; effet d'une vérification UPnP ancienne écrit (relecture de #149, constat 1) |
-| U7a | **Fait (#151)** : « Premiers réglages », socle en lecture seule (dossier de conception U7). Page de la coquille hors de la navigation, six étapes (bienvenue, vérification, apprentissage, qui prévenir, réponses automatiques, résumé) ; aucune commande : chaque étape lit les fichiers du service et renvoie vers Santé, Réglages ou Menaces ; apprentissage dit en trois cas (en cours, terminé, pas d'apprentissage automatique quand le début vaut la fin) ; « Personne n'est prévenu » dit tel quel ; repère par utilisateur (`%LOCALAPPDATA%\deR4Tizer\premiers-reglages.txt`) écrit seulement par « Plus tard » et « Terminer » ; ouverture d'office au premier lancement de la coquille, jamais en administrateur, avec `--page` ou `--cache` ; carte dans la Vue d'ensemble tant que le repère manque, bouton « Revoir » dans Réglages |
-| U7b | **Fait (#152)** : actions des étapes. Apprentissage : terminer s'il est en cours, rien sinon ; jamais recommencer depuis l'assistant (pendant 7 jours, toute alerte non critique sans signal fort serait apprise, programme malveillant actif compris : relecture de #152, constat 1), seulement dans Réglages, avertissement écrit ; réponses automatiques : activer ou désactiver les deux de niveau 3 (blocage par les listes, suspension par leurre), l'IPS restant dans Détection ; mêmes commandes que les pages Réglages et Menaces, construites par les mêmes fonctions pour la confirmation et l'envoi (audit de #152, S152-01) ; interface élevée : confirmation détaillée montrée par l'assistant avant l'action ; résultat dit « demandé » et état relu ; textes repris (remarques R2, R5, R6 de #151) |
-| U7-1 | **Fait (#153)** : suites des audits de #151 et #152. Interface élevée : « config » (réponses automatiques, IPS, listes) et « apprentissage » confirmés par Canal dans toutes les pages, l'assistant n'en montre plus une seconde (S152-02), ainsi que « debloquer », « reglages », « notifications », « majConfig », « autoriserLecteur » (S153-01) et « exception » (S153-02) ; confirmation avec le nom lisible du réglage et, pour « recommencer », le risque des 7 jours (R8) ; `derniere-alerte-lue.txt` jamais écrit par une interface élevée (S151-01) |
-| U7c | **Fait (#154)** : Qui prévenir, option B du dossier (destinataires, canaux et secrets restent dans Réglages). L'étape envoie un message de test aux canaux déjà réglés : réglages relus au clic (le service les applique avant le test, S154-01), secrets vides (le service garde les siens), « testerNotifications » confirmé en administrateur dans toutes les pages, commande construite par la fonction de la page Réglages (`CommandeNotifications`) ; seulement si config.json est lu et qu'un canal est activé |
-| U7 | Assistant de premier lancement : **fait** (U7a à U7c, #151 à #154) |
-| U8a | **Fait (#155)** : textes de l'installeur (dossier de conception U8). Licence en français et en anglais (leurres, réponses automatiques et leurs durées, lancement, téléchargements, Defender complété et jamais affaibli, options de désinstallation, binaires non signés) ; dernière page : un texte posé par quatre affectations de propriété côté client (type 51), selon la langue (UserLanguageID) et le lancement effectif (miroir de la condition d'exécution), jamais de case « Lancer » ni d'action qui lance l'interface : lancée d'ici, elle pourrait tourner élevée (selon le mode de lancement de l'installeur) et garder le mutex de la session ; « protection » retiré des descriptions ; `tests/test-msi.ps1` ; 3a : interface venue de la tâche, jeton non élevé |
-| U8b | Images de l'installeur (bannière, dialogue), générées à la construction, sur la nouvelle icône ; captures des dialogues en VM |
-| B1 | **Fait (#156)** : bascule, la coquille devient l'interface par défaut (dossier de la bascule) ; `--classique` pour l'interface d'avant ; démarrage caché sans fenêtre, coquille construite au premier geste ; page déchargée quand la coquille est cachée ; palette neutre sauf `--classique` ; repli automatique sur l'interface classique si la coquille ne démarre pas, y compris au premier geste après un démarrage caché, la fenêtre cachée libérée |
-| B2 | **Fait (#158)**, pas encore exercé en VM : seconde instance, montrer l'interface déjà ouverte (événement de la session sans donnée, écouté sur un fil d'arrière-plan ; décision pure `SignalerPremiere` : jamais avec `--cache`, `--relance`, `--commande-fichier`, `--dossier` ni `--classique` ; page demandée ignorée) |
-| B3 | Dernière page du MSI : phrase « Premiers réglages », après B1 et B2 |
-| B4 | Allègement (veille sans pages WinForms), sur les mesures de B1 ; retrait de `--classique` après la campagne Kali, sur décision |
+| U0 | Script of real screenshots in a VM; reference screenshots; cheap WinForms fixes (texts through `L.T`, contrast): **done**: `tests/vm/captures.ps1` (`tests\vm\lancer.ps1 -Scenario captures`), 19 pages in French and in English at 96 dpi, captured in a VM before the fixes that follow (the screenshots after the fixes awaited the lifting of a detection of `deR4TizerSvc.exe` by Defender in the VM, on 2026-11-03: heuristic false positive `Wacatac`, installation refused; screenshots taken since, those of the README); secondary text `#9AA3AF`; header and status bar translated; badges never under the title, cut by severity ("+N" in the color of the most severe hidden one) |
+| U1 | **Done** (pilot first opened by `--fluent`, default interface since B1): `src/Fluent.cs`, pure C# compiled by `csc` (no compiled XAML, no dependency: WPF assemblies of .NET Framework 4.8); tokens, grouped navigation, today's pages hosted by `WindowsFormsHost`; `tests/rendu-pilote.ps1` (contrasts, navigation, off-screen rendering at 100, 125 and 150 %, elevated assistant without WPF). Real screenshots of the pilot in a VM (`tests/vm/captures.ps1`, 20 pages, French and English). Software rendering forced (hardware rendering left the shell white in the Hyper-V VM); window brought back to the work area; in pilot mode, today's pages take the palette and the font of the shell (`Theme.cs`), without a doubled "//" title. **WPF confirmed by the maintainer (2026-11-09).** Still to measure: memory in the notification area, start through the restart task, sharpness at 125 and 150 % in a VM |
+| U2a | **Done (#134)**: native Overview in the pilot: facts of today's header (same rules, same texts, put back in sentence case) sorted by severity, colored counters of the navigation at "à surveiller" at most, opening sentence without promise ("État inconnu" if nothing is published), panic button through the same path and the same confirmation as today, service status line; counters in the navigation; the notification area (open, double-click, click on a notification) shows the shell; closing the shell hides it, only "Quitter" stops it (review of #133, R3) |
+| U2b | **Done (#136)**: Alerts page rewritten in WPF: filters by level with their count, list of the most recent (500 at most), unread ones marked, details panel on the right (time, destination, rule, technique, what to do, reasons, path in monospace) with explicit buttons, offered according to what the alert allows (block, stop alerting except for a critical one, isolate, suspend, kill, quarantine, open the location) and going through the same methods and the same questions as today's menu; service texts neutralized; reading of the alerts marked from the shell |
+| U2c | **Done (#137)**: Incidents and Ongoing responses rewritten in WPF, same details panel: list sorted as today, state always written, "Lecture en cours…" before the first reading (never a reassuring blank), last list kept if the file becomes unreadable; buttons through the same actions as today's pages (`ActionsIncidents`, `ActionsReponses`: same command, same closing dialog, same recovery checks, same elevated confirmation). Prerequisites from the review of #136: alert level neutralized; suspending or killing from an alert refused if the process that carries this PID was started after the alert, the two times stated otherwise (an alert does not keep the creation time of the process) |
+| U3a | **Done (#138)**: Health and Detection in WPF: same rows as today's Health page (source and date of each row), "Lecture en cours…" before the first reading; Detection in five views (IDS, TLS, HTTP, DNS, JA3), network and rule texts neutralized (today's page too), IPS set through the same command and the same elevated confirmation, button hidden as long as its state is not read. Prerequisites from #137: unknown response kind neutralized, limits of the guard on the PID written in the matrix |
+| U3b | **Done (#139)**: Events in WPF: same search as today's page (`RechercheSiem`, extracted without a logic change, read-only outside the interface thread), same filters (period, level, source), timeline in 48 clickable slices, correlation incidents then events (500 displayed at most), details panel; texts neutralized, today's page too. Prerequisites from #138: IPS state "inconnu" if config.json is unreadable (no button, box greyed out); "Copier" gives back the original value, control and formatting characters escaped (audit of #139, S139-01) |
+| U4a | **Done (#140)**: Connections and Chains in WPF: read from etat.json outside the interface thread, "Lecture en cours…" before the first reading, last list kept and stated if the state becomes unreadable, failed collection stated (incomplete list); Connections: filters (all, suspicious, threats), most severe first, 500 at most; Chains: "who launched what" tree in the panel, threshold of 12; buttons through the same methods and the same questions as today's menus; texts neutralized, today's pages too; "Copier" escaped. U4 split into U4a and U4b |
+| U4b | **Done (#141)**: Traffic in WPF: same file as today's page (trafic.json, read outside the interface thread and only when it changes), summary of throughput and totals, map of countries (logarithmic scale, bubble per country, fixed arcs to the exchanges of the last 10 seconds, no continuous animation), curve of the last 10 minutes with its maximum, then programs, countries or destinations and their detail; "Lecture en cours…" before the first reading, nothing concluded without a file, last display kept and stated if it becomes unreadable; texts neutralized, today's page included |
+| U5a | **Done (#142)**: Blocks, Quarantine and Threats in WPF: same files, read outside the interface thread (absent: nothing recorded; unreadable: nothing concluded, last display kept and stated); same commands and same questions in both interfaces (`ActionsProtection`); settings of automatic responses offered only when config.json is read (audit of #139, S139-02); texts neutralized, today's pages included; legend of the Traffic map cut cleanly. U5 split into U5a, U5b and U5c |
+| U5b | **Done (#143)**: Baseline and Firewall in WPF: Baseline per profile (logging, recommended, hardened) with its score, same buttons and same questions as today (`ActionsProtection.Baseline`), apply or cancel a rule from its panel; Firewall in two views (exposure to the Internet, rule changes), read-only, inactive packet log stated; "Lecture en cours…", absent and unreadable distinguished; texts neutralized, today's pages included |
+| U5c-0 | **Done (#144)**: interface only. With no exposure found, each check is stated as seen or not verified, and the verdict states what it rests on; "contrôles incomplets" if the packet log is inactive or if UPnP is not verified; never "aucune exposition". Finding C1 of the U5c design file |
+| U5c-1 | **Done (#148)**: service. Diagnostic per check published in etat.json (Exposition.Diagnostic): public IPv4, global IPv6, accepted connections, blocked sources, UPnP (verified from the text and the freshness of reseau.json, NDR then frozen), state of the Windows firewall (INetFwPolicy2 reading); verdict with four values, never "protégé"; read-only, no request to a third party nor to the router; `Exposee` unchanged. Decided by the maintainer on 2026-11-10 (« Oui » (Yes): in this phase) |
+| U5c-2 | **Done (#149)**: `Exposee` follows the verdict of the diagnostic; global IPv6 alone and blocked sources alone as "exposition à surveiller" (orange, without blinking) rather than "PC exposé", decided by the maintainer on 2026-11-10 (« Oui » (Yes)); Firewall page: "Pourquoi" view (finding, state, what to do), summary titled according to the verdict in both interfaces; old service without diagnostic: finding of U5c-0 |
+| U6a | **Done (#145)**: Autostart, Extensions and Privacy in WPF: same files, read outside the interface thread; Autostart with the same filter (Microsoft and Windows hidden except with a remark), remarks first, quarantine of the target through the same question; Extensions, sensitive permissions first, read-only; Privacy in three views (camera and microphone, remote control, open ports), failed collection stated; texts neutralized, today's pages included. U6 split into U6a and U6b |
+| U6b | **Done (#146)**: Local network in WPF (reseau.json, read-only, four views, decoy and rogue DHCP stated, texts neutralized, today's page included); questions of today's buttons translated (review of #143, finding 5), blocking question neutralized. U6 split again: Settings and removal of `WindowsFormsHost` in U6c |
+| U6c | **Done (#147)**: Settings in WPF: same settings, same checks and same commands as today's page (`ActionsReglages`, shared); choices through buttons (no light drop-down list), secrets in masked fields never shown again; config.json unreadable: stated, nothing is saved (both interfaces); CSV export without formulas; texts neutralized; no action before the first reading. Removal of `WindowsFormsHost`: all the pages of the shell are native. Prerequisite from #146: test of the {0} {1} placeholders over the whole translation table |
+| U7-0 | **Done (#150)**: prerequisites from the reviews. Leftovers of the WinForms hosting removed (`pages` parameter of the shell, `Fenetre.PageDe`, `WindowsFormsIntegration.dll` reference of the builds, review of #147); reading of the Windows firewall outside the monitor lock (review of #148); effect of an old UPnP check written (review of #149, finding 1) |
+| U7a | **Done (#151)**: "Premiers réglages", read-only base (U7 design file). Page of the shell outside the navigation, six steps (welcome, verification, learning, who to notify, automatic responses, summary); no command: each step reads the service files and refers to Health, Settings or Threats; learning stated in three cases (in progress, finished, no automatic learning when the start equals the end); "Personne n'est prévenu" stated as it is; per-user marker (`%LOCALAPPDATA%\deR4Tizer\premiers-reglages.txt`) written only by "Plus tard" and "Terminer"; opened automatically at the first launch of the shell, never as administrator, with `--page` or `--cache`; card in the Overview as long as the marker is missing, "Revoir" button in Settings |
+| U7b | **Done (#152)**: actions of the steps. Learning: finish it if it is in progress, nothing otherwise; never restart from the assistant (for 7 days, any non-critical alert without a strong signal would be learned, active malicious program included: review of #152, finding 1), only in Settings, written warning; automatic responses: enable or disable the two at level 3 (blocking by the lists, suspension by decoy), the IPS staying in Detection; same commands as the Settings and Threats pages, built by the same functions for the confirmation and the sending (audit of #152, S152-01); elevated interface: detailed confirmation shown by the assistant before the action; result stated as "demandé" and state reread; texts reworked (remarks R2, R5, R6 of #151) |
+| U7-1 | **Done (#153)**: follow-ups of the audits of #151 and #152. Elevated interface: "config" (automatic responses, IPS, lists) and "apprentissage" confirmed by Canal in all pages, the assistant no longer shows a second one (S152-02), as well as "debloquer", "reglages", "notifications", "majConfig", "autoriserLecteur" (S153-01) and "exception" (S153-02); confirmation with the readable name of the setting and, for "recommencer", the 7-day risk (R8); `derniere-alerte-lue.txt` never written by an elevated interface (S151-01) |
+| U7c | **Done (#154)**: Who to notify, option B of the file (recipients, channels and secrets stay in Settings). The step sends a test message to the channels already set: settings reread on click (the service applies them before the test, S154-01), empty secrets (the service keeps its own), "testerNotifications" confirmed as administrator in all pages, command built by the function of the Settings page (`CommandeNotifications`); only if config.json is read and a channel is enabled |
+| U7 | First-run assistant: **done** (U7a to U7c, #151 to #154) |
+| U8a | **Done (#155)**: texts of the installer (U8 design file). License in French and in English (decoys, automatic responses and their durations, launch, downloads, Defender complemented and never weakened, uninstallation options, unsigned binaries); last page: a text set by four client-side property assignments (type 51), according to the language (UserLanguageID) and the actual launch (mirror of the execution condition), never a "Lancer" checkbox nor an action that launches the interface: launched from there, it could run elevated (depending on how the installer was launched) and keep the session mutex; "protection" removed from the descriptions; `tests/test-msi.ps1`; 3a: interface coming from the task, non-elevated token |
+| U8b | Images of the installer (banner, dialog), generated at build time, on the new icon; screenshots of the dialogs in a VM |
+| B1 | **Done (#156)**: switchover, the shell becomes the default interface (switchover file); `--classique` for the former interface; hidden start without a window, shell built at the first gesture; page unloaded when the shell is hidden; neutral palette except `--classique`; automatic fallback to the classic interface if the shell does not start, including at the first gesture after a hidden start, the hidden window released |
+| B2 | **Done (#158)**, not yet exercised in a VM: second instance, show the interface already open (session event without data, listened to on a background thread; pure decision `SignalerPremiere`: never with `--cache`, `--relance`, `--commande-fichier`, `--dossier` or `--classique`; requested page ignored) |
+| B3 | Last page of the MSI: "Premiers réglages" sentence, after B1 and B2 |
+| B4 | Lightening (standby without WinForms pages), based on the measurements of B1; removal of `--classique` after the Kali campaign, on decision |
 
-**Assistant de premier lancement (U7)** : non élevé, rejouable depuis les réglages ; chaque choix privilégié passe par la
-commande existante et sa confirmation élevée. Étapes : Bienvenue ; Vérification (lecture seule, une collecte
-indisponible est dite) ; Apprentissage (7 jours) ; Qui prévenir ; Réponses automatiques (niveau 3 seulement, défaut
-d'aujourd'hui : voir les points non tranchés) ; Résumé avec « Plus tard ». Fermer l'assistant ne change rien ; il ne dit jamais « vous êtes protégé ».
+**First-run assistant (U7)**: non-elevated, replayable from the settings; each privileged choice goes through the
+existing command and its elevated confirmation. Steps: Welcome; Verification (read-only, an unavailable collection
+is stated); Learning (7 days); Who to notify; Automatic responses (level 3 only, today's
+default: see the points not settled); Summary with "Plus tard". Closing the assistant changes nothing; it never says "you are protected".
 
-## Garde-fous
+## Safeguards
 
-- Aucune dépendance nouvelle sans accord du mainteneur (WebView2 compris).
-- XAML chargé seulement depuis la ressource de l'exécutable signé.
-- Toute chaîne non fiable affichée passe par `Visible`, panneau de détails compris (corriger d'abord S105-09).
-- `--commande-fichier` ne charge pas WPF : test qui le prouve.
-- Le service, le canal et les droits ne changent pas, sauf le diagnostic d'exposition de U5.
-- `tests/test-confirmations.ps1` inchangé : les confirmations élevées disent toujours ce que fait la commande.
-- « Collecte indisponible » n'est jamais montré comme « rien de suspect ».
-- README (en anglais seul depuis le 2026-11-18 ; l'interface de l'app reste bilingue) à jour à chaque PR qui change ce que l'on voit.
+- No new dependency without the maintainer's agreement (WebView2 included).
+- XAML loaded only from the resource of the signed executable.
+- Any untrusted string displayed goes through `Visible`, details panel included (fix S105-09 first).
+- `--commande-fichier` does not load WPF: a test proves it.
+- The service, the channel and the rights do not change, except the exposure diagnostic of U5.
+- `tests/test-confirmations.ps1` unchanged: the elevated confirmations always say what the command does.
+- "Collecte indisponible" is never shown as "rien de suspect".
+- README (in English only since 2026-11-18; the app's interface stays bilingual) up to date with each PR that changes what one sees.
 
 ## Tests
 
-- Unitaires, par réflexion : une seule pastille du mode panique ; textes d'en-tête par `L.T` ; contraste des jetons
-  ≥ 4,5:1 ; `Visible` dans le panneau de détails ; regroupement de la navigation ; Vue d'ensemble (collecte
-  indisponible) ; assistant (fermer ne change rien).
-- Intégration : script de captures réelles en VM (chaque page, 100, 125 et 150 %, français et anglais, données
-  synthétiques), clavier, relance par la tâche, mémoire ; passage complet avant chaque fusion.
+- Unit, through reflection: a single panic mode badge; header texts through `L.T`; contrast of the tokens
+  ≥ 4.5:1; `Visible` in the details panel; grouping of the navigation; Overview (unavailable
+  collection); assistant (closing changes nothing).
+- Integration: script of real screenshots in a VM (each page, 100, 125 and 150 %, French and English, synthetic
+  data), keyboard, restart through the task, memory; full pass before each merge.
 
-## Modèle de menaces
+## Threat model
 
-Option WPF : plus d'endroits qui affichent des chaînes non fiables (`Visible` partout), XAML seulement depuis la
-ressource de l'exécutable. Repli WebView2 (abandonné le 2026-11-09, gardé pour mémoire) : surface XSS et pont entre l'hôte et la page, frontière
-nouvelle à décrire dans `docs/security/threat-model.md` avant tout code (contenu des seules ressources de l'exécutable,
-CSP stricte et Trusted Types, ni framework JS ni npm, `textContent`, pont fermé, assistant élevé natif, données sous
-`%LOCALAPPDATA%`, runtime absent dit et jamais installé en silence).
+WPF option: more places that display untrusted strings (`Visible` everywhere), XAML only from the
+resource of the executable. WebView2 fallback (abandoned on 2026-11-09, kept for the record): XSS surface and bridge between the host and the page, a new
+boundary to be described in `docs/security/threat-model.md` before any code (content from the executable's resources only,
+strict CSP and Trusted Types, neither JS framework nor npm, `textContent`, closed bridge, native elevated assistant, data under
+`%LOCALAPPDATA%`, missing runtime stated and never installed silently).
 
-## Risques
+## Risks
 
-Coût du pilote inconnu tant que la compilation n'est pas essayée ; mémoire de WPF non mesurée ; mélange WinForms et WPF
-pendant la transition ; un écran plus beau peut promettre plus que le service ne fait ; même modèle pour l'auteur et le
-prérelecteur.
+Cost of the pilot unknown as long as the build is not tried; WPF memory not measured; mix of WinForms and WPF
+during the transition; a nicer screen can promise more than the service does; same model for the author and the
+pre-reviewer.
 
-## Inscription dans `CLAUDE.md`
+## Entry in `CLAUDE.md`
 
-Inscrite le 2026-11-03, sur l'autorisation du mainteneur (« Ok pour modifier Claude. Md je t'autorise ») ; texte
-proposé alors, repris dans `CLAUDE.md` :
+Written on 2026-11-03, with the maintainer's authorization (« Ok pour modifier Claude. Md je t'autorise » (OK to modify Claude.md, I authorize you)); text
+proposed then, taken up in `CLAUDE.md`:
 
-- Section 2, règle 1 : « Seules exceptions : la phase « Interface et assistant d'installation » et les phases 7, 8 et
-  9 (section 5), … » (l'assistant de premier lancement est une capacité nouvelle).
-- Section 5, nouveau point avant la phase 7 : « Phase « Interface et assistant d'installation », avant la phase 7.
-  Ouverte par le mainteneur le 2026-11-03, par ces mots : « fais la refonte avant la phase 7 ». Commence une fois les
-  corrections de la phase 6 fusionnées et ce point inscrit ; la phase 7 commence une fois celle-ci validée par la relecture et par
-  cryptobones-1337. Décisions, découpage et garde-fous : `docs/roadmap/interface.md`. Comme pour les phases 3, 4 et 6,
-  la preuve locale en VM tient lieu de CI GitHub pour ses PR ; rien ne change pour la distribution. »
-- Section 5, phase 7 : ajouter « et après la phase « Interface et assistant d'installation » » à sa condition de
-  début.
+- Section 2, rule 1: "Only exceptions: the "Interface and installation assistant" phase and phases 7, 8 and
+  9 (section 5), …" (the first-run assistant is a new capability).
+- Section 5, new point before phase 7: ""Interface and installation assistant" phase, before phase 7.
+  Opened by the maintainer on 2026-11-03, in these words: « fais la refonte avant la phase 7 » (do the redesign before phase 7). Starts once the
+  fixes of phase 6 are merged and this point is written; phase 7 starts once this one is validated by the review and by
+  cryptobones-1337. Decisions, split and safeguards: `docs/roadmap/interface.md`. As for phases 3, 4 and 6,
+  the local VM proof stands in for GitHub CI for its PRs; nothing changes for distribution."
+- Section 5, phase 7: add "and after the "Interface and installation assistant" phase" to its start
+  condition.
 
-## Textes du service dans l'interface anglaise (revue de l'auditeur du 2026-11-21, point 3)
+## Service texts in the English interface (auditor's review of 2026-11-21, point 3)
 
-Décision du mainteneur (2026-11-21) : le service émet des codes stables (règle, technique ATT&CK, identifiant de
-collecte, état) et l'interface les traduit par ses tables, comme pour les sortes de réponse et les états. Les raisons
-des alertes gardent leur texte français : l'empreinte des exceptions (`apprentissage::signature_avec`), `mitre::enrichir`
-et les tests de l'interface sur « MENACE » et « BLOQUÉ » le lisent ; un code et des paramètres viendront s'y ajouter.
-Depuis la revue de l'auditeur du 2026-11-22 (point 2), l'empreinte des exceptions ne lit plus du tout les techniques
-ATT&CK ni les conseils : la règle et un code de comportement posé par le producteur (`Comportement`, voir
-`docs/detection/modele-evenement.md`). Un nom ou un identifiant de technique peut être retouché ou traduit sans rendre
-une exception caduque ; les exceptions d'un format précédent sont comptées et dites dans la page Santé (ligne
-« Exceptions »), jamais perdues en silence. L'interface traduit
-chaque libellé à part (`L.Mitre`), une alerte pouvant porter plusieurs techniques.
+Decision of the maintainer (2026-11-21): the service emits stable codes (rule, ATT&CK technique, collection
+identifier, state) and the interface translates them through its tables, as for response kinds and states. The reasons
+of the alerts keep their French text: the hash of the exceptions (`apprentissage::signature_avec`), `mitre::enrichir`
+and the interface tests on "MENACE" and "BLOQUÉ" read it; a code and parameters will be added to it.
+Since the auditor's review of 2026-11-22 (point 2), the hash of the exceptions no longer reads the ATT&CK techniques
+nor the advice at all: the rule and a behavior code set by the producer (`Comportement`, see
+`docs/detection/modele-evenement.md`). A technique name or identifier can be reworded or translated without making
+an exception obsolete; the exceptions of a previous format are counted and stated in the Health page ("Exceptions"
+row), never lost silently. The interface translates
+each label separately (`L.Mitre`), since an alert can carry several techniques.
 
-- **Lot 1 (fait)** : noms lisibles des 25 collectes (bandeau des alertes, détail d'une alerte, page Santé), Sysmon
-  absent remplacé par WMI dit par une ligne neutre avec sa vraie conséquence (WMI partiel : programmes très brefs
-  peut-être manqués, PRC-001 à PRC-005 dégradées) au lieu de « désactivée », conséquences manquantes (Sessions, ConfigDns, FiltrageDns),
-  techniques et conseils de `mitre.rs` traduits par la table (un texte retouché sans sa traduction fait échouer
-  `textes_du_service_traduits_dans_l_interface_lot1`), conseils qui renvoyaient à l'ancienne interface (« clic droit »,
-  « onglet ») corrigés dans les deux langues.
-- **Reste** : raisons des alertes (environ 120 modèles), raisons des collectes (environ 35), destinations fixes (environ
-  30), titres et messages du SIEM (environ 25), constats SAN-*, notifications envoyées au dehors (français seulement).
+- **Lot 1 (done)**: readable names of the 25 collections (alert banner, detail of an alert, Health page), Sysmon
+  missing replaced by WMI stated by a neutral line with its real consequence (partial WMI: very short programs
+  possibly missed, PRC-001 to PRC-005 degraded) instead of "désactivée", missing consequences (Sessions, ConfigDns, FiltrageDns),
+  techniques and advice of `mitre.rs` translated through the table (a text reworded without its translation fails
+  `textes_du_service_traduits_dans_l_interface_lot1`), advice that referred to the old interface ("clic droit",
+  "onglet") fixed in both languages.
+- **Remaining**: reasons of the alerts (about 120 templates), reasons of the collections (about 35), fixed destinations (about
+  30), titles and messages of the SIEM (about 25), SAN-* findings, notifications sent outside (French only).

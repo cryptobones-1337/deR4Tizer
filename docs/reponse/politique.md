@@ -1,214 +1,214 @@
-# Politique de réponse de deR4Tizer
+# Response policy of deR4Tizer
 
-Une action de réponse coupe ou modifie quelque chose sur le poste du client : elle doit être juste, réversible
-et prévisible. Cette politique fixe ce que deR4Tizer a le droit de faire seul. Elle est appliquée dans le
-code depuis la phase 6 (validée par le mainteneur le 2026-11-03, `CLAUDE.md`, section 5, point 4) ; les écarts qui
-restent sont listés plus bas.
+A response action cuts off or modifies something on the client's computer: it must be accurate, reversible
+and predictable. This policy sets what deR4Tizer is allowed to do on its own. It has been applied in the
+code since phase 6 (validated by the maintainer on 2026-11-03, `CLAUDE.md`, section 5, point 4); the gaps that
+remain are listed below.
 
-## Niveaux
+## Levels
 
-| Niveau | Nom | Ce qui se passe | Exemples |
+| Level | Name | What happens | Examples |
 |---|---|---|---|
-| 0 | Observation | Événement enregistré (mini-SIEM, journal), aucune alerte. | Nouvelle connexion d'un programme connu, comportement appris. |
-| 1 | Alerte | Alerte locale et, selon la gravité, remontée au prestataire. Aucune action sur le poste. | Persistance nouvelle, connexion suspecte, extension dangereuse. |
-| 2 | Action sous contrôle humain | Action proposée et confirmée par un administrateur (UAC), **ou** action automatique désactivée par défaut, activée sciemment. | Tuer, suspendre, mettre en quarantaine, isoler un programme, mode panique, blocage manuel ; IPS (désactivé par défaut). |
-| 3 | Action automatique | Action prise seule par le service, sans confirmation. | Seulement les deux actions ci-dessous. |
+| 0 | Observation | Event recorded (mini-SIEM, log), no alert. | New connection of a known program, learned behavior. |
+| 1 | Alert | Local alert and, depending on severity, escalation to the provider. No action on the computer. | New persistence, suspicious connection, dangerous extension. |
+| 2 | Action under human control | Action proposed and confirmed by an administrator (UAC), **or** automatic action disabled by default, knowingly enabled. | Kill, suspend, quarantine, isolate a program, panic mode, manual blocking; IPS (disabled by default). |
+| 3 | Automatic action | Action taken by the service on its own, without confirmation. | Only the two actions below. |
 
-## Seules actions de niveau 3 autorisées
+## Only level 3 actions allowed
 
-1. **Blocage des adresses IP de Spamhaus DROP et de Feodo Tracker** au pare-feu (listes de confiance haute,
-   libres d'usage), identifiées dans le binaire, quel que soit le réglage « listes restreintes » : toute autre liste
-   donne une alerte seule. Le blocage est levé quand l'adresse sort de ces listes, si les trois sont chargées, ou à expiration (7 jours).
-   Feodo Tracker publie des adresses de serveurs : un réseau qui y apparaîtrait est écarté. Une liste dont la couverture
-   est aberrante (plus de 2^27 adresses IPv4, ou 2^48 réseaux IPv6 /64 ou plus, soit un /16) est rejetée en entier (PR 6.15).
-2. **Suspension du programme qui touche un leurre anti-rançongiciel.** Les processus critiques de Windows
-   (`reponse::protege`) ne sont jamais suspendus ; les logiciels connus et signés, au nom exact, installés hors du profil de l'utilisateur (droits du dossier non vérifiés), de sauvegarde, de
-   synchronisation ou d'antivirus déclenchent une alerte sans suspension. Le programme reste suspendu jusqu'à
-   une décision humaine.
+1. **Blocking of the IP addresses of Spamhaus DROP and Feodo Tracker** at the firewall (high-confidence lists,
+   free to use), identified in the binary, whatever the "listes restreintes" setting: any other list
+   gives an alert only. The block is lifted when the address leaves these lists, if all three are loaded, or on expiry (7 days).
+   Feodo Tracker publishes server addresses: a network that appeared in it is discarded. A list whose coverage
+   is aberrant (more than 2^27 IPv4 addresses, or 2^48 IPv6 /64 networks or more, that is a /16) is rejected entirely (PR 6.15).
+2. **Suspension of the program that touches an anti-ransomware decoy.** Critical Windows processes
+   (`reponse::protege`) are never suspended; known and signed backup, synchronization or antivirus software, with the exact name,
+   installed outside the user's profile (folder rights not checked), triggers an alert without suspension. The program stays suspended until
+   a human decision.
 
-Tout le reste, IPS compris, est au niveau 2 au plus.
+Everything else, IPS included, is at level 2 at most.
 
-## Filtrage par nom de domaine (phase 7, dans le code)
+## Domain name filtering (phase 7, in the code)
 
-Le filtrage est dans le code : moteur (PR 7.2, `filtrage.rs`), résolveur local (PR 7.3, `dns_local.rs`), activation
-sur les cartes (PR 7.4), page « Navigation » et journal des blocages (PR 7.5), résolveur tiers Quad9 au choix (PR 7.6).
-Le blocage d'un nom de domaine par le filtrage est une **action automatique de niveau 2** : désactivée par défaut,
-activée sciemment par un administrateur, catégories activées séparément (« Navigation sécurisée », « Publicités et
-pistage »). Il ne s'ajoute pas au niveau 3.
+Filtering is in the code: engine (PR 7.2, `filtrage.rs`), local resolver (PR 7.3, `dns_local.rs`), activation
+on the adapters (PR 7.4), "Navigation" page and log of blocks (PR 7.5), third-party resolver Quad9 as an option (PR 7.6).
+Blocking a domain name through filtering is an **automatic level 2 action**: disabled by default,
+knowingly enabled by an administrator, categories enabled separately ("Navigation sécurisée", "Publicités et
+pistage"). It does not add to level 3.
 
-Les lignes marquées « D7-x » renvoient au dossier de la phase 7. D7-8 (Quad9) a été tranchée par le mainteneur le
-2026-11-14 ; D7-1 (résolveur local) est une recommandation du dossier appliquée, mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12) ;
-D7-2, D7-3 et D7-10 sont des recommandations du dossier appliquées dans le code, sans décision écrite du mainteneur
+The rows marked "D7-x" refer to the phase 7 design file. D7-8 (Quad9) was settled by the maintainer on
+2026-11-14; D7-1 (local resolver) is an applied recommendation of the file, put into service on the adapters with the maintainer's explicit agreement for 7.4 (2026-11-12);
+D7-2, D7-3 and D7-10 are recommendations of the file applied in the code, without a written decision of the maintainer
 (`docs/detection/listes-domaines.md`).
 
-| | Dans le code |
+| | In the code |
 |---|---|
-| Durée | Tant que le filtrage reste activé : c'est un **mode**, pas une action ponctuelle, donc sans échéance (contrairement à l'IPS, dont les blocages durent 24 h). Pour qu'un faux positif durable ne passe pas inaperçu (le site d'une mairie dans une liste publicitaire), un compteur des noms bloqués et un signal au-delà d'un seuil, ou un rappel périodique, sont à prévoir avec l'interface (PR 7.5) (audit de #157, S157-02). |
-| Récupération | Désactivation par l'utilisateur, désinstallation, autorisation d'un nom par l'utilisateur, procédure manuelle écrite dans le README. Avec le résolveur local (D7-1, recommandation appliquée, mise en service sur les cartes avec l'accord explicite du mainteneur pour la 7.4 (2026-11-12)) : cartes réseau remises à l'identique, DHCP compris, à la désactivation, à l'arrêt du service et à la désinstallation. |
-| Échec | Ouvert, jamais de coupure du DNS : serveurs d'origine en secours si le résolveur local ne répond plus. |
-| Garde contre les boucles | Recommandation du dossier appliquée (D7-10, sans décision écrite du mainteneur) : jamais de remise en place automatique après un changement de DNS par un tiers (client VPN, prestataire) ; alerte DNS-002 et réactivation par l'utilisateur. |
-| Jamais bloqué | Une liste de protection compilée dans le binaire (mises à jour de Windows et de Defender, autorités de certification) et les noms autorisés par l'utilisateur. |
-| Ce qu'il n'est pas | Une barrière de sécurité : un programme qui a son propre résolveur (DNS chiffré intégré, adresse codée en dur) le contourne. Il réduit l'exposition, rien de plus. |
+| Duration | As long as filtering stays enabled: it is a **mode**, not a one-off action, hence without deadline (unlike the IPS, whose blocks last 24 h). So that a lasting false positive does not go unnoticed (a town hall's website in an advertising list), a counter of blocked names and a signal beyond a threshold, or a periodic reminder, are to be planned with the interface (PR 7.5) (audit of #157, S157-02). |
+| Recovery | Disabling by the user, uninstallation, allowing of a name by the user, manual procedure written in the README. With the local resolver (D7-1, applied recommendation, put into service on the adapters with the maintainer's explicit agreement for 7.4 (2026-11-12)): network adapters restored exactly, DHCP included, on disabling, on service stop and on uninstallation. |
+| Failure | Open, never a DNS cut: original servers as backup if the local resolver stops answering. |
+| Guard against loops | Applied recommendation of the file (D7-10, without a written decision of the maintainer): never an automatic reinstatement after a DNS change by a third party (VPN client, provider); DNS-002 alert and reactivation by the user. |
+| Never blocked | A protection list compiled into the binary (Windows and Defender updates, certification authorities) and the names allowed by the user. |
+| What it is not | A security barrier: a program that has its own resolver (built-in encrypted DNS, hard-coded address) bypasses it. It reduces exposure, nothing more. |
 
-Les blocages par domaine posés à la main dans le fichier hosts restent ce qu'ils sont aujourd'hui (manuels, lignes de
-l'utilisateur jamais réécrites).
+Domain blocks set by hand in the hosts file stay what they are today (manual, the user's lines
+never rewritten).
 
-## Règles communes
+## Common rules
 
-- Une alerte critique n'est jamais adoucie (apprentissage, exceptions) ni retenue par le plafond de remontée.
-- Chaque action automatique est journalisée et produit une alerte qui dit quoi faire.
-- Chaque action de réponse a une durée maximale et une procédure de récupération testée. À l'échéance, jamais de
-  reprise automatique d'un processus suspendu ni de levée automatique d'une isolation : l'alerte est relancée
-  vers le prestataire, la récupération est une action humaine (phase 6).
+- A critical alert is never softened (learning, exceptions) nor held back by the escalation cap.
+- Each automatic action is logged and produces an alert that says what to do.
+- Each response action has a maximum duration and a tested recovery procedure. At the deadline, never an
+  automatic resume of a suspended process nor an automatic lifting of an isolation: the alert is sent again
+  to the provider, recovery is a human action (phase 6).
 
-## Point de décision et garde contre les boucles
+## Decision point and guard against loops
 
-Le blocage d'une adresse, la suspension, la reprise, l'arrêt d'un processus, l'isolation et le mode panique passent par
-`politique.rs` : aucun n'est exécuté sans une autorisation qu'il délivre (`execution.rs`). Le blocage par domaine, la
-quarantaine, la restauration et le déblocage sont manuels et n'y passent pas. Une action automatique n'est permise que
-dans les cas écrits ici.
+Blocking an address, suspension, resume, termination of a process, isolation and panic mode go through
+`politique.rs`: none is executed without an authorization it issues (`execution.rs`). Domain blocking,
+quarantine, restore and unblocking are manual and do not go through it. An automatic action is allowed only
+in the cases written here.
 
-**Identité revalidée.** Tuer, suspendre et reprendre portent sur un processus identifié par son PID et son heure de création.
-L'instance administrateur les lit et les montre, avec le chemin et la signature vérifiée, et le service les compare juste
-avant d'agir, sur le même handle ; sinon, aucune action. Une commande sans identité est refusée. Pour un leurre : processus créé
-avant l'événement. Le chemin n'est pas comparé (décision du mainteneur, 2026-11-01) : un programme qui se renomme, ou dont le
-chemin est très long, doit rester suspendable et arrêtable.
+**Revalidated identity.** Kill, suspend and resume apply to a process identified by its PID and its creation time.
+The administrator instance reads and shows them, with the path and the verified signature, and the service compares them just
+before acting, on the same handle; otherwise, no action. A command without identity is refused. For a decoy: process created
+before the event. The path is not compared (maintainer's decision, 2026-11-01): a program that renames itself, or whose
+path is very long, must remain suspendable and stoppable.
 
-La garde ne concerne que les actions automatiques, n'a aucun réglage et ne retient jamais l'alerte : seule l'action
-est retenue. Un administrateur peut toujours agir à la main.
+The guard only concerns automatic actions, has no setting and never holds back the alert: only the action
+is held back. An administrator can always act by hand.
 
-| Garde | Seuil | Effet |
+| Guard | Threshold | Effect |
 |---|---|---|
-| Même blocage automatique sur la même adresse | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
-| Suspension d'un programme signé installé dans Program Files, hors interpréteurs, fermé en écriture (seuls SYSTEM, Administrateurs, TrustedInstaller ou un service précis y écrivent ou en sont propriétaires) et lancé sous SYSTEM ou un administrateur | 3 fois par 24 h | ensuite, alerte seule et alerte « Critique » de boucle arrêtée (REP-002) |
-| Blocages IP par les listes, toutes cibles | 30 par heure | au-delà, arrêtés 1 h, alerte « Critique » une fois |
-| Adresses distinctes par l'IPS (compteur à part des listes) | 50 par heure | au-delà, alerte seule |
-| Décision humaine contraire (déblocage, reprise) | 7 jours | aucune action automatique sur cette cible, alerte seule |
+| Same automatic block on the same address | 3 times per 24 h | then, alert only and "Critique" alert of a stopped loop (REP-002) |
+| Suspension of a signed program installed in Program Files, interpreters excluded, closed to writing (only SYSTEM, Administrators, TrustedInstaller or a specific service write there or own it) and launched under SYSTEM or an administrator | 3 times per 24 h | then, alert only and "Critique" alert of a stopped loop (REP-002) |
+| IP blocks by the lists, all targets | 30 per hour | beyond, stopped for 1 h, "Critique" alert once |
+| Distinct addresses by the IPS (counter separate from the lists) | 50 per hour | beyond, alert only |
+| Contrary human decision (unblocking, resume) | 7 days | no automatic action on this target, alert only |
 
-- **Suspension sans plafond global, et sans seuil hors de Program Files** (décisions du mainteneur, 2026-11-01) : un
-  rançongiciel ne doit pouvoir s'exempter ni avec des programmes jetables, ni en se lançant quatre fois, ni par trois touches
-  via `powershell.exe`. Seul un programme signé installé dans Program Files, hors interpréteurs, a un seuil ; depuis le
-  2026-11-21 (décision du mainteneur, S110-14), il faut aussi que le programme et ses dossiers soient fermés en écriture
-  (seuls SYSTEM, Administrateurs, TrustedInstaller ou un compte de service y écrivent ou en sont propriétaires) et qu'il tourne sous SYSTEM ou un administrateur, et la liste des interpréteurs est
-  complétée (dotnet, deno, bun, Lua, R, Julia, Tcl, AutoHotkey, AutoIt, MSBuild, csi). En contrepartie,
-  un programme légitime hors de ce cas est suspendu à chaque touche, et un programme relancé en boucle s'accumule, suspendu,
-  jusqu'à ce qu'un administrateur le reprenne ou l'arrête. Le seuil de Program Files reste utilisable par un programme signé
-  déjà installé qui toucherait les leurres trois fois : l'alerte reste.
-- **Limite du plafond des listes** : un compte standard peut l'atteindre en se connectant à 31 adresses listées. Les
-  blocages par les listes s'arrêtent alors une heure, renouvelable ; les alertes « Critique » restent. Le plafond protège
-  d'une liste corrompue.
-- **Limite de l'IPS** : `ids.rs`, non corrigé à ce jour, écrit « bloquée » dans son alerte dès la détection, même si l'action est ensuite
-  retenue ; le SIEM et le journal disent la retenue.
-- **Décision humaine sur un programme** : liée à l'empreinte de l'exécutable. Un fichier remplacé au même chemin n'en
-  hérite pas, et une empreinte illisible ne donne aucune exception. Une reprise n'en est une que si le programme a été
-  suspendu automatiquement dans les 7 derniers jours, et jamais pour un interpréteur (PowerShell, cmd, rundll32, python…)
-  ni un programme du dossier Windows : l'exception couvrirait tous les scripts qu'il lance ; l'administrateur le lit dans
-  la réponse à la reprise (PR 6.14). Limite : l'interpréteur est reconnu par le nom de son fichier ; une copie renommée
-  (powershell.exe copié en maj.exe) garde l'exception. La confirmation d'une reprise ou d'un déblocage dit l'effet de 7 jours avant d'agir,
-  et la signature montrée est celle du fichier à ce chemin, pas forcément celle du processus (PR 6.14).
-- **Historique** : `reponses.json`, borné (2 000 traces, 500 décisions humaines), gardé après un redémarrage. Contenu mal
-  formé : aucune action automatique, alerte REP-002 ; retirer le fichier du dossier de données, puis redémarrer le service,
-  rétablit la réponse automatique. Lecture refusée (fichier tenu ouvert, protection du dossier en échec) : la garde repart
-  en mémoire, sans son historique, et la réponse reste ; le fichier n'est alors jamais écrasé, et le journal du service le
-  dit (S110-13, 2026-11-21). Le fichier est lu hors du verrou de la garde, et écrit par un fil dédié qui ne garde que la
-  copie la plus récente : le cycle et le fil des leurres déposent la copie sans attendre le disque ; une commande
-  d'administrateur (ouvrir, clore, lever, décision humaine) ne répond qu'une fois sa copie écrite, 10 s au plus, pour que
-  l'interface relise un fichier à jour ; cette attente se fait une seule fois, à la fin de la commande, après avoir rendu
-  le verrou du moniteur : un disque lent ne retarde plus le cycle (revue de l'auditeur du 2026-11-21, point 2 ; mesuré
-  avec une écriture ralentie à 800 ms : le cycle attendait 700 ms, il n'attend plus) ; une copie plus ancienne
-  n'écrase jamais une plus récente, et une écriture en échec est réessayée 5 s plus tard (S110-04, S110-16, S230-01,
-  S230-02). Limite : la dernière copie peut être perdue si le service s'arrête avant son écriture ; un fichier refusé à la
-  lecture initiale n'est pas relu avant le prochain démarrage (S230-03). Depuis la revue de l'auditeur du 2026-11-21
-  (point 1) : le journal du service dit seulement le premier échec d'écriture d'une série et le retour à la normale, et
-  la page Santé montre une ligne « Registre des réponses » en échec tant que le fichier n'est pas écrit, ou quand la
-  lecture initiale a été refusée (les échéances de la session seront alors perdues au redémarrage) ; le service publie un
-  code dans etat.json (`RegistreReponses` : vide, `EcritureEnEchec` avec `RegistreReponsesDepuis`, `LectureRefusee`,
-  `ContenuIllisible` ou `ProtectionEnEchec` : tous les cas où rien n'est écrit), traduit par l'interface.
+- **Suspension without a global cap, and without threshold outside Program Files** (maintainer's decisions, 2026-11-01): a
+  ransomware must not be able to exempt itself either with throwaway programs, or by launching itself four times, or through three hits
+  via `powershell.exe`. Only a signed program installed in Program Files, interpreters excluded, has a threshold; since
+  2026-11-21 (maintainer's decision, S110-14), the program and its folders must also be closed to writing
+  (only SYSTEM, Administrators, TrustedInstaller or a service account write there or own them) and it must run under SYSTEM or an administrator, and the list of interpreters is
+  completed (dotnet, deno, bun, Lua, R, Julia, Tcl, AutoHotkey, AutoIt, MSBuild, csi). In return,
+  a legitimate program outside this case is suspended at each hit, and a program relaunched in a loop piles up, suspended,
+  until an administrator resumes or stops it. The Program Files threshold remains usable by a signed program
+  already installed that would touch the decoys three times: the alert remains.
+- **Limit of the list cap**: a standard account can reach it by connecting to 31 listed addresses. Blocks
+  by the lists then stop for one hour, renewable; the "Critique" alerts remain. The cap protects
+  against a corrupted list.
+- **Limit of the IPS**: `ids.rs`, not fixed to date, writes "bloquée" in its alert as soon as it detects, even if the action is then
+  held back; the SIEM and the log state that it was held back.
+- **Human decision on a program**: tied to the hash of the executable. A file replaced at the same path does not
+  inherit it, and an unreadable hash gives no exception. A resume counts as one only if the program was
+  suspended automatically in the last 7 days, and never for an interpreter (PowerShell, cmd, rundll32, python…)
+  nor a program of the Windows folder: the exception would cover all the scripts it launches; the administrator reads this in
+  the reply to the resume (PR 6.14). Limit: the interpreter is recognized by its file name; a renamed copy
+  (powershell.exe copied as maj.exe) keeps the exception. The confirmation of a resume or of an unblocking states the 7-day effect before acting,
+  and the signature shown is that of the file at that path, not necessarily that of the process (PR 6.14).
+- **History**: `reponses.json`, bounded (2 000 traces, 500 human decisions), kept after a restart. Malformed
+  content: no automatic action, REP-002 alert; removing the file from the data folder, then restarting the service,
+  restores automatic response. Read refused (file held open, folder protection failed): the guard restarts
+  in memory, without its history, and response remains; the file is then never overwritten, and the service log
+  says so (S110-13, 2026-11-21). The file is read outside the guard lock, and written by a dedicated thread that keeps only the
+  most recent copy: the cycle and the decoy thread drop off the copy without waiting for the disk; an administrator
+  command (open, close, lift, human decision) replies only once its copy is written, 10 s at most, so that
+  the interface rereads an up-to-date file; this wait happens only once, at the end of the command, after giving back
+  the monitor lock: a slow disk no longer delays the cycle (auditor's review of 2026-11-21, point 2; measured
+  with a write slowed down to 800 ms: the cycle waited 700 ms, it no longer waits); an older copy
+  never overwrites a more recent one, and a failed write is retried 5 s later (S110-04, S110-16, S230-01,
+  S230-02). Limit: the last copy can be lost if the service stops before it is written; a file refused at the
+  initial read is not reread before the next start (S230-03). Since the auditor's review of 2026-11-21
+  (point 1): the service log only states the first write failure of a series and the return to normal, and
+  the Health page shows a "Registre des réponses" line as failed as long as the file is not written, or when the
+  initial read was refused (the session's deadlines will then be lost at restart); the service publishes a
+  code in etat.json (`RegistreReponses`: empty, `EcritureEnEchec` with `RegistreReponsesDepuis`, `LectureRefusee`,
+  `ContenuIllisible` or `ProtectionEnEchec`: all the cases where nothing is written), translated by the interface.
 
-## Durées et récupération (phase 6, dans le code)
+## Durations and recovery (phase 6, in the code)
 
-Décisions : `docs/roadmap/phase6.md`. Ces valeurs sont en vigueur depuis les PR citées dans le tableau.
+Decisions: `docs/roadmap/phase6.md`. These values have been in force since the PRs quoted in the table.
 
-**Mode panique transactionnel (PR 6.5).** Les deux règles sont posées et vérifiées (présentes, activées, en blocage),
-puis seulement le drapeau est écrit ; un échec à n'importe quelle étape retire tout et lève l'alerte REP-003 « mode
-panique NON activé ». La désactivation retire, vérifie qu'aucune règle ne reste, puis efface le drapeau ; une règle
-restée garde le drapeau. L'état publié est l'état effectif, compté sur les règles : « active », « inactive » ou
-« incertaine ». Un profil du pare-feu désactivé avant est réactivé pour l'activation, et rendu désactivé si elle
-échoue. Limite : les serveurs DNS de la machine et les adresses des serveurs de notification restent joignables, tous
-ports, pour tous les programmes (un tunnel DNS reste possible).
+**Transactional panic mode (PR 6.5).** The two rules are set and checked (present, enabled, blocking),
+and only then is the flag written; a failure at any step removes everything and raises the REP-003 alert "mode
+panique NON activé". Deactivation removes, checks that no rule remains, then deletes the flag; a remaining
+rule keeps the flag. The published state is the effective state, counted on the rules: "active", "inactive" or
+"incertaine". A firewall profile disabled beforehand is enabled for the activation, and disabled again if it
+fails. Limit: the machine's DNS servers and the addresses of the notification servers stay reachable, all
+ports, for all programs (a DNS tunnel remains possible).
 
-**Isolation sur le chemin final (PR 6.6).** Le programme est ouvert en descendant son chemin élément par élément, chaque
-dossier ouvert par rapport au handle de son parent, sans suivre de point d'analyse (PR 6.13) ; un dossier du chemin qui est un lien, une jonction ou un point de montage
-est refusé, et l'administrateur donne le chemin réel (PR 6.13 ; avant, une jonction était résolue). Son chemin final
-(noms courts développés) est comparé au dossier Windows, et
-c'est lui qui porte les règles de pare-feu. Un chemin réseau, un tube ou un volume sans lettre est refusé sur le texte,
-avant toute ouverture ; un fichier qui porte le nom d'un programme critique de Windows (svchost.exe, lsass.exe…) ou
-d'un programme livré avec Windows (présent dans le dossier Windows, System32 ou SysWOW64 : dllhost.exe,
-RuntimeBroker.exe…, PR 6.13) hors du dossier Windows aussi (la quarantaine convient mieux). Limites : un maliciel
-nommé svchost.exe dans un dossier de l'utilisateur ne peut donc pas être isolé, seulement mis en quarantaine ; un outil
-légitime qui porte le nom d'un programme de Windows non plus (curl.exe ou tar.exe livrés avec Git, par exemple) ; un
-programme nommé comme un logiciel de Program Files ou d'un sous-dossier de Windows (navigateur, WmiPrvSE.exe…) reste
-isolable, et une jonction posée après coup pourrait faire couper le vrai, jusqu'à la décision humaine que demande
-REP-004. Toutes les 5 minutes, chaque isolation est revérifiée par la même descente, dossier par dossier
-sans suivre de lien (seules comptent les étiquettes qui redirigent le chemin, bit « substitut de nom » : jonctions, liens
-symboliques…, pas les fichiers ni les dossiers OneDrive à la demande, PR 6.13 ; un chemin illisible 3 relevés de suite
-est dit par REP-004). Le chemin n'est jamais repassé à Windows en entier, ni à l'isolation ni à la revérification : un dossier remplacé par un lien pendant la lecture n'est pas traversé
-(PR 6.13 ; avant, il pouvait l'être entre la lecture des dossiers et l'ouverture du fichier) : si son chemin mène ailleurs (dossier remplacé par une jonction ou un lien), l'alerte REP-004 le dit, une fois ; les règles sont gardées, jamais levées
-automatiquement, et peuvent alors couper le réseau du programme visé : la décision reste humaine. Limite : un programme isolé copié
-ailleurs n'est plus coupé du réseau (la règle vise un chemin, pas un fichier).
+**Isolation on the final path (PR 6.6).** The program is opened by walking down its path element by element, each
+folder opened relative to the handle of its parent, without following a reparse point (PR 6.13); a folder of the path that is a link, a junction or a mount point
+is refused, and the administrator gives the real path (PR 6.13; before, a junction was resolved). Its final path
+(short names expanded) is compared with the Windows folder, and
+it is the one that carries the firewall rules. A network path, a pipe or a volume without a letter is refused on the text,
+before any opening; so is a file that bears the name of a critical Windows program (svchost.exe, lsass.exe…) or
+of a program shipped with Windows (present in the Windows folder, System32 or SysWOW64: dllhost.exe,
+RuntimeBroker.exe…, PR 6.13) outside the Windows folder (quarantine is better suited). Limits: a malware
+named svchost.exe in a user folder therefore cannot be isolated, only quarantined; nor can a legitimate
+tool that bears the name of a Windows program (curl.exe or tar.exe shipped with Git, for example); a
+program named like a piece of software of Program Files or of a Windows subfolder (browser, WmiPrvSE.exe…) remains
+isolable, and a junction placed afterwards could make the real one cut off, until the human decision that
+REP-004 asks for. Every 5 minutes, each isolation is checked again by the same walk down, folder by folder
+without following a link (only the tags that redirect the path count, "name surrogate" bit: junctions, symbolic
+links…, not OneDrive on-demand files or folders, PR 6.13; a path unreadable for 3 readings in a row
+is stated by REP-004). The path is never handed back to Windows as a whole, neither at isolation nor at the recheck: a folder replaced by a link during the reading is not traversed
+(PR 6.13; before, it could be between the reading of the folders and the opening of the file): if its path leads elsewhere (folder replaced by a junction or a link), the REP-004 alert says so, once; the rules are kept, never lifted
+automatically, and can then cut off the network of the targeted program: the decision remains human. Limit: an isolated program copied
+elsewhere is no longer cut off from the network (the rule targets a path, not a file).
 
-**Interface (PR 6.7b).** La page « Réponses en cours » montre chaque action active : quoi, sur quoi, déclencheur,
-depuis quand, échéance de relance, état (« relance en attente » en jaune, mode panique en rouge, toujours écrit en
-toutes lettres), procédure de récupération, service arrêté compris. Son bouton (« Reprendre », « Libérer »,
-« Débloquer », « Rétablir Internet », « Restaurer ») envoie la commande par le canal : pour un compte non administrateur,
-par l'assistant élevé et sa confirmation ; pour un administrateur, après la confirmation de la page (et celle de
-l'assistant pour « Reprendre »). « Reprendre » refuse un PID réutilisé (heure de création comparée). La confirmation du mode panique dit
-sa portée (tout Internet, IPv4 et IPv6 ; connexions IPv6 ouvertes non coupées ; réseau local, DNS et serveurs de
-notification joignables), la relance à 4 h et le retour arrière ; l'en-tête montre l'état effectif publié par le
-service. La confirmation d'une isolation montre le chemin réel qui sera isolé, aussi à un administrateur, quand il est sur un
-disque local fixe et lisible en 2 s.
+**Interface (PR 6.7b).** The "Réponses en cours" page shows each active action: what, on what, trigger,
+since when, reminder deadline, state ("relance en attente" in yellow, panic mode in red, always written out in
+full), recovery procedure, service stopped included. Its button ("Reprendre", "Libérer",
+"Débloquer", "Rétablir Internet", "Restaurer") sends the command over the channel: for a non-administrator account,
+through the elevated assistant and its confirmation; for an administrator, after the page's confirmation (and that of
+the assistant for "Reprendre"). "Reprendre" refuses a reused PID (creation time compared). The confirmation of the panic mode states
+its scope (all of the Internet, IPv4 and IPv6; open IPv6 connections not cut; local network, DNS and notification
+servers reachable), the reminder at 4 h and the rollback; the header shows the effective state published by the
+service. The confirmation of an isolation shows the real path that will be isolated, also to an administrator, when it is on a
+fixed local disk and readable within 2 s.
 
-**Échéances.** Une échéance est un rendez-vous de relance, pas une levée. Depuis la PR 6.4, le registre des actions
-(`reponses.json`) suit les suspensions, l'isolation et le mode panique, et depuis la PR 6.4b la quarantaine et les
-blocages manuels ; une relance est l'alerte REP-001, une seule par sorte d'action et par heure au plus (24 h pour la
-quarantaine et le blocage manuel ; les relances retenues partent, comptées, avec la suivante). Un processus
-suspendu qui n'existe plus passe à « terminé », sans alerte. Au-delà de 500 actions en cours, sortent du suivi d'abord
-les quarantaines et blocages manuels les plus anciens, puis les suspensions automatiques les plus récentes : la première,
-souvent le vrai programme suivi de jetables, reste suivie ; le nombre de ce qui sort est dit une fois par REP-002
-« registre plein », jusqu'au retour sous la borne (PR 6.14). Limite : un attaquant qui garde 500 programmes jetables
-suspendus avant de lancer sa vraie charge la fait sortir du suivi dès son entrée ; son alerte LEU-002 Critique part
-quand même, mais ni relance ni ligne sur la page « Réponses en cours ». Ce qui sort reste suspendu, et son alerte d'origine reste. Un mode panique, une
-isolation ou une suspension manuelle restent toujours suivis. L'état réel des fils d'un processus suspendu n'est pas relu : la relance dit
-qu'il peut avoir été repris hors de deR4Tizer.
+**Deadlines.** A deadline is a reminder appointment, not a lifting. Since PR 6.4, the action register
+(`reponses.json`) tracks suspensions, isolation and panic mode, and since PR 6.4b quarantine and
+manual blocks; a reminder is the REP-001 alert, one per kind of action and per hour at most (24 h for
+quarantine and manual blocking; reminders held back go out, counted, with the next one). A suspended
+process that no longer exists moves to "terminé", without alert. Beyond 500 actions in progress, the oldest
+quarantines and manual blocks leave the tracking first, then the most recent automatic suspensions: the first one,
+often the real program followed by throwaway ones, stays tracked; the number of what leaves is stated once by REP-002
+"registre plein", until it is back under the bound (PR 6.14). Limit: an attacker who keeps 500 throwaway programs
+suspended before launching the real payload makes it leave the tracking as soon as it enters; its LEU-002 Critical alert goes out
+anyway, but neither reminder nor row on the "Réponses en cours" page. What leaves stays suspended, and its original alert remains. A panic mode, an
+isolation or a manual suspension always stay tracked. The real state of the threads of a suspended process is not reread: the reminder says
+that it may have been resumed outside deR4Tizer.
 
-| Action | Échéance | À l'échéance | État |
+| Action | Deadline | At the deadline | State |
 |---|---|---|---|
-| Blocage IP de niveau 3 (Spamhaus DROP, Feodo Tracker) | 7 jours | levé ; plus tôt si l'adresse sort de la liste | fait |
-| Blocage IP par l'IPS | 24 h | levé | fait (PR 6.4) |
-| Suspension automatique (leurre) | 2 h | reste suspendu ; relance « Critique », puis toutes les 24 h | fait (PR 6.4) |
-| Suspension manuelle | 24 h | reste suspendu ; relance « Alerte », puis toutes les 24 h | fait (PR 6.4) |
-| Isolation d'un programme | 7 jours | reste isolé ; relance « Alerte », puis tous les 7 jours | fait (PR 6.4) |
-| Mode panique | 4 h | reste actif ; relance « Critique », puis toutes les 24 h | fait (PR 6.4) |
-| Quarantaine | 30 jours | reste en quarantaine, jamais supprimée ; relance « Info », puis tous les 30 jours ; close par une restauration | fait (PR 6.4b) |
-| Blocage manuel (hosts, IP) | 90 jours | reste bloqué ; rappel « Info », puis tous les 90 jours ; clos par un déblocage | fait (PR 6.4b) |
-| Tuer, tuer une chaîne | sans objet | irréversible, journalisé | — |
+| Level 3 IP block (Spamhaus DROP, Feodo Tracker) | 7 days | lifted; earlier if the address leaves the list | done |
+| IP block by the IPS | 24 h | lifted | done (PR 6.4) |
+| Automatic suspension (decoy) | 2 h | stays suspended; "Critique" reminder, then every 24 h | done (PR 6.4) |
+| Manual suspension | 24 h | stays suspended; "Alerte" reminder, then every 24 h | done (PR 6.4) |
+| Isolation of a program | 7 days | stays isolated; "Alerte" reminder, then every 7 days | done (PR 6.4) |
+| Panic mode | 4 h | stays active; "Critique" reminder, then every 24 h | done (PR 6.4) |
+| Quarantine | 30 days | stays in quarantine, never deleted; "Info" reminder, then every 30 days; closed by a restore | done (PR 6.4b) |
+| Manual block (hosts, IP) | 90 days | stays blocked; "Info" reminder, then every 90 days; closed by an unblocking | done (PR 6.4b) |
+| Kill, kill a chain | not applicable | irreversible, logged | n/a |
 
-Un blocage automatique dont l'échéance n'a pas été écrite en reçoit une au contrôle suivant : 24 h s'il vient de l'IPS,
-7 jours sinon.
+An automatic block whose deadline was not written gets one at the next check: 24 h if it comes from the IPS,
+7 days otherwise.
 
-**Récupération.** Avec le service, isoler puis libérer un programme (scénario 3b) et activer puis désactiver le mode panique (scénario 3a) sont exercés à chaque passage complet en VM depuis la phase 6 (par exemple la preuve de la PR #168 : 3a 90 réussis, 3b 34 réussis, 0 échec). Les procédures service arrêté et après la désinstallation sont écrites, pas exercées en VM ; les échéances longues (2 h, 24 h, 7 jours) ne sont vérifiées qu'en labo.
+**Recovery.** With the service, isolating then releasing a program (scenario 3b) and enabling then disabling the panic mode (scenario 3a) are exercised at each full pass in a VM since phase 6 (for example the proof of PR #168: 3a 90 passed, 3b 34 passed, 0 failure). The procedures with the service stopped and after uninstallation are written, not exercised in a VM; the long deadlines (2 h, 24 h, 7 days) are only checked in the lab.
 
-| Action | Avec le service | Service arrêté ou en panne | Après la désinstallation |
+| Action | With the service | Service stopped or failed | After uninstallation |
 |---|---|---|---|
-| Suspension | « Reprendre » (identité revalidée) ou « Tuer » | Moniteur de ressources de Windows (`resmon`, « Reprendre le processus »), ou arrêt du processus dans le Gestionnaire des tâches | le processus reste suspendu jusqu'à son arrêt ou au redémarrage : redémarrer le poste |
-| Isolation | « Libérer » (sur le chemin final ; exercé en VM au scénario 3b) | Pare-feu Windows avancé : supprimer les règles « deR4Tizer - isole … » (groupe `deR4Tizer`) | `--nettoyer` retire le groupe, à vérifier pour les règles d'isolation |
-| Mode panique | « Rétablir Internet » ; aussi sûr en état « incertain » (signal VM, PR 6.5) | supprimer les règles « deR4Tizer PANIQUE » dans le pare-feu, puis le fichier `panique-active` du dossier de données | `--nettoyer`, d'après les règles et pas seulement le drapeau |
-| Blocage IP | « Débloquer » | règles « deR4Tizer » du pare-feu | `--nettoyer` |
-| Quarantaine | « Restaurer » ou repli | aucune (copie encodée dans le dossier de données) | avec `GARDER_DONNEES=1` : réinstaller puis restaurer ; sans : perdue, à vérifier |
+| Suspension | "Reprendre" (identity revalidated) or "Tuer" | Windows Resource Monitor (`resmon`, "Reprendre le processus"), or termination of the process in Task Manager | the process stays suspended until it is stopped or until restart: restart the computer |
+| Isolation | "Libérer" (on the final path; exercised in a VM in scenario 3b) | Windows Defender Firewall with Advanced Security: delete the rules "deR4Tizer - isole …" (group `deR4Tizer`) | `--nettoyer` removes the group, to be checked for the isolation rules |
+| Panic mode | "Rétablir Internet"; also safe in the "incertain" state (VM signal, PR 6.5) | delete the rules "deR4Tizer PANIQUE" in the firewall, then the `panique-active` file of the data folder | `--nettoyer`, based on the rules and not only on the flag |
+| IP block | "Débloquer" | "deR4Tizer" rules of the firewall | `--nettoyer` |
+| Quarantine | "Restaurer" or fallback | none (encoded copy in the data folder) | with `GARDER_DONNEES=1`: reinstall then restore; without: lost, to be checked |
 
-## Écarts du code actuel (4.3) avec cette politique
+## Gaps between the current code (4.3) and this policy
 
-| Écart | Où | À traiter |
+| Gap | Where | To be handled |
 |---|---|---|
-| L'IPS, une fois activé, bloque au pare-feu sans confirmation (niveau 2 « désactivé par défaut », conforme), mais sans durée maximale propre ni procédure de récupération documentée. | `ids.rs`, `moniteur.rs` | Traité en phase 6 : blocage de 24 h, levé à l'échéance (PR 6.4, tableau plus haut). |
-| Aucune durée maximale ni relance vers le prestataire pour un processus suspendu ou un programme isolé. | `vol_donnees.rs`, `reponse.rs` | Traité en phase 6 : durées et relances (PR 6.4, tableau plus haut). |
+| The IPS, once enabled, blocks at the firewall without confirmation (level 2 "disabled by default", compliant), but without its own maximum duration nor documented recovery procedure. | `ids.rs`, `moniteur.rs` | Handled in phase 6: 24 h block, lifted at the deadline (PR 6.4, table above). |
+| No maximum duration nor reminder to the provider for a suspended process or an isolated program. | `vol_donnees.rs`, `reponse.rs` | Handled in phase 6: durations and reminders (PR 6.4, table above). |

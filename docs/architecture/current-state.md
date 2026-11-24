@@ -1,85 +1,85 @@
-# Architecture actuelle de deR4Tizer
+# Current architecture of deR4Tizer
 
-État au 2026-10-22 (`main`, version 4.3), complété au fil des PR jusqu'au 2026-11-19. Description du code tel qu'il
-est, pas d'une cible.
+State as of 2026-10-22 (`main`, version 4.3), extended PR by PR up to 2026-11-19. A description of the code as it
+is, not of a target.
 
-## Composants
+## Components
 
-| Composant | Langage | Compte | Rôle |
+| Component | Language | Account | Role |
 |---|---|---|---|
-| `deR4TizerSvc.exe` (`service-rs/`) | Rust (chaîne MSVC pour les binaires livrés) | SYSTEM | Surveillance, détection, réponse, export, mise à jour, protection du dossier de données. |
-| `deR4Tizer.exe` (`src/`) | C#, .NET Framework 4.8 (WPF pour l'interface par défaut, `src/Fluent.cs` ; WinForms pour l'interface d'avant, `--classique`, et la fenêtre cachée qui porte la zone de notification) | Utilisateur, sans droits d'administrateur | Affichage de l'état ; actions envoyées au service par le canal, avec l'UAC (`runas`). |
-| `deR4Tizer.msi` (`installeur/deR4Tizer.wxs`, `construire-msi.ps1`) | WiX 3.14 | Administrateur | Installation du service (démarrage automatique, redémarrage sur échec), du dossier de données avec ses droits, mise à niveau (`MajorUpgrade`, `AllowDowngrades`), désinstallation (`--nettoyer`, `--supprimer-donnees` sauf `GARDER_DONNEES=1` : contenu supprimé, racine gardée et protégée, composant permanent ; quarantaine non vide gardée, réservée à SYSTEM et aux administrateurs, audit du 2026-11-23, A-4-3 ; `--nettoyer` retire aussi l'audit de lecture posé dans les profils, nos seules entrées, et les anciens comptes rendus de `%SystemRoot%\Temp` écrits par SYSTEM, A-6-4). Refus d'installer, de mettre à niveau ou de réparer quand le dossier de données est un lien (action JScript en lecture seule `installeur/lire-dossier-donnees.js`, condition de lancement en échec fermé ; audit du 2026-11-23, C-1). |
+| `deR4TizerSvc.exe` (`service-rs/`) | Rust (MSVC toolchain for the shipped binaries) | SYSTEM | Monitoring, detection, response, export, update, protection of the data folder. |
+| `deR4Tizer.exe` (`src/`) | C#, .NET Framework 4.8 (WPF for the default interface, `src/Fluent.cs`; WinForms for the former interface, `--classique`, and for the hidden window that carries the notification area) | User, without administrator rights | Display of the state; actions sent to the service over the channel, with UAC (`runas`). |
+| `deR4Tizer.msi` (`installeur/deR4Tizer.wxs`, `construire-msi.ps1`) | WiX 3.14 | Administrator | Installation of the service (automatic start, restart on failure), of the data folder with its rights, upgrade (`MajorUpgrade`, `AllowDowngrades`), uninstallation (`--nettoyer`, `--supprimer-donnees` unless `GARDER_DONNEES=1`: content deleted, root kept and protected, permanent component; a non-empty quarantine is kept, restricted to SYSTEM and administrators, audit of 2026-11-23, A-4-3; `--nettoyer` also removes the read audit set in the profiles, our own entries only, and the old reports in `%SystemRoot%\Temp` written by SYSTEM, A-6-4). Refuses to install, upgrade or repair when the data folder is a link (read-only JScript action `installeur/lire-dossier-donnees.js`, launch condition failing closed; audit of 2026-11-23, C-1). |
 
-Aucun pilote noyau. API Windows utilisées : journaux d'événements, ETW, WMI, pare-feu (COM), IP Helper,
-sockets brutes (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, sécurité NTFS.
+No kernel driver. Windows APIs used: event logs, ETW, WMI, firewall (COM), IP Helper,
+raw sockets (`SIO_RCVALL`), `WinVerifyTrust`, Windows Installer, NTFS security.
 
 ## Communication
 
-- **Canal** `\\.\pipe\deR4Tizer` : une ligne JSON par commande (`commun::Commande`), une ligne JSON en réponse.
-  SYSTEM et administrateurs seulement ; l'interface vérifie que le serveur du tube est le processus du service
+- **Channel** `\\.\pipe\deR4Tizer`: one JSON line per command (`commun::Commande`), one JSON line in reply.
+  SYSTEM and administrators only; the interface checks that the pipe server is the service process
   (`GetNamedPipeServerProcessId`).
-- **Fichiers d'état** : le service écrit des fichiers JSON dans le dossier de données, l'interface les lit.
-- **API HTTP d'export** (facultative) : lecture seule, jeton, 127.0.0.1 ou réseau local filtré.
-- **Sorties** : syslog (UDP ou TCP, en clair), ntfy, Teams, SMTP (par `curl.exe`), téléchargement des listes de
-  menaces, des données GeoIP et du manifeste de mise à jour (HTTPS).
+- **State files**: the service writes JSON files in the data folder, the interface reads them.
+- **HTTP export API** (optional): read-only, token, 127.0.0.1 or filtered local network.
+- **Outputs**: syslog (UDP or TCP, in clear text), ntfy, Teams, SMTP (through `curl.exe`), download of the threat
+  lists, the GeoIP data and the update manifest (HTTPS).
 
-## Fils du service
+## Service threads
 
-`surveillance` (cœur, `moniteur.rs`, relève toutes les 3 s), `commandes` (canal), `protection` (droits du dossier,
-toutes les heures), `listes de menaces` (12 h ; 24 h pour les deux listes Spamhaus DROP), `mise à jour` (quotidienne, 10 min après le démarrage),
+`surveillance` (core, `moniteur.rs`, a reading every 3 s), `commandes` (channel), `protection` (folder rights,
+every hour), `listes de menaces` (12 h; 24 h for the two Spamhaus DROP lists), `mise à jour` (daily, 10 min after start),
 `notifications`, `syslog`, `api`, `siem`, `ndr`, `geoip`, `ja3`, `audit données sensibles`, `traces de processus`,
-`contrôles`, `persistance` (démarrages automatiques, toutes les minutes, hors du verrou du moniteur ; ses alertes sont reprises par le cycle, ou à l'arrêt après la fin du relevé en cours, attendue 8 s au plus), `dns` (relevé des serveurs DNS des cartes, DNS-002, toutes les 60 s), `sante` (santé de l'interface et des collectes),
-`chronologies` (chronologie de chaque incident), `filtrage` (filtrage par nom de domaine, avec `filtrage rechargement`,
-`filtrage sonde` et `résolveur local fin`), `garde-canal`, plus un fil de capture par interface réseau (`capture.rs`). À l'arrêt du service, les alertes encore en file (persistance, alertes des autres fils, détections de processus) sont enregistrées dans `alertes.json` avant la sortie ; une alerte produite par un fil après cette reprise peut encore être perdue.
+`contrôles`, `persistance` (automatic start entries, every minute, outside the monitor lock; its alerts are picked up by the cycle, or at stop after the end of the reading in progress, waited for 8 s at most), `dns` (reading of the adapters' DNS servers, DNS-002, every 60 s), `sante` (health of the interface and of the collections),
+`chronologies` (timeline of each incident), `filtrage` (domain name filtering, with `filtrage rechargement`,
+`filtrage sonde` and `résolveur local fin`), `garde-canal`, plus one capture thread per network interface (`capture.rs`). When the service stops, the alerts still queued (persistence, alerts from the other threads, process detections) are saved in `alertes.json` before exit; an alert produced by a thread after this pickup can still be lost.
 
-Registre des règles (phase 3, `regles.rs`) : un identifiant stable par détection existante, compilé dans le binaire (aucun fichier de règles) ; chaque producteur d'alertes pose le sien dans `Alerte.Regle`, repris par le SIEM (`Evenement.Regle`, avec `Modele`). Liste et fiches : `docs/detection/regles.md`.
+Rule registry (phase 3, `regles.rs`): one stable identifier per existing detection, compiled into the binary (no rule file); each alert producer sets its own in `Alerte.Regle`, carried over by the SIEM (`Evenement.Regle`, with `Modele`). List and rule sheets: `docs/detection/regles.md`.
 
-État des collectes (phase 3, `collectes.rs`) : chaque source de télémétrie note ses lectures réussies ou en échec dans un tableau fixe d'atomiques (un succès répété ne prend aucun verrou) ; une source active muette plus de trois intervalles devient indisponible, une source jamais notée reste « Inconnue ». `etat.json` publie `Collectes` (`Id`, `Etat`, `Depuis`, `DernierSucces`, `Raison` sans nom de compte, 200 caractères au plus), `ReglesSansCollecte`, `ReglesDegradees` (règle portée seulement par une source partielle, par exemple WMI sans Sysmon) et, depuis la PR 3.3d, `CausesSansCollecte` (pour chaque règle sans collecte, les sources dont l'une au moins manque). L'interface (PR 3.4, classe `Couverture` de `src/Commun.cs`) les lit sans rien écrire. Depuis la phase 4 (PR 4.4a, `sante.rs`), le fil « sante » écrit chaque changement d'état dans le SIEM (`Source` « sante ») et lève les constats SAN-001 (collecte critique indisponible plus de 30 min), SAN-002 (rétablie), SAN-003 (Defender aveugle), SAN-012 (alertes non suivies) et, depuis l'audit du 2026-11-23, SAN-013 (historique du mini-SIEM incomplet), hors du verrou du moniteur. La remontée (PR 4.4b, `notifications.rs`) retente les alertes critiques et les constats non remis (file en mémoire, 100, 24 h), signale une panne de plus d'une heure (SAN-004, local) et envoie un battement quotidien de compteurs. Le fil « sante » repère aussi l'interface dans chaque session active (PR 4.5a, chemin installé exact) et signale son absence (SAN-010) ou ses arrêts répétés (SAN-011), sans rien relancer. La relance passe par une tâche planifiée posée par le MSI (`relance.rs`, PR 4.5b), lancée par Windows sous l'identité de chaque utilisateur connecté. Toutes les sources sont notées depuis la PR 3.3b.
+Collection state (phase 3, `collectes.rs`): each telemetry source records its successful or failed readings in a fixed array of atomics (a repeated success takes no lock); an active source silent for more than three intervals becomes unavailable, a source never recorded stays "Inconnue". `etat.json` publishes `Collectes` (`Id`, `Etat`, `Depuis`, `DernierSucces`, `Raison` without account name, 200 characters at most), `ReglesSansCollecte`, `ReglesDegradees` (a rule carried only by a partial source, for example WMI without Sysmon) and, since PR 3.3d, `CausesSansCollecte` (for each rule without collection, the sources of which at least one is missing). The interface (PR 3.4, class `Couverture` in `src/Commun.cs`) reads them without writing anything. Since phase 4 (PR 4.4a, `sante.rs`), the "sante" thread writes each state change to the SIEM (`Source` "sante") and raises the findings SAN-001 (critical collection unavailable for more than 30 min), SAN-002 (restored), SAN-003 (Defender blind), SAN-012 (alerts not followed up) and, since the audit of 2026-11-23, SAN-013 (mini-SIEM history incomplete), outside the monitor lock. Escalation (PR 4.4b, `notifications.rs`) retries the critical alerts and the undelivered findings (in-memory queue, 100, 24 h), reports an outage of more than one hour (SAN-004, local) and sends a daily heartbeat of counters. The "sante" thread also locates the interface in each active session (PR 4.5a, exact installed path) and reports its absence (SAN-010) or its repeated stops (SAN-011), without restarting anything. The restart goes through a scheduled task set by the MSI (`relance.rs`, PR 4.5b), launched by Windows under the identity of each signed-in user. All sources are recorded since PR 3.3b.
 
-Suivi des incidents (phase 4, `incidents.rs`) : décisions pures (entité, rattachement d'une alerte, transitions, plafond de 500 incidents) ; le moniteur tient le suivi sous son verrou et l'écrit dans `suivi-incidents.json` avec `alertes.json` ; la commande `incident` (administrateurs) change l'état, avec l'auteur lu sur le jeton du client du tube (`natif::identite_client_tube`, passé par `canal.rs`). Chronologie de chaque incident calculée par le fil « chronologies », hors du verrou du moniteur, et écrite dans `chronologies\<id>.json` (PR 4.3). Ordre total des alertes et des événements par `HeureUtc` et `Seq` (PR 4.1) ; actions de réponse écrites dans le SIEM (`Source` « reponse »). Format : `docs/detection/modele-evenement.md`.
+Incident tracking (phase 4, `incidents.rs`): pure decisions (entity, attachment of an alert, transitions, cap of 500 incidents); the monitor keeps the tracking under its lock and writes it to `suivi-incidents.json` together with `alertes.json`; the `incident` command (administrators) changes the state, with the author read from the token of the pipe client (`natif::identite_client_tube`, passed through `canal.rs`). Timeline of each incident computed by the "chronologies" thread, outside the monitor lock, and written to `chronologies\<id>.json` (PR 4.3). Total order of alerts and events by `HeureUtc` and `Seq` (PR 4.1); response actions written to the SIEM (`Source` "reponse"). Format: `docs/detection/modele-evenement.md`.
 
-Mesure du cycle (phase 1, `mesure.rs`) : durée de chaque étape du cycle de 3 s, attente et tenue du verrou du
-moniteur par la surveillance, durée de chaque commande (verrou tenu), étapes des contrôles de 10 minutes et nombre de
-PowerShell lancés par contexte, compteurs nommés (`chaines.alertes_plafonnees` : alertes CHA-001 retenues par le
-plafond de trois par chaîne et par heure, T-1 ; `chaines.alertes_hors_plafond` : alertes levées au-delà parce
-qu'elles apportaient une technique nouvelle ou un signal fort). Écrite dans `mesures.json` toutes les 200 cycles (environ 10 minutes) : cumul depuis le
-démarrage et dernière fenêtre, avec la répartition par classes de durée. Condition préalable à tout découpage de
-`Moniteur` (CLAUDE.md, phase 1) ; aucune décision du service n'en dépend.
+Cycle measurement (phase 1, `mesure.rs`): duration of each step of the 3 s cycle, wait for and hold of the
+monitor lock by the monitoring, duration of each command (lock held), steps of the 10-minute checks and number of
+PowerShell processes started per context, named counters (`chaines.alertes_plafonnees`: CHA-001 alerts held back by the
+cap of three per chain and per hour, T-1; `chaines.alertes_hors_plafond`: alerts raised beyond it because
+they brought a new technique or a strong signal). Written to `mesures.json` every 200 cycles (about 10 minutes): totals since
+start and last window, with the breakdown by duration class. Precondition for any split of
+`Moniteur` (CLAUDE.md, phase 1); no service decision depends on it.
 
-## Dossier de données `C:\ProgramData\deR4Tizer`
+## Data folder `C:\ProgramData\deR4Tizer`
 
-Propriétaire Administrateurs, héritage coupé ; SYSTEM et Administrateurs en contrôle total ; comptes autorisés en
-lecture. Contenu principal :
+Owner Administrators, inheritance cut; SYSTEM and Administrators with full control; authorized accounts with
+read access. Main content:
 
-| Élément | Rôle |
+| Item | Role |
 |---|---|
-| `config.json` | Réglages (API, mise à jour, blocage automatique, IPS…). |
-| `reponses.json` | Registre des actions en cours et de leurs échéances, relances comprises ; historique de la garde contre les boucles : actions automatiques récentes, décisions humaines (`politique.rs`). |
-| `suivi-incidents.json`, `chronologies\` | Cycle de vie des incidents (ouvert, pris en charge, clos) et chronologie de chacun (phase 4). |
-| `mesures.json` | Mesures du cycle de surveillance (`mesure.rs`). |
-| `filtrage-etat.json`, `filtrage-origine.json` | État publié du filtrage par nom de domaine ; réglages DNS d'origine des cartes, pour les rendre (phase 7). |
-| `lecteurs.json` | Comptes autorisés en lecture. |
-| `etat.json`, `alertes.json`, `incidents.json`, `journal.txt` | État publié, alertes, incidents, journal du service (2 Mo, puis `journal.1.txt` à `journal.5.txt`, audit du 2026-11-23, A-8-3). |
-| `siem\` | Événements normalisés, un fichier NDJSON par jour (30 jours, 1 Go au plus, 1 Go / 30 par jour ; le fichier du jour n'est jamais supprimé, audit du 2026-11-23, A-6-3). Secrets des lignes de commande masqués (A-6-1). |
-| `trafic.json`, `dpi.json`, `ids.json`, `reseau.json`, `exposition.json`, `dns.json` | Résultats de l'analyse réseau. |
-| `menaces\`, `menaces.json`, `regles\`, `geoip\` | Listes de menaces, règles IDS, données GeoIP. |
-| `blocages.json`, `panique-active` | Blocages en cours, mode panique. |
-| `quarantaine\`, `quarantaine.json`, `restaurations\` | Copies encodées, manifeste, dossiers de repli. |
-| `ecartes\` | Éléments d'un autre propriétaire mis de côté au démarrage (jamais lus). |
-| `maj\`, `maj.json` | Manifeste téléchargé, journaux d'installation, `echec.txt`, état de la mise à jour. |
-| `secrets\`, `api-jeton.txt`, `notifications.json` | Secrets de remontée et jeton de l'API (droits propres, administrateurs). |
-| `baseline.json`, `baseline-sauvegarde.json`, `sauvegardes\` | Baseline appliquée et valeurs précédentes. |
-| `leurres.json`, `leurres-noms.json`, `demarrage.json`, `executables.json`, `extensions*.json`, `parefeu.json` | État des surveillances. |
+| `config.json` | Settings (API, update, automatic blocking, IPS…). |
+| `reponses.json` | Register of the actions in progress and of their deadlines, reminders included; history of the guard against loops: recent automatic actions, human decisions (`politique.rs`). |
+| `suivi-incidents.json`, `chronologies\` | Incident life cycle (open, taken in charge, closed) and timeline of each one (phase 4). |
+| `mesures.json` | Measurements of the monitoring cycle (`mesure.rs`). |
+| `filtrage-etat.json`, `filtrage-origine.json` | Published state of domain name filtering; original DNS settings of the adapters, to give them back (phase 7). |
+| `lecteurs.json` | Accounts authorized to read. |
+| `etat.json`, `alertes.json`, `incidents.json`, `journal.txt` | Published state, alerts, incidents, service log (2 MB, then `journal.1.txt` to `journal.5.txt`, audit of 2026-11-23, A-8-3). |
+| `siem\` | Normalized events, one NDJSON file per day (30 days, 1 GB at most, 1 GB / 30 per day; the current day's file is never deleted, audit of 2026-11-23, A-6-3). Secrets in command lines masked (A-6-1). |
+| `trafic.json`, `dpi.json`, `ids.json`, `reseau.json`, `exposition.json`, `dns.json` | Results of the network analysis. |
+| `menaces\`, `menaces.json`, `regles\`, `geoip\` | Threat lists, IDS rules, GeoIP data. |
+| `blocages.json`, `panique-active` | Current blocks, panic mode. |
+| `quarantaine\`, `quarantaine.json`, `restaurations\` | Encoded copies, manifest, fallback folders. |
+| `ecartes\` | Items owned by another account set aside at start (never read). |
+| `maj\`, `maj.json` | Downloaded manifest, installation logs, `echec.txt`, update state. |
+| `secrets\`, `api-jeton.txt`, `notifications.json` | Escalation secrets and API token (own rights, administrators). |
+| `baseline.json`, `baseline-sauvegarde.json`, `sauvegardes\` | Applied baseline and previous values. |
+| `leurres.json`, `leurres-noms.json`, `demarrage.json`, `executables.json`, `extensions*.json`, `parefeu.json` | State of the monitors. |
 
-Dossier de travail de la mise à jour : `%ProgramFiles%\deR4Tizer\maj`, réservé à SYSTEM.
+Working folder of the update: `%ProgramFiles%\deR4Tizer\maj`, restricted to SYSTEM.
 
-## Compilation et CI
+## Build and CI
 
-- Tests : `cargo test --release` (chaîne MSVC, en local comme en CI ; jamais de compilation locale GNU).
-- Binaires livrés : chaîne MSVC (`compiler-rs.ps1` en local, job `windows` en CI) ; interface :
-  `compiler.ps1 -InterfaceSeulement` ; paquet : `construire-msi.ps1`.
-- `.github/workflows/ci.yml` : `windows` (tests, compilation, MSI, artefacts), `integration-installation` (3a),
-  `integration-quarantaine` (3b), et `integration-maj` (3c), qui tournent à chaque PR ; aucun n'est une vérification obligatoire sur `main` aujourd'hui (protection non rétablie, action du mainteneur).
-- `.github/workflows/publication.yml` : sur un tag `v*`, compilation sans secret, signature dans l'environnement
-  « publication », manifeste, version GitHub.
+- Tests: `cargo test --release` (MSVC toolchain, locally as in CI; never a local GNU build).
+- Shipped binaries: MSVC toolchain (`compiler-rs.ps1` locally, `windows` job in CI); interface:
+  `compiler.ps1 -InterfaceSeulement`; package: `construire-msi.ps1`.
+- `.github/workflows/ci.yml`: `windows` (tests, build, MSI, artifacts), `integration-installation` (3a),
+  `integration-quarantaine` (3b), and `integration-maj` (3c), which run on every PR; none of them is a required check on `main` today (protection not restored, a maintainer action).
+- `.github/workflows/publication.yml`: on a `v*` tag, build without secrets, signing in the
+  "publication" environment, manifest, GitHub release.
