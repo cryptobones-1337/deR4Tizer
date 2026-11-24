@@ -206,6 +206,30 @@ try {
     $rF = & $lignesP $eF
     $eF.Config.Ips = $false; $rF2 = (& $lignesP $eF)['Ips']
     Cas 'T-18 Protections (D1) : ids.json vieux de 22 min et filtrage-etat.json sans date, non vérifiables ; IPS éteint dans les réglages reste gris' ($rF['Ips'].Visuel -eq 4 -and $rF['Filtrage'].Visuel -eq 4 -and $rF['Ips'].Detail.StartsWith('ids.json ancien') -and $rF2.Visuel -eq 1 -and $rF['MajAuto'].Visuel -eq 0) "$($rF['Ips'].Visuel)/$($rF['Filtrage'].Visuel)/$($rF2.Visuel)"
+    # Maquette t18-2 : tuile « contrôle de mise à jour en échec », à surveiller, avec la date ; jamais retenue si l'état du
+    # service est ancien ou absent (règle D1) ; ouvre Réglages sur la section « Mises à jour »
+    $majEchec = { param([hashtable]$h, $etat) $m = & $neuf 'EtatMaj'; foreach ($k in $h.Keys) { $m.$k = $h[$k] }; $d = ''
+        $r = [object[]]@($m, $etat, $maintP, $d); $ok = $vue.GetMethod('MajEnEchec').Invoke($null, $r); "$ok/$($r[3])" }
+    $etFrais = & $etatP0; $etVieuxM = & $etatP0; $etVieuxM.MisAJour = '2026-11-23 05:42:00'
+    $casM = @(
+        (& $majEchec @{ Controle = 'EchecRecent'; StatutCode = 'ManifesteNonObtenu'; EchecDepuis = '2026-11-23 06:10:02'; VerifieLe = '2026-11-23 10:10:02' } $etFrais),
+        (& $majEchec @{ Controle = 'EchecProlonge'; VerifieLe = '2026-11-23 06:10:02' } $etFrais),
+        (& $majEchec @{ StatutCode = 'InstallationImpossible'; VerifieLe = '2026-11-23 06:10:02' } $etFrais),
+        (& $majEchec @{ StatutCode = 'AJour'; EchecInstallationPrecedente = $true; VerifieLe = '2026-11-23 06:10:02' } $etFrais),
+        (& $majEchec @{ StatutCode = 'AJour'; VerifieLe = '2026-11-23 06:10:02' } $etFrais),
+        (& $majEchec @{ Controle = 'EchecProlonge'; StatutCode = 'ManifesteNonObtenu'; VerifieLe = '2026-11-23 06:10:02' } $etVieuxM),
+        (& $majEchec @{ Controle = 'EchecProlonge'; VerifieLe = '2026-11-23 06:10:02' } $null)) -join '|'
+    Cas 'T-18 maquette t18-2 : contrôle de mise à jour en échec retenu (Controle, StatutCode, installation précédente) avec sa date ; à jour non ; état ancien ou absent jamais' ($casM -eq 'True/2026-11-23 06:10:02|True/2026-11-23 06:10:02|True/2026-11-23 06:10:02|True/2026-11-23 06:10:02|False/|False/|False/') $casM
+    $cMaj = & $champs $comptesT @{ MajEnEchec = $true; MajDepuis = '2026-11-23 06:10:02' }
+    $secMaj = $vue.GetMethod('Sections').Invoke($null, @((& $points @(0)), $null, $cMaj))
+    $tMaj = @($secMaj.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)=$($_.Gravite)=$($_.Section)=$($_.Libelle)" }) -join '|'
+    $iMaj = [array]::IndexOf((& $t 'VueReglagesFluent').GetField('Sections').GetValue($null), 'Mises à jour')
+    Cas 'T-18 maquette t18-2 : tuile « à surveiller » vers Réglages, section « Mises à jour », comptée par la tête, jamais à traiter' ($tMaj -eq "Réglages=!=1=$iMaj=Contrôle de mise à jour en échec depuis le 2026-11-23 06:10:02" -and $iMaj -ge 0 -and $secMaj.TuilesATraiter.Count -eq 0 -and (& $resume ($vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $null, $cMaj)))) -eq "Rien d'avéré, 1 point à surveiller|1") $tMaj
+    $langue.GetField('En').SetValue($null, $true)
+    $libMajEn = @($vue.GetMethod('TuilesComptes').Invoke($null, @($cMaj)))[0].Libelle
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'T-18 maquette t18-2 : libellé anglais de la tuile' ($libMajEn -eq 'Update check failed since 2026-11-23 06:10:02') $libMajEn
+    Cas 'T-18 source : la fenêtre tire la tuile de maj.json et de l''état publiés, par la même décision' ($srcG.Contains('bool majEchec = pc != null && VueEnsembleFluent.MajEnEchec(pc.Maj, pc.Etat, DateTime.Now, out majDepuis);') -and $srcG.Contains('MajEnEchec = majEchec, MajDepuis = majDepuis,'))
     # D4 : suivi-incidents.json illisible, dit (« ? »), jamais 0 en silence
     $cIll = & $champs $comptesT @{ IncidentsIllisibles = $true; IncidentsOuverts = 0 }
     $secIll = $vue.GetMethod('Sections').Invoke($null, @((& $points @(0)), $null, $cIll))
@@ -349,6 +373,17 @@ public class SourceSimulee : RealProxy
     $ouv = $coquille.GetField('ouverte', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fenP)
     Cas 'T-18 rendu : le lien de la réponse au rançongiciel ouvre la page Menaces (l''activation reste sur cette page)' ($ouv -eq 'Menaces') "$ouv"
     $fenP.Close()
+    # Tuile de mise à jour rendue : un clic ouvre Réglages sur la section « Mises à jour »
+    $hM = @{ Points = $faits; Badges = (& $badgesDe @()); Statut = '▸ mis à jour 10:00   ▸ v4.3'; TextePanique = 'Panique'; SanteService = 0; Comptes = (& $champs $comptesT @{ MajEnEchec = $true; MajDepuis = '2026-11-23 06:10:02' }) }
+    $srcM = (New-Object SourceSimulee ((& $t 'ISourceEtat'), $hM)).GetTransparentProxy()
+    $fenM = $coquille.GetConstructor([Type[]]@((& $t 'ISourceEtat'))).Invoke([object[]]@($srcM))
+    $null = $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fenM, @("Vue d'ensemble"))
+    $tuileM = $coquille.GetField('tuilesVue', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fenM)['Réglages']
+    if ($tuileM) { $tuileM.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) }
+    $pageM = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fenM).Content
+    $fsM = if ($pageM) { $pageM.GetType().GetField('section', [Reflection.BindingFlags]'Instance,NonPublic') } else { $null }; $secM = if ($fsM) { $fsM.GetValue($pageM) } else { -1 }
+    Cas 'T-18 rendu : la tuile « contrôle de mise à jour en échec » ouvre Réglages sur « Mises à jour »' ($null -ne $tuileM -and $pageM.GetType().Name -eq 'PageReglagesFluent' -and $secM -eq $iMaj) "$($pageM.GetType().Name) section $secM"
+    $fenM.Close()
     $styleB = $coquille.GetMethod('StyleDefilement', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @())
     $sens = foreach ($o in 'Vertical', 'Horizontal') {
         $sb = New-Object Windows.Controls.Primitives.ScrollBar; $sb.Orientation = $o; $sb.Style = $styleB; $sb.Width = 200; $sb.Height = 200

@@ -285,7 +285,7 @@ namespace DeR4Tizer
         public static List<PointEtat> AvecCompteurs(IList<PointEtat> points, IDictionary<string, PointEtat> badges, ComptesVue comptes)
         {
             var r = new List<PointEtat>(points ?? new List<PointEtat>());
-            foreach (var t in TuilesComptes(comptes)) r.Add(new PointEtat { Texte = t.Libelle + DeuxPoints + t.Valeur, Gravite = t.Gravite });
+            foreach (var t in TuilesComptes(comptes)) r.Add(new PointEtat { Texte = t.Nombre ? t.Libelle + DeuxPoints + t.Valeur : t.Libelle, Gravite = t.Gravite });
             if (badges == null) return r;
             foreach (var g in NavigationFluent.Groupes())
                 foreach (var e in g.Entrees)
@@ -305,7 +305,20 @@ namespace DeR4Tizer
 
         // Une tuile : un compteur de la navigation (« à surveiller »), ou un compte d'alertes ou d'incidents (T-4, « à traiter »
         // s'il est critique), qui ouvre sa page
-        public class TuileVue { public string Cle; public string Icone; public string Valeur; public string Libelle; public bool Nombre; public int Gravite = 1; }
+        public class TuileVue { public string Cle; public string Icone; public string Valeur; public string Libelle; public bool Nombre; public int Gravite = 1; public int Section = -1; }
+
+        // Contrôle de mise à jour en échec (maquette t18-2) : maj.json dit un contrôle en échec (Controle « EchecRecent » ou
+        // « EchecProlonge »), une issue d'échec (StatutCode) ou une installation précédente en échec. Jamais retenu si l'état
+        // du service est ancien ou absent (même règle que le panneau « Protections », prérelecture de #310, D1)
+        public static bool MajEnEchec(EtatMaj m, Etat etat, DateTime maintenant, out string depuis)
+        {
+            depuis = "";
+            if (m == null || etat == null || VueSante.EtatAncien(etat, maintenant)) return false;
+            bool echec = m.EchecInstallationPrecedente || m.Controle == "EchecRecent" || m.Controle == "EchecProlonge" || VueProtectionsFluent.EchecsMaj.Contains(m.StatutCode ?? "");
+            if (!echec) return false;
+            depuis = Canal.Visible(!string.IsNullOrEmpty(m.EchecDepuis) ? m.EchecDepuis : m.VerifieLe ?? "");
+            return true;
+        }
 
         // Pages dont la tuile vient de ComptesVue, jamais du compteur de la navigation (plafonné à « à surveiller »)
         static readonly string[] Comptees = { "Alertes", "Incidents" };
@@ -337,6 +350,11 @@ namespace DeR4Tizer
             if (c.AlertesCritiquesNonLues > 0)
                 l.Add(new TuileVue { Cle = "Alertes", Icone = IconeDe("Alertes"), Valeur = Nombre(c.AlertesCritiquesNonLues), Nombre = true, Gravite = 2,
                     Libelle = string.Format(en ? "Critical alerts not yet read ({0} unread in all)" : "Alertes critiques non lues ({0} non lues en tout)", Nombre(Math.Max(c.AlertesNonLues, c.AlertesCritiquesNonLues))) });
+            // Contrôle de mise à jour en échec (maquette t18-2) : à surveiller, ouvre Réglages, section « Mises à jour »
+            if (c.MajEnEchec)
+                l.Add(new TuileVue { Cle = "Réglages", Icone = IconeDe("Réglages"), Valeur = "!", Nombre = false, Gravite = 1, Section = Array.IndexOf(VueReglagesFluent.Sections, "Mises à jour"),
+                    Libelle = string.IsNullOrEmpty(c.MajDepuis) ? (en ? "Update check failed" : "Contrôle de mise à jour en échec")
+                                                                : string.Format(en ? "Update check failed since {0}" : "Contrôle de mise à jour en échec depuis le {0}", c.MajDepuis) });
             return l;
         }
 
@@ -408,6 +426,9 @@ namespace DeR4Tizer
         public int AlertesNonLues, AlertesCritiquesNonLues, IncidentsOuverts, IncidentsCritiques;
         // suivi-incidents.json présent mais illisible : rien n'est compté, et c'est dit (prérelecture de #310, D4)
         public bool IncidentsIllisibles;
+        // Contrôle de mise à jour en échec et sa date (VueEnsembleFluent.MajEnEchec), maquette t18-2
+        public bool MajEnEchec;
+        public string MajDepuis;
     }
 
     // Une ligne du panneau « Protections » : état publié par le service, traduit ; un lien vers la page de la fonction
@@ -434,7 +455,7 @@ namespace DeR4Tizer
         // Décision du mainteneur du 2026-11-23 : recommandées ; non recommandées : mise à jour automatique, syslog, API
         public static readonly string[] Recommandees = { "Rancongiciel", "BlocageListes", "Baseline", "Remontee" };
         public static readonly string[] Experimentales = { "Ips" };
-        static readonly string[] EchecsMaj = { "AdresseRefusee", "ManifesteNonObtenu", "ManifesteInvalide", "ManifesteAncien", "SansCleEpinglee", "InstallationRefusee", "InstallationImpossible" };
+        internal static readonly string[] EchecsMaj = { "AdresseRefusee", "ManifesteNonObtenu", "ManifesteInvalide", "ManifesteAncien", "SansCleEpinglee", "InstallationRefusee", "InstallationImpossible" };
 
         static string T(string fr, string en) { return L.En ? en : fr; }
 
@@ -915,7 +936,14 @@ namespace DeR4Tizer
             b.Content = c;
             string cle = t.Cle;
             tuilesVue[cle] = b;
-            b.Click += (s, a) => Ouvrir(cle);
+            int sectionT = t.Section;
+            b.Click += (s, a) =>
+            {
+                Ouvrir(cle);
+                // Tuile de mise à jour : la page Réglages ouverte sur sa section « Mises à jour »
+                var pr = zone.Content as PageReglagesFluent;
+                if (sectionT >= 0 && pr != null) pr.Afficher(sectionT);
+            };
             return b;
         }
 
