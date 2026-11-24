@@ -1,82 +1,82 @@
-# Campagne Kali — premier lot « détection réseau » (NDR / IDS dégelés)
+# Kali campaign: first "network detection" lot (NDR / IDS unfrozen)
 
-Date : 2026-11-16. La phase « détection réseau » a été **ouverte par le mainteneur** (dégel du 2026-11-16) :
+Date: 2026-11-16. The "network detection" phase was **opened by the maintainer** (unfreezing of 2026-11-16):
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Les constats du §2 (leurre actif sauté 10 minutes après un échec de `bind`, injection de faux positifs) ne sont pas corrigés au 2026-11-19.
-le NDR local (`ndr.rs`, `EXP-NDR-001`) et l'IDS (`ids.rs`, `EXP-IDS-001`), jusque-là expérimentaux et gelés,
-entrent en validation. Ce premier lot éprouve les détections accessibles **sans privilège root** sur la machine
-attaquante. Lab isolé ; adresses en plages de documentation (RFC 5737) ; noms de test en `.test` (RFC 2606) ;
-résultats bruts hors dépôt. Aucune donnée personnelle, aucun nom de poste, aucun mot de passe.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): These scenarios S-20 to S-27 were executed before being entered in the approved list: added to the list (version 1.5) on 2026-11-19 by decision of the maintainer, approval after the fact (`campagne-kali-phase1.md`, §6). No number of trials is given: measurements not consolidated. The findings of §2 (active decoy skipped for 10 minutes after a `bind` failure, injection of false positives) are not fixed as of 2026-11-19.
+the local NDR (`ndr.rs`, `EXP-NDR-001`) and the IDS (`ids.rs`, `EXP-IDS-001`), until then experimental and frozen,
+enter validation. This first lot tests the detections reachable **without root privilege** on the attacking
+machine. Isolated lab; addresses in documentation ranges (RFC 5737); test names in `.test` (RFC 2606);
+raw results outside the repository. No personal data, no workstation name, no password.
 
-## Contexte topologique (honnête)
+## Topological context (honest)
 
-La VM cible a **deux cartes** ; le service surveille, via `adresse_lan()`/`adresse_locale()`, la carte **qui
-porte une passerelle** (réseau hôte), pas le segment de la machine attaquante. Pour éprouver la détection sur le
-segment de l'attaquant, le harnais **réoriente la cible sur le segment du labo de façon réversible** : il
-désactive les autres cartes, pose une passerelle sur la carte du labo (`netsh`), relance le service, puis
-**restaure l'instantané** en fin d'essai (aucune modification durable de la baseline). Cette topologie **mono-LAN**
-(une carte, une passerelle, attaquant sur le même réseau) est le **cas réaliste d'un poste ordinaire** ; la
-double-carte des instantanés de campagne est un artefact de labo. La machine attaquante n'utilise **aucun droit
-root** : un répondeur LLMNR et un émetteur UDP en espace utilisateur (ports non privilégiés), en Python.
+The target VM has **two adapters**; the service monitors, through `adresse_lan()`/`adresse_locale()`, the adapter **that
+carries a gateway** (host network), not the segment of the attacking machine. To test the detection on the
+attacker's segment, the harness **redirects the target to the lab segment in a reversible way**: it
+disables the other adapters, sets a gateway on the lab adapter (`netsh`), restarts the service, then
+**restores the snapshot** at the end of the trial (no lasting modification of the baseline). This **single-LAN** topology
+(one adapter, one gateway, attacker on the same network) is the **realistic case of an ordinary workstation**; the
+dual adapter of the campaign snapshots is a lab artefact. The attacking machine uses **no root
+right**: an LLMNR responder and a UDP sender in user space (unprivileged ports), in Python.
 
-## 1. Scénarios mesurés
+## 1. Scenarios measured
 
-| Scénario | Config A | Config C | Règle mesurée | Détail |
+| Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-22** — leurre LLMNR actif (empoisonneur de type Responder) | **VP** | **VP** | `EXP-NDR-001` **Critique**, T1557.001 | un répondeur LLMNR **sans root** sur le segment labo répond à la sonde du leurre → « EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant » |
-| **S-24** — signature IDS (règle de test intégrée) | **VP** | **VP** | `EXP-IDS-001`, sid 9000000 | 3 datagrammes UDP porteurs du motif de test capturés → chaîne **capture (`SIO_RCVALL`) → IDS → alerte** |
+| **S-22**: active LLMNR decoy (Responder-type poisoner) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.001 | an LLMNR responder **without root** on the lab segment answers the decoy's probe → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
+| **S-24**: IDS signature (built-in test rule) | **VP** | **VP** | `EXP-IDS-001`, sid 9000000 | 3 UDP datagrams carrying the test pattern captured → chain **capture (`SIO_RCVALL`) → IDS → alert** |
 
-**S-22 (leurre LLMNR).** Au démarrage du service, le NDR émet une question LLMNR pour un **nom aléatoire
-inexistant** ; le répondeur du labo y répond (réponse de 30 octets reçue côté attaquant), ce qui déclenche
-`EXP-NDR-001` **Critique** (`EMPOISONNEMENT LLMNR/NBNS … "srv-26dada1d" (A) / "srv-f5d3a5d6" (C)`, T1557.001).
-Le leurre actif est le **signal le plus sûr** du NDR (aucun faux positif plausible : seul un vrai empoisonneur
-répond au nom inexistant). Le volet **responder passif** (≥ 3 noms distincts en 10 min) n'a pas été exercé (une
-seule sonde) : jambe suivante.
+**S-22 (LLMNR decoy).** At service startup, the NDR sends an LLMNR question for a **random
+non-existent name**; the lab responder answers it (30-byte answer received on the attacker side), which triggers
+`EXP-NDR-001` **Critical** (`EMPOISONNEMENT LLMNR/NBNS … "srv-26dada1d" (A) / "srv-f5d3a5d6" (C)`, T1557.001).
+The active decoy is the **most reliable signal** of the NDR (no plausible false positive: only a real poisoner
+answers for the non-existent name). The **passive responder** part (≥ 3 distinct names in 10 min) was not exercised (a
+single probe): next leg.
 
-**S-24 (IDS).** La machine attaquante envoie trois datagrammes UDP contenant le motif de la **règle de test
-intégrée** (sid 9000000, `deR4Tizer-test-IDS-7f3a`, priorité 3 → Info). deR4Tizer les capture (socket brute
-`SIO_RCVALL`, indépendante de tout pilote) et produit la détection `EXP-IDS-001` (15 règles chargées, 0 ignorée).
-Cela valide **toute la chaîne capture → analyse Aho-Corasick → règle → alerte** sur le segment du labo, **sans
-root ni risque Defender** (charge bénigne).
+**S-24 (IDS).** The attacking machine sends three UDP datagrams containing the pattern of the **built-in test
+rule** (sid 9000000, `deR4Tizer-test-IDS-7f3a`, priority 3 → Info). deR4Tizer captures them (raw socket
+`SIO_RCVALL`, independent of any driver) and produces the `EXP-IDS-001` detection (15 rules loaded, 0 ignored).
+This validates **the whole chain capture → Aho-Corasick analysis → rule → alert** on the lab segment, **without
+root or Defender risk** (benign payload).
 
-## 2. Constats produits (à transmettre au mainteneur)
+## 2. Product findings (to pass on to the maintainer)
 
-1. **Leurre actif désarmé 600 s sur échec de `bind`.** Dans `ndr.rs` `demarrer()`, `leurre_fait` et
-   `dernier_leurre` sont mis à jour **inconditionnellement après** l'appel à `leurre()`, alors que `leurre()`
-   sort tôt si `UdpSocket::bind(locale)` échoue. Donc si l'interface est **transitoirement indisponible** à la
-   première itération du NDR (démarrage lent, sortie de veille, reconnexion VPN, changement de réseau), le leurre
-   est **silencieusement sauté pendant 10 minutes**. *(Découvert en mesurant : le premier essai S-22 a été D/limite
-   pour cette raison ; stabiliser l'interface avant l'armement a donné le VP.)* Candidat correctif : ne passer
-   `leurre_fait = true` que si le leurre a réellement tourné, ou réessayer plus tôt après un échec.
-2. **Injection de faux positifs (revue de code, à mesurer quand le root sera disponible).** Deux détections
-   passives reposent sur une **source usurpable** : le **DHCP pirate** identifie le serveur par l'**option 54
-   contrôlée par l'attaquant** (un paquet forgé peut désigner une IP bénigne ≠ serveur de l'interface → fausse
-   Critique visant un innocent) ; le **responder passif** LLMNR/NBNS/mDNS peut **cadrer une machine victime** par
-   usurpation de source. Le **leurre actif** n'est pas injectable de la sorte. Candidat : corroborer avant de
-   lever une Critique, et porter le niveau fort par le leurre.
+1. **Active decoy disarmed for 600 s on a `bind` failure.** In `ndr.rs` `demarrer()`, `leurre_fait` and
+   `dernier_leurre` are updated **unconditionally after** the call to `leurre()`, whereas `leurre()`
+   returns early if `UdpSocket::bind(locale)` fails. So if the interface is **transiently unavailable** at the
+   first iteration of the NDR (slow startup, resume from sleep, VPN reconnection, network change), the decoy
+   is **silently skipped for 10 minutes**. *(Discovered while measuring: the first S-22 trial was D/limite
+   for this reason; stabilising the interface before arming gave the VP.)* Candidate fix: only set
+   `leurre_fait = true` if the decoy actually ran, or retry earlier after a failure.
+2. **Injection of false positives (code review, to be measured when root is available).** Two passive detections
+   rest on a **spoofable source**: the **rogue DHCP** identifies the server by **option 54,
+   controlled by the attacker** (a forged packet can designate a benign IP ≠ server of the interface → false
+   Critical aimed at an innocent party); the LLMNR/NBNS/mDNS **passive responder** can **frame a victim machine** through
+   source spoofing. The **active decoy** cannot be injected in this way. Candidate: corroborate before
+   raising a Critical, and carry the strong level through the decoy.
 
-## 3. Limites assumées
+## 3. Accepted limits
 
-- **Plafond root.** `arpspoof` (ARP, S-20), `dnsmasq` en mode DHCP (serveur pirate, S-21) et le NBNS réel
-  (port 137) exigent **root** sur la machine attaquante (seuls `systemctl`/`nmcli`/`apt` y sont sans mot de passe,
-  jamais saisi). Ces scénarios **ne sont pas mesurés dans ce lot** : en attente d'une décision d'infrastructure.
-- **Règles IDS directionnelles et signatures de contenu.** Les règles `$EXTERNAL_NET → $HOME_NET` et les
-  signatures de contenu (EICAR…) exigent un **adressage RFC 1918** (le labo est en RFC 5737, donc hors
-  `$HOME_NET`) et une **méthode sans déclencher Defender** ; cadrées pour une jambe suivante. Ce lot valide le
-  moteur via la règle de test `any any`.
-- **Responder passif** (≥ 3 noms) : non exercé (une seule sonde de leurre) ; jambe suivante.
-- **Artefacts d'exposition labo (décision D-1).** En config C (journalisation du pare-feu active), le NBNS du
-  leurre (port 137) lève une Critique « PC EXPOSÉ À INTERNET » parce que `203.0.113.x` est hors RFC 1918 →
-  **artefact d'adressage RFC 5737**, exclu des VP/FP.
-- **Harnais.** Réorientation **réversible** (annulée par l'instantané), mono-LAN délibéré. La capture suit la
-  **route par défaut** (fiable après pose d'une passerelle de métrique 1 sur la carte labo) ; le NDR
-  (`adresse_lan`, choix par énumération des cartes) reste à surveiller.
+- **Root ceiling.** `arpspoof` (ARP, S-20), `dnsmasq` in DHCP mode (rogue server, S-21) and real NBNS
+  (port 137) require **root** on the attacking machine (only `systemctl`/`nmcli`/`apt` run there without a password,
+  never typed). These scenarios **are not measured in this lot**: pending an infrastructure decision.
+- **Directional IDS rules and content signatures.** The `$EXTERNAL_NET → $HOME_NET` rules and the
+  content signatures (EICAR…) require **RFC 1918 addressing** (the lab is in RFC 5737, therefore outside
+  `$HOME_NET`) and a **method that does not trigger Defender**; scoped for a next leg. This lot validates the
+  engine through the `any any` test rule.
+- **Passive responder** (≥ 3 names): not exercised (a single decoy probe); next leg.
+- **Lab exposure artefacts (decision D-1).** In config C (firewall logging active), the decoy's NBNS
+  (port 137) raises a Critical "PC EXPOSÉ À INTERNET" because `203.0.113.x` is outside RFC 1918 →
+  **RFC 5737 addressing artefact**, excluded from the VP/FP.
+- **Harness.** **Reversible** redirection (undone by the snapshot), deliberately single-LAN. The capture follows the
+  **default route** (reliable after setting a metric 1 gateway on the lab adapter); the NDR
+  (`adresse_lan`, choice by enumeration of the adapters) remains to be watched.
 
-## 4. Méthode
+## 4. Method
 
-Instantanés « campagne A » (sans baseline) et « campagne C » (baseline renforcée), 2026-11-14. Réorientation
-réversible, répondeur/émetteur **sans root** (Python, ports non privilégiés), remise à l'instantané **avant et
-après** chaque essai, VM remise en veille à la fin. Defender **jamais** modifié à la main. VM unique ⇒ essais
-**strictement en série**. Décision D-1 (artefacts d'exposition de labo exclus des VP/FP) appliquée. Jamais le mot
-de passe de la machine attaquante (accès par clé SSH). Programmes de test bénins (une chaîne de signature, une
-réponse LLMNR), réversibles, aucune charge hostile, aucune infrastructure réelle contactée.
+Snapshots "campagne A" (without baseline) and "campagne C" (reinforced baseline), 2026-11-14. Reversible
+redirection, responder/sender **without root** (Python, unprivileged ports), reset to the snapshot **before and
+after** each trial, VM put back to sleep at the end. Defender **never** modified by hand. Single VM ⇒ trials
+**strictly in series**. Decision D-1 (lab exposure artefacts excluded from the VP/FP) applied. Never the
+password of the attacking machine (SSH key access). Benign test programs (a signature string, an
+LLMNR answer), reversible, no hostile payload, no real infrastructure contacted.

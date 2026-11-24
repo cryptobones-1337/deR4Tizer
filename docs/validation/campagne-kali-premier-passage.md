@@ -1,117 +1,117 @@
-# Campagne Kali — premier passage
+# Kali campaign: first pass
 
-Date : 2026-11-15. Liste des scénarios : v1.3 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+Date: 2026-11-15. List of scenarios: v1.3 (`campagne-kali-phase1.md`). Raw results outside the repository.
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : (1) Le report de S-06 reposait sur une prémisse fausse (« code du filtrage absent du checkout ») : `campagne-kali-phase1.md`, §5.5, la corrige ; S-06 a été mesuré aux troisième et quatrième lots. (2) Le constat COR-R3 reste ouvert, non corrigé dans le code au 2026-11-19. (3) Hors S-01 en configuration A (10 essais), aucun nombre d'essais n'est donné : mesures non consolidées ; les volets simulés de S-13 sont des SIMULATIONS, non marqués tels.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): (1) The postponement of S-06 rested on a false premise ("filtering code absent from the checkout"): `campagne-kali-phase1.md`, §5.5, corrects it; S-06 was measured in the third and fourth lots. (2) The COR-R3 finding remains open, not fixed in the code as of 2026-11-19. (3) Apart from S-01 in configuration A (10 trials), no number of trials is given: measurements not consolidated; the simulated parts of S-13 are SIMULATIONS, not marked as such.
 
-> **Note du 2026-11-20** : S-19 a été rejoué en v1.6 après la relecture de la baseline (essai 3 : RÉUSSI, profil recommandé à 100 %, D-BAS-01 confirmé corrigé). Ce rapport du 2026-11-15 reste tel quel ; la fiche et la mesure sont dans `campagne-kali-phase1.md`, S-19.
-Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation (RFC 5737),
-non routables.
+> **Note of 2026-11-20**: S-19 was replayed in v1.6 after the review of the baseline (trial 3: "RÉUSSI", recommended profile at 100%, D-BAS-01 confirmed fixed). This report of 2026-11-15 stays as it is; the sheet and the measurement are in `campagne-kali-phase1.md`, S-19.
+No personal data, no workstation name, no password. Lab addresses: documentation ranges (RFC 5737),
+not routable.
 
-**Réserve (latences)** : aucune latence n'est rapportée à ce stade. L'horloge de la VM est ~9 h derrière celle de l'hôte
-dans les résultats bruts ; les latences seront mesurées en phase 4, après normalisation en UTC à partir de l'écart
-d'horloges relevé (précondition 4.3). Les verdicts VP reposent sur la présence règle/niveau/entité, pas sur l'heure.
+**Reservation (latencies)**: no latency is reported at this stage. The VM clock is ~9 h behind the host's
+in the raw results; the latencies will be measured in phase 4, after normalisation to UTC from the recorded clock
+offset (precondition 4.3). The VP verdicts rest on the presence of rule/level/entity, not on the time.
 
-## Chaîne de mesure validée
+## Measurement chain validated
 
-Trois contrôles établissent que la chaîne (comportement → événement Windows → collecte → corrélation → alerte → incident)
-fonctionne, dans les deux configurations, avant toute mesure offensive consolidée.
+Three checks establish that the chain (behaviour → Windows event → collection → correlation → alert → incident)
+works, in both configurations, before any consolidated offensive measurement.
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| N-01 (témoin de chaîne, négatif) | A (sans baseline) | RÉUSSI | Activité légitime : 0 alerte Alerte/Critique, ouverture de session vue, aucune collecte dégradée. |
-| N-01 (témoin de chaîne, négatif) | C (baseline 100 %) | RÉUSSI | Identique sous baseline durcie : pilotage et collecte des preuves opérationnels (UAC bureau sécurisé, règles ASR). |
-| S-19 (contrôle de la configuration C) | C | RÉUSSI | Baseline conforme (journalisation 100, renforcé 100, recommandé 96 = écart D-BAS-01 attendu). Defender : 27 réglages comparés à la référence, **aucun affaibli, aucune exclusion**. Bureau à distance refusé (port 3389 fermé). Protection LSA effective. Pare-feu actif sur les trois profils. 0 alerte en 25 min. Le score recommandé à 96 fait passer D-BAS-01 d'hypothèse de lecture à **constat mesuré** (appuie le correctif prévu en phase 6). |
+| N-01 (chain control, negative) | A (without baseline) | "RÉUSSI" | Legitimate activity: 0 Alert/Critical alerts, logon seen, no degraded collection. |
+| N-01 (chain control, negative) | C (baseline 100%) | "RÉUSSI" | Identical under the hardened baseline: control and collection of the proofs operational (UAC secure desktop, ASR rules). |
+| S-19 (check of configuration C) | C | "RÉUSSI" | Baseline compliant (logging 100, reinforced 100, recommended 96 = expected D-BAS-01 gap). Defender: 27 settings compared with the reference, **none weakened, no exclusion**. Remote Desktop refused (port 3389 closed). LSA protection effective. Firewall active on the three profiles. 0 alerts in 25 min. The recommended score of 96 turns D-BAS-01 from a reading hypothesis into a **measured finding** (supports the fix planned in phase 6). |
 
-## Détection de force brute (COR-R1)
+## Brute force detection (COR-R1)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-01 (force brute RDP, échecs seuls) | A | VP | Série d'échecs d'authentification RDP (mots de passe faux, aucun accès obtenu) → 6× événement 4625 tous de la source → COR-R1 **Alerte** sur l'entité `source:<Kali>` (« 5 échecs d'ouverture de session en 5 minutes ») dans le délai → 1 incident ouvert. Annexes admises : RES-004 (Alerte) et RES-005 (Critique), classées « artefact d'exposition de labo » (adresse du labo, exclue du décompte VP et FP). **Consolidation : 10 essais sur 10 = VP** (0 FN, 0 FP, 0 invalide ; 6× 4625 et 1 COR-R1 par essai) — détection déterministe. |
+| S-01 (RDP brute force, failures only) | A | VP | Series of RDP authentication failures (wrong passwords, no access obtained) → 6× event 4625 all from the source → COR-R1 **Alert** on the entity `source:<Kali>` ("5 échecs d'ouverture de session en 5 minutes") within the delay → 1 incident opened. Accepted side alerts: RES-004 (Alert) and RES-005 (Critical), classified as "lab exposure artefact" (lab address, excluded from the VP and FP counts). **Consolidation: 10 trials out of 10 = VP** (0 FN, 0 FP, 0 invalid; 6× 4625 and 1 COR-R1 per trial): deterministic detection. |
 
-En configuration C, S-01 est **prévenu** (Bureau à distance refusé par la baseline) : la détection COR-R1 se mesure en A
-(S-01) ; en C, COR-R1 **est mesurée** par un vecteur d'ouverture de session non RDP (S-03, SMB), sous réserve que le
-partage SMB soit autorisé — détection confirmée dans ce cas (voir la ligne SMB de la grille).
+In configuration C, S-01 is **prevented** (Remote Desktop refused by the baseline): the COR-R1 detection is measured in A
+(S-01); in C, COR-R1 **is measured** through a non-RDP logon vector (S-03, SMB), provided that
+SMB sharing is allowed: detection confirmed in that case (see the SMB row of the grid).
 
-## Persistance (PER-001)
+## Persistence (PER-001)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-09 (persistance : clé Run + tâche planifiée) | C | VP | Deux entrées de démarrage neuves lancées par un interpréteur → **2 alertes PER-001 (Alerte)**, une par mécanisme ; événement 4698 (création de tâche) produit. Détecté sous la baseline durcie ; aucune règle ASR ne gêne. |
-| S-09 (persistance : clé Run + tâche planifiée) | A | VP | Identique (2 PER-001 Alerte, 4698 produit). Persistance détectée dans les deux configurations. |
+| S-09 (persistence: Run key + scheduled task) | C | VP | Two new startup entries launched by an interpreter → **2 PER-001 alerts (Alert)**, one per mechanism; event 4698 (task creation) produced. Detected under the hardened baseline; no ASR rule gets in the way. |
+| S-09 (persistence: Run key + scheduled task) | A | VP | Identical (2 PER-001 Alert, 4698 produced). Persistence detected in both configurations. |
 
-## Corrélations système (service, compte, journaux, audit)
+## System correlations (service, account, logs, audit)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-13 (service + compte admin + journal effacé + audit modifié) | C | C (3/4 + 1 constat) | **R4** (journal effacé) et **R5** (service depuis un dossier suspect) en **Critique** ; **R7** (protection affaiblie par modification de l'audit) en **Alerte** ; **BAS-001** (dérive de baseline) confirmée. La 4ᵉ corrélation attendue, **R3**, ne se déclenche pas : voir le constat ci-dessous. |
-| S-13 (service + compte admin + journal effacé + audit modifié) | A | C (3/4 + 1 constat) | Identique à C : **R4** et **R5** en **Critique**, **R7** en **Alerte**, **BAS-001** confirmée ; **R3** dégrade en **R3b**. Le constat R3 est donc indépendant de la configuration. |
+| S-13 (service + admin account + cleared log + audit modified) | C | C (3/4 + 1 finding) | **R4** (log cleared) and **R5** (service from a suspicious folder) at **Critical**; **R7** (protection weakened by modification of the audit) at **Alert**; **BAS-001** (baseline drift) confirmed. The 4th expected correlation, **R3**, does not fire: see the finding below. |
+| S-13 (service + admin account + cleared log + audit modified) | A | C (3/4 + 1 finding) | Identical to C: **R4** and **R5** at **Critical**, **R7** at **Alert**, **BAS-001** confirmed; **R3** degrades into **R3b**. The R3 finding is therefore independent of the configuration. |
 
-### Constat produit — corrélation R3 « nouveau compte administrateur »
+### Product finding: correlation R3 "new administrator account"
 
-La corrélation **R3** (« un compte créé il y a moins de 30 min a été ajouté aux Administrateurs », Critique, T1136.001)
-**ne se déclenche jamais par le vecteur standard** ; on obtient à la place **R3b** (« Ajout au groupe Administrateurs »,
-Alerte, T1098), de niveau moindre et sans le lien « compte neuf → promu admin ».
+Correlation **R3** ("un compte créé il y a moins de 30 min a été ajouté aux Administrateurs", Critical, T1136.001)
+**never fires through the standard vector**; instead one gets **R3b** ("Ajout au groupe Administrateurs",
+Alert, T1098), of a lower level and without the link "new account → promoted admin".
 
-Cause (lecture du code `siem.rs` + reproduction) : l'événement Windows d'ajout à un groupe local (4732) journalise le
-membre par **identifiant de sécurité (SID)**, le nom de compte valant « - » ; le moteur rapproche alors le membre par
-**SID**, alors que la table des comptes récemment créés est indexée par **nom** (issu de l'événement 4720). Nom contre
-SID : le rapprochement échoue toujours, quel que soit le mode d'ajout (par nom ou par SID). **Confirmé par événements
-bruts** : le 4720 porte `TargetUserName` et `TargetSid=…-1004` ; le 4732 porte `MemberName=« - »` (vide) et
-`MemberSid=…-1004` — le même SID que le compte créé. La donnée de rapprochement existe donc (SID identique), mais le
-produit relie par nom, indisponible dans le 4732. Cause **prouvée** par les événements bruts ; **correctif proposé**
-(hors de la campagne, à décider par le mainteneur) : conserver le **SID** du compte créé (présent dans le 4720) et
-rapprocher le **MemberSid** du 4732.
+Cause (reading of the `siem.rs` code + reproduction): the Windows event for addition to a local group (4732) logs the
+member by **security identifier (SID)**, the account name being "-"; the engine then matches the member by
+**SID**, whereas the table of recently created accounts is indexed by **name** (taken from event 4720). Name against
+SID: the matching always fails, whatever the addition mode (by name or by SID). **Confirmed by raw
+events**: the 4720 carries `TargetUserName` and `TargetSid=…-1004`; the 4732 carries `MemberName=« - »` (empty) and
+`MemberSid=…-1004`: the same SID as the created account. The matching data therefore exists (identical SID), but the
+product links by name, unavailable in the 4732. Cause **proven** by the raw events; **proposed fix**
+(outside the campaign, to be decided by the maintainer): keep the **SID** of the created account (present in the 4720) and
+match the **MemberSid** of the 4732.
 
-## Grille de couverture (premier passage)
+## Coverage grid (first pass)
 
-| Domaine / technique | Règle attendue | Config A | Config C |
+| Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Activité légitime (témoin) | — | RÉUSSI (0 FP) | RÉUSSI (0 FP) |
-| Contrôle du durcissement | — (S-19) | s/o | RÉUSSI (Defender 0 affaibli ; D-BAS-01 confirmé) |
-| Force brute RDP (T1110.001) | COR-R1 | **VP 10/10** | prévenu (RDP refusé) ; COR-R1 mesuré en C par S-03 |
-| Force brute SMB (T1110.001, T1021.002) | COR-R1 | **VP** (IP source présente dans le 4625) | **prévention** (baseline bloque SMB par défaut) **+ détection VP** si SMB autorisé ; COR-R2/R9 reportés (volet réussite) |
-| Persistance (T1547.001, T1053.005) | PER-001 ×2 | **VP** | **VP** |
-| Service depuis dossier suspect (T1543.003) | COR-R5 | **VP (Critique)** | **VP (Critique)** |
-| Effacement de journal (T1070.001) | COR-R4 | **VP (Critique)** | **VP (Critique)** |
-| Protection affaiblie / audit (T1562.002) | COR-R7 + BAS-001 | **VP (Alerte + BAS-001)** | **VP (Alerte + BAS-001)** |
-| Compte créé puis promu admin (T1136.001) | COR-R3 | **constat : R3 inatteignable, dégrade en R3b** | **constat : R3 inatteignable, dégrade en R3b** |
+| Legitimate activity (control) | · | "RÉUSSI" (0 FP) | "RÉUSSI" (0 FP) |
+| Check of the hardening | · (S-19) | n/a | "RÉUSSI" (Defender 0 weakened; D-BAS-01 confirmed) |
+| RDP brute force (T1110.001) | COR-R1 | **VP 10/10** | prevented (RDP refused); COR-R1 measured in C through S-03 |
+| SMB brute force (T1110.001, T1021.002) | COR-R1 | **VP** (source IP present in the 4625) | **prevention** (baseline blocks SMB by default) **+ VP detection** if SMB allowed; COR-R2/R9 postponed (success part) |
+| Persistence (T1547.001, T1053.005) | PER-001 ×2 | **VP** | **VP** |
+| Service from a suspicious folder (T1543.003) | COR-R5 | **VP (Critical)** | **VP (Critical)** |
+| Log clearing (T1070.001) | COR-R4 | **VP (Critical)** | **VP (Critical)** |
+| Weakened protection / audit (T1562.002) | COR-R7 + BAS-001 | **VP (Alert + BAS-001)** | **VP (Alert + BAS-001)** |
+| Account created then promoted admin (T1136.001) | COR-R3 | **finding: R3 unreachable, degrades into R3b** | **finding: R3 unreachable, degrades into R3b** |
 
-Aucune case n'est notée « 0 » : non évalué ≠ échec.
+No cell is marked "0": not evaluated ≠ failure.
 
-### Scénarios restants et leurs préalables (pour la suite)
+### Remaining scenarios and their prerequisites (for what follows)
 
-- **S-13 en A** : exécuté — identique à C (R4, R5, R7, BAS-001 ; R3 → R3b). Constat R3 indépendant de la configuration.
-- **S-06 (DNS, filtrage phase 7)** : reporté. Le code source du filtrage (collectes `FiltrageDns`/`ConfigDns`, règle
-  DNS-002) n'est pas dans le checkout lu (présent seulement dans le binaire 4.3 installé). À préciser : version de source
-  correspondant au 4.3, commande d'activation du filtrage, format de la liste `.test`.
-- **S-14 (vol d'identifiants, VOL-001)** : préalable à poser — le service pose lui-même la SACL d'audit sur les dossiers
-  d'identifiants de navigateur ; ces dossiers doivent exister dans la VM (profil de navigateur) et la collecte
-  `AuditDonnees` être « Active » (un cycle de lecture 4663 réussi) avant l'essai.
-- **S-07 (listes de menaces, DNS-001/RES-001)** : préalable — collectes `ListesMenaces` et `ListesDomaines` « Active » ;
-  listes synthétiques `.test` posées.
-- **S-04 (canal de commandes)**, **S-02/S-05** (RDP réussite), **S-08/S-10/S-15** : repoussés (cf. analyse de l'agent).
+- **S-13 in A**: executed: identical to C (R4, R5, R7, BAS-001; R3 → R3b). R3 finding independent of the configuration.
+- **S-06 (DNS, phase 7 filtering)**: postponed. The source code of the filtering (collections `FiltrageDns`/`ConfigDns`, rule
+  DNS-002) is not in the checkout read (present only in the installed 4.3 binary). To be specified: source version
+  matching 4.3, filtering activation command, format of the `.test` list.
+- **S-14 (credential theft, VOL-001)**: prerequisite to set up: the service itself sets the audit SACL on the browser
+  credential folders; these folders must exist in the VM (browser profile) and the
+  `AuditDonnees` collection must be "Active" (one successful 4663 reading cycle) before the trial.
+- **S-07 (threat lists, DNS-001/RES-001)**: prerequisite: collections `ListesMenaces` and `ListesDomaines` "Active";
+  synthetic `.test` lists in place.
+- **S-04 (command channel)**, **S-02/S-05** (RDP success), **S-08/S-10/S-15**: postponed (see the agent's analysis).
 
-Préalable de labo commun constaté : les instantanés de campagne n'ouvrent pas le partage de fichiers (SMB-In) ; il a
-fallu l'activer pour S-03. À intégrer aux instantanés pour S-03/S-04.
+Common lab prerequisite observed: the campaign snapshots do not open file sharing (SMB-In); it had
+to be enabled for S-03. To be included in the snapshots for S-03/S-04.
 
-## Points ouverts (à trancher par l'agent purple team, pour la liste v1.4)
+## Open points (to be decided by the purple team agent, for list v1.4)
 
-1. RES-004 / RES-005 (« PC exposé à Internet ») sur l'adresse du labo (décision D-1) : classés « artefact d'exposition
-   de labo » (plage de documentation, non routable) et **exclus du décompte VP comme du décompte FP dans tous les
-   scénarios**, y compris les tests négatifs. Aucun correctif produit : sur un poste réel avec une vraie adresse
-   publique, ces alertes seraient de vrais positifs d'exposition ; les filtrer dégraderait une détection légitime.
-2. Critère de collecte de N-01 (décision D-2) : une collecte à cycle long peut paraître « Indisponible » juste après une
-   restauration d'instantané (dernier succès daté de la prise de l'instantané). Convention retenue : une collecte non
-   exercée par le scénario est écartée du verdict seulement si la cause prouvée est « pas de lecture depuis la
-   restauration » ; en revanche, toute collecte dont dépend une règle du scénario doit être « Active » au départ (sinon
-   essai invalide). Conséquence : S-14 (AuditDonnees) et S-07 (ListesMenaces, ListesDomaines) ne sont mesurables
-   qu'après activation de ces collectes. Question produit consignée comme vérification de phase 5 : sur un poste réel
-   sortant d'une veille longue (> 3 h), une collecte événementielle ou à rafraîchissement périodique passe-t-elle
-   « Indisponible » à tort ?
+1. RES-004 / RES-005 ("PC exposé à Internet") on the lab address (decision D-1): classified as "lab exposure
+   artefact" (documentation range, not routable) and **excluded from the VP count as well as from the FP count in all
+   scenarios**, including the negative tests. No product fix: on a real workstation with a real public
+   address, these alerts would be true exposure positives; filtering them would degrade a legitimate detection.
+2. Collection criterion of N-01 (decision D-2): a long-cycle collection may appear "Indisponible" just after a
+   snapshot restore (last success dated from when the snapshot was taken). Convention adopted: a collection not
+   exercised by the scenario is set aside from the verdict only if the proven cause is "no reading since the
+   restore"; on the other hand, any collection on which a rule of the scenario depends must be "Active" at the start (otherwise
+   invalid trial). Consequence: S-14 (AuditDonnees) and S-07 (ListesMenaces, ListesDomaines) can only be measured
+   after activation of these collections. Product question recorded as a phase 5 check: on a real workstation
+   coming out of a long sleep (> 3 h), does an event-driven or periodically refreshed collection wrongly turn
+   "Indisponible"?
 
-## Méthode (rappel)
+## Method (reminder)
 
-Instantanés de campagne « campagne A » (sans baseline) et « campagne C » (baseline à 100 % appliquée par le service),
-préparés hors campagne, apprentissage terminé. Remise à l'instantané avant chaque essai des scénarios à corrélation.
-Defender jamais modifié à la main (règle 2). S-19 exécuté au début de chaque lot en C.
+Campaign snapshots "campagne A" (without baseline) and "campagne C" (baseline at 100% applied by the service),
+prepared outside the campaign, learning finished. Reset to the snapshot before each trial of the correlation scenarios.
+Defender never modified by hand (rule 2). S-19 executed at the start of each lot in C.
