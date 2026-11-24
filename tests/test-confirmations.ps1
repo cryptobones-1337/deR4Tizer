@@ -193,6 +193,58 @@ try {
     $principal = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs'))
     Verifier-Fenetre 'A-1-2 : l''assistant élevé passe Affaiblit à la fenêtre' { $principal.Contains('Canal.FenetreConfirmation(Canal.TitreConfirmation(c, L.En), texte, L.En, Canal.Affaiblit(c))') }
 
+    # Relecture de #304 : « apprentissage » dit valeur par valeur (texte et titre), jamais « toutes les exceptions » pour
+    # « oublier-perimees », et une valeur inconnue dite inconnue. Supprimer des exceptions n'affaiblit pas (les
+    # comportements sont de nouveau signalés ; celles d'une version précédente ne s'appliquent déjà plus) : pas de bandeau
+    $attendusApp = @(
+        @{ V = 'oublier'; Fr = "SUPPRIMER toutes les exceptions d'alerte, actuelles et d'une version précédente`nLes comportements concernés seront de nouveau signalés par une alerte."
+           En = "DELETE all alert exceptions, current ones and those from a previous version`nThe behaviours concerned will raise alerts again."
+           TFr = "Supprimer toutes les exceptions d'alerte"; TEn = 'Delete all alert exceptions' },
+        @{ V = 'oublier-perimees'; Fr = "SUPPRIMER seulement les exceptions d'alerte d'une version précédente (elles ne s'appliquent plus)`nLes exceptions actuelles sont gardées."
+           En = "DELETE only the alert exceptions from a previous version (they no longer apply)`nCurrent exceptions are kept."
+           TFr = "Supprimer les exceptions d'une version précédente"; TEn = 'Delete exceptions from a previous version' },
+        @{ V = 'tout-effacer'; Fr = "Commande d'apprentissage inconnue : tout-effacer`nCette interface ne sait pas ce qu'elle ferait : annulez."
+           En = "Unknown learning-mode command: tout-effacer`nThis interface does not know what it would do: cancel."
+           TFr = "Commande d'apprentissage inconnue"; TEn = 'Unknown learning-mode command' }
+    )
+    foreach ($en in $false, $true) {
+        $langue.GetField('En').SetValue($null, $en)
+        $lg = if ($en) { 'en' } else { 'fr' }
+        foreach ($a in $attendusApp) {
+            $c = [Activator]::CreateInstance($cmdT); $c.Action = 'apprentissage'; $c.Valeur = $a.V
+            $tx = [string]$canal.GetMethod('Decrire').Invoke($null, @($c)); $ti = [string]$canal.GetMethod('TitreConfirmation').Invoke($null, @($c, $en))
+            $txA = if ($en) { $a.En } else { $a.Fr }; $tiA = if ($en) { $a.TEn } else { $a.TFr }
+            Verifier-Fenetre "Relecture #304 : apprentissage $($a.V) : texte et titre exacts [$lg]" { if ($tx -eq $txA -and $ti -eq $tiA) { $true } else { "$ti | $tx" } }
+            Verifier-Fenetre "Relecture #304 : apprentissage $($a.V) n'affaiblit pas, pas de bandeau [$lg]" { -not $affaiblit.Invoke($null, @($c)) }
+        }
+        $c = [Activator]::CreateInstance($cmdT); $c.Action = 'apprentissage'; $c.Valeur = 'x' + [char]0x202E + "`nLIGNE-INJECTEE"
+        $tx = [string]$canal.GetMethod('Decrire').Invoke($null, @($c))
+        Verifier-Fenetre "Relecture #304 : apprentissage, valeur inconnue piégée neutralisée [$lg]" { -not $tx.Contains([string][char]0x202E) -and -not $tx.Contains("`nLIGNE-INJECTEE") -and $tx.Contains('x??LIGNE-INJECTEE') }
+    }
+
+    # Relecture de #305, A305-1 : mot de passe SMTP présent dans la commande, canal e-mail éteint : dit (jamais sa valeur)
+    foreach ($en in $false, $true) {
+        $langue.GetField('En').SetValue($null, $en)
+        $lg = if ($en) { 'en' } else { 'fr' }
+        $nouveau = if ($en) { 'SMTP password new' } else { 'mot de passe SMTP nouveau' }
+        $efface = if ($en) { 'SMTP password cleared' } else { 'mot de passe SMTP effacé' }
+        $c = [Activator]::CreateInstance($cmdT); $c.Action = 'notifications'
+        $c.Valeur = '{"Config":{"Smtp":false,"SmtpServeur":"smtp.example.org","SmtpPort":465,"NiveauMin":"Critique","MaxParHeure":10},"SmtpMotDePasse":"VALEUR-SECRETE-42"}'
+        $tOff = [string]$canal.GetMethod('Decrire').Invoke($null, @($c))
+        Verifier-Fenetre "A305-1 : canal e-mail éteint, mot de passe présent : « $nouveau » dit, valeur jamais affichée [$lg]" { if ($tOff.Contains($nouveau) -and -not $tOff.Contains('VALEUR-SECRETE')) { $true } else { $tOff } }
+        $c.Valeur = '{"Config":{"Smtp":false},"SmtpMotDePasse":"-"}'
+        $tEff = [string]$canal.GetMethod('Decrire').Invoke($null, @($c))
+        Verifier-Fenetre "A305-1 : canal e-mail éteint, mot de passe effacé : dit [$lg]" { if ($tEff.Contains($efface)) { $true } else { $tEff } }
+        $c.Valeur = '{"Config":{"Smtp":false,"NiveauMin":"Critique","MaxParHeure":10}}'
+        $tSans = [string]$canal.GetMethod('Decrire').Invoke($null, @($c))
+        Verifier-Fenetre "A305-1 : canal e-mail éteint, sans mot de passe : rien sur le mot de passe [$lg]" { if (-not $tSans.Contains('SMTP')) { $true } else { $tSans } }
+        $c.Valeur = '{"Config":{"Smtp":true,"SmtpServeur":"smtp.example.org","SmtpPort":465},"SmtpMotDePasse":"VALEUR-SECRETE-42"}'
+        $tOn = [string]$canal.GetMethod('Decrire').Invoke($null, @($c))
+        $motOn = if ($en) { ', password new)' } else { ', mot de passe nouveau)' }
+        Verifier-Fenetre "A305-1 : canal e-mail actif : mot de passe dit dans sa ligne, une seule fois, valeur jamais affichée [$lg]" { if ($tOn.Contains($motOn) -and -not $tOn.Contains($nouveau) -and -not $tOn.Contains('VALEUR-SECRETE')) { $true } else { $tOn } }
+    }
+    $langue.GetField('En').SetValue($null, $false)
+
     # Audit du 2026-11-23, A-1-1 : fichier de commande jugé sur la chaîne seule, avant tout accès disque. Décision pure :
     # dossier attendu fixé, lecteur C: seul fixe (Z: joue le lecteur mappé)
     $accepte = $canal.GetMethod('CheminDeCommandeAccepte')

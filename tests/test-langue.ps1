@@ -102,6 +102,22 @@ try {
     Cas 'Main : Commun.Dossier posé par DossierDemande seulement, avec le jeton et le type de lecteur réels' ($gSrc.Contains('string dossierDemande = DossierDemande(args, Canal.EstAdmin(), Canal.LecteurFixe);') -and $gSrc.Contains('if (dossierDemande != null) Commun.Dossier = dossierDemande;') -and -not $gSrc.Contains('Commun.Dossier = args['))
     # --dossier refusé : instance ordinaire (mutex commun), jamais une seconde interface parallèle sur le dossier normal
     Cas 'Main : mutex et écoute décidés par le dossier appliqué, plus par la seule présence de « --dossier » (A298-3)' (-not $gSrc.Substring($gSrc.IndexOf('static int Main(string[] args)')).Contains('Array.IndexOf(args, "--dossier")') -and -not ($gSrc -match 'if \(i < 0\) Ecouter') -and -not $gSrc.Contains('Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier")') -and $gSrc.Contains('new Mutex(true, dossierDeTest ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier)'))
+    # Audit de #304, A304-2 : sous jeton administrateur, le repère des premiers réglages n'est jamais consulté (File.Exists
+    # vers un %LOCALAPPDATA% que HKCU peut rediriger sans élévation) : chemin et test d'existence jamais appelés
+    $rv = (& $t 'VueAssistantFluent').GetMethod('RepereVu')
+    if ($rv) {
+        $appels = [Collections.Generic.List[string]]::new()
+        $cheminF = [Func[string]] { $appels.Add('chemin'); 'C:\essai\premiers-reglages.txt' }
+        $existeF = [Func[string, bool]] { param($p) $appels.Add("existe:$p"); $false }
+        $vuAdm = [bool]$rv.Invoke($null, [object[]]@($true, $cheminF, $existeF)); $nAdm = $appels.Count
+        $vuStd = [bool]$rv.Invoke($null, [object[]]@($false, $cheminF, $existeF))
+        Cas 'interface élevée : repère des premiers réglages jamais consulté, ni son chemin ; sans élévation, consulté (A304-2)' ($vuAdm -and $nAdm -eq 0 -and -not $vuStd -and ($appels -join ',') -eq 'chemin,existe:C:\essai\premiers-reglages.txt') "$vuAdm|$nAdm|$vuStd|$($appels -join ',')"
+    } else { Cas 'interface élevée : repère des premiers réglages jamais consulté, ni son chemin ; sans élévation, consulté (A304-2)' $false 'VueAssistantFluent.RepereVu absente' }
+    $flSrc = [IO.File]::ReadAllText((Join-Path $src 'Fluent.cs'))
+    $tousSrc = (Get-ChildItem (Join-Path $src '*.cs') | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+    $consult = 'VueAssistantFluent.RepereVu(Canal.EstAdmin(), VueAssistantFluent.CheminRepere, VueAssistantFluent.RepereExiste)'
+    $nExiste = ([regex]::Matches($tousSrc, 'RepereExiste[(]')).Count; $nConsult = ([regex]::Matches($flSrc, [regex]::Escape($consult))).Count; $nVu = ([regex]::Matches($tousSrc, 'RepereVu[(]')).Count
+    Cas 'interface : le repère n''est consulté que par RepereVu, avec le jeton réel, à l''ouverture et pour la carte de la Vue d''ensemble (A304-2)' ($nExiste -eq 1 -and $nConsult -eq 2 -and $nVu -eq 3) "$nExiste|$nConsult|$nVu"
 
     # ---------------------------------------------------------------- ce que la page Réglages dit
     $langue.GetField('En').SetValue($null, $true)
