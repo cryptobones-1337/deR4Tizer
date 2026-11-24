@@ -256,6 +256,13 @@ impl Arbre {
         self.service.unwrap_or_else(std::process::id)
     }
 
+    /// Tests : PID du service fixé. Sans lui, le service est le processus de test lui-même (`std::process::id()`), dont
+    /// le PID change à chaque lancement et peut tomber sur un PID synthétique d'un scénario
+    #[cfg(test)]
+    pub(crate) fn fixer_pid_service(&mut self, pid: u32) {
+        self.service = Some(pid);
+    }
+
     /// Alertes CHA-001 retenues par le plafond (par chaîne et par heure) depuis le démarrage
     pub fn alertes_plafonnees(&self) -> u64 {
         self.plafonnees
