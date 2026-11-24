@@ -63,6 +63,26 @@ namespace DeR4Tizer
         public List<string> ReglesSansCollecte { get; set; }
         public List<string> ReglesDegradees { get; set; }
         public List<CauseSansCollecte> CausesSansCollecte { get; set; }
+        // États effectifs publiés pour la Vue d'ensemble (T-18, PR #308) : null pour un service plus ancien, lu
+        // « non vérifiable », jamais « actif » (panneau « Protections », VueProtectionsFluent)
+        public EtatReponsesAuto ReponsesAuto { get; set; }
+        public EtatSortie Syslog { get; set; }
+        public EtatSortie Api { get; set; }
+    }
+
+    // Réponses automatiques : codes « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » (T-18) ; vide :
+    // état non publié
+    public class EtatReponsesAuto
+    {
+        public string Rancongiciel { get; set; }
+        public string BlocageListes { get; set; }
+    }
+
+    // Sortie vers un tiers (syslog, API) : réglage et code « Desactive », « Joignable », « EnEchec », « NonVerifiable » (T-18)
+    public class EtatSortie
+    {
+        public bool Actif { get; set; }
+        public string Etat { get; set; }
     }
 
     // État d'une collecte publié par le service (etat.json, phase 3.3)
@@ -534,6 +554,8 @@ namespace DeR4Tizer
         // Résolveur d'amont choisi (PR 7.6) : vide, celui du réseau ; « quad9 » ; RepliTiers : Quad9 injoignable, DNS du réseau
         public string AmontChoisi { get; set; }
         public bool RepliTiers { get; set; }
+        // Code stable de l'état (T-18, filtrage::code_etat) : vide pour un service plus ancien (« non vérifiable »)
+        public string EtatCode { get; set; }
     }
 
     // Textes du filtrage partagés par la page « Navigation » et par Canal.Decrire (assistant élevé, sans WPF) : ici, et
@@ -655,6 +677,8 @@ namespace DeR4Tizer
         public List<string> Programmes { get; set; } public bool Active { get; set; }
     }
     public class TraficPort { public string Port { get; set; } public long Octets { get; set; } }
+    // Raison : « HorsTcpUdp », « SansPort », « SansProprietaire » (ligne « ? ») ou « ProcessusTermine » (lignes « PID n »)
+    public class TraficNonAttribue { public string Raison { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } }
     public class EtatTrafic
     {
         public string MisAJour { get; set; } public string Depuis { get; set; } public string Interface { get; set; }
@@ -662,6 +686,8 @@ namespace DeR4Tizer
         public long Paquets { get; set; } public int PlagesGeoip { get; set; }
         public List<PointTrafic> Serie { get; set; } public List<TraficApplication> Applications { get; set; }
         public List<TraficDestination> Destinations { get; set; } public List<TraficPays> Pays { get; set; } public List<TraficPort> Ports { get; set; }
+        // Octets sans programme nommé, par raison (T-4, PR #308) ; vide pour un service plus ancien
+        public List<TraficNonAttribue> NonAttribue { get; set; }
     }
 
     // ------------------------------------------------------------ réseau local (reseau.json)
@@ -690,7 +716,10 @@ namespace DeR4Tizer
     }
     public class EtatMaj { public string VerifieLe { get; set; } public string VersionInstallee { get; set; } public string VersionDisponible { get; set; } public string Statut { get; set; } public bool CleEpinglee { get; set; }
         // Code du contrôle pour la page Santé (maj.rs, code_controle ; audit du 2026-11-23, A-3-2 et T-12) ; null : service plus ancien
-        public string Controle { get; set; } public string EchecDepuis { get; set; } }
+        public string Controle { get; set; } public string EchecDepuis { get; set; }
+        // T-18 (PR #308) : issue du contrôle en code stable (maj::StatutMaj), installation automatique appliquée, installable,
+        // installation précédente en échec ; vides ou faux pour un service plus ancien
+        public string StatutCode { get; set; } public bool AutoApplique { get; set; } public bool Installable { get; set; } public bool EchecInstallationPrecedente { get; set; } }
     public class ConfigMaj
     {
         public ConfigMaj() { Auto = false; Url = "https://github.com/cryptobones-1337/deR4Tizer/releases/latest/download/manifeste.json"; }

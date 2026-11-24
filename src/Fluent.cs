@@ -145,6 +145,10 @@ namespace DeR4Tizer
         int SanteService();
         // La zone de notification montre la coquille (page demandée, ou celle ouverte si null)
         void Rattacher(Action<string> montrer);
+        // Panneau « Protections » (T-18) : fichiers d'état relus par la fenêtre d'aujourd'hui (lecture seule) ; null : rien
+        EntreesProtections Protections();
+        // Comptes de la Vue d'ensemble (T-4) : alertes critiques non lues, incidents non clos ; null : rien de compté
+        ComptesVue Comptes();
     }
 
     // Ce que la page Alertes de la coquille lit de la fenêtre d'aujourd'hui (U2b) ; les actions passent par les mêmes
@@ -276,16 +280,18 @@ namespace DeR4Tizer
 
         // Faits de l'en-tête, plus les compteurs colorés de la navigation (baseline peu conforme, démarrage à revoir…) :
         // « à surveiller » au plus, ce ne sont pas des menaces avérées ; sans eux, la tête disait « aucun problème » à côté
-        // d'un compteur rouge (capture en VM d'U2)
-        public static List<PointEtat> AvecCompteurs(IList<PointEtat> points, IDictionary<string, PointEtat> badges)
+        // d'un compteur rouge (capture en VM d'U2). Alertes et incidents sont comptés à part (ComptesVue, T-4) : une alerte
+        // critique non lue et un incident critique non clos sont « à traiter », avec le même nombre que leurs tuiles
+        public static List<PointEtat> AvecCompteurs(IList<PointEtat> points, IDictionary<string, PointEtat> badges, ComptesVue comptes)
         {
             var r = new List<PointEtat>(points ?? new List<PointEtat>());
+            foreach (var t in TuilesComptes(comptes)) r.Add(new PointEtat { Texte = t.Libelle + DeuxPoints + t.Valeur, Gravite = t.Gravite });
             if (badges == null) return r;
             foreach (var g in NavigationFluent.Groupes())
                 foreach (var e in g.Entrees)
                 {
                     PointEtat b;
-                    if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
+                    if (!Comptees.Contains(e.Cle) && badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
                     {
                         // « Baseline : 12% » est illisible : phrase claire (le détail reste la page Baseline).
                         string t = e.Cle == "Baseline"
@@ -297,8 +303,39 @@ namespace DeR4Tizer
             return r;
         }
 
-        // Une tuile « à surveiller » : un compteur de la navigation, qui ouvre sa page
-        public class TuileVue { public string Cle; public string Icone; public string Valeur; public string Libelle; public bool Nombre; }
+        // Une tuile : un compteur de la navigation (« à surveiller »), ou un compte d'alertes ou d'incidents (T-4, « à traiter »
+        // s'il est critique), qui ouvre sa page
+        public class TuileVue { public string Cle; public string Icone; public string Valeur; public string Libelle; public bool Nombre; public int Gravite = 1; }
+
+        // Pages dont la tuile vient de ComptesVue, jamais du compteur de la navigation (plafonné à « à surveiller »)
+        static readonly string[] Comptees = { "Alertes", "Incidents" };
+
+        static string IconeDe(string cle)
+        {
+            return NavigationFluent.Groupes().SelectMany(g => g.Entrees).Where(e => e.Cle == cle).Select(e => e.Icone).FirstOrDefault() ?? "";
+        }
+
+        static string Nombre(int n) { return n > 999 ? "999+" : n.ToString(); }
+
+        // Tuiles des comptes (T-4) : incidents critiques non clos (risque confirmé, comme la page Incidents) à traiter, sinon
+        // incidents non clos à surveiller ; alertes critiques non lues à traiter (une alerte non critique non lue reste comme
+        // aujourd'hui hors des tuiles). Le libellé dit aussi le total, pour que le nombre de la tuile ne passe pas pour lui
+        public static List<TuileVue> TuilesComptes(ComptesVue c)
+        {
+            var l = new List<TuileVue>();
+            if (c == null) return l;
+            bool en = L.En;
+            if (c.IncidentsCritiques > 0)
+                l.Add(new TuileVue { Cle = "Incidents", Icone = IconeDe("Incidents"), Valeur = Nombre(c.IncidentsCritiques), Nombre = true, Gravite = 2,
+                    Libelle = string.Format(en ? "Critical incidents open ({0} open in all)" : "Incidents critiques ouverts ({0} ouverts en tout)", Nombre(c.IncidentsOuverts)) });
+            else if (c.IncidentsOuverts > 0)
+                l.Add(new TuileVue { Cle = "Incidents", Icone = IconeDe("Incidents"), Valeur = Nombre(c.IncidentsOuverts), Nombre = true, Gravite = 1,
+                    Libelle = en ? "Incidents open (none critical)" : "Incidents ouverts (aucun critique)" });
+            if (c.AlertesCritiquesNonLues > 0)
+                l.Add(new TuileVue { Cle = "Alertes", Icone = IconeDe("Alertes"), Valeur = Nombre(c.AlertesCritiquesNonLues), Nombre = true, Gravite = 2,
+                    Libelle = string.Format(en ? "Critical alerts not yet read ({0} unread in all)" : "Alertes critiques non lues ({0} non lues en tout)", Nombre(Math.Max(c.AlertesNonLues, c.AlertesCritiquesNonLues))) });
+            return l;
+        }
 
         // Ce que la Vue d'ensemble affiche, rangé : chaque fait de l'en-tête dans la section de sa gravité (aucun n'est
         // perdu), plus les compteurs de la navigation en tuiles. Resume(AvecCompteurs) compte exactement ces éléments : la
@@ -309,19 +346,22 @@ namespace DeR4Tizer
         {
             public List<PointEtat> ATraiter = new List<PointEtat>(), ASurveiller = new List<PointEtat>(), EnOrdre = new List<PointEtat>();
             public List<TuileVue> Tuiles = new List<TuileVue>();
+            // Tuiles « à traiter » (T-4) : incidents critiques non clos, alertes critiques non lues
+            public List<TuileVue> TuilesATraiter = new List<TuileVue>();
         }
 
-        public static SectionsVue Sections(IList<PointEtat> points, IDictionary<string, PointEtat> badges)
+        public static SectionsVue Sections(IList<PointEtat> points, IDictionary<string, PointEtat> badges, ComptesVue comptes)
         {
             var s = new SectionsVue();
             foreach (var p in points ?? new List<PointEtat>())
                 (p.Gravite >= 2 ? s.ATraiter : p.Gravite == 1 ? s.ASurveiller : s.EnOrdre).Add(p);
+            foreach (var t in TuilesComptes(comptes)) (t.Gravite >= 2 ? s.TuilesATraiter : s.Tuiles).Add(t);
             if (badges == null) return s;
             foreach (var g in NavigationFluent.Groupes())
                 foreach (var e in g.Entrees)
                 {
                     PointEtat b;
-                    if (badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
+                    if (!Comptees.Contains(e.Cle) && badges.TryGetValue(e.Cle, out b) && b.Gravite >= 1)
                         s.Tuiles.Add(new TuileVue { Cle = e.Cle, Icone = e.Icone, Valeur = b.Texte ?? "", Libelle = e.Cle == "Baseline" ? L.T("Réglages de sécurité appliqués") : L.T(e.Cle), Nombre = EstNombre(b.Texte) });
                 }
             return s;
@@ -339,6 +379,277 @@ namespace DeR4Tizer
             if (jaunes > 0) { gravite = 1; return string.Format(L.T(jaunes == 1 ? "Rien d'avéré, {0} point à surveiller" : "Rien d'avéré, {0} points à surveiller"), jaunes); }
             gravite = 0;
             return L.T("Aucun problème relevé");
+        }
+    }
+
+    // Ce que lit le panneau « Protections » de la Vue d'ensemble (T-18) : fichiers publiés par le service, relus par la
+    // fenêtre d'aujourd'hui ; null : absent ou illisible. Lecture seule : aucune commande, aucun réglage
+    public class EntreesProtections
+    {
+        public Etat Etat;
+        public Config Config;
+        public bool ConfigIllisible;
+        public EtatMaj Maj;
+        public EtatFiltrage Filtrage;
+        public EtatIds Ids;
+        public EtatBaseline Baseline;
+        public EtatRemontee Remontee;
+        public EtatApprentissage Apprentissage;
+        public DateTime Maintenant;
+    }
+
+    // Comptes de la Vue d'ensemble (T-4) : alertes non lues (comme le compteur de la page Alertes) et incidents non clos
+    // (suivi-incidents.json ; critiques : risque confirmé, comme la page Incidents)
+    public class ComptesVue
+    {
+        public int AlertesNonLues, AlertesCritiquesNonLues, IncidentsOuverts, IncidentsCritiques;
+    }
+
+    // Une ligne du panneau « Protections » : état publié par le service, traduit ; un lien vers la page de la fonction
+    public class LigneProtection
+    {
+        public string Cle;          // identifiant stable de la ligne
+        public string Titre;
+        public string Detail;
+        public string Etat;         // libellé d'état, à droite
+        public int Visuel;          // VueProtectionsFluent.Verifie, Eteint, Attention, Information, NonVerifiable
+        public string Page;         // clé de navigation de la page où la fonction se règle
+        public bool Experimental;
+        public bool Recommande;
+    }
+
+    // Décisions pures du panneau « Protections » (T-18, maquettes validées le 2026-11-23) : l'état effectif publié par le
+    // service, jamais un verdict global ; un champ absent (service plus ancien, fichier absent ou illisible) vaut « non
+    // vérifiable », jamais « actif » ; éteinte, une fonction recommandée est orange, une autre grise ; une fonction
+    // expérimentale n'est jamais recommandée (jamais orange parce qu'éteinte). Aucun bouton d'activation : un lien par ligne
+    // vers la page de la fonction, où la même commande et la même confirmation s'appliquent
+    public static class VueProtectionsFluent
+    {
+        public const int Verifie = 0, Eteint = 1, Attention = 2, Information = 3, NonVerifiable = 4;
+        // Décision du mainteneur du 2026-11-23 : recommandées ; non recommandées : mise à jour automatique, syslog, API
+        public static readonly string[] Recommandees = { "Rancongiciel", "BlocageListes", "Baseline", "Remontee" };
+        public static readonly string[] Experimentales = { "Ips" };
+        static readonly string[] EchecsMaj = { "AdresseRefusee", "ManifesteNonObtenu", "ManifesteInvalide", "ManifesteAncien", "SansCleEpinglee", "InstallationRefusee", "InstallationImpossible" };
+
+        static string T(string fr, string en) { return L.En ? en : fr; }
+
+        public static Color Couleur(int visuel)
+        {
+            return visuel == Verifie ? Jetons.Succes : visuel == Attention ? Jetons.Attention : visuel == Information ? Jetons.Accent : Jetons.TexteSecondaire;
+        }
+
+        // Légende, dans l'ordre des états
+        public static string Legende(int visuel)
+        {
+            switch (visuel)
+            {
+                case Verifie: return T("actif et vérifié", "active and verified");
+                case Eteint: return T("éteint par choix", "off by choice");
+                case Attention: return T("activé sans effet, ou recommandé et éteint", "on without effect, or recommended and off");
+                case Information: return T("information", "information");
+                default: return T("non vérifiable (état non publié)", "not verifiable (state not published)");
+            }
+        }
+
+        public static string Pied()
+        {
+            return T("Chaque fonction s'active depuis sa page, avec la même confirmation. Cette liste montre ce que publie le service, pas un verdict global.",
+                     "Each feature is turned on from its page, with the same confirmation. This list shows what the service reports, not a global verdict.");
+        }
+
+        public static string Lien(string page) { return string.Format(T("Ouvrir {0}", "Open {0}"), L.T(page)); }
+
+        static LigneProtection Nouvelle(string cle, string titre, string page)
+        {
+            return new LigneProtection { Cle = cle, Titre = titre, Page = page, Recommande = Recommandees.Contains(cle) && !Experimentales.Contains(cle), Experimental = Experimentales.Contains(cle) };
+        }
+
+        static LigneProtection Poser(LigneProtection l, int visuel, string etat, string detail)
+        {
+            l.Visuel = visuel; l.Etat = etat; l.Detail = detail ?? "";
+            return l;
+        }
+
+        // Éteinte : orange si recommandée (jamais pour une expérimentale), grise sinon
+        static LigneProtection Eteinte(LigneProtection l, string detail)
+        {
+            return l.Recommande && !l.Experimental
+                ? Poser(l, Attention, T("Recommandé · désactivé", "Recommended · off"), detail)
+                : Poser(l, Eteint, T("Désactivé", "Off"), detail);
+        }
+
+        static string NonPublieTexte() { return T("Le service ne publie pas cet état (version plus ancienne, ou fichier absent ou illisible) : rien n'est conclu.", "The service does not publish this state (older version, or file missing or unreadable): nothing is concluded."); }
+
+        static LigneProtection NonPublie(LigneProtection l, bool reglageActif, string detail)
+        {
+            return Poser(l, NonVerifiable, reglageActif ? T("Activé · non vérifié", "On · not verified") : T("Non vérifiable", "Not verifiable"), detail ?? NonPublieTexte());
+        }
+
+        static string Ancien() { return T("État du service ancien (plus de 2 min) : ce qui suit peut ne plus être vrai ; service à vérifier (page Santé).", "Service state is old (over 2 min): this may no longer be true; check the service (Health page)."); }
+
+        // Réponse automatique, d'après le code publié (politique::etat_rancongiciel, etat_blocage_listes)
+        static LigneProtection Reponse(LigneProtection l, string code, string actif, string partiel, string sansEffet, string eteinte)
+        {
+            switch (code ?? "")
+            {
+                case "Actif": return Poser(l, Verifie, T("Actif", "Active"), actif);
+                case "Desactive": return Eteinte(l, eteinte);
+                case "Partiel": return Poser(l, Attention, T("Actif en partie", "Partly active"), partiel);
+                case "SansEffet": return Poser(l, Attention, T("Activé, sans effet", "On, no effect"), sansEffet);
+                case "NonVerifiable": return NonPublie(l, true, T("Une source n'a pas encore été lue par le service : rien n'est conclu.", "A source has not been read by the service yet: nothing is concluded."));
+                default: return NonPublie(l, false, null);
+            }
+        }
+
+        static string NomCategorie(string libelle)
+        {
+            return libelle == "sécurité" ? VueNavigationFluent.NomCategorie("securite") : libelle == "publicité et pistage" ? VueNavigationFluent.NomCategorie("publicite") : Canal.Visible(libelle);
+        }
+
+        public static List<LigneProtection> Lignes(EntreesProtections e)
+        {
+            e = e ?? new EntreesProtections();
+            var etat = e.Etat;
+            bool ancien = etat != null && VueSante.EtatAncien(etat, e.Maintenant);
+            var c = e.ConfigIllisible ? null : e.Config;
+            var l = new List<LigneProtection>();
+            Func<string, string> v = x => Canal.Visible(x ?? "");
+
+            // Réponses automatiques (etat.json, ReponsesAuto)
+            var ra = etat == null ? null : etat.ReponsesAuto;
+            var ran = Nouvelle("Rancongiciel", T("Réponse automatique au rançongiciel", "Ransomware auto-response"), "Menaces");
+            l.Add(ancien ? NonPublie(ran, false, Ancien()) : Reponse(ran, ra == null ? null : ra.Rancongiciel,
+                T("Suspend un programme qui modifie les fichiers leurres ; leurres surveillés.", "Suspends a program that modifies the decoy files; decoys watched."),
+                T("Leurres ou journal Sécurité lus en partie : un programme qui touche un leurre peut ne pas être vu.", "Decoys or Security log only partly read: a program touching a decoy may go unseen."),
+                T("Leurres non surveillés (collecte indisponible, audit « Système de fichiers » coupé, ou registre des réponses illisible) : rien ne serait suspendu.", "Decoys not watched (collection unavailable, \"File System\" audit off, or responses register unreadable): nothing would be suspended."),
+                T("Un programme qui touche aux fichiers leurres est seulement signalé, pas suspendu.", "A program touching the decoy files is only reported, not suspended.")));
+            var bl = Nouvelle("BlocageListes", T("Blocage automatique par les listes de menaces", "Automatic block from threat lists"), "Menaces");
+            l.Add(ancien ? NonPublie(bl, false, Ancien()) : Reponse(bl, ra == null ? null : ra.BlocageListes,
+                T("Les adresses Spamhaus DROP et Feodo Tracker sont bloquées au pare-feu ; listes chargées.", "Spamhaus DROP and Feodo Tracker addresses are blocked at the firewall; lists loaded."),
+                T("Une partie des listes est chargée : certaines adresses connues ne seraient pas bloquées.", "Only some lists are loaded: some known addresses would not be blocked."),
+                T("Listes non chargées, connexions non vues, protection du dossier de données en échec, ou registre des réponses illisible : rien ne serait bloqué.", "Lists not loaded, connections not seen, data folder protection failing, or responses register unreadable: nothing would be blocked."),
+                T("Les adresses malveillantes connues sont seulement signalées, pas bloquées.", "Known malicious addresses are only reported, not blocked.")));
+
+            // IPS, expérimental (ids.json, sinon le réglage pour le seul « désactivé »)
+            var ips = Nouvelle("Ips", T("Prévention d'intrusion (IPS)", "Intrusion prevention (IPS)"), "Détection");
+            string eteintIps = T("Bloquerait au pare-feu sans confirmation pendant 24 h ; jamais recommandé tant qu'il est expérimental.", "Would block at the firewall without confirmation for 24 h; never recommended while experimental.");
+            if (e.Ids != null)
+            {
+                if (!e.Ids.Ips) l.Add(Eteinte(ips, eteintIps));
+                else if (e.Ids.Regles > 0) l.Add(Poser(ips, Verifie, T("Actif", "Active"), string.Format(T("{0} règle(s) chargée(s), paquets analysés ; bloque au pare-feu pendant 24 h.", "{0} rule(s) loaded, packets analysed; blocks at the firewall for 24 h."), e.Ids.Regles)));
+                else l.Add(Poser(ips, Attention, T("Activé, sans effet", "On, no effect"), T("Aucune règle chargée : rien n'est bloqué.", "No rule loaded: nothing is blocked.")));
+            }
+            else if (c != null && !c.Ips) l.Add(Eteinte(ips, eteintIps));
+            else l.Add(NonPublie(ips, c != null && c.Ips, null));
+
+            // Filtrage par nom de domaine (filtrage-etat.json, EtatCode)
+            var fi = Nouvelle("Filtrage", T("Filtrage par nom de domaine", "Domain filtering"), "Navigation");
+            string code = e.Filtrage == null ? null : e.Filtrage.EtatCode;
+            string suspendu = T("Activé, suspendu", "On, suspended");
+            switch (code ?? "")
+            {
+                case "Actif":
+                    var cats = (e.Filtrage.Categories ?? new List<string>()).Where(x => !string.IsNullOrEmpty(x)).ToList();
+                    l.Add(Poser(fi, Verifie, string.Format(T("Actif · {0} catégorie(s)", "Active · {0} category(ies)"), cats.Count), string.Join(", ", cats.Select(NomCategorie)) + T(" ; noms bloqués par le résolveur local.", "; names blocked by the local resolver.")));
+                    break;
+                case "ActifSansCategorie": l.Add(Poser(fi, Attention, T("Activé, sans effet", "On, no effect"), T("Le résolveur tourne mais aucune catégorie n'est choisie : rien n'est bloqué.", "The resolver runs but no category is selected: nothing is blocked."))); break;
+                case "Inactif": l.Add(Eteinte(fi, T("Aucun nom de domaine n'est filtré.", "No domain name is filtered."))); break;
+                case "RemiseEnAttente": l.Add(Poser(fi, Attention, suspendu, T("Remise des cartes réseau en attente : rien n'est filtré pour l'instant.", "Network card restore pending: nothing is filtered for now."))); break;
+                case "SuspenduResolveur": l.Add(Poser(fi, Attention, suspendu, T("Résolveur local non lancé : rien n'est filtré.", "Local resolver not running: nothing is filtered."))); break;
+                case "SuspenduAmont": l.Add(Poser(fi, Attention, suspendu, T("Résolveur d'amont injoignable : rien n'est filtré.", "Upstream resolver unreachable: nothing is filtered."))); break;
+                case "Contourne": l.Add(Poser(fi, Attention, T("Activé, contourné", "On, bypassed"), VueNavigationFluent.EtatTexte(e.Filtrage.Etat) + T(" : le trafic de cette carte n'est pas filtré.", ": this card's traffic is not filtered."))); break;
+                default: l.Add(NonPublie(fi, false, null)); break;
+            }
+
+            // Baseline (baseline.json) : même seuil que le compteur de la navigation (90 %)
+            var ba = Nouvelle("Baseline", T("Baseline de sécurité", "Security baseline"), "Baseline");
+            if (e.Baseline == null || e.Baseline.Regles == null)
+                l.Add(NonPublie(ba, false, T("Le service n'a pas encore évalué la baseline (toutes les 10 minutes), ou baseline.json est illisible : rien n'est conclu.", "The service has not evaluated the baseline yet (every 10 minutes), or baseline.json is unreadable: nothing is concluded.")));
+            else
+            {
+                int rec = VueBaselineFluent.Score(e.Baseline, "recommandé");
+                var regles = VueBaselineFluent.Regles(e.Baseline, "recommandé");
+                string d = string.Format(T("{0} des {1} réglages Windows recommandés sont appliqués.", "{0} of {1} recommended Windows settings are applied."), regles.Count(x => x.Etat == "conforme"), regles.Count);
+                l.Add(rec >= 90 ? Poser(ba, Verifie, string.Format(T("{0} % appliqués", "{0}% applied"), rec), d)
+                                : Poser(ba, Attention, string.Format(T("Recommandé · {0} % appliqués", "Recommended · {0}% applied"), rec), d));
+            }
+
+            // Remontée des alertes (config.json pour les canaux, notifications.json pour les envois)
+            var re = Nouvelle("Remontee", T("Remontée des alertes", "Alert forwarding"), "Réglages");
+            if (c == null) l.Add(NonPublie(re, false, T("config.json illisible : on ne sait pas qui est prévenu.", "config.json unreadable: who is notified is unknown.")));
+            else
+            {
+                var canaux = VueReglagesFluent.Canaux(c.Notifications);
+                string noms = string.Join(", ", canaux);
+                var r = e.Remontee;
+                if (canaux.Count == 0) l.Add(Eteinte(re, T("Personne n'est prévenu des alertes : aucun canal n'est activé (ntfy, Teams ou e-mail).", "Nobody is notified of alerts: no channel is turned on (ntfy, Teams or e-mail).")));
+                else if (r == null) l.Add(NonPublie(re, true, noms + T(" : notifications.json absent ou illisible, on ne sait pas si un message est parti.", ": notifications.json missing or unreadable, whether a message was sent is unknown.")));
+                else if (!string.IsNullOrEmpty(r.EchecDepuis)) l.Add(Poser(re, Attention, T("Activé, en échec", "On, failing"), string.Format(T("{0} : envois en échec depuis {1} ; {2} alerte(s) en attente.", "{0}: sending fails since {1}; {2} alert(s) waiting."), noms, v(r.EchecDepuis), r.EnAttente)));
+                else if (r.Envoyes == 0) l.Add(NonPublie(re, true, noms + T(" : aucun message envoyé pour l'instant ; envoyez un message de test (Réglages).", ": no message sent yet; send a test message (Settings).")));
+                else l.Add(Poser(re, Verifie, T("Actif", "Active"), string.Format(T("{0} ; dernier message envoyé le {1}.", "{0}; last message sent on {1}."), noms, v(r.DernierEnvoi))));
+            }
+
+            // Mise à jour automatique (config.json pour le réglage, maj.json pour l'issue)
+            var mj = Nouvelle("MajAuto", T("Mises à jour automatiques", "Automatic updates"), "Réglages");
+            var m = e.Maj;
+            bool majEchec = m != null && (m.EchecInstallationPrecedente || EchecsMaj.Contains(m.StatutCode ?? ""));
+            if (c == null || c.Maj == null) l.Add(NonPublie(mj, false, T("config.json illisible : le réglage n'est pas connu.", "config.json unreadable: the setting is unknown.")));
+            else if (!c.Maj.Auto)
+                l.Add(Eteinte(mj, T("Les mises à jour sont contrôlées chaque jour et seulement signalées.", "Updates are checked daily and only reported.") + (majEchec ? T(" Dernier contrôle en échec (page Santé).", " Last check failed (Health page).") : "")));
+            else if (m == null) l.Add(NonPublie(mj, true, T("maj.json absent ou illisible : premier contrôle 10 min après le démarrage du service.", "maj.json missing or unreadable: first check 10 min after the service starts.")));
+            else if (m.EchecInstallationPrecedente) l.Add(Poser(mj, Attention, T("Activé, en échec", "On, failing"), T("L'installation précédente a échoué (paquet modifié ou retour arrière) : voir la page Santé.", "The previous installation failed (modified package or rollback): see the Health page.")));
+            else if (EchecsMaj.Contains(m.StatutCode ?? "")) l.Add(Poser(mj, Attention, T("Activé, en échec", "On, failing"), string.Format(T("Dernier contrôle le {0} en échec ; rien n'est installé.", "Last check on {0} failed; nothing installed."), v(m.VerifieLe))));
+            else if (m.StatutCode == "AJour") l.Add(Poser(mj, Verifie, T("Actif", "Active"), string.Format(T("Dernier contrôle le {0} : à jour.", "Last check on {0}: up to date."), v(m.VerifieLe))));
+            else if (m.StatutCode == "InstallationLancee") l.Add(Poser(mj, Verifie, T("Actif", "Active"), string.Format(T("Installation lancée par le contrôle du {0}.", "Installation started by the check on {0}."), v(m.VerifieLe))));
+            else if (m.StatutCode == "Disponible") l.Add(Poser(mj, Attention, T("Activé, non installée", "On, not installed"), string.Format(T("Version {0} disponible, non installée automatiquement (page Santé).", "Version {0} available, not installed automatically (Health page)."), v(m.VersionDisponible))));
+            else l.Add(NonPublie(mj, true, null));
+
+            // Source de collecte des processus (etat.json)
+            var sp = Nouvelle("SourceProcessus", T("Source de collecte des processus", "Process collection source"), "Santé");
+            string src = etat == null ? null : etat.SourceProcessus;
+            if (ancien) l.Add(NonPublie(sp, false, Ancien()));
+            else if (src == "Sysmon") l.Add(Poser(sp, Verifie, T("Sysmon · actif", "Sysmon · active"), T("Créations de programmes avec ligne de commande et empreintes.", "Program creations with command lines and hashes.")));
+            else if (src == "Audit 4688") l.Add(Poser(sp, Verifie, T("Audit 4688 · actif", "Audit 4688 · active"), T("Créations de programmes lues dans le journal Sécurité (Sysmon non installé).", "Program creations come from the Security log (Sysmon not installed).")));
+            else if (src == "WMI") l.Add(Poser(sp, Information, "WMI", T("Créations de programmes vues par WMI, moins complètes (Sysmon et audit 4688 indisponibles).", "Program creations seen through WMI, less complete (Sysmon and audit 4688 unavailable).")));
+            else if (src == "aucune") l.Add(Poser(sp, Attention, T("Aucune", "None"), T("Aucune création de programme n'est vue : les détections sur les processus ne peuvent pas se déclencher.", "No program creation is seen: process detections cannot fire.")));
+            else l.Add(NonPublie(sp, false, null));
+
+            // Apprentissage (apprentissage.json)
+            var ap = Nouvelle("Apprentissage", T("Apprentissage", "Learning"), "Réglages");
+            var app = e.Apprentissage;
+            int jour, total;
+            if (app == null || string.IsNullOrEmpty(app.Fin)) l.Add(NonPublie(ap, false, T("apprentissage.json absent ou illisible : rien n'est conclu.", "apprentissage.json missing or unreadable: nothing is concluded.")));
+            else if (app.Debut == app.Fin) l.Add(Poser(ap, Information, T("Écarté", "Skipped"), T("Pas d'apprentissage automatique : ce poste avait déjà des alertes à l'installation.", "No automatic learning: this computer already had alerts when deR4Tizer was installed.")));
+            else if (VueReglagesFluent.JourApprentissage(app, e.Maintenant, out jour, out total))
+                l.Add(Poser(ap, Information, string.Format(T("Jour {0} sur {1}", "Day {0} of {1}"), jour, total), string.Format(T("Les alertes non critiques sont notées en information jusqu'au {0}.", "Non-critical alerts are recorded as information until {0}."), v(app.Fin))));
+            else l.Add(Poser(ap, Verifie, T("Terminé", "Finished"), string.Format(T("Depuis le {0} ; {1} comportement(s) appris, {2} exception(s).", "Since {0}; {1} learned behaviour(s), {2} exception(s)."), v(app.Fin), (app.Appris ?? new List<string>()).Count, (app.Exceptions ?? new List<ExceptionApprise>()).Count)));
+
+            // Syslog et API (etat.json, Syslog et Api) ; l'hôte et le port viennent des réglages locaux
+            var sy = Nouvelle("Syslog", T("Export syslog", "Syslog export"), "Réglages");
+            var ss = etat == null ? null : etat.Syslog;
+            bool syReglage = c != null && c.Syslog != null && c.Syslog.Actif;
+            string dest = c != null && c.Syslog != null && !string.IsNullOrEmpty(c.Syslog.Hote) ? v(c.Syslog.Hote) + ":" + c.Syslog.Port : T("le SIEM", "the SIEM");
+            switch (ancien || ss == null ? "" : ss.Etat ?? "")
+            {
+                case "Desactive": l.Add(Eteinte(sy, T("Les alertes ne partent vers aucun SIEM.", "Alerts are not sent to a SIEM."))); break;
+                case "Joignable": l.Add(Poser(sy, Verifie, T("Actif", "Active"), string.Format(T("Alertes envoyées vers {0} en TCP ; dernier envoi accepté par Windows, pas une preuve de réception.", "Alerts go to {0} over TCP; last send accepted by Windows, not a proof of receipt."), dest))); break;
+                case "EnEchec": l.Add(Poser(sy, Attention, T("Activé, en échec", "On, failing"), string.Format(T("Le dernier envoi vers {0} a échoué.", "The last send to {0} failed."), dest))); break;
+                case "NonVerifiable": l.Add(NonPublie(sy, true, string.Format(T("Alertes vers {0} ; aucun envoi encore, ou UDP (jamais confirmé) : rien n'est conclu.", "Alerts go to {0}; nothing sent yet, or UDP (never confirmed): nothing is concluded."), dest))); break;
+                default: l.Add(NonPublie(sy, syReglage, ancien ? Ancien() : syReglage ? string.Format(T("Alertes vers {0} ; le service ne publie pas si l'envoi fonctionne.", "Alerts go to {0}; the service does not publish whether sending works."), dest) : null)); break;
+            }
+            var api = Nouvelle("Api", T("API d'export", "Export API"), "Réglages");
+            var sa = etat == null ? null : etat.Api;
+            bool apiReglage = c != null && c.Api != null && c.Api.Actif;
+            string port = c != null && c.Api != null ? c.Api.Port.ToString() : "?";
+            switch (ancien || sa == null ? "" : sa.Etat ?? "")
+            {
+                case "Desactive": l.Add(Eteinte(api, T("Export HTTP en lecture seule pour un SIEM.", "Read-only HTTP export for a SIEM."))); break;
+                case "Joignable": l.Add(Poser(api, Verifie, T("Port ouvert", "Port open"), string.Format(T("Port {0} ouvert par le service ; l'accès depuis le SIEM n'est pas vérifié.", "Port {0} opened by the service; access from the SIEM is not verified."), port))); break;
+                case "EnEchec": l.Add(Poser(api, Attention, T("Activé, en échec", "On, failing"), T("Jeton, port ou écoute en échec : l'API ne répond pas.", "Token, port or listener failing: the API does not answer."))); break;
+                case "NonVerifiable": l.Add(NonPublie(api, true, T("Ouverture de l'écoute en cours.", "Listener opening in progress."))); break;
+                default: l.Add(NonPublie(api, apiReglage, ancien ? Ancien() : apiReglage ? string.Format(T("Port {0} ; le service ne publie pas s'il écoute.", "Port {0}; the service does not publish whether it listens."), port) : null)); break;
+            }
+            return l;
         }
     }
 
@@ -550,11 +861,13 @@ namespace DeR4Tizer
         }
 
         // Tuile de compteur (Vue d'ensemble) : barre orange à gauche (un compteur est « à surveiller » au plus, comme dans
-        // Resume), icône et valeur, libellé ; bouton focalisable qui ouvre la page du compteur (relecture de la refonte,
-        // défaut 6). Un mot (« LIVE ») garde la taille du texte, seul un chiffre est mis en grand
+        // Resume), rouge pour un compte « à traiter » (T-4 : incidents critiques, alertes critiques non lues), icône et
+        // valeur, libellé ; bouton focalisable qui ouvre la page du compteur (relecture de la refonte, défaut 6). Un mot
+        // (« LIVE ») garde la taille du texte, seul un chiffre est mis en grand
         Button Tuile(VueEnsembleFluent.TuileVue t)
         {
-            var b = new Button { Template = ModeleSimple(), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Carte), BorderBrush = Jetons.Pinceau(Jetons.Attention), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 12, 12), Width = 190, HorizontalContentAlignment = HorizontalAlignment.Stretch, Foreground = Jetons.Pinceau(Jetons.Texte) };
+            var teinte = t.Gravite >= 2 ? Jetons.Danger : Jetons.Attention;
+            var b = new Button { Template = ModeleSimple(), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Carte), BorderBrush = Jetons.Pinceau(teinte), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 12, 12), Width = 190, HorizontalContentAlignment = HorizontalAlignment.Stretch, Foreground = Jetons.Pinceau(Jetons.Texte) };
             b.FocusVisualStyle = Jetons.StyleFocus();
             string valeur = Canal.Visible(t.Nombre ? t.Valeur : VueEnsembleFluent.Phrase(t.Valeur));
             System.Windows.Automation.AutomationProperties.SetName(b, t.Libelle + VueEnsembleFluent.DeuxPoints + valeur);
@@ -563,7 +876,7 @@ namespace DeR4Tizer
             var haut = new DockPanel();
             if (!string.IsNullOrEmpty(t.Icone))
             {
-                var ic = new TextBlock { Text = t.Icone, FontFamily = Jetons.Icones, FontSize = 16, Foreground = Jetons.Pinceau(Jetons.Attention), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+                var ic = new TextBlock { Text = t.Icone, FontFamily = Jetons.Icones, FontSize = 16, Foreground = Jetons.Pinceau(teinte), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
                 DockPanel.SetDock(ic, Dock.Left);
                 haut.Children.Add(ic);
             }
@@ -768,8 +1081,10 @@ namespace DeR4Tizer
         UIElement VueEnsemble()
         {
             var pile = new StackPanel { MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Left };
-            var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
-            var sections = source == null ? new VueEnsembleFluent.SectionsVue() : VueEnsembleFluent.Sections(source.Points(), source.Badges());
+            // Comptes des alertes et des incidents (T-4) : dans la phrase de tête et dans les tuiles, le même nombre
+            var comptes = source == null ? null : source.Comptes();
+            var points = source == null ? new List<PointEtat>() : VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges(), comptes);
+            var sections = source == null ? new VueEnsembleFluent.SectionsVue() : VueEnsembleFluent.Sections(source.Points(), source.Badges(), comptes);
             tuilesVue.Clear();
             int gravite;
             string resume = VueEnsembleFluent.Resume(points, out gravite);
@@ -803,7 +1118,16 @@ namespace DeR4Tizer
                 carte.Child = contenu;
                 pile.Children.Add(carte);
             };
-            section("À traiter", sections.ATraiter, Jetons.Danger);
+            // « À traiter » : les faits rouges de l'en-tête, puis les comptes critiques en tuiles (T-4 : incidents critiques non
+            // clos, alertes critiques non lues), comptés par la phrase de tête
+            if (sections.ATraiter.Count > 0 || sections.TuilesATraiter.Count > 0)
+            {
+                pile.Children.Add(new TextBlock { Text = L.T("À traiter"), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Danger), Margin = new Thickness(0, 0, 0, 10) });
+                section(null, sections.ATraiter, Jetons.Danger);
+                var wrapR = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+                foreach (var tv in sections.TuilesATraiter) wrapR.Children.Add(Tuile(tv));
+                if (wrapR.Children.Count > 0) pile.Children.Add(wrapR);
+            }
             // « À surveiller » : les faits orange de l'en-tête en liste (jamais perdus, défaut 1), puis les compteurs de la
             // navigation en tuiles cliquables
             if (sections.ASurveiller.Count > 0 || sections.Tuiles.Count > 0)
@@ -814,6 +1138,10 @@ namespace DeR4Tizer
                 foreach (var tv in sections.Tuiles) wrap.Children.Add(Tuile(tv));
                 if (wrap.Children.Count > 0) pile.Children.Add(wrap);
             }
+            // Panneau « Protections » (T-18) : état effectif publié par le service, un lien par ligne ; pas compté dans la
+            // phrase de tête, aucun bouton d'activation
+            var protections = source == null ? null : source.Protections();
+            if (protections != null) pile.Children.Add(PanneauProtections(VueProtectionsFluent.Lignes(protections)));
             // « En ordre » : un seul conteneur, lignes séparées, libellé à gauche et état à droite (séparé sur « : ») ; puce
             // verte pour un fait sain seulement, grise pour une information (défaut 3)
             var enOrdre = sections.EnOrdre;
@@ -857,6 +1185,78 @@ namespace DeR4Tizer
             }
 
             return new ScrollViewer { Content = pile, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        }
+
+        // Puce d'état du panneau « Protections » : pleine (vérifié, attention, information), anneau (éteint par choix),
+        // anneau pointillé (non vérifiable) ; la forme distingue les états aussi en contraste élevé, où les couleurs se confondent
+        internal static System.Windows.Shapes.Ellipse PuceProtection(int visuel)
+        {
+            var c = Jetons.Pinceau(VueProtectionsFluent.Couleur(visuel));
+            var e = new System.Windows.Shapes.Ellipse { Width = 9, Height = 9, VerticalAlignment = VerticalAlignment.Center };
+            if (visuel == VueProtectionsFluent.Eteint) { e.Stroke = c; e.StrokeThickness = 1.5; }
+            else if (visuel == VueProtectionsFluent.NonVerifiable) { e.Stroke = c; e.StrokeThickness = 1.5; e.StrokeDashArray = new DoubleCollection { 1, 1.2 }; }
+            else e.Fill = c;
+            return e;
+        }
+
+        // Panneau « Protections » (T-18) : légende, une ligne par fonction (titre, détail, état à droite, lien vers sa page),
+        // phrase de pied. Les liens ouvrent la page de la fonction et rien d'autre : l'activation reste sur cette page
+        UIElement PanneauProtections(List<LigneProtection> lignes)
+        {
+            bool en = L.En;
+            var bloc = new StackPanel { Margin = new Thickness(0, 8, 0, 12) };
+            bloc.Children.Add(new TextBlock { Text = "Protections", FontSize = 13, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+            var legende = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+            foreach (int x in new[] { VueProtectionsFluent.Verifie, VueProtectionsFluent.Eteint, VueProtectionsFluent.Attention, VueProtectionsFluent.Information, VueProtectionsFluent.NonVerifiable })
+            {
+                var item = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 2) };
+                var p = PuceProtection(x); p.Width = p.Height = 8; p.Margin = new Thickness(0, 0, 6, 0);
+                item.Children.Add(p);
+                item.Children.Add(new TextBlock { Text = VueProtectionsFluent.Legende(x), FontSize = 11.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+                legende.Children.Add(item);
+            }
+            bloc.Children.Add(legende);
+            var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 4, 6, 10) };
+            var col = new StackPanel();
+            for (int i = 0; i < lignes.Count; i++)
+            {
+                var lp = lignes[i];
+                if (i > 0) col.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(16, 0, 16, 0) });
+                var dock = new DockPanel { Margin = new Thickness(16, 11, 16, 11) };
+                var puce = PuceProtection(lp.Visuel);
+                puce.Margin = new Thickness(0, 5, 14, 0); puce.VerticalAlignment = VerticalAlignment.Top;
+                DockPanel.SetDock(puce, Dock.Left);
+                dock.Children.Add(puce);
+                var droite = new StackPanel { Margin = new Thickness(16, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Right };
+                droite.Children.Add(new TextBlock { Text = lp.Etat, Foreground = Jetons.Pinceau(VueProtectionsFluent.Couleur(lp.Visuel)), HorizontalAlignment = HorizontalAlignment.Right });
+                string page = lp.Page;
+                var lien = new Button { Template = ModeleSimple(), Cursor = Cursors.Hand, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0, 3, 0, 0), HorizontalAlignment = HorizontalAlignment.Right, Foreground = Jetons.Pinceau(Jetons.Accent), Tag = page };
+                lien.FocusVisualStyle = Jetons.StyleFocus();
+                lien.Content = new TextBlock { Text = VueProtectionsFluent.Lien(page) + "  \u203A", FontSize = 12.5 };
+                System.Windows.Automation.AutomationProperties.SetName(lien, VueProtectionsFluent.Lien(page) + VueEnsembleFluent.DeuxPoints + lp.Titre);
+                lien.Click += (s, a) => Ouvrir(page);
+                droite.Children.Add(lien);
+                DockPanel.SetDock(droite, Dock.Right);
+                dock.Children.Add(droite);
+                var gauche = new StackPanel();
+                var titre = new WrapPanel();
+                titre.Children.Add(new TextBlock { Text = lp.Titre, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+                if (lp.Experimental)
+                {
+                    var etiquette = new Border { BorderBrush = Jetons.Pinceau(Jetons.TexteSecondaire), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(10, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                    etiquette.Child = new TextBlock { Text = en ? "Experimental" : "Expérimental", FontSize = 11, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) };
+                    titre.Children.Add(etiquette);
+                }
+                gauche.Children.Add(titre);
+                if (!string.IsNullOrEmpty(lp.Detail))
+                    gauche.Children.Add(new TextBlock { Text = lp.Detail, FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) });
+                dock.Children.Add(gauche);
+                col.Children.Add(dock);
+            }
+            col.Children.Add(new TextBlock { Text = VueProtectionsFluent.Pied(), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 6, 16, 0) });
+            carte.Child = col;
+            bloc.Children.Add(carte);
+            return bloc;
         }
 
         // Barre de défilement sombre : fine, pouce arrondi teinté, pas de boutons fléchés (chrome de Windows retiré)
@@ -2298,8 +2698,13 @@ namespace DeR4Tizer
             string lecture = VueReseauFluent.Lecture(lu, illisible, flux != null && flux.Count > 0);
             if (lecture != null && (!lu || flux == null || flux.Count == 0)) return lecture;
             var l = flux ?? new List<FluxInfo>();
-            int suspectes = l.Count(f => f.Score >= 1 || Gravite(f) == 2), menaces = l.Count(f => Gravite(f) == 2);
+            // Même seuil que l'onglet « Suspectes » et la pastille (gravité >= 1 : score au seuil d'alerte ou menace connue) ;
+            // un score de 1 sous le seuil est compté à part, jamais dit suspect (T-4 : le sous-titre comptait score >= 1)
+            int suspectes = l.Count(f => Gravite(f) >= 1), menaces = l.Count(f => Gravite(f) == 2);
+            int faibles = l.Count(f => Gravite(f) == 0 && f.Score >= 1);
             string texte = string.Format(en ? "{0} live outbound connection(s), {1} suspicious, {2} to a known threat." : "{0} connexion(s) sortante(s) en direct, dont {1} suspecte(s) et {2} vers une menace connue.", l.Count, suspectes, menaces);
+            if (faibles > 0)
+                texte += " " + string.Format(en ? "{0} with a low score (1 to {1}), not counted as suspicious." : "{0} avec un score faible (1 à {1}), non comptée(s) comme suspecte(s).", faibles, Commun.SeuilAlerte - 1);
             if (!string.IsNullOrEmpty(misAJour)) texte += " " + (en ? "State of " : "État du ") + Canal.Visible(misAJour) + ".";
             if (panne != null) texte += "\n" + (en ? "Incomplete list: " : "Liste incomplète : ") + panne;
             return lecture != null ? lecture + "\n" + texte : texte;
@@ -2666,7 +3071,57 @@ namespace DeR4Tizer
             return s;
         }
 
-        static string Programmes(List<string> l) { return string.Join(", ", (l ?? new List<string>()).Select(Canal.Visible)); }
+        static string Programmes(List<string> l) { return string.Join(", ", (l ?? new List<string>()).Select(NomProgramme)); }
+
+        // « ? » : nom posé par le service pour un trafic sans programme nommé (T-4) ; affiché « Programme non identifié »,
+        // avec les raisons publiées (trafic.json, NonAttribue). Tout autre nom est neutralisé tel quel
+        public const string SansProgramme = "?";
+        public static string NomProgramme(string nom) { return nom == SansProgramme ? (L.En ? "Unidentified program" : "Programme non identifié") : Canal.Visible(nom); }
+
+        // Raisons de la ligne « ? » (capture::attribuer) ; « ProcessusTermine » est la somme des lignes « PID n », pas de cette
+        // ligne. « Connexion fermée avant la relecture » et « aucun programme du poste » (machine virtuelle, partage de
+        // connexion) ne se distinguent pas sans collecte nouvelle : un seul libellé (PR #308)
+        public static readonly string[] RaisonsSansProgramme = { "SansProprietaire", "HorsTcpUdp", "SansPort" };
+
+        public static string LibelleRaison(string r)
+        {
+            bool en = L.En;
+            switch (r)
+            {
+                case "SansProprietaire": return en ? "Port owned by no program" : "Port sans programme";
+                case "HorsTcpUdp": return en ? "Not TCP or UDP" : "Ni TCP ni UDP";
+                case "SansPort": return en ? "No local port" : "Sans port local";
+                default: return Canal.Visible(r);
+            }
+        }
+
+        public static string ExplicationRaison(string r)
+        {
+            bool en = L.En;
+            switch (r)
+            {
+                case "SansProprietaire": return en ? "Connection closed before the port tables were read again, virtual machine or Windows Sandbox, connection sharing, unsolicited incoming packet (scans included) or a reply from Windows itself: these cases cannot be told apart."
+                                                   : "Connexion fermée avant la relecture des tables de ports, machine virtuelle ou Windows Sandbox, partage de connexion, paquet entrant non sollicité (balayage compris) ou réponse de Windows lui-même : ces cas ne se distinguent pas.";
+                case "HorsTcpUdp": return en ? "ICMP, IPsec (VPN) and other protocols have no port." : "ICMP, IPsec (VPN) et les autres protocoles n'ont pas de port.";
+                case "SansPort": return en ? "IP fragment other than the first, truncated header, or port 0." : "Fragment IP qui n'est pas le premier, en-tête tronqué, ou port 0.";
+                default: return "";
+            }
+        }
+
+        // Détail de la ligne « Programme non identifié » : ce que c'est, puis chaque raison publiée avec son volume, la plus
+        // grosse d'abord ; service plus ancien (NonAttribue absent) : dit non publié, rien n'est conclu
+        public static List<LigneDetail> DetailSansProgramme(EtatTrafic t)
+        {
+            bool en = L.En;
+            var l = new List<LigneDetail> { new LigneDetail { Titre = en ? "What it is" : "Ce que c'est", Texte = en ? "Packets whose local port belonged to no program when they were seen." : "Paquets dont le port local n'appartenait à aucun programme au moment où ils ont été vus." } };
+            var raisons = (t == null || t.NonAttribue == null ? new List<TraficNonAttribue>() : t.NonAttribue)
+                .Where(x => x != null && RaisonsSansProgramme.Contains(x.Raison) && x.Entrant + x.Sortant > 0).OrderByDescending(x => x.Entrant + x.Sortant).ToList();
+            if (raisons.Count == 0)
+                l.Add(new LigneDetail { Titre = en ? "Reasons" : "Raisons", Texte = en ? "Breakdown by reason not published by this service (older version): nothing is concluded." : "Détail par raison non publié par ce service (version plus ancienne) : rien n'est conclu." });
+            foreach (var x in raisons)
+                l.Add(new LigneDetail { Titre = LibelleRaison(x.Raison) + " · " + Format.Octets(x.Entrant + x.Sortant), Texte = ExplicationRaison(x.Raison) });
+            return l;
+        }
 
         public static string NomPays(string code) { return Canal.Visible(PaysCarte.NomDe(code)) + " (" + Canal.Visible(code) + ")"; }
 
@@ -2691,9 +3146,10 @@ namespace DeR4Tizer
                 foreach (var a in (t.Applications ?? new List<TraficApplication>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Nom ?? "", StringComparer.OrdinalIgnoreCase))
                     l.Add(new LigneEtatFluent
                     {
-                        Titre = Canal.Visible(a.Nom), Etiquette = Format.Octets(a.Entrant + a.Sortant),
+                        Titre = NomProgramme(a.Nom), Etiquette = Format.Octets(a.Entrant + a.Sortant),
                         Sous = "↓ " + Format.Octets(a.Entrant) + "  ↑ " + Format.Octets(a.Sortant) + "  ·  " + a.Destinations + " destination(s)",
                         Detail = new List<LigneDetail> { d(en ? "Received" : "Reçu", Format.Octets(a.Entrant)), d(en ? "Sent" : "Envoyé", Format.Octets(a.Sortant)), d("Destinations", a.Destinations.ToString()) }
+                            .Concat(a.Nom == SansProgramme ? DetailSansProgramme(t) : new List<LigneDetail>()).ToList()
                     });
             else if (vue == 1)
                 foreach (var p in (t.Pays ?? new List<TraficPays>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Code ?? "", StringComparer.Ordinal))
@@ -2702,7 +3158,7 @@ namespace DeR4Tizer
                         Titre = NomPays(p.Code), Etiquette = Format.Octets(p.Entrant + p.Sortant),
                         Sous = p.Destinations + " destination(s)  ·  " + Programmes(p.Programmes) + (p.Active ? maintenant : ""),
                         Detail = new List<LigneDetail> { d(en ? "Received" : "Reçu", Format.Octets(p.Entrant)), d(en ? "Sent" : "Envoyé", Format.Octets(p.Sortant)), d("Destinations", p.Destinations.ToString()),
-                                                         d(en ? "Programs" : "Programmes", string.Join("\n", (p.Programmes ?? new List<string>()).Select(Canal.Visible))) }
+                                                         d(en ? "Programs" : "Programmes", string.Join("\n", (p.Programmes ?? new List<string>()).Select(NomProgramme))) }
                     });
             else
                 foreach (var x in (t.Destinations ?? new List<TraficDestination>()).Where(x => x != null).OrderByDescending(x => x.Entrant + x.Sortant).ThenBy(x => x.Ip ?? "", StringComparer.Ordinal))
@@ -2710,14 +3166,14 @@ namespace DeR4Tizer
                     var det = new List<LigneDetail> { new LigneDetail { Titre = en ? "IP address" : "Adresse IP", Texte = Canal.Visible(x.Ip), Chasse = true } };
                     if (!string.IsNullOrEmpty(x.Nom)) det.Add(new LigneDetail { Titre = en ? "Name" : "Nom", Texte = Canal.Visible(x.Nom), Chasse = true });
                     det.Add(d(en ? "Country" : "Pays", NomPays(x.Pays)));
-                    det.Add(d(en ? "Program" : "Programme", Canal.Visible(x.Programme)));
+                    det.Add(d(en ? "Program" : "Programme", NomProgramme(x.Programme)));
                     det.Add(d("Port", x.Port.ToString()));
                     det.Add(d(en ? "Received" : "Reçu", Format.Octets(x.Entrant)));
                     det.Add(d(en ? "Sent" : "Envoyé", Format.Octets(x.Sortant)));
                     l.Add(new LigneEtatFluent
                     {
                         Titre = Canal.Visible(string.IsNullOrEmpty(x.Nom) ? x.Ip : x.Nom + " (" + x.Ip + ")"), Etiquette = Format.Octets(x.Entrant + x.Sortant),
-                        Sous = Canal.Visible(x.Pays) + "  ·  " + Canal.Visible(x.Programme) + "  ·  port " + x.Port + (x.Active ? maintenant : ""), Detail = det
+                        Sous = Canal.Visible(x.Pays) + "  ·  " + NomProgramme(x.Programme) + "  ·  port " + x.Port + (x.Active ? maintenant : ""), Detail = det
                     });
                 }
             foreach (var x in l) foreach (var y in x.Detail) if (string.IsNullOrEmpty(y.Texte)) y.Texte = "—";
@@ -5677,7 +6133,7 @@ namespace DeR4Tizer
                     if (source != null)
                     {
                         int g;
-                        var points = VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges());
+                        var points = VueEnsembleFluent.AvecCompteurs(source.Points(), source.Badges(), source.Comptes());
                         contenu.Children.Add(Texte(VueEnsembleFluent.Resume(points, out g)));
                         foreach (var p in points.Where(x => x.Gravite > 0)) contenu.Children.Add(Texte("· " + p.Texte));
                     }

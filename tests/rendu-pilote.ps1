@@ -81,7 +81,7 @@ try {
     foreach ($b in @(@('Baseline', '12%', 2), @('Démarrage auto', '2', 1), @('Alertes', '1', 0))) {
         $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Texte').SetValue($p, $b[1]); $pointT.GetField('Gravite').SetValue($p, [int]$b[2]); $badges.Add($b[0], $p)
     }
-    $avec = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badges))
+    $avec = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badges, $null))
     $lu = @($avec | ForEach-Object { "$($pointT.GetField('Texte').GetValue($_))=$($pointT.GetField('Gravite').GetValue($_))" }) -join '|'
     Cas "Vue d'ensemble : compteurs colorés de la navigation à surveiller, jamais à traiter" ($lu -eq 't=0|Réglages de sécurité recommandés : 12% appliqués=1|Démarrage auto : 2=1') $lu
     Cas "Vue d'ensemble : avec un compteur rouge, la tête n'est plus « aucun problème »" ((& $resume $avec) -eq "Rien d'avéré, 2 points à surveiller|1") (& $resume $avec)
@@ -89,6 +89,98 @@ try {
     $deux = $vue.GetProperty('DeuxPoints').GetValue($null)
     $langue.GetField('En').SetValue($null, $false)
     Cas "Vue d'ensemble : deux-points sans espace avant en anglais, avec en français" ($deux -eq ': ' -and $vue.GetProperty('DeuxPoints').GetValue($null) -eq ' : ')
+
+    # T-4 : alertes critiques non lues et incidents critiques non clos comptés « à traiter », avec le même nombre que leurs
+    # tuiles ; le compteur de la navigation, plafonné à « à surveiller », ne compte plus pour eux (cause 2 de la PR #308)
+    $champs = { param($type, [hashtable]$h) $x = [Activator]::CreateInstance($type); foreach ($k in $h.Keys) { $type.GetField($k).SetValue($x, $h[$k]) }; $x }
+    $comptesT = & $t 'ComptesVue'
+    $badgesDe = { param($l) $d = [Activator]::CreateInstance([Collections.Generic.Dictionary``2].MakeGenericType([string], $pointT))
+        foreach ($b in $l) { $p = [Activator]::CreateInstance($pointT); $pointT.GetField('Texte').SetValue($p, $b[1]); $pointT.GetField('Gravite').SetValue($p, [int]$b[2]); $d.Add($b[0], $p) }; , $d }
+    $badgesT4 = & $badgesDe @(@('Alertes', '11', 2), @('Incidents', '14', 2), @('Chaînes', '2', 1))
+    $c1 = & $champs $comptesT @{ AlertesNonLues = 11; AlertesCritiquesNonLues = 4; IncidentsOuverts = 14; IncidentsCritiques = 11 }
+    $avecT4 = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badgesT4, $c1))
+    $secT4 = $vue.GetMethod('Sections').Invoke($null, @((& $points @(0)), $badgesT4, $c1))
+    $rougesT4 = @($secT4.TuilesATraiter | ForEach-Object { "$($_.Cle)=$($_.Valeur)" }) -join '|'
+    $orangesT4 = @($secT4.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)" }) -join '|'
+    Cas "T-4 Vue d'ensemble : alertes critiques non lues et incidents critiques « à traiter », phrase de tête comptée comme les tuiles" ((& $resume $avecT4) -eq '2 points à traiter|2' -and $rougesT4 -eq 'Incidents=11|Alertes=4' -and $orangesT4 -eq 'Chaînes=2') "« $(& $resume $avecT4) » ; rouges $rougesT4 ; orange $orangesT4"
+    $libT4 = @($secT4.TuilesATraiter | ForEach-Object { $_.Libelle }) -join '|'
+    Cas "T-4 Vue d'ensemble : libellés des tuiles avec le total (14 ouverts, 11 non lues)" ($libT4 -eq 'Incidents critiques ouverts (14 ouverts en tout)|Alertes critiques non lues (11 non lues en tout)') $libT4
+    $c2 = & $champs $comptesT @{ AlertesNonLues = 3; AlertesCritiquesNonLues = 0; IncidentsOuverts = 2; IncidentsCritiques = 0 }
+    $badgesT4b = & $badgesDe @(@('Alertes', '3', 0), @('Incidents', '2', 1))
+    $avec2 = $vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $badgesT4b, $c2))
+    $sec2 = $vue.GetMethod('Sections').Invoke($null, @((& $points @(0)), $badgesT4b, $c2))
+    $o2 = @($sec2.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)=$($_.Libelle)" }) -join '|'
+    Cas "T-4 Vue d'ensemble : incidents non critiques à surveiller, une seule tuile (pas de doublon avec le compteur de la navigation)" ((& $resume $avec2) -eq "Rien d'avéré, 1 point à surveiller|1" -and $o2 -eq 'Incidents=2=Incidents ouverts (aucun critique)' -and $sec2.TuilesATraiter.Count -eq 0) "« $(& $resume $avec2) » ; $o2"
+    $langue.GetField('En').SetValue($null, $true)
+    $libEn = @(($vue.GetMethod('TuilesComptes').Invoke($null, @($c1))) | ForEach-Object { $_.Libelle }) -join '|'
+    $langue.GetField('En').SetValue($null, $false)
+    Cas "T-4 Vue d'ensemble : libellés anglais des tuiles" ($libEn -eq 'Critical incidents open (14 open in all)|Critical alerts not yet read (11 unread in all)') $libEn
+
+    # T-18 : panneau « Protections », décisions pures. États publiés par le service (PR #308) ; champ absent : « non
+    # vérifiable », jamais « actif » ; recommandée éteinte : orange ; autre éteinte : grise ; expérimentale jamais recommandée
+    $vp = & $t 'VueProtectionsFluent'
+    $neuf = { param($n) [Activator]::CreateInstance((& $t $n)) }
+    $maintP = [datetime]'2026-11-23 10:42:10'
+    $lignesP = { param($e) if ($e.Maintenant -eq [datetime]::MinValue) { $e.Maintenant = $maintP }; $r = [ordered]@{}; foreach ($l in @($vp.GetMethod('Lignes').Invoke($null, @($e)))) { $r[$l.Cle] = $l }; $r }
+    $etatP0 = { $x = & $neuf 'Etat'; $x.MisAJour = '2026-11-23 10:42:05'; $x.SourceProcessus = 'Audit 4688'; $x }
+    $entreesP = { param($etat, $cfg) $e = & $neuf 'EntreesProtections'; $e.Etat = $etat; $e.Config = $cfg; $e }
+    $sortieP = { param($actif, $code) $x = & $neuf 'EtatSortie'; $x.Actif = $actif; $x.Etat = $code; $x }
+    $ancienP = & $lignesP (& $entreesP (& $etatP0) (& $neuf 'Config'))
+    $visA = @($ancienP.Values | ForEach-Object { "$($_.Cle)=$($_.Visuel)" }) -join '|'
+    Cas 'T-18 Protections : service plus ancien (champs absents), non vérifiable, jamais « actif » ; 11 lignes' ($ancienP.Count -eq 11 -and $ancienP['Rancongiciel'].Visuel -eq 4 -and $ancienP['BlocageListes'].Visuel -eq 4 -and $ancienP['Syslog'].Visuel -eq 4 -and $ancienP['Api'].Visuel -eq 4 -and $ancienP['Filtrage'].Visuel -eq 4 -and $ancienP['Baseline'].Visuel -eq 4 -and $ancienP['Apprentissage'].Visuel -eq 4 -and @($ancienP.Values | Where-Object { $_.Visuel -eq 0 -and $_.Cle -ne 'SourceProcessus' }).Count -eq 0) $visA
+    $codesR = foreach ($code in 'Actif', 'Desactive', 'Partiel', 'SansEffet', 'NonVerifiable', 'Inconnu', '') {
+        $et = & $etatP0; $ra = & $neuf 'EtatReponsesAuto'; $ra.Rancongiciel = $code; $ra.BlocageListes = $code; $et.ReponsesAuto = $ra
+        $r = & $lignesP (& $entreesP $et (& $neuf 'Config')); "$code=$($r['Rancongiciel'].Visuel)/$($r['BlocageListes'].Visuel)"
+        if ($code -eq 'Desactive') { $etiqDes = $r['Rancongiciel'].Etat } }
+    Cas 'T-18 Protections : réponses automatiques, code publié vers la couleur (actif vert ; éteinte recommandée, partielle, sans effet orange ; non vérifiable ou inconnu pointillé)' (($codesR -join '|') -eq 'Actif=0/0|Desactive=2/2|Partiel=2/2|SansEffet=2/2|NonVerifiable=4/4|Inconnu=4/4|=4/4' -and $etiqDes -eq 'Recommandé · désactivé') "$($codesR -join '|') ; « $etiqDes »"
+    $casIps = foreach ($c in @(@($false, 0, 'ids'), @($false, 0, 'config'), @($true, 0, 'ids'), @($true, 12, 'ids'), @($true, 0, 'config'))) {
+        $cfg = & $neuf 'Config'; $cfg.Ips = $c[0]; $e = & $entreesP (& $etatP0) $cfg
+        if ($c[2] -eq 'ids') { $i = & $neuf 'EtatIds'; $i.Ips = $c[0]; $i.Regles = $c[1]; $e.Ids = $i }
+        $l = (& $lignesP $e)['Ips']; "$($l.Visuel)/$($l.Recommande)/$($l.Experimental)/$($l.Etat -like '*ecommand*')" }
+    Cas 'T-18 Protections : IPS expérimental jamais recommandé, éteint gris (jamais orange), actif avec règles vert, sans règle orange, non lu pointillé' (($casIps -join '|') -eq '1/False/True/False|1/False/True/False|2/False/True/False|0/False/True/False|4/False/True/False') ($casIps -join '|')
+    $et = & $etatP0; $et.Syslog = & $sortieP $false 'Desactive'; $et.Api = & $sortieP $false 'Desactive'
+    $blP = & $neuf 'EtatBaseline'; $regT = & $t 'EtatRegle'; $lr = New-Object "Collections.Generic.List[$($regT.FullName)]"
+    for ($i = 0; $i -lt 25; $i++) { $rg = [Activator]::CreateInstance($regT); $rg.Profil = 'recommandé'; $rg.Etat = $(if ($i -lt 3) { 'conforme' } else { 'non conforme' }); $lr.Add($rg) }
+    $blP.Regles = $lr; $scP = New-Object 'Collections.Generic.Dictionary[string,int]'; $scP['recommandé'] = 12; $blP.Scores = $scP
+    $e = & $entreesP $et (& $neuf 'Config'); $e.Baseline = $blP
+    $rE = & $lignesP $e
+    $vE = @('Syslog', 'Api', 'MajAuto', 'Remontee', 'Baseline' | ForEach-Object { "$_=$($rE[$_].Visuel)=$($rE[$_].Etat)" }) -join '|'
+    Cas 'T-18 Protections : éteintes, non recommandées grises (syslog, API, mise à jour automatique), recommandées orange (remontée, baseline à 12 %)' ($vE -eq 'Syslog=1=Désactivé|Api=1=Désactivé|MajAuto=1=Désactivé|Remontee=2=Recommandé · désactivé|Baseline=2=Recommandé · 12 % appliqués' -and $rE['Baseline'].Detail -eq '3 des 25 réglages Windows recommandés sont appliqués.') "$vE ; $($rE['Baseline'].Detail)"
+    $scP['recommandé'] = 92
+    Cas 'T-18 Protections : baseline à 92 %, vert (même seuil de 90 % que le compteur de la navigation)' ((& $lignesP $e)['Baseline'].Visuel -eq 0)
+    $et = & $etatP0; $et.Api = & $sortieP $true 'Joignable'; $et.Syslog = & $sortieP $true 'EnEchec'
+    $cfg = & $neuf 'Config'; $cfg.Maj.Auto = $true; $e = & $entreesP $et $cfg; $m = & $neuf 'EtatMaj'; $m.StatutCode = 'ManifesteNonObtenu'; $e.Maj = $m
+    $r1 = & $lignesP $e
+    $m.StatutCode = ''; $r2 = (& $lignesP $e)['MajAuto']
+    $m.StatutCode = 'AJour'; $r3 = (& $lignesP $e)['MajAuto']
+    $m.EchecInstallationPrecedente = $true; $r4 = (& $lignesP $e)['MajAuto']
+    Cas 'T-18 Protections : API « port ouvert » vert, syslog en échec orange ; mise à jour auto en échec orange, code vide pointillé, à jour vert, installation précédente en échec orange' ($r1['Api'].Visuel -eq 0 -and $r1['Api'].Etat -eq 'Port ouvert' -and $r1['Syslog'].Visuel -eq 2 -and $r1['MajAuto'].Visuel -eq 2 -and $r2.Visuel -eq 4 -and $r3.Visuel -eq 0 -and $r4.Visuel -eq 2) "$($r1['Api'].Etat) / $($r1['Syslog'].Visuel) / $($r1['MajAuto'].Visuel) $($r2.Visuel) $($r3.Visuel) $($r4.Visuel)"
+    $casF = foreach ($code in 'Actif', 'ActifSansCategorie', 'Inactif', 'Contourne', 'SuspenduAmont', '') {
+        $f = & $neuf 'EtatFiltrage'; $f.EtatCode = $code; $f.Etat = 'contourné sur la carte Wi-Fi'; $cats = New-Object 'Collections.Generic.List[string]'; $cats.Add('sécurité'); $cats.Add('publicité et pistage'); $f.Categories = $cats
+        $e = & $entreesP (& $etatP0) (& $neuf 'Config'); $e.Filtrage = $f; $l = (& $lignesP $e)['Filtrage']; "$code=$($l.Visuel)" }
+    Cas 'T-18 Protections : filtrage, actif vert, sans catégorie ou contourné ou suspendu orange, inactif gris (non recommandé), code absent pointillé' (($casF -join '|') -eq 'Actif=0|ActifSansCategorie=2|Inactif=1|Contourne=2|SuspenduAmont=2|=4') ($casF -join '|')
+    $et = & $etatP0; $et.MisAJour = '2026-11-23 09:00:00'; $ra = & $neuf 'EtatReponsesAuto'; $ra.Rancongiciel = 'Actif'; $ra.BlocageListes = 'Actif'; $et.ReponsesAuto = $ra; $et.Api = & $sortieP $true 'Joignable'
+    $rA = & $lignesP (& $entreesP $et (& $neuf 'Config'))
+    Cas 'T-18 Protections : état du service ancien, les lignes tirées d''etat.json deviennent non vérifiables (jamais « actif »)' ($rA['Rancongiciel'].Visuel -eq 4 -and $rA['BlocageListes'].Visuel -eq 4 -and $rA['SourceProcessus'].Visuel -eq 4 -and $rA['Api'].Visuel -eq 4)
+    $apP = & $neuf 'EtatApprentissage'; $apP.Debut = '2026-11-21 09:14:00'; $apP.Fin = '2026-11-28 09:14:00'
+    $e = & $entreesP (& $etatP0) (& $neuf 'Config'); $e.Apprentissage = $apP; $lA = (& $lignesP $e)['Apprentissage']
+    Cas 'T-18 Protections : apprentissage en cours en information (bleu), jour 3 sur 7' ($lA.Visuel -eq 3 -and $lA.Etat -eq 'Jour 3 sur 7') "$($lA.Visuel) $($lA.Etat)"
+    $coulP = @(0..4 | ForEach-Object { $vp.GetMethod('Couleur').Invoke($null, @([int]$_)) })
+    $jet = { param($n) $jetons.GetField($n).GetValue($null) }
+    Cas 'T-18 Protections : couleurs des états (vert, gris, orange, bleu information, gris pointillé)' ($coulP[0] -eq (& $jet 'Succes') -and $coulP[1] -eq (& $jet 'TexteSecondaire') -and $coulP[2] -eq (& $jet 'Attention') -and $coulP[3] -eq (& $jet 'Accent') -and $coulP[4] -eq (& $jet 'TexteSecondaire'))
+    $kMin = ($coulP | ForEach-Object { $jetons.GetMethod('Contraste').Invoke($null, [object[]]@([Windows.Media.Color]$_, [Windows.Media.Color](& $jet 'Carte'))) } | Measure-Object -Minimum).Minimum
+    Cas "T-18 Protections : libellés d'état lisibles sur la carte ($([math]::Round($kMin, 2)):1, 4,5 au moins)" ($kMin -ge 4.5)
+    $langue.GetField('En').SetValue($null, $true)
+    $et = & $etatP0; $et.Api = & $sortieP $true 'Joignable'; $ra = & $neuf 'EtatReponsesAuto'; $ra.Rancongiciel = 'Desactive'; $ra.BlocageListes = 'SansEffet'; $et.ReponsesAuto = $ra
+    $rEn = & $lignesP (& $entreesP $et (& $neuf 'Config'))
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'T-18 Protections : libellés anglais (port open, recommended · off, on, no effect)' ($rEn['Api'].Etat -eq 'Port open' -and $rEn['Rancongiciel'].Etat -eq 'Recommended · off' -and $rEn['BlocageListes'].Etat -eq 'On, no effect' -and $rEn['Rancongiciel'].Titre -eq 'Ransomware auto-response') "$($rEn['Api'].Etat) / $($rEn['Rancongiciel'].Etat) / $($rEn['BlocageListes'].Etat)"
+    $srcF = [IO.File]::ReadAllText("$src\Fluent.cs") -replace "`r`n", "`n"
+    $classeP = $srcF.Substring($srcF.IndexOf('public static class VueProtectionsFluent'), $srcF.IndexOf('// Coquille du pilote') - $srcF.IndexOf('public static class VueProtectionsFluent'))
+    $panneauP = $srcF.Substring($srcF.IndexOf('UIElement PanneauProtections('), $srcF.IndexOf('static Style StyleDefilement()') - $srcF.IndexOf('UIElement PanneauProtections('))
+    Cas 'T-18 Protections : aucune commande ni réglage dans le panneau (pas de « tout activer »), un seul geste : ouvrir la page de la fonction' (-not (($classeP + $panneauP) -cmatch 'ActionsProtection|ActionsReglages|Commande|Envoyer|ChangerIps|DemanderPanique') -and ([regex]::Matches($panneauP, '\.Click \+=')).Count -eq 1 -and $panneauP.Contains('lien.Click += (s, a) => Ouvrir(page);'))
+    $srcG = [IO.File]::ReadAllText("$src\Gui.cs")
+    Cas 'T-4 source : comptes de la fenêtre comme les pages (alertes non lues : même liste et même dernière lecture ; incidents critiques : risque confirmé ; compteur Incidents)' ($srcG.Contains('AlertesCritiquesNonLues = a.Count(x => x != null && x.Niveau == "Critique" && VueAlertesFluent.NonLue(x, derniereLue))') -and $srcG.Contains('incidentsCritiques = incidents.Count(i => i != null && VueIncidents.RisqueConfirme(i));') -and $srcG.Contains('incidentsOuverts = incidents.Count(i => i != null && i.Etat != "Clos");') -and $srcG.Contains('navIncidents = Lien(liens, "Incidents", pageIncidents, largeurNav);') -and $srcG.Contains('public EntreesProtections Protections() { return protectionsCourantes; }'))
 
     # Relecture de la refonte (défauts 1 à 3) : la coquille rendue avec une source simulée (mandataire de l'interface
     # ISourceEtat, aucun service) ; ce que l'écran affirme est lu dans l'arbre des contrôles
@@ -159,7 +251,7 @@ public class SourceSimulee : RealProxy
     $tb = & $textesDe $zoneV
     $orange = @($tb | Where-Object { $_.Text -eq 'Defender (falsification off)' })
     Cas "Vue d'ensemble : un fait orange de l'en-tête est affiché sous « À surveiller » (défaut 1)" ($orange.Count -eq 1 -and @($tb | Where-Object { $_.Text -eq 'À surveiller' }).Count -eq 1) "$($orange.Count) affiché(s)"
-    $sections = $vue.GetMethod('Sections').Invoke($null, @($faits, $badges))
+    $sections = $vue.GetMethod('Sections').Invoke($null, @($faits, $badges, $null))
     # Compté dans l'arbre rendu : tuiles (boutons du WrapPanel) + faits orange affichés, comparés à la phrase de tête affichée
     $noeuds = New-Object Collections.Generic.List[object]; $pileN = New-Object Collections.Stack; $pileN.Push($zoneV)
     while ($pileN.Count) { $n = $pileN.Pop(); $noeuds.Add($n); if ($n -is [Windows.DependencyObject]) { foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pileN.Push($e) } } }
@@ -198,6 +290,34 @@ public class SourceSimulee : RealProxy
     Cas "Bouton Panique : phrase S134-01 en infobulle et en aide du lecteur d'écran (défaut 7)" ($bp.ToolTip -eq $phraseP -and [Windows.Automation.AutomationProperties]::GetHelpText($bp) -eq $phraseP) "$($bp.ToolTip)"
     Cas "Pied du rail : texte dans un DockPanel, retour à la ligne (défaut 5)" ($piedT.GetValue($fen).Parent -is [Windows.Controls.DockPanel] -and $piedT.GetValue($fen).TextWrapping -eq 'Wrap')
     $fen.Close()
+    # T-18 et T-4 rendus : coquille avec comptes et panneau « Protections » (source simulée, données fictives)
+    $eR = & $entreesP (& $etatP0) (& $neuf 'Config')
+    $raR = & $neuf 'EtatReponsesAuto'; $raR.Rancongiciel = 'Actif'; $raR.BlocageListes = 'Actif'; $eR.Etat.ReponsesAuto = $raR; $eR.Etat.Syslog = & $sortieP $true 'NonVerifiable'; $eR.Etat.Api = & $sortieP $false 'Desactive'
+    $hP = @{ Points = $faits; Badges = $badgesT4; Statut = '▸ mis à jour 10:00   ▸ v4.3'; TextePanique = 'Panique'; SanteService = 0; Protections = $eR; Comptes = $c1 }
+    $srcP = (New-Object SourceSimulee ((& $t 'ISourceEtat'), $hP)).GetTransparentProxy()
+    $fenP = $coquille.GetConstructor([Type[]]@((& $t 'ISourceEtat'))).Invoke([object[]]@($srcP))
+    $null = $coquille.GetMethod('Ouvrir', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($fenP, @("Vue d'ensemble"))
+    $zoneP = $coquille.GetField('zone', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fenP).Content
+    $noeudsP = New-Object Collections.Generic.List[object]; $pileP = New-Object Collections.Stack; $pileP.Push($zoneP)
+    while ($pileP.Count) { $n = $pileP.Pop(); $noeudsP.Add($n); if ($n -is [Windows.DependencyObject]) { foreach ($x in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pileP.Push($x) } } }
+    $danger = $jetons.GetField('Danger').GetValue($null)
+    $tuilesRouges = @($noeudsP | Where-Object { $_ -is [Windows.Controls.Button] -and $_.Parent -is [Windows.Controls.WrapPanel] -and $_.BorderBrush.Color -eq $danger })
+    $teteP = @($noeudsP | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -like '*à traiter' } | ForEach-Object { $_.Text })
+    Cas "T-4 rendu : « 2 points à traiter » et exactement 2 tuiles rouges (incidents critiques, alertes critiques non lues)" ($tuilesRouges.Count -eq 2 -and $teteP.Count -eq 2 -and $teteP -contains '2 points à traiter' -and $teteP -contains 'À traiter') "$($tuilesRouges.Count) tuile(s) ; $($teteP -join ' / ')"
+    $titreP = @($noeudsP | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -eq 'Protections' })
+    $liensP = @()
+    if ($titreP.Count -eq 1) {
+        $pileP.Push($titreP[0].Parent); $sous = New-Object Collections.Generic.List[object]
+        while ($pileP.Count) { $n = $pileP.Pop(); $sous.Add($n); if ($n -is [Windows.DependencyObject]) { foreach ($x in [Windows.LogicalTreeHelper]::GetChildren($n)) { $pileP.Push($x) } } }
+        $liensP = @($sous | Where-Object { $_ -is [Windows.Controls.Button] })
+    }
+    $clesNav = @($nav.GetMethod('Groupes').Invoke($null, @()) | ForEach-Object { $_.Entrees } | ForEach-Object { $_.Cle })
+    Cas 'T-18 rendu : panneau « Protections » de 11 lignes, chaque bouton est un lien vers une page de la navigation' ($titreP.Count -eq 1 -and $liensP.Count -eq 11 -and @($liensP | Where-Object { $clesNav -notcontains [string]$_.Tag }).Count -eq 0) "$($liensP.Count) lien(s) : $(@($liensP | ForEach-Object { $_.Tag }) -join ', ')"
+    $lienR = @($liensP | Where-Object { [string]$_.Tag -eq 'Menaces' })[0]
+    if ($lienR) { $lienR.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) }
+    $ouv = $coquille.GetField('ouverte', [Reflection.BindingFlags]'Instance,NonPublic').GetValue($fenP)
+    Cas 'T-18 rendu : le lien de la réponse au rançongiciel ouvre la page Menaces (l''activation reste sur cette page)' ($ouv -eq 'Menaces') "$ouv"
+    $fenP.Close()
     $styleB = $coquille.GetMethod('StyleDefilement', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @())
     $sens = foreach ($o in 'Vertical', 'Horizontal') {
         $sb = New-Object Windows.Controls.Primitives.ScrollBar; $sb.Orientation = $o; $sb.Style = $styleB; $sb.Width = 200; $sb.Height = 200
@@ -377,6 +497,11 @@ public class SourceSimulee : RealProxy
     $panne = [string](& $t 'VueReseauFluent').GetMethod('Panne').Invoke($null, @($etatP, 'Connexions'))
     Cas 'Connexions : collecte en panne trouvée et neutralisée, aucune pour une autre collecte' ($panne.Contains('Connexions') -and -not ($panne -match "\u202E") -and $null -eq (& $t 'VueReseauFluent').GetMethod('Panne').Invoke($null, @($etatP, 'Processus'))) $panne
 
+    # T-4 : sous-titre de Connexions au même seuil que l'onglet « Suspectes » et la pastille (cause 1 de la PR #308)
+    $rT4 = & $res $lf $true $false $null
+    $nSus = @($vc.GetMethod('Filtrer').Invoke($null, [object[]]@($lf.PSObject.BaseObject, [int]1))).Count
+    Cas 'T-4 Connexions : sous-titre au seuil de l''onglet « Suspectes » (gravité >= 1), score faible compté à part, jamais dit suspect' ($nSus -eq 2 -and $rT4.Contains("dont $nSus suspecte(s)") -and $rT4.Contains('1 avec un score faible (1 à 2), non comptée(s) comme suspecte(s).')) $rT4
+
     # Chaînes (U4a) : chaînes au score positif, plus lourdes d'abord ; seuil 12 ; arbre, détail et copie
     $vch = & $t 'VueChainesFluent'; $chT = & $t 'Chaine'; $noT = & $t 'NoeudChaine'
     $nds = New-Object "Collections.Generic.List[$($noT.FullName)]"
@@ -429,6 +554,23 @@ public class SourceSimulee : RealProxy
     $traficSrc = [IO.File]::ReadAllText("$src\Trafic.cs")
     Cas 'Trafic : courbe sans maximum avant deux mesures (« pas encore de mesure »)' ($fluentSrc.Contains('points.Count < 2 ? (en ? "no measurement yet" : "pas encore de mesure")'))
     Cas 'Trafic d''aujourd''hui : programmes, destinations, interface et bulle neutralisés' ($traficSrc.Contains('Canal.Visible(a.Nom)') -and $traficSrc.Contains('Canal.Visible(t.Interface)') -and ([regex]::Matches($traficSrc, '\.Select\(Canal\.Visible\)')).Count -eq 2 -and $traficSrc.Contains('Canal.Visible(x.Programme)') -and $traficSrc.Contains('Canal.Visible((t.Depuis ?? "").Length >= 16') -and $traficSrc.Contains('Select(p => new[] { VueTraficFluent.NomPays(p.Code),'))
+    # T-4 : « ? » du trafic affiché « Programme non identifié », avec les raisons publiées par le service (PR #308)
+    $naT = & $t 'TraficNonAttribue'
+    $lna = New-Object "Collections.Generic.List[$($naT.FullName)]"
+    foreach ($x in @(@('HorsTcpUdp', 5MB, 1MB), @('SansProprietaire', 90MB, 8MB), @('ProcessusTermine', 3MB, 0), @('SansPort', 0, 0))) { $lna.Add((& $nouv $naT @{ Raison = $x[0]; Entrant = [long]$x[1]; Sortant = [long]$x[2] })) }
+    $laQ = New-Object "Collections.Generic.List[$($apT.FullName)]"; $laQ.Add((& $nouv $apT @{ Nom = '?'; Entrant = [long]95MB; Sortant = [long]9MB; Destinations = 37 }))
+    $ldQ = New-Object "Collections.Generic.List[$($deT.FullName)]"; $ldQ.Add((& $nouv $deT @{ Ip = '192.0.2.7'; Pays = 'FR'; Programme = '?'; Port = 443; Entrant = [long]1; Sortant = [long]1 }))
+    $etQ = & $nouv $etT @{ Applications = $laQ; Destinations = $ldQ; NonAttribue = $lna }
+    $lq = @($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ, [int]0))); $lqD = @($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ, [int]2)))
+    $titresQ = @($lq[0].Detail | ForEach-Object { $_.Titre })
+    $octets = { param($o) [string](& $t 'Format').GetMethod('Octets').Invoke($null, @([long]$o)) }
+    Cas 'T-4 Trafic : « ? » devient « Programme non identifié », raisons publiées avec leur volume (plus grosse d''abord), sans les PID terminés ni les raisons vides' ($lq[0].Titre -eq 'Programme non identifié' -and ($titresQ -join '|') -eq ("Reçu|Envoyé|Destinations|Ce que c'est|Port sans programme · " + (& $octets 98MB) + '|Ni TCP ni UDP · ' + (& $octets 6MB)) -and $lqD[0].Sous.Contains('Programme non identifié') -and -not $lqD[0].Sous.Contains('?')) ($titresQ -join '|')
+    $etQ2 = & $nouv $etT @{ Applications = $laQ }
+    $txtQ2 = @(@($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ2, [int]0)))[0].Detail | ForEach-Object { $_.Texte }) -join '|'
+    $langue.GetField('En').SetValue($null, $true)
+    $titreEn = @($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ, [int]0)))[0].Titre
+    $langue.GetField('En').SetValue($null, $false)
+    Cas 'T-4 Trafic : service plus ancien (raisons absentes), détail dit non publié ; « Unidentified program » en anglais' ($txtQ2.Contains('Détail par raison non publié par ce service') -and $titreEn -eq 'Unidentified program') "$titreEn ; $txtQ2"
     $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
     Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
     # Blocages, Quarantaine, Menaces (U5a) : résumés honnêtes, textes neutralisés, mêmes commandes, S139-02
