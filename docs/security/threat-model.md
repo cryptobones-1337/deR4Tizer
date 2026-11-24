@@ -121,7 +121,7 @@ as the service on the channel.
 
 - Phase 4 (PR 4.2): it can neither close nor modify an incident (`incident` command reserved to administrators,
   author read from the client's token). It can trigger alerts on many entities to saturate tracking
-  (500 open incidents): only closed ones are removed, the surplus is counted (SAN-012, PR 4.4) and stays in
+  (500 incidents not closed): only closed ones are removed, the surplus is counted (SAN-012, PR 4.4) and stays in
   `alertes.json`.
 - Measures: data folder protected and verified, fail-closed; channel reserved to administrators; file operations
   by handle; restore under the user's identity; PowerShell started by its absolute path (a
@@ -250,7 +250,7 @@ Privileged operations, audit of 2026-11-23: the local GPO is read fail-closed be
   is never deleted, and beyond its ceiling (1 GB / 30) the events of the day are no longer written but counted;
   it can therefore still silence the SIEM for the rest of the day, and make its queue overflow: finding SAN-013 says so
   (first loss, first ceiling, first purge by size). The service log rotates over 5 generations
-  (A-8-3, fixed in the lab): noise caused on purpose must write more than 10 MB to erase a line. The SIEM (`siem\`, 30 days
+  (A-8-3, fixed in the lab): provoked noise must write more than 10 MB to erase a line. The SIEM (`siem\`, 30 days
   and 1 GB at most) and the service log (`journal.txt`, 2 MB, then `journal.1.txt` to `journal.5.txt`, each
   rotation stating the interval covered) stay on the monitored machine: an administrator can
   erase them, and an intrusion older than these limits is no longer there. Only a copy already sent elsewhere escapes this,
