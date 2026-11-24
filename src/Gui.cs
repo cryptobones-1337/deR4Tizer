@@ -1418,7 +1418,7 @@ namespace DeR4Tizer
         };
         readonly List<BoutonNav> navigation = new List<BoutonNav>();
         readonly List<Control> pages = new List<Control>();
-        BoutonNav navFlux, navAlertes, navChaines, navVie, navParefeu, navDemarrage, navBaseline, navExtensions, navBlocages, navQuarantaine, navMenaces;
+        BoutonNav navFlux, navAlertes, navIncidents, navChaines, navVie, navParefeu, navDemarrage, navBaseline, navExtensions, navBlocages, navQuarantaine, navMenaces;
         Control pageAlertes;
         readonly BoutonNeon btnService = new BoutonNeon("Démarrer le service", Theme.Vert);
         readonly BoutonNeon btnPanique = new BoutonNeon("◉ PANIQUE : couper Internet", Theme.Rouge);
@@ -1624,7 +1624,7 @@ namespace DeR4Tizer
             var pageIncidents = new PageIncidents();
             contenu.Controls.Add(pageIncidents);
             pages.Add(pageIncidents);
-            Lien(liens, "Incidents", pageIncidents, largeurNav);
+            navIncidents = Lien(liens, "Incidents", pageIncidents, largeurNav);
             var pageSiem = new PageSiem();
             contenu.Controls.Add(pageSiem);
             pages.Add(pageSiem);
@@ -2017,6 +2017,7 @@ namespace DeR4Tizer
                     chkListesRestreintes.Checked = config.ListesRestreintes;
                 }
                 configIllisible = illisible;
+                configLue = illisible ? null : config;
                 majCase = false;
                 LibelleMenaces();
             }
@@ -2055,6 +2056,20 @@ namespace DeR4Tizer
                 blocagesVus = cleBlocages;
                 RemplirBlocages(blocages);
             }
+            // Incidents non clos (T-4) : compteur de la navigation, rouge pour un risque confirmé (comme la page Incidents)
+            var incidents = LuSiChange<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>();
+            incidentsOuverts = incidents.Count(i => i != null && i.Etat != "Clos");
+            incidentsCritiques = incidents.Count(i => i != null && VueIncidents.RisqueConfirme(i));
+            navIncidents.Badge = incidentsOuverts;
+            navIncidents.CouleurBadge = incidentsCritiques > 0 ? Theme.Rouge : Theme.Jaune;
+            // Panneau « Protections » de la coquille (T-18) : fichiers d'état publiés par le service, relus quand ils changent
+            protectionsCourantes = new EntreesProtections
+            {
+                Etat = etat, Config = configLue, ConfigIllisible = configIllisible, Baseline = bl,
+                Maj = LuSiChange<EtatMaj>("maj.json"), Filtrage = LuSiChange<EtatFiltrage>("filtrage-etat.json"), Ids = LuSiChange<EtatIds>("ids.json"),
+                Remontee = LuSiChange<EtatRemontee>("notifications.json"), Apprentissage = LuSiChange<EtatApprentissage>("apprentissage.json"),
+                Maintenant = DateTime.Now
+            };
             // Coquille du pilote (U2) : mêmes faits que l'en-tête, publiés après chaque rafraîchissement
             // Textes neutralisés (Canal.Visible) : noms de programmes et d'outils venus du service (relecture de #134, D1)
             pointsCourants = entete.Pastilles.Select(PointDe).ToList();
@@ -2067,6 +2082,39 @@ namespace DeR4Tizer
         List<PointEtat> pointsCourants = new List<PointEtat>();
         public event Action Change;
         public List<PointEtat> Points() { return pointsCourants; }
+
+        // Panneau « Protections » et comptes de la Vue d'ensemble (T-18, T-4) : lecture seule des fichiers du service, relus
+        // seulement quand leur date change
+        Config configLue;
+        EntreesProtections protectionsCourantes;
+        int incidentsOuverts, incidentsCritiques;
+        readonly Dictionary<string, DateTime> datesLues = new Dictionary<string, DateTime>();
+        readonly Dictionary<string, object> fichiersLus = new Dictionary<string, object>();
+        T LuSiChange<T>(string nom) where T : class
+        {
+            DateTime d = DateFichier(nom), vu;
+            if (!datesLues.TryGetValue(nom, out vu) || vu != d)
+            {
+                // Absent ou illisible : relu au prochain rafraîchissement, jamais gardé jusqu'à la prochaine écriture du service
+                var x = Commun.Lire<T>(nom);
+                fichiersLus[nom] = x;
+                if (x != null) datesLues[nom] = d; else datesLues.Remove(nom);
+            }
+            object o;
+            return fichiersLus.TryGetValue(nom, out o) ? o as T : null;
+        }
+        public EntreesProtections Protections() { return protectionsCourantes; }
+        // Alertes non lues comptées comme le compteur de la page Alertes (même liste, même dernière lecture)
+        public ComptesVue Comptes()
+        {
+            var a = alertesAffichees ?? new List<Alerte>();
+            return new ComptesVue
+            {
+                AlertesNonLues = a.Count(x => x != null && VueAlertesFluent.NonLue(x, derniereLue)),
+                AlertesCritiquesNonLues = a.Count(x => x != null && x.Niveau == "Critique" && VueAlertesFluent.NonLue(x, derniereLue)),
+                IncidentsOuverts = incidentsOuverts, IncidentsCritiques = incidentsCritiques
+            };
+        }
         int santeService = 2;
         public int SanteService() { return santeService; }
         // État du service pour le pied de la coquille : 2 arrêté ou non installé, 1 état illisible ou ancien, 0 en ligne
