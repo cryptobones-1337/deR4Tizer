@@ -135,7 +135,7 @@ try {
     Cas 'T-18 Protections : réponses automatiques, code publié vers la couleur (actif vert ; éteinte recommandée, partielle, sans effet orange ; non vérifiable ou inconnu pointillé)' (($codesR -join '|') -eq 'Actif=0/0|Desactive=2/2|Partiel=2/2|SansEffet=2/2|NonVerifiable=4/4|Inconnu=4/4|=4/4' -and $etiqDes -eq 'Recommandé · désactivé') "$($codesR -join '|') ; « $etiqDes »"
     $casIps = foreach ($c in @(@($false, 0, 'ids'), @($false, 0, 'config'), @($true, 0, 'ids'), @($true, 12, 'ids'), @($true, 0, 'config'))) {
         $cfg = & $neuf 'Config'; $cfg.Ips = $c[0]; $e = & $entreesP (& $etatP0) $cfg
-        if ($c[2] -eq 'ids') { $i = & $neuf 'EtatIds'; $i.Ips = $c[0]; $i.Regles = $c[1]; $e.Ids = $i }
+        if ($c[2] -eq 'ids') { $i = & $neuf 'EtatIds'; $i.MisAJour = '2026-11-23 10:42:00'; $i.Ips = $c[0]; $i.Regles = $c[1]; $e.Ids = $i }
         $l = (& $lignesP $e)['Ips']; "$($l.Visuel)/$($l.Recommande)/$($l.Experimental)/$($l.Etat -like '*ecommand*')" }
     Cas 'T-18 Protections : IPS expérimental jamais recommandé, éteint gris (jamais orange), actif avec règles vert, sans règle orange, non lu pointillé' (($casIps -join '|') -eq '1/False/True/False|1/False/True/False|2/False/True/False|0/False/True/False|4/False/True/False') ($casIps -join '|')
     $et = & $etatP0; $et.Syslog = & $sortieP $false 'Desactive'; $et.Api = & $sortieP $false 'Desactive'
@@ -156,7 +156,7 @@ try {
     $m.EchecInstallationPrecedente = $true; $r4 = (& $lignesP $e)['MajAuto']
     Cas 'T-18 Protections : API « port ouvert » vert, syslog en échec orange ; mise à jour auto en échec orange, code vide pointillé, à jour vert, installation précédente en échec orange' ($r1['Api'].Visuel -eq 0 -and $r1['Api'].Etat -eq 'Port ouvert' -and $r1['Syslog'].Visuel -eq 2 -and $r1['MajAuto'].Visuel -eq 2 -and $r2.Visuel -eq 4 -and $r3.Visuel -eq 0 -and $r4.Visuel -eq 2) "$($r1['Api'].Etat) / $($r1['Syslog'].Visuel) / $($r1['MajAuto'].Visuel) $($r2.Visuel) $($r3.Visuel) $($r4.Visuel)"
     $casF = foreach ($code in 'Actif', 'ActifSansCategorie', 'Inactif', 'Contourne', 'SuspenduAmont', '') {
-        $f = & $neuf 'EtatFiltrage'; $f.EtatCode = $code; $f.Etat = 'contourné sur la carte Wi-Fi'; $cats = New-Object 'Collections.Generic.List[string]'; $cats.Add('sécurité'); $cats.Add('publicité et pistage'); $f.Categories = $cats
+        $f = & $neuf 'EtatFiltrage'; $f.MisAJour = '2026-11-23 10:42:00'; $f.EtatCode = $code; $f.Etat = 'contourné sur la carte Wi-Fi'; $cats = New-Object 'Collections.Generic.List[string]'; $cats.Add('sécurité'); $cats.Add('publicité et pistage'); $f.Categories = $cats
         $e = & $entreesP (& $etatP0) (& $neuf 'Config'); $e.Filtrage = $f; $l = (& $lignesP $e)['Filtrage']; "$code=$($l.Visuel)" }
     Cas 'T-18 Protections : filtrage, actif vert, sans catégorie ou contourné ou suspendu orange, inactif gris (non recommandé), code absent pointillé' (($casF -join '|') -eq 'Actif=0|ActifSansCategorie=2|Inactif=1|Contourne=2|SuspenduAmont=2|=4') ($casF -join '|')
     $et = & $etatP0; $et.MisAJour = '2026-11-23 09:00:00'; $ra = & $neuf 'EtatReponsesAuto'; $ra.Rancongiciel = 'Actif'; $ra.BlocageListes = 'Actif'; $et.ReponsesAuto = $ra; $et.Api = & $sortieP $true 'Joignable'
@@ -181,6 +181,37 @@ try {
     Cas 'T-18 Protections : aucune commande ni réglage dans le panneau (pas de « tout activer »), un seul geste : ouvrir la page de la fonction' (-not (($classeP + $panneauP) -cmatch 'ActionsProtection|ActionsReglages|Commande|Envoyer|ChangerIps|DemanderPanique') -and ([regex]::Matches($panneauP, '\.Click \+=')).Count -eq 1 -and $panneauP.Contains('lien.Click += (s, a) => Ouvrir(page);'))
     $srcG = [IO.File]::ReadAllText("$src\Gui.cs")
     Cas 'T-4 source : comptes de la fenêtre comme les pages (alertes non lues : même liste et même dernière lecture ; incidents critiques : risque confirmé ; compteur Incidents)' ($srcG.Contains('AlertesCritiquesNonLues = a.Count(x => x != null && x.Niveau == "Critique" && VueAlertesFluent.NonLue(x, derniereLue))') -and $srcG.Contains('incidentsCritiques = incidents.Count(i => i != null && VueIncidents.RisqueConfirme(i));') -and $srcG.Contains('incidentsOuverts = incidents.Count(i => i != null && i.Etat != "Clos");') -and $srcG.Contains('navIncidents = Lien(liens, "Incidents", pageIncidents, largeurNav);') -and $srcG.Contains('public EntreesProtections Protections() { return protectionsCourantes; }'))
+    # Prérelecture de #310, D1 : état du service ancien ou absent (service arrêté, fichiers restés), aucune ligne verte, quel
+    # que soit le fichier qui la porte ; ids.json et filtrage-etat.json anciens : non vérifiables
+    $entreesToutVert = { param($etat)
+        $cfg = & $neuf 'Config'; $cfg.Ips = $true; $cfg.Maj.Auto = $true; $cfg.Notifications.Ntfy = $true
+        $e = & $entreesP $etat $cfg
+        $i = & $neuf 'EtatIds'; $i.MisAJour = '2026-11-23 10:42:00'; $i.Ips = $true; $i.Regles = 12; $e.Ids = $i
+        $f = & $neuf 'EtatFiltrage'; $f.MisAJour = '2026-11-23 10:42:00'; $f.EtatCode = 'Actif'; $cats = New-Object 'Collections.Generic.List[string]'; $cats.Add('sécurité'); $f.Categories = $cats; $e.Filtrage = $f
+        $m = & $neuf 'EtatMaj'; $m.StatutCode = 'AJour'; $m.VerifieLe = '2026-11-23 06:00:00'; $e.Maj = $m
+        $rm = & $neuf 'EtatRemontee'; $rm.Envoyes = 3; $rm.DernierEnvoi = '2026-11-23 09:00:00'; $e.Remontee = $rm
+        $b9 = & $neuf 'EtatBaseline'; $b9.Regles = $lr; $s9 = New-Object 'Collections.Generic.Dictionary[string,int]'; $s9['recommandé'] = 95; $b9.Scores = $s9; $e.Baseline = $b9
+        $a9 = & $neuf 'EtatApprentissage'; $a9.Debut = '2026-11-09 09:00:00'; $a9.Fin = '2026-11-16 09:00:00'; $e.Apprentissage = $a9
+        $e }
+    $clesVertes = 'Ips', 'Filtrage', 'MajAuto', 'Remontee', 'Baseline', 'Apprentissage'
+    $temoin = & $lignesP (& $entreesToutVert (& $etatP0))
+    $vT = @($clesVertes | ForEach-Object { "$_=$($temoin[$_].Visuel)" }) -join '|'
+    $etVieux = & $etatP0; $etVieux.MisAJour = '2026-11-23 05:42:00'
+    $vieux = & $lignesP (& $entreesToutVert $etVieux)
+    $sansEtat = & $lignesP (& $entreesToutVert $null)
+    $vV = @($vieux.Values | Where-Object { $_.Visuel -eq 0 } | ForEach-Object { $_.Cle }) -join ','
+    $vS = @($sansEtat.Values | Where-Object { $_.Visuel -eq 0 } | ForEach-Object { $_.Cle }) -join ','
+    Cas 'T-18 Protections (D1) : état du service vieux de 5 h ou etat.json absent, aucune ligne verte (IPS, filtrage, mise à jour, remontée, baseline, apprentissage compris) ; témoin frais : ces six lignes vertes' ($vT -eq 'Ips=0|Filtrage=0|MajAuto=0|Remontee=0|Baseline=0|Apprentissage=0' -and $vV -eq '' -and $vS -eq '' -and $vieux['Ips'].Visuel -eq 4 -and $sansEtat['Filtrage'].Detail.StartsWith('État du service absent')) "témoin $vT ; vieux [$vV] ; absent [$vS]"
+    $eF = & $entreesToutVert (& $etatP0); $eF.Ids.MisAJour = '2026-11-23 10:20:00'; $eF.Filtrage.MisAJour = ''
+    $rF = & $lignesP $eF
+    $eF.Config.Ips = $false; $rF2 = (& $lignesP $eF)['Ips']
+    Cas 'T-18 Protections (D1) : ids.json vieux de 22 min et filtrage-etat.json sans date, non vérifiables ; IPS éteint dans les réglages reste gris' ($rF['Ips'].Visuel -eq 4 -and $rF['Filtrage'].Visuel -eq 4 -and $rF['Ips'].Detail.StartsWith('ids.json ancien') -and $rF2.Visuel -eq 1 -and $rF['MajAuto'].Visuel -eq 0) "$($rF['Ips'].Visuel)/$($rF['Filtrage'].Visuel)/$($rF2.Visuel)"
+    # D4 : suivi-incidents.json illisible, dit (« ? »), jamais 0 en silence
+    $cIll = & $champs $comptesT @{ IncidentsIllisibles = $true; IncidentsOuverts = 0 }
+    $secIll = $vue.GetMethod('Sections').Invoke($null, @((& $points @(0)), $null, $cIll))
+    $tIll = @($secIll.Tuiles | ForEach-Object { "$($_.Cle)=$($_.Valeur)=$($_.Gravite)" }) -join '|'
+    Cas 'T-4 Vue d''ensemble (D4) : suivi-incidents.json illisible, tuile « ? » à surveiller comptée par la tête, jamais 0 en silence' ($tIll -eq 'Incidents=?=1' -and (& $resume ($vue.GetMethod('AvecCompteurs').Invoke($null, @((& $points @(0)), $null, $cIll)))) -eq "Rien d'avéré, 1 point à surveiller|1") $tIll
+    Cas 'T-4 source (D2, D4) : fichier absent ou illisible relu au rafraîchissement suivant ; suivi-incidents.json illisible repéré' ($srcG.Contains('if (x != null) datesLues[nom] = d; else datesLues.Remove(nom);') -and $srcG.Contains('incidentsIllisibles = lusIncidents == null && File.Exists(Path.Combine(Commun.Dossier, "suivi-incidents.json"));') -and $srcG.Contains('IncidentsIllisibles = incidentsIllisibles'))
 
     # Relecture de la refonte (défauts 1 à 3) : la coquille rendue avec une source simulée (mandataire de l'interface
     # ISourceEtat, aucun service) ; ce que l'écran affirme est lu dans l'arbre des contrôles
@@ -571,6 +602,9 @@ public class SourceSimulee : RealProxy
     $titreEn = @($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ, [int]0)))[0].Titre
     $langue.GetField('En').SetValue($null, $false)
     Cas 'T-4 Trafic : service plus ancien (raisons absentes), détail dit non publié ; « Unidentified program » en anglais' ($txtQ2.Contains('Détail par raison non publié par ce service') -and $titreEn -eq 'Unidentified program') "$titreEn ; $txtQ2"
+    $etQ3 = & $nouv $etT @{ Applications = $laQ; NonAttribue = (New-Object "Collections.Generic.List[$($naT.FullName)]") }
+    $txtQ3 = @(@($vt.GetMethod('Lignes').Invoke($null, [object[]]@($etQ3, [int]0)))[0].Detail | ForEach-Object { $_.Texte }) -join '|'
+    Cas 'T-4 Trafic (D3) : raisons publiées mais vides, dit tel quel, jamais « version plus ancienne »' ($txtQ3.Contains('Le service ne publie aucune raison pour ce volume') -and -not $txtQ3.Contains('version plus ancienne')) $txtQ3
     $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
     Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
     # Blocages, Quarantaine, Menaces (U5a) : résumés honnêtes, textes neutralisés, mêmes commandes, S139-02

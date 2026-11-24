@@ -325,7 +325,10 @@ namespace DeR4Tizer
             var l = new List<TuileVue>();
             if (c == null) return l;
             bool en = L.En;
-            if (c.IncidentsCritiques > 0)
+            if (c.IncidentsIllisibles)
+                l.Add(new TuileVue { Cle = "Incidents", Icone = IconeDe("Incidents"), Valeur = "?", Nombre = false, Gravite = 1,
+                    Libelle = en ? "Incidents: suivi-incidents.json unreadable, nothing is concluded" : "Incidents : suivi-incidents.json illisible, rien n'est conclu" });
+            else if (c.IncidentsCritiques > 0)
                 l.Add(new TuileVue { Cle = "Incidents", Icone = IconeDe("Incidents"), Valeur = Nombre(c.IncidentsCritiques), Nombre = true, Gravite = 2,
                     Libelle = string.Format(en ? "Critical incidents open ({0} open in all)" : "Incidents critiques ouverts ({0} ouverts en tout)", Nombre(c.IncidentsOuverts)) });
             else if (c.IncidentsOuverts > 0)
@@ -403,6 +406,8 @@ namespace DeR4Tizer
     public class ComptesVue
     {
         public int AlertesNonLues, AlertesCritiquesNonLues, IncidentsOuverts, IncidentsCritiques;
+        // suivi-incidents.json présent mais illisible : rien n'est compté, et c'est dit (prérelecture de #310, D4)
+        public bool IncidentsIllisibles;
     }
 
     // Une ligne du panneau « Protections » : état publié par le service, traduit ; un lien vers la page de la fonction
@@ -487,6 +492,20 @@ namespace DeR4Tizer
 
         static string Ancien() { return T("État du service ancien (plus de 2 min) : ce qui suit peut ne plus être vrai ; service à vérifier (page Santé).", "Service state is old (over 2 min): this may no longer be true; check the service (Health page)."); }
 
+        static string Absent() { return T("État du service absent ou illisible (etat.json) : le service tourne-t-il ? Rien n'est vérifié (page Santé).", "Service state missing or unreadable (etat.json): is the service running? Nothing is verified (Health page)."); }
+
+        // Fichier publié souvent par le service (ids.json toutes les quelques secondes, filtrage-etat.json au moins toutes
+        // les 5 min) : au-delà de 10 min, ou date illisible, il n'est plus tenu pour à jour (prérelecture de #310, D1)
+        public const int DelaiFichierMinutes = 10;
+        public static bool Frais(string misAJour, DateTime maintenant)
+        {
+            DateTime d;
+            return DateTime.TryParseExact(misAJour ?? "", "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out d)
+                && Math.Abs((maintenant - d).TotalMinutes) <= DelaiFichierMinutes;
+        }
+
+        static string FichierAncien(string fichier) { return string.Format(T("{0} ancien (plus de 10 min) ou sans date : rien n'est conclu.", "{0} is old (over 10 min) or undated: nothing is concluded."), fichier); }
+
         // Réponse automatique, d'après le code publié (politique::etat_rancongiciel, etat_blocage_listes)
         static LigneProtection Reponse(LigneProtection l, string code, string actif, string partiel, string sansEffet, string eteinte)
         {
@@ -530,10 +549,13 @@ namespace DeR4Tizer
                 T("Listes non chargées, connexions non vues, protection du dossier de données en échec, ou registre des réponses illisible : rien ne serait bloqué.", "Lists not loaded, connections not seen, data folder protection failing, or responses register unreadable: nothing would be blocked."),
                 T("Les adresses malveillantes connues sont seulement signalées, pas bloquées.", "Known malicious addresses are only reported, not blocked.")));
 
-            // IPS, expérimental (ids.json, sinon le réglage pour le seul « désactivé »)
+            // IPS, expérimental (ids.json à jour, sinon le réglage pour le seul « désactivé »)
             var ips = Nouvelle("Ips", T("Prévention d'intrusion (IPS)", "Intrusion prevention (IPS)"), "Détection");
             string eteintIps = T("Bloquerait au pare-feu sans confirmation pendant 24 h ; jamais recommandé tant qu'il est expérimental.", "Would block at the firewall without confirmation for 24 h; never recommended while experimental.");
-            if (e.Ids != null)
+            bool idsAncien = e.Ids != null && !Frais(e.Ids.MisAJour, e.Maintenant);
+            if (idsAncien && (c == null || c.Ips)) l.Add(NonPublie(ips, c != null && c.Ips, FichierAncien("ids.json")));
+            else if (idsAncien) l.Add(Eteinte(ips, eteintIps));
+            else if (e.Ids != null)
             {
                 if (!e.Ids.Ips) l.Add(Eteinte(ips, eteintIps));
                 else if (e.Ids.Regles > 0) l.Add(Poser(ips, Verifie, T("Actif", "Active"), string.Format(T("{0} règle(s) chargée(s), paquets analysés ; bloque au pare-feu pendant 24 h.", "{0} rule(s) loaded, packets analysed; blocks at the firewall for 24 h."), e.Ids.Regles)));
@@ -546,7 +568,8 @@ namespace DeR4Tizer
             var fi = Nouvelle("Filtrage", T("Filtrage par nom de domaine", "Domain filtering"), "Navigation");
             string code = e.Filtrage == null ? null : e.Filtrage.EtatCode;
             string suspendu = T("Activé, suspendu", "On, suspended");
-            switch (code ?? "")
+            if (e.Filtrage != null && !string.IsNullOrEmpty(code) && !Frais(e.Filtrage.MisAJour, e.Maintenant)) { l.Add(NonPublie(fi, false, FichierAncien("filtrage-etat.json"))); code = null; }
+            else switch (code ?? "")
             {
                 case "Actif":
                     var cats = (e.Filtrage.Categories ?? new List<string>()).Where(x => !string.IsNullOrEmpty(x)).ToList();
@@ -649,6 +672,12 @@ namespace DeR4Tizer
                 case "NonVerifiable": l.Add(NonPublie(api, true, T("Ouverture de l'écoute en cours.", "Listener opening in progress."))); break;
                 default: l.Add(NonPublie(api, apiReglage, ancien ? Ancien() : apiReglage ? string.Format(T("Port {0} ; le service ne publie pas s'il écoute.", "Port {0}; the service does not publish whether it listens."), port) : null)); break;
             }
+            // État du service ancien ou absent (service arrêté, fichiers restés sur le disque) : aucune ligne n'est dite
+            // « actif et vérifié », quel que soit le fichier qui la porte (IPS, filtrage, mise à jour, remontée, baseline,
+            // apprentissage) ; les lignes éteintes, orange ou d'information restent (prérelecture de #310, D1)
+            if (etat == null || ancien)
+                foreach (var x in l.Where(x => x.Visuel == Verifie))
+                    Poser(x, NonVerifiable, T("Non vérifiable", "Not verifiable"), (etat == null ? Absent() : Ancien()) + " " + x.Detail);
             return l;
         }
     }
@@ -3116,8 +3145,12 @@ namespace DeR4Tizer
             var l = new List<LigneDetail> { new LigneDetail { Titre = en ? "What it is" : "Ce que c'est", Texte = en ? "Packets whose local port belonged to no program when they were seen." : "Paquets dont le port local n'appartenait à aucun programme au moment où ils ont été vus." } };
             var raisons = (t == null || t.NonAttribue == null ? new List<TraficNonAttribue>() : t.NonAttribue)
                 .Where(x => x != null && RaisonsSansProgramme.Contains(x.Raison) && x.Entrant + x.Sortant > 0).OrderByDescending(x => x.Entrant + x.Sortant).ToList();
-            if (raisons.Count == 0)
+            // Champ absent : service plus ancien ; champ publié sans raison pour ce volume (relevé remis à zéro à minuit
+            // entre deux écritures, par exemple) : dit tel quel, jamais « version plus ancienne » (prérelecture de #310, D3)
+            if (raisons.Count == 0 && (t == null || t.NonAttribue == null))
                 l.Add(new LigneDetail { Titre = en ? "Reasons" : "Raisons", Texte = en ? "Breakdown by reason not published by this service (older version): nothing is concluded." : "Détail par raison non publié par ce service (version plus ancienne) : rien n'est conclu." });
+            else if (raisons.Count == 0)
+                l.Add(new LigneDetail { Titre = en ? "Reasons" : "Raisons", Texte = en ? "The service publishes no reason for this volume (count reset at midnight, or not written yet): nothing is concluded." : "Le service ne publie aucune raison pour ce volume (relevé remis à zéro à minuit, ou pas encore écrit) : rien n'est conclu." });
             foreach (var x in raisons)
                 l.Add(new LigneDetail { Titre = LibelleRaison(x.Raison) + " · " + Format.Octets(x.Entrant + x.Sortant), Texte = ExplicationRaison(x.Raison) });
             return l;

@@ -2057,11 +2057,15 @@ namespace DeR4Tizer
                 RemplirBlocages(blocages);
             }
             // Incidents non clos (T-4) : compteur de la navigation, rouge pour un risque confirmé (comme la page Incidents)
-            var incidents = LuSiChange<List<IncidentSuivi>>("suivi-incidents.json") ?? new List<IncidentSuivi>();
+            var lusIncidents = LuSiChange<List<IncidentSuivi>>("suivi-incidents.json");
+            // Présent mais illisible : rien n'est compté et c'est dit (« ? »), jamais 0 en silence (prérelecture de #310, D4)
+            incidentsIllisibles = lusIncidents == null && File.Exists(Path.Combine(Commun.Dossier, "suivi-incidents.json"));
+            var incidents = lusIncidents ?? new List<IncidentSuivi>();
             incidentsOuverts = incidents.Count(i => i != null && i.Etat != "Clos");
             incidentsCritiques = incidents.Count(i => i != null && VueIncidents.RisqueConfirme(i));
             navIncidents.Badge = incidentsOuverts;
             navIncidents.CouleurBadge = incidentsCritiques > 0 ? Theme.Rouge : Theme.Jaune;
+            navIncidents.TexteBadge = incidentsIllisibles ? "?" : null;
             // Panneau « Protections » de la coquille (T-18) : fichiers d'état publiés par le service, relus quand ils changent
             protectionsCourantes = new EntreesProtections
             {
@@ -2088,6 +2092,7 @@ namespace DeR4Tizer
         Config configLue;
         EntreesProtections protectionsCourantes;
         int incidentsOuverts, incidentsCritiques;
+        bool incidentsIllisibles;
         readonly Dictionary<string, DateTime> datesLues = new Dictionary<string, DateTime>();
         readonly Dictionary<string, object> fichiersLus = new Dictionary<string, object>();
         T LuSiChange<T>(string nom) where T : class
@@ -2112,7 +2117,7 @@ namespace DeR4Tizer
             {
                 AlertesNonLues = a.Count(x => x != null && VueAlertesFluent.NonLue(x, derniereLue)),
                 AlertesCritiquesNonLues = a.Count(x => x != null && x.Niveau == "Critique" && VueAlertesFluent.NonLue(x, derniereLue)),
-                IncidentsOuverts = incidentsOuverts, IncidentsCritiques = incidentsCritiques
+                IncidentsOuverts = incidentsOuverts, IncidentsCritiques = incidentsCritiques, IncidentsIllisibles = incidentsIllisibles
             };
         }
         int santeService = 2;
