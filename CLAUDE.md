@@ -22,7 +22,7 @@ It is not an antivirus, nor a replacement for Defender, nor an enterprise EDR. A
 9. **No destructive test on the host machine.** No real malware. Scenarios are benign and reproducible, in CI or in a VM.
 10. **Small changes.** One lot = one coherent, reviewable commit (or pull request). No module rewrite when a targeted fix is enough. No new dependency without a justification (maintenance, licence, necessity) written in the commit message.
 11. **No secret** in logs, error messages, the command line or files readable by the authorised accounts.
-12. **Language.** Code, code comments, messages and commit messages in French, like the rest of the repository. Documentation (README, `docs/`, CHANGELOG, capability matrix, threat model, all `.md` files) in English since 2026-11-24 (maintainer decision, decision log outside the repository: « Oui, tout en anglais » (Yes, everything in English)). Before that date, the exception was (maintainer decision of 2026-11-18, confirmed on 2026-11-19 with these words: « C'est moi qui ai demandé anglais seul le 18 du 11 » (I am the one who asked for English only on 18/11)): the README and the presentation page (GitHub Pages) in English, for international reach. The application interface remains bilingual French/English.
+12. **Language.** Code, code comments, messages and commit messages in French, like the rest of the repository. Documentation (README, `docs/`, CHANGELOG, capability matrix, threat model, all `.md` files) in English since 2026-11-24 (maintainer decision, decision log outside the repository: « Oui, tout en anglais » (Yes, everything in English)). Before that date, the exception was (maintainer decision of 2026-11-18, confirmed on 2026-11-19 with these words: « C'est moi qui ai demandé anglais seul le 18 du 11 » (I am the one who asked for English only on 18/11)): the README and the presentation page (GitHub Pages) in English, for international reach. The application interface remains bilingual French/English. Until a file is translated in its own lot, edits to it keep the file's current language; translation lots are tracked in the PR descriptions.
 13. **Personal data.** No personal data in the repository or on GitHub (commits, PRs, comments, screenshots),
     checked by the PII guard. Only exception, decided by the maintainer on 2026-11-19: his name, shown on his GitHub
     profile because he needs it for the signing certificate in his name (Certum), and picked up by GitHub as author
@@ -67,7 +67,7 @@ It is not an antivirus, nor a replacement for Defender, nor an enterprise EDR. A
 
 ### After each lot
 
-Report in the conversation AND in the commit message (in French, like commit messages):
+Report in the conversation AND in the commit message (the report template stays in French, like commit messages):
 
 ```
 Lot N : <titre>
