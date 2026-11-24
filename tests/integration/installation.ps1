@@ -2006,7 +2006,10 @@ if ($anciensCr.Count -and $crPoseOk) {
         if (-not (Test-Path -LiteralPath $crPose)) { return 'fichier posé par le compte standard supprimé' }
         $nouveaux = @(Get-ChildItem $tempSysteme -Filter 'deR4Tizer-nettoyage-*.txt' -Force | Where-Object { $_.FullName -ne $crPose -and (Droits $_.FullName).Proprietaire -eq 'S-1-5-18' } | Sort-Object LastWriteTime)
         if (-not $nouveaux.Count) { return 'compte rendu de cette désinstallation absent' }
-        if ((Get-Content -LiteralPath $nouveaux[-1].FullName -Raw) -notmatch 'Audit de lecture des données sensibles') { return "compte rendu sans la ligne du retrait de l'audit : $(Get-Content -LiteralPath $nouveaux[-1].FullName -Raw)" }
+        # Le service écrit ses comptes rendus en UTF-8 sans BOM : sans -Encoding UTF8, Windows PowerShell 5.1 les lit en ANSI
+        # (« donnÃ©es ») et une recherche accentuée échoue (run 45294613655 de #302)
+        $texteCr = Get-Content -LiteralPath $nouveaux[-1].FullName -Raw -Encoding UTF8
+        if ($texteCr -notmatch 'Audit de lecture des données sensibles') { return "compte rendu sans la ligne du retrait de l'audit : $texteCr" }
         $true
     }
 } else {

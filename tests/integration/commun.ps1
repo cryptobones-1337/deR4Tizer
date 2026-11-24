@@ -618,7 +618,7 @@ function Racine-GardeeApresDesinstallation([hashtable]$CopiesAvant) {
         if ($a.Count) { return "$($e.FullName) : entrées pour $(($a | ForEach-Object { "$($_.Sid) $($_.Droits)" }) -join ', ')" }
     }
     $cr = Get-ChildItem (Join-Path $env:SystemRoot 'Temp') -Filter 'deR4Tizer-desinstallation-*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-    if (-not $cr -or (Get-Content -LiteralPath $cr.FullName -Raw) -notmatch 'SAUF la quarantaine') { return "compte rendu de la quarantaine gardée absent de %SystemRoot%\Temp" }
+    if (-not $cr -or (Get-Content -LiteralPath $cr.FullName -Raw -Encoding UTF8) -notmatch 'SAUF la quarantaine') { return "compte rendu de la quarantaine gardée absent de %SystemRoot%\Temp" }
     $true
 }
 
