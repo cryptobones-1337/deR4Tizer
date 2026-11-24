@@ -417,6 +417,14 @@ fn niveau3_complet(sources: &[commun::SourceMenace]) -> bool {
     SOURCES.iter().filter(|s| s.auto).all(|s| sources.iter().any(|i| i.nom == s.nom && i.entrees > 0))
 }
 
+/// Décision pure (T-18) : sources du niveau 3 qui ont chargé au moins une entrée, et sources du niveau 3 attendues (même
+/// critère que `niveau3_complet`) ; pour l'état effectif du blocage automatique (`politique::etat_blocage_listes`)
+pub fn niveau3_charges(sources: &[commun::SourceMenace]) -> (usize, usize) {
+    let attendues: Vec<&Source> = SOURCES.iter().filter(|s| s.auto).collect();
+    let chargees = attendues.iter().filter(|s| sources.iter().any(|i| i.nom == s.nom && i.entrees > 0)).count();
+    (chargees, attendues.len())
+}
+
 /// Garde le rang le plus fort pour une adresse exacte présente dans plusieurs listes
 fn monter(entree: &mut Correspondance, nouvelle: Correspondance) {
     if (nouvelle.auto, nouvelle.haute) > (entree.auto, entree.haute) {

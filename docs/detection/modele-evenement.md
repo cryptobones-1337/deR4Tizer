@@ -271,6 +271,57 @@ fichiers des incidents qui ne sont plus suivis sont effacés.
   recalculé pour autant au démarrage. Quand l'incident change, elle est recalculée sur ce que
   le SIEM a encore (30 jours de fichiers) : au-delà restent les résumés et les transitions de l'incident.
 
+## États publiés pour la Vue d'ensemble (T-18, T-4)
+
+Ajouts en lecture seulement, décidés par le mainteneur le 2026-11-23 (maquettes T-18 et T-4 validées) : aucune
+commande ni aucun réglage nouveau, aucune collecte nouvelle, aucune donnée personnelle (ni hôte, ni port, ni adresse,
+ni nom). Chaque état est tiré de ce que le service sait déjà, par une décision pure testée ; chaque champ est absent
+des fichiers écrits avant et se relit alors vide, `false` ou liste vide. Les codes sont stables, en ASCII, traduits par
+l'interface ; les textes français existants restent à côté.
+
+`etat.json` (et donc `/api/v1/etat`) :
+
+| Champ | Type | Valeurs | D'où |
+|---|---|---|---|
+| `ReponsesAuto.Rancongiciel` | texte | « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » | réglage `ReponseAutoRancongiciel`, politique (`decider`, suspension sur leurre), collectes `Leurres` et `JournalSecurite` (`politique::etat_rancongiciel`) |
+| `ReponsesAuto.BlocageListes` | texte | « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable » | réglage `BlocageAutoMenaces`, politique (refus en échec de la protection du dossier de données), listes du niveau 3 chargées (`menaces::niveau3_charges`), collecte `Connexions` (`politique::etat_blocage_listes`) |
+| `Syslog.Actif`, `Syslog.Etat` | booléen, texte | « Desactive », « Joignable », « EnEchec », « NonVerifiable » | réglage, et issue du dernier envoi d'une alerte depuis le démarrage ou le dernier réglage (`export::etat_syslog`) |
+| `Api.Actif`, `Api.Etat` | booléen, texte | « Desactive », « Joignable », « EnEchec », « NonVerifiable » | réglage, et ouverture de l'écoute par le service (`api::etat_api`) |
+
+- Ordre des sources d'une réponse : une source indisponible ou désactivée donne « SansEffet » (même si une autre n'est
+  pas encore lue), puis une source jamais lue « NonVerifiable », puis une source partielle « Partiel ». Blocage : aucune
+  des trois listes du niveau 3 (Spamhaus DROP IPv4 et IPv6, Feodo Tracker) chargée, « SansEffet » ; une partie,
+  « Partiel » ; protection du dossier en échec, « SansEffet » (la suspension sur leurre, elle, reste : D6-10).
+- Réglages lus : ceux du moniteur (`config.json` chargé, mis à jour par les commandes). La suspension sur leurre relit
+  `config.json` à chaque événement : les deux ne diffèrent que si le fichier est modifié hors du service.
+- Syslog : « Joignable » seulement en TCP (message écrit sur une connexion établie). En UDP, un datagramme émis n'est
+  jamais confirmé : « NonVerifiable ». Aucun envoi tant qu'aucune alerte du niveau choisi n'est levée : « NonVerifiable ».
+  Le bouton « Tester » n'y compte pas.
+- API : « Joignable » dit que le service a ouvert son port ; l'accès depuis le SIEM (pare-feu, réseau, adresses
+  autorisées) n'est pas vérifié. Jeton non créé ou port non obtenu : « EnEchec ».
+
+`maj.json` :
+
+| Champ | Type | Valeurs |
+|---|---|---|
+| `Controle` | texte | existant (PR #294) : « », « ManifesteAncien », « EchecRecent », « EchecProlonge » (page Santé) |
+| `StatutCode` | texte | « AdresseRefusee », « ManifesteNonObtenu », « ManifesteInvalide », « AJour », « ManifesteAncien », « Disponible », « SansCleEpinglee », « InstallationRefusee », « InstallationLancee », « InstallationImpossible » (`maj::StatutMaj`) ; le texte de `Statut` dit le détail |
+| `AutoApplique` | booléen | installation automatique appliquée par ce contrôle (réglage lu au moment du contrôle) |
+| `Installable` | booléen | vrai pour « Disponible » si ce binaire a une clé épinglée, et pour « InstallationLancee » (`maj::installable`) |
+
+`filtrage-etat.json` (jamais `etat.json` ni l'API) : `EtatCode`, mêmes cas que `Etat` : « Inactif »,
+« RemiseEnAttente », « SuspenduResolveur », « SuspenduAmont », « Contourne », « Actif », plus « ActifSansCategorie »
+quand le filtrage tourne sans aucune catégorie active (`filtrage::code_etat`).
+
+`trafic.json` : `NonAttribue`, liste de `{ Raison, Entrant, Sortant }` (octets depuis minuit, même périmètre que
+`Applications` : trafic public seulement), raisons sans octet omises, la plus grosse d'abord (`trafic::lignes_non_attribuees`).
+Raisons (`capture::attribuer`) : « HorsTcpUdp » (ni TCP ni UDP : ICMP, IPsec…), « SansPort » (fragment IP qui n'est pas
+le premier), « SansProprietaire » (port local absent des tables de Windows, même relues : connexion fermée avant la
+relecture, ou paquet d'aucun programme du poste, machine virtuelle, Windows Sandbox, partage de connexion) ; leur somme
+est la ligne « ? » des programmes. « ProcessusTermine » (port tenu par un PID absent de la liste des processus relue en
+même temps) est la somme des lignes « PID n ». Limite : « fermée avant la relecture » et « aucun programme du poste »
+ne se distinguent pas sans collecte nouvelle.
+
 ## Règles de stabilité
 
 - Un champ ne change jamais de type.

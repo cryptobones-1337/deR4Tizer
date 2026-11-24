@@ -488,6 +488,8 @@ pub struct EtatFiltrage {
     pub mis_a_jour: String,
     /// « inactif », « actif », « contourné sur la carte … », « suspendu : … », « remise des cartes en attente »
     pub etat: String,
+    /// Même état en code stable (`code_etat`, T-18), traduit par l'interface ; le texte ci-dessus reste pour l'existant
+    pub etat_code: String,
     pub categories: Vec<String>,
     pub cartes: Vec<CartePubliee>,
     /// Cartes que l'activation réglerait, relevées comme elle (`filtrage_cartes::releve_origine`) ; vide quand le
@@ -519,6 +521,27 @@ pub fn libelle_etat(actif: bool, remise_en_attente: bool, resolveur: bool, silen
         format!("contourné sur la carte {}", contournees.join(", "))
     } else {
         "actif".into()
+    }
+}
+
+/// Code stable de l'état (pur, testé ; T-18) : mêmes cas, dans le même ordre, que `libelle_etat`, plus
+/// « ActifSansCategorie » quand le filtrage tourne sans aucune catégorie active (rien n'est bloqué). « Inactif »,
+/// « RemiseEnAttente », « SuspenduResolveur », « SuspenduAmont », « Contourne », « ActifSansCategorie », « Actif »
+pub fn code_etat(actif: bool, remise_en_attente: bool, resolveur: bool, silence: bool, contournees: &[String], aucune_categorie: bool) -> &'static str {
+    if !actif {
+        "Inactif"
+    } else if remise_en_attente {
+        "RemiseEnAttente"
+    } else if !resolveur {
+        "SuspenduResolveur"
+    } else if silence {
+        "SuspenduAmont"
+    } else if !contournees.is_empty() {
+        "Contourne"
+    } else if aucune_categorie {
+        "ActifSansCategorie"
+    } else {
+        "Actif"
     }
 }
 

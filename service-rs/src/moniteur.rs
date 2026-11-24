@@ -1096,6 +1096,8 @@ impl Moniteur {
             // Registre des réponses : écriture en échec ou lecture initiale refusée, dit dans la page Santé (point 1 de
             // la revue de l'auditeur du 2026-11-21)
             let registre = politique::etat_registre();
+            let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(),
+                crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
@@ -1125,6 +1127,9 @@ impl Moniteur {
                 regles_sans_collecte,
                 regles_degradees,
                 causes_sans_collecte,
+                reponses_auto,
+                syslog: crate::export::etat_publie(self.config.syslog.actif),
+                api: crate::api::etat_publie(self.config.api.actif),
             });
             self.derniere_signature_etat = signature_etat;
             self.dernier_etat_ecrit = Instant::now();
@@ -2340,6 +2345,18 @@ fn juge_filtrage(partage: &Arc<Partage>, actives: Vec<crate::filtrage::Categorie
     })
 }
 
+/// États effectifs des réponses automatiques publiés dans etat.json (T-18), pur et testé : réglages en vigueur, échec de
+/// la protection du dossier de données, listes du niveau 3 chargées (`menaces::niveau3_charges`) et état des collectes
+/// (`collectes::instantane`, sans effet). Une collecte absente de l'instantané compte comme « Inconnue »
+pub(crate) fn etat_reponses_auto(config: &commun::Config, echec_protection: bool, niveau3: (usize, usize),
+    etats: &[(Collecte, collectes::EtatPublie, bool)]) -> commun::EtatReponsesAuto {
+    let etat = |c: Collecte| etats.iter().find(|(x, _, _)| *x == c).map(|(_, e, _)| e.clone()).unwrap_or(collectes::EtatPublie::Inconnue);
+    commun::EtatReponsesAuto {
+        rancongiciel: politique::etat_rancongiciel(config.reponse_auto_rancongiciel, &etat(Collecte::Leurres), &etat(Collecte::JournalSecurite)).into(),
+        blocage_listes: politique::etat_blocage_listes(config.blocage_auto_menaces, echec_protection, niveau3, &etat(Collecte::Connexions)).into(),
+    }
+}
+
 /// État du filtrage publié (PR 7.5a), sans l'heure ; l'appelant compare puis horodate
 fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filtrage::EtatFiltrage {
     use crate::filtrage_cartes as fc;
@@ -2353,10 +2370,13 @@ fn etat_filtrage(partage: &Arc<Partage>, config: &commun::Config) -> crate::filt
     let cartes_a_regler: Vec<String> = if resolveur { Vec::new() } else { fc::releve_origine().map(|l| l.into_iter().map(|o| o.nom).collect()).unwrap_or_default() };
     let f = partage.filtrage.read().unwrap();
     let mut st = partage.stats_filtrage.lock().unwrap();
+    let remise = RESTAURATION_EN_ATTENTE.load(Ordering::Acquire);
+    let categories: Vec<String> = crate::filtrage::categories_actives(config).iter().map(|c| c.libelle().to_string()).collect();
     crate::filtrage::EtatFiltrage {
         mis_a_jour: String::new(),
-        etat: crate::filtrage::libelle_etat(config.filtrage.actif, RESTAURATION_EN_ATTENTE.load(Ordering::Acquire), resolveur, silence, &contournees),
-        categories: crate::filtrage::categories_actives(config).iter().map(|c| c.libelle().to_string()).collect(),
+        etat: crate::filtrage::libelle_etat(config.filtrage.actif, remise, resolveur, silence, &contournees),
+        etat_code: crate::filtrage::code_etat(config.filtrage.actif, remise, resolveur, silence, &contournees, categories.is_empty()).into(),
+        categories,
         cartes,
         cartes_a_regler,
         amonts: crate::dns_local::amonts_en_cours().iter().map(|a| a.to_string()).collect(),

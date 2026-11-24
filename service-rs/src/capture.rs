@@ -101,16 +101,61 @@ impl Contexte {
 
     /// Nom du programme qui possède le port local du paquet, « ? » s'il est inconnu
     pub fn programme(&self, p: &Paquet) -> String {
+        self.attribution(p).0
+    }
+
+    /// Nom du programme (`programme`) et, s'il n'est pas nommé, pourquoi (T-4 : raison du trafic non attribué, publiée
+    /// dans trafic.json). Mêmes tables, même relecture qu'avant : aucune collecte nouvelle
+    pub fn attribution(&self, p: &Paquet) -> (String, Option<NonAttribue>) {
         let mut pid = self.pid(p);
         if pid.is_none() && (p.proto == TCP || p.proto == UDP) && self.age() > Duration::from_millis(300) {
             self.rafraichir();
             pid = self.pid(p);
         }
-        match pid {
-            Some(4) => "System".into(),
-            Some(pid) => self.tables.borrow().noms.get(&pid).cloned().unwrap_or_else(|| format!("PID {pid}")),
-            None => "?".into(),
+        let (_, _, port_local) = p.distant();
+        let t = self.tables.borrow();
+        attribuer(p.proto, port_local, pid, pid.and_then(|x| t.noms.get(&x)).map(String::as_str))
+    }
+}
+
+/// Raison d'un trafic sans programme nommé (T-4), code stable publié dans trafic.json (`NonAttribue`)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NonAttribue {
+    /// Ni TCP ni UDP (ICMP, IPsec, GRE…) : pas de port, donc pas de propriétaire à chercher (« ? »)
+    HorsTcpUdp,
+    /// TCP ou UDP sans port lisible : fragment IP qui n'est pas le premier (« ? »)
+    SansPort,
+    /// Port local absent des tables de Windows, même relues : connexion fermée avant la relecture, ou paquet qui ne
+    /// vient d'aucun programme du poste (machine virtuelle, Windows Sandbox, partage de connexion) (« ? »)
+    SansProprietaire,
+    /// Port tenu par un PID absent de la liste des processus relue en même temps : processus terminé entre les deux
+    /// lectures (« PID n »)
+    ProcessusTermine,
+}
+
+impl NonAttribue {
+    pub const TOUTES: [NonAttribue; 4] = [NonAttribue::HorsTcpUdp, NonAttribue::SansPort, NonAttribue::SansProprietaire, NonAttribue::ProcessusTermine];
+
+    pub fn code(self) -> &'static str {
+        match self {
+            NonAttribue::HorsTcpUdp => "HorsTcpUdp",
+            NonAttribue::SansPort => "SansPort",
+            NonAttribue::SansProprietaire => "SansProprietaire",
+            NonAttribue::ProcessusTermine => "ProcessusTermine",
         }
+    }
+}
+
+/// Décision pure (T-4) : nom du programme d'un paquet d'après le PID propriétaire de son port local et le nom de ce PID,
+/// et la raison s'il n'est pas nommé. Mêmes noms qu'avant (« System », nom, « PID n », « ? »)
+pub fn attribuer(proto: u8, port_local: u16, pid: Option<u32>, nom: Option<&str>) -> (String, Option<NonAttribue>) {
+    match (pid, nom) {
+        (Some(4), _) => ("System".into(), None),
+        (Some(_), Some(n)) => (n.to_string(), None),
+        (Some(pid), None) => (format!("PID {pid}"), Some(NonAttribue::ProcessusTermine)),
+        (None, _) if proto != TCP && proto != UDP => ("?".into(), Some(NonAttribue::HorsTcpUdp)),
+        (None, _) if port_local == 0 => ("?".into(), Some(NonAttribue::SansPort)),
+        (None, _) => ("?".into(), Some(NonAttribue::SansProprietaire)),
     }
 }
 

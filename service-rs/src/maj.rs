@@ -73,6 +73,74 @@ struct Etat {
     /// Début de la série de contrôles en échec (vide, ou date lisible), et le même en secondes Unix (0 : aucun échec)
     echec_depuis: String,
     echec_depuis_s: i64,
+    /// Issue du contrôle en code stable (`StatutMaj::code`, T-18) ; le texte de `statut` reste pour l'existant. Vide dans
+    /// un fichier écrit avant
+    statut_code: String,
+    /// Installation automatique appliquée par ce contrôle (réglage lu au moment du contrôle, pas le réglage actuel)
+    auto_applique: bool,
+    /// Version plus récente que le service installerait (`installable`) : annoncée et clé épinglée, ou installation lancée
+    installable: bool,
+}
+
+/// Issue d'un contrôle en code stable (T-18), publiée dans maj.json (`StatutCode`) et traduite par l'interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatutMaj {
+    /// Adresse du manifeste refusée (config.json) : aucune vérification
+    AdresseRefusee,
+    /// Manifeste non téléchargé (404, réseau, DNS…)
+    ManifesteNonObtenu,
+    /// Manifeste téléchargé mais illisible ou refusé par `lire_manifeste`
+    ManifesteInvalide,
+    AJour,
+    /// Manifeste plus ancien que la version installée (A-3-2)
+    ManifesteAncien,
+    /// Version plus récente annoncée, installation automatique désactivée : signalée seulement
+    Disponible,
+    /// Version plus récente, installation automatique activée, mais ce binaire n'a pas de clé épinglée
+    SansCleEpinglee,
+    /// Version plus récente refusée avant l'installation (retour arrière impossible, téléchargement, signature, version
+    /// ou propriétaire du paquet) : le texte de `Statut` dit pourquoi
+    InstallationRefusee,
+    InstallationLancee,
+    /// Script d'installation impossible à lancer
+    InstallationImpossible,
+}
+
+impl StatutMaj {
+    pub fn code(self) -> &'static str {
+        match self {
+            StatutMaj::AdresseRefusee => "AdresseRefusee",
+            StatutMaj::ManifesteNonObtenu => "ManifesteNonObtenu",
+            StatutMaj::ManifesteInvalide => "ManifesteInvalide",
+            StatutMaj::AJour => "AJour",
+            StatutMaj::ManifesteAncien => "ManifesteAncien",
+            StatutMaj::Disponible => "Disponible",
+            StatutMaj::SansCleEpinglee => "SansCleEpinglee",
+            StatutMaj::InstallationRefusee => "InstallationRefusee",
+            StatutMaj::InstallationLancee => "InstallationLancee",
+            StatutMaj::InstallationImpossible => "InstallationImpossible",
+        }
+    }
+
+    /// Issue pour le calendrier des essais et la page Santé (inchangée : manifeste non obtenu ou refusé, plus ancien, lu)
+    pub fn issue(self) -> Issue {
+        match self {
+            StatutMaj::AdresseRefusee | StatutMaj::ManifesteNonObtenu | StatutMaj::ManifesteInvalide => Issue::Echec,
+            StatutMaj::ManifesteAncien => Issue::ManifesteAncien,
+            _ => Issue::Lu,
+        }
+    }
+}
+
+/// Décision pure (T-18) : la version annoncée serait-elle installée par le service ? Annoncée avec l'installation
+/// automatique coupée : oui si ce binaire a une clé épinglée (rien n'est vérifié du paquet tant qu'il n'est pas
+/// téléchargé) ; installation lancée : oui ; tout autre cas : non
+pub fn installable(statut: StatutMaj, cle_epinglee: bool) -> bool {
+    match statut {
+        StatutMaj::Disponible => cle_epinglee,
+        StatutMaj::InstallationLancee => true,
+        _ => false,
+    }
 }
 
 // ------------------------------------------------------------ calendrier et issue des contrôles (audit du 2026-11-23,
@@ -406,44 +474,44 @@ fn preparer_paquet_retour(travail: &Path, url_manifeste: &str, cles: &[String]) 
 }
 
 /// Vérifie et, si tout est en ordre (et si l'installation automatique est permise), installe. Rend la version du
-/// manifeste, le statut et l'issue du contrôle (calendrier des essais, page Santé)
-fn verifier(config: &ConfigMaj, installer: bool) -> (String, String, Issue) {
+/// manifeste, le statut et son code (d'où l'issue du contrôle : calendrier des essais, page Santé)
+fn verifier(config: &ConfigMaj, installer: bool) -> (String, String, StatutMaj) {
     let dossier = commun::dossier().join("maj");
     let _ = crate::commun::creer_dossiers(&dossier);
     let f_manifeste = dossier.join("manifeste.json");
     // config.json relu du disque : l'adresse est revalidée ici, pas seulement à la commande majConfig (B2)
     if !commun::adresse_manifeste_simple(&config.url) {
-        return (String::new(), "adresse du manifeste refusée (config.json) : aucune vérification".into(), Issue::Echec);
+        return (String::new(), "adresse du manifeste refusée (config.json) : aucune vérification".into(), StatutMaj::AdresseRefusee);
     }
     if let Err(e) = telecharger(&config.url, &f_manifeste, TAILLE_MAX_MANIFESTE) {
-        return (String::new(), texte_echec_manifeste(&e), Issue::Echec);
+        return (String::new(), texte_echec_manifeste(&e), StatutMaj::ManifesteNonObtenu);
     }
     // Lu avec le contrôle du propriétaire, comme tout fichier du dossier de données (la confiance vient de
     // toute façon du paquet signé)
     let lu = commun::lire_fichier(&f_manifeste).ok_or_else(|| "manifeste illisible ou protection du dossier non vérifiée".to_string());
     let m = match lu.and_then(|t| lire_manifeste(t.as_bytes())) {
         Ok(m) => m,
-        Err(e) => return (String::new(), e, Issue::Echec),
+        Err(e) => return (String::new(), e, StatutMaj::ManifesteInvalide),
     };
     // Égale : à jour ; plus ancienne : statut distinct (A-3-2) ; plus récente : vérification du paquet
     if let Some((statut, issue)) = statut_comparaison(&m.version, commun::VERSION) {
-        return (m.version, statut, issue);
+        let code = if issue == Issue::ManifesteAncien { StatutMaj::ManifesteAncien } else { StatutMaj::AJour };
+        return (m.version, statut, code);
     }
-    let (v, s) = installer_version(config, &m, installer, &dossier);
-    (v, s, Issue::Lu)
+    installer_version(config, &m, installer, &dossier)
 }
 
 /// Version plus récente annoncée par un manifeste lu : signalée, ou vérifiée puis installée si c'est permis
-fn installer_version(config: &ConfigMaj, m: &Manifeste, installer: bool, dossier: &Path) -> (String, String) {
+fn installer_version(config: &ConfigMaj, m: &Manifeste, installer: bool, dossier: &Path) -> (String, String, StatutMaj) {
     if !installer {
-        return (m.version.clone(), format!("version {} disponible (installation automatique désactivée)", m.version));
+        return (m.version.clone(), format!("version {} disponible (installation automatique désactivée)", m.version), StatutMaj::Disponible);
     }
     let v = m.version.clone();
-    let refus = |e: String| (v.clone(), format!("version {v} disponible : {e}"));
+    let refus = |e: String| (v.clone(), format!("version {v} disponible : {e}"), StatutMaj::InstallationRefusee);
     let cles = cles_epinglees(CLES_EPINGLEES);
-    // Sans clé épinglée, rien ne sera jamais installé : inutile de télécharger
+    // Sans clé épinglée, rien ne sera jamais installé : inutile de télécharger (même texte qu'avant, code distinct)
     if cles.is_empty() {
-        return refus("cette version n'a pas de clé de signature épinglée : mise à jour signalée, pas installée".into());
+        return (v.clone(), format!("version {v} disponible : cette version n'a pas de clé de signature épinglée : mise à jour signalée, pas installée"), StatutMaj::SansCleEpinglee);
     }
     let travail = match preparer_dossier_travail() {
         Ok(d) => d,
@@ -537,14 +605,14 @@ pub fn commande_script(script: &str) -> Command {
 
 /// Script à part (le service ne peut pas se remplacer lui-même) : empreintes revérifiées juste avant
 /// l'exécution, installation, contrôle du service par son canal, retour arrière par le paquet précédent
-fn lancer_installation(p: &ParametresScript) -> (String, String) {
+fn lancer_installation(p: &ParametresScript) -> (String, String, StatutMaj) {
     match commande_script(&script_installation(p)).spawn() {
         Ok(_) => {
             let _ = fs::remove_file(p.journaux.join("echec.txt"));
             commun::journal(&format!("mise à jour vers la version {} : installation lancée (retour arrière si le service ne répond pas)", p.version));
-            (p.version.to_string(), format!("installation de la version {} en cours", p.version))
+            (p.version.to_string(), format!("installation de la version {} en cours", p.version), StatutMaj::InstallationLancee)
         }
-        Err(e) => (p.version.to_string(), format!("installation impossible ({e})")),
+        Err(e) => (p.version.to_string(), format!("installation impossible ({e})"), StatutMaj::InstallationImpossible),
     }
 }
 
@@ -610,13 +678,13 @@ pub fn script_installation(p: &ParametresScript) -> String {
     )
 }
 
-fn publier(disponible: String, mut statut: String, issue: Issue) {
+fn publier(disponible: String, mut statut: String, code: StatutMaj, auto: bool) {
     // Écrit par le script en UTF-8 avec BOM (PowerShell 5) ; sans -Encoding, il l'était en Windows-1252 et sa
     // lecture échouait : l'échec n'apparaissait jamais dans l'interface
     if let Some(e) = commun::lire_fichier(&commun::dossier().join("maj").join("echec.txt")) {
         statut = format!("{statut} · {}", e.trim_start_matches('\u{feff}').trim());
     }
-    let _ = publier_vers("maj.json", &commun::dossier().join("maj.json"), disponible, statut, issue, crate::sante::secondes());
+    let _ = publier_vers("maj.json", &commun::dossier().join("maj.json"), disponible, statut, code, auto, crate::sante::secondes());
 }
 
 /// Écrit l'état du contrôle dans `chemin` (suivi sous le nom `nom` ; tests : dossier de travail). Le début de la série
@@ -624,19 +692,25 @@ fn publier(disponible: String, mut statut: String, issue: Issue) {
 /// physiques et lien vérifiés sur le handle), SANS `lire`/`lire_etat` : ceux-ci marquent un fichier mal formé « non
 /// chargé », et `ecrire` refuse ensuite de le remplacer ; le statut restait alors figé alors que les contrôles suivants
 /// échouaient (audit de #294, S294-01). Illisible, refusé ou mal formé : la série repart de `t`, et le fichier est
-/// réécrit. Aucune confiance n'est portée par maj.json : seul `EchecDepuisS` est repris, borné par `debut_echecs`
-pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String, issue: Issue, t: i64) -> Result<(), String> {
+/// réécrit. Aucune confiance n'est portée par maj.json : seul `EchecDepuisS` est repris, borné par `debut_echecs`.
+/// `code` : issue du contrôle (`StatutMaj`) ; `auto` : installation automatique appliquée par ce contrôle (T-18)
+pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String, code: StatutMaj, auto: bool, t: i64) -> Result<(), String> {
+    let issue = code.issue();
     let precedent = echec_depuis_publie(commun::lire_fichier(chemin).as_deref());
     let depuis = debut_echecs(issue, precedent, t);
+    let cle_epinglee = !cles_epinglees(CLES_EPINGLEES).is_empty();
     commun::ecrire_suivi(nom, chemin, &Etat {
         verifie_le: commun::maintenant(),
         version_installee: commun::VERSION.into(),
         version_disponible: disponible,
         statut,
-        cle_epinglee: !cles_epinglees(CLES_EPINGLEES).is_empty(),
+        cle_epinglee,
         controle: code_controle(issue, depuis, t).into(),
         echec_depuis: if depuis > 0 { commun::heure(std::time::UNIX_EPOCH + Duration::from_secs(depuis as u64)) } else { String::new() },
         echec_depuis_s: depuis,
+        statut_code: code.code().into(),
+        auto_applique: auto,
+        installable: installable(code, cle_epinglee),
     })
 }
 
@@ -644,8 +718,8 @@ pub fn publier_vers(nom: &str, chemin: &Path, disponible: String, statut: String
 /// téléchargement
 pub fn verifier_maintenant(config: ConfigMaj) {
     std::thread::spawn(move || {
-        let (v, s, issue) = verifier(&config, config.auto);
-        publier(v, s, issue);
+        let (v, s, code) = verifier(&config, config.auto);
+        publier(v, s, code, config.auto);
     });
 }
 
@@ -660,9 +734,9 @@ pub fn demarrer() {
             if config.maj.url.is_empty() {
                 echecs = 0;
             } else {
-                let (v, s, issue) = verifier(&config.maj, config.maj.auto);
-                echecs = if issue == Issue::Echec { echecs.saturating_add(1) } else { 0 };
-                publier(v, s, issue);
+                let (v, s, code) = verifier(&config.maj, config.maj.auto);
+                echecs = if code.issue() == Issue::Echec { echecs.saturating_add(1) } else { 0 };
+                publier(v, s, code, config.maj.auto);
             }
             std::thread::sleep(Duration::from_secs(delai_avant_controle(echecs)));
         }

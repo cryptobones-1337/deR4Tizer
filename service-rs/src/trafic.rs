@@ -61,6 +61,34 @@ struct LignePort {
     octets: u64,
 }
 
+/// Trafic sans programme nommé, par raison (T-4) : code stable (`capture::NonAttribue::code`) et octets depuis minuit.
+/// La somme des raisons HorsTcpUdp, SansPort et SansProprietaire est la ligne « ? » des programmes ; ProcessusTermine
+/// est la somme des lignes « PID n »
+#[derive(Serialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub struct LigneNonAttribue {
+    pub raison: String,
+    pub entrant: u64,
+    pub sortant: u64,
+}
+
+/// Décision pure (T-4) : lignes publiées, raisons sans octet omises, la plus grosse d'abord (ordre fixe à égalité)
+pub fn lignes_non_attribuees(compteurs: &[(u64, u64); 4]) -> Vec<LigneNonAttribue> {
+    let mut v: Vec<LigneNonAttribue> = crate::capture::NonAttribue::TOUTES.iter().zip(compteurs)
+        .filter(|(_, (e, s))| e.saturating_add(*s) > 0)
+        .map(|(r, (e, s))| LigneNonAttribue { raison: r.code().into(), entrant: *e, sortant: *s })
+        .collect();
+    v.sort_by_key(|l| std::cmp::Reverse(l.entrant.saturating_add(l.sortant)));
+    v
+}
+
+/// Compte les octets d'un paquet sans programme nommé dans la case de sa raison (pur ; compteurs saturés)
+pub fn noter_non_attribue(compteurs: &mut [(u64, u64); 4], raison: crate::capture::NonAttribue, entrant: bool, octets: u64) {
+    if let Some(c) = compteurs.get_mut(raison as usize) {
+        if entrant { c.0 = c.0.saturating_add(octets) } else { c.1 = c.1.saturating_add(octets) }
+    }
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "PascalCase")]
 struct Etat {
@@ -78,6 +106,8 @@ struct Etat {
     destinations: Vec<LigneDestination>,
     pays: Vec<LignePays>,
     ports: Vec<LignePort>,
+    /// Trafic sans programme nommé, par raison (T-4) ; absent des fichiers écrits avant : liste vide
+    non_attribue: Vec<LigneNonAttribue>,
 }
 
 #[derive(Default)]
@@ -103,6 +133,8 @@ pub struct Trafic {
     applications: HashMap<String, (u64, u64, HashSet<Ipv4Addr>)>,
     destinations: HashMap<Ipv4Addr, Destination>,
     ports: HashMap<String, u64>,
+    /// Octets (entrant, sortant) sans programme nommé, dans l'ordre de `capture::NonAttribue::TOUTES` (T-4)
+    non_attribue: [(u64, u64); 4],
     total: (u64, u64),
     paquets: u64,
     seconde: (u64, u64),
@@ -138,6 +170,7 @@ impl Trafic {
             applications: HashMap::new(),
             destinations: HashMap::new(),
             ports: HashMap::new(),
+            non_attribue: [(0, 0); 4],
             total: (0, 0),
             paquets: 0,
             seconde: (0, 0),
@@ -217,6 +250,7 @@ impl Trafic {
             destinations,
             pays,
             ports,
+            non_attribue: lignes_non_attribuees(&self.non_attribue),
         };
         drop(geo);
         let _ = commun::ecrire("trafic.json", &etat);
@@ -238,7 +272,10 @@ impl Analyseur for Trafic {
         if privee(ip) {
             return;
         }
-        let programme = contexte.programme(p);
+        let (programme, raison) = contexte.attribution(p);
+        if let Some(r) = raison {
+            noter_non_attribue(&mut self.non_attribue, r, p.entrant, octets);
+        }
         let a = self.applications.entry(programme.clone()).or_default();
         if p.entrant { a.0 += octets } else { a.1 += octets }
         if a.2.len() < 2000 {
@@ -279,6 +316,7 @@ impl Analyseur for Trafic {
                 self.applications.clear();
                 self.destinations.clear();
                 self.ports.clear();
+                self.non_attribue = [(0, 0); 4];
                 self.total = (0, 0);
                 self.depuis = commun::maintenant();
             }
