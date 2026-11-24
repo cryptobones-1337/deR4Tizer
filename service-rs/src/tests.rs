@@ -11821,6 +11821,7 @@ fn attack_lot3_fiches_et_table_concordent() {
 fn attack_lot2_chaine_porte_les_techniques_de_ses_signaux() {
     use crate::natif::InfoListe;
     let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(crate::tests_detection::PID_SERVICE_ESSAI);
     let liste: std::collections::HashMap<u32, InfoListe> = [(100, ("explorer", 4)), (200, ("powershell", 100)), (300, ("cmd", 200))]
         .into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
     arbre.maj(&liste);
@@ -11834,6 +11835,7 @@ fn attack_lot2_chaine_porte_les_techniques_de_ses_signaux() {
     assert_eq!(a[0].mitre, "T1059.001 PowerShell / T1027 Code obscurci / T1218 Binaire système détourné");
     // Signaux sans technique : la chaîne n'en invente pas
     let mut b = crate::chaines::Arbre::default();
+    b.fixer_pid_service(crate::tests_detection::PID_SERVICE_ESSAI);
     b.maj(&liste);
     b.signaler(200, 6, "indice");
     b.signaler(300, 6, "autre indice");
@@ -12697,6 +12699,7 @@ fn audit_p2_chaine_code_des_signaux() {
     use crate::natif::InfoListe;
     let alerte_chaine = |code: &str, raison: &str| {
         let mut arbre = crate::chaines::Arbre::default();
+        arbre.fixer_pid_service(crate::tests_detection::PID_SERVICE_ESSAI);
         let liste: std::collections::HashMap<u32, InfoListe> = [(100, ("explorer", 4)), (200, ("powershell", 100)), (300, ("cmd", 200))]
             .into_iter().map(|(pid, (nom, parent))| (pid, InfoListe { nom: nom.into(), parent })).collect();
         arbre.maj(&liste);

@@ -777,10 +777,17 @@ fn arbre_de_test() -> crate::chaines::Arbre {
                        &[(100, &explorateur)])
 }
 
-/// Arbre synthétique (pid, nom, parent) et chemins des programmes lus (pid, chemin) ; un pid absent n'a pas de chemin lu
+/// PID du service dans les arbres synthétiques : fixe, hors de tout PID de scénario. Sans lui, le service est le processus
+/// de test (`std::process::id()`), dont le PID change à chaque lancement : tombé sur un PID d'un scénario, il en retire ou
+/// en coupe une branche (échec instable de `t1_comportement_repete_sous_le_meme_parent`, run 45366147827 : deux chaînes)
+pub(crate) const PID_SERVICE_ESSAI: u32 = 0xFFFF_FFF0;
+
+/// Arbre synthétique (pid, nom, parent) et chemins des programmes lus (pid, chemin) ; un pid absent n'a pas de chemin lu ;
+/// service : `PID_SERVICE_ESSAI`
 fn arbre_avec_chemins(processus: &[(u32, &str, u32)], chemins: &[(u32, &str)]) -> crate::chaines::Arbre {
     use crate::natif::InfoListe;
     let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
     let liste: std::collections::HashMap<u32, InfoListe> =
         processus.iter().map(|&(pid, nom, parent)| (pid, InfoListe { nom: nom.into(), parent })).collect();
     let chemins: std::collections::HashMap<u32, String> = chemins.iter().map(|&(p, c)| (p, c.to_string())).collect();
@@ -1200,7 +1207,7 @@ fn t1_parent_mort_avant_l_enfant_ecarte() {
 /// PID d'auditpol est repris par un vrai programme de l'utilisateur : sa chaîne ne remonte pas au service
 #[test]
 fn t1_descendants_du_service_hors_chaine() {
-    let service = std::process::id();
+    let service = PID_SERVICE_ESSAI;
     let sys = format!(r"{}\System32", crate::natif::dossier_windows());
     let (auditpol, icacls, powershell) = (format!(r"{sys}\auditpol.exe"), format!(r"{sys}\icacls.exe"), format!(r"{sys}\WindowsPowerShell\v1.0\powershell.exe"));
     let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (service, "deR4TizerSvc", 50), (700, "auditpol", service), (701, "conhost", 700),
@@ -1232,7 +1239,7 @@ fn t1_descendants_du_service_hors_chaine() {
 /// les chaînes, sans signal
 #[test]
 fn t1_enfant_du_service_usurpe_signale() {
-    let service = std::process::id();
+    let service = PID_SERVICE_ESSAI;
     let mut arbre = arbre_avec_chemins(&[(service, "deR4TizerSvc", 50)], &[]);
     arbre.creation(800, Some(service), r"C:\Users\Public\outil.exe", None);
     arbre.creation(801, Some(800), r"C:\W\System32\whoami.exe", None);
@@ -1261,7 +1268,19 @@ fn t1_enfant_du_service_usurpe_signale() {
 /// la chaîne compte une fois ; une alerte au plus par niveau, trois au plus par chaîne et par heure, le surplus compté
 #[test]
 fn t1_comportement_repete_sous_le_meme_parent() {
+    let (chaines, score, alertes) = scenario_comportement_repete(None);
+    assert_eq!(chaines, 1);
+    assert_eq!(score, 12, "répétitions comptées une fois");
+    assert_eq!(alertes, 1, "une seule alerte pour 200 répétitions");
+}
+
+/// Scénario de `t1_comportement_repete_sous_le_meme_parent` : nombre de chaînes, score de la première, alertes levées ;
+/// `service` : PID du service à la place de `PID_SERVICE_ESSAI`
+fn scenario_comportement_repete(service: Option<u32>) -> (usize, i32, usize) {
     let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (110, "outil", 100)], &[]);
+    if let Some(s) = service {
+        arbre.fixer_pid_service(s);
+    }
     arbre.signaler_code(110, 2, "réseau : IP DIRECTE (aucune requête DNS)", &[], "RES-002#ip-directe");
     let mut alertes = 0;
     for i in 0..200u32 {
@@ -1273,9 +1292,19 @@ fn t1_comportement_repete_sous_le_meme_parent() {
         alertes += arbre.alertes(&arbre.chaines()).len();
     }
     let chaines = arbre.chaines();
-    assert_eq!(chaines.len(), 1);
-    assert_eq!(chaines[0].score, 12, "répétitions comptées une fois");
-    assert_eq!(alertes, 1, "une seule alerte pour 200 répétitions");
+    (chaines.len(), chaines.first().map(|c| c.score).unwrap_or(0), alertes)
+}
+
+/// Cause de l'échec instable de `t1_comportement_repete_sous_le_meme_parent` (run 45366147827, « left: 2, right: 1 » sur
+/// le nombre de chaînes) : le service est reconnu par son PID, et dans les tests ce PID était celui du processus de test.
+/// Quand il tombe sur un `cmd` du scénario (PID pair multiple de 4 entre 1000 et 1396, comme un PID Windows), ce `cmd`
+/// est pris pour le service : son enfant `pwsh` devient sa propre tête (parent usurpé), deuxième chaîne. Le scénario
+/// tourne donc avec un PID de service fixé hors de ses PID ; le même scénario avec le PID en collision donne bien deux
+/// chaînes, ce qui prouve la cause
+#[test]
+fn t1_scenario_independant_du_pid_du_processus_de_test() {
+    assert_eq!(scenario_comportement_repete(None).0, 1, "service fixé hors du scénario : une chaîne");
+    assert_eq!(scenario_comportement_repete(Some(1236)).0, 2, "PID du service en collision avec un cmd du scénario : l'échec vu en CI");
 }
 
 /// Plafond : une chaîne qui gagne sans cesse des comportements nouveaux lève trois alertes CHA-001 au plus par heure ;
