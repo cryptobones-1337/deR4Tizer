@@ -76,6 +76,9 @@ pub struct Partage {
     /// Relevé des démarrages en cours : l'arrêt l'attend avant de vider la file (sinon une alerte déjà retirée de la
     /// référence demarrage.json serait perdue pour toujours : relecture de #61)
     pub persistance_en_cours: AtomicBool,
+    /// Adresses IPv4 des connexions signalées au dernier relevé (`ips_signalees`), lues par trafic.rs pour publier leurs
+    /// pays dans trafic.json (T-19, lecture seulement)
+    pub ips_signalees: Mutex<Vec<std::net::Ipv4Addr>>,
 }
 
 /// Alertes de persistance encore en file, après la fin du relevé en cours (attendue au plus `attente`) : appelé à
@@ -165,6 +168,7 @@ impl Moniteur {
             alertes_persistance: Mutex::new(Vec::new()),
             entrees_persistance: AtomicUsize::new(0),
             persistance_en_cours: AtomicBool::new(false),
+            ips_signalees: Mutex::new(Vec::new()),
         });
         crate::siem::demarrer(partage.alertes_externes.clone(), !console);
         if !console {
@@ -904,6 +908,8 @@ impl Moniteur {
             flux.push(f);
         }
 
+        // Connexions signalées (T-19) : leurs adresses, pour les pays publiés par trafic.json
+        *self.partage.ips_signalees.lock().unwrap() = ips_signalees(&flux);
         let t = mesure::noter("cycle.flux", t);
         // Oublie les flux fermés pour que leur réapparition soit considérée comme nouvelle
         self.premieres_vues.retain(|k, _| cles_vues.contains(k));
@@ -2958,6 +2964,22 @@ pub(crate) fn regle_flux(menace: bool, nouveau: bool, premier_passage: bool, sco
     } else {
         None
     }
+}
+
+/// Nombre maximal d'adresses signalées partagées avec trafic.rs (T-19)
+pub const MAX_IPS_SIGNALEES: usize = 500;
+
+/// Décision pure (testée, T-19) : adresses IPv4 des connexions signalées, au même seuil que l'onglet « Suspectes » de la
+/// page Connexions (score au seuil d'alerte, ou menace connue) ; sans doublon, MAX_IPS_SIGNALEES au plus. IPv6 et texte
+/// qui n'est pas une adresse ignorés (la carte est en IPv4)
+pub fn ips_signalees(flux: &[FluxInfo]) -> Vec<std::net::Ipv4Addr> {
+    let mut vues = HashSet::new();
+    flux.iter()
+        .filter(|f| f.score >= commun::SEUIL_ALERTE || f.raisons.contains("MENACE"))
+        .filter_map(|f| f.ip.parse::<std::net::Ipv4Addr>().ok())
+        .filter(|ip| vues.insert(*ip))
+        .take(MAX_IPS_SIGNALEES)
+        .collect()
 }
 
 /// Décision pure (testée, audit du 2026-11-23, B-1-01) : une connexion ouverte au démarrage du service ne garde la marque

@@ -117,6 +117,148 @@ fn t4_trafic_non_attribue_raison() {
     assert!(include_str!("capture.rs").replace("\r\n", "\n").contains("    pub fn programme(&self, p: &Paquet) -> String {\n        self.attribution(p).0\n    }"), "DPI et IDS : même nom qu'avant");
 }
 
+/// T-19 (étape 1, service) : carte du trafic. Par pays : programmes avec leurs volumes et destinations principales,
+/// bornés et triés ; seuls les pays qui ont du trafic, détail pour les plus gros seulement
+#[test]
+fn t19_trafic_pays_programmes_destinations_bornes() {
+    use crate::trafic::{lignes_pays, VueDestination, MAX_DESTINATIONS_PAYS, MAX_PAYS, MAX_PAYS_DETAILLES, MAX_PROGRAMMES_PAYS};
+    use std::time::Duration;
+    let v = |ip: [u8; 4], nom: &'static str, pays: &'static str, programme: &'static str, e: u64, s: u64| VueDestination {
+        ip: Ipv4Addr::from(ip), nom, pays, programme, entrant: e, sortant: s, recent: (0, 0), active: false,
+    };
+    let vues = vec![
+        v([1, 1, 1, 1], "a.example.com", "US", "msedge.exe", 100, 10),
+        v([1, 1, 1, 2], "", "US", "msedge.exe", 50, 5),
+        v([1, 1, 1, 3], "b.example.net", "US", "Teams.exe", 300, 0),
+        v([2, 2, 2, 2], "c.example.org", "DE", "?", 7, 1),
+        v([3, 3, 3, 3], "sans-pays.example", "", "msedge.exe", 999, 999),
+    ];
+    let l = lignes_pays(&vues, Duration::from_secs(10));
+    assert_eq!(l.iter().map(|p| p.code.as_str()).collect::<Vec<_>>(), ["US", "DE"], "pays sans code omis, le plus gros d'abord");
+    let us = &l[0];
+    assert_eq!((us.entrant, us.sortant, us.destinations), (450, 15, 3), "champs existants inchangés");
+    let pv: Vec<(&str, u64, u64)> = us.programmes_volumes.iter().map(|p| (p.nom.as_str(), p.entrant, p.sortant)).collect();
+    assert_eq!(pv, [("Teams.exe", 300, 0), ("msedge.exe", 150, 15)], "volumes par programme additionnés, le plus gros d'abord");
+    let dp: Vec<(String, &str, &str, u64)> = us.destinations_principales.iter().map(|d| (d.ip.clone(), d.nom.as_str(), d.programme.as_str(), d.entrant + d.sortant)).collect();
+    assert_eq!(dp, [("1.1.1.3".to_string(), "b.example.net", "Teams.exe", 300), ("1.1.1.1".to_string(), "a.example.com", "msedge.exe", 110),
+        ("1.1.1.2".to_string(), "", "msedge.exe", 55)], "adresse et nom comme dans Destinations");
+    assert_eq!(l[1].programmes_volumes[0].nom, "?", "programme désigné comme dans les listes existantes");
+    assert_eq!(serde_json::to_string(&us.programmes_volumes[0]).unwrap(), r#"{"Nom":"Teams.exe","Entrant":300,"Sortant":0}"#);
+    assert_eq!(serde_json::to_string(&us.destinations_principales[2]).unwrap(),
+        r#"{"Ip":"1.1.1.2","Nom":"","Programme":"msedge.exe","Entrant":50,"Sortant":5}"#);
+
+    // Bornes : programmes et destinations par pays, nombre de pays détaillés, nombre de pays
+    let noms: Vec<String> = (0..40).map(|i| format!("p{i}.exe")).collect();
+    let codes: Vec<String> = (0..300).map(|i| format!("{}{}", (b'A' + (i / 26) as u8) as char, (b'A' + (i % 26) as u8) as char)).collect();
+    let mut grosses = Vec::new();
+    for (i, c) in codes.iter().enumerate() {
+        let n = if i == 0 { 40 } else { 1 };
+        for j in 0..n {
+            grosses.push(VueDestination { ip: Ipv4Addr::from(((i as u32) << 8) | j as u32), nom: "", pays: c.as_str(), programme: noms[j].as_str(),
+                entrant: 10_000 - i as u64 + j as u64, sortant: 0, recent: (0, 0), active: false });
+        }
+    }
+    let l = lignes_pays(&grosses, Duration::from_secs(10));
+    assert_eq!(l.len(), MAX_PAYS, "nombre de pays borné");
+    assert_eq!(l[0].code, "AA");
+    assert_eq!(l[0].destinations, 40, "le compte des destinations n'est pas borné, seule la liste l'est");
+    assert_eq!(l[0].programmes_volumes.len(), MAX_PROGRAMMES_PAYS);
+    assert_eq!(l[0].programmes_volumes[0].nom, "p39.exe");
+    assert_eq!(l[0].destinations_principales.len(), MAX_DESTINATIONS_PAYS);
+    assert!(l[0].programmes.len() <= 8, "liste existante, toujours bornée à 8");
+    assert!(l.iter().take(MAX_PAYS_DETAILLES).all(|p| !p.destinations_principales.is_empty()));
+    assert!(l.iter().skip(MAX_PAYS_DETAILLES).all(|p| p.destinations_principales.is_empty() && p.programmes_volumes.is_empty()),
+        "détail réservé aux pays les plus gros");
+    assert!(serde_json::to_string(&l).unwrap().len() < 200_000, "trafic.json reste petit");
+    // Volumes saturés, jamais de dépassement
+    let max = [v([9, 9, 9, 9], "", "FR", "x", u64::MAX, u64::MAX), v([9, 9, 9, 8], "", "FR", "x", u64::MAX, 1)];
+    let l = lignes_pays(&max, Duration::from_secs(10));
+    assert_eq!((l[0].entrant, l[0].sortant), (u64::MAX, u64::MAX));
+    assert_eq!(l[0].programmes_volumes[0].entrant, u64::MAX);
+}
+
+/// T-19 : débit récent par pays (épaisseur des arcs) : octets des dix dernières secondes environ, relevés aux deux
+/// écritures précédentes de trafic.json ; aucune collecte nouvelle
+#[test]
+fn t19_trafic_debit_recent() {
+    use crate::trafic::{debit_recent, decaler_cliches, lignes_pays, VueDestination};
+    use std::time::Duration;
+    assert_eq!(debit_recent(10_000, Duration::from_secs(10)), 1_000);
+    assert_eq!(debit_recent(10_000, Duration::from_millis(5_000)), 2_000);
+    assert_eq!(debit_recent(10_000, Duration::ZERO), 10_000, "durée nulle : une seconde au moins, jamais de division par zéro");
+    assert_eq!(debit_recent(u64::MAX, Duration::from_secs(1)), u64::MAX);
+    // Instantanés : deux écritures en arrière ; une destination nouvelle compte tout ce qu'elle a échangé
+    let mut c = [(0u64, 0u64); 2];
+    assert_eq!(decaler_cliches(&mut c, (100, 10)), (100, 10));
+    assert_eq!(decaler_cliches(&mut c, (150, 10)), (150, 10), "fenêtre de deux écritures");
+    assert_eq!(decaler_cliches(&mut c, (160, 30)), (60, 20));
+    assert_eq!(decaler_cliches(&mut c, (160, 30)), (10, 20));
+    assert_eq!(decaler_cliches(&mut c, (160, 30)), (0, 0), "rien de récent : débit nul");
+    assert_eq!(decaler_cliches(&mut c, (5, 5)), (0, 0), "compteur plus petit (jour nouveau) : jamais négatif");
+    // Somme par pays
+    let d = |pays: &'static str, recent: (u64, u64)| VueDestination { ip: Ipv4Addr::new(1, 2, 3, 4), nom: "", pays, programme: "a", entrant: 1, sortant: 1, recent, active: true };
+    let l = lignes_pays(&[d("US", (8_000, 2_000)), d("US", (2_000, 0)), d("JP", (0, 50))], Duration::from_secs(10));
+    assert_eq!((l[0].code.as_str(), l[0].debit_entrant_recent, l[0].debit_sortant_recent), ("US", 1_000, 200));
+    assert_eq!((l[1].code.as_str(), l[1].debit_entrant_recent, l[1].debit_sortant_recent), ("JP", 0, 5));
+    assert!(l[0].active);
+    // Câblage : instantanés relevés à chaque écriture, fenêtre mesurée, remis à zéro avec les destinations
+    let t = include_str!("trafic.rs").replace("\r\n", "\n");
+    let e = &t[t.find("    fn ecrire(&mut self) {").unwrap()..];
+    assert!(e.contains("decaler_cliches(&mut d.cliches, (d.entrant, d.sortant))"), "instantanés relevés à l'écriture");
+    assert!(e.contains("let pays = lignes_pays(&vues, duree_recente);"), "lignes des pays par la décision pure");
+    assert!(t.contains("self.destinations.clear();"), "jour nouveau : destinations et instantanés repartent de zéro");
+}
+
+/// T-19 : pays des connexions signalées (même seuil que l'onglet « Suspectes » de Connexions : score au seuil d'alerte
+/// ou menace connue), publiés par trafic.json, bornés ; adresses relevées par le moniteur, aucune collecte nouvelle
+#[test]
+fn t19_pays_des_connexions_signalees() {
+    use crate::commun::FluxInfo;
+    use crate::moniteur::{ips_signalees, MAX_IPS_SIGNALEES};
+    use crate::trafic::{pays_signales, MAX_PAYS_SIGNALES};
+    let f = |ip: &str, score: i32, raisons: &str| FluxInfo { ip: ip.into(), score, raisons: raisons.into(), ..Default::default() };
+    let flux = vec![
+        f("5.5.5.5", crate::commun::SEUIL_ALERTE, "NON SIGNÉ"),
+        f("6.6.6.6", crate::commun::SEUIL_ALERTE - 1, "IP DIRECTE"),
+        f("7.7.7.7", 0, "MENACE CONNUE (liste)"),
+        f("5.5.5.5", 9, "doublon"),
+        f("2001:db8::1", 9, "IPv6 : hors de la carte (IPv4 seulement)"),
+        f("pas une adresse", 9, ""),
+    ];
+    assert_eq!(ips_signalees(&flux), [Ipv4Addr::new(5, 5, 5, 5), Ipv4Addr::new(7, 7, 7, 7)]);
+    let beaucoup: Vec<FluxInfo> = (0..2_000u32).map(|i| f(&Ipv4Addr::from(0x0100_0000 + i).to_string(), 5, "")).collect();
+    assert_eq!(ips_signalees(&beaucoup).len(), MAX_IPS_SIGNALEES, "borné");
+
+    let pays = |ip: Ipv4Addr| match ip.octets()[0] { 5 => Some("RU".to_string()), 7 => Some("CN".to_string()), 8 => Some(String::new()), _ => None };
+    let ips = [Ipv4Addr::new(7, 0, 0, 1), Ipv4Addr::new(5, 0, 0, 1), Ipv4Addr::new(5, 0, 0, 2), Ipv4Addr::new(8, 0, 0, 1), Ipv4Addr::new(9, 0, 0, 1)];
+    assert_eq!(pays_signales(&ips, pays), ["CN", "RU"], "triés, sans doublon, sans pays inconnu");
+    let tous: Vec<Ipv4Addr> = (0..1_000u32).map(Ipv4Addr::from).collect();
+    assert_eq!(pays_signales(&tous, |ip| Some(format!("{:03}", u32::from(ip)))).len(), MAX_PAYS_SIGNALES, "borné");
+    // Câblage : le moniteur publie les adresses à chaque relevé, trafic.json les traduit en pays
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("*self.partage.ips_signalees.lock().unwrap() = ips_signalees(&flux);"), "relevé du moniteur partagé");
+    let t = include_str!("trafic.rs").replace("\r\n", "\n");
+    assert!(t.contains("pays_signales: pays_signales(&signalees, |ip| geo.pays(ip)),"), "publié dans trafic.json");
+}
+
+/// T-19 : trafic.json écrit avant T-19 relu sans erreur (champs nouveaux vides), et noms des champs publiés
+#[test]
+fn t19_trafic_ancien_format_relu() {
+    use crate::trafic::{Etat, LignePays};
+    let ancien = r#"{"Code":"US","Entrant":5,"Sortant":6,"Destinations":2,"Programmes":["a"],"Active":true}"#;
+    let p: LignePays = serde_json::from_str(ancien).expect("ancienne ligne de pays relue");
+    assert_eq!((p.code.as_str(), p.entrant, p.programmes.len()), ("US", 5, 1));
+    assert!(p.programmes_volumes.is_empty() && p.destinations_principales.is_empty());
+    assert_eq!((p.debit_entrant_recent, p.debit_sortant_recent), (0, 0));
+    let e: Etat = serde_json::from_str(r#"{"MisAJour":"x","Pays":[{"Code":"FR"}],"Serie":[],"NonAttribue":[]}"#).expect("ancien fichier relu");
+    let j = serde_json::to_string(&e).unwrap();
+    assert!(j.contains(r#""PaysSignales":[]"#), "{j}");
+    let j = serde_json::to_string(&p).unwrap();
+    for champ in ["\"ProgrammesVolumes\":[]", "\"DestinationsPrincipales\":[]", "\"DebitEntrantRecent\":0", "\"DebitSortantRecent\":0"] {
+        assert!(j.contains(champ), "{champ} dans {j}");
+    }
+}
+
 // ------------------------------------------------------------ TLS ClientHello
 
 /// ClientHello minimal : TLS 1.2, deux suites (dont une GREASE), SNI, groupes, formats de points

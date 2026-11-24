@@ -337,6 +337,26 @@ processus terminé entre les deux lectures, ou, si l'instantané des processus �
 somme des lignes « PID n ». Limite : « fermée avant la relecture » et « aucun programme du poste »
 ne se distinguent pas sans collecte nouvelle.
 
+`trafic.json`, carte du trafic (T-19, étape 1 : service ; décidé par le mainteneur le 2026-11-23) : ajouts en lecture
+seulement, calculés sur ce que `trafic.rs` et le moniteur savent déjà (aucune collecte nouvelle, aucune commande,
+aucun réglage) ; champs absents des fichiers écrits avant, relus vides (`serde(default)`).
+
+| Champ | Type | Bornes et sens |
+|---|---|---|
+| `Pays[]` | liste | existante ; désormais 250 pays au plus (`MAX_PAYS`), seulement ceux qui ont du trafic, le plus gros d'abord ; `Programmes` (noms seuls, 8 au plus) gardé tel quel |
+| `Pays[].ProgrammesVolumes` | liste de `{ Nom, Entrant, Sortant }` | octets depuis minuit par programme dans ce pays, le plus gros d'abord ; 10 au plus (`MAX_PROGRAMMES_PAYS`) ; nom comme dans `Applications` (nom, « System », « PID n », « ? ») |
+| `Pays[].DestinationsPrincipales` | liste de `{ Ip, Nom, Programme, Entrant, Sortant }` | destinations du pays, la plus grosse d'abord ; 10 au plus (`MAX_DESTINATIONS_PAYS`) ; mêmes champs que `Destinations` : adresse publique distante, nom tiré du cache DNS du service ou vide, programme comme dans `Applications` |
+| `Pays[].DebitEntrantRecent`, `Pays[].DebitSortantRecent` | entier (octets par seconde) | débit du pays depuis l'avant-dernière écriture du fichier (10 s environ, durée mesurée), pour l'épaisseur des arcs (`trafic::debit_recent`, `trafic::decaler_cliches`) |
+| `PaysSignales` | liste de codes pays | pays des connexions signalées au dernier relevé du moniteur, au même seuil que l'onglet « Suspectes » de Connexions (score au seuil d'alerte, ou menace connue) ; triés, sans doublon ; 50 au plus (`MAX_PAYS_SIGNALES`) ; adresses IPv4 seulement, 500 au plus (`moniteur::ips_signalees`) |
+
+`ProgrammesVolumes` et `DestinationsPrincipales` ne sont remplis que pour les 30 pays les plus gros
+(`MAX_PAYS_DETAILLES`), vides au-delà : au pire quelques dizaines de Ko. Décision pure `trafic::lignes_pays`.
+Limites : chaque destination garde le premier programme nommé qui l'a jointe (comme `Destinations`) ; deux programmes
+qui joignent la même adresse sont comptés sous le premier. Le pays est celui du titulaire du bloc (registres
+Internet régionaux), pas un lieu. Une adresse retirée de la table (élagage au-delà de 5 000 destinations, ou plafond
+de 6 000) sort du détail et du débit récent. Aucun nom de compte ni chemin de programme n'est publié : seulement le
+nom du programme, comme dans les listes existantes.
+
 ## Règles de stabilité
 
 - Un champ ne change jamais de type.
