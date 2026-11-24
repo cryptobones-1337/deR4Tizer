@@ -1164,6 +1164,7 @@ fn t1_parent_ne_apres_l_enfant_ecarte() {
     assert!(arbre.alertes(&chaines).is_empty());
     // Heures de création du journal (TimeCreated) : même décision quand les 4688 arrivent dans le désordre
     let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
     let t = 134_000_000_000_000_000u64;
     arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
     arbre.creation_a(1111, Some(100), r"C:\G\grep.exe", None, Some(t + 50_000_000));
@@ -1427,6 +1428,7 @@ fn t1_heure_4688() {
 fn t1_creation_heures_exactes() {
     let t = 134_000_000_000_000_000u64;
     let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
     arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
     arbre.creation_a(300, Some(100), r"C:\P\pwsh.exe", None, Some(t + 1));
     arbre.signaler(300, 7, "a");
