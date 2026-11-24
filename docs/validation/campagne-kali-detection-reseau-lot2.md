@@ -1,79 +1,79 @@
-# Campagne Kali — second lot « détection réseau » (usurpation ARP, NBNS réel, responder passif)
+# Kali campaign: second "network detection" lot (ARP spoofing, real NBNS, passive responder)
 
-Date : 2026-11-16. Suite du premier lot de la phase « détection réseau ». Ce lot éprouve les détections qui
+Date: 2026-11-16. Continuation of the first lot of the "network detection" phase. This lot tests the detections that
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Le §2 conclut que l'absence d'alerte DHCP pirate « n'est pas un défaut » : le cinquième lot « détection réseau » mesure le contraire (serveur DHCP de l'interface lu vide sur une carte Hyper-V, détection inerte), corrigé par la PR #190 (2026-11-17) ; S-21 reste à remesurer, jamais mesuré positif.
-exigeaient un **accès privilégié** sur la machine attaquante. Le root y est désormais disponible mais **strictement
-borné** : trois **unités systemd figées et auditables** — un responder NBNS/LLMNR/mDNS (sans poisoner DHCP ni
-WPAD), un `dnsmasq` en DHCP seul, et un `arpspoof` ciblé sur la seule adresse de la cible — pilotées par
-`systemctl` sans mot de passe. Le mot de passe de la machine attaquante n'est **jamais saisi**. Lab isolé ;
-adresses en plages de documentation (RFC 5737) ; noms de test en `.test` (RFC 2606) ; résultats bruts hors dépôt.
-Aucune donnée personnelle, aucun nom de poste, aucun mot de passe.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): These scenarios S-20 to S-27 were executed before being entered in the approved list: added to the list (version 1.5) on 2026-11-19 by decision of the maintainer, approval after the fact (`campagne-kali-phase1.md`, §6). No number of trials is given: measurements not consolidated. §2 concludes that the absence of a rogue DHCP alert "is not a defect": the fifth "network detection" lot measures the opposite (DHCP server of the interface read as empty on a Hyper-V adapter, inert detection), fixed by PR #190 (2026-11-17); S-21 remains to be measured again, never measured positive.
+required **privileged access** on the attacking machine. Root is now available there but **strictly
+bounded**: three **frozen and auditable systemd units** (an NBNS/LLMNR/mDNS responder (without poisoning DHCP or
+WPAD), a `dnsmasq` in DHCP only, and an `arpspoof` aimed at the target's address alone) driven by
+`systemctl` without a password. The password of the attacking machine is **never typed**. Isolated lab;
+addresses in documentation ranges (RFC 5737); test names in `.test` (RFC 2606); raw results outside the repository.
+No personal data, no workstation name, no password.
 
-## Contexte topologique (honnête)
+## Topological context (honest)
 
-Comme au premier lot, le harnais **réoriente la cible sur le segment du labo de façon réversible** (désactivation
-des autres cartes, passerelle posée par `netsh`, relance du service), puis **restaure l'instantané** en fin
-d'essai — aucune modification durable de la baseline. La topologie **mono-LAN** (une carte, une passerelle,
-attaquant sur le même réseau) reste le cas réaliste d'un poste ordinaire. Chaque essai vérifie d'abord sa
-**précondition de mesure** (règle D-2) avant de conclure : un essai dont la précondition n'est pas remplie est
-**D (invalide)**, jamais un faux négatif.
+As in the first lot, the harness **redirects the target to the lab segment in a reversible way** (deactivation
+of the other adapters, gateway set through `netsh`, restart of the service), then **restores the snapshot** at the end
+of the trial: no lasting modification of the baseline. The **single-LAN** topology (one adapter, one gateway,
+attacker on the same network) remains the realistic case of an ordinary workstation. Each trial first checks its
+**measurement precondition** (rule D-2) before concluding: a trial whose precondition is not met is
+**D (invalid)**, never a false negative.
 
-## 1. Scénarios mesurés
+## 1. Scenarios measured
 
-| Scénario | Config A | Config C | Règle mesurée | Détail |
+| Scenario | Config A | Config C | Rule measured | Detail |
 |---|---|---|---|---|
-| **S-20** — usurpation ARP (homme du milieu) | **VP** | **VP** | `EXP-NDR-001` **Critique**, T1557.002 | la table de voisinage de la cible voit deux IP (une adresse bidon + la passerelle) sur la **même MAC** → « USURPATION ARP probable : la MAC de la passerelle est aussi annoncée par un autre appareil » |
-| **S-25** — NBNS réel (jambe NBNS du leurre actif) | **VP** | **VP** | `EXP-NDR-001` **Critique**, T1557.001 | le responder root répond au leurre sur **NBNS (137)** *et* **LLMNR (5355)** → « EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant » |
-| **S-23** — responder passif LLMNR (≥ 3 noms) | **VP** | **P-baseline** | `EXP-NDR-001` **Alerte**, T1557.001 | la cible interroge plusieurs noms, le responder répond à chacun → « répond en LLMNR pour ≥ 3 noms » ; **en C, la baseline désactive LLMNR côté client** → attaque **prévenue en amont** |
+| **S-20**: ARP spoofing (man in the middle) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.002 | the target's neighbour table sees two IPs (a dummy address + the gateway) on the **same MAC** → "USURPATION ARP probable : la MAC de la passerelle est aussi annoncée par un autre appareil" |
+| **S-25**: real NBNS (NBNS leg of the active decoy) | **VP** | **VP** | `EXP-NDR-001` **Critical**, T1557.001 | the root responder answers the decoy on **NBNS (137)** *and* **LLMNR (5355)** → "EMPOISONNEMENT LLMNR/NBNS … a répondu pour le nom inexistant" |
+| **S-23**: passive LLMNR responder (≥ 3 names) | **VP** | **P-baseline** | `EXP-NDR-001` **Alert**, T1557.001 | the target queries several names, the responder answers each one → "répond en LLMNR pour ≥ 3 noms"; **in C, the baseline disables LLMNR on the client side** → attack **prevented upstream** |
 
-**S-20 (usurpation ARP).** Après réorientation, la passerelle de la cible est la machine attaquante. L'unité
-`arpspoof` annonce une adresse bidon (`203.0.113.1`) à la **MAC de l'attaquant**. **Précondition D-2 vérifiée** :
-le harnais confirme d'abord que `203.0.113.1` **et** la passerelle portent la **même MAC** dans la table de
-voisinage de la cible (sinon : D). `analyser_arp` (cycle 10 s, via `GetIpNetTable2`) lève alors `EXP-NDR-001`
-**Critique** « USURPATION ARP probable … le trafic peut être intercepté (homme du milieu) » (T1557.002). VP
-identique en A et C (la détection est indépendante de la baseline).
+**S-20 (ARP spoofing).** After redirection, the target's gateway is the attacking machine. The
+`arpspoof` unit announces a dummy address (`203.0.113.1`) at the **attacker's MAC**. **Precondition D-2 checked**:
+the harness first confirms that `203.0.113.1` **and** the gateway carry the **same MAC** in the target's neighbour
+table (otherwise: D). `analyser_arp` (10 s cycle, through `GetIpNetTable2`) then raises `EXP-NDR-001`
+**Critical** "USURPATION ARP probable … le trafic peut être intercepté (homme du milieu)" (T1557.002). Identical
+VP in A and C (the detection is independent of the baseline).
 
-**S-25 (NBNS réel).** Ce scénario **complète S-22** : au premier lot, le leurre n'avait été éprouvé que sur
-**LLMNR** (répondeur Python sans root, port non privilégié). Avec le responder root (port 137 privilégié), le
-leurre actif de deR4Tizer — question **LLMNR (224.0.0.252:5355) *et* NBNS (137)** pour un nom aléatoire inexistant
-— reçoit une réponse **sur les deux protocoles** : `resultat_leurre = « RÉPONSE … 203.0.113.20 (LLMNR),
-203.0.113.20 (NBNS) »`, et `EXP-NDR-001` **Critique** « EMPOISONNEMENT LLMNR/NBNS » (T1557.001). **VP en A et C** :
-le leurre part **côté service** quelle que soit la politique LLMNR du client — à la différence du responder passif
-ci-dessous. Le leurre actif reste le **signal le plus sûr** du NDR.
+**S-25 (real NBNS).** This scenario **completes S-22**: in the first lot, the decoy had only been tested on
+**LLMNR** (Python responder without root, unprivileged port). With the root responder (privileged port 137), the
+deR4Tizer active decoy (question **LLMNR (224.0.0.252:5355) *and* NBNS (137)** for a random non-existent name)
+receives an answer **on both protocols**: `resultat_leurre = « RÉPONSE … 203.0.113.20 (LLMNR),
+203.0.113.20 (NBNS) »`, and `EXP-NDR-001` **Critical** "EMPOISONNEMENT LLMNR/NBNS" (T1557.001). **VP in A and C**:
+the decoy leaves **from the service side** whatever the client's LLMNR policy, unlike the passive responder
+below. The active decoy remains the **most reliable signal** of the NDR.
 
-**S-23 (responder passif LLMNR).** La cible émet 6 requêtes LLMNR de noms distincts ; le responder répond à
-chacune ; la capture voit ≥ 3 réponses distinctes du même hôte → `EXP-NDR-001` **Alerte** « répond en LLMNR pour
-≥ 3 noms » (T1557.001). **VP en A.** **En C : P-baseline (prévention)** — la baseline renforcée **désactive LLMNR
-côté client** (`EnableMulticast(Policy) = 0`, vérifié dans la VM) : la cible n'émet plus de requêtes LLMNR, donc
-l'empoisonnement passif est **prévenu en amont**. Ce n'est pas un défaut de détection : c'est la défense en
-profondeur qui joue (et le **leurre actif**, lui, continue de veiller même en C — cf. S-25). Détection passive
-(`Alerte`) et défense active (`Critique` par le leurre) sont complémentaires.
+**S-23 (passive LLMNR responder).** The target sends 6 LLMNR queries for distinct names; the responder answers
+each one; the capture sees ≥ 3 distinct answers from the same host → `EXP-NDR-001` **Alert** "répond en LLMNR pour
+≥ 3 noms" (T1557.001). **VP in A.** **In C: P-baseline (prevention)**: the reinforced baseline **disables LLMNR
+on the client side** (`EnableMulticast(Policy) = 0`, checked in the VM): the target no longer sends LLMNR queries, so
+passive poisoning is **prevented upstream**. This is not a detection defect: it is defence in
+depth at work (and the **active decoy**, for its part, keeps watching even in C, see S-25). Passive detection
+(`Alerte`) and active defence (`Critique` through the decoy) are complementary.
 
-## 2. Constat produit — DHCP pirate (S-21) non mesurable en l'état (revue de code)
+## 2. Product finding: rogue DHCP (S-21) not measurable as things stand (code review)
 
-Le scénario **DHCP pirate** (S-21) **n'est pas mesuré** dans ce lot, pour une raison de conception et non de
-privilège. Dans `ndr.rs`, un serveur DHCP observé est jugé pirate si `serveur != dhcp_interface`, avec
-`legitime = dhcp_interface.is_empty() || dhcp_interface == serveur`. Or, après réorientation, la cible est en **IP
-statique** → `dhcp_interface` est **vide** → **tout** serveur DHCP est jugé légitime, aucune alerte. Et si la cible
-passe en DHCP avec l'attaquant pour **seul** serveur, elle prend son bail de l'attaquant → `dhcp_interface ==`
-attaquant → légitime aussi. **Ce n'est pas un défaut** : on ne peut pas qualifier de « pirate » le **seul** serveur
-DHCP présent. Un VP fidèle exige un **serveur légitime *et* un pirate** sur le segment (deux serveurs), montage à
-préparer. La logique de détection (lecture de l'**option 54**, table bornée ≤ 50 serveurs) est, elle, correcte en
-revue.
+The **rogue DHCP** scenario (S-21) **is not measured** in this lot, for a design reason and not a
+privilege reason. In `ndr.rs`, an observed DHCP server is judged rogue if `serveur != dhcp_interface`, with
+`legitime = dhcp_interface.is_empty() || dhcp_interface == serveur`. Yet, after redirection, the target has a **static
+IP** → `dhcp_interface` is **empty** → **every** DHCP server is judged legitimate, no alert. And if the target
+switches to DHCP with the attacker as its **only** server, it takes its lease from the attacker → `dhcp_interface ==`
+attacker → legitimate as well. **This is not a defect**: one cannot qualify as "rogue" the **only** DHCP
+server present. A faithful VP requires a **legitimate server *and* a rogue one** on the segment (two servers), a setup to
+prepare. The detection logic (reading of **option 54**, table bounded to ≤ 50 servers) is, for its part, correct on
+review.
 
-## 3. Limites assumées
+## 3. Accepted limits
 
-- **S-21 (DHCP pirate)** : en attente du montage à deux serveurs DHCP (légitime + pirate) sur le segment labo.
-- **IDS directionnel / contenu** : les règles IDS dépendant de `$HOME_NET`/`$EXTERNAL_NET` supposent un adressage
-  **RFC 1918** ; le labo est en **RFC 5737** (hors `$HOME_NET`), donc ces règles ne sont pas exerçables tel quel.
-  Jambe suivante : rejouer en adressage RFC 1918, ou éprouver des règles non directionnelles.
-- **Durcissement du code** (fuzzing des décodeurs ARP/DHCP/LLMNR/NBNS, revue des `unsafe`, corroboration anti-FP)
-  reste le **chemin privilégié** vers la bascule « pris en charge » — sous **audit sécurité obligatoire** (chemin
-  privilégié), hors de ce lot de validation.
+- **S-21 (rogue DHCP)**: pending the setup with two DHCP servers (legitimate + rogue) on the lab segment.
+- **Directional IDS / content**: the IDS rules depending on `$HOME_NET`/`$EXTERNAL_NET` assume **RFC 1918**
+  addressing; the lab is in **RFC 5737** (outside `$HOME_NET`), so these rules cannot be exercised as they are.
+  Next leg: replay in RFC 1918 addressing, or test non-directional rules.
+- **Hardening of the code** (fuzzing of the ARP/DHCP/LLMNR/NBNS decoders, review of the `unsafe` blocks, anti-FP corroboration)
+  remains the **preferred path** to the switch to "supported", under a **mandatory security audit** (privileged
+  path), outside this validation lot.
 
-## 4. Bilan
+## 4. Assessment
 
-Avec ce lot, la couverture **LLMNR + NBNS + ARP** est complète : leurre actif (LLMNR **et** NBNS, Critique, A+C),
-responder passif (Alerte, A ; prévenu en C), usurpation ARP (Critique, A+C). Restent le DHCP pirate (montage à
-deux serveurs) et l'IDS directionnel (adressage RFC 1918).
+With this lot, the **LLMNR + NBNS + ARP** coverage is complete: active decoy (LLMNR **and** NBNS, Critical, A+C),
+passive responder (Alert, A; prevented in C), ARP spoofing (Critical, A+C). The rogue DHCP (setup with
+two servers) and the directional IDS (RFC 1918 addressing) remain.

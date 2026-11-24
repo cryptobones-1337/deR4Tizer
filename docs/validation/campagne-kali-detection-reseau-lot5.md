@@ -1,71 +1,71 @@
-# Campagne Kali — cinquième lot « détection réseau » : durcissement (fuzzing des décodeurs) + DHCP pirate
+# Kali campaign: fifth "network detection" lot: hardening (fuzzing of the decoders) + rogue DHCP
 
-Date : 2026-11-17. Ce lot couvre deux choses : (1) le **durcissement volet 1** — fuzzing des décodeurs de paquets,
+Date: 2026-11-17. This lot covers two things: (1) **hardening part 1**: fuzzing of the packet decoders,
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : Ces scénarios S-20 à S-27 ont été exécutés avant d'être inscrits dans la liste approuvée : ajoutés à la liste (version 1.5) le 2026-11-19 sur décision du mainteneur, approbation après coup (`campagne-kali-phase1.md`, §6). Aucun nombre d'essais n'est donné : mesures non consolidées. Le « durcissement proposé » et le « correctif identifié » du §2 et du §3 sont faits : PR #190, fusionnée le 2026-11-17 ; S-21 reste à remesurer.
-et (2) le scénario **S-21 (serveur DHCP pirate)**, qui aboutit à un **constat de limite mesuré** et à une piste de
-durcissement. Lab isolé ; résultats bruts hors dépôt ; aucune donnée personnelle, aucun nom de poste, aucun mot de
-passe.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): These scenarios S-20 to S-27 were executed before being entered in the approved list: added to the list (version 1.5) on 2026-11-19 by decision of the maintainer, approval after the fact (`campagne-kali-phase1.md`, §6). No number of trials is given: measurements not consolidated. The "proposed hardening" and the "fix identified" of §2 and §3 are done: PR #190, merged on 2026-11-17; S-21 remains to be measured again.
+and (2) the scenario **S-21 (rogue DHCP server)**, which ends in a **measured limit finding** and a lead for
+hardening. Isolated lab; raw results outside the repository; no personal data, no workstation name, no
+password.
 
-## 1. Durcissement des décodeurs — fuzzing (volet privilégié)
+## 1. Hardening of the decoders: fuzzing (privileged part)
 
-Trois fonctions parsent des octets **entièrement contrôlés par l'attaquant** sur le réseau : `nom_dns` et `nom_nbns`
-(`ndr.rs`), et `decoder` (`capture.rs`, en-têtes IPv4/TCP/UDP). Une panique dans le fil de capture tuerait la
-surveillance réseau : le critère est **zéro panique**, et le décodeur doit **toujours renvoyer `None`** sur entrée
-malformée.
+Three functions parse bytes **entirely controlled by the attacker** on the network: `nom_dns` and `nom_nbns`
+(`ndr.rs`), and `decoder` (`capture.rs`, IPv4/TCP/UDP headers). A panic in the capture thread would kill
+network monitoring: the criterion is **zero panics**, and the decoder must **always return `None`** on malformed
+input.
 
-**Méthode.** Les trois fonctions ont été extraites **verbatim** (copie à l'identique, mêmes gardes) dans un harnais
-std pur, sans aucune dépendance ni API Windows : toute panique du harnais serait une panique du décodeur réel.
-Compilation locale **ciblée sur les seuls décodeurs** (pas le service), profil optimisé avec les **contrôles de
-débordement arithmétique et de tranche activés**. Pilote : exhaustif court (toutes les longueurs 0 à 80, variantes
-multiples), aléatoire biaisé (longueurs 0 à 1500, octets « intéressants » surreprésentés), puis **graines
-semi-valides** (DNS/LLMNR, NBNS, DHCP, IPv4+UDP, IPv4+TCP) **mutées** (retournement de bits, troncature, extension).
-Chaque appel sous capture de panique.
+**Method.** The three functions were extracted **verbatim** (identical copy, same guards) into a pure std
+harness, without any dependency or Windows API: any panic of the harness would be a panic of the real decoder.
+Local compilation **targeted at the decoders only** (not the service), optimised profile with the **arithmetic
+overflow and slice checks enabled**. Driver: short exhaustive (all lengths 0 to 80, multiple
+variants), biased random (lengths 0 to 1500, "interesting" bytes over-represented), then **semi-valid
+seeds** (DNS/LLMNR, NBNS, DHCP, IPv4+UDP, IPv4+TCP) **mutated** (bit flipping, truncation, extension).
+Each call under panic capture.
 
-**Résultat.** **50 324 000 appels par fonction (~151 millions au total), 0 panique.** Les trois décodeurs renvoient
-`None` sur entrée malformée sans jamais paniquer : un paquet forgé ne peut pas tuer le fil de capture (sur cette
-campagne). La revue manuelle concorde : chaque accès de tranche est gardé (p. ex. `p + 1 + l > m.len()` pour les
-labels DNS ; `m.len() < 46` et `m[12] != 32` pour NBNS ; `ihl`/`total` bornés pour l'en-tête IP), l'arithmétique est
-en `wrapping`/`usize`, et `from_utf8_lossy`/`to_lowercase` ne paniquent pas. Le corpus de graines mutées est conservé
-comme base de non-régression.
+**Result.** **50,324,000 calls per function (~151 million in total), 0 panics.** The three decoders return
+`None` on malformed input without ever panicking: a forged packet cannot kill the capture thread (on this
+campaign). The manual review agrees: each slice access is guarded (e.g. `p + 1 + l > m.len()` for the
+DNS labels; `m.len() < 46` and `m[12] != 32` for NBNS; `ihl`/`total` bounded for the IP header), the arithmetic is
+in `wrapping`/`usize`, and `from_utf8_lossy`/`to_lowercase` do not panic. The corpus of mutated seeds is kept
+as a non-regression base.
 
-## 2. S-21 — serveur DHCP pirate : constat de limite mesuré
+## 2. S-21: rogue DHCP server: measured limit finding
 
-**Montage** (deux serveurs du point de vue de la cible, car la règle `legitime = dhcp_interface.is_empty() ||
-dhcp_interface == serveur` n'alerte que sur un serveur **différent** de celui de l'interface). **Légitime** : un
-serveur DHCP du labo (RFC 5737, `203.0.113.20`, plage `.100-.200`) donne un bail à la cible. **Pirate** : un
-injecteur émet des `OFFER` non sollicités portant l'**option 54 = `203.0.113.50`** (identifiant de serveur étranger),
-en paquets bruts. Attendu : `serveur = .50 ≠ dhcp_interface = .20` → Critique « SERVEUR DHCP PIRATE » (T1557.003).
+**Setup** (two servers from the target's point of view, because the rule `legitime = dhcp_interface.is_empty() ||
+dhcp_interface == serveur` only alerts on a server **different** from that of the interface). **Legitimate**: a
+lab DHCP server (RFC 5737, `203.0.113.20`, range `.100-.200`) gives a lease to the target. **Rogue**: an
+injector sends unsolicited `OFFER` packets carrying **option 54 = `203.0.113.50`** (foreign server identifier),
+as raw packets. Expected: `serveur = .50 ≠ dhcp_interface = .20` → Critical "SERVEUR DHCP PIRATE" (T1557.003).
 
-**Résultat mesuré : la détection ne s'arme pas sur cette cible.** La cible obtient un bail correct (`203.0.113.180`,
-passerelle `.20`, et côté Windows **`DHCP Server = 203.0.113.20`, `DHCPEnabled = True`** — confirmé par CIM et
-`ipconfig /all`). Mais le champ `dhcp_interface` que publie le service **reste vide**, y compris après un bail
-**acquis au redémarrage** (voie normale, pas seulement un renouvellement forcé). Un dump complet montre que
-`interface`, `passerelle` et `masque` sont **tous** renseignés — seul `dhcp_interface` est vide.
+**Measured result: the detection does not arm on this target.** The target obtains a correct lease (`203.0.113.180`,
+gateway `.20`, and on the Windows side **`DHCP Server = 203.0.113.20`, `DHCPEnabled = True`**, confirmed by CIM and
+`ipconfig /all`). But the `dhcp_interface` field that the service publishes **stays empty**, including after a lease
+**acquired at restart** (normal path, not only a forced renewal). A full dump shows that
+`interface`, `passerelle` and `masque` are **all** filled in: only `dhcp_interface` is empty.
 
-**Cause racine.** Le service lit le serveur DHCP via **`GetAdaptersInfo`** (API héritée, dépréciée par Microsoft) :
-`dhcp = if DhcpEnabled != 0 { texte_ip(&DhcpServer) } else { "" }`. Sur la carte réseau synthétique de la VM, ce
-champ revient **vide** alors que l'OS connaît parfaitement le serveur. Tous les autres champs de la **même**
-structure (passerelle, masque) passent : le point faible est précisément la lecture du serveur DHCP.
+**Root cause.** The service reads the DHCP server through **`GetAdaptersInfo`** (legacy API, deprecated by Microsoft):
+`dhcp = if DhcpEnabled != 0 { texte_ip(&DhcpServer) } else { "" }`. On the synthetic network adapter of the VM, this
+field comes back **empty** while the OS knows the server perfectly well. All the other fields of the **same**
+structure (gateway, mask) come through: the weak point is precisely the reading of the DHCP server.
 
-**Conséquence (sécurité).** Quand `dhcp_interface` est vide, `legitime = is_empty() || …` est **toujours vrai** : la
-détection de serveur DHCP pirate (`EXP-NDR-001`, T1557.003) est alors **inerte**. Portée du constat : mesuré sur
-cible Hyper-V ; non vérifiable sur matériel physique depuis le labo (VM seulement).
+**Consequence (security).** When `dhcp_interface` is empty, `legitime = is_empty() || …` is **always true**: the
+rogue DHCP server detection (`EXP-NDR-001`, T1557.003) is then **inert**. Scope of the finding: measured on a
+Hyper-V target; not verifiable on physical hardware from the lab (VM only).
 
-**Durcissement proposé (suivi, code privilégié → audit + passage compilé).** Lire le serveur DHCP via
-**`GetAdaptersAddresses` (`Dhcpv4Server`)**, fiable et non déprécié, au lieu de `GetAdaptersInfo.DhcpServer`. Après
-ce correctif, S-21 redevient mesurable. Le **caveat d'honnêteté** est conservé pour ce moment-là : l'option 54 étant
-contrôlée par l'attaquant, un `OFFER` forgé peut désigner une IP **bénigne** → la règle repère un serveur
-**distinct**, elle ne distingue pas un vrai pirate d'une usurpation visant un innocent.
+**Proposed hardening (follow-up, privileged code → audit + compiled pass).** Read the DHCP server through
+**`GetAdaptersAddresses` (`Dhcpv4Server`)**, reliable and not deprecated, instead of `GetAdaptersInfo.DhcpServer`. After
+this fix, S-21 becomes measurable again. The **honesty caveat** is kept for that moment: option 54 being
+controlled by the attacker, a forged `OFFER` can designate a **benign** IP → the rule spots a **distinct**
+server, it does not distinguish a real rogue server from spoofing aimed at an innocent party.
 
-## 3. Bilan et limites
+## 3. Assessment and limits
 
-- **Décodeurs** : panic-free sur ~151 M de cas (volet 1 du durcissement : acquis).
-- **S-21 DHCP pirate** : **constat de limite** — la détection ne s'arme pas tant que la source du serveur DHCP reste
-  `GetAdaptersInfo`. Correctif identifié (`GetAdaptersAddresses`), à porter en code puis à remesurer.
-- **IDS directionnel** : hors de portée du labo actuel (il faut une source publique et une destination privée
-  mutuellement joignables, donc un routeur/NAT), laissé documenté.
-- **Revue des blocs `unsafe`** et **corroboration anti-faux-positifs** : rédigées (volets 2 et 3 du durcissement),
-  à instruire avec le correctif ci-dessus.
+- **Decoders**: panic-free over ~151 M cases (part 1 of the hardening: acquired).
+- **S-21 rogue DHCP**: **limit finding**: the detection does not arm as long as the source of the DHCP server remains
+  `GetAdaptersInfo`. Fix identified (`GetAdaptersAddresses`), to be carried into the code then measured again.
+- **Directional IDS**: out of reach of the current lab (it needs a public source and a private destination
+  mutually reachable, therefore a router/NAT), left documented.
+- **Review of the `unsafe` blocks** and **anti-false-positive corroboration**: written up (parts 2 and 3 of the hardening),
+  to be examined with the fix above.
 
-Lab isolé, résultats bruts hors dépôt. Aucune donnée personnelle.
+Isolated lab, raw results outside the repository. No personal data.

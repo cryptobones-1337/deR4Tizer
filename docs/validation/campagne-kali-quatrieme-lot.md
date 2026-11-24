@@ -1,59 +1,59 @@
-# Campagne Kali — quatrième lot (filtrage DNS : jambe filtrage de S-06 ; limite de testabilité de DNS-003)
+# Kali campaign: fourth lot (DNS filtering: filtering leg of S-06; testability limit of DNS-003)
 
-Date : 2026-11-15. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+Date: 2026-11-15. List of scenarios: v1.4 (`campagne-kali-phase1.md`). Raw results outside the repository.
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : « couverture » et « vrais positifs mesurés » désignent des essais isolés : aucun nombre d'essais n'est donné, aucune mesure n'est consolidée (10 essais valides, `CLAUDE.md`). Le constat COR-R3 reste ouvert, non corrigé au 2026-11-19.
-Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
-(RFC 5737) ; noms de test en `.test` (RFC 2606). Prolonge le troisième lot (`campagne-kali-troisieme-lot.md`) : il
-exécute **la jambe filtrage (b) de S-06**, après la jambe DNS-002 (a) du troisième lot. S-06 est donc **couvert en
-entier**. Il documente aussi pourquoi **DNS-003 (S-18)** n'est pas mesurable de bout en bout en laboratoire.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): "coverage" and "measured true positives" refer to single trials: no number of trials is given, no measurement is consolidated (10 valid trials, `CLAUDE.md`). The COR-R3 finding remains open, not fixed as of 2026-11-19.
+No personal data, no workstation name, no password. Lab addresses: documentation ranges
+(RFC 5737); test names in `.test` (RFC 2606). Extends the third lot (`campagne-kali-troisieme-lot.md`): it
+executes **the filtering leg (b) of S-06**, after the DNS-002 leg (a) of the third lot. S-06 is therefore **covered in
+full**. It also documents why **DNS-003 (S-18)** cannot be measured end to end in the laboratory.
 
-**Réserve (latences)** : comme aux passages précédents, l'horloge de la VM est décalée dans les résultats bruts ; le
-verdict VP repose sur la présence du comportement attendu, pas sur l'heure. Préconditions auto-validées (ci-dessous).
+**Reservation (latencies)**: as in the previous passes, the VM clock is offset in the raw results; the
+VP verdict rests on the presence of the expected behaviour, not on the time. Self-validated preconditions (below).
 
-## Jambe filtrage de S-06 (un nom de la liste est bloqué par le résolveur local)
+## Filtering leg of S-06 (a name of the list is blocked by the local resolver)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-06 jambe (b) (filtrage par résolveur local) | C (baseline 100 %) | **VP** | Une liste de filtrage synthétique (un seul nom `.test`, propriétaire de fichier contrôlé) est chargée dans une catégorie active ; après activation du résolveur local sur la carte, une requête vers ce nom est **résolue en adresse nulle** (0.0.0.0) et le blocage **apparaît dans les « derniers blocages »** (nom, liste, catégorie). Un nom **non listé** n'est **pas** bloqué (témoin négatif). |
-| S-06 jambe (b) | A (sans baseline) | **VP** | Identique. Le filtrage est une fonction propre du service, indépendante de la baseline. |
+| S-06 leg (b) (filtering by local resolver) | C (baseline 100%) | **VP** | A synthetic filtering list (a single `.test` name, controlled file owner) is loaded into an active category; after activation of the local resolver on the adapter, a query for that name is **resolved to the null address** (0.0.0.0) and the block **appears in the "derniers blocages"** (name, list, category). A **non-listed** name is **not** blocked (negative control). |
+| S-06 leg (b) | A (without baseline) | **VP** | Identical. Filtering is a function of the service itself, independent of the baseline. |
 
-**Précondition auto-validée** : l'essai n'est retenu que si (1) la liste synthétique est **effectivement chargée**
-(au moins une entrée, vue dans l'état du filtrage) et (2) l'**activation du résolveur sur la carte réussit** ; sinon
-l'essai est déclaré invalide, jamais un faux négatif. En laboratoire isolé, le téléchargement réel des listes échoue et
-le service **conserve et charge la copie locale** — comportement attendu, exploité ici comme pour les listes de menaces.
-**Témoin négatif** : un nom absent de la liste n'est pas résolu en adresse nulle. Entièrement réversible (désactivation
-du filtrage + remise à l'instantané).
+**Self-validated precondition**: the trial is kept only if (1) the synthetic list is **actually loaded**
+(at least one entry, seen in the filtering status) and (2) the **activation of the resolver on the adapter succeeds**; otherwise
+the trial is declared invalid, never a false negative. In the isolated laboratory, the actual download of the lists fails and
+the service **keeps and loads the local copy**: expected behaviour, used here as for the threat lists.
+**Negative control**: a name absent from the list is not resolved to the null address. Entirely reversible (deactivation
+of the filtering + reset to the snapshot).
 
-## Grille de couverture — mise à jour (cumul des quatre lots)
+## Coverage grid: update (cumulative of the four lots)
 
-| Domaine / technique | Règle attendue | Config A | Config C |
+| Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Vol d'identifiants de navigateur (T1555 / T1539) | VOL-001 | **VP (Critique)** | **VP (Critique)** |
-| Requête vers domaine malveillant connu (T1071 / renseignement) | DNS-001 | **VP (Critique)** | **VP (Critique)** |
-| Connexion vers IP de menace connue (T1071) | RES-001 + blocage auto | **VP (Critique + blocage 7 j)** | **VP (Critique + blocage 7 j)** |
-| Changement de serveur DNS sur une carte (T1557) | DNS-002 | **VP (Alerte)** | **VP (Alerte)** |
-| Filtrage DNS : nom listé bloqué (adresse nulle) | filtrage par résolveur local | **VP** | **VP** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
+| DNS server change on an adapter (T1557) | DNS-002 | **VP (Alert)** | **VP (Alert)** |
+| DNS filtering: listed name blocked (null address) | filtering by local resolver | **VP** | **VP** |
 
-**S-06 est désormais couvert en entier** : jambe (a) DNS-002 (troisième lot) et jambe (b) filtrage (ce lot), en
-configurations A et C.
+**S-06 is now covered in full**: leg (a) DNS-002 (third lot) and leg (b) filtering (this lot), in
+configurations A and C.
 
-## DNS-003 (S-18) : limite de testabilité, pas un défaut
+## DNS-003 (S-18): testability limit, not a defect
 
-**DNS-003** alerte lorsqu'une carte pointe encore sur le résolveur local alors qu'un **autre programme tient le port DNS
-de la boucle locale**. À la lecture de la source (`origin/main`), cette alerte n'est émise qu'au **démarrage du service**,
-et **seulement si une carte reste sur la boucle locale après une tentative de remise des cartes**. Or, pour une carte
-fonctionnelle, cette remise **réussit** (la carte est rendue à son état d'origine) : un scénario externe
-« activer → arrêt brutal du service → un tiers prend le port 53 → redémarrage » **ne laisse donc pas** de carte sur la
-boucle, et l'alerte n'est pas émise. La faire émettre exigerait de **forcer l'échec de la remise d'une carte**, ce qui
-n'est pas provocable proprement depuis l'extérieur sans dégrader la carte autrement.
+**DNS-003** alerts when an adapter still points to the local resolver while **another program holds the loopback DNS
+port**. On reading the source (`origin/main`), this alert is emitted only at **service startup**,
+and **only if an adapter stays on the loopback after an attempt to reset the adapters**. Yet, for a working
+adapter, this reset **succeeds** (the adapter is returned to its original state): an external scenario
+"activate → abrupt stop of the service → a third party takes port 53 → restart" therefore **does not leave** an adapter on the
+loopback, and the alert is not emitted. Making it fire would require **forcing the reset of an adapter to fail**, which
+cannot be caused cleanly from outside without degrading the adapter in some other way.
 
-**Conclusion** : DNS-003 n'est **pas mesurable en vrai positif de bout en bout** en laboratoire par un moyen externe.
-La logique de l'alerte est correcte et **couverte par un test unitaire** du dépôt. Ce point est une **limite de
-testabilité en laboratoire**, pas un défaut du produit ; il est signalé au mainteneur.
+**Conclusion**: DNS-003 is **not measurable as an end-to-end true positive** in the laboratory by external means.
+The logic of the alert is correct and **covered by a unit test** of the repository. This point is a **laboratory
+testability limit**, not a defect of the product; it is reported to the maintainer.
 
-## Méthode (rappel)
+## Method (reminder)
 
-Instantanés de campagne « campagne A » (sans baseline) et « campagne C » (baseline à 100 %). Remise à l'instantané avant
-et après chaque essai. Defender jamais modifié à la main. Aucun outil offensif détaillé ; la jambe filtrage de S-06 est
-entièrement locale (aucune adresse réelle contactée ; un résolveur de laboratoire sert d'amont, sans accès à Internet).
+Campaign snapshots "campagne A" (without baseline) and "campagne C" (baseline at 100%). Reset to the snapshot before
+and after each trial. Defender never modified by hand. No detailed offensive tool; the filtering leg of S-06 is
+entirely local (no real address contacted; a laboratory resolver serves as upstream, without access to the Internet).

@@ -1,65 +1,65 @@
-# Campagne Kali — second lot (vol d'identifiants, listes de menaces)
+# Kali campaign: second lot (credential theft, threat lists)
 
-Date : 2026-11-15. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+Date: 2026-11-15. List of scenarios: v1.4 (`campagne-kali-phase1.md`). Raw results outside the repository.
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : « couverture » et « vrais positifs mesurés » désignent des essais isolés : aucun nombre d'essais n'est donné, aucune mesure n'est consolidée (10 essais valides, `CLAUDE.md`). Le constat COR-R3 reste ouvert, non corrigé au 2026-11-19. S-14 est une SIMULATION (fichier d'identifiants d'un compte de test vide), non marquée telle dans ce rapport.
-Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation (RFC 5737),
-non routables. Prolonge le rapport du premier passage (`campagne-kali-premier-passage.md`) : il lève deux des préalables
-qui y étaient notés (profil de navigateur pour VOL-001, listes de menaces actives pour DNS-001/RES-001).
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): "coverage" and "measured true positives" refer to single trials: no number of trials is given, no measurement is consolidated (10 valid trials, `CLAUDE.md`). The COR-R3 finding remains open, not fixed as of 2026-11-19. S-14 is a SIMULATION (credentials file of an empty test account), not marked as such in this report.
+No personal data, no workstation name, no password. Lab addresses: documentation ranges (RFC 5737),
+not routable. Extends the report of the first pass (`campagne-kali-premier-passage.md`): it lifts two of the prerequisites
+that were noted there (browser profile for VOL-001, active threat lists for DNS-001/RES-001).
 
-**Réserve (latences)** : comme au premier passage, l'horloge de la VM est décalée dans les résultats bruts ; les
-verdicts VP reposent sur la présence règle/niveau/entité, pas sur l'heure. Préconditions auto-validées (voir ci-dessous).
+**Reservation (latencies)**: as in the first pass, the VM clock is offset in the raw results; the
+VP verdicts rest on the presence of rule/level/entity, not on the time. Self-validated preconditions (see below).
 
-## Vol d'identifiants (VOL-001)
+## Credential theft (VOL-001)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-14 (lecture d'une base d'identifiants de navigateur par un programme inattendu) | C (baseline 100 %) | **VP (Critique)** | Un programme **non signé**, au nom neutre, lancé depuis un **emplacement temporaire**, ouvre **en lecture** le fichier d'identifiants d'un profil de navigateur de leurre (créé pour l'essai, sans secret) → **1 alerte VOL-001 Critique** (score 10, T1555 / T1539). Aucun mot de passe lu, aucune copie, aucune exfiltration. |
-| S-14 | A (sans baseline) | **VP (Critique)** | Identique. L'audit de lecture nécessaire (« Système de fichiers ») est posé par le service lui-même, donc la détection ne dépend pas de la baseline. |
+| S-14 (reading of a browser credential database by an unexpected program) | C (baseline 100%) | **VP (Critical)** | An **unsigned** program, with a neutral name, launched from a **temporary location**, opens **for reading** the credentials file of a decoy browser profile (created for the trial, without any secret) → **1 VOL-001 Critical alert** (score 10, T1555 / T1539). No password read, no copy, no exfiltration. |
+| S-14 | A (without baseline) | **VP (Critical)** | Identical. The required read audit ("File System") is set by the service itself, so the detection does not depend on the baseline. |
 
-**Précondition auto-validée** : l'essai n'est retenu que si le service a effectivement posé l'audit de lecture sur le
-dossier surveillé **et** qu'un événement d'audit de lecture est produit sur le fichier ciblé ; sinon l'essai est déclaré
-invalide (D), jamais un faux négatif. Les deux configurations ont satisfait cette précondition (audit posé sur les
-dossiers de données sensibles présents, événement de lecture produit).
+**Self-validated precondition**: the trial is kept only if the service has actually set the read audit on the
+monitored folder **and** a read audit event is produced on the targeted file; otherwise the trial is declared
+invalid (D), never a false negative. Both configurations met this precondition (audit set on the
+sensitive data folders present, read event produced).
 
-## Listes de menaces (DNS-001, RES-001)
+## Threat lists (DNS-001, RES-001)
 
-| Scénario | Configuration | Verdict | Résumé |
+| Scenario | Configuration | Verdict | Summary |
 |---|---|---|---|
-| S-07 (domaine malveillant connu + IP de menace connue) | C | **VP (DNS-001 + RES-001 + blocage 7 j)** | **DNS-001** : une requête DNS vers un **domaine de la liste de menaces** → **alerte Critique** « domaine malveillant connu ». **RES-001** : une connexion vers une **IP d'une liste de confiance haute** → **alerte Critique** « menace connue » **et blocage automatique au pare-feu, échéance à 7 jours** (relevé dans le journal des blocages). |
-| S-07 | A | **VP (DNS-001 + RES-001 + blocage 7 j)** | Identique. Les listes de menaces et le journal du client DNS sont actifs indépendamment de la baseline. |
+| S-07 (known malicious domain + known threat IP) | C | **VP (DNS-001 + RES-001 + 7-day block)** | **DNS-001**: a DNS query to a **domain of the threat list** → **Critical alert** "domaine malveillant connu". **RES-001**: a connection to an **IP of a high-confidence list** → **Critical alert** "menace connue" **and automatic firewall block, expiring after 7 days** (recorded in the block log). |
+| S-07 | A | **VP (DNS-001 + RES-001 + 7-day block)** | Identical. The threat lists and the DNS client log are active independently of the baseline. |
 
-**Précondition auto-validée** : les listes synthétiques (une entrée de documentation chacune : un domaine `.test`, une IP
-en plage RFC 5737) sont fournies au service comme entrées des sources correspondantes, avec un **propriétaire de fichier
-contrôlé** (SYSTEM ou Administrateurs), puis activées par le **canal de commandes** du service. En labo isolé, le
-téléchargement réel des listes échoue (pas de résolution DNS sortante) et le service **conserve et charge la copie
-locale** — comportement attendu. L'essai n'est retenu que si l'état des menaces confirme le chargement (entrées ≥ 1 pour
-la source IP et pour la source domaine) ; les deux configurations l'ont confirmé.
+**Self-validated precondition**: the synthetic lists (one documentation entry each: a `.test` domain, an IP
+in the RFC 5737 range) are supplied to the service as inputs of the corresponding sources, with a **controlled file
+owner** (SYSTEM or Administrators), then activated through the service's **command channel**. In the isolated lab, the
+actual download of the lists fails (no outbound DNS resolution) and the service **keeps and loads the local
+copy**: expected behaviour. The trial is kept only if the threat status confirms the loading (entries ≥ 1 for
+the IP source and for the domain source); both configurations confirmed it.
 
-## Grille de couverture — mise à jour (cumul premier passage + second lot)
+## Coverage grid: update (cumulative first pass + second lot)
 
-| Domaine / technique | Règle attendue | Config A | Config C |
+| Domain / technique | Expected rule | Config A | Config C |
 |---|---|---|---|
-| Vol d'identifiants de navigateur (T1555 / T1539) | VOL-001 | **VP (Critique)** | **VP (Critique)** |
-| Requête vers domaine malveillant connu (T1071 / renseignement) | DNS-001 | **VP (Critique)** | **VP (Critique)** |
-| Connexion vers IP de menace connue (T1071) | RES-001 + blocage auto | **VP (Critique + blocage 7 j)** | **VP (Critique + blocage 7 j)** |
+| Browser credential theft (T1555 / T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
+| Query to a known malicious domain (T1071 / intelligence) | DNS-001 | **VP (Critical)** | **VP (Critical)** |
+| Connection to a known threat IP (T1071) | RES-001 + auto block | **VP (Critical + 7-day block)** | **VP (Critical + 7-day block)** |
 
-Avec le premier passage (chaîne de mesure, force brute RDP/SMB, persistance, corrélations système), la campagne couvre
-désormais, en vrais positifs mesurés : **témoin négatif propre, durcissement, force brute (RDP, SMB), persistance,
-corrélations service/compte/journal/audit, vol d'identifiants, et renseignement sur les menaces (domaine + IP + blocage)**.
-Le constat produit R3 (corrélation « nouveau compte administrateur ») reste ouvert, correctif proposé au mainteneur.
+With the first pass (measurement chain, RDP/SMB brute force, persistence, system correlations), the campaign now
+covers, as measured true positives: **clean negative control, hardening, brute force (RDP, SMB), persistence,
+service/account/log/audit correlations, credential theft, and threat intelligence (domain + IP + block)**.
+The product finding R3 (correlation "new administrator account") remains open, fix proposed to the maintainer.
 
-## Scénario non exécuté dans ce lot
+## Scenario not executed in this lot
 
-- **S-06 (filtrage DNS, règle DNS-002)** : non exécuté dans ce lot — ses préalables de labo (résolveur local actif,
-  filtrage activé sur les cartes, liste de filtrage synthétique `.test`, amont DNS de labo) restent à monter. Le code
-  correspondant (détection d'un changement de serveur DNS et filtrage par résolveur local) **est présent** dans la
-  source : S-06 est testable et planifié pour un prochain lot. La détection DNS de bout en bout est déjà couverte ici par
+- **S-06 (DNS filtering, rule DNS-002)**: not executed in this lot: its lab prerequisites (local resolver active,
+  filtering enabled on the adapters, synthetic `.test` filtering list, lab DNS upstream) remain to be set up. The
+  corresponding code (detection of a DNS server change and filtering by local resolver) **is present** in the
+  source: S-06 is testable and planned for a next lot. End-to-end DNS detection is already covered here by
   S-07 (DNS-001).
 
-## Méthode (rappel)
+## Method (reminder)
 
-Instantanés de campagne « campagne A » (sans baseline) et « campagne C » (baseline à 100 % appliquée par le service).
-Remise à l'instantané avant et après chaque essai. Defender jamais modifié à la main. Aucun outil offensif détaillé ;
-S-14 est entièrement local (aucune orchestration externe) ; S-07 n'émet aucun trafic vers un vrai domaine ou hôte
-malveillant (entrées de documentation seulement).
+Campaign snapshots "campagne A" (without baseline) and "campagne C" (baseline at 100% applied by the service).
+Reset to the snapshot before and after each trial. Defender never modified by hand. No detailed offensive tool;
+S-14 is entirely local (no external orchestration); S-07 sends no traffic to a real malicious domain or
+host (documentation entries only).

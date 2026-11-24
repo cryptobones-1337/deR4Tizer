@@ -1,78 +1,78 @@
-# Campagne Kali, lot 4 de la couverture ATT&CK : consolidation (10 essais), partie 1 : S-09
+# Kali campaign, lot 4 of the ATT&CK coverage: consolidation (10 trials), part 1: S-09
 
-- **Date** : 2026-11-22.
-- **Liste** : v1.7 (`campagne-kali-phase1.md`, protocole de répétition 3.4, témoins N-02 et N-06, règle D-3).
-- **Profil** : `carte-attack.md`, profil validé par le mainteneur le 2026-11-21.
-- **Résultats bruts** : hors dépôt, dossiers de sortie du banc nommés plus bas. Aucune donnée personnelle.
+- **Date**: 2026-11-22.
+- **List**: v1.7 (`campagne-kali-phase1.md`, repetition protocol 3.4, controls N-02 and N-06, rule D-3).
+- **Profile**: `carte-attack.md`, profile validated by the maintainer on 2026-11-21.
+- **Raw results**: outside the repository, bench output folders named below. No personal data.
 
-Cette partie consolide les deux lignes de la carte que S-09 exerce : T1547.001 (clé Run) et T1053.005 (tâche
-planifiée). Les autres lignes du lot 4 suivront dans des parties de ce même rapport, au fil des séries.
+This part consolidates the two rows of the map that S-09 exercises: T1547.001 (Run key) and T1053.005 (scheduled
+task). The other rows of lot 4 will follow in parts of this same report, as the series go.
 
-## Environnement
+## Environment
 
-| Champ | A | B | C |
+| Field | A | B | C |
 |---|---|---|---|
-| Binaire du service | construit sur le poste par `preparer.ps1` depuis main 5c33e76 (plus des scripts de test seuls), installé dans les trois instantanés ; SHA-256 8E97200A2820… relevé dans chaque série et par S-19 | identique | identique |
-| Instantané | « campagne A 2026-11-22 » | « campagne B 2026-11-22 » (A + Sysmon + Atomic Red Team) | « campagne C 2026-11-22 » (A + trois profils + bureau-distance seule) |
+| Service binary | built on the workstation by `preparer.ps1` from main 5c33e76 (plus test scripts only), installed in the three snapshots; SHA-256 8E97200A2820… recorded in each series and by S-19 | identical | identical |
+| Snapshot | "campagne A 2026-11-22" | "campagne B 2026-11-22" (A + Sysmon + Atomic Red Team) | "campagne C 2026-11-22" (A + three profiles + bureau-distance only) |
 | Windows | 26300.9974 | 26300.9974 | 26300.9974 |
-| Sysmon | absent | 15.22 (SHA-256 83D31F24…, configuration minimale du script de préparation : créations de processus, réseau, threads distants, accès à LSASS, clés Run) | absent |
-| Atomic Red Team | absent | module 2.3.0, fiches au commit a0e3f9bc… ; aucune fiche utilisée | absent |
-| Apprentissage | terminé (instantané ; commande renvoyée par le banc) | terminé | terminé |
-| Contrôle de la configuration | s/o | s/o | S-19 essai 4 : RÉUSSI (Defender 28 réglages, 0 plus faible ; scores 100/100/100 ; 0 alerte en 25 min) |
+| Sysmon | absent | 15.22 (SHA-256 83D31F24…, minimal configuration from the preparation script: process creations, network, remote threads, access to LSASS, Run keys) | absent |
+| Atomic Red Team | absent | module 2.3.0, sheets at commit a0e3f9bc…; no sheet used | absent |
+| Learning | finished (snapshot; command returned by the bench) | finished | finished |
+| Configuration check | n/a | n/a | S-19 trial 4: "RÉUSSI" (Defender 28 settings, 0 weaker; scores 100/100/100; 0 alerts in 25 min) |
 
-Préparation de B : Microsoft Defender a détecté 24 éléments dans les fichiers d'Atomic Red Team pendant leur pose
-(noté, rien n'est touché, comme le 2026-11-14) ; aucune fiche n'a servi à S-09.
+Preparation of B: Microsoft Defender detected 24 items in the Atomic Red Team files while they were being put in place
+(noted, nothing is touched, as on 2026-11-14); no sheet was used for S-09.
 
-## Protocole
+## Protocol
 
-Banc `tests/vm/s09.ps1` (#248, #250), lancé par `tests/vm/lancer.ps1 -Scenario s09 -Instantane <instantané>` :
-- série de 10 essais enchaînés dans une même session (3.4, point 2), avec remise à l'instantané au début et à la fin ;
-- (a) valeur Run de l'utilisateur vers un interpréteur qui écrit un fichier témoin ; (b) tâche planifiée équivalente ;
-  nom distinct à chaque essai ;
-- apprentissage terminé avant le premier essai ;
-- VP : PER-001 au niveau Alerte citant l'entrée ; C : Info d'apprentissage ou de comportement appris ; FN : rien en
-  180 s ;
-- nettoyage prouvé par le relevé suivant des démarrages automatiques avant l'essai d'après ; collecte Persistance
-  « Active » avant chaque essai (D-2) ;
-- témoins N-06 (valeur Run vers un programme signé) et N-02 (tâche vers un programme signé), 3 essais chacun : conformes
-  si l'entrée est vue au relevé et qu'aucune alerte ne dépasse le niveau Info dans les 180 s ;
-- latence : `HeureUtc` de l'alerte moins l'heure de pose de l'entrée (horloge de la VM), arrondie au dixième (moitié
-  vers le haut). Le relevé des démarrages automatiques tourne toutes les minutes : la latence suit ce rythme.
+Bench `tests/vm/s09.ps1` (#248, #250), launched by `tests/vm/lancer.ps1 -Scenario s09 -Instantane <instantané>`:
+- series of 10 trials chained in a single session (3.4, point 2), with reset to the snapshot at the start and at the end;
+- (a) user Run value pointing to an interpreter that writes a marker file; (b) equivalent scheduled task;
+  distinct name at each trial;
+- learning finished before the first trial;
+- VP: PER-001 at level Alert naming the entry; C: learning Info or learned behaviour Info; FN: nothing within
+  180 s;
+- cleanup proven by the next reading of the automatic startups before the following trial; Persistance collection
+  "Active" before each trial (D-2);
+- controls N-06 (Run value pointing to a signed program) and N-02 (task pointing to a signed program), 3 trials each: compliant
+  if the entry is seen at the reading and no alert exceeds level Info within the 180 s;
+- latency: `HeureUtc` of the alert minus the time the entry was put in place (VM clock), rounded to the tenth (half
+  up). The reading of the automatic startups runs every minute: the latency follows this rhythm.
 
-## Résultats
+## Results
 
-| Ligne | Scénario | Config. | Exécutés | Valides | VP | C | FN | D | Détection | Latence médiane / max (s) | Témoin : essais, FP |
+| Row | Scenario | Config. | Executed | Valid | VP | C | FN | D | Detection | Median / max latency (s) | Control: trials, FP |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| T1547.001 | S-09 (a) | A | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60,8 / 62,2 | N-06 : 3, 0 |
-| T1547.001 | S-09 (a) | B | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60,7 / 62,2 | N-06 : 3, 0 |
-| T1547.001 | S-09 (a) | C | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60,4 / 61,8 | N-06 : 3, 0 |
-| T1053.005 | S-09 (b) | A | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60,1 / 61,7 | N-02 : 3, 0 |
-| T1053.005 | S-09 (b) | B | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 61,2 / 62,7 | N-02 : 3, 0 |
-| T1053.005 | S-09 (b) | C | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60,1 / 62,6 | N-02 : 3, 0 |
+| T1547.001 | S-09 (a) | A | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.8 / 62.2 | N-06: 3, 0 |
+| T1547.001 | S-09 (a) | B | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.7 / 62.2 | N-06: 3, 0 |
+| T1547.001 | S-09 (a) | C | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.4 / 61.8 | N-06: 3, 0 |
+| T1053.005 | S-09 (b) | A | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.1 / 61.7 | N-02: 3, 0 |
+| T1053.005 | S-09 (b) | B | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 61.2 / 62.7 | N-02: 3, 0 |
+| T1053.005 | S-09 (b) | C | 10 | 10 | 10 | 0 | 0 | 0 | 10/10 | 60.1 / 62.6 | N-02: 3, 0 |
 
-Les témoins ont tous donné PER-001 au niveau Info (entrée nouvelle, sans remarque), entrée vue au relevé : conformes.
-Aucun arrêt de série. Règle D-3 : une alerte de persistance (PER-001 Alerte) sur la tâche d'exécution du banc dans
-chaque configuration (A, B et C), étiquetée artefact et exclue. Sorties : `sortie-vm-s09-20261122-083803` (A),
+The controls all gave PER-001 at level Info (new entry, without remark), entry seen at the reading: compliant.
+No series stopped. Rule D-3: one persistence alert (PER-001 Alert) on the bench's execution task in
+each configuration (A, B and C), labelled as an artefact and excluded. Outputs: `sortie-vm-s09-20261122-083803` (A),
 `-102956` (B), `-093213` (C).
 
-Pilotes, hors décompte : deux séries en configuration A sur l'instantané « propre » avec installation, le 2026-11-22
-(binaire main 0bfea32 puis banc final) : 20/20 chacune, témoins conformes.
+Pilots, outside the count: two series in configuration A on the "clean" snapshot with installation, on 2026-11-22
+(binary main 0bfea32 then final bench): 20/20 each, controls compliant.
 
-## Avant et après
+## Before and after
 
-| Ligne | État avant (carte du 2026-11-21) | État après | Ligne de la carte modifiée |
+| Row | Status before (map of 2026-11-21) | Status after | Row of the map modified |
 |---|---|---|---|
-| T1547.001 | Testé en labo, clé Run (S-09, 2026-11-15) | Testé en labo, consolidé, clé Run : 10/10 en A, B et C (campagne Kali, lot 4, 2026-11-22) | Persistance / T1547.001 (reste à faire : dossier Démarrage, hors liste) |
-| T1053.005 | Testé en labo (S-09, 2026-11-15) | Testé en labo, consolidé : 10/10 en A, B et C (campagne Kali, lot 4, 2026-11-22) | Exécution / T1053.005 |
+| T1547.001 | Lab-tested, Run key (S-09, 2026-11-15) | Lab-tested, consolidated, Run key: 10/10 in A, B and C (Kali campaign, lot 4, 2026-11-22) | Persistence / T1547.001 (still to do: Startup folder, outside the list) |
+| T1053.005 | Lab-tested (S-09, 2026-11-15) | Lab-tested, consolidated: 10/10 in A, B and C (Kali campaign, lot 4, 2026-11-22) | Execution / T1053.005 |
 
-Bilan de la carte : « consolidé » 1 → 3 ; « testé en labo, non consolidé » 13 → 11.
+Assessment of the map: "consolidated" 1 → 3; "lab-tested, not consolidated" 13 → 11.
 
-## Limites
+## Limits
 
-- Campagne menée par un agent dans une VM de test, sur une liste approuvée par l'agent de validation : ni humaine ni
-  indépendante.
-- Une seule forme d'action par technique (interpréteur qui écrit un fichier témoin) ; le dossier Démarrage
-  (T1547.001) n'est pas exercé.
-- La latence de 60 s environ est celle du relevé des démarrages automatiques, toutes les minutes ; une persistance posée
-  et retirée entre deux relevés n'est pas vue.
-- Faux positifs comptés sur les témoins seulement ; aucune mesure sur poste réel.
+- Campaign carried out by an agent in a test VM, on a list approved by the validation agent: neither human nor
+  independent.
+- A single form of action per technique (interpreter that writes a marker file); the Startup folder
+  (T1547.001) is not exercised.
+- The latency of about 60 s is that of the reading of the automatic startups, every minute; a persistence put in place
+  and removed between two readings is not seen.
+- False positives counted on the controls only; no measurement on a real workstation.

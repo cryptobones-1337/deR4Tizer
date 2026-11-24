@@ -1,134 +1,134 @@
-# Campagne Kali — sixième lot (scénarios v1.4 restants : sessions, réseau, exécution, simulations)
+# Kali campaign: sixth lot (remaining v1.4 scenarios: sessions, network, execution, simulations)
 
-Date : 2026-11-16. Liste des scénarios : v1.4 (`campagne-kali-phase1.md`). Résultats bruts hors dépôt.
+Date: 2026-11-16. List of scenarios: v1.4 (`campagne-kali-phase1.md`). Raw results outside the repository.
 
-> **Note du 2026-11-19** (audit documentaire ; les résultats ci-dessous ne sont pas réécrits) : (1) « Ce lot termine les scénarios v1.4 non encore exécutés » est inexact : restent sans résultat N-03, N-04, S-18, S-05 (a) et (b), S-10 (b), S-11 (b) et (c), l'option longue de S-16, « Débloquer » de S-07 et le volet réussite de S-03 (liste dans `README.md` de ce dossier). (2) Grille du §5 : N-02 « RÉUSSI » en configuration C et SAN-010 en C sont des hypothèses (« tenue pour identique ») : non évalués ; les lignes PowerShell encodé (PRC-002, VP avec Sysmon) et accès limité à LSASS (B2) sont des mesures de la configuration B, pas de A ni de C. (3) « IDS/DPI/NDR gelés » vaut à la date du lot ; dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »). (4) Aucun nombre d'essais n'est donné : mesures non consolidées.
-Aucune donnée personnelle, aucun nom de poste, aucun mot de passe. Adresses du labo : plages de documentation
-(RFC 5737) ; noms de test en `.test` (RFC 2606). Ce lot termine les scénarios v1.4 non encore exécutés.
+> **Note of 2026-11-19** (documentation audit; the results below are not rewritten): (1) "This lot completes the v1.4 scenarios not yet executed" is inaccurate: N-03, N-04, S-18, S-05 (a) and (b), S-10 (b), S-11 (b) and (c), the long option of S-16, "Unblock" of S-07 and the success part of S-03 remain without a result (list in `README.md` of this folder). (2) Grid of §5: N-02 "RÉUSSI" in configuration C and SAN-010 in C are hypotheses ("taken as identical"): not evaluated; the rows encoded PowerShell (PRC-002, VP with Sysmon) and limited access to LSASS (B2) are measurements of configuration B, not of A or C. (3) "IDS/DPI/NDR frozen" holds at the date of the lot; unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph). (4) No number of trials is given: measurements not consolidated.
+No personal data, no workstation name, no password. Lab addresses: documentation ranges
+(RFC 5737); test names in `.test` (RFC 2606). This lot completes the v1.4 scenarios not yet executed.
 
-**Réserve (latences)** : comme aux passages précédents, l'horloge de la VM est décalée dans les résultats bruts ; les
-verdicts reposent sur la présence (ou l'absence) du comportement attendu, pas sur l'heure. Préconditions auto-validées
-repliées dans chaque mesure (verdict D si une précondition n'est pas tenue, jamais un faux négatif).
+**Reservation (latencies)**: as in the previous passes, the VM clock is offset in the raw results; the
+verdicts rest on the presence (or absence) of the expected behaviour, not on the time. Self-validated preconditions
+folded into each measurement (verdict D if a precondition is not met, never a false negative).
 
-**Mécanisme d'identifiant de test** (sous-lots sessions) : pour les scénarios à session authentifiée réussie, un compte
-de test **dédié** est créé après restauration avec un **mot de passe généré** (jamais un mot de passe réel), transmis à
-la VM attaquante par le canal SSH chiffré, **jamais journalisé ni écrit en preuve**, et effacé par la remise à
-l'instantané. Le mot de passe de la VM attaquante n'est jamais saisi (accès par clé seulement).
+**Test credential mechanism** (session sub-lots): for the scenarios with a successful authenticated session, a **dedicated**
+test account is created after the restore with a **generated password** (never a real password), sent to
+the attacking VM through the encrypted SSH channel, **never logged or written as proof**, and erased by the reset to
+the snapshot. The password of the attacking VM is never typed (key access only).
 
-## 1. Sessions et corrélations
+## 1. Sessions and correlations
 
-| Scénario | Config A | Config C | Règle mesurée |
+| Scenario | Config A | Config C | Rule measured |
 |---|---|---|---|
-| S-17 — session administrative à distance sur partage admin (T1021.002) | **VP** | **VP** | COR-R9 Alerte « Session ouverte depuis Internet » ; 4672 présent (jeton admin) ; 5140 produit mais non lu (B2) |
-| S-04 — connexion distante au canal de commandes (IPC-03) | **VP** | **VP** | COR-R9 Alerte ; tube `deR4Tizer` distant **rejeté** (`STATUS_ACCESS_DENIED`, `PIPE_REJECT_REMOTE_CLIENTS`), aucune commande exécutée |
-| S-02 — force brute RDP **suivie d'une réussite** (T1110.001/T1078.003/T1133) | **VP** | **P-baseline** | COR-R1 Alerte + **COR-R2 Critique** (≥ 5 échecs) + COR-R9 Alerte (réussite) |
+| S-17: remote administrative session on an admin share (T1021.002) | **VP** | **VP** | COR-R9 Alert "Session ouverte depuis Internet"; 4672 present (admin token); 5140 produced but not read (B2) |
+| S-04: remote connection to the command channel (IPC-03) | **VP** | **VP** | COR-R9 Alert; remote `deR4Tizer` pipe **rejected** (`STATUS_ACCESS_DENIED`, `PIPE_REJECT_REMOTE_CLIENTS`), no command executed |
+| S-02: RDP brute force **followed by a success** (T1110.001/T1078.003/T1133) | **VP** | **P-baseline** | COR-R1 Alert + **COR-R2 Critical** (≥ 5 failures) + COR-R9 Alert (success) |
 
-**Première mesure de COR-R2 (Critique) et du volet « réussite » de COR-R9** de toute la campagne (reportés au premier
-passage). En configuration C, le Bureau à distance est refusé par la baseline durcie (3389 non à l'écoute) : prévention
-confirmée, COR-R2/R9 non exerçables.
+**First measurement of COR-R2 (Critical) and of the "success" part of COR-R9** in the whole campaign (postponed at the first
+pass). In configuration C, Remote Desktop is refused by the hardened baseline (3389 not listening): prevention
+confirmed, COR-R2/R9 cannot be exercised.
 
-**Constat produit (honnête) — COR-R9 sur RDP = Alerte, pas Critique.** Pour une ouverture Bureau à distance réussie,
-Windows émet la 4624 **type 3 (réseau NLA) avant** la type 10 (RemoteInteractive), de même IP et même utilisateur. La
-clé de déduplication `R9|ip|user` est prise par la type 3, dont le message ne contient pas « bureau à distance » : COR-R9
-sort donc en **Alerte** « Session ouverte depuis Internet », et non en **Critique** « Bureau à distance ouvert depuis
-Internet ». C'est un **constat de mesure** (analogue au constat R3 du premier passage), candidat à un correctif
-comportemental (inclure le type d'ouverture dans la clé, ou rapprocher la type 10 avant d'épuiser la clé) — à proposer
-en phase 6, pas dans ce lot de validation.
+**Product finding (honest): COR-R9 on RDP = Alert, not Critical.** For a successful Remote Desktop logon,
+Windows emits the 4624 **type 3 (network NLA) before** the type 10 (RemoteInteractive), with the same IP and the same user. The
+deduplication key `R9|ip|user` is taken by the type 3, whose message does not contain "bureau à distance": COR-R9
+therefore comes out at **Alert** "Session ouverte depuis Internet", and not at **Critical** "Bureau à distance ouvert depuis
+Internet". This is a **measurement finding** (similar to the R3 finding of the first pass), a candidate for a behavioural
+fix (include the logon type in the key, or match the type 10 before using up the key): to be proposed
+in phase 6, not in this validation lot.
 
-## 2. Réseau (C2, exfiltration) et balayage
+## 2. Network (C2, exfiltration) and scanning
 
-| Scénario | Config A | Config C | Règle mesurée |
+| Scenario | Config A | Config C | Rule measured |
 |---|---|---|---|
-| S-11 — C2 HTTP simulé + transfert d'un fichier bénin (T1071.001/T1105) | **VP** | **VP** | RES-002 Alerte (flux sortant du programme non signé) + RES-003 (première connexion) |
-| S-12 — exfiltration d'un fichier canari (T1041) | **VP** | **VP** | RES-002 Alerte (flux sortant d'exfil) + RES-003 ; volume/contenu = **E** (DPI gelé) |
-| S-08 — balayage de ports (T1046) | **GAP** | **GAP** | *aucune règle de balayage* |
+| S-11: simulated HTTP C2 + transfer of a benign file (T1071.001/T1105) | **VP** | **VP** | RES-002 Alert (outbound flow of the unsigned program) + RES-003 (first connection) |
+| S-12: exfiltration of a canary file (T1041) | **VP** | **VP** | RES-002 Alert (outbound exfil flow) + RES-003; volume/content = **E** (DPI frozen) |
+| S-08: port scan (T1046) | **GAP** | **GAP** | *no scan rule* |
 
-S-11 et S-12 : un programme de test **non signé**, lancé depuis un dossier temporaire, ouvre une connexion sortante
-**maintenue** (ESTABLISHED) vers le serveur HTTP du labo ; deR4Tizer lit la table TCP native (`GetExtendedTcpTable`,
-indépendante de la capture de paquets gelée) et score le flux (non signé, dossier temporaire, IP directe, port
-inhabituel) au-dessus du seuil → **RES-002 Alerte**. deR4Tizer détecte la **connexion** d'exfiltration ; le **volume et
-le contenu** exfiltrés ne sont pas mesurés (IDS/DPI/NDR gelés) : limite connue (classe E), pas un faux négatif.
+S-11 and S-12: an **unsigned** test program, launched from a temporary folder, opens an outbound connection
+that is **kept open** (ESTABLISHED) to the lab HTTP server; deR4Tizer reads the native TCP table (`GetExtendedTcpTable`,
+independent of the frozen packet capture) and scores the flow (unsigned, temporary folder, direct IP, unusual
+port) above the threshold → **RES-002 Alert**. deR4Tizer detects the exfiltration **connection**; the exfiltrated **volume and
+content** are not measured (IDS/DPI/NDR frozen): known limit (class E), not a false negative.
 
-**S-08 (balayage) = gap d'architecture assumé.** Il n'existe **aucune règle de détection de balayage** (`parefeu.rs`) ;
-les seules alertes fortes sont RES-004 (auto-exposition IPv4 publique de la VM) et RES-005 (paquets refusés du balayage),
-**toutes dans la plage du labo** → artefacts d'exposition (décision D-1), exclus des VP/FP. À classer **C/E** (couverture
-manquante connue), **jamais un faux négatif**, jamais 0.
+**S-08 (scan) = accepted architecture gap.** There is **no scan detection rule** (`parefeu.rs`);
+the only strong alerts are RES-004 (public IPv4 self-exposure of the VM) and RES-005 (refused packets of the scan),
+**all in the lab range** → exposure artefacts (decision D-1), excluded from the VP/FP. To be classified **C/E** (known missing
+coverage), **never a false negative**, never 0.
 
-## 3. Exécution et simulations
+## 3. Execution and simulations
 
-| Scénario | Verdict | Détail |
+| Scenario | Verdict | Detail |
 |---|---|---|
-| S-10 — PowerShell encodé (T1059.001/T1027), charge bénigne | **VP (Sysmon)** | PRC-002 Alerte sur la commande `-EncodedCommand` |
-| S-15 — accès limité à LSASS (T1003.001, SIMULATION) | **B2** | Sysmon 10 (ProcessAccess) présent ; **aucune règle deR4Tizer** ne consomme l'accès processus |
-| S-16 — leurre anti-rançongiciel touché (T1486, SIMULATION) | **VP (A) / P-Defender (C)** | LEU-002 Critique + suspension automatique du processus (A) ; accès contrôlé aux dossiers refuse l'écriture (C) |
+| S-10: encoded PowerShell (T1059.001/T1027), benign payload | **VP (Sysmon)** | PRC-002 Alert on the `-EncodedCommand` command |
+| S-15: limited access to LSASS (T1003.001, SIMULATION) | **B2** | Sysmon 10 (ProcessAccess) present; **no deR4Tizer rule** consumes the process access |
+| S-16: anti-ransomware decoy touched (T1486, SIMULATION) | **VP (A) / P-Defender (C)** | LEU-002 Critical + automatic suspension of the process (A); controlled folder access refuses the write (C) |
 
-**S-10 — PRC-002 fiable avec Sysmon ; non déterministe sans Sysmon (constat honnête).** La source de la ligne de
-commande de PRC-002 est **Sysmon si installé, sinon WMI** (`processus.rs`) — deR4Tizer ne lit **pas** le journal 4688.
-En configuration B (Sysmon), la capture est à la création du processus : PRC-002 se lève de façon **fiable** (VP). Sans
-Sysmon (WMI, par PID après coup), un `powershell` encodé **court** peut se terminer avant l'interrogation WMI, qui perd
-alors la ligne de commande : la détection est **non déterministe** (mesuré : deux essais, l'un avec PRC-002, l'autre
-sans). **Ce n'est pas un faux négatif** mais une limite de collecte connue. Amélioration produit possible (lire aussi le
-4688 avec ligne de commande) — à proposer, pas dans ce lot.
+**S-10: PRC-002 reliable with Sysmon; non-deterministic without Sysmon (honest finding).** The source of the command
+line of PRC-002 is **Sysmon if installed, otherwise WMI** (`processus.rs`): deR4Tizer does **not** read the 4688 log.
+In configuration B (Sysmon), the capture happens at process creation: PRC-002 fires **reliably** (VP). Without
+Sysmon (WMI, by PID after the fact), a **short** encoded `powershell` may end before the WMI query, which then loses
+the command line: the detection is **non-deterministic** (measured: two trials, one with PRC-002, the other
+without). **This is not a false negative** but a known collection limit. Possible product improvement (also read the
+4688 with command line): to be proposed, not in this lot.
 
-**S-15 — gap assumé.** Handle LSASS ouvert en « informations limitées » (`PROCESS_QUERY_LIMITED_INFORMATION`) puis fermé
-aussitôt, aucune lecture mémoire. La télémétrie (Sysmon 10) existe, mais aucune règle deR4Tizer n'en fait une détection :
-**B2** (ni faux négatif, ni détection), à classer comme couverture manquante connue.
+**S-15: accepted gap.** LSASS handle opened with "limited information" (`PROCESS_QUERY_LIMITED_INFORMATION`) then closed
+at once, no memory read. The telemetry (Sysmon 10) exists, but no deR4Tizer rule turns it into a detection:
+**B2** (neither a false negative nor a detection), to be classified as known missing coverage.
 
-**S-16 — détection + réponse automatique, prévenu sous baseline.** Un programme non signé ajoute **un seul octet** à un
-leurre (SIMULATION réversible). En configuration A : **LEU-002 Critique** + **suspension automatique** du processus
-(NtSuspendProcess, threads suspendus vérifiés). En configuration C : l'accès contrôlé aux dossiers de la baseline
-renforcée **refuse l'écriture** (leurre intact, événement Defender 1123) → **P-Defender** (prévention). Les deux comptent,
-non fusionnés.
+**S-16: detection + automatic response, prevented under the baseline.** An unsigned program appends **a single byte** to a
+decoy (reversible SIMULATION). In configuration A: **LEU-002 Critical** + **automatic suspension** of the process
+(NtSuspendProcess, suspended threads checked). In configuration C: the controlled folder access of the reinforced
+baseline **refuses the write** (decoy intact, Defender event 1123) → **P-Defender** (prevention). Both count,
+not merged.
 
-## 4. Session standard (présence de l'interface)
+## 4. Standard session (presence of the interface)
 
-| Volet | Verdict | Détail |
+| Part | Verdict | Detail |
 |---|---|---|
-| S-05 — spécificité (interface présente dans une session active) | **RÉUSSI** | Interface présente dans la session console active ; **aucun SAN-010/011** pendant la présence (pas de faux positif) |
-| S-05 — témoin négatif (interface absente > 15 min) | **RÉUSSI** | Tâche de relance désactivée + interface arrêtée → **SAN-010 Critique** levé après 15 min d'absence pour la session concernée |
+| S-05: specificity (interface present in an active session) | **"RÉUSSI"** | Interface present in the active console session; **no SAN-010/011** during the presence (no false positive) |
+| S-05: negative control (interface absent > 15 min) | **"RÉUSSI"** | Restart task disabled + interface stopped → **SAN-010 Critical** raised after 15 min of absence for the session concerned |
 
-Le mécanisme cœur de la décision D4-1 est couvert dans la **session console interactive existante** : le service suit
-l'interface **par session** et ne lève aucune alerte tant qu'elle est présente (spécificité), mais lève **SAN-010
-Critique** quand elle reste absente plus de 15 min (témoin). La mesure confirme que **le service ne relance rien
-lui-même** (`sante.rs`) : l'interface n'est revenue qu'à la remise à l'instantané (tâche de relance rétablie). SAN-010
-est une règle de santé **indépendante de la baseline** ; la configuration C est tenue pour identique (hypothèse).
+The core mechanism of decision D4-1 is covered in the **existing interactive console session**: the service tracks
+the interface **per session** and raises no alert as long as it is present (specificity), but raises **SAN-010
+Critical** when it stays absent for more than 15 min (control). The measurement confirms that **the service restarts nothing
+itself** (`sante.rs`): the interface only came back at the reset to the snapshot (restart task restored). SAN-010
+is a health rule **independent of the baseline**; configuration C is taken as identical (hypothesis).
 
-**Limites de reproductibilité (honnêtes)** : les deux volets de D4-1 qui exigent une **seconde session interactive** —
-(a) ouverture d'une session **Bureau à distance** et (b) **bascule rapide d'utilisateur** — ne sont pas reproduits dans
-ce harnais non interactif (PowerShell Direct ne crée pas de session interactive). Le mécanisme de suivi de l'interface
-par session qu'ils exercent est couvert par la session console ci-dessus ; leur exécution en session Bureau à distance
-ou seconde console reste une vérification manuelle en VM.
+**Reproducibility limits (honest)**: the two parts of D4-1 that require a **second interactive session**,
+(a) opening a **Remote Desktop** session and (b) **fast user switching**, are not reproduced in
+this non-interactive harness (PowerShell Direct does not create an interactive session). The per-session interface tracking
+mechanism that they exercise is covered by the console session above; their execution in a Remote Desktop session
+or a second console remains a manual check in a VM.
 
-## 5. Grille de couverture — mise à jour (cumul des six lots)
+## 5. Coverage grid: update (cumulative of the six lots)
 
-| Domaine / technique | Règle | Config A | Config C |
+| Domain / technique | Rule | Config A | Config C |
 |---|---|---|---|
-| Vol d'identifiants de navigateur (T1555/T1539) | VOL-001 | **VP (Critique)** | **VP (Critique)** |
-| Domaine / IP de liste de menaces (T1071) | DNS-001 / RES-001 + blocage 7 j | **VP (Critique)** | **VP (Critique)** |
-| Changement de serveur DNS (T1557) ; filtrage DNS | DNS-002 ; filtrage | **VP** | **VP** |
-| Defender pleinement actif ne flague pas le produit | lot 3d | **VP** | **VP** |
-| Force brute RDP/SMB + corrélations | COR-R1/R2/R9 | **VP** | VP (SMB) / P-baseline (RDP) |
-| Session admin distante ; canal de commandes distant | COR-R9 ; refus du tube | **VP** | **VP** |
-| C2 HTTP / exfiltration (connexion) | RES-002 | **VP** | **VP** |
-| PowerShell encodé | PRC-002 | **VP (Sysmon)** | VP (Sysmon) ; non déterministe sans Sysmon |
-| Leurre anti-rançongiciel | LEU-002 + suspension | **VP** | P-Defender |
-| Balayage de ports | *aucune* | **GAP (C/E)** | **GAP (C/E)** |
-| Accès limité à LSASS | *aucune* | **B2** | **B2** |
-| Session légitime ; tâche planifiée bénigne | N-01 ; N-02 | **RÉUSSI** | **RÉUSSI** |
+| Browser credential theft (T1555/T1539) | VOL-001 | **VP (Critical)** | **VP (Critical)** |
+| Threat list domain / IP (T1071) | DNS-001 / RES-001 + 7-day block | **VP (Critical)** | **VP (Critical)** |
+| DNS server change (T1557); DNS filtering | DNS-002; filtering | **VP** | **VP** |
+| Fully active Defender does not flag the product | lot 3d | **VP** | **VP** |
+| RDP/SMB brute force + correlations | COR-R1/R2/R9 | **VP** | VP (SMB) / P-baseline (RDP) |
+| Remote admin session; remote command channel | COR-R9; pipe refusal | **VP** | **VP** |
+| HTTP C2 / exfiltration (connection) | RES-002 | **VP** | **VP** |
+| Encoded PowerShell | PRC-002 | **VP (Sysmon)** | VP (Sysmon); non-deterministic without Sysmon |
+| Anti-ransomware decoy | LEU-002 + suspension | **VP** | P-Defender |
+| Port scan | *none* | **GAP (C/E)** | **GAP (C/E)** |
+| Limited access to LSASS | *none* | **B2** | **B2** |
+| Legitimate session; benign scheduled task | N-01; N-02 | **"RÉUSSI"** | **"RÉUSSI"** |
 
-## 6. Méthode (rappel)
+## 6. Method (reminder)
 
-Instantanés « campagne A » (sans baseline), « campagne B » (+ Sysmon + Atomic Red Team), « campagne C » (baseline à
-100 %). Remise à l'instantané avant et après chaque essai, VM remise en veille à la fin. Defender jamais modifié à la
-main. VM unique ⇒ scénarios strictement en série. Décisions D-1 (artefacts d'exposition de labo exclus des VP/FP) et
-D-2 (collecte d'une règle = Active au départ, sinon essai invalide) appliquées. Les programmes de test sont bénins,
-réversibles, non signés, lancés depuis un dossier temporaire ; aucune charge hostile, aucune infrastructure réelle
-contactée.
+Snapshots "campagne A" (without baseline), "campagne B" (+ Sysmon + Atomic Red Team), "campagne C" (baseline at
+100%). Reset to the snapshot before and after each trial, VM put back to sleep at the end. Defender never modified by
+hand. Single VM ⇒ scenarios strictly in series. Decisions D-1 (lab exposure artefacts excluded from the VP/FP) and
+D-2 (collection of a rule = Active at the start, otherwise invalid trial) applied. The test programs are benign,
+reversible, unsigned, launched from a temporary folder; no hostile payload, no real infrastructure
+contacted.
 
-**Constats produits à transmettre au mainteneur** : (1) COR-R9 par RDP = Alerte et non Critique (ordre type 3 → type 10) ;
-(2) PRC-002 non déterministe sans Sysmon (source WMI par PID). Deux candidats d'amélioration comportementale, hors du
-périmètre de ce lot de validation.
+**Product findings to pass on to the maintainer**: (1) COR-R9 through RDP = Alert and not Critical (order type 3 → type 10);
+(2) PRC-002 non-deterministic without Sysmon (WMI source by PID). Two candidates for behavioural improvement, outside the
+scope of this validation lot.
 
-**Limites de reproductibilité en laboratoire** : le volume/contenu d'exfiltration (S-11/S-12) n'est pas mesuré
-(IDS/DPI/NDR gelés) ; les volets Bureau à distance (a) et bascule rapide d'utilisateur (b) de S-05 ne sont pas
-reproduits dans un harnais non interactif (voir §4).
+**Laboratory reproducibility limits**: the exfiltration volume/content (S-11/S-12) is not measured
+(IDS/DPI/NDR frozen); the Remote Desktop (a) and fast user switching (b) parts of S-05 are not
+reproduced in a non-interactive harness (see §4).
