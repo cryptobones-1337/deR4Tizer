@@ -5640,6 +5640,52 @@ fn audit_donnees_sacl_completee() {
     assert_eq!(texte_sacl_de_sddl("O:BAS:NO_ACCESS_CONTROL").as_deref(), Some(""));
 }
 
+/// Audit du 2026-11-23, A-6-4, instruction de la CI de #302 (run 45294613655 : fichier créé après la pose dans le dossier
+/// témoin, SACL vide) : sur un vrai dossier, la pose par handle (poser_audit_arborescence) donne-t-elle aux fichiers créés
+/// ENSUITE la copie héritée de notre entrée ? Sinon la détection de vol de données ne verrait pas les fichiers créés après
+/// la pose. Puis le retrait (retirer_audit_arborescence) les enlève toutes. Exige SeSecurityPrivilege (session élevée :
+/// CI, VM, Windows Sandbox) ; sans lui, le test le dit et s'arrête (non exécuté, pas réussi)
+#[test]
+fn a64_audit_herite_par_les_fichiers_crees_apres_la_pose_puis_retire() {
+    use crate::natif::{poser_audit_arborescence, retirer_audit_arborescence, sacl_de_chemin, texte_sacl_de_sddl};
+    for recursif in [false, true] {
+        let d = dossier_test(&format!("a64-heritage-{recursif}"));
+        let e = crate::vol_donnees::entrees_audit(recursif);
+        std::fs::write(d.join("avant.txt"), b"a").unwrap();
+        if let Err(err) = poser_audit_arborescence(&d, e.dossier, e.fichier, recursif, 1000) {
+            eprintln!("NON EXÉCUTÉ (récursif {recursif}) : pose impossible sans élévation ({err})");
+            let _ = std::fs::remove_dir_all(&d);
+            return;
+        }
+        // Créés après la pose, par le chemin, comme le ferait un navigateur
+        std::fs::write(d.join("apres.txt"), b"b").unwrap();
+        std::fs::create_dir(d.join("sous")).unwrap();
+        std::fs::write(d.join("sous").join("apres.txt"), b"c").unwrap();
+        let lire = |p: &std::path::Path, dossier: bool| sacl_de_chemin(p, dossier).unwrap_or_else(|x| format!("illisible : {x}"));
+        let (sd, sa, sv) = (lire(&d, true), lire(&d.join("apres.txt"), false), lire(&d.join("avant.txt"), false));
+        let (ss, ssa) = (lire(&d.join("sous"), true), lire(&d.join("sous").join("apres.txt"), false));
+        eprintln!("récursif {recursif} : dossier {sd} | avant.txt {sv} | apres.txt {sa} | sous {ss} | sous\\apres.txt {ssa}");
+        // Constaté en Windows Sandbox (2026-11-24) : la SACL posée par SetKernelObjectSecurity ne porte pas « AI », et
+        // Windows recopie alors l'entrée héritable sur un nouveau fichier SANS le drapeau « ID » (« (AU;SA;CC;;;WD) ») :
+        // la copie héritée a la forme de notre entrée explicite de fichier. Les deux formes valent copie
+        let entree = |sddl: &str| texte_sacl_de_sddl(&format!("O:BA{sddl}")).unwrap().trim_start_matches("S:").trim_start_matches('(').trim_end_matches(')').to_string();
+        let (copie, explicite) = (entree(e.copie_fichier), entree(e.fichier));
+        let porte = |s: &str| crate::natif::sacl_sans_entrees(s, &[explicite.as_str()], &[copie.as_str()]).is_some();
+        assert!(porte(&sa), "fichier créé après la pose sans copie héritée : {sa} (dossier : {sd})");
+        assert_eq!(porte(&ssa), recursif, "sous-dossier : copie héritée seulement pour une cible récursive : {ssa}");
+        // Retrait : plus aucune entrée de Tout le monde, nulle part
+        let b = retirer_audit_arborescence(&d, &e, recursif, 1000).unwrap();
+        eprintln!("retrait (récursif {recursif}) : {b:?}");
+        // Le sous-dossier créé après la pose compris : Windows lui donne « (AU;OICISA;CC;;;WD) » (sans « ID », constaté en
+        // Windows Sandbox le 2026-11-24), qui restait après le premier retrait
+        for (p, dossier) in [(d.clone(), true), (d.join("avant.txt"), false), (d.join("apres.txt"), false), (d.join("sous"), true), (d.join("sous").join("apres.txt"), false)] {
+            let s = lire(&p, dossier);
+            assert!(!s.contains(";;;WD)"), "{} : entrée de Tout le monde restée : {s}", p.display());
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
 /// Audit du 2026-11-23, A-6-4 : la désinstallation retire l'audit de lecture posé dans les profils. Seules partent les
 /// entrées identiques aux nôtres (drapeaux comparés en ensemble, quel que soit leur ordre) ; leurs copies héritées ne
 /// partent que si le parent n'en transmet plus ; règle de l'organisation, autre audit de Tout le monde, étiquette
@@ -5692,6 +5738,15 @@ fn a64_retrait_audit_seulement_nos_entrees() {
     assert!(transmet("S:AI(AU;OICIIDSA;CC;;;WD)", "CC"), "héritée d'un parent plus haut");
     assert!(!transmet("S:", "CC"));
     assert!(!transmet("S:(AU;SA;CC;;;WD)(AU;OICIIOSAFA;FA;;;BA)(AU;OIFA;CC;;;WD)", "CC"), "sans OI, autre SID, échecs seuls");
+    // Copie SANS « ID » sur un sous-dossier créé après la pose d'une cible récursive (parent sans « AI », constaté en
+    // Windows Sandbox le 2026-11-24) : retirée quand le parent n'en transmet plus, gardée sinon
+    let e = crate::vol_donnees::entrees_audit(true);
+    let n = |s: &str| texte_sacl_de_sddl(&format!("O:BA{s}")).unwrap().trim_start_matches("S:").trim_start_matches('(').trim_end_matches(')').to_string();
+    let copies_d: Vec<String> = [e.copie_dossier, e.copie_dossier_sans_id].iter().map(|s| n(s)).collect();
+    let copies_d: Vec<&str> = copies_d.iter().map(String::as_str).collect();
+    assert_eq!(n(e.copie_dossier_sans_id), "AU;OICISA;CC;;;WD");
+    assert_eq!(sans("S:(AU;OICISA;CC;;;WD)", &[n(e.dossier).as_str()], &copies_d).as_deref(), Some("S:"));
+    assert_eq!(sans("S:(AU;OICISA;CC;;;WD)", &[n(e.dossier).as_str()], &[]), None, "parent qui transmet encore : gardée");
     // Les entrées passées au retrait sont celles de la pose ; elles se lisent comme Windows les écrit
     for recursif in [false, true] {
         let e = crate::vol_donnees::entrees_audit(recursif);

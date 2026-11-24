@@ -943,21 +943,19 @@ Verifier 'Droits de chaque élément après les scénarios (données, Program Fi
 # Quarantaine gardée (audit du 2026-11-23, A-4-3) : les copies présentes avant la désinstallation restent, identiques,
 # réservées à SYSTEM et aux administrateurs, avec leur index et le marqueur ; tout le reste part
 $copiesAvant = Copies-Quarantaine
-# Retrait de l'audit (A-6-4) : un fichier créé dans le dossier témoin après la pose hérite de l'entrée du dossier (copie
-# « ID ») ; il doit la porter avant la désinstallation, sinon le contrôle ne prouverait rien
-$auditTemoin = $false; $copieHeritee = $false
+# Retrait de l'audit (A-6-4) : un fichier créé dans le dossier témoin après la pose reçoit de Windows l'entrée héritable du
+# dossier. Constaté en Windows Sandbox (2026-11-24) : la SACL posée par SetKernelObjectSecurity ne porte pas « AI », et
+# la copie arrive SANS le drapeau « ID » (« (AU;SA;CC;;;WD) », que Get-Acl ne dit pas héritée). Le run 45294613655 de #302
+# exigeait IsInherited, et son SDDL « vide » était relu APRÈS la désinstallation, qui avait déjà retiré l'entrée. Ici :
+# entrée de Tout le monde exigée avant la désinstallation, quelle que soit sa forme, et SDDL relevés avant
+$auditTemoin = $false; $copieAvant = $false; $diagAvant = ''
 if ($edge -and (Test-Path -LiteralPath "$edge\Local State") -and @(Audit-Tous $edge).Count) {
     $auditTemoin = $true
     $apresPose = "$edge\apres-pose.dat"
     Set-Content -LiteralPath $apresPose -Value 'x'
-    # Run 45294613655 de #302 : le fichier créé ne portait aucune copie héritée (SACL vide). Windows recalcule les entrées
-    # héritées quand un descripteur non protégé est réécrit par le chemin (SetNamedSecurityInfo) : réécrit ici par
-    # l'administrateur, SACL non protégée, comme le faisait l'ancienne pose en PowerShell
-    if (-not @(Audit-Tous $apresPose | Where-Object { $_.IsInherited }).Count) {
-        try { $a = Get-Acl -LiteralPath $apresPose -Audit; $a.SetAuditRuleProtection($false, $true); Set-Acl -LiteralPath $apresPose -AclObject $a } catch { }
-    }
-    $copieHeritee = [bool]@(Audit-Tous $apresPose | Where-Object { $_.IsInherited }).Count
-    $diagCopie = "fichier : $((Get-Acl -LiteralPath $apresPose -Audit).Sddl) ; dossier : $((Get-Acl -LiteralPath $edge -Audit).Sddl)"
+    $copieAvant = [bool]@(Audit-Tous $apresPose).Count
+    $diagAvant = "avant la désinstallation : fichier créé après la pose : $((Get-Acl -LiteralPath $apresPose -Audit).Sddl) ; dossier : $((Get-Acl -LiteralPath $edge -Audit).Sddl)"
+    Write-Host "  $diagAvant"
 }
 Verifier "Désinstallation sans GARDER_DONNEES : données retirées, racine gardée et protégée ($($copiesAvant.Count) copie(s) de quarantaine gardée(s)), canaris intacts (jonction de ecartes comprise)" {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-3b.log')
@@ -973,10 +971,9 @@ Verifier "Désinstallation sans GARDER_DONNEES : données retirées, racine gard
 }
 $titreRetraitAudit = 'Désinstallation : audit de lecture de deR4Tizer retiré du dossier témoin et de ses fichiers (copie héritée comprise), règle tierce et étiquette d''intégrité gardées, canari de la jonction inchangé (A-6-4)'
 if ($auditTemoin) {
-    # Copie héritée : contrôlée seulement si elle existait avant (sinon dit à part, avec le diagnostic) ; le reste du
-    # contrôle ne dépend pas d'elle
-    if (-not $copieHeritee) { NonExecute 'Désinstallation : copie héritée de l''audit retirée (A-6-4)' "aucune copie héritée sur le fichier créé après la pose, même après recalcul ($diagCopie)" }
     Verifier $titreRetraitAudit {
+        # Témoin : sans entrée héritée sur le fichier créé après la pose, la détection ne verrait pas ce fichier : échec
+        if (-not $copieAvant) { return "le fichier créé après la pose ne portait aucune entrée d'audit de Tout le monde ($diagAvant)" }
         foreach ($x in $edge, "$edge\Local State", "$edge\temoin-integrite-basse.dat", "$edge\apres-pose.dat") {
             if (@(Audit-Tous $x).Count) { return "audit de Tout le monde resté sur $x : $((Get-Acl -LiteralPath $x -Audit).Sddl)" }
         }
