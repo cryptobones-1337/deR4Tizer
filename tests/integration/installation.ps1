@@ -1798,8 +1798,43 @@ $arret = {
     (Get-Service deR4Tizer).Status -eq 'Stopped'
 }
 $alertesN3 = { Get-Content (Join-Path $script:Donnees 'alertes.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue }
-$blocagesN3 = { @(Get-Content (Join-Path $script:Donnees 'blocages.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object Cible) }
-$regleN3 = { param($ip) @(Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match ('(?<![\d.])' + [regex]::Escape($ip) + '(?!\d)') }).Count }
+# Lecture refaite 3 fois, puis levée avec l'erreur : une lecture en échec (fichier en cours de remplacement, requête CIM du
+# pare-feu refusée) n'est jamais lue comme « rien de bloqué » ni « aucune règle ». Run 45316332443 (main 6fce0f2, tentative 1) :
+# Feodo inscrite dans blocages.json, « aucune règle » lue, puis 36 ms après « blocage de départ absent » ; erreurs tues jusque-là
+$relireN3 = { param([scriptblock]$Lecture, [string]$Quoi)
+    $derniere = ''
+    for ($i = 0; $i -lt 3; $i++) {
+        try { $lu = @(& $Lecture) } catch { $derniere = $_.Exception.Message; Start-Sleep 1; continue }
+        return $lu
+    }
+    throw "$Quoi illisible après 3 essais : $derniere"
+}
+$blocagesN3 = { @(& $relireN3 {
+    $f = Join-Path $script:Donnees 'blocages.json'
+    if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object Cible }
+} 'blocages.json') }
+# Groupe sans aucune règle : « ObjectNotFound », seule erreur qui vaut « aucune règle »
+$regleN3 = { param($ip)
+    $regles = @(& $relireN3 { try { Get-NetFirewallRule -Group 'deR4Tizer' -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } } } 'règles du groupe deR4Tizer')
+    @($regles | Where-Object { $_.DisplayName -match ('(?<![\d.])' + [regex]::Escape($ip) + '(?!\d)') }).Count
+}
+# Adresses attendues bloquées : registre ET règle de pare-feu pour chacune, relus jusqu'à $Secondes ; renvoie '' ou ce qui manque
+$bloqueesN3 = { param([string[]]$Noms, [int]$Secondes)
+    $fin = (Get-Date).AddSeconds($Secondes)
+    do {
+        $manque = ''
+        try {
+            $b = @(& $blocagesN3)
+            foreach ($n in $Noms) {
+                if ($cibles[$n] -notin $b) { $manque = "$n ($($cibles[$n])) non bloquée : $($b -join ', ')"; break }
+                if (-not (& $regleN3 $cibles[$n])) { $manque = "$n ($($cibles[$n])) inscrite dans blocages.json, aucune règle de pare-feu"; break }
+            }
+        } catch { $manque = "lecture en échec : $($_.Exception.Message)" }
+        if (-not $manque) { return '' }
+        Start-Sleep 2
+    } while ((Get-Date) -lt $fin)
+    "$manque (encore après $Secondes s)"
+}
 # Service arrêté. config.json reste en UTF-8 : il peut porter des accents
 $poserReglage = { param([bool]$Valeur)
     $f = Join-Path $script:Donnees 'config.json'
@@ -1847,11 +1882,11 @@ try {
         } else {
             Verifier $titreN3 {
                 if ($vues.Count -lt $cibles.Count) { return "alertes pour $($vues -join ', ') seulement, sur $($cibles.Count)" }
+                # Relu jusqu'à 30 s après les alertes : une lecture isolée ne conclut plus seule (run 45316332443)
+                $manque = & $bloqueesN3 'Feodo', 'Spam', 'Deux' 30
+                if ($manque) { return $manque }
+                # FireHOL contrôlée après : les blocages des adresses permises ont eu le temps d'être posés
                 $b = & $blocagesN3
-                foreach ($n in 'Feodo', 'Spam', 'Deux') {
-                    if ($cibles[$n] -notin $b) { return "$n ($($cibles[$n])) non bloquée : $($b -join ', ')" }
-                    if (-not (& $regleN3 $cibles[$n])) { return "$n ($($cibles[$n])) : aucune règle de pare-feu" }
-                }
                 foreach ($n in 'Hol', 'HolPlage') {
                     if ($cibles[$n] -in $b) { return "$n ($($cibles[$n])) bloquée alors qu'elle n'est que dans FireHOL" }
                     if (& $regleN3 $cibles[$n]) { return "règle de pare-feu présente pour $n" }
@@ -1859,9 +1894,9 @@ try {
                 $true
             }
             # Feodo retire l'adresse, FireHOL la porte encore : le blocage ne tient plus à rien de permis
-            $departN3 = ($cibles.Feodo -in (& $blocagesN3)) -and (& $regleN3 $cibles.Feodo)
-            if (-not $departN3) {
-                NonExecute $titreLevee 'blocage de départ absent : rien à lever'
+            $manqueDepart = & $bloqueesN3 'Feodo' 10
+            if ($manqueDepart) {
+                NonExecute $titreLevee "blocage de départ absent : rien à lever ($manqueDepart)"
             } elseif (& $arret) {
                 Poser-EnAdministrateur 'menaces\Feodo_Tracker_C2_botnets_.txt' "$($cibles.Deux)`n"
                 Poser-EnAdministrateur 'menaces\FireHOL_niveau_1.txt' "$($cibles.Hol)`n203.0.113.128/25`n$($cibles.Deux)`n$($cibles.Feodo)`n"
