@@ -12,7 +12,13 @@ signé au nom de l'éditeur. La confirmation dit vrai et son bouton par défaut 
 affaiblit la protection, elle dit en tête que la demande ne vient peut-être pas de l'utilisateur et n'arme « Continuer »
 qu'après 2 s (A-1-2, corrigé, liste élargie par S277-02 ; testé par `tests\test-confirmations.ps1`, à essayer en VM). L'assistant n'accepte que son
 propre fichier de commande, jugé sur le texte du chemin avant tout accès disque : aucun chemin réseau n'est ouvert avec
-l'identité de l'administrateur (A-1-1, corrigé ; même test).
+l'identité de l'administrateur (A-1-1, corrigé ; même test). Tout programme du compte peut aussi lancer l'interface
+complète en administrateur (derrière l'invite UAC) avec les arguments de son choix : sous jeton administrateur, le dossier
+de données de test (`--dossier`) n'est jamais appliqué et l'interface élevée lit le dossier de données normal ; sans
+élévation, `--dossier` n'est accepté que sur un disque local fixe, même critère que A-1-1 (`Programme.DossierDemande` ;
+audit de #298, A298-3, corrigé ; testé par `tests\test-langue.ps1`, à essayer en VM). Les autres arguments ne changent ni
+le dossier lu ni les droits (page affichée, démarrage caché, interface classique) ; un argument inconnu ou mal formé est
+ignoré et ouvre l'interface ordinaire.
 Limite connue (audit de #296, S296-01, non corrigée) : les polices de la fenêtre de confirmation sont choisies par leur nom (« Segoe UI »,
 « Segoe UI Semibold ») ; une police installée par l'utilisateur sous ce nom pourrait être employée par l'assistant élevé (déjà vrai pour Segoe UI avant T-16).
 

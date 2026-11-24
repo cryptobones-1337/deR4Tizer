@@ -17,7 +17,9 @@ Ordre de décision :
    sa culture n'est pas celle de l'utilisateur. Le fichier de réglage du compte élevé n'est jamais lu. Valeur hors de
    « fr » et « en » : ignorée. Lancé sans `--langue` (par une version précédente) : config.json puis culture, comme
    avant. Ses arguments sont fixés : un `--dossier` parmi eux n'est pas une option (`Programme.DossierDemande`, audit de
-   #298, A298-2).
+   #298, A298-2). L'interface élevée n'applique jamais `--dossier` non plus, et l'interface non élevée seulement sur un
+   disque local fixe (audit de #298, A298-3) : sous jeton administrateur, config.json est toujours lu dans le dossier de
+   données normal.
 2. Réglage de l'utilisateur, `%LOCALAPPDATA%\deR4Tizer\langue.txt` : `auto`, `fr` ou `en` (toute autre valeur, ou un
    fichier de plus de 64 octets, est ignorée). Écrit et lu par l'interface non élevée seulement : jamais sous jeton
    administrateur, ni pour l'écriture ni pour la lecture (le dossier est contrôlé par les programmes non élevés du

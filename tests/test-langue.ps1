@@ -86,10 +86,22 @@ try {
     Cas 'interface élevée : langue.txt jamais lu (culture en-US → anglais) ; sans élévation, « fr » lu' ($adm -eq 'True/auto' -and $std -eq 'False/fr') "$adm|$std"
     # Audit de #298, A298-2 : --dossier n'est jamais une option de l'assistant élevé
     $dd = $prog.GetMethod('DossierDemande', [Reflection.BindingFlags]'Static,NonPublic')
-    $dos = { param([string[]]$a) $dd.Invoke($null, [object[]]@(, $a)) }
+    # Lecteurs du labo : C fixe, Z « réseau » (non fixe) ; jamais le vrai type des lecteurs du poste
+    $fixe = [Func[char, bool]] { param($l) $l -eq [char]'C' }
+    $dos = { param([string[]]$a, [bool]$adm = $false) $dd.Invoke($null, [object[]]@($a, $adm, $fixe)) }
     Cas 'assistant élevé : « --dossier » parmi ses arguments ignoré ; interface : --dossier appliqué' ($null -eq (& $dos @('--commande-fichier', '--dossier', '--langue', 'en')) -and $null -eq (& $dos @('--commande-fichier', 'x.json', '--langue', '--dossier')) -and $null -eq (& $dos @('--commande-fichier', '--dossier')) -and (& $dos @('--dossier', 'C:\essai')) -eq 'C:\essai' -and (& $dos @('--cache', '--dossier', 'C:\essai')) -eq 'C:\essai' -and $null -eq (& $dos @('--dossier')))
+    # Audit de #298, A298-3 : sous jeton administrateur, --dossier jamais appliqué (dossier de données normal), même local
+    Cas 'interface élevée : --dossier jamais appliqué, même sur un disque local fixe (A298-3)' ($null -eq (& $dos @('--dossier', 'C:\essai') $true) -and $null -eq (& $dos @('--cache', '--dossier', 'C:\essai') $true) -and $null -eq (& $dos @('--dossier', '\\hote\partage') $true) -and (& $dos @('--dossier', 'C:\essai') $false) -eq 'C:\essai')
+    # A298-3 : critère de A-1-1 / A-5-2 (Canal.CheminLocalFixeTexte), jugé sur le texte avant tout accès disque
+    $refuses = @('\\hote\partage', '\\hote@SSL\DavWWWRoot\d', '\\?\UNC\hote\p', '\\.\pipe\x', '\\?\C:\essai', 'Z:\essai', 'C:essai', 'C:/essai', 'C:\a\..\b', 'C:\a:flux', '//hote/partage', 'essai', '')
+    $acceptes = @(foreach ($r in $refuses) { if ($null -ne (& $dos @('--dossier', $r))) { $r } })
+    Cas 'interface : --dossier hors disque local fixe refusé (UNC, WebDAV, \\?\, lecteur non fixe, relatif, « .. », flux) (A298-3)' ($acceptes.Count -eq 0) ($acceptes -join ' | ')
     $gSrc = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs'))
-    Cas 'Main : Commun.Dossier posé par DossierDemande seulement' ($gSrc.Contains('string dossierDemande = DossierDemande(args);') -and $gSrc.Contains('if (dossierDemande != null) Commun.Dossier = dossierDemande;') -and -not $gSrc.Contains('Commun.Dossier = args['))
+    $dSrc = $gSrc.Substring($gSrc.IndexOf('internal static string DossierDemande('), 700)
+    Cas 'DossierDemande : réutilise Canal.CheminLocalFixeTexte, aucune copie du critère (A298-3)' ($dSrc.Contains('Canal.CheminLocalFixeTexte(') -and -not $dSrc.Contains('DriveType') -and -not $dSrc.Contains('StartsWith("\\\\'))
+    Cas 'Main : Commun.Dossier posé par DossierDemande seulement, avec le jeton et le type de lecteur réels' ($gSrc.Contains('string dossierDemande = DossierDemande(args, Canal.EstAdmin(), Canal.LecteurFixe);') -and $gSrc.Contains('if (dossierDemande != null) Commun.Dossier = dossierDemande;') -and -not $gSrc.Contains('Commun.Dossier = args['))
+    # --dossier refusé : instance ordinaire (mutex commun), jamais une seconde interface parallèle sur le dossier normal
+    Cas 'Main : mutex et écoute décidés par le dossier appliqué, plus par la seule présence de « --dossier » (A298-3)' (-not $gSrc.Substring($gSrc.IndexOf('static int Main(string[] args)')).Contains('Array.IndexOf(args, "--dossier")') -and -not ($gSrc -match 'if \(i < 0\) Ecouter') -and -not $gSrc.Contains('Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier")') -and $gSrc.Contains('new Mutex(true, dossierDeTest ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier)'))
 
     # ---------------------------------------------------------------- ce que la page Réglages dit
     $langue.GetField('En').SetValue($null, $true)
