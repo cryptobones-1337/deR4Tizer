@@ -499,10 +499,11 @@ fn lancer(e: &Arc<Essai>, nom: &str, f: impl FnOnce() + Send + 'static) -> bool 
 
 /// Liaison exclusive (`SO_EXCLUSIVEADDRUSE`) d'un socket UDP ou d'une écoute TCP : erreur si un autre programme tient
 /// déjà l'adresse ou le port de toutes les adresses
-fn lier_exclusif(adresse: SocketAddr, tcp: bool) -> std::io::Result<std::os::windows::io::RawSocket> {
+pub(crate) fn lier_exclusif(adresse: SocketAddr, tcp: bool) -> std::io::Result<std::os::windows::io::RawSocket> {
     use windows::Win32::Networking::WinSock::{
-        bind, closesocket, listen, setsockopt, socket, AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, IPPROTO_TCP,
+        bind, closesocket, listen, setsockopt, WSASocketW, AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, IPPROTO_TCP,
         IPPROTO_UDP, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_IN6_0, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+        WSA_FLAG_NO_HANDLE_INHERIT, WSA_FLAG_OVERLAPPED,
     };
     // Winsock initialisé par la bibliothèque standard (WSAStartup à la première utilisation)
     let _ = UdpSocket::bind("127.0.0.1:0");
@@ -513,7 +514,12 @@ fn lier_exclusif(adresse: SocketAddr, tcp: bool) -> std::io::Result<std::os::win
     );
     unsafe {
         // Code d'erreur Winsock du dernier appel, pas le HRESULT (relecture de #161, R57)
-        let s = socket(famille, type_, proto).map_err(|_| std::io::Error::last_os_error())?;
+        // Socket non héritable, dès sa création (comme ceux de la bibliothèque standard) : `socket()` le crée héritable,
+        // et tout programme lancé par le service pendant que le résolveur tourne (curl, PowerShell…) en gardait une copie,
+        // donc le port 53 lié après « filtrage off » (échec du scénario 7.4, run 45365657788). Drapeau posé à la création,
+        // pas après : un autre fil peut lancer un programme entre les deux
+        let s = WSASocketW(famille, type_.0, proto, None, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)
+            .map_err(|_| std::io::Error::last_os_error())?;
         let erreur = |s| {
             let e = std::io::Error::last_os_error();
             let _ = closesocket(s);

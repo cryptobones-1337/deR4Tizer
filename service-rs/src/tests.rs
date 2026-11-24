@@ -11537,6 +11537,44 @@ fn dns_echec_local_pas_un_silence() {
     assert!(sonde[..sonde.find("} else {").unwrap()].contains("false"), "sonde en échec local : pas de silence");
 }
 
+/// Échec instable du scénario d'intégration « Filtrage activé (7.4) » (run 45365657788 : écoute sur ::1 et 127.0.0.1
+/// port 53 encore vue 10 s après « filtrage off », un curl du service tué à l'arrêt suivant). Cause : les sockets du
+/// résolveur, créés par `socket()` de Winsock, étaient héritables ; tout programme lancé par le service pendant que le
+/// résolveur tournait (curl d'un téléchargement : jusqu'à 180 s) en recevait une copie et gardait le port lié après leur
+/// fermeture par le service. Sockets non héritables ; un port fermé par le service pendant qu'un enfant vit est libre
+#[test]
+fn dns_sockets_du_resolveur_non_heritables() {
+    use std::os::windows::io::FromRawSocket;
+    use std::os::windows::process::CommandExt;
+    use windows::Win32::Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+    // Comportement : un enfant lancé pendant que le socket est ouvert ne retient pas le port après sa fermeture
+    let u = unsafe { std::net::UdpSocket::from_raw_socket(crate::dns_local::lier_exclusif("127.0.0.1:0".parse().unwrap(), false).expect("liaison")) };
+    let port = u.local_addr().unwrap().port();
+    let mut enfant = std::process::Command::new(crate::natif::systeme32("cmd.exe"))
+        .args(["/d", "/c", "ping -n 8 127.0.0.1 >nul"])
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .expect("enfant lancé");
+    drop(u);
+    let relie = crate::dns_local::lier_exclusif(std::net::SocketAddr::from(([127, 0, 0, 1], port)), false);
+    let _ = enfant.kill();
+    let _ = enfant.wait();
+    if let Ok(s) = &relie {
+        unsafe { drop(std::net::UdpSocket::from_raw_socket(*s)) };
+    }
+    assert!(relie.is_ok(), "port {port} encore tenu par l'enfant après sa fermeture par le service : {relie:?}");
+    for adresse in ["127.0.0.1:0", "[::1]:0"] {
+        for tcp in [false, true] {
+            let brut = crate::dns_local::lier_exclusif(adresse.parse().unwrap(), tcp).expect("liaison");
+            let mut drapeaux = 0u32;
+            let lu = unsafe { GetHandleInformation(HANDLE(brut as *mut core::ffi::c_void), &mut drapeaux) };
+            unsafe { drop(std::net::UdpSocket::from_raw_socket(brut)) };
+            assert!(lu.is_ok(), "drapeaux du socket illisibles ({adresse}, tcp : {tcp}) : {lu:?}");
+            assert_eq!(drapeaux & HANDLE_FLAG_INHERIT.0, 0, "socket héritable par les programmes lancés par le service ({adresse}, tcp : {tcp})");
+        }
+    }
+}
+
 /// Parseur et réponses : aucune panique, quelle que soit l'entrée
 #[test]
 fn dns_torturer() {
