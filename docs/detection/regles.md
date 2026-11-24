@@ -1,1141 +1,1141 @@
-# Règles de détection : fiches (phase 3)
+# Detection rules: rule sheets (phase 3)
 
-Inventaire des détections **qui existent déjà** dans le service. Aucune règle nouvelle. Chaque fiche donne l'identifiant
-de la règle, ce qu'elle couvre, la télémétrie dont elle dépend et ce qui se passe si cette télémétrie manque, son niveau,
-ses faux positifs attendus, ses tests et son état de mesure.
+Inventory of the detections **that already exist** in the service. No new rule. Each sheet gives the identifier
+of the rule, what it covers, the telemetry it depends on and what happens if that telemetry is missing, its level,
+its expected false positives, its tests and its measurement status.
 
-**Depuis la PR 3.2, chaque alerte porte l'identifiant de sa règle** (champ `Regle`, registre `service-rs/src/regles.rs`). Un test vérifie
-que ce document et le registre listent les mêmes identifiants.
+**Since PR 3.2, every alert carries the identifier of its rule** (field `Regle`, registry `service-rs/src/regles.rs`). A test checks
+that this document and the registry list the same identifiers.
 
-**Ligne « ATT&CK » de chaque fiche (couverture ATT&CK, lot 3)** : tirée de la même table que le code ; un test
-(`attack_lot3_fiches_et_table_concordent`) compare chaque fiche à la table, la documentation ne peut plus diverger.
+**"ATT&CK" line of each sheet (ATT&CK coverage, batch 3)**: taken from the same table as the code; a test
+(`attack_lot3_fiches_et_table_concordent`) compares each sheet with the table, so the documentation can no longer diverge.
 
-**Technique ATT&CK (couverture ATT&CK, lot 2)** : elle vient de l'identifiant de règle, par une seule table placée
-dans le registre (`regles.rs`, champ `techniques`, ATT&CK v20.1, d'après `docs/validation/carte-attack.md`), et plus
-jamais de mots du texte de l'alerte. Trois cas : liste fixe ; techniques posées par le code qui produit l'alerte, pour
-les règles à plusieurs comportements (CHA-001 : celles des signaux de la chaîne ; COR-R7 : celle de l'événement ;
-VIE-001 : caméra T1125 ou micro T1123 ; VIE-002 : T1219, ou T1572 pour ngrok ; EXP-NDR-001, EXP-DPI-001 ; EXP-IDS-001
-n'en pose aucune) ; « aucune », dit
-explicitement (santé, réponse, intégrité, détections génériques de Defender, RES-006, COR-R6). Le conseil « Que faire »
-reste choisi par mots-clés (`mitre.rs`). Décisions sans écart avec la carte, prises en l'absence du mainteneur
-(2026-11-22, journal des décisions) : DNS-002 et DNS-003 T1557 ; VOL-001 T1555.003 et T1539 ; COR-R1 T1110.
+**ATT&CK technique (ATT&CK coverage, batch 2)**: it comes from the rule identifier, through a single table placed
+in the registry (`regles.rs`, field `techniques`, ATT&CK v20.1, based on `docs/validation/carte-attack.md`), and never
+again from words in the alert text. Three cases: fixed list; techniques set by the code that produces the alert, for
+rules with several behaviours (CHA-001: those of the signals of the chain; COR-R7: that of the event;
+VIE-001: camera T1125 or microphone T1123; VIE-002: T1219, or T1572 for ngrok; EXP-NDR-001, EXP-DPI-001; EXP-IDS-001
+sets none); "none", stated
+explicitly (health, response, integrity, generic Defender detections, RES-006, COR-R6). The "What to do" advice
+is still chosen by keywords (`mitre.rs`). Decisions with no gap from the map, taken in the maintainer's absence
+(2026-11-22, decision log): DNS-002 and DNS-003 T1557; VOL-001 T1555.003 and T1539; COR-R1 T1110.
 
-Les niveaux indiqués sont ceux que le code produit **avant** l'apprentissage et les exceptions : `apprentissage::filtrer`
-peut faire passer une « Alerte » en « Info ». Seuls les niveaux « Critique » et « Info » sont garantis tels quels.
+The levels given are those the code produces **before** learning and exceptions: `apprentissage::filtrer`
+may turn an "Alert" into "Info". Only the "Critical" and "Info" levels are guaranteed as they are.
 
-État de mesure : aucune fiche n'est **consolidée** (10 essais valides, `CLAUDE.md`) ni n'a de faux positifs comptés sur le
-terrain. Depuis l'écriture de ce paragraphe, chaque règle de domaine a ses tests positif et négatif en labo, et
-plusieurs ont une mesure en VM ou dans la campagne Kali, dite sur leur fiche (RES-003, PER-001, RES-001, DNS-001,
-PRC-002, LEU-002, VOL-001, corrélations). Les PR de domaine de la phase 3 les mesurent une à une (en labo, puis en VM quand c'est
-permis) et mettent la fiche et `docs/roadmap/capability-matrix.md` à jour.
+Measurement status: no sheet is **consolidated** (10 valid trials, `CLAUDE.md`) nor has false positives counted in the
+field. Since this paragraph was written, each domain rule has its positive and negative tests in the lab, and
+several have a measurement in a VM or in the Kali campaign, stated on their sheet (RES-003, PER-001, RES-001, DNS-001,
+PRC-002, LEU-002, VOL-001, correlations). The domain PRs of phase 3 measure them one by one (in the lab, then in a VM when it is
+allowed) and update the sheet and `docs/roadmap/capability-matrix.md`.
 
-Règles de forme :
+Form rules:
 
-- identifiant `DOM-NNN`, jamais réutilisé ; une règle retirée reste listée, marquée « retirée » ;
-- `COR-R1` à `COR-R10` gardent les numéros actuels du SIEM (`incidents.json`) ;
-- `EXP-*` : modules expérimentaux (IDS, DPI, NDR), gelés pendant la phase 3 : seule une ligne d'identifiant de règle a
-  été ajoutée à leurs alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25, voir `CLAUDE.md`) ;
-  dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI ») ;
-- une alerte qui réunit plusieurs indices d'un même domaine porte l'identifiant de la règle la plus forte qu'elle
-  contient (par exemple PRC-001 et PRC-002 dans la même alerte : PRC-001 ; `processus::regle_retenue`). Une alerte ne
-  porte qu'une règle. Pour les lignes de commande, tous les motifs sont cherchés et nommés dans les raisons, et la
-  suppression des sauvegardes (PRC-005) l'emporte sur les autres motifs (PR 3.7).
+- identifier `DOM-NNN`, never reused; a withdrawn rule stays listed, marked "withdrawn";
+- `COR-R1` to `COR-R10` keep the current SIEM numbers (`incidents.json`);
+- `EXP-*`: experimental modules (IDS, DPI, NDR), frozen during phase 3: only a rule identifier line was
+  added to their alerts (PR 3.2), with no other change of logic (maintainer, 2026-10-25, see `CLAUDE.md`);
+  unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph);
+- an alert that gathers several clues from the same domain carries the identifier of the strongest rule it
+  contains (for example PRC-001 and PRC-002 in the same alert: PRC-001; `processus::regle_retenue`). An alert
+  carries only one rule. For command lines, all patterns are searched for and named in the reasons, and the
+  deletion of backups (PRC-005) takes precedence over the other patterns (PR 3.7).
 
-« Si la télémétrie manque » décrit le comportement des détections elles-mêmes : dans la plupart des cas, la règle se
-tait. Depuis la PR 3.3a, ce silence est publié dans `etat.json` : `Collectes` donne l'état de chaque source de
-télémétrie et `ReglesSansCollecte` les règles dont une source nécessaire n'est pas lue (une source jamais notée compte
-comme non lue). Depuis la PR 3.4, l'interface le montre : la liste des alertes vide ne dit « Aucune alerte. » que si
-chaque détection a sa collecte, sinon elle nomme les détections muettes et les sources qui leur manquent ; une
-pastille jaune compte les collectes en panne. Correspondance règle → sources :
-`collectes::besoins`. Depuis la PR 3.3b, toutes les sources sont notées : connexions, liste des processus, journaux
-(Defender, Sécurité, Système, pare-feu, DNS, Sysmon), état de Defender, WMI des processus, listes de menaces et de
-domaines, LOLDrivers, relevé des démarrages automatiques, audit des créations de processus (4688), baseline, leurres, audit des données (SACL), `pfirewall.log`,
-extensions, magasin des consentements (caméra, micro), capture du trafic et du réseau local. Ne suivent aucune
-source : RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, INT-003, et les constats de santé SAN-* (qui portent sur les
-collectes elles-mêmes). Par défaut, les listes de domaines sont toutes à licence
-restreinte et coupées : `ListesDomaines` est « Desactivee » et DNS-001 « sans collecte ».
+"If the telemetry is missing" describes the behaviour of the detections themselves: in most cases, the rule stays
+silent. Since PR 3.3a, this silence is published in `etat.json`: `Collectes` gives the status of each telemetry
+source and `ReglesSansCollecte` the rules for which a required source is not read (a source never recorded counts
+as not read). Since PR 3.4, the interface shows it: the empty alert list says "No alerts." only if
+each detection has its collection, otherwise it names the silent detections and the sources they lack; a
+yellow badge counts the failed collections. Rule → sources mapping:
+`collectes::besoins`. Since PR 3.3b, all sources are recorded: connections, process list, logs
+(Defender, Security, System, firewall, DNS, Sysmon), Defender status, process WMI, threat and
+domain lists, LOLDrivers, autostart inventory, process creation audit (4688), baseline, decoys, data audit (SACL), `pfirewall.log`,
+extensions, consent store (camera, microphone), traffic and local network capture. Following no
+source: RES-004, SYS-001, VIE-003, COR-R6, INT-001, INT-002, INT-003, and the SAN-* health findings (which concern the
+collections themselves). By default, the domain lists are all under a restricted
+licence and switched off: `ListesDomaines` is "Desactivee" and DNS-001 "sans collecte".
 
-Ce que garantit « Active » : la source se **lit** (pour un journal suivi, le numéro du dernier événement et les
-nouveaux événements sont lus ; une lecture interrompue passe en « Indisponible » et les événements sont relus au tour
-suivant ; depuis la PR 3.3c, un journal désactivé passe en « Indisponible » même s'il reste lisible, et le journal
-DNS-Client est réactivé : décision D4). Cela ne garantit pas que Windows **produit** les événements attendus. Cas
-connus non détectés :
-- politique d'audit modifiée (ouvertures de session non auditées : COR-R1, R2, R3, R9 restent couvertes) ;
-- Sysmon configuré sans l'événement 22 (il couvre quand même DNS-001), ou service Sysmon arrêté alors que son journal
-  reste lisible ;
-- listes de menaces chargées depuis une copie locale ancienne (l'âge n'est pas suivi) ;
-- `JournalSecurite` noté par trois lecteurs (SIEM, accès aux fichiers 4663, créations de processus 4688) : un seul en panne ne se voit pas, les autres
-  continuant de lire le même journal ;
-- l'audit des données (SACL) posé ne prouve pas que la politique d'audit des accès aux objets est active : sans elle,
-  aucun 4663 n'est produit (VOL-001, LEU-002) ; l'audit posé sur les leurres eux-mêmes n'est pas suivi (journal seul) ;
-- capture : « Active » dit que le fil de capture tourne, pas qu'il reçoit des paquets (une réception toujours en
-  échec n'est pas vue) ;
-- leurres : « Active » dit qu'au moins un leurre est suivi, pas que chaque profil en a un ;
-- audit des données : un dossier dont le parcours est tronqué (20 000 éléments) ou dont des éléments sont écartés
-  (liens) compte comme audité ;
-- `pfirewall.log` : un fichier présent alors que la journalisation des paquets a été coupée reste lu (« Active ») ;
-- démarrages automatiques : un relevé partiel mais non vide compte comme lu ;
-- veille ou hibernation : le délai de trois intervalles se compte en heure murale ; au réveil, les sources à long
-  intervalle (baseline, Defender, extensions : 10 min ; audit, listes : 1 h) peuvent rester « Indisponible » jusqu'à
-  leur prochaine lecture (échec fermé).
+What "Active" guarantees: the source is **read** (for a followed log, the number of the last event and the
+new events are read; an interrupted read turns "Indisponible" and the events are read again at the next
+round; since PR 3.3c, a disabled log turns "Indisponible" even if it remains readable, and the
+DNS-Client log is re-enabled: decision D4). It does not guarantee that Windows **produces** the expected events. Known
+undetected cases:
+- audit policy changed (logons not audited: COR-R1, R2, R3, R9 remain covered);
+- Sysmon configured without event 22 (it still covers DNS-001), or Sysmon service stopped while its log
+  remains readable;
+- threat lists loaded from an old local copy (the age is not tracked);
+- `JournalSecurite` recorded by three readers (SIEM, file access 4663, process creations 4688): a single one failing is not visible, the others
+  continuing to read the same log;
+- the data audit (SACL) being set does not prove that the object access audit policy is active: without it,
+  no 4663 is produced (VOL-001, LEU-002); the audit set on the decoys themselves is not tracked (log only);
+- capture: "Active" says that the capture thread is running, not that it receives packets (a reception that always
+  fails is not seen);
+- decoys: "Active" says that at least one decoy is followed, not that each profile has one;
+- data audit: a folder whose traversal is truncated (20,000 items) or from which items are excluded
+  (links) counts as audited;
+- `pfirewall.log`: a file that is present while packet logging has been switched off is still read ("Active");
+- autostarts: a partial but non-empty inventory counts as read;
+- sleep or hibernation: the delay of three intervals is counted in wall-clock time; on wake-up, the sources with a long
+  interval (baseline, Defender, extensions: 10 min; audit, lists: 1 h) may remain "Indisponible" until
+  their next read (fail closed).
 
-Lecture d'un journal suivi :
-- par fenêtres de 5 000 numéros au plus (PR 3.3c) : une fenêtre lue jusqu'au bout avance jusqu'à sa borne, même sans
-  événement retenu ; un journal inondé d'événements que la requête écarte ne fige donc plus la lecture ; les fenêtres
-  s'enchaînent dans un même tour tant qu'elles se lisent jusqu'au bout, 1,5 s au plus, puis le tour suivant reprend ;
-- journal désactivé (encore lisible, mais Windows n'y écrit plus) : « Indisponible », une ligne dans `journal.txt` ; le
-  journal DNS-Client est réactivé (une tentative par épisode, D4), les autres sont seulement signalés ; un journal coupé
-  par le service lui-même (retour arrière de la baseline, demandé par l'administrateur) est laissé coupé et noté
-  « Desactivee », jusqu'à ce qu'il soit réactivé par un autre moyen (une coupure ultérieure par un tiers est alors de
-  nouveau réactivée) ; limite : cette coupure n'est retenue qu'en mémoire, et au redémarrage du service le journal
-  DNS-Client est réactivé comme à chaque démarrage (le retour arrière ne vaut que jusque-là) ;
-- angles morts de la désactivation : une coupure suivie d'une réactivation ne laisse aucune trace de la plage pendant
-  laquelle Windows n'a rien écrit ; une coupure et une réactivation par un tiers entre deux tours (2 s) ne sont pas
-  vues ; une configuration du canal illisible est prise pour « activé » ;
-- un délai dépassé (journal très chargé) n'est pas un blocage : rien n'est sauté, la lecture reprend au tour suivant là
-  où elle s'est arrêtée ; la collecte est « Partielle » tant que la lecture progresse ;
-- tours sans progrès (délais dépassés et erreurs comptés ensemble) : après 30 tours (une minute), sur un délai, rien
-  n'est sauté et la collecte passe « Indisponible » ; sur une erreur (événement illisible), un seul numéro est sauté,
-  juste après le dernier lu, puis 2, 4… si le blocage persiste ; le saut est écrit dans `journal.txt` ; les événements
-  perdus sont ceux des numéros sautés : au plus deux fois l'écart entre le dernier lu et l'événement fautif ;
-- événements écrasés par la rotation du journal avant d'être lus : vérifié avant chaque fenêtre lue (un petit
-  journal, comme DNS-Client ou Defender, tourne en quelques milliers d'événements) ; la lecture reprend au plus ancien
-  numéro encore présent, la perte est comptée et écrite dans `journal.txt` ; un journal qui grossit plus vite que le
-  service ne le lit (plus de 5 000 numéros par fenêtre, 1,5 s de lecture par tour de 2 s) finit ainsi par perdre des
-  événements, comptés ;
-- après un saut ou une rotation, la collecte reste « Partielle » une heure (« N numéro(s) d'événement perdu(s) »).
+Reading a followed log:
+- by windows of at most 5,000 numbers (PR 3.3c): a window read to the end advances to its bound, even without
+  any retained event; a log flooded with events that the query discards therefore no longer freezes the read; the windows
+  follow one another within a single round as long as they are read to the end, 1.5 s at most, then the next round resumes;
+- disabled log (still readable, but Windows no longer writes to it): "Indisponible", one line in `journal.txt`; the
+  DNS-Client log is re-enabled (one attempt per episode, D4), the others are only reported; a log switched off
+  by the service itself (baseline rollback, requested by the administrator) is left off and recorded
+  "Desactivee", until it is re-enabled by some other means (a later switch-off by a third party is then
+  re-enabled again); limit: this switch-off is kept only in memory, and when the service restarts the
+  DNS-Client log is re-enabled as at every start (the rollback only holds until then);
+- blind spots of disabling: a switch-off followed by a re-enabling leaves no trace of the range during
+  which Windows wrote nothing; a switch-off and a re-enabling by a third party between two rounds (2 s) are not
+  seen; an unreadable channel configuration is taken as "enabled";
+- an exceeded timeout (very busy log) is not a blockage: nothing is skipped, the read resumes at the next round where
+  it stopped; the collection is "Partielle" as long as the read progresses;
+- rounds without progress (exceeded timeouts and errors counted together): after 30 rounds (one minute), on a timeout, nothing
+  is skipped and the collection turns "Indisponible"; on an error (unreadable event), a single number is skipped,
+  just after the last one read, then 2, 4… if the blockage persists; the skip is written to `journal.txt`; the events
+  lost are those of the skipped numbers: at most twice the gap between the last one read and the faulty event;
+- events overwritten by log rotation before being read: checked before each window read (a small
+  log, such as DNS-Client or Defender, rotates within a few thousand events); the read resumes at the oldest
+  number still present, the loss is counted and written to `journal.txt`; a log that grows faster than the
+  service reads it (more than 5,000 numbers per window, 1.5 s of reading per round of 2 s) thus ends up losing
+  events, counted;
+- after a skip or a rotation, the collection remains "Partielle" for one hour ("N numéro(s) d'événement perdu(s)").
 
-Un journal illisible au démarrage est suivi quand même : son fil réessaie toutes les 2 s et le suivi part de la
-première lecture réussie (les événements écrits entre-temps ne sont pas relus). Sysmon illisible au démarrage : l'audit
-des créations de processus (4688) prend le relais, sinon WMI.
-Créations de processus sans Sysmon (couverture ATT&CK, lot 1) : les règles PRC-001 à PRC-005 et les chaînes lisent les
-événements 4688 du journal Sécurité, qui portent le programme, sa ligne de commande et son parent même pour un
-processus déjà terminé. Collecte `AuditProcessus`, relue toutes les 5 min, et plus tôt (une fois par minute au plus) quand un 4688 arrive alors que l'audit est noté inactif, ce qui arrive juste après l'installation, quand la baseline active l'audit : « Active » (audit actif, ligne de commande
-réglée et vue) ; « Partielle » (ligne de commande absente : PRC-001 lit le 4688, PRC-002 à PRC-005 prennent la ligne
-de commande dans WMI) ; « Desactivee » (audit jamais activé : la baseline n'est pas appliquée, comme Sysmon absent) ;
-« Indisponible » (audit coupé après avoir été actif, réglage illisible, journal Sécurité illisible). Dans les trois
-derniers cas, le repli sur WMI est dit dans la raison, et un poste géré (baseline en lecture seule) est nommé. Les deux
-sources analysent chaque création (aucune fenêtre sans analyse quand l'audit est coupé ou le journal bloqué) ; la même
-règle levée pour un PID et le même programme dans les 30 s n'est pas répétée par l'autre source. Limites : un audit
-coupé avant un redémarrage du service est dit « non activé » (l'état n'est gardé qu'en mémoire) ; un Windows dont
-`auditpol` n'est ni en anglais ni en français fait lire l'audit « non activé » (WMI prend le relais) ; `auditpol` figé
-laisse l'état au dernier relevé (WMI analyse de toute façon) ; un 4688 en retard ne remplace pas, dans l'arbre des
-chaînes, un processus vivant de même PID ; lignes de commande bornées à 1 024 caractères dans l'arbre, 300 dans les
-chaînes publiées, 8 192 dans le cache.
-« Partielle » (WMI sans Sysmon ni audit actif) : les processus brefs peuvent manquer, PRC-001 à PRC-005 sont publiées
-dégradées.
+A log that is unreadable at startup is followed anyway: its thread retries every 2 s and following starts from the
+first successful read (events written in the meantime are not read again). Sysmon unreadable at startup: the audit
+of process creations (4688) takes over, otherwise WMI.
+Process creations without Sysmon (ATT&CK coverage, batch 1): rules PRC-001 to PRC-005 and the chains read the
+4688 events of the Security log, which carry the program, its command line and its parent even for a
+process that has already ended. Collection `AuditProcessus`, read again every 5 min, and earlier (at most once per minute) when a 4688 arrives while the audit is recorded as inactive, which happens just after installation, when the baseline enables the audit: "Active" (audit active, command line
+configured and seen); "Partielle" (command line absent: PRC-001 reads the 4688, PRC-002 to PRC-005 take the command
+line from WMI); "Desactivee" (audit never enabled: the baseline is not applied, like Sysmon absent);
+"Indisponible" (audit switched off after having been active, unreadable setting, unreadable Security log). In the last three
+cases, the fallback to WMI is stated in the reason, and a managed machine (baseline read-only) is named. Both
+sources analyse each creation (no window without analysis when the audit is switched off or the log blocked); the same
+rule raised for a PID and the same program within 30 s is not repeated by the other source. Limits: an audit
+switched off before a restart of the service is reported "non activé" (the state is kept only in memory); a Windows whose
+`auditpol` is neither in English nor in French makes the audit read as "non activé" (WMI takes over); a frozen `auditpol`
+leaves the state at the last inventory (WMI analyses anyway); a late 4688 does not replace, in the tree of
+chains, a living process with the same PID; command lines capped at 1,024 characters in the tree, 300 in the
+published chains, 8,192 in the cache.
+"Partielle" (WMI without Sysmon or active audit): short-lived processes may be missed, PRC-001 to PRC-005 are published
+as degraded.
 
-Domaines : `RES` connexions, `DNS`, `PRC` processus, `CHA` chaînes de processus, `PER` persistance, `DEF` Defender,
-`LEU` leurres, `VOL` vol de données, `SYS` fichier hosts et pare-feu, `PIL` pilotes, `EXT` extensions de navigateur,
-`VIE` vie privée et accès distant, `BAS` baseline, `COR` corrélations du SIEM, `INT` intégrité du service, `EXP`
-modules expérimentaux.
+Domains: `RES` connections, `DNS`, `PRC` processes, `CHA` process chains, `PER` persistence, `DEF` Defender,
+`LEU` decoys, `VOL` data theft, `SYS` hosts file and firewall, `PIL` drivers, `EXT` browser extensions,
+`VIE` privacy and remote access, `BAS` baseline, `COR` SIEM correlations, `INT` service integrity, `EXP`
+experimental modules.
 
 ---
 
-## RES : connexions
+## RES: connections
 
-### RES-001 : connexion vers une adresse ou un domaine des listes de menaces
-- **ATT&CK** : T1071.001 Communication par protocole web.
-- **Code** : `moniteur.rs` (passage, branche « menace », niveau Critique).
-- **Justification** : un programme du poste parle à une infrastructure malveillante connue (Spamhaus DROP, Feodo
-  Tracker, listes de domaines) ; c'est le signe le plus direct d'une infection active.
-- **Télémétrie** : table des connexions TCP, listes de menaces chargées ; journal DNS pour rattacher un domaine.
-- **Si elle manque** : table illisible : aucune connexion vue ; listes vides ou absentes : la règle se tait.
-- **Niveau** : Critique. Peut déclencher le blocage automatique (niveau 3 de `docs/reponse/politique.md`).
-- **Faux positifs attendus** : adresse partagée (hébergement mutualisé) ajoutée à une liste ; liste périmée. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; aucune liste de menaces n'est chargée dans la VM. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_001_positif` (adresse d'une liste synthétique trouvée, score 10, alerte même pour une connexion déjà
-  ouverte au démarrage), `res_001_negatif` (adresse privée refusée au chargement de la liste ; adresse absente) ;
-  décisions pures `moniteur::score_flux` et `moniteur::regle_flux` (PR 3.8). Non exercée dans les scénarios VM ; mesurée
-  dans la campagne Kali (`docs/validation/campagne-kali-second-lot.md`, 2026-11-15 : VP en configurations A et C, avec
-  le blocage de 7 jours), non consolidée.
+### RES-001 : connection to an address or a domain from the threat lists
+- **ATT&CK** : T1071.001 Web protocols.
+- **Code**: `moniteur.rs` (pass, "threat" branch, level Critical).
+- **Rationale**: a program on the machine talks to a known malicious infrastructure (Spamhaus DROP, Feodo
+  Tracker, domain lists); it is the most direct sign of an active infection.
+- **Telemetry**: TCP connection table, loaded threat lists; DNS log to link a domain.
+- **If it is missing**: unreadable table: no connection seen; empty or absent lists: the rule stays silent.
+- **Level**: Critical. May trigger automatic blocking (level 3 of `docs/reponse/politique.md`).
+- **Expected false positives**: shared address (shared hosting) added to a list; outdated list. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none; no threat list is loaded in the VM. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `res_001_positif` (address from a synthetic list found, score 10, alert even for a connection already
+  open at startup), `res_001_negatif` (private address rejected when the list is loaded; absent address);
+  pure decisions `moniteur::score_flux` and `moniteur::regle_flux` (PR 3.8). Not exercised in the VM scenarios; measured
+  in the Kali campaign (`docs/validation/campagne-kali-second-lot.md`, 2026-11-15: TP in configurations A and C, with
+  the 7-day blocking), not consolidated.
 
-### RES-002 : nouvelle connexion au score suspect (≥ 3)
-- **ATT&CK** : T1071.001 Communication par protocole web (la technique observée : une connexion ; l'exfiltration et le téléchargement ne sont pas vus, revue de l'auditeur du 2026-11-22, point 1).
-- **Code** : `moniteur.rs` (calcul du score des flux, niveau Alerte).
-- **Justification** : réunit des indices faibles qui, ensemble, décrivent un programme malveillant qui sort sur Internet.
-- **Indices** (une seule règle, chaque indice nommé dans `Raisons`) : programme non signé ; dossier temporaire ou
-  téléchargements ; fichier téléchargé récemment ; ligne de commande suspecte ; adresse IP directe sans requête DNS ;
-  balise (connexions régulières) ; port inhabituel ; télémétrie.
-- **Télémétrie** : connexions, processus (chemin, signature, ligne de commande) ; l'indice « IP directe » exige le
-  journal DNS.
-- **Si elle manque** : sans lecture du journal DNS depuis plus de trois intervalles (90 s), l'indice « IP directe » n'est
-  pas compté (PR 3.3b : il suivait l'état du journal au démarrage et pouvait se déclencher à tort) ; un journal DNS coupé
-  est réactivé, ou, s'il ne peut l'être, noté indisponible (PR 3.3c, D4), et l'indice tombe 90 s plus tard ; sans ligne
-  de commande (WMI), l'indice correspondant manque.
-- **Ligne de commande lue** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : celle du cache
-  d'informations de processus seulement si l'entrée décrit le programme qui tient la connexion (chemin complet
-  identique, casse ignorée), sinon une interrogation WMI du processus vivant, gardée au même contrôle. Avant, une
-  entrée gardée une heure sous un PID réutilisé était prêtée au nouveau programme : une connexion de gh portait
-  « PowerShell obscurci », venu d'un cmd qui avait eu le même PID 25 min plus tôt. Test :
-  `processus_cache_pid_reutilise_jamais_prete`. Réserve de la prérelecture de #283 : une connexion dont le chemin du
-  programme est illisible (processus protégé, déjà terminé) perd tout ce contexte : aucune ligne de commande n'est
-  lue, ni du cache ni de WMI (sens prudent : jamais une ligne empruntée, au prix d'un indice manqué).
-- **Connexions déjà ouvertes au démarrage** (audit du 2026-11-23, B-1-01, corrigé ; testé en labo, à essayer en VM) :
-  elles ne prennent pas l'indice « IP directe » tant qu'elles restent ouvertes ; fermées (table TCP lue sans elles),
-  elles perdent cette marque, et rouvertes plus tard elles sont jugées comme nouvelles (`moniteur::purger_preexistants`).
-  Avant, la table de ces connexions n'était jamais purgée : une connexion rouverte des heures après le démarrage
-  n'avait plus l'indice. Une lecture de la table TCP en échec ne purge rien. Limite : une connexion dont le chemin du
-  programme devient illisible le temps d'un passage change de clé et perd aussi la marque.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : applications de messagerie ou de jeu qui se connectent sans DNS ; outils internes non
-  signés. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_002_positif` (non signé ; IP directe et port inhabituel ; non signé, téléchargé hier et balise),
-  `res_002_negatif` (connexion banale ; origine Internet d'un programme signé ; navigateur sans DNS ; journal DNS non lu ;
-  connexion déjà ouverte au démarrage ; connexion déjà vue ou premier passage),
-  `res_002_preexistantes_purgees_a_la_fermeture` (marque gardée tant que la connexion est ouverte, purgée à sa
-  fermeture, rien purgé sur une lecture en échec ; câblage) ; existant pour l'indice « IP directe » :
-  `ip_directe_editeurs_exacts`. Décision pure `moniteur::score_flux` (PR 3.8) : les indices sont lus dans le cycle, le
-  calcul est testé à part. Les indices non couverts un par un : dossier temporaire, ligne de commande suspecte,
-  télémétrie (chacun ajoute son poids, comme ceux testés).
+### RES-002 : new connection with a suspicious score (≥ 3)
+- **ATT&CK** : T1071.001 Web protocols (the observed technique: a connection; exfiltration and download are not seen, auditor's review of 2026-11-22, point 1).
+- **Code**: `moniteur.rs` (computation of the flow score, level Alert).
+- **Rationale**: gathers weak clues which, together, describe a malicious program that goes out to the Internet.
+- **Clues** (a single rule, each clue named in `Raisons`): unsigned program; temporary or
+  downloads folder; recently downloaded file; suspicious command line; direct IP address without a DNS query;
+  beacon (regular connections); unusual port; telemetry.
+- **Telemetry**: connections, processes (path, signature, command line); the "direct IP" clue requires the
+  DNS log.
+- **If it is missing**: without a read of the DNS log for more than three intervals (90 s), the "direct IP" clue is
+  not counted (PR 3.3b: it followed the state of the log at startup and could trigger wrongly); a switched-off DNS log
+  is re-enabled, or, if it cannot be, recorded as unavailable (PR 3.3c, D4), and the clue drops 90 s later; without a command
+  line (WMI), the corresponding clue is missing.
+- **Command line read** (finding T-2 of 2026-11-23, fixed, tested in the lab, to be tried in a VM): the one from the process
+  information cache only if the entry describes the program that holds the connection (identical full
+  path, case ignored), otherwise a WMI query of the living process, kept under the same check. Before, an
+  entry kept for one hour under a reused PID was attributed to the new program: a gh connection carried
+  "PowerShell obscurci", coming from a cmd that had had the same PID 25 min earlier. Test:
+  `processus_cache_pid_reutilise_jamais_prete`. Reservation from the pre-review of #283: a connection whose program
+  path is unreadable (protected process, already ended) loses all this context: no command line is
+  read, neither from the cache nor from WMI (cautious direction: never a borrowed line, at the cost of a missed clue).
+- **Connections already open at startup** (audit of 2026-11-23, B-1-01, fixed; tested in the lab, to be tried in a VM):
+  they do not get the "direct IP" clue as long as they stay open; once closed (TCP table read without them),
+  they lose this mark, and if reopened later they are judged as new (`moniteur::purger_preexistants`).
+  Before, the table of these connections was never purged: a connection reopened hours after startup
+  no longer had the clue. A failed read of the TCP table purges nothing. Limit: a connection whose program
+  path becomes unreadable for the duration of one pass changes key and also loses the mark.
+- **Level**: Alert.
+- **Expected false positives**: messaging or gaming applications that connect without DNS; unsigned internal
+  tools. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `res_002_positif` (unsigned; direct IP and unusual port; unsigned, downloaded yesterday and beacon),
+  `res_002_negatif` (ordinary connection; Internet origin of a signed program; browser without DNS; DNS log not read;
+  connection already open at startup; connection already seen or first pass),
+  `res_002_preexistantes_purgees_a_la_fermeture` (mark kept as long as the connection is open, purged when it
+  closes, nothing purged on a failed read; wiring); existing for the "direct IP" clue:
+  `ip_directe_editeurs_exacts`. Pure decision `moniteur::score_flux` (PR 3.8): the clues are read in the cycle, the
+  computation is tested separately. The clues not covered one by one: temporary folder, suspicious command line,
+  telemetry (each adds its weight, like those tested).
 
-### RES-003 : première connexion à Internet d'un programme
-- **ATT&CK** : T1071.001 Communication par protocole web (la technique observée ; le lancement par l'utilisateur n'est pas vu).
-- **Code** : `moniteur.rs` (niveau Info).
-- **Justification** : donne l'historique de « qui parle à Internet » ; utile à l'enquête, pas une alarme.
-- **Télémétrie** : connexions.
-- **Si elle manque** : la règle se tait.
-- **Niveau** : Info.
-- **Faux positifs attendus** : chaque nouveau programme ou nouvelle version (attendu, par nature). Mesurés en VM
-  (scénario `mesure`, 22 min, compte neuf) : 9 à 13 alertes Info, soit 24 à 35 par heure, surtout au premier usage
-  (OneDrive, Edge, services de Windows).
-- **Tests** : `res_003_positif`, `res_003_negatif` (apprentissage ; premier passage) ; décision pure
-  `moniteur::premiere_connexion_signalee` (PR 3.8). Exercée en VM (alertes Info du scénario `mesure`).
+### RES-003 : first Internet connection of a program
+- **ATT&CK** : T1071.001 Web protocols (the observed technique; the launch by the user is not seen).
+- **Code**: `moniteur.rs` (level Info).
+- **Rationale**: gives the history of "who talks to the Internet"; useful for the investigation, not an alarm.
+- **Telemetry**: connections.
+- **If it is missing**: the rule stays silent.
+- **Level**: Info.
+- **Expected false positives**: each new program or new version (expected, by nature). Measured in a VM
+  (`mesure` scenario, 22 min, new account): 9 to 13 Info alerts, i.e. 24 to 35 per hour, mostly at first use
+  (OneDrive, Edge, Windows services).
+- **Tests**: `res_003_positif`, `res_003_negatif` (learning; first pass); pure decision
+  `moniteur::premiere_connexion_signalee` (PR 3.8). Exercised in a VM (Info alerts of the `mesure` scenario).
 
-### RES-004 : adresse publique directement sur le PC
-- **ATT&CK** : T1133 Services distants exposés.
-- **Code** : `moniteur.rs` (« PC EXPOSÉ À INTERNET : adresse publique directement sur le PC »).
-- **Justification** : un PC sans box ni NAT devant lui est joignable depuis Internet.
-- **Conditions** : contrôle tous les 100 passages du cycle ; l'alerte part quand un réseau public apparaît sur une carte
-  réseau depuis le relevé précédent : une adresse IPv4 publique, ou un préfixe /64 IPv6 global, sans tenir compte du
-  nom de la carte. Les adresses IPv6 temporaires, que Windows renouvelle chaque jour dans le même préfixe, ne comptent
-  pas (relecture de #87, D1 et R2-D1). Avant la
-  PR 3.8, seul un **nombre** d'adresses en hausse alertait. Un PC déjà exposé au démarrage du service ne déclenche aucune
-  alerte (adresses relevées au démarrage). Limite inchangée : un relevé qui échoue rend une liste vide, et les adresses
-  revues au relevé suivant passent pour nouvelles.
-- **Télémétrie** : adresses des cartes réseau.
-- **Si elle manque** : la règle se tait.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : réseau d'entreprise avec adresses publiques volontaires ; IPv6 globale (selon le cas) ;
-  opérateur qui change le préfixe IPv6 chaque jour : au plus une alerte par jour, cohérent avec la règle (relecture de
+### RES-004 : public address directly on the PC
+- **ATT&CK** : T1133 External remote services.
+- **Code**: `moniteur.rs` ("PC EXPOSÉ À INTERNET : adresse publique directement sur le PC").
+- **Rationale**: a PC with no router or NAT in front of it is reachable from the Internet.
+- **Conditions**: check every 100 passes of the cycle; the alert fires when a public network appears on a network
+  adapter since the previous inventory: a public IPv4 address, or a global IPv6 /64 prefix, regardless of the
+  adapter name. Temporary IPv6 addresses, which Windows renews every day within the same prefix, do not count
+  (review of #87, D1 and R2-D1). Before
+  PR 3.8, only a rising **number** of addresses raised an alert. A PC already exposed when the service starts triggers no
+  alert (addresses recorded at startup). Unchanged limit: an inventory that fails returns an empty list, and the addresses
+  seen again at the next inventory pass for new ones.
+- **Telemetry**: network adapter addresses.
+- **If it is missing**: the rule stays silent.
+- **Level**: Alert.
+- **Expected false positives**: corporate network with deliberate public addresses; global IPv6 (depending on the case);
+  ISP that changes the IPv6 prefix every day: at most one alert per day, consistent with the rule (review of
   #87).
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'a pas d'adresse publique. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_004_positif` (adresse apparue ; adresse qui en remplace une autre ; nouveau préfixe IPv6),
-  `res_004_negatif` (mêmes adresses ; adresse disparue ; adresse temporaire IPv6 renouvelée dans le même préfixe ; même
-  adresse sur une autre carte), sur la forme relevée « adresse (carte) », que `res_004_forme_du_releve` lie au code qui
-  la produit ; décision pure `moniteur::alerte_adresses_publiques`. PR 3.8 : comparaison adresse par adresse ;
-  avant, seul un nombre d'adresses en hausse alertait, et une adresse publique qui en remplaçait une autre passait
-  inaperçue (faux négatif, corrigé). Non exercée en VM.
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none; the VM has no public address. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `res_004_positif` (address appeared; address that replaces another one; new IPv6 prefix),
+  `res_004_negatif` (same addresses; address gone; temporary IPv6 address renewed within the same prefix; same
+  address on another adapter), on the recorded form "address (adapter)", which `res_004_forme_du_releve` ties to the code that
+  produces it; pure decision `moniteur::alerte_adresses_publiques`. PR 3.8: address-by-address comparison;
+  before, only a rising number of addresses raised an alert, and a public address that replaced another one went
+  unnoticed (false negative, fixed). Not exercised in a VM.
 
-Note (U5c-2) : l'alerte RES-004 est inchangée. Seule la pastille de l'interface change : une IPv6 globale seule donne « exposition à surveiller » (orange), plus « PC exposé » (rouge) ; une IPv4 publique reste « PC exposé ». Une redirection UPnP vers ce PC vue seulement par une vérification de plus de 30 min ne donne plus « PC exposé » (non vérifiée, citée dans le constat) ; l'alerte UPnP d'origine n'est pas retirée.
+Note (U5c-2): the RES-004 alert is unchanged. Only the interface badge changes: a global IPv6 alone gives "exposure to watch" (orange), no longer "PC exposed" (red); a public IPv4 remains "PC exposed". A UPnP redirection to this PC seen only by a check older than 30 min no longer gives "PC exposed" (not verified, cited in the finding); the original UPnP alert is not withdrawn.
 
-### RES-005 : paquet entrant venu d'Internet
-- **ATT&CK** : T1133 Services distants exposés.
-- **Code** : `parefeu.rs` (journal du pare-feu, « PC EXPOSÉ À INTERNET : paquet entrant … »).
-- **Justification** : un paquet entrant depuis une adresse publique, surtout accepté, montre un PC exposé.
-- **Télémétrie** : `pfirewall.log` (journalisation des paquets du pare-feu Windows).
-- **Si elle manque** : journal du pare-feu désactivé ou illisible : la règle se tait.
-- **Niveau** : Critique si le paquet est accepté, Alerte s'il est bloqué. Une alerte par source, port et action en
+### RES-005 : incoming packet from the Internet
+- **ATT&CK** : T1133 External remote services.
+- **Code**: `parefeu.rs` (firewall log, "PC EXPOSÉ À INTERNET : paquet entrant …").
+- **Rationale**: an incoming packet from a public address, especially an accepted one, shows an exposed PC.
+- **Telemetry**: `pfirewall.log` (Windows firewall packet logging).
+- **If it is missing**: firewall log disabled or unreadable: the rule stays silent.
+- **Level**: Critical if the packet is accepted, Alert if it is blocked. One alert per source, port and action within
   24 h.
-- **Faux positifs attendus** : box en DMZ ou redirection de port voulue (signalé aussi par la revue UX).
-- **Tests** : `res_005_positif` (paquet vers un port en écoute ; demande d'écho), `res_005_negatif` (réponse vers un port
-  éphémère ; réponse UDP ; réponse d'écho), sur `parefeu::exposition_reelle` ; existants, du journal à l'alerte :
+- **Expected false positives**: router in DMZ or intended port forwarding (also pointed out by the UX review).
+- **Tests**: `res_005_positif` (packet to a listening port; echo request), `res_005_negatif` (reply to an ephemeral
+  port; UDP reply; echo reply), on `parefeu::exposition_reelle`; existing, from the log to the alert:
   `exposition_reelle_sans_faux_positifs`, `exposition_udp_reponse_reconnue_par_le_flux`,
-  `exposition_paquet_bloque_reponse_a_un_flux`. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'est pas exposée à Internet. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
+  `exposition_paquet_bloque_reponse_a_un_flux`. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none; the VM is not exposed to the Internet. The
+  measurement underestimates them: new account, few programs, local connections only.
 
-### RES-006 : nouveau port ouvert en écoute sur le réseau
-- **ATT&CK** : aucune.
-- **Code** : `surveillances.rs` (`ports_ouverts`).
-- **Justification** : un programme qui se met à écouter sur le réseau peut être une porte dérobée.
-- **Télémétrie** : table des connexions TCP (ports en écoute), signature du programme.
-- **Si elle manque** : table illisible : aucun port vu ; premier relevé (`ecoutes-connues.json` absent) : apprentissage,
-  aucune alerte, voulu.
-- **Niveau** : Alerte si le programme n'est pas signé, Info sinon.
-- **Faux positifs attendus** : logiciels qui ouvrent un port de service local (synchronisation, partage).
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_006_positif` (apprentissage au premier relevé ; port nouveau : Alerte si non signé, Info sinon),
-  `res_006_negatif` (boucle locale ; port RPC dynamique de Windows ; port déjà connu) ; `surveillances::ports_ouverts`
-  rendu testable (chemin d'un PID passé en paramètre, écriture de `ecoutes-connues.json` laissée à l'appelant, PR 3.8).
+### RES-006 : new port open and listening on the network
+- **ATT&CK** : aucune (none).
+- **Code**: `surveillances.rs` (`ports_ouverts`).
+- **Rationale**: a program that starts listening on the network may be a backdoor.
+- **Telemetry**: TCP connection table (listening ports), program signature.
+- **If it is missing**: unreadable table: no port seen; first inventory (`ecoutes-connues.json` absent): learning,
+  no alert, intended.
+- **Level**: Alert if the program is not signed, Info otherwise.
+- **Expected false positives**: software that opens a local service port (synchronisation, sharing).
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `res_006_positif` (learning at the first inventory; new port: Alert if unsigned, Info otherwise),
+  `res_006_negatif` (loopback; Windows dynamic RPC port; port already known); `surveillances::ports_ouverts`
+  made testable (path of a PID passed as a parameter, writing of `ecoutes-connues.json` left to the caller, PR 3.8).
 
-### RES-007 : connexion entrante depuis Internet
-- **ATT&CK** : T1133 Services distants exposés.
-- **Code** : `surveillances.rs` (`ports_ouverts`, « CONNEXION ENTRANTE depuis Internet »).
-- **Justification** : quelqu'un d'Internet est connecté à un port en écoute du PC. Distincte de RES-005 : elle vient de
-  la table TCP (connexion établie), pas du journal du pare-feu.
-- **Télémétrie** : table des connexions TCP, signature du programme.
-- **Si elle manque** : table illisible : la règle se tait.
-- **Niveau** : Critique si le programme n'est pas signé, Alerte sinon.
-- **Faux positifs attendus** : serveur volontairement exposé (jeu, accès distant voulu). Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; la VM n'est pas exposée à Internet. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `res_007_positif` (connexion établie depuis Internet sur un port en écoute : Critique si non signé, Alerte
-  sinon), `res_007_negatif` (connexion entrante du réseau local ; connexion sortante) ; `surveillances::ports_ouverts`.
-  Non exercée en VM.
+### RES-007 : incoming connection from the Internet
+- **ATT&CK** : T1133 External remote services.
+- **Code**: `surveillances.rs` (`ports_ouverts`, "CONNEXION ENTRANTE depuis Internet").
+- **Rationale**: someone from the Internet is connected to a listening port of the PC. Distinct from RES-005: it comes from
+  the TCP table (established connection), not from the firewall log.
+- **Telemetry**: TCP connection table, program signature.
+- **If it is missing**: unreadable table: the rule stays silent.
+- **Level**: Critical if the program is not signed, Alert otherwise.
+- **Expected false positives**: deliberately exposed server (game, intended remote access). False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none; the VM is not exposed to the Internet. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `res_007_positif` (connection established from the Internet on a listening port: Critical if unsigned, Alert
+  otherwise), `res_007_negatif` (incoming connection from the local network; outgoing connection); `surveillances::ports_ouverts`.
+  Not exercised in a VM.
 
 ## DNS
 
-### DNS-001 : requête DNS vers un domaine malveillant connu
-- **ATT&CK** : T1071.004 Communication via DNS (la technique observée ; le lien d'hameçonnage n'est pas vu).
-- **Code** : `moniteur.rs` (« requête DNS vers un domaine MALVEILLANT connu »).
-- **Justification** : la résolution d'un domaine de commande ou de distribution de malware, même sans connexion.
-- **Télémétrie** : journal DNS-Client (ou Sysmon 22), listes de domaines.
-- **Si elle manque** : journal DNS coupé après le démarrage : jamais vu aujourd'hui, la règle se tait.
-- **Niveau** : Critique.
-- **Faux positifs attendus** : domaine retiré tardivement d'une liste ; résolution provoquée par un outil de sécurité.
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique, service en apprentissage) : aucun ; aucune liste de domaines n'est activée par défaut. La
-  mesure les sous-estime : compte neuf, peu de programmes, connexions locales seulement.
-- **Tests** : `dns_001_positif` (domaine d'une liste synthétique, sans tenir compte de la casse), `dns_001_negatif` (autre
-  domaine ; sous-domaine, les listes portant des noms exacts ; nom vide) ; décision pure `moniteur::alerte_dns`
-  (PR 3.8). Non exercée dans les scénarios VM (il faudrait une liste de domaines de test chargée par le service) ;
-  mesurée dans la campagne Kali avec une liste synthétique (`campagne-kali-second-lot.md`, 2026-11-15 : VP en
-  configurations A et C), non consolidée.
-- **Phase 7** : le filtrage par nom de domaine est dans le code (PR 7.2 à 7.6) ; le blocage d'un nom par le filtrage est
-  compté dans les « derniers blocages » de la page « Navigation », sans changer cette alerte.
+### DNS-001 : DNS query to a known malicious domain
+- **ATT&CK** : T1071.004 DNS (the observed technique; the phishing link is not seen).
+- **Code**: `moniteur.rs` ("requête DNS vers un domaine MALVEILLANT connu").
+- **Rationale**: the resolution of a malware command or distribution domain, even without a connection.
+- **Telemetry**: DNS-Client log (or Sysmon 22), domain lists.
+- **If it is missing**: DNS log switched off after startup: never seen today, the rule stays silent.
+- **Level**: Critical.
+- **Expected false positives**: domain removed late from a list; resolution caused by a security tool.
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity, service in learning mode): none; no domain list is enabled by default. The
+  measurement underestimates them: new account, few programs, local connections only.
+- **Tests**: `dns_001_positif` (domain from a synthetic list, case ignored), `dns_001_negatif` (other
+  domain; subdomain, since the lists carry exact names; empty name); pure decision `moniteur::alerte_dns`
+  (PR 3.8). Not exercised in the VM scenarios (it would need a test domain list loaded by the service);
+  measured in the Kali campaign with a synthetic list (`campagne-kali-second-lot.md`, 2026-11-15: TP in
+  configurations A and C), not consolidated.
+- **Phase 7**: filtering by domain name is in the code (PR 7.2 to 7.6); the blocking of a name by the filtering is
+  counted in the "latest blocks" of the "Browsing" page, without changing this alert.
 
-### DNS-002 : serveur DNS changé sur une carte du poste
-- **ATT&CK** : T1557 Interception (adversaire au milieu).
-- **Code** : `dns_surveillance.rs` (`releve`, `changements_dns`) ; fil « dns » de `moniteur.rs` (phase 7, PR 7.1).
-- **Justification** : un programme qui règle un serveur DNS statique sur une carte du poste fait passer toutes les
-  résolutions par lui (faux site de la banque, faux portail de la mairie) ; le fichier hosts (SYS-001) ne le montre pas.
-- **Limite** : une box compromise qui donne un serveur malveillant par le DHCP n'est pas signalée : un changement donné
-  par le réseau n'est qu'un événement (relecture de #159, constat 2).
-- **Télémétrie** : serveurs DNS effectifs, passerelles et type de chaque carte active (`GetAdaptersAddresses`), et
-  serveur statique éventuel (`NameServer` sous `Tcpip\Parameters\Interfaces\{GUID}` et son équivalent `Tcpip6`) ; relevé
-  toutes les 60 s, hors du verrou du moniteur ; le premier relevé sert de référence, sans alerte.
-- **Décision** (`changements_dns(avant, apres)`, pure ; seules les cartes dont les serveurs DNS changent sont examinées) :
-  - serveur **statique** ajouté ou changé sur une carte physique (Ethernet, Wi-Fi) : alerte, même si la passerelle
-    change au même moment (un serveur réglé à la main ne vient pas du réseau ; la passerelle est citée) ;
-  - changement non statique qui accompagne un changement de réseau (autre passerelle) : événement du mini-SIEM (`dns`,
-    `serveur-dns`) seulement (portable qui change de Wi-Fi) ;
-  - changement donné par le DHCP sur le même réseau : événement seulement ;
-  - cartes virtuelles et VPN : événement seulement ;
-  - carte nouvelle ou disparue : rien.
-  Rien n'est remis en place (lecture seule). Le cas « filtrage actif et port 53 de la boucle locale tenu par un autre
-  programme » est la règle DNS-003 (PR 7.5a) ; rien n'est remis en place automatiquement après un changement par un
-  tiers (D7-10, recommandation du dossier appliquée, sans décision écrite du mainteneur).
-- **Si elle manque** : `GetAdaptersAddresses` en échec : collecte `ConfigDns` indisponible, jamais « aucun changement » ;
-  la référence est gardée, un changement fait pendant la panne est signalé au retour.
-- **Niveau** : Alerte. Signal fort : jamais appris ni adouci par l'apprentissage ; une exception « ne plus alerter »
-  ne couvre que le jeu de serveurs de l'alerte (cité dans la destination).
-- **Faux positifs attendus** : un utilisateur ou un prestataire qui règle un DNS à la main (alerte juste, mais
-  voulue) ; un logiciel de contrôle parental ou un VPN qui modifie la carte physique.
-- **Tests** : `dns002_statique_change_meme_reseau` (positif, Ethernet et Wi-Fi), `dns002_statique_change_avec_passerelle`,
-  `dns002_jamais_appris_exception_par_serveurs` ; `dns002_changement_de_reseau_sans_alerte`
-  (autre passerelle, DHCP sur le même réseau, DNS inchangé, carte nouvelle ou disparue), `dns002_carte_vpn_sans_alerte`,
-  `dns002_lecture_impossible_collecte_indisponible` (négatifs) ; en VM (3a), témoin retenu (DNS statique réglé sur la
-  carte de la VM, réseau inchangé : alerte) et témoin écarté (retour au DHCP : pas d'alerte).
+### DNS-002 : DNS server changed on an adapter of the machine
+- **ATT&CK** : T1557 Adversary-in-the-middle.
+- **Code**: `dns_surveillance.rs` (`releve`, `changements_dns`); "dns" thread of `moniteur.rs` (phase 7, PR 7.1).
+- **Rationale**: a program that sets a static DNS server on an adapter of the machine routes all
+  resolutions through it (fake bank site, fake town hall portal); the hosts file (SYS-001) does not show it.
+- **Limit**: a compromised router that hands out a malicious server through DHCP is not reported: a change given
+  by the network is only an event (review of #159, finding 2).
+- **Telemetry**: effective DNS servers, gateways and type of each active adapter (`GetAdaptersAddresses`), and
+  any static server (`NameServer` under `Tcpip\Parameters\Interfaces\{GUID}` and its `Tcpip6` equivalent); inventory
+  every 60 s, outside the monitor lock; the first inventory serves as the reference, without an alert.
+- **Decision** (`changements_dns(avant, apres)`, pure; only the adapters whose DNS servers change are examined):
+  - **static** server added or changed on a physical adapter (Ethernet, Wi-Fi): alert, even if the gateway
+    changes at the same moment (a server set by hand does not come from the network; the gateway is cited);
+  - non-static change that goes with a network change (another gateway): mini-SIEM event (`dns`,
+    `serveur-dns`) only (laptop that changes Wi-Fi);
+  - change given by DHCP on the same network: event only;
+  - virtual and VPN adapters: event only;
+  - new or vanished adapter: nothing.
+  Nothing is restored (read-only). The case "filtering active and port 53 of the loopback held by another
+  program" is rule DNS-003 (PR 7.5a); nothing is restored automatically after a change by a
+  third party (D7-10, recommendation of the design file applied, without a written decision from the maintainer).
+- **If it is missing**: `GetAdaptersAddresses` failing: collection `ConfigDns` unavailable, never "no change";
+  the reference is kept, a change made during the outage is reported on recovery.
+- **Level**: Alert. Strong signal: never learned nor softened by learning; a "stop alerting" exception
+  only covers the set of servers of the alert (cited in the destination).
+- **Expected false positives**: a user or a contractor who sets a DNS by hand (correct alert, but
+  intended); a parental control software or a VPN that modifies the physical adapter.
+- **Tests**: `dns002_statique_change_meme_reseau` (positive, Ethernet and Wi-Fi), `dns002_statique_change_avec_passerelle`,
+  `dns002_jamais_appris_exception_par_serveurs`; `dns002_changement_de_reseau_sans_alerte`
+  (another gateway, DHCP on the same network, DNS unchanged, new or vanished adapter), `dns002_carte_vpn_sans_alerte`,
+  `dns002_lecture_impossible_collecte_indisponible` (negatives); in a VM (3a), retained control (static DNS set on the
+  VM's adapter, network unchanged: alert) and discarded control (back to DHCP: no alert).
 
-### DNS-003 : port DNS de la boucle locale tenu par un autre programme, carte encore réglée sur le résolveur
-- **ATT&CK** : T1557 Interception (adversaire au milieu).
-- **Code** : `moniteur.rs` (`reprendre_filtrage`, `alerte_port_dns_tenu`) (phase 7, PR 7.5a ; audit de #164, S164-05).
-- **Justification** : filtrage activé, le service redémarre et ne peut pas lier le port 53 de la boucle locale, alors
-  qu'une carte pointe encore sur `127.0.0.1` ou `::1` (remise impossible) : le programme qui tient le port peut
-  répondre à toutes les résolutions de noms du poste, SYSTEM compris.
-- **Télémétrie** : échec de la liaison exclusive du résolveur ; relecture du registre des cartes (`NameServer`) ;
-  table UDP (`GetExtendedUdpTable`) pour le PID qui tient le port 53.
-- **Si elle manque** : relevé des cartes impossible (collecte `ConfigDns` indisponible) : la règle se tait. Elle n'est pas
-  rattachée à `FiltrageDns`, indisponible justement quand elle se déclenche (relecture de #165, R70).
-- **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
-- **Faux positifs attendus** : un autre résolveur légitime installé après l'activation du filtrage (partage de
-  connexion, Docker, WSL) : l'alerte reste juste, la carte pointe sur lui sans qu'on l'ait voulu.
-- **Tests** : `filtrage_alerte_port_dns_tenu`.
+### DNS-003 : DNS port of the loopback held by another program, adapter still set to the resolver
+- **ATT&CK** : T1557 Adversary-in-the-middle.
+- **Code**: `moniteur.rs` (`reprendre_filtrage`, `alerte_port_dns_tenu`) (phase 7, PR 7.5a; audit of #164, S164-05).
+- **Rationale**: filtering enabled, the service restarts and cannot bind port 53 of the loopback, while
+  an adapter still points to `127.0.0.1` or `::1` (restoring impossible): the program that holds the port can
+  answer all name resolutions of the machine, SYSTEM included.
+- **Telemetry**: failure of the resolver's exclusive bind; re-read of the adapters' registry (`NameServer`);
+  UDP table (`GetExtendedUdpTable`) for the PID that holds port 53.
+- **If it is missing**: adapter inventory impossible (collection `ConfigDns` unavailable): the rule stays silent. It is not
+  tied to `FiltrageDns`, which is unavailable precisely when it triggers (review of #165, R70).
+- **Level**: Critical (strong signal, never softened by learning).
+- **Expected false positives**: another legitimate resolver installed after filtering was enabled (connection
+  sharing, Docker, WSL): the alert remains correct, the adapter points to it without anyone having wanted it.
+- **Tests**: `filtrage_alerte_port_dns_tenu`.
 
-## PRC : processus
+## PRC: processes
 
-### PRC-001 : document bureautique qui lance un interpréteur
-- **ATT&CK** : T1566.001 Pièce jointe piégée ; T1204.002 Fichier piégé lancé par l'utilisateur.
-- **Code** : `processus.rs` (`analyser`, « macro ou exploit probable »).
-- **Justification** : Word, Excel ou un lecteur PDF qui lance PowerShell, cmd, wscript… est la marque d'une macro ou
-  d'un exploit. Ajouts de l'audit du 2026-11-23 (fait par Claude, A-7-8, corrigé, testé en labo) : document `olk` (nom
-  du programme du nouvel Outlook, olk.exe) ; interpréteurs `hh` (aide compilée .chm, qui exécute un script),
-  `msiexec` (paquet MSI qui exécute des actions), `forfiles` (lance une commande pour chaque fichier), `cmstp`
-  (profil de connexion qui exécute un script, T1218.003), `odbcconf` (charge une DLL), `regasm` et `regsvcs` (exécutent
-  le code d'un assembly .NET), `msxsl` (feuille de style XSL qui porte un script) : aucun n'a de raison d'être lancé par
-  un document. `conhost` n'est pas retenu : Windows le crée pour toute console, un complément d'Office qui en ouvre une
-  donnerait un faux positif Critique, et l'enfant d'un `conhost --headless` reste vu par les autres règles.
-- **Télémétrie** : création de processus avec le parent (Sysmon 1, sinon événement 4688 du journal Sécurité, sinon WMI).
-- **Si elle manque** : sans Sysmon ni audit des créations de processus, flux WMI arrêté : la source reste affichée « WMI »
-  et la règle se tait.
-- **Niveau** : Critique (signal fort, jamais adouci par l'apprentissage).
-- **Faux positifs attendus** : modèles d'entreprise qui lancent un script légitime. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `prc_001_positif` (Word qui lance PowerShell, avec ou sans ligne de commande, et avec un motif PowerShell en
-  plus : PRC-001 l'emporte), `prc_001_negatif` (PowerShell lancé par l'Explorateur ; Word qui lance un programme qui
-  n'est pas un interpréteur), `prc_001_interpreteurs_elargis` (A-7-8 : chacun des interpréteurs ajoutés lancé par Word,
-  PowerShell lancé par le nouvel Outlook ; conhost lancé par Word : rien) ; décision pure `processus::alerte_processus`.
-  Non exercée en VM : aucun Office dans la VM.
+### PRC-001 : office document that launches an interpreter
+- **ATT&CK** : T1566.001 Spearphishing attachment; T1204.002 Malicious file launched by the user.
+- **Code**: `processus.rs` (`analyser`, "macro ou exploit probable").
+- **Rationale**: Word, Excel or a PDF reader that launches PowerShell, cmd, wscript… is the mark of a macro or
+  of an exploit. Additions from the audit of 2026-11-23 (done by Claude, A-7-8, fixed, tested in the lab): document `olk` (name
+  of the program of the new Outlook, olk.exe); interpreters `hh` (compiled help .chm, which runs a script),
+  `msiexec` (MSI package that runs actions), `forfiles` (runs a command for each file), `cmstp`
+  (connection profile that runs a script, T1218.003), `odbcconf` (loads a DLL), `regasm` and `regsvcs` (run
+  the code of a .NET assembly), `msxsl` (XSL stylesheet that carries a script): none has any reason to be launched by
+  a document. `conhost` is not retained: Windows creates it for every console, an Office add-in that opens one
+  would give a Critical false positive, and the child of a `conhost --headless` is still seen by the other rules.
+- **Telemetry**: process creation with the parent (Sysmon 1, otherwise event 4688 of the Security log, otherwise WMI).
+- **If it is missing**: without Sysmon or process creation audit, WMI feed stopped: the source remains displayed as "WMI"
+  and the rule stays silent.
+- **Level**: Critical (strong signal, never softened by learning).
+- **Expected false positives**: corporate templates that launch a legitimate script. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `prc_001_positif` (Word that launches PowerShell, with or without a command line, and with a PowerShell pattern in
+  addition: PRC-001 takes precedence), `prc_001_negatif` (PowerShell launched by Explorer; Word that launches a program that
+  is not an interpreter), `prc_001_interpreteurs_elargis` (A-7-8: each of the added interpreters launched by Word,
+  PowerShell launched by the new Outlook; conhost launched by Word: nothing); pure decision `processus::alerte_processus`.
+  Not exercised in a VM: no Office in the VM.
 
-### PRC-002 : PowerShell obscurci ou qui télécharge du code
-- **ATT&CK** : posée par l'alerte, d'après les motifs qui ont correspondu : obscurcissement (`-EncodedCommand` ou l'une
-  de ses abréviations d'une charge longue, `FromBase64String`) T1059.001 PowerShell et T1027 Code obscurci ;
-  téléchargement, exécution d'une chaîne ou fenêtre cachée (`DownloadString`, `DownloadFile`, `Net.WebClient`,
-  `Invoke-Expression`, `IEX` avec un téléchargement, `irm`, `iwr`, `Invoke-WebRequest`, `Invoke-RestMethod` ou
-  `Start-BitsTransfer` vers une adresse http(s), `-WindowStyle Hidden`) T1059.001 seul. Une ligne qui a les deux porte
-  les deux. Code de comportement `obscurci`, `telecharge` ou les deux.
-- **Code** : `processus.rs` (expression « PowerShell obscurci ou qui télécharge du code », `MOTIFS_PRC002`,
+### PRC-002 : obfuscated PowerShell or PowerShell that downloads code
+- **ATT&CK** : posée par l'alerte (set by the alert), based on the patterns that matched: obfuscation (`-EncodedCommand` or one
+  of its abbreviations with a long payload, `FromBase64String`) T1059.001 PowerShell and T1027 Obfuscated code;
+  download, execution of a string or hidden window (`DownloadString`, `DownloadFile`, `Net.WebClient`,
+  `Invoke-Expression`, `IEX` with a download, `irm`, `iwr`, `Invoke-WebRequest`, `Invoke-RestMethod` or
+  `Start-BitsTransfer` to an http(s) address, `-WindowStyle Hidden`) T1059.001 alone. A line that has both carries
+  both. Behaviour code `obscurci`, `telecharge` or both.
+- **Code**: `processus.rs` (expression "PowerShell obscurci ou qui télécharge du code", `MOTIFS_PRC002`,
   `ligne_pour_motifs`).
-- **Justification** : `-EncodedCommand` long, `DownloadString`, `IEX` d'une adresse : chargement de code typique.
-- **Télémétrie** : ligne de commande (Sysmon 1, sinon événement 4688 avec sa ligne de commande, sinon WMI tant que le
-  processus vit).
-- **Si elle manque** : sans Sysmon ni 4688 portant la ligne de commande, processus terminé avant la lecture WMI : ligne
-  de commande absente, la règle se tait.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : scripts d'administration ou d'installation encodés ; depuis A-7-1, un téléchargement en
-  ligne de commande vers une adresse http(s), même vers un intranet et sans `iex`
-  (`powershell -c "Invoke-WebRequest https://intranet/… -OutFile …"`). Choix : il alerte, parce qu'il est rare sur un
-  poste personnel et qu'il est le premier geste d'un chargement de code ; il reste au niveau Alerte (jamais Critique),
-  et une exception sur son code de comportement (`PRC-002:telecharge`) le fait taire. Un script lancé par `-File` ne
-  l'est pas (son contenu n'est pas lu). Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `prc_002_positif` (`-enc` d'une charge de plus de 40 caractères ; `IEX` d'un `DownloadString`),
-  `prc_002_negatif` (script lancé par `-File` ; `-enc` d'un texte court ; `Get-Help Invoke-WebRequest` ; adresse
-  affichée sans téléchargement ; `-ExecutionPolicy` suivi d'un long texte ; script `-File` avec une adresse en argument),
-  `prc_002_formes_elargies` (A-7-1 : `irm … | iex`, `-ec`, `-enco`, `/e`, `-e "…"`, `-EncodedCommand` de pwsh,
-  `iwr … -OutFile`, `Start-BitsTransfer`, `Invoke-RestMethod … | Invoke-Expression`, `iwr` puis `iex`, téléchargement
-  vers un intranet, avec le code de comportement de chacun), `prc_002_copie_renommee_par_nom_origine` (copie renommée
-  reconnue par le nom d'origine `PowerShell.EXE` ou `pwsh.dll`, ligne montrée telle quelle ; sans nom d'origine ou avec
-  celui d'un autre programme : rien). Campagne Kali (`campagne-kali-sixieme-lot.md`,
-  2026-11-16) : VP avec Sysmon (configuration B), non déterministe sans Sysmon ; non consolidée. Non exercée dans les
-  scénarios VM : sans Sysmon, la ligne de
-  commande d'un processus bref est souvent perdue par WMI, et un motif de téléchargement ferait réagir Defender (AMSI),
-  qu'on ne touche pas.
-- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-1, corrigé, testé en labo, à essayer en VM) :
-  `irm … | iex`, abréviations de `-EncodedCommand` (`-e`, `-ec`, `-en`, `-enc`, `-enco`…, préfixe `-`, `/` ou tiret
-  typographique, charge entre guillemets), `iwr … -OutFile`, `Start-BitsTransfer`, copie renommée de powershell.exe
-  quand Sysmon donne le nom d'origine du fichier (champ OriginalFileName de l'événement 1, lu dans la ressource de
-  version du programme : `PowerShell.EXE`, `pwsh.dll`).
-- **Faux négatifs connus** : copie renommée de powershell.exe sans Sysmon : les événements 4688 et WMI ne portent pas le
-  nom d'origine, et le service ne lit pas la ressource de version des programmes lancés (il faudrait l'ouvrir à chaque
-  création de processus, alors qu'il a peut-être déjà disparu) ; l'interpréteur reste cherché par son nom dans la
-  ligne. Un obscurcissement par concaténation (`&('i'+'ex')`) échappera toujours aux motifs : seul le journal des blocs
-  de script (4104), activé par la baseline et lu par aucune règle (A-7-4), le verrait.
+- **Rationale**: long `-EncodedCommand`, `DownloadString`, `IEX` from an address: typical code loading.
+- **Telemetry**: command line (Sysmon 1, otherwise event 4688 with its command line, otherwise WMI as long as the
+  process is alive).
+- **If it is missing**: without Sysmon or a 4688 carrying the command line, process ended before the WMI read: command
+  line absent, the rule stays silent.
+- **Level**: Alert.
+- **Expected false positives**: encoded administration or installation scripts; since A-7-1, a download from the
+  command line to an http(s) address, even to an intranet and without `iex`
+  (`powershell -c "Invoke-WebRequest https://intranet/… -OutFile …"`). Choice: it alerts, because it is rare on a
+  personal machine and it is the first step of code loading; it stays at the Alert level (never Critical),
+  and an exception on its behaviour code (`PRC-002:telecharge`) silences it. A script launched by `-File` does
+  not alert (its content is not read). False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `prc_002_positif` (`-enc` of a payload of more than 40 characters; `IEX` of a `DownloadString`),
+  `prc_002_negatif` (script launched by `-File`; `-enc` of a short text; `Get-Help Invoke-WebRequest`; address
+  displayed without download; `-ExecutionPolicy` followed by a long text; `-File` script with an address as argument),
+  `prc_002_formes_elargies` (A-7-1: `irm … | iex`, `-ec`, `-enco`, `/e`, `-e "…"`, `-EncodedCommand` of pwsh,
+  `iwr … -OutFile`, `Start-BitsTransfer`, `Invoke-RestMethod … | Invoke-Expression`, `iwr` then `iex`, download
+  to an intranet, with the behaviour code of each), `prc_002_copie_renommee_par_nom_origine` (renamed copy
+  recognised by the original name `PowerShell.EXE` or `pwsh.dll`, line shown as it is; without an original name or with
+  that of another program: nothing). Kali campaign (`campagne-kali-sixieme-lot.md`,
+  2026-11-16): TP with Sysmon (configuration B), non-deterministic without Sysmon; not consolidated. Not exercised in the
+  VM scenarios: without Sysmon, the command
+  line of a short-lived process is often lost by WMI, and a download pattern would make Defender react (AMSI),
+  which we do not touch.
+- **Fixed false negatives** (audit of 2026-11-23, done by Claude, A-7-1, fixed, tested in the lab, to be tried in a VM):
+  `irm … | iex`, abbreviations of `-EncodedCommand` (`-e`, `-ec`, `-en`, `-enc`, `-enco`…, prefix `-`, `/` or typographic
+  dash, payload in quotes), `iwr … -OutFile`, `Start-BitsTransfer`, renamed copy of powershell.exe
+  when Sysmon gives the original name of the file (OriginalFileName field of event 1, read from the version
+  resource of the program: `PowerShell.EXE`, `pwsh.dll`).
+- **Known false negatives**: renamed copy of powershell.exe without Sysmon: the 4688 and WMI events do not carry the
+  original name, and the service does not read the version resource of launched programs (it would have to open it at each
+  process creation, while it may already be gone); the interpreter is still searched for by its name in the
+  line. An obfuscation by concatenation (`&('i'+'ex')`) will always escape the patterns: only the script block
+  log (4104), enabled by the baseline and read by no rule (A-7-4), would see it.
 
-### PRC-003 : détournement d'outil Windows (LOLBin)
-- **ATT&CK** : posée par l'alerte : la technique de chaque outil vu (motifs qui ont correspondu) : certutil T1105 Téléchargement d'outils, bitsadmin T1197 Tâches BITS, mshta, regsvr32 et rundll32 (`javascript:`) T1218 Binaire système détourné, rundll32 d'une DLL d'un dossier inscriptible T1218.011 Rundll32 détourné, comsvcs.dll MiniDump T1003.001 Vidage de la mémoire de LSASS, msiexec depuis une adresse T1218.007 Paquet MSI détourné, wmic T1047 WMI détourné.
-- **Code** : `processus.rs` (`MOTIFS_PROGRAMMES`, règle PRC-003 : certutil, bitsadmin, mshta, regsvr32, rundll32,
-  rundll32_dll, comsvcs, msiexec, wmic ; code de comportement `PRC-003:<outils vus>`).
-- **Ce qui est vu** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : chaque motif est lié au
-  programme qui le fait (certutil.exe, bitsadmin.exe, mshta.exe, regsvr32.exe, rundll32.exe pour rundll32, rundll32_dll
-  et comsvcs, msiexec.exe, wmic.exe). Il est lu sur la ligne de ce programme, reconnu par le nom de fichier de son image
-  ou, avec Sysmon, par le nom d'origine du fichier (OriginalFileName, mécanisme de PRC-002) ; et sur la commande que cmd
-  (`/c`, `/k`, `/r`), PowerShell ou pwsh (`-Command` ou une abréviation) lance en tête, ou après un séparateur `&`, `|`,
-  `;` ou une parenthèse (`cmd /c certutil -urlcache …`). Avant, le motif était cherché dans tout texte : bash, git, grep
-  ou echo dont un argument contenait `certutil -urlcache` alertaient (faux positif vu par le mainteneur sur son poste,
-  v4.3). L'outil lancé par un interpréteur crée aussi son propre processus, vu par son événement de création (4688,
-  Sysmon 1 ou WMI) : la lecture de la tête de commande garde le signal quand ce processus bref est manqué (WMI sans
-  audit), au prix d'une seconde alerte, sur l'interpréteur, quand les deux sont vus. Ce n'est pas une décision de
-  confiance (règle 5) : le nom sert à détecter, jamais à accorder.
-- **Justification** : outils signés Microsoft utilisés pour télécharger ou exécuter du code. Ajouts de l'audit du
-  2026-11-23 (fait par Claude, A-7-7, corrigé, testé en labo) : `rundll32 …comsvcs.dll, MiniDump <pid> <fichier> full`
-  (ou son ordinal `#24`) vide la mémoire d'un processus, en pratique LSASS pour voler les identifiants ; rundll32 d'une
-  DLL de `Users\Public`, `AppData`, `Temp` ou `ProgramData` (dossiers où l'utilisateur écrit) ; `msiexec … http(s)://`
-  installe un paquet distant ; mshta et regsvr32 sur un chemin réseau (UNC `\\hôte\partage`), `regsvr32 -i:` avec un
-  tiret ; certutil qui récupère une adresse par `-f` ou `-verifyctl`. Un paquet MSI local ou sur un partage de
-  déploiement n'est pas visé (installation ordinaire).
-- **Télémétrie** : ligne de commande.
-- **Si elle manque** : comme PRC-002.
-- **Niveau** : Alerte ; Critique (signal fort, jamais adouci) quand comsvcs.dll vide la mémoire d'un processus (A-7-7).
-- **Faux positifs attendus** : `certutil -decode` dans des scripts d'administration ; un installeur qui lance rundll32
-  sur une DLL déposée dans `Temp` ou `ProgramData`. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
-  `rundll32 shell32.dll,Control_RunDLL`, msiexec d'un paquet local ou sur un partage, regsvr32 d'une DLL installée,
-  `certutil -verifyctl` sans adresse, comsvcs.dll sans MiniDump), `prc_003_formes_elargies` (A-7-7 : chaque forme
-  ajoutée, avec l'outil, la technique et le niveau) ; T-2 (communs avec PRC-005) : `prc_003_005_mots_en_argument_negatif`
-  (bash, sh, grep, git, notepad, cmd et PowerShell dont un argument contient les mots du motif : rien),
+### PRC-003 : abuse of a Windows tool (LOLBin)
+- **ATT&CK** : posée par l'alerte (set by the alert): the technique of each tool seen (patterns that matched): certutil T1105 Ingress tool transfer, bitsadmin T1197 BITS jobs, mshta, regsvr32 and rundll32 (`javascript:`) T1218 System binary proxy execution, rundll32 of a DLL from a writable folder T1218.011 Rundll32, comsvcs.dll MiniDump T1003.001 LSASS memory, msiexec from an address T1218.007 Msiexec, wmic T1047 Windows Management Instrumentation.
+- **Code**: `processus.rs` (`MOTIFS_PROGRAMMES`, rule PRC-003: certutil, bitsadmin, mshta, regsvr32, rundll32,
+  rundll32_dll, comsvcs, msiexec, wmic; behaviour code `PRC-003:<outils vus>`).
+- **What is seen** (finding T-2 of 2026-11-23, fixed, tested in the lab, to be tried in a VM): each pattern is tied to the
+  program that does it (certutil.exe, bitsadmin.exe, mshta.exe, regsvr32.exe, rundll32.exe for rundll32, rundll32_dll
+  and comsvcs, msiexec.exe, wmic.exe). It is read on the line of that program, recognised by the file name of its image
+  or, with Sysmon, by the original name of the file (OriginalFileName, mechanism of PRC-002); and on the command that cmd
+  (`/c`, `/k`, `/r`), PowerShell or pwsh (`-Command` or an abbreviation) launches at the head, or after a separator `&`, `|`,
+  `;` or a parenthesis (`cmd /c certutil -urlcache …`). Before, the pattern was searched for in any text: bash, git, grep
+  or echo with an argument containing `certutil -urlcache` raised alerts (false positive seen by the maintainer on their machine,
+  v4.3). The tool launched by an interpreter also creates its own process, seen through its creation event (4688,
+  Sysmon 1 or WMI): reading the head of the command keeps the signal when this short-lived process is missed (WMI without
+  audit), at the cost of a second alert, on the interpreter, when both are seen. This is not a trust
+  decision (rule 5): the name is used to detect, never to grant.
+- **Rationale**: Microsoft-signed tools used to download or run code. Additions from the audit of
+  2026-11-23 (done by Claude, A-7-7, fixed, tested in the lab): `rundll32 …comsvcs.dll, MiniDump <pid> <fichier> full`
+  (or its ordinal `#24`) dumps the memory of a process, in practice LSASS to steal credentials; rundll32 of a
+  DLL from `Users\Public`, `AppData`, `Temp` or `ProgramData` (folders where the user writes); `msiexec … http(s)://`
+  installs a remote package; mshta and regsvr32 on a network path (UNC `\\hôte\partage`), `regsvr32 -i:` with a
+  dash; certutil that fetches an address through `-f` or `-verifyctl`. A local MSI package or one on a deployment
+  share is not targeted (ordinary installation).
+- **Telemetry**: command line.
+- **If it is missing**: like PRC-002.
+- **Level**: Alert; Critical (strong signal, never softened) when comsvcs.dll dumps the memory of a process (A-7-7).
+- **Expected false positives**: `certutil -decode` in administration scripts; an installer that launches rundll32
+  on a DLL dropped in `Temp` or `ProgramData`. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `prc_003_positif` (`certutil -urlcache … http`, `mshta vbscript:`), `prc_003_negatif` (`certutil -store`,
+  `rundll32 shell32.dll,Control_RunDLL`, msiexec of a local package or one on a share, regsvr32 of an installed DLL,
+  `certutil -verifyctl` without an address, comsvcs.dll without MiniDump), `prc_003_formes_elargies` (A-7-7: each added
+  form, with the tool, the technique and the level); T-2 (shared with PRC-005): `prc_003_005_mots_en_argument_negatif`
+  (bash, sh, grep, git, notepad, cmd and PowerShell with an argument containing the words of the pattern: nothing),
   `prc_003_005_outil_en_tete_d_interpreteur` (`cmd /c certutil …`, `pwsh -co "certutil …"`, `pwsh -c rundll32 …comsvcs.dll,
-  MiniDump …` : vus), `prc_003_005_commandes_en_tete` (programmes en tête : chemin entre guillemets, `call`, `start`,
-  rien sans option de commande), `prc_003_005_copie_renommee_par_nom_origine`. Non exercée en VM (comme PRC-002).
-- **Faux négatifs connus** : copie renommée d'un outil (`certutil.exe` copié en `c.exe`) sans Sysmon : les événements
-  4688 et WMI ne portent pas le nom d'origine du fichier (angle mort déclaré, comme pour PowerShell sous PRC-002) ; avec
-  Sysmon, le nom d'origine la reconnaît. Un outil lancé par un autre programme que cmd, PowerShell ou pwsh (bash, un
-  script, `Start-Process` qui passe ses arguments à part) n'est vu que par le processus de l'outil lui-même.
-  Nom court 8.3 d'un outil (`BITSAD~1.EXE`, `VSSADM~1.EXE`) dans l'image ou en tête de commande : le nom lu n'est
-  pas celui de l'outil, le motif ne s'applique pas ; non vérifié (à essayer en VM : Windows écrit en principe le nom
-  long dans le 4688 et Sysmon, mais une ligne de commande peut porter le nom court).
+  MiniDump …`: seen), `prc_003_005_commandes_en_tete` (programs at the head: path in quotes, `call`, `start`,
+  nothing without a command option), `prc_003_005_copie_renommee_par_nom_origine`. Not exercised in a VM (like PRC-002).
+- **Known false negatives**: renamed copy of a tool (`certutil.exe` copied as `c.exe`) without Sysmon: the 4688 and WMI
+  events do not carry the original name of the file (declared blind spot, as for PowerShell under PRC-002); with
+  Sysmon, the original name recognises it. A tool launched by a program other than cmd, PowerShell or pwsh (bash, a
+  script, `Start-Process` that passes its arguments separately) is only seen through the process of the tool itself.
+  8.3 short name of a tool (`BITSAD~1.EXE`, `VSSADM~1.EXE`) in the image or at the head of the command: the name read is
+  not that of the tool, the pattern does not apply; not verified (to be tried in a VM: Windows in principle writes the long
+  name in the 4688 and Sysmon, but a command line may carry the short name).
 
-### PRC-004 : navigateur lancé en débogage à distance
-- **ATT&CK** : T1539 Vol de cookies de session.
-- **Code** : `processus.rs` (`--remote-debugging-port` ou `-pipe` sur Chrome et Chromium, Edge, Brave, Vivaldi, Opera,
-  Arc, et Yandex dont le programme `browser.exe` n'est reconnu que dans son dossier `YandexBrowser\Application`, le nom
-  seul étant trop commun). Ajouts de l'audit du 2026-11-23 (fait par Claude, A-7-9, corrigé, testé en labo). Firefox
-  n'est pas retenu : ses cookies se lisent dans son profil sans passer par le débogage (VOL-001 surveille ces fichiers),
-  et son débogage à distance sert surtout aux outils de test.
-- **Justification** : technique de vol de cookies qui contourne le chiffrement des navigateurs.
-- **Télémétrie** : ligne de commande.
-- **Si elle manque** : comme PRC-002.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : développeurs web, outils de test automatisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `prc_004_positif` (Chrome avec `--remote-debugging-port`), `prc_004_negatif` (WebView2 en débogage ;
-  Chrome normal ; A-7-9 : Firefox en débogage, `browser.exe` hors du dossier de Yandex, Vivaldi normal),
-  `prc_004_navigateurs_chromium` (Vivaldi, Opera, Yandex, Arc, Chromium en débogage) ; existant :
-  `debogage_a_distance_ancre_sur_l_executable`. Non exercée en VM (comme PRC-002).
+### PRC-004 : browser launched in remote debugging mode
+- **ATT&CK** : T1539 Steal web session cookie.
+- **Code**: `processus.rs` (`--remote-debugging-port` or `-pipe` on Chrome and Chromium, Edge, Brave, Vivaldi, Opera,
+  Arc, and Yandex whose program `browser.exe` is only recognised in its `YandexBrowser\Application` folder, the name
+  alone being too common). Additions from the audit of 2026-11-23 (done by Claude, A-7-9, fixed, tested in the lab). Firefox
+  is not retained: its cookies can be read in its profile without going through debugging (VOL-001 watches these files),
+  and its remote debugging is mostly used by test tools.
+- **Rationale**: cookie theft technique that bypasses browser encryption.
+- **Telemetry**: command line.
+- **If it is missing**: like PRC-002.
+- **Level**: Alert.
+- **Expected false positives**: web developers, automated test tools. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `prc_004_positif` (Chrome with `--remote-debugging-port`), `prc_004_negatif` (WebView2 in debugging mode;
+  normal Chrome; A-7-9: Firefox in debugging mode, `browser.exe` outside the Yandex folder, normal Vivaldi),
+  `prc_004_navigateurs_chromium` (Vivaldi, Opera, Yandex, Arc, Chromium in debugging mode); existing:
+  `debogage_a_distance_ancre_sur_l_executable`. Not exercised in a VM (like PRC-002).
 
-### PRC-005 : suppression des sauvegardes
-- **ATT&CK** : T1490 Suppression des sauvegardes.
-- **Code** : `processus.rs` (`MOTIFS_PROGRAMMES`, règle PRC-005 : `vssadmin delete shadows`, `vssadmin resize
-  shadowstorage` à moins de 1 000 Mo, `wbadmin delete catalog|systemstatebackup|backup`, `bcdedit … recoveryenabled no`,
-  `bcdedit … bootstatuspolicy ignoreallfailures`, `wmic shadowcopy delete`, `diskshadow … delete shadows` ;
-  `Win32_ShadowCopy` supprimé par `Remove-WmiObject`, `Remove-CimInstance` ou `.Delete()` sur la ligne de PowerShell ;
-  texte `delete shadows` passé à diskshadow lancé après `|` ou `&` sur la ligne de cmd ou de PowerShell).
-- **Ce qui est vu** (constat T-2 du 2026-11-23, corrigé, testé en labo, à essayer en VM) : chaque motif est lié au
-  programme lancé : vssadmin.exe, wbadmin.exe, bcdedit.exe, wmic.exe, diskshadow.exe, reconnus par le nom de fichier de
-  l'image ou, avec Sysmon, par le nom d'origine du fichier (OriginalFileName, mécanisme de PRC-002 repris) ; les formes
-  propres à PowerShell (WMI ou CIM) sur une image powershell.exe, pwsh.exe ou powershell_ise.exe, ou une copie renommée
-  de PowerShell reconnue par Sysmon. L'outil lancé en tête de commande par cmd (`/c`, `/k`, `/r`), PowerShell ou pwsh
-  (`-Command` ou une abréviation), ou après un séparateur `&`, `|`, `;` ou une parenthèse, reste vu sur la ligne de
-  l'interpréteur : `cmd /c vssadmin delete shadows /all`, `powershell -c "vssadmin delete shadows"`, `cmd /c call bcdedit
-  …`. Décision : l'outil crée aussi son propre processus, vu par son événement de création (4688, Sysmon 1 ou WMI), mais
-  un processus aussi bref peut être manqué par WMI sans audit ; garder la tête de commande garde le signal, au prix d'une
-  seconde alerte Critique (sur l'interpréteur) quand les deux sont vus. Avant, le motif était cherché dans tout texte :
-  bash, git, grep ou echo dont un argument contenait `vssadmin delete shadows` levaient une alerte Critique (faux positif
-  vu par le mainteneur sur son poste, v4.3). Le nom de fichier sert ici à détecter, jamais à faire confiance (la règle 5
-  ne s'applique pas).
-- **Justification** : étape qui précède presque toujours le chiffrement par un rançongiciel.
-- **Télémétrie** : ligne de commande.
-- **Si elle manque** : comme PRC-002.
-- **Niveau** : Critique (signal fort, jamais adouci), même quand la ligne contient d'autres motifs. Avant la PR 3.7,
-  seul le premier motif trouvé comptait : une ligne comme `… DownloadString(…); vssadmin delete shadows` ne portait que
-  PRC-002, au niveau Alerte (faux négatif, corrigé).
-- **Faux positifs attendus** : nettoyage volontaire des clichés par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `prc_005_positif` (`vssadmin delete shadows`, `bcdedit … recoveryenabled No`, et la ligne qui télécharge du
-  code puis supprime les sauvegardes : PRC-005, Critique, les deux motifs dans les raisons), `prc_005_negatif`
-  (`vssadmin list shadows`, `wbadmin get versions` ; A-7-3 : lecture des clichés par WMI, `vssadmin list shadowstorage`,
-  agrandissement de l'espace des clichés en %, en Go ou illimité, `diskshadow /s` seul, `diskshadow list shadows`,
-  `bootstatuspolicy displayallfailures`) ; les formes ajoutées par A-7-3 sont dans `prc_005_positif` ; T-2 :
+### PRC-005 : deletion of backups
+- **ATT&CK** : T1490 Inhibit system recovery.
+- **Code**: `processus.rs` (`MOTIFS_PROGRAMMES`, rule PRC-005: `vssadmin delete shadows`, `vssadmin resize
+  shadowstorage` below 1,000 MB, `wbadmin delete catalog|systemstatebackup|backup`, `bcdedit … recoveryenabled no`,
+  `bcdedit … bootstatuspolicy ignoreallfailures`, `wmic shadowcopy delete`, `diskshadow … delete shadows`;
+  `Win32_ShadowCopy` deleted by `Remove-WmiObject`, `Remove-CimInstance` or `.Delete()` on the PowerShell line;
+  text `delete shadows` passed to diskshadow launched after `|` or `&` on the cmd or PowerShell line).
+- **What is seen** (finding T-2 of 2026-11-23, fixed, tested in the lab, to be tried in a VM): each pattern is tied to the
+  launched program: vssadmin.exe, wbadmin.exe, bcdedit.exe, wmic.exe, diskshadow.exe, recognised by the file name of
+  the image or, with Sysmon, by the original name of the file (OriginalFileName, mechanism of PRC-002 reused); the forms
+  specific to PowerShell (WMI or CIM) on a powershell.exe, pwsh.exe or powershell_ise.exe image, or a renamed copy
+  of PowerShell recognised by Sysmon. The tool launched at the head of the command by cmd (`/c`, `/k`, `/r`), PowerShell or pwsh
+  (`-Command` or an abbreviation), or after a separator `&`, `|`, `;` or a parenthesis, is still seen on the line of
+  the interpreter: `cmd /c vssadmin delete shadows /all`, `powershell -c "vssadmin delete shadows"`, `cmd /c call bcdedit
+  …`. Decision: the tool also creates its own process, seen through its creation event (4688, Sysmon 1 or WMI), but
+  such a short-lived process may be missed by WMI without audit; keeping the head of the command keeps the signal, at the cost of a
+  second Critical alert (on the interpreter) when both are seen. Before, the pattern was searched for in any text:
+  bash, git, grep or echo with an argument containing `vssadmin delete shadows` raised a Critical alert (false positive
+  seen by the maintainer on their machine, v4.3). The file name is used here to detect, never to trust (rule 5
+  does not apply).
+- **Rationale**: step that almost always precedes encryption by ransomware.
+- **Telemetry**: command line.
+- **If it is missing**: like PRC-002.
+- **Level**: Critical (strong signal, never softened), even when the line contains other patterns. Before PR 3.7,
+  only the first pattern found counted: a line such as `… DownloadString(…); vssadmin delete shadows` carried only
+  PRC-002, at the Alert level (false negative, fixed).
+- **Expected false positives**: deliberate cleanup of snapshots by an administrator. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `prc_005_positif` (`vssadmin delete shadows`, `bcdedit … recoveryenabled No`, and the line that downloads
+  code then deletes the backups: PRC-005, Critical, both patterns in the reasons), `prc_005_negatif`
+  (`vssadmin list shadows`, `wbadmin get versions`; A-7-3: reading snapshots through WMI, `vssadmin list shadowstorage`,
+  enlarging the snapshot space in %, in GB or unlimited, `diskshadow /s` alone, `diskshadow list shadows`,
+  `bootstatuspolicy displayallfailures`); the forms added by A-7-3 are in `prc_005_positif`; T-2:
   `prc_003_005_mots_en_argument_negatif` (`grep "vssadmin delete shadows" notes.txt`, `echo vssadmin delete shadows`,
-  `git commit -m "certutil -urlcache …"`, bash, sh, cmd et PowerShell avec ces mots en argument, `findstr "delete shadows"
-  diskshadow.log` : rien), `prc_003_005_outil_en_tete_d_interpreteur` (`cmd /c vssadmin …`, `cmd /c ""…\vssadmin.exe"
+  `git commit -m "certutil -urlcache …"`, bash, sh, cmd and PowerShell with these words as an argument, `findstr "delete shadows"
+  diskshadow.log`: nothing), `prc_003_005_outil_en_tete_d_interpreteur` (`cmd /c vssadmin …`, `cmd /c ""…\vssadmin.exe"
   …"`, `cmd /c echo o & vssadmin …`, `cmd /k (wbadmin …)`, `powershell -c "vssadmin …"`, `& '…\vssadmin.exe' …`,
-  `… ; wmic shadowcopy delete`, texte passé à diskshadow), `prc_005_formes_powershell_liees_a_l_interpreteur`
-  (PowerShell, pwsh, ISE, copie renommée avec et sans nom d'origine ; cmd, wmic, bash : rien),
-  `prc_003_005_copie_renommee_par_nom_origine` (copie de vssadmin : rien sans nom d'origine, PRC-005 avec). Non exercée en VM :
-  sans Sysmon, la ligne de commande d'un processus aussi bref est souvent perdue par WMI, le scénario serait instable.
-- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-3, corrigé, testé en labo, à essayer en VM) :
+  `… ; wmic shadowcopy delete`, text passed to diskshadow), `prc_005_formes_powershell_liees_a_l_interpreteur`
+  (PowerShell, pwsh, ISE, renamed copy with and without an original name; cmd, wmic, bash: nothing),
+  `prc_003_005_copie_renommee_par_nom_origine` (copy of vssadmin: nothing without an original name, PRC-005 with it). Not exercised in a VM:
+  without Sysmon, the command line of such a short-lived process is often lost by WMI, the scenario would be unstable.
+- **Fixed false negatives** (audit of 2026-11-23, done by Claude, A-7-3, fixed, tested in the lab, to be tried in a VM):
   `Get-WmiObject Win32_ShadowCopy | Remove-WmiObject`, `Get-CimInstance Win32_ShadowCopy | Remove-CimInstance`,
-  `vssadmin resize shadowstorage … /maxsize=401MB` (une taille de moins de 1 000 Mo efface les clichés),
-  `wbadmin delete backup`, `bcdedit /set … bootstatuspolicy ignoreallfailures`, `diskshadow` dont la ligne dit
-  `delete shadows` (y compris un script écrit puis passé par `/s` dans la même ligne).
-- **Faux négatifs connus** : `diskshadow /s script.txt` seul n'alerte pas : le script n'est pas lu et la ligne ne dit
-  pas s'il supprime (diskshadow sert aussi aux sauvegardes) ; une taille écrite en octets de plus de trois chiffres
-  (`/maxsize=400000000`) non plus. `wmic` est retiré de Windows 11 24H2. Copie renommée de vssadmin, wbadmin, bcdedit,
-  wmic ou diskshadow (ou de PowerShell pour les formes WMI) sans Sysmon : les événements 4688 et WMI ne portent pas le
-  nom d'origine du fichier (angle mort déclaré, constat T-2) ; avec Sysmon, elle est vue. Un outil lancé par un autre
-  programme que cmd, PowerShell ou pwsh (bash, un script, `Start-Process` qui passe ses arguments à part) n'est vu que
-  par le processus de l'outil lui-même. Nom court 8.3 d'un outil (`BITSAD~1.EXE`, `VSSADM~1.EXE`) dans l'image ou en tête de commande : le nom lu n'est
-  pas celui de l'outil, le motif ne s'applique pas ; non vérifié (à essayer en VM : Windows écrit en principe le nom
-  long dans le 4688 et Sysmon, mais une ligne de commande peut porter le nom court).
+  `vssadmin resize shadowstorage … /maxsize=401MB` (a size below 1,000 MB erases the snapshots),
+  `wbadmin delete backup`, `bcdedit /set … bootstatuspolicy ignoreallfailures`, `diskshadow` whose line says
+  `delete shadows` (including a script written then passed by `/s` in the same line).
+- **Known false negatives**: `diskshadow /s script.txt` alone does not alert: the script is not read and the line does not say
+  whether it deletes (diskshadow is also used for backups); nor does a size written in bytes with more than three digits
+  (`/maxsize=400000000`). `wmic` is removed from Windows 11 24H2. Renamed copy of vssadmin, wbadmin, bcdedit,
+  wmic or diskshadow (or of PowerShell for the WMI forms) without Sysmon: the 4688 and WMI events do not carry the
+  original name of the file (declared blind spot, finding T-2); with Sysmon, it is seen. A tool launched by a
+  program other than cmd, PowerShell or pwsh (bash, a script, `Start-Process` that passes its arguments separately) is only seen
+  through the process of the tool itself. 8.3 short name of a tool (`BITSAD~1.EXE`, `VSSADM~1.EXE`) in the image or at the head of the command: the name read is
+  not that of the tool, the pattern does not apply; not verified (to be tried in a VM: Windows in principle writes the
+  long name in the 4688 and Sysmon, but a command line may carry the short name).
 
-## CHA : chaînes de processus
+## CHA: process chains
 
-### CHA-001 : chaîne de processus au score cumulé
-- **ATT&CK** : posée par l'alerte : les techniques des signaux de la chaîne, dans leur ordre.
-- **Code** : `chaines.rs` (au moins deux signaux et score au-dessus du seuil).
-- **Justification** : plusieurs actions suspectes d'une même descendance de processus forment une attaque en étapes.
-- **Télémétrie** : arbre des processus (liste des processus, et créations 4688 : un processus bref, terminé avant la
-  lecture de la liste, garde son parent) et signaux des autres règles.
-- **Si elle manque** : sans processus, aucune chaîne.
-- **Niveau** : Critique.
-- **Faux positifs attendus** : installeurs qui enchaînent des outils signalés ; outils de développement qui lancent
-  PowerShell avec `-EncodedCommand` (une alerte par session, au plus trois par heure depuis T-1). Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique : programmes lancés, fichiers écrits, connexions
-  locales) : aucun, chiffre qui les sous-estime : la VM n'a pas Sysmon (lignes de commande des processus brefs perdues par WMI),
-  et l'activité ne lance ni interpréteur, ni outil LOLBin, ni Office.
-- **Tests** : `cha_001_positif` (deux signaux dans la même descendance, score cumulé au seuil de 12 : une alerte
-  Critique, pas de nouvelle alerte au même score, une autre quand le score monte), `cha_001_negatif` (un seul signal,
-  même fort ; deux signaux sous le seuil ; deux signaux dans deux descendances distinctes de l'Explorateur, qui est une
-  racine), `cha_001_racine_par_chemin` (A-7-5 : `svchost.exe` dans `AppData\Local\Temp` ou `taskhostw.exe` dans
-  `Users\Public` qui lance deux étapes signalées : une chaîne, une alerte Critique ; le vrai svchost et l'Explorateur
-  réel sous le dossier Windows restent des racines ; `svchost.exe` dans `Windows\Tasks` n'en est pas une ; chemin
-  illisible : pas une racine). Non exercée en VM (signaux des autres règles nécessaires). Audit du 2026-11-23, T-1 et
-  T-3 : `t1_pid_reutilise_meme_nom_aucune_chaine_commune` (PID repris par un processus de même nom, un signal sur
-  chacun : aucune chaîne commune), `t1_parent_ne_apres_l_enfant_ecarte` (suite de 4688 rejouée : cmd lance pwsh, son
-  PID est repris par git puis par grep deux fois ; pwsh n'est jamais rattaché à grep ; même décision par les heures
-  TimeCreated reçues dans le désordre), `t1_parent_mort_avant_l_enfant_ecarte`, `t1_descendants_du_service_hors_chaine`
-  (auditpol, icacls, powershell lancés par le service et leurs conhost : aucune chaîne ; le PID d'auditpol repris par un
-  programme de l'utilisateur : sa chaîne ne remonte pas au service), `t1_comportement_repete_sous_le_meme_parent`
-  (200 `cmd /c … pwsh -EncodedCommand` sous le même parent : score 12, une seule alerte),
+### CHA-001 : process chain with a cumulative score
+- **ATT&CK** : posée par l'alerte (set by the alert): the techniques of the signals of the chain, in their order.
+- **Code**: `chaines.rs` (at least two signals and a score above the threshold).
+- **Rationale**: several suspicious actions from the same process descent form an attack in stages.
+- **Telemetry**: process tree (process list, and 4688 creations: a short-lived process, ended before the
+  list was read, keeps its parent) and signals from the other rules.
+- **If it is missing**: without processes, no chain.
+- **Level**: Critical.
+- **Expected false positives**: installers that chain reported tools; development tools that launch
+  PowerShell with `-EncodedCommand` (one alert per session, at most three per hour since T-1). False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity: programs launched, files written, local
+  connections): none, a figure that underestimates them: the VM has no Sysmon (command lines of short-lived processes lost by WMI),
+  and the activity launches no interpreter, no LOLBin tool and no Office.
+- **Tests**: `cha_001_positif` (two signals in the same descent, cumulative score at the threshold of 12: one Critical
+  alert, no new alert at the same score, another one when the score rises), `cha_001_negatif` (a single signal,
+  even a strong one; two signals below the threshold; two signals in two distinct descents of Explorer, which is a
+  root), `cha_001_racine_par_chemin` (A-7-5: `svchost.exe` in `AppData\Local\Temp` or `taskhostw.exe` in
+  `Users\Public` that launches two reported steps: one chain, one Critical alert; the real svchost and the real
+  Explorer under the Windows folder remain roots; `svchost.exe` in `Windows\Tasks` is not one; unreadable
+  path: not a root). Not exercised in a VM (signals from the other rules needed). Audit of 2026-11-23, T-1 and
+  T-3: `t1_pid_reutilise_meme_nom_aucune_chaine_commune` (PID taken over by a process with the same name, one signal on
+  each: no common chain), `t1_parent_ne_apres_l_enfant_ecarte` (replayed sequence of 4688: cmd launches pwsh, its
+  PID is taken over by git then by grep twice; pwsh is never linked to grep; same decision with the
+  TimeCreated times received out of order), `t1_parent_mort_avant_l_enfant_ecarte`, `t1_descendants_du_service_hors_chaine`
+  (auditpol, icacls, powershell launched by the service and their conhost: no chain; the PID of auditpol taken over by a
+  user program: its chain does not go back up to the service), `t1_comportement_repete_sous_le_meme_parent`
+  (200 `cmd /c … pwsh -EncodedCommand` under the same parent: score 12, a single alert),
   `t1_plafond_par_chaine_et_par_heure`, `t3_entite_stable_quand_la_chaine_grossit`, `t1_chaine_sans_nom_non_publiee`,
-  `t1_heure_4688` (parseur torturé), `t1_creation_heures_exactes`, `t1_parent_vivait_bornes`, `t1_enfant_du_service_usurpe_signale`
-  (revue de #282 : enfant du service hors de ses programmes, ou auditpol hors de System32 : dans la chaîne, signalé
-  T1134.004 ; chemin inconnu : dans la chaîne, sans signal).
-- **Faux positifs corrigés** (audit du 2026-11-23, T-1 et T-3, fait par Claude, corrigé, testé en labo, à essayer en VM) :
-  sur un poste de développement, une centaine d'alertes Critiques en une heure, chaînes impossibles (« grep → pwsh »,
-  « tail → bash », « deR4TizerSvc → auditpol → conhost → git »). Causes reproduites sur les événements du poste
-  (motifs seulement, aucune donnée du poste dans le dépôt) : un processus terminé reste une heure dans l'arbre et son
-  PID est vite repris ; l'enfant gardait le PID de son parent et se trouvait rattaché au processus suivant de ce PID,
-  né après lui (une part notable des liens de la chaîne publiée était fausse) ; la reprise d'un PID n'était vue que si le
-  nom changeait ; les programmes lancés par le service (auditpol, wevtutil, powershell, curl, plusieurs fois par minute)
-  entraient dans les chaînes ; enfin un outil qui lance des centaines de fois `pwsh -EncodedCommand` sous le même parent
-  (PRC-002 à chaque fois) faisait monter le score sans fin, et chaque hausse levait une alerte. Corrigé : chaque processus
-  porte son heure de création (TimeCreated du 4688 au 100 ns près ; à défaut l'heure de la première liste qui l'a vu) et
-  la borne de sa fin (première liste où il manquait) ; un parent n'est retenu que s'il est né avant l'enfant et vivait à
-  sa création (`chaines::parent_vivait`), sinon l'enfant est sa propre tête de chaîne ; un PID repris (autre nom, autre
-  parent, autre heure de création, entrée vue terminée, ou seconde création du même PID) repart sans signaux, même à nom
-  égal (`chaines::meme_processus`) ; les programmes que le service lance (enfants directs du service, reconnu par son
-  propre PID, jamais un nom, dont le chemin est exactement celui d'auditpol, wevtutil, powershell, curl, icacls, netsh,
-  gpupdate, schtasks ou conhost sous System32 : `chaines::programme_du_service`) et leurs descendants sortent des
-  chaînes, marqués à leur entrée (un PID repris ensuite ne les y fait pas rentrer) ; un autre enfant du service (parent
-  usurpé, T1134.004) reste dans les chaînes et y porte un signal de 5 (« parent usurpé ? », code
-  `CHA-001#parent-service`) ; un
-  même comportement (code du signal) répété au même endroit de la chaîne (même suite de programmes depuis la tête) compte
-  une fois ; trois alertes CHA-001 au plus par chaîne et par heure pour les hausses qui n'apportent rien de nouveau, le
-  surplus compté (`mesures.json`, compteur `chaines.alertes_plafonnees`) ; une alerte qui apporte une technique ATT&CK
-  nouvelle dans la chaîne ou un signal fort (PRC-001, PRC-005, comsvcs, LEU : `chaines::signal_fort`) passe toujours,
-  comptée à part (`chaines.alertes_hors_plafond`) ; toutes les alertes CHA-001 sont Critiques, le niveau ne peut pas
-  monter ; un signal sur un PID inconnu de l'arbre ne publie plus de chaîne « PID n ». T-3 : l'entité
-  d'incident d'une chaîne est son programme de tête (son chemin s'il est connu et n'est pas un interpréteur ou un lanceur
-  générique comme cmd ou powershell, sinon `chaine:<nom>#<pid>@<heure de création>`), plus le texte de la chaîne : une chaîne qui grossit reste un seul incident. Limites : un parent vu
-  seulement par la liste (son 4688 manque) garde une marge de 10 s ; la reprise d'un PID par un processus de même nom et
-  de même parent, entre deux listes et sans 4688, n'est pas vue (l'heure de création des processus de la liste n'est pas
-  lue) ; un processus créé avec pour parent un programme du service pendant qu'il tourne (quelques secondes) sort de
-  CHA-001 sans signal (`docs/security/threat-model.md`) ; réserve de la prérelecture de #282 : un administrateur qui
-  prend le service pour parent en lançant l'un des programmes de la liste (par exemple `powershell.exe` de System32)
-  est traité comme un programme du service, sa chaîne sort de CHA-001 sans signal (la liste dit quels programmes, pas
-  lesquels le service a lancés). Fermeture prévue : le service retiendra les PID qu'il lance lui-même, avec le registre
-  des PowerShell lancés par le service prévu par la phase 4104 (réserve R3 de son dossier) ; non fait ici. Reste ouvert, décision du mainteneur : un outil de développement signé qui encode ses commandes
-  (`-EncodedCommand`) lève toujours PRC-002 à chaque lancement et une chaîne CHA-001 par session (une alerte, puis au
-  plus trois par heure).
-- **Faux négatifs corrigés** (audit du 2026-11-23, fait par Claude, A-7-5, corrigé, testé en labo, à essayer en VM) :
-  une racine était reconnue à son nom seul ; elle l'est maintenant par le chemin exact du programme système sous le
-  dossier Windows (`chaines::racine`, même comparaison que `reponse::chemin_critique`). Le chemin vient de la liste des
-  processus (lu pour les candidats racines), des événements 4688 ou des connexions ; chemin illisible : pas une racine
-  (sens prudent, la chaîne continue), remontée bornée à 32 parents.
-- **Faux négatifs connus** : un parent choisi à la création du processus (T1134.004, usurpation du parent) rattache le
-  programme à un vrai lanceur du système : la chaîne est coupée là, comme avant. Non corrigé ici (parent usurpé vers le
-  service lui-même : signalé depuis T-1, voir plus haut). Si le chemin de
-  l'Explorateur était illisible, deux étapes sans lien lancées par lui formeraient une chaîne (faux positif possible, sens
-  prudent).
+  `t1_heure_4688` (tortured parser), `t1_creation_heures_exactes`, `t1_parent_vivait_bornes`, `t1_enfant_du_service_usurpe_signale`
+  (review of #282: child of the service outside its programs, or auditpol outside System32: in the chain, reported
+  T1134.004; unknown path: in the chain, without a signal).
+- **Fixed false positives** (audit of 2026-11-23, T-1 and T-3, done by Claude, fixed, tested in the lab, to be tried in a VM):
+  on a development machine, about a hundred Critical alerts in one hour, impossible chains ("grep → pwsh",
+  "tail → bash", "deR4TizerSvc → auditpol → conhost → git"). Causes reproduced on the events of the machine
+  (patterns only, no data from the machine in the repository): an ended process stays in the tree for one hour and its
+  PID is quickly taken over; the child kept the PID of its parent and was linked to the next process with that PID,
+  born after it (a notable share of the links of the published chain was false); the takeover of a PID was only seen if the
+  name changed; the programs launched by the service (auditpol, wevtutil, powershell, curl, several times per minute)
+  entered the chains; finally a tool that launches `pwsh -EncodedCommand` hundreds of times under the same parent
+  (PRC-002 each time) made the score rise endlessly, and each rise raised an alert. Fixed: each process
+  carries its creation time (TimeCreated of the 4688 to the nearest 100 ns; failing that, the time of the first list that saw it) and
+  the bound of its end (first list where it was missing); a parent is retained only if it was born before the child and was alive at
+  its creation (`chaines::parent_vivait`), otherwise the child is its own chain head; a taken-over PID (other name, other
+  parent, other creation time, entry seen as ended, or second creation of the same PID) starts again without signals, even with an equal
+  name (`chaines::meme_processus`); the programs that the service launches (direct children of the service, recognised by its
+  own PID, never a name, whose path is exactly that of auditpol, wevtutil, powershell, curl, icacls, netsh,
+  gpupdate, schtasks or conhost under System32: `chaines::programme_du_service`) and their descendants leave the
+  chains, marked on entry (a PID taken over afterwards does not bring them back in); another child of the service (spoofed
+  parent, T1134.004) stays in the chains and carries a signal of 5 there ("parent usurpé ?", code
+  `CHA-001#parent-service`); the
+  same behaviour (signal code) repeated at the same place in the chain (same sequence of programs from the head) counts
+  once; at most three CHA-001 alerts per chain and per hour for rises that bring nothing new, the
+  surplus counted (`mesures.json`, counter `chaines.alertes_plafonnees`); an alert that brings a new ATT&CK technique
+  into the chain or a strong signal (PRC-001, PRC-005, comsvcs, LEU: `chaines::signal_fort`) always gets through,
+  counted separately (`chaines.alertes_hors_plafond`); all CHA-001 alerts are Critical, the level cannot
+  rise; a signal on a PID unknown to the tree no longer publishes a "PID n" chain. T-3: the incident
+  entity of a chain is its head program (its path if it is known and is not an interpreter or a generic
+  launcher such as cmd or powershell, otherwise `chaine:<nom>#<pid>@<heure de création>`), plus the text of the chain: a chain that grows remains a single incident. Limits: a parent seen
+  only through the list (its 4688 is missing) keeps a margin of 10 s; the takeover of a PID by a process with the same name and
+  the same parent, between two lists and without a 4688, is not seen (the creation time of the processes of the list is not
+  read); a process created with a program of the service as its parent while that program is running (a few seconds) leaves
+  CHA-001 without a signal (`docs/security/threat-model.md`); reservation from the pre-review of #282: an administrator who
+  takes the service as parent by launching one of the programs of the list (for example `powershell.exe` from System32)
+  is treated as a program of the service, their chain leaves CHA-001 without a signal (the list says which programs, not
+  which ones the service launched). Planned closure: the service will remember the PIDs it launches itself, with the registry
+  of PowerShell instances launched by the service planned by the 4104 phase (reservation R3 of its design file); not done here. Still open, maintainer's decision: a signed development tool that encodes its commands
+  (`-EncodedCommand`) still raises PRC-002 at each launch and one CHA-001 chain per session (one alert, then at
+  most three per hour).
+- **Fixed false negatives** (audit of 2026-11-23, done by Claude, A-7-5, fixed, tested in the lab, to be tried in a VM):
+  a root was recognised by its name alone; it is now recognised by the exact path of the system program under the
+  Windows folder (`chaines::racine`, same comparison as `reponse::chemin_critique`). The path comes from the process
+  list (read for root candidates), from 4688 events or from connections; unreadable path: not a root
+  (cautious direction, the chain continues), walk-up capped at 32 parents.
+- **Known false negatives**: a parent chosen at process creation (T1134.004, parent PID spoofing) links the
+  program to a real system launcher: the chain is cut there, as before. Not fixed here (parent spoofed to the
+  service itself: reported since T-1, see above). If the path of
+  Explorer were unreadable, two unrelated steps launched by it would form a chain (possible false positive, cautious
+  direction).
 
-## PER : persistance
+## PER: persistence
 
-### PER-001 : démarrage automatique nouveau
-- **ATT&CK** : posée par l'alerte : la technique du type d'entrée : clé Run et dossier Démarrage T1547.001, service et pilote T1543.003, tâche planifiée T1053.005, abonnement WMI T1546.003 ; aucune pour Winlogon, IFEO et AppInit (pas encore dans la table).
-- **Code** : `persistance.rs` (« NOUVEAU démarrage automatique »).
-- **Justification** : un malware s'installe presque toujours pour survivre au redémarrage.
-- **Télémétrie** : relevé des démarrages automatiques (clés Run, services, tâches…), toutes les minutes.
-- **Si elle manque** : premier relevé (apprentissage) : aucune alerte, voulu. Relevé **partiel**, sans échec signalé :
-  une tâche illisible est sautée, un échec WMI n'est noté qu'au journal. L'entrée sort alors de la référence, puis
-  revient au relevé suivant comme un « NOUVEAU démarrage automatique » : faux positif (au niveau Alerte pour une entrée
-  WMI, marquée « technique de persistance rare »), pas un silence.
-- **Niveau** : Alerte si la cible est jugée suspecte, sinon Info.
-- **Faux positifs attendus** : installation d'un logiciel ; relevé partiel (ci-dessus) ; première session d'un compte
-  (OneDrive, tâches de Windows par utilisateur).
-- **Tâches, lues auprès du Planificateur** (énumération COM, tâches cachées comprises, actions lues par son API, une entrée par action, 4 096 caractères par commande, 30 s au plus, 20 000 tâches au plus, racine en dernier) : un fichier posé dans `System32\Tasks` n'est pas une tâche, et le service n'ouvre aucun fichier de ce dossier ; le Planificateur, lui, le peut : l'effet d'un verrou passe par le contrôle du 3a (audits de #102, #103, #106). Une action au-delà de la première a son entrée (« : action 2 ») ; une commande tronquée porte l'empreinte de la commande entière et rend l'entrée suspecte. Une anomalie est reconnue à un indicateur posé par le service, jamais à son texte. Au plus 16 nouvelles tâches par relevé : celles de `\\Microsoft` d'abord, puis par ancienneté, les suivantes aux relevés d'après, ce qu'une entrée dit ; une tâche supprimée pendant son attente n'est jamais levée ; un arriéré de 20 000 tâches ferait 20 h d'attente ; une mise à jour de Windows qui ajoute plus de 16 tâches, ou un premier relevé incomplet, lève aussi cette entrée, sur un poste sain. Une définition illisible, une erreur sur un dossier ou une borne : relevé incomplet, tâches connues gardées. Le Planificateur injoignable ou hors délai : entrée « Dossier des tâches : relevé incomplet », collecte « partielle », tâches connues gardées dans la référence ; au-delà de 30 min de délai, collecte indisponible, et SAN-001 le dit après son délai. Un premier relevé incomplet termine quand même l'apprentissage : les tâches non lues lèvent une fois « NOUVEAU » au relevé complet suivant.
-- **Dossier des tâches, examiné pour ses anomalies** (énumération et métadonnées seulement, 8 niveaux, 5 000 éléments par dossier, 10 000 dossiers, 2 millions d'éléments) : les comptes authentifiés peuvent y créer des éléments. Lien non suivi, fichier sans tâche enregistrée, tâche enregistrée illisible (accès refusé à SYSTEM, image corrompue), deux tâches de même nom affiché, borne atteinte : entrée « Dossier des tâches : » au niveau Alerte, jamais adoucie ni apprise, à chaque apparition, y compris au premier relevé, 16 au plus par relevé, et 16 doublons au plus, puis une entrée générique. Une borne de cet examen ne rend pas le relevé incomplet. Limites : un compte standard peut lever 16 anomalies et 16 nouvelles tâches par relevé, soit 1 000 alertes en une demi-heure environ, qui chassent les vraies ; **les changements de tâches déjà connues (PER-002) n'ont pas de plafond** : 1 000 tâches posées puis réécrites évincent 1 000 alertes par relevé (S106-12, à corriger avant la distribution, avec un budget par compte, S106-13) ; un dossier saturé cache les fichiers suivants à l'examen, pas les tâches ; un poste ancien peut garder des fichiers orphelins d'une désinstallation : jusqu'à 16 alertes, une fois (non mesuré) ; une tâche à DACL excluant SYSTEM et le lien entre le fichier d'une tâche et ce qui s'exécute restent à essayer (S106-08, S106-09).
-- **Lecture bloquée d'un fichier** (signature, empreinte, `hosts`, leurres) : un simple droit de lecture permet d'y poser un verrou opportuniste. 8 s au plus, une lecture à la fois par fichier, 16 s d'attente par minute au total ; son résultat, même tardif, est repris au tour suivant. Signature : « non signé » tant qu'elle ne répond pas, une ligne au journal, rien en cache. `hosts` et leurres : pas de comparaison tant qu'ils ne répondent pas, donc un leurre verrouillé ne lève pas LEU-001 (LEU-002 reste). Au plus 8 lectures bloquées à la fois : au-delà, tout fichier nouveau est « non signé », ce qui fait passer de vrais programmes pour non signés et peut faire suspendre un outil de sauvegarde signé qui touche un leurre ; la garde des processus critiques, elle, reste fermée hors délai. Les pilotes (`hygiene.rs`), désignés par le registre des services, écrit par un administrateur, sont lus sans échéance, comme le paquet de mise à jour, dans un dossier réservé à SYSTEM.
-- **Mesuré en VM le 2026-11-01, service en SYSTEM, verrou posé en administrateur** : une ouverture en lecture de `hosts` ou d'un fichier ordinaire par un autre processus reste bloquée plus de 150 s ; un verrou tenu 5 min sur `journal.txt`, `etat.json` ou `reseau.json`, ou sur `hosts` pendant une commande de blocage, ne fige pas le service : une commande prend 9 s au plus, **cause non établie** ; démarrage sous verrou sur `alertes.json`, `config.json`, `journal.txt`, `suivi-incidents.json` : service en marche et canal joignable en 17 s. Ce n'est pas une propriété générale : hors du service, sur un autre poste, une ouverture en ajout sous le même verrou est restée bloquée plus de 150 s. Pendant le verrou, `etat.json` n'est plus écrit, sans aucun signal, et le blocage d'un domaine est refusé avec une erreur (`ecrire_bloc_hosts`).
-- **À corriger ou à vérifier avant la distribution** : S103-07 reste ouvert, faute d'explication, pour ce qui est lu ou écrit sous le verrou du moniteur, par le compte lecteur réel ; S104-07, démarrage sous verrou par ce compte ; `etat.json` périmé : l'interface le signale au-delà de 2 min ou si l'heure est future, et dit « état illisible » s'il ne se lit plus (PR 4.6) ; rien ne part à la remontée, et l'en-tête lit encore ces fichiers sur le fil de l'interface, qu'un verrou pourrait figer (S104-14, S105-07, non essayé) ; un compte standard qui fait refuser le blocage d'un domaine, sans couper son adresse, en gardant simplement `hosts` ouvert en lecture (S104-16, essai sur un fichier ordinaire ; sous verrou, mesuré).
-- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM, service en apprentissage, avant la PR 3.6) : PER-001 Info 11,
-  PER-001 Alerte 5 à 6. Les alertes venaient de deux causes, corrigées à la source par la PR 3.6 :
-  - tâches `\SoftLanding\…` de Windows « serveur COM non enregistré pour la machine » : leur classe COM est empaquetée
-    (`Classes\PackagedCom`, écrite par le système, c'est-à-dire le service de déploiement des paquets), désormais
-    résolue vers le fichier de son paquet, signé. Seulement pour un paquet de Windows (éditeur Microsoft) installé sous
-    `Windows\SystemApps` ou `Program Files\WindowsApps` ; le chemin lu dans le registre ne peut pas sortir du dossier du
-    paquet ; une classe surchargée dans le profil d'un utilisateur chargé (HKCU) n'est jamais résolue : la remarque
-    reste, et la tâche est signalée comme avant (détournement COM possible) ;
-  - `RunOnce` de OneDrive « lancé via cmd » : la commande exacte de nettoyage de son installeur n'est plus suspecte, dans
-    `RunOnce` seulement ; le nom du profil n'accepte ni `%` (variable remplacée par cmd avant l'analyse de la ligne), ni
-    `^ ! ( )`, ni caractère de contrôle ; toute variante reste suspecte.
-  Limite : la surcharge dans le profil d'un utilisateur dont la ruche n'est pas chargée n'est pas vue.
-  Restent en Info : entrées OneDrive, services et tâches de Windows qui apparaissent à la première session.
-- **Tests** : `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
-  `per_001_nettoyage_onedrive` ; existants : `tache_com_cible_le_serveur_du_clsid`,
-  `tache_com_hors_windows_sans_serveur_signalee`. En VM : clé Run de test vers `cmd.exe /c rem` (3a, « Alerte de
-  persistance produite juste avant un arrêt », bout en bout). État : réussi en VM de test pour la clé Run (scénario 3a, Defender actif).
+### PER-001 : new autostart
+- **ATT&CK** : posée par l'alerte (set by the alert): the technique of the entry type: Run key and Startup folder T1547.001, service and driver T1543.003, scheduled task T1053.005, WMI subscription T1546.003; none for Winlogon, IFEO and AppInit (not yet in the table).
+- **Code**: `persistance.rs` ("NOUVEAU démarrage automatique").
+- **Rationale**: malware almost always installs itself to survive a restart.
+- **Telemetry**: autostart inventory (Run keys, services, tasks…), every minute.
+- **If it is missing**: first inventory (learning): no alert, intended. **Partial** inventory, without a reported failure:
+  an unreadable task is skipped, a WMI failure is only recorded in the log. The entry then leaves the reference, then
+  comes back at the next inventory as a "NOUVEAU démarrage automatique": false positive (at the Alert level for a WMI
+  entry, marked "technique de persistance rare"), not a silence.
+- **Level**: Alert if the target is judged suspicious, otherwise Info.
+- **Expected false positives**: installation of software; partial inventory (above); first session of an account
+  (OneDrive, per-user Windows tasks).
+- **Tasks, read from the Task Scheduler** (COM enumeration, hidden tasks included, actions read through its API, one entry per action, 4,096 characters per command, 30 s at most, 20,000 tasks at most, root last): a file dropped in `System32\Tasks` is not a task, and the service opens no file in this folder; the Task Scheduler, however, can: the effect of a lock goes through the check of 3a (audits of #102, #103, #106). An action beyond the first has its own entry (": action 2"); a truncated command carries the fingerprint of the whole command and makes the entry suspicious. An anomaly is recognised by a flag set by the service, never by its text. At most 16 new tasks per inventory: those of `\\Microsoft` first, then by age, the following ones at the later inventories, which an entry states; a task deleted while waiting is never raised; a backlog of 20,000 tasks would mean 20 h of waiting; a Windows update that adds more than 16 tasks, or an incomplete first inventory, also raises this entry, on a healthy machine. An unreadable definition, an error on a folder or a bound: incomplete inventory, known tasks kept. Task Scheduler unreachable or timed out: entry "Dossier des tâches : relevé incomplet", collection "Partielle", known tasks kept in the reference; beyond 30 min of delay, collection unavailable, and SAN-001 says so after its delay. An incomplete first inventory still ends learning: the unread tasks raise "NOUVEAU" once at the next complete inventory.
+- **Tasks folder, examined for its anomalies** (enumeration and metadata only, 8 levels, 5,000 items per folder, 10,000 folders, 2 million items): authenticated accounts can create items there. Link not followed, file without a registered task, unreadable registered task (access denied to SYSTEM, corrupted image), two tasks with the same displayed name, bound reached: entry "Dossier des tâches :" at the Alert level, never softened nor learned, at each appearance, including at the first inventory, at most 16 per inventory, and at most 16 duplicates, then a generic entry. A bound of this examination does not make the inventory incomplete. Limits: a standard account can raise 16 anomalies and 16 new tasks per inventory, i.e. about 1,000 alerts in half an hour, which push out the real ones; **changes to already known tasks (PER-002) have no cap**: 1,000 tasks dropped then rewritten evict 1,000 alerts per inventory (S106-12, to be fixed before distribution, with a budget per account, S106-13); a saturated folder hides the following files from the examination, not the tasks; an old machine may keep orphan files from an uninstallation: up to 16 alerts, once (not measured); a task with a DACL excluding SYSTEM and the link between the file of a task and what runs remain to be tried (S106-08, S106-09).
+- **Blocked read of a file** (signature, fingerprint, `hosts`, decoys): a mere read right allows an opportunistic lock to be placed on it. 8 s at most, one read at a time per file, 16 s of waiting per minute in total; its result, even late, is picked up at the next round. Signature: "non signé" as long as it does not respond, one line in the log, nothing in the cache. `hosts` and decoys: no comparison as long as they do not respond, so a locked decoy does not raise LEU-001 (LEU-002 remains). At most 8 blocked reads at a time: beyond that, any new file is "non signé", which makes real programs appear unsigned and may get a signed backup tool that touches a decoy suspended; the guard of critical processes, on the other hand, stays closed when timed out. Drivers (`hygiene.rs`), designated by the services registry, written by an administrator, are read without a deadline, like the update package, in a folder reserved for SYSTEM.
+- **Measured in a VM on 2026-11-01, service as SYSTEM, lock placed as administrator**: an open for reading of `hosts` or of an ordinary file by another process stays blocked for more than 150 s; a lock held for 5 min on `journal.txt`, `etat.json` or `reseau.json`, or on `hosts` during a blocking command, does not freeze the service: a command takes 9 s at most, **cause not established**; startup under a lock on `alertes.json`, `config.json`, `journal.txt`, `suivi-incidents.json`: service running and channel reachable within 17 s. This is not a general property: outside the service, on another machine, an open for appending under the same lock stayed blocked for more than 150 s. During the lock, `etat.json` is no longer written, without any signal, and the blocking of a domain is refused with an error (`ecrire_bloc_hosts`).
+- **To fix or to verify before distribution**: S103-07 remains open, for lack of an explanation, for what is read or written under the monitor lock, by the real reader account; S104-07, startup under a lock by this account; stale `etat.json`: the interface reports it beyond 2 min or if the time is in the future, and says "status unreadable" if it can no longer be read (PR 4.6); nothing is sent upstream, and the header still reads these files on the interface thread, which a lock could freeze (S104-14, S105-07, not tried); a standard account that gets the blocking of a domain refused, without cutting off its address, simply by keeping `hosts` open for reading (S104-16, trial on an ordinary file; under a lock, measured).
+- **Measured false positives** (`mesure` scenario, 22 min in a VM, service in learning mode, before PR 3.6): PER-001 Info 11,
+  PER-001 Alert 5 to 6. The alerts came from two causes, fixed at the source by PR 3.6:
+  - Windows `\SoftLanding\…` tasks "serveur COM non enregistré pour la machine": their COM class is packaged
+    (`Classes\PackagedCom`, written by the system, that is the package deployment service), now
+    resolved to the file of its package, signed. Only for a Windows package (publisher Microsoft) installed under
+    `Windows\SystemApps` or `Program Files\WindowsApps`; the path read from the registry cannot leave the folder of the
+    package; a class overridden in the profile of a loaded user (HKCU) is never resolved: the remark
+    remains, and the task is reported as before (possible COM hijacking);
+  - OneDrive `RunOnce` "lancé via cmd": the exact cleanup command of its installer is no longer suspicious, in
+    `RunOnce` only; the profile name accepts neither `%` (variable replaced by cmd before the line is analysed), nor
+    `^ ! ( )`, nor a control character; any variant remains suspicious.
+  Limit: an override in the profile of a user whose hive is not loaded is not seen.
+  Remaining at Info: OneDrive entries, Windows services and tasks that appear at the first session.
+- **Tests**: `per_001_positif`, `per_001_negatif` (`persistance::comparer`), `per_001_com_empaquete_chemin_borne`,
+  `per_001_nettoyage_onedrive`; existing: `tache_com_cible_le_serveur_du_clsid`,
+  `tache_com_hors_windows_sans_serveur_signalee`. In a VM: test Run key to `cmd.exe /c rem` (3a, "Alerte de
+  persistance produite juste avant un arrêt", end to end). Status: passed in a test VM for the Run key (scenario 3a, Defender active).
 
-### PER-002 : démarrage automatique modifié
-- **ATT&CK** : posée par l'alerte : la technique du type d'entrée, comme PER-001 (clé Run T1547.001…) ; sans T1112, qui n'était pas observé en propre.
-- **Code** : `persistance.rs` (« démarrage automatique MODIFIÉ »).
-- **Justification** : un démarrage légitime détourné vers une autre commande.
-- **Télémétrie** : comme PER-001.
-- **Si elle manque** : comme PER-001 (relevé partiel : faux « nouveau »).
-- **Niveau** : Alerte si suspecte, sinon Info.
-- **Faux positifs attendus** : mises à jour des logiciels (nouveau chemin de version).
-- **Faux positifs mesurés** (scénario `mesure`, 22 min en VM) : PER-002 Info 4, les tâches de Defender dont la commande
-  passe de `Program Files` au dossier de sa plateforme après une mise à jour. Gardées (Info) : un changement de commande
-  est exactement ce que la règle doit voir.
-- **Devenu suspect** (PR 3.6) : une entrée connue dont la commande n'a pas changé, sans remarque au relevé précédent et
-  avec une remarque maintenant, lève aussi PER-002 (« DEVENU SUSPECT ») : classe COM surchargée après coup dans le profil
-  d'un utilisateur, fichier remplacé par un fichier non signé ou déplacé vers un dossier suspect. Une seule alerte, si la
-  remarque est encore là au relevé suivant (une minute plus tard) ; aucune pendant l'apprentissage. Un échec de
-  vérification de signature n'est gardé en cache que 30 s : le relevé suivant refait la vérification au lieu de
-  confirmer l'échec. Limites : une vérification impossible au moins deux relevés de suite (services de chiffrement
-  lents plus d'une minute au démarrage du PC, fichier verrouillé par une mise à jour) peut lever une fausse alerte
-  « NON SIGNÉ » ; aucun scénario ne redémarre la VM avec le service installé pour le mesurer. L'attente de confirmation
-  ne vit qu'en mémoire : si le service s'arrête entre les deux relevés, l'entrée devenue suspecte n'est jamais signalée
-  (la référence relue porte déjà la remarque).
-- **Tests** : `per_002_positif` (commande changée vers un dossier suspect ; entrée COM devenue suspecte : Alerte),
-  `per_002_negatif` (signataire changé seul, commande changée pendant l'apprentissage : pas d'alerte),
-  `per_002_devenu_suspect_negatif` (déjà suspecte, redevenue propre, apprentissage). État : testé en labo.
+### PER-002 : modified autostart
+- **ATT&CK** : posée par l'alerte (set by the alert): the technique of the entry type, like PER-001 (Run key T1547.001…); without T1112, which was not observed on its own.
+- **Code**: `persistance.rs` ("démarrage automatique MODIFIÉ").
+- **Rationale**: a legitimate autostart diverted to another command.
+- **Telemetry**: like PER-001.
+- **If it is missing**: like PER-001 (partial inventory: false "new").
+- **Level**: Alert if suspicious, otherwise Info.
+- **Expected false positives**: software updates (new version path).
+- **Measured false positives** (`mesure` scenario, 22 min in a VM): PER-002 Info 4, the Defender tasks whose command
+  moves from `Program Files` to the folder of its platform after an update. Kept (Info): a change of command
+  is exactly what the rule must see.
+- **Became suspicious** (PR 3.6): a known entry whose command has not changed, without a remark at the previous inventory and
+  with a remark now, also raises PER-002 ("DEVENU SUSPECT"): COM class overridden afterwards in the profile
+  of a user, file replaced by an unsigned file or moved to a suspicious folder. A single alert, if the
+  remark is still there at the next inventory (one minute later); none during learning. A signature
+  verification failure is kept in the cache for only 30 s: the next inventory redoes the verification instead of
+  confirming the failure. Limits: a verification that is impossible for at least two inventories in a row (cryptographic services
+  slow for more than one minute at PC startup, file locked by an update) may raise a false alert
+  "NON SIGNÉ"; no scenario restarts the VM with the service installed to measure it. The wait for confirmation
+  lives only in memory: if the service stops between the two inventories, the entry that became suspicious is never reported
+  (the re-read reference already carries the remark).
+- **Tests**: `per_002_positif` (command changed to a suspicious folder; COM entry that became suspicious: Alert),
+  `per_002_negatif` (signer changed alone, command changed during learning: no alert),
+  `per_002_devenu_suspect_negatif` (already suspicious, clean again, learning). Status: tested in the lab.
 
-## DEF : Microsoft Defender
+## DEF: Microsoft Defender
 
-Les règles DEF-003 à DEF-006 et DEF-010 à DEF-012 supposent un Defender affaibli : elles ne sont **jamais** exercées en
-VM (Defender intouchable) et restent au mieux « testé en labo ».
+Rules DEF-003 to DEF-006 and DEF-010 to DEF-012 assume a weakened Defender: they are **never** exercised in a
+VM (Defender is untouchable) and remain at best "tested in the lab".
 
-| Id | Événement ou état | Niveau | ATT&CK |
+| Id | Event or state | Level | ATT&CK |
 |---|---|---|---|
-| DEF-001 | 1116 : menace détectée | Critique | aucune |
-| DEF-002 | 1117 : menace traitée | Info | aucune |
-| DEF-003 | 5001 : protection en temps réel désactivée | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-004 | 5010 / 5012 : analyse antivirus désactivée | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-005 | 5007 : exclusion ajoutée | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-006 | 5007 : protection affaiblie (temps réel, antispyware, falsification) | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-007 | 1121 / 1122 : règle ASR (blocage / audit) | Alerte / Info | aucune |
-| DEF-008 | 1123 / 1124 : accès contrôlé aux dossiers (blocage / audit) | Alerte / Info | aucune |
-| DEF-009 | 1125 / 1126 : protection réseau (blocage / audit) | Alerte / Info | aucune |
-| DEF-010 | État WMI : protection en temps réel coupée entre deux relevés | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-011 | État WMI : protection contre les falsifications désactivée | Critique | T1685 Protections désactivées ou modifiées |
-| DEF-012 | État WMI : antivirus désactivé | Critique | T1685 Protections désactivées ou modifiées |
+| DEF-001 | 1116: threat detected | Critical | aucune (none) |
+| DEF-002 | 1117: threat handled | Info | aucune (none) |
+| DEF-003 | 5001: real-time protection disabled | Critical | T1685 Disable or modify protections |
+| DEF-004 | 5010 / 5012: antivirus scanning disabled | Critical | T1685 Disable or modify protections |
+| DEF-005 | 5007: exclusion added | Critical | T1685 Disable or modify protections |
+| DEF-006 | 5007: protection weakened (real time, antispyware, tampering) | Critical | T1685 Disable or modify protections |
+| DEF-007 | 1121 / 1122: ASR rule (block / audit) | Alert / Info | aucune (none) |
+| DEF-008 | 1123 / 1124: controlled folder access (block / audit) | Alert / Info | aucune (none) |
+| DEF-009 | 1125 / 1126: network protection (block / audit) | Alert / Info | aucune (none) |
+| DEF-010 | WMI state: real-time protection switched off between two inventories | Critical | T1685 Disable or modify protections |
+| DEF-011 | WMI state: tamper protection disabled | Critical | T1685 Disable or modify protections |
+| DEF-012 | WMI state: antivirus disabled | Critical | T1685 Disable or modify protections |
 
-- **Code** : `defender.rs` (`traduire` pour DEF-001 à 009, `ecarts` pour DEF-010 à 012).
-- **Justification** : Defender est la protection de base du poste ; ses détections et toute tentative de l'affaiblir
-  doivent remonter.
-- **Télémétrie** : journal Microsoft-Windows-Windows Defender/Operational (DEF-001 à 009) ; état WMI de Defender,
-  toutes les 10 min (DEF-010 à 012).
-- **Si elle manque** : journal illisible ou coupé : collecte `JournalDefender` « Indisponible », DEF-001 à 009 publiées
-  sans collecte (PR 3.3) ; état WMI illisible : aucun écart calculé, collecte `EtatDefender` « Indisponible », DEF-010
-  à 012 sans collecte.
-- **Faux positifs attendus** : DEF-005 et DEF-006 quand un administrateur règle Defender lui-même ; DEF-007 à 009 en
-  mode audit sur des logiciels métier.
-- **Faux positifs mesurés** : comptage par règle et par heure du scénario `mesure` (22 min d'activité synthétique en VM,
-  alertes produites après le début de l'activité, PR 3.5) ; le service y est fraîchement installé, donc en apprentissage
-  (7 jours : les alertes non critiques y sont notées « Info ») ; aucune règle DEF n'y est attendue, ce qui ne dit rien
-  d'un poste réel (limite D12 : pas de mesure sur poste réel). Mesuré au passage de la PR 3.5 (#81, tête 68a4ce1) :
-  **0 alerte DEF** sur 33 alertes en 22 min (preuve en commentaire de la #81).
-- **Limite** : DEF-006 ne voit que `DisableRealtimeMonitoring = 0x1`, `DisableAntiSpyware = 0x1` et
-  `TamperProtection = 0x4` ; les autres réglages `Disable*` (comportement, IOAV, scripts) et `TamperProtection = 0x0`
-  ne lèvent rien (DEF-010 à 012 voient l'effet sur l'état WMI pour le temps réel, la falsification et l'antivirus).
-- **Tests** (PR 3.5, `service-rs/src/tests_detection.rs`) : un positif et un négatif par règle, de `def_001_positif` à
-  `def_012_negatif`, et `def_traduire_sans_panique` (mini-fuzz de `traduire`). Négatifs : événement voisin non suivi
-  (2000, 1118, 5000, 5009, 5011, 1120, 1127) ; exclusion retirée et autre réglage modifié (DEF-005) ; protection
-  rétablie (DEF-006) ; audit jamais au niveau « Alerte » (1122 pour DEF-007, 1124 pour DEF-008) ; état déjà coupé au relevé précédent ou illisible (DEF-010 à 012). Ils décrivent le comportement existant
-  (aucun changement de `defender.rs`) ; 9 mutations de `defender.rs` les font échouer.
-- **En VM** : aucune règle DEF n'est exercée (Defender intouchable, lot 3d) ; DEF-001 avec un fichier EICAR : non tant
-  que le lot 3d exige « aucune détection » (D10). Le journal et l'état sont lus en VM (collectes « Active » au 3a).
-  État : testé en labo.
+- **Code**: `defender.rs` (`traduire` for DEF-001 to 009, `ecarts` for DEF-010 to 012).
+- **Rationale**: Defender is the baseline protection of the machine; its detections and any attempt to weaken it
+  must be reported.
+- **Telemetry**: Microsoft-Windows-Windows Defender/Operational log (DEF-001 to 009); Defender WMI state,
+  every 10 min (DEF-010 to 012).
+- **If it is missing**: unreadable or switched-off log: collection `JournalDefender` "Indisponible", DEF-001 to 009 published
+  without collection (PR 3.3); unreadable WMI state: no gap computed, collection `EtatDefender` "Indisponible", DEF-010
+  to 012 without collection.
+- **Expected false positives**: DEF-005 and DEF-006 when an administrator configures Defender themselves; DEF-007 to 009 in
+  audit mode on business software.
+- **Measured false positives**: count per rule and per hour of the `mesure` scenario (22 min of synthetic activity in a VM,
+  alerts produced after the start of the activity, PR 3.5); the service is freshly installed there, hence in learning mode
+  (7 days: non-critical alerts are recorded as "Info" there); no DEF rule is expected there, which says nothing
+  about a real machine (limit D12: no measurement on a real machine). Measured at the run of PR 3.5 (#81, head 68a4ce1):
+  **0 DEF alerts** out of 33 alerts in 22 min (evidence in a comment of #81).
+- **Limit**: DEF-006 only sees `DisableRealtimeMonitoring = 0x1`, `DisableAntiSpyware = 0x1` and
+  `TamperProtection = 0x4`; the other `Disable*` settings (behaviour, IOAV, scripts) and `TamperProtection = 0x0`
+  raise nothing (DEF-010 to 012 see the effect on the WMI state for real time, tampering and the antivirus).
+- **Tests** (PR 3.5, `service-rs/src/tests_detection.rs`): one positive and one negative per rule, from `def_001_positif` to
+  `def_012_negatif`, and `def_traduire_sans_panique` (mini-fuzz of `traduire`). Negatives: neighbouring event not followed
+  (2000, 1118, 5000, 5009, 5011, 1120, 1127); exclusion removed and another setting modified (DEF-005); protection
+  restored (DEF-006); audit never at the "Alert" level (1122 for DEF-007, 1124 for DEF-008); state already off at the previous inventory or unreadable (DEF-010 to 012). They describe the existing behaviour
+  (no change to `defender.rs`); 9 mutations of `defender.rs` make them fail.
+- **In a VM**: no DEF rule is exercised (Defender is untouchable, batch 3d); DEF-001 with an EICAR file: no, as long
+  as batch 3d requires "no detection" (D10). The log and the state are read in a VM ("Active" collections in 3a).
+  Status: tested in the lab.
 
-## LEU : leurres anti-rançongiciel
+## LEU: anti-ransomware decoys
 
-### LEU-001 : leurre modifié, supprimé, renommé ou remplacé par un lien
-- **ATT&CK** : T1486 Chiffrement de données (rançongiciel).
-- **Code** : `hygiene.rs` (`verifier_leurres`, empreinte lue par handle vérifié).
-- **Justification** : un fichier que rien ne devrait toucher a changé ou disparu : chiffrement en cours probable.
-- **Télémétrie** : leurres posés et leurs empreintes. Les leurres ne sont pas posés en mode console. Ils sont posés
-  dans `Documents`, `Pictures` et `Desktop` à leur emplacement réel, lu dans « User Shell Folders » de la ruche de
-  l'utilisateur (sauvegarde OneDrive des dossiers, redirection vers un autre lecteur local fixe ; audit du 2026-11-23,
-  fait par Claude, A-7-2, corrigé : tests `a7_2_dossier_reel_des_leurres`, `a7_2_destination_des_leurres_admise`,
-  `a7_2_bilan_des_leurres`, `a7_2_anciens_leurres_suivis_et_retires`). Reste : ruche non chargée (utilisateur sans
-  session) ou dossier redirigé vers un partage réseau ou un lecteur amovible : leurre dans le dossier par défaut du
-  profil (refus journalisé). Hors du profil, seul un dossier d'un lecteur local fixe (vu par SYSTEM : un lecteur mappé
-  ou une lettre SUBST de la session est inconnu, donc refusé) dont l'utilisateur est propriétaire est admis ; un leurre
-  qui a plus d'un nom (lien dur) n'est ni audité ni suivi, refus journalisé (S268-01, `s268_01_leurre_lien_dur_refuse`) ;
-  nombre de liens, audit et empreinte sont lus sur un seul handle (S268-04, `s268_04_pose_sur_un_seul_handle`), et les
-  anciens emplacements repassent ce contrôle (S268-05).
-  Au plus 3 anciens emplacements suivis par profil et par leurre, au-delà retirés (S268-02). Chaque échec de création est journalisé (une fois) et rend la collecte `Leurres`
-  partielle ; l'état de santé publie « leurres : n posés sur m attendus » (champ `Detail` de la collecte). Un leurre
-  resté dans un ancien dossier reste suivi tant qu'il existe et est retiré à la désinstallation. Leurres dans un
-  dossier synchronisé par OneDrive : ils peuvent être téléversés dans le stockage en ligne de l'utilisateur et
-  apparaître sur ses autres appareils ; OneDrive, qui tourne sous le compte de l'utilisateur, est suspendu s'il écrit
-  dans un leurre ou le supprime (libération d'espace de Fichiers à la demande, conflit de synchronisation), ce qui
-  arrête la synchronisation jusqu'à la reprise. Rien de cela n'est encore essayé en VM (il faut un compte Microsoft).
-- **Si elle manque** : leurres non posés : la règle se tait.
-- **Niveau** : Critique.
-- **Faux positifs attendus** : outil de nettoyage ou de synchronisation qui réécrit tout un dossier.
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
-  les leurres sont posés (le contrôle du 3a exige la collecte `Leurres` « Active »), mais aucun
-  programme de l'activité synthétique ne les touche.
-- **Tests** : `leu_001_positif` (leurre modifié, leurre supprimé, sur de vrais fichiers : deux alertes Critique, et les
-  leurres signalés ne sont plus suivis, pour ne pas alerter à chaque tour), `leu_001_negatif` (leurre lu sans être
-  modifié) ; existant : `leurres_par_handle_jamais_a_travers_un_lien`. Pose des leurres exercée en VM (scénario 3b) ;
-  la règle elle-même n'y est pas déclenchée.
+### LEU-001 : decoy modified, deleted, renamed or replaced by a link
+- **ATT&CK** : T1486 Data encrypted for impact (ransomware).
+- **Code**: `hygiene.rs` (`verifier_leurres`, fingerprint read through a verified handle).
+- **Rationale**: a file that nothing should touch has changed or disappeared: encryption probably in progress.
+- **Telemetry**: decoys placed and their fingerprints. Decoys are not placed in console mode. They are placed
+  in `Documents`, `Pictures` and `Desktop` at their real location, read from "User Shell Folders" in the
+  user's hive (OneDrive backup of folders, redirection to another fixed local drive; audit of 2026-11-23,
+  done by Claude, A-7-2, fixed: tests `a7_2_dossier_reel_des_leurres`, `a7_2_destination_des_leurres_admise`,
+  `a7_2_bilan_des_leurres`, `a7_2_anciens_leurres_suivis_et_retires`). Remaining: hive not loaded (user without a
+  session) or folder redirected to a network share or a removable drive: decoy in the default folder of the
+  profile (refusal logged). Outside the profile, only a folder on a fixed local drive (as seen by SYSTEM: a mapped drive
+  or a SUBST letter of the session is unknown, hence refused) owned by the user is admitted; a decoy
+  that has more than one name (hard link) is neither audited nor followed, refusal logged (S268-01, `s268_01_leurre_lien_dur_refuse`);
+  number of links, audit and fingerprint are read on a single handle (S268-04, `s268_04_pose_sur_un_seul_handle`), and the
+  old locations go through this check again (S268-05).
+  At most 3 old locations followed per profile and per decoy, beyond that removed (S268-02). Each creation failure is logged (once) and makes the `Leurres` collection
+  partial; the health status publishes "leurres : n posés sur m attendus" (field `Detail` of the collection). A decoy
+  left in an old folder remains followed as long as it exists and is removed at uninstallation. Decoys in a
+  folder synchronised by OneDrive: they may be uploaded to the user's online storage and
+  appear on the user's other devices; OneDrive, which runs under the user's account, is suspended if it writes
+  to a decoy or deletes it (Files On-Demand space freeing, synchronisation conflict), which
+  stops synchronisation until it is resumed. None of this has been tried in a VM yet (it needs a Microsoft account).
+- **If it is missing**: decoys not placed: the rule stays silent.
+- **Level**: Critical.
+- **Expected false positives**: cleanup or synchronisation tool that rewrites a whole folder.
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; the measurement underestimates them:
+  the decoys are placed (the check of 3a requires the `Leurres` collection "Active"), but no
+  program of the synthetic activity touches them.
+- **Tests**: `leu_001_positif` (decoy modified, decoy deleted, on real files: two Critical alerts, and the
+  reported decoys are no longer followed, so as not to alert at each round), `leu_001_negatif` (decoy read without being
+  modified); existing: `leurres_par_handle_jamais_a_travers_un_lien`. Placing of decoys exercised in a VM (scenario 3b);
+  the rule itself is not triggered there.
 
-### LEU-002 : leurre touché (audit des accès)
-- **ATT&CK** : T1486 Chiffrement de données (rançongiciel).
-- **Code** : `vol_donnees.rs` (événement 4663 sur un leurre).
-- **Justification** : même raison que LEU-001, au moment de l'accès ; peut suspendre le programme (réponse automatique
-  au rançongiciel, niveau 3).
-- **Télémétrie** : journal Sécurité 4663 et audit (SACL) posé sur les leurres.
-- **Si elle manque** : audit des objets désactivé : la règle se tait.
-- **Niveau** : Critique ; Info si le programme est un logiciel connu et signé (sauvegarde, synchronisation, antivirus), au nom exact, installé dans un dossier normalement fermé aux comptes standard : Program Files hors WindowsApps, directement dans System32 ou SysWOW64, plateforme de Defender. Dans le profil ou Temp, il n'est jamais connu : un logiciel installé sans droits d'administrateur ou depuis le Store est suspendu (décision du mainteneur, 2026-11-02). Depuis le 2026-11-21 (décision du mainteneur, S110-14, S114-01, S114-02) : le programme et chacun de ses dossiers sous la racine doivent aussi être fermés en écriture : seuls SYSTEM, Administrateurs, TrustedInstaller ou un compte de service peuvent y écrire ou en être propriétaires (droits lus ; tout autre compte, entrée non reconnue ou droits illisibles = ouvert ; audit de #228, S228-01), et le programme doit tourner sous SYSTEM ou avec le groupe Administrateurs actif ; sinon il n'est pas connu et il est suspendu. **Conséquence :** un client de synchronisation qui tourne sous le compte de l'utilisateur (OneDrive, Dropbox, Box) et touche un leurre est suspendu ; de même un logiciel dont le dossier a pour propriétaire le compte qui l'a installé (stratégie « propriétaire = créateur », logiciel copié sans installateur) n'est jamais connu (audit de #229, S229-01, sens prudent). **Limite :** un processus creux lancé depuis un binaire autorisé, sous SYSTEM ou un administrateur, garde ce statut (S114-02),
-  qui n'est pas suspendu.
-- **Faux positifs attendus** : logiciel de sauvegarde ou d'indexation non encore reconnu.
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
-  aucun programme de l'activité ne touche un leurre.
-- **Tests** : `leu_002_positif` (événement 4663 sur un leurre, nom sans tenir compte de la casse : Critique, suspension
-  annoncée seulement si elle a eu lieu), `leu_002_negatif` (autre fichier ; logiciel connu : Info, non suspendu) ;
-  décisions pures `hygiene::pid_touchant_leurre_parmi` et `vol_donnees::alerte_leurre_touche` (PR 3.9 : noms des
-  leurres passés en paramètre, sans lire ni créer le fichier des noms) ; existant : `b1_leurre_touche_par_rundll32_suspendu`
-  (décision de suspension). Non exercée dans les scénarios VM ; campagne Kali (`campagne-kali-sixieme-lot.md`,
-  2026-11-16) : VP en configuration A, prévenu par Defender en configuration C ; non consolidée.
+### LEU-002 : decoy touched (access audit)
+- **ATT&CK** : T1486 Data encrypted for impact (ransomware).
+- **Code**: `vol_donnees.rs` (event 4663 on a decoy).
+- **Rationale**: same reason as LEU-001, at the moment of access; may suspend the program (automatic response
+  to ransomware, level 3).
+- **Telemetry**: Security log 4663 and audit (SACL) set on the decoys.
+- **If it is missing**: object audit disabled: the rule stays silent.
+- **Level**: Critical; Info if the program is a known and signed software (backup, synchronisation, antivirus), with the exact name, installed in a folder normally closed to standard accounts: Program Files outside WindowsApps, directly in System32 or SysWOW64, Defender platform. In the profile or Temp, it is never known: software installed without administrator rights or from the Store is suspended (maintainer's decision, 2026-11-02). Since 2026-11-21 (maintainer's decision, S110-14, S114-01, S114-02): the program and each of its folders under the root must also be closed to writing: only SYSTEM, Administrators, TrustedInstaller or a service account may write there or own them (rights read; any other account, unrecognised entry or unreadable rights = open; audit of #228, S228-01), and the program must run as SYSTEM or with the Administrators group active; otherwise it is not known and it is suspended. **Consequence:** a synchronisation client that runs under the user's account (OneDrive, Dropbox, Box) and touches a decoy is suspended; likewise a software whose folder is owned by the account that installed it ("owner = creator" policy, software copied without an installer) is never known (audit of #229, S229-01, cautious direction). **Limit:** a hollowed process launched from an authorised binary, as SYSTEM or an administrator, keeps this status (S114-02),
+  and is not suspended.
+- **Expected false positives**: backup or indexing software not yet recognised.
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; the measurement underestimates them:
+  no program of the activity touches a decoy.
+- **Tests**: `leu_002_positif` (event 4663 on a decoy, name case ignored: Critical, suspension
+  announced only if it took place), `leu_002_negatif` (other file; known software: Info, not suspended);
+  pure decisions `hygiene::pid_touchant_leurre_parmi` and `vol_donnees::alerte_leurre_touche` (PR 3.9: names of the
+  decoys passed as a parameter, without reading or creating the names file); existing: `b1_leurre_touche_par_rundll32_suspendu`
+  (suspension decision). Not exercised in the VM scenarios; Kali campaign (`campagne-kali-sixieme-lot.md`,
+  2026-11-16): TP in configuration A, prevented by Defender in configuration C; not consolidated.
 
-## VOL : vol de données
+## VOL: data theft
 
-### VOL-001 : accès aux secrets d'un logiciel par un autre programme
-- **ATT&CK** : T1555.003 Identifiants des navigateurs ; T1539 Vol de cookies de session.
-- **Code** : `vol_donnees.rs` (« comportement typique d'un VOLEUR DE DONNÉES »).
-- **Justification** : les voleurs d'identifiants lisent les bases de mots de passe et de cookies des navigateurs, les
-  jetons de Discord et de Telegram, les portefeuilles de cryptomonnaie (Ledger, Exodus, Electrum, MetaMask).
-- **Conditions** : une alerte au plus par programme et par cible toutes les 24 h.
-- **Télémétrie** : journal Sécurité 4663 et audit (SACL) sur les fichiers des profils.
-- **Si elle manque** : audit désactivé : la règle se tait.
-- **Niveau** : Critique si le programme vient d'un dossier temporaire, des téléchargements ou du profil public, sinon
-  Alerte.
-- **Faux positifs attendus** : gestionnaires de mots de passe, outils de migration de profil.
-  Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime :
-  aucun navigateur ni portefeuille n'est installé ou ouvert pendant la mesure.
-- **Tests** : `vol_001_positif` (lecture d'une base de mots de passe de Chrome par un programme d'un dossier temporaire :
-  Critique ; d'ailleurs : Alerte ; par un « chrome.exe » non signé par Google : alerte), `vol_001_negatif` (fichier hors
-  des dossiers surveillés ; dossier parcouru sans lecture ; notre propre service ; une alerte par programme et par cible
-  en 24 h, `vol_donnees::premiere_en_24h`, PR 3.9) ; décision `vol_donnees::analyser` sur des événements 4663
-  synthétiques. Non exercée dans les scénarios VM ; campagne Kali (`campagne-kali-second-lot.md`, 2026-11-15, simulation
-  sur un compte de test vide) : VP Critique en configurations A et C ; non consolidée.
-- **Signataire du programme** (second audit du 2026-11-23, B-2-01, corrigé) : gardé en cache sous l'identité du fichier lue
-  par handle avec son numéro USN (à défaut, l'empreinte SHA-256 du contenu), et non plus sous le chemin et la date de
-  modification, qu'un compte standard remet à l'identique après avoir remplacé un programme autorisé : le remplaçant est
-  revérifié et alerte. Test : `audit_b_2_01_programme_remplace_meme_date_reverifie` (labo).
+### VOL-001 : access to the secrets of a software by another program
+- **ATT&CK** : T1555.003 Credentials from web browsers; T1539 Steal web session cookie.
+- **Code**: `vol_donnees.rs` ("comportement typique d'un VOLEUR DE DONNÉES").
+- **Rationale**: credential stealers read the password and cookie databases of browsers, the
+  Discord and Telegram tokens, the cryptocurrency wallets (Ledger, Exodus, Electrum, MetaMask).
+- **Conditions**: at most one alert per program and per target every 24 h.
+- **Telemetry**: Security log 4663 and audit (SACL) on the profile files.
+- **If it is missing**: audit disabled: the rule stays silent.
+- **Level**: Critical if the program comes from a temporary folder, the downloads or the public profile, otherwise
+  Alert.
+- **Expected false positives**: password managers, profile migration tools.
+  False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; the measurement underestimates them:
+  no browser or wallet is installed or open during the measurement.
+- **Tests**: `vol_001_positif` (read of a Chrome password database by a program from a temporary folder:
+  Critical; from elsewhere: Alert; by a "chrome.exe" not signed by Google: alert), `vol_001_negatif` (file outside
+  the watched folders; folder traversed without reading; our own service; one alert per program and per target
+  within 24 h, `vol_donnees::premiere_en_24h`, PR 3.9); decision `vol_donnees::analyser` on synthetic 4663
+  events. Not exercised in the VM scenarios; Kali campaign (`campagne-kali-second-lot.md`, 2026-11-15, simulation
+  on an empty test account): Critical TP in configurations A and C; not consolidated.
+- **Signer of the program** (second audit of 2026-11-23, B-2-01, fixed): kept in the cache under the identity of the file read
+  through a handle with its USN number (failing that, the SHA-256 fingerprint of the content), and no longer under the path and the
+  modification date, which a standard account restores identically after replacing an authorised program: the replacement is
+  verified again and alerts. Test: `audit_b_2_01_programme_remplace_meme_date_reverifie` (lab).
 
-## SYS : fichier hosts et pare-feu
+## SYS: hosts file and firewall
 
-### SYS-001 : fichier hosts modifié par un autre programme
-- **ATT&CK** : T1565 Manipulation de données.
-- **Code** : `moniteur.rs` (empreinte du fichier hosts).
-- **Justification** : redirection de domaines vers un serveur de l'attaquant, ou blocage des mises à jour de sécurité.
-- **Télémétrie** : empreinte du fichier hosts.
-- **Si elle manque** : fichier illisible : l'empreinte vaut « » (`empreinte_hosts`). Depuis la PR 3.10, ce relevé ne
-  déclenche rien et l'empreinte connue est gardée : un changement fait pendant la panne est signalé dès que le fichier
-  redevient lisible. Avant, l'alerte partait **à tort** à la panne, puis repartait au retour du fichier.
-- **Limites** (audit de #90) :
-  - un fichier gardé illisible en permanence (un compte standard peut l'ouvrir sans partage) rend la règle muette, sans
-    aucun signal dans `etat.json` ni dans le journal (S90-01). Aucune modification n'est possible pendant ce verrou, et
-    une modification faite après sa levée est signalée ;
-  - une référence vide (fichier illisible au démarrage du service, ou relecture ratée juste après une écriture du
-    service) fait adopter le premier relevé lisible sans alerte (S90-02) ;
-  - la référence n'est pas conservée d'un démarrage à l'autre : une modification faite service arrêté n'est jamais
-    signalée (S90-03, antérieure à la PR 3.10).
-  Ces trois limites demandent les droits d'administrateur pour modifier le fichier, qui suffisent déjà à le modifier
-  avant le démarrage du service. Correction prévue : empreinte conservée dans le dossier de données, calculée sur le
-  contenu écrit par le service, et panne durable notée.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : logiciels de blocage de publicités, outils de développement. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun.
-- **Tests** : `sys_001_positif` (empreinte changée ; changement fait pendant une panne de lecture, signalé au retour),
-  `sys_001_negatif` (même empreinte ; fichier illisible) ; décision pure `moniteur::alerte_hosts` (PR 3.10). Non
-  exercée en VM (le scénario n'écrit pas dans le fichier hosts).
+### SYS-001 : hosts file modified by another program
+- **ATT&CK** : T1565 Data manipulation.
+- **Code**: `moniteur.rs` (fingerprint of the hosts file).
+- **Rationale**: redirection of domains to a server of the attacker, or blocking of security updates.
+- **Telemetry**: fingerprint of the hosts file.
+- **If it is missing**: unreadable file: the fingerprint is "" (`empreinte_hosts`). Since PR 3.10, this inventory
+  triggers nothing and the known fingerprint is kept: a change made during the outage is reported as soon as the file
+  becomes readable again. Before, the alert fired **wrongly** at the outage, then fired again when the file came back.
+- **Limits** (audit of #90):
+  - a file kept permanently unreadable (a standard account can open it without sharing) makes the rule silent, without
+    any signal in `etat.json` or in the log (S90-01). No modification is possible during this lock, and
+    a modification made after it is lifted is reported;
+  - an empty reference (file unreadable at service startup, or failed re-read just after a write by the
+    service) makes the first readable inventory be adopted without an alert (S90-02);
+  - the reference is not kept from one startup to the next: a modification made while the service is stopped is never
+    reported (S90-03, prior to PR 3.10).
+  These three limits require administrator rights to modify the file, which are already enough to modify it
+  before the service starts. Planned fix: fingerprint kept in the data folder, computed on the
+  content written by the service, and lasting outage recorded.
+- **Level**: Alert.
+- **Expected false positives**: ad-blocking software, development tools. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none.
+- **Tests**: `sys_001_positif` (fingerprint changed; change made during a read outage, reported on recovery),
+  `sys_001_negatif` (same fingerprint; unreadable file); pure decision `moniteur::alerte_hosts` (PR 3.10). Not
+  exercised in a VM (the scenario does not write to the hosts file).
 
-### SYS-002 : règle de pare-feu ajoutée ou modifiée
-- **ATT&CK** : T1686.003 Pare-feu de Windows modifié.
-- **Code** : `parefeu.rs` (suivi des modifications du pare-feu).
-- **Justification** : ouvrir un port entrant est un moyen classique de garder un accès au poste.
-- **Variantes** : auteur non signé : Critique ; port entrant ouvert en ligne de commande : Alerte ; autorisation
-  entrante par un auteur introuvable : Alerte ; par un programme tiers signé ou un installeur de mise à jour : Info.
-- **Télémétrie** : journal du pare-feu (Windows Firewall With Advanced Security), signature de l'auteur.
-- **Si elle manque** : le résultat de l'abonnement est ignoré aujourd'hui (silence).
-- **Faux positifs attendus** : installeurs de logiciels qui ouvrent leurs ports. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun.
-- **Tests** : `sys_002_positif` (port entrant ouvert par netsh : Alerte ; règle modifiée par un programme non signé :
-  Critique), `sys_002_negatif` (nos propres règles ; règle sortante changée par Windows ; événement sans rapport), sur
-  `parefeu::traduire` avec des événements synthétiques.
+### SYS-002 : firewall rule added or modified
+- **ATT&CK** : T1686.003 Windows firewall modified.
+- **Code**: `parefeu.rs` (tracking of firewall changes).
+- **Rationale**: opening an inbound port is a classic way to keep access to the machine.
+- **Variants**: unsigned author: Critical; inbound port opened from the command line: Alert; inbound
+  authorisation by an author that cannot be found: Alert; by a signed third-party program or an update installer: Info.
+- **Telemetry**: firewall log (Windows Firewall With Advanced Security), signature of the author.
+- **If it is missing**: the result of the subscription is ignored today (silence).
+- **Expected false positives**: software installers that open their ports. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none.
+- **Tests**: `sys_002_positif` (inbound port opened by netsh: Alert; rule modified by an unsigned program:
+  Critical), `sys_002_negatif` (our own rules; outbound rule changed by Windows; unrelated event), on
+  `parefeu::traduire` with synthetic events.
 
-### SYS-003 : toutes les règles du pare-feu supprimées
-- **ATT&CK** : T1686.003 Pare-feu de Windows modifié.
-- **Code** : `parefeu.rs` (opération « toutes supprimées »).
-- **Justification** : un pare-feu vidé désarme le poste.
-- **Variantes** :
-  - par un autre auteur que le service Windows (svchost, binaire Windows) : Critique, tout de suite ;
-  - par svchost (rechargement par la stratégie de groupe, `gpupdate`) : Info (« règles du pare-feu rechargées par
-    Windows ») ; puis, si moins de 50 règles sont revenues 60 s après : Critique (« pare-feu vidé »).
-- **Télémétrie** : journal du pare-feu, nombre de règles.
-- **Si elle manque** : comme SYS-002.
-- **Niveau** : Critique ; Info pour le rechargement par la stratégie de groupe.
-- **Faux positifs attendus** : réinitialisation volontaire du pare-feu par un administrateur. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : une alerte Info par passage, le rechargement des règles par la stratégie de groupe au démarrage de la VM (attendu, Info).
-- **Tests** : `sys_003_positif` (toutes supprimées par un autre programme : Critique), `sys_003_negatif` (svchost de
-  Windows : Info ; un « svchost.exe » hors de Windows reste Critique), sur `parefeu::traduire`. La vérification du
-  retour des règles, une minute après, n'est pas testée (appel Windows).
+### SYS-003 : all firewall rules deleted
+- **ATT&CK** : T1686.003 Windows firewall modified.
+- **Code**: `parefeu.rs` ("all deleted" operation).
+- **Rationale**: an emptied firewall disarms the machine.
+- **Variants**:
+  - by an author other than the Windows service (svchost, Windows binary): Critical, immediately;
+  - by svchost (reload by group policy, `gpupdate`): Info ("règles du pare-feu rechargées par
+    Windows"); then, if fewer than 50 rules have come back 60 s later: Critical ("pare-feu vidé").
+- **Telemetry**: firewall log, number of rules.
+- **If it is missing**: like SYS-002.
+- **Level**: Critical; Info for the reload by group policy.
+- **Expected false positives**: deliberate reset of the firewall by an administrator. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): one Info alert per run, the reload of the rules by group policy at VM startup (expected, Info).
+- **Tests**: `sys_003_positif` (all deleted by another program: Critical), `sys_003_negatif` (Windows
+  svchost: Info; a "svchost.exe" outside Windows remains Critical), on `parefeu::traduire`. The check of the
+  return of the rules, one minute later, is not tested (Windows call).
 
-## PIL : pilotes
+## PIL: drivers
 
-### PIL-001 : pilote vulnérable connu présent
-- **ATT&CK** : T1068 Élévation de privilèges par une faille (pilote vulnérable).
-- **Code** : `hygiene.rs` (liste LOLDrivers, une fois par jour).
-- **Justification** : un pilote signé mais vulnérable permet de désactiver les protections (BYOVD).
-- **Télémétrie** : liste LOLDrivers chargée, pilotes du disque.
-- **Si elle manque** : liste vide ou illisible : aucune alerte (silence), comme s'il n'y avait aucun pilote vulnérable.
-- **Niveau** : Critique.
-- **Faux positifs attendus** : ancien pilote de matériel encore présent mais inutilisé. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la liste LOLDrivers est vide dans la VM (PIL-001 sans collecte, contrôle du 3a).
-- **Tests** : `pil_001_positif` (pilote .sys dont l'empreinte est dans la liste : Critique, une seule fois),
-  `pil_001_negatif` (pilote sain ; même contenu sous un autre type de fichier ; pilote absent), sur de vrais fichiers
-  temporaires ; décision `hygiene::pilotes_vulnerables` (PR 3.10). Existant : `chemins_des_pilotes`.
+### PIL-001 : known vulnerable driver present
+- **ATT&CK** : T1068 Exploitation for privilege escalation (vulnerable driver).
+- **Code**: `hygiene.rs` (LOLDrivers list, once a day).
+- **Rationale**: a signed but vulnerable driver makes it possible to disable protections (BYOVD).
+- **Telemetry**: loaded LOLDrivers list, drivers on disk.
+- **If it is missing**: empty or unreadable list: no alert (silence), as if there were no vulnerable driver.
+- **Level**: Critical.
+- **Expected false positives**: old hardware driver still present but unused. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; the LOLDrivers list is empty in the VM (PIL-001 without collection, check of 3a).
+- **Tests**: `pil_001_positif` (.sys driver whose fingerprint is in the list: Critical, only once),
+  `pil_001_negatif` (healthy driver; same content under another file type; absent driver), on real temporary
+  files; decision `hygiene::pilotes_vulnerables` (PR 3.10). Existing: `chemins_des_pilotes`.
 
-## EXT : extensions de navigateur
+## EXT: browser extensions
 
-### EXT-001 : nouvelle extension de navigateur
-- **ATT&CK** : T1176.001 Extension de navigateur.
-- **Code** : `hygiene.rs` (`verifier_extensions`, toutes les 10 min, sauf au premier relevé).
-- **Justification** : une extension malveillante lit tout ce que l'utilisateur fait dans le navigateur.
-- **Télémétrie** : profils des navigateurs.
-- **Si elle manque** : profil illisible : la règle se tait.
-- **Niveau** : Alerte si l'extension a des permissions sensibles, Info sinon.
-- **Faux positifs attendus** : chaque extension installée volontairement. Faux positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; aucun navigateur n'installe d'extension pendant la mesure.
-- **Tests** : `ext_001_positif` (apprentissage au premier relevé ; puis nouvelle extension : Alerte si ses permissions
-  sont sensibles, sinon Info ; date de première vue notée), `ext_001_negatif` (extension déjà connue, date reprise ; même
-  identifiant dans un autre navigateur : nouvelle) ; décision pure `hygiene::nouvelles_extensions` (PR 3.10, sans
-  fichier de données).
+### EXT-001 : new browser extension
+- **ATT&CK** : T1176.001 Browser extensions.
+- **Code**: `hygiene.rs` (`verifier_extensions`, every 10 min, except at the first inventory).
+- **Rationale**: a malicious extension reads everything the user does in the browser.
+- **Telemetry**: browser profiles.
+- **If it is missing**: unreadable profile: the rule stays silent.
+- **Level**: Alert if the extension has sensitive permissions, Info otherwise.
+- **Expected false positives**: each extension installed deliberately. False positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; no browser installs an extension during the measurement.
+- **Tests**: `ext_001_positif` (learning at the first inventory; then new extension: Alert if its permissions
+  are sensitive, otherwise Info; date first seen recorded), `ext_001_negatif` (extension already known, date carried over; same
+  identifier in another browser: new); pure decision `hygiene::nouvelles_extensions` (PR 3.10, without a
+  data file).
 
-## VIE : vie privée et accès distant
+## VIE: privacy and remote access
 
-| Id | Détection | Code | Niveau | ATT&CK |
+| Id | Detection | Code | Level | ATT&CK |
 |---|---|---|---|---|
-| VIE-001 | Programme qui utilise la caméra ou le micro pour la première fois | `surveillances.rs` | Alerte | posée par l'alerte : T1125 Capture vidéo (caméra) ou T1123 Capture audio (micro) |
-| VIE-002 | Outil de prise en main à distance en cours d'exécution | `surveillances.rs` | Alerte | posée par l'alerte : T1219 Outil d'accès à distance, ou T1572 Tunnel de protocole pour ngrok |
-| VIE-003 | Bureau à distance activé | `surveillances.rs` | Alerte | T1021.001 Bureau à distance |
+| VIE-001 | Program that uses the camera or the microphone for the first time | `surveillances.rs` | Alert | posée par l'alerte (set by the alert): T1125 Video capture (camera) or T1123 Audio capture (microphone) |
+| VIE-002 | Remote control tool running | `surveillances.rs` | Alert | posée par l'alerte (set by the alert): T1219 Remote access tools, or T1572 Protocol tunneling for ngrok |
+| VIE-003 | Remote Desktop enabled | `surveillances.rs` | Alert | T1021.001 Remote Desktop Protocol |
 
-- **Justification** : espionnage par la caméra ou le micro ; arnaques au faux support qui font installer un outil de
-  prise en main ; Bureau à distance ouvert par un attaquant.
-- **Télémétrie** : registre (consentements d'accès aux périphériques, réglage du Bureau à distance), processus.
-- **Si elle manque** : registre illisible : la règle se tait ; l'interface affiche « CAM / MIC OFF » comme si rien
-  n'était utilisé.
-- **Faux positifs attendus** : VIE-001 à la visioconférence ; VIE-002 pour un support informatique légitime. Faux
-  positifs mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun ; la mesure les sous-estime, car
-  l'activité n'utilise ni caméra ni micro et ne lance aucun outil de prise en main à distance.
-- **Tests** (PR 3.12), sans registre ni fichier de données :
-  - `vie_001_positif` (apprentissage au premier relevé, puis un nouveau programme qui utilise la caméra : Alerte),
-    `vie_001_negatif` (programme connu ; usage terminé ; usage déjà en cours au relevé précédent), sur
-    `surveillances::premiers_usages` ;
-  - `vie_002_positif` (outil lancé, nom sans tenir compte de la casse ; relancé après sa fin : nouvelle alerte),
-    `vie_002_negatif` (programme ordinaire ; outil toujours en cours, une seule alerte), sur
-    `surveillances::outils_distants`, avec le chemin d'un PID passé en paramètre ;
-  - `vie_003_positif`, `vie_003_negatif` (premier relevé, toujours activé, désactivé), sur
+- **Rationale**: spying through the camera or the microphone; fake support scams that get a remote control tool
+  installed; Remote Desktop opened by an attacker.
+- **Telemetry**: registry (device access consents, Remote Desktop setting), processes.
+- **If it is missing**: unreadable registry: the rule stays silent; the interface displays "CAM / MIC OFF" as if nothing
+  were in use.
+- **Expected false positives**: VIE-001 during video conferencing; VIE-002 for legitimate IT support. False
+  positives measured in a VM (`mesure` scenario, 22 min of synthetic activity): none; the measurement underestimates them, because
+  the activity uses neither camera nor microphone and launches no remote control tool.
+- **Tests** (PR 3.12), without registry or data file:
+  - `vie_001_positif` (learning at the first inventory, then a new program that uses the camera: Alert),
+    `vie_001_negatif` (known program; usage ended; usage already in progress at the previous inventory), on
+    `surveillances::premiers_usages`;
+  - `vie_002_positif` (tool launched, name case ignored; relaunched after it ended: new alert),
+    `vie_002_negatif` (ordinary program; tool still running, a single alert), on
+    `surveillances::outils_distants`, with the path of a PID passed as a parameter;
+  - `vie_003_positif`, `vie_003_negatif` (first inventory, still enabled, disabled), on
     `surveillances::alerte_bureau_a_distance`.
-  Non exercées en VM ; le relevé du magasin des consentements et du registre n'est pas testé.
+  Not exercised in a VM; the inventory of the consent store and of the registry is not tested.
 
-## BAS : baseline
+## BAS: baseline
 
-### BAS-001 : réglage de sécurité de la baseline défait
-- **ATT&CK** : T1685 Protections désactivées ou modifiées ; T1112 Registre modifié.
-- **Code** : `baseline.rs` (`derives`, toutes les 10 min).
-- **Justification** : un réglage de durcissement qui revient en arrière (par un malware, une mise à jour ou une
-  personne) rouvre une faiblesse.
-- **Conditions** : seuls les réglages appliqués par deR4Tizer sont suivis. Deux cas : passés de « conforme » à « non
-  conforme » dans le registre (l'état du registre est gardé à part, si bien qu'un relevé « inconnu » ou « sans effet »
-  dû à Defender ne masque pas une modification qui suit, audit de #217, S217-01) ; passés de « conforme » à « sans
-  effet » (Microsoft Defender n'applique plus la règle : antivirus passif ou valeur effective différente) ; plusieurs
-  règles passées « sans effet » au même relevé donnent une seule alerte qui les nomme (S217-04). Une règle illisible à
-  un relevé garde son dernier état connu pour la comparaison suivante (S217-05).
-- **Télémétrie** : évaluation de la baseline.
-- **Si elle manque** : évaluation impossible : aucune dérive calculée.
-- **Niveau** : Alerte.
-- **Faux positifs attendus** : stratégie de groupe ou administrateur qui change le réglage volontairement. Faux
-  positifs mesurés en VM (scénario `mesure`, 22 min) : aucun ; aucun réglage n'est changé pendant la mesure.
-- **Tests** : `bas_001_positif` (règle appliquée par deR4Tizer, conforme puis non conforme : Alerte, valeurs attendue
-  et actuelle dans les raisons), `bas_001_negatif` (règle non appliquée par deR4Tizer ; déjà non conforme ; état
-  inconnu ; règle nouvelle), `bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet` (modification vue après
-  un relevé « inconnu » ou « sans effet » ; passage à « sans effet »), `bas_001_s217_04_et_05_regroupement_et_dernier_etat_connu`, sur `baseline::derives`. Non exercée en VM.
+### BAS-001 : baseline security setting undone
+- **ATT&CK** : T1685 Disable or modify protections; T1112 Modify registry.
+- **Code**: `baseline.rs` (`derives`, every 10 min).
+- **Rationale**: a hardening setting that is rolled back (by malware, an update or a
+  person) reopens a weakness.
+- **Conditions**: only the settings applied by deR4Tizer are followed. Two cases: changed from "compliant" to
+  "non-compliant" in the registry (the registry state is kept separately, so that an "unknown" or "no effect" inventory
+  due to Defender does not mask a modification that follows, audit of #217, S217-01); changed from "compliant" to "no
+  effect" (Microsoft Defender no longer applies the rule: passive antivirus or different effective value); several
+  rules turned "no effect" at the same inventory give a single alert that names them (S217-04). A rule unreadable at
+  an inventory keeps its last known state for the next comparison (S217-05).
+- **Telemetry**: baseline evaluation.
+- **If it is missing**: evaluation impossible: no drift computed.
+- **Level**: Alert.
+- **Expected false positives**: group policy or administrator that changes the setting deliberately. False
+  positives measured in a VM (`mesure` scenario, 22 min): none; no setting is changed during the measurement.
+- **Tests**: `bas_001_positif` (rule applied by deR4Tizer, compliant then non-compliant: Alert, expected
+  and current values in the reasons), `bas_001_negatif` (rule not applied by deR4Tizer; already non-compliant; unknown
+  state; new rule), `bas_001_s217_01_derive_vue_apres_un_tour_inconnu_ou_sans_effet` (modification seen after
+  an "unknown" or "no effect" inventory; change to "no effect"), `bas_001_s217_04_et_05_regroupement_et_dernier_etat_connu`, on `baseline::derives`. Not exercised in a VM.
 
-## COR : corrélations du SIEM
+## COR: SIEM correlations
 
-| Id | Corrélation | Niveau | ATT&CK |
+| Id | Correlation | Level | ATT&CK |
 |---|---|---|---|
-| COR-R1 | Tentatives de mot de passe en série | Alerte | T1110 Force brute |
-| COR-R2 | Session ouverte après une série d'échecs | Critique | T1110 Force brute ; T1078.003 Compte local valide |
-| COR-R3 | Nouveau compte administrateur (créé il y a moins de 30 min puis ajouté aux Administrateurs) | Critique | T1136.001 Compte local créé |
-| COR-R3b | Ajout d'un compte existant au groupe Administrateurs | Alerte | T1098 Manipulation de compte |
-| COR-R4 | Journal d'événements effacé | Critique | T1685.005 Journaux d'événements effacés |
-| COR-R5 | Service installé depuis un emplacement suspect | Critique | T1543.003 Service Windows ; T1569.002 Exécution par un service |
-| COR-R6 | Attaque en plusieurs étapes (3 détections d'un même programme en 10 min) | Critique | aucune |
-| COR-R7 | Protection affaiblie (service de sécurité arrêté, politique d'audit modifiée) | Alerte | posée par l'alerte : T1685 Protections désactivées ou modifiées et T1489 Arrêt de services (service de sécurité arrêté) ou T1685.001 Journalisation désactivée ou modifiée (politique d'audit modifiée) |
-| COR-R8 | **Numéro non attribué** : aucune règle R8 dans `siem.rs` à ce jour ; le numéro reste libre, il n'est pas réutilisé pour une autre règle sans décision | sans objet | sans objet |
-| COR-R9 | Session ouverte depuis une adresse publique (Bureau à distance : Critique ; autre : Alerte) | Critique / Alerte | T1133 Services distants exposés |
-| COR-R10 | Pilote vulnérable installé (BYOVD) | Critique | T1068 Élévation de privilèges par une faille (pilote vulnérable) |
+| COR-R1 | Password attempts in series | Alert | T1110 Brute force |
+| COR-R2 | Session opened after a series of failures | Critical | T1110 Brute force; T1078.003 Valid local account |
+| COR-R3 | New administrator account (created less than 30 min ago then added to Administrators) | Critical | T1136.001 Local account created |
+| COR-R3b | Existing account added to the Administrators group | Alert | T1098 Account manipulation |
+| COR-R4 | Event log cleared | Critical | T1685.005 Event logs cleared |
+| COR-R5 | Service installed from a suspicious location | Critical | T1543.003 Windows service; T1569.002 Service execution |
+| COR-R6 | Multi-stage attack (3 detections of the same program within 10 min) | Critical | aucune (none) |
+| COR-R7 | Protection weakened (security service stopped, audit policy changed) | Alert | posée par l'alerte (set by the alert): T1685 Disable or modify protections and T1489 Service stop (security service stopped) or T1685.001 Logging disabled or modified (audit policy changed) |
+| COR-R8 | **Numéro non attribué** (number not assigned): no R8 rule in `siem.rs` to date; the number stays free, it is not reused for another rule without a decision | not applicable | not applicable |
+| COR-R9 | Session opened from a public address (Remote Desktop: Critical; other: Alert) | Critical / Alert | T1133 External remote services |
+| COR-R10 | Vulnerable driver installed (BYOVD) | Critical | T1068 Exploitation for privilege escalation (vulnerable driver) |
 
-- **Code** : `siem.rs` (`Correlation`).
-- **Télémétrie** : journaux Sécurité et Système ; audit avancé (profil de baseline « journalisation »).
-- **Si elle manque** : audit désactivé ou journal illisible : la corrélation se tait. Sauf COR-R6, qui se nourrit des
-  alertes du service et non de l'audit.
-- **Faux positifs attendus** : COR-R1 aux mots de passe mal saisis ; COR-R9 pour un accès distant volontaire ; COR-R3
-  (Critique) pour tout compte local créé puis ajouté aux Administrateurs dans les 30 minutes, y compris par un
-  administrateur ou un installeur légitime (avant B-5-02, ce cas donnait COR-R3b, Alerte).
-- **Rapprochement de COR-R3** (audit du 2026-11-23, B-5-02, corrigé ; testé en labo, à essayer en VM) : le compte créé
-  (4720) et le compte ajouté aux Administrateurs (4732) sont le même s'ils ont le même SID (`TargetSid`, `MemberSid`),
-  sinon le même nom exact (après le dernier « \ », sans casse) : `siem::meme_compte`. Avant, une sous-chaîne suffisait
-  (« adm » créé, « admin2 » existant ajouté : faux Critique), et le 4732 d'un compte local, sans nom (`MemberName` « - »),
-  ne portait que le SID, qui ne rejoignait jamais le nom du 4720 : COR-R3b au lieu de COR-R3. Le SID n'est gardé qu'en
-  mémoire pour la corrélation, jamais écrit dans les événements du SIEM.
-- **Tests** : `cor_r1_positif` à `cor_r9_negatif` (PR 3.11), sur `siem::Correlation::analyser` avec des événements
-  synthétiques déjà traduits :
-  - COR-R1 : cinq échecs de la même source ; pas quatre, ni cinq répartis sur deux sources ;
-  - COR-R2 : session ouverte après cinq échecs de la même source ; pas après quatre, ni d'une autre source ;
-  - COR-R3 et COR-R3b : compte créé puis ajouté, compte existant ajouté, une fois par heure ; nom exact et non
-    sous-chaîne, SID qui décide quand les deux sont connus (`cor_r3_compte_exact_pas_sous_chaine`), et du XML des
-    journaux à l'incident pour un compte local rapproché par son SID (`cor_r3_bout_en_bout_par_sid`) ;
-  - COR-R4 : effacement d'un journal, une fois par heure ;
-  - COR-R5 : service depuis un dossier temporaire, `ProgramData` ou PowerShell ; pas depuis Program Files ni Windows ;
-  - COR-R6 : trois détections différentes d'un même programme, sans tenir compte de la casse ; pas deux, ni trois
-    programmes, ni des alertes Info ;
-  - COR-R7 : service de sécurité arrêté, politique d'audit modifiée ; pas un changement d'état Info ;
-  - COR-R9 : Bureau à distance depuis une adresse publique (Critique), autre session (Alerte) ; pas depuis le réseau
-    local.
-  Les fenêtres de temps (5 min, 30 min, 10 min, une heure) ne sont pas exercées : le moteur lit l'horloge lui-même.
-  COR-R10 n'est pas testée : sa vérification télécharge la liste LOLDrivers. Aucune n'est exercée dans les scénarios VM ;
-  la campagne Kali en mesure plusieurs (`campagne-kali-premier-passage.md` et `campagne-kali-sixieme-lot.md`) : COR-R1,
-  COR-R2, COR-R4, COR-R5, COR-R7 et COR-R9 en VP, non consolidés. Limites connues, non corrigées : COR-R3 ne se
-  déclenche pas par le vecteur standard (l'ajout au groupe, événement 4732, porte le SID du membre, rapproché du nom du
-  compte créé : on obtient COR-R3b, Alerte) ; COR-R9 par Bureau à distance mesurée en Alerte et non en Critique (ordre
-  des ouvertures de session type 3 puis type 10). Limites de seuil (audit du 2026-11-23, fait par Claude, non corrigées) : une force brute lente (moins
-  de 5 échecs en 5 minutes) n'est vue ni par COR-R1 ni par COR-R2 ; COR-R5 ne retient ni le Bureau ni Documents comme
-  emplacement suspect d'un service ; COR-R6 compte par nom de programme, des étapes sous des noms différents ne
-  s'additionnent pas. Faux positifs
-  mesurés en VM (scénario `mesure`, 22 min d'activité synthétique) : aucun incident ; la mesure les sous-estime, car
-  l'activité n'ouvre aucune session, n'installe aucun service et ne change aucun compte.
+- **Code**: `siem.rs` (`Correlation`).
+- **Telemetry**: Security and System logs; advanced audit (baseline profile "journalisation").
+- **If it is missing**: audit disabled or unreadable log: the correlation stays silent. Except COR-R6, which feeds on the
+  alerts of the service and not on the audit.
+- **Expected false positives**: COR-R1 on mistyped passwords; COR-R9 for deliberate remote access; COR-R3
+  (Critical) for any local account created then added to Administrators within 30 minutes, including by a
+  legitimate administrator or installer (before B-5-02, this case gave COR-R3b, Alert).
+- **Matching of COR-R3** (audit of 2026-11-23, B-5-02, fixed; tested in the lab, to be tried in a VM): the account created
+  (4720) and the account added to Administrators (4732) are the same if they have the same SID (`TargetSid`, `MemberSid`),
+  otherwise the same exact name (after the last "\", case ignored): `siem::meme_compte`. Before, a substring was enough
+  ("adm" created, existing "admin2" added: false Critical), and the 4732 of a local account, without a name (`MemberName` "-"),
+  carried only the SID, which never matched the name of the 4720: COR-R3b instead of COR-R3. The SID is kept only in
+  memory for the correlation, never written into the SIEM events.
+- **Tests**: `cor_r1_positif` to `cor_r9_negatif` (PR 3.11), on `siem::Correlation::analyser` with already translated
+  synthetic events:
+  - COR-R1: five failures from the same source; not four, nor five spread over two sources;
+  - COR-R2: session opened after five failures from the same source; not after four, nor from another source;
+  - COR-R3 and COR-R3b: account created then added, existing account added, once per hour; exact name and not
+    substring, SID that decides when both are known (`cor_r3_compte_exact_pas_sous_chaine`), and from the XML of the
+    logs to the incident for a local account matched by its SID (`cor_r3_bout_en_bout_par_sid`);
+  - COR-R4: clearing of a log, once per hour;
+  - COR-R5: service from a temporary folder, `ProgramData` or PowerShell; not from Program Files or Windows;
+  - COR-R6: three different detections of the same program, case ignored; not two, nor three
+    programs, nor Info alerts;
+  - COR-R7: security service stopped, audit policy changed; not an Info state change;
+  - COR-R9: Remote Desktop from a public address (Critical), other session (Alert); not from the local
+    network.
+  The time windows (5 min, 30 min, 10 min, one hour) are not exercised: the engine reads the clock itself.
+  COR-R10 is not tested: its check downloads the LOLDrivers list. None is exercised in the VM scenarios;
+  the Kali campaign measures several of them (`campagne-kali-premier-passage.md` and `campagne-kali-sixieme-lot.md`): COR-R1,
+  COR-R2, COR-R4, COR-R5, COR-R7 and COR-R9 as TP, not consolidated. Known limits, not fixed: COR-R3 does not
+  trigger through the standard vector (the addition to the group, event 4732, carries the SID of the member, matched against the name of the
+  created account: one gets COR-R3b, Alert); COR-R9 through Remote Desktop measured as Alert and not as Critical (order
+  of logons type 3 then type 10). Threshold limits (audit of 2026-11-23, done by Claude, not fixed): a slow brute force (fewer
+  than 5 failures in 5 minutes) is seen neither by COR-R1 nor by COR-R2; COR-R5 retains neither the Desktop nor Documents as a
+  suspicious location for a service; COR-R6 counts by program name, steps under different names do not
+  add up. False positives
+  measured in a VM (`mesure` scenario, 22 min of synthetic activity): no incident; the measurement underestimates them, because
+  the activity opens no session, installs no service and changes no account.
 
-## INT : intégrité du service
+## INT: service integrity
 
-| Id | Détection | Code | Niveau | ATT&CK |
+| Id | Detection | Code | Level | ATT&CK |
 |---|---|---|---|---|
-| INT-001 | Échec de la protection du dossier de données (échec fermé) | `protection.rs` | Critique | aucune |
-| INT-002 | Tube de commandes déjà pris par un autre processus (squat) | `canal.rs` | Critique | aucune |
-| INT-003 | Dossier d'installation modifiable par un autre compte (audit du 2026-11-23, A-4-1) | `protection.rs` | Critique | aucune |
+| INT-001 | Failure of the protection of the data folder (fail closed) | `protection.rs` | Critical | aucune (none) |
+| INT-002 | Command pipe already taken by another process (squatting) | `canal.rs` | Critical | aucune (none) |
+| INT-003 | Installation folder modifiable by another account (audit of 2026-11-23, A-4-1) | `protection.rs` | Critical | aucune (none) |
 
-- **Justification** : un dossier de données mal protégé ou un tube squatté donnerait la main sur le service ; un dossier
-  d'installation modifiable par un autre compte y ferait exécuter un programme ou une DLL en SYSTEM.
-- **Télémétrie** : aucune externe (contrôles du service lui-même).
-- **Faux positifs attendus** : aucun connu.
-- **Tests** : existants : `lot1_alerte_critique_locale_en_echec` (INT-001), `lot5_canal_squat_pid_et_alerte_critique`
-  (INT-002), `audit_a_4_1_dossier_installation_protege` (INT-003, décision et branchements) ; 3a (premier démarrage en
-  échec fermé) pour INT-001. INT-003 sur une vraie installation redirigée : à mesurer en VM.
+- **Rationale**: a badly protected data folder or a squatted pipe would give control over the service; an installation
+  folder modifiable by another account would let a program or a DLL be run there as SYSTEM.
+- **Telemetry**: none external (checks by the service itself).
+- **Expected false positives**: none known.
+- **Tests**: existing: `lot1_alerte_critique_locale_en_echec` (INT-001), `lot5_canal_squat_pid_et_alerte_critique`
+  (INT-002), `audit_a_4_1_dossier_installation_protege` (INT-003, decision and wiring); 3a (first startup in
+  fail closed) for INT-001. INT-003 on a real redirected installation: to be measured in a VM.
 
-## SAN : santé de deR4Tizer (phase 4)
+## SAN: deR4Tizer health (phase 4)
 
-| Id | Constat | Code | Niveau | ATT&CK |
+| Id | Finding | Code | Level | ATT&CK |
 |---|---|---|---|---|
-| SAN-001 | Collecte critique indisponible (ou jamais lue) depuis plus de 30 min ; collectes critiques (D4-5) : `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, `Persistance` | `sante.rs` | Alerte | aucune |
-| SAN-002 | Collecte rétablie après un constat SAN-001 ou SAN-003 (« rétablie après N min ») | `sante.rs` | Info | aucune |
-| SAN-003 | Defender aveugle : journal **et** état illisibles depuis plus de 30 min (remplace SAN-001 pour ces deux collectes) | `sante.rs` | Critique | aucune |
-| SAN-004 | Remontée des alertes configurée et en échec depuis plus d'une heure : constat **local** (jamais remonté, on ne peut pas) | `sante.rs`, `notifications.rs` | Alerte | aucune |
-| SAN-010 | Interface absente d'une session active plus de 15 min (après un délai de grâce de 5 min à l'ouverture de la session ou au démarrage du service), malgré la tâche de relance | `sante.rs`, `natif.rs` | Critique (décision du mainteneur, 2026-10-31 : sans interface, un constat local n'est vu par personne) | aucune |
-| SAN-011 | Interface arrêtée à répétition : 3 disparitions en une heure dans une même session | `sante.rs`, `natif.rs` | Alerte | aucune |
-| SAN-012 | Alertes non suivies faute de place : plus de 500 incidents non clos (l'alerte reste dans `alertes.json`) | `sante.rs` | Critique | aucune |
-| SAN-013 | Historique du mini-SIEM incomplet : événements perdus (file de 20 000 pleine), événements non écrits (fichier du jour au plafond de 1 Go / 30, 34 Mo environ), ou fichier d'un jour précédent supprimé pour la taille totale (1 Go) | `sante.rs`, `siem.rs` | Alerte | aucune |
-| SAN-014 | Configuration présente mais non chargée : `config.json` illisible, refusé (propriétaire, liens physiques) ou mal formé après trois essais ; le service tourne avec la configuration par défaut et ne réécrit pas le fichier | `sante.rs`, `moniteur.rs`, `commun.rs` | Critique | aucune |
+| SAN-001 | Critical collection unavailable (or never read) for more than 30 min; critical collections (D4-5): `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, `Persistance` | `sante.rs` | Alert | aucune (none) |
+| SAN-002 | Collection restored after a SAN-001 or SAN-003 finding ("rétablie après N min") | `sante.rs` | Info | aucune (none) |
+| SAN-003 | Defender blind: log **and** state unreadable for more than 30 min (replaces SAN-001 for these two collections) | `sante.rs` | Critical | aucune (none) |
+| SAN-004 | Alert forwarding configured and failing for more than one hour: **local** finding (never forwarded, it cannot be) | `sante.rs`, `notifications.rs` | Alert | aucune (none) |
+| SAN-010 | Interface absent from an active session for more than 15 min (after a grace period of 5 min at session opening or at service startup), despite the restart task | `sante.rs`, `natif.rs` | Critical (maintainer's decision, 2026-10-31: without an interface, a local finding is seen by no one) | aucune (none) |
+| SAN-011 | Interface repeatedly stopped: 3 disappearances within one hour in the same session | `sante.rs`, `natif.rs` | Alert | aucune (none) |
+| SAN-012 | Alerts not followed for lack of room: more than 500 unclosed incidents (the alert stays in `alertes.json`) | `sante.rs` | Critical | aucune (none) |
+| SAN-013 | Mini-SIEM history incomplete: events lost (queue of 20,000 full), events not written (file of the day at the cap of 1 GB / 30, about 34 MB), or file of a previous day deleted because of the total size (1 GB) | `sante.rs`, `siem.rs` | Alert | aucune (none) |
+| SAN-014 | Configuration present but not loaded: `config.json` unreadable, refused (owner, hard links) or malformed after three attempts; the service runs with the default configuration and does not rewrite the file | `sante.rs`, `moniteur.rs`, `commun.rs` | Critical | aucune (none) |
 
-- **Justification** : une collecte coupée fait taire les règles qui en dépendent ; sans constat, ce silence ressemble à
-  un poste calme. Couper la vue sur Defender est ce qu'un attaquant gagne le plus à faire (SAN-003).
-- **Télémétrie** : l'état publié des collectes (`collectes::instantane`, PR 3.3) ; le compteur des alertes non suivies
-  du moniteur (SAN-012). Fil « sante », toutes les 30 s, hors du verrou du moniteur.
-- **Bornes** : un constat par collecte (SAN-001), ou par règle (SAN-003, SAN-012), et par 24 h au plus **pour une même
-  panne** : rétablie, la collecte peut de nouveau être signalée (audit de #98, S98-01). `Inconnue`
-  compte comme indisponible (échec fermé) ; une collecte relue moins souvent que toutes les 15 min (listes de menaces :
-  toutes les heures) ne compte que l'indisponibilité notée par sa source, pas son seul silence, qu'elle rattrape après
-  une veille (relecture de #98, D1) ; `Desactivee` (Sysmon absent, mode console) ne lève jamais rien. Jamais
-  adoucis par l'apprentissage (`apprentissage::signal_fort`). Décision en mémoire : après un redémarrage, une panne
-  déjà signalée peut l'être une fois de plus.
-- **Historique** : chaque changement d'état d'une collecte est écrit dans le SIEM (`Source` « sante », `Type`
-  « collecte »), au changement seulement ; le passage d'« Inconnue » à « Active » du démarrage est tu ; plus de 6
-  changements dans l'heure : collecte « instable », une ligne par heure au plus. La chronologie d'un incident les
-  reprend (PR 4.3).
-- **Faux positifs attendus** : redémarrage de Defender pendant une mise à jour de sa plateforme ; journal Sécurité plein
-  (à mesurer en VM) ; listes de menaces jamais téléchargées (poste sans Internet). Écarté : la veille d'un portable
-  (silence des listes de menaces jusqu'à leur prochain tour, test `sante_veille_silence_des_listes_sans_constat`).
-- **Limite** : une collecte coupée à répétition, moins de 30 min chaque fois, ne lève jamais SAN-001 (l'historique la dit
-  « instable » au-delà de 6 changements dans l'heure) ; un constat « instable » pour les collectes critiques est à
-  reprendre plus tard.
-- **Tests** : `sante_collecte_muette_30_min`, `sante_collecte_revenue_avant_30_min`, `sante_collecte_retablie`,
+- **Rationale**: a switched-off collection silences the rules that depend on it; without a finding, this silence looks like
+  a quiet machine. Cutting off the view of Defender is what an attacker gains most by doing (SAN-003).
+- **Telemetry**: the published status of the collections (`collectes::instantane`, PR 3.3); the monitor's counter of unfollowed
+  alerts (SAN-012). "sante" thread, every 30 s, outside the monitor lock.
+- **Bounds**: one finding per collection (SAN-001), or per rule (SAN-003, SAN-012), and per 24 h at most **for the same
+  outage**: once restored, the collection can be reported again (audit of #98, S98-01). `Inconnue`
+  counts as unavailable (fail closed); a collection read less often than every 15 min (threat lists:
+  every hour) only counts the unavailability recorded by its source, not its mere silence, which it catches up on after
+  a sleep (review of #98, D1); `Desactivee` (Sysmon absent, console mode) never raises anything. Never
+  softened by learning (`apprentissage::signal_fort`). Decision in memory: after a restart, an outage
+  already reported may be reported once more.
+- **History**: each state change of a collection is written to the SIEM (`Source` "sante", `Type`
+  "collecte"), on change only; the change from "Inconnue" to "Active" at startup is not recorded; more than 6
+  changes within the hour: collection "instable", one line per hour at most. The timeline of an incident
+  includes them (PR 4.3).
+- **Expected false positives**: restart of Defender during an update of its platform; Security log full
+  (to be measured in a VM); threat lists never downloaded (machine without Internet). Ruled out: the sleep of a laptop
+  (silence of the threat lists until their next round, test `sante_veille_silence_des_listes_sans_constat`).
+- **Limit**: a collection switched off repeatedly, for less than 30 min each time, never raises SAN-001 (the history calls it
+  "instable" beyond 6 changes within the hour); an "instable" finding for the critical collections is to be
+  taken up later.
+- **Tests**: `sante_collecte_muette_30_min`, `sante_collecte_revenue_avant_30_min`, `sante_collecte_retablie`,
   `sante_desactivee_sans_alerte`, `sante_inconnue_compte_indisponible`, `sante_defender_aveugle_critique`,
   `sante_defender_un_seul_collecteur`, `sante_rappel_apres_24_h`, `sante_historique_au_changement_et_instable`,
   `sante_veille_silence_des_listes_sans_constat`, `sante_rappel_remis_a_zero_au_retablissement`,
-  `incidents_plafond_non_clos`, `sante_jamais_adoucie_par_l_apprentissage` ; 3a (événement « sante » à l'arrêt d'une
-  collecte).
-- **SAN-004** (PR 4.4b) : une panne de remontée commence au premier lot non remis (aucun canal tenté n'a réussi) et
-  finit au premier lot remis ; un constat par panne et par 24 h au plus ; remontée non configurée : rien. Tests :
+  `incidents_plafond_non_clos`, `sante_jamais_adoucie_par_l_apprentissage`; 3a ("sante" event when a
+  collection stops).
+- **SAN-004** (PR 4.4b): a forwarding outage starts at the first batch not delivered (no channel attempted succeeded) and
+  ends at the first batch delivered; one finding per outage and per 24 h at most; forwarding not configured: nothing. Tests:
   `sante_remontee_echec_1h`, `sante_remontee_non_configuree`.
-- **SAN-010 et SAN-011** (PR 4.5a) : collecte `Sessions` (fil « sante », toutes les 30 s) ; sessions `WTSActive` avec un
-  jeton d'utilisateur ; interface reconnue par son chemin complet **égal** au chemin installé (`deR4Tizer.exe` à côté
-  du service) : une copie posée ailleurs ne compte pas. Installation avec `LANCEMENT_SESSION=0` (pas de valeur Run) : aucune session attendue, aucun constat. Énumération impossible : collecte indisponible, jamais
-  « interface présente », et SAN-010/011 sans collecte. Un constat par session, par épisode (SAN-010 : remis à zéro au
-  retour de l'interface, 3 constats au plus par session et par 24 h, le dernier constat le disant, puis une ligne dans le SIEM ; le plafond est en mémoire : il repart de zéro au redémarrage du service et à la fermeture de la session) et par 24 h au plus ; chaque disparition et chaque retour sont écrits dans le SIEM (`Type`
-  « interface »). Le service ne relance rien : une tâche planifiée posée par le MSI le fait sous l'identité de l'utilisateur (PR 4.5b), toutes les 5 min, et SAN-010 signale l'absence au-delà. Il ne distingue pas un
-  « Quitter » volontaire d'un arrêt forcé. Limite : une interface au bon chemin mais suspendue compte comme présente ; un programme sous le compte de l'utilisateur peut donc couper les notifications locales sans SAN-010 (audit de #100, S100-01) ; la surveillance et la remontée continuent ; il faudrait un signe de vie de l'interface pour aller plus loin. Autres faux positifs attendus : tâche de relance retirée ou interdite (poste géré) ; compte non autorisé à lire les données, qui
-  ferme l'interface ; session Bureau à distance sans bureau. Tests : `sante_interface_absente_15_min`,
+- **SAN-010 and SAN-011** (PR 4.5a): collection `Sessions` ("sante" thread, every 30 s); `WTSActive` sessions with a
+  user token; interface recognised by its full path **equal** to the installed path (`deR4Tizer.exe` next to
+  the service): a copy placed elsewhere does not count. Installation with `LANCEMENT_SESSION=0` (no Run value): no session expected, no finding. Enumeration impossible: collection unavailable, never
+  "interface present", and SAN-010/011 without collection. One finding per session, per episode (SAN-010: reset when
+  the interface comes back, at most 3 findings per session and per 24 h, the last finding saying so, then one line in the SIEM; the cap is in memory: it starts again from zero when the service restarts and when the session closes) and per 24 h at most; each disappearance and each return are written to the SIEM (`Type`
+  "interface"). The service restarts nothing: a scheduled task placed by the MSI does it under the user's identity (PR 4.5b), every 5 min, and SAN-010 reports the absence beyond that. It does not distinguish a deliberate
+  "Quit" from a forced stop. Limit: an interface at the right path but suspended counts as present; a program under the user's account can therefore cut off local notifications without SAN-010 (audit of #100, S100-01); monitoring and forwarding continue; a sign of life from the interface would be needed to go further. Other expected false positives: restart task removed or forbidden (managed machine); account not authorised to read the data, which
+  closes the interface; Remote Desktop session without a desktop. Tests: `sante_interface_absente_15_min`,
   `sante_grace_ouverture_session`, `sante_interface_trois_disparitions`, `sante_interface_deux_disparitions`,
   `sante_interface_retour_et_session_fermee`.
-- **SAN-013** (audit du 2026-11-23, A-6-3) : un compte standard qui crée des processus en boucle remplissait le SIEM ;
-  la purge par la taille chassait les jours les plus anciens, fichier du jour compris, et la file débordait en silence.
-  Désormais le fichier du jour n'est jamais supprimé ; au-delà de son plafond (1 Go / 30 : 30 jours pleins tiennent dans
-  1 Go, une inondation d'un jour ne chasse plus les autres), les événements du jour ne sont plus écrits mais comptés (la
-  corrélation les voit quand même) ; la purge par la taille ne touche que les jours précédents (le jour courant compte
-  pour sa part bornée). Constat à la première perte, au premier événement non écrit et à la première purge par la taille,
-  chacun aussitôt ; une hausse d'un compteur déjà signalé, une fois par 24 h au plus. Compteurs depuis le démarrage, en
-  mémoire. **Limite** : un compte standard peut toujours saturer le jour courant (ce qu'il fait ensuite ce jour-là n'est
-  plus écrit dans le SIEM, les alertes restent dans `alertes.json`) : c'est ce que SAN-013 dit ; plafond à mesurer en
-  VM sur un poste ordinaire. Tests : `siem_purge_par_jour`, `sante_san013_historique_incomplet`.
-- **SAN-014** (audit du 2026-11-23, C-3) : un `config.json` présent mais illisible (verrou, droits, propriétaire refusé,
-  plusieurs liens physiques) ou mal formé passait pour absent : le service tournait avec la configuration par défaut, et
-  la première commande de réglage l'écrivait par-dessus la configuration légitime. Désormais `commun::lire_etat` distingue
-  « absent » de « présent mais non chargé » (trois essais espacés de 100 ms pour une erreur de lecture, aucun pour un
-  contenu mal formé ou un refus) ; non chargé au démarrage, la configuration reste celle par défaut, `config.json` n'est
-  jamais réécrit jusqu'au prochain démarrage, les commandes qui l'écriraient sont refusées avec la raison, la page Santé
-  le dit (ligne « Configuration ») et SAN-014 est levé aussitôt, puis une fois par 24 h au plus tant que l'état dure. Pas
-  de constat en échec de la protection du dossier (INT-001 le dit déjà). La même règle vaut pour tout fichier lu par
-  `commun::lire` (blocages, bases « connues », historique du pare-feu, état du réseau…) : présent mais non chargé, il
-  n'est plus réécrit tant qu'une lecture ne l'a pas chargé ou vu absent. Tests : `lot_a_lecture_absent_distinct_de_illisible`,
-  `lot_a_fichier_non_charge_jamais_reecrit`, `lot_a_configuration_non_chargee_et_san014`. Essai en VM à faire.
+- **SAN-013** (audit of 2026-11-23, A-6-3): a standard account that creates processes in a loop filled the SIEM;
+  the purge by size pushed out the oldest days, file of the day included, and the queue overflowed silently.
+  Now the file of the day is never deleted; beyond its cap (1 GB / 30: 30 full days fit in
+  1 GB, a one-day flood no longer pushes out the others), the events of the day are no longer written but counted (the
+  correlation still sees them); the purge by size only touches the previous days (the current day counts
+  for its bounded share). Finding at the first loss, at the first unwritten event and at the first purge by size,
+  each immediately; a rise of an already reported counter, once per 24 h at most. Counters since startup, in
+  memory. **Limit**: a standard account can still saturate the current day (what it does next that day is no
+  longer written to the SIEM, the alerts stay in `alertes.json`): that is what SAN-013 says; cap to be measured in a
+  VM on an ordinary machine. Tests: `siem_purge_par_jour`, `sante_san013_historique_incomplet`.
+- **SAN-014** (audit of 2026-11-23, C-3): a `config.json` present but unreadable (lock, rights, owner refused,
+  several hard links) or malformed passed for absent: the service ran with the default configuration, and
+  the first settings command wrote it over the legitimate configuration. Now `commun::lire_etat` distinguishes
+  "absent" from "present but not loaded" (three attempts 100 ms apart for a read error, none for a
+  malformed content or a refusal); if not loaded at startup, the configuration stays the default one, `config.json` is
+  never rewritten until the next startup, the commands that would write it are refused with the reason, the Health page
+  says so ("Configuration" line) and SAN-014 is raised immediately, then once per 24 h at most as long as the state lasts. No
+  finding when the protection of the folder fails (INT-001 already says so). The same rule applies to any file read by
+  `commun::lire` (blocks, "known" databases, firewall history, network state…): present but not loaded, it
+  is no longer rewritten as long as a read has not loaded it or seen it absent. Tests: `lot_a_lecture_absent_distinct_de_illisible`,
+  `lot_a_fichier_non_charge_jamais_reecrit`, `lot_a_configuration_non_chargee_et_san014`. Trial in a VM still to be done.
 
-## REP : réponse (phase 6)
+## REP: response (phase 6)
 
-| Id | Constat | Code | Niveau | ATT&CK |
+| Id | Finding | Code | Level | ATT&CK |
 |---|---|---|---|---|
-| REP-001 | Action de réponse toujours en cours à son échéance : suspension (2 h si automatique, 24 h sinon), isolation (7 jours), mode panique (4 h), quarantaine (30 jours), blocage manuel (90 jours), puis à chaque période. Une alerte par sorte d'action et par heure au plus (24 h pour quarantaine et blocage manuel) : les relances retenues partent, comptées, avec la suivante ; au-delà d'une action, l'alerte dit le nombre et nomme les 5 premières. Jamais une levée : la récupération est humaine, et la relance la dit | `politique.rs` | Critique (suspension automatique, panique), Alerte (suspension manuelle, isolation), Info (quarantaine, blocage manuel) | aucune |
-| REP-002 | Boucle d'actions arrêtée : une action automatique est retenue par la garde (même cible, plafond des listes ou de l'IPS), ou `reponses.json` est mal formé, ou le registre des actions en cours est plein (suspensions automatiques récentes sorties du suivi, une fois par épisode) | `politique.rs` | Critique | aucune |
-| REP-003 | Pare-feu muet 5 min de suite (niveau Alerte, une fois par panne : l'état publié peut être ancien) ; ou mode panique non posé (une règle refusée ou inactive, drapeau non écrit : tout est retiré) ou non retiré (une règle reste : drapeau gardé), ou devenu incertain hors d'une commande (règle ou drapeau retiré par un tiers, vu en 30 s au plus). Dit l'état effectif et la récupération | `moniteur.rs`, `reponse.rs` | Critique | aucune |
-| REP-004 | Isolation détournée : le chemin isolé mène à un autre programme (dossier remplacé par une jonction, fichier par un lien), constaté au relevé de 5 min, signalé une fois ; ou isolation non vérifiable (chemin illisible 3 relevés de suite, niveau Alerte) ; les règles sont gardées (jamais de levée automatique), la décision est humaine | `moniteur.rs`, `reponse.rs` | Critique (isolation détournée), Alerte (isolation non vérifiable) ; jamais adoucie par l'apprentissage (comme toute REP-*) | aucune |
+| REP-001 | Response action still in progress at its deadline: suspension (2 h if automatic, 24 h otherwise), isolation (7 days), panic mode (4 h), quarantine (30 days), manual block (90 days), then at each period. One alert per kind of action and per hour at most (24 h for quarantine and manual block): the held reminders go out, counted, with the next one; beyond one action, the alert gives the number and names the first 5. Never a lifting: recovery is human, and the reminder says so | `politique.rs` | Critical (automatic suspension, panic), Alert (manual suspension, isolation), Info (quarantine, manual block) | aucune (none) |
+| REP-002 | Action loop stopped: an automatic action is held back by the guard (same target, cap of the lists or of the IPS), or `reponses.json` is malformed, or the registry of actions in progress is full (recent automatic suspensions dropped from tracking, once per episode) | `politique.rs` | Critical | aucune (none) |
+| REP-003 | Firewall silent for 5 min in a row (Alert level, once per outage: the published state may be old); or panic mode not set (a rule refused or inactive, flag not written: everything is removed) or not removed (a rule remains: flag kept), or become uncertain outside a command (rule or flag removed by a third party, seen within 30 s at most). States the effective state and the recovery | `moniteur.rs`, `reponse.rs` | Critical | aucune (none) |
+| REP-004 | Isolation diverted: the isolated path leads to another program (folder replaced by a junction, file by a link), found at the 5-min inventory, reported once; or isolation not verifiable (path unreadable for 3 inventories in a row, Alert level); the rules are kept (never an automatic lifting), the decision is human | `moniteur.rs`, `reponse.rs` | Critical (isolation diverted), Alert (isolation not verifiable); never softened by learning (like any REP-*) | aucune (none) |
 
-- **Justification** : une action automatique répétée sans fin rend le poste inutilisable ; une action retenue laisse un
-  programme ou une adresse actifs, ce que le prestataire doit savoir. L'alerte d'origine part toujours : RES-001 et LEU-002
-  disent que l'action est retenue, pas l'alerte de l'IPS (`ids.rs`, non corrigé à ce jour), écrite dès la détection.
-- **Télémétrie** : aucune collecte, l'historique des actions automatiques (`reponses.json`).
-- **Bornes** : une alerte par cible et par 24 h, une par arrêt d'une heure des listes, une par heure pour l'IPS, une par
-  démarrage pour un fichier mal formé. Une retenue pour décision humaine n'en lève pas : c'est un choix de l'administrateur.
-- **Faux positifs attendus** : un logiciel légitime qui touche les leurres à répétition ; une liste de menaces très
-  renouvelée après une longue coupure.
-- **Que faire** : vérifier le programme ou l'adresse cités. Une action manuelle reste toujours possible.
+- **Rationale**: an automatic action repeated endlessly makes the machine unusable; a held-back action leaves a
+  program or an address active, which the contractor must know. The original alert always goes out: RES-001 and LEU-002
+  say that the action is held back, the IPS alert does not (`ids.rs`, not fixed to date), written as soon as the detection occurs.
+- **Telemetry**: no collection, the history of automatic actions (`reponses.json`).
+- **Bounds**: one alert per target and per 24 h, one per one-hour stop of the lists, one per hour for the IPS, one per
+  startup for a malformed file. A hold for a human decision raises none: it is a choice of the administrator.
+- **Expected false positives**: a legitimate software that touches the decoys repeatedly; a threat list heavily
+  renewed after a long interruption.
+- **What to do**: check the program or the address cited. A manual action always remains possible.
 
-## EXP : modules expérimentaux (dégelés en novembre 2026, en validation)
+## EXP: experimental modules (unfrozen in November 2026, under validation)
 
 | Id | Module | Code | ATT&CK |
 |---|---|---|---|
-| EXP-IDS-001 | IDS (règles au format Suricata) ; niveau selon la priorité de la règle (1 Critique, 2 Alerte, sinon Info), aucune technique ATT&CK posée par le code ; l'identifiant (sid) et le fichier de la règle IDS restent dans les raisons | `ids.rs` | posée par l'alerte : aucune à ce jour (l'identifiant de la règle IDS est dans les raisons) |
-| EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` | posée par l'alerte selon le comportement : T1187, T1021, T1048.003, T1071.001, T1071.004, T1552 |
-| EXP-NDR-001 | NDR : usurpation ARP (Critique ou Alerte, T1557.002), empoisonnement LLMNR/NBNS par le leurre actif (Critique, T1557.001), répondeur passif LLMNR/NBNS/mDNS (Alerte, T1557.001), serveur DHCP pirate (Critique, T1557.003), redirection UPnP vers ce PC (Alerte, T1133), d'après `ndr.rs` | `ndr.rs` | posée par l'alerte selon le comportement : T1557.002, T1557.001, T1557.003, T1133, T1200 |
+| EXP-IDS-001 | IDS (rules in Suricata format); level according to the priority of the rule (1 Critical, 2 Alert, otherwise Info), no ATT&CK technique set by the code; the identifier (sid) and the file of the IDS rule stay in the reasons | `ids.rs` | posée par l'alerte (set by the alert): none to date (the identifier of the IDS rule is in the reasons) |
+| EXP-DPI-001 | DPI (SNI, JA3, HTTP, DNS) | `dpi.rs` | posée par l'alerte (set by the alert) depending on the behaviour: T1187, T1021, T1048.003, T1071.001, T1071.004, T1552 |
+| EXP-NDR-001 | NDR: ARP spoofing (Critical or Alert, T1557.002), LLMNR/NBNS poisoning detected by the active decoy (Critical, T1557.001), passive LLMNR/NBNS/mDNS responder (Alert, T1557.001), rogue DHCP server (Critical, T1557.003), UPnP redirection to this PC (Alert, T1133), based on `ndr.rs` | `ndr.rs` | posée par l'alerte (set by the alert) depending on the behaviour: T1557.002, T1557.001, T1557.003, T1133, T1200 |
 
-- Gelés par `CLAUDE.md` pendant la phase 3 : seule une ligne qui pose l'identifiant de règle a été ajoutée à leurs
-  alertes (PR 3.2), sans autre changement de logique (mainteneur, 2026-10-25). Dégelés depuis (IDS et NDR le 2026-11-16, DPI le 2026-11-18, `CLAUDE.md`, paragraphe « Dégel de l'IDS, du NDR et du DPI »).
-- Un identifiant par module (PR 3.2) : chacun de ces modules produit ses alertes à un seul endroit, et la règle précise
-  (sid de l'IDS, motif du DPI ou du NDR) reste dans les raisons. Un découpage plus fin reste à faire dans leur validation.
-- **IDS, second audit (B-4-01 et B-4-02, corrigés)** : une règle sans contenu positif (aucun `content`, ou seulement
-  des `content` niés) évalue quand même toutes ses conditions : elle ne se déclenche que si aucun de ses contenus niés
-  n'est présent, avec leurs options (`offset`, `depth`…) ; avant, elle se déclenchait sur son seul en-tête (protocole,
-  adresses, ports). Comme dans Suricata, une règle qui a au moins un `content` (nié ou non) ne correspond jamais à un
-  paquet sans charge utile (SYN, ACK) : avec l'IPS, une règle `drop` à contenus niés ne bloque pas un simple ACK.
-  Une variable d'en-tête inconnue rend la règle ignorée et comptée, comme une option non prise en
-  charge (`ids.json`, champ `Ignorees`) ; avant, elle valait « toutes les adresses » ou « tous les ports ». Variables
-  connues, inchangées : `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`,
-  `$ORACLE_PORTS`. Les autres variables standard prennent leur valeur du `suricata.yaml` par défaut de Suricata 7
-  (`suricata.yaml.in`, branche `main-7.0.x`) : `$HTTP_SERVERS`, `$SMTP_SERVERS`, `$SQL_SERVERS`, `$DNS_SERVERS`,
+- Frozen by `CLAUDE.md` during phase 3: only a line that sets the rule identifier was added to their
+  alerts (PR 3.2), with no other change of logic (maintainer, 2026-10-25). Unfrozen since then (IDS and NDR on 2026-11-16, DPI on 2026-11-18, `CLAUDE.md`, « Unfreezing of the IDS, NDR and DPI » paragraph).
+- One identifier per module (PR 3.2): each of these modules produces its alerts in a single place, and the precise rule
+  (IDS sid, DPI or NDR pattern) stays in the reasons. A finer split remains to be done in their validation.
+- **IDS, second audit (B-4-01 and B-4-02, fixed)**: a rule without positive content (no `content`, or only
+  negated `content`) still evaluates all its conditions: it triggers only if none of its negated contents
+  is present, with their options (`offset`, `depth`…); before, it triggered on its header alone (protocol,
+  addresses, ports). As in Suricata, a rule that has at least one `content` (negated or not) never matches a
+  packet without a payload (SYN, ACK): with the IPS, a `drop` rule with negated contents does not block a mere ACK.
+  An unknown header variable makes the rule ignored and counted, like an unsupported
+  option (`ids.json`, field `Ignorees`); before, it meant "all addresses" or "all ports". Known variables,
+  unchanged: `$HOME_NET`, `$EXTERNAL_NET`, `$HTTP_PORTS`, `$SSH_PORTS`, `$FILE_DATA_PORTS`,
+  `$ORACLE_PORTS`. The other standard variables take their value from the default `suricata.yaml` of Suricata 7
+  (`suricata.yaml.in`, branch `main-7.0.x`): `$HTTP_SERVERS`, `$SMTP_SERVERS`, `$SQL_SERVERS`, `$DNS_SERVERS`,
   `$TELNET_SERVERS`, `$DC_SERVERS`, `$DNP3_SERVER`, `$DNP3_CLIENT`, `$MODBUS_SERVER`, `$MODBUS_CLIENT`, `$ENIP_SERVER`,
-  `$ENIP_CLIENT` valent `$HOME_NET` ; `$AIM_SERVERS` vaut `$EXTERNAL_NET` ; `$SHELLCODE_PORTS` vaut tous les ports
-  sauf 80 (seul ; dans une liste, la règle est ignorée), `$DNP3_PORTS` 20000, `$MODBUS_PORTS` 502, `$FTP_PORTS` 21,
-  `$GENEVE_PORTS` 6081, `$VXLAN_PORTS` 4789, `$TEREDO_PORTS` 3544. `$GTP_PORTS` (absent du `suricata.yaml` de la
-  version 7) et toute autre variable restent inconnus : règle ignorée. Testé en labo (`ids_regle_sans_contenu_positif_evalue_ses_negations`,
-  `ids_variable_inconnue_ignoree`, `ids_variables_standard_de_suricata`) ; à mesurer en VM (compte des règles ignorées
-  sur un jeu ET Open).
-- **Télémétrie** : capture réseau.
-- **Tests** : ceux des modules, plus ceux du second audit pour l'IDS (ci-dessus) ; aucune mesure de faux positifs
-  pendant la phase 3.
+  `$ENIP_CLIENT` are `$HOME_NET`; `$AIM_SERVERS` is `$EXTERNAL_NET`; `$SHELLCODE_PORTS` is all ports
+  except 80 (alone; in a list, the rule is ignored), `$DNP3_PORTS` 20000, `$MODBUS_PORTS` 502, `$FTP_PORTS` 21,
+  `$GENEVE_PORTS` 6081, `$VXLAN_PORTS` 4789, `$TEREDO_PORTS` 3544. `$GTP_PORTS` (absent from the `suricata.yaml` of
+  version 7) and any other variable remain unknown: rule ignored. Tested in the lab (`ids_regle_sans_contenu_positif_evalue_ses_negations`,
+  `ids_variable_inconnue_ignoree`, `ids_variables_standard_de_suricata`); to be measured in a VM (count of ignored rules
+  on an ET Open set).
+- **Telemetry**: network capture.
+- **Tests**: those of the modules, plus those of the second audit for the IDS (above); no false positive measurement
+  during phase 3.
