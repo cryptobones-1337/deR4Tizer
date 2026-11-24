@@ -5640,6 +5640,30 @@ fn audit_donnees_sacl_completee() {
     assert_eq!(texte_sacl_de_sddl("O:BAS:NO_ACCESS_CONTROL").as_deref(), Some(""));
 }
 
+/// Décision pure (prérelecture de #302) : suite du test élevé d'audit selon la pose. Ok(true) continuer (pose faite),
+/// Ok(false) s'arrêter en le disant (pose refusée hors CI : session non élevée d'un poste de travail), Err en CI quand la
+/// pose est refusée (le job windows est administrateur : un « ok » sans exécution n'y prouverait rien, et cargo masque la
+/// sortie des tests réussis)
+fn suite_audit_eleve(en_ci: bool, refus: Option<&str>) -> Result<bool, String> {
+    match (en_ci, refus) {
+        (_, None) => Ok(true),
+        (false, Some(_)) => Ok(false),
+        (true, Some(r)) => Err(format!("a64_audit_herite : en CI, la pose de l'audit est refusée ({r}) ; le test élevé ne peut pas s'exécuter")),
+    }
+}
+
+/// Prérelecture de #302 : en CI (GITHUB_ACTIONS), le test élevé d'audit échoue si la pose est refusée
+#[test]
+fn a64_audit_eleve_en_ci_sans_privilege_echoue() {
+    assert_eq!(suite_audit_eleve(false, None), Ok(true));
+    assert_eq!(suite_audit_eleve(true, None), Ok(true));
+    assert_eq!(suite_audit_eleve(false, Some("privilège absent")), Ok(false), "hors CI : dit et sauté");
+    assert!(suite_audit_eleve(true, Some("privilège absent")).is_err_and(|m| m.contains("privilège absent")), "en CI : échec, pas un saut");
+    let t = include_str!("tests.rs").replace("\r\n", "\n");
+    assert!(t.contains("let en_ci = std::env::var_os(\"GITHUB_ACTIONS\").is_some();\n    for recursif in [false, true] {")
+        && t.contains("match suite_audit_eleve(en_ci, pose.as_ref().err().map(String::as_str)) {"), "branchée dans le test élevé");
+}
+
 /// Audit du 2026-11-23, A-6-4, instruction de la CI de #302 (run 45294613655 : fichier créé après la pose dans le dossier
 /// témoin, SACL vide) : sur un vrai dossier, la pose par handle (poser_audit_arborescence) donne-t-elle aux fichiers créés
 /// ENSUITE la copie héritée de notre entrée ? Sinon la détection de vol de données ne verrait pas les fichiers créés après
@@ -5648,14 +5672,24 @@ fn audit_donnees_sacl_completee() {
 #[test]
 fn a64_audit_herite_par_les_fichiers_crees_apres_la_pose_puis_retire() {
     use crate::natif::{poser_audit_arborescence, retirer_audit_arborescence, sacl_de_chemin, texte_sacl_de_sddl};
+    let en_ci = std::env::var_os("GITHUB_ACTIONS").is_some();
     for recursif in [false, true] {
         let d = dossier_test(&format!("a64-heritage-{recursif}"));
         let e = crate::vol_donnees::entrees_audit(recursif);
         std::fs::write(d.join("avant.txt"), b"a").unwrap();
-        if let Err(err) = poser_audit_arborescence(&d, e.dossier, e.fichier, recursif, 1000) {
-            eprintln!("NON EXÉCUTÉ (récursif {recursif}) : pose impossible sans élévation ({err})");
-            let _ = std::fs::remove_dir_all(&d);
-            return;
+        let pose = poser_audit_arborescence(&d, e.dossier, e.fichier, recursif, 1000);
+        // Prérelecture de #302 : en CI, une pose refusée fait échouer le test (un saut y rendrait « ok » sans preuve)
+        match suite_audit_eleve(en_ci, pose.as_ref().err().map(String::as_str)) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!("NON EXÉCUTÉ (récursif {recursif}) : pose impossible sans élévation ({})", pose.err().unwrap_or_default());
+                let _ = std::fs::remove_dir_all(&d);
+                return;
+            }
+            Err(m) => {
+                let _ = std::fs::remove_dir_all(&d);
+                panic!("{m}");
+            }
         }
         // Créés après la pose, par le chemin, comme le ferait un navigateur
         std::fs::write(d.join("apres.txt"), b"b").unwrap();

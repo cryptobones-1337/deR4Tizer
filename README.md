@@ -227,8 +227,11 @@ Known, by design. Be aware before relying on it:
 - Uninstall leftovers (audit of 2026-11-23, A-4-3 and A-6-4; tested on the decisions and in CI scenarios, to be tried in
   the VM): a quarantine that is not empty is kept (see Install). The read auditing set on profile folders is removed
   through handles that follow no link, entry by entry: only entries identical to deR4Tizer's (Everyone, success, read
-  data, same inheritance flags) go, so an identical entry set by someone else on the same folders goes too (an audit
-  list does not record who added an entry), and every other entry stays; items that cannot be opened (links,
+  data, same inheritance flags) go, together with the copies Windows makes of them on files and subfolders created
+  after deR4Tizer set them (`(AU;SA;CC;;;WD)` on a file, `(AU;OICISA;CC;;;WD)` on a subfolder, or the same with the
+  inherited flag `ID`), copies being removed only under a folder that no longer passes them on; so an identical entry
+  set by someone else on the same folders or their content goes too (an audit list does not record who added an
+  entry), and every other entry stays; items that cannot be opened (links,
   unreadable, beyond 20,000 per folder) or whose audit list holds a conditional or resource-attribute entry (never
   rewritten) keep it, and the uninstall report gives their number. Left on purpose: the reports of the uninstall
   itself (`%SystemRoot%\Temp\deR4Tizer-nettoyage-*.txt`, `deR4Tizer-arret-*.txt` if stopping the service was slow,
