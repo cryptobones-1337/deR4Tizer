@@ -739,11 +739,17 @@ namespace DeR4Tizer
                         // et mot de passe (nouveau, effacé ou inchangé) ; un serveur, un port, un compte ou une sécurité changés sans nouveau mot de passe effacent
                         // l'ancien côté service, jamais envoyé à un autre serveur
                         Func<string, string> champ = k => conf != null && conf.ContainsKey(k) && conf[k] != null ? Visible(conf[k].ToString()) : "";
+                        // Mot de passe présent dans la commande (jamais sa valeur) : « nouveau » ou « effacé », null s'il est absent
+                        string mdpCommande = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
+                            ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau")) : null;
+                        // Canal e-mail éteint : le mot de passe tapé part quand même avec la commande, il est donc dit aussi
+                        // (relecture de #305, A305-1)
+                        if (!actif("Smtp") && mdpCommande != null)
+                            canaux.Add((en ? "e-mail (off): SMTP password " : "e-mail (désactivé) : mot de passe SMTP ") + mdpCommande);
                         if (actif("Smtp"))
                         {
-                            string mdp = d.TryGetValue("SmtpMotDePasse", out o) && o is string && ((string)o).Length > 0
-                                ? (((string)o) == "-" ? (en ? "cleared" : "effacé") : (en ? "new" : "nouveau"))
-                                : (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
+                            string mdp = mdpCommande
+                                ?? (en ? "unchanged (cleared if the server, port, account or security changes)" : "inchangé (effacé si le serveur, le port, le compte ou la sécurité change)");
                             canaux.Add((en ? "e-mail via " : "e-mail par ") + champ("SmtpServeur") + ":" + champ("SmtpPort")
                                 + " (" + champ("SmtpSecurite") + (en ? ", account " : ", compte ") + champ("SmtpUtilisateur") + (en ? ", sender " : ", expéditeur ") + champ("Expediteur")
                                 + (en ? ", password " : ", mot de passe ") + mdp + ")" + (en ? ", recipients " : ", destinataires ")
@@ -765,7 +771,15 @@ namespace DeR4Tizer
                     return v == "terminer" ? (en ? "End learning mode now" : "Terminer le mode apprentissage maintenant")
                         : v == "recommencer" ? (en ? "Restart learning mode for 7 days (forget learned behaviours)\nFor 7 days, every non-critical alert without a strong signal is recorded as information and learned, including a malicious program active at that time: only on a computer known to be clean."
                                                      : "Relancer le mode apprentissage pour 7 jours (oublier les comportements appris)\nPendant 7 jours, toute alerte non critique sans signal fort est notée en information et mémorisée, y compris celle d'un programme malveillant actif à ce moment : seulement sur un poste que l'on sait sain.")
-                        : (en ? "DELETE all alert exceptions" : "SUPPRIMER toutes les exceptions d'alerte");
+                        // Texte exact par valeur, fidèle à apprentissage::commande (relecture de #304) : « oublier-perimees » ne
+                        // supprime que les exceptions d'une version précédente ; une valeur inconnue est dite inconnue, jamais
+                        // présentée par un texte rassurant
+                        : v == "oublier" ? (en ? "DELETE all alert exceptions, current ones and those from a previous version\nThe behaviours concerned will raise alerts again."
+                                               : "SUPPRIMER toutes les exceptions d'alerte, actuelles et d'une version précédente\nLes comportements concernés seront de nouveau signalés par une alerte.")
+                        : v == "oublier-perimees" ? (en ? "DELETE only the alert exceptions from a previous version (they no longer apply)\nCurrent exceptions are kept."
+                                                        : "SUPPRIMER seulement les exceptions d'alerte d'une version précédente (elles ne s'appliquent plus)\nLes exceptions actuelles sont gardées.")
+                        : (en ? "Unknown learning-mode command: " : "Commande d'apprentissage inconnue : ") + Visible(v)
+                            + (en ? "\nThis interface does not know what it would do: cancel." : "\nCette interface ne sait pas ce qu'elle ferait : annulez.");
                 case "majVerifier": return en ? "Check for an update now (and install it if it is verified)" : "Rechercher une mise à jour maintenant (et l'installer si elle est vérifiée)";
                 case "majConfig":
                     {
@@ -928,7 +942,10 @@ namespace DeR4Tizer
         // (non suspendu automatiquement 7 jours), le mode panique coupé, un domaine autorisé ou retiré, les catégories du
         // filtrage (l'assistant ne connaît pas les catégories actuelles), un compte autorisé à lire les données, et les
         // réglages : la commande porte toute la configuration syslog et API (destination des journaux, API ouverte sur le
-        // réseau), dont l'assistant ne connaît pas l'état actuel. Décision pure, testée par tests\test-confirmations.ps1
+        // réseau), dont l'assistant ne connaît pas l'état actuel. « apprentissage » « oublier » et « oublier-perimees »
+        // n'affaiblissent pas (relecture de #304) : supprimer une exception rend son comportement de nouveau signalé, et celles
+        // d'une version précédente ne s'appliquent déjà plus ; une valeur inconnue est refusée par le service (validation.rs)
+        // et dite inconnue par Decrire. Décision pure, testée par tests\test-confirmations.ps1
         public static bool Affaiblit(Commande c)
         {
             if (c == null) return false;
@@ -988,7 +1005,10 @@ namespace DeR4Tizer
                 case "testerNotifications": return en ? "Send a test notification" : "Envoyer une notification de test";
                 case "exception": return en ? "Add an alert exception" : "Ajouter une exception d'alerte";
                 case "apprentissage": return v == "terminer" ? (en ? "End learning mode" : "Terminer l'apprentissage")
-                    : v == "recommencer" ? (en ? "Restart learning mode" : "Relancer l'apprentissage") : (en ? "Delete all alert exceptions" : "Supprimer les exceptions d'alerte");
+                    : v == "recommencer" ? (en ? "Restart learning mode" : "Relancer l'apprentissage")
+                    : v == "oublier" ? (en ? "Delete all alert exceptions" : "Supprimer toutes les exceptions d'alerte")
+                    : v == "oublier-perimees" ? (en ? "Delete exceptions from a previous version" : "Supprimer les exceptions d'une version précédente")
+                    : (en ? "Unknown learning-mode command" : "Commande d'apprentissage inconnue");
                 case "majVerifier": return en ? "Check for an update" : "Rechercher une mise à jour";
                 case "majConfig": return en ? "Change update settings" : "Modifier les réglages de mise à jour";
                 case "autoriserLecteur": return en ? "Allow an account to read the data" : "Autoriser un compte à lire les données";

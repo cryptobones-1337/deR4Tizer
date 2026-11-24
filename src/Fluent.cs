@@ -430,7 +430,8 @@ namespace DeR4Tizer
             string demandee = iPage > 0 && iPage + 1 < Environment.GetCommandLineArgs().Length ? Environment.GetCommandLineArgs()[iPage + 1] : null;
             bool connue = demandee != null && (demandee == VueAssistantFluent.Cle || NavigationFluent.Groupes().SelectMany(x => x.Entrees).Any(x => x.Cle == demandee));
             // Premiers réglages (U7a) : proposés au premier lancement, jamais en administrateur, sans source, avec --page ou caché
-            bool proposer = VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()), Canal.EstAdmin(), source != null, demandee != null,
+            // Repère jamais consulté sous jeton administrateur (audit de #304, A304-2)
+            bool proposer = VueAssistantFluent.DoitProposer(VueAssistantFluent.RepereVu(Canal.EstAdmin(), VueAssistantFluent.CheminRepere, VueAssistantFluent.RepereExiste), Canal.EstAdmin(), source != null, demandee != null,
                 Environment.GetCommandLineArgs().Contains("--cache") && !OuvertureDifferee);
             Ouvrir(connue ? demandee : proposer ? VueAssistantFluent.Cle : NavigationFluent.VueEnsemble);
             if (source != null)
@@ -840,7 +841,7 @@ namespace DeR4Tizer
                 pile.Children.Add(carte);
             }
 
-            if (source != null && !Canal.EstAdmin() && !VueAssistantFluent.RepereExiste(VueAssistantFluent.CheminRepere()))
+            if (source != null && !VueAssistantFluent.RepereVu(Canal.EstAdmin(), VueAssistantFluent.CheminRepere, VueAssistantFluent.RepereExiste))
             {
                 bool en = L.En;
                 var carte = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 0, 12) };
@@ -5392,6 +5393,17 @@ namespace DeR4Tizer
         }
 
         public static bool RepereExiste(string chemin) { try { return System.IO.File.Exists(chemin); } catch { return false; } }
+
+        // Repère « déjà proposés » consulté par l'interface non élevée seulement (audit de #304, A304-2) : sous jeton
+        // administrateur, ni son chemin (GetFolderPath, qui vérifie le dossier) ni son existence (File.Exists) ne sont
+        // demandés, car %LOCALAPPDATA% se redirige par HKCU sans élévation et la requête partirait vers un chemin choisi par
+        // un programme non élevé du compte. Rend vrai (« déjà vu » : rien à proposer, aucune carte), comme le veut déjà
+        // DoitProposer en administrateur. Décision pure, testée par tests\test-langue.ps1
+        public static bool RepereVu(bool administrateur, Func<string> chemin, Func<string, bool> existe)
+        {
+            if (administrateur) return true;
+            return existe(chemin());
+        }
 
         // « termine » ou « plus_tard » seulement ; échec d'écriture : l'assistant sera reproposé, sans autre effet. Jamais en
         // administrateur : ce dossier est contrôlé par les programmes non élevés du compte (jonction, lien), et l'assistant ne
