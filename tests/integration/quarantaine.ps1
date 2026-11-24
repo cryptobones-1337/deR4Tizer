@@ -948,8 +948,16 @@ $copiesAvant = Copies-Quarantaine
 $auditTemoin = $false; $copieHeritee = $false
 if ($edge -and (Test-Path -LiteralPath "$edge\Local State") -and @(Audit-Tous $edge).Count) {
     $auditTemoin = $true
-    Set-Content -LiteralPath "$edge\apres-pose.dat" -Value 'x'
-    $copieHeritee = [bool]@(Audit-Tous "$edge\apres-pose.dat" | Where-Object { $_.IsInherited }).Count
+    $apresPose = "$edge\apres-pose.dat"
+    Set-Content -LiteralPath $apresPose -Value 'x'
+    # Run 45294613655 de #302 : le fichier créé ne portait aucune copie héritée (SACL vide). Windows recalcule les entrées
+    # héritées quand un descripteur non protégé est réécrit par le chemin (SetNamedSecurityInfo) : réécrit ici par
+    # l'administrateur, SACL non protégée, comme le faisait l'ancienne pose en PowerShell
+    if (-not @(Audit-Tous $apresPose | Where-Object { $_.IsInherited }).Count) {
+        try { $a = Get-Acl -LiteralPath $apresPose -Audit; $a.SetAuditRuleProtection($false, $true); Set-Acl -LiteralPath $apresPose -AclObject $a } catch { }
+    }
+    $copieHeritee = [bool]@(Audit-Tous $apresPose | Where-Object { $_.IsInherited }).Count
+    $diagCopie = "fichier : $((Get-Acl -LiteralPath $apresPose -Audit).Sddl) ; dossier : $((Get-Acl -LiteralPath $edge -Audit).Sddl)"
 }
 Verifier "Désinstallation sans GARDER_DONNEES : données retirées, racine gardée et protégée ($($copiesAvant.Count) copie(s) de quarantaine gardée(s)), canaris intacts (jonction de ecartes comprise)" {
     $c = Desinstaller (Join-Path $Journaux 'desinstallation-3b.log')
@@ -965,8 +973,10 @@ Verifier "Désinstallation sans GARDER_DONNEES : données retirées, racine gard
 }
 $titreRetraitAudit = 'Désinstallation : audit de lecture de deR4Tizer retiré du dossier témoin et de ses fichiers (copie héritée comprise), règle tierce et étiquette d''intégrité gardées, canari de la jonction inchangé (A-6-4)'
 if ($auditTemoin) {
+    # Copie héritée : contrôlée seulement si elle existait avant (sinon dit à part, avec le diagnostic) ; le reste du
+    # contrôle ne dépend pas d'elle
+    if (-not $copieHeritee) { NonExecute 'Désinstallation : copie héritée de l''audit retirée (A-6-4)' "aucune copie héritée sur le fichier créé après la pose, même après recalcul ($diagCopie)" }
     Verifier $titreRetraitAudit {
-        if (-not $copieHeritee) { return "témoin : le fichier créé après la pose ne portait pas de copie héritée ($((Get-Acl -LiteralPath "$edge\apres-pose.dat" -Audit).Sddl))" }
         foreach ($x in $edge, "$edge\Local State", "$edge\temoin-integrite-basse.dat", "$edge\apres-pose.dat") {
             if (@(Audit-Tous $x).Count) { return "audit de Tout le monde resté sur $x : $((Get-Acl -LiteralPath $x -Audit).Sddl)" }
         }
