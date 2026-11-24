@@ -1,1188 +1,1188 @@
-# Campagne de validation Kali : audit initial et liste fermée de scénarios (phase 1)
+# Kali validation campaign: initial audit and closed list of scenarios (phase 1)
 
-| Champ | Valeur |
+| Field | Value |
 |---|---|
-| Version de la liste | **1.8** (2026-11-22 : redémarrage du service par le banc réseau du lot 4, sur décision du mainteneur ; délais de S-22, S-25, S-27, N-12 et N-13 recalculés ; capture passive prouvée après le redémarrage ; témoins N-06 à N-13, fiches complètes de S-20 à S-27, règle D-3 et protocole de répétition ajoutés en 1.7 ; S-19 réécrit en 1.6 ; S-20 à S-27 ajoutés en 1.5 ; version 1.4 pour le reste) |
-| Date de la version 1.4 | 2026-11-15 |
-| Versions précédentes | 1.7 du 2026-11-22 ; 1.6 du 2026-11-20 ; 1.5 du 2026-11-19 ; 1.4 du 2026-11-15 ; 1.3 du 2026-11-14 ; 1.2 du 2026-11-14 ; 1.1 et 1.0 du 2026-11-14 (publiées/transmises sous `docs/validation/campagne-kali-phase1.md`) |
-| Code audité | (v1.3) `main` au commit `cde9468` ; règle d'approbation relue dans `CLAUDE.md` à `8faf4f9` ; baseline lue dans `service-rs/src/baseline.rs` et `gpo.rs` à `ede269f`. (v1.4) Correction de l'énoncé de S-07, réécriture de la fiche S-06 et correction d'une erreur de la rédaction initiale (« code DNS-002/filtrage absent »), établies à la **lecture du worktree complet de `main` à jour** (après les fusions de phase 7.3/7.4) ; le checkout de travail de la v1.3 était sur une branche périmée (`passages-en-vm`) antérieure à ces fusions, d'où l'erreur. Aucune mesure n'y est présentée. |
-| Statut | **APPROUVÉE PAR L'AGENT DE VALIDATION** |
+| List version | **1.8** (2026-11-22: restart of the service by the lot 4 network bench, on decision of the maintainer; delays of S-22, S-25, S-27, N-12 and N-13 recalculated; passive capture proven after the restart; controls N-06 to N-13, full sheets of S-20 to S-27, rule D-3 and repetition protocol added in 1.7; S-19 rewritten in 1.6; S-20 to S-27 added in 1.5; version 1.4 for the rest) |
+| Date of version 1.4 | 2026-11-15 |
+| Previous versions | 1.7 of 2026-11-22; 1.6 of 2026-11-20; 1.5 of 2026-11-19; 1.4 of 2026-11-15; 1.3 of 2026-11-14; 1.2 of 2026-11-14; 1.1 and 1.0 of 2026-11-14 (published/transmitted under `docs/validation/campagne-kali-phase1.md`) |
+| Audited code | (v1.3) `main` at commit `cde9468`; approval rule reread in `CLAUDE.md` at `8faf4f9`; baseline read in `service-rs/src/baseline.rs` and `gpo.rs` at `ede269f`. (v1.4) Correction of the statement of S-07, rewrite of the S-06 sheet and correction of an error of the initial draft ("DNS-002/filtering code absent"), established by **reading the full, up-to-date worktree of `main`** (after the merges of phase 7.3/7.4); the working checkout of v1.3 was on a stale branch (`passages-en-vm`) older than these merges, hence the error. No measurement is presented in it. |
+| Status | **APPROVED BY THE VALIDATION AGENT** |
 
-> **Note du 2026-11-19** : les mentions « IDS, DPI, NDR gelés » de cette liste (§2, §3, §5) et la classe E qui en découle valent à la date de la v1.4 ; l'IDS et le NDR sont dégelés depuis le 2026-11-16, le DPI depuis le 2026-11-18 (`CLAUDE.md`).
+> **Note of 2026-11-19**: the mentions "IDS, DPI, NDR frozen" in this list (§2, §3, §5) and the class E that follows from them hold at the date of v1.4; the IDS and the NDR have been unfrozen since 2026-11-16, the DPI since 2026-11-18 (`CLAUDE.md`).
 
-> **Rappel sur l'approbation (v1.4).** L'approbation par l'agent de validation **n'est ni humaine ni indépendante** (même modèle que celui qui exécute les scénarios ; leurs angles morts peuvent coïncider) et **ne lève aucune règle** de `CLAUDE.md` ni du mandat. La **version 1.4 a été transmise au mainteneur, pour information, le 2026-11-15, avant toute exécution.** Nouveautés principales : **correction de l'énoncé de S-07** (adresse de menace placée dans une source de **confiance haute**, et non « liste de niveau 3 » : une source de réputation ne déclenche pas le blocage automatique) ; **règles de décision D-1** (artefact d'exposition de labo RES-004/005) **et D-2** (collecte « Indisponible » après restauration) inscrites comme règles de notation (5.4) ; **S-06** (DNS-002 et filtrage DNS) **réécrit au niveau comportement et testable** (DNS-002 = Alerte ; filtrage = blocage sans alerte, noté dans les « derniers blocages »), après correction de l'erreur « code absent » de la rédaction initiale (checkout périmé ; le code est bien dans `main`, 5.5). Les volets T1562.002 de S-13 et DNS-003 (S-18) restent approuvés depuis la v1.1 (5.2). **Rien ici n'est un résultat.**
+> **Reminder about the approval (v1.4).** The approval by the validation agent **is neither human nor independent** (same model as the one that runs the scenarios; their blind spots may coincide) and **lifts no rule** of `CLAUDE.md` or of the mandate. **Version 1.4 was transmitted to the maintainer, for information, on 2026-11-15, before any execution.** Main changes: **correction of the statement of S-07** (threat address placed in a **high confidence** source, and not a "level 3 list": a reputation source does not trigger automatic blocking); **decision rules D-1** (lab exposure artefact RES-004/005) **and D-2** ("Indisponible" collection after restore) recorded as scoring rules (5.4); **S-06** (DNS-002 and DNS filtering) **rewritten at the level of behaviour and testable** (DNS-002 = Alert; filtering = blocking without alert, noted in the latest blocks), after correction of the "code absent" error of the initial draft (stale checkout; the code is indeed in `main`, 5.5). The T1562.002 part of S-13 and DNS-003 (S-18) remain approved since v1.1 (5.2). **Nothing here is a result.**
 
-## Approbation
+## Approval
 
-Approuvée le 2026-11-14, version 1.0, par l'agent de validation, en application de `CLAUDE.md` (section 5, phase 7,
-campagne Kali : « Liste fermée de scénarios écrite et approuvée par l'agent de validation avant toute exécution »).
+Approved on 2026-11-14, version 1.0, by the validation agent, in application of `CLAUDE.md` (section 5, phase 7,
+Kali campaign: "Closed list of scenarios written and approved by the validation agent before any execution").
 
-- **2026-11-14, version 1.1** : approuvée par l'agent de validation (volets T1562.002 de S-13 et DNS-003 approuvés sur la
-  décision du mainteneur citée en 5.2).
-- **2026-11-14, version 1.2** : approuvée par l'agent de validation (instantanés de campagne « campagne A » et
-  « campagne B », approbation datée). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur avant
-  toute exécution.
-- **2026-11-14, version 1.3** : approuvée par l'agent de validation (configuration C principale, baseline à 100 % sur
-  décision du mainteneur ; attendu en configuration C par scénario ; classe P « prévenu (baseline) » ; S-19 ; défaut
-  D-BAS-01). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur le 2026-11-14 avant toute
-  exécution.
-- **2026-11-15, version 1.4** : approuvée par l'agent de validation (correction de l'énoncé de S-07 : source de
-  **confiance haute**, non « niveau 3 » ; **règles de décision D-1 et D-2** inscrites ; **S-06 réécrit au niveau
-  comportement et classé testable** — le code de DNS-002 et du filtrage est présent dans `main`, l'erreur « code absent »
-  d'une rédaction initiale venait d'un checkout périmé). **Cette approbation n'est ni humaine
-  ni indépendante** ; elle ne lève aucune règle, et la v1.4 a été transmise au mainteneur, pour information, le 2026-11-15,
-  avant toute exécution.
-- **2026-11-19, version 1.5** : S-20 à S-27 ajoutés sur décision du mainteneur (`CLAUDE.md`, campagne Kali), **après
-  leur exécution** (2026-11-16 et 2026-11-17) ; aucune approbation préalable de l'agent de validation (§6).
-- **2026-11-20, version 1.6** : approuvée par l'agent de validation (S-19 réécrit après la relecture de la baseline du
-  2026-11-20, PR #215 à #221 : protection LSA attendue à RunAsPPL = 2, 1 admis seulement s'il était déjà en place,
-  RunAsPPLBoot relevé seulement ; `reseau.bureau-distance` laissée de côté par l'application du profil, puis appliquée
-  seule à la préparation de « campagne C » ; règles Defender jugées sur leur état effectif et recoupées avec
-  Get-MpPreference ; journal Sécurité jamais réduit ; scores attendus 100/100/100 ; réévaluation de la baseline demandée
-  au service avant le relevé ; empreinte du binaire contrôlée). Actions et nettoyages des autres scénarios inchangés.
-  **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au mainteneur pour information. **Exécutée avant
-  publication** : l'approbation de l'agent (2026-11-20, vers 22 h 50) a précédé l'essai (S-19 essai 3, 23 h 20 : RÉUSSI,
-  3.1), mais la fiche v1.6 n'était pas encore fusionnée sur `main`, contrairement à `CLAUDE.md` (publication avant la
-  première exécution) ; écart signalé au mainteneur, qui peut en prendre acte comme pour S-20 à S-27.
+- **2026-11-14, version 1.1**: approved by the validation agent (T1562.002 part of S-13 and DNS-003 approved on the
+  decision of the maintainer quoted in 5.2).
+- **2026-11-14, version 1.2**: approved by the validation agent (campaign snapshots "campagne A" and
+  "campagne B", dated approval). **Neither human nor independent**; lifts no rule; transmitted to the maintainer before
+  any execution.
+- **2026-11-14, version 1.3**: approved by the validation agent (main configuration C, baseline at 100 % on
+  decision of the maintainer; expected result in configuration C per scenario; class P "prevented (baseline)"; S-19; defect
+  D-BAS-01). **Neither human nor independent**; lifts no rule; transmitted to the maintainer on 2026-11-14 before any
+  execution.
+- **2026-11-15, version 1.4**: approved by the validation agent (correction of the statement of S-07: source of
+  **high confidence**, not "level 3"; **decision rules D-1 and D-2** recorded; **S-06 rewritten at the level of
+  behaviour and classed testable**: the code of DNS-002 and of filtering is present in `main`, the "code absent" error
+  of an initial draft came from a stale checkout). **This approval is neither human
+  nor independent**; it lifts no rule, and v1.4 was transmitted to the maintainer, for information, on 2026-11-15,
+  before any execution.
+- **2026-11-19, version 1.5**: S-20 to S-27 added on decision of the maintainer (`CLAUDE.md`, Kali campaign), **after
+  their execution** (2026-11-16 and 2026-11-17); no prior approval by the validation agent (§6).
+- **2026-11-20, version 1.6**: approved by the validation agent (S-19 rewritten after the review of the baseline of
+  2026-11-20, PR #215 to #221: LSA protection expected at RunAsPPL = 2, 1 accepted only if it was already in place,
+  RunAsPPLBoot recorded only; `reseau.bureau-distance` left aside by the application of the profile, then applied
+  alone during the preparation of "campagne C"; Defender rules judged on their effective state and cross-checked with
+  Get-MpPreference; Security log never reduced; expected scores 100/100/100; re-evaluation of the baseline requested
+  from the service before the reading; hash of the binary checked). Actions and cleanups of the other scenarios unchanged.
+  **Neither human nor independent**; lifts no rule; transmitted to the maintainer for information. **Executed before
+  publication**: the approval of the agent (2026-11-20, around 22:50) preceded the trial (S-19 trial 3, 23:20: "RÉUSSI",
+  3.1), but the v1.6 sheet was not yet merged on `main`, contrary to `CLAUDE.md` (publication before the
+  first execution); deviation reported to the maintainer, who may take note of it as for S-20 to S-27.
 
-- **2026-11-22, version 1.7** : approuvée par l'agent de validation pour le lot 4 de la couverture ATT&CK
-  (consolidation par 10 essais des lignes « testé en labo, non consolidé » de `carte-attack.md`). Ajouts : témoins
-  négatifs N-06 à N-13 (3.2 et 3.2 bis) ; protocole de répétition (3.4) ; règle de décision D-3 (5.6) ; fiches complètes
-  de S-20 à S-27 avec délais maximaux chiffrés (§7). Aucun scénario offensif nouveau, aucune variante nouvelle ; actions
-  et attendus de S-01 à S-19 inchangés. Le service n'est jamais arrêté ni redémarré par le banc (S-18 hors lot) : pour le
-  leurre et l'UPnP, on attend le cycle de 600 s du NDR (décision provisoire du coordinateur du 2026-11-22, en l'absence
-  du mainteneur, à qui la question sera posée). **Ni humaine ni indépendante** ; ne lève aucune règle ; transmise au
-  mainteneur pour information avant exécution ; publiée sur `main` avant la première exécution d'un essai du lot 4.
-- **2026-11-22, version 1.8** : approuvée par l'agent de validation. Décision du mainteneur du 2026-11-22, citée telle
-  quelle : à la question « Le banc réseau du lot 4 peut-il redémarrer le service entre deux essais ? », la réponse est
-  « Oui ». La décision provisoire de la v1.7 (jamais de redémarrage, attente du cycle de 600 s) est levée. Changements :
-  point 8 du protocole de répétition (3.4) ; règles communes des fiches réseau (7.0) ; délais de S-22, S-25 et S-27 et
-  des témoins N-12 et N-13 recalculés sur la première itération du NDR après le démarrage (`ndr.rs`) ; capture passive
-  prouvée après le redémarrage. Le redémarrage ne vaut que pour les fiches réseau (S-20 à S-27, N-12, N-13) ; S-18 reste
-  hors lot ; aucun autre scénario, action ni attendu changé. **Ni humaine ni indépendante** ; ne lève aucune règle ;
-  transmise au mainteneur pour information avant exécution ; publiée sur `main` avant la première exécution d'un essai
-  réseau du lot 4.
+- **2026-11-22, version 1.7**: approved by the validation agent for lot 4 of the ATT&CK coverage
+  (consolidation by 10 trials of the "lab-tested, not consolidated" lines of `carte-attack.md`). Additions: negative
+  controls N-06 to N-13 (3.2 and 3.2 bis); repetition protocol (3.4); decision rule D-3 (5.6); full sheets
+  of S-20 to S-27 with quantified maximum delays (§7). No new offensive scenario, no new variant; actions
+  and expected results of S-01 to S-19 unchanged. The service is never stopped or restarted by the bench (S-18 outside the lot): for the
+  decoy and UPnP, the 600 s cycle of the NDR is awaited (provisional decision of the coordinator of 2026-11-22, in the absence
+  of the maintainer, to whom the question will be put). **Neither human nor independent**; lifts no rule; transmitted to the
+  maintainer for information before execution; published on `main` before the first execution of a trial of lot 4.
+- **2026-11-22, version 1.8**: approved by the validation agent. Decision of the maintainer of 2026-11-22, quoted as
+  is: to the question « Le banc réseau du lot 4 peut-il redémarrer le service entre deux essais ? » (May the lot 4 network bench restart the service between two trials?), the answer is
+  « Oui » (Yes). The provisional decision of v1.7 (never restart, wait for the 600 s cycle) is lifted. Changes:
+  point 8 of the repetition protocol (3.4); common rules of the network sheets (7.0); delays of S-22, S-25 and S-27 and
+  of the controls N-12 and N-13 recalculated on the first iteration of the NDR after start-up (`ndr.rs`); passive capture
+  proven after the restart. The restart applies only to the network sheets (S-20 to S-27, N-12, N-13); S-18 remains
+  outside the lot; no other scenario, action or expected result changed. **Neither human nor independent**; lifts no rule;
+  transmitted to the maintainer for information before execution; published on `main` before the first execution of a
+  network trial of lot 4.
 
-- **Cette approbation n'est ni humaine ni indépendante** : l'agent est le même modèle que celui qui exécute les
-  scénarios ; leurs angles morts peuvent coïncider. Elle n'est jamais présentée comme une validation.
-- Elle ne lève aucune règle : aucun scénario qui toucherait Defender, sortirait du labo, volerait un identifiant réel,
-  porterait une charge destructive ou exigerait une saisie de mot de passe n'est approuvé. Les cas douteux sont laissés au
-  mainteneur (section 5.2).
-- Cette version est transmise au mainteneur, pour information, **avant toute exécution**. Il peut retirer un scénario ou
-  reprendre l'approbation à tout moment. Tout ajout ou changement fait l'objet d'une nouvelle version approuvée avant
-  d'être exécuté.
-- L'exécution ne commence qu'une fois les prérequis de la section 4 vérifiés, par N-01 puis S-01 seul ; le scénario
-  suivant n'est lancé que si l'état de référence est vérifié et les preuves du précédent complètes.
+- **This approval is neither human nor independent**: the agent is the same model as the one that runs the
+  scenarios; their blind spots may coincide. It is never presented as a validation.
+- It lifts no rule: no scenario that would touch Defender, leave the lab, steal a real credential,
+  carry a destructive payload or require typing a password is approved. Doubtful cases are left to the
+  maintainer (section 5.2).
+- This version is transmitted to the maintainer, for information, **before any execution**. He may withdraw a scenario or
+  take back the approval at any time. Any addition or change is the subject of a new version approved before
+  being executed.
+- Execution starts only once the prerequisites of section 4 are checked, with N-01 then S-01 alone; the next
+  scenario is launched only if the reference state is checked and the evidence of the previous one is complete.
 
-**Retenus (v1.4)** : N-01 à N-05 ; S-01 à S-05 ; **S-06 (DNS-002 et filtrage DNS, testable)** ; S-07 à
-S-12 ; S-13 **y compris son volet T1562.002** (approuvé en v1.1) ; S-14 à S-19 ; S-16 avec son option longue (2 h, en
-configuration A). **Ajoutés** : S-18 (DNS-003) en v1.1 ; S-19 (contrôle de la configuration C) en v1.3. Configurations :
-C principale, A comparaison, B collecte Sysmon (3.0, 5.1.2, 5.1.11).
+**Retained (v1.4)**: N-01 to N-05; S-01 to S-05; **S-06 (DNS-002 and DNS filtering, testable)**; S-07 to
+S-12; S-13 **including its T1562.002 part** (approved in v1.1); S-14 to S-19; S-16 with its long option (2 h, in
+configuration A). **Added**: S-18 (DNS-003) in v1.1; S-19 (check of configuration C) in v1.3. Configurations:
+C main, A comparison, B Sysmon collection (3.0, 5.1.2, 5.1.11).
 
-**Retenus en plus (v1.7)** : témoins N-06 à N-13 (3.2, 3.2 bis) ; S-20 à S-27 avec fiches complètes (§7) ; protocole
-de répétition (3.4) et règle D-3 (5.6) pour les séries de 10 essais. **Hors du lot 4, non ajoutés** : dossier Démarrage
-(T1547.001), service lancé depuis un dossier système (T1569.002), balise régulière (T1071.001), responder passif NBNS
+**Also retained (v1.7)**: controls N-06 to N-13 (3.2, 3.2 bis); S-20 to S-27 with full sheets (§7); repetition protocol
+(3.4) and rule D-3 (5.6) for the series of 10 trials. **Outside lot 4, not added**: Startup folder
+(T1547.001), service launched from a system folder (T1569.002), regular beacon (T1071.001), passive NBNS responder
 (T1557.001).
 
-**Écartés (v1.1)** : T1567 (D) ; T1055 (non exécuté) ; T1562.001 contre Defender, les journaux de Windows ou deR4Tizer
-(interdit) ; fiches Atomic qui téléchargent, désactivent une protection, lisent la mémoire de LSASS ou effacent un journal réel.
+**Excluded (v1.1)**: T1567 (D); T1055 (not executed); T1562.001 against Defender, the Windows logs or deR4Tizer
+(forbidden); Atomic sheets that download, disable a protection, read the memory of LSASS or clear a real log.
 
-**Tranchés par le mainteneur le 2026-11-14, approuvés en v1.1** : volet T1562.002 de S-13 ; DNS-003 (devenu S-18).
-Décision citée mot pour mot en section 5.2.
+**Decided by the maintainer on 2026-11-14, approved in v1.1**: T1562.002 part of S-13; DNS-003 (became S-18).
+Decision quoted word for word in section 5.2.
 
-**Correction (v1.4)** : **S-06** (DNS-002 et filtrage DNS) avait été faussement classé « code absent / en attente du
-mainteneur » par une rédaction initiale, à cause d'un checkout périmé (branche `passages-en-vm`, antérieure aux fusions
-de phase 7.3/7.4). Le code est bien présent dans `main` : S-06 est **testable** et sa fiche est réécrite au niveau
-comportement (3.1, 5.5).
+**Correction (v1.4)**: **S-06** (DNS-002 and DNS filtering) had been wrongly classed "code absent / awaiting the
+maintainer" by an initial draft, because of a stale checkout (branch `passages-en-vm`, older than the merges
+of phase 7.3/7.4). The code is indeed present in `main`: S-06 is **testable** and its sheet is rewritten at the level of
+behaviour (3.1, 5.5).
 
-**Changements de la v1.1 à la v1.0** : les deux volets ci-dessus passent de « laissé au mainteneur » à approuvé ; S-18
-créé pour DNS-003 ; cross-références mises à jour ; en-tête en version 1.1.
+**Changes from v1.0 to v1.1**: the two parts above go from "left to the maintainer" to approved; S-18
+created for DNS-003; cross-references updated; header at version 1.1.
 
-**Changements de la v1.2 à la v1.1** (relecture PR #172) : les configurations A et B partent des instantanés « campagne A »
-et « campagne B » (et non de « propre ») ; toutes les remises visent l'instantané de la configuration ; la VM ne revient
-à « propre » qu'après la campagne ; « non mesurée » précisé en « non mesurée en VM ». Aucun scénario ajouté, retiré ni
-changé dans son action ou son attendu.
+**Changes from v1.1 to v1.2** (review of PR #172): configurations A and B start from the snapshots "campagne A"
+and "campagne B" (and not from "propre"); all resets target the snapshot of the configuration; the VM goes back
+to "propre" only after the campaign; "not measured" made precise as "not measured in a VM". No scenario added, removed or
+changed in its action or its expected result.
 
-**Changements de la v1.3 à la v1.2** (décision du mainteneur du 2026-11-14 : « pour les tests kali, tu as bien pris en
-compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait ») : configuration C ajoutée,
-instantané « campagne C » (« campagne A » plus la baseline appliquée par le service, trois profils), devenue
-configuration principale de mesure ; A reste la comparaison, B la collecte Sysmon ; section 1.7 ; classe P « prévenu
-(baseline) », jamais confondue avec une détection ; un attendu en configuration C (HYPOTHÈSE) par scénario et par test
-négatif ; S-19 ; section 5.3 (défaut D-BAS-01). Actions et nettoyages des scénarios existants inchangés.
+**Changes from v1.2 to v1.3** (decision of the maintainer of 2026-11-14: « pour les tests kali, tu as bien pris en
+compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit » (for the Kali tests, did you take into account having the baseline at 100%? It is one of the points of the product), then « ok parfait » (ok perfect)): configuration C added,
+snapshot "campagne C" ("campagne A" plus the baseline applied by the service, three profiles), which became the
+main measurement configuration; A remains the comparison, B the Sysmon collection; section 1.7; class P "prevented
+(baseline)", never confused with a detection; an expected result in configuration C (HYPOTHESIS) per scenario and per negative
+test; S-19; section 5.3 (defect D-BAS-01). Actions and cleanups of the existing scenarios unchanged.
 
-**Changements de la v1.4 à la v1.3** (lecture du worktree complet de `main`, après les fusions de phase 7.3/7.4) :
-- **S-07 corrigé.** La v1.3 plaçait l'adresse de menace dans une « liste de niveau 3 ». **Une source de réputation (par
-  exemple un niveau 3) ne déclenche PAS le blocage automatique** ; le blocage automatique de 7 jours exige une source de
-  **confiance haute**. L'énoncé de S-07 (3.1), la cartographie (2) et la décision 5.1.5 sont corrigés : l'adresse de
-  menace est placée dans une **source de confiance haute** (par exemple une liste C2 de botnets ou un bloc DROP). S-07 est
-  décrit **au niveau comportement** : domaine malveillant connu (DNS-001) + adresse de menace connue de confiance haute
-  (RES-001) + blocage automatique à échéance de 7 jours. Aucun nom de fichier d'implémentation, aucune commande offensive
-  détaillée, aucune adresse hors plage de documentation.
-- **Règles de décision D-1 et D-2 inscrites** (5.4, renvoi en 3.0) : D-1, les alertes RES-004/RES-005 portant une adresse
-  de la plage de documentation du labo sont des **artefacts d'exposition de labo**, exclus des VP comme des FP, conservés
-  dans les preuves ; D-2, critère de collecte « Indisponible » après restauration (une collecte dont dépend une règle du
-  scénario doit être « Active » au départ, prouvée par une lecture postérieure à la restauration, sinon essai invalide,
-  classe D, jamais 0).
-- **S-06 réécrit au niveau comportement, testable** (1.5, 2, 3.1, 3.3, 5.5) : une rédaction initiale avait classé S-06
-  « code absent / classe E » ; c'était une **erreur due à un checkout périmé** (branche `passages-en-vm`, antérieure aux
-  fusions de phase 7.3/7.4). Le code de **DNS-002** (`dns_surveillance.rs`) et du **filtrage DNS** (résolveur local,
-  `dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`) est bien dans `main` et listé par la matrice des capacités. S-06
-  couvre désormais (a) DNS-002 = changement de serveur DNS statique sur une carte → Alerte, et (b) le filtrage par
-  résolveur local = un nom `.test` de la liste est résolu en adresse nulle et apparaît dans les « derniers blocages »,
-  sans alerte. Le témoin **N-05** redevient un **témoin négatif normal** (retour au DHCP sans alerte). Aucune action ni
-  nettoyage d'un autre scénario n'est changé.
+**Changes from v1.3 to v1.4** (reading of the full worktree of `main`, after the merges of phase 7.3/7.4):
+- **S-07 corrected.** v1.3 placed the threat address in a "level 3 list". **A reputation source (for
+  example a level 3) does NOT trigger automatic blocking**; the 7-day automatic blocking requires a source of
+  **high confidence**. The statement of S-07 (3.1), the mapping (2) and decision 5.1.5 are corrected: the threat
+  address is placed in a **high confidence source** (for example a botnet C2 list or a DROP block). S-07 is
+  described **at the level of behaviour**: known malicious domain (DNS-001) + known high confidence threat address
+  (RES-001) + automatic blocking expiring after 7 days. No implementation file name, no detailed offensive command,
+  no address outside the documentation range.
+- **Decision rules D-1 and D-2 recorded** (5.4, reference in 3.0): D-1, the RES-004/RES-005 alerts carrying an address
+  of the documentation range of the lab are **lab exposure artefacts**, excluded from TP as from FP, kept
+  in the evidence; D-2, "Indisponible" collection criterion after restore (a collection on which a rule of the
+  scenario depends must be "Active" at the start, proven by a reading after the restore, otherwise invalid trial,
+  class D, never 0).
+- **S-06 rewritten at the level of behaviour, testable** (1.5, 2, 3.1, 3.3, 5.5): an initial draft had classed S-06
+  "code absent / class E"; it was an **error due to a stale checkout** (branch `passages-en-vm`, older than the
+  merges of phase 7.3/7.4). The code of **DNS-002** (`dns_surveillance.rs`) and of **DNS filtering** (local resolver,
+  `dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`) is indeed in `main` and listed by the capability matrix. S-06
+  now covers (a) DNS-002 = change of static DNS server on an adapter → Alert, and (b) filtering by
+  local resolver = a `.test` name of the list is resolved to a null address and appears in the latest blocks,
+  without alert. The control **N-05** becomes again a **normal negative control** (return to DHCP without alert). No action or
+  cleanup of another scenario is changed.
 
-**Changements de la v1.8 à la v1.7** (2026-11-22, décision du mainteneur citée dans l'entrée de version 1.8) :
-- **Redémarrage du service par le banc réseau** : arrêt puis démarrage par le compte administrateur du banc, après la
-  réorientation des cartes et au plus tard à l'heure de départ de l'essai, avec ses preuves (3.4, point 8 ; 7.0).
-- **Délais recalculés** : le leurre et le relevé UPnP partent à la première itération du NDR après le démarrage ; 660 s
-  deviennent 180 s après le démarrage pour S-22, S-25, S-27, N-12 et N-13.
-- **Capture passive** : ouverte au démarrage sur la carte du labo ; preuve par le journal du service et l'état des
-  collectes (7.0).
-- **Précondition ajoutée** (7.0) : filtrage DNS désactivé, état relevé après le redémarrage ; aucun attendu ne change.
-- Rien d'autre ne change.
+**Changes from v1.7 to v1.8** (2026-11-22, decision of the maintainer quoted in the version 1.8 entry):
+- **Restart of the service by the network bench**: stop then start by the administrator account of the bench, after the
+  reorientation of the adapters and at the latest at the start time of the trial, with its evidence (3.4, point 8; 7.0).
+- **Delays recalculated**: the decoy and the UPnP reading start at the first iteration of the NDR after start-up; 660 s
+  become 180 s after start-up for S-22, S-25, S-27, N-12 and N-13.
+- **Passive capture**: opened at start-up on the lab adapter; evidence through the service log and the state of the
+  collections (7.0).
+- **Precondition added** (7.0): DNS filtering disabled, state read after the restart; no expected result changes.
+- Nothing else changes.
 
-**Changements de la v1.7 à la v1.6** (2026-11-22, lot 4 de la couverture ATT&CK) :
-- **Témoins négatifs N-06 à N-13** : activité légitime voisine de chaque ligne à consolider qui n'avait pas de témoin
-  (3.2 et 3.2 bis).
-- **Fiches complètes de S-20 à S-27** (§7) : préconditions, action, attendu, délai maximal chiffré, nettoyage et preuves.
-  Le §6 ne donnait que « le délai du cycle du NDR ».
-- **Règle D-3** (5.6) : la PER-001 de la tâche d'exécution du banc est un artefact.
-- **Protocole de répétition** (3.4) : remise à l'instantané à chaque essai sauf S-09, cibles distinctes, apprentissage
-  terminé, niveau vérifié, actions de S-13 hors SYSTEM, service jamais redémarré par le banc.
-- Aucun scénario offensif ajouté, aucune action ni aucun nettoyage de S-01 à S-19 changé.
+**Changes from v1.6 to v1.7** (2026-11-22, lot 4 of the ATT&CK coverage):
+- **Negative controls N-06 to N-13**: legitimate activity close to each line to consolidate that had no control
+  (3.2 and 3.2 bis).
+- **Full sheets of S-20 to S-27** (§7): preconditions, action, expected result, quantified maximum delay, cleanup and evidence.
+  §6 only gave "the delay of the NDR cycle".
+- **Rule D-3** (5.6): the PER-001 of the execution task of the bench is an artefact.
+- **Repetition protocol** (3.4): reset to the snapshot at each trial except S-09, distinct targets, learning
+  finished, level checked, actions of S-13 outside SYSTEM, service never restarted by the bench.
+- No offensive scenario added, no action or cleanup of S-01 to S-19 changed.
 
-Document publiable tel quel (`docs/validation/`) : niveau comportement, identifiants ATT&CK, attendus, nettoyage et
-preuves ; aucune commande offensive détaillée ; aucune donnée personnelle, aucun chemin de profil, aucun identifiant de
-compte ni mot de passe. Adresses en plages de documentation (RFC 5737), noms de test en `.test` (RFC 2606).
+Document publishable as is (`docs/validation/`): level of behaviour, ATT&CK identifiers, expected results, cleanup and
+evidence; no detailed offensive command; no personal data, no profile path, no account identifier
+or password. Addresses in documentation ranges (RFC 5737), test names in `.test` (RFC 2606).
 
-Tout ce qui est marqué **HYPOTHÈSE** est déduit de la lecture du code et des documents, non mesuré. Rien ici n'est un
-résultat.
+Everything marked **HYPOTHESIS** is deduced from reading the code and the documents, not measured. Nothing here is a
+result.
 
 ---
 
-## 1. État des capacités de détection (d'après le code et `docs/`)
+## 1. State of the detection capabilities (from the code and `docs/`)
 
-### 1.1 Architecture utile à la campagne
+### 1.1 Architecture relevant to the campaign
 
-- Service Rust en SYSTEM, cycle de surveillance toutes les 3 s environ, fils séparés pour les journaux, la persistance
-  (1 min), la santé (30 s), le DNS (60 s), le filtrage.
-- Canal `\.\pipe\deR4Tizer` : clients distants refusés par le tube (PR #168) ; connexion distante (IPC-03) **jamais
-  essayée** (matrice des capacités).
-- Alertes avec `Regle`, `Modele`, `HeureUtc`, `Seq`, `Collecte` ; une alerte Alerte ou Critique ouvre ou rejoint un
-  incident (entité, 24 h) ; une alerte Info n'ouvre rien.
-- **Apprentissage** : 7 jours après la première installation, toute alerte « Alerte » sans signal fort devient « Info » et
-  son comportement est mémorisé. Jamais adoucis : Critique, SAN-*, REP-*, DNS-002, IDS, et les motifs téléchargement de
-  code, LOLBin, débogage à distance, suppression des sauvegardes, macro, anomalie du dossier des tâches. Conséquence pour
-  la mesure (décision 5.1.1 : apprentissage terminé).
-- Profil de baseline « journalisation » appliqué automatiquement au premier démarrage sur un poste non géré : audit des
-  ouvertures de session, création de processus (4688) avec ligne de commande, système de fichiers (4663), autres objets
-  (4698), comptes et groupes, politique d'audit, extensions de sécurité, règles du pare-feu, `pfirewall.log`, blocs de
-  script PowerShell (4104), modules (4103), journaux DNS-Client et Planificateur. À vérifier dans l'instantané (section 4).
+- Rust service as SYSTEM, monitoring cycle about every 3 s, separate threads for the logs, persistence
+  (1 min), health (30 s), DNS (60 s), filtering.
+- Channel `\.\pipe\deR4Tizer`: remote clients refused by the pipe (PR #168); remote connection (IPC-03) **never
+  tried** (capability matrix).
+- Alerts with `Regle`, `Modele`, `HeureUtc`, `Seq`, `Collecte`; an Alert or Critical alert opens or joins an
+  incident (entity, 24 h); an Info alert opens nothing.
+- **Learning**: 7 days after the first installation, any "Alert" alert without a strong signal becomes "Info" and
+  its behaviour is memorised. Never softened: Critical, SAN-*, REP-*, DNS-002, IDS, and the patterns code
+  download, LOLBin, remote debugging, deletion of backups, macro, anomaly of the tasks folder. Consequence for
+  the measurement (decision 5.1.1: learning finished).
+- Baseline profile "logging" applied automatically at the first start-up on an unmanaged machine: audit of
+  logons, process creation (4688) with command line, file system (4663), other objects
+  (4698), accounts and groups, audit policy, security extensions, firewall rules, `pfirewall.log`, PowerShell script
+  blocks (4104), modules (4103), DNS-Client and Task Scheduler logs. To check in the snapshot (section 4).
 
-### 1.2 Sources d'événements réellement consommées
+### 1.2 Event sources actually consumed
 
-| Source | Consommée par | Remarque |
+| Source | Consumed by | Remark |
 |---|---|---|
-| Sécurité : 4624, 4625, 4648, 4672, 4688, 4697, 4719, 4720-4726, 4728, 4732, 4740, 4756, 4798, 1102 | COR-* | 4688 enregistré mais aucune règle PRC ne s'en sert ; 4698, 5140, 5145 non souscrits |
-| Sécurité 4663 | VOL-001, LEU-002 | exige l'audit des objets et la SACL posée |
-| Système : 7045, 104, 7036 | SIEM | 7036 seulement pour deR4Tizer, Defender, pare-feu, journal d'événements, Centre de sécurité |
-| Sysmon 1 et 22 seulement | processus | **choisi au démarrage si présent**, sinon WMI ; les autres événements Sysmon ne sont pas lus |
-| WMI des processus | processus | processus brefs perdus, lignes de commande souvent absentes |
-| DNS-Client (ou Sysmon 22) | DNS-001, indice « IP directe » | |
-| Defender (journal, état) | DEF-001 à 012 | DEF-003 à 006 et 010 à 012 supposent Defender affaibli : jamais exercées |
-| Journal du pare-feu (règles) | SYS-002, SYS-003 | |
-| `pfirewall.log` | RES-005 | une alerte par (source, port, action) et par 24 h |
-| Table TCP, ports en écoute | RES-001 à 003, 006, 007 | relevé périodique : une connexion brève peut être manquée (HYPOTHÈSE) |
-| Démarrages automatiques | PER-001, PER-002 | toutes les minutes |
-| Leurres, hosts | LEU-001, SYS-001 | empreintes |
-| Cartes réseau | DNS-002, DNS-003 | 60 s — voir réserve ci-dessous |
-| PowerShell 4104 | **aucune règle** | produit par Windows, jamais lu |
+| Security: 4624, 4625, 4648, 4672, 4688, 4697, 4719, 4720-4726, 4728, 4732, 4740, 4756, 4798, 1102 | COR-* | 4688 recorded but no PRC rule uses it; 4698, 5140, 5145 not subscribed |
+| Security 4663 | VOL-001, LEU-002 | requires object auditing and the SACL set |
+| System: 7045, 104, 7036 | SIEM | 7036 only for deR4Tizer, Defender, firewall, event log, Security Center |
+| Sysmon 1 and 22 only | processes | **chosen at start-up if present**, otherwise WMI; the other Sysmon events are not read |
+| WMI for processes | processes | short-lived processes lost, command lines often missing |
+| DNS-Client (or Sysmon 22) | DNS-001, "direct IP" indicator | |
+| Defender (log, state) | DEF-001 to 012 | DEF-003 to 006 and 010 to 012 assume a weakened Defender: never exercised |
+| Firewall log (rules) | SYS-002, SYS-003 | |
+| `pfirewall.log` | RES-005 | one alert per (source, port, action) and per 24 h |
+| TCP table, listening ports | RES-001 to 003, 006, 007 | periodic reading: a short connection may be missed (HYPOTHESIS) |
+| Automatic start-ups | PER-001, PER-002 | every minute |
+| Decoys, hosts | LEU-001, SYS-001 | hashes |
+| Network adapters | DNS-002, DNS-003 | 60 s: see reservation below |
+| PowerShell 4104 | **no rule** | produced by Windows, never read |
 
-> **Note (v1.4) sur la ligne « Cartes réseau / DNS-002, DNS-003 ».** À la lecture du worktree complet de `main` (après
-> les fusions de phase 7.3/7.4), la **surveillance du serveur DNS de carte (DNS-002, `dns_surveillance.rs`)** et le
-> **filtrage DNS par résolveur local** (`dns_local.rs` sur `127.0.0.1:53` et `[::1]:53`, moteur `filtrage.rs`, activation
-> sur les cartes `filtrage_cartes.rs`, état `filtrage-etat.json`) sont bien présents, en plus de la lecture du journal
-> DNS-Client (3008) qui alimente **DNS-001** et du vidage du cache. Une rédaction initiale les disait « absents » : erreur
-> due à un checkout périmé, corrigée ici (5.5). **DNS-002, le filtrage et DNS-003 (S-18) sont donc testables.** Prudence
-> conservée, non bloquante : vérifier que le binaire installé correspond bien à cette source de `main` avant de mesurer.
+> **Note (v1.4) on the line "Network adapters / DNS-002, DNS-003".** On reading the full worktree of `main` (after
+> the merges of phase 7.3/7.4), the **monitoring of the adapter DNS server (DNS-002, `dns_surveillance.rs`)** and the
+> **DNS filtering by local resolver** (`dns_local.rs` on `127.0.0.1:53` and `[::1]:53`, engine `filtrage.rs`, activation
+> on the adapters `filtrage_cartes.rs`, state `filtrage-etat.json`) are indeed present, in addition to the reading of the
+> DNS-Client log (3008) that feeds **DNS-001** and of the cache flush. An initial draft called them "absent": error
+> due to a stale checkout, corrected here (5.5). **DNS-002, filtering and DNS-003 (S-18) are therefore testable.** Caution
+> kept, not blocking: check that the installed binary indeed matches this source of `main` before measuring.
 
-### 1.3 Règles (`regles.rs`, `docs/detection/regles.md`)
+### 1.3 Rules (`regles.rs`, `docs/detection/regles.md`)
 
-État de mesure : **non mesurée en VM** pour toutes les fiches, sauf PER-001 (clé Run) et DNS-002, vues au scénario 3a.
-La « DNS-002 vue au scénario 3a » provient simplement de `main` (règle `DNS_002` de `regles.rs`, détection dans
-`dns_surveillance.rs`) ; la spéculation d'une rédaction initiale (binaire d'une branche non fusionnée) venait d'un
-checkout périmé et est retirée (5.5).
+Measurement state: **not measured in a VM** for all the sheets, except PER-001 (Run key) and DNS-002, seen in scenario 3a.
+The "DNS-002 seen in scenario 3a" simply comes from `main` (rule `DNS_002` of `regles.rs`, detection in
+`dns_surveillance.rs`); the speculation of an initial draft (binary from an unmerged branch) came from a
+stale checkout and is withdrawn (5.5).
 
-- RES-001 (menace connue, Critique, blocage automatique **si la source est de confiance haute**, par exemple un bloc DROP
-  ou une liste C2 de botnets), RES-002 (score ≥ 3), RES-003 (Info), RES-004, RES-005, RES-006, RES-007.
-- DNS-001 (listes de domaines désactivées par défaut, licences restreintes), DNS-002, DNS-003.
-- PRC-001 à 005, CHA-001 ; PER-001, PER-002 ; DEF-001 à 012 ; LEU-001, LEU-002 ; VOL-001 ; SYS-001 à 003 ; PIL-001 ;
-  EXT-001 ; VIE-001 à 003 ; BAS-001.
-- COR-R1 (5 échecs en 5 min, même source), COR-R2 (réussite après ≥ 5 échecs en 30 min, Critique), COR-R3/R3b, COR-R4
-  (1102/104), COR-R5, COR-R6, COR-R7, COR-R9 (Critique si Bureau à distance, Alerte sinon), COR-R10. Pas de R8.
-- SAN-001 à 004, SAN-010 à 012 ; REP-001 à 004 ; INT-001, INT-002 ; EXP-IDS/DPI/NDR (gelés).
+- RES-001 (known threat, Critical, automatic blocking **if the source is of high confidence**, for example a DROP block
+  or a botnet C2 list), RES-002 (score ≥ 3), RES-003 (Info), RES-004, RES-005, RES-006, RES-007.
+- DNS-001 (domain lists disabled by default, restricted licences), DNS-002, DNS-003.
+- PRC-001 to 005, CHA-001; PER-001, PER-002; DEF-001 to 012; LEU-001, LEU-002; VOL-001; SYS-001 to 003; PIL-001;
+  EXT-001; VIE-001 to 003; BAS-001.
+- COR-R1 (5 failures in 5 min, same source), COR-R2 (success after ≥ 5 failures in 30 min, Critical), COR-R3/R3b, COR-R4
+  (1102/104), COR-R5, COR-R6, COR-R7, COR-R9 (Critical if Remote Desktop, Alert otherwise), COR-R10. No R8.
+- SAN-001 to 004, SAN-010 to 012; REP-001 to 004; INT-001, INT-002; EXP-IDS/DPI/NDR (frozen).
 
-### 1.4 Réponses automatiques et durées
+### 1.4 Automatic responses and durations
 
-| Action | Niveau | Échéance | À l'échéance |
+| Action | Level | Expiry | At expiry |
 |---|---|---|---|
-| Blocage IP d'une source de confiance haute (bloc DROP / liste C2 de botnets) | 3, actif par défaut | 7 jours | levé |
-| Suspension du programme qui touche un leurre | 3, actif par défaut | 2 h | reste suspendu ; REP-001 Critique puis toutes les 24 h |
-| Blocage IPS | 2, IPS désactivé par défaut | 24 h | levé |
-| Suspension manuelle, isolation, panique | 2 | 24 h, 7 j, 4 h | jamais levé, relance |
-| Quarantaine, blocage manuel | 2 | 30 j, 90 j | rappel Info |
-| Filtrage DNS | 2, mode désactivé par défaut | aucune | — (un blocage n'est pas une alerte : il apparaît dans les « derniers blocages », `filtrage-etat.json` ; S-06) |
+| IP blocking from a high confidence source (DROP block / botnet C2 list) | 3, active by default | 7 days | lifted |
+| Suspension of the program that touches a decoy | 3, active by default | 2 h | stays suspended; REP-001 Critical then every 24 h |
+| IPS blocking | 2, IPS disabled by default | 24 h | lifted |
+| Manual suspension, isolation, panic | 2 | 24 h, 7 d, 4 h | never lifted, reminder |
+| Quarantine, manual blocking | 2 | 30 d, 90 d | Info reminder |
+| DNS filtering | 2, mode disabled by default | none | · (a block is not an alert: it appears in the latest blocks, `filtrage-etat.json`; S-06) |
 
-Gardes : 3 blocages de la même adresse par 24 h, 30 blocages par listes par heure, décision humaine respectée 7 jours ;
-REP-002 quand une action est retenue.
+Guards: 3 blocks of the same address per 24 h, 30 blocks from lists per hour, human decision respected for 7 days;
+REP-002 when an action is withheld.
 
-### 1.5 Filtrage DNS (phase 7) — **présent dans `main` (v1.4)**
+### 1.5 DNS filtering (phase 7): **present in `main` (v1.4)**
 
-Fonction documentée (phase 7) : résolveur local sur la boucle, cartes physiques réglées sur lui à l'activation, serveurs
-d'origine en secours, échec ouvert ; un blocage n'est pas une alerte (il apparaît dans un fichier d'état). Limite
-documentée : tant que l'amont ne répond pas, les cartes restent sur leurs serveurs d'origine, sans filtrage ; un labo
-sans Internet exige donc un amont DNS de labo (décision 5.1.4).
+Documented function (phase 7): local resolver on the loopback, physical adapters set to it on activation, original
+servers as fallback, fail open; a block is not an alert (it appears in a state file). Documented
+limit: as long as the upstream does not respond, the adapters stay on their original servers, without filtering; a lab
+without Internet therefore requires a lab DNS upstream (decision 5.1.4).
 
-**Constat de lecture (v1.4) : ce code est présent dans `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`,
-état `filtrage-etat.json`), et DNS-002 dans `dns_surveillance.rs` ; la matrice des capacités les liste (résolveur local,
-moteur de filtrage, état/DNS-003, Quad9). Une rédaction initiale les disait « absents » : erreur due à un checkout périmé
-(branche `passages-en-vm`), corrigée ici. **Conséquence** : le scénario S-06 est **testable** (3.1) et le témoin N-05 est
-un **témoin négatif normal** (3.2). Seule prudence maintenue, non bloquante : confirmer que le binaire installé correspond
-à cette source avant de mesurer (section 4).
+**Reading finding (v1.4): this code is present in `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`,
+state `filtrage-etat.json`), and DNS-002 in `dns_surveillance.rs`; the capability matrix lists them (local resolver,
+filtering engine, state/DNS-003, Quad9). An initial draft called them "absent": error due to a stale checkout
+(branch `passages-en-vm`), corrected here. **Consequence**: scenario S-06 is **testable** (3.1) and control N-05 is
+a **normal negative control** (3.2). Only caution kept, not blocking: confirm that the installed binary matches
+this source before measuring (section 4).
 
-### 1.6 Limites connues qui pèsent sur la campagne
+### 1.6 Known limits that weigh on the campaign
 
-- IDS, DPI, NDR gelés : contenu HTTP, empreintes TLS, détection réseau de balayage : classe E.
-- Aucune détection de balayage hors IDS ; effet attendu : RES-005 par port touché (HYPOTHÈSE).
-- Aucune télémétrie d'accès à un processus ni d'injection consommée : T1003.001 et T1055 sans règle.
-- 4104 jamais lu : un obscurcissement absent de la ligne de commande n'a aucune règle.
-- « Active » garantit la lecture d'une source, pas la production des événements par Windows.
-- Corrélations dédupliquées une heure en mémoire et fenêtre d'échecs de 30 min : deux essais depuis la même source dans
-  l'heure ne donnent pas deux incidents (conception des essais, 3.0).
-- La plage de documentation RFC 5737 compte comme Internet pour le service : c'est ce qui rend COR-R9 possible ; effets de
-  bord : VM vue « exposée », RES-004/RES-005, RES-007, indice « IP directe ». Ces RES-004/RES-005 sur une adresse du labo
-  sont des **artefacts d'exposition de labo** (règle de décision D-1, 5.4).
-- **DNS-002, filtrage DNS et DNS-003 présents dans `main`** (1.5) : S-06 et S-18 sont testables ; seule prudence, non
-  bloquante, confirmer que le binaire installé correspond à la source avant de mesurer (section 4).
+- IDS, DPI, NDR frozen: HTTP content, TLS fingerprints, network detection of scanning: class E.
+- No scan detection outside the IDS; expected effect: RES-005 per port touched (HYPOTHESIS).
+- No telemetry of process access or injection consumed: T1003.001 and T1055 without a rule.
+- 4104 never read: an obfuscation absent from the command line has no rule.
+- "Active" guarantees the reading of a source, not the production of the events by Windows.
+- Correlations deduplicated for one hour in memory and failure window of 30 min: two trials from the same source within
+  the hour do not give two incidents (design of the trials, 3.0).
+- The RFC 5737 documentation range counts as Internet for the service: this is what makes COR-R9 possible; side
+  effects: VM seen as "exposed", RES-004/RES-005, RES-007, "direct IP" indicator. These RES-004/RES-005 on a lab address
+  are **lab exposure artefacts** (decision rule D-1, 5.4).
+- **DNS-002, DNS filtering and DNS-003 present in `main`** (1.5): S-06 and S-18 are testable; only caution, not
+  blocking, confirm that the installed binary matches the source before measuring (section 4).
 
-### 1.7 Baseline de deR4Tizer appliquée à 100 % (configuration C, ajouté en v1.3)
+### 1.7 deR4Tizer baseline applied at 100 % (configuration C, added in v1.3)
 
-Lu dans `service-rs/src/baseline.rs` (`main` à `ede269f`). La baseline passe par la GPO locale ; les valeurs d'origine
-sont sauvegardées pour l'annulation ; l'application est refusée sur un poste géré (domaine ou MDM). Trois profils :
-journalisation (appliqué d'office), recommandé, renforcé. Effets attendus sur la campagne, tous **HYPOTHÈSE** :
+Read in `service-rs/src/baseline.rs` (`main` at `ede269f`). The baseline goes through the local GPO; the original values
+are saved for undo; application is refused on a managed machine (domain or MDM). Three profiles:
+logging (applied by default), recommended, hardened. Expected effects on the campaign, all **HYPOTHESIS**:
 
-| Règle de la baseline | Profil | Effet attendu sur la campagne |
+| Baseline rule | Profile | Expected effect on the campaign |
 |---|---|---|
-| `reseau.bureau-distance` | recommandé | S-01, S-02, S-05 (a), N-04 : RDP impossible ; COR-R1/R2 et la variante Critique de R9 par RDP non exerçables en C, mesurées en A. Laissée de côté par l'application du profil quand le Bureau à distance est activé ; posée seule à la préparation de C (v1.6) |
-| `reseau.pare-feu` | recommandé | règles d'autorisation locales conservées ; davantage de paquets refusés journalisés (S-08) |
-| `reseau.smb1`, `reseau.invite-smb` ; `reseau.signature-smb` | recommandé ; renforcé | S-03, S-04, S-17 : Kali doit parler SMB 2 ou 3 ; signature exigée côté client, VM en serveur non touchée |
-| `asr.scripts-obscurcis`, `asr.scripts-telecharges` | recommandé | S-10 : contenu obscurci bloqué possible ; création du processus et ligne de commande restent visibles |
-| `asr.lsass` ; `systeme.lsa` ; `systeme.wdigest` | recommandé ; renforcé ; recommandé | S-15 : accès « informations limitées » permis ; une lecture de mémoire serait refusée (jamais exercée) |
-| `asr.psexec-wmi` | renforcé | aucun scénario n'exécute à distance ; effet de bord possible relevé |
-| `asr.prevalence` (mode audit) | renforcé | programmes de test récents (S-14, S-16, S-18) : événements 1122, sans blocage |
-| `asr.rancongiciel` | recommandé | s'appuie sur le cloud, injoignable : effet incertain sur S-16 |
-| `defender.dossiers-blocage` | renforcé | S-16 : leurres dans Documents, Images, Bureau (protégés) : écriture du programme de test non signé refusée ; témoins de S-09 hors de ces dossiers |
-| `defender.pua`, `defender.cloud`, `defender.reseau` | recommandé | sans Internet, cloud et réputation injoignables : effet attendu faible sur S-07 et S-11 ; toute réaction relevée |
-| `systeme.wsh` | renforcé | toute variante .vbs ou .js bloquée ; S-09 et S-10 passent par PowerShell |
-| `systeme.smartscreen` | recommandé | N-03 : avertissement à l'ouverture d'un fichier téléchargé, pas au téléchargement |
-| `systeme.uac` | recommandé | sans effet attendu sur le pilotage par PowerShell Direct (vérifié par N-01 en C) |
+| `reseau.bureau-distance` | recommended | S-01, S-02, S-05 (a), N-04: RDP impossible; COR-R1/R2 and the Critical variant of R9 through RDP not exercisable in C, measured in A. Left aside by the application of the profile when Remote Desktop is enabled; set alone during the preparation of C (v1.6) |
+| `reseau.pare-feu` | recommended | local allow rules kept; more refused packets logged (S-08) |
+| `reseau.smb1`, `reseau.invite-smb`; `reseau.signature-smb` | recommended; hardened | S-03, S-04, S-17: Kali must speak SMB 2 or 3; signing required on the client side, VM as server not touched |
+| `asr.scripts-obscurcis`, `asr.scripts-telecharges` | recommended | S-10: obfuscated content possibly blocked; process creation and command line remain visible |
+| `asr.lsass`; `systeme.lsa`; `systeme.wdigest` | recommended; hardened; recommended | S-15: "limited information" access allowed; a memory read would be refused (never exercised) |
+| `asr.psexec-wmi` | hardened | no scenario executes remotely; possible side effect recorded |
+| `asr.prevalence` (audit mode) | hardened | recent test programs (S-14, S-16, S-18): events 1122, without blocking |
+| `asr.rancongiciel` | recommended | relies on the cloud, unreachable: uncertain effect on S-16 |
+| `defender.dossiers-blocage` | hardened | S-16: decoys in Documents, Pictures, Desktop (protected): write by the unsigned test program refused; controls of S-09 outside these folders |
+| `defender.pua`, `defender.cloud`, `defender.reseau` | recommended | without Internet, cloud and reputation unreachable: weak expected effect on S-07 and S-11; any reaction recorded |
+| `systeme.wsh` | hardened | any .vbs or .js variant blocked; S-09 and S-10 go through PowerShell |
+| `systeme.smartscreen` | recommended | N-03: warning when opening a downloaded file, not at download |
+| `systeme.uac` | recommended | no expected effect on control through PowerShell Direct (checked by N-01 in C) |
 
-En configuration C, une action peut être **prévenue** (réglage de Windows posé par la baseline, ou Defender durci par
-elle) sans être **détectée** par deR4Tizer : les deux sont notés séparément (classe P, section 2). Défaut constaté à la
-lecture : D-BAS-01 (5.3).
+In configuration C, an action may be **prevented** (Windows setting set by the baseline, or Defender hardened by
+it) without being **detected** by deR4Tizer: the two are noted separately (class P, section 2). Defect found on
+reading: D-BAS-01 (5.3).
 
 ---
 
-## 2. Cartographie ATT&CK → alerte attendue
+## 2. ATT&CK mapping → expected alert
 
-Classe a priori : **HYPOTHÈSE** pour toutes les lignes. A détection attendue ; B événement produit sans règle ; C alerte
-attendue mais incorrecte ou trop générique ; D non exécutable dans le labo ; **E non testable avec l'architecture
-actuelle** (gelé, ou fonction absente de la source lue). Sous-classes descriptives : B1 reçu par deR4Tizer sans règle, B2
-produit par Windows ou Sysmon mais non lu.
+A priori class: **HYPOTHESIS** for all the lines. A detection expected; B event produced without a rule; C alert
+expected but incorrect or too generic; D not executable in the lab; **E not testable with the current
+architecture** (frozen, or function absent from the source read). Descriptive subclasses: B1 received by deR4Tizer without a rule, B2
+produced by Windows or Sysmon but not read.
 
-Classe ajoutée en v1.3 : **P, prévenu (baseline)**. Le comportement est empêché, preuve à l'appui, par un réglage de
-Windows posé par la baseline (P-baseline) ou par un composant de Defender durci par elle (P-Defender). **P n'est jamais
-une détection** : un essai entièrement prévenu sort du dénominateur de détection (ni VP, ni FN) et est compté à part ; si
-deR4Tizer alerte aussi, l'essai est noté « P + A » et seule la part A entre dans le score. Une réaction de Defender en
-configuration A ou B (sans baseline durcie) est notée « bloqué par Defender », jamais attribuée à la baseline.
+Class added in v1.3: **P, prevented (baseline)**. The behaviour is prevented, with evidence, by a Windows setting
+set by the baseline (P-baseline) or by a Defender component hardened by it (P-Defender). **P is never
+a detection**: a fully prevented trial leaves the detection denominator (neither TP nor FN) and is counted separately; if
+deR4Tizer also alerts, the trial is noted "P + A" and only the A part enters the score. A Defender reaction in
+configuration A or B (without hardened baseline) is noted "blocked by Defender", never attributed to the baseline.
 
-| Technique | Comportement simulé | Capteur requis | Événement attendu | Règle | Alerte attendue | Classe a priori (HYPOTHÈSE) |
+| Technique | Simulated behaviour | Sensor required | Expected event | Rule | Expected alert | A priori class (HYPOTHESIS) |
 |---|---|---|---|---|---|---|
-| T1110.001 (RDP) | série d'échecs de mot de passe vers un compte de test | audit Logon | 4625 type 3 avec adresse source | COR-R1 | COR-R1 Alerte | A |
-| T1110.001 puis T1078.003 | échecs puis réussite depuis la même source | audit Logon | 4625 ×≥5 puis 4624 | COR-R2 | COR-R2 Critique | A |
-| T1133 / T1021.001 | session Bureau à distance depuis la plage de documentation du labo | audit Logon | 4624 type 3 puis type 10 | COR-R9 | COR-R9 Critique | **C** : la clé de déduplication de R9 serait prise par la 4624 de type 3 qui précède la type 10 ; R9 sortirait « Session ouverte depuis Internet », Alerte |
-| T1021.001 | même session | table TCP | connexion établie sur 3389 | RES-007 | RES-007 Alerte | A |
-| T1110.001 (SMB) | échecs puis réussite sur le partage de fichiers | audit Logon | 4625/4624 type 3 | COR-R1, R2, R9 | R1 Alerte, R2 Critique, R9 Alerte | A ; si l'adresse source manque, clé « compte » et R9 muette |
-| T1021.002 | accès authentifié à un partage administratif, lecture seule | audit Logon | 4624 type 3, 4672, 5140 | COR-R9 | COR-R9 Alerte | A pour la session ; B2 pour l'accès au partage |
-| T1046 | balayage de ports TCP borné | `pfirewall.log` | paquets bloqués depuis une adresse « publique » | RES-005 | aucune règle « balayage » | C (une RES-005 par port) ou E |
-| T1071.001 | requêtes HTTP régulières vers un serveur du labo | table TCP, DNS-Client | connexions répétées | RES-002 | RES-002 Alerte (balise, IP directe, port) | A si vues par le relevé ; sinon FN de collecte |
-| T1105 | téléchargement d'un fichier texte bénin par PowerShell | Sysmon 1 ou WMI, table TCP | processus, connexion | PRC-002, RES-002 | PRC-002 Alerte | A avec Sysmon ; instable sans |
-| T1105 | même téléchargement par un outil Windows détourné | idem ; Defender | idem | PRC-003, DEF-001 | PRC-003 Alerte ; DEF-001 si Defender réagit | A |
-| T1059.001 + T1027 | commande PowerShell encodée longue, contenu bénin | Sysmon 1 ou WMI | ligne de commande | PRC-002 | PRC-002 Alerte | A avec Sysmon |
-| T1027 | script bénin obscurci lancé par fichier | 4104 | 4104 | aucune | aucune | B2 |
-| T1547.001 | valeur Run vers une commande bénigne | démarrages automatiques | entrée nouvelle | PER-001 | PER-001 Alerte | A |
-| T1053.005 | tâche planifiée bénigne lancée par un interpréteur | relevé des tâches | tâche nouvelle ; 4698 non lu | PER-001 | PER-001 Alerte | A |
-| T1543.003 | service local, image dans un dossier inscriptible, commande bénigne | journal Système | 7045 | COR-R5, PER-001 | COR-R5 Critique | A |
-| T1136.001 + T1098 | compte local créé puis ajouté aux Administrateurs | audit comptes et groupes | 4720, 4732 | COR-R3 | COR-R3 Critique | A |
-| T1070.001 (SIMULATION) | effacement d'un journal dédié créé pour le test | journal Système | 104 | COR-R4 | COR-R4 Critique | A (HYPOTHÈSE : 104 émis) |
-| T1562.002 (SIMULATION) | sous-catégorie d'audit hors besoins des règles désactivée puis rétablie | audit politique ; baseline | 4719 ; dérive | COR-R7, BAS-001 | COR-R7 Alerte ; BAS-001 Alerte si la sous-catégorie fait partie du profil | A |
-| T1562.001 | Defender, journaux et deR4Tizer intouchables | — | — | DEF-003 à 006, 010 à 012 | — | D (interdit) |
-| T1003.001 (SIMULATION) | ouverture de LSASS en accès « informations limitées », sans lecture de mémoire | Sysmon 10 si configuré | 10 | aucune | aucune | B2 |
-| T1555.003 (SIMULATION) | ouverture en lecture du fichier d'identifiants d'un navigateur d'un compte de test vide, par un programme de test non signé lancé d'un dossier temporaire | 4663 + SACL | 4663 | VOL-001 | VOL-001 Critique | A |
-| T1055 (SIMULATION) | aucune action ; télémétrie disponible inventoriée | — | — | aucune | aucune | non exécuté ; aucun capteur consommé |
-| T1486 (SIMULATION) | un programme de test modifie un seul leurre de deR4Tizer | 4663 + empreinte | 4663 | LEU-002, LEU-001 | LEU-002 Critique + suspension automatique ; REP-001 à 2 h | A |
-| T1041 | envoi HTTP d'un fichier canari généré vers Kali | table TCP | connexion sortante | RES-002 | RES-002 Alerte selon le score | A pour la connexion ; E pour le contenu et le volume |
-| T1567 | envoi vers un service web public | — | — | — | — | D (aucun service réel autorisé) |
-| — (menace connue) | connexion vers une adresse du labo inscrite dans une **source de confiance haute** | table TCP, liste locale | connexion | RES-001 | RES-001 Critique ; blocage automatique 7 j | A |
-| — (DNS) | résolution d'un nom `.test` d'une liste de domaines **de confiance haute** | DNS-Client / Sysmon 22 | requête | DNS-001 | DNS-001 Critique | A (listes restreintes à activer) |
-| — (DNS, S-06) | serveur DNS statique réglé sur la carte | cartes, registre | changement | DNS-002 | DNS-002 Alerte | A |
-| — (DNS, S-18) | port 53 de la boucle tenu par un autre programme au redémarrage | échec de liaison, registre des cartes, table UDP | échec de liaison exclusive + PID | DNS-003 | DNS-003 Critique (PID) | A (approuvé en v1.1 ; filtrage présent dans `main`) |
-| — (filtrage, S-06) | résolution d'un nom `.test` de la liste de filtrage | résolveur local | blocage | — | aucune alerte ; nom dans les derniers blocages | A (essai fonctionnel : blocage attendu, sans alerte) |
-| IPC-03 | ouverture du canal depuis Kali par le réseau | tube | refus | — | refus, aucune commande exécutée | A (refus attendu) |
+| T1110.001 (RDP) | series of password failures against a test account | Logon audit | 4625 type 3 with source address | COR-R1 | COR-R1 Alert | A |
+| T1110.001 then T1078.003 | failures then success from the same source | Logon audit | 4625 ×≥5 then 4624 | COR-R2 | COR-R2 Critical | A |
+| T1133 / T1021.001 | Remote Desktop session from the documentation range of the lab | Logon audit | 4624 type 3 then type 10 | COR-R9 | COR-R9 Critical | **C**: the deduplication key of R9 would be taken by the type 3 4624 that precedes the type 10; R9 would come out "Session ouverte depuis Internet", Alert |
+| T1021.001 | same session | TCP table | connection established on 3389 | RES-007 | RES-007 Alert | A |
+| T1110.001 (SMB) | failures then success on the file share | Logon audit | 4625/4624 type 3 | COR-R1, R2, R9 | R1 Alert, R2 Critical, R9 Alert | A; if the source address is missing, "account" key and R9 silent |
+| T1021.002 | authenticated access to an administrative share, read only | Logon audit | 4624 type 3, 4672, 5140 | COR-R9 | COR-R9 Alert | A for the session; B2 for the access to the share |
+| T1046 | bounded TCP port scan | `pfirewall.log` | packets blocked from a "public" address | RES-005 | no "scan" rule | C (one RES-005 per port) or E |
+| T1071.001 | regular HTTP requests to a lab server | TCP table, DNS-Client | repeated connections | RES-002 | RES-002 Alert (beacon, direct IP, port) | A if seen by the reading; otherwise collection FN |
+| T1105 | download of a benign text file by PowerShell | Sysmon 1 or WMI, TCP table | process, connection | PRC-002, RES-002 | PRC-002 Alert | A with Sysmon; unstable without |
+| T1105 | same download by a misused Windows tool | same; Defender | same | PRC-003, DEF-001 | PRC-003 Alert; DEF-001 if Defender reacts | A |
+| T1059.001 + T1027 | long encoded PowerShell command, benign content | Sysmon 1 or WMI | command line | PRC-002 | PRC-002 Alert | A with Sysmon |
+| T1027 | benign obfuscated script launched from a file | 4104 | 4104 | none | none | B2 |
+| T1547.001 | Run value pointing to a benign command | automatic start-ups | new entry | PER-001 | PER-001 Alert | A |
+| T1053.005 | benign scheduled task launched by an interpreter | reading of the tasks | new task; 4698 not read | PER-001 | PER-001 Alert | A |
+| T1543.003 | local service, image in a writable folder, benign command | System log | 7045 | COR-R5, PER-001 | COR-R5 Critical | A |
+| T1136.001 + T1098 | local account created then added to Administrators | accounts and groups audit | 4720, 4732 | COR-R3 | COR-R3 Critical | A |
+| T1070.001 (SIMULATION) | clearing of a dedicated log created for the test | System log | 104 | COR-R4 | COR-R4 Critical | A (HYPOTHESIS: 104 emitted) |
+| T1562.002 (SIMULATION) | audit subcategory outside the needs of the rules disabled then restored | policy audit; baseline | 4719; drift | COR-R7, BAS-001 | COR-R7 Alert; BAS-001 Alert if the subcategory is part of the profile | A |
+| T1562.001 | Defender, logs and deR4Tizer untouchable | · | · | DEF-003 to 006, 010 to 012 | · | D (forbidden) |
+| T1003.001 (SIMULATION) | opening of LSASS with "limited information" access, without memory read | Sysmon 10 if configured | 10 | none | none | B2 |
+| T1555.003 (SIMULATION) | opening for reading of the credentials file of a browser of an empty test account, by an unsigned test program launched from a temporary folder | 4663 + SACL | 4663 | VOL-001 | VOL-001 Critical | A |
+| T1055 (SIMULATION) | no action; available telemetry inventoried | · | · | none | none | not executed; no sensor consumed |
+| T1486 (SIMULATION) | a test program modifies a single deR4Tizer decoy | 4663 + hash | 4663 | LEU-002, LEU-001 | LEU-002 Critical + automatic suspension; REP-001 at 2 h | A |
+| T1041 | HTTP sending of a generated canary file to Kali | TCP table | outgoing connection | RES-002 | RES-002 Alert depending on the score | A for the connection; E for the content and the volume |
+| T1567 | sending to a public web service | · | · | · | · | D (no real service authorised) |
+| · (known threat) | connection to a lab address listed in a **high confidence source** | TCP table, local list | connection | RES-001 | RES-001 Critical; automatic blocking 7 d | A |
+| · (DNS) | resolution of a `.test` name from a **high confidence** domain list | DNS-Client / Sysmon 22 | query | DNS-001 | DNS-001 Critical | A (restricted lists to enable) |
+| · (DNS, S-06) | static DNS server set on the adapter | adapters, registry | change | DNS-002 | DNS-002 Alert | A |
+| · (DNS, S-18) | loopback port 53 held by another program at restart | binding failure, adapter registry, UDP table | exclusive binding failure + PID | DNS-003 | DNS-003 Critical (PID) | A (approved in v1.1; filtering present in `main`) |
+| · (filtering, S-06) | resolution of a `.test` name from the filtering list | local resolver | block | · | no alert; name in the latest blocks | A (functional trial: block expected, without alert) |
+| IPC-03 | opening of the channel from Kali over the network | pipe | refusal | · | refusal, no command executed | A (refusal expected) |
 
 ---
 
-## 3. Liste fermée proposée
+## 3. Proposed closed list
 
-### 3.0 Règles communes
+### 3.0 Common rules
 
-- Adressage : VM cible et Kali sur `d4t-labo`, dans la plage de documentation RFC 5737 ; lien d'administration sur une
-  plage de documentation distincte entre le poste et Kali seulement ; carte « Default Switch » de la VM débranchée.
-- Instantané de départ selon la configuration (décisions 5.1.2 et 5.1.11) :
-  - « campagne C » (configuration C, **principale de mesure** depuis la v1.3) : « campagne A » plus la baseline de
-    deR4Tizer appliquée par le service lui-même (trois profils en une commande, puis `reseau.bureau-distance` seule), puis
-    redémarrage ; sans Sysmon ;
-  - « campagne A » (configuration A, comparaison) : installation sans baseline au-delà du profil journalisation appliqué
-    d'office ; sans Sysmon ;
-  - « campagne B » (configuration B, collecte Sysmon) : avec Sysmon et Atomic Red Team.
-  Les trois sont préparés hors campagne avec deR4Tizer installé, l'apprentissage terminé, les comptes de test et les
-  réglages du labo ; en C, la baseline l'emporte quand elle les contredit (Bureau à distance refusé). Leurs noms ne
-  commencent jamais par « propre ».
-- **« Remise à l'instantané » désigne la remise à l'instantané de campagne de la configuration de l'essai**, **jamais à
-  « propre »** (qui effacerait deR4Tizer, les comptes de test et les réglages du labo). Remise avant et après chaque lot,
-  et **avant chaque essai des scénarios à corrélation** (COR-*).
-- La VM n'est remise à « propre » qu'**après la campagne**, une fois les preuves collectées.
-- Atomic Red Team n'existe que dans « campagne B » ; en A ou C, le comportement est produit sans elle.
-- Chaque scénario porte un attendu en configuration C, marqué HYPOTHÈSE. Scénarios que C rend inexécutables ou prévenus
-  (S-01, S-02, S-05 (a), N-04 : Bureau à distance refusé ; S-16 : leurres dans des dossiers protégés) : la détection se
-  mesure en A, l'essai en C reste une mesure de prévention (classe P). S-19 est exécuté au début de chaque lot en C ; s'il
-  échoue, le lot est invalide (D).
-- Scores séparés par configuration (A, B, C), jamais fusionnés ; classe P comptée à part, jamais comme détection.
-- Comptes locaux de test dédiés ; mots de passe de labo jamais écrits dans un rapport ni dans le dépôt.
-- Horodatage : début (UTC) relevé sur la VM ; latence = `HeureUtc` de l'alerte moins `TimeCreated` de l'événement
-  déclencheur (et, en second, moins le début de l'action).
-- Essai valide : comportement prouvé (événement Windows ou Sysmon, journal côté Kali), collectes « Active » au début et à
-  la fin. Sinon D (invalide), jamais 0. **Critère précisé par la règle de décision D-2 (5.4) :** toute collecte dont dépend
-  une règle du scénario doit être « Active » au départ, prouvée par une lecture réussie **postérieure à la restauration**
-  de l'instantané ; sinon l'essai est invalide (D).
-- VP : règle, niveau et entité attendus, dans le délai ; C : autre règle ou autre niveau ; FN : rien dans le délai ; FP :
-  alerte Alerte ou Critique pendant un test négatif ou sans lien avec le scénario. **Règle de décision D-1 (5.4) :** une
-  alerte **RES-004/RES-005** portant une adresse de la **plage de documentation du labo** est un **artefact d'exposition
-  de labo**, exclu du décompte des VP comme des FP (y compris dans les tests négatifs), mais conservé dans les preuves ;
-  une RES-004/005 portant une adresse hors plage de labo est investiguée, jamais exclue d'office.
-- 10 essais valides par scénario avant toute mesure consolidée ; SIMULATION et émulation jamais dans le même score.
-- Preuves communes : `alertes.json`, `suivi-incidents.json`, `incidents.json`, événements du SIEM du jour, `etat.json`,
-  `reponses.json`, `blocages.json`, `journal.txt` ; extraits des journaux Windows et de Sysmon sur la fenêtre de l'essai ;
-  versions de deR4Tizer, Windows, Sysmon, Atomic Red Team ; état de Defender au début et à la fin. Résultats bruts hors
-  du dépôt.
+- Addressing: target VM and Kali on `d4t-labo`, in the RFC 5737 documentation range; administration link on a
+  separate documentation range between the host machine and Kali only; "Default Switch" adapter of the VM unplugged.
+- Starting snapshot depending on the configuration (decisions 5.1.2 and 5.1.11):
+  - "campagne C" (configuration C, **main measurement configuration** since v1.3): "campagne A" plus the deR4Tizer
+    baseline applied by the service itself (three profiles in one command, then `reseau.bureau-distance` alone), then
+    restart; without Sysmon;
+  - "campagne A" (configuration A, comparison): installation without baseline beyond the logging profile applied
+    by default; without Sysmon;
+  - "campagne B" (configuration B, Sysmon collection): with Sysmon and Atomic Red Team.
+  All three are prepared outside the campaign with deR4Tizer installed, learning finished, the test accounts and the
+  lab settings; in C, the baseline prevails when it contradicts them (Remote Desktop refused). Their names never
+  start with "propre".
+- **"Reset to the snapshot" means the reset to the campaign snapshot of the configuration of the trial**, **never to
+  "propre"** (which would erase deR4Tizer, the test accounts and the lab settings). Reset before and after each lot,
+  and **before each trial of the correlation scenarios** (COR-*).
+- The VM is reset to "propre" only **after the campaign**, once the evidence is collected.
+- Atomic Red Team exists only in "campagne B"; in A or C, the behaviour is produced without it.
+- Each scenario carries an expected result in configuration C, marked HYPOTHESIS. Scenarios that C makes unexecutable or prevented
+  (S-01, S-02, S-05 (a), N-04: Remote Desktop refused; S-16: decoys in protected folders): detection is
+  measured in A, the trial in C remains a prevention measurement (class P). S-19 is executed at the start of each lot in C; if it
+  fails, the lot is invalid (D).
+- Scores separate per configuration (A, B, C), never merged; class P counted separately, never as detection.
+- Dedicated local test accounts; lab passwords never written in a report or in the repository.
+- Timestamping: start (UTC) read on the VM; latency = `HeureUtc` of the alert minus `TimeCreated` of the triggering
+  event (and, secondarily, minus the start of the action).
+- Valid trial: behaviour proven (Windows or Sysmon event, log on the Kali side), collections "Active" at the start and at
+  the end. Otherwise D (invalid), never 0. **Criterion made precise by decision rule D-2 (5.4):** any collection on which
+  a rule of the scenario depends must be "Active" at the start, proven by a successful reading **after the restore**
+  of the snapshot; otherwise the trial is invalid (D).
+- TP: expected rule, level and entity, within the delay; C: other rule or other level; FN: nothing within the delay; FP:
+  Alert or Critical alert during a negative test or unrelated to the scenario. **Decision rule D-1 (5.4):** an
+  **RES-004/RES-005** alert carrying an address of the **documentation range of the lab** is a **lab exposure
+  artefact**, excluded from the count of TP as of FP (including in the negative tests), but kept in the evidence;
+  an RES-004/005 carrying an address outside the lab range is investigated, never excluded by default.
+- 10 valid trials per scenario before any consolidated measurement; SIMULATION and emulation never in the same score.
+- Common evidence: `alertes.json`, `suivi-incidents.json`, `incidents.json`, SIEM events of the day, `etat.json`,
+  `reponses.json`, `blocages.json`, `journal.txt`; extracts of the Windows and Sysmon logs over the window of the trial;
+  versions of deR4Tizer, Windows, Sysmon, Atomic Red Team; state of Defender at the start and at the end. Raw results outside
+  the repository.
 
-### 3.1 Scénarios (du plus bénin au moins bénin)
+### 3.1 Scenarios (from the most benign to the least benign)
 
-**N-01 — Témoin de chaîne : activité légitime (négatif, valide la collecte et les preuves)**
-- Technique : aucune (négatif).
-- Préconditions : instantané de campagne de la configuration ; collectes actives ; apprentissage terminé ; horloges
-  relevées.
-- Action : ouverture de session locale du compte de test, une commande d'administration PowerShell signée lancée par
-  fichier, consultation de l'interface.
-- Attendu : aucune alerte Alerte/Critique ; 4624 présents dans le SIEM ; aucune collecte en panne.
-- Délai : 10 min d'observation.
-- Nettoyage : fermeture de session.
-- Preuves : communes + état des collectes au début et à la fin.
-- Attendu en configuration C (HYPOTHÈSE) : identique ; vérifie que le pilotage par PowerShell Direct et la collecte des
-  preuves fonctionnent sous la baseline ; aucune alerte due à la baseline.
+**N-01 · Chain control: legitimate activity (negative, validates the collection and the evidence)**
+- Technique: none (negative).
+- Preconditions: campaign snapshot of the configuration; collections active; learning finished; clocks
+  read.
+- Action: local logon of the test account, a signed PowerShell administration command launched from a
+  file, viewing of the interface.
+- Expected: no Alert/Critical alert; 4624 present in the SIEM; no collection down.
+- Delay: 10 min of observation.
+- Cleanup: logoff.
+- Evidence: common + state of the collections at the start and at the end.
+- Expected in configuration C (HYPOTHESIS): identical; checks that control through PowerShell Direct and the collection of the
+  evidence work under the baseline; no alert due to the baseline.
 
-**S-01 — Force brute RDP, échecs seuls (premier scénario : valide la chaîne de mesure, COR-R1)**
-- Technique : T1110.001. Nature : émulation (échecs réels contre un compte de test, aucun accès obtenu).
-- Préconditions : N-01 réussi ; Bureau à distance autorisé sur le profil de la carte du labo ; compte de test hors
-  Administrateurs ; nombre d'échecs inférieur au seuil de verrouillage relevé.
-- Action : depuis Kali, une série d'échecs d'authentification au-delà du seuil de corrélation, en moins de 2 min, puis
-  arrêt.
-- Attendu : plusieurs 4625 (source = Kali) ; COR-R1 Alerte, entité `source:<adresse Kali>` ; un incident ouvert. Annexes
-  admises : RES-005, RES-007 (RES-004/005 sur l'adresse du labo = artefact de labo, D-1).
-- Délai maximal : 120 s après l'atteinte du seuil.
-- Nettoyage : remise à l'instantané avant l'essai suivant.
-- Preuves : communes + 4625 exportés ; journal côté Kali (heure, nombre, résultat ; sans mot de passe).
-- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-baseline)** : Bureau à distance refusé, connexion refusée côté
-  Kali, aucune 4625 par RDP, COR-R1 non exercée. Ce n'est pas un FN : COR-R1 se mesure en C par S-03 et en A par S-01.
+**S-01 · RDP brute force, failures only (first scenario: validates the measurement chain, COR-R1)**
+- Technique: T1110.001. Nature: emulation (real failures against a test account, no access obtained).
+- Preconditions: N-01 passed; Remote Desktop allowed on the profile of the lab adapter; test account outside
+  Administrators; number of failures below the lockout threshold read.
+- Action: from Kali, a series of authentication failures beyond the correlation threshold, in less than 2 min, then
+  stop.
+- Expected: several 4625 (source = Kali); COR-R1 Alert, entity `source:<adresse Kali>`; one incident opened. Accepted
+  side alerts: RES-005, RES-007 (RES-004/005 on the lab address = lab artefact, D-1).
+- Maximum delay: 120 s after the threshold is reached.
+- Cleanup: reset to the snapshot before the next trial.
+- Evidence: common + exported 4625; log on the Kali side (time, number, result; without password).
+- Expected in configuration C (HYPOTHESIS): **prevented (P-baseline)**: Remote Desktop refused, connection refused on the
+  Kali side, no 4625 through RDP, COR-R1 not exercised. This is not an FN: COR-R1 is measured in C by S-03 and in A by S-01.
 
-**S-02 — Force brute RDP suivie d'une réussite**
-- Technique : T1110.001, T1078.003, T1133. Nature : émulation.
-- Préconditions : comme S-01.
-- Action : une série d'échecs au-delà du seuil puis une ouverture de session réussie du compte de test, fermée aussitôt.
-- Attendu : COR-R1 Alerte ; COR-R2 Critique ; COR-R9 Critique selon la fiche (**HYPOTHÈSE C** : Alerte « Session ouverte
-  depuis Internet ») ; R2 et R9 dans un même incident `compte:<compte de test>` ; RES-007.
-- Délai : 120 s après la 4624. Nettoyage : déconnexion ; remise à l'instantané.
-- Preuves : communes + 4624 (types 3 et 10), 4625.
-- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-baseline)** comme S-01 ; COR-R2 et la variante Critique de COR-R9
-  (Bureau à distance) non exerçables en C, mesurées en A.
+**S-02 · RDP brute force followed by a success**
+- Technique: T1110.001, T1078.003, T1133. Nature: emulation.
+- Preconditions: as S-01.
+- Action: a series of failures beyond the threshold then a successful logon of the test account, closed immediately.
+- Expected: COR-R1 Alert; COR-R2 Critical; COR-R9 Critical according to the sheet (**HYPOTHESIS C**: Alert "Session ouverte
+  depuis Internet"); R2 and R9 in the same incident `compte:<compte de test>`; RES-007.
+- Delay: 120 s after the 4624. Cleanup: disconnection; reset to the snapshot.
+- Evidence: common + 4624 (types 3 and 10), 4625.
+- Expected in configuration C (HYPOTHESIS): **prevented (P-baseline)** as S-01; COR-R2 and the Critical variant of COR-R9
+  (Remote Desktop) not exercisable in C, measured in A.
 
-**S-03 — Force brute SMB suivie d'une réussite**
-- Technique : T1110.001, T1021.002. Nature : émulation.
-- Préconditions : partage de fichiers autorisé sur le profil de la carte du labo ; compte de test.
-- Action : une série d'échecs d'authentification sur le partage au-delà du seuil, puis une connexion réussie en lecture
-  d'un partage de test.
-- Attendu : COR-R1, COR-R2, COR-R9 Alerte ; si l'adresse source manque dans 4625, R1 par compte et R9 muette (à
-  constater). Délai : 120 s. Nettoyage : remise à l'instantané.
-- Preuves : communes + 4625/4624 avec le champ d'adresse source.
-- Attendu en configuration C (HYPOTHÈSE) : identique à A si l'autorisation « partage de fichiers » survit au blocage des
-  entrées par défaut ; Kali en SMB 2 ou 3. Accès refusé par le pare-feu : P-baseline, relevé.
+**S-03 · SMB brute force followed by a success**
+- Technique: T1110.001, T1021.002. Nature: emulation.
+- Preconditions: file sharing allowed on the profile of the lab adapter; test account.
+- Action: a series of authentication failures on the share beyond the threshold, then a successful read connection
+  to a test share.
+- Expected: COR-R1, COR-R2, COR-R9 Alert; if the source address is missing in 4625, R1 by account and R9 silent (to
+  be observed). Delay: 120 s. Cleanup: reset to the snapshot.
+- Evidence: common + 4625/4624 with the source address field.
+- Expected in configuration C (HYPOTHESIS): identical to A if the "file sharing" permission survives the blocking of
+  inbound traffic by default; Kali in SMB 2 or 3. Access refused by the firewall: P-baseline, recorded.
 
-**S-04 — Connexion distante au canal de commandes (IPC-03)**
-- Technique : aucune directe (frontière de privilège). Nature : émulation.
-- Préconditions : compte de test standard.
-- Action : depuis Kali, tentative d'ouverture du tube de deR4Tizer par le réseau, avec une demande de version.
-- Attendu : refus ; aucune commande exécutée ; COR-R9 Alerte pour la session réseau. Délai : 60 s. Nettoyage : remise à
-  l'instantané. Preuves : erreur côté Kali, `journal.txt`, SIEM.
-- Attendu en configuration C (HYPOTHÈSE) : identique (refus du tube, COR-R9 Alerte) ; si la session SMB est refusée en
-  amont : P-baseline, et le refus du tube n'est pas exercé (D pour IPC-03).
+**S-04 · Remote connection to the command channel (IPC-03)**
+- Technique: none directly (privilege boundary). Nature: emulation.
+- Preconditions: standard test account.
+- Action: from Kali, attempt to open the deR4Tizer pipe over the network, with a version request.
+- Expected: refusal; no command executed; COR-R9 Alert for the network session. Delay: 60 s. Cleanup: reset to
+  the snapshot. Evidence: error on the Kali side, `journal.txt`, SIEM.
+- Expected in configuration C (HYPOTHESIS): identical (refusal of the pipe, COR-R9 Alert); if the SMB session is refused
+  upstream: P-baseline, and the refusal of the pipe is not exercised (D for IPC-03).
 
-**S-05 — Essais D4-1 : interface en session Bureau à distance et au changement rapide d'utilisateur**
-- Technique : aucune (essai fonctionnel, décision D4-1). Nature : essai fonctionnel.
-- Préconditions : deux comptes de test ; tâche de relance présente.
-- Action : (a) session Bureau à distance du compte A depuis Kali ; (b) changement rapide vers le compte B à la console.
-- Attendu : interface présente dans chaque session active au plus tard 6 min après l'ouverture ; aucun SAN-010 sur
-  25 min ; témoin retenu : interface fermée volontairement plus de 15 min, SAN-010. Délai : 25 min par cas.
-- Nettoyage : sessions fermées ; remise à l'instantané. Preuves : processus par session, SIEM, alertes SAN.
-- Attendu en configuration C (HYPOTHÈSE) : (a) **non exécutable** (Bureau à distance refusé) : D en C, mesuré en A ;
-  (b) identique à A.
+**S-05 · D4-1 trials: interface in a Remote Desktop session and at fast user switching**
+- Technique: none (functional trial, decision D4-1). Nature: functional trial.
+- Preconditions: two test accounts; relaunch task present.
+- Action: (a) Remote Desktop session of account A from Kali; (b) fast switch to account B at the console.
+- Expected: interface present in each active session at the latest 6 min after opening; no SAN-010 over
+  25 min; control retained: interface closed on purpose for more than 15 min, SAN-010. Delay: 25 min per case.
+- Cleanup: sessions closed; reset to the snapshot. Evidence: processes per session, SIEM, SAN alerts.
+- Expected in configuration C (HYPOTHESIS): (a) **not executable** (Remote Desktop refused): D in C, measured in A;
+  (b) identical to A.
 
-**S-06 — Changement de serveur DNS (DNS-002) et filtrage DNS par résolveur local**
-- Technique : sans correspondance ATT&CK exacte (redirection de résolution) ; fonction de phase 7. Nature : émulation
-  (DNS-002, changement de serveur DNS), essai fonctionnel (filtrage par résolveur local).
-- **Statut v1.4 : testable.** Le code est présent dans `main` (DNS-002 : `dns_surveillance.rs` ; filtrage : résolveur
-  local `dns_local.rs`, moteur `filtrage.rs`, activation sur les cartes `filtrage_cartes.rs`, état `filtrage-etat.json`).
-  Une rédaction initiale classait S-06 « code absent / classe E » : c'était une erreur due à un checkout périmé, corrigée
-  (5.5). L'activation des cartes sur le résolveur local en SYSTEM a l'accord du mainteneur (phase 7.4) : ce n'est pas une
-  question ouverte.
-- Préconditions : configuration A suffit ; amont DNS de labo sur Kali (le résolveur local relaie vers lui ; sans amont qui
-  répond, les cartes restent sur leurs serveurs d'origine, limite de 5.1.4) ; résolveur local actif ; filtrage activé par
-  la commande `filtrage` de l'administrateur (cartes physiques réglées sur le résolveur local, serveurs d'origine en
-  secours) ; liste de filtrage synthétique locale avec un nom `.test` (noms `.test` uniquement, aucune liste de tiers) ;
-  état des collectes, du filtrage et des cartes relevé ; critère D-2 (5.4) : les collectes `ConfigDns` (DNS-002) et
-  `FiltrageDns` doivent être « Active » au départ, prouvées par une lecture postérieure à la restauration.
-- Action : (a) **DNS-002** : un serveur DNS statique est réglé sur une carte physique active de la VM (réseau inchangé),
-  puis le relevé des cartes (toutes les 60 s) le compare ; (b) **filtrage** : résolution par le client DNS de Windows d'un
-  nom `.test` présent dans la liste de filtrage synthétique.
-- Attendu : (a) **DNS-002 Alerte** (serveur DNS réglé à la main sur une carte physique ; règle non adoucie par
-  l'apprentissage) ; (b) **aucune alerte** : le nom `.test` listé est résolu en **adresse nulle** et apparaît dans les
-  « derniers blocages » (`filtrage-etat.json`), l'état du filtrage le comptant ; un nom `.test` **hors** liste est relayé
-  vers l'amont de labo (témoin). 1 incident pour DNS-002 au plus.
-- Délai maximal : 120 s pour DNS-002 (après le relevé des cartes) ; 60 s pour le filtrage.
-- Nettoyage : serveur DNS statique retiré, carte rendue au DHCP (témoin négatif N-05 : aucune alerte au retour au DHCP,
-  changement donné par le réseau) ; filtrage désactivé par la commande `filtrage` (cartes rendues à leurs serveurs
-  d'origine, port 53 relâché, résolveur local arrêté) ; liste de filtrage synthétique retirée ; **vérifier que les cartes
-  et le filtrage sont rendus à l'identique** ; remise à l'instantané après l'essai.
-- Preuves : communes + réglage DNS des cartes avant/après (relevé et registre `NameServer`), `alertes.json` (DNS-002),
-  `filtrage-etat.json` (derniers blocages, catégories, état actif), événement DNS brut (nom résolu), état des collectes
-  `ConfigDns` et `FiltrageDns` au début et à la fin.
-- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-002 Alerte ; blocage sans alerte) ; aucune règle de la baseline
-  ne porte sur le réglage DNS des cartes ni sur le filtrage ; si le poste est vu « joint à un domaine », l'activation du
-  filtrage est refusée (décision D7-5 du code) : le relever, et mesurer alors le filtrage en configuration A.
+**S-06 · Change of DNS server (DNS-002) and DNS filtering by local resolver**
+- Technique: no exact ATT&CK match (redirection of resolution); phase 7 function. Nature: emulation
+  (DNS-002, change of DNS server), functional trial (filtering by local resolver).
+- **Status v1.4: testable.** The code is present in `main` (DNS-002: `dns_surveillance.rs`; filtering: local resolver
+  `dns_local.rs`, engine `filtrage.rs`, activation on the adapters `filtrage_cartes.rs`, state `filtrage-etat.json`).
+  An initial draft classed S-06 "code absent / class E": it was an error due to a stale checkout, corrected
+  (5.5). The activation of the adapters on the local resolver as SYSTEM has the agreement of the maintainer (phase 7.4): it is not an
+  open question.
+- Preconditions: configuration A is enough; lab DNS upstream on Kali (the local resolver relays to it; without an upstream that
+  responds, the adapters stay on their original servers, limit of 5.1.4); local resolver active; filtering enabled by
+  the administrator's `filtrage` command (physical adapters set to the local resolver, original servers as
+  fallback); local synthetic filtering list with a `.test` name (`.test` names only, no third-party list);
+  state of the collections, of filtering and of the adapters read; criterion D-2 (5.4): the collections `ConfigDns` (DNS-002) and
+  `FiltrageDns` must be "Active" at the start, proven by a reading after the restore.
+- Action: (a) **DNS-002**: a static DNS server is set on an active physical adapter of the VM (network unchanged),
+  then the reading of the adapters (every 60 s) compares it; (b) **filtering**: resolution by the Windows DNS client of a
+  `.test` name present in the synthetic filtering list.
+- Expected: (a) **DNS-002 Alert** (DNS server set by hand on a physical adapter; rule not softened by
+  learning); (b) **no alert**: the listed `.test` name is resolved to a **null address** and appears in the
+  latest blocks (`filtrage-etat.json`), the filtering state counting it; a `.test` name **outside** the list is relayed
+  to the lab upstream (control). 1 incident for DNS-002 at most.
+- Maximum delay: 120 s for DNS-002 (after the reading of the adapters); 60 s for filtering.
+- Cleanup: static DNS server removed, adapter returned to DHCP (negative control N-05: no alert on return to DHCP,
+  change given by the network); filtering disabled by the `filtrage` command (adapters returned to their original
+  servers, port 53 released, local resolver stopped); synthetic filtering list removed; **check that the adapters
+  and filtering are returned identically**; reset to the snapshot after the trial.
+- Evidence: common + DNS setting of the adapters before/after (reading and registry `NameServer`), `alertes.json` (DNS-002),
+  `filtrage-etat.json` (latest blocks, categories, active state), raw DNS event (resolved name), state of the collections
+  `ConfigDns` and `FiltrageDns` at the start and at the end.
+- Expected in configuration C (HYPOTHESIS): identical (DNS-002 Alert; block without alert); no baseline rule
+  concerns the DNS setting of the adapters or filtering; if the machine is seen as "joined to a domain", the activation of
+  filtering is refused (decision D7-5 of the code): record it, and then measure filtering in configuration A.
 
-**S-07 — Domaine et adresse inscrits dans des listes de menaces de test (confiance haute) — DNS-001 / RES-001**
-- Technique : T1071 (infrastructure connue). Nature : émulation.
-- Préconditions : listes synthétiques locales posées par un administrateur (propriétaire SYSTEM ou Administrateurs),
-  effacées par la remise à l'instantané :
-  - un **nom de domaine `.test`** (nom malveillant connu de test) dans une **liste de domaines de confiance haute**
-    (listes restreintes activées pour le test, décision 5.1.5) ;
-  - une **adresse secondaire de Kali dédiée** (dans la plage de documentation du labo, **jamais l'adresse principale de
-    Kali**, sinon le blocage automatique couperait le labo) placée dans une **source de confiance haute** (par exemple une
-    liste C2 de botnets ou un bloc DROP). **Correction v1.4 :** une source de **réputation** (par exemple de niveau 3) **ne
-    déclenche PAS** le blocage automatique ; seule une source de **confiance haute** le fait. La v1.3 parlait à tort d'une
-    « liste de niveau 3 ».
-  - critère D-2 (5.4) : les collectes « listes de menaces » et « listes de domaines » doivent être **Active** au départ
-    (listes synthétiques effectivement chargées), prouvées **après** la restauration ; sinon l'essai est **invalide (D)**.
-- Action : (a) résolution du nom de domaine listé par le client DNS de Windows (requête vers l'amont de labo sur Kali, le
-  commutateur privé ; aucun vrai domaine contacté) ; (b) connexion réseau bénigne, maintenue quelques secondes, vers
-  l'adresse de menace listée (serveur du labo sur Kali), pour qu'elle soit vue par le relevé périodique de la table TCP.
-- Attendu : **DNS-001 Critique** (résolution d'un domaine malveillant connu) ; **RES-001 Critique** (connexion vers une
-  adresse de menace de confiance haute) + **blocage automatique à échéance de 7 jours** avec coupure de la connexion ;
-  recouvrement par « Débloquer » vérifié (après « Débloquer », une nouvelle connexion re-déclenche tant que la liste est
-  présente — à noter). 1+ incident.
-- Délai : 60 s (résolution et connexion).
-- Nettoyage : « Débloquer » l'adresse dans l'interface ; listes de test retirées ; listes restreintes remises à leur
-  valeur d'origine ; remise à l'instantané.
-- Preuves : communes + `menaces.json` (sources et compteurs avant/après), événement DNS brut (nom résolu), `alertes.json`
-  (DNS-001, RES-001), `blocages.json` (échéance +7 j), règles « deR4Tizer » du pare-feu avant et après.
-- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-001, RES-001, blocage de 7 jours) ; sans réputation cloud
-  joignable, la protection réseau ne devrait pas bloquer l'adresse du labo ; si elle le fait : P-Defender relevé à part,
-  DNS-001 restant attendue (la résolution précède la connexion).
+**S-07 · Domain and address listed in test threat lists (high confidence): DNS-001 / RES-001**
+- Technique: T1071 (known infrastructure). Nature: emulation.
+- Preconditions: local synthetic lists set by an administrator (owner SYSTEM or Administrators),
+  erased by the reset to the snapshot:
+  - a **`.test` domain name** (known malicious test name) in a **high confidence domain list**
+    (restricted lists enabled for the test, decision 5.1.5);
+  - a **dedicated secondary address of Kali** (in the documentation range of the lab, **never the main address of
+    Kali**, otherwise the automatic blocking would cut off the lab) placed in a **high confidence source** (for example a
+    botnet C2 list or a DROP block). **Correction v1.4:** a **reputation** source (for example of level 3) **does NOT
+    trigger** automatic blocking; only a **high confidence** source does. v1.3 wrongly spoke of a
+    "level 3 list".
+  - criterion D-2 (5.4): the collections "threat lists" and "domain lists" must be **Active** at the start
+    (synthetic lists actually loaded), proven **after** the restore; otherwise the trial is **invalid (D)**.
+- Action: (a) resolution of the listed domain name by the Windows DNS client (query to the lab upstream on Kali, the
+  private switch; no real domain contacted); (b) benign network connection, held a few seconds, to
+  the listed threat address (lab server on Kali), so that it is seen by the periodic reading of the TCP table.
+- Expected: **DNS-001 Critical** (resolution of a known malicious domain); **RES-001 Critical** (connection to a
+  high confidence threat address) + **automatic blocking expiring after 7 days** with the connection cut;
+  recovery through "Unblock" checked (after "Unblock", a new connection re-triggers as long as the list is
+  present: to be noted). 1+ incident.
+- Delay: 60 s (resolution and connection).
+- Cleanup: "Unblock" the address in the interface; test lists removed; restricted lists returned to their
+  original value; reset to the snapshot.
+- Evidence: common + `menaces.json` (sources and counters before/after), raw DNS event (resolved name), `alertes.json`
+  (DNS-001, RES-001), `blocages.json` (expiry +7 d), "deR4Tizer" firewall rules before and after.
+- Expected in configuration C (HYPOTHESIS): identical (DNS-001, RES-001, 7-day blocking); without reachable cloud
+  reputation, network protection should not block the lab address; if it does: P-Defender recorded separately,
+  DNS-001 remaining expected (the resolution precedes the connection).
 
-**S-08 — Balayage de ports**
-- Technique : T1046. Nature : émulation. Préconditions : journal des paquets actif sur le profil de la carte du labo.
-- Action : un balayage TCP borné, une fois.
-- Attendu : aucune règle dédiée ; RES-005 par port bloqué (HYPOTHÈSE, à compter ; RES-004/005 sur l'adresse du labo =
-  artefact de labo, D-1) ; alertes EXP éventuelles relevées sans notation. Délai : 180 s. Nettoyage : remise à l'instantané.
-- Preuves : communes + `pfirewall.log`, `exposition.json`, nombre de RES-005.
-- Attendu en configuration C (HYPOTHÈSE) : comme A, avec davantage de paquets refusés journalisés si la carte est sur le
-  profil public et le port 3389 fermé ; nombre de RES-005 comparé à A.
+**S-08 · Port scan**
+- Technique: T1046. Nature: emulation. Preconditions: packet log active on the profile of the lab adapter.
+- Action: a bounded TCP scan, once.
+- Expected: no dedicated rule; RES-005 per blocked port (HYPOTHESIS, to count; RES-004/005 on the lab address =
+  lab artefact, D-1); possible EXP alerts recorded without scoring. Delay: 180 s. Cleanup: reset to the snapshot.
+- Evidence: common + `pfirewall.log`, `exposition.json`, number of RES-005.
+- Expected in configuration C (HYPOTHESIS): as A, with more refused packets logged if the adapter is on the
+  public profile and port 3389 closed; number of RES-005 compared with A.
 
-**S-09 — Persistance par clé Run et par tâche planifiée**
-- Technique : T1547.001, T1053.005. Nature : émulation (commande bénigne qui écrit un fichier témoin).
-- Préconditions : fiches Atomic correspondantes lues si elles servent ; écartées si elles téléchargent ou ne se nettoient
-  pas.
-- Action : (a) valeur Run vers un interpréteur qui écrit un témoin ; (b) tâche planifiée équivalente.
-- Attendu : PER-001 Alerte pour chacune ; 4698 produit (B2). Délai : 180 s. Nettoyage : valeur et tâche supprimées ;
-  aucune alerte résiduelle. Preuves : communes + `demarrage.json`.
-- Attendu en configuration C (HYPOTHÈSE) : PER-001 Alerte pour (a) et (b) ; témoin écrit hors des dossiers protégés (sinon
-  P-Defender par l'accès contrôlé aux dossiers, relevé) ; variante par Windows Script Host bloquée (P-baseline), non
-  utilisée.
+**S-09 · Persistence through Run key and scheduled task**
+- Technique: T1547.001, T1053.005. Nature: emulation (benign command that writes a marker file).
+- Preconditions: matching Atomic sheets read if they are used; excluded if they download or do not clean
+  up after themselves.
+- Action: (a) Run value pointing to an interpreter that writes a marker; (b) equivalent scheduled task.
+- Expected: PER-001 Alert for each; 4698 produced (B2). Delay: 180 s. Cleanup: value and task deleted;
+  no residual alert. Evidence: common + `demarrage.json`.
+- Expected in configuration C (HYPOTHESIS): PER-001 Alert for (a) and (b); marker written outside the protected folders (otherwise
+  P-Defender through controlled folder access, recorded); variant through Windows Script Host blocked (P-baseline), not
+  used.
 
-**S-10 — PowerShell encodé et obscurci (contenu bénin)**
-- Technique : T1059.001, T1027. Nature : émulation. Préconditions : configurations A et B.
-- Action : (a) commande encodée longue qui écrit un témoin ; (b) script obscurci au même effet, lancé par fichier.
-- Attendu : (a) PRC-002 Alerte ; (b) aucune alerte, 4104 présent (B2). Délai : 60 s. Nettoyage : témoin supprimé.
-- Preuves : communes + Sysmon 1, 4688, 4104.
-- Attendu en configuration C (HYPOTHÈSE) : (a) PRC-002 Alerte, avec un blocage possible du contenu par
-  `asr.scripts-obscurcis` (1121) : « P + A » ; (b) blocage probable du script obscurci (P-Defender), aucune alerte de
-  deR4Tizer, 4104 relevé s'il est produit.
+**S-10 · Encoded and obfuscated PowerShell (benign content)**
+- Technique: T1059.001, T1027. Nature: emulation. Preconditions: configurations A and B.
+- Action: (a) long encoded command that writes a marker; (b) obfuscated script with the same effect, launched from a file.
+- Expected: (a) PRC-002 Alert; (b) no alert, 4104 present (B2). Delay: 60 s. Cleanup: marker deleted.
+- Evidence: common + Sysmon 1, 4688, 4104.
+- Expected in configuration C (HYPOTHESIS): (a) PRC-002 Alert, with a possible blocking of the content by
+  `asr.scripts-obscurcis` (1121): "P + A"; (b) probable blocking of the obfuscated script (P-Defender), no alert from
+  deR4Tizer, 4104 recorded if it is produced.
 
-**S-11 — Commande et contrôle HTTP simulé, transfert d'un fichier bénin**
-- Technique : T1071.001, T1105. Nature : émulation (serveur HTTP sur Kali servant un fichier texte).
-- Préconditions : serveur du labo sur un port hors liste courante ; réponses tenues quelques secondes.
-- Action : (a) requêtes régulières pendant quelques minutes ; (b) téléchargement par PowerShell ; (c) même téléchargement
-  par un outil Windows détourné.
-- Attendu : (a) RES-002 avec indice « balise » ; (b) PRC-002 et/ou RES-002 ; (c) PRC-003 Alerte, DEF-001 si Defender
-  réagit (résultat, jamais contourné) ; CHA-001 si deux signaux s'enchaînent ; contenu HTTP : E. Délai : 300 s (a), 60 s
-  (b, c). Nettoyage : fichiers supprimés ; remise à l'instantané. Preuves : communes + journal du serveur, journal Defender.
-- Attendu en configuration C (HYPOTHÈSE) : identique (RES-002, PRC-002, PRC-003) ; cloud et protection réseau
-  injoignables, effet attendu faible ; toute détection ou tout blocage de Defender noté à part (P-Defender ou DEF-001).
+**S-11 · Simulated HTTP command and control, transfer of a benign file**
+- Technique: T1071.001, T1105. Nature: emulation (HTTP server on Kali serving a text file).
+- Preconditions: lab server on a port outside the common list; responses held a few seconds.
+- Action: (a) regular requests for a few minutes; (b) download by PowerShell; (c) same download
+  by a misused Windows tool.
+- Expected: (a) RES-002 with "beacon" indicator; (b) PRC-002 and/or RES-002; (c) PRC-003 Alert, DEF-001 if Defender
+  reacts (result, never bypassed); CHA-001 if two signals follow one another; HTTP content: E. Delay: 300 s (a), 60 s
+  (b, c). Cleanup: files deleted; reset to the snapshot. Evidence: common + server log, Defender log.
+- Expected in configuration C (HYPOTHESIS): identical (RES-002, PRC-002, PRC-003); cloud and network protection
+  unreachable, weak expected effect; any detection or blocking by Defender noted separately (P-Defender or DEF-001).
 
-**S-12 — Exfiltration d'un fichier canari**
-- Technique : T1041. Nature : émulation (fichier généré, marqué CANARI, aucune donnée réelle). Préconditions : réception
-  sur Kali. Action : envoi HTTP du canari par un programme de test.
-- Attendu : RES-002 si le score est atteint ; rien sur le volume ni le contenu (E). Délai : 60 s. Nettoyage : canari
-  supprimé des deux côtés. Preuves : communes + empreinte du canari, journal du serveur.
-- Attendu en configuration C (HYPOTHÈSE) : identique (RES-002 selon le score) ; aucune règle de la baseline ne porte sur
-  l'envoi HTTP.
+**S-12 · Exfiltration of a canary file**
+- Technique: T1041. Nature: emulation (generated file, marked CANARI, no real data). Preconditions: reception
+  on Kali. Action: HTTP sending of the canary by a test program.
+- Expected: RES-002 if the score is reached; nothing on the volume or the content (E). Delay: 60 s. Cleanup: canary
+  deleted on both sides. Evidence: common + hash of the canary, server log.
+- Expected in configuration C (HYPOTHESIS): identical (RES-002 depending on the score); no baseline rule concerns
+  HTTP sending.
 
-**S-13 — Service, compte administrateur, journal dédié effacé, audit modifié**
-- Technique : T1543.003, T1136.001, T1098, T1070.001 (SIMULATION), T1562.002 (SIMULATION). Nature : SIMULATION pour
-  T1070.001 et T1562.002 ; émulation pour les autres.
-- Préconditions : journal dédié créé pour le test. **Volet T1562.002 approuvé en v1.1** (décision du mainteneur du
-  2026-11-14, 5.2) : exécuté avec nettoyage à rétablissement vérifié. État initial de la sous-catégorie d'audit relevé
-  avant l'essai.
-- Action : service créé avec une image dans un dossier inscriptible (commande bénigne) ; compte de test créé puis ajouté
-  aux Administrateurs ; journal dédié effacé ; sous-catégorie d'audit désactivée puis rétablie.
-- Attendu : COR-R5 Critique ; COR-R3 Critique ; COR-R4 Critique ; COR-R7 Alerte ; BAS-001 Alerte si la sous-catégorie
-  appartient au profil « journalisation ». Délai : 120 s ; 25 min pour BAS-001.
-- Nettoyage : service, compte, journal dédié supprimés ; sous-catégorie d'audit remise dans son état initial et le
-  rétablissement vérifié (comparaison avant/après) ; remise à l'instantané après l'essai.
-- Preuves : communes + 7045, 4720, 4732, 104, 4719 ; politique d'audit avant et après.
-- Attendu en configuration C (HYPOTHÈSE) : identique (COR-R5, COR-R3, COR-R4, COR-R7) ; aucune règle ASR ne bloque la
-  création du service ni du compte ; BAS-001 attendue si la sous-catégorie modifiée appartient au profil journalisation ;
-  la GPO locale peut rétablir d'elle-même la sous-catégorie à son actualisation : heure du rétablissement relevée.
+**S-13 · Service, administrator account, dedicated log cleared, audit modified**
+- Technique: T1543.003, T1136.001, T1098, T1070.001 (SIMULATION), T1562.002 (SIMULATION). Nature: SIMULATION for
+  T1070.001 and T1562.002; emulation for the others.
+- Preconditions: dedicated log created for the test. **T1562.002 part approved in v1.1** (decision of the maintainer of
+  2026-11-14, 5.2): executed with cleanup with verified restoration. Initial state of the audit subcategory read
+  before the trial.
+- Action: service created with an image in a writable folder (benign command); test account created then added
+  to Administrators; dedicated log cleared; audit subcategory disabled then restored.
+- Expected: COR-R5 Critical; COR-R3 Critical; COR-R4 Critical; COR-R7 Alert; BAS-001 Alert if the subcategory
+  belongs to the "logging" profile. Delay: 120 s; 25 min for BAS-001.
+- Cleanup: service, account, dedicated log deleted; audit subcategory returned to its initial state and the
+  restoration checked (before/after comparison); reset to the snapshot after the trial.
+- Evidence: common + 7045, 4720, 4732, 104, 4719; audit policy before and after.
+- Expected in configuration C (HYPOTHESIS): identical (COR-R5, COR-R3, COR-R4, COR-R7); no ASR rule blocks the
+  creation of the service or of the account; BAS-001 expected if the modified subcategory belongs to the logging profile;
+  the local GPO may restore the subcategory by itself at its refresh: time of the restoration recorded.
 
-**S-14 — Lecture d'un fichier d'identifiants de navigateur (SIMULATION)**
-- Technique : T1555.003 (SIMULATION). Nature : SIMULATION : compte de test sans aucun mot de passe enregistré ; ouverture
-  en lecture puis fermeture, aucune copie, aucun déchiffrement.
-- Préconditions : audit des objets actif, SACL posée par deR4Tizer ; collecte « audit des données » **Active** au départ,
-  prouvée par une lecture auditée postérieure à la restauration (D-2, 5.4) — amorçage par une lecture légitime du
-  navigateur, qui ne lève aucune alerte.
-- Action : un programme de test non signé, lancé d'un dossier temporaire, ouvre le fichier en lecture puis ferme aussitôt.
-- Attendu : VOL-001 Critique. Délai : 60 s. Nettoyage : programme de test supprimé ; remise à l'instantané. Preuves :
-  communes + 4663.
-- Attendu en configuration C (HYPOTHÈSE) : identique (VOL-001 Critique) : l'accès contrôlé aux dossiers ne bloque que
-  l'écriture et ne protège pas ce fichier ; audit ASR de prévalence (1122) possible pour le programme de test, sans blocage.
+**S-14 · Reading of a browser credentials file (SIMULATION)**
+- Technique: T1555.003 (SIMULATION). Nature: SIMULATION: test account without any saved password; opening
+  for reading then closing, no copy, no decryption.
+- Preconditions: object auditing active, SACL set by deR4Tizer; "data audit" collection **Active** at the start,
+  proven by an audited reading after the restore (D-2, 5.4): priming through a legitimate reading by the
+  browser, which raises no alert.
+- Action: an unsigned test program, launched from a temporary folder, opens the file for reading then closes it immediately.
+- Expected: VOL-001 Critical. Delay: 60 s. Cleanup: test program deleted; reset to the snapshot. Evidence:
+  common + 4663.
+- Expected in configuration C (HYPOTHESIS): identical (VOL-001 Critical): controlled folder access only blocks
+  writing and does not protect this file; ASR prevalence audit (1122) possible for the test program, without blocking.
 
-**S-15 — Accès limité à LSASS (SIMULATION)**
-- Technique : T1003.001 (SIMULATION). Nature : SIMULATION : handle en accès « informations limitées » seulement, aucune
-  lecture de mémoire, aucun outil de vol d'identifiants. Préconditions : configuration Sysmon notée.
-- Action : ouverture puis fermeture immédiate du handle.
-- Attendu : aucune alerte de deR4Tizer (aucune règle) ; Sysmon 10 si configuré (B2) ; réaction de Defender relevée.
-  Délai : 60 s. Nettoyage : aucun. Preuves : communes + Sysmon 10.
-- Attendu en configuration C (HYPOTHÈSE) : identique (aucune alerte de deR4Tizer, B2) : la protection LSA et `asr.lsass`
-  laissent passer l'accès « informations limitées » ; toute réaction (1121, ouverture refusée) est relevée comme P, sans
-  changer la classe de détection.
+**S-15 · Limited access to LSASS (SIMULATION)**
+- Technique: T1003.001 (SIMULATION). Nature: SIMULATION: handle with "limited information" access only, no
+  memory read, no credential theft tool. Preconditions: Sysmon configuration noted.
+- Action: opening then immediate closing of the handle.
+- Expected: no alert from deR4Tizer (no rule); Sysmon 10 if configured (B2); Defender reaction recorded.
+  Delay: 60 s. Cleanup: none. Evidence: common + Sysmon 10.
+- Expected in configuration C (HYPOTHESIS): identical (no alert from deR4Tizer, B2): LSA protection and `asr.lsass`
+  let the "limited information" access through; any reaction (1121, opening refused) is recorded as P, without
+  changing the detection class.
 
-**S-16 — Leurre anti-rançongiciel touché (SIMULATION, réponse automatique)**
-- Technique : T1486 (SIMULATION). Nature : SIMULATION : un programme de test modifie un seul leurre ; aucun chiffrement,
-  aucun autre fichier. Préconditions : leurres posés (collecte `Leurres` active) ; réponse automatique activée (défaut).
-- Action : écriture d'un octet dans un leurre par un programme de test hors Program Files.
-- Attendu : LEU-002 Critique, suspension automatique, inscription dans `reponses.json` ; LEU-001 au relevé suivant ;
-  option longue : REP-001 Critique à 2 h, processus toujours suspendu ; « Reprendre » vérifié. Délai : 60 s ; 2 h 05 pour
-  l'option. Nettoyage : reprise puis arrêt du programme de test ; remise à l'instantané. Preuves : communes + 4663, état
-  du processus.
-- Attendu en configuration C (HYPOTHÈSE) : **prévenu (P-Defender)** : leurres dans Documents, Images et Bureau, protégés
-  par l'accès contrôlé aux dossiers en blocage ; écriture du programme de test non signé refusée (1123), leurre intact ;
-  LEU-002 et la suspension probablement non déclenchées (aucune modification réussie). Détection et réponse automatique
-  mesurées en A ; option longue en A seulement. LEU-002 malgré tout en C : « P + A », relevé.
+**S-16 · Anti-ransomware decoy touched (SIMULATION, automatic response)**
+- Technique: T1486 (SIMULATION). Nature: SIMULATION: a test program modifies a single decoy; no encryption,
+  no other file. Preconditions: decoys set (collection `Leurres` active); automatic response enabled (default).
+- Action: writing of one byte into a decoy by a test program outside Program Files.
+- Expected: LEU-002 Critical, automatic suspension, entry in `reponses.json`; LEU-001 at the next reading;
+  long option: REP-001 Critical at 2 h, process still suspended; "Resume" checked. Delay: 60 s; 2 h 05 for
+  the option. Cleanup: resume then stop of the test program; reset to the snapshot. Evidence: common + 4663, state
+  of the process.
+- Expected in configuration C (HYPOTHESIS): **prevented (P-Defender)**: decoys in Documents, Pictures and Desktop, protected
+  by controlled folder access in block mode; write by the unsigned test program refused (1123), decoy intact;
+  LEU-002 and the suspension probably not triggered (no successful modification). Detection and automatic response
+  measured in A; long option in A only. LEU-002 nevertheless in C: "P + A", recorded.
 
-**S-17 — Session administrative à distance sur un partage administratif**
-- Technique : T1021.002. Nature : émulation (liste d'un répertoire seulement ; aucun service distant, aucune exécution à
-  distance). Préconditions : compte de test administrateur dédié.
-- Action : depuis Kali, connexion authentifiée au partage administratif, liste d'un répertoire, déconnexion.
-- Attendu : COR-R9 Alerte ; 4672 dans le SIEM ; 5140 produit mais non lu (B2). Délai : 120 s. Nettoyage : remise à
-  l'instantané. Preuves : communes + 4624, 4672, 5140.
-- Attendu en configuration C (HYPOTHÈSE) : identique (COR-R9 Alerte, 4672) ; `asr.psexec-wmi` sans objet ; Kali en SMB 2 ou 3.
+**S-17 · Remote administrative session on an administrative share**
+- Technique: T1021.002. Nature: emulation (listing of a directory only; no remote service, no remote
+  execution). Preconditions: dedicated administrator test account.
+- Action: from Kali, authenticated connection to the administrative share, listing of a directory, disconnection.
+- Expected: COR-R9 Alert; 4672 in the SIEM; 5140 produced but not read (B2). Delay: 120 s. Cleanup: reset to
+  the snapshot. Evidence: common + 4624, 4672, 5140.
+- Expected in configuration C (HYPOTHESIS): identical (COR-R9 Alert, 4672); `asr.psexec-wmi` not applicable; Kali in SMB 2 or 3.
 
-**S-18 — DNS-003 : port 53 de la boucle locale tenu par un autre programme au redémarrage du service (approuvé en v1.1)**
-- Technique : sans correspondance ATT&CK exacte (interférence avec le résolveur local) ; fonction de phase 7. Nature :
-  émulation.
-- Statut : **approuvé en v1.1** (décision du mainteneur du 2026-11-14, 5.2). Exige un **arrêt du service deR4Tizer puis sa
-  relance** ; exécutable seulement parce que le mainteneur l'a tranché (dérogation au principe « deR4Tizer intact »).
-- **Note v1.4 :** S-18 s'appuie sur la **fonction de filtrage DNS** (cartes réglées sur le résolveur local), **présente
-  dans `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`, 1.5) : S-18 est testable. Seule prudence, non
-  bloquante, confirmer que le binaire installé correspond à cette source avant de mesurer.
-- Préconditions : configuration A suffit ; filtrage DNS activé (cartes réglées sur le résolveur local) ; état des
-  collectes, du filtrage et des cartes relevé ; un programme d'écoute bénin de labo prêt (il ouvre seulement le port 53 en
-  écoute locale, sans servir de vraie résolution).
-- Action : (a) le service est arrêté de telle sorte que les cartes restent réglées sur la boucle locale (cas de risque du
-  modèle de menace) ; (b) le programme bénin de labo prend le port 53 ; (c) le service est relancé et ne peut pas lier le
-  port 53, une carte pointant encore sur le résolveur local.
-- Attendu (**HYPOTHÈSE a priori, classe A attendue**) : DNS-003 Critique, avec le PID du programme qui tient le port 53
-  (règle non adoucie par l'apprentissage) ; aucune autre alerte Alerte/Critique sans lien. À mesurer, jamais présenté
-  comme un résultat. Délai maximal : 180 s après la relance.
-- Nettoyage : programme d'écoute arrêté, port 53 libéré ; **service deR4Tizer relancé et son bon fonctionnement vérifié**
-  (tube qui répond, collectes « Active », filtrage et cartes rendus à l'identique) ; **remise à l'instantané après l'essai**.
-- Preuves : communes + fichiers d'état du filtrage avant et après, réglage des cartes avant et après, `journal.txt`
-  (arrêt et relance, échec de liaison du port 53, PID relevé), état des collectes au début et à la fin.
-- Attendu en configuration C (HYPOTHÈSE) : identique (DNS-003 Critique avec le PID) ; programme d'écoute récent : audit
-  ASR de prévalence (1122) possible, sans blocage ; nettoyage inchangé (service relancé et vérifié, remise à « campagne C »).
+**S-18 · DNS-003: loopback port 53 held by another program at the restart of the service (approved in v1.1)**
+- Technique: no exact ATT&CK match (interference with the local resolver); phase 7 function. Nature:
+  emulation.
+- Status: **approved in v1.1** (decision of the maintainer of 2026-11-14, 5.2). Requires a **stop of the deR4Tizer service then its
+  relaunch**; executable only because the maintainer decided it (exception to the "deR4Tizer intact" principle).
+- **Note v1.4:** S-18 relies on the **DNS filtering function** (adapters set to the local resolver), **present
+  in `main`** (`dns_local.rs`, `filtrage.rs`, `filtrage_cartes.rs`, 1.5): S-18 is testable. Only caution, not
+  blocking, confirm that the installed binary matches this source before measuring.
+- Preconditions: configuration A is enough; DNS filtering enabled (adapters set to the local resolver); state of the
+  collections, of filtering and of the adapters read; a benign lab listener program ready (it only opens port 53 for
+  local listening, without serving real resolution).
+- Action: (a) the service is stopped in such a way that the adapters stay set to the loopback (risk case of the
+  threat model); (b) the benign lab program takes port 53; (c) the service is relaunched and cannot bind
+  port 53, an adapter still pointing to the local resolver.
+- Expected (**a priori HYPOTHESIS, class A expected**): DNS-003 Critical, with the PID of the program that holds port 53
+  (rule not softened by learning); no other unrelated Alert/Critical alert. To be measured, never presented
+  as a result. Maximum delay: 180 s after the relaunch.
+- Cleanup: listener program stopped, port 53 freed; **deR4Tizer service relaunched and its proper operation checked**
+  (pipe that responds, collections "Active", filtering and adapters returned identically); **reset to the snapshot after the trial**.
+- Evidence: common + filtering state files before and after, setting of the adapters before and after, `journal.txt`
+  (stop and relaunch, binding failure of port 53, PID recorded), state of the collections at the start and at the end.
+- Expected in configuration C (HYPOTHESIS): identical (DNS-003 Critical with the PID); recent listener program: ASR
+  prevalence audit (1122) possible, without blocking; cleanup unchanged (service relaunched and checked, reset to "campagne C").
 
-**S-19 — Contrôle de la configuration C : conformité de la baseline et état de Defender (ajouté en v1.3)**
-- Technique : aucune (contrôle de configuration ; préalable de chaque lot en configuration C). Nature : contrôle, lecture
-  seule. Le service est seulement prié de réévaluer la baseline (aucun réglage écrit).
-- Préconditions (v1.6) : « campagne A » porte le service de `main` (empreinte du binaire notée) ; « campagne C » est
-  préparé depuis ce « campagne A ». Relevé de référence de Defender (Get-MpPreference, Get-MpComputerStatus), de
-  `baseline.json`, de la protection LSA et de la taille du journal Sécurité pris dans « campagne A ». Baseline appliquée par
-  le service en deux commandes : d'abord les profils journalisation, recommandé et renforcé (le message doit dire que
-  `reseau.bureau-distance` est laissée de côté, le Bureau à distance de « campagne A » étant activé), puis
-  `reseau.bureau-distance` seule. Ensuite, mise à jour des stratégies, redémarrage, prise de l'instantané. Windows 11 22H2
-  ou plus récent (build 22621).
-- Action : à la préparation, puis au début de chaque lot en C : réévaluation de la baseline demandée au service, puis
-  relevé de `baseline.json` et de l'état de Defender, comparaison réglage par réglage avec le relevé de référence.
-- Attendu (HYPOTHÈSE) :
-  - Defender : **aucun réglage plus faible qu'avant** (protection temps réel, comportement, scripts, téléchargements,
-    falsifications, cloud, PUA, protection réseau, accès contrôlé aux dossiers, analyse des supports amovibles) ; mode
-    « Normal » ; règles ASR jamais rétrogradées ; aucune exclusion. « Plus faible » est défini dans une table écrite avant
-    le premier relevé.
-  - Baseline : trois profils à 100 %, toutes les règles « conforme » et appliquées. Les 21 règles Defender (6 Defender,
-    15 ASR) concordent avec Get-MpPreference : « conforme » si et seulement si Defender applique la valeur. Aucune règle
-    « sans effet » ni « inconnu ».
-  - Effets au-delà du registre : Bureau à distance et Assistance à distance refusés par stratégie, port 3389 fermé.
-    Protection LSA : RunAsPPL = 2 (1 accepté seulement s'il était déjà en place dans « campagne A »), événement Wininit 12
-    postérieur à « campagne A » (RunAsPPLBoot relevé, non exigé). Journal Sécurité d'au moins 1 Gio, jamais plus petit
-    qu'en « campagne A », stratégie absente ou au moins égale à la cible. Pare-feu actif sur les trois profils, entrant
-    bloqué par défaut sur le profil Public. `EnableControlledFolderAccess` = 1.
-  - deR4Tizer : aucune alerte Alerte ou Critique, aucune BAS-001 pendant l'observation.
-- Délai : relevé immédiat ; 25 min d'observation. Nettoyage : aucun.
-- Garde-fou : un réglage de Defender plus faible, ou Defender hors du mode Normal, arrête la configuration C et remonte au
-  mainteneur (`CLAUDE.md`, règle 2) ; rien n'est corrigé à la main pour poursuivre.
-- Verdict : RÉUSSI si tout ce qui précède est vrai ; ARRÊT si Defender est affaibli ou hors du mode Normal ; INVALIDE (D)
-  sinon, en séparant les préalables (binaire, réévaluation, build), les écarts de configuration et les défauts du produit
-  (désaccord entre la baseline et Defender, alerte pendant l'observation).
-- Preuves : `baseline.json`, `baseline-sauvegarde.json`, messages des deux commandes d'application, Get-MpPreference et
-  Get-MpComputerStatus avant et après, table de comparaison, recoupement des règles Defender, empreinte du binaire, état du
-  Bureau à distance, de la protection LSA, du journal Sécurité, du pare-feu et de l'accès contrôlé aux dossiers.
-- Mesure (v1.6, 2026-11-20, essai 3, seul essai sur la v1.6 ; les essais 1 et 2 du 2026-11-15 portaient sur la v1.3 ;
-  exécuté avant la publication de cette fiche, voir l'entrée de version 1.6) : service compilé depuis la tête de #221
-  (eb399a4, non fusionnée au moment de l'essai ; `main` c64e64e plus des changements de messages seulement), binaire du
-  service A67EDD13, Windows 11 build 26300 : **RÉUSSI**. Préparation : la règle du
-  Bureau à distance laissée de côté par le profil et dite, puis appliquée seule ; scores 100/100/100. S-19 : 28 réglages
-  Defender comparés, 0 plus faible, mode Normal, 0 exclusion ; 21 règles Defender recoupées, 0 désaccord ; Bureau à
-  distance refusé (3389 fermé) ; RunAsPPL = 2 et Wininit 12 postérieur à A ; journal Sécurité 1 Gio ; pare-feu actif,
-  entrant Public bloqué ; 0 alerte Alerte/Critique et 0 BAS-001 en 25 min.
+**S-19 · Check of configuration C: compliance of the baseline and state of Defender (added in v1.3)**
+- Technique: none (configuration check; prerequisite of each lot in configuration C). Nature: check, read
+  only. The service is only asked to re-evaluate the baseline (no setting written).
+- Preconditions (v1.6): "campagne A" carries the service from `main` (hash of the binary noted); "campagne C" is
+  prepared from this "campagne A". Reference reading of Defender (Get-MpPreference, Get-MpComputerStatus), of
+  `baseline.json`, of LSA protection and of the size of the Security log taken in "campagne A". Baseline applied by
+  the service in two commands: first the logging, recommended and hardened profiles (the message must say that
+  `reseau.bureau-distance` is left aside, the Remote Desktop of "campagne A" being enabled), then
+  `reseau.bureau-distance` alone. Then, policy update, restart, taking of the snapshot. Windows 11 22H2
+  or more recent (build 22621).
+- Action: at preparation, then at the start of each lot in C: re-evaluation of the baseline requested from the service, then
+  reading of `baseline.json` and of the state of Defender, comparison setting by setting with the reference reading.
+- Expected (HYPOTHESIS):
+  - Defender: **no setting weaker than before** (real-time protection, behaviour, scripts, downloads,
+    tampering, cloud, PUA, network protection, controlled folder access, scanning of removable media); mode
+    "Normal"; ASR rules never downgraded; no exclusion. "Weaker" is defined in a table written before
+    the first reading.
+  - Baseline: three profiles at 100 %, all rules "conforme" and applied. The 21 Defender rules (6 Defender,
+    15 ASR) agree with Get-MpPreference: "conforme" if and only if Defender applies the value. No rule
+    "sans effet" or "inconnu".
+  - Effects beyond the registry: Remote Desktop and Remote Assistance refused by policy, port 3389 closed.
+    LSA protection: RunAsPPL = 2 (1 accepted only if it was already in place in "campagne A"), Wininit event 12
+    later than "campagne A" (RunAsPPLBoot recorded, not required). Security log of at least 1 GiB, never smaller
+    than in "campagne A", policy absent or at least equal to the target. Firewall active on the three profiles, inbound
+    blocked by default on the Public profile. `EnableControlledFolderAccess` = 1.
+  - deR4Tizer: no Alert or Critical alert, no BAS-001 during the observation.
+- Delay: immediate reading; 25 min of observation. Cleanup: none.
+- Safeguard: a weaker Defender setting, or Defender outside Normal mode, stops configuration C and is escalated to the
+  maintainer (`CLAUDE.md`, rule 2); nothing is corrected by hand to carry on.
+- Verdict: "RÉUSSI" if all of the above is true; "ARRÊT" if Defender is weakened or outside Normal mode; "INVALIDE" (D)
+  otherwise, separating the prerequisites (binary, re-evaluation, build), the configuration deviations and the product defects
+  (disagreement between the baseline and Defender, alert during the observation).
+- Evidence: `baseline.json`, `baseline-sauvegarde.json`, messages of the two application commands, Get-MpPreference and
+  Get-MpComputerStatus before and after, comparison table, cross-check of the Defender rules, hash of the binary, state of
+  Remote Desktop, of LSA protection, of the Security log, of the firewall and of controlled folder access.
+- Measurement (v1.6, 2026-11-20, trial 3, only trial on v1.6; trials 1 and 2 of 2026-11-15 were on v1.3;
+  executed before the publication of this sheet, see the version 1.6 entry): service built from the head of #221
+  (eb399a4, not merged at the time of the trial; `main` c64e64e plus message changes only), service
+  binary A67EDD13, Windows 11 build 26300: **"RÉUSSI"**. Preparation: the
+  Remote Desktop rule left aside by the profile and stated, then applied alone; scores 100/100/100. S-19: 28 Defender
+  settings compared, 0 weaker, Normal mode, 0 exclusion; 21 Defender rules cross-checked, 0 disagreement; Remote
+  Desktop refused (3389 closed); RunAsPPL = 2 and Wininit 12 later than A; Security log 1 GiB; firewall active,
+  Public inbound blocked; 0 Alert/Critical alert and 0 BAS-001 in 25 min.
 
-### 3.2 Tests négatifs
+### 3.2 Negative tests
 
-| Id | Activité légitime | Attendu | Attendu en configuration C (HYPOTHÈSE) |
+| Id | Legitimate activity | Expected | Expected in configuration C (HYPOTHESIS) |
 |---|---|---|---|
-| N-01 | sessions locales, administration PowerShell par fichier signé | aucune Alerte/Critique | identique ; aucune alerte due à la baseline |
-| N-02 | tâche planifiée créée par un administrateur vers un programme signé de Program Files | PER-001 Info au plus | identique |
-| N-03 | téléchargement autorisé depuis Kali par le navigateur | aucune RES-002 ; RES-003 Info admise | identique ; avertissement SmartScreen à l'ouverture du fichier, sans alerte de deR4Tizer |
-| N-04 | une erreur de mot de passe puis réussite en Bureau à distance | aucune COR-R1/R2 ; COR-R9 reste attendue (tout le labo est « public » pour le service) | non exécutable (Bureau à distance refusé) : D en C, mesuré en A |
-| N-05 | réglage DNS rendu au DHCP (après S-06) | témoin négatif : DNS-002 ne se déclenche pas au retour au DHCP (changement donné par le réseau : événement du mini-SIEM, sans alerte) | identique |
-| N-06 (v1.7) | valeur Run vers un programme signé de Program Files, sans argument | PER-001 Info au plus | identique |
-| N-07 (v1.7) | service déclaré vers un programme signé de Program Files, démarrage manuel, jamais démarré | aucune COR-R5 ; 7045 produit ; PER-001 Info au plus | identique |
-| N-08 (v1.7) | compte de test ajouté à un groupe local non administrateur | aucune COR-R3 ni COR-R3b | identique |
-| N-09 (v1.7) | politique d'audit lue par l'administrateur, puis stratégies locales réappliquées par le système | aucune COR-R7, aucune BAS-001 | identique |
-| N-10 (v1.7) | journal dédié au test exporté vers un fichier, sans effacement | aucune COR-R4 ; aucun 104 | identique |
-| N-11 (v1.7) | le programme de test de S-16 écrit dans un fichier ordinaire voisin d'un leurre | aucune LEU-001 ni LEU-002, aucune suspension | écriture refusée possible par l'accès contrôlé aux dossiers : témoin D en C, mesuré en A |
-| N-12 (v1.7) | Kali présent sur le segment du labo, aucun émetteur NDR actif, pendant un cycle complet du leurre | aucune EXP-NDR-001 Alerte ou Critique ; leurre émis, sans réponse | identique |
-| N-13 (v1.7) | box émulée qui annonce une redirection vers une autre adresse du segment, pas vers ce PC | aucune EXP-NDR-001 ; état UPnP « dont 0 vers ce PC » | identique |
+| N-01 | local sessions, PowerShell administration through a signed file | no Alert/Critical | identical; no alert due to the baseline |
+| N-02 | scheduled task created by an administrator pointing to a signed program in Program Files | PER-001 Info at most | identical |
+| N-03 | authorised download from Kali by the browser | no RES-002; RES-003 Info accepted | identical; SmartScreen warning when opening the file, without alert from deR4Tizer |
+| N-04 | one password error then success in Remote Desktop | no COR-R1/R2; COR-R9 remains expected (the whole lab is "public" for the service) | not executable (Remote Desktop refused): D in C, measured in A |
+| N-05 | DNS setting returned to DHCP (after S-06) | negative control: DNS-002 does not trigger on return to DHCP (change given by the network: mini-SIEM event, without alert) | identical |
+| N-06 (v1.7) | Run value pointing to a signed program in Program Files, without argument | PER-001 Info at most | identical |
+| N-07 (v1.7) | service declared pointing to a signed program in Program Files, manual start, never started | no COR-R5; 7045 produced; PER-001 Info at most | identical |
+| N-08 (v1.7) | test account added to a non-administrator local group | no COR-R3 or COR-R3b | identical |
+| N-09 (v1.7) | audit policy read by the administrator, then local policies reapplied by the system | no COR-R7, no BAS-001 | identical |
+| N-10 (v1.7) | log dedicated to the test exported to a file, without clearing | no COR-R4; no 104 | identical |
+| N-11 (v1.7) | the test program of S-16 writes into an ordinary file next to a decoy | no LEU-001 or LEU-002, no suspension | write possibly refused by controlled folder access: control D in C, measured in A |
+| N-12 (v1.7) | Kali present on the lab segment, no NDR emitter active, during a full cycle of the decoy | no EXP-NDR-001 Alert or Critical; decoy emitted, without response | identical |
+| N-13 (v1.7) | emulated box that announces a redirection to another address of the segment, not to this PC | no EXP-NDR-001; UPnP state "dont 0 vers ce PC" | identical |
 
-### 3.2 bis Fiches des témoins ajoutés en v1.7
+### 3.2 bis Sheets of the controls added in v1.7
 
-Communs : test négatif (activité légitime voisine d'une ligne du lot 4). Un FP est une alerte Alerte ou Critique liée au
-témoin (D-1 et D-3 s'appliquent). Le témoin n'est valide que si l'activité a bien eu lieu, prouvée par l'événement
-indiqué ; sinon D. Les attendus en configuration C sont une HYPOTHÈSE. Preuves communes (3.0) en plus des preuves propres.
+Common: negative test (legitimate activity close to a line of lot 4). An FP is an Alert or Critical alert linked to the
+control (D-1 and D-3 apply). The control is valid only if the activity actually took place, proven by the event
+indicated; otherwise D. The expected results in configuration C are a HYPOTHESIS. Common evidence (3.0) in addition to the specific evidence.
 
-**N-06 : valeur Run vers un programme signé (voisin de T1547.001, S-09)**
-- Préconditions : instantané de la configuration ; collecte des démarrages automatiques « Active » ; relevé de référence noté.
-- Action : une valeur Run de l'utilisateur de test, nom distinct par essai, vers un programme signé de Program Files,
-  sans argument.
-- Attendu : PER-001 Info au plus (entrée nouvelle, sans remarque). Délai : 180 s.
-- Nettoyage : valeur supprimée ; disparition constatée au relevé suivant.
-- Preuves : `demarrage.json` avant et après, valeur du registre avant et après.
-- Configuration C : identique.
+**N-06: Run value pointing to a signed program (close to T1547.001, S-09)**
+- Preconditions: snapshot of the configuration; collection of automatic start-ups "Active"; reference reading noted.
+- Action: a Run value of the test user, distinct name per trial, pointing to a signed program in Program Files,
+  without argument.
+- Expected: PER-001 Info at most (new entry, without remark). Delay: 180 s.
+- Cleanup: value deleted; disappearance observed at the next reading.
+- Evidence: `demarrage.json` before and after, registry value before and after.
+- Configuration C: identical.
 
-**N-07 : service signé dans Program Files (voisin de T1543.003 et T1569.002, S-13)**
-- Préconditions : instantané de la configuration ; journal Système lisible.
-- Action : un service, nom distinct par essai, déclaré vers un programme signé de Program Files, en démarrage manuel ;
-  jamais démarré ; aucune ligne de commande d'interpréteur.
-- Attendu : 7045 produit ; aucune COR-R5 ; PER-001 Info au plus. Délai : 120 s après le 7045.
-- Nettoyage : service supprimé ; remise à l'instantané après le témoin.
-- Preuves : 7045, liste des services avant et après.
-- Configuration C : identique.
+**N-07: signed service in Program Files (close to T1543.003 and T1569.002, S-13)**
+- Preconditions: snapshot of the configuration; System log readable.
+- Action: a service, distinct name per trial, declared pointing to a signed program in Program Files, with manual start;
+  never started; no interpreter command line.
+- Expected: 7045 produced; no COR-R5; PER-001 Info at most. Delay: 120 s after the 7045.
+- Cleanup: service deleted; reset to the snapshot after the control.
+- Evidence: 7045, list of services before and after.
+- Configuration C: identical.
 
-**N-08 : compte ajouté à un groupe non administrateur (voisin de T1098, S-13)**
-- Préconditions : instantané de la configuration ; audit des comptes et des groupes actif.
-- Action : un compte de test, distinct par essai, créé puis ajouté à un groupe local non administrateur.
-- Attendu : 4720 et 4732 produits ; aucune COR-R3 ni COR-R3b. Délai : 120 s après le 4732.
-- Nettoyage : compte supprimé ; remise à l'instantané.
-- Preuves : 4720, 4732 (groupe visé).
-- Configuration C : identique.
+**N-08: account added to a non-administrator group (close to T1098, S-13)**
+- Preconditions: snapshot of the configuration; audit of accounts and groups active.
+- Action: a test account, distinct per trial, created then added to a non-administrator local group.
+- Expected: 4720 and 4732 produced; no COR-R3 or COR-R3b. Delay: 120 s after the 4732.
+- Cleanup: account deleted; reset to the snapshot.
+- Evidence: 4720, 4732 (target group).
+- Configuration C: identical.
 
-**N-09 : politique d'audit lue, stratégies réappliquées par le système (voisin de T1685.001, S-13)**
-- Préconditions : instantané de la configuration ; politique d'audit relevée.
-- Action : l'administrateur lit la politique d'audit, sans rien changer, puis demande la mise à jour des stratégies
-  locales ; leur application est faite par le système.
-- Attendu : aucune COR-R7 (un 4719 émis par le système n'est pas retenu par le service) ; aucune BAS-001. Délai : 120 s
-  après la mise à jour. Tout 4719 produit est relevé avec son émetteur.
-- Nettoyage : aucun ; politique d'audit comparée avant et après ; remise à l'instantané.
-- Preuves : politique d'audit avant et après, 4719 éventuels.
-- Configuration C : identique.
+**N-09: audit policy read, policies reapplied by the system (close to T1685.001, S-13)**
+- Preconditions: snapshot of the configuration; audit policy read.
+- Action: the administrator reads the audit policy, without changing anything, then requests the update of the local
+  policies; their application is done by the system.
+- Expected: no COR-R7 (a 4719 emitted by the system is not retained by the service); no BAS-001. Delay: 120 s
+  after the update. Any 4719 produced is recorded with its emitter.
+- Cleanup: none; audit policy compared before and after; reset to the snapshot.
+- Evidence: audit policy before and after, possible 4719.
+- Configuration C: identical.
 
-**N-10 : journal dédié exporté sans effacement (voisin de T1685.005, S-13)**
-- Préconditions : un journal dédié créé pour le témoin, distinct par essai.
-- Action : export du journal dédié vers un fichier, sans effacement.
-- Attendu : aucun 104 ; aucune COR-R4. Délai : 120 s.
-- Nettoyage : export et journal dédié supprimés ; remise à l'instantané.
-- Preuves : liste des journaux, journal Système sur la fenêtre.
-- Configuration C : identique.
+**N-10: dedicated log exported without clearing (close to T1685.005, S-13)**
+- Preconditions: a dedicated log created for the control, distinct per trial.
+- Action: export of the dedicated log to a file, without clearing.
+- Expected: no 104; no COR-R4. Delay: 120 s.
+- Cleanup: export and dedicated log deleted; reset to the snapshot.
+- Evidence: list of logs, System log over the window.
+- Configuration C: identical.
 
-**N-11 : fichier ordinaire voisin d'un leurre (voisin de T1486, S-16)**
-- Préconditions : comme S-16 (leurres posés, collecte `Leurres` active).
-- Action : le programme de test de S-16, copie distincte par essai, écrit un octet dans un fichier ordinaire du même
-  dossier qu'un leurre ; aucun leurre n'est touché.
-- Attendu : aucune LEU-001 ni LEU-002, aucune suspension. Délai : 60 s.
-- Nettoyage : fichier et programme supprimés ; remise à l'instantané.
-- Preuves : empreintes des leurres avant et après, `reponses.json`.
-- Configuration C : écriture refusée possible par l'accès contrôlé aux dossiers (1123). L'activité n'a pas lieu : témoin
-  D en C, mesuré en A.
+**N-11: ordinary file next to a decoy (close to T1486, S-16)**
+- Preconditions: as S-16 (decoys set, collection `Leurres` active).
+- Action: the test program of S-16, distinct copy per trial, writes one byte into an ordinary file in the same
+  folder as a decoy; no decoy is touched.
+- Expected: no LEU-001 or LEU-002, no suspension. Delay: 60 s.
+- Cleanup: file and program deleted; reset to the snapshot.
+- Evidence: hashes of the decoys before and after, `reponses.json`.
+- Configuration C: write possibly refused by controlled folder access (1123). The activity does not take place: control
+  D in C, measured in A.
 
-**N-12 : segment sans émetteur (voisin de T1557.001 et T1557.002, S-20 à S-26)**
-- Préconditions : règles communes du §7 (redémarrage compris) ; aucune unité d'émission active côté Kali.
-- Action : aucune ; observation à partir du démarrage du service, qui est l'heure de départ.
-- Attendu : leurre émis sans réponse (`reseau.json`) ; aucune EXP-NDR-001 Alerte ou Critique. Délai : 180 s après le
-  démarrage du service. Valide seulement si le leurre a été émis dans les 120 s qui suivent le démarrage.
-- Nettoyage : remise à l'instantané.
-- Preuves : preuves du redémarrage (7.0), `reseau.json` (heure et résultat du leurre), état des unités côté Kali.
-- Configuration C : identique.
+**N-12: segment without emitter (close to T1557.001 and T1557.002, S-20 to S-26)**
+- Preconditions: common rules of §7 (restart included); no emission unit active on the Kali side.
+- Action: none; observation from the start-up of the service, which is the start time.
+- Expected: decoy emitted without response (`reseau.json`); no EXP-NDR-001 Alert or Critical. Delay: 180 s after the
+  start-up of the service. Valid only if the decoy was emitted within the 120 s following start-up.
+- Cleanup: reset to the snapshot.
+- Evidence: evidence of the restart (7.0), `reseau.json` (time and result of the decoy), state of the units on the Kali side.
+- Configuration C: identical.
 
-**N-13 : redirection UPnP vers une autre machine (voisin de T1133, S-27)**
-- Préconditions : comme S-27 (box émulée démarrée avant le redémarrage du service).
-- Action : la box émulée annonce une redirection d'un port vers une autre adresse du segment, pas vers ce PC.
-- Attendu : box découverte ; état « 1 redirection(s) sur la box, dont 0 vers ce PC » ; aucune EXP-NDR-001. Délai : 180 s
-  après le démarrage du service. Valide seulement si la box est découverte dans les 120 s qui suivent le démarrage.
-- Nettoyage : comme S-27.
-- Preuves : preuves du redémarrage (7.0), `reseau.json` (état UPnP), journal de la box émulée.
-- Configuration C : identique.
+**N-13: UPnP redirection to another machine (close to T1133, S-27)**
+- Preconditions: as S-27 (emulated box started before the restart of the service).
+- Action: the emulated box announces a redirection of a port to another address of the segment, not to this PC.
+- Expected: box discovered; state "1 redirection(s) sur la box, dont 0 vers ce PC"; no EXP-NDR-001. Delay: 180 s
+  after the start-up of the service. Valid only if the box is discovered within the 120 s following start-up.
+- Cleanup: as S-27.
+- Evidence: evidence of the restart (7.0), `reseau.json` (UPnP state), log of the emulated box.
+- Configuration C: identical.
 
-### 3.3 Écartés, non exécutés ou en attente
+### 3.3 Excluded, not executed or pending
 
-- T1567 : D (aucun service web réel autorisé ; un substitut du labo serait T1041).
-- T1055 : non exécuté ; aucune injection, même bénigne, sans accord explicite ; aucun capteur consommé.
-- T1562.001 contre Defender, les journaux Windows ou deR4Tizer : D (interdit).
-- DNS-003 : exige l'arrêt puis la relance du service ; **approuvé en v1.1** (5.2), devenu S-18 ; filtrage présent dans
-  `main` (5.5) : S-18 testable.
-- Volet T1562.002 de S-13 : **approuvé en v1.1** (5.2), exécuté dans S-13.
-- **S-06 (DNS-002 + filtrage DNS) : testable (v1.4).** Code présent dans `main` ; fiche réécrite au niveau comportement
-  (3.1). L'erreur « code absent » d'une rédaction initiale venait d'un checkout périmé (5.5). N-05 est un témoin négatif
-  normal.
-- En configuration C seulement (v1.3) : S-01, S-02, S-05 (a) et N-04 non exécutables comme détection (Bureau à distance
-  refusé), S-16 attendu prévenu ; mesurés en A. L'essai en C reste une mesure de prévention.
-- Fiches Atomic qui téléchargent, désactivent une protection, lisent la mémoire de LSASS ou effacent un journal réel :
-  écartées d'office.
-
----
-
-### 3.4 Protocole de répétition des 10 essais (v1.7, lot 4 de la couverture ATT&CK)
-
-S'applique aux séries de consolidation : S-02, S-09, S-11 (a), S-13, S-14, S-16, S-17, S-20, S-22 (facultatif), S-23,
-S-25, S-26, S-27 et à leurs témoins. Il précise l'exécution sans changer les actions, attendus ni nettoyages des fiches.
-
-1. **Décompte.** 10 essais valides par scénario et par configuration. Un essai invalide (D) est remplacé par un essai
-   supplémentaire. Le rapport donne les essais exécutés, valides, VP, C, FN, D et P, et le nombre de détections. Scores
-   séparés par configuration ; P compté à part ; volets SIMULATION et émulation jamais fusionnés (S-13 noté par volet).
-2. **Remise à l'instantané de la configuration avant chaque essai, sauf S-09.** S-09 enchaîne ses 10 essais dans une
-   même session, avec remise au début et à la fin de la série. Entre deux essais de S-09, le nettoyage est prouvé par
-   le relevé suivant des démarrages automatiques (entrées absentes de `demarrage.json`) avant l'essai d'après.
-3. **Après chaque remise**, avant l'heure de départ : horloge de la VM resynchronisée, fin de la maintenance de Windows
-   constatée, critère D-2 vérifié pour chaque collecte dont dépend une règle du scénario.
-4. **Cibles distinctes à chaque essai** : nom de tâche, nom de valeur Run, nom de service (distinct dans ses 20 premiers
-   caractères), compte de test, journal dédié, copie du programme de test dans un dossier propre à l'essai. La forme de
-   l'action ne change pas : même type de dossier, même interpréteur, même commande bénigne.
-5. **Apprentissage terminé avant le premier essai.** État de l'apprentissage relevé (fin passée) au début de chaque
-   série. Sur une installation neuve, l'apprentissage est terminé par la commande de l'administrateur avant tout essai,
-   et le premier relevé des démarrages automatiques est passé.
-6. **Niveau vérifié.** Un VP exige la règle, le niveau et l'entité attendus. Une alerte de la bonne règle au niveau
-   « Info » avec la mention « mode apprentissage » ou « comportement appris » est notée C ; la série s'arrête jusqu'à ce
-   que la configuration soit expliquée.
-7. **Actions de S-13 hors SYSTEM.** Elles sont faites par le compte administrateur de test, en session élevée.
-   L'émetteur du 4719 est relevé ; un 4719 émis par le système rend l'essai invalide (D).
-8. **Redémarrage du service : fiches réseau seulement** (décision du mainteneur du 2026-11-22). Pour S-20 à S-27, N-12
-   et N-13, le compte administrateur du banc arrête puis démarre le service deR4Tizer par le gestionnaire de services de
-   Windows, après la réorientation des cartes et au plus tard à l'heure de départ de l'essai, avec les preuves de 7.0.
-   Ailleurs (S-02, S-09, S-11, S-13, S-14, S-16, S-17 et les autres témoins), le banc n'arrête ni ne redémarre jamais le
-   service. Le redémarrage ne remplace pas la remise à l'instantané avant chaque essai. S-18 reste hors lot.
-9. **Latence.** Principale : `HeureUtc` de l'alerte moins `TimeCreated` de l'événement déclencheur, lus sur l'horloge de
-   la VM. Pour le NDR : moins l'heure d'émission du leurre ou du relevé UPnP (`reseau.json`), ou moins la première
-   observation dans la VM (double adresse MAC, requête seuil). Secondaire : moins l'heure de départ. Médiane et p95 par
-   scénario et par configuration. Une latence entre machines est corrigée de l'écart d'horloge relevé.
-10. **Fenêtre d'observation.** Délai maximal de la fiche. Dans le lot 4, BAS-001 (25 min) n'est pas attendue :
-    NON ÉVALUÉE, sauf si elle est observée dans la fenêtre. La ligne T1685.001 se juge sur COR-R7.
-11. **Témoins.** Chaque témoin du scénario (N-01 à N-13 selon le cas) est exécuté au moins 3 fois par configuration.
-12. **Versions notées** : commit de `main` du binaire, empreintes SHA-256 du MSI et du service, version de la liste,
-    build de Windows, Sysmon (version et configuration, en B) ou « absent », Atomic Red Team (version, en B ; aucune
-    fiche utilisée) ou « absent », instantané et type de point de contrôle.
-13. **Arrêt.** Des preuves incomplètes ou un environnement non propre arrêtent la série avant l'essai suivant.
-
-## 4. Prérequis du labo à vérifier avant S-01
-
-1. Réseau : VM cible et Kali seules sur `d4t-labo` ; « Default Switch » de la VM débranché ; lien d'administration sans
-   route vers la VM ; aucune route vers Internet pendant la campagne.
-2. Adresses : VM cible et Kali en plage de documentation RFC 5737 ; adresse secondaire de Kali réservée à S-07 (plage de
-   documentation) ; profil réseau de la carte de la VM relevé, Bureau à distance et partage de fichiers autorisés sur ce
-   profil.
-3. Horloges : écart VM, Kali et hôte relevé au début et à la fin de chaque lot.
-4. Instantanés de campagne « campagne A », « campagne B » et « campagne C » présents, préparés hors campagne, chacun avec
-   deR4Tizer installé, l'apprentissage terminé, les comptes de test et les réglages du labo ; aucun nom ne commence par
-   « propre » ; instantané « propre » présent pour le retour après la campagne seulement ; Defender actif, sans exclusion,
-   état relevé dans chaque instantané.
-5. deR4Tizer : version et empreinte du MSI ; service en marche ; aucune collecte « Inconnue » ; profil « journalisation »
-   conforme ; état de l'apprentissage ; source des processus (Sysmon ou WMI) relevée. **Version de source alignée sur le
-   binaire installé relevée** (pour S-06/S-18) : confirmer que le binaire installé correspond bien à la source de `main`
-   (après les fusions de phase 7.3/7.4) qui expose DNS-002 et le filtrage, avant de mesurer ces règles.
-6. Collecte indépendante : 4688, 4104, Planificateur, Defender, Sysmon (configuration notée) lisibles et exportables.
-7. Comptes de test créés, seuil de verrouillage relevé ; aucun mot de passe dans une preuve.
-8. Kali : outils et versions notés ; serveur HTTP et amont DNS du labo prêts (S-07, S-11, S-06) ;
-   journal horodaté.
-9. Collecte des preuves sur la VM (PowerShell Direct) essayée à blanc sur N-01, en configuration A et en configuration C.
-10. « campagne C » : préparé depuis « campagne A » (service de `main` dans A et C, empreinte notée) ; relevé de
-    référence de Defender et de `baseline.json` pris avant l'application ; baseline appliquée par le service (trois profils
-    en une commande, puis `reseau.bureau-distance` seule) ; redémarrage ; S-19 réussi ; instantané pris ensuite.
+- T1567: D (no real web service authorised; a lab substitute would be T1041).
+- T1055: not executed; no injection, even benign, without explicit agreement; no sensor consumed.
+- T1562.001 against Defender, the Windows logs or deR4Tizer: D (forbidden).
+- DNS-003: requires the stop then the relaunch of the service; **approved in v1.1** (5.2), became S-18; filtering present in
+  `main` (5.5): S-18 testable.
+- T1562.002 part of S-13: **approved in v1.1** (5.2), executed within S-13.
+- **S-06 (DNS-002 + DNS filtering): testable (v1.4).** Code present in `main`; sheet rewritten at the level of behaviour
+  (3.1). The "code absent" error of an initial draft came from a stale checkout (5.5). N-05 is a normal negative
+  control.
+- In configuration C only (v1.3): S-01, S-02, S-05 (a) and N-04 not executable as detection (Remote Desktop
+  refused), S-16 expected prevented; measured in A. The trial in C remains a prevention measurement.
+- Atomic sheets that download, disable a protection, read the memory of LSASS or clear a real log:
+  excluded by default.
 
 ---
 
-## 5. Décisions de conception et points laissés au mainteneur
+### 3.4 Repetition protocol for the 10 trials (v1.7, lot 4 of the ATT&CK coverage)
 
-### 5.1 Décisions prises par l'agent de validation (v1.0 ; 2 et 3 révisées en v1.2 ; 2 révisée et 11 ajoutée en v1.3 ; 5 corrigée en v1.4)
+Applies to the consolidation series: S-02, S-09, S-11 (a), S-13, S-14, S-16, S-17, S-20, S-22 (optional), S-23,
+S-25, S-26, S-27 and to their controls. It makes the execution precise without changing the actions, expected results or cleanups of the sheets.
 
-1. **Apprentissage terminé dans l'instantané de campagne.** On mesure le régime normal d'un poste après ses 7 premiers
-   jours. La fin de l'apprentissage est relevée dans chaque rapport ; une mesure en apprentissage pourra venir plus tard,
-   notée à part.
-2. **Trois configurations, jamais fusionnées** (révisée en v1.2 ; en v1.3, C ajoutée et devenue principale, 5.1.11).
-   Configuration A « sans Sysmon » : collecte indépendante par les journaux natifs. Configuration B « avec Sysmon » :
-   Sysmon et Atomic Red Team. Les deux préparées hors campagne, apprentissage terminé, comptes de test et réglages du
-   labo ; aucune ne part de « propre ». Scénarios sans processus (COR-*, DNS, IPC-03, D4-1) : A suffit ; scénarios PRC et
-   persistance : les deux.
-3. **Remise à l'instantané de campagne avant chaque essai des scénarios à corrélation** (S-01 à S-04, S-13, S-17 ;
-   révisée en v1.2). La déduplication d'une heure et la fenêtre d'échecs de 30 min sont en mémoire ; sans remise, les
-   essais ne sont pas indépendants. La remise vise l'instantané de la configuration, jamais « propre ». La VM revient à
-   « propre » seulement après la campagne.
-4. **Résolveur DNS de labo sur Kali**, sur `d4t-labo` seulement, pour une zone `.test` et les noms du labo, sans relais
-   vers Internet. Raison : exercer DNS-001 (S-07) hors Internet ; le filtrage de phase 7 (S-06) l'exige aussi (amont du résolveur
-   local). Outil côté Kali, hors de la VM de test.
-5. **Listes restreintes activées pour S-07, avec des listes synthétiques locales** (noms `.test`, adresse secondaire de
-   Kali), posées par un administrateur, effacées par la remise à l'instantané. **Correction v1.4 :** l'adresse de menace
-   est placée dans une **source de confiance haute** (par exemple une liste C2 de botnets ou un bloc DROP), **et non dans
-   une source de réputation (par exemple un niveau 3)** : seule une source de confiance haute déclenche le blocage
-   automatique de 7 jours (la v1.3 parlait à tort d'une « liste de niveau 3 »). Sans ces listes, DNS-001 et RES-001 ne
-   peuvent pas se déclencher dans un labo sans Internet ; aucun contenu de tiers n'est utilisé. L'adresse principale de
-   Kali n'est jamais listée (sinon le blocage automatique couperait le labo).
-6. **T1070.001 en SIMULATION sur un journal dédié créé pour le test** : retenu (aucun journal existant de Windows n'est
-   touché). **T1562.002** : modifie la journalisation de Windows ; d'abord laissé au mainteneur, puis **approuvé en v1.1**
-   (5.2), exécuté dans S-13 avec rétablissement vérifié.
-7. **Option longue de S-16 (REP-001 à 2 h)** : retenue, une observation par configuration, rapportée comme non consolidée.
-8. **T1555.003 (S-14) ajouté**, en SIMULATION : compte de test sans aucun mot de passe enregistré, ouverture en lecture
-   puis fermeture, aucune copie, aucun déchiffrement. S-15 (LSASS en accès « informations limitées ») reste dans la forme
-   prévue par la consigne.
-9. **Classement** : T1567 en D ; T1055 non exécuté (D) ; B1 et B2 restent des sous-divisions de B ; **classe E** réservée
-   au gelé (IDS/DPI/NDR). S-06 n'est plus en E : le code de DNS-002 et du filtrage est présent dans `main` (5.5).
-10. **Publication** : ce document, une fois transmis au mainteneur, est proposé sous `docs/validation/` par une PR de
-    documentation seule, après la garde PII ; la fusion reste décidée par le mainteneur.
-11. **Configuration C, principale de mesure (v1.3), sur décision du mainteneur du 2026-11-14** : les tests Kali se font
-    avec la baseline de deR4Tizer appliquée à 100 % (décision citée telle quelle : « pour les tests kali, tu as bien pris
-    en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit », puis « ok parfait »). La baseline est
-    appliquée par le service lui-même ; elle ne fait que durcir Defender, ce que S-19 vérifie : la règle 2 de `CLAUDE.md`
-    reste entière. Effet réversible, confiné à la VM de test. A reste la comparaison, B la collecte Sysmon.
+1. **Count.** 10 valid trials per scenario and per configuration. An invalid trial (D) is replaced by an additional
+   trial. The report gives the trials executed, valid, TP, C, FN, D and P, and the number of detections. Scores
+   separate per configuration; P counted separately; SIMULATION and emulation parts never merged (S-13 scored per part).
+2. **Reset to the snapshot of the configuration before each trial, except S-09.** S-09 chains its 10 trials in the
+   same session, with a reset at the start and at the end of the series. Between two trials of S-09, the cleanup is proven by
+   the next reading of the automatic start-ups (entries absent from `demarrage.json`) before the following trial.
+3. **After each reset**, before the start time: clock of the VM resynchronised, end of Windows maintenance
+   observed, criterion D-2 checked for each collection on which a rule of the scenario depends.
+4. **Distinct targets at each trial**: task name, Run value name, service name (distinct in its first 20
+   characters), test account, dedicated log, copy of the test program in a folder specific to the trial. The form of
+   the action does not change: same type of folder, same interpreter, same benign command.
+5. **Learning finished before the first trial.** State of learning read (end passed) at the start of each
+   series. On a fresh installation, learning is finished by the administrator's command before any trial,
+   and the first reading of the automatic start-ups has passed.
+6. **Level checked.** A TP requires the expected rule, level and entity. An alert of the right rule at level
+   "Info" with the mention "mode apprentissage" or "comportement appris" is scored C; the series stops until
+   the configuration is explained.
+7. **Actions of S-13 outside SYSTEM.** They are done by the administrator test account, in an elevated session.
+   The emitter of the 4719 is recorded; a 4719 emitted by the system makes the trial invalid (D).
+8. **Restart of the service: network sheets only** (decision of the maintainer of 2026-11-22). For S-20 to S-27, N-12
+   and N-13, the administrator account of the bench stops then starts the deR4Tizer service through the Windows service
+   manager, after the reorientation of the adapters and at the latest at the start time of the trial, with the evidence of 7.0.
+   Elsewhere (S-02, S-09, S-11, S-13, S-14, S-16, S-17 and the other controls), the bench never stops or restarts the
+   service. The restart does not replace the reset to the snapshot before each trial. S-18 remains outside the lot.
+9. **Latency.** Main: `HeureUtc` of the alert minus `TimeCreated` of the triggering event, read on the clock of
+   the VM. For the NDR: minus the time of emission of the decoy or of the UPnP reading (`reseau.json`), or minus the first
+   observation in the VM (duplicate MAC address, threshold query). Secondary: minus the start time. Median and p95 per
+   scenario and per configuration. A latency between machines is corrected by the clock offset recorded.
+10. **Observation window.** Maximum delay of the sheet. In lot 4, BAS-001 (25 min) is not expected:
+    "NON ÉVALUÉE", unless it is observed within the window. The T1685.001 line is judged on COR-R7.
+11. **Controls.** Each control of the scenario (N-01 to N-13 as the case may be) is executed at least 3 times per configuration.
+12. **Versions noted**: commit of `main` of the binary, SHA-256 hashes of the MSI and of the service, version of the list,
+    Windows build, Sysmon (version and configuration, in B) or "absent", Atomic Red Team (version, in B; no
+    sheet used) or "absent", snapshot and type of checkpoint.
+13. **Stop.** Incomplete evidence or an unclean environment stops the series before the next trial.
 
-### 5.2 Points remontés au mainteneur, tranchés le 2026-11-14
+## 4. Lab prerequisites to check before S-01
 
-Ces deux volets sortaient du mandat de l'agent (journalisation de Windows ou service lui-même) et avaient été laissés au
-mainteneur en v1.0. **Décision du mainteneur, 2026-11-14, citée mot pour mot : « J'autorise les deux ».** Les deux volets
-passent de non approuvé à approuvé en v1.1. C'est une décision du mainteneur, pas une approbation de l'agent (qui reste
-ni humaine ni indépendante et ne lève aucune règle). La v1.1 lui est transmise, pour information, avant toute exécution ;
-il peut retirer un scénario ou reprendre l'approbation à tout moment.
+1. Network: target VM and Kali alone on `d4t-labo`; "Default Switch" of the VM unplugged; administration link without
+   a route to the VM; no route to the Internet during the campaign.
+2. Addresses: target VM and Kali in the RFC 5737 documentation range; secondary address of Kali reserved for S-07 (documentation
+   range); network profile of the VM adapter read, Remote Desktop and file sharing allowed on this
+   profile.
+3. Clocks: offset between VM, Kali and host read at the start and at the end of each lot.
+4. Campaign snapshots "campagne A", "campagne B" and "campagne C" present, prepared outside the campaign, each with
+   deR4Tizer installed, learning finished, the test accounts and the lab settings; no name starts with
+   "propre"; "propre" snapshot present for the return after the campaign only; Defender active, without exclusion,
+   state read in each snapshot.
+5. deR4Tizer: version and hash of the MSI; service running; no "Inconnue" collection; "logging" profile
+   compliant; state of learning; source of processes (Sysmon or WMI) read. **Source version aligned with the
+   installed binary recorded** (for S-06/S-18): confirm that the installed binary indeed matches the source of `main`
+   (after the merges of phase 7.3/7.4) that exposes DNS-002 and filtering, before measuring these rules.
+6. Independent collection: 4688, 4104, Task Scheduler, Defender, Sysmon (configuration noted) readable and exportable.
+7. Test accounts created, lockout threshold read; no password in any evidence.
+8. Kali: tools and versions noted; HTTP server and lab DNS upstream ready (S-07, S-11, S-06);
+   timestamped log.
+9. Collection of the evidence on the VM (PowerShell Direct) dry-run on N-01, in configuration A and in configuration C.
+10. "campagne C": prepared from "campagne A" (service from `main` in A and C, hash noted); reference reading
+    of Defender and of `baseline.json` taken before the application; baseline applied by the service (three profiles
+    in one command, then `reseau.bureau-distance` alone); restart; S-19 passed; snapshot taken afterwards.
 
-1. **Volet T1562.002 de S-13** (désactivation temporaire d'une sous-catégorie d'audit, puis rétablissement) : touche la
-   journalisation de Windows. **Approuvé en v1.1.** S-13 l'exécute ; nettoyage à rétablissement vérifié (sous-catégorie
-   remise dans son état initial, comparaison avant/après) puis remise à l'instantané. Aucune autre sous-catégorie ni aucun
-   autre réglage d'audit n'est touché.
-2. **DNS-003** (devenu S-18) : exige d'arrêter le service deR4Tizer, de faire tenir le port 53 par un autre programme, et
-   de relancer le service. **Approuvé en v1.1** ; seule dérogation au principe « deR4Tizer intact », tenant à cette
-   décision écrite. Nettoyage à rétablissement vérifié (programme d'écoute arrêté, port 53 libéré, service relancé et
-   vérifié) puis remise à l'instantané. Filtrage présent dans `main` (5.5) : S-18 est testable.
+---
 
-### 5.3 Défauts du produit constatés à la lecture (ajouté en v1.3)
+## 5. Design decisions and points left to the maintainer
 
-**D-BAS-01 : deux règles de la baseline écrivent la même valeur de registre.** Constat de lecture de `baseline.rs` et
-`gpo.rs` à `ede269f`, non mesuré en VM.
-- `defender.dossiers-audit` (profil recommandé) et `defender.dossiers-blocage` (profil renforcé) posent toutes deux
-  `EnableControlledFolderAccess` : 2 (audit) pour l'une, 1 (blocage) pour l'autre. Appliquées ensemble, le blocage, écrit
-  en dernier, l'emporte (HYPOTHÈSE de lecture, vérifiée par S-19).
-- `evaluer` compare règle par règle : `defender.dossiers-audit` est alors vue « non conforme » et le profil recommandé ne
-  peut pas atteindre 100 %. **Une conformité de 100 % sur tous les profils est donc impossible.**
-- Effets : une règle affichée « non conforme » alors que le réglage effectif est plus fort ; et, si les profils recommandé
-  puis renforcé sont appliqués par deux commandes successives, une BAS-001 « réglage modifié hors de deR4Tizer » serait
-  levée à tort (HYPOTHÈSE de lecture, non mesurée).
-- Correctif proposé, minimal, soumis au circuit habituel : déclarer les deux règles exclusives, la plus forte remplaçant
-  la plus faible. Tests de non-régression décrits. Effet sur la détection : aucun ; supprime un faux « non conforme » et un
-  faux positif possible de BAS-001.
-- Effet sur la campagne : S-19 attendait le profil recommandé sous 100 % (v1.3 à 1.5) ; ce constat n'était pas un échec
-  de S-19.
-- **Corrigé** : relecture de la baseline du 2026-11-20, lot B3 (`PLUS_STRICTES` : l'accès contrôlé aux dossiers en
-  blocage satisfait la règle d'audit, et l'écriture de l'audit est retenue quand le blocage est en place, PR #216).
-  **Confirmé en VM** par S-19 v1.6 (2026-11-20, essai 3) : profil recommandé à 100 %.
+### 5.1 Decisions taken by the validation agent (v1.0; 2 and 3 revised in v1.2; 2 revised and 11 added in v1.3; 5 corrected in v1.4)
 
-**Point à vérifier P-BAS-02** : `systeme.lsa` (protection LSA) est vue conforme dès que la valeur de registre est posée,
-alors qu'elle n'agit qu'après un redémarrage. Défaut non établi : S-19 vérifie la protection effective après redémarrage
-(v1.6 : événement Wininit 12 postérieur à « campagne A » ; vérifié le 2026-11-20). Toujours ouvert : la règle reste jugée
-sur le registre seul.
+1. **Learning finished in the campaign snapshot.** The normal regime of a machine after its first 7
+   days is measured. The end of learning is recorded in each report; a measurement during learning may come later,
+   noted separately.
+2. **Three configurations, never merged** (revised in v1.2; in v1.3, C added and made the main one, 5.1.11).
+   Configuration A "without Sysmon": independent collection through the native logs. Configuration B "with Sysmon":
+   Sysmon and Atomic Red Team. Both prepared outside the campaign, learning finished, test accounts and lab
+   settings; none starts from "propre". Scenarios without processes (COR-*, DNS, IPC-03, D4-1): A is enough; PRC and
+   persistence scenarios: both.
+3. **Reset to the campaign snapshot before each trial of the correlation scenarios** (S-01 to S-04, S-13, S-17;
+   revised in v1.2). The one-hour deduplication and the 30-min failure window are in memory; without a reset, the
+   trials are not independent. The reset targets the snapshot of the configuration, never "propre". The VM goes back to
+   "propre" only after the campaign.
+4. **Lab DNS resolver on Kali**, on `d4t-labo` only, for a `.test` zone and the lab names, without relaying
+   to the Internet. Reason: to exercise DNS-001 (S-07) without Internet; phase 7 filtering (S-06) also requires it (upstream of the local
+   resolver). Tool on the Kali side, outside the test VM.
+5. **Restricted lists enabled for S-07, with local synthetic lists** (`.test` names, secondary address of
+   Kali), set by an administrator, erased by the reset to the snapshot. **Correction v1.4:** the threat address
+   is placed in a **high confidence source** (for example a botnet C2 list or a DROP block), **and not in
+   a reputation source (for example a level 3)**: only a high confidence source triggers the 7-day automatic
+   blocking (v1.3 wrongly spoke of a "level 3 list"). Without these lists, DNS-001 and RES-001 cannot
+   trigger in a lab without Internet; no third-party content is used. The main address of
+   Kali is never listed (otherwise the automatic blocking would cut off the lab).
+6. **T1070.001 in SIMULATION on a dedicated log created for the test**: retained (no existing Windows log is
+   touched). **T1562.002**: modifies Windows logging; first left to the maintainer, then **approved in v1.1**
+   (5.2), executed within S-13 with verified restoration.
+7. **Long option of S-16 (REP-001 at 2 h)**: retained, one observation per configuration, reported as not consolidated.
+8. **T1555.003 (S-14) added**, in SIMULATION: test account without any saved password, opening for reading
+   then closing, no copy, no decryption. S-15 (LSASS with "limited information" access) stays in the form
+   provided for by the instruction.
+9. **Classification**: T1567 in D; T1055 not executed (D); B1 and B2 remain subdivisions of B; **class E** reserved
+   for what is frozen (IDS/DPI/NDR). S-06 is no longer in E: the code of DNS-002 and of filtering is present in `main` (5.5).
+10. **Publication**: this document, once transmitted to the maintainer, is proposed under `docs/validation/` through a
+    documentation-only PR, after the PII guard; the merge remains decided by the maintainer.
+11. **Configuration C, main measurement configuration (v1.3), on decision of the maintainer of 2026-11-14**: the Kali tests are done
+    with the deR4Tizer baseline applied at 100 % (decision quoted as is: « pour les tests kali, tu as bien pris
+    en compte d'avoir la baseline à 100% ? C'est l'un des interêts du produit » (for the Kali tests, did you take into account having the baseline at 100%? It is one of the points of the product), then « ok parfait » (ok perfect)). The baseline is
+    applied by the service itself; it only hardens Defender, which S-19 checks: rule 2 of `CLAUDE.md`
+    remains whole. Reversible effect, confined to the test VM. A remains the comparison, B the Sysmon collection.
 
-### 5.4 Règles de décision D-1 et D-2 (ajoutées en v1.4, tranchées par l'agent de validation)
+### 5.2 Points escalated to the maintainer, decided on 2026-11-14
 
-Deux règles de notation qui confirment et formalisent des propositions du premier passage. Elles ne lèvent aucune règle
-du mandat ; elles encadrent le décompte et la validité des essais. Transmises au mainteneur, pour information.
+These two parts went beyond the mandate of the agent (Windows logging or the service itself) and had been left to the
+maintainer in v1.0. **Decision of the maintainer, 2026-11-14, quoted word for word: « J'autorise les deux » (I authorise both).** The two parts
+go from not approved to approved in v1.1. It is a decision of the maintainer, not an approval by the agent (which remains
+neither human nor independent and lifts no rule). v1.1 is transmitted to him, for information, before any execution;
+he may withdraw a scenario or take back the approval at any time.
 
-**D-1 — RES-004 / RES-005 (« PC exposé à Internet ») sur une adresse du labo : artefact d'exposition de labo.**
-- Cause établie à la lecture : la plage de documentation du labo est considérée **« publique »** par le service (ni
-  privée, ni locale, ni réservée). Le trafic entrant depuis Kali (force brute, balayage) est lu comme une **exposition
-  réelle** et lève RES-004/RES-005. Sur un poste réel avec une vraie adresse publique, ces alertes seraient de **vrais
-  positifs d'exposition** ; les filtrer dégraderait une détection légitime.
-- **Règle (dans tous les scénarios, y compris les tests négatifs) :** une alerte **RES-004/RES-005** dont l'adresse
-  homologue **appartient à la plage de documentation du labo** est étiquetée **« artefact d'exposition de labo »** et
-  **exclue du décompte des VP comme des FP**. Avant d'exclure, **vérifier l'adresse homologue** : toute RES-004/005 portant
-  une adresse **hors** plage de labo est **investiguée** (jamais exclue d'office). Ces alertes sont **conservées dans les
-  preuves brutes**.
-- **Aucun correctif produit** : le comportement est correct sur un poste réel.
+1. **T1562.002 part of S-13** (temporary disabling of an audit subcategory, then restoration): touches
+   Windows logging. **Approved in v1.1.** S-13 executes it; cleanup with verified restoration (subcategory
+   returned to its initial state, before/after comparison) then reset to the snapshot. No other subcategory or
+   other audit setting is touched.
+2. **DNS-003** (became S-18): requires stopping the deR4Tizer service, having port 53 held by another program, and
+   relaunching the service. **Approved in v1.1**; only exception to the "deR4Tizer intact" principle, resting on this
+   written decision. Cleanup with verified restoration (listener program stopped, port 53 freed, service relaunched and
+   checked) then reset to the snapshot. Filtering present in `main` (5.5): S-18 is testable.
 
-**D-2 — Critère de collecte « Indisponible » après restauration d'instantané.**
-- Constat : une collecte à cycle long peut paraître « Indisponible » juste après une restauration (dernier succès daté de
-  la prise de l'instantané), sans panne réelle de la télémétrie.
-- **Règle :** une collecte **non exercée** par le scénario est **écartée du verdict** seulement si la cause prouvée est
-  « aucune lecture depuis la restauration ». Toute collecte **dont dépend une règle du scénario** doit être **« Active » au
-  départ**, prouvée par une **lecture réussie postérieure à la restauration** ; sinon l'essai est **invalide (classe D)**,
-  **jamais compté 0**.
-- **Application :** S-14, collecte « audit des données » Active (au moins une lecture auditée depuis la restauration, par
-  un amorçage légitime) avant l'essai ; S-07, collectes « listes de menaces » et « listes de domaines » Active (listes
-  synthétiques effectivement chargées) avant l'essai.
-- **Reporté en phase 5 (question produit, non bloquante) :** sur un poste réel sortant d'une veille longue, une collecte
-  événementielle ou périodique passe-t-elle « Indisponible » à tort ? À instrumenter en phase 5, sans impact sur la
-  notation des campagnes.
+### 5.3 Product defects found on reading (added in v1.3)
 
-### 5.5 Correction v1.4 — S-06 (DNS-002 et filtrage DNS) : erreur « code absent » d'une rédaction initiale
+**D-BAS-01: two baseline rules write the same registry value.** Reading finding of `baseline.rs` and
+`gpo.rs` at `ede269f`, not measured in a VM.
+- `defender.dossiers-audit` (recommended profile) and `defender.dossiers-blocage` (hardened profile) both set
+  `EnableControlledFolderAccess`: 2 (audit) for one, 1 (block) for the other. Applied together, the block, written
+  last, prevails (reading HYPOTHESIS, checked by S-19).
+- `evaluer` compares rule by rule: `defender.dossiers-audit` is then seen as "non conforme" and the recommended profile cannot
+  reach 100 %. **A compliance of 100 % on all profiles is therefore impossible.**
+- Effects: a rule displayed "non conforme" while the effective setting is stronger; and, if the recommended
+  then hardened profiles are applied by two successive commands, a BAS-001 "réglage modifié hors de deR4Tizer" would be
+  raised wrongly (reading HYPOTHESIS, not measured).
+- Proposed fix, minimal, submitted to the usual circuit: declare the two rules exclusive, the stronger replacing
+  the weaker. Non-regression tests described. Effect on detection: none; removes a false "non conforme" and a
+  possible false positive of BAS-001.
+- Effect on the campaign: S-19 expected the recommended profile below 100 % (v1.3 to 1.5); this finding was not a failure
+  of S-19.
+- **Fixed**: review of the baseline of 2026-11-20, lot B3 (`PLUS_STRICTES`: controlled folder access in
+  block mode satisfies the audit rule, and the write of the audit is withheld when the block is in place, PR #216).
+  **Confirmed in a VM** by S-19 v1.6 (2026-11-20, trial 3): recommended profile at 100 %.
 
-Une rédaction initiale de la v1.4 affirmait que le code de **DNS-002** et du **filtrage DNS** (résolveur local) était
-« absent de la source », classait **S-06 en classe E / en attente du mainteneur** et remontait quatre questions au
-mainteneur. **Cette prémisse était fausse.** Elle venait d'un **checkout de travail périmé** (branche `passages-en-vm`),
-antérieur aux fusions de phase 7.3/7.4.
+**Point to check P-BAS-02**: `systeme.lsa` (LSA protection) is seen as compliant as soon as the registry value is set,
+while it only acts after a restart. Defect not established: S-19 checks the effective protection after restart
+(v1.6: Wininit event 12 later than "campagne A"; checked on 2026-11-20). Still open: the rule remains judged
+on the registry alone.
 
-À la lecture du **worktree complet de `main` à jour**, le code est bien présent :
-- **DNS-002** : `dns_surveillance.rs` (relevé des serveurs DNS des cartes toutes les 60 s ; un serveur statique changé
-  sur une carte physique lève la règle `DNS_002`, niveau Alerte), règle déclarée dans `regles.rs`.
-- **Filtrage DNS** : résolveur local sur `127.0.0.1:53` et `[::1]:53` (`dns_local.rs`), moteur de filtrage et état
-  (`filtrage.rs`, `EtatFiltrage`, `filtrage-etat.json`, « derniers blocages »), activation sur les cartes
-  (`filtrage_cartes.rs`, commande `filtrage` de l'administrateur, phase 7.4, réglage des cartes en SYSTEM accordé par le
-  mainteneur), **DNS-003** via l'alerte « port DNS tenu » (`alerte_port_dns_tenu`, Critique, au démarrage du service).
-- La **matrice des capacités** (`capability-matrix.md`) liste DNS-002, le moteur de filtrage, le résolveur local,
-  l'état/DNS-003 et Quad9.
+### 5.4 Decision rules D-1 and D-2 (added in v1.4, decided by the validation agent)
 
-**Conséquences :** S-06 est **testable**, sa fiche est réécrite au niveau comportement (3.1) ; DNS-003 (S-18) est
-testable (5.2) ; N-05 est un témoin négatif normal (3.2). **Il n'y a pas de question bloquante au mainteneur sur ce
-point.** Seule prudence maintenue, non bloquante : avant de mesurer, confirmer que le **binaire installé** dans
-l'instantané de test correspond bien à cette source de `main` (empreinte du MSI et version relevées, section 4, point 5).
+Two scoring rules that confirm and formalise proposals of the first pass. They lift no rule
+of the mandate; they frame the count and the validity of the trials. Transmitted to the maintainer, for information.
 
-### 5.6 Règle de décision D-3 (ajoutée en v1.7, tranchée par l'agent de validation)
+**D-1 · RES-004 / RES-005 ("PC exposé à Internet") on a lab address: lab exposure artefact.**
+- Cause established on reading: the documentation range of the lab is considered **"public"** by the service (neither
+  private, nor local, nor reserved). Inbound traffic from Kali (brute force, scan) is read as a **real
+  exposure** and raises RES-004/RES-005. On a real machine with a real public address, these alerts would be **true
+  exposure positives**; filtering them would degrade a legitimate detection.
+- **Rule (in all scenarios, including the negative tests):** an **RES-004/RES-005** alert whose peer
+  address **belongs to the documentation range of the lab** is labelled **"lab exposure artefact"** and
+  **excluded from the count of TP as of FP**. Before excluding, **check the peer address**: any RES-004/005 carrying
+  an address **outside** the lab range is **investigated** (never excluded by default). These alerts are **kept in the
+  raw evidence**.
+- **No product fix**: the behaviour is correct on a real machine.
 
-**D-3 : PER-001 ou PER-002 de la tâche d'exécution du banc, artefact du banc.**
-- Constat de lecture (`persistance.rs`, `tests/vm/lancer.ps1`) : le banc lance son exécuteur par une tâche planifiée
-  (interpréteur, fenêtre cachée), que le relevé des démarrages automatiques voit comme une persistance nouvelle et
-  suspecte.
-- **Règle :** une PER-001 ou PER-002 qui porte sur la tâche d'exécution du banc est étiquetée « artefact du banc » et
-  exclue du décompte des VP comme des FP, y compris dans les témoins. Trois conditions, toutes vérifiées : nom de la
-  tâche identique à celui que le banc a enregistré ; commande identique à celle qu'il a enregistrée ; création
-  antérieure à l'heure de départ de l'essai.
-- Toute autre PER-001 ou PER-002 est investiguée, jamais exclue d'office. Les alertes exclues sont conservées dans les
-  preuves brutes.
-- Aucun correctif produit : sur un poste réel, cette tâche serait une vraie persistance suspecte.
+**D-2 · "Indisponible" collection criterion after snapshot restore.**
+- Finding: a long-cycle collection may appear "Indisponible" just after a restore (last success dated from
+  the taking of the snapshot), without a real failure of the telemetry.
+- **Rule:** a collection **not exercised** by the scenario is **set aside from the verdict** only if the proven cause is
+  "no reading since the restore". Any collection **on which a rule of the scenario depends** must be **"Active" at the
+  start**, proven by a **successful reading after the restore**; otherwise the trial is **invalid (class D)**,
+  **never counted 0**.
+- **Application:** S-14, "data audit" collection Active (at least one audited reading since the restore, through
+  a legitimate priming) before the trial; S-07, "threat lists" and "domain lists" collections Active (synthetic
+  lists actually loaded) before the trial.
+- **Postponed to phase 5 (product question, not blocking):** on a real machine coming out of a long sleep, does an
+  event-driven or periodic collection wrongly go "Indisponible"? To be instrumented in phase 5, without impact on the
+  scoring of the campaigns.
 
-## 6. Version 1.5 (2026-11-19) : scénarios de détection réseau S-20 à S-27, approuvés après exécution
+### 5.5 Correction v1.4: S-06 (DNS-002 and DNS filtering): "code absent" error of an initial draft
 
-Ajoutés à la liste approuvée le 2026-11-19 sur décision du mainteneur (« Scénario S20 à S27, il faut les ajouter à la
-liste approuvée », `CLAUDE.md`, campagne Kali). **Approbation après coup** : ces scénarios ont été conçus dans le dossier
-de conception « détection réseau » (hors dépôt) et exécutés du 2026-11-16 au 2026-11-17, avant leur inscription ici.
-Niveaux et techniques d'après le code (`ndr.rs`, `ids.rs`). Nature : émulation bénigne et réversible depuis la VM Kali,
-sur le segment de laboratoire (topologie accordée le 2026-11-19).
+An initial draft of v1.4 asserted that the code of **DNS-002** and of **DNS filtering** (local resolver) was
+"absent from the source", classed **S-06 in class E / awaiting the maintainer** and escalated four questions to the
+maintainer. **This premise was false.** It came from a **stale working checkout** (branch `passages-en-vm`),
+older than the merges of phase 7.3/7.4.
 
-| Id | Comportement | Technique | Règle et niveau attendus | Rapport |
+On reading the **full, up-to-date worktree of `main`**, the code is indeed present:
+- **DNS-002**: `dns_surveillance.rs` (reading of the DNS servers of the adapters every 60 s; a static server changed
+  on a physical adapter raises the rule `DNS_002`, level Alert), rule declared in `regles.rs`.
+- **DNS filtering**: local resolver on `127.0.0.1:53` and `[::1]:53` (`dns_local.rs`), filtering engine and state
+  (`filtrage.rs`, `EtatFiltrage`, `filtrage-etat.json`, latest blocks), activation on the adapters
+  (`filtrage_cartes.rs`, administrator's `filtrage` command, phase 7.4, setting of the adapters as SYSTEM granted by the
+  maintainer), **DNS-003** through the "port DNS tenu" alert (`alerte_port_dns_tenu`, Critical, at the start-up of the service).
+- The **capability matrix** (`capability-matrix.md`) lists DNS-002, the filtering engine, the local resolver,
+  the state/DNS-003 and Quad9.
+
+**Consequences:** S-06 is **testable**, its sheet is rewritten at the level of behaviour (3.1); DNS-003 (S-18) is
+testable (5.2); N-05 is a normal negative control (3.2). **There is no blocking question to the maintainer on this
+point.** Only caution kept, not blocking: before measuring, confirm that the **installed binary** in
+the test snapshot indeed matches this source of `main` (hash of the MSI and version recorded, section 4, point 5).
+
+### 5.6 Decision rule D-3 (added in v1.7, decided by the validation agent)
+
+**D-3: PER-001 or PER-002 of the execution task of the bench, bench artefact.**
+- Reading finding (`persistance.rs`, `tests/vm/lancer.ps1`): the bench launches its executor through a scheduled task
+  (interpreter, hidden window), which the reading of the automatic start-ups sees as a new and
+  suspicious persistence.
+- **Rule:** a PER-001 or PER-002 that concerns the execution task of the bench is labelled "bench artefact" and
+  excluded from the count of TP as of FP, including in the controls. Three conditions, all checked: name of the
+  task identical to the one the bench recorded; command identical to the one it recorded; creation
+  earlier than the start time of the trial.
+- Any other PER-001 or PER-002 is investigated, never excluded by default. The excluded alerts are kept in the
+  raw evidence.
+- No product fix: on a real machine, this task would be a real suspicious persistence.
+
+## 6. Version 1.5 (2026-11-19): network detection scenarios S-20 to S-27, approved after execution
+
+Added to the approved list on 2026-11-19 on decision of the maintainer (« Scénario S20 à S27, il faut les ajouter à la
+liste approuvée » (Scenarios S20 to S27 must be added to the approved list), `CLAUDE.md`, Kali campaign). **Approval after the fact**: these scenarios were designed in the
+"network detection" design file (outside the repository) and executed from 2026-11-16 to 2026-11-17, before being recorded here.
+Levels and techniques according to the code (`ndr.rs`, `ids.rs`). Nature: benign and reversible emulation from the Kali VM,
+on the laboratory segment (topology granted on 2026-11-19).
+
+| Id | Behaviour | Technique | Expected rule and level | Report |
 |---|---|---|---|---|
-| S-20 | usurpation ARP de la passerelle (deux adresses sur une même adresse MAC) | T1557.002 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot2.md` |
-| S-21 | serveur DHCP pirate (un second serveur sur le segment) | T1557.003 | EXP-NDR-001 Critique | lot 2 et lot 5 « détection réseau » (à remesurer après la PR #190) |
-| S-22 | répondeur LLMNR qui répond au leurre actif | T1557.001 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot1.md` |
-| S-23 | répondeur passif LLMNR (au moins 3 noms) | T1557.001 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot2.md` |
-| S-24 | trafic portant le motif de la règle IDS de test intégrée (sid 9000000) | aucune posée par le code | EXP-IDS-001, niveau de la règle | `campagne-kali-detection-reseau-lot1.md` |
-| S-25 | répondeur NBNS réel qui répond au leurre actif (jambe NBNS du leurre) | T1557.001 | EXP-NDR-001 Critique | `campagne-kali-detection-reseau-lot2.md` |
-| S-26 | répondeur passif mDNS (au moins 15 noms) | T1557.001 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot3.md` |
-| S-27 | redirection UPnP d'un port vers ce PC annoncée par la box émulée | T1133 | EXP-NDR-001 Alerte | `campagne-kali-detection-reseau-lot4.md` |
+| S-20 | ARP spoofing of the gateway (two addresses on the same MAC address) | T1557.002 | EXP-NDR-001 Critical | `campagne-kali-detection-reseau-lot2.md` |
+| S-21 | rogue DHCP server (a second server on the segment) | T1557.003 | EXP-NDR-001 Critical | "network detection" lot 2 and lot 5 (to be remeasured after PR #190) |
+| S-22 | LLMNR responder that answers the active decoy | T1557.001 | EXP-NDR-001 Critical | `campagne-kali-detection-reseau-lot1.md` |
+| S-23 | passive LLMNR responder (at least 3 names) | T1557.001 | EXP-NDR-001 Alert | `campagne-kali-detection-reseau-lot2.md` |
+| S-24 | traffic carrying the pattern of the built-in test IDS rule (sid 9000000) | none set by the code | EXP-IDS-001, level of the rule | `campagne-kali-detection-reseau-lot1.md` |
+| S-25 | real NBNS responder that answers the active decoy (NBNS leg of the decoy) | T1557.001 | EXP-NDR-001 Critical | `campagne-kali-detection-reseau-lot2.md` |
+| S-26 | passive mDNS responder (at least 15 names) | T1557.001 | EXP-NDR-001 Alert | `campagne-kali-detection-reseau-lot3.md` |
+| S-27 | UPnP redirection of a port to this PC announced by the emulated box | T1133 | EXP-NDR-001 Alert | `campagne-kali-detection-reseau-lot4.md` |
 
-Pour chacun : préconditions et nettoyage décrits dans son rapport ; remise à l'instantané avant et après chaque essai ;
-résultat attendu = l'alerte ci-dessus dans le délai du cycle du NDR ; mesures non consolidées tant qu'il n'y a pas 10
-essais valides. Non couverts : responder passif NBNS (non exercé), IDS directionnel et de contenu, mode IPS.
+For each one: preconditions and cleanup described in its report; reset to the snapshot before and after each trial;
+expected result = the alert above within the delay of the NDR cycle; measurements not consolidated as long as there are not 10
+valid trials. Not covered: passive NBNS responder (not exercised), directional and content IDS, IPS mode.
 
-## 7. Version 1.7 (2026-11-22) : fiches complètes de S-20 à S-27
+## 7. Version 1.7 (2026-11-22): full sheets of S-20 to S-27
 
-Approuvées par l'agent de validation le 2026-11-22. Elles complètent le tableau du §6 sans changer comportement, règle
-ni niveau attendus. Nature : émulation bénigne et réversible depuis la VM Kali, sur le segment du labo. Les attendus en
-configuration C sont une HYPOTHÈSE quand ils ne s'appuient pas sur une mesure citée.
+Approved by the validation agent on 2026-11-22. They complete the table of §6 without changing the expected behaviour, rule
+or level. Nature: benign and reversible emulation from the Kali VM, on the lab segment. The expected results in
+configuration C are a HYPOTHESIS when they do not rely on a quoted measurement.
 
-### 7.0 Règles communes (révisées en v1.8)
+### 7.0 Common rules (revised in v1.8)
 
-- Départ : instantané de la configuration. Réorientation réversible de la VM sur le segment du labo (autres cartes
-  désactivées, passerelle posée sur la carte du labo ; topologie accordée le 2026-11-19).
-- **Redémarrage du service (v1.8, décision du mainteneur du 2026-11-22)** :
-  - Qui et comment : le compte administrateur du banc arrête puis démarre le service deR4Tizer par le gestionnaire de
-    services de Windows.
-  - Quand : après la réorientation, et après le démarrage de l'émetteur côté Kali quand la fiche le demande (S-22, S-25,
-    S-27, N-13). Au plus tard à l'heure de départ de l'essai.
-  - Heure de départ : pour S-22, S-25, S-27, N-12 et N-13, c'est le démarrage du service, puisque le leurre et le relevé
-    UPnP partent à la première itération du NDR (`ndr.rs`). Pour S-20, S-21, S-23, S-24 et S-26, c'est le début de
-    l'action, après les preuves ci-dessous.
-  - Preuves, relevées dans la minute qui suit le démarrage : heures d'arrêt et de démarrage (journal Système et
-    `journal.txt`) ; canal joignable (une demande d'état reçoit une réponse) ; état des collectes noté. Les collectes
-    « capture réseau local » et « capture trafic » doivent être « Active » sur l'adresse du segment du labo, d'après la
-    ligne « capture des paquets (…) active sur <adresse> » du journal du service. Le filtrage DNS doit être désactivé,
-    état relevé ; S-18 reste hors lot.
-  - Échec : service qui ne redémarre pas, canal muet ou capture ouverte sur une autre adresse donnent un essai D, suivi
-    d'une remise à l'instantané.
-  - Alertes annexes : l'arrêt de deR4Tizer est noté au niveau Info (aucune COR-R7 attendue, HYPOTHÈSE de lecture). Une
-    alerte Alerte ou Critique entre l'arrêt et l'heure de départ est notée à part et investiguée ; elle ne compte ni en
-    VP ni en FP du scénario.
-  - Le redémarrage ne remplace pas la remise à l'instantané avant chaque essai.
-- Critère D-2 réseau : `reseau.json` réécrit après le démarrage, avec l'adresse du segment du labo comme adresse locale ;
-  sinon D. Pour S-21, S-23, S-24 et S-26, la capture prouvée active sur la carte du labo, comme ci-dessus, est exigée ;
-  sinon D, jamais FN.
-- Côté Kali : unités systemd figées et auditables, droits root bornés à ces unités, aucun mot de passe saisi ; un seul
-  comportement par essai ; journal horodaté.
-- Délai : compté depuis l'événement de référence de la fiche. Une absence d'alerte dans le délai, préconditions tenues,
-  est un FN.
-- Nettoyage commun : unité arrêtée et arrêt prouvé côté Kali ; adresses secondaires de Kali retirées et retrait vérifié ;
-  remise à l'instantané après l'essai.
-- Preuves communes : 3.0 ; preuves du redémarrage ; `reseau.json` avant et après ; état des collectes ; journal côté
-  Kali ; écart d'horloge entre la VM et Kali.
-- Témoins : N-12 (S-20 à S-26), N-13 (S-27).
+- Start: snapshot of the configuration. Reversible reorientation of the VM onto the lab segment (other adapters
+  disabled, gateway set on the lab adapter; topology granted on 2026-11-19).
+- **Restart of the service (v1.8, decision of the maintainer of 2026-11-22)**:
+  - Who and how: the administrator account of the bench stops then starts the deR4Tizer service through the Windows
+    service manager.
+  - When: after the reorientation, and after the start of the emitter on the Kali side when the sheet requires it (S-22, S-25,
+    S-27, N-13). At the latest at the start time of the trial.
+  - Start time: for S-22, S-25, S-27, N-12 and N-13, it is the start-up of the service, since the decoy and the UPnP
+    reading start at the first iteration of the NDR (`ndr.rs`). For S-20, S-21, S-23, S-24 and S-26, it is the start of
+    the action, after the evidence below.
+  - Evidence, recorded within the minute following start-up: stop and start times (System log and
+    `journal.txt`); channel reachable (a status request gets a response); state of the collections noted. The collections
+    "capture réseau local" and "capture trafic" must be "Active" on the address of the lab segment, according to the
+    line "capture des paquets (…) active sur <adresse>" of the service log. DNS filtering must be disabled,
+    state recorded; S-18 remains outside the lot.
+  - Failure: a service that does not restart, a silent channel or a capture opened on another address give a D trial, followed
+    by a reset to the snapshot.
+  - Side alerts: the stop of deR4Tizer is noted at Info level (no COR-R7 expected, reading HYPOTHESIS). An
+    Alert or Critical alert between the stop and the start time is noted separately and investigated; it counts neither as
+    TP nor as FP of the scenario.
+  - The restart does not replace the reset to the snapshot before each trial.
+- Network D-2 criterion: `reseau.json` rewritten after start-up, with the address of the lab segment as local address;
+  otherwise D. For S-21, S-23, S-24 and S-26, the capture proven active on the lab adapter, as above, is required;
+  otherwise D, never FN.
+- Kali side: systemd units frozen and auditable, root rights bounded to these units, no password typed; a single
+  behaviour per trial; timestamped log.
+- Delay: counted from the reference event of the sheet. An absence of alert within the delay, preconditions held,
+  is an FN.
+- Common cleanup: unit stopped and stop proven on the Kali side; secondary addresses of Kali removed and removal checked;
+  reset to the snapshot after the trial.
+- Common evidence: 3.0; evidence of the restart; `reseau.json` before and after; state of the collections; log on the
+  Kali side; clock offset between the VM and Kali.
+- Controls: N-12 (S-20 to S-26), N-13 (S-27).
 
-**S-20 : usurpation ARP de la passerelle (T1557.002)**
-- Préconditions : 7.0, redémarrage compris ; passerelle de la VM tenue par Kali ; table de voisinage de la VM relevée.
-- Action : après les preuves du redémarrage, Kali annonce une adresse inutilisée du segment sous sa propre adresse MAC.
-  Dans la table de voisinage de la VM, deux adresses (la passerelle et l'adresse inutilisée) partagent alors une même MAC.
-- Validité : double MAC observée dans la table de voisinage de la VM ; sinon D.
-- Attendu : EXP-NDR-001 Critique « usurpation ARP probable » (T1557.002). Délai : 120 s après la première observation de
-  la double MAC (relevé ARP toutes les 10 s).
-- Nettoyage : annonces arrêtées ; 7.0.
-- Preuves : table de voisinage horodatée, alerte.
-- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+**S-20: ARP spoofing of the gateway (T1557.002)**
+- Preconditions: 7.0, restart included; gateway of the VM held by Kali; neighbour table of the VM read.
+- Action: after the evidence of the restart, Kali announces an unused address of the segment under its own MAC address.
+  In the neighbour table of the VM, two addresses (the gateway and the unused address) then share the same MAC.
+- Validity: duplicate MAC observed in the neighbour table of the VM; otherwise D.
+- Expected: EXP-NDR-001 Critical "usurpation ARP probable" (T1557.002). Delay: 120 s after the first observation of
+  the duplicate MAC (ARP reading every 10 s).
+- Cleanup: announcements stopped; 7.0.
+- Evidence: timestamped neighbour table, alert.
+- Configuration C: identical (measured on 2026-11-16, not consolidated).
 
-**S-21 : serveur DHCP pirate (T1557.003)** : hors du lot 4, à remesurer après la PR #190.
-- Préconditions : 7.0, redémarrage compris ; VM en DHCP avec un bail du serveur DHCP légitime du labo ; serveur DHCP de
-  la carte lu non vide par le service (`reseau.json`), sinon D.
-- Action : après les preuves du redémarrage, un second émetteur du segment envoie des offres DHCP non sollicitées, avec un
-  identifiant de serveur différent de celui du bail.
-- Attendu : EXP-NDR-001 Critique « serveur DHCP pirate » (T1557.003). Délai : 120 s après la première offre capturée.
-  Réserve : l'identifiant de serveur est contrôlé par l'émetteur.
-- Nettoyage : émetteur et serveur légitime arrêtés ; 7.0.
-- Preuves : bail de la VM, offres capturées, alerte.
-- Configuration C : identique.
+**S-21: rogue DHCP server (T1557.003)**: outside lot 4, to be remeasured after PR #190.
+- Preconditions: 7.0, restart included; VM on DHCP with a lease from the legitimate DHCP server of the lab; DHCP server of
+  the adapter read as non-empty by the service (`reseau.json`), otherwise D.
+- Action: after the evidence of the restart, a second emitter of the segment sends unsolicited DHCP offers, with a
+  server identifier different from that of the lease.
+- Expected: EXP-NDR-001 Critical "serveur DHCP pirate" (T1557.003). Delay: 120 s after the first captured offer.
+  Reservation: the server identifier is controlled by the emitter.
+- Cleanup: emitter and legitimate server stopped; 7.0.
+- Evidence: lease of the VM, captured offers, alert.
+- Configuration C: identical.
 
-**S-22 : leurre LLMNR, répondeur sans droits root (T1557.001)** : facultatif dans le lot 4 (S-25 couvre le même chemin).
-- Préconditions : 7.0 ; répondeur LLMNR en espace utilisateur démarré avant le redémarrage du service.
-- Action : le service démarre ; le répondeur répond au nom inexistant que le leurre interroge à la première itération du
+**S-22: LLMNR decoy, responder without root rights (T1557.001)**: optional in lot 4 (S-25 covers the same path).
+- Preconditions: 7.0; user-space LLMNR responder started before the restart of the service.
+- Action: the service starts; the responder answers the non-existent name that the decoy queries at the first iteration of the
   NDR.
-- Validité : émission du leurre (`reseau.json`) dans les 120 s qui suivent le démarrage du service ; sinon D (cas du
-  leurre sauté après un échec de liaison, constat du premier lot réseau).
-- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 180 s après le démarrage du service,
-  et 60 s au plus après l'émission du leurre.
-- Nettoyage : répondeur arrêté ; 7.0.
-- Preuves : preuves du redémarrage, heure et résultat du leurre, journal du répondeur, alerte.
-- Configuration C : identique (le leurre part du service, quelle que soit la politique LLMNR du client).
+- Validity: emission of the decoy (`reseau.json`) within the 120 s following the start-up of the service; otherwise D (case of the
+  decoy skipped after a binding failure, finding of the first network lot).
+- Expected: EXP-NDR-001 Critical "empoisonnement LLMNR/NBNS" (T1557.001). Delay: 180 s after the start-up of the service,
+  and 60 s at most after the emission of the decoy.
+- Cleanup: responder stopped; 7.0.
+- Evidence: evidence of the restart, time and result of the decoy, log of the responder, alert.
+- Configuration C: identical (the decoy comes from the service, whatever the LLMNR policy of the client).
 
-**S-23 : responder passif LLMNR, au moins 3 noms (T1557.001)**
-- Préconditions : 7.0, redémarrage et capture prouvée compris ; unité de réponse active côté Kali.
-- Action : après les preuves du redémarrage, la VM résout, par le client DNS de Windows, au moins 6 noms `.test`
-  inexistants et distincts ; le répondeur répond à chacun.
-- Validité : au moins 3 réponses distinctes du même hôte capturées ; sinon D.
-- Attendu : EXP-NDR-001 Alerte « répond en LLMNR pour au moins 3 noms » (T1557.001). Délai : 120 s après la 3ᵉ réponse
-  capturée.
-- Nettoyage : unité arrêtée ; 7.0.
-- Preuves : requêtes émises (heures), réponses capturées, alerte.
-- Configuration C : **prévenu (P-baseline)** : LLMNR désactivé côté client par la baseline (mesuré le 2026-11-16), aucune
-  requête émise. Compté à part, hors score de détection.
+**S-23: passive LLMNR responder, at least 3 names (T1557.001)**
+- Preconditions: 7.0, restart and proven capture included; response unit active on the Kali side.
+- Action: after the evidence of the restart, the VM resolves, through the Windows DNS client, at least 6 distinct non-existent
+  `.test` names; the responder answers each one.
+- Validity: at least 3 distinct responses from the same host captured; otherwise D.
+- Expected: EXP-NDR-001 Alert "répond en LLMNR pour au moins 3 noms" (T1557.001). Delay: 120 s after the 3rd captured
+  response.
+- Cleanup: unit stopped; 7.0.
+- Evidence: queries emitted (times), captured responses, alert.
+- Configuration C: **prevented (P-baseline)**: LLMNR disabled on the client side by the baseline (measured on 2026-11-16), no
+  query emitted. Counted separately, outside the detection score.
 
-**S-24 : motif de la règle IDS de test intégrée (sid 9000000)** : hors du lot 4.
-- Préconditions : 7.0, redémarrage et capture prouvée compris ; règles IDS chargées.
-- Action : après les preuves du redémarrage, Kali envoie trois datagrammes portant le motif de la règle de test intégrée.
-- Attendu : EXP-IDS-001 au niveau de la règle (Info). Délai : 60 s après le premier datagramme.
-- Nettoyage : 7.0.
-- Preuves : état de l'IDS (règles chargées), alerte.
-- Configuration C : identique.
+**S-24: pattern of the built-in test IDS rule (sid 9000000)**: outside lot 4.
+- Preconditions: 7.0, restart and proven capture included; IDS rules loaded.
+- Action: after the evidence of the restart, Kali sends three datagrams carrying the pattern of the built-in test rule.
+- Expected: EXP-IDS-001 at the level of the rule (Info). Delay: 60 s after the first datagram.
+- Cleanup: 7.0.
+- Evidence: state of the IDS (rules loaded), alert.
+- Configuration C: identical.
 
-**S-25 : leurre LLMNR et NBNS, répondeur root (T1557.001)**
-- Préconditions : 7.0 ; unité de réponse LLMNR et NBNS active côté Kali, sans empoisonnement DHCP ni WPAD, démarrée avant
-  le redémarrage du service.
-- Action : le service démarre ; le répondeur répond, en LLMNR et en NBNS, au nom inexistant que le leurre interroge à la
-  première itération du NDR.
-- Validité : comme S-22. Le résultat du leurre doit montrer une réponse sur les deux protocoles ; une réponse sur un
-  seul est notée.
-- Attendu : EXP-NDR-001 Critique « empoisonnement LLMNR/NBNS » (T1557.001). Délai : 180 s après le démarrage du service,
-  et 60 s au plus après l'émission du leurre.
-- Nettoyage : unité arrêtée ; 7.0.
-- Preuves : preuves du redémarrage, heure et résultat du leurre, journal de l'unité, alerte.
-- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+**S-25: LLMNR and NBNS decoy, root responder (T1557.001)**
+- Preconditions: 7.0; LLMNR and NBNS response unit active on the Kali side, without DHCP or WPAD poisoning, started before
+  the restart of the service.
+- Action: the service starts; the responder answers, in LLMNR and in NBNS, the non-existent name that the decoy queries at the
+  first iteration of the NDR.
+- Validity: as S-22. The result of the decoy must show a response on both protocols; a response on only
+  one is noted.
+- Expected: EXP-NDR-001 Critical "empoisonnement LLMNR/NBNS" (T1557.001). Delay: 180 s after the start-up of the service,
+  and 60 s at most after the emission of the decoy.
+- Cleanup: unit stopped; 7.0.
+- Evidence: evidence of the restart, time and result of the decoy, log of the unit, alert.
+- Configuration C: identical (measured on 2026-11-16, not consolidated).
 
-**S-26 : responder passif mDNS, au moins 15 noms (T1557.001)**
-- Préconditions : 7.0, redémarrage et capture prouvée compris ; unité de réponse mDNS active côté Kali.
-- Action : après les preuves du redémarrage, un programme de test de la VM émet au moins 20 requêtes mDNS de noms
-  distincts, directement sur le réseau, sans passer par le client mDNS de Windows ; le répondeur répond à chacune.
-- Validité : au moins 15 réponses distinctes du même hôte capturées ; sinon D.
-- Attendu : EXP-NDR-001 Alerte « répond en mDNS pour N noms » (T1557.001). Délai : 120 s après la 15ᵉ réponse capturée.
-  S-26 mesure le détecteur, pas la posture mDNS du client.
-- Nettoyage : unité arrêtée, programme de test supprimé ; 7.0.
-- Preuves : requêtes émises (heures), réponses capturées, alerte.
-- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+**S-26: passive mDNS responder, at least 15 names (T1557.001)**
+- Preconditions: 7.0, restart and proven capture included; mDNS response unit active on the Kali side.
+- Action: after the evidence of the restart, a test program of the VM emits at least 20 mDNS queries for distinct
+  names, directly on the network, without going through the Windows mDNS client; the responder answers each one.
+- Validity: at least 15 distinct responses from the same host captured; otherwise D.
+- Expected: EXP-NDR-001 Alert "répond en mDNS pour N noms" (T1557.001). Delay: 120 s after the 15th captured response.
+  S-26 measures the detector, not the mDNS posture of the client.
+- Cleanup: unit stopped, test program deleted; 7.0.
+- Evidence: queries emitted (times), captured responses, alert.
+- Configuration C: identical (measured on 2026-11-16, not consolidated).
 
-**S-27 : redirection UPnP d'un port vers ce PC (T1133)**
-- Préconditions : 7.0, plus un ré-adressage réversible du segment en 192.168.50.0/24 (VM, et adresse secondaire de
-  Kali), fait avant le redémarrage : le module UPnP n'interroge que des adresses privées (topologie accordée le
-  2026-11-19). Dans cet adressage, COR-R9 et les artefacts D-1 ne sont pas attendus. Box émulée en espace utilisateur,
-  côté Kali, démarrée avant le redémarrage du service.
-- Action : le service démarre ; à la première itération du NDR, la box émulée répond à la découverte UPnP et annonce une
-  redirection d'un port vers la VM.
-- Validité : box découverte par le service (état UPnP de `reseau.json`) dans les 120 s qui suivent le démarrage ; sinon D.
-- Attendu : EXP-NDR-001 Alerte « la box ouvre le port … vers ce PC » (T1133) ; état « dont 1 vers ce PC ». Délai : 180 s
-  après le démarrage du service, et 60 s au plus après le relevé UPnP.
-- Nettoyage : box émulée arrêtée ; adresse secondaire de Kali retirée et retrait vérifié ; 7.0.
-- Preuves : preuves du redémarrage, état UPnP avant et après, journal de la box émulée, alerte.
-- Configuration C : identique (mesuré le 2026-11-16, non consolidé).
+**S-27: UPnP redirection of a port to this PC (T1133)**
+- Preconditions: 7.0, plus a reversible re-addressing of the segment in 192.168.50.0/24 (VM, and secondary address of
+  Kali), done before the restart: the UPnP module only queries private addresses (topology granted on
+  2026-11-19). In this addressing, COR-R9 and the D-1 artefacts are not expected. User-space emulated box,
+  on the Kali side, started before the restart of the service.
+- Action: the service starts; at the first iteration of the NDR, the emulated box answers the UPnP discovery and announces a
+  redirection of a port to the VM.
+- Validity: box discovered by the service (UPnP state of `reseau.json`) within the 120 s following start-up; otherwise D.
+- Expected: EXP-NDR-001 Alert "la box ouvre le port … vers ce PC" (T1133); state "dont 1 vers ce PC". Delay: 180 s
+  after the start-up of the service, and 60 s at most after the UPnP reading.
+- Cleanup: emulated box stopped; secondary address of Kali removed and removal checked; 7.0.
+- Evidence: evidence of the restart, UPnP state before and after, log of the emulated box, alert.
+- Configuration C: identical (measured on 2026-11-16, not consolidated).
