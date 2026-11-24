@@ -118,6 +118,34 @@ try {
     $consult = 'VueAssistantFluent.RepereVu(Canal.EstAdmin(), VueAssistantFluent.CheminRepere, VueAssistantFluent.RepereExiste)'
     $nExiste = ([regex]::Matches($tousSrc, 'RepereExiste[(]')).Count; $nConsult = ([regex]::Matches($flSrc, [regex]::Escape($consult))).Count; $nVu = ([regex]::Matches($tousSrc, 'RepereVu[(]')).Count
     Cas 'interface : le repère n''est consulté que par RepereVu, avec le jeton réel, à l''ouverture et pour la carte de la Vue d''ensemble (A304-2)' ($nExiste -eq 1 -and $nConsult -eq 2 -and $nVu -eq 3) "$nExiste|$nConsult|$nVu"
+    # Prérelecture et audit de #307 (S307-01) : GetFolderPath(LocalApplicationData) sans DoNotVerify vérifie le dossier,
+    # donc interroge un %LOCALAPPDATA% que HKCU peut rediriger. Chaque appel de src porte DoNotVerify, ou n'est atteint
+    # que hors jeton administrateur : chemins du repère et de langue.txt calculés seulement derrière « Canal.EstAdmin() ? »
+    # ou dans RepereVu(Canal.EstAdmin(), …) ; derniere-alerte-lue.txt jamais calculé en administrateur ; fichier de
+    # commande écrit seulement après le retour de la branche administrateur d'Executer
+    $hors = @()
+    foreach ($f in Get-ChildItem (Join-Path $src '*.cs')) {
+        $lignes = [IO.File]::ReadAllLines($f.FullName)
+        for ($i = 0; $i -lt $lignes.Count; $i++) {
+            $ln = $lignes[$i]; $pos = "$($f.Name):$($i + 1)"
+            if ($ln.TrimStart().StartsWith('//')) { continue }
+            $avant = (@($lignes[[Math]::Max(0, $i - 2)..[Math]::Max(0, $i - 1)]) -join ' ')
+            if ($ln -match 'SpecialFolder\.LocalApplicationData') {
+                $ok = $ln.Contains('SpecialFolderOption.DoNotVerify') -or $avant.Contains('public static string CheminRepere()') -or $avant.Contains('public static string CheminReglage()') -or
+                      $avant.Contains('readonly string fichierLecture = Canal.EstAdmin() ? null : Path.Combine(') -or
+                      $ln.Contains('string dossier = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "deR4Tizer");')
+                if (-not $ok) { $hors += "GetFolderPath $pos" }
+            }
+            if ($ln -match 'CheminReglage[(][)]' -and -not $ln.Contains('public static string CheminReglage()') -and -not ($ln -match 'Canal\.EstAdmin[(][)][^;]*[?][^;]*CheminReglage[(][)]')) { $hors += "CheminReglage $pos" }
+            if ($ln -match 'CheminRepere' -and -not $ln.Contains('public static string CheminRepere()') -and -not $ln.Contains($consult) -and -not $ln.Contains('Canal.EstAdmin() ? null : VueAssistantFluent.CheminRepere()')) { $hors += "CheminRepere $pos" }
+        }
+    }
+    $exSrc = $gSrc.Substring($gSrc.IndexOf('public static void Executer(Commande c)'))
+    $exSrc = $exSrc.Substring(0, $exSrc.IndexOf('string dossier = Path.Combine('))
+    $retourAdmin = $exSrc.Contains('if (EstAdmin())') -and ($exSrc -match 'Afficher[(]Envoyer[(]c[)][)];\s*return;\s*[}]\s*$')
+    Cas 'interface élevée : aucun GetFolderPath(LocalApplicationData) qui vérifie le dossier, sauf hors jeton administrateur (S307-01)' ((-not $hors) -and $retourAdmin) "$($hors -join ' ; ') | retour admin : $retourAdmin"
+    Cas 'interface élevée : dossier attendu du fichier de commande calculé avec DoNotVerify (S307-01)' ($gSrc.Contains('new List<string> { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "deR4Tizer") };'))
+    Cas 'interface classique : derniere-alerte-lue.txt jamais lu en administrateur (S307-01)' ($gSrc.Contains('if (fichierLecture != null) try { derniereLue = File.ReadAllText(fichierLecture).Trim(); } catch { }'))
 
     # ---------------------------------------------------------------- ce que la page Réglages dit
     $langue.GetField('En').SetValue($null, $true)
@@ -143,7 +171,7 @@ try {
     $g = [IO.File]::ReadAllText((Join-Path $src 'Gui.cs')); $fl = [IO.File]::ReadAllText((Join-Path $src 'Fluent.cs')); $rg = [IO.File]::ReadAllText((Join-Path $src 'Reglages.cs'))
     Cas 'une seule affectation de L.En dans l''interface (Programme.ChoisirLangue)' (([regex]::Matches($tous, '\bL\.En\s*=[^=]')).Count -eq 1 -and $g.Contains('L.En = L.Choisir(')) "$(([regex]::Matches($tous, '\bL\.En\s*=[^=]')).Count)"
     Cas 'culture de Windows lue par L.CultureAnglaise seulement' (([regex]::Matches($tous, 'TwoLetterISOLanguageName')).Count -eq 1)
-    Cas 'Main : langue choisie avant l''assistant élevé et avant toute fenêtre, réglage jamais lu sous jeton administrateur' ($g.IndexOf('ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());') -ge 0 -and $g.IndexOf('ChoisirLangue(args, cfg,') -lt $g.IndexOf('Commande c;'))
+    Cas 'Main : langue choisie avant l''assistant élevé et avant toute fenêtre, réglage jamais lu sous jeton administrateur' ($g.IndexOf('ChoisirLangue(args, cfg, Canal.EstAdmin() || Mode(args) == "commande" ? null : L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());') -ge 0 -and $g.IndexOf('ChoisirLangue(args, cfg,') -lt $g.IndexOf('Commande c;'))
     Cas 'assistant élevé lancé avec la langue de l''interface (--langue)' ($g.Contains('"--commande-fichier \"" + fichier + "\" --langue " + (L.En ? "en" : "fr")'))
     Cas 'pages Réglages : bouton actif = réglage en vigueur, jamais la langue de config.json ; la langue ne part plus avec les réglages' (-not ($fl -match '[xc]\.Langue\b') -and -not ($rg -match 'config\.Langue|anglais \? "en"') -and $fl.Contains('langue.Definir(L.Reglage, ActionsReglages.LangueEnregistree());') -and $rg.Contains('return Canal.EstAdmin() ? null : L.LireReglage(L.CheminReglage());') -and ([regex]::Matches($tous, 'L\.LireReglage\(')).Count -eq 2 -and $rg.Contains('cbLangue.SelectedIndex = Math.Max(0, Array.IndexOf(L.Reglages, L.Reglage));'))
 

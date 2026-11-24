@@ -74,7 +74,8 @@ namespace DeR4Tizer
         // lancement de l'interface (constat T-17). Faux si rien n'est écrit (interface élevée, valeur hors liste, échec)
         public static bool ChoisirLangue(string valeur)
         {
-            return L.EcrireReglage(L.CheminReglage(), valeur, Canal.EstAdmin());
+            // Chemin jamais calculé sous jeton administrateur (audit de #307, S307-01)
+            return Canal.EstAdmin() ? false : L.EcrireReglage(L.CheminReglage(), valeur, false);
         }
 
         // Choix enregistré pour le prochain lancement ; jamais lu sous jeton administrateur (audit de #298, A298-1)
