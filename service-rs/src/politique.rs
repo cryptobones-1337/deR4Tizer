@@ -119,6 +119,61 @@ pub fn decider(action: Action, declencheur: Declencheur, c: &Contexte) -> Decisi
     }
 }
 
+// ------------------------------------------------------------ états effectifs publiés (T-18), décisions pures testées
+
+/// État commun de sources de télémétrie dont une réponse automatique a besoin : une source indisponible ou désactivée
+/// (« SansEffet ») l'emporte sur une source pas encore lue (« NonVerifiable »), puis sur une source partielle
+/// (« Partiel ») ; toutes actives : « Actif »
+fn etat_des_sources(sources: &[&crate::collectes::EtatPublie]) -> &'static str {
+    use crate::collectes::EtatPublie as E;
+    if sources.iter().any(|s| matches!(s, E::Indisponible(_) | E::Desactivee(_))) {
+        "SansEffet"
+    } else if sources.iter().any(|s| matches!(s, E::Inconnue)) {
+        "NonVerifiable"
+    } else if sources.iter().any(|s| matches!(s, E::Partielle(_))) {
+        "Partiel"
+    } else {
+        "Actif"
+    }
+}
+
+/// Décision pure (T-18) : état effectif de la réponse automatique aux rançongiciels, publié dans etat.json
+/// (`ReponsesAuto.Rancongiciel`). Réglage coupé : « Desactive ». Sinon la politique (`decider`, suspension sur leurre)
+/// et les deux sources dont la suspension dépend : les leurres posés et suivis (collecte Leurres) et le journal Sécurité
+/// qui porte leurs 4663 (collecte JournalSecurite)
+pub fn etat_rancongiciel(reglage: bool, leurres: &crate::collectes::EtatPublie, journal_securite: &crate::collectes::EtatPublie) -> &'static str {
+    if !reglage {
+        return "Desactive";
+    }
+    let c = Contexte { rancongiciel: true, ..Default::default() };
+    if !matches!(decider(Action::Suspendre, Declencheur::Automatique(SourceAuto::Leurre), &c), Decision::Autorisee(_)) {
+        return "SansEffet";
+    }
+    etat_des_sources(&[leurres, journal_securite])
+}
+
+/// Décision pure (T-18) : état effectif du blocage automatique par les listes (`ReponsesAuto.BlocageListes`). Réglage
+/// coupé : « Desactive ». Sinon la politique (`decider`, liste du niveau 3 : refusée en échec de la protection du dossier
+/// de données, « SansEffet »), les listes du niveau 3 chargées (`niveau3` : chargées, attendues ; aucune : « SansEffet »,
+/// une partie : « Partiel ») et la table des connexions, où le blocage est décidé (collecte Connexions)
+pub fn etat_blocage_listes(reglage: bool, echec_protection: bool, niveau3: (usize, usize), connexions: &crate::collectes::EtatPublie) -> &'static str {
+    if !reglage {
+        return "Desactive";
+    }
+    let c = Contexte { blocage_menaces: true, echec_protection, ..Default::default() };
+    if !matches!(decider(Action::BloquerIp, Declencheur::Automatique(SourceAuto::Liste { niveau3: true }), &c), Decision::Autorisee(_)) {
+        return "SansEffet";
+    }
+    let (chargees, attendues) = niveau3;
+    if chargees == 0 {
+        return "SansEffet";
+    }
+    match etat_des_sources(&[connexions]) {
+        "Actif" if chargees < attendues => "Partiel",
+        e => e,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Genre {
     BlocageListe,

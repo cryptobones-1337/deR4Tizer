@@ -207,15 +207,57 @@ fn egaux(a: &str, b: &str) -> bool {
 
 // ------------------------------------------------------------ serveur
 
+/// Écoute de l'API (T-18), telle que le fil qui l'ouvre la connaît déjà : pas encore sue, ouverte, ou impossible (jeton
+/// non créé, port non obtenu)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EtatEcoute {
+    EnCours,
+    Ouverte,
+    Echec,
+}
+
+/// Génération de l'API et état de son écoute : seule la génération en cours écrit
+static ECOUTE: Mutex<(u64, EtatEcoute)> = Mutex::new((0, EtatEcoute::EnCours));
+
+fn noter_ecoute(generation: u64, e: EtatEcoute) {
+    let mut g = verrou(&ECOUTE);
+    if generation >= g.0 && generation == GENERATION.load(Ordering::SeqCst) {
+        *g = (generation, e);
+    }
+}
+
+/// Décision pure (T-18) : état effectif de l'API d'export publié dans etat.json. « Desactive » ; « Joignable » (port
+/// ouvert par le service : l'accès depuis le SIEM, pare-feu et réseau compris, n'est pas vérifié) ; « EnEchec » (jeton
+/// non créé ou port non obtenu) ; « NonVerifiable » (ouverture en cours)
+pub fn etat_api(actif: bool, ecoute: EtatEcoute) -> &'static str {
+    if !actif {
+        return "Desactive";
+    }
+    match ecoute {
+        EtatEcoute::Ouverte => "Joignable",
+        EtatEcoute::Echec => "EnEchec",
+        EtatEcoute::EnCours => "NonVerifiable",
+    }
+}
+
+/// État publié de l'API (`actif` : réglage en vigueur du moniteur). Écoute d'une génération dépassée : pas encore sue
+pub fn etat_publie(actif: bool) -> commun::EtatSortie {
+    let (g, e) = *verrou(&ECOUTE);
+    let e = if g == GENERATION.load(Ordering::SeqCst) { e } else { EtatEcoute::EnCours };
+    commun::EtatSortie { actif, etat: etat_api(actif, e).into() }
+}
+
 /// (Re)démarre l'API selon la configuration ; l'ancienne écoute s'arrête d'elle-même
 pub fn demarrer(config: &ConfigApi) {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    noter_ecoute(generation, EtatEcoute::EnCours);
     regle_parefeu(config);
     if !config.actif {
         return;
     }
     let Some(jeton) = jeton() else {
         commun::journal("API d'export : non démarrée, jeton impossible à créer avec ses droits");
+        noter_ecoute(generation, EtatEcoute::Echec);
         return;
     };
     let autorisees = adresses_autorisees(config);
@@ -238,10 +280,12 @@ pub fn demarrer(config: &ConfigApi) {
         }
         let Some(ecoute) = ecoute else {
             commun::journal(&format!("API d'export : impossible d'écouter sur {adresse}"));
+            noter_ecoute(generation, EtatEcoute::Echec);
             return;
         };
         let _ = ecoute.set_nonblocking(true);
         commun::journal(&format!("API d'export : écoute sur {adresse}"));
+        noter_ecoute(generation, EtatEcoute::Ouverte);
         ecouter(&ecoute, &jeton, &autorisees, reseau, &PLACES, &SIGNAL, &|| GENERATION.load(Ordering::SeqCst) == generation);
     }).unwrap();
 }

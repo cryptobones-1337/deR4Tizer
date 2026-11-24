@@ -105,6 +105,32 @@ pub struct Etat {
     pub regles_degradees: Vec<String>,
     /// Pour chaque règle sans collecte, les sources dont l'une au moins manque (phase 3.3d, lues par l'interface)
     pub causes_sans_collecte: Vec<crate::collectes::CauseSansCollecte>,
+    /// États effectifs des réponses automatiques (T-18) : ce qui agirait vraiment, pas seulement le réglage
+    pub reponses_auto: EtatReponsesAuto,
+    /// États effectifs de l'export syslog et de l'API d'export (T-18)
+    pub syslog: EtatSortie,
+    pub api: EtatSortie,
+}
+
+/// États effectifs des réponses automatiques (T-18, décisions pures de `politique.rs`), en codes stables traduits par
+/// l'interface : « Desactive », « Actif », « Partiel », « SansEffet », « NonVerifiable ». Vides dans un etat.json écrit
+/// avant
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EtatReponsesAuto {
+    /// Suspension d'un programme qui touche un leurre (`politique::etat_rancongiciel`)
+    pub rancongiciel: String,
+    /// Blocage au pare-feu des adresses du niveau 3 (`politique::etat_blocage_listes`)
+    pub blocage_listes: String,
+}
+
+/// État effectif d'une sortie vers un tiers (T-18) : réglage, et code « Desactive », « Joignable », « EnEchec » ou
+/// « NonVerifiable » (`export::etat_syslog`, `api::etat_api`). Ni hôte, ni port, ni adresse
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EtatSortie {
+    pub actif: bool,
+    pub etat: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

@@ -6,6 +6,7 @@
 use crate::commun::{self, Alerte, ConfigSyslog};
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs, UdpSocket};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,6 +45,54 @@ pub fn alerte(a: &Alerte) {
     }
 }
 
+/// Issue du dernier envoi d'une alerte au serveur syslog (T-18), depuis le démarrage ou le dernier réglage reçu. Ce que
+/// le fil d'envoi sait déjà : aucune connexion ni aucun message de plus. Le bouton « Tester » n'y compte pas (il peut
+/// viser d'autres réglages que ceux enregistrés)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum DernierEnvoi {
+    Aucun = 0,
+    /// Écrit sur une connexion TCP établie : le serveur est joignable
+    TcpRemis = 1,
+    /// Datagramme UDP émis : rien ne dit qu'il est arrivé
+    UdpEmis = 2,
+    Echec = 3,
+}
+
+static DERNIER_ENVOI: AtomicU8 = AtomicU8::new(0);
+
+fn noter_envoi(d: DernierEnvoi) {
+    DERNIER_ENVOI.store(d as u8, Ordering::Relaxed);
+}
+
+fn dernier_envoi() -> DernierEnvoi {
+    match DERNIER_ENVOI.load(Ordering::Relaxed) {
+        1 => DernierEnvoi::TcpRemis,
+        2 => DernierEnvoi::UdpEmis,
+        3 => DernierEnvoi::Echec,
+        _ => DernierEnvoi::Aucun,
+    }
+}
+
+/// Décision pure (T-18) : état effectif de l'export syslog publié dans etat.json. « Desactive » ; « Joignable » (dernier
+/// envoi écrit sur une connexion TCP) ; « EnEchec » (dernier envoi en échec) ; « NonVerifiable » (aucun envoi depuis le
+/// démarrage ou le dernier réglage, ou UDP : un datagramme émis n'est jamais confirmé)
+pub fn etat_syslog(actif: bool, dernier: DernierEnvoi) -> &'static str {
+    if !actif {
+        return "Desactive";
+    }
+    match dernier {
+        DernierEnvoi::TcpRemis => "Joignable",
+        DernierEnvoi::Echec => "EnEchec",
+        DernierEnvoi::Aucun | DernierEnvoi::UdpEmis => "NonVerifiable",
+    }
+}
+
+/// État publié de l'export syslog (`actif` : réglage en vigueur du moniteur)
+pub fn etat_publie(actif: bool) -> commun::EtatSortie {
+    commun::EtatSortie { actif, etat: etat_syslog(actif, dernier_envoi()).into() }
+}
+
 fn boucle(mut config: ConfigSyslog, rx: Receiver<Message>) {
     let mut tcp: Option<TcpStream> = None;
     let mut derniere_erreur = String::new();
@@ -52,14 +101,20 @@ fn boucle(mut config: ConfigSyslog, rx: Receiver<Message>) {
             Message::Config(c) => {
                 tcp = None;
                 config = c;
+                // Nouveaux réglages : rien n'est encore su de la nouvelle destination
+                noter_envoi(DernierEnvoi::Aucun);
             }
             Message::Alerte(a) => {
                 if !config.actif || rang(&a.niveau) < rang(&config.niveau_min) {
                     continue;
                 }
                 match envoyer(&config, &message(&config, &a), &mut tcp) {
-                    Ok(()) => derniere_erreur.clear(),
+                    Ok(()) => {
+                        derniere_erreur.clear();
+                        noter_envoi(if config.protocole.eq_ignore_ascii_case("TCP") { DernierEnvoi::TcpRemis } else { DernierEnvoi::UdpEmis });
+                    }
                     Err(e) => {
+                        noter_envoi(DernierEnvoi::Echec);
                         if e != derniere_erreur {
                             commun::journal(&format!("syslog : envoi impossible vers {}:{} ({e})", config.hote, config.port));
                             derniere_erreur = e;

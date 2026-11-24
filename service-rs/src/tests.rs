@@ -71,6 +71,52 @@ fn decoder_sans_panique() {
     });
 }
 
+/// T-4 : trafic sans programme nommé, raison publiée dans trafic.json (`NonAttribue`). Mêmes noms qu'avant (« System »,
+/// nom, « PID n », « ? ») ; chaque « ? » et chaque « PID n » a sa raison, un programme nommé n'en a aucune
+#[test]
+fn t4_trafic_non_attribue_raison() {
+    use crate::capture::{attribuer, NonAttribue, NonAttribue::*, TCP, UDP};
+    assert_eq!(attribuer(TCP, 50_000, Some(4), None), ("System".to_string(), None));
+    assert_eq!(attribuer(TCP, 50_000, Some(1234), Some("msedge")), ("msedge".to_string(), None));
+    assert_eq!(attribuer(UDP, 50_000, Some(1234), None), ("PID 1234".to_string(), Some(ProcessusTermine)));
+    assert_eq!(attribuer(1, 0, None, None), ("?".to_string(), Some(HorsTcpUdp)), "ICMP");
+    assert_eq!(attribuer(50, 0, None, None), ("?".to_string(), Some(HorsTcpUdp)), "IPsec ESP");
+    assert_eq!(attribuer(TCP, 0, None, None), ("?".to_string(), Some(SansPort)), "fragment qui n'est pas le premier");
+    assert_eq!(attribuer(UDP, 0, None, None).1, Some(SansPort));
+    assert_eq!(attribuer(TCP, 443, None, None), ("?".to_string(), Some(SansProprietaire)));
+    assert_eq!(attribuer(UDP, 53_000, None, Some("ignoré")).1, Some(SansProprietaire), "sans PID, un nom ne compte pas");
+    // Codes stables, et ordre des cases des compteurs
+    let codes: Vec<&str> = NonAttribue::TOUTES.iter().map(|r| r.code()).collect();
+    assert_eq!(codes, ["HorsTcpUdp", "SansPort", "SansProprietaire", "ProcessusTermine"]);
+    for (i, r) in NonAttribue::TOUTES.iter().enumerate() {
+        assert_eq!(*r as usize, i, "{r:?}");
+    }
+    // Compteurs et lignes publiées : raisons sans octet omises, la plus grosse d'abord, sommes saturées
+    use crate::trafic::{lignes_non_attribuees, noter_non_attribue, LigneNonAttribue};
+    let ligne = |r: &str, e: u64, s: u64| LigneNonAttribue { raison: r.into(), entrant: e, sortant: s };
+    let mut c = [(0u64, 0u64); 4];
+    assert!(lignes_non_attribuees(&c).is_empty(), "rien de non attribué : liste vide");
+    noter_non_attribue(&mut c, SansProprietaire, true, 98);
+    noter_non_attribue(&mut c, SansProprietaire, false, 2);
+    noter_non_attribue(&mut c, HorsTcpUdp, true, 6);
+    noter_non_attribue(&mut c, ProcessusTermine, false, 11);
+    let l = lignes_non_attribuees(&c);
+    assert_eq!(l, vec![ligne("SansProprietaire", 98, 2), ligne("ProcessusTermine", 0, 11), ligne("HorsTcpUdp", 6, 0)]);
+    assert_eq!(serde_json::to_string(&l[0]).unwrap(), r#"{"Raison":"SansProprietaire","Entrant":98,"Sortant":2}"#);
+    noter_non_attribue(&mut c, SansPort, true, u64::MAX);
+    noter_non_attribue(&mut c, SansPort, true, 5);
+    assert_eq!(lignes_non_attribuees(&c)[0], ligne("SansPort", u64::MAX, 0), "compteur saturé, jamais repassé à zéro");
+    // Câblage : même périmètre que la ligne « ? » (trafic public seulement), publié, remis à zéro à minuit
+    let t = include_str!("trafic.rs").replace("\r\n", "\n");
+    let p = &t[t.find("fn paquet(&mut self").unwrap()..];
+    let prive = p.find("if privee(ip)").unwrap();
+    let attribution = p.find("let (programme, raison) = contexte.attribution(p);").expect("raison relevée avec le nom");
+    assert!(prive < attribution, "trafic privé exclu comme pour les programmes");
+    assert!(t.contains("non_attribue: lignes_non_attribuees(&self.non_attribue),"), "publié dans trafic.json");
+    assert!(t.contains("self.applications.clear();") && t.contains("self.non_attribue = [(0, 0); 4];"), "remis à zéro avec le reste");
+    assert!(include_str!("capture.rs").replace("\r\n", "\n").contains("    pub fn programme(&self, p: &Paquet) -> String {\n        self.attribution(p).0\n    }"), "DPI et IDS : même nom qu'avant");
+}
+
 // ------------------------------------------------------------ TLS ClientHello
 
 /// ClientHello minimal : TLS 1.2, deux suites (dont une GREASE), SNI, groupes, formats de points
@@ -408,6 +454,45 @@ fn api_adresses_autorisees() {
     assert!(!crate::api::autorisee_test("192.168.1.11".parse().unwrap(), &l));
     assert!(crate::api::autorisee_test("127.0.0.1".parse().unwrap(), &[]));
     assert_eq!(crate::api::decoder_test("a%20b+c%3A%"), "a b c:%");
+}
+
+/// T-18 : états effectifs de l'export syslog et de l'API publiés dans etat.json (`Syslog`, `Api`) : réglage coupé
+/// « Desactive » ; UDP jamais « Joignable » (un datagramme émis n'est pas confirmé) ; rien d'envoyé depuis le démarrage ou
+/// le dernier réglage, ou écoute en cours d'ouverture : « NonVerifiable » ; échec : « EnEchec ». Ni hôte ni port publiés
+#[test]
+fn t18_etats_syslog_et_api() {
+    use crate::export::{etat_syslog, DernierEnvoi};
+    for d in [DernierEnvoi::Aucun, DernierEnvoi::TcpRemis, DernierEnvoi::UdpEmis, DernierEnvoi::Echec] {
+        assert_eq!(etat_syslog(false, d), "Desactive", "{d:?}");
+    }
+    assert_eq!(etat_syslog(true, DernierEnvoi::TcpRemis), "Joignable");
+    assert_eq!(etat_syslog(true, DernierEnvoi::UdpEmis), "NonVerifiable");
+    assert_eq!(etat_syslog(true, DernierEnvoi::Aucun), "NonVerifiable");
+    assert_eq!(etat_syslog(true, DernierEnvoi::Echec), "EnEchec");
+    use crate::api::{etat_api, EtatEcoute};
+    for e in [EtatEcoute::EnCours, EtatEcoute::Ouverte, EtatEcoute::Echec] {
+        assert_eq!(etat_api(false, e), "Desactive", "{e:?}");
+    }
+    assert_eq!(etat_api(true, EtatEcoute::Ouverte), "Joignable");
+    assert_eq!(etat_api(true, EtatEcoute::Echec), "EnEchec");
+    assert_eq!(etat_api(true, EtatEcoute::EnCours), "NonVerifiable");
+    assert_eq!(crate::api::etat_publie(false), crate::commun::EtatSortie { actif: false, etat: "Desactive".into() });
+    assert_eq!(serde_json::to_string(&crate::commun::EtatSortie { actif: true, etat: "EnEchec".into() }).unwrap(), r#"{"Actif":true,"Etat":"EnEchec"}"#);
+    // Câblage : ce que le fil d'envoi et le fil d'écoute savent déjà
+    let x = include_str!("export.rs").replace("\r\n", "\n");
+    let b = &x[x.find("fn boucle(").unwrap()..];
+    let b = &b[..b.find("\n}\n").unwrap()];
+    assert!(b.contains("config = c;\n                // Nouveaux réglages : rien n'est encore su de la nouvelle destination\n                noter_envoi(DernierEnvoi::Aucun);"));
+    assert!(b.contains("noter_envoi(if config.protocole.eq_ignore_ascii_case(\"TCP\") { DernierEnvoi::TcpRemis } else { DernierEnvoi::UdpEmis });"));
+    assert!(b.contains("Err(e) => {\n                        noter_envoi(DernierEnvoi::Echec);"));
+    assert!(x.contains("if config.protocole.eq_ignore_ascii_case(\"TCP\") {"), "même critère que l'envoi");
+    let a = include_str!("api.rs").replace("\r\n", "\n");
+    let d = &a[a.find("pub fn demarrer(config: &ConfigApi)").unwrap()..];
+    let d = &d[..d.find("\n}\n").unwrap()];
+    assert!(d.contains("jeton impossible à créer avec ses droits\");\n        noter_ecoute(generation, EtatEcoute::Echec);"));
+    assert!(d.contains("impossible d'écouter sur {adresse}\"));\n            noter_ecoute(generation, EtatEcoute::Echec);"));
+    assert!(d.contains("écoute sur {adresse}\"));\n        noter_ecoute(generation, EtatEcoute::Ouverte);"));
+    assert!(d.find("noter_ecoute(generation, EtatEcoute::EnCours);").unwrap() < d.find("if !config.actif").unwrap(), "nouvelle génération : écoute pas encore sue");
 }
 
 /// Audit SEC-009 (AUD3-01) et SEC-007 (AUD3-04) : seule la partie avant « / » était vérifiée, la suite allait telle
@@ -4752,7 +4837,7 @@ fn audit_t12_essais_apres_echec_et_sante() {
 /// contrôle suivant ; la série d'échecs repart alors de ce contrôle, puis se poursuit normalement
 #[test]
 fn s294_01_maj_json_mal_forme_reecrit_au_controle_suivant() {
-    use crate::maj::{publier_vers, Issue};
+    use crate::maj::{publier_vers, StatutMaj};
     let d = std::env::temp_dir().join(format!("d4t-s294-01-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
@@ -4762,18 +4847,18 @@ fn s294_01_maj_json_mal_forme_reecrit_au_controle_suivant() {
     let t = 1_800_000_000i64;
     for mal in ["{\"Statut\":\"à jour\"", "pas du json", "\u{feff}[1,2]", "{\"EchecDepuisS\":\"texte\"}"] {
         std::fs::write(&f, mal).unwrap();
-        publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), Issue::Echec, t).expect("maj.json mal formé : réécrit au contrôle suivant");
+        publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), StatutMaj::ManifesteNonObtenu, false, t).expect("maj.json mal formé : réécrit au contrôle suivant");
         let v = lire(&f);
         assert_eq!(v["Statut"], "manifeste introuvable (404)", "{mal}");
         assert_eq!(v["Controle"], "EchecRecent", "{mal}");
         assert_eq!(v["EchecDepuisS"], t, "{mal} : la série repart de ce contrôle");
     }
     // Contrôle suivant, 24 h plus tard : série reprise du fichier réécrit
-    publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), Issue::Echec, t + 86_400).unwrap();
+    publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), StatutMaj::ManifesteNonObtenu, false, t + 86_400).unwrap();
     let v = lire(&f);
     assert_eq!((v["EchecDepuisS"].as_i64(), v["Controle"].as_str()), (Some(t), Some("EchecProlonge")));
     // Manifeste de nouveau lu : série close
-    publier_vers(nom, &f, "4.3".into(), "à jour".into(), Issue::Lu, t + 86_500).unwrap();
+    publier_vers(nom, &f, "4.3".into(), "à jour".into(), StatutMaj::AJour, false, t + 86_500).unwrap();
     let v = lire(&f);
     assert_eq!((v["EchecDepuisS"].as_i64(), v["Controle"].as_str(), v["Statut"].as_str()), (Some(0), Some(""), Some("à jour")));
     let _ = std::fs::remove_dir_all(&d);
@@ -4787,6 +4872,69 @@ fn s294_01_maj_json_mal_forme_reecrit_au_controle_suivant() {
     torturer_texte("{\"EchecDepuisS\":1799999000,\"Controle\":\"EchecRecent\"}", &mut |t| {
         let _ = e(Some(t));
     });
+}
+
+/// T-18 : maj.json publie l'issue du contrôle en code stable (`StatutCode`), l'installation automatique appliquée par ce
+/// contrôle (`AutoApplique`) et si la version annoncée serait installée par le service (`Installable`). L'issue de la page
+/// Santé et du calendrier des essais en découle sans changer ; un maj.json écrit avant se relit
+#[test]
+fn t18_maj_code_auto_installable() {
+    use crate::maj::{installable, publier_vers, Issue, StatutMaj::*};
+    let tous = [AdresseRefusee, ManifesteNonObtenu, ManifesteInvalide, AJour, ManifesteAncien, Disponible, SansCleEpinglee, InstallationRefusee, InstallationLancee, InstallationImpossible];
+    let codes: Vec<&str> = tous.iter().map(|s| s.code()).collect();
+    assert_eq!(codes, ["AdresseRefusee", "ManifesteNonObtenu", "ManifesteInvalide", "AJour", "ManifesteAncien", "Disponible", "SansCleEpinglee", "InstallationRefusee", "InstallationLancee", "InstallationImpossible"]);
+    for s in tous {
+        let issue = match s {
+            AdresseRefusee | ManifesteNonObtenu | ManifesteInvalide => Issue::Echec,
+            ManifesteAncien => Issue::ManifesteAncien,
+            _ => Issue::Lu,
+        };
+        assert_eq!(s.issue(), issue, "{s:?} : issue d'avant");
+        for cle in [false, true] {
+            assert_eq!(installable(s, cle), (s == Disponible && cle) || s == InstallationLancee, "{s:?}, clé épinglée {cle}");
+        }
+    }
+    // Écrit dans maj.json, à côté des champs d'avant
+    let d = std::env::temp_dir().join(format!("d4t-t18-maj-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("maj.json");
+    let nom = "essai-t18\\maj.json";
+    let lire = |f: &std::path::Path| -> serde_json::Value { serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap() };
+    let t = 1_800_000_000i64;
+    publier_vers(nom, &f, "4.4".into(), "version 4.4 disponible (installation automatique désactivée)".into(), Disponible, false, t).unwrap();
+    let v = lire(&f);
+    let cle = v["CleEpinglee"].as_bool().expect("CleEpinglee");
+    assert_eq!((v["StatutCode"].as_str(), v["AutoApplique"].as_bool(), v["Installable"].as_bool(), v["Controle"].as_str()), (Some("Disponible"), Some(false), Some(cle), Some("")));
+    publier_vers(nom, &f, String::new(), "manifeste introuvable (404)".into(), ManifesteNonObtenu, true, t).unwrap();
+    let v = lire(&f);
+    assert_eq!((v["StatutCode"].as_str(), v["AutoApplique"].as_bool(), v["Installable"].as_bool(), v["Controle"].as_str(), v["EchecDepuisS"].as_i64()),
+        (Some("ManifesteNonObtenu"), Some(true), Some(false), Some("EchecRecent"), Some(t)));
+    publier_vers(nom, &f, "4.4".into(), "installation de la version 4.4 en cours".into(), InstallationLancee, true, t + 10).unwrap();
+    let v = lire(&f);
+    assert_eq!((v["StatutCode"].as_str(), v["Installable"].as_bool(), v["Controle"].as_str(), v["EchecDepuisS"].as_i64()), (Some("InstallationLancee"), Some(true), Some(""), Some(0)));
+    publier_vers(nom, &f, "4.2".into(), "manifeste plus ancien".into(), ManifesteAncien, false, t + 20).unwrap();
+    assert_eq!(lire(&f)["Controle"].as_str(), Some("ManifesteAncien"));
+    let _ = std::fs::remove_dir_all(&d);
+    // maj.json écrit avant (sans ces champs) : la série d'échecs est toujours reprise
+    assert_eq!(crate::maj::echec_depuis_publie(Some(r#"{"Statut":"x","Controle":"EchecRecent","EchecDepuisS":7}"#)), 7);
+    // Câblage : chaque issue de `verifier` a son code ; le réglage appliqué est celui passé à la vérification
+    let m = include_str!("maj.rs").replace("\r\n", "\n");
+    let v = &m[m.find("fn verifier(config: &ConfigMaj").unwrap()..];
+    let v = &v[..v.find("\n}\n").unwrap()];
+    for (garde, code) in [("if !commun::adresse_manifeste_simple(&config.url)", "StatutMaj::AdresseRefusee"), ("telecharger(&config.url, &f_manifeste", "StatutMaj::ManifesteNonObtenu"),
+        ("lire_manifeste(t.as_bytes())", "StatutMaj::ManifesteInvalide"), ("statut_comparaison(&m.version, commun::VERSION)", "StatutMaj::ManifesteAncien } else { StatutMaj::AJour }")] {
+        let i = v.find(garde).unwrap_or_else(|| panic!("{garde}"));
+        assert!(v[i..].find(code).is_some_and(|j| j < 250), "{garde} : {code}");
+    }
+    let iv = &m[m.find("fn installer_version(").unwrap()..];
+    let iv = &iv[..iv.find("\n}\n").unwrap()];
+    assert!(iv.contains("(installation automatique désactivée)\", m.version), StatutMaj::Disponible)"));
+    assert!(iv.contains("let refus = |e: String| (v.clone(), format!(\"version {v} disponible : {e}\"), StatutMaj::InstallationRefusee);"));
+    assert!(iv.contains("StatutMaj::SansCleEpinglee"));
+    assert!(m.contains("let (v, s, code) = verifier(&config, config.auto);\n        publier(v, s, code, config.auto);"), "vérification à la demande");
+    assert!(m.contains("let (v, s, code) = verifier(&config.maj, config.maj.auto);\n                echecs = if code.issue() == Issue::Echec"), "contrôle quotidien");
+    assert!(m.contains("publier(v, s, code, config.maj.auto);"));
 }
 
 /// Audit du 2026-11-23, A-3-4 : scénarios réels de la mise à jour (CI, job integration-maj) ajoutés et branchés ; le cas
@@ -8412,6 +8560,85 @@ fn sans_empreinte() -> Option<String> {
     None
 }
 
+/// T-18 : états effectifs des réponses automatiques publiés dans etat.json (`ReponsesAuto`) : ce qui agirait vraiment, pas
+/// seulement le réglage. Réglage coupé : « Desactive ». Leurres ou journal Sécurité non lus, aucune liste du niveau 3
+/// chargée, protection du dossier en échec, table des connexions illisible : « SansEffet », jamais « Actif »
+#[test]
+fn t18_etats_effectifs_reponses_auto() {
+    use crate::collectes::{Collecte, EtatPublie as E};
+    use crate::politique::{etat_blocage_listes as bl, etat_rancongiciel as rc};
+    let (a, p, i, d, n) = (E::Active, E::Partielle("x".into()), E::Indisponible("x".into()), E::Desactivee("x".into()), E::Inconnue);
+    // Rançongiciel : leurres (collecte Leurres) et 4663 (collecte JournalSecurite)
+    for x in [&a, &p, &i, &d, &n] {
+        for y in [&a, &p, &i, &d, &n] {
+            assert_eq!(rc(false, x, y), "Desactive", "{x:?} {y:?}");
+        }
+    }
+    assert_eq!(rc(true, &a, &a), "Actif");
+    assert_eq!(rc(true, &p, &a), "Partiel", "une partie des leurres posés");
+    assert_eq!(rc(true, &a, &p), "Partiel");
+    assert_eq!(rc(true, &i, &a), "SansEffet", "aucun leurre posé");
+    assert_eq!(rc(true, &d, &a), "SansEffet", "mode console : leurres non posés");
+    assert_eq!(rc(true, &a, &i), "SansEffet", "journal Sécurité non lu : aucun 4663");
+    assert_eq!(rc(true, &n, &a), "NonVerifiable", "leurres pas encore posés");
+    assert_eq!(rc(true, &n, &i), "SansEffet", "une source indisponible l'emporte sur une source pas encore lue");
+    assert_eq!(rc(true, &p, &n), "NonVerifiable");
+    // Blocage par les listes : politique (protection du dossier), listes du niveau 3 chargées, table des connexions
+    for protection in [false, true] {
+        for c in [&a, &i, &n] {
+            assert_eq!(bl(false, protection, (3, 3), c), "Desactive");
+        }
+    }
+    assert_eq!(bl(true, false, (3, 3), &a), "Actif");
+    assert_eq!(bl(true, false, (2, 3), &a), "Partiel", "une liste du niveau 3 non chargée");
+    assert_eq!(bl(true, false, (0, 3), &a), "SansEffet", "aucune liste chargée");
+    assert_eq!(bl(true, true, (3, 3), &a), "SansEffet", "protection du dossier en échec : blocage refusé par la politique");
+    assert_eq!(bl(true, false, (3, 3), &i), "SansEffet", "table des connexions illisible");
+    assert_eq!(bl(true, false, (3, 3), &n), "NonVerifiable");
+    assert_eq!(bl(true, false, (2, 3), &p), "Partiel");
+    assert_eq!(bl(true, false, (0, 3), &n), "SansEffet");
+    // Listes du niveau 3 : mêmes sources et même critère que niveau3_complet
+    use crate::menaces::niveau3_charges;
+    let s = |nom: &str, entrees: usize| crate::commun::SourceMenace { nom: nom.into(), entrees, ..Default::default() };
+    assert_eq!(niveau3_charges(&[]), (0, 3));
+    assert_eq!(niveau3_charges(&[s("Spamhaus DROP (IPv4)", 10), s("Spamhaus DROP (IPv6)", 0), s("Feodo Tracker (C2 botnets)", 5), s("URLhaus", 9)]), (2, 3));
+    assert_eq!(niveau3_charges(&[s("Spamhaus DROP (IPv4)", 1), s("Spamhaus DROP (IPv6)", 1), s("Feodo Tracker (C2 botnets)", 1)]), (3, 3));
+    // Assemblage du moniteur : réglages en vigueur, collectes de l'instantané (absente : inconnue), sans croiser les sources
+    use crate::commun::Config;
+    let r = |config: &Config, echec: bool, niveau3: (usize, usize), v: &[(Collecte, E, bool)]| {
+        let e = crate::moniteur::etat_reponses_auto(config, echec, niveau3, v);
+        (e.rancongiciel, e.blocage_listes)
+    };
+    let defaut = Config::default();
+    let vu = |l: E, j: E, c: E| vec![(Collecte::Leurres, l, false), (Collecte::JournalSecurite, j, false), (Collecte::Connexions, c, false)];
+    let paire = |x: &str, y: &str| (x.to_string(), y.to_string());
+    assert_eq!(r(&defaut, false, (3, 3), &vu(a.clone(), a.clone(), a.clone())), paire("Actif", "Actif"));
+    assert_eq!(r(&defaut, false, (3, 3), &[]), paire("NonVerifiable", "NonVerifiable"));
+    assert_eq!(r(&defaut, false, (3, 3), &vu(i.clone(), a.clone(), a.clone())), paire("SansEffet", "Actif"));
+    assert_eq!(r(&defaut, false, (3, 3), &vu(a.clone(), i.clone(), a.clone())), paire("SansEffet", "Actif"));
+    assert_eq!(r(&defaut, false, (3, 3), &vu(a.clone(), a.clone(), i.clone())), paire("Actif", "SansEffet"));
+    assert_eq!(r(&defaut, true, (3, 3), &vu(a.clone(), a.clone(), a.clone())), paire("Actif", "SansEffet"), "D6-10 : la suspension sur leurre reste");
+    assert_eq!(r(&defaut, false, (1, 3), &vu(a.clone(), a.clone(), a.clone())), paire("Actif", "Partiel"));
+    let coupe = Config { reponse_auto_rancongiciel: false, blocage_auto_menaces: false, ..Config::default() };
+    assert_eq!(r(&coupe, false, (3, 3), &vu(a.clone(), a.clone(), a.clone())), paire("Desactive", "Desactive"));
+    // etat.json : noms lus par l'interface ; un etat.json écrit avant se relit avec des états vides
+    let e = crate::commun::Etat { reponses_auto: crate::commun::EtatReponsesAuto { rancongiciel: "Actif".into(), blocage_listes: "Partiel".into() }, ..Default::default() };
+    let j = serde_json::to_string(&e).unwrap();
+    for attendu in [r#""ReponsesAuto":{"Rancongiciel":"Actif","BlocageListes":"Partiel"}"#, r#""Syslog":{"Actif":false,"Etat":""}"#, r#""Api":{"Actif":false,"Etat":""}"#] {
+        assert!(j.contains(attendu), "{attendu}");
+    }
+    let ancien: crate::commun::Etat = serde_json::from_str(r#"{"Version":"4.3","Flux":[],"PaniqueEtat":"inactive"}"#).unwrap();
+    assert_eq!((ancien.reponses_auto, ancien.syslog, ancien.api), Default::default());
+    // Câblage dans l'écriture d'etat.json
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    assert!(m.contains("let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(),\n                crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());"));
+    let w = &m[m.find(r#"commun::ecrire("etat.json", &Etat {"#).unwrap()..];
+    let w = &w[..w.find("});").unwrap()];
+    assert!(w.contains("                reponses_auto,\n"), "états des réponses publiés");
+    assert!(w.contains("syslog: crate::export::etat_publie(self.config.syslog.actif),"));
+    assert!(w.contains("api: crate::api::etat_publie(self.config.api.actif),"));
+}
+
 #[test]
 fn politique_echec_protection_refuse_les_actions_alimentees_par_fichiers() {
     use crate::politique::{decider, Action::*, Contexte, Decision::*, Declencheur::*, SourceAuto::*};
@@ -10530,6 +10757,43 @@ fn filtrage_libelle_etat() {
     assert_eq!(libelle_etat(true, false, true, true, &[]), "suspendu : amont injoignable");
     assert_eq!(libelle_etat(true, false, true, false, &["Wi-Fi".into()]), "contourné sur la carte Wi-Fi");
     assert_eq!(libelle_etat(true, false, true, false, &[]), "actif");
+}
+
+/// T-18 : état du filtrage en code stable (`EtatCode` de filtrage-etat.json), mêmes cas et même ordre que le libellé, plus
+/// « ActifSansCategorie » (le filtrage tourne mais rien n'est bloqué)
+#[test]
+fn t18_filtrage_code_etat() {
+    use crate::filtrage::{code_etat, libelle_etat};
+    assert_eq!(code_etat(false, true, true, true, &[], true), "Inactif");
+    assert_eq!(code_etat(true, true, true, false, &[], false), "RemiseEnAttente");
+    assert_eq!(code_etat(true, false, false, false, &[], false), "SuspenduResolveur");
+    assert_eq!(code_etat(true, false, true, true, &[], false), "SuspenduAmont");
+    assert_eq!(code_etat(true, false, true, false, &["Wi-Fi".into()], true), "Contourne");
+    assert_eq!(code_etat(true, false, true, false, &[], true), "ActifSansCategorie");
+    assert_eq!(code_etat(true, false, true, false, &[], false), "Actif");
+    // Tous les cas : le code suit le libellé publié jusqu'ici
+    for bits in 0..64u8 {
+        let b = |i: u8| bits >> i & 1 == 1;
+        let contournees: Vec<String> = if b(4) { vec!["Wi-Fi".into()] } else { Vec::new() };
+        let libelle = libelle_etat(b(0), b(1), b(2), b(3), &contournees);
+        let attendu = match libelle.as_str() {
+            "inactif" => "Inactif",
+            "remise des cartes en attente" => "RemiseEnAttente",
+            "suspendu : résolveur local non lancé" => "SuspenduResolveur",
+            "suspendu : amont injoignable" => "SuspenduAmont",
+            "actif" if b(5) => "ActifSansCategorie",
+            "actif" => "Actif",
+            l if l.starts_with("contourné sur la carte ") => "Contourne",
+            l => panic!("libellé inattendu : {l}"),
+        };
+        assert_eq!(code_etat(b(0), b(1), b(2), b(3), &contournees, b(5)), attendu, "cas {bits:06b}");
+    }
+    // Câblage : publié avec le libellé, d'après les catégories actives
+    let m = include_str!("moniteur.rs").replace("\r\n", "\n");
+    let f = &m[m.find("fn etat_filtrage(").unwrap()..];
+    let f = &f[..f.find("\n}").unwrap()];
+    assert!(f.contains("etat_code: crate::filtrage::code_etat(config.filtrage.actif, remise, resolveur, silence, &contournees, categories.is_empty()).into(),"));
+    assert!(f.contains("etat: crate::filtrage::libelle_etat(config.filtrage.actif, remise, resolveur, silence, &contournees),"));
 }
 
 /// DNS-003 (S164-05) : Critique, PID et chemin du programme qui tient le port, cartes nommées
