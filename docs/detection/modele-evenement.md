@@ -319,7 +319,7 @@ l'interface ; les textes français existants restent à côté.
 | `StatutCode` | texte | « AdresseRefusee », « ManifesteNonObtenu », « ManifesteInvalide », « AJour », « ManifesteAncien », « Disponible », « SansCleEpinglee », « InstallationRefusee », « InstallationLancee », « InstallationImpossible » (`maj::StatutMaj`) ; le texte de `Statut` dit le détail |
 | `AutoApplique` | booléen | installation automatique appliquée par ce contrôle (réglage lu au moment du contrôle) |
 | `Installable` | booléen | vrai pour « Disponible » si ce binaire a une clé épinglée, et pour « InstallationLancee » (`maj::installable`) |
-| `EchecInstallationPrecedente` | booléen | **hors de la liste acceptée le 2026-11-23, soumis à l'accord du mainteneur (retiré s'il le refuse)** ; `maj\echec.txt` présent : le script de l'installation précédente a échoué (paquet modifié, ou retour arrière) ; son texte est ajouté à `Statut`. Indépendant de `StatutMaj` : un contrôle « AJour » peut suivre une installation échouée ; effacé au lancement d'une nouvelle installation (audit de #308, S308-03) |
+| `EchecInstallationPrecedente` | booléen | **ajouté hors de la liste du 23 novembre, accepté par le mainteneur le 2026-11-24 (« Oui, le garder »)** ; `maj\echec.txt` présent : le script de l'installation précédente a échoué (paquet modifié, ou retour arrière) ; son texte est ajouté à `Statut`. Indépendant de `StatutMaj` : un contrôle « AJour » peut suivre une installation échouée ; effacé au lancement d'une nouvelle installation (audit de #308, S308-03) |
 
 `filtrage-etat.json` (jamais `etat.json` ni l'API) : `EtatCode`, mêmes cas que `Etat` : « Inactif »,
 « RemiseEnAttente », « SuspenduResolveur », « SuspenduAmont », « Contourne », « Actif », plus « ActifSansCategorie »
