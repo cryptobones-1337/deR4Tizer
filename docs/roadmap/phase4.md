@@ -1,85 +1,85 @@
-# Phase 4 : incidents, chronologie, santé des collecteurs et de l'interface
+# Phase 4: incidents, timeline, health of the collectors and of the interface
 
-Ouverte le 2026-10-27, à la fusion de la dernière PR de la phase 3 (PR 3.12), d'après la réponse du mainteneur du
-2026-10-26 (`CLAUDE.md`, section 5, point 3). Ce document fixe le périmètre, le découpage et les décisions de la phase.
-Écrit avant le code ; la phase est depuis livrée (PR 4.1 à 4.6) : l'état de chaque élément est celui de la matrice
-(`docs/roadmap/capability-matrix.md`). La réponse du mainteneur du 2026-10-26 est notée au journal des décisions,
-hors dépôt ; `CLAUDE.md` ne la cite pas.
+Opened on 2026-10-27, when the last PR of phase 3 (PR 3.12) was merged, following the maintainer's answer of
+2026-10-26 (`CLAUDE.md`, section 5, point 3). This document sets the scope, the split and the decisions of the phase.
+Written before the code; the phase has since been delivered (PR 4.1 to 4.6): the state of each item is the one in the matrix
+(`docs/roadmap/capability-matrix.md`). The maintainer's answer of 2026-10-26 is recorded in the decision log,
+outside the repository; `CLAUDE.md` does not quote it.
 
-## Besoin
+## Need
 
-Le poste d'une TPE ou d'une petite commune n'a ni SOC ni administrateur sur place, et le prestataire ne voit que ce que
-deR4Tizer lui envoie. Quatre manques :
+The computer of a very small business or a small municipality has neither a SOC nor an administrator on site, and the provider only sees what
+deR4Tizer sends. Four gaps:
 
-1. **Pas de suivi** : une alerte reste un message isolé, qu'on ne peut ni prendre en charge ni clore.
-2. **Pas de chronologie par incident** : reconstituer ce qui s'est passé autour d'une alerte est une recherche manuelle
-   dans le SIEM, et les actions de réponse n'y figurent pas.
-3. **Une panne reste silencieuse dans le temps** : l'état des collectes est visible depuis la phase 3, mais il n'est ni
-   historisé ni remonté ; une remontée qui échoue n'est pas retentée.
-4. **L'interface peut disparaître sans bruit** : l'utilisateur, ou un programme de son compte, peut la fermer, et le
-   service ne le voit pas. Les notifications locales n'apparaissent plus sans elle ; la détection et la remontée par le
-   service continuent.
+1. **No tracking**: an alert remains an isolated message, which can be neither taken in charge nor closed.
+2. **No timeline per incident**: reconstructing what happened around an alert is a manual search
+   in the SIEM, and the response actions are not in it.
+3. **An outage stays silent over time**: the state of the collections has been visible since phase 3, but it is neither
+   kept as history nor escalated; a failed escalation is not retried.
+4. **The interface can disappear without a sound**: the user, or a program of their account, can close it, and the
+   service does not see it. Local notifications no longer appear without it; detection and escalation by the
+   service go on.
 
-## Ce que la phase ne fait pas
+## What the phase does not do
 
-- aucune nouvelle détection, au-delà des constats de santé (`SAN-*`) ;
-- aucune action de réponse nouvelle ni modifiée (phase 6) : les actions existantes sont seulement **enregistrées** ;
-- aucune fermeture automatique d'un incident ;
-- aucun envoi au prestataire du contenu d'une chronologie (lignes de commande, comptes) : le résumé seulement ;
-- rien des phases 6 à 9, ni dégel de l'IDS, du DPI ou du NDR.
+- no new detection, beyond the health findings (`SAN-*`);
+- no new or modified response action (phase 6): the existing actions are only **recorded**;
+- no automatic closing of an incident;
+- no sending of the content of a timeline (command lines, accounts) to the provider: the summary only;
+- nothing from phases 6 to 9, nor unfreezing of the IDS, the DPI or the NDR.
 
-## Découpage
+## Split
 
-Chaque PR part de `main` à jour, sans empilement, avec sa relecture et son passage complet en VM avant la fusion.
+Each PR starts from an up-to-date `main`, without stacking, with its review and its full pass in a VM before the merge.
 
-| PR | Contenu |
+| PR | Content |
 |---|---|
-| 4.0 | Ce document, le modèle prévu (`docs/detection/modele-evenement.md`), les lignes « prévu » de la matrice |
-| 4.1 | `HeureUtc` et `Seq` sur les alertes et les événements ; pertes de la file du SIEM comptées ; actions de réponse dans le SIEM (`Source` « reponse ») |
-| 4.2 | Incidents : modèle, rattachement des alertes, `suivi-incidents.json`, commande `incident` (administrateurs) |
-| 4.3 | Chronologie par incident (calcul hors du verrou du moniteur, trous de collecte, bornes) |
-| 4.4 | Santé des collectes, en deux PR : **4.4a** historique et constats SAN-001, SAN-002, SAN-003, SAN-012 ; **4.4b** file de remontée retentée, SAN-004, battement quotidien (touche `notifications.rs`, chemin privilégié, audité à part) |
-| 4.5 | Santé de l'interface, en deux PR : **4.5a** repérage par le service, collecte `Sessions`, SAN-010 et SAN-011 (et la suite S99-04 de la remontée) ; **4.5b** relance par une tâche planifiée posée par le MSI (D4-1, option C, accord du mainteneur le 2026-10-27), `--relance` sans invite, texte de « Quitter » |
-| 4.6 | Interface : pages Incidents et Santé, pastille d'en-tête, état ancien signalé (S104-14, côté interface). L'interface par session n'est pas publiée par le service : la page le dit et renvoie à SAN-010 et SAN-011 |
+| 4.0 | This document, the planned model (`docs/detection/modele-evenement.md`), the "prévu" rows of the matrix |
+| 4.1 | `HeureUtc` and `Seq` on alerts and events; losses of the SIEM queue counted; response actions in the SIEM (`Source` "reponse") |
+| 4.2 | Incidents: model, attachment of alerts, `suivi-incidents.json`, `incident` command (administrators) |
+| 4.3 | Timeline per incident (computed outside the monitor lock, collection gaps, bounds) |
+| 4.4 | Health of the collections, in two PRs: **4.4a** history and findings SAN-001, SAN-002, SAN-003, SAN-012; **4.4b** retried escalation queue, SAN-004, daily heartbeat (touches `notifications.rs`, privileged path, audited separately) |
+| 4.5 | Health of the interface, in two PRs: **4.5a** detection by the service, `Sessions` collection, SAN-010 and SAN-011 (and the follow-up S99-04 of escalation); **4.5b** restart through a scheduled task set by the MSI (D4-1, option C, maintainer's agreement on 2026-10-27), `--relance` without prompt, text of "Quitter" |
+| 4.6 | Interface: Incidents and Health pages, header badge, stale state reported (S104-14, interface side). The per-session interface is not published by the service: the page says so and refers to SAN-010 and SAN-011 |
 
-Les fiches `SAN-*` entrent dans `docs/detection/regles.md` avec leur entrée au registre (`regles.rs`), leur code et
-leurs tests, dans la PR qui les apporte (4.2, 4.4, 4.5) : le test du registre exige que les fiches et le registre
-concordent.
+The `SAN-*` sheets go into `docs/detection/regles.md` with their entry in the registry (`regles.rs`), their code and
+their tests, in the PR that brings them (4.2, 4.4, 4.5): the registry test requires the sheets and the registry to
+agree.
 
-## Décisions
+## Decisions
 
-Le mainteneur a demandé, le 2026-10-26, d'enchaîner sur la phase 4 sans attendre sa validation de la phase 3 (réponse
-« Enchaîner sur la phase 4 »). Dans le cadre de cette réponse, les décisions ouvertes ont été **tranchées par l'agent**,
-selon les recommandations du dossier de conception ; le mainteneur peut revenir sur chacune.
+The maintainer asked, on 2026-10-26, to move on to phase 4 without waiting for his validation of phase 3 (answer
+« Enchaîner sur la phase 4 » (Move on to phase 4)). Within this answer, the open decisions were **settled by the agent**,
+following the recommendations of the design file; the maintainer can reverse each of them.
 
-| # | Décision | Retenu |
+| # | Decision | Chosen |
 |---|---|---|
-| D4-1 | Interface disparue : relancer ou alerter | Repérage et alerte par le service (SAN-010 après 15 min d'absence, niveau « Critique », décision du mainteneur le 2026-10-31 ; SAN-011 après 3 arrêts en une heure, niveau « Alerte », remonté seulement si la remontée est configurée à ce niveau) : retenus. La **relance** par une tâche planifiée posée par le MSI, sous l'identité de l'utilisateur, est un comportement privilégié (`CLAUDE.md`, section 4, « Avant chaque lot », point 3) : elle attendait **l'accord explicite du mainteneur**, donné le 2026-10-27 (« the service may relaunch the interface through a scheduled task (decision D4-1) > validated »), puis un essai en VM : descripteur de la tâche non modifiable par un compte standard, fait avec la PR 4.5b ; **sessions Bureau à distance et changement rapide d'utilisateur reportés à la campagne de fin de phase 7, depuis la VM Kali, par décision du mainteneur le 2026-10-31, aucune version n'étant publiée avant** ; retour arrière vers une version sans relance, **non essayé** (le paquet de référence 4.1.0 refuse de descendre, ce qui n'est pas le chemin réel), effet déduit du code, limite acceptée par le mainteneur le 2026-10-31, la 4.5b entrant dans la première version distribuée. Sans cet accord, ou si l'essai échoue : alerte seule, sans relance. Une relance directe par le service (création de processus dans la session) n'est pas envisagée. |
-| D4-2 | Fichier du suivi | Nouveau `suivi-incidents.json`, écrit par le moniteur seul ; `incidents.json` (corrélations du SIEM) inchangé. |
-| D4-3 | Fermeture automatique d'un incident | Jamais. Un incident sans activité depuis 7 jours est seulement affiché « inactif ». |
-| D4-4 | `HeureUtc` et `Seq` dans `Alerte` et `Evenement` | Oui, en ajouts au modèle 1 : sans eux, la chronologie se trompe d'ordre pendant l'heure répétée du passage à l'heure d'hiver. |
-| D4-5 | Collectes « critiques » pour SAN-001 | `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, et `Persistance` depuis l'audit de #103 (S103-04), qui élargit le choix initial. |
-| D4-6 | Battement quotidien au prestataire | Oui, quand la remontée est configurée : compteurs seulement, une fois par jour. |
-| D4-7 | Suivi et chronologie dans l'API d'export | Non pendant la phase 4 (à reprendre avec la phase 8, mode avancé). |
-| D4-8 | File de remontée sur disque | Non : en mémoire, bornée (100 éléments, 24 h) ; la perte au redémarrage est une limite écrite. |
-| D4-9 | Nouvelle dépendance | Aucune. |
-| D4-10 | « Faux positif » à la clôture | Aucune exception posée d'office ; elle est proposée à part, avec sa propre confirmation. |
+| D4-1 | Interface gone: restart or alert | Detection and alert by the service (SAN-010 after 15 min of absence, level "Critique", maintainer's decision of 2026-10-31; SAN-011 after 3 stops within one hour, level "Alerte", escalated only if escalation is configured at that level): chosen. The **restart** through a scheduled task set by the MSI, under the user's identity, is a privileged behavior (`CLAUDE.md`, section 4, "Before each lot", point 3): it awaited **the maintainer's explicit agreement**, given on 2026-10-27 ("the service may relaunch the interface through a scheduled task (decision D4-1) > validated"), then a test in a VM: task descriptor not modifiable by a standard account, done with PR 4.5b; **Remote Desktop sessions and fast user switching postponed to the end-of-phase-7 campaign, from the Kali VM, by decision of the maintainer on 2026-10-31, no version being published before**; rollback to a version without restart, **not tested** (the reference package 4.1.0 refuses to downgrade, which is not the real path), effect deduced from the code, limit accepted by the maintainer on 2026-10-31, 4.5b going into the first distributed version. Without this agreement, or if the test fails: alert only, without restart. A direct restart by the service (process creation in the session) is not considered. |
+| D4-2 | Tracking file | New `suivi-incidents.json`, written by the monitor alone; `incidents.json` (SIEM correlations) unchanged. |
+| D4-3 | Automatic closing of an incident | Never. An incident without activity for 7 days is only displayed as "inactif". |
+| D4-4 | `HeureUtc` and `Seq` in `Alerte` and `Evenement` | Yes, as additions to model 1: without them, the timeline gets the order wrong during the repeated hour of the switch to winter time. |
+| D4-5 | "Critical" collections for SAN-001 | `JournalDefender`, `EtatDefender`, `JournalSecurite`, `Connexions`, `Processus`, `ListesMenaces`, and `Persistance` since the audit of #103 (S103-04), which widens the initial choice. |
+| D4-6 | Daily heartbeat to the provider | Yes, when escalation is configured: counters only, once a day. |
+| D4-7 | Tracking and timeline in the export API | Not during phase 4 (to be taken up with phase 8, advanced mode). |
+| D4-8 | Escalation queue on disk | No: in memory, bounded (100 items, 24 h); the loss at restart is a written limit. |
+| D4-9 | New dependency | None. |
+| D4-10 | "False positive" at closing | No exception set automatically; it is offered separately, with its own confirmation. |
 
-## Preuve
+## Proof
 
-GitHub Actions était alors désactivé (du 2026-10-22 au 2026-11-17). `CLAUDE.md` ne prévoit la preuve locale en VM à la place de la CI GitHub que pour
-la phase 3. Pour la phase 4, elle est **appliquée d'après la réponse du mainteneur du 2026-10-26**, en attendant qu'il
-l'inscrive dans `CLAUDE.md`. Rien ne change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et
-relecture indépendante restent exigés.
+GitHub Actions was then disabled (from 2026-10-22 to 2026-11-17). `CLAUDE.md` only provides for the local VM proof in place of GitHub CI for
+phase 3. For phase 4, it is **applied following the maintainer's answer of 2026-10-26**, until he
+writes it into `CLAUDE.md`. Nothing changes for distribution: green GitHub CI, successful lot 3d, signed binaries and
+independent review remain required.
 
-## À inscrire dans `CLAUDE.md` par le mainteneur
+## To be written into `CLAUDE.md` by the maintainer
 
-Note du 2026-11-19 : `CLAUDE.md` dit depuis que la preuve locale en VM tient lieu de CI GitHub « comme pour les phases 3,
-4 et 6 » (section 5, point 5, inscrit le 2026-11-03 sur l'autorisation du mainteneur) ; le texte proposé ci-dessous n'y
-a pas été repris tel quel. Texte proposé à l'époque, sous la section 5, point 3 :
+Note of 2026-11-19: `CLAUDE.md` has since said that the local VM proof stands in for GitHub CI "as for phases 3,
+4 and 6" (section 5, point 5, written on 2026-11-03 with the maintainer's authorization); the text proposed below was
+not taken up there as it is. Text proposed at the time, under section 5, point 3:
 
-- Ouverture : le 2026-10-26, le mainteneur a demandé d'enchaîner sur la phase 4 à la fin de la phase 3, sans attendre sa
-  validation de celle-ci (réponse « Enchaîner sur la phase 4 »). Décisions de la phase : `docs/roadmap/phase4.md`.
-- Comme pour la phase 3, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub pour les
-  PR de la phase 4. Rien ne change pour la distribution.
-- D4-1 : la relance de l'interface par une tâche planifiée : accord explicite du mainteneur le 2026-10-27, essai en VM avec la PR 4.5b.
+- Opening: on 2026-10-26, the maintainer asked to move on to phase 4 at the end of phase 3, without waiting for his
+  validation of it (answer « Enchaîner sur la phase 4 » (Move on to phase 4)). Decisions of the phase: `docs/roadmap/phase4.md`.
+- As for phase 3, the local VM proof (section 4, "Temporary exception") stands in for GitHub CI for the
+  PRs of phase 4. Nothing changes for distribution.
+- D4-1: the restart of the interface through a scheduled task: explicit agreement of the maintainer on 2026-10-27, test in a VM with PR 4.5b.

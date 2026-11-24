@@ -1,108 +1,108 @@
-# Phase 6 : politique de réponse appliquée dans le code
+# Phase 6: response policy applied in the code
 
-Ouverte le 2026-11-01, à la fin de la phase 4, sur l'accord explicite du mainteneur (réponse « Oui, selon le dossier »,
-`CLAUDE.md`, section 5, point 4). Ce document fixe le périmètre, le découpage et les décisions de la phase. Écrit avant le code ; la phase est depuis livrée et validée par le
-mainteneur le 2026-11-03 (`CLAUDE.md`, section 5, point 4) : l'état de chaque élément est celui de la matrice
+Opened on 2026-11-01, at the end of phase 4, on the maintainer's explicit agreement (answer « Oui, selon le dossier » (Yes, according to the file),
+`CLAUDE.md`, section 5, point 4). This document sets the scope, the split and the decisions of the phase. Written before the code; the phase has since been delivered and validated by the
+maintainer on 2026-11-03 (`CLAUDE.md`, section 5, point 4): the state of each item is the one in the matrix
 (`docs/roadmap/capability-matrix.md`).
 
-## Besoin
+## Need
 
-Une action de réponse coupe ou modifie quelque chose sur un poste sans informaticien sur place. Quatre manques :
+A response action cuts off or modifies something on a computer with no IT person on site. Four gaps:
 
-1. **Le niveau 3 déborde** : avec le réglage « listes restreintes », le blocage automatique s'étend à FireHOL niveau 1 et
-   à ThreatView, ce que la politique ne permet pas.
-2. **L'identité n'est pas revalidée** : entre la décision et l'action, un PID réutilisé peut désigner un autre programme.
-3. **Rien ne borne la répétition** : une adresse débloquée à la main est rebloquée dès qu'une connexion vers elle reparaît, et un programme
-   repris peut être suspendu de nouveau sans limite.
-4. **Rien n'a d'échéance** : un processus suspendu, un programme isolé ou le mode panique le restent sans que personne
-   ne soit relancé.
+1. **Level 3 overflows**: with the "listes restreintes" setting, automatic blocking extends to FireHOL level 1 and
+   to ThreatView, which the policy does not allow.
+2. **Identity is not revalidated**: between the decision and the action, a reused PID can designate another program.
+3. **Nothing bounds repetition**: an address unblocked by hand is blocked again as soon as a connection to it reappears, and a program
+   resumed can be suspended again without limit.
+4. **Nothing has a deadline**: a suspended process, an isolated program or the panic mode stay so without anyone
+   being reminded.
 
-## Ce que la phase ne fait pas
+## What the phase does not do
 
-- aucune nouvelle action, aucun nouveau déclencheur automatique, aucun élargissement du niveau 3 ;
-- aucun arrêt automatique d'un processus, aucune mise en quarantaine automatique ;
-- aucune modification de la logique de l'IDS, du DPI ou du NDR, qui restaient gelés pendant la phase 6 (dégelés depuis : IDS et NDR le 2026-11-16, DPI le 2026-11-18) : la politique s'applique en aval, dans
-  le moniteur ;
-- rien de Microsoft Defender, ni rien des phases 7 à 9.
+- no new action, no new automatic trigger, no widening of level 3;
+- no automatic termination of a process, no automatic quarantine;
+- no change to the logic of the IDS, the DPI or the NDR, which stayed frozen during phase 6 (unfrozen since: IDS and NDR on 2026-11-16, DPI on 2026-11-18): the policy applies downstream, in
+  the monitor;
+- nothing about Microsoft Defender, nor anything from phases 7 to 9.
 
-## Découpage
+## Split
 
-Chaque PR part de `main` à jour, sans empilement, avec sa relecture, son audit et son passage complet en VM avant la
-fusion. Celles qui touchent le même fichier passent l'une après l'autre.
+Each PR starts from an up-to-date `main`, without stacking, with its review, its audit and its full pass in a VM before the
+merge. Those that touch the same file go one after the other.
 
-| PR | Contenu |
+| PR | Content |
 |---|---|
-| 6.0 | Ce document, la section « Prévu en phase 6 » de la politique, les lignes « prévu » de la matrice |
-| 6.1 | Niveau 3 restreint par l'identité de la source : Spamhaus DROP et Feodo Tracker seulement, quel que soit le réglage |
-| 6.2 | Point de décision unique (`politique.rs`) et garde contre les boucles ; tous les déclencheurs automatiques y passent |
-| 6.3 | Identité revalidée par handle, action sur ce même handle ; nouveaux champs de commande ; confirmation complète |
-| 6.4 | Registre `reponses.json`, échéances, relances (`REP-001`) |
-| 6.4b | Quarantaine et blocage manuel au registre ; relances groupées ; corrections de la relecture et de l'audit de #115 |
-| 6.5 | Mode panique transactionnel, état effectif, PowerShell hors du verrou ; en tête, deux restes de l'audit de #116 (`tout_debloquer`, liste en mémoire) |
-| 6.6 | Isolation sur le chemin final, lu par handle ; en tête, deux remarques de #117 (profil illisible, commande de panique en cours) |
-| 6.7a | Préalables de #118 côté service : nom de binaire critique refusé, dossiers parents lus sans suivre de lien, REP-003 au premier relevé |
-| 6.7b | Interface : page « Réponses en cours », portée et retour arrière du mode panique, état effectif dans l'en-tête, chemin réel dans la confirmation d'isolation (S118-02) |
-| 6.8 | Préalables de #119 et #120 : étiquettes de lien par le bit « substitut de nom », isolation non vérifiable dite (REP-004), « Reprendre » refusé seulement sur une heure lue et différente, registre illisible distingué d'un registre vide |
-| 6.9 | Préalables de #116 et #117 : relances plafonnées par sorte et par durée (S116-01), lecture du pare-feu avec échéance sur le fil « sante » (S117-02) |
-| 6.10 | Pare-feu muet dit après 5 min (REP-003, Alerte) ; retrait du mode panique à échéance pendant la désinstallation (D6-7 ; les autres appels au pare-feu de la désinstallation restent sans échéance) |
-| 6.11 | Désinstallation : retrait des règles de pare-feu à échéance (relecture de #123, D1) ; matrice : état « incertaine » affiché depuis la 6.7b |
-| 6.12 | PowerShell de règles du service (API, capture) suivis et attendus à l'arrêt ; compte rendu de la désinstallation à nom unique, sans écraser ni suivre de lien, avec le code et les règles restées |
-| 6.13 | Isolation : chemin descendu élément par élément par handles, sans course ni lien traversé ; nom d'un programme livré avec Windows refusé hors du dossier Windows |
-| 6.14 | Reprise d'un interpréteur ou d'un programme de Windows : pas d'exception de 7 jours ; confirmations qui disent l'effet de 7 jours et la portée de la signature ; registre plein : suspensions automatiques récentes sorties d'abord, dit par REP-002 |
-| 6.15 | Listes de menaces : Feodo Tracker en adresses exactes ; couverture IPv6 bornée (2^48 réseaux /64, un /16), liste rejetée en entier à partir de là |
+| 6.0 | This document, the "Planned in phase 6" section of the policy, the "prévu" rows of the matrix |
+| 6.1 | Level 3 restricted by the identity of the source: Spamhaus DROP and Feodo Tracker only, whatever the setting |
+| 6.2 | Single decision point (`politique.rs`) and guard against loops; all automatic triggers go through it |
+| 6.3 | Identity revalidated through a handle, action on that same handle; new command fields; complete confirmation |
+| 6.4 | `reponses.json` register, deadlines, reminders (`REP-001`) |
+| 6.4b | Quarantine and manual blocking in the register; grouped reminders; fixes from the review and the audit of #115 |
+| 6.5 | Transactional panic mode, effective state, PowerShell outside the lock; first, two leftovers from the audit of #116 (`tout_debloquer`, in-memory list) |
+| 6.6 | Isolation on the final path, read through a handle; first, two remarks from #117 (unreadable profile, panic command in progress) |
+| 6.7a | Prerequisites from #118 on the service side: critical binary name refused, parent folders read without following a link, REP-003 at the first reading |
+| 6.7b | Interface: "Réponses en cours" page, scope and rollback of the panic mode, effective state in the header, real path in the isolation confirmation (S118-02) |
+| 6.8 | Prerequisites from #119 and #120: link tags through the "name surrogate" bit, unverifiable isolation stated (REP-004), "Reprendre" refused only on a time read and different, unreadable register distinguished from an empty register |
+| 6.9 | Prerequisites from #116 and #117: reminders capped per kind and per duration (S116-01), reading of the firewall with a deadline on the "sante" thread (S117-02) |
+| 6.10 | Silent firewall stated after 5 min (REP-003, Alerte); removal of the panic mode with a deadline during uninstallation (D6-7; the other firewall calls of the uninstallation stay without deadline) |
+| 6.11 | Uninstallation: removal of the firewall rules with a deadline (review of #123, D1); matrix: "incertaine" state displayed since 6.7b |
+| 6.12 | Service rule PowerShell processes (API, capture) tracked and waited for at stop; uninstallation report with a unique name, without overwriting or following a link, with the code and the remaining rules |
+| 6.13 | Isolation: path walked down element by element through handles, without race or traversed link; name of a program shipped with Windows refused outside the Windows folder |
+| 6.14 | Resuming an interpreter or a Windows program: no 7-day exception; confirmations that state the 7-day effect and the scope of the signature; full register: recent automatic suspensions removed first, stated by REP-002 |
+| 6.15 | Threat lists: Feodo Tracker as exact addresses; bounded IPv6 coverage (2^48 /64 networks, one /16), list rejected entirely beyond that |
 
-Chaque PR apporte la procédure de récupération de ses actions, écrite et vérifiée en VM ; celle qui n'est que lue est
-déclarée « non exécutée ». Les procédures prévues sont dans `docs/reponse/politique.md`.
+Each PR brings the recovery procedure for its actions, written and checked in a VM; one that is only read is
+declared "non exécutée". The planned procedures are in `docs/reponse/politique.md`.
 
-Les fiches `REP-*` entrent dans `docs/detection/regles.md` avec leur entrée au registre (`regles.rs`), leur code et leurs
-tests, dans la PR qui les apporte : le test du registre exige que les fiches et le registre concordent.
+The `REP-*` sheets go into `docs/detection/regles.md` with their entry in the registry (`regles.rs`), their code and their
+tests, in the PR that brings them: the registry test requires the sheets and the registry to agree.
 
-## Décisions
+## Decisions
 
-Accord explicite du mainteneur le 2026-11-01 sur les recommandations du dossier de conception, pour les PR 6.1 à 6.7
-tant qu'elles y restent. La question posée rappelait : listes restreintes en alerte seule, identité revalidée avant
-chaque action, décision humaine prioritaire 7 jours, jamais de reprise automatique. Elle rappelait aussi un plafond de 3
-suspensions par heure, retiré ensuite par le mainteneur (voir plus bas).
+Explicit agreement of the maintainer on 2026-11-01 on the recommendations of the design file, for PRs 6.1 to 6.7
+as long as they stay within it. The question asked recalled: restricted lists as alert only, identity revalidated before
+each action, human decision takes priority for 7 days, never an automatic resume. It also recalled a cap of 3
+suspensions per hour, later removed by the maintainer (see below).
 
-| # | Décision | Retenu |
+| # | Decision | Chosen |
 |---|---|---|
-| D6-1 | Politique et IPS, sans dégeler l'IDS | En aval, dans le moniteur, sur la file des blocages ; `ids.rs` intact. |
-| D6-2 | Identité d'un processus | PID et heure de création, revalidés et appliqués sur un même handle. Le chemin est montré, pas comparé (décision du mainteneur, 2026-11-01, après l'audit de la PR 6.3 : un programme qui se renomme y échappait). L'empreinte SHA-256 de l'exécutable n'est exigée que pour la liste « décision humaine ». |
-| D6-3 | Échéances | Voir la politique : ce sont des rendez-vous de relance, jamais une levée pour la suspension, l'isolation et le mode panique. |
-| D6-4 | Durée d'un blocage par l'IPS | 24 h, au lieu des 7 jours hérités. |
-| D6-5 | Seuils de la garde | 3 actions par cible et par 24 h (pour une suspension : programme signé dans Program Files seulement, décision du mainteneur, 2026-11-01) ; 30 blocages par les listes par heure ; 50 adresses par heure pour l'IPS, à part ; décision humaine prioritaire 7 jours. Aucun réglage dans l'interface. Le plafond de 3 suspensions par heure du dossier est retiré (décision du mainteneur, 2026-11-01). |
-| D6-6 | Relance sans remontée configurée | Locale seulement, et la page Santé le dit. Sans canal, personne n'est prévenu : limite écrite. |
-| D6-7 | Échec de `--nettoyer` à la désinstallation | La désinstallation n'est jamais bloquée ; un compte rendu est écrit et vérifié. |
-| D6-8 | Nouvelle dépendance | Aucune. |
-| D6-9 | Arrêt automatique d'un processus | Hors du niveau 3, comme aujourd'hui. |
-| D6-10 | Suspension sur leurre, protection du dossier en échec | Gardée, comme aujourd'hui : elle ne dépend d'aucun fichier du dossier de données. Seules les actions alimentées par ces fichiers sont refusées. |
+| D6-1 | Policy and IPS, without unfreezing the IDS | Downstream, in the monitor, on the blocking queue; `ids.rs` untouched. |
+| D6-2 | Identity of a process | PID and creation time, revalidated and applied on one same handle. The path is shown, not compared (maintainer's decision, 2026-11-01, after the audit of PR 6.3: a program that renames itself escaped it). The SHA-256 hash of the executable is required only for the "human decision" list. |
+| D6-3 | Deadlines | See the policy: they are reminder appointments, never a lifting for suspension, isolation and panic mode. |
+| D6-4 | Duration of a block by the IPS | 24 h, instead of the inherited 7 days. |
+| D6-5 | Thresholds of the guard | 3 actions per target and per 24 h (for a suspension: signed program in Program Files only, maintainer's decision, 2026-11-01); 30 blocks by the lists per hour; 50 addresses per hour for the IPS, separately; human decision takes priority for 7 days. No setting in the interface. The cap of 3 suspensions per hour from the file is removed (maintainer's decision, 2026-11-01). |
+| D6-6 | Reminder without configured escalation | Local only, and the Health page says so. Without a channel, nobody is notified: written limit. |
+| D6-7 | Failure of `--nettoyer` at uninstallation | Uninstallation is never blocked; a report is written and checked. |
+| D6-8 | New dependency | None. |
+| D6-9 | Automatic termination of a process | Outside level 3, as today. |
+| D6-10 | Suspension on decoy, folder protection failed | Kept, as today: it depends on no file of the data folder. Only the actions fed by those files are refused. |
 
-## Plafond des suspensions retiré
+## Suspension cap removed
 
-Le dossier prévoyait au plus 3 suspensions automatiques par heure. L'audit de la PR 6.2 a montré qu'un compte standard
-pouvait l'user avec 3 programmes jetables, puis lancer un rançongiciel qui ne serait pas suspendu. Le mainteneur a décidé
-de le retirer le 2026-11-01. L'audit a ensuite montré que le seuil de 3 par programme en 24 h permettait la même attaque,
-par un programme lancé quatre fois ou par trois touches via `powershell.exe`. Le mainteneur l'a limité le même jour aux
-programmes signés installés dans Program Files, hors interpréteurs. Tout le reste est toujours suspendu, et seule une
-reprise par un administrateur arrête une boucle.
+The file provided for at most 3 automatic suspensions per hour. The audit of PR 6.2 showed that a standard account
+could use it up with 3 throwaway programs, then launch a ransomware that would not be suspended. The maintainer decided
+to remove it on 2026-11-01. The audit then showed that the threshold of 3 per program in 24 h allowed the same attack,
+through a program launched four times or through three hits via `powershell.exe`. The maintainer limited it the same day to
+signed programs installed in Program Files, interpreters excluded. Everything else is always suspended, and only a
+resume by an administrator stops a loop.
 
-## Preuve
+## Proof
 
-GitHub Actions était alors désactivé (du 2026-10-22 au 2026-11-17). Pour la phase 6, la preuve locale en VM tient lieu de CI GitHub, d'après la même
-réponse du mainteneur, qui portait aussi sur ce régime de preuve, en attendant qu'il l'inscrive dans `CLAUDE.md`. Rien ne
-change pour la distribution : CI GitHub verte, lot 3d réussi, binaires signés et relecture indépendante restent exigés.
+GitHub Actions was then disabled (from 2026-10-22 to 2026-11-17). For phase 6, the local VM proof stands in for GitHub CI, following the same
+answer of the maintainer, which also covered this proof regime, until he writes it into `CLAUDE.md`. Nothing
+changes for distribution: green GitHub CI, successful lot 3d, signed binaries and independent review remain required.
 
-Les échéances longues (2 h, 24 h, 7 jours) ne seront vérifiées qu'en labo : aucun réglage de test dans le binaire livré.
-La reprise par le Moniteur de ressources de Windows est décrite, pas testée, et le cas d'un processus suspendu sans
-registre n'est pas reproduit. Les scénarios le déclareront « non exécuté ».
+The long deadlines (2 h, 24 h, 7 days) will only be checked in the lab: no test setting in the shipped binary.
+Resuming through Windows Resource Monitor is described, not tested, and the case of a process suspended without
+register is not reproduced. The scenarios will declare it "non exécuté".
 
-## À inscrire dans `CLAUDE.md` par le mainteneur
+## To be written into `CLAUDE.md` by the maintainer
 
-Note du 2026-11-19 : `CLAUDE.md` cite depuis l'ouverture et la validation de la phase 6 avec les mots du mainteneur
-(section 5, point 4) et dit que la preuve locale en VM tient lieu de CI GitHub « comme pour les phases 3, 4 et 6 »
-(point 5). Texte proposé à l'époque, sous la section 5, point 4 :
+Note of 2026-11-19: `CLAUDE.md` has since quoted the opening and the validation of phase 6 in the maintainer's words
+(section 5, point 4) and says that the local VM proof stands in for GitHub CI "as for phases 3, 4 and 6"
+(point 5). Text proposed at the time, under section 5, point 4:
 
-- Ouverture : le 2026-11-01, à la fin de la phase 4, accord explicite du mainteneur pour coder la phase selon le dossier
-  de conception (réponse « Oui, selon le dossier »). Décisions de la phase : `docs/roadmap/phase6.md`.
-- Comme pour les phases 3 et 4, la preuve locale en VM (section 4, « Exception temporaire ») tient lieu de CI GitHub pour
-  les PR de la phase 6. Rien ne change pour la distribution.
+- Opening: on 2026-11-01, at the end of phase 4, explicit agreement of the maintainer to code the phase according to the design
+  file (answer « Oui, selon le dossier » (Yes, according to the file)). Decisions of the phase: `docs/roadmap/phase6.md`.
+- As for phases 3 and 4, the local VM proof (section 4, "Temporary exception") stands in for GitHub CI for
+  the PRs of phase 6. Nothing changes for distribution.
