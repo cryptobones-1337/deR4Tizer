@@ -2839,13 +2839,23 @@ namespace DeR4Tizer
 
         // Dossier de données de test (--dossier <chemin>), jamais pour l'assistant élevé : ses arguments sont fixés
         // (« --commande-fichier <fichier> [--langue fr|en] ») et un « --dossier » parmi eux n'est pas une option (audit de
-        // #298, A298-2)
-        internal static string DossierDemande(string[] args)
+        // #298, A298-2). Jamais non plus sous jeton administrateur : tout programme non élevé peut lancer l'interface élevée
+        // (derrière l'invite UAC) avec les arguments de son choix, et elle lirait alors config.json et le reste du dossier
+        // en administrateur depuis un chemin choisi par l'appelant ; l'interface élevée garde le dossier de données normal.
+        // Sans élévation, chemin sur un disque local fixe seulement, même critère que le fichier de commande et
+        // l'emplacement d'un programme (Canal.CheminLocalFixeTexte, A-1-1 et A-5-2), jugé sur le texte avant tout accès
+        // disque. Refusé : null, le dossier de données normal est pris (audit de #298, A298-3)
+        internal static string DossierDemande(string[] args, bool administrateur, Func<char, bool> lecteurFixe)
         {
-            if (Mode(args) == "commande") return null;
+            if (Mode(args) == "commande" || administrateur) return null;
             int i = Array.IndexOf(args, "--dossier");
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+            string dossier = i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+            return Canal.CheminLocalFixeTexte(dossier, lecteurFixe) ? dossier : null;
         }
+
+        // Vrai quand un dossier de données de test est appliqué (DossierDemande) : interface à part (mutex propre, pas
+        // d'écoute de la seconde instance). Un « --dossier » refusé donne une instance ordinaire sur le dossier normal
+        static bool dossierDeTest;
 
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
@@ -2960,7 +2970,7 @@ namespace DeR4Tizer
             if (!cache) obtenir().Show();
             // Écoute de la seconde instance posée seulement une fois la coquille prête à tourner : en cas de repli, aucun fil ne
             // reste sur la fenêtre libérée (relecture de #158, R32)
-            if (Array.IndexOf(Environment.GetCommandLineArgs(), "--dossier") < 0) Ecouter(ancienne);
+            if (!dossierDeTest) Ecouter(ancienne);
             piloteDemarre = true;
             app.Run();
             ancienne.Dispose();
@@ -2972,9 +2982,9 @@ namespace DeR4Tizer
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            int i = Array.IndexOf(args, "--dossier");
-            string dossierDemande = DossierDemande(args);
+            string dossierDemande = DossierDemande(args, Canal.EstAdmin(), Canal.LecteurFixe);
             if (dossierDemande != null) Commun.Dossier = dossierDemande;
+            dossierDeTest = dossierDemande != null;
 
             var cfg = Commun.Lire<Config>("config.json");
             ChoisirLangue(args, cfg, L.CheminReglage(), System.Globalization.CultureInfo.CurrentUICulture, Canal.EstAdmin());
@@ -3038,20 +3048,20 @@ namespace DeR4Tizer
 
             bool premier;
             // Une seule interface à la fois, sauf pour un dossier de données de test
-            using (new Mutex(true, i >= 0 ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier))
+            using (new Mutex(true, dossierDeTest ? "deR4Tizer.Interface." + Guid.NewGuid() : "deR4Tizer.Interface", out premier))
             {
                 // Seconde instance (B2) : signale la première sur un geste de l'utilisateur, puis sort
                 if (!premier) { if (SignalerPremiere(args)) SignalerInstance(); return 0; }
                 // Bascule (B1) : la coquille WPF est l'interface par défaut ; la fenêtre d'aujourd'hui reste cachée (zone de
                 // notification, rafraîchissement, commandes). --classique : l'interface d'avant la refonte
-                if (Mode(args) == "classique") { var classique = new Fenetre(args.Contains("--cache")); if (i < 0) Ecouter(classique); Application.Run(classique); return 0; }
+                if (Mode(args) == "classique") { var classique = new Fenetre(args.Contains("--cache")); if (!dossierDeTest) Ecouter(classique); Application.Run(classique); return 0; }
                 try { return LancerPilote(args.Contains("--cache")); }
                 catch (Exception e)
                 {
                     if (piloteDemarre) throw;
                     // WPF ou la coquille n'a pas pu démarrer : l'interface classique prend le relais et le dit
                     var repli = new Fenetre(args.Contains("--cache"));
-                    if (i < 0) Ecouter(repli);
+                    if (!dossierDeTest) Ecouter(repli);
                     repli.Signaler((L.En ? "The new interface could not start; the classic interface is shown instead. " : "La nouvelle interface n'a pas pu démarrer ; l'interface classique la remplace. ") + Canal.Visible(e.GetType().Name));
                     Application.Run(repli);
                 }
