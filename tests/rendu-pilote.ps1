@@ -664,6 +664,119 @@ public class SourceSimulee : RealProxy
     $reglagesSrc = [IO.File]::ReadAllText("$src\Reglages.cs")
     Cas 'Réglages : mêmes commandes dans les deux interfaces, opérations d''apprentissage et de notifications en liste fermée' ($reglagesSrc.Contains('if (Array.IndexOf(OperationsApprentissage, operation) < 0) return null;') -and $reglagesSrc.Contains('if ((action != "notifications" && action != "testerNotifications") || c == null) return null;') -and -not $reglagesSrc.Contains('Commun.Lire<Config>("config.json") ?? new Config()') -and ([regex]::Matches($reglagesSrc, 'Canal\.Executer\(')).Count -eq 9 -and -not $fluentSrc.Contains('Canal.Executer('))
     Cas 'Réglages : aucune action avant la première lecture (des champs vides ne partent jamais)' ($fluentSrc.Contains('(s, e) => { if (!rempli) return; action(); Charger(); }') -and $fluentSrc.Contains('rempli = true;'))
+    # Page Réglages refaite (constat T-15, maquettes validées le 2026-11-23) : sections, une carte par bloc, secrets jamais
+    # réaffichés, envois inchangés (mêmes commandes, mêmes champs, mêmes validations), erreurs sous le champ
+    $vr = & $t 'VueReglagesFluent'; $prT = & $t 'PageReglagesFluent'; $eaT = & $t 'EtatApprentissage'; $cnT = & $t 'ConfigNotifications'
+    $ipT = [Reflection.BindingFlags]'Instance,Public,NonPublic'
+    $blocPr = ($fluentSrc -replace "`r`n", "`n"); $iPr = $blocPr.IndexOf('    class PageReglagesFluent'); $blocPr = if ($iPr -ge 0) { $blocPr.Substring($iPr, $blocPr.IndexOf('    // Décisions pures de « Premiers réglages »') - $iPr) } else { '' }
+    $appels = @{}; foreach ($m in [regex]::Matches($blocPr, 'ActionsReglages\.(\w+)')) { $appels[$m.Groups[1].Value] = 1 + [int]$appels[$m.Groups[1].Value] }
+    $envois = (@('AfficherJeton', 'Apprentissage', 'AutoriserLecteur', 'ChoisirLangue', 'Enregistrer', 'MajConfig', 'MajVerifier', 'Notifications', 'NouveauJeton', 'TesterSyslog') | ForEach-Object { "$_=$($appels[$_])" }) -join ','
+    $ops = (@([regex]::Matches($blocPr, 'ActionsReglages\.Apprentissage\("([^"]+)"\)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)) -join ','
+    Cas 'Réglages (T-15) : mêmes envois qu''avant, un appel par action (jeton, apprentissage en quatre opérations, lecteur, langue, réglages, mise à jour, notifications, test syslog), rien d''autre' ($envois -eq 'AfficherJeton=1,Apprentissage=4,AutoriserLecteur=1,ChoisirLangue=1,Enregistrer=1,MajConfig=1,MajVerifier=1,Notifications=1,NouveauJeton=1,TesterSyslog=1' -and $ops -eq 'oublier,oublier-perimees,recommencer,terminer' -and -not $blocPr.Contains('Canal.Executer(') -and -not $blocPr.Contains('new Commande') -and -not ($blocPr -match 'WriteAllText|File\.Write|EcrireReglage')) "$envois | $ops"
+    Cas 'Réglages (T-15) : les deux « Enregistrer » (syslog, API) appellent la même méthode, qui relit config.json et envoie langue gardée, syslog et API ensemble' (([regex]::Matches($blocPr, 'Bouton\("Enregistrer", true, Enregistrer\)')).Count -eq 2 -and $blocPr.Contains('ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));') -and $blocPr.Contains('"« Enregistrer » envoie ensemble le syslog et l''API d''export'))
+    Cas 'Réglages (T-15) : secrets jamais relus ni réaffichés (seule affectation : vide), indice d''après notifications.json' (([regex]::Matches($blocPr, '\.Password\s*=\s*""')).Count -eq 4 -and ([regex]::Matches($blocPr, '\.Password\s*=')).Count -eq 4 -and $blocPr.Contains('indiceNtfyUrl.Text = Enregistre(en == null ? (bool?)null : en.NtfyConfigure);'))
+    Cas 'Réglages (T-15) : compteur des exceptions périmées lu dans etat.json' ($blocPr.Contains('var etat = Commun.Lire<Etat>("etat.json");') -and $blocPr.Contains('exceptions.Text = VueReglagesFluent.TexteExceptions(app, etat);'))
+    if (-not $vr -or -not $prT.GetMethod('Afficher', $ipT)) { Cas 'Réglages (T-15) : décisions pures et navigation des sections présentes' $false 'VueReglagesFluent ou Afficher absent' }
+    else {
+        foreach ($code in 'fr', 'en') {
+            $langue.GetField('En').SetValue($null, $code -eq 'en')
+            $noms = @(0..6 | ForEach-Object { [string]$vr.GetMethod('Nom').Invoke($null, @([int]$_)) })
+            $attendu = if ($code -eq 'en') { 'Language|Learning|Alert forwarding|Syslog|Export API|Updates|Accounts and data' } else { "Langue|Apprentissage|Remontée des alertes|Syslog|API d'export|Mises à jour|Comptes et données" }
+            Cas "Réglages (T-15) $code : sept sections dans l'ordre des maquettes, premiers réglages dans « Langue »" (($noms -join '|') -eq $attendu) ($noms -join '|')
+            $pg = [Activator]::CreateInstance($prT, $ipT, $null, [object[]]@(), $null)
+            $panneaux = $prT.GetField('panneaux', $ipT).GetValue($pg); $entreesNav = $prT.GetField('entrees', $ipT).GetValue($pg)
+            $uneSeule = $true
+            foreach ($i in 0..6) {
+                $prT.GetMethod('Afficher', $ipT).Invoke($pg, @([int]$i))
+                $vis = @($panneaux | Where-Object { $_.Visibility -eq 'Visible' }).Count; $ouv = @($entreesNav | Where-Object { [string]$_.Tag -eq 'ouverte' }).Count
+                if ($vis -ne 1 -or $ouv -ne 1 -or $panneaux[$i].Visibility -ne 'Visible' -or $prT.GetField('titreSection', $ipT).GetValue($pg).Text -ne $noms[$i]) { $uneSeule = $false }
+            }
+            Cas "Réglages (T-15) $code : une section affichée à la fois, son entrée seule ouverte, titre de la section" $uneSeule
+            # Une carte par bloc : chaque section ne contient que des cartes et des bandeaux (Border), en nombre attendu
+            $compte = @($panneaux | ForEach-Object { $p = $_; if (@($p.Children | Where-Object { $_ -isnot [Windows.Controls.Border] }).Count) { 'x' } else { $p.Children.Count } }) -join ','
+            Cas "Réglages (T-15) $code : une carte par bloc (langue 2, apprentissage bandeau + 2, remontée bandeau + règles + 3 canaux + envoi, syslog 1, API 2, mises à jour bandeau + 1, comptes 2)" ($compte -eq '2,3,6,1,2,2,2') $compte
+            # Boutons : au plus un principal (bordure accent) par carte ; destructifs en rouge : Recommencer, exceptions, nouveau jeton
+            $tous = New-Object Collections.Generic.List[object]
+            $parcourir = { param($o) foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($o)) { if ($e -is [Windows.DependencyObject]) { $tous.Add($e); & $parcourir $e } } }
+            $principaux = @(); $rouges = @()
+            foreach ($p in $panneaux) { foreach ($carte in $p.Children) {
+                $tous.Clear(); & $parcourir $carte
+                # Boutons de choix (ChoixFluent : niveau, protocole…) à part : leur bordure accent marque la valeur choisie
+                $bt = @($tous | Where-Object { $_ -is [Windows.Controls.Button] -and -not (& $t 'ChoixFluent').IsInstanceOfType($_.Parent) })
+                $principaux += @($bt | Where-Object { $_.BorderBrush.Color -eq $jetons.GetField('Accent').GetValue($null) }).Count
+                $rouges += @($bt | Where-Object { $_.BorderBrush.Color -eq $jetons.GetField('Danger').GetValue($null) -and $_.Foreground.Color -eq $jetons.GetField('Danger').GetValue($null) } | ForEach-Object { [string]$_.Content })
+            } }
+            $attRouges = if ($code -eq 'en') { 'Restart (7 days)|Clear exceptions from a previous version|Delete exceptions|New token' } else { 'Recommencer (7 jours)|Effacer les exceptions d''une version précédente|Supprimer les exceptions|Nouveau jeton' }
+            Cas "Réglages (T-15) $code : un bouton principal au plus par carte ; actions destructives à part, en rouge" (@($principaux | Where-Object { $_ -gt 1 }).Count -eq 0 -and ($rouges -join '|') -eq $attRouges) "$($principaux -join ',') | $($rouges -join '|')"
+
+            # Remplissage avec des données fictives : secrets jamais réaffichés, indice « enregistré / non renseigné »
+            $cfgR = [Activator]::CreateInstance($cfgT)
+            $cfgR.Syslog = & $nouv $csT @{ Actif = $true; Hote = 'siem.example.lan'; Port = 514; Protocole = 'TCP'; Format = 'CEF'; NiveauMin = 'Alerte' }
+            $cfgR.Api = & $nouv $caT @{ Actif = $true; Port = 8642; Reseau = $true; Adresses = '192.168.1.20' }
+            $cfgR.Notifications = & $nouv $cnT @{ NiveauMin = 'Critique'; MaxParHeure = 10; Ntfy = $true; Smtp = $true; SmtpServeur = 'smtp.example.org'; SmtpPort = 465; SmtpSecurite = 'STARTTLS'; SmtpUtilisateur = 'alerts@example.org'; Expediteur = 'alerts@example.org'; Destinataires = 'it@example.org' }
+            $enN = & $nouv $enT2 @{ NtfyConfigure = $true; TeamsConfigure = $false; SmtpMotDePasse = $true; Envoyes = [long]3 }
+            $remplirR = $prT.GetMethod('Remplir', $ipT)
+            $rmT = & $t 'EtatRemontee'; $etT = & $t 'Etat'
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
+            $pw = { param($n) $prT.GetField($n, $ipT).GetValue($pg) }
+            (& $pw 'ntfyUrl').Password = 'tape-par-erreur'; (& $pw 'smtpMdp').Password = 'x'
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
+            $vides = @('ntfyUrl', 'ntfyJeton', 'teamsUrl', 'smtpMdp' | Where-Object { (& $pw $_).Password -ne '' }).Count
+            $ind = @('indiceNtfyUrl', 'indiceTeamsUrl', 'indiceSmtpMdp', 'indiceNtfyJeton' | ForEach-Object { (& $pw $_).Text }) -join '|'
+            $attInd = if ($code -eq 'en') { 'Saved|Not set|Saved|Never shown again' } else { 'Enregistré|Non renseigné|Enregistré|Jamais réaffiché' }
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $null, $null, $null, $null))
+            $inconnu = (& $pw 'indiceNtfyUrl').Text
+            Cas "Réglages (T-15) $code : secrets vidés à chaque lecture, jamais réaffichés ; le champ vide dit « enregistré » ou « non renseigné » (notifications.json), « inconnu » sans lui, rien d'affirmé pour le jeton" ($vides -eq 0 -and $ind -eq $attInd -and $inconnu -eq $(if ($code -eq 'en') { 'Unknown' } else { 'État inconnu' })) "$vides | $ind | $inconnu"
+
+            # Envois inchangés : syslog et API saisis (mêmes champs, mêmes Trim), notifications (même commande, mêmes champs)
+            (& $pw 'hote').Text = '  siem.example.lan '; (& $pw 'adresses').Text = ' 192.168.1.20 '; (& $pw 'portSyslog').Text = ' 6514 '
+            $sx = $prT.GetMethod('Saisis', $ipT).Invoke($pg, @())
+            # JSON comparé sans l'ordre des clés (l'ordre de sérialisation des propriétés n'est pas garanti)
+            Add-Type -AssemblyName System.Web.Extensions
+            $canon = { param($j) $tri = { param($o) if ($o -is [Collections.IDictionary]) { '{' + ((@($o.Keys) | Sort-Object | ForEach-Object { "$_=" + (& $tri $o[$_]) }) -join ',') + '}' } else { [string]$o } }; & $tri ((New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($j)) }
+            $jsS = [string](& $t 'Commun').GetMethod('Json').Invoke($null, @()).Serialize($sx.Item1); $jsA = [string](& $t 'Commun').GetMethod('Json').Invoke($null, @()).Serialize($sx.Item2)
+            Cas "Réglages (T-15) $code : syslog et API saisis comme avant (champs, Trim, ports convertis)" ((& $canon $jsS) -eq (& $canon '{"Actif":true,"Hote":"siem.example.lan","Port":6514,"Protocole":"TCP","Format":"CEF","NiveauMin":"Alerte"}') -and (& $canon $jsA) -eq (& $canon '{"Actif":true,"Port":8642,"Reseau":true,"Adresses":"192.168.1.20"}')) "$jsS $jsA"
+            (& $pw 'ntfyUrl').Password = ' https://ntfy.example.org/sujet '; (& $pw 'destinataires').Text = ' it@example.org '
+            $cn = $prT.GetMethod('SaisieNotifications', $ipT).Invoke($pg, @())
+            $cmdN = $ar.GetMethod('CommandeNotifications').Invoke($null, [object[]]@('notifications', $cn, (& $pw 'ntfyUrl').Password, (& $pw 'ntfyJeton').Password, (& $pw 'teamsUrl').Password, (& $pw 'smtpMdp').Password))
+            Cas "Réglages (T-15) $code : notifications saisies comme avant (champs, Trim, secrets tels quels jusqu'à CommandeNotifications), même commande" ($cmdN.Action -eq 'notifications' -and (& $canon $cmdN.Valeur) -eq (& $canon '{"Config":{"NiveauMin":"Critique","MaxParHeure":10,"Ntfy":true,"Teams":false,"Smtp":true,"SmtpServeur":"smtp.example.org","SmtpPort":465,"SmtpSecurite":"STARTTLS","SmtpUtilisateur":"alerts@example.org","Expediteur":"alerts@example.org","Destinataires":"it@example.org"},"NtfyUrl":"https://ntfy.example.org/sujet","NtfyJeton":"","TeamsUrl":"","SmtpMotDePasse":""}')) "$($cmdN.Valeur)"
+            # Erreurs de saisie : même validation (rien n'est rendu), dite sous le champ et sous les boutons des deux cartes
+            (& $pw 'portSyslog').Text = '70000'; (& $pw 'portApi').Text = '8642'
+            $sNul = $prT.GetMethod('Saisis', $ipT).Invoke($pg, @())
+            $pi2 = [string]$ar.GetMethod('PortsInvalides').Invoke($null, [object[]]@('70000', '8642', 0, 0))
+            $okErr = $null -eq $sNul -and (& $pw 'errPortSyslog').Visibility -eq 'Visible' -and (& $pw 'errPortApi').Visibility -ne 'Visible' -and (& $pw 'errSyslog').Text -eq $pi2 -and (& $pw 'errApi').Text.StartsWith($pi2) -and (& $pw 'errApi').Text.Length -gt $pi2.Length
+            (& $pw 'portSyslog').Text = '514'; (& $pw 'maxHeure').Text = '0'
+            $nNul = $prT.GetMethod('SaisieNotifications', $ipT).Invoke($pg, @())
+            $okErr = $okErr -and $null -eq $nNul -and (& $pw 'errMaxHeure').Visibility -eq 'Visible' -and (& $pw 'errSmtpPort').Visibility -ne 'Visible' -and (& $pw 'errNotif').Text -eq [string]$ar.GetMethod('NotificationsInvalides').Invoke($null, [object[]]@('0', '465', 0, 0))
+            $remplirR.Invoke($pg, [object[]]@($cfgR, $false, $null, $null, $enN, $null, $null, $null))
+            Cas "Réglages (T-15) $code : saisie invalide, rien n'est rendu à envoyer ; erreur sous le champ fautif seul, message de la validation d'aujourd'hui sous les boutons (et section du champ dite dans l'autre carte) ; effacée à la lecture suivante" ($okErr -and (& $pw 'errPortSyslog').Visibility -ne 'Visible' -and (& $pw 'errNotif').Visibility -ne 'Visible') "$okErr $((& $pw 'errApi').Text)"
+        }
+        $langue.GetField('En').SetValue($null, $false)
+        # États de la navigation et bandeaux (décisions pures)
+        $maint = [datetime]'2026-11-24 12:00:00'
+        $appT = & $nouv $eaT @{ Debut = '2026-11-22 05:00:00'; Fin = '2026-11-29 05:00:00' }
+        $etS = { param($i, $c, $il, $a, $m, $r) $x = $vr.GetMethod('EtatSection').Invoke($null, [object[]]@([int]$i, $c, [bool]$il, $a, $m, $r, $null, $maint)); "$($x.Texte)~$($x.Gravite)" }
+        $cAucun = [Activator]::CreateInstance($cfgT)
+        $mj = { param($c) & $nouv $emT @{ Controle = $c; Statut = 's' } }
+        $etats = @((& $etS 1 $null $false $appT $null $null), (& $etS 2 $cAucun $false $null $null $null), (& $etS 2 $cfgR $true $null $null $null), (& $etS 3 $cAucun $true $null $null $null),
+            (& $etS 5 $null $false $null $null $null), (& $etS 5 $null $false $null (& $mj '') $null), (& $etS 5 $null $false $null (& $mj 'EchecRecent') $null), (& $etS 5 $null $false $null (& $mj 'EchecProlonge') $null),
+            (& $etS 5 $null $false $null (& $mj 'ManifesteAncien') $null), (& $etS 5 $null $false $null (& $mj 'Inconnu') $null)) -join '|'
+        Cas 'Réglages (T-15) : états de la navigation (jour 3/7, aucun canal à surveiller, configuration illisible « ? », code d''état de maj.json : contrôlée, échec récent à surveiller, échec prolongé, manifeste ancien et code inconnu à traiter)' ($etats -eq 'Jour 3/7~0|Aucun~1|?~1|?~1|pas vérifiée~0|contrôlée~0|en échec~1|en échec~2|à vérifier~2|en échec~2') $etats
+        $rmT = & $t 'EtatRemontee'
+        $bR = { param($n, $r) $b = $vr.GetMethod('BandeauRemontee').Invoke($null, [object[]]@($n, $false, $r)); "$($b.Gravite)~$($b.Titre)" }
+        $nN = & $nouv $cnT @{ Ntfy = $true; NiveauMin = 'Critique' }
+        $bandeaux = @((& $bR (& $nouv $cnT @{}) $null), (& $bR $nN (& $nouv $rmT @{ NtfyConfigure = $false })), (& $bR $nN (& $nouv $rmT @{ NtfyConfigure = $true; EchecDepuis = 'h' + [char]0x202E })), (& $bR $nN (& $nouv $rmT @{ NtfyConfigure = $true; DerniereErreur = '550' + [char]0x202E }))) -join '|'
+        $detR = $vr.GetMethod('BandeauRemontee').Invoke($null, [object[]]@($nN, $false, (& $nouv $rmT @{ NtfyConfigure = $true; Envoyes = [long]2; DerniereErreur = "550 `r`n" + [char]0x202E }))).Detail
+        Cas 'Réglages (T-15) : bandeau de la remontée (aucun canal, canal sans adresse, échec, canaux activés ; textes du serveur neutralisés)' ($bandeaux -eq '1~Aucun canal activé|1~Activé sans adresse enregistrée : ntfy|2~Remontée en échec depuis le h?|0~1 canal(aux) activé(s) : ntfy, à partir du niveau Critique' -and -not ($detR -match "[‮\r\n]") -and $detR.Contains('dernière erreur : 550')) "$bandeaux | $detR"
+        $bM = $vr.GetMethod('BandeauMaj').Invoke($null, @((& $nouv $emT @{ Controle = 'EchecProlonge'; Statut = 'manifeste illisible'; VerifieLe = 'h'; EchecDepuis = 'd' })))
+        Cas 'Réglages (T-15) : bandeau des mises à jour, état de la ligne « Mise à jour » de la page Santé et texte d''aujourd''hui' ($bM.Gravite -eq 2 -and $bM.Titre -eq 'Mise à jour : en échec depuis plus de 24 h' -and $bM.Detail.StartsWith('Version installée : ') -and $bM.Detail.Contains('aucune mise à jour ne peut être vue')) "$($bM.Titre) | $($bM.Detail)"
+        $exL = New-Object "Collections.Generic.List[$((& $t 'ExceptionApprise').FullName)]"; 1..3 | ForEach-Object { $exL.Add([Activator]::CreateInstance((& $t 'ExceptionApprise'))) }
+        $appX = & $nouv $eaT @{ Exceptions = $exL.PSObject.BaseObject }
+        $txE = [string]$vr.GetMethod('TexteExceptions').Invoke($null, [object[]]@($appX, (& $nouv (& $t 'Etat') @{ ExceptionsPerimees = 2 }))); $txE0 = [string]$vr.GetMethod('TexteExceptions').Invoke($null, [object[]]@($appX, $null))
+        Cas 'Réglages (T-15) : exceptions en vigueur (apprentissage.json) et périmées (etat.json), dites à part' ($txE -eq '3 exception(s) en vigueur · 2 d''une version précédente, qui ne s''appliquent plus' -and $txE0 -eq '3 exception(s) en vigueur') "$txE | $txE0"
+        $pd = @($vr.GetMethod('PortsEnDefaut').Invoke($null, @('0', '80'))) + @($vr.GetMethod('PortsEnDefaut').Invoke($null, @('514', '8642'))) + @($vr.GetMethod('NotificationsEnDefaut').Invoke($null, @('10', '70000')))
+        Cas 'Réglages (T-15) : champ en défaut désigné par la validation même d''ActionsReglages' (($pd -join ',') -eq 'True,True,False,False,False,True') ($pd -join ',')
+    }
     Cas 'Coquille : plus aucune page WinForms hébergée ni prêtée (WindowsFormsHost, PageDe et la référence de compilation retirés, relecture de #147)' (-not $fluentSrc.Contains('WindowsFormsHost') -and -not $fluentSrc.Contains('Forms.Integration') -and -not $fluentSrc.Contains('pages(cle)') -and -not ([IO.File]::ReadAllText("$src\Gui.cs")).Contains('PageDe(') -and -not ([IO.File]::ReadAllText((Join-Path $src '..\compiler.ps1'))).Contains('WindowsFormsIntegration'))
     # Premiers réglages (U7a) : décisions pures, lecture seule, repère par utilisateur
     $va = & $t 'VueAssistantFluent'; $eaT = & $t 'EtatApprentissage'; $cnT = & $t 'ConfigNotifications'

@@ -911,6 +911,8 @@ namespace DeR4Tizer
         }
 
         internal static ControlTemplate ModeleBouton() { return ModeleSimple(); }
+        // Modèle des entrées de navigation, repris par la navigation des sections de la page Réglages (T-15)
+        internal static ControlTemplate ModeleNavigation() { return Modele(); }
     }
 
     // Page Alertes en WPF (U2b) : filtres par niveau, liste, panneau de détails à droite avec des boutons explicites.
@@ -4533,101 +4535,355 @@ namespace DeR4Tizer
         }
     }
 
-    // Page Réglages en WPF (U6c) : mêmes réglages, mêmes contrôles et mêmes commandes que la page d'aujourd'hui
-    // (ActionsReglages) ; lue à l'ouverture et après chaque action, jamais pendant la saisie ; config.json illisible : dit, et
-    // rien n'est enregistré
-    class PageReglagesFluent : ScrollViewer
+    // Bandeau d'état d'une section de la page Réglages (T-15) : gravité 2 à traiter (rouge), 1 à surveiller (orange), 0 en
+    // ordre (vert), -1 information (accent), -2 neutre (gris) ; titre et détail déjà neutralisés
+    public class BandeauReglages
     {
-        readonly StackPanel pile = new StackPanel { MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left };
-        readonly TextBlock config = Texte(true), apprentissage = Texte(false), notifEtat = Texte(true), maj = Texte(false), lecteurs = Texte(true);
+        public int Gravite;
+        public string Titre;
+        public string Detail;
+    }
+
+    // Décisions pures de la page Réglages (constat T-15), testées par tests\rendu-pilote.ps1 : sections, états de la
+    // navigation des sections, bandeaux, champs en défaut. Aucune ne décide d'un envoi : les commandes restent celles
+    // d'ActionsReglages, construites et validées comme avant
+    public static class VueReglagesFluent
+    {
+        // Navigation des sections, dans cet ordre (clés françaises) ; les premiers réglages sont dans « Langue »
+        public static readonly string[] Sections = { "Langue", "Apprentissage", "Remontée des alertes", "Syslog", "API d'export", "Mises à jour", "Comptes et données" };
+        static readonly string[] SectionsEn = { "Language", "Learning", "Alert forwarding", "Syslog", "Export API", "Updates", "Accounts and data" };
+        public static readonly string[] Icones = { "", "", "", "", "", "", "" };
+
+        public static string Nom(int section) { return section < 0 || section >= Sections.Length ? "" : L.En ? SectionsEn[section] : Sections[section]; }
+
+        static string T(string fr, string en) { return L.En ? en : fr; }
+
+        static bool Date(string s, out DateTime d)
+        {
+            return DateTime.TryParseExact(s ?? "", "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out d);
+        }
+
+        // Jour de l'apprentissage en cours (1 à total) ; faux s'il est terminé ou si ses dates sont illisibles
+        public static bool JourApprentissage(EtatApprentissage app, DateTime maintenant, out int jour, out int total)
+        {
+            jour = 0; total = 0;
+            DateTime debut, fin;
+            if (app == null || !Date(app.Debut, out debut) || !Date(app.Fin, out fin) || fin <= debut || maintenant >= fin) return false;
+            total = Math.Max(1, (int)Math.Round((fin - debut).TotalDays));
+            jour = Math.Min(total, Math.Max(1, (int)Math.Floor((maintenant - debut).TotalDays) + 1));
+            return true;
+        }
+
+        // Canaux de remontée activés dans config.json (pas les secrets enregistrés : notifications.json le dit à part)
+        public static List<string> Canaux(ConfigNotifications n)
+        {
+            var l = new List<string>();
+            if (n == null) return l;
+            if (n.Ntfy) l.Add("ntfy");
+            if (n.Teams) l.Add("Teams");
+            if (n.Smtp) l.Add(T("e-mail", "e-mail"));
+            return l;
+        }
+
+        // Gravité de l'état de mise à jour, d'après le code publié par le service dans maj.json (maj.rs, code_controle,
+        // #294) : contrôle en échec depuis plus de 24 h, manifeste plus ancien (gel possible) ou code inconnu (service plus
+        // récent) : à traiter ; dernier contrôle en échec, essai rapproché : à surveiller ; lu : en ordre ; pas encore : neutre
+        public static int GraviteMaj(EtatMaj m)
+        {
+            if (m == null) return -2;
+            string c = m.Controle;
+            if (string.IsNullOrEmpty(c)) return 0;
+            if (c == "EchecRecent") return 1;
+            return 2;
+        }
+
+        public static string EtatMajCourt(EtatMaj m)
+        {
+            if (m == null) return T("pas vérifiée", "not checked");
+            string c = m.Controle;
+            if (string.IsNullOrEmpty(c)) return T("contrôlée", "checked");
+            if (c == "ManifesteAncien") return T("à vérifier", "to check");
+            return T("en échec", "failed");
+        }
+
+        // État court affiché à droite de chaque section de la navigation ; configuration illisible : « ? » à surveiller,
+        // jamais une valeur par défaut présentée comme réglée
+        public static PointEtat EtatSection(int section, Config c, bool illisible, EtatApprentissage app, EtatMaj em, EtatRemontee r, List<Lecteur> lecteurs, DateTime maintenant)
+        {
+            var x = new PointEtat { Texte = "", Gravite = 0 };
+            int jour, total;
+            switch (section)
+            {
+                case 0: x.Texte = L.En ? "English" : "Français"; break;
+                case 1:
+                    if (app == null) x.Texte = "";
+                    else if (JourApprentissage(app, maintenant, out jour, out total)) x.Texte = string.Format(T("Jour {0}/{1}", "Day {0}/{1}"), jour, total);
+                    else x.Texte = T("terminé", "finished");
+                    break;
+                case 2:
+                    {
+                        if (illisible || c == null) { x.Texte = "?"; x.Gravite = 1; break; }
+                        var canaux = Canaux(c.Notifications);
+                        if (canaux.Count == 0) { x.Texte = T("Aucun", "None"); x.Gravite = 1; }
+                        else if (r != null && !string.IsNullOrEmpty(r.EchecDepuis)) { x.Texte = T("en échec", "failed"); x.Gravite = 2; }
+                        else x.Texte = canaux.Count == 1 ? canaux[0] : string.Format(T("{0} canaux", "{0} channels"), canaux.Count);
+                        break;
+                    }
+                case 3:
+                    if (illisible || c == null) { x.Texte = "?"; x.Gravite = 1; }
+                    else x.Texte = c.Syslog != null && c.Syslog.Actif ? T("Activé", "On") : T("Désactivé", "Off");
+                    break;
+                case 4:
+                    if (illisible || c == null) { x.Texte = "?"; x.Gravite = 1; }
+                    else x.Texte = c.Api != null && c.Api.Actif ? T("Activée", "On") : T("Désactivée", "Off");
+                    break;
+                case 5: x.Texte = EtatMajCourt(em); x.Gravite = Math.Max(0, GraviteMaj(em)); break;
+                case 6: x.Texte = string.Format(T("{0} lecteur(s)", "{0} reader(s)"), (lecteurs ?? new List<Lecteur>()).Count(l => l != null)); break;
+            }
+            return x;
+        }
+
+        // Bandeau de la remontée : aucun canal (personne n'est prévenu), canal sans adresse enregistrée, envois en échec, ou
+        // canaux activés avec le compte des envois ; textes du service et d'un serveur neutralisés
+        public static BandeauReglages BandeauRemontee(ConfigNotifications n, bool illisible, EtatRemontee r)
+        {
+            Func<string, string> v = Canal.Visible;
+            if (illisible || n == null)
+                return new BandeauReglages { Gravite = 1, Titre = T("Réglages de remontée inconnus", "Alert forwarding settings unknown"), Detail = ActionsReglages.ConfigIllisible() };
+            var canaux = Canaux(n);
+            if (canaux.Count == 0)
+                return new BandeauReglages { Gravite = 1, Titre = T("Aucun canal activé", "No channel turned on"), Detail = T("Personne n'est prévenu des alertes : activez ntfy, Teams ou l'e-mail ci-dessous.", "Nobody is notified of alerts: turn on ntfy, Teams or e-mail below.") };
+            string envois = r == null ? T("notifications.json absent ou illisible : envois inconnus.", "notifications.json missing or unreadable: sending unknown.")
+                : string.Format(T("{0} message(s) envoyé(s)", "{0} message(s) sent"), r.Envoyes)
+                    + (string.IsNullOrEmpty(r.DernierEnvoi) ? "" : T(", dernier le ", ", last on ") + v(r.DernierEnvoi))
+                    + " · " + (string.IsNullOrEmpty(r.DerniereErreur) ? T("aucune erreur signalée", "no error reported") : T("dernière erreur : ", "last error: ") + v(r.DerniereErreur));
+            if (r != null && !string.IsNullOrEmpty(r.EchecDepuis))
+                return new BandeauReglages { Gravite = 2, Titre = string.Format(T("Remontée en échec depuis le {0}", "Alert forwarding failing since {0}"), v(r.EchecDepuis)), Detail = envois };
+            var sansAdresse = new List<string>();
+            if (r != null && n.Ntfy && !r.NtfyConfigure) sansAdresse.Add("ntfy");
+            if (r != null && n.Teams && !r.TeamsConfigure) sansAdresse.Add("Teams");
+            if (sansAdresse.Count > 0)
+                return new BandeauReglages { Gravite = 1, Titre = string.Format(T("Activé sans adresse enregistrée : {0}", "On without a saved address: {0}"), string.Join(", ", sansAdresse)), Detail = envois };
+            return new BandeauReglages { Gravite = 0, Titre = string.Format(T("{0} canal(aux) activé(s) : {1}, à partir du niveau {2}", "{0} channel(s) on: {1}, from level {2}"), canaux.Count, string.Join(", ", canaux), v(L.T(n.NiveauMin ?? ""))), Detail = envois };
+        }
+
+        public static BandeauReglages BandeauApprentissage(EtatApprentissage app, DateTime maintenant, out double avancement)
+        {
+            avancement = -1;
+            if (app == null)
+                return new BandeauReglages { Gravite = -2, Titre = T("Apprentissage : état inconnu", "Learning: state unknown"), Detail = T("apprentissage.json absent ou illisible.", "apprentissage.json missing or unreadable.") };
+            int jour, total;
+            if (JourApprentissage(app, maintenant, out jour, out total))
+            {
+                avancement = (double)jour / total;
+                return new BandeauReglages { Gravite = -1, Titre = string.Format(T("Apprentissage : jour {0} sur {1}", "Learning: day {0} of {1}"), jour, total), Detail = ActionsReglages.TexteApprentissage(app) };
+            }
+            return new BandeauReglages { Gravite = 0, Titre = T("Apprentissage terminé : seul un comportement nouveau alerte", "Learning finished: only new behaviour raises an alert"), Detail = ActionsReglages.TexteApprentissage(app) };
+        }
+
+        // Bandeau des mises à jour : état de la ligne « Mise à jour » de la page Santé (même code, même texte), détail
+        // d'aujourd'hui (version installée, clé épinglée, date et statut du service)
+        public static BandeauReglages BandeauMaj(EtatMaj m)
+        {
+            var ligne = VueSante.LigneMaj(m);
+            return new BandeauReglages
+            {
+                Gravite = GraviteMaj(m),
+                Titre = L.T("Mise à jour") + " : " + ligne.Etat,
+                Detail = ActionsReglages.TexteMaj(m) + (m != null && !string.IsNullOrEmpty(m.Controle) && !string.IsNullOrEmpty(ligne.Detail) ? "\n" + ligne.Detail : "")
+            };
+        }
+
+        // Exceptions apprises : en vigueur (apprentissage.json) et d'une version précédente (compteur d'etat.json)
+        public static string TexteExceptions(EtatApprentissage app, Etat e)
+        {
+            int n = app == null || app.Exceptions == null ? 0 : app.Exceptions.Count;
+            int p = e == null ? 0 : e.ExceptionsPerimees;
+            return (app == null ? T("Exceptions en vigueur : inconnues (apprentissage.json illisible)", "Exceptions in force: unknown (apprentissage.json unreadable)") : string.Format(T("{0} exception(s) en vigueur", "{0} exception(s) in force"), n))
+                + (p > 0 ? " · " + string.Format(T("{0} d'une version précédente, qui ne s'appliquent plus", "{0} from a previous version, no longer applied"), p) : "");
+        }
+
+        // Champs en défaut, par la validation même qui décide de l'envoi (ActionsReglages), l'autre champ mis à une valeur
+        // valide : [port syslog, port de l'API] et [messages par heure, port SMTP]
+        public static bool[] PortsEnDefaut(string syslog, string api)
+        {
+            int a, b;
+            return new[] { ActionsReglages.PortsInvalides(syslog, "8642", out a, out b) != null, ActionsReglages.PortsInvalides("514", api, out a, out b) != null };
+        }
+
+        public static bool[] NotificationsEnDefaut(string maxHeure, string port)
+        {
+            int a, b;
+            return new[] { ActionsReglages.NotificationsInvalides(maxHeure, "465", out a, out b) != null, ActionsReglages.NotificationsInvalides("10", port, out a, out b) != null };
+        }
+
+        // Adresse du manifeste : vide ou égale à l'adresse par défaut (le service applique alors l'adresse par défaut, S68b-02)
+        public static bool ManifesteParDefaut(string url)
+        {
+            string u = (url ?? "").Trim();
+            return u.Length == 0 || u == new ConfigMaj().Url;
+        }
+    }
+
+    // Page Réglages en WPF (U6c, refaite au constat T-15 sur les maquettes validées le 2026-11-23) : navigation des sections
+    // à gauche, une section affichée à la fois, une carte par bloc. Mêmes réglages, mêmes contrôles et mêmes commandes que
+    // la page d'aujourd'hui (ActionsReglages) : aucune commande ni aucun réglage ajouté ou retiré ; lue à l'ouverture et
+    // après chaque action, jamais pendant la saisie ; config.json illisible : dit, et rien n'est enregistré ; secrets jamais
+    // relus ni réaffichés (le champ vide dit seulement « enregistré » ou « non renseigné », d'après notifications.json)
+    class PageReglagesFluent : Grid
+    {
+        readonly StackPanel contenu = new StackPanel { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Left };
+        readonly TextBlock titreSection = new TextBlock { FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 2, 0, 14) };
+        readonly StackPanel[] panneaux = new StackPanel[VueReglagesFluent.Sections.Length];
+        readonly Button[] entrees = new Button[VueReglagesFluent.Sections.Length];
+        readonly TextBlock[] etatsEntrees = new TextBlock[VueReglagesFluent.Sections.Length];
+        int section;
+        readonly TextBlock config = Texte(true);
+        readonly Border configBandeau;
         // Trois valeurs (constat T-17) : automatique (langue de Windows), français, anglais ; bouton actif = réglage en vigueur
         readonly ChoixFluent langue = new ChoixFluent(L.Reglages, L.Reglages.Select(r => L.Libelle(r, System.Globalization.CultureInfo.CurrentUICulture)).ToArray());
         readonly TextBlock langueEtat = Texte(true);
-        readonly CheckBox syslog = Case("Envoyer les alertes à un serveur syslog / SIEM"), api = Case("Activer l'API d'export"), reseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)"),
-            majAuto = Case("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)"),
-            ntfy = Case("ntfy (application mobile ou de bureau, serveur public ou auto-hébergé)"), teams = Case("Microsoft Teams (webhook d'un flux de travail « publier dans un canal »)"), smtp = Case("E-mail (SMTP chiffré)");
-        readonly TextBox hote = Saisie(220), portSyslog = Saisie(70), portApi = Saisie(70), adresses = Saisie(300), majUrl = Saisie(520), maxHeure = Saisie(60),
-            smtpServeur = Saisie(220), smtpPort = Saisie(60), smtpUtilisateur = Saisie(220), expediteur = Saisie(220), destinataires = Saisie(360), compte = Saisie(300);
+        readonly CheckBox syslog = Interrupteur("Syslog / SIEM"), api = Interrupteur(VueReglagesFluent.Nom(4)), majAuto = Interrupteur(T("Installation automatique", "Automatic installation")),
+            ntfy = Interrupteur("ntfy"), teams = Interrupteur("Microsoft Teams"), smtp = Interrupteur("E-mail"),
+            reseau = Case("Accessible depuis le réseau local (sinon cet ordinateur seulement)");
+        readonly TextBox hote = Saisie(), portSyslog = Saisie(), portApi = Saisie(), adresses = Saisie(), majUrl = Saisie(), maxHeure = Saisie(),
+            smtpServeur = Saisie(), smtpPort = Saisie(), smtpUtilisateur = Saisie(), expediteur = Saisie(), destinataires = Saisie(), compte = Saisie();
         // Adresse ntfy masquée comme les autres secrets (audit de #147, S147-02)
         readonly PasswordBox ntfyUrl = Secret(360), ntfyJeton = Secret(220), teamsUrl = Secret(520), smtpMdp = Secret(160);
+        readonly TextBlock indiceNtfyUrl = Indice(), indiceNtfyJeton = Indice(), indiceTeamsUrl = Indice(), indiceSmtpMdp = Indice();
         readonly ChoixFluent protocole = new ChoixFluent(ActionsReglages.Protocoles, null), format = new ChoixFluent(ActionsReglages.Formats, null), niveau = new ChoixFluent(ActionsReglages.Niveaux, null),
             niveauNotif = new ChoixFluent(ActionsReglages.Niveaux, null), securite = new ChoixFluent(ActionsReglages.Securites, null);
+        // Erreurs de saisie, sous le champ ; message de la validation d'aujourd'hui sous les boutons de la carte
+        readonly TextBlock errPortSyslog = Erreur(), errPortApi = Erreur(), errMaxHeure = Erreur(), errSmtpPort = Erreur(), errCompte = Erreur(),
+            errSyslog = Erreur(), errApi = Erreur(), errNotif = Erreur();
+        readonly TextBlock bandeauRemonteeTitre = new TextBlock(), bandeauRemonteeDetail = new TextBlock(), bandeauAppTitre = new TextBlock(), bandeauAppDetail = new TextBlock(),
+            bandeauMajTitre = new TextBlock(), bandeauMajDetail = new TextBlock();
+        readonly Border bandeauRemontee, bandeauApp, bandeauMaj;
+        readonly Grid avancementApp = new Grid { Height = 6, Width = 420, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 0) };
+        readonly TextBlock notifEtat = Texte(true), exceptions = new TextBlock { TextWrapping = TextWrapping.Wrap }, aideManifeste = Texte(true);
+        readonly WrapPanel lecteurs = new WrapPanel();
         int enCours, chargement;
         bool rempli;            // aucune action avant la première lecture : des champs vides ne partent jamais comme réglages
         public Action Revoir;   // ouvre « Premiers réglages » (donné par la coquille)
 
         public PageReglagesFluent()
         {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            Content = pile;
-            pile.Children.Add(Note("Langue, envoi des alertes à un SIEM (syslog), API d'export et export des journaux."));
-            pile.Children.Add(config);
-            Section("LANGUE");
-            pile.Children.Add(Ligne(Etiquette("Langue de l'interface"), langue));
-            pile.Children.Add(langueEtat);
-            // Choix écrit pour cet utilisateur, sans commande ni élévation ; affiché à part jusqu'au prochain lancement
+            ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            ColumnDefinitions.Add(new ColumnDefinition());
+            var nav = new StackPanel { Width = 240, Margin = new Thickness(0, 0, 24, 0) };
+            for (int i = 0; i < panneaux.Length; i++) { nav.Children.Add(Entree(i)); panneaux[i] = new StackPanel(); }
+            Children.Add(nav);
+            var defile = new ScrollViewer { Content = contenu, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetColumn(defile, 1);
+            Children.Add(defile);
+            contenu.Children.Add(titreSection);
+            configBandeau = Bandeau(new TextBlock { Text = T("Configuration illisible", "Configuration unreadable") }, config, null);
+            Teinter(configBandeau, 1);
+            configBandeau.Visibility = Visibility.Collapsed;
+            contenu.Children.Add(configBandeau);
+            foreach (var p in panneaux) contenu.Children.Add(p);
+
+            // ---------------- Langue (choix écrit pour cet utilisateur, sans commande ni élévation, constat T-17) et premiers réglages
+            panneaux[0].Children.Add(Carte(L.T("Langue de l'interface"), T("S'applique au prochain lancement de l'interface ; propre à votre compte, sans droits d'administrateur.", "Applies the next time the interface starts; for your account only, without administrator rights."), null,
+                Pile(langue, langueEtat), null));
             langue.Choisi = v => { ActionsReglages.ChoisirLangue(v); AfficherLangue(); };
             AfficherLangue();
-
-            Section("MODE APPRENTISSAGE ET EXCEPTIONS");
-            pile.Children.Add(Note("Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement »."));
-            pile.Children.Add(apprentissage);
-            pile.Children.Add(Ligne(Bouton("Terminer l'apprentissage", false, () => ActionsReglages.Apprentissage("terminer")),
-                Bouton("Recommencer (7 jours)", false, () => ActionsReglages.Apprentissage("recommencer")), Bouton("Supprimer les exceptions", false, () => ActionsReglages.Apprentissage("oublier"))));
-            // Exceptions d'une version précédente seulement (ligne « Exceptions » de la page Santé ; prérelecture de #255, R1)
-            pile.Children.Add(Ligne(Bouton("Effacer les exceptions d'une version précédente", false, () => ActionsReglages.Apprentissage("oublier-perimees"))));
-
-            Section("REMONTÉE DES ALERTES (PRESTATAIRE, RÉFÉRENT)");
-            pile.Children.Add(Note("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire ». Les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation."));
-            pile.Children.Add(Ligne(Etiquette("Niveau minimal"), niveauNotif, Etiquette("Messages par heure au plus"), maxHeure));
-            pile.Children.Add(ntfy);
-            pile.Children.Add(Note("Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique)."));
-            pile.Children.Add(Ligne(Etiquette("Adresse du sujet"), ntfyUrl, Etiquette("Jeton (facultatif)"), ntfyJeton));
-            pile.Children.Add(teams);
-            pile.Children.Add(Ligne(Etiquette("Adresse du webhook"), teamsUrl));
-            pile.Children.Add(smtp);
-            pile.Children.Add(Ligne(Etiquette("Serveur"), smtpServeur, Etiquette("Port"), smtpPort, Etiquette("Sécurité"), securite));
-            pile.Children.Add(Ligne(Etiquette("Utilisateur"), smtpUtilisateur, Etiquette("Mot de passe"), smtpMdp));
-            pile.Children.Add(Ligne(Etiquette("Expéditeur"), expediteur, Etiquette("Destinataires"), destinataires));
-            pile.Children.Add(Note("Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer."));
-            pile.Children.Add(notifEtat);
-            pile.Children.Add(Ligne(Bouton("Enregistrer les notifications", true, () => Notifications("notifications")), Bouton("Envoyer un message de test", false, () => Notifications("testerNotifications"))));
-
-            Section("ENVOI DES ALERTES (SYSLOG)");
-            pile.Children.Add(syslog);
-            pile.Children.Add(Ligne(Etiquette("Serveur"), hote, Etiquette("Port"), portSyslog, Etiquette("Protocole"), protocole));
-            pile.Children.Add(Ligne(Etiquette("Format"), format, Etiquette("Niveau minimal"), niveau));
-            pile.Children.Add(Note("JSON : en-tête RFC 5424 et détail en JSON. CEF : reconnu par la plupart des SIEM (Splunk, QRadar, Sentinel, Wazuh, Graylog…)."));
-            pile.Children.Add(Ligne(Bouton("Tester l'envoi", false, () => { var x = Saisis(); if (x != null) ActionsReglages.TesterSyslog(x.Item1); })));
-
-            Section("API D'EXPORT (HTTP, LECTURE SEULE)");
-            pile.Children.Add(api);
-            pile.Children.Add(Ligne(Etiquette("Port"), portApi));
-            pile.Children.Add(reseau);
-            pile.Children.Add(Ligne(Etiquette("Adresses autorisées (SIEM)"), adresses));
-            pile.Children.Add(Note("Chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ». Routes : /api/v1/alertes, /connexions, /exposition, /baseline, /regles-parefeu, /blocages, /journal."));
-            pile.Children.Add(Ligne(Bouton("Afficher le jeton", false, ActionsReglages.AfficherJeton), Bouton("Nouveau jeton", false, () => ActionsReglages.NouveauJeton())));
-            pile.Children.Add(Ligne(Bouton("Enregistrer", true, Enregistrer)));
-
-            Section("MISE À JOUR");
-            pile.Children.Add(maj);
-            pile.Children.Add(majAuto);
-            pile.Children.Add(Ligne(Etiquette("Manifeste"), majUrl));
-            pile.Children.Add(Ligne(Bouton("Enregistrer", true, () => ActionsReglages.MajConfig(majAuto.IsChecked == true, majUrl.Text)), Bouton("Rechercher maintenant", false, ActionsReglages.MajVerifier)));
-
-            Section("ACCÈS AUX DONNÉES");
-            pile.Children.Add(lecteurs);
-            pile.Children.Add(Ligne(Etiquette("Nom du compte (par exemple : PC-ACCUEIL\\marie)"), compte, Bouton("Autoriser", false, Autoriser)));
-
-            Section("EXPORT DES JOURNAUX");
-            pile.Children.Add(Ligne(Bouton("Exporter les alertes…", true, ExporterAlertes), Bouton("Exporter le journal du service…", false, ExporterJournal)));
-
             // Premiers réglages (U7a) : rejouables à tout moment, sans commande
-            Section("PREMIERS RÉGLAGES");
             var revoir = Briques.Action(L.En ? "See the first-run setup again" : "Revoir les premiers réglages", false, (s, e) => { if (Revoir != null) Revoir(); });
-            revoir.HorizontalAlignment = HorizontalAlignment.Left;
-            pile.Children.Add(revoir);
+            revoir.HorizontalAlignment = HorizontalAlignment.Left; revoir.Margin = new Thickness(0, 4, 8, 4);
+            panneaux[0].Children.Add(Carte(T("Premiers réglages", "First-run setup"), T("Rejoue les étapes des premiers réglages ; ne change rien par lui-même.", "Replays the first-run steps; changes nothing by itself."), null, null, new UIElement[] { revoir }));
+
+            // ---------------- Apprentissage et exceptions
+            avancementApp.ColumnDefinitions.Add(new ColumnDefinition()); avancementApp.ColumnDefinitions.Add(new ColumnDefinition());
+            var plein = new Border { Background = Jetons.Pinceau(Jetons.Accent), CornerRadius = new CornerRadius(3, 0, 0, 3) };
+            var vide = new Border { Background = Jetons.Pinceau(Jetons.Surface), CornerRadius = new CornerRadius(0, 3, 3, 0) };
+            Grid.SetColumn(vide, 1); avancementApp.Children.Add(plein); avancementApp.Children.Add(vide);
+            bandeauApp = Bandeau(bandeauAppTitre, bandeauAppDetail, avancementApp);
+            panneaux[1].Children.Add(bandeauApp);
+            panneaux[1].Children.Add(Carte(T("Mode apprentissage", "Learning mode"), L.T("Les premiers jours, les alertes non critiques sont notées en information et leur comportement est mémorisé (logiciel de caisse, outils du prestataire, scripts…). Ensuite, seul un comportement nouveau alerte. Les alertes critiques ne sont jamais adoucies. Clic droit sur une alerte : « Ne plus alerter pour ce comportement »."), null, null,
+                new UIElement[] { Bouton("Terminer l'apprentissage", true, () => ActionsReglages.Apprentissage("terminer")) },
+                new UIElement[] { Destructif(L.T("Recommencer (7 jours)"), () => ActionsReglages.Apprentissage("recommencer")) },
+                T("Recommencer oublie les comportements appris et réapprend pendant 7 jours, y compris ce que ferait un programme malveillant actif à ce moment : seulement sur un poste que l'on sait sain.",
+                  "Restarting forgets learned behaviours and learns again for 7 days, including what a malicious program active at that time would do: only on a computer known to be clean.")));
+            // Exceptions d'une version précédente seulement (ligne « Exceptions » de la page Santé ; prérelecture de #255, R1)
+            panneaux[1].Children.Add(Carte(T("Exceptions apprises", "Learned exceptions"), T("Clic droit sur une alerte, « Ne plus alerter pour ce comportement », pour en ajouter une.", "Right-click an alert, \"No longer alert for this behaviour\", to add one."), null,
+                exceptions, null,
+                new UIElement[] { Destructif(T("Effacer les exceptions d'une version précédente", "Clear exceptions from a previous version"), () => ActionsReglages.Apprentissage("oublier-perimees")),
+                    Destructif(L.T("Supprimer les exceptions"), () => ActionsReglages.Apprentissage("oublier")) },
+                T("Irréversible. « Supprimer les exceptions » retire aussi celles d'une version précédente.", "Cannot be undone. \"Delete exceptions\" also removes those from a previous version.")));
+
+            // ---------------- Remontée des alertes
+            bandeauRemontee = Bandeau(bandeauRemonteeTitre, bandeauRemonteeDetail, null);
+            panneaux[2].Children.Add(bandeauRemontee);
+            panneaux[2].Children.Add(Carte(T("Règles", "Rules"), T("Envoie les alertes de ce poste à la personne qui s'en occupe, avec le « quoi faire » ; les alertes d'un quart de minute sont regroupées en un seul message, et un plafond par heure évite l'inondation.", "Sends this computer's alerts to the person in charge, with what to do; alerts within 15 seconds are grouped into one message, and an hourly cap prevents flooding."), null,
+                Grille(Champ(L.T("Niveau minimal"), niveauNotif), Champ(L.T("Messages par heure au plus"), maxHeure, errMaxHeure, T("1 à 1000.", "1 to 1000."))), null));
+            panneaux[2].Children.Add(CarteCanal(ntfy, T("Application mobile ou de bureau, serveur public ou auto-hébergé.", "Mobile or desktop app, public or self-hosted server."),
+                Grille(Champ(L.T("Adresse du sujet"), Masque(ntfyUrl, indiceNtfyUrl)), Champ(L.T("Jeton (facultatif)"), Masque(ntfyJeton, indiceNtfyJeton)),
+                    Large(Note(L.T("Conseil : un serveur ntfy auto-hébergé plutôt que ntfy.sh, que des malwares utilisent aussi pour faire sortir des données (il reste joignable en mode panique).")), Jetons.Attention))));
+            panneaux[2].Children.Add(CarteCanal(teams, T("Webhook d'un flux de travail « publier dans un canal ».", "\"Post to a channel\" workflow webhook."),
+                Grille(Large(Champ(L.T("Adresse du webhook"), Masque(teamsUrl, indiceTeamsUrl))))));
+            panneaux[2].Children.Add(CarteCanal(smtp, T("SMTP chiffré.", "Encrypted SMTP."),
+                Grille(Champ(L.T("Serveur"), smtpServeur), Champ(L.T("Port"), smtpPort, errSmtpPort, T("1 à 65535.", "1 to 65535.")),
+                    Champ(L.T("Sécurité"), securite), Champ(L.T("Utilisateur"), smtpUtilisateur),
+                    Champ(L.T("Mot de passe"), Masque(smtpMdp, indiceSmtpMdp)), Champ(L.T("Expéditeur"), expediteur),
+                    Large(Champ(L.T("Destinataires"), destinataires)))));
+            panneaux[2].Children.Add(Carte(T("Enregistrer et tester", "Save and test"), L.T("Les adresses ntfy et Teams, le jeton et le mot de passe sont gardés à part, lisibles par les administrateurs seulement : laissez le champ vide pour conserver la valeur enregistrée, tapez « - » pour l'effacer."), null,
+                Pile(notifEtat), new UIElement[] { Bouton("Enregistrer les notifications", true, () => Notifications("notifications")), Bouton("Envoyer un message de test", false, () => Notifications("testerNotifications")) },
+                null, null, errNotif));
+
+            // ---------------- Syslog ; « Enregistrer » envoie le syslog et l'API ensemble (une seule commande « reglages »)
+            var ensemble = T("« Enregistrer » envoie ensemble le syslog et l'API d'export, avec la langue gardée dans config.json : une seule confirmation, qui montre les trois.",
+                "\"Save\" sends syslog and the export API together, with the language kept in config.json: one confirmation, which shows all three.");
+            panneaux[3].Children.Add(Carte("Syslog / SIEM", L.T("JSON : en-tête RFC 5424 et détail en JSON. CEF : reconnu par la plupart des SIEM (Splunk, QRadar, Sentinel, Wazuh, Graylog…)."), syslog,
+                Grille(Champ(L.T("Serveur"), hote), Champ(L.T("Port"), portSyslog, errPortSyslog, T("1 à 65535.", "1 to 65535.")),
+                    Champ(L.T("Protocole"), protocole), Champ(L.T("Format"), format), Champ(L.T("Niveau minimal"), niveau)),
+                new UIElement[] { Bouton("Enregistrer", true, Enregistrer), Bouton("Tester l'envoi", false, () => { var x = Saisis(); if (x != null) ActionsReglages.TesterSyslog(x.Item1); }) },
+                null, null, Pile(errSyslog, Note(ensemble))));
+
+            // ---------------- API d'export
+            var routes = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+            foreach (var route in new[] { "/api/v1/alertes", "/connexions", "/exposition", "/baseline", "/regles-parefeu", "/blocages", "/journal" })
+                routes.Children.Add(new TextBlock { Text = route, FontFamily = Briques.Chasse, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 14, 2) });
+            panneaux[4].Children.Add(Carte(VueReglagesFluent.Nom(4), T("HTTP en lecture seule ; chaque requête doit porter l'en-tête « Authorization: Bearer <jeton> ».", "Read-only HTTP; every request must carry the \"Authorization: Bearer <token>\" header."), api,
+                Grille(Champ(L.T("Port"), portApi, errPortApi, T("1024 à 65535.", "1024 to 65535.")), Large(reseau), Large(Champ(L.T("Adresses autorisées (SIEM)"), adresses)), Large(routes)),
+                new UIElement[] { Bouton("Enregistrer", true, Enregistrer) }, null, null, Pile(errApi, Note(ensemble))));
+            panneaux[4].Children.Add(Carte(T("Jeton d'accès", "Access token"), T("Les outils qui lisent l'API utilisent ce jeton.", "Tools that read the API use this token."), null, null,
+                new UIElement[] { Bouton("Afficher le jeton", false, ActionsReglages.AfficherJeton) },
+                new UIElement[] { Destructif(L.T("Nouveau jeton"), () => ActionsReglages.NouveauJeton()) },
+                T("Remplacer le jeton coupe les outils qui utilisent l'ancien.", "Replacing the token breaks the tools that use the old one.")));
+
+            // ---------------- Mises à jour
+            bandeauMaj = Bandeau(bandeauMajTitre, bandeauMajDetail, null);
+            panneaux[5].Children.Add(bandeauMaj);
+            majUrl.TextChanged += (s, e) => AideManifeste();
+            panneaux[5].Children.Add(Carte(T("Installation automatique", "Automatic installation"), L.T("Installer automatiquement une version signée par la clé épinglée dans deR4Tizer (révocation vérifiée)"), majAuto,
+                Grille(Large(Champ(L.T("Manifeste"), majUrl, null, null, aideManifeste))),
+                new UIElement[] { Bouton("Enregistrer", true, () => ActionsReglages.MajConfig(majAuto.IsChecked == true, majUrl.Text)), Bouton("Rechercher maintenant", false, ActionsReglages.MajVerifier) }));
+
+            // ---------------- Comptes et données
+            panneaux[6].Children.Add(Carte(T("Accès aux données", "Data access"), L.T("Les événements, sessions, alertes et appareils du réseau ne sont lisibles que par SYSTEM, les administrateurs et ces comptes :").TrimEnd(' ', ':') + ".", null,
+                Pile(new TextBlock { Text = T("Lecteurs en plus de SYSTEM et des administrateurs", "Readers besides SYSTEM and administrators"), FontSize = 13, Margin = new Thickness(0, 0, 0, 8) }, lecteurs,
+                    Couleur(Note(L.T("Ces comptes peuvent lire l'historique de tous les comptes (alertes, événements, lignes de commande masquées).")), Jetons.Attention),
+                    Champ(L.T("Nom du compte (par exemple : PC-ACCUEIL\\marie)"), compte, errCompte)),
+                new UIElement[] { Bouton("Autoriser", true, Autoriser) }));
+            panneaux[6].Children.Add(Carte(T("Export des journaux", "Log export"), T("Alertes en JSON ou en CSV (sans formule pour le tableur), journal du service en texte.", "Alerts as JSON or CSV (no spreadsheet formulas), service log as text."), null, null,
+                new UIElement[] { Bouton("Exporter les alertes…", true, ExporterAlertes), Bouton("Exporter le journal du service…", false, ExporterJournal) }));
+
+            Afficher(0);
             Loaded += (s, e) => Charger();
+        }
+
+        // Une section affichée à la fois ; l'entrée ouverte est marquée comme dans la navigation de la coquille
+        internal void Afficher(int i)
+        {
+            if (i < 0 || i >= panneaux.Length) return;
+            section = i;
+            for (int k = 0; k < panneaux.Length; k++)
+            {
+                panneaux[k].Visibility = k == i ? Visibility.Visible : Visibility.Collapsed;
+                entrees[k].Tag = k == i ? "ouverte" : null;
+            }
+            titreSection.Text = VueReglagesFluent.Nom(i);
         }
 
         // Lecture hors du fil de l'interface ; les champs ne sont remplis qu'à l'ouverture et après une action
@@ -4644,17 +4900,19 @@ namespace DeR4Tizer
                     var app = Commun.Lire<EtatApprentissage>("apprentissage.json");
                     var em = Commun.Lire<EtatMaj>("maj.json");
                     var en = Commun.Lire<EtatNotifications>("notifications.json");
+                    var r = Commun.Lire<EtatRemontee>("notifications.json");
                     var lect = Commun.Lire<List<Lecteur>>("lecteurs.json");
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Remplir(c, illisible, app, em, en, lect); }));
+                    var etat = Commun.Lire<Etat>("etat.json");
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) Remplir(c, illisible, app, em, en, r, lect, etat); }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
         }
 
-        void Remplir(Config c, bool illisible, EtatApprentissage app, EtatMaj em, EtatNotifications en, List<Lecteur> lect)
+        void Remplir(Config c, bool illisible, EtatApprentissage app, EtatMaj em, EtatNotifications en, EtatRemontee r, List<Lecteur> lect, Etat etat)
         {
             config.Text = illisible ? ActionsReglages.ConfigIllisible() : "";
-            config.Visibility = illisible ? Visibility.Visible : Visibility.Collapsed;
+            configBandeau.Visibility = illisible ? Visibility.Visible : Visibility.Collapsed;
             var x = c ?? new Config();
             var sl = x.Syslog ?? new ConfigSyslog(); var a = x.Api ?? new ConfigApi(); var n = x.Notifications ?? new ConfigNotifications(); var m = x.Maj ?? new ConfigMaj();
             AfficherLangue();
@@ -4663,13 +4921,49 @@ namespace DeR4Tizer
             majAuto.IsChecked = m.Auto; majUrl.Text = m.Url ?? "";
             niveauNotif.Definir(n.NiveauMin); maxHeure.Text = n.MaxParHeure.ToString(); ntfy.IsChecked = n.Ntfy; teams.IsChecked = n.Teams; smtp.IsChecked = n.Smtp;
             smtpServeur.Text = n.SmtpServeur ?? ""; smtpPort.Text = n.SmtpPort.ToString(); securite.Definir(n.SmtpSecurite); smtpUtilisateur.Text = n.SmtpUtilisateur ?? ""; expediteur.Text = n.Expediteur ?? ""; destinataires.Text = n.Destinataires ?? "";
-            // Secrets jamais relus ni réaffichés : vide garde la valeur enregistrée
+            // Secrets jamais relus ni réaffichés : vide garde la valeur enregistrée ; le champ vide dit seulement s'il y en a une
             ntfyUrl.Password = ""; ntfyJeton.Password = ""; teamsUrl.Password = ""; smtpMdp.Password = "";
-            apprentissage.Text = ActionsReglages.TexteApprentissage(app);
-            maj.Text = ActionsReglages.TexteMaj(em);
+            indiceNtfyUrl.Text = Enregistre(en == null ? (bool?)null : en.NtfyConfigure);
+            indiceTeamsUrl.Text = Enregistre(en == null ? (bool?)null : en.TeamsConfigure);
+            indiceSmtpMdp.Text = Enregistre(en == null ? (bool?)null : en.SmtpMotDePasse);
+            // Le service ne dit pas si un jeton ntfy est enregistré : rien n'est affirmé
+            indiceNtfyJeton.Text = T("Jamais réaffiché", "Never shown again");
+            foreach (var e in new[] { errPortSyslog, errPortApi, errMaxHeure, errSmtpPort, errCompte, errSyslog, errApi, errNotif }) DireErreur(e, null);
             notifEtat.Text = ActionsReglages.TexteNotifications(en);
-            lecteurs.Text = ActionsReglages.TexteLecteurs(lect);
+            exceptions.Text = VueReglagesFluent.TexteExceptions(app, etat);
+            lecteurs.Children.Clear();
+            var l = (lect ?? new List<Lecteur>()).Where(y => y != null).ToList();
+            foreach (var y in l) lecteurs.Children.Add(Pastille(Canal.Visible(ActionsReglages.NomLecteur(y))));
+            if (l.Count == 0) lecteurs.Children.Add(Pastille(T("aucun", "none")));
+            AideManifeste();
+            var maintenant = DateTime.Now;
+            var br = VueReglagesFluent.BandeauRemontee(illisible ? null : n, illisible, r);
+            bandeauRemonteeTitre.Text = br.Titre; bandeauRemonteeDetail.Text = br.Detail; Teinter(bandeauRemontee, br.Gravite);
+            double av;
+            var ba = VueReglagesFluent.BandeauApprentissage(app, maintenant, out av);
+            bandeauAppTitre.Text = ba.Titre; bandeauAppDetail.Text = ba.Detail; Teinter(bandeauApp, ba.Gravite);
+            avancementApp.Visibility = av < 0 ? Visibility.Collapsed : Visibility.Visible;
+            if (av >= 0) { avancementApp.ColumnDefinitions[0].Width = new GridLength(av, GridUnitType.Star); avancementApp.ColumnDefinitions[1].Width = new GridLength(1 - av, GridUnitType.Star); }
+            var bm = VueReglagesFluent.BandeauMaj(em);
+            bandeauMajTitre.Text = bm.Titre; bandeauMajDetail.Text = bm.Detail; Teinter(bandeauMaj, bm.Gravite);
+            for (int i = 0; i < etatsEntrees.Length; i++)
+            {
+                var p = VueReglagesFluent.EtatSection(i, illisible ? null : x, illisible, app, em, r, lect, maintenant);
+                etatsEntrees[i].Text = p.Texte;
+                etatsEntrees[i].Foreground = Jetons.Pinceau(p.Gravite == 2 ? Jetons.Danger : p.Gravite == 1 ? Jetons.Attention : Jetons.TexteSecondaire);
+                System.Windows.Automation.AutomationProperties.SetName(entrees[i], VueReglagesFluent.Nom(i) + (string.IsNullOrEmpty(p.Texte) ? "" : ", " + p.Texte));
+            }
             rempli = true;
+        }
+
+        static string T(string fr, string en) { return L.En ? en : fr; }
+
+        static string Enregistre(bool? b) { return b == null ? T("État inconnu", "Unknown") : b.Value ? T("Enregistré", "Saved") : T("Non renseigné", "Not set"); }
+
+        void AideManifeste()
+        {
+            aideManifeste.Text = VueReglagesFluent.ManifesteParDefaut(majUrl.Text) ? T("Adresse par défaut.", "Default address.")
+                : T("Adresse modifiée : ce n'est pas l'adresse par défaut du projet.", "Modified address: not the project's default address.");
         }
 
         // Bouton actif = réglage en vigueur dans ce processus, jamais la valeur par défaut de config.json (constat T-13)
@@ -4679,11 +4973,24 @@ namespace DeR4Tizer
             langueEtat.Text = ActionsReglages.TexteLangue();
         }
 
+        static void DireErreur(TextBlock t, string texte)
+        {
+            t.Text = texte ?? "";
+            t.Visibility = string.IsNullOrEmpty(texte) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        // Syslog et API saisis, ou null si un port est invalide (même validation qu'avant, ActionsReglages.PortsInvalides) :
+        // erreur dite sous le champ, et sous les boutons des deux cartes, puisque « Enregistrer » envoie les deux
         Tuple<ConfigSyslog, ConfigApi> Saisis()
         {
             int ps, pa;
             string erreur = ActionsReglages.PortsInvalides(portSyslog.Text, portApi.Text, out ps, out pa);
-            if (erreur != null) { WinForms.MessageBox.Show(erreur, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return null; }
+            var defaut = VueReglagesFluent.PortsEnDefaut(portSyslog.Text, portApi.Text);
+            DireErreur(errPortSyslog, erreur != null && defaut[0] ? T("Port invalide.", "Invalid port.") : null);
+            DireErreur(errPortApi, erreur != null && defaut[1] ? T("Port invalide.", "Invalid port.") : null);
+            DireErreur(errSyslog, erreur == null ? null : erreur + (defaut[1] ? " " + T("Champ en défaut dans la section « API d'export ».", "Field in error in the \"Export API\" section.") : ""));
+            DireErreur(errApi, erreur == null ? null : erreur + (defaut[0] ? " " + T("Champ en défaut dans la section « Syslog ».", "Field in error in the \"Syslog\" section.") : ""));
+            if (erreur != null) return null;
             return Tuple.Create(new ConfigSyslog { Actif = syslog.IsChecked == true, Hote = hote.Text.Trim(), Port = ps, Protocole = protocole.Valeur, Format = format.Valeur, NiveauMin = niveau.Valeur },
                 new ConfigApi { Actif = api.IsChecked == true, Port = pa, Reseau = reseau.IsChecked == true, Adresses = adresses.Text.Trim() });
         }
@@ -4698,23 +5005,37 @@ namespace DeR4Tizer
             ActionsReglages.Enregistrer(ActionsReglages.Composer(illisible ? null : lue, s.Item1, s.Item2));
         }
 
-        void Notifications(string action)
+        // Réglages de remontée saisis, ou null si un nombre est invalide (même validation qu'avant,
+        // ActionsReglages.NotificationsInvalides) : erreur sous le champ et sous les boutons
+        ConfigNotifications SaisieNotifications()
         {
             int max, port;
             string erreur = ActionsReglages.NotificationsInvalides(maxHeure.Text, smtpPort.Text, out max, out port);
-            if (erreur != null) { WinForms.MessageBox.Show(erreur, "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return; }
-            ActionsReglages.Notifications(action, new ConfigNotifications
+            var defaut = VueReglagesFluent.NotificationsEnDefaut(maxHeure.Text, smtpPort.Text);
+            DireErreur(errMaxHeure, erreur != null && defaut[0] ? T("Nombre invalide.", "Invalid number.") : null);
+            DireErreur(errSmtpPort, erreur != null && defaut[1] ? T("Port invalide.", "Invalid port.") : null);
+            DireErreur(errNotif, erreur == null ? null : erreur + (defaut[1] && smtp.IsChecked != true ? " " + T("Port SMTP : carte « E-mail ».", "SMTP port: \"E-mail\" card.") : ""));
+            if (erreur != null) return null;
+            return new ConfigNotifications
             {
                 NiveauMin = niveauNotif.Valeur, MaxParHeure = max, Ntfy = ntfy.IsChecked == true, Teams = teams.IsChecked == true, Smtp = smtp.IsChecked == true,
                 SmtpServeur = smtpServeur.Text.Trim(), SmtpPort = port, SmtpSecurite = securite.Valeur, SmtpUtilisateur = smtpUtilisateur.Text.Trim(), Expediteur = expediteur.Text.Trim(), Destinataires = destinataires.Text.Trim()
-            }, ntfyUrl.Password, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
+            };
+        }
+
+        void Notifications(string action)
+        {
+            var c = SaisieNotifications();
+            if (c == null) return;
+            ActionsReglages.Notifications(action, c, ntfyUrl.Password, ntfyJeton.Password, teamsUrl.Password, smtpMdp.Password);
         }
 
         void Autoriser()
         {
+            DireErreur(errCompte, null);
             if (string.IsNullOrWhiteSpace(compte.Text)) return;
             string sid = ActionsReglages.Sid(compte.Text);
-            if (sid == null) { WinForms.MessageBox.Show(L.T("Compte introuvable."), "deR4Tizer", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning); return; }
+            if (sid == null) { DireErreur(errCompte, L.T("Compte introuvable.")); return; }
             ActionsReglages.AutoriserLecteur(sid);
             compte.Text = "";
         }
@@ -4737,9 +5058,167 @@ namespace DeR4Tizer
 
         // ------------------------------------------------------------ construction
 
-        void Section(string titre)
+        // Entrée de la navigation des sections : icône, libellé, état court à droite ; modèle de la navigation de la coquille
+        Button Entree(int i)
         {
-            pile.Children.Add(new TextBlock { Text = L.T(titre), FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Accent), Margin = new Thickness(0, 20, 0, 6) });
+            var d = new DockPanel { LastChildFill = true };
+            var icone = new TextBlock { Text = VueReglagesFluent.Icones[i], FontFamily = Jetons.Icones, FontSize = 16, Width = 28, VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(icone, Dock.Left); d.Children.Add(icone);
+            var etat = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+            DockPanel.SetDock(etat, Dock.Right); d.Children.Add(etat);
+            etatsEntrees[i] = etat;
+            d.Children.Add(new TextBlock { Text = VueReglagesFluent.Nom(i), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = VueReglagesFluent.Nom(i) });
+            var b = new Button { Content = d, Foreground = Jetons.Pinceau(Jetons.Texte), HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 1, 0, 1), Cursor = Cursors.Hand };
+            b.Template = Coquille.ModeleNavigation();
+            b.FocusVisualStyle = Jetons.StyleFocus();
+            System.Windows.Automation.AutomationProperties.SetName(b, VueReglagesFluent.Nom(i));
+            int k = i;
+            b.Click += (s, e) => Afficher(k);
+            entrees[i] = b;
+            return b;
+        }
+
+        // Carte : titre (interrupteur à droite), phrase d'aide, contenu, boutons ; à part, sous un trait, les actions
+        // destructives en rouge avec leur conséquence ; en dessous, les messages de la carte
+        static Border Carte(string titre, string aide, UIElement droite, UIElement corps, UIElement[] actions, UIElement[] destructives = null, string consequence = null, UIElement pied = null)
+        {
+            var cadre = new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(22, 18, 22, 18), Margin = new Thickness(0, 0, 0, 14) };
+            if (Jetons.ContrasteEleve) { cadre.BorderBrush = Jetons.Pinceau(Jetons.Separateur); cadre.BorderThickness = new Thickness(1); }
+            var pile = new StackPanel();
+            var haut = new DockPanel();
+            if (droite != null) { DockPanel.SetDock(droite, Dock.Right); haut.Children.Add(droite); }
+            haut.Children.Add(new TextBlock { Text = titre, FontSize = 16, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+            pile.Children.Add(haut);
+            var texteAide = new TextBlock { Text = aide ?? "", FontSize = 13, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Tag = aide ?? "" };
+            if (!string.IsNullOrEmpty(aide)) pile.Children.Add(texteAide);
+            if (corps != null) { var fe = corps as FrameworkElement; if (fe != null) fe.Margin = new Thickness(0, 14, 0, 0); pile.Children.Add(corps); }
+            if (actions != null && actions.Length > 0)
+            {
+                var l = new WrapPanel { Margin = new Thickness(0, corps == null ? 12 : 4, 0, 0) };
+                foreach (var a in actions) l.Children.Add(a);
+                pile.Children.Add(l);
+            }
+            if (pied != null) pile.Children.Add(pied);
+            if (destructives != null && destructives.Length > 0)
+            {
+                pile.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(0, 16, 0, 12) });
+                var l = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+                foreach (var a in destructives) l.Children.Add(a);
+                var texte = new TextBlock { Text = consequence ?? "", FontSize = 12.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+                if (destructives.Length == 1)
+                {
+                    var d = new DockPanel();
+                    DockPanel.SetDock(l, Dock.Right);
+                    d.Children.Add(l);
+                    d.Children.Add(texte);
+                    pile.Children.Add(d);
+                }
+                else { pile.Children.Add(texte); pile.Children.Add(l); }
+            }
+            cadre.Child = pile;
+            return cadre;
+        }
+
+        // Carte d'un canal de remontée : interrupteur ; canal éteint, champs repliés (ils restent lus et envoyés comme avant)
+        static Border CarteCanal(CheckBox interrupteur, string aide, UIElement champs)
+        {
+            var carte = Carte((string)System.Windows.Automation.AutomationProperties.GetName(interrupteur), aide, interrupteur, champs, null);
+            var pile = (StackPanel)carte.Child;
+            var texteAide = pile.Children.OfType<TextBlock>().FirstOrDefault(t => t.Tag as string == aide);
+            Action suivre = () =>
+            {
+                bool actif = interrupteur.IsChecked == true;
+                champs.Visibility = actif ? Visibility.Visible : Visibility.Collapsed;
+                if (texteAide != null) texteAide.Text = aide + (actif ? "" : " " + T("Désactivé : champs masqués.", "Off: fields hidden."));
+            };
+            interrupteur.Checked += (s, e) => suivre();
+            interrupteur.Unchecked += (s, e) => suivre();
+            suivre();
+            return carte;
+        }
+
+        // Bandeau d'état, même dessin que celui de la Vue d'ensemble : carte teintée, tuile d'icône, titre et détail
+        static Border Bandeau(TextBlock titre, TextBlock detail, UIElement extra)
+        {
+            var b = new Border { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
+            var d = new DockPanel();
+            var tuile = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(8), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 14, 0) };
+            tuile.Child = new TextBlock { FontFamily = Jetons.Icones, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(tuile, Dock.Left); d.Children.Add(tuile);
+            var p = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            titre.FontSize = 16; titre.FontWeight = FontWeights.SemiBold; titre.TextWrapping = TextWrapping.Wrap;
+            detail.FontSize = 13; detail.Foreground = Jetons.Pinceau(Jetons.TexteSecondaire); detail.TextWrapping = TextWrapping.Wrap; detail.Margin = new Thickness(0, 3, 0, 0);
+            p.Children.Add(titre); p.Children.Add(detail);
+            if (extra != null) p.Children.Add(extra);
+            d.Children.Add(p);
+            b.Child = d;
+            Teinter(b, -2);
+            return b;
+        }
+
+        static void Teinter(Border b, int gravite)
+        {
+            var couleur = gravite == 2 ? Jetons.Danger : gravite == 1 ? Jetons.Attention : gravite == 0 ? Jetons.Succes : gravite == -1 ? Jetons.Accent : Jetons.TexteSecondaire;
+            b.Background = new LinearGradientBrush(VueTraficFluent.Melange(Jetons.Carte, couleur, 0.16), Jetons.Carte, 0);
+            b.BorderBrush = Jetons.Pinceau(VueTraficFluent.Melange(Jetons.Separateur, couleur, 0.35));
+            var tuile = (Border)((DockPanel)b.Child).Children[0];
+            tuile.Background = Jetons.Pinceau(VueTraficFluent.Melange(Jetons.Carte, couleur, 0.28));
+            var icone = (TextBlock)tuile.Child;
+            icone.Foreground = Jetons.Pinceau(couleur);
+            icone.Text = gravite == 2 ? "" : gravite == 1 ? "" : gravite == 0 ? "" : gravite == -1 ? "" : "";
+        }
+
+        // Grille à deux colonnes ; un élément marqué Large prend toute la largeur
+        static Grid Grille(params UIElement[] cases)
+        {
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            int r = 0, c = 0;
+            foreach (var e in cases)
+            {
+                var fe = e as FrameworkElement;
+                bool large = fe != null && "large".Equals(fe.Tag);
+                if (large && c != 0) { r++; c = 0; }
+                if (g.RowDefinitions.Count <= r) g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetRow(e, r); Grid.SetColumn(e, c == 0 ? 0 : 2);
+                if (large) Grid.SetColumnSpan(e, 3);
+                g.Children.Add(e);
+                if (large || c == 1) { r++; c = 0; } else c = 1;
+            }
+            return g;
+        }
+
+        static UIElement Large(FrameworkElement e, Color? couleur = null)
+        {
+            e.Tag = "large";
+            var t = e as TextBlock;
+            if (t != null && couleur != null) t.Foreground = Jetons.Pinceau(couleur.Value);
+            return e;
+        }
+
+        // Champ : libellé au-dessus, saisie, aide, erreur de saisie sous le champ
+        static StackPanel Champ(string libelle, UIElement saisie, TextBlock erreur = null, string aide = null, TextBlock aideVariable = null)
+        {
+            var p = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+            p.Children.Add(new TextBlock { Text = libelle, FontSize = 13, Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap });
+            var fe = saisie as FrameworkElement;
+            if (fe != null) fe.HorizontalAlignment = fe is ChoixFluent ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+            p.Children.Add(saisie);
+            var nomChamp = saisie as Control ?? (saisie is Grid ? ((Grid)saisie).Children.OfType<PasswordBox>().FirstOrDefault() : null);
+            if (nomChamp != null) System.Windows.Automation.AutomationProperties.SetName(nomChamp, libelle);
+            if (aide != null) p.Children.Add(new TextBlock { Text = aide, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap });
+            if (aideVariable != null) { aideVariable.FontSize = 12; aideVariable.Margin = new Thickness(0, 4, 0, 0); p.Children.Add(aideVariable); }
+            if (erreur != null) p.Children.Add(erreur);
+            return p;
+        }
+
+        static StackPanel Pile(params UIElement[] elements)
+        {
+            var p = new StackPanel();
+            foreach (var e in elements) p.Children.Add(e);
+            return p;
         }
 
         static TextBlock Texte(bool secondaire)
@@ -4749,40 +5228,132 @@ namespace DeR4Tizer
 
         static TextBlock Note(string texte)
         {
-            var t = Texte(true); t.Text = L.T(texte); return t;
+            var t = Texte(true); t.Text = texte; return t;
         }
 
-        static TextBlock Etiquette(string texte)
+        static TextBlock Couleur(TextBlock t, Color c) { t.Foreground = Jetons.Pinceau(c); return t; }
+
+        static TextBlock Erreur()
         {
-            return new TextBlock { Text = L.T(texte), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+            return new TextBlock { FontSize = 12, Foreground = Jetons.Pinceau(Jetons.Danger), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+        }
+
+        static TextBlock Indice()
+        {
+            return new TextBlock { FontSize = 13, FontStyle = FontStyles.Italic, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), VerticalAlignment = VerticalAlignment.Center };
+        }
+
+        static Border Pastille(string texte)
+        {
+            var b = new Border { Background = Jetons.Pinceau(Jetons.Surface), CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 3, 10, 4), Margin = new Thickness(0, 0, 6, 6) };
+            var p = new StackPanel { Orientation = Orientation.Horizontal };
+            p.Children.Add(new TextBlock { Text = "", FontFamily = Jetons.Icones, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+            p.Children.Add(new TextBlock { Text = texte, FontFamily = Briques.Chasse, FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center });
+            b.Child = p;
+            return b;
         }
 
         static CheckBox Case(string texte)
         {
-            return new CheckBox { Content = new TextBlock { Text = L.T(texte), TextWrapping = TextWrapping.Wrap }, Foreground = Jetons.Pinceau(Jetons.Texte), Margin = new Thickness(0, 6, 0, 4), Cursor = Cursors.Hand };
+            return new CheckBox { Content = new TextBlock { Text = L.T(texte), TextWrapping = TextWrapping.Wrap }, Foreground = Jetons.Pinceau(Jetons.Texte), Margin = new Thickness(0, 2, 0, 12), Cursor = Cursors.Hand };
         }
 
-        static TextBox Saisie(double largeur)
+        // Interrupteur : case à cocher dessinée en capsule, état dit en mots à côté (la couleur seule ne porte pas le sens) ;
+        // nom lu par les lecteurs d'écran = titre de la carte
+        static CheckBox Interrupteur(string nom)
         {
-            return new TextBox { Width = largeur, Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(6, 3, 6, 3), FontFamily = Briques.Chasse, FontSize = 12, Margin = new Thickness(0, 0, 12, 0), VerticalContentAlignment = VerticalAlignment.Center };
+            var etat = new TextBlock { FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+            var c = new CheckBox { Content = etat, Foreground = Jetons.Pinceau(Jetons.Texte), Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(12, 0, 0, 0) };
+            c.Template = ModeleInterrupteur();
+            c.FocusVisualStyle = Jetons.StyleFocus();
+            System.Windows.Automation.AutomationProperties.SetName(c, nom);
+            Action dire = () => { etat.Text = c.IsChecked == true ? T("Activé", "On") : T("Désactivé", "Off"); etat.Foreground = Jetons.Pinceau(c.IsChecked == true ? Jetons.Texte : Jetons.TexteSecondaire); };
+            c.Checked += (s, e) => dire();
+            c.Unchecked += (s, e) => dire();
+            dire();
+            return c;
+        }
+
+        static ControlTemplate modeleInterrupteur;
+        static ControlTemplate ModeleInterrupteur()
+        {
+            if (modeleInterrupteur != null) return modeleInterrupteur;
+            var t = new ControlTemplate(typeof(CheckBox));
+            var pile = new FrameworkElementFactory(typeof(StackPanel));
+            pile.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+            pile.SetValue(Panel.BackgroundProperty, Brushes.Transparent);
+            var texte = new FrameworkElementFactory(typeof(ContentPresenter));
+            texte.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            texte.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 10, 0));
+            var capsule = new FrameworkElementFactory(typeof(Border), "capsule");
+            capsule.SetValue(FrameworkElement.WidthProperty, 40.0);
+            capsule.SetValue(FrameworkElement.HeightProperty, 20.0);
+            capsule.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+            capsule.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            capsule.SetValue(Border.BackgroundProperty, Jetons.Pinceau(Jetons.Fond));
+            capsule.SetValue(Border.BorderBrushProperty, Jetons.Pinceau(Jetons.TexteSecondaire));
+            capsule.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            var bouton = new FrameworkElementFactory(typeof(System.Windows.Shapes.Ellipse), "bouton");
+            bouton.SetValue(FrameworkElement.WidthProperty, 12.0);
+            bouton.SetValue(FrameworkElement.HeightProperty, 12.0);
+            bouton.SetValue(System.Windows.Shapes.Shape.FillProperty, Jetons.Pinceau(Jetons.TexteSecondaire));
+            bouton.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+            bouton.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            bouton.SetValue(FrameworkElement.MarginProperty, new Thickness(4, 0, 0, 0));
+            capsule.AppendChild(bouton);
+            pile.AppendChild(texte);
+            pile.AppendChild(capsule);
+            t.VisualTree = pile;
+            var coche = new Trigger { Property = System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, Value = true };
+            coche.Setters.Add(new Setter(Border.BackgroundProperty, Jetons.Pinceau(Jetons.Accent), "capsule"));
+            coche.Setters.Add(new Setter(Border.BorderBrushProperty, Jetons.Pinceau(Jetons.Accent), "capsule"));
+            coche.Setters.Add(new Setter(System.Windows.Shapes.Shape.FillProperty, Jetons.Pinceau(Jetons.TexteSurAccent), "bouton"));
+            coche.Setters.Add(new Setter(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Right, "bouton"));
+            coche.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 3, 0), "bouton"));
+            coche.Setters.Add(new Setter(FrameworkElement.WidthProperty, 14.0, "bouton"));
+            coche.Setters.Add(new Setter(FrameworkElement.HeightProperty, 14.0, "bouton"));
+            t.Triggers.Add(coche);
+            modeleInterrupteur = t;
+            return t;
+        }
+
+        static TextBox Saisie()
+        {
+            return new TextBox { Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(8, 5, 8, 5), FontFamily = Briques.Chasse, FontSize = 12.5, VerticalContentAlignment = VerticalAlignment.Center };
         }
 
         static PasswordBox Secret(double largeur)
         {
-            return new PasswordBox { Width = largeur, Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(6, 3, 6, 3), FontSize = 12, Margin = new Thickness(0, 0, 12, 0), VerticalContentAlignment = VerticalAlignment.Center };
+            return new PasswordBox { MinWidth = Math.Min(largeur, 160), Background = Jetons.Pinceau(Jetons.Surface), Foreground = Jetons.Pinceau(Jetons.Texte), BorderBrush = Jetons.Pinceau(Jetons.Separateur), CaretBrush = Jetons.Pinceau(Jetons.Texte), Padding = new Thickness(8, 5, 8, 5), FontSize = 12.5, VerticalContentAlignment = VerticalAlignment.Center };
         }
 
-        static WrapPanel Ligne(params UIElement[] elements)
+        // Secret : le champ vide montre, par-dessus, un cadenas et l'indice (« enregistré », « non renseigné ») ; dès la première
+        // lettre tapée, l'indice disparaît. La valeur enregistrée n'est jamais lue ni affichée
+        static Grid Masque(PasswordBox p, TextBlock indice)
         {
-            var l = new WrapPanel { Margin = new Thickness(0, 4, 0, 4) };
-            foreach (var e in elements) l.Children.Add(e);
-            return l;
+            var g = new Grid();
+            g.Children.Add(p);
+            var d = new StackPanel { Orientation = Orientation.Horizontal, IsHitTestVisible = false, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            d.Children.Add(new TextBlock { Text = "", FontFamily = Jetons.Icones, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+            d.Children.Add(indice);
+            g.Children.Add(d);
+            p.PasswordChanged += (s, e) => d.Visibility = p.Password.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            return g;
         }
 
         Button Bouton(string texte, bool fort, Action action)
         {
             var b = Briques.Action(L.T(texte), fort, (s, e) => { if (!rempli) return; action(); Charger(); });
             b.HorizontalAlignment = HorizontalAlignment.Left; b.Margin = new Thickness(0, 4, 8, 4);
+            return b;
+        }
+
+        // Action destructive : même bouton, bordure et texte rouges ; la conséquence est dite à côté, sur la carte
+        Button Destructif(string texte, Action action)
+        {
+            var b = Bouton(texte, false, action);
+            b.BorderBrush = Jetons.Pinceau(Jetons.Danger); b.Foreground = Jetons.Pinceau(Jetons.Danger);
+            b.Margin = new Thickness(8, 4, 0, 4);
             return b;
         }
     }
