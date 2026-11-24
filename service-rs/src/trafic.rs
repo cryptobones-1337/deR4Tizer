@@ -87,8 +87,9 @@ pub struct DestinationPays {
 }
 
 /// T-19 : bornes de la carte, pour que trafic.json reste petit : 250 pays, dont 30 avec 10 programmes et 10 destinations.
-/// Liste Pays : moins d'1 Mo au pire (noms DNS et de programmes de plus de 250 caractères, liste Programmes existante
-/// comprise : environ 880 Ko mesurés par l'audit de #311, S311-01), quelques dizaines de Ko en pratique
+/// Liste Pays au pire (250 pays, noms de plus de 250 caractères, liste Programmes existante comprise) : environ 880 Ko
+/// mesurés avec des noms ASCII (audit de #311, S311-01) ; davantage avec des noms non ASCII (longueur des noms DNS et
+/// des programmes non bornée) ; quelques dizaines de Ko en pratique
 pub const MAX_PAYS: usize = 250;
 pub const MAX_PAYS_DETAILLES: usize = 30;
 pub const MAX_PROGRAMMES_PAYS: usize = 10;
