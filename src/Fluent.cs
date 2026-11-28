@@ -3296,7 +3296,11 @@ namespace DeR4Tizer
             Action<int, string> a = (k, s) => l.Add(new KeyValuePair<int, string>(k, s));
             a(0, NomPays(code));
             var p = Pays(t, code);
-            if (p == null) a(2, en ? "No traffic since midnight" : "Aucun échange depuis minuit");
+            // Pays absent de la liste : « aucun échange » seulement si l'état est lu et les plages d'adresses chargées ;
+            // sinon rien n'est conclu (prérelecture de #322, D1)
+            if (p == null && t == null) a(2, en ? "Traffic not read yet: nothing is concluded" : "Trafic pas encore lu : rien n'est conclu");
+            else if (p == null && t.PlagesGeoip <= 0) a(2, en ? "Address ranges not loaded: no country can be attributed yet, nothing is concluded" : "Plages d'adresses non chargées : aucun pays attribuable pour l'instant, rien n'est conclu");
+            else if (p == null) a(2, en ? "No traffic since midnight" : "Aucun échange depuis minuit");
             else
             {
                 a(1, "↓ " + Format.Octets(p.Entrant) + (en ? " received" : " reçus") + "  ·  ↑ " + Format.Octets(p.Sortant) + (en ? " sent" : " envoyés"));
@@ -3321,8 +3325,27 @@ namespace DeR4Tizer
         public static string Bulle(string code, TraficPays p)
         {
             if (code == null) return null;
-            var t = new EtatTrafic { Pays = p == null ? new List<TraficPays>() : new List<TraficPays> { p } };
+            if (p == null) return NomPays(code);
+            var t = new EtatTrafic { Pays = new List<TraficPays> { p }, PlagesGeoip = 1 };
             return string.Join("\n", LignesBulle(t, code, false).Select(x => x.Value));
+        }
+
+        // Légende des arcs : pays d'origine (réglage régional), ou pourquoi il n'y a pas d'arc
+        public static string TexteArcs(EtatTrafic t, string origine)
+        {
+            bool en = L.En;
+            if (t != null && Ancien(t)) return en ? "no arcs: recent rate not published by this service (older version)" : "pas d'arc : débit récent non publié par ce service (version plus ancienne)";
+            if (origine == null || !PaysCarte.Tous.ContainsKey(origine)) return en ? "no arcs: country of the regional setting unknown" : "pas d'arc : pays du réglage régional inconnu";
+            return string.Format(en ? "arcs from {0} ({1}, regional setting): last 10 s, width = √ rate, 20 at most" : "arcs depuis {0} ({1}, réglage régional) : 10 dernières s, épaisseur = √ débit, 20 au plus", NomSeul(origine), Canal.Visible(origine));
+        }
+
+        // Molette : la carte la garde pour zoomer, sauf au zoom minimal en descente et au zoom maximal en montée, où la page
+        // défile (prérelecture de #322)
+        public static bool MoletteGardee(double zoom, int delta)
+        {
+            if (delta < 0 && zoom <= ZoomMin) return false;
+            if (delta > 0 && zoom >= ZoomMax) return false;
+            return delta != 0;
         }
 
         // Filtre de pays écrit au-dessus des listes
@@ -3492,7 +3515,19 @@ namespace DeR4Tizer
             ToolTipService.SetInitialShowDelay(this, 150);
             System.Windows.Automation.AutomationProperties.SetName(this, L.En ? "Traffic map: arrows go through the countries with traffic, Enter filters the lists, Esc clears the filter, + and - zoom"
                                                                               : "Carte du trafic : flèches pour parcourir les pays avec trafic, Entrée pour filtrer les listes, Échap pour retirer le filtre, + et - pour zoomer");
+            // Infobulle ouverte au clavier fermée en quittant la page, quand la carte est cachée ou la fenêtre réduite
+            // (prérelecture de #322)
+            Loaded += (s, e) => { fenetre = Window.GetWindow(this); if (fenetre != null) fenetre.StateChanged += FenetreChangee; };
+            Unloaded += (s, e) => { if (fenetre != null) fenetre.StateChanged -= FenetreChangee; fenetre = null; Fermer(); };
+            IsVisibleChanged += (s, e) => { if (!IsVisible) Fermer(); };
         }
+
+        Window fenetre;
+
+        void FenetreChangee(object s, EventArgs e) { if (fenetre != null && fenetre.WindowState == WindowState.Minimized) Fermer(); }
+
+        // Ferme l'infobulle (survol oublié aussi) ; appelée au départ de la page et à la réduction de la fenêtre
+        internal void Fermer() { survol = null; ToolTip = null; bulle.IsOpen = false; }
 
         public void Definir(EtatTrafic e) { t = e; if (clavier != null && VueTraficFluent.Pays(t, clavier) == null) clavier = null; Bulle(); InvalidateVisual(); }
 
@@ -3644,6 +3679,7 @@ namespace DeR4Tizer
         protected override void OnMouseWheel(MouseWheelEventArgs e)
         {
             base.OnMouseWheel(e);
+            if (!VueTraficFluent.MoletteGardee(zoom, e.Delta)) return;
             Zoomer(Math.Pow(1.25, e.Delta / 120.0), e.GetPosition(this));
             e.Handled = true;
         }
@@ -3800,10 +3836,7 @@ namespace DeR4Tizer
                 g.DrawText(ft, new Point(xt, 18)); fin = xt + ft.Width;
             }
             // Arcs : pays d'origine (réglage régional), 10 dernières secondes, épaisseur en racine carrée du débit
-            string arcs;
-            if (t != null && VueTraficFluent.Ancien(t)) arcs = en ? "no arcs: recent rate not published by this service (older version)" : "pas d'arc : débit récent non publié par ce service (version plus ancienne)";
-            else if (Origine == null || !PaysCarte.Tous.ContainsKey(Origine)) arcs = en ? "no arcs: country of the regional setting unknown" : "pas d'arc : pays du réglage régional inconnu";
-            else arcs = string.Format(en ? "arcs from {0} (regional setting): last 10 s, width = √ rate, 20 at most" : "arcs depuis {0} (réglage régional) : 10 dernières s, épaisseur = √ débit, 20 au plus", VueTraficFluent.NomPays(Origine));
+            string arcs = VueTraficFluent.TexteArcs(t, Origine);
             var trait = new Pen(new SolidColorBrush(Color.FromArgb(0xB0, Jetons.Accent.R, Jetons.Accent.G, Jetons.Accent.B)), 1); trait.Freeze();
             var epais = new Pen(trait.Brush, 4); epais.Freeze();
             g.DrawLine(trait, new Point(14, 26), new Point(28, 26)); g.DrawLine(epais, new Point(34, 26), new Point(48, 26));
